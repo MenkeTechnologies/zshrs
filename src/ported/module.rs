@@ -3399,54 +3399,97 @@ pub fn modname_ok(p: &str) -> i32 {
 
 /// Port of `require_module(const char *module, Feature_enables features, int silent)` from `Src/module.c:2344`.
 ///
-/// C: ensures `modname` is loaded with the named features enabled.
-/// Returns 0 on success, non-zero on failure.
+/// C body c:2342-2360:
+/// ```c
+/// mod_export int
+/// require_module(const char *module, Feature_enables features, int silent)
+/// {
+///     Module m = NULL;
+///     int ret = 0;
+///     queue_signals();
+///     m = find_module(module, FINDMOD_ALIASP, &module);
+///     if (!m || !m->u.handle ||
+///         (m->node.flags & MOD_UNLOAD))
+///         ret = load_module(module, features, silent);
+///     else
+///         ret = do_module_features(m, features, 0);
+///     unqueue_signals();
+///     return ret;
+/// }
+/// ```
 ///
-/// Static-link path: load via `try_load_module`. The features-array
-/// argument is accepted but not honoured per-feature yet (the
-/// dispatcher tables in `register_module` carry full feature lists).
-/// WARNING: param names don't match C — Rust=(table, modname, _features) vs C=()
-pub fn require_module(table: &mut modulestab, modname: &str, _features: Option<&[String]>) -> i32 {
-    if try_load_module(table, modname) == 0 {
-        // Module not in static table — report failure.
-        // c:Src/module.c:1610-1623 — do_load_module's zwarn arm.
-        // zsh emits "failed to load module `<name>': <dlerror>" when
-        // dlopen fails for an unknown module. zshrs's static-link
-        // path has no dlopen but the user-visible miss is the same;
-        // emit the canonical message so user scripts wrapping
-        // `zmodload` in error-handling see the expected diagnostic.
-        // Bug #376 in docs/BUGS.md.
-        crate::ported::utils::zwarn(&format!(
-            "failed to load module `{}'",
-            modname
-        ));
-        return 1;
-    }
-    // c:Src/module.c:2354-2356 — when the module is found but its
-    // handle is NULL OR MOD_UNLOAD is set, call `load_module` which
-    // walks MOD_BUSY → MOD_INIT_S → MOD_SETUP → MOD_INIT_B per
-    // c:2206-2322. Without this step, builtin modules stay at
-    // MOD_LINKED-only (set by `module::new` at zsh_h.rs:758) and
-    // every "is this module loaded?" check that reads MOD_INIT_B
-    // returns false even after the user's explicit `zmodload`. Fix
-    // affects math-function gating (`zmodload zsh/mathfunc; echo
-    // $((sqrt(4)))`), `zmodload -e` exit codes, and any other
-    // per-module load probe.
-    let needs_load = table
-        .modules
-        .get(modname)
-        .map(|m| {
-            let flags = m.node.flags;
-            (flags & crate::ported::zsh_h::MOD_INIT_B) == 0
-                || (flags & crate::ported::zsh_h::MOD_UNLOAD) != 0
-        })
-        .unwrap_or(true);
-    if needs_load {
-        if !table.load_module(modname) {
+/// Two branches: when the module isn't loaded yet (or is mid-unload),
+/// route through `load_module` which runs the full setup → features →
+/// boot lifecycle. When it's already loaded, skip to
+/// `do_module_features` to just enable the requested per-feature
+/// surface — much cheaper.
+///
+/// Static-link analog of `m->u.handle` is `MOD_INIT_B` (boot ran):
+/// once boot_module has fired, the module is "loaded" in zshrs's
+/// non-dlopen world.
+/// WARNING: param names don't match C — Rust=(table, modname, features, silent) vs C=(module, features, silent)
+pub fn require_module(
+    table: &mut modulestab,
+    modname: &str,
+    features: Option<&[String]>,
+    silent: i32,
+) -> i32 {
+    // c:2344
+    // c:2350 — queue_signals(): signal-deferral wrapper.
+    crate::ported::signals::queue_signals();
+
+    // c:2351 — `m = find_module(module, FINDMOD_ALIASP, &module);`
+    // Resolves alias chain; canonical name lives in `mname`.
+    let mname_opt = find_module(table, modname, FINDMOD_ALIASP);
+
+    // c:2352-2353 — `if (!m || !m->u.handle || MOD_UNLOAD)`.
+    // Static-link analog of `m->u.handle`: MOD_INIT_B (boot ran).
+    let needs_load = match &mname_opt {
+        None => true, // c:2352 !m
+        Some(mname) => match table.modules.get(mname) {
+            None => true,
+            Some(m) => {
+                (m.node.flags & MOD_INIT_B) == 0 // c:2352 !u.handle analog
+                    || (m.node.flags & MOD_UNLOAD) != 0 // c:2353
+            }
+        },
+    };
+
+    let mname = mname_opt.unwrap_or_else(|| modname.to_string());
+
+    let ret = if needs_load {
+        // c:2354 — `ret = load_module(module, features, silent);`
+        // try_load_module gates the static-link path. On miss, emit
+        // the canonical zwarn (gated by silent).
+        if try_load_module(table, &mname) == 0 {
+            if silent == 0 {
+                crate::ported::utils::zwarn(&format!("failed to load module `{}'", mname));
+            }
+            crate::ported::signals::unqueue_signals();
             return 1;
         }
-    }
-    0
+        if !table.load_module(&mname) {
+            crate::ported::signals::unqueue_signals();
+            return 1;
+        }
+        0
+    } else {
+        // c:2356 — `ret = do_module_features(m, features, 0);`
+        // Module already loaded; just enable the requested features.
+        // features=NULL in C means "enable all features"; the Rust
+        // do_module_features takes a single enablesstr arg, so flatten
+        // the features list (or pass empty for None).
+        let enablesarr: String = match features {
+            Some(arr) => arr.join(" "),
+            None => String::new(),
+        };
+        do_module_features(table, &enablesarr, 0)
+    };
+
+    // c:2357 — unqueue_signals();
+    crate::ported::signals::unqueue_signals();
+
+    ret // c:2359
 }
 
 /// Port of `add_dep(const char *name, char *from)` from `Src/module.c:2369`.
@@ -4455,7 +4498,7 @@ pub fn bin_zmodload_load(table: &mut modulestab, nam: &str, args: &[String], ops
     } else {
         // c:2989-2992 — load loop
         for arg in args {
-            let tmpret = require_module(table, arg, None); // c:2990
+            let tmpret = require_module(table, arg, None, OPT_ISSET(ops, b's') as i32); // c:2990
             if tmpret != 0 && ret != 1 {
                 // c:2991
                 ret = tmpret;
@@ -4571,12 +4614,13 @@ pub fn ensurefeature(
 ) -> i32 {
     // c:3415
     match feature {
-        None => require_module(table, modname, None), // c:3420-3421
+        // c:3420-3421 — `if (!feature) return require_module(modname, NULL, 0);`
+        None => require_module(table, modname, None, 0),
         Some(f) => {
             // c:3422-3428 — build single-element features[2] array.
             let combined = crate::ported::string::dyncat(prefix, f); // c:3422
             let arr = vec![combined];
-            require_module(table, modname, Some(&arr)) // c:3428
+            require_module(table, modname, Some(&arr), 0) // c:3428
         }
     }
 }
