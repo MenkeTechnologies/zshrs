@@ -5046,24 +5046,59 @@ pub fn bin_zmodload_features(
 
     let modname = modname.unwrap();
 
-    // c:3032 — `-m` glob-pattern branch (compile patprogs).
-    // Static-link path: skip pattern compilation; treat each feature
-    // string as a literal name. Full pattern support pending the
-    // pattern.c port wire-up.
+    // c:3032-3047 — `-m` glob-pattern branch.
+    // C body:
+    //   if (OPT_ISSET(ops,'m')) {
+    //       patprogs = zhalloc(arrlen(args)*sizeof(Patprog));
+    //       for (argp = args; *argp; argp++, patprogp++) {
+    //           if (*arg == '+' || *arg == '-') arg++;
+    //           tokenize(arg);
+    //           *patprogp = patcompile(arg, 0, 0);
+    //       }
+    //   } else patprogs = NULL;
+    // Static-link path: pattern compilation deferred. The -m flag is
+    // observed at the -a / require_module dispatch below, but the
+    // patprogs array stays NULL — patcompile callers (autofeatures,
+    // do_module_features) fall back to exact-name matching.
 
-    // Build features array from `+name`/`-name` args.
-    let mut feats: Vec<String> = Vec::with_capacity(rest_args.len());
-    for arg in rest_args {
-        feats.push(arg.clone());
+    // c:3049-3226 — `-l/-L/-e` arm (the big listing path) deferred:
+    // requires the full Feature_enables array shape + features_module
+    // dispatch with patprog comparison. Left as a follow-up.
+
+    // c:3227-3229 — `-P` is illegal without -l/-L/-e.
+    if OPT_ISSET(ops, b'P') && !(OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'e')) {
+        zwarnnam(nam, "-P can only be used with -l or -L"); // c:3228
+        return 1; // c:3229
     }
 
-    // c:3098-3120 — apply features via do_module_features after
-    // setting up the enables array per +/- prefixes.
-    if !feats.is_empty() {
-        autofeatures(table, nam, Some(modname), &feats, 0, 0);
+    // c:3230-3247 — `-a` arm: route through autofeatures with
+    // FEAT_IGNORE (the autoload-feature registration path).
+    if OPT_ISSET(ops, b'a') {
+        // c:3231-3234 — `-m` incompatible with `-a`.
+        if OPT_ISSET(ops, b'm') {
+            zwarnnam(nam, "-m cannot be used with -a"); // c:3232
+            return 1; // c:3233
+        }
+        // c:3246 — `return autofeatures(nam, modname, args, 0, FEAT_IGNORE);`
+        // FEAT_IGNORE is hard-coded here because marking-for-autoload
+        // is separate from enable/disable (per the c:3236-3244 comment).
+        return autofeatures(table, nam, Some(modname), rest_args, 0, FEAT_IGNORE);
     }
-    do_module_features(table, modname, None, FEAT_CHECKAUTO); // c:3122
-    0
+
+    // c:3249-3260 — default arm: build Feature_enables array from
+    // `+name`/`-name` args, then `require_module(modname, features,
+    // OPT_ISSET(ops,'s'))`.
+    //
+    // C builds a fep[] array with str + (optional) patprog pairs.
+    // The Rust port flattens to a `Vec<String>` since patprogs are
+    // deferred; require_module accepts Option<&[String]>.
+    let feats: Vec<String> = rest_args.to_vec();
+    let features_arg = if feats.is_empty() {
+        None
+    } else {
+        Some(feats.as_slice())
+    };
+    require_module(table, modname, features_arg, OPT_ISSET(ops, b's') as i32) // c:3260
 }
 
 /// Port of `ensurefeature(const char *modname, const char *prefix, const char *feature)` from `Src/module.c:3415`.
