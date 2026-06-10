@@ -3894,6 +3894,54 @@ pub fn incasepat() -> i32 {
 pub fn set_incasepat(v: i32) {
     LEX_INCASEPAT.set(v);
 }
+/// Port of `mod_export char *tokstrings[WHILE + 1]` from
+/// `Src/lex.c:171-205`. Canonical text for each punctuation token —
+/// used by `zshlex` (lex.c:1965 `zshlextext = tokstrings[tok]`) when
+/// no tokstr was captured, and by `yyerror` (parse.c:2738) to format
+/// "parse error near `X'" tails.
+///
+/// Indexed by lextok value (C's `tokstrings[tok]`). Entries the C
+/// initializer doesn't set are `None`; the array bound is WHILE+1
+/// matching C exactly.
+#[allow(non_upper_case_globals)]
+pub static tokstrings: [Option<&'static str>; (WHILE + 1) as usize] = {
+    let mut t: [Option<&'static str>; (WHILE + 1) as usize] =
+        [None; (WHILE + 1) as usize];
+    t[SEPER as usize] = Some(";");           // c:173
+    t[NEWLIN as usize] = Some("\\n");        // c:174
+    t[SEMI as usize] = Some(";");            // c:175
+    t[DSEMI as usize] = Some(";;");          // c:176
+    t[AMPER as usize] = Some("&");           // c:177
+    t[INPAR_TOK as usize] = Some("(");       // c:178
+    t[OUTPAR_TOK as usize] = Some(")");      // c:179
+    t[DBAR as usize] = Some("||");           // c:180
+    t[DAMPER as usize] = Some("&&");         // c:181
+    t[OUTANG_TOK as usize] = Some(">");      // c:182
+    t[OUTANGBANG as usize] = Some(">|");     // c:183
+    t[DOUTANG as usize] = Some(">>");        // c:184
+    t[DOUTANGBANG as usize] = Some(">>|");   // c:185
+    t[INANG_TOK as usize] = Some("<");       // c:186
+    t[INOUTANG as usize] = Some("<>");       // c:187
+    t[DINANG as usize] = Some("<<");         // c:188
+    t[DINANGDASH as usize] = Some("<<-");    // c:189
+    t[INANGAMP as usize] = Some("<&");       // c:190
+    t[OUTANGAMP as usize] = Some(">&");      // c:191
+    t[AMPOUTANG as usize] = Some("&>");      // c:192
+    t[OUTANGAMPBANG as usize] = Some("&>|"); // c:193
+    t[DOUTANGAMP as usize] = Some(">>&");    // c:194
+    t[DOUTANGAMPBANG as usize] = Some(">>&|"); // c:195
+    t[TRINANG as usize] = Some("<<<");       // c:196
+    t[BAR_TOK as usize] = Some("|");         // c:197
+    t[BARAMP as usize] = Some("|&");         // c:198
+    t[INOUTPAR as usize] = Some("()");       // c:199
+    t[DINPAR as usize] = Some("((");         // c:200
+    t[DOUTPAR as usize] = Some("))");        // c:201
+    t[AMPERBANG as usize] = Some("&|");      // c:202
+    t[SEMIAMP as usize] = Some(";&");        // c:203
+    t[SEMIBAR as usize] = Some(";|");        // c:204
+    t
+};
+
 /// `char *tokstr` accessors — direct port of lex.c:170 file-static.
 pub fn tokstr() -> Option<String> {
     LEX_TOKSTR.with_borrow(|t| t.clone())
