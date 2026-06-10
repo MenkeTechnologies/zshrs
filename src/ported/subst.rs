@@ -10006,6 +10006,33 @@ pub fn paramsubst(
             if (pf_flags & PREFORK_SINGLE) != 0 {
                 isarr = 0;
             }
+            // c:Src/subst.c:3032 — `if (qt && !getlen && isarr > 0) {
+            //     val = sepjoin(aval, sep, 1); isarr = 0; }`.
+            // In zsh, the qt+isarr sepjoin transition fires AFTER the
+            // value-init (s::)-split that set isarr=2 — `aval` is now
+            // the split array and sepjoin re-collapses it to a scalar
+            // with the IFS first char. Without this, `"${(s:|:)|a|b|}"`
+            // in DQ context retained isarr=2 and the splat block
+            // emitted Nularg sentinels for the leading/trailing empty
+            // pieces instead of joining them with spaces. Mirror the
+            // c:3032 transition here for the spsep arm so qt + spsep
+            // splat round-trips to ` a b ` matching zsh. nojoin == 2
+            // (the explicit `(@s::)` opt-out) keeps array shape per
+            // c:3030-3034 fall-through.
+            if qt && isarr > 0 && nojoin != 2 && (pf_flags & PREFORK_SINGLE) == 0 {
+                // c:3032 sepjoin
+                if let Some(sp) = split_parts.as_ref() {
+                    let join_sep: String = sep.clone().unwrap_or_else(|| {
+                        // c:Src/params.c sepjoin default — IFS first char.
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        ifs.chars().next().map(String::from).unwrap_or_default()
+                    });
+                    value = sp.join(&join_sep);
+                    split_parts = Some(vec![value.clone()]);
+                }
+                isarr = 0; // c:3034
+            }
         } else if let Some(ref sp) = sep {
             // c:3906-3907 — `val = sepjoin(aval, sep, 1); isarr = 0;`
             // (j:STR:) / (F) — join an array with STR. Source priority:

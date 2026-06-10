@@ -8589,41 +8589,16 @@ impl ShellExecutor {
         // Builtins not in fusevm's name→id table fall through to
         // host.exec. Catch them here before the OS-level exec attempts
         // to spawn a non-existent binary.
-        //
-        // c:Src/Modules/*.c boot_/setup_ chain — module-bound builtins
-        // (zsh/net/tcp → ztcp, zsh/net/socket → zsocket, zsh/zftp →
-        // zftp, zsh/zpty → zpty) are only registered into `builtintab`
-        // when the module is loaded via `zmodload`. Without a load,
-        // execcmd_exec falls through to PATH and reports "command not
-        // found" with exit 127. The Rust dispatcher previously routed
-        // these names directly to `dispatch_builtin` regardless of
-        // module state, so `zftp` etc. ran the builtin even with no
-        // zmodload. Gate by `MODULESTAB.is_loaded(module)` so the
-        // not-loaded case falls through to the PATH path below
-        // (which then reports "command not found").
-        let module_bound = |modname: &str| -> bool {
-            crate::ported::module::MODULESTAB
-                .lock()
-                .map(|t| t.is_loaded(modname))
-                .unwrap_or(false)
-        };
         match cmd.as_str() {
             "sched" => return dispatch_builtin("sched", rest_vec.clone()),
             "echotc" => return dispatch_builtin("echotc", rest_vec.clone()),
             "echoti" => return dispatch_builtin("echoti", rest_vec.clone()),
-            "zpty" if module_bound("zsh/zpty") => {
-                return dispatch_builtin("zpty", rest_vec.clone())
-            }
-            "ztcp" if module_bound("zsh/net/tcp") => {
-                return dispatch_builtin("ztcp", rest_vec.clone())
-            }
-            "zsocket" if module_bound("zsh/net/socket") => {
+            "zpty" => return dispatch_builtin("zpty", rest_vec.clone()),
+            "ztcp" => return dispatch_builtin("ztcp", rest_vec.clone()),
+            "zsocket" => {
                 // c:Src/Modules/socket.c:276 BUILTIN spec — BUILTINS["zsocket"]
                 // optstr "ad:ltv" parsed by execbuiltin.
                 return dispatch_builtin("zsocket", rest_vec.clone());
-            }
-            "zftp" if module_bound("zsh/zftp") => {
-                return dispatch_builtin("zftp", rest_vec.clone())
             }
             "private" => {
                 // c:Src/Modules/param_private.c:217 — bin_private via
