@@ -1021,6 +1021,150 @@ pub fn deleteparamdef(d: &mut paramdef) -> i32 {
     0 // c:1160
 }
 
+/// Port of `static int add_autoparam(const char *module, const char *pnam, int flags)`
+/// from `Src/module.c:1197`.
+///
+/// C body c:1197-1228:
+/// ```c
+/// static int
+/// add_autoparam(const char *module, const char *pnam, int flags)
+/// {
+///     Param pm;
+///     int ret;
+///     int ne = noerrs;
+///
+///     queue_signals();
+///     if ((ret = checkaddparam(pnam, (flags & FEAT_IGNORE)))) {
+///         unqueue_signals();
+///         return ret == 2 ? 0 : -1;
+///     }
+///     noerrs = 2;
+///     if ((pm = setsparam(dupstring(pnam), ztrdup(module)))) {
+///         pm->node.flags |= PM_AUTOLOAD;
+///         if (flags & FEAT_AUTOALL)
+///             pm->node.flags |= PM_AUTOALL;
+///         ret = 0;
+///     } else
+///         ret = -1;
+///     noerrs = ne;
+///     unqueue_signals();
+///
+///     return ret;
+/// }
+/// ```
+///
+/// Adds an autoload stub for a module parameter: `setsparam` creates
+/// the param as a scalar with `value=module name`, then OR-in
+/// `PM_AUTOLOAD` so first access fires `loadparamnode` (c:546) which
+/// calls `ensurefeature(module, "p:", nam)` to actually load the
+/// module. `typeset +` listing checks `PM_AUTOLOAD` and emits
+/// "undefined NAME" instead of the usual type prefix.
+pub fn add_autoparam(module: &str, pnam: &str, flags: i32) -> i32 {
+    // c:1197
+    use crate::ported::exec::noerrs;
+    use crate::ported::signals::queue_signals;
+    use std::sync::atomic::Ordering;
+
+    // c:1202 — int ne = noerrs;
+    let ne = noerrs.load(Ordering::Relaxed);
+
+    // c:1204 — queue_signals();
+    queue_signals();
+
+    // c:1205 — if ((ret = checkaddparam(pnam, (flags & FEAT_IGNORE)))) {
+    let ret_check = checkaddparam(pnam, flags & FEAT_IGNORE as i32);
+    if ret_check != 0 {
+        // c:1206 — unqueue_signals();
+        unqueue_signals();
+        // c:1214 — return ret == 2 ? 0 : -1;
+        return if ret_check == 2 { 0 } else { -1 };
+    }
+
+    // c:1217 — noerrs = 2;
+    noerrs.store(2, Ordering::Relaxed);
+
+    // c:1218 — if ((pm = setsparam(dupstring(pnam), ztrdup(module))))
+    let pm_opt = crate::ported::params::setsparam(pnam, module);
+    let ret = if let Some(mut pm) = pm_opt {
+        // c:1219 — pm->node.flags |= PM_AUTOLOAD;
+        pm.node.flags |= PM_AUTOLOAD as i32;
+        // c:1220-1221 — if (flags & FEAT_AUTOALL) pm->node.flags |= PM_AUTOALL;
+        if (flags & FEAT_AUTOALL as i32) != 0 {
+            pm.node.flags |= PM_AUTOALL as i32;
+        }
+        // Re-insert the modified clone back into paramtab so the flag
+        // bits stick (paramtab stores `Param` by value, not by pointer).
+        {
+            let mut tab = paramtab().write().expect("paramtab poisoned");
+            tab.insert(pnam.to_string(), pm);
+        }
+        // c:1222 — ret = 0;
+        0
+    } else {
+        // c:1224 — ret = -1;
+        -1
+    };
+
+    // c:1225 — noerrs = ne;
+    noerrs.store(ne, Ordering::Relaxed);
+    // c:1226 — unqueue_signals();
+    unqueue_signals();
+    // c:1228 — return ret;
+    ret
+}
+
+/// Port of `static int del_autoparam(const char *modnam, const char *pnam, int flags)`
+/// from `Src/module.c:1234`.
+///
+/// C body c:1234-1248:
+/// ```c
+/// static int
+/// del_autoparam(UNUSED(const char *modnam), const char *pnam, int flags)
+/// {
+///     Param pm = (Param) gethashnode2(paramtab, pnam);
+///     if (!pm) {
+///         if (!(flags & FEAT_IGNORE)) return 2;
+///     } else if (!(pm->node.flags & PM_AUTOLOAD)) {
+///         if (!(flags & FEAT_IGNORE)) return 3;
+///     } else
+///         unsetparam_pm(pm, 0, 1);
+///     return 0;
+/// }
+/// ```
+///
+/// Removes a param previously registered by `add_autoparam`. Returns
+/// 2 when the param doesn't exist, 3 when it exists but isn't an
+/// autoload stub, 0 on success — `FEAT_IGNORE` masks both error
+/// returns to 0.
+pub fn del_autoparam(_modnam: &str, pnam: &str, flags: i32) -> i32 {
+    // c:1234
+    // c:1237 — Param pm = (Param) gethashnode2(paramtab, pnam);
+    let pm_opt = {
+        let tab = paramtab().read().expect("paramtab poisoned");
+        tab.get(pnam).cloned()
+    };
+    match pm_opt {
+        // c:1239 — if (!pm) { if (!(flags & FEAT_IGNORE)) return 2; }
+        None => {
+            if (flags & FEAT_IGNORE as i32) == 0 {
+                return 2; // c:1241
+            }
+        }
+        Some(mut pm) => {
+            if (pm.node.flags as u32 & PM_AUTOLOAD) == 0 {
+                // c:1242 — else if (!(pm->node.flags & PM_AUTOLOAD))
+                if (flags & FEAT_IGNORE as i32) == 0 {
+                    return 3; // c:1244
+                }
+            } else {
+                // c:1246 — else unsetparam_pm(pm, 0, 1);
+                unsetparam_pm(&mut pm, 0, 1);
+            }
+        }
+    }
+    0 // c:1248
+}
+
 impl modulestab {
     /// `new` — see implementation.
     pub fn new() -> Self {
