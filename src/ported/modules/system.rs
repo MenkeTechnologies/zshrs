@@ -1019,17 +1019,33 @@ pub fn bin_zsystem_flock(
         l_pid: 0,
     };
 
+    use std::sync::atomic::Ordering::Relaxed;
     if timeout > 0.0 {
         // c:710
-        // c:711-749 — timed retry loop. zshrs uses a simple
-        // monotonic Instant-based deadline; matches the C
-        // behavior bit-by-bit (poll with EAGAIN/EACCES retry,
-        // EINTR retry, EOTHER → fail, deadline → return 2).
+        // c:711-749 — timed retry loop.
+        // C body c:729-749:
+        //   while (fcntl(flock_fd, F_SETLK, &lck) < 0) {
+        //       if (errflag) { zclose(flock_fd); return 1; }    ← c:730
+        //       if (errno != EINTR && errno != EACCES && errno != EAGAIN) {
+        //           zclose(flock_fd);
+        //           zwarnnam(nam, 'failed to lock file ...');
+        //           return 1;
+        //       }
+        //       ... deadline check + sleep ...
+        //   }
+        //
+        // Prior port skipped the errflag check at c:730 — Ctrl-C
+        // during a flock-acquire wait wouldn't bail out the retry.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout);
         loop {
             let r = unsafe { libc::fcntl(flock_fd, libc::F_SETLK, &lck) };
             if r >= 0 {
                 break;
+            }
+            // c:730 — `if (errflag) { zclose; return 1; }`.
+            if crate::ported::utils::errflag.load(Relaxed) != 0 {
+                zclose(flock_fd); // c:731
+                return 1; // c:732
             }
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if eno != libc::EINTR && eno != libc::EACCES && eno != libc::EAGAIN {
@@ -1050,7 +1066,15 @@ pub fn bin_zsystem_flock(
         }
     } else {
         // c:751-762 — no timeout: F_SETLK if timeout==0 (non-blocking),
-        // else F_SETLKW (blocking). EINTR retry.
+        // else F_SETLKW (blocking).
+        // C body:
+        //   while (fcntl(flock_fd, ...) < 0) {
+        //       if (errflag) { zclose; return 1; }   ← c:752
+        //       if (errno == EINTR) continue;
+        //       zclose(flock_fd);
+        //       zwarnnam(nam, 'failed to lock file ...');
+        //       return 1;
+        //   }
         let cmd = if timeout == 0.0 {
             libc::F_SETLK
         } else {
@@ -1060,6 +1084,11 @@ pub fn bin_zsystem_flock(
             let r = unsafe { libc::fcntl(flock_fd, cmd, &lck) };
             if r >= 0 {
                 break;
+            }
+            // c:752 — errflag bail-out.
+            if crate::ported::utils::errflag.load(Relaxed) != 0 {
+                zclose(flock_fd); // c:753
+                return 1; // c:754
             }
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if eno == libc::EINTR {
