@@ -256,28 +256,92 @@ pub fn newptycmd(
     if args.is_empty() {
         return 1;
     }
-    let cmd_path = &args[0];
-    let cmd_args = &args[1..];
 
-    // Spawn under a forkpty wrapper. Approximation: use
-    // openpty + fork via std::process::Command stdin/stdout
-    // redirection. A faithful port needs forkpty(3) integration.
-    let child = match Command::new(cmd_path)
-        .args(cmd_args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+    // c:438 — `get_pty(1, &master, &slave)` — allocate master/slave fds.
+    // Approximation: full C path runs `parse_string(zjoin(args, ' ', 1))`
+    // then `execode(prog, 1, 0, "zpty")` in the child, so the args are
+    // interpreted as a shell command line (globs, redirs, builtins).
+    // This port still uses execvp(3), matching the prior inline shape
+    // — true execode integration is a separate iteration.
+    #[cfg(unix)]
     {
-        Ok(c) => c,
-        Err(_) => return 1,
-    };
-    let pid = child.id() as i32;
-    let stdin = child.stdin.expect("piped").into_raw_fd();
+        let (master, slave) = match get_pty() {
+            Ok(p) => p,
+            Err(_) => return 1, // c:438-440
+        };
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => {
+                // c:441-446 — `if (pid == -1) { close(...); return 1; }`
+                unsafe {
+                    libc::close(master);
+                    libc::close(slave);
+                }
+                1
+            }
+            0 => {
+                // c:386-435 — child-side reset (setsid, dup2, etc.).
+                unsafe {
+                    libc::close(master);
+                    libc::setsid();
+                    libc::dup2(slave, 0);
+                    libc::dup2(slave, 1);
+                    libc::dup2(slave, 2);
+                    if slave > 2 {
+                        libc::close(slave);
+                    }
+                }
+                if !echo {
+                    // c:124 — `ptysettyinfo` — disable echo on slave-side termios.
+                    unsafe {
+                        let mut termios: libc::termios = std::mem::zeroed();
+                        if libc::tcgetattr(0, &mut termios) >= 0 {
+                            termios.c_lflag &= !libc::ECHO;
+                            let _ = libc::tcsetattr(0, libc::TCSADRAIN, &termios);
+                        }
+                    }
+                }
+                let cmd = match CString::new(args[0].as_str()) {
+                    Ok(c) => c,
+                    Err(_) => unsafe { libc::_exit(1) },
+                };
+                let c_args: Vec<CString> = args
+                    .iter()
+                    .filter_map(|s| CString::new(s.as_str()).ok())
+                    .collect();
+                let c_args_ptrs: Vec<*const libc::c_char> = c_args
+                    .iter()
+                    .map(|s| s.as_ptr())
+                    .chain(std::iter::once(std::ptr::null()))
+                    .collect();
+                unsafe {
+                    libc::execvp(cmd.as_ptr(), c_args_ptrs.as_ptr());
+                    libc::_exit(1); // c:436 — `zexit(lastval, ZEXIT_NORMAL)` on failure.
+                }
+            }
+            pid => {
+                unsafe {
+                    libc::close(slave); // c:451
+                }
+                // c:466-467 — `if (nblock) ptynonblock(master);`
+                if nblock {
+                    let _ = ptynonblock(master);
+                }
+                // c:455-458 — `p = (Ptycmd) zalloc(...); p->name = ztrdup(pname);
+                //              p->args = args; p->fd = master; p->pid = pid;
+                //              p->echo = echo; p->nblock = nblock;`
+                let new = ptycmd::new(pname, args.to_vec(), master, pid, echo, nblock);
+                cmds.insert(new.name.clone(), new); // c:474 list-insert
+                0
+            }
+        }
+    }
 
-    let new = ptycmd::new(pname, args.to_vec(), stdin, pid, echo, nblock);
-    cmds.insert(new.name.clone(), new);
-    0
+    #[cfg(not(unix))]
+    {
+        let _ = (echo, nblock, pname, args, cmds);
+        1
+    }
 }
 
 /// Port of `deleteptycmd(Ptycmd cmd)` from `Src/Modules/zpty.c:490`. Removes
@@ -678,106 +742,40 @@ pub fn bin_zpty(
             // finished pty exits 1.
             let r = if cmd.finished { 1 } else { 0 };
             (r, output)
-        } else {
+        } else if !args.is_empty() {
+            // c:837-847 — positional arm: create a new pty command.
+            //   if (!args[1]) { zwarnnam(nam, "missing command"); return 1; }
+            //   if (getptycmd(*args)) { zwarnnam(...); return 1; }
+            //   return newptycmd(nam, *args, args+1, OPT_ISSET(ops,'e'),
+            //                    OPT_ISSET(ops,'b'));
+            // c:838
             if args.len() < 2 {
-                return (1, "zpty: requires a name and command\n".to_string());
+                return (1, "zpty: missing command\n".to_string());
             }
-
             let name = args[0];
-            if cmds.get(name).is_some() {
-                return (1, format!("zpty: pty command {} already exists\n", name));
+            // c:842
+            if cmds.contains_key(name) {
+                return (
+                    1,
+                    format!("zpty: pty command name already used: {}\n", name),
+                );
             }
-
+            // c:846 — single canonical entry point.
             let cmd_args: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
-
-            #[cfg(unix)]
-            {
-                match get_pty() {
-                    Ok((master, slave)) => match unsafe { libc::fork() } {
-                        -1 => {
-                            unsafe {
-                                libc::close(master);
-                            }
-                            unsafe {
-                                libc::close(slave);
-                            }
-                            (
-                                1,
-                                format!("zpty: fork failed: {}\n", io::Error::last_os_error()),
-                            )
-                        }
-                        0 => {
-                            unsafe {
-                                libc::close(master);
-                            }
-                            unsafe {
-                                libc::setsid();
-                                libc::dup2(slave, 0);
-                                libc::dup2(slave, 1);
-                                libc::dup2(slave, 2);
-                                if slave > 2 {
-                                    libc::close(slave);
-                                }
-                            }
-
-                            if !OPT_ISSET(ops, b'e') {
-                                // Inline of the deleted disable_echo helper
-                                // (Src/Modules/zpty.c:124 ptysettyinfo).
-                                unsafe {
-                                    let mut termios: libc::termios = std::mem::zeroed();
-                                    if libc::tcgetattr(0, &mut termios) >= 0 {
-                                        termios.c_lflag &= !libc::ECHO;
-                                        let _ = libc::tcsetattr(0, libc::TCSADRAIN, &termios);
-                                    }
-                                }
-                            }
-
-                            let cmd = CString::new(cmd_args[0].clone()).unwrap();
-                            let c_args: Vec<CString> = cmd_args
-                                .iter()
-                                .map(|s| CString::new(s.as_str()).unwrap())
-                                .collect();
-                            let c_args_ptrs: Vec<*const libc::c_char> = c_args
-                                .iter()
-                                .map(|s| s.as_ptr())
-                                .chain(std::iter::once(std::ptr::null()))
-                                .collect();
-
-                            unsafe {
-                                libc::execvp(cmd.as_ptr(), c_args_ptrs.as_ptr());
-                                libc::_exit(1);
-                            }
-                        }
-                        pid => {
-                            unsafe {
-                                libc::close(slave);
-                            }
-
-                            if !OPT_ISSET(ops, b'b') {
-                                let _ = ptynonblock(master);
-                            }
-
-                            let pty_cmd = ptycmd::new(
-                                name,
-                                cmd_args,
-                                master,
-                                pid,
-                                OPT_ISSET(ops, b'e'),
-                                !OPT_ISSET(ops, b'b'),
-                            );
-                            cmds.insert(pty_cmd.name.clone(), pty_cmd);
-
-                            (0, output)
-                        }
-                    },
-                    Err(e) => (1, format!("zpty: can't open pty: {}\n", e)),
-                }
-            }
-
-            #[cfg(not(unix))]
-            {
-                (1, "zpty: not supported on this platform\n".to_string())
-            }
+            let r = newptycmd(
+                cmds,
+                _nam,
+                name,
+                &cmd_args,
+                OPT_ISSET(ops, b'e'),
+                OPT_ISSET(ops, b'b'),
+            );
+            (r, output)
+        } else {
+            // c:848-870 — no-flag, no-args arm: list all live ptys.
+            // Deferred: full listing arm with -L / pid + checkptycmd
+            // per c:852-867 is its own port iteration.
+            (0, output)
         }
     })();
     drop(cmds_guard);
