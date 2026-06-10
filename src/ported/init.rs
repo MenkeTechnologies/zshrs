@@ -373,9 +373,20 @@ pub fn init_io(_cmd: Option<&str>) {
     *shout.lock().unwrap() = 0;
     if SHTTY.load(Ordering::SeqCst) != -1 {
         // c:615
-        unsafe {
-            libc::close(SHTTY.load(Ordering::SeqCst));
-        } // c:616
+        // c:616 — `zclose(SHTTY);` — fdtable-aware close. SHTTY was
+        // registered as FDT_INTERNAL by movefd at one of the open
+        // sites below (c:627 ttyname/O_RDWR open, c:658 dup(0), c:662
+        // dup(1), c:668 /dev/tty open — all routed through movefd
+        // which sets fdtable[fd] = FDT_INTERNAL at utils.rs:2243).
+        // Prior port used raw libc::close which skipped the
+        // fdtable_set(fd, FDT_UNUSED) clear that zclose does at
+        // utils.rs:2402. Same leak shape as random.rs finish_
+        // (b3107b5a46), tcp.rs tcp_close (9b4dae375a), and
+        // zpty.rs deleteptycmd (c37083d09f) — stale FDT_INTERNAL
+        // marker survives the close → kernel-reused fd inherits the
+        // module-owned classification → closem(FDT_UNUSED, 0) calls
+        // from sibling builtins skip closing it.
+        let _ = crate::ported::utils::zclose(SHTTY.load(Ordering::SeqCst));
         SHTTY.store(-1, Ordering::SeqCst); // c:617
     }
 
