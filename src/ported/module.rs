@@ -1604,7 +1604,7 @@ impl modulestab {
         // The Rust do_boot_module routes through boot_module dispatcher
         // (b474b62898) to the per-module boot_(m) — the real partab
         // and bintab installations land here.
-        let bootret = do_boot_module(self, "", 0);
+        let bootret = do_boot_module(self, name, None, 0);
         if bootret == 1 {
             // c:2306-2315 — boot failure: cleanup + finish + clear, return 1.
             let _ = cleanup_module(self, name);
@@ -3241,31 +3241,61 @@ pub fn finish_module(_table: &mut modulestab, name: &str) -> i32 {
 
 /// Port of `do_module_features(Module m, Feature_enables enablesarr, int flags)` from `Src/module.c:1998`.
 ///
-/// C body (128 lines): fetches the module's features array via
-/// `features_module()`, fetches its enables via `enables_module()`,
-/// then under FEAT_CHECKAUTO walks the module's `autoloads` list and
-/// for each entry validates it against `features` — calling
-/// `autofeatures(REMOVE|IGNORE)` to cancel any autoload that names a
-/// feature the module doesn't actually export.
+/// C body c:1998-2125 (128 lines):
+/// ```c
+/// if (features_module(m, &features) == 0) {
+///     int *enables = NULL;
+///     if (enables_module(m, &enables)) {
+///         if (!(flags & FEAT_IGNORE)) zwarn(...);
+///         return 1;
+///     }
+///     if ((flags & FEAT_CHECKAUTO) && m->autoloads) {
+///         /* validate autoloads against features list */
+///         /* on mismatch: zwarn + autofeatures(REMOVE|IGNORE) +
+///            expunge from enablesarr */
+///     }
+///     if (enablesarr) {
+///         /* walk enablesarr, flip enables bits per +/- prefix */
+///     } else {
+///         /* enable all features */
+///     }
+///     if (enables_module(m, &enables)) return 2;
+/// } else if (enablesarr) {
+///     if (!(flags & FEAT_IGNORE)) zwarn("module does not support features");
+///     return 1;
+/// }
+/// return ret;
+/// ```
 ///
-/// Returns 0 on full success, 1 if any feature couldn't be enabled.
-pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i32 {
+/// Prior Rust port confused module-name and enables-string into a
+/// single `enablesarr: &str` param — the module-lookup and zwarn
+/// diagnostic both used the feature-list string instead of the
+/// module's name. Signature now separates them per C semantics:
+/// modname identifies the module, features is the list of features
+/// to enable (None = "enable all").
+/// WARNING: param names don't match C — Rust=(table, modname, features, flags) vs C=(m, enablesarr, flags)
+pub fn do_module_features(
+    table: &mut modulestab,
+    modname: &str,
+    features: Option<&[String]>,
+    flags: i32,
+) -> i32 {
     // c:1998
-    let mut features: Vec<String> = Vec::new(); // c:1998
+    let mut module_features: Vec<String> = Vec::new(); // c:2000
     let mut ret: i32 = 0; // c:2001
 
-    // c:2003 — `if (features_module(m, &features) == 0)` — fetch features.
-    if features_module(m, enablesarr, &mut features) == 0 {
-        // c:2011-2018 — fetch enables. If features are supported, enables
-        // should be too; an error here is reported unless FEAT_IGNORE.
+    // c:2003 — `if (features_module(m, &features) == 0)`.
+    if features_module(table, modname, &mut module_features) == 0 {
+        // c:2011-2018 — fetch enables. Features supported → enables
+        // should be too; error here is reported unless FEAT_IGNORE.
         let mut enables: Option<Vec<i32>> = None;
-        if enables_module(m, enablesarr, &mut enables) != 0 {
+        if enables_module(table, modname, &mut enables) != 0 {
             // c:2012
             if (flags & FEAT_IGNORE) == 0 {
                 // c:2014
                 zwarn(&format!(
                     "error getting enabled features for module `{}'", // c:2015
-                    enablesarr,
+                    modname
                 ));
             }
             return 1; // c:2017
@@ -3273,36 +3303,113 @@ pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i
 
         // c:2020 — `if ((flags & FEAT_CHECKAUTO) && m->autoloads)`
         if (flags & FEAT_CHECKAUTO) != 0 {
-            let autoloads: Vec<String> = match m.modules.get(enablesarr) {
-                Some(m) => m
-                    .autoloads
-                    .as_ref()
-                    .map(|al| al.iter().cloned().collect())
-                    .unwrap_or_default(),
-                None => return ret,
-            };
+            let autoloads: Vec<String> = table
+                .modules
+                .get(modname)
+                .and_then(|m| m.autoloads.as_ref())
+                .map(|al| al.iter().cloned().collect())
+                .unwrap_or_default();
             // c:2027-2074 — walk autoloads, cancel mismatches.
             for al in &autoloads {
                 // c:2028
-                // c:2032-2034 — `for (ptr = features; *ptr; ptr++) if (!strcmp(al, *ptr)) break;`
-                let found = features.iter().any(|f| f == al);
+                // c:2032-2034 — match `al` against the features array.
+                let found = module_features.iter().any(|f| f == al);
                 if !found {
                     // c:2035
                     if (flags & FEAT_IGNORE) == 0 {
                         // c:2037
                         zwarn(&format!(
                             "module `{}' has no such feature: `{}': autoload cancelled", // c:2038-2040
-                            enablesarr, al,
+                            modname, al
                         ));
                     }
-                    // c:2045-2047 — `autofeatures(NULL, m->node.nam, arg, 0, FEAT_IGNORE|FEAT_REMOVE)`
+                    // c:2045-2047 — autofeatures(NULL, m->node.nam, arg, 0, FEAT_IGNORE|FEAT_REMOVE)
                     let arg = vec![al.clone()];
-                    autofeatures(m, "", Some(enablesarr), &arg, 0, FEAT_IGNORE | FEAT_REMOVE);
+                    autofeatures(
+                        table,
+                        "",
+                        Some(modname),
+                        &arg,
+                        0,
+                        FEAT_IGNORE | FEAT_REMOVE,
+                    );
+                    // c:2053-2072 — expunge from enablesarr.
+                    // features arg is &[String] — Rust slice can't be
+                    // mutated through &. The C path mutates the passed
+                    // Feature_enables array; the Rust callers that need
+                    // expunge build a fresh list. Skipped here.
                 }
             }
         }
+
+        // c:2077-2113 — apply enablesarr (or enable all).
+        match features {
+            Some(arr) => {
+                // c:2079-2103 — walk enablesarr.
+                let enables_vec = enables.get_or_insert_with(Vec::new);
+                if enables_vec.len() < module_features.len() {
+                    enables_vec.resize(module_features.len(), 0);
+                }
+                for fep_str in arr {
+                    // c:2079 for (fep = enablesarr; fep->str; fep++)
+                    let (on, esp) = if let Some(rest) = fep_str.strip_prefix('+') {
+                        // c:2082-2083
+                        (1i32, rest)
+                    } else if let Some(rest) = fep_str.strip_prefix('-') {
+                        // c:2084-2086
+                        (0i32, rest)
+                    } else {
+                        (1i32, fep_str.as_str())
+                    };
+                    // c:2088-2094 — exact name match (pattern path
+                    // skipped: zshrs doesn't carry the patprog from
+                    // Feature_enables).
+                    let mut found = false;
+                    for (i, f) in module_features.iter().enumerate() {
+                        if f == esp {
+                            enables_vec[i] = on; // c:2090
+                            found = true;
+                            break; // c:2093 break-on-non-pat
+                        }
+                    }
+                    if !found {
+                        // c:2095-2102 — `module has no such feature`.
+                        if (flags & FEAT_IGNORE) == 0 {
+                            zwarn(&format!(
+                                "module `{}' has no such feature: `{}'",
+                                modname, esp
+                            ));
+                        }
+                        return 1; // c:2101
+                    }
+                }
+            }
+            None => {
+                // c:2105-2112 — enable all features.
+                let enables_vec = enables.get_or_insert_with(Vec::new);
+                enables_vec.clear();
+                enables_vec.resize(module_features.len(), 1);
+            }
+        }
+
+        // c:2115 — final `enables_module(m, &enables)` commits the bits.
+        if enables_module(table, modname, &mut enables) != 0 {
+            return 2; // c:2116
+        }
+    } else if features.is_some() {
+        // c:2117-2121 — features_module failed AND enablesarr non-NULL:
+        // module doesn't support features. zwarn unless FEAT_IGNORE.
+        if (flags & FEAT_IGNORE) == 0 {
+            zwarn(&format!(
+                "module `{}' does not support features", // c:2119
+                modname
+            ));
+        }
+        return 1; // c:2120
     }
-    ret // c:2120 (approx)
+    // c:2122 — `Else it doesn't support features but we don't care.`
+    let _ = &mut ret;
+    ret // c:2124
 }
 
 /// Port of `deletemathfunc(MathFunc f)` from `Src/module.c:1342`.
@@ -3341,20 +3448,25 @@ pub fn do_module_features(m: &mut modulestab, enablesarr: &str, flags: i32) -> i
 ///     return ret;
 /// }
 /// ```
-pub fn do_boot_module(m: &mut modulestab, enablesarr: &str, silent: i32) -> i32 {
+pub fn do_boot_module(
+    table: &mut modulestab,
+    modname: &str,
+    features: Option<&[String]>,
+    silent: i32,
+) -> i32 {
     // c:2139
     let flags = if silent != 0 {
-        // c:2139
+        // c:2142 — silent → IGNORE | CHECKAUTO
         FEAT_IGNORE | FEAT_CHECKAUTO
     } else {
         FEAT_CHECKAUTO // c:2143
     };
-    let ret = do_module_features(m, enablesarr, flags); // c:2141
+    let ret = do_module_features(table, modname, features, flags); // c:2141
     if ret == 1 {
         // c:2145
         return 1; // c:2146
     }
-    if boot_module(m, enablesarr) != 0 {
+    if boot_module(table, modname) != 0 {
         // c:2148
         return 1; // c:2149
     }
@@ -3530,12 +3642,8 @@ pub fn require_module(
         // Module already loaded; just enable the requested features.
         // features=NULL in C means "enable all features"; the Rust
         // do_module_features takes a single enablesstr arg, so flatten
-        // the features list (or pass empty for None).
-        let enablesarr: String = match features {
-            Some(arr) => arr.join(" "),
-            None => String::new(),
-        };
-        do_module_features(table, &enablesarr, 0)
+        // C: features=NULL means "enable all"; pass through.
+        do_module_features(table, &mname, features, 0)
     };
 
     // c:2357 — unqueue_signals();
@@ -4635,7 +4743,7 @@ pub fn bin_zmodload_features(
     if !feats.is_empty() {
         autofeatures(table, nam, Some(modname), &feats, 0, 0);
     }
-    do_module_features(table, modname, FEAT_CHECKAUTO); // c:3122
+    do_module_features(table, modname, None, FEAT_CHECKAUTO); // c:3122
     0
 }
 
