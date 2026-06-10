@@ -651,38 +651,33 @@ pub fn bin_zpty(
                 (1, format!("zpty: no such pty command: {}\n", name))
             }
         } else if OPT_ISSET(ops, b't') {
+            // c:825-836 — `-t` arm: "is the child still running?"
+            //   if (!*args) { zwarnnam(nam, "missing pty command name"); return 1; }
+            //   else if (!(p = getptycmd(*args))) { zwarnnam(...); return 1; }
+            //   checkptycmd(p);
+            //   return p->fin;
+            // Prior port used `poll(fd, POLLIN, 0)` to test fd-readability —
+            // a different question (pending output) from the C one
+            // (child-process liveness). The poll-based answer returned
+            // 0 when output was queued and 1 otherwise, so `zpty -t` on
+            // an alive-but-idle pty incorrectly reported "finished".
+            // c:828
             if args.is_empty() {
-                return (1, "zpty: -t requires a pty name\n".to_string());
+                return (1, "zpty: missing pty command name\n".to_string());
             }
-
             let name = args[0];
-            if let Some(cmd) = cmds.get(name) {
-                // Inline of the deleted pty_test helper: poll(2) with zero
-                // timeout (Src/Modules/zpty.c:773 -t branch).
-                #[cfg(unix)]
-                {
-                    let mut pfd = libc::pollfd {
-                        fd: cmd.master_fd,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    };
-                    let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
-                    if ret < 0 {
-                        (
-                            1,
-                            format!("zpty: test failed: {}\n", io::Error::last_os_error()),
-                        )
-                    } else if ret > 0 {
-                        (0, output)
-                    } else {
-                        (1, output)
-                    }
-                }
-                #[cfg(not(unix))]
-                (0, output)
-            } else {
-                (1, format!("zpty: no such pty command: {}\n", name))
-            }
+            // c:831
+            let cmd = match cmds.get_mut(name) {
+                Some(c) => c,
+                None => return (1, format!("zpty: no such pty command: {}\n", name)),
+            };
+            // c:835 — `checkptycmd(p)` (1-byte non-blocking probe + kill(pid, 0)).
+            checkptycmd(cmd);
+            // c:836 — `return p->fin;` — 1 if finished, 0 if alive.
+            // `zpty -t name` is true iff child still running, so a
+            // finished pty exits 1.
+            let r = if cmd.finished { 1 } else { 0 };
+            (r, output)
         } else {
             if args.len() < 2 {
                 return (1, "zpty: requires a name and command\n".to_string());
