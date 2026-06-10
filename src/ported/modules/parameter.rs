@@ -1916,21 +1916,35 @@ pub fn dispatcharsgetfn(pm: *mut param) -> Vec<String> {
 #[allow(non_snake_case)]
 pub fn setpmoption(pm: Param, value: String) {
     // c:926
-    // c:926-940 — optlookup(pm->node.nam), dosetopt(n, on, ...).
+    // Faithful port of c:929-936:
+    //   if (!value || (strcmp(value, 'on') && strcmp(value, 'off')))
+    //       zwarn('invalid value: %s', value);
+    //   else if (!(n = optlookup(pm->node.nam)))
+    //       zwarn('no such option: %s', pm->node.nam);
+    //   else if (dosetopt(n, (value && strcmp(value, 'off')), 0, opts))
+    //       zwarn('can't change option: %s', pm->node.nam);
+    //
+    // Prior port checked value first and optlookup, but ignored
+    // dosetopt's return — \`options[rcs]=off\` silently swallowed
+    // 'cannot change option' errors (e.g. when a special-case
+    // dosetopt path refuses the flip).
     let val = value.as_str();
     if val != "on" && val != "off" {
-        // c:931
-        zwarn(&format!("invalid value: {}", value)); // c:930
+        // c:930-931
+        zwarn(&format!("invalid value: {}", value));
         return;
     }
     let nam = pm.node.nam.clone();
-    let n = optlookup(&nam); // c:934
+    let n = optlookup(&nam); // c:932
     if n == 0 {
-        zwarn(&format!("no such option: {}", nam)); // c:932
+        zwarn(&format!("no such option: {}", nam)); // c:933
         return;
     }
-    let on = val == "on";
-    dosetopt(n, on as i32, 0); // c:953
+    let on = val == "on"; // c:934 (value && strcmp(value, 'off'))
+    if dosetopt(n, on as i32, 0) != 0 {
+        // c:934-935 — non-zero dosetopt return signals 'can't change'.
+        zwarn(&format!("can't change option: {}", nam));
+    }
 }
 
 /// Port of `unsetpmoption(Param pm, UNUSED(int exp))` from Src/Modules/parameter.c:941.
@@ -1938,10 +1952,23 @@ pub fn setpmoption(pm: Param, value: String) {
 #[allow(unused_variables)]
 pub fn unsetpmoption(pm: Param, exp: i32) {
     // c:941
-    // c:941-951 — dosetopt(optlookup(name), 0, ...) i.e. unset the option.
+    // Faithful port of c:945-948:
+    //   if (!(n = optlookup(pm->node.nam)))
+    //       zwarn('no such option: %s', pm->node.nam);
+    //   else if (dosetopt(n, 0, 0, opts))
+    //       zwarn('can't change option: %s', pm->node.nam);
+    //
+    // Prior port silently swallowed both error paths — \`unset
+    // 'options[rcs]'\` returned zero status even for unknown
+    // option names or refused flips.
     let n = optlookup(&pm.node.nam);
-    if n != 0 {
-        dosetopt(n, 0, 0); // c:949
+    if n == 0 {
+        zwarn(&format!("no such option: {}", pm.node.nam)); // c:946
+        return;
+    }
+    if dosetopt(n, 0, 0) != 0 {
+        // c:947-948
+        zwarn(&format!("can't change option: {}", pm.node.nam));
     }
 }
 
