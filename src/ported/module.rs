@@ -85,24 +85,60 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
     let mut out = String::new();
 
     // c:163-194 — PRINTMOD_DEPS branch.
+    // C body:
+    //   if (!m->deps) return;
+    //   if (flags & PRINTMOD_LIST) {
+    //       printf("zmodload -d ");
+    //       if (modname[0] == '-') fputs("-- ", stdout);
+    //       quotedzputs(modname, stdout);
+    //   } else {
+    //       nicezputs(modname, stdout);
+    //       putchar(':');
+    //   }
+    //   for (n = firstnode(m->deps); n; incnode(n)) {
+    //       putchar(' ');
+    //       if (flags & PRINTMOD_LIST)
+    //           quotedzputs((char *) getdata(n), stdout);
+    //       else
+    //           nicezputs((char *) getdata(n), stdout);
+    //   }
+    //
+    // C uses quotedzputs (round-trippable shell input) under
+    // PRINTMOD_LIST so the emitted `zmodload -d MOD DEP1 DEP2` is
+    // re-parseable. The default path uses nicezputs (printable form
+    // with \M-/^ escapes for control bytes) which is listing-friendly.
+    // The two helpers are both already ported in src/ported/utils.rs.
     if flags & PRINTMOD_DEPS != 0 {
+        use crate::ported::utils::{nicezputs, quotedzputs};
         let deps = match m.deps.as_ref() {
             Some(d) if !d.is_empty() => d,
-            _ => return out,
+            _ => return out, // c:170-171
         };
         if flags & PRINTMOD_LIST != 0 {
-            out.push_str("zmodload -d ");
+            out.push_str("zmodload -d "); // c:174
             if modname.starts_with('-') {
-                out.push_str("-- ");
+                out.push_str("-- "); // c:176
             }
-            out.push_str(modname);
+            out.push_str(&quotedzputs(modname)); // c:177
         } else {
-            out.push_str(modname);
-            out.push(':');
+            let mut buf: Vec<u8> = Vec::new();
+            let _ = nicezputs(modname, &mut buf); // c:179
+            if let Ok(s) = std::str::from_utf8(&buf) {
+                out.push_str(s);
+            }
+            out.push(':'); // c:180
         }
         for dep in deps.iter() {
-            out.push(' ');
-            out.push_str(dep);
+            out.push(' '); // c:183
+            if flags & PRINTMOD_LIST != 0 {
+                out.push_str(&quotedzputs(dep)); // c:185
+            } else {
+                let mut buf: Vec<u8> = Vec::new();
+                let _ = nicezputs(dep, &mut buf); // c:187
+                if let Ok(s) = std::str::from_utf8(&buf) {
+                    out.push_str(s);
+                }
+            }
         }
         return out;
     }
@@ -152,20 +188,42 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
     }
 
     // c:202-217 — alias module branch.
+    // c:202-217 — alias module branch.
+    // C body:
+    //   if (flags & PRINTMOD_LIST) {
+    //       printf("zmodload -A ");
+    //       if (modname[0] == '-') fputs("-- ", stdout);
+    //       quotedzputs(modname, stdout);
+    //       putchar('=');
+    //       quotedzputs(m->u.alias, stdout);
+    //   } else {
+    //       nicezputs(modname, stdout);
+    //       fputs(" -> ", stdout);
+    //       nicezputs(m->u.alias, stdout);
+    //   }
     if m.node.flags & MOD_ALIAS != 0 {
+        use crate::ported::utils::{nicezputs, quotedzputs};
         let alias = m.alias.as_deref().unwrap_or("");
         if flags & PRINTMOD_LIST != 0 {
-            out.push_str("zmodload -A ");
+            out.push_str("zmodload -A "); // c:207
             if modname.starts_with('-') {
-                out.push_str("-- ");
+                out.push_str("-- "); // c:209
             }
-            out.push_str(modname);
-            out.push('=');
-            out.push_str(alias);
+            out.push_str(&quotedzputs(modname)); // c:210
+            out.push('='); // c:211
+            out.push_str(&quotedzputs(alias)); // c:212
         } else {
-            out.push_str(modname);
-            out.push_str(" -> ");
-            out.push_str(alias);
+            let mut buf: Vec<u8> = Vec::new();
+            let _ = nicezputs(modname, &mut buf); // c:214
+            if let Ok(s) = std::str::from_utf8(&buf) {
+                out.push_str(s);
+            }
+            out.push_str(" -> "); // c:215
+            let mut buf2: Vec<u8> = Vec::new();
+            let _ = nicezputs(alias, &mut buf2); // c:216
+            if let Ok(s) = std::str::from_utf8(&buf2) {
+                out.push_str(s);
+            }
         }
         return out;
     }
@@ -187,6 +245,7 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
     let _ = MOD_LINKED; // c:Src/module.c:218 — union-based check; flag retained for unload path.
     let auto = flags & PRINTMOD_AUTO != 0;
     if loaded || auto {
+        use crate::ported::utils::{nicezputs, quotedzputs};
         if flags & PRINTMOD_LIST != 0 {
             // c:229-237 — `PRINTMOD_AUTO`: skip when no autoloads set.
             // C `firstnode(m->autoloads)` returns the first node — if
@@ -210,14 +269,14 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
             if modname.starts_with('-') {
                 out.push_str("-- "); // c:244
             }
-            out.push_str(modname); // c:245 quotedzputs(modname)
-                                   // c:246-251 — PRINTMOD_AUTO: emit each autoload as
-                                   //             ` quotedzputs(al)`.
+            out.push_str(&quotedzputs(modname)); // c:245
+                                                 // c:246-251 — PRINTMOD_AUTO: emit each autoload as
+                                                 //             ` quotedzputs(al)`.
             if auto {
                 if let Some(al_list) = m.autoloads.as_ref() {
                     for al in al_list.iter() {
                         out.push(' '); // c:249
-                        out.push_str(al); // c:250 quotedzputs(al)
+                        out.push_str(&quotedzputs(al)); // c:250
                     }
                 }
             }
@@ -228,7 +287,11 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
             // the dispatch directly when PRINTMOD_FEATURES is set.
         } else {
             // c:266 — `else /* -l */ nicezputs(modname, stdout);`
-            out.push_str(modname);
+            let mut buf: Vec<u8> = Vec::new();
+            let _ = nicezputs(modname, &mut buf);
+            if let Ok(s) = std::str::from_utf8(&buf) {
+                out.push_str(s);
+            }
         }
     }
     out // c:268 putchar('\n') handled by caller's println!
