@@ -3749,6 +3749,45 @@ pub fn bin_zftp(
     _func: i32,
 ) -> i32 {
     let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    // c:3074-3104 — recompute `zfprefs` from `$ZFTP_PREFS` on every
+    // invocation. Letters: S=sendport (ZFPF_SNDP), P=passive
+    // (ZFPF_PASV; ignored once SNDP is set per c:3090-3091), D=dumb
+    // (ZFPF_DUMB). Unknown letters warn but don't abort.
+    //
+    // Prior Rust bin_zftp never read ZFTP_PREFS, so the boot_ default
+    // of `PS` (ZFPF_SNDP|ZFPF_PASV from c:3219) was the only value
+    // zfprefs ever held — user `ZFTP_PREFS=D` (dumb mode) was a
+    // silent no-op.
+    if let Some(prefs) = crate::ported::params::getsparam_u("ZFTP_PREFS") {
+        zfprefs.store(0, Ordering::Relaxed); // c:3076 — zfprefs = 0;
+        for ch in prefs.chars() {
+            // c:3077
+            match ch.to_ascii_uppercase() {
+                // c:3078 toupper
+                'S' => {
+                    // c:3079
+                    zfprefs.fetch_or(ZFPF_SNDP, Ordering::Relaxed); // c:3081
+                }
+                'P' => {
+                    // c:3084 — skip when SNDP already set (c:3090-3091).
+                    let cur = zfprefs.load(Ordering::Relaxed);
+                    if (cur & ZFPF_SNDP) == 0 {
+                        zfprefs.fetch_or(ZFPF_PASV, Ordering::Relaxed); // c:3091
+                    }
+                }
+                'D' => {
+                    // c:3094
+                    zfprefs.fetch_or(ZFPF_DUMB, Ordering::Relaxed); // c:3096
+                }
+                _ => {
+                    // c:3099
+                    zwarnnam(_nam, &format!("preference {} not recognized", ch));
+                }
+            }
+        }
+    }
+
     let mut zftp_guard = zftp_state().lock().unwrap_or_else(|e| {
         zftp_state_clear_poison();
         e.into_inner()
