@@ -1397,19 +1397,66 @@ pub fn funcfiletracegetfn(pm: *mut param) -> Vec<String> {
 /// }
 /// ```
 #[allow(non_snake_case)]
-pub fn getbuiltin(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<Param> {
-    // c:784 — builtintab[name] lookup. Static-link path: the BUILTINS
-    // table in builtin.rs is the canonical source. Disabled-flag
-    // tracking isn't yet wired; until it is, the `dis` arm collapses
-    // to "found means enabled".
+pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
+    // c:775
+    // Faithful port of c:780-793:
+    //   pm = hcalloc; pm->node.nam = dupstring(name);
+    //   pm->node.flags = PM_SCALAR | PM_READONLY;
+    //   pm->gsu.s = &nullsetscalar_gsu;
+    //   if ((bn = builtintab->getnode2(builtintab, name)) &&
+    //       (dis ? (bn->node.flags & DISABLED)
+    //            : !(bn->node.flags & DISABLED))) {
+    //       char *t = ((bn->handlerfunc ||
+    //                   (bn->node.flags & BINF_PREFIX))
+    //                  ? "defined" : "undefined");
+    //       pm->u.str = dupstring(t);
+    //   } else {
+    //       pm->u.str = dupstring("");
+    //       pm->node.flags |= (PM_UNSET|PM_SPECIAL);
+    //   }
+    //
+    // Prior port ignored the `dis` parameter entirely — every lookup
+    // collapsed to "found in BUILTINS = enabled". Now honours the
+    // DISABLED gate:
+    //   - dis=0          → entry visible iff NOT in BUILTINS_DISABLED
+    //   - dis=DISABLED   → entry visible iff IS in BUILTINS_DISABLED
+    // Without this distinction, `$builtins[ls]` reported "defined"
+    // even after `disable ls`, and `$dis_builtins[ls]` reported "" /
+    // PM_UNSET when ls was actually disabled — both diverging from
+    // zsh -fc parity.
     let entry = BUILTINS
         .iter() // c:784
         .find(|b| b.node.nam == name);
-    let (value, found) = if let Some(_bn) = entry {
-        // c:785
-        // c:786-789 — `defined` if handler present (always true for
-        // ported builtins) or BINF_PREFIX flag set.
-        ("defined".to_string(), true) // c:790
+    let (value, found) = if let Some(bn) = entry {
+        // c:785 — `bn != NULL`. Check the DISABLED state.
+        let is_disabled = {
+            let set = crate::ported::builtin::BUILTINS_DISABLED
+                .lock()
+                .ok();
+            set.map(|s| s.contains(name)).unwrap_or(false)
+        };
+        let dis_match = if dis != 0 {
+            is_disabled // c:785 dis ? (DISABLED) : ...
+        } else {
+            !is_disabled // c:785 ... : !(DISABLED)
+        };
+        if dis_match {
+            // c:786-789 — `defined` if handlerfunc present OR
+            // BINF_PREFIX set; else `undefined`. ported entries
+            // always have a handler in BUILTINS, so the BINF_PREFIX
+            // path is symbolic — surfaced via the flags check.
+            let has_handler = bn.handlerfunc.is_some();
+            let has_prefix = (bn.node.flags & crate::ported::zsh_h::BINF_PREFIX as i32) != 0;
+            let t = if has_handler || has_prefix {
+                "defined"
+            } else {
+                "undefined"
+            };
+            (t.to_string(), true) // c:790
+        } else {
+            // c:791-792 — wrong DISABLED parity: treat as not found.
+            (String::new(), false)
+        }
     } else {
         (String::new(), false) // c:793
     };
