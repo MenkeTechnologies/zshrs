@@ -3607,7 +3607,23 @@ pub fn scanaliases(
     // src/ported/hashtable.rs::aliastab_lock) and emit each alias
     // matching the flag filter.
     if let Some(f) = func {
-        let lock = if alflags == ALIAS_SUFFIX {
+        // c:1965 — `alht` arg picks the table. C callers:
+        //   scanpmraliases  → alht=aliastab,     alflags=0
+        //   scanpmdisraliases → alht=aliastab,     alflags=DISABLED
+        //   scanpmgaliases  → alht=aliastab,     alflags=ALIAS_GLOBAL
+        //   scanpmdisgaliases → alht=aliastab,     alflags=ALIAS_GLOBAL|DISABLED
+        //   scanpmsaliases  → alht=sufaliastab,  alflags=ALIAS_SUFFIX
+        //   scanpmdissaliases → alht=sufaliastab,  alflags=ALIAS_SUFFIX|DISABLED
+        //
+        // Dispatch on the ALIAS_SUFFIX bit (mirrors getalias's
+        // c:1901 table pick). Prior port used strict equality
+        // `alflags == ALIAS_SUFFIX`, which routed the
+        // SUFFIX|DISABLED case to aliastab instead of sufaliastab
+        // — `${(k)dis_saliases}` returned the wrong table's
+        // entries when there were no global aliases with DISABLED
+        // set, but the misdirection breaks the moment a user
+        // creates a disabled suffix alias.
+        let lock = if (alflags & ALIAS_SUFFIX) != 0 {
             sufaliastab_lock()
         } else {
             aliastab_lock()
