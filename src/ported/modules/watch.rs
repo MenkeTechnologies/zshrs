@@ -906,37 +906,39 @@ pub static bintab: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::new(
 // etc. — same int comparisons C does at watch.c:458.
 
 /// Read `ut_user` (an FFI `[c_char; UT_USERSIZE]` array) as a Rust
-/// `String`. C: `printf("%s", u->ut_user)` decays the char array to
-/// `char*` and prints until NUL — this fn does the equivalent.
+/// `String`. C: `printf("%.*s", (int)sizeof(u->ut_name), u->ut_name)`
+/// at watch.c:285 — size-bounded read, stop at first NUL or buffer
+/// end. Prior port used `CStr::from_ptr(buf.as_ptr())` which scans
+/// until NUL — reads PAST the array when the utmpx field holds an
+/// EXACTLY-N-byte value with no trailing NUL (UB in unsafe Rust;
+/// real-world hazard on max-length usernames). Inline bounded
+/// slice walk mirrors what `printf("%.*s", N, ptr)` emits.
 pub fn utmp_user(u: &libc::utmpx) -> String {
-    // c:204 ut_user
-    unsafe {
-        CStr::from_ptr(u.ut_user.as_ptr())
-            .to_string_lossy()
-            .into_owned()
-    }
+    // c:285
+    let buf = &u.ut_user;
+    let bytes: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-/// Read `ut_line` as a `String`. Same `CStr::from_ptr` shape as C's
-/// `char*` decay of the `ut_line` array.
+/// Read `ut_line` as a `String`. C: `printf("%.*s", (int)sizeof(u->ut_line), ...)`
+/// at watch.c:294/296 — same bounded-read pattern as utmp_user.
 pub fn utmp_line(u: &libc::utmpx) -> String {
-    // c:204 ut_line
-    unsafe {
-        CStr::from_ptr(u.ut_line.as_ptr())
-            .to_string_lossy()
-            .into_owned()
-    }
+    // c:294
+    let buf = &u.ut_line;
+    let bytes: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
-/// Read `ut_host` as a `String`. Mirrors C's `char*` decay of
-/// `ut_host`.
+/// Read `ut_host` as a `String`. C: `printf("%.*s", (int)sizeof(u->ut_host), ...)`
+/// at watch.c:309 — same bounded-read pattern as utmp_user.
 pub fn utmp_host(u: &libc::utmpx) -> String {
-    // c:204 ut_host
-    unsafe {
-        CStr::from_ptr(u.ut_host.as_ptr())
-            .to_string_lossy()
-            .into_owned()
-    }
+    // c:309
+    let buf = &u.ut_host;
+    let bytes: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len()) };
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
 /// Inline of C's `entry->ut_type == USER_PROCESS && entry->ut_user[0]
