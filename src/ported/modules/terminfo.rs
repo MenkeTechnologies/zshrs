@@ -234,7 +234,15 @@ pub fn getterminfo(
 ) -> Option<crate::ported::zsh_h::Param> {
     // c:135
     use crate::ported::zsh_h::{hashnode, param, PM_INTEGER, PM_READONLY, PM_SCALAR, PM_UNSET};
-    const TERM_BAD: i32 = 1 << 1;
+    // c:Src/zsh.h:1985 — `#define TERM_BAD 0x01`. Use the canonical
+    // const from zsh_h.rs:4155. Prior local shadow `const TERM_BAD:
+    // i32 = 1 << 1` was 0x02 — colliding with TERM_UNKNOWN's 0x02.
+    // When only TERM_UNKNOWN was set, the `& TERM_BAD` check below
+    // false-positived and `${terminfo[cap]}` returned None before the
+    // setupterm path could attempt the tigetnum/tigetflag/tigetstr
+    // lookups. Same bug as bin_echoti in termcap.rs (already fixed
+    // there); fix mirrored here.
+    use crate::ported::zsh_h::TERM_BAD;
 
     // c:142 — `if (termflags & TERM_BAD) return NULL;`
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
@@ -370,7 +378,11 @@ pub fn scanterminfo(
 
     // c:152-153 — `if (termflags & TERM_BAD) return;`. The full
     // termflag check at getterminfo's entry mirrors here too.
-    const TERM_BAD: i32 = 1 << 1;
+    // Use the canonical TERM_BAD (0x01) from zsh_h.rs:4155 — the
+    // local shadow at this line was 0x02 which collides with
+    // TERM_UNKNOWN. Same fix as the one applied to getterminfo and
+    // bin_echoti (termcap.rs).
+    use crate::ported::zsh_h::TERM_BAD;
     if (TERMFLAGS.load(Ordering::Relaxed) & TERM_BAD) != 0 {
         return;
     }
