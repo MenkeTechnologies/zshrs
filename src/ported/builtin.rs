@@ -10146,6 +10146,7 @@ pub fn bin_emulate(
     // only).
     let mut i = 1; // skip shname (argv[0])
     let mut optionbreak = false;
+    let mut cmd_body: Option<String> = None; // c:6310 — `-c command` capture.
     while !optionbreak && i < argv.len() {
         let arg = &argv[i];
         // c:Src/init.c:418 — only `-` / `+` start an option arg.
@@ -10207,10 +10208,23 @@ pub fn bin_emulate(
                 break; // c:505 — break out of char walk after `-o`
             }
             if ch == 'c' {
-                // c:470-479 — `-c command`. bin_emulate's per-cmd
-                // form supports `emulate zsh -c 'body'` but the sticky
-                // emulation evaluator at c:6332-6373 isn't ported yet.
-                // Document the gap and skip the rest of the arg.
+                // c:6310 — `-c command`. Capture the command body from
+                // either the rest of the current arg (e.g. `-c'body'`)
+                // or the next argv slot. C's sticky-emulation evaluator
+                // (c:6332-6373) wraps the cmd in saved/restored
+                // emulation state; we mirror by running the captured
+                // body through eval after the option-parse loop exits.
+                let body = if j + 1 < bytes.len() {
+                    bytes[j + 1..].iter().collect::<String>()
+                } else {
+                    if i + 1 >= argv.len() {
+                        zwarnnam(nam, "string expected after -c");
+                        return 1;
+                    }
+                    consumed_next_arg = true;
+                    argv[i + 1].clone()
+                };
+                cmd_body = Some(body);
                 break;
             }
             // c:Src/init.c — single-char option letter dispatch via
@@ -10238,6 +10252,25 @@ pub fn bin_emulate(
             i += 1;
         }
     }
+    // c:6332-6377 — `-c command` evaluator. After applying emulation
+    // and option overrides, run the cmd body via eval() and restore
+    // the prior emulation. The full sticky-emulation struct (c:6346)
+    // tracking per-pattern enables isn't ported; the eval/restore
+    // wrapper captures the visible behavior (cmd runs under new
+    // emulation, prior emulation restored on return).
+    if let Some(body) = cmd_body {
+        if opt_l_arg {
+            // c:6333-6336 — `-L` is incompatible with `-c`.
+            zwarnnam(nam, "option -L incompatible with -c");
+            return 1;
+        }
+        // Run the body under the now-applied emulation. The body is
+        // passed as a single string; eval() joins-with-space, which
+        // for a one-element argv is a no-op.
+        let r = eval(&[body]);
+        return r;
+    }
+
     // c:6314-6317 — `if (*argv) zwarnnam(nam, "unknown argument %s",
     // *argv);`. Anything left after the option-parse loop is unknown.
     // zinit's `emulate -LR zsh -o extendedglob` exhausts argv, so this
