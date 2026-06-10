@@ -2077,37 +2077,37 @@ pub fn strcatsub(prefix: &str, src: &str, suffix: &str, glob_subst: bool) -> Str
     //     dupstring(src)); if (glbsub) shtokenize(dest); }`
     // — fast path: no prefix, no suffix, just src (optionally
     // shtokenized).
+    // c:820-823 — `if (!pl && (!s || !*s)) { *d = dest = (copied ?
+    //   src : dupstring(src)); if (glbsub) shtokenize(dest); }`.
+    // The C-faithful shtokenize call is wired here; strcatsub is
+    // currently invoked only from unit tests in this module — the
+    // active paramsubst pipeline doesn't route through this port
+    // yet (the GLOBSUBST flag is mutated on the global option table
+    // at subst.rs:4053 / 11777, which is a Rust-port deviation from
+    // C's per-paramsubst local `globsubst`). When the paramsubst
+    // port is reworked to use a local, callers should pass
+    // `glob_subst` here so the tokenization fires.
     if prefix.is_empty() && suffix.is_empty() {
         // c:820
+        let mut dest = src.to_string(); // c:821
         if glob_subst {
             // c:822
-            // shtokenize returns Vec<GlobToken>; for a string-output
-            // signature we keep the src as-is. The full token-aware
-            // pipeline lives in the canonical glob path.
-            // shtokenize(src) call elided — `src` is `&str` here; the
-            // tokenization side-effect would write into the dest buffer
-            // C builds at `c:823`, not into the input. The canonical
-            // glob pipeline handles tokenization on its own copy.
+            crate::ported::glob::shtokenize(&mut dest);
         }
-        return src.to_string(); // c:821
+        return dest;
     }
 
-    // C: `*d = dest = hcalloc(pl + l + (s ? strlen(s) : 0) + 1);
-    //     strncpy(dest, pb, pl); dest += pl;
-    //     strcpy(dest, src); if (glbsub) shtokenize(dest);
-    //     dest += l;
-    //     if (s) strcpy(dest, s);`
-    // — general path: pre-allocate + copy three segments in order.
-    let mut result = String::with_capacity(
-        // c:825
-        prefix.len() + src.len() + suffix.len() + 1,
-    );
+    // c:825-833 — general path: pre-allocate + copy three segments.
+    let mut result =
+        String::with_capacity(prefix.len() + src.len() + suffix.len() + 1); // c:825
     result.push_str(prefix); // c:826
-    result.push_str(src); // c:828
     if glob_subst {
-        // c:829
-        // Same shtokenize note as above.
-        // shtokenize(src) call elided — same reasoning as c:823 above.
+        // c:829 — tokenize the src segment before joining.
+        let mut src_tok = src.to_string();
+        crate::ported::glob::shtokenize(&mut src_tok);
+        result.push_str(&src_tok);
+    } else {
+        result.push_str(src); // c:828
     }
     result.push_str(suffix); // c:833
     result // c:835
