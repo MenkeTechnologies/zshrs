@@ -2804,10 +2804,50 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
 ///             (m->u.linked->cleanup)(m) : dyn_cleanup_module(m));
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn cleanup_module(_table: &mut modulestab, _name: &str) -> i32 {
+///
+/// Static-link path: dispatch via name → fn-pointer table to the
+/// per-module `cleanup_(m)` defined in `src/ported/modules/<name>.rs`.
+/// Mirrors the symmetric `boot_module` dispatcher (`Src/module.c:1910`).
+/// Per-module cleanup_ typically calls `delprepromptfn` /
+/// `setfeatureenables(NULL)` to roll back what boot_ installed.
+/// WARNING: param names don't match C — Rust=(_table, name) vs C=(m)
+pub fn cleanup_module(_table: &mut modulestab, name: &str) -> i32 {
     // c:1918
-    0 // c:1918 (cleanup)(m) success
+    match name {
+        "zsh/attr" => crate::ported::modules::attr::cleanup_(std::ptr::null()),
+        "zsh/cap" => crate::ported::modules::cap::cleanup_(std::ptr::null()),
+        "zsh/clone" => crate::ported::modules::clone::cleanup_(std::ptr::null()),
+        "zsh/curses" => crate::ported::modules::curses::cleanup_(std::ptr::null()),
+        "zsh/datetime" => crate::ported::modules::datetime::cleanup_(std::ptr::null()),
+        "zsh/db/gdbm" => crate::ported::modules::db_gdbm::cleanup_(std::ptr::null()),
+        "zsh/example" => crate::ported::modules::example::cleanup_(std::ptr::null()),
+        "zsh/files" => crate::ported::modules::files::cleanup_(std::ptr::null()),
+        "zsh/hlgroup" => crate::ported::modules::hlgroup::cleanup_(std::ptr::null()),
+        "zsh/ksh93" => crate::ported::modules::ksh93::cleanup_(std::ptr::null()),
+        "zsh/langinfo" => crate::ported::modules::langinfo::cleanup_(std::ptr::null()),
+        "zsh/mapfile" => crate::ported::modules::mapfile::cleanup_(std::ptr::null()),
+        "zsh/mathfunc" => crate::ported::modules::mathfunc::cleanup_(std::ptr::null()),
+        "zsh/nearcolor" => crate::ported::modules::nearcolor::cleanup_(std::ptr::null()),
+        "zsh/newuser" => crate::ported::modules::newuser::cleanup_(std::ptr::null()),
+        "zsh/parameter" => crate::ported::modules::parameter::cleanup_(std::ptr::null()),
+        "zsh/param/private" => crate::ported::modules::param_private::cleanup_(std::ptr::null()),
+        "zsh/pcre" => crate::ported::modules::pcre::cleanup_(std::ptr::null()),
+        "zsh/random" => crate::ported::modules::random::cleanup_(std::ptr::null()),
+        "zsh/regex" => crate::ported::modules::regex::cleanup_(std::ptr::null()),
+        "zsh/net/socket" => crate::ported::modules::socket::cleanup_(std::ptr::null()),
+        "zsh/stat" => crate::ported::modules::stat::cleanup_(std::ptr::null()),
+        "zsh/system" => crate::ported::modules::system::cleanup_(std::ptr::null()),
+        "zsh/net/tcp" => crate::ported::modules::tcp::cleanup_(std::ptr::null()),
+        "zsh/termcap" => crate::ported::modules::termcap::cleanup_(std::ptr::null()),
+        "zsh/terminfo" => crate::ported::modules::terminfo::cleanup_(std::ptr::null()),
+        "zsh/watch" => crate::ported::modules::watch::cleanup_(std::ptr::null()),
+        "zsh/zftp" => crate::ported::modules::zftp::cleanup_(std::ptr::null()),
+        "zsh/zprof" => crate::ported::modules::zprof::cleanup_(std::ptr::null()),
+        "zsh/zpty" => crate::ported::modules::zpty::cleanup_(std::ptr::null()),
+        "zsh/zselect" => crate::ported::modules::zselect::cleanup_(std::ptr::null()),
+        "zsh/zutil" => crate::ported::modules::zutil::cleanup_(std::ptr::null()),
+        _ => 0,
+    }
 }
 
 /// Port of `finish_module(Module m)` from `Src/module.c:1926`.
@@ -2819,10 +2859,50 @@ pub fn cleanup_module(_table: &mut modulestab, _name: &str) -> i32 {
 ///             (m->u.linked->finish)(m) : dyn_finish_module(m));
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn finish_module(_table: &mut modulestab, _name: &str) -> i32 {
+///
+/// Static-link path: dispatch to the per-module `finish_(m)`.
+/// finish_ is the second teardown step (after cleanup_) — it frees
+/// process-lifetime state that survives a single `zmodload -u`.
+/// Most modules have an empty body returning 0; a few (zftp, zpty,
+/// watch with utmpx descriptors) keep state explicitly.
+/// WARNING: param names don't match C — Rust=(_table, name) vs C=(m)
+pub fn finish_module(_table: &mut modulestab, name: &str) -> i32 {
     // c:1926
-    0 // c:1926 (finish)(m) success
+    match name {
+        "zsh/attr" => crate::ported::modules::attr::finish_(std::ptr::null()),
+        "zsh/cap" => crate::ported::modules::cap::finish_(std::ptr::null()),
+        "zsh/clone" => crate::ported::modules::clone::finish_(std::ptr::null()),
+        "zsh/curses" => crate::ported::modules::curses::finish_(std::ptr::null()),
+        "zsh/datetime" => crate::ported::modules::datetime::finish_(std::ptr::null()),
+        "zsh/db/gdbm" => crate::ported::modules::db_gdbm::finish_(std::ptr::null()),
+        "zsh/example" => crate::ported::modules::example::finish_(std::ptr::null()),
+        "zsh/files" => crate::ported::modules::files::finish_(std::ptr::null()),
+        "zsh/hlgroup" => crate::ported::modules::hlgroup::finish_(std::ptr::null()),
+        "zsh/ksh93" => crate::ported::modules::ksh93::finish_(std::ptr::null()),
+        "zsh/langinfo" => crate::ported::modules::langinfo::finish_(std::ptr::null()),
+        "zsh/mapfile" => crate::ported::modules::mapfile::finish_(std::ptr::null()),
+        "zsh/mathfunc" => crate::ported::modules::mathfunc::finish_(std::ptr::null()),
+        "zsh/nearcolor" => crate::ported::modules::nearcolor::finish_(std::ptr::null()),
+        "zsh/newuser" => crate::ported::modules::newuser::finish_(std::ptr::null()),
+        "zsh/parameter" => crate::ported::modules::parameter::finish_(std::ptr::null()),
+        "zsh/param/private" => crate::ported::modules::param_private::finish_(std::ptr::null()),
+        "zsh/pcre" => crate::ported::modules::pcre::finish_(std::ptr::null()),
+        "zsh/random" => crate::ported::modules::random::finish_(std::ptr::null()),
+        "zsh/regex" => crate::ported::modules::regex::finish_(std::ptr::null()),
+        "zsh/net/socket" => crate::ported::modules::socket::finish_(std::ptr::null()),
+        "zsh/stat" => crate::ported::modules::stat::finish_(std::ptr::null()),
+        "zsh/system" => crate::ported::modules::system::finish_(std::ptr::null()),
+        "zsh/net/tcp" => crate::ported::modules::tcp::finish_(std::ptr::null()),
+        "zsh/termcap" => crate::ported::modules::termcap::finish_(std::ptr::null()),
+        "zsh/terminfo" => crate::ported::modules::terminfo::finish_(std::ptr::null()),
+        "zsh/watch" => crate::ported::modules::watch::finish_(std::ptr::null()),
+        "zsh/zftp" => crate::ported::modules::zftp::finish_(std::ptr::null()),
+        "zsh/zprof" => crate::ported::modules::zprof::finish_(std::ptr::null()),
+        "zsh/zpty" => crate::ported::modules::zpty::finish_(std::ptr::null()),
+        "zsh/zselect" => crate::ported::modules::zselect::finish_(std::ptr::null()),
+        "zsh/zutil" => crate::ported::modules::zutil::finish_(std::ptr::null()),
+        _ => 0,
+    }
 }
 
 /// Port of `do_module_features(Module m, Feature_enables enablesarr, int flags)` from `Src/module.c:1998`.
