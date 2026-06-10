@@ -561,16 +561,25 @@ pub fn dowatch() {
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         return;
     }
-    // c:625 — `queue_signals();` + WATCHFMT fallback.
-    crate::ported::signals_h::queue_signals();
-    let fmt = crate::ported::params::getsparam("WATCHFMT")
-        .unwrap_or_else(|| DEFAULT_WATCHFMT.to_string());
-    // c:631-643 — merge-walk uptr/wptr by ucmp.
+    // c:622-625 — `wct = wtabsz; uct = utabsz; uptr = utab; wptr = wtab;`
     let wtab_snapshot: Vec<libc::utmpx> = WTAB.with(|t| t.borrow().clone());
     let mut uct = utab.len();
     let mut wct = wtab_snapshot.len();
     let mut uidx = 0usize;
     let mut widx = 0usize;
+    // c:626-629 — second `if (errflag) { free(utab); return; }` guard.
+    // Catches a signal handler firing in the tight window between the
+    // first errflag check at c:617 and the queue_signals barrier at
+    // c:630; without it a SIGINT delivered mid-pointer-setup would
+    // race the merge-walk start.
+    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        return;
+    }
+    // c:630 — `queue_signals();` + WATCHFMT fallback.
+    crate::ported::signals_h::queue_signals();
+    let fmt = crate::ported::params::getsparam("WATCHFMT")
+        .unwrap_or_else(|| DEFAULT_WATCHFMT.to_string());
+    // c:633-640 — merge-walk uptr/wptr by ucmp.
     while uct > 0 || wct > 0 {
         if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
             break;
