@@ -140,6 +140,31 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // "read-only variable" warning per c:127 pmflags propagation.
     let tied = Arc::new(tied_gdbm_param::new(pmname.to_string(), db, readonly));
 
+    // c:193 — `addmodulefd(gdbm_fdesc(dbf), FDT_INTERNAL);` — register
+    // the gdbm-owned fd in the global fdtable as FDT_INTERNAL so the
+    // shell's fd-management code (closem, exec redirect-restore,
+    // subshell fd inheritance trim) recognizes it as module-private
+    // and doesn't accidentally close or repurpose it. Without this
+    // registration:
+    //   - closem(FDT_UNUSED, 0) in bin_clone, bin_zpty, and others
+    //     would treat the gdbm fd as "unused" and close it (no entry
+    //     ⇒ fdtable_get returns FDT_UNUSED ⇒ skip-not-set check
+    //     fails → close).
+    //   - A subsequent gdbm_store / gdbm_fetch through the tied
+    //     param would call into libgdbm with a closed fd, panicking
+    //     out via EBADF or worse (libgdbm may corrupt its in-memory
+    //     index if it can't reach the backing file).
+    //   - Subshell fd inheritance would leak the fd to the child
+    //     without the FDT_INTERNAL marker that triggers explicit
+    //     pre-exec close.
+    let dbfd = tied.db.fd();
+    if dbfd >= 0 {
+        crate::ported::utils::addmodulefd(
+            dbfd,
+            crate::ported::zsh_h::FDT_INTERNAL,
+        );
+    }
+
     {
         let mut params = match TIED_PARAMS.lock() {
             Ok(p) => p,
