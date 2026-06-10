@@ -1344,13 +1344,26 @@ impl ZshCompiler {
         // command names — exempt them from the "dynamic command name"
         // check that routes through Op::Exec.
         let first_is_test_builtin = first_untoked == "[" || first_untoked == "[[";
+        // c:Src/subst.c::filesubstr (c:799) — `=cmd` at word start
+        // triggers PATH lookup of `cmd`. C zsh's `prefork` runs this on
+        // every argv element including the head. The compile-time
+        // dispatcher must route `=cmd` through the dynamic path so the
+        // runtime expansion (multsub → prefork → filesub → equalsubstr)
+        // fires. Without this, `=ls` reached host_exec_external as the
+        // raw string `=ls` and got `command not found: =ls`.
+        //
+        // The first byte after untokenize is ASCII `=` (the lexer emits
+        // Equals TOKEN \u{8d}, untokenize maps it back). EQUALS-option
+        // gating happens inside equalsubstr at runtime — checking it
+        // here would require duplicating the option lookup.
         let first_is_dynamic = !first_is_test_builtin
             && (unquoted(&first_untoked, '$')
                 || unquoted(&first_untoked, '`')
                 || unquoted(&first_untoked, '*')
                 || unquoted(&first_untoked, '?')
                 || unquoted(&first_untoked, '[')
-                || first_untoked.starts_with('~'));
+                || first_untoked.starts_with('~')
+                || first_untoked.starts_with('='));
         if first_is_dynamic {
             let argc = simple.words.len() as u8;
             for w in &simple.words {
