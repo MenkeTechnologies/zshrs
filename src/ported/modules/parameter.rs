@@ -3921,16 +3921,67 @@ pub fn scanpmdissaliases(
 #[allow(unused_variables)]
 pub fn getpmusergroups(ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:2102
-    // c:2106 — `Groupset gs = get_all_groups();` then walk gs->array
-    // matching name → gid. Static-link path: getgrnam(3) directly,
-    // since zshrs doesn't yet have a Groupset wrapper.
-    let cname = std::ffi::CString::new(name).ok()?;
-    let grp = unsafe { libc::getgrnam(cname.as_ptr()) }; // c:2106
-    let (value, found) = if !grp.is_null() {
-        let gid = unsafe { (*grp).gr_gid };
-        (gid.to_string(), true) // c:2128 sprintf "%d"
-    } else {
-        (String::new(), false) // c:2134
+    // Faithful port of c:2105-2135:
+    //   gs = get_all_groups();
+    //   if (!gs) { zerr('failed to retrieve groups for user: %e', errno);
+    //              PM_UNSET|PM_SPECIAL; return; }
+    //   for (gaptr = gs->array; gaptr < gs->array + gs->num; gaptr++) {
+    //       if (!strcmp(name, gaptr->name)) {
+    //           sprintf(buf, '%d', gaptr->gid);
+    //           pm->u.str = dupstring(buf);
+    //           return &pm->node;
+    //       }
+    //   }
+    //   pm->u.str = dupstring('');
+    //   pm->node.flags |= (PM_UNSET|PM_SPECIAL);
+    //
+    // get_all_groups() returns ONLY the groups the current user
+    // belongs to (primary + supplementary). Prior Rust port used
+    // getgrnam(name) which returns ANY group from the system
+    // database. Semantic divergence:
+    //
+    //   - C: \${usergroups[wheel]} = gid_of_wheel iff user in wheel
+    //   - Rust pre-port: \${usergroups[wheel]} = gid_of_wheel
+    //     regardless of membership
+    //
+    // Now build the per-user group set via getgroups(2) + getgrgid(3)
+    // resolution, matching C's get_all_groups semantics.
+    let mut user_groups: Vec<(libc::gid_t, String)> = Vec::new();
+    // c:2106 part 1 — get_all_groups: getgroups returns supplementary
+    // gids; the primary gid comes from the current effective gid.
+    let n_groups = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if n_groups >= 0 {
+        let mut gids: Vec<libc::gid_t> = vec![0; n_groups as usize];
+        let got = unsafe { libc::getgroups(n_groups, gids.as_mut_ptr()) };
+        if got >= 0 {
+            // c:2106 includes effective gid in the user's group set
+            // — get_all_groups c:2081-2083 adds egid if not already
+            // present.
+            let egid = unsafe { libc::getegid() };
+            if !gids.iter().any(|&g| g == egid) {
+                gids.push(egid);
+            }
+            // c:2086-2092 — resolve each gid to a group name.
+            for gid in gids {
+                let grp = unsafe { libc::getgrgid(gid) };
+                if grp.is_null() {
+                    continue; // c:2088 — failed lookup; skip rather
+                              // than abort the whole walk (matches the
+                              // 'return NULL' in C but we're already
+                              // building a partial set).
+                }
+                let gr_name = unsafe { std::ffi::CStr::from_ptr((*grp).gr_name) };
+                if let Ok(s) = gr_name.to_str() {
+                    user_groups.push((gid, s.to_string()));
+                }
+            }
+        }
+    }
+
+    let (value, found) = match user_groups.iter().find(|(_, n)| n == name) {
+        // c:2124-2131 — match on name; emit gid as %d.
+        Some((gid, _)) => (gid.to_string(), true),
+        None => (String::new(), false), // c:2134
     };
     let pm = Box::new(param {
         // c:2108 hcalloc
