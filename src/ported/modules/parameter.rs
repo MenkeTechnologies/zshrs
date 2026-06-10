@@ -2150,35 +2150,56 @@ pub fn scanpmoptions(
 #[allow(unused_variables)]
 pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:1040
-    // c:1052 — `m = (Module)modulestab->getnode2(modulestab, name)`.
+    // Faithful port of c:1051-1068:
+    //   m = modulestab->getnode2(modulestab, name);
+    //   if (!m) return NULL;
+    //   if (m->u.handle && !(m->node.flags & MOD_UNLOAD)) {
+    //       type = ((m->node.flags & MOD_ALIAS) ?
+    //               dyncat('alias:', m->u.alias) : 'loaded');
+    //   }
+    //   if (!type) {
+    //       if (m->autoloads && firstnode(m->autoloads))
+    //           type = 'autoloaded';
+    //   }
+    //   if (type) pm->u.str = dupstring(type);
+    //   else { pm->u.str = ''; pm->node.flags |= (PM_UNSET|PM_SPECIAL); }
+    //
+    // Prior port missed the MOD_ALIAS branch entirely: alias entries
+    // (zmodload -A foo=bar) showed up as 'loaded' instead of
+    // 'alias:bar'. Now matches C's three-way dispatch.
     let modtab = MODULESTAB.lock().unwrap();
-    // Check is_loaded() rather than just presence in modulestab —
-    // zshrs pre-registers all linked modules so zmodload can find
-    // them, but only modules without the MOD_UNLOAD bit count as
-    // "loaded" for the user-visible ${modules[NAME]} probe. Bug
-    // #532/#535 in docs/BUGS.md.
-    let module_present = modtab
-        .modules
-        .get(name)
-        .map(|m| m.is_loaded())
-        .unwrap_or(false);
+    let (module_present, is_alias, alias_target) = match modtab.modules.get(name) {
+        // c:1055 gate: m->u.handle && !MOD_UNLOAD. Static-link analog
+        // is MOD_LINKED && !MOD_UNLOAD (same gate is_loaded() encodes).
+        Some(m) => {
+            let loaded = m.is_loaded();
+            let alias = (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0;
+            (loaded, alias, m.alias.clone().unwrap_or_default())
+        }
+        None => (false, false, String::new()),
+    };
+    // c:1060 autoload check: C uses per-module m->autoloads linklist.
+    // Rust equivalent: any autoload_* map entry whose value == name.
     let autoload_present = modtab.autoload_builtins.values().any(|v| v == name)
         || modtab.autoload_conditions.values().any(|v| v == name)
         || modtab.autoload_params.values().any(|v| v == name)
         || modtab.autoload_mathfuncs.values().any(|v| v == name);
     drop(modtab);
-    // c:1054-1063 — emit "loaded" / "alias:NAME" / "autoloaded" / unset.
+    // c:1056-1063 — emit 'alias:<target>' / 'loaded' / 'autoloaded' / unset.
     let typ = if module_present {
-        Some("loaded".to_string())
-    }
-    // c:1057-1058
-    else if autoload_present {
+        if is_alias {
+            // c:1056-1057 — `alias:<target>`
+            Some(format!("alias:{}", alias_target))
+        } else {
+            // c:1057 — bare 'loaded'
+            Some("loaded".to_string())
+        }
+    } else if autoload_present {
+        // c:1060-1061
         Some("autoloaded".to_string())
-    }
-    // c:1062
-    else {
-        None
-    }; // c:1064
+    } else {
+        None // c:1062
+    };
     let (val, extra_flags) = match typ {
         Some(s) => (s, 0),                                       // c:1066 set str
         None => (String::new(), (PM_UNSET | PM_SPECIAL) as i32), // c:1068-1069
