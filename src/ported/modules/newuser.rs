@@ -91,8 +91,19 @@ pub fn check_dotfile(dotdir: &str, fname: &str) -> i32 {
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:4
-    // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");`. paramtab read.
-    let mut dotdir: String = getsparam("ZDOTDIR").unwrap_or_default();
+    // c:70 — `const char *dotdir = getsparam_u("ZDOTDIR");` — the `_u`
+    // variant strips zsh's Meta-escape encoding from the returned value.
+    // Required here because the path is concatenated with ".zshenv"
+    // etc. and passed straight to access(2)/source(); access(2) reads
+    // raw filesystem bytes, not zsh's metafied representation.
+    //
+    // Prior port used the non-`_u` `getsparam` which returns the
+    // metafied form. For ASCII-only ZDOTDIR paths the gap was
+    // invisible; for any path containing a Meta-escaped byte (e.g.
+    // a user with NUL in their config-dir name from a paramtab
+    // bytes-set via $'\x00'), the metafied form survived into
+    // access(2) which would surface as ENOENT instead of resolving.
+    let mut dotdir: String = crate::ported::params::getsparam_u("ZDOTDIR").unwrap_or_default();
 
     // c:71-78 — `const char *spaths[] = { SITESCRIPT_DIR, SCRIPT_DIR, 0 };`
     // The C source resolves these from configure-time defines; the Rust
@@ -113,12 +124,13 @@ pub fn boot_(m: *const module) -> i32 {
 
     // c:84-88 — `if (!dotdir) { dotdir = home; if (!dotdir) return 0; }`.
     //
-    // C reads the `home` global which is the shell's $HOME param.
-    // The previous Rust port read `std::env::var("HOME")` — OS env —
-    // which diverges when the shell has updated HOME via paramtab
-    // but hasn't yet exported the change. Route through getsparam.
+    // C reads the `home` global which is the shell's $HOME param,
+    // ALREADY UNMETAFIED at param-init time (the `home` global is
+    // populated from getpwuid()->pw_dir which is raw OS bytes — no
+    // Meta encoding involved). Route through getsparam_u for the
+    // same reason as ZDOTDIR above: the path feeds into access(2).
     if dotdir.is_empty() {
-        dotdir = getsparam("HOME") // c:85
+        dotdir = crate::ported::params::getsparam_u("HOME") // c:85
             .unwrap_or_default();
         if dotdir.is_empty() {
             return 0; // c:87
