@@ -4297,6 +4297,123 @@ pub fn setmathfuncs(
 pub static CONDTAB: Lazy<Mutex<Vec<conddef>>> = // c:cond.c:21
     Lazy::new(|| Mutex::new(Vec::new()));
 
+/// Port of `Conddef getconddef(int inf, const char *name, int autol)`
+/// from `Src/module.c:648`.
+///
+/// C body c:648-689:
+/// ```c
+/// Conddef
+/// getconddef(int inf, const char *name, int autol)
+/// {
+///     Conddef p;
+///     int f = 1;
+///     char *lookup, *s;
+///     lookup = dupstring(name);
+///     if (!lookup) return NULL;
+///     for (s = lookup; *s != '\0'; s++) {
+///         if (*s == Dash) *s = '-';
+///     }
+///     do {
+///         for (p = condtab; p; p = p->next) {
+///             if ((!!inf == !!(p->flags & CONDF_INFIX)) &&
+///                 !strcmp(lookup, p->name))
+///                 break;
+///         }
+///         if (autol && p && p->module) {
+///             if (f) {
+///                 (void)ensurefeature(p->module,
+///                                     (p->flags & CONDF_INFIX) ? "C:" : "c:",
+///                                     (p->flags & CONDF_AUTOALL) ? NULL : lookup);
+///                 f = 0;
+///                 p = NULL;
+///             } else {
+///                 deleteconddef(p);
+///                 return NULL;
+///             }
+///         } else
+///             break;
+///     } while (!p);
+///     return p;
+/// }
+/// ```
+///
+/// Returns a clone of the matched `conddef` (or `None` if absent).
+/// `inf` selects between infix-style (`[[ A op B ]]`) and prefix-style
+/// (`[[ -X arg ]]`) conditions — `CONDF_INFIX` on the entry must match.
+/// `autol` triggers `ensurefeature` on autoload-stubs; the autoload
+/// loop runs at most once (gated by `f`) — if the second iteration
+/// still finds the entry, the stub is treated as a failed load and
+/// removed via `deleteconddef`.
+pub fn getconddef(inf: i32, name: &str, autol: i32, table: &mut modulestab) -> Option<conddef> {
+    // c:648
+    // c:655 — `lookup = dupstring(name)` then Dash → '-' substitution.
+    let lookup: String = crate::ported::string::dupstring(name)
+        .chars()
+        .map(|c| if c == crate::ported::zsh_h::Dash { '-' } else { c })
+        .collect();
+    let mut f = 1; // c:651 `int f = 1;`
+    loop {
+        // c:663 do { ... } while (!p);
+        // c:664-668 — walk condtab matching (!!inf == !!CONDF_INFIX) && name.
+        let want_infix = inf != 0;
+        let hit: Option<conddef> = {
+            let tab = CONDTAB.lock().unwrap();
+            tab.iter().find_map(|p| {
+                let p_infix = (p.flags & CONDF_INFIX) != 0;
+                if p_infix == want_infix && p.name == lookup {
+                    // Manual field-by-field clone: conddef doesn't
+                    // derive Clone (function-pointer + Option<Conddef>
+                    // mix with no PartialEq).
+                    Some(conddef {
+                        next: None,
+                        name: p.name.clone(),
+                        flags: p.flags,
+                        handler: p.handler,
+                        min: p.min,
+                        max: p.max,
+                        condid: p.condid,
+                        module: p.module.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+        };
+        // c:669-685 — autoload trigger + failure-retry loop.
+        let has_autoload_module = hit
+            .as_ref()
+            .map(|p| p.module.is_some())
+            .unwrap_or(false);
+        if autol != 0 && hit.is_some() && has_autoload_module {
+            let p = hit.as_ref().unwrap();
+            if f != 0 {
+                // c:674-678 — first miss: load the module + retry.
+                let module = p.module.as_ref().unwrap().clone();
+                let prefix = if (p.flags & CONDF_INFIX) != 0 {
+                    "C:"
+                } else {
+                    "c:"
+                };
+                let feature_arg = if (p.flags & CONDF_AUTOALL) != 0 {
+                    // c:677 — NULL → autoload-all branch.
+                    None
+                } else {
+                    Some(lookup.as_str())
+                };
+                let _ = ensurefeature(table, &module, prefix, feature_arg);
+                f = 0;
+                continue; // c:680 `p = NULL;` + outer do-while re-tries.
+            } else {
+                // c:681-683 — second pass still hit autoload entry →
+                // load failed; remove the stub and return None.
+                let _ = deleteconddef(p);
+                return None;
+            }
+        }
+        return hit; // c:684-685 `else break;` then return p.
+    }
+}
+
 /// Port of `int deleteconddef(Conddef c)` from `Src/module.c:724`.
 /// Removes condition definition `c` from `condtab`. Returns 0 on
 /// success, -1 on miss. C also frees the autoloaded entry's name +
