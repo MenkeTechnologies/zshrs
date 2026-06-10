@@ -396,20 +396,35 @@ pub fn zfsetparam(name: &str, val: &str, flags: i32) {
 #[allow(non_snake_case)]
 pub fn zfunsetparam(name: &str) {
     // c:529
-    // c:529-534 — paramtab->getnode(paramtab, name); pm->node.flags &=
-    // ~PM_READONLY; unsetparam_pm(pm, 0, 1);
-    // C's `unsetparam(name)` on an empty name is a silent no-op (the
-    // paramtab lookup returns NULL). Rust's `std::env::remove_var("")`
-    // panics since 1.86 ("invalid argument"). Match C semantics:
-    // empty-name short-circuit.
+    // Faithful port of c:531-536:
+    //   if ((pm = (Param) paramtab->getnode(paramtab, name))) {
+    //       pm->node.flags &= ~PM_READONLY;
+    //       unsetparam_pm(pm, 0, 1);
+    //   }
+    //
+    // Prior port called std::env::remove_var which only touches the
+    // OS environment, not paramtab. ZFTP_* params live in paramtab
+    // (created via createparam in zfsetparam), and many carry
+    // PM_READONLY — std::env::remove_var on a PM_READONLY paramtab
+    // entry would silently no-op for the shell but might clear the
+    // env var ambient state, leading to divergent shell-vs-env views.
+    //
+    // C's empty-name lookup returns NULL (paramtab miss); Rust's
+    // params::unsetparam similarly no-ops on empty.
     if name.is_empty() {
         return;
     }
-    // Static-link path: paramtab access goes through the params subsystem
-    // which doesn't yet expose a typed `getnode`/`unsetparam_pm` wrapper.
-    // Use the env-var fallback; full Param-flag path lives in
-    // src/ported/params.rs and will be wired in a later port pass.
-    std::env::remove_var(name); // c:533 (effective)
+    // c:531-535 — clear PM_READONLY first so the unset succeeds even
+    // on readonly params (the whole point of this helper — connection
+    // teardown needs to flush ZFTP_HOST etc. regardless of readonly).
+    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+        if let Some(pm) = tab.get_mut(name) {
+            pm.node.flags &= !(crate::ported::zsh_h::PM_READONLY as i32);
+        }
+    }
+    // c:535 — unsetparam_pm(pm, 0, 1). The free unsetparam helper
+    // wraps the getnode + unsetparam_pm flow and removes from paramtab.
+    crate::ported::params::unsetparam(name);
 }
 
 /// Port of `zfargstring(char *cmd, char **args)` from `Src/Modules/zftp.c:546`.
