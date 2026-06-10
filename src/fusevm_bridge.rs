@@ -209,6 +209,39 @@ fn shname() -> String {
     crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string())
 }
 
+/// Map a builtin name to the zsh module that owns it, IFF zsh does
+/// not auto-load that builtin on first use. Used by
+/// `dispatch_builtin_raw` to gate `--zsh` mode dispatch behind
+/// `zmodload`, mirroring `zsh -fc <name>` returning 127 for these
+/// names without an explicit module load.
+///
+/// Returns `Some(module_name)` if `name` belongs to a non-auto-load
+/// module per the per-module `Src/Modules/<x>.c` `bintab[]` plus
+/// the auto-load flag set at module-build time. `None` for core
+/// builtins and for auto-loaded module builtins (sched, log, echotc,
+/// echoti, zformat, zparseopts, zregexparse, zstyle, strftime,
+/// private, vared, zle, bindkey, comp*) which work without zmodload.
+fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
+    match name {
+        "zftp" => Some("zsh/zftp"),
+        "zsocket" => Some("zsh/net/socket"),
+        "ztcp" => Some("zsh/net/tcp"),
+        "zstat" => Some("zsh/stat"),
+        "zselect" => Some("zsh/zselect"),
+        "zpty" => Some("zsh/zpty"),
+        "zprof" => Some("zsh/zprof"),
+        "zsystem" | "syserror" => Some("zsh/system"),
+        "clone" => Some("zsh/clone"),
+        "zcurses" => Some("zsh/curses"),
+        "ztie" | "zuntie" | "zgdbmpath" => Some("zsh/db/gdbm"),
+        "pcre_compile" | "pcre_match" | "pcre_study" => Some("zsh/pcre"),
+        "example" => Some("zsh/example"),
+        "cap" | "getcap" | "setcap" => Some("zsh/cap"),
+        "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => Some("zsh/attr"),
+        _ => None,
+    }
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // c:Bugs #475/#504/#555 — bash-only builtins (`mapfile`,
     // `readarray`, `compopt`) should emit "command not found" in
@@ -220,6 +253,49 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // gate here.
     if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
         && matches!(name, "compopt" | "mapfile" | "readarray")
+    {
+        eprintln!("zsh:1: command not found: {}", name);
+        let _ = args;
+        return 127;
+    }
+    // c:Src/Modules/<mod>.c boot_/setup_ chain — module-bound builtins
+    // (zftp, zsocket, ztcp, zstat, etc.) are only registered into
+    // `builtintab` when their module is loaded via `zmodload`. In
+    // zsh `-fc` (the parity test harness's invocation), the modules
+    // are NOT pre-loaded, so each name reports "command not found"
+    // with exit 127. zshrs intentionally pre-loads all module bintabs
+    // in `createbuiltintable` (builtin.rs:131-152) for the default
+    // mode so users can call these without `zmodload`; that auto-load
+    // diverges from zsh's gate behavior. Match zsh's stance only when
+    // the user explicitly asked for parity via `--zsh`.
+    //
+    // The list is the union of builtins from modules that zsh does
+    // NOT auto-load (verified via `zsh -fc <name>` returning 127):
+    //   zsh/zftp          → zftp
+    //   zsh/net/socket    → zsocket
+    //   zsh/net/tcp       → ztcp
+    //   zsh/stat          → zstat (NOT `stat`; that name resolves to
+    //                              /bin/stat on PATH per zsh's setup)
+    //   zsh/zselect       → zselect
+    //   zsh/zpty          → zpty
+    //   zsh/zprof         → zprof
+    //   zsh/system        → zsystem, syserror
+    //   zsh/clone         → clone
+    //   zsh/curses        → zcurses
+    //   zsh/db/gdbm       → ztie, zuntie, zgdbmpath
+    //   zsh/pcre          → pcre_compile, pcre_match, pcre_study
+    //   zsh/example       → example
+    //   zsh/cap           → cap, getcap, setcap
+    //   zsh/attr          → zgetattr, zsetattr, zdelattr, zlistattr
+    if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        && module_bound_builtin_module(name)
+            .map(|m| {
+                !crate::ported::module::MODULESTAB
+                    .lock()
+                    .map(|t| t.is_loaded(m))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
     {
         eprintln!("zsh:1: command not found: {}", name);
         let _ = args;
