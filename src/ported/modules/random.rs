@@ -269,25 +269,43 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
     handlefeatures(m, module_features(), enables)
 }
 
-/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/random.c:282`.
+/// Port of `boot_(UNUSED(Module m))` from `Src/Modules/random.c:282-308`.
 #[allow(unused_variables)]
 pub fn boot_(m: *const module) -> i32 {
     // c:282
-    // c:282-308 — USE_URANDOM block: open(/dev/urandom, O_RDONLY),
-    //              movefd, addmodulefd to track the fd.
-    match std::fs::OpenOptions::new().read(true).open("/dev/urandom") {
-        // c:295
-        Ok(f) => {
-            let fd = f.into_raw_fd(); // c:312
-            RANDFD.store(fd, Ordering::SeqCst);
-            0
-        }
+    // c:296 — `if ((tmpfd = open("/dev/urandom", O_RDONLY)) < 0)`
+    let f = match std::fs::OpenOptions::new().read(true).open("/dev/urandom") {
+        Ok(f) => f,
         Err(e) => {
-            // c:300 — `zwarn("Could not access kernel random pool: %m");`
+            // c:297 — `zwarn("Could not access kernel random pool: %e.", errno);`
             zwarn(&format!("Could not access kernel random pool: {}", e));
-            1 // c:319
+            return 1; // c:298
         }
+    };
+    // c:300 — `randfd = movefd(tmpfd);` — relocate to a high fd so the
+    // urandom handle doesn't clash with shell-side fd 3-9 use. Prior
+    // port skipped movefd, so randfd typically landed at fd 3 or 4 —
+    // colliding with redirect-save slots from `exec 3>file` style
+    // user commands. The shell's redirect machinery would then
+    // dup-over the urandom fd, leaving random_real reading from
+    // whatever the user redirected.
+    let tmpfd = f.into_raw_fd(); // c:293 `int tmpfd = -1`
+    let fd = crate::ported::utils::movefd(tmpfd);
+    // c:301 — `addmodulefd(randfd, FDT_MODULE);` — register the urandom
+    // fd in the global fdtable as FDT_MODULE so closem and exec
+    // redirect-save recognize it as module-owned. Same fix as the
+    // db_gdbm addmodulefd port (c0dad2eb83) but with FDT_MODULE
+    // (matches C: random.c uses FDT_MODULE, db_gdbm.c uses FDT_INTERNAL).
+    crate::ported::utils::addmodulefd(fd, crate::ported::zsh_h::FDT_MODULE);
+    // c:302-305 — `if (randfd < 0) { zwarn(...); return 1; }` — movefd
+    // failure (out of fd slots). Rust movefd returns -1 on failure
+    // matching C.
+    if fd < 0 {
+        zwarn("Could not access kernel random pool.");
+        return 1;
     }
+    RANDFD.store(fd, Ordering::SeqCst);
+    0 // c:307
 }
 
 /// Re-export of the canonical `random_real()` from
@@ -309,16 +327,23 @@ pub fn cleanup_(m: *const module) -> i32 {
     setfeatureenables(m, module_features(), None)
 }
 
-/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/random.c:319`.
+/// Port of `finish_(UNUSED(Module m))` from `Src/Modules/random.c:319-326`.
 #[allow(unused_variables)]
 pub fn finish_(m: *const module) -> i32 {
     // c:319
-    // c:319-324 — USE_URANDOM block: `if (randfd >= 0) zclose(randfd)`.
+    // c:322-323 — `if (randfd >= 0) zclose(randfd);`
     let fd = RANDFD.swap(-1, Ordering::SeqCst);
     if fd >= 0 {
+        // Clear the fdtable entry BEFORE close so the post-close
+        // kernel-reuse of this fd number doesn't inherit the
+        // FDT_MODULE marker we set in boot_ (port c0dad2eb83 +
+        // c3a5125d9f pattern). C's zclose internally calls
+        // fdtable_set(fd, FDT_UNUSED) so the canonical path is safe;
+        // the raw libc::close below skips that step.
+        crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_UNUSED);
         unsafe { libc::close(fd) }; // c:323 zclose
     }
-    0
+    0 // c:325
 }
 
 /// Buffer size for pre-loading random integers
