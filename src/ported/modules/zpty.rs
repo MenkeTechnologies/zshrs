@@ -21,22 +21,29 @@ pub const READ_MAX: usize = 1024 * 1024; // c:44
 /// Same fields (name, args, master fd, pid, echo, nonblock).
 #[derive(Debug)]
 pub struct ptycmd {
-    /// `name` field.
+    /// `name` field (C: `char *name`).
     pub name: String,
-    /// `args` field.
+    /// `args` field (C: `char **args`).
     pub args: Vec<String>,
-    /// `master_fd` field.
+    /// `master_fd` field (C: `int fd` — master end of the pty).
     pub master_fd: RawFd,
-    /// `pid` field.
+    /// `pid` field (C: `pid_t pid` — spawned child PID).
     pub pid: i32,
-    /// `echo` field.
+    /// `echo` field (C: `int echo`).
     pub echo: bool,
-    /// `nonblock` field.
+    /// `nonblock` field (C: `int nblock`).
     pub nonblock: bool,
-    /// `finished` field.
+    /// `finished` field (C: `int fin`).
     pub finished: bool,
-    /// `buffer` field.
-    pub buffer: Vec<u8>,
+    /// `read_buf` field — C: `int read;` initialised to -1; the
+    /// single byte stashed by `checkptycmd` (c:543-544) for the next
+    /// `ptyread` to consume at c:583-588. `None` ⇔ C's -1 sentinel.
+    pub read_buf: Option<u8>,
+    /// `old` field — C: `char *old; int olen;` populated when a
+    /// pattern-bearing `ptyread` exits early with EWOULDBLOCK/EAGAIN
+    /// (c:682-694) so the partial-match prefix carries to the next
+    /// invocation (c:572-578).
+    pub old: Option<Vec<u8>>,
 }
 
 impl ptycmd {
@@ -57,7 +64,9 @@ impl ptycmd {
             echo,
             nonblock,
             finished: false,
-            buffer: Vec::new(),
+            // c:455-458 — `cmd->read = -1; cmd->old = NULL; cmd->olen = 0;`
+            read_buf: None,
+            old: None,
         }
     }
 }
@@ -409,9 +418,9 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
         }
         return;
     }
-    // c:544 — `cmd->read = (int) c;` — buffer the read byte for
-    // the next read-builtin call. zshrs's ptycmd uses Vec<u8>.
-    cmd.buffer.push(c);
+    // c:543-544 — `cmd->read = (int) c;` — stash the probed byte
+    // for the next `ptyread` call to consume at c:583-588.
+    cmd.read_buf = Some(c);
 }
 
 /// Port of `ptyread(char *nam, Ptycmd cmd, char **args, int noblock, int mustmatch)`
@@ -468,18 +477,31 @@ pub fn ptyread(
         let _ = std::io::stdout().flush();
     }
 
-    // c:579-582 — `buf = zhalloc(256 + 1)` (no cmd->old machinery yet).
-    let mut buf: Vec<u8> = Vec::with_capacity(257);
+    // c:572-582 — `if (cmd->old) { used=olen; buf=zhalloc(256+used+1); memcpy(buf, cmd->old, olen); ... } else { buf=zhalloc(256+1); }`
+    let mut buf: Vec<u8> = if let Some(old) = cmd.old.take() {
+        used = old.len();
+        let mut v = Vec::with_capacity(256 + used + 1);
+        v.extend_from_slice(&old);
+        v
+    } else {
+        Vec::with_capacity(257)
+    };
+    // c:583-588 — `if (cmd->read != -1) { buf[used] = cmd->read; seen = used = 1; cmd->read = -1; }`
+    if let Some(c) = cmd.read_buf.take() {
+        buf.push(c);
+        seen = true;
+        used = 1;
+    }
 
     // c:589 — `do { ... } while ();` loop.
     use std::sync::atomic::Ordering::Relaxed;
     let setparam_target = args.first().copied(); // None ⇔ C's `!*args` (stdout).
 
     loop {
-        // c:590-628 — noblock poll branch. Probe via poll(2) (Rust
-        // doesn't need the HAVE_SELECT/FIONREAD ifdef split — poll is
-        // universally available on the supported targets).
-        if noblock {
+        // c:590 — `if (noblock && cmd->read == -1)` — poll only when
+        // we don't have a stashed read byte to consume; if read_buf
+        // is set, fall through to the read-or-stash path below.
+        if noblock && cmd.read_buf.is_none() {
             let mut pfd = libc::pollfd {
                 fd: cmd.master_fd,
                 events: libc::POLLIN,
@@ -490,8 +512,10 @@ pub fn ptyread(
             if pollret == 0 {
                 break;
             }
-            // c:612-625 — set-nonblock + read-1 fallback omitted: the
-            // Rust port doesn't carry `cmd->read` yet (see header).
+            // c:612-625 — when pollret < 0, C tries setblock_fd + 1-byte
+            // read and stashes the byte to cmd->read. Skip: setblock_fd
+            // isn't ported (mode-save/restore on fd 0); next iteration's
+            // checkptycmd does the equivalent stash anyway via c:543-544.
         }
         // c:629-633 — refresh fin-state on every loop iteration when
         // we haven't read anything yet this round.
@@ -501,9 +525,17 @@ pub fn ptyread(
                 break; // c:632
             }
         }
-        // c:634 — `read(cmd->fd, buf + used, 1)` single-byte read.
+        // c:634 — `if (cmd->read != -1 || (ret = read(cmd->fd, buf+used, 1)) == 1)`:
+        // prefer the byte that checkptycmd's mid-loop pass at c:629-630
+        // just stashed in `cmd.read_buf`; only fall through to a fresh
+        // 1-byte read when none was stashed.
         let mut byte: u8 = 0;
-        ret = unsafe { libc::read(cmd.master_fd, &mut byte as *mut u8 as *mut _, 1) } as isize;
+        if let Some(c) = cmd.read_buf.take() {
+            byte = c;
+            ret = 1; // c:637
+        } else {
+            ret = unsafe { libc::read(cmd.master_fd, &mut byte as *mut u8 as *mut _, 1) } as isize;
+        }
         if ret == 1 {
             // c:642-646 — `if (imeta(c)) { buf[used++] = Meta; buf[used++] = c ^ 32; } else buf[used++] = c;`
             if crate::ported::ztype_h::imeta(byte) {
@@ -567,6 +599,19 @@ pub fn ptyread(
                     break;
                 }
             }
+        }
+    }
+
+    // c:682-694 — pattern-pending + EWOULDBLOCK/EAGAIN partial-match
+    // stash: copy `buf` into `cmd->old` for the next ptyread call to
+    // pick up at c:572-578, then early-return 1 (alive, no match yet).
+    if prog.is_some() && ret < 0 {
+        let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if eno == libc::EWOULDBLOCK || eno == libc::EAGAIN {
+            // c:691-692 — `cmd->old = zalloc(olen=used); memcpy(...)`.
+            cmd.old = Some(buf);
+            // c:694
+            return 1;
         }
     }
 
