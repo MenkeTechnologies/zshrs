@@ -154,12 +154,24 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     };
 
     // c:108-112 — build arr (the $match / $BASH_REMATCH array).
+    //   for (m = matches + start, n = start; n <= re.re_nsub; ++n, ++m, ++x) {
+    //       *x = metafy(lhstr + m->rm_so, m->rm_eo - m->rm_so, META_DUP);
+    //   }
+    //
+    // C metafies each capture's byte range before storing. The Rust
+    // port pushed `m.as_str().to_string()` — raw bytes, no metafy.
+    // For ASCII-only captures the gap is invisible; for captures
+    // containing NUL or 0x83-class bytes (rare but legal — e.g.
+    // matching against binary data via $'\x00...'), the raw form
+    // confuses downstream metafy-aware consumers (param printing,
+    // string-comparison, `print -r`'s output path) — they expect
+    // metafied storage and decode incorrectly.
     let mut arr: Vec<String> = Vec::with_capacity(nelem);
     for n in start..=nsub {
-        // c:109
+        // c:108
         if let Some(m) = captures.get(n) {
-            // c:110
-            arr.push(m.as_str().to_string()); // c:110 metafy
+            // c:109 — `metafy(lhstr + m->rm_so, m->rm_eo - m->rm_so, META_DUP)`
+            arr.push(crate::ported::utils::metafy(m.as_str()));
         } else {
             arr.push(String::new());
         }
@@ -178,10 +190,14 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         return return_value;
     }
 
-    // c:119-121 — assignsparam("MATCH", full-match-text).
+    // c:119-122 — `m = matches; s = metafy(lhstr + m->rm_so,
+    //                   m->rm_eo - m->rm_so, META_DUP);
+    //                assignsparam("MATCH", s, 0);`
     let m0 = captures.get(0).expect("regex matched but no group 0");
-    let full = m0.as_str().to_string(); // c:120 metafy
-    setsparam("MATCH", &full); // c:121 assignsparam
+    // c:121 — metafy the full-match text before assignsparam, same
+    // reason as the capture-array metafy above.
+    let full = crate::ported::utils::metafy(m0.as_str());
+    setsparam("MATCH", &full); // c:122 assignsparam
 
     // c:124-135 — char-offset MBEGIN. C walks the pre-match bytes
     // counting MB_CHARLEN-stepped characters; Rust collapses to
