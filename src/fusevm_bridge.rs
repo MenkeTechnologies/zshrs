@@ -3236,7 +3236,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let _ = std::io::stderr().flush();
                 std::process::exit(co_vm.last_status);
             }
-            _pid => {
+            pid => {
                 // Parent: close child ends, store [read_fd, write_fd] in NAME.
                 unsafe {
                     libc::close(p2c[0]);
@@ -3264,6 +3264,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .store(read_fd, std::sync::atomic::Ordering::Relaxed);
                 crate::ported::modules::clone::coprocout
                     .store(write_fd, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/exec.c:2837 — `lastpid = (zlong) pid;`. zsh
+                // sets the `$!` global to the coproc child's PID so
+                // subsequent `$!` reads return it. The Rust port at
+                // exec.rs:6773 mirrors this for regular background
+                // jobs but the coproc launch path was missing the
+                // assignment, leaving `$!` at 0 after `coproc cmd`.
+                crate::ported::modules::clone::lastpid
+                    .store(pid, std::sync::atomic::Ordering::Relaxed);
                 Value::Status(0)
             }
         }
