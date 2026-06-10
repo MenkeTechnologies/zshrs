@@ -2464,15 +2464,31 @@ pub fn zalloc_default_array(assoc: &str, keep: bool, num: i32) -> Vec<String> {
     let mut aval: Vec<String> = Vec::new();
     if keep && num > 0 {
         // c:1715
-        // c:1717-1718 — fetchvalue(assoc, SCANPM_WANTKEYS|WANTVALS|MATCHMANY)
-        //               → all key/value pairs of the associative array.
-        // c:1719-1727 — the C body walks `getarrvalue(v)` (a flat
-        // string-array view of the assoc), copying each entry into
-        // *aval. zshrs's paramtab doesn't expose the typed hash-as-
-        // array view here (assocgetfn lives in src/extensions/);
-        // leave the pre-load empty so the caller writes into the
-        // trailing capacity. Tracked at TODO.md as a zutil gap.
-        let _ = assoc;
+        // c:1717-1718 — `fetchvalue(assoc, SCANPM_WANTKEYS|SCANPM_WANTVALS|SCANPM_MATCHMANY)`
+        //               returns a Value with the assoc-hash entries as a
+        //               flat string array (alternating key, value).
+        // c:1719-1727 — walk that flat array via `getarrvalue(v)` and
+        //               copy each entry into `*aval`; the post-loop
+        //               extra capacity (`num*2`) holds the new
+        //               key/value pairs zparseopts is about to push.
+        //
+        // Route through the canonical `paramtab_hashed_storage` view
+        // — the IndexMap iteration order matches C's hashtable walk
+        // order (insertion-stable for assoc params). Prior port
+        // deferred this with a TODO and left aval empty, so
+        // `zparseopts -K -A myhash ... existing-key=oldvalue` produced
+        // an output assoc that DROPPED the existing entries instead
+        // of preserving them — the `-K` ("keep") flag's documented
+        // contract was a no-op.
+        let store = crate::ported::params::paramtab_hashed_storage();
+        if let Ok(s) = store.lock() {
+            if let Some(m) = s.get(assoc) {
+                for (k, v) in m.iter() {
+                    aval.push(k.clone());
+                    aval.push(v.clone());
+                }
+            }
+        }
     }
     // c:1730-1732 — `if (!ap) { ap = zalloc((num*2)+1); *ap = NULL; }`
     aval.reserve((num as usize) * 2 + 1);
