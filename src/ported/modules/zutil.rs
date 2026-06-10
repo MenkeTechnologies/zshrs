@@ -2337,15 +2337,26 @@ pub fn lookup_opt(str: &str) -> Option<Zoptdesc> {
     let head = OPT_DESCS.lock().unwrap();
     let mut cur = head.as_deref();
     while let Some(p) = cur {
-        // c:1573-1582 — ZOF_GNUL (long-form with `=value`).
+        // c:1573-1582 — ZOF_GNUL (option takes arg, GNU-style):
+        //   name == str OR (name is prefix AND str[name.len()] == '=')
         if p.flags & ZOF_GNUL != 0 {
             if p.name == str
                 || (str.starts_with(&p.name) && str.as_bytes().get(p.name.len()) == Some(&b'='))
             {
                 return Some(Box::new(p.clone()));
             }
-        // c:1584-1591 — default (cuddled) prefix-match.
-        } else if str.starts_with(&p.name) {
+        // c:1591-1593 — ZOF_ARG (option takes arg, cuddled style):
+        //   strpfx (prefix match). `-fooVALUE` matches spec `-foo:`.
+        } else if p.flags & ZOF_ARG != 0 {
+            if str.starts_with(&p.name) {
+                return Some(Box::new(p.clone()));
+            }
+        // c:1595-1596 — option takes NO argument: strcmp (exact match).
+        // Prior Rust port used starts_with here too, so `--foobar`
+        // mis-resolved to spec `--foo` (no-arg) and silently swallowed
+        // the trailing `bar`. C's exact match rejects this so the
+        // outer code falls through to short-option dispatch.
+        } else if p.name == str {
             return Some(Box::new(p.clone()));
         }
         cur = p.next.as_deref();
