@@ -2899,16 +2899,41 @@ pub fn zfgetcwd() -> i32 {
         zfunsetparam("ZFTP_PWD"); // c:2367
         return 1; // c:2368
     }
-    let cwd_ret = if lastcode.load(Ordering::Relaxed) >= 200 {
-        0
+    // c:2370-2382 — parse the PWD reply to extract the directory
+    // path between optional `"` delimiters.
+    //
+    //   ptr = lastmsg;
+    //   while (*ptr == ' ') ptr++;
+    //   if (!*ptr) return 1;                 /* ultra safe */
+    //   if (*ptr == '"') { ptr++; endc = '"'; }
+    //   else endc = ' ';
+    //   for (eptr = ptr; *eptr && *eptr != endc; eptr++);
+    //   zfsetparam("ZFTP_PWD", ztrduppfx(ptr, eptr-ptr), ZFPM_READONLY);
+    //
+    // Prior port collapsed this to "set if PWD command succeeded"
+    // without actually setting ZFTP_PWD to the parsed path. Scripts
+    // reading `$ZFTP_PWD` after `zftp cd somewhere` got a stale value
+    // from a previous chdir or empty string entirely.
+    let pwd_msg = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
+    let trimmed = pwd_msg.trim_start_matches(' '); // c:2371-2372
+    if trimmed.is_empty() {
+        // c:2373 — `if (!*ptr) return 1;`
+        return 1; // c:2374
+    }
+    let (rest, endc) = if let Some(s) = trimmed.strip_prefix('"') {
+        // c:2375-2378 — `if (*ptr == '"') { ptr++; endc = '"'; }`
+        (s, '"')
     } else {
-        1
+        // c:2378-2379 — `else endc = ' ';`
+        (trimmed, ' ')
     };
+    let path: String = rest.chars().take_while(|&c| c != endc).collect(); // c:2380-2381
+    zfsetparam("ZFTP_PWD", &path, ZFPM_READONLY); // c:2382
 
-    // c:2388-2393 — zftp_chpwd hook: after PWD reply parses, fire
-    // the shfunc with SFC_HOOK context. The fully-ported parse loop
-    // (extract dir between `"`s in the reply) isn't here yet, so
-    // ZFTP_PWD update is partial; the hook firing is independent.
+    let cwd_ret = 0; // c:2396 — `return 0;` post-parse success
+
+    // c:2388-2393 — zftp_chpwd hook: fire the shfunc with SFC_HOOK
+    // context after ZFTP_PWD has been updated.
     if let Some(mut shfunc) = getshfunc("zftp_chpwd") {
         let osc = SFCONTEXT.load(Ordering::Relaxed);
         SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed);
