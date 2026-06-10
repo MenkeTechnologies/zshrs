@@ -662,18 +662,6 @@ pub fn bin_zpty(
             return (ret, output); // c:824
         }
 
-        if OPT_ISSET(ops, b'L') {
-            for (name, cmd) in cmds.iter() {
-                let status = if cmd.finished {
-                    "(finished)"
-                } else {
-                    "(running)"
-                };
-                output.push_str(&format!("{}: {} {}\n", name, cmd.args.join(" "), status));
-            }
-            return (0, output);
-        }
-
         if OPT_ISSET(ops, b'w') {
             // c:795 — `if (!*args) { zwarnnam(nam, "missing pty command name"); return 1; }`
             if args.is_empty() {
@@ -772,10 +760,62 @@ pub fn bin_zpty(
             );
             (r, output)
         } else {
-            // c:848-870 — no-flag, no-args arm: list all live ptys.
-            // Deferred: full listing arm with -L / pid + checkptycmd
-            // per c:852-867 is its own port iteration.
-            (0, output)
+            // c:848-868 — no-flag (or -L) catch-all: list every live pty,
+            // refreshing fin-state via checkptycmd. -L uses the
+            // "nam [-e] [-b] name args..." format suitable for re-execution;
+            // the default uses "(finished) name: args..." or
+            // "(pid) name: args...".
+            //   for (p = ptycmds; p; p = p->next) {
+            //       checkptycmd(p);
+            //       if (OPT_ISSET(ops,'L')) printf("%s %s%s%s ", nam, ...);
+            //       else if (p->fin) printf("(finished) %s: ", p->name);
+            //       else printf("(%d) %s: ", p->pid, p->name);
+            //       for (a = p->args; *a; ) {
+            //           quotedzputs(*a++, stdout);
+            //           if (*a) putchar(' ');
+            //       }
+            //       putchar('\n');
+            //   }
+            //   return 0;
+            // c:852 — iterate over snapshot of keys so checkptycmd can
+            // mutate each ptycmd (and so we don't hold a borrow on cmds
+            // while mutating).
+            let names: Vec<String> = cmds.keys().cloned().collect();
+            for n in &names {
+                let cmd = match cmds.get_mut(n) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                // c:853
+                checkptycmd(cmd);
+                if OPT_ISSET(ops, b'L') {
+                    // c:854-856 — `printf("%s %s%s%s ", nam, (echo?-e:""), (nblock?-b:""), name)`
+                    output.push_str(&format!(
+                        "{} {}{}{} ",
+                        _nam,
+                        if cmd.echo { "-e " } else { "" },
+                        if cmd.nonblock { "-b " } else { "" },
+                        cmd.name
+                    ));
+                } else if cmd.finished {
+                    // c:857-858
+                    output.push_str(&format!("(finished) {}: ", cmd.name));
+                } else {
+                    // c:859-860
+                    output.push_str(&format!("({}) {}: ", cmd.pid, cmd.name));
+                }
+                // c:861-865 — `for (a = p->args; *a; ) { quotedzputs(*a++, stdout);
+                //               if (*a) putchar(' '); }`
+                let n_args = cmd.args.len();
+                for (i, a) in cmd.args.iter().enumerate() {
+                    output.push_str(&crate::ported::utils::quotedzputs(a));
+                    if i + 1 < n_args {
+                        output.push(' ');
+                    }
+                }
+                output.push('\n'); // c:866
+            }
+            (0, output) // c:868
         }
     })();
     drop(cmds_guard);
