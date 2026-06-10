@@ -206,24 +206,35 @@ pub fn bin_echotc(
             tputs(value_cstr.as_ptr(), 1, putraw);
         }
     } else {
-        // c:132 — `num = (argv[1]) ? atoi(argv[1]) : atoi(*argv);`
-        // c:133 — `tputs(tgoto(t, num, atoi(*argv)), 1, putraw);`
+        // c:131-133 — verbatim:
+        //   /* This assumes arguments of <lines> <columns> for cap 'cm' */
+        //   num = (argv[1]) ? atoi(argv[1]) : atoi(*argv);
+        //   tputs(tgoto(t, num, atoi(*argv)), 1, putraw);
         //
-        // tgoto(cap, col, line) signature: col = atoi(*argv) =
-        // argv_rest[0]; line = num = argv_rest[1] if present else
-        // atoi(*argv). This convention matches `cm` (cursor-move) caps
-        // taking (col, row) — the trailing argument is the row even
-        // though it appears second.
-        let col: libc::c_int = argv_rest
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let line: libc::c_int = argv_rest
+        // tgoto's signature is `tgoto(cap, destcol, destline)` per
+        // termcap(3) — column first, line second. C's pick:
+        //   p1 = num = atoi(argv[1]) (or atoi(*argv) if only one arg)
+        //   p2 = atoi(*argv)
+        // i.e. user typed `echotc cm <line> <col>`, C maps the SECOND
+        // user-arg to destcol (p1) and the FIRST to destline (p2). The
+        // comment at c:131 makes the line-then-column convention
+        // explicit.
+        //
+        // Prior Rust port had this reversed (col = argv_rest[0],
+        // line = argv_rest[1]) — `echotc cm 5 10` jumped to (col=5,
+        // line=10) where C jumps to (col=10, line=5).
+        let num: libc::c_int = argv_rest
             .get(1)
             .and_then(|s| s.parse().ok())
-            .unwrap_or(col);
+            .or_else(|| argv_rest.first().and_then(|s| s.parse().ok()))
+            .unwrap_or(0); // c:132
+        let arg0_n: libc::c_int = argv_rest
+            .first()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0); // c:133 atoi(*argv)
         unsafe {
-            let resolved = tgoto(value_cstr.as_ptr(), col, line);
+            // c:133 — tgoto(t, num, atoi(*argv))
+            let resolved = tgoto(value_cstr.as_ptr(), num, arg0_n);
             if !resolved.is_null() {
                 tputs(resolved, 1, putraw);
             }
