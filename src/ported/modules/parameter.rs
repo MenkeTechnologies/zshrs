@@ -982,19 +982,50 @@ pub fn setpmdisfunctions(pm: Param, ht: *mut HashTable) {
 /// ```
 #[allow(non_snake_case)]
 /// WARNING: param names don't match C — Rust=() vs C=(ht, name, dis)
-pub fn getfunction(_ht: *mut HashTable, name: &str, _dis: i32) -> Option<Param> {
+pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
+    // c:388
+    // Faithful port of c:399-438:
+    //   if ((shf = shfunctab->getnode2(shfunctab, name)) &&
+    //       (dis ? (shf->node.flags & DISABLED)
+    //            : !(shf->node.flags & DISABLED))) {
+    //       if (shf->node.flags & PM_UNDEFINED) {
+    //           pm->u.str = dyncat('builtin autoload -X', ...);
+    //       } else { /* build pretty body */ }
+    //   } else {
+    //       pm->u.str = ''; flags |= PM_UNSET|PM_SPECIAL;
+    //   }
+    //
+    // C uses getnode2 (no DISABLED filter) so the entry is visible
+    // regardless of state; the dis-parity check decides visibility.
+    // The Rust equivalent is get_including_disabled — get() filters
+    // DISABLED out automatically.
+    //
+    // Prior port called shfunctab.get(name) which already drops the
+    // disabled entries, then ignored the `dis` parameter entirely.
+    // That meant:
+    //   - \${(k)functions[(I)f]}     listed disabled fns (wrong)
+    //   - \${(k)dis_functions[(I)f]} returned nothing (wrong: should
+    //                                list ONLY disabled fns)
     let g = shfunctab_lock().read().ok()?;
-    let entry = g.get(name); // c:399 shfunctab[name]
+    let entry = g.get_including_disabled(name); // c:399 shfunctab->getnode2
     let (value, found) = if let Some(shf) = entry {
-        // c:401-407 — PM_UNDEFINED autoload form: `builtin autoload -X[Ut]`.
-        // Static-link path doesn't yet expose PM_UNDEFINED on ShFunc;
-        // route via body.is_none() as the autoload signal.
-        let body = shf.body.as_deref();
-        let v = match body {
-            None => "builtin autoload -X".to_string(), // c:402-407
-            Some(text) => format!("\t{}", text),       // c:409-431 getpermtext
-        };
-        (v, true)
+        // c:400 — DISABLED parity check.
+        let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+        let dis_match = if dis != 0 { is_disabled } else { !is_disabled };
+        if dis_match {
+            // c:401-407 — PM_UNDEFINED autoload form: `builtin autoload -X[Ut]`.
+            // Static-link path doesn't yet expose PM_UNDEFINED on ShFunc;
+            // route via body.is_none() as the autoload signal.
+            let body = shf.body.as_deref();
+            let v = match body {
+                None => "builtin autoload -X".to_string(), // c:402-407
+                Some(text) => format!("\t{}", text),       // c:409-431 getpermtext
+            };
+            (v, true)
+        } else {
+            // c:435-437 — wrong DISABLED parity: treat as not found.
+            (String::new(), false)
+        }
     } else {
         (String::new(), false) // c:439
     };
