@@ -290,35 +290,56 @@ pub fn gettermcap(
         return None;
     }
     let n_c = std::ffi::CString::new(name).ok()?;
-    // c:163 — try string cap first (most common via `${termcap[name]}`).
-    let mut buf: [libc::c_char; 1024] = [0; 1024];
-    let mut area = buf.as_mut_ptr();
+    // c:165 — "logic in the following cascade copied from echotc, above"
+    // — C's order is numeric → boolean → string (NOT string → numeric →
+    // boolean). Prior Rust port reversed the order AND used raw
+    // tgetflag instead of the canonical ztgetflag wrapper.
+    //
+    // Why order matters: some terminal entries define a name in
+    // multiple cap classes. `lines` is numeric on most terms but
+    // booldata files have it as a string alias on a few historical
+    // entries — C's numeric-first order picks the integer; the
+    // prior string-first port returned the cap escape sequence
+    // instead, so `${termcap[lines]}` returned `\E[B` (the cursor-
+    // down escape) on those terms instead of the line count.
+    //
+    // ztgetflag (this module's ported wrapper at c:54) distinguishes
+    // 1 = on, 0 = "known but off" (cap is in BOOLCODES), -1 = unknown.
+    // Raw tgetflag conflates 0 and -1, so the prior port couldn't tell
+    // "boolean off" from "missing" — `${termcap[bw]}` returned PM_UNSET
+    // for a known-off auto-margin instead of "no" as C does.
     let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let raw = unsafe { tgetstr(n_c.as_ptr(), &mut area) }; // c:163
-    if !raw.is_null() {
-        let s = unsafe { std::ffi::CStr::from_ptr(raw) }
-            .to_string_lossy()
-            .into_owned();
-        return Some(mk(s, PM_SCALAR as i32));
+    // c:167 — try numeric cap first.
+    let num = unsafe { tgetnum(n_c.as_ptr()) }; // c:167
+    if num != -1 {
+        // c:168-171 — PM_INTEGER with value (Rust port flattens to
+        // decimal string so vm_helper::partab_get sees a populated
+        // u_str without going through u_val).
+        return Some(mk(num.to_string(), PM_SCALAR as i32));
     }
-    // c:170 — numeric cap fallback.
-    let n = unsafe { tgetnum(n_c.as_ptr()) }; // c:170
-    if n != -1 {
-        return Some(mk(n.to_string(), PM_SCALAR as i32));
-    }
-    // c:175 — boolean cap fallback.
-    match unsafe { tgetflag(n_c.as_ptr()) } {
-        1 => Some(mk("yes".to_string(), PM_SCALAR as i32)),
-        0 => {
-            // Known but off → "" only if it's in BOOLCODES.
-            if BOOLCODES.iter().any(|b| *b == name) {
-                Some(mk(String::new(), PM_SCALAR as i32))
+    drop(_g);
+    // c:175-186 — boolean cap via ztgetflag wrapper.
+    match ztgetflag(name) {
+        // c:175
+        1 => Some(mk("yes".to_string(), PM_SCALAR as i32)), // c:183
+        0 => Some(mk("no".to_string(), PM_SCALAR as i32)),  // c:179
+        _ => {
+            // c:176 (break) — fall through to tgetstr.
+            let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let mut buf: [libc::c_char; 1024] = [0; 1024];
+            let mut area = buf.as_mut_ptr();
+            let raw = unsafe { tgetstr(n_c.as_ptr(), &mut area) }; // c:187
+            if !raw.is_null() && (raw as isize) != -1 {
+                // c:188 — PM_SCALAR with cap string.
+                let s = unsafe { std::ffi::CStr::from_ptr(raw) }
+                    .to_string_lossy()
+                    .into_owned();
+                Some(mk(s, PM_SCALAR as i32))
             } else {
-                // c:191-193 — `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
+                // c:192-193 — `pm->u.str = ""; pm->node.flags |= PM_UNSET;`
                 Some(mk(String::new(), PM_SCALAR as i32 | PM_UNSET as i32))
             }
         }
-        _ => Some(mk(String::new(), PM_SCALAR as i32 | PM_UNSET as i32)),
     }
 }
 
