@@ -1319,6 +1319,89 @@ impl ShellExecutor {
                     }
                     if let Some(pm) = tab.get_mut(&env_name) {
                         pm.node.flags |= PM_EXPORTED as i32;
+                        // c:Src/params.c:893-924 — C's env-import calls
+                        // `assignsparam(..., ASSPM_ENV_IMPORT)` which
+                        // routes through the param's GSU setfn. For
+                        // SPECIAL scalars with cached storage (HOME,
+                        // USERNAME, TERM, WORDCHARS, TERMINFO,
+                        // TERMINFO_DIRS, KEYBOARD_HACK, histchars) the
+                        // setfn writes to a separate `*_lock` global
+                        // (e.g. home_lock). Just OR'ing PM_EXPORTED
+                        // leaves those globals empty, so `$HOME` reads
+                        // back "" even though HOME is in env. Mirror
+                        // C by copying the env value into pm.u_str and
+                        // (for cached specials) the matching global.
+                        //
+                        // IFS / `_` carry PM_DONTIMPORT (Src/params.c
+                        // IPDEF7) — skip those; their env value MUST
+                        // NOT override the shell-set default.
+                        let dontimport = (pm.node.flags as u32
+                            & crate::ported::zsh_h::PM_DONTIMPORT)
+                            != 0;
+                        // Only seed cached state when the param was
+                        // still marked PM_UNSET — i.e. nothing has set
+                        // it yet. ShellExecutor::new's earlier init
+                        // block (vm_helper line 837+) already ran
+                        // setsparam for a few names (ZSH_ARGZERO,
+                        // WORDCHARS, SHLVL with the +1 increment, IFS,
+                        // OPTIND, …); those calls clear PM_UNSET so we
+                        // must not overwrite them with the raw env
+                        // value here. The PM_UNSET-still-set case is
+                        // the "C zsh would have called
+                        // assignsparam(...,ASSPM_ENV_IMPORT) and ours
+                        // didn't yet" gap that bug #599 (HOME=` `) and
+                        // %~ prompt expansion need.
+                        let still_unset = (pm.node.flags as u32
+                            & crate::ported::zsh_h::PM_UNSET)
+                            != 0;
+                        if !dontimport && still_unset {
+                            pm.u_str = Some(env_value.clone());
+                            pm.env = Some(format!("{}={}", env_name, env_value));
+                            // c:Src/params.c:3660 — `assignstrvalue`
+                            // clears PM_UNSET on any write. HOME / TERM
+                            // / TERMINFO / TERMINFO_DIRS / WORDCHARS
+                            // start life with PM_UNSET in
+                            // `special_params` (params.rs SPECIAL_PARAMS
+                            // table) so `lookup_special_var` skips the
+                            // getfn for uninitialized specials; env
+                            // import is the canonical "now it's set"
+                            // event, so clear the bit.
+                            pm.node.flags &= !(PM_UNSET as i32);
+                            // Cached-state specials: route through
+                            // the matching setfn so the global cache
+                            // (home_lock / wordchars_lock / etc.)
+                            // reflects the env value. Each setfn
+                            // ignores its `pm` arg (matches C's
+                            // UNUSED(Param pm)), so passing the
+                            // borrowed paramtab entry is safe.
+                            match env_name.as_str() {
+                                "HOME" => crate::ported::params::homesetfn(
+                                    pm.as_mut(),
+                                    env_value.clone(),
+                                ),
+                                "USERNAME" => crate::ported::params::usernamesetfn(
+                                    pm.as_mut(),
+                                    env_value.clone(),
+                                ),
+                                "TERM" => crate::ported::params::termsetfn(
+                                    pm.as_mut(),
+                                    env_value.clone(),
+                                ),
+                                "WORDCHARS" => crate::ported::params::wordcharssetfn(
+                                    pm.as_mut(),
+                                    env_value.clone(),
+                                ),
+                                "TERMINFO" => crate::ported::params::terminfosetfn(
+                                    pm.as_mut(),
+                                    env_value.clone(),
+                                ),
+                                "TERMINFO_DIRS" => crate::ported::params::terminfodirssetfn(
+                                    pm.as_mut(),
+                                    env_value.clone(),
+                                ),
+                                _ => {}
+                            }
+                        }
                     } else {
                         // Fresh entry — PM_SCALAR + PM_EXPORTED, value
                         // taken from env. Mirrors C zsh's c:907-908
