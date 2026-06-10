@@ -110,15 +110,63 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
         }
     };
 
-    // c:142-145 — check existing tied
+    // c:142-159 — `if ((tied_param = paramtab->getnode(paramtab, pmname)) &&
+    //                   !(tied_param->node.flags & PM_UNSET)) {
+    //                   if (unsetparam_pm(tied_param, 0, 1)) return 1;
+    //               }`
+    //
+    // C unsets ANY existing param with this name — scalar, array, hash,
+    // tied — not just tied-by-this-module. Prior Rust port only checked
+    // its own TIED_PARAMS registry and rejected with "already tied" if
+    // the name was already gdbm-tied; non-tied existing params were
+    // silently shadowed, so a user doing
+    //   myvar=hello
+    //   ztie -d db/gdbm -f db.gdbm myvar
+    // ended up with the scalar `myvar=hello` in paramtab AND the tied
+    // hash `myvar` in TIED_PARAMS — two competing storage paths for
+    // the same name. `$myvar` returned `hello` (scalar wins paramtab
+    // lookup), `${myvar[key]}` returned the gdbm entry. Mixed semantics
+    // with no diagnostic.
+    //
+    // C semantic: unset the old param FIRST so the tie can take over
+    // the name cleanly. If unset fails (readonly variable), abort the
+    // tie with the same exit code C uses.
     {
-        let params = match TIED_PARAMS.lock() {
-            Ok(p) => p,
+        let mut existing_unset_failed = false;
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut(pmname) {
+                // c:143 — `!(tied_param->node.flags & PM_UNSET)`
+                if (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) == 0 {
+                    // c:157 — `if (unsetparam_pm(tied_param, 0, 1)) return 1;`
+                    let r = crate::ported::params::unsetparam_pm(pm, 0, 1);
+                    if r != 0 {
+                        existing_unset_failed = true;
+                    }
+                }
+            }
+        }
+        if existing_unset_failed {
+            // c:158 — zerr already emitted from inside unsetparam_pm
+            // for the read-only-variable diagnostic at c:3852.
+            return 1;
+        }
+        // c:142 also catches the "already gdbm-tied" case: C's
+        // unsetparam_pm → gdbmhashunsetfn → gdbmuntie path would have
+        // released the prior tie. zshrs's paramtab doesn't mirror tied
+        // entries yet, so the explicit TIED_PARAMS check below covers
+        // the same case (different code path, same end-state — caller
+        // gets the prior tie removed).
+        let still_tied = match TIED_PARAMS.lock() {
+            Ok(p) => p.contains_key(pmname),
             Err(_) => return 1,
         };
-        if params.contains_key(pmname) {
-            zwarnnam(nam, &format!("parameter {} is already tied", pmname));
-            return 1;
+        if still_tied {
+            // Existing tie wasn't released by the unsetparam_pm path
+            // above (paramtab + TIED_PARAMS aren't yet synced). Route
+            // through gdbmuntie to release it cleanly — matches what
+            // C's unsetparam_pm dispatch chain would have done.
+            gdbmuntie(pmname);
+            remove_tied_name(pmname);
         }
     }
 
