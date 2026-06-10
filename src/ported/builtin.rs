@@ -9222,8 +9222,17 @@ pub fn bin_break(
             let loginshell = isset(LOGINSHELL);
             if !loginshell {
                 // c:5865
-                zwarnnam(name, "not login shell"); // c:5866
-                return 1; // c:5867
+                // c:Src/builtin.c:5861 — `zerrnam(name, "not login
+                // shell");`. C uses zerrnam (sets ERRFLAG_ERROR via
+                // utils.c:203), NOT zwarnnam. The errflag set aborts
+                // the remainder of the current command list — `logout
+                // 2>&1; print ex:$?` in a non-login shell prints only
+                // the error message because the `;` separator's next
+                // command is gated on errflag-clear. Previous Rust
+                // port used zwarnnam (no errflag) so `print` still
+                // ran. Pinned by logout_builtin_stderr parity probe.
+                zerrnam(name, "not login shell"); // c:5861
+                return 1; // c:5862
             }
             // c:5869 — `/*FALLTHROUGH*/` into BIN_EXIT body.
             // Reusing the BIN_EXIT branch below by setting `func` to
