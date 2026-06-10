@@ -426,43 +426,64 @@ impl style_table {
 #[allow(non_snake_case)]
 pub fn printstylenode(hn: HashNode, printflags: i32) {
     // c:184
-    // c:186 — Style s = (Style)hn; HashNode/Style differ in Rust;
-    // walk the canonical zstyletab by style name instead.
+    // c:186-211 — Two distinct output formats based on `printflags`:
+    //
+    //   ZSLIST_BASIC = 1: `zstyle -L NAME` long format. Emits the
+    //                     style name, then one line per (pat, vals)
+    //                     prefixed by `(eval)` or 6 spaces.
+    //   other (= 0):      `zstyle -L` re-feedable format. Emits
+    //                     `zstyle [-e] '<pat>' '<style>' '<val>...'`
+    //                     for each pattern.
+    //
+    // Prior Rust port for ZSLIST_BASIC stopped after emitting the
+    // style name and never walked the patterns — `zstyle -L NAME`
+    // printed only the heading, omitting the (pattern, values) lines
+    // that are the whole point of the listing.
+    //
+    // Prior Rust port for the re-feedable arm always emitted
+    // `zstyle ` without the `-e` flag, so an eval-style (set via
+    // `zstyle -e PAT STYLE BODY`) round-tripped to a plain literal
+    // style instead of the same eval form.
     let nam: String = hn.nam.clone();
     let mut stdout = std::io::stdout().lock();
-    if printflags == 1 {
-        // c:190 ZSLIST_BASIC
-        let _ = writeln!(stdout, "{}", nam); // c:191-192
-        return;
-    }
-    // c:195-211 — `zstyle -L` form: emit one line per (pat, vals) tuple.
-    //
-    // C uses quotedzputs (Src/utils.c:6464) for each of pat / style / each
-    // value. quotedzputs wraps strings in single quotes when they contain
-    // shell-special chars (e.g. `:`, `*`, space) and emits bare-quoted
-    // form (`':completion:*'`) so the output round-trips back through
-    // zsh as a literal zstyle invocation.
-    //
-    // Previous Rust port emitted `{} ` bare which produced
-    // `:completion:* menu select` — not zsh-syntax-legal and not
-    // re-feedable through eval. The canonical form is
-    // `zstyle ':completion:*' menu select`.
     use crate::ported::utils::quotedzputs;
-    if let Ok(t) = zstyletab.lock() {
-        for (pat, style, vals) in t.list(None) {
-            // c:196-208
-            if style != nam {
-                continue;
-            }
-            let _ = write!(stdout, "zstyle "); // c:201
-            let _ = write!(stdout, "{}", quotedzputs(&pat)); // c:202
+    let t = match zstyletab.lock() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let patterns = match t.styles.get(&nam) {
+        Some(p) => p,
+        None => return,
+    };
+    if printflags == 1 {
+        // c:190-193 — ZSLIST_BASIC header: the style name on its own line.
+        let _ = writeln!(stdout, "{}", quotedzputs(&nam)); // c:191-192
+    }
+    for p in patterns {
+        // c:195
+        // c:196-197 — `if (zstyle_contprog && !pattry(zstyle_contprog, p->pat))
+        //              continue;` — contprog filter not modeled in the
+        // Rust port (the global zstyle_contprog is set by `zstyle -L
+        // <pattern>` when a context-filter pattern is supplied).
+        let is_eval = p.eval.is_some();
+        if printflags == 1 {
+            // c:198-199 — `printf("%s  %s", eval ? "(eval)" : "      ", p->pat);`
+            let prefix = if is_eval { "(eval)" } else { "      " };
+            let _ = write!(stdout, "{}  {}", prefix, p.pat); // c:199
+        } else {
+            // c:201-204 — `printf("zstyle %s", eval ? "-e " : "");
+            //              quotedzputs(p->pat); putchar(' '); quotedzputs(style);`
+            let eflag = if is_eval { "-e " } else { "" };
+            let _ = write!(stdout, "zstyle {}", eflag); // c:201
+            let _ = write!(stdout, "{}", quotedzputs(&p.pat)); // c:202
             let _ = write!(stdout, " "); // c:203
-            let _ = write!(stdout, "{}", quotedzputs(&style)); // c:204
-            for v in &vals {
-                let _ = write!(stdout, " {}", quotedzputs(v)); // c:206-209
-            }
-            let _ = writeln!(stdout); // c:210
+            let _ = write!(stdout, "{}", quotedzputs(&nam)); // c:204
         }
+        // c:206-209 — per-value: ` `, quotedzputs(v).
+        for v in &p.vals {
+            let _ = write!(stdout, " {}", quotedzputs(v)); // c:207-208
+        }
+        let _ = writeln!(stdout); // c:210
     }
 }
 
