@@ -866,12 +866,23 @@ pub fn zfsendcmd(cmd: &str) -> i32 {
     // c:712 — `tmout = getiparam("ZFTP_TMOUT");`. Read paramtab, not OS env.
     tmout = getiparam("ZFTP_TMOUT") as i32;
 
-    // c:837-841 — setjmp / timeout handler. The Rust port uses
-    // ZFDRRRRING as the polled flag instead of longjmp; zfalarm
-    // installs the SIGALRM handler.
+    // c:837-841 — `if (setjmp(zfalrmbuf)) { alarm(0);
+    //                  zwarnnam("zftp", "timeout sending message");
+    //                  return 6; }`. ZFDRRRRING adapter same as
+    // zfread (cfe7560f58), zfwrite (00c1c36dc9), zfgetline (bef84af815).
+    // Two check sites match C's setjmp semantics: before alarm
+    // install + after write returns.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        // Stale alarm from prior call.
+        unsafe {
+            libc::alarm(0);
+        }
+        zwarnnam("zftp", "timeout sending message");
+        return 6;
+    }
     zfalarm(tmout); // c:842
 
-    // c:843 — ret = write(zfsess->control->fd, cmd, strlen(cmd));
+    // c:843 — `ret = write(zfsess->control->fd, cmd, strlen(cmd));`
     let bytes = cmd.as_bytes();
     ret = match sess.control.as_mut() {
         Some(stream) => match stream.write(bytes) {
@@ -883,9 +894,15 @@ pub fn zfsendcmd(cmd: &str) -> i32 {
         },
         None => -1,
     };
-    // c:844 — alarm(0);
+    // c:844 — `alarm(0);`
     unsafe {
         libc::alarm(0);
+    }
+
+    // c:837 setjmp counterpart for THIS call — alarm fired during write.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        zwarnnam("zftp", "timeout sending message"); // c:839
+        return 6; // c:840
     }
 
     // c:846-849 — write failure.
