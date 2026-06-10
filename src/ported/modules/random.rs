@@ -179,7 +179,16 @@ pub fn math_zrand_int(
     let lower = lower.unwrap_or(0);
     let upper = upper.unwrap_or(u32::MAX as i64);
 
-    if lower < 0 || lower > u32::MAX as i64 {
+    // c:179-185 — `lower < 0 || lower >= UINT32_MAX` — note `>=` not `>`.
+    // C's check disallows lower=UINT32_MAX (4294967295) because the
+    // subsequent `diff = upper - lower + incl` calc would push diff
+    // into the carry-bit and wrap to 0 under uint32 arithmetic — the
+    // `if (diff == 0)` branch at c:187 would then return upper as a
+    // non-random fixed value. Prior Rust port used `> u32::MAX as i64`
+    // (a `>` not `>=`), allowing the out-of-range case and silently
+    // returning `upper` (non-random) when inclusive=true and upper
+    // pegged at UINT32_MAX.
+    if lower < 0 || lower >= u32::MAX as i64 {
         return Err(format!(
             "Lower bound ({}) out of range: 0-4294967295",
             lower
@@ -193,7 +202,9 @@ pub fn math_zrand_int(
         ));
     }
 
-    if upper < 0 || upper > u32::MAX as i64 {
+    // c:183 — `upper < 0 || upper >= UINT32_MAX` — same `>=` semantic as
+    // the lower check at c:179, for the same overflow-on-diff reason.
+    if upper < 0 || upper >= u32::MAX as i64 {
         return Err(format!(
             "Upper bound ({}) out of range: 0-4294967295",
             upper
