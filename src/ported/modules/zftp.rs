@@ -2065,7 +2065,36 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
         }
     };
 
-    // c:1789 — zfalarm(tmout): installed for the connect() phase.
+    // c:1778-1789 — `if (setjmp(zfalrmbuf)) { alarm(0);
+    //                  queue_signals();
+    //                  if ((hname = getsparam_u("ZFTP_HOST")) && *hname)
+    //                      zwarnnam(name, "timeout connecting to %s", hname);
+    //                  else
+    //                      zwarnnam(name, "timeout on host name lookup");
+    //                  unqueue_signals();
+    //                  zfclose(0);
+    //                  return 1;
+    //               }`
+    // ZFDRRRRING adapter same as the other zftp setjmp ports (cfe7560f58,
+    // 00c1c36dc9, bef84af815, f68bff9298). The diagnostic is host-aware:
+    // if ZFTP_HOST was already set by a prior open call (re-open after
+    // previous timeout), the message names the host; otherwise it
+    // reports "timeout on host name lookup" since the resolve hasn't
+    // completed yet.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        unsafe {
+            libc::alarm(0);
+        }
+        let hname = crate::ported::params::getsparam_u("ZFTP_HOST").unwrap_or_default();
+        if !hname.is_empty() {
+            zwarnnam(name, &format!("timeout connecting to {}", hname));
+        } else {
+            zwarnnam(name, "timeout on host name lookup");
+        }
+        zfclose(0); // c:1787
+        return 1; // c:1788
+    }
+    // c:1790 — zfalarm(tmout): installed for the connect() phase.
     zfalarm(tmout);
 
     // c:1803 — zsh_getipnodebyname → ToSocketAddrs resolves both v4+v6.
@@ -2138,6 +2167,26 @@ pub fn zftp_open(name: &str, args: &[&str], flags: i32) -> i32 {
     unsafe {
         libc::alarm(0);
     } // c:1882
+
+    // c:1778 setjmp counterpart for THIS call — alarm fired during
+    // resolve or connect. ZFDRRRRING was zeroed inside zfalarm; non-
+    // zero now means zfhandler tripped during the blocked
+    // to_socket_addrs or TcpStream::connect_timeout. Without this
+    // check, a SIGALRM-cut-short connect that happened to succeed
+    // (or appeared to via Rust's connect-timeout returning Ok on a
+    // partial handshake) would proceed into the FTP-login phase
+    // with a half-formed connection — confusing diagnostics later
+    // instead of the C-faithful "timeout connecting to %s" up front.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        let hname = crate::ported::params::getsparam_u("ZFTP_HOST").unwrap_or_default();
+        if !hname.is_empty() {
+            zwarnnam(name, &format!("timeout connecting to {}", hname));
+        } else {
+            zwarnnam(name, "timeout on host name lookup");
+        }
+        zfclose(0); // c:1787
+        return 1; // c:1788
+    }
 
     ZFNOPEN.fetch_add(1, Ordering::Relaxed); // c:1852 zfnopen++
 
