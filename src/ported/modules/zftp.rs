@@ -5148,12 +5148,19 @@ fn errno_ptr() -> *mut libc::c_int {
 /// a Rust-only architectural helper since C does the parse inline.
 fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {
     // c:925 inline
-    let start = msg
-        .find('(')
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PASV response"))?;
-    let end = msg
-        .find(')')
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PASV response"))?;
+    // c:937-939 — `for (ptr = lastmsg; *ptr; ptr++) if (idigit(*ptr)) break;`.
+    // C walks to the FIRST DIGIT in lastmsg and sscanf from there — it
+    // doesn't require parentheses. RFC 959's PASV reply text is
+    // unspecified ("Entering Passive Mode" is conventional but not
+    // mandatory), so some servers / proxies omit the `(...)` wrap.
+    //
+    // Prior Rust port required both `(` and `)` and bailed with
+    // "invalid PASV response" otherwise; against a paren-less server
+    // PASV transfers would refuse to open and fall through to the
+    // less-efficient PORT-mode path on every transfer.
+    let start = msg.bytes().position(|b| b.is_ascii_digit()).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "invalid PASV response")
+    })?;
 
     // c:940-941 — `sscanf("%d,%d,...", nums...)` then `(unsigned char) nums[i]`.
     // C parses each value as int, then *truncates* to u8 via cast. Previous
@@ -5161,9 +5168,15 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {
     // would PANIC (debug) / wrap (release) when a malicious or malformed
     // server sent values > 255. Match C's truncate-to-u8 semantics so
     // out-of-range octets behave the same as C (low 8 bits used; no panic).
-    let nums: Vec<i32> = msg[start + 1..end]
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
+    //
+    // Take the first 6 comma-separated number tokens from `start`
+    // onward; trailing text after the 6th value is ignored (matches
+    // sscanf's lazy match).
+    let nums: Vec<i32> = msg[start..]
+        .split(|c: char| !c.is_ascii_digit() && c != '-')
+        .filter(|s| !s.is_empty())
+        .take(6)
+        .filter_map(|s| s.parse().ok())
         .collect();
 
     if nums.len() != 6 {
