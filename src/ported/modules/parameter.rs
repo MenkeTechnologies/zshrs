@@ -1494,6 +1494,28 @@ pub fn scanbuiltins(
     // filter was ignored, so `${#dis_builtins}` returned 159 instead
     // of 0.
     if let Some(f) = func {
+        // c:Src/Modules/parameter.c:816-840 — C iterates the LIVE
+        // `builtintab` which only contains builtins from currently-
+        // loaded modules. zshrs's `BUILTINS` slice is the static
+        // union of every statically-linked module's bintab, so direct
+        // iteration over-reports in --zsh parity mode where modules
+        // aren't auto-loaded. Skip entries whose owning module isn't
+        // loaded so `${(k)builtins}` and `${#builtins}` agree with
+        // `zsh -fc` (e.g. zsh's count is 103, zshrs's full BUILTINS
+        // is 159). Default zshrs mode walks the full set so user
+        // scripts see all built-in module commands without explicit
+        // zmodload — matching the auto-load posture.
+        //
+        // BUILTINS also currently contains some duplicate entries
+        // (`fg`, `kill`, `suspend` appear in two adjacent batches,
+        // builtin.rs:12110-12423 + 12855-12878) — `builtintab` in
+        // C is a hash table so re-adds collapse, but Vec iteration
+        // here visits each occurrence. Dedup by name to match the
+        // hash-table shape `${#builtins}` exposes.
+        let is_zsh_mode =
+            crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
+        let mut emitted: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for b in BUILTINS.iter() {
             // c:823
             let b_flags = b.node.flags; // c:825 hn->flags
@@ -1505,6 +1527,82 @@ pub fn scanbuiltins(
                 (b_flags & DISABLED) == 0
             };
             if !pass {
+                continue;
+            }
+            // c:Src/Modules/parameter.c:823 — `builtintab` membership
+            // skips when the owning module isn't loaded. Map each
+            // module-bound name to its module; entries from `zsh/main`
+            // (core builtins) return None and always pass.
+            if is_zsh_mode {
+                let owning_module: Option<&str> = match b.node.nam.as_str() {
+                    // zsh/files (Src/Modules/files.c:806-824).
+                    "chmod" | "chgrp" | "chown" | "ln" | "mkdir" | "mv"
+                    | "rm" | "rmdir" | "sync" => Some("zsh/files"),
+                    "zf_chmod" | "zf_chgrp" | "zf_chown" | "zf_ln"
+                    | "zf_mkdir" | "zf_mv" | "zf_rm" | "zf_rmdir"
+                    | "zf_sync" => Some("zsh/files"),
+                    // zsh/zftp (Src/Modules/zftp.c).
+                    "zftp" => Some("zsh/zftp"),
+                    // zsh/net/tcp (Src/Modules/tcp.c).
+                    "ztcp" => Some("zsh/net/tcp"),
+                    // zsh/net/socket (Src/Modules/socket.c).
+                    "zsocket" => Some("zsh/net/socket"),
+                    // zsh/stat (Src/Modules/stat.c).
+                    "stat" | "zstat" => Some("zsh/stat"),
+                    // zsh/zselect (Src/Modules/zselect.c).
+                    "zselect" => Some("zsh/zselect"),
+                    // zsh/zpty (Src/Modules/zpty.c).
+                    "zpty" => Some("zsh/zpty"),
+                    // zsh/zprof (Src/Modules/zprof.c).
+                    "zprof" => Some("zsh/zprof"),
+                    // zsh/system (Src/Modules/system.c).
+                    "zsystem" | "syserror" | "sysopen" | "sysread"
+                    | "sysseek" | "syswrite" => Some("zsh/system"),
+                    // zsh/clone (Src/Modules/clone.c).
+                    "clone" => Some("zsh/clone"),
+                    // zsh/curses (Src/Modules/curses.c).
+                    "zcurses" => Some("zsh/curses"),
+                    // zsh/db/gdbm (Src/Modules/db_gdbm.c).
+                    "ztie" | "zuntie" | "zgdbmpath" => Some("zsh/db/gdbm"),
+                    // zsh/pcre (Src/Modules/pcre.c).
+                    "pcre_compile" | "pcre_match" | "pcre_study" => Some("zsh/pcre"),
+                    // zsh/example (Src/Modules/example.c).
+                    "example" => Some("zsh/example"),
+                    // zsh/cap (Src/Modules/cap.c).
+                    "cap" | "getcap" | "setcap" => Some("zsh/cap"),
+                    // zsh/attr (Src/Modules/attr.c).
+                    "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => {
+                        Some("zsh/attr")
+                    }
+                    // zsh/datetime (Src/Modules/datetime.c).
+                    "strftime" => Some("zsh/datetime"),
+                    // zsh/param/private — Src/Modules/param_private.c:217.
+                    "private" => Some("zsh/param/private"),
+                    // c:Src/Modules/parameter.c — `hashinfo` does NOT
+                    // exist in upstream zsh. The zshrs BUILTINS entry
+                    // (builtin.rs:12172) is a zshrs-only debug helper.
+                    // Suppress in --zsh mode so `${(k)builtins}` doesn't
+                    // expose a name zsh doesn't have. Same for `mem` /
+                    // `patdebug` / `nameref` — debug builtins in
+                    // zshrs's BUILTINS table that have no upstream
+                    // counterpart.
+                    "hashinfo" | "mem" | "patdebug" | "nameref" => {
+                        Some("__zshrs_only")
+                    }
+                    // zsh/main core builtins.
+                    _ => None,
+                };
+                if let Some(modname) = owning_module {
+                    let loaded = crate::ported::module::MODULESTAB
+                        .lock()
+                        .map(|t| t.is_loaded(modname))
+                        .unwrap_or(false);
+                    if !loaded {
+                        continue;
+                    }
+                }
+            }
+            if !emitted.insert(b.node.nam.clone()) {
                 continue;
             }
             let node = Box::new(hashnode {
