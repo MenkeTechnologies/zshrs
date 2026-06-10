@@ -189,25 +189,53 @@ pub fn bin_echotc(
     }
 
     // c:131-137 — `tputs(t, 1, putraw)` or `tputs(tgoto(t, num, atoi(*argv)), 1, putraw)`.
+    // Re-fetch the cap pointer for tputs/tgoto — `value` is the cloned
+    // String for the argct-count walk above, but tputs/tgoto want the
+    // original cap C-string still in libtermcap's buffer area.
+    let value_cstr = match std::ffi::CString::new(value.as_str()) {
+        Ok(c) => c,
+        Err(_) => return 1,
+    };
+    let _g = TERMCAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if argct == 0 {
         // c:131
-        // c:132 — `tputs(t, 1, putraw);` — direct emit of raw cap.
-        print!("{}", value); // c:132
-    } else {
-        // c:135 — `num = (argv[1]) ? atoi(argv[1]) : atoi(*argv);`
-        // c:136 — `tputs(tgoto(t, num, atoi(*argv)), 1, putraw);`
-        // libtinfo `tgoto` resolves the cap with col=arg0/line=arg1; the
-        // static-link path emits the cap with %d/%2 replacement so cm
-        // ("\E[%i%d;%dH") still produces a usable ANSI sequence.
-        let mut out = value;
-        for arg in &argv_rest {
-            out = out.replacen("%d", arg, 1);
-            out = out.replacen("%2", arg, 1);
-            out = out.replacen("%3", arg, 1);
+        // c:132 — `tputs(t, 1, putraw);` — emit through libtermcap so
+        // padding ($<delay>) is honored and any embedded %% / %i / %r
+        // gets resolved.
+        unsafe {
+            tputs(value_cstr.as_ptr(), 1, putraw);
         }
-        print!("{}", out); // c:136
+    } else {
+        // c:132 — `num = (argv[1]) ? atoi(argv[1]) : atoi(*argv);`
+        // c:133 — `tputs(tgoto(t, num, atoi(*argv)), 1, putraw);`
+        //
+        // tgoto(cap, col, line) signature: col = atoi(*argv) =
+        // argv_rest[0]; line = num = argv_rest[1] if present else
+        // atoi(*argv). This convention matches `cm` (cursor-move) caps
+        // taking (col, row) — the trailing argument is the row even
+        // though it appears second.
+        let col: libc::c_int = argv_rest
+            .first()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let line: libc::c_int = argv_rest
+            .get(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(col);
+        unsafe {
+            let resolved = tgoto(value_cstr.as_ptr(), col, line);
+            if !resolved.is_null() {
+                tputs(resolved, 1, putraw);
+            }
+        }
     }
-    0 // c:144
+    drop(_g);
+    // tputs writes via putraw → libc::write(1, ...) which is unbuffered;
+    // flush stdout's userspace buffer too so a Rust-side println after
+    // the cap emit doesn't reorder around it.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    0 // c:135
 }
 
 /// Port of `static HashNode gettermcap(UNUSED(HashTable ht), const char *name)`
@@ -357,6 +385,33 @@ unsafe extern "C" {
     fn tgetflag(id: *const libc::c_char) -> libc::c_int;
     fn tgetnum(id: *const libc::c_char) -> libc::c_int;
     fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
+    // c:Src/utils.c:424 `putraw(int c) { putc(c, stdout); }` is the
+    // callback C's bin_echotc hands to tputs at c:129/133. tputs walks
+    // the cap string and calls the putc-fn for each byte, expanding
+    // padding ($<delay>) and decoding %-codes inline. Without it, the
+    // naive %d/%2/%3 string replacement misses padding entirely and
+    // mis-handles caps using %., %+, %i, %r, %% etc.
+    fn tputs(
+        str_: *const libc::c_char,
+        affcnt: libc::c_int,
+        putc_fn: extern "C" fn(libc::c_int) -> libc::c_int,
+    ) -> libc::c_int;
+    fn tgoto(
+        cap: *const libc::c_char,
+        col: libc::c_int,
+        row: libc::c_int,
+    ) -> *mut libc::c_char;
+}
+
+/// Port of `putraw(int c)` from `Src/utils.c:424`. Single-byte
+/// stdout emit used as the tputs callback.
+extern "C" fn putraw(c: libc::c_int) -> libc::c_int {
+    // c:426 — `putc(c, stdout);`
+    let byte = c as u8;
+    unsafe {
+        libc::write(1, &byte as *const u8 as *const libc::c_void, 1);
+    }
+    0 // c:427
 }
 
 // `bintab` — port of `static struct builtin bintab[]` (termcap.c).
