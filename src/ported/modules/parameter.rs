@@ -2084,25 +2084,36 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
         (String::new(), false) // c:1009
     };
     let pm = Box::new(param {
-        // c:992 hcalloc
+        // c:993 hcalloc
         node: hashnode {
             next: None,
-            nam: name.to_string(), // c:993
+            nam: name.to_string(), // c:994
+            // c:995 — `pm->node.flags = PM_SCALAR;` for known options;
+            //         c:1009 — `pm->node.flags |= (PM_UNSET|PM_SPECIAL);`
+            //         for unknown.
+            //
+            // Prior port added PM_READONLY in BOTH branches. C does not
+            // set PM_READONLY — `$options` is a writable assoc (the
+            // pmoption_gsu vtable at c:996 carries a setfn that routes
+            // assignment through setopt). With PM_READONLY spuriously
+            // set, `options[interactive]=on` failed with "read-only
+            // variable: options" instead of toggling the option. This
+            // broke the most common documented usage of the parameter
+            // module's $options view (zsh manual SHMODULES.zsh-parameter
+            // documents options[name] as a writable mapping).
             flags: if found {
-                (PM_SCALAR | PM_READONLY) as i32
-            }
-            // c:994
-            else {
-                (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32
-            }, // c:1010
+                PM_SCALAR as i32
+            } else {
+                (PM_SCALAR | PM_UNSET | PM_SPECIAL) as i32
+            },
         },
         u_data: 0,
         u_arr: None,
-        u_str: Some(value), // c:1005 / c:1009
+        u_str: Some(value), // c:1005 / c:1008
         u_val: 0,
         u_dval: 0.0,
         u_hash: None,
-        gsu_s: None, // c:996 pmoption_gsu
+        gsu_s: None, // c:996 pmoption_gsu — setter wiring pending
         gsu_i: None,
         gsu_f: None,
         gsu_a: None,
