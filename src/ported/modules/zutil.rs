@@ -2187,16 +2187,33 @@ pub fn bin_zregexparse(
         }
     });
     let mut result = RParseResult::default();
-    let parse_err = rparsealt(&mut result) != 0 || RPARSEARGS.with(|q| !q.borrow().is_empty());
+    let parsealt_failed = rparsealt(&mut result) != 0;
+    let leftover = RPARSEARGS.with(|q| !q.borrow().is_empty());
+    let parse_err = parsealt_failed || leftover;
     if parse_err {
-        // c:1500
-        zwarnnam(
-            nam,
-            &format!(
-                "invalid regex : {}", // c:1502
-                args.last().map(|s| s.as_str()).unwrap_or("")
-            ),
-        );
+        // c:1500-1505 — C distinguishes "*rparseargs != NULL" from the
+        // empty case:
+        //   if (*rparseargs)
+        //       zwarnnam(nam, "invalid regex : %s", *rparseargs);
+        //   else
+        //       zwarnnam(nam, "not enough regex arguments");
+        //
+        // Prior Rust port always emitted "invalid regex : <args.last()>"
+        // — wrong on two counts:
+        //   1. "not enough regex arguments" was unreachable; partial
+        //      parses where rparsealt bailed mid-stream (no leftover
+        //      tokens) reported as "invalid regex" with an empty token.
+        //   2. The token shown was args.last() (the original tail of
+        //      argv), not the first unparsed token from rparseargs.
+        //
+        // Read the actual front-of-queue from RPARSEARGS so the
+        // diagnostic points at the failing token the way C does.
+        let leftover_first: Option<String> =
+            RPARSEARGS.with(|q| q.borrow().front().cloned());
+        match leftover_first {
+            Some(tok) => zwarnnam(nam, &format!("invalid regex : {}", tok)), // c:1502
+            None => zwarnnam(nam, "not enough regex arguments"),             // c:1504
+        }
         ret = 3; // c:1505
     } else {
         ret = 0; // c:1508
