@@ -1979,27 +1979,61 @@ impl modulestab {
     /// WARNING: param names don't match C — Rust=(name, module, flags) vs C=(module, bnam, flags)
     pub fn add_autobin(&mut self, name: &str, module: &str, flags: i32) -> i32 {
         // c:426
-        // c:431 — bn = zshcalloc(sizeof(*bn))
-        let mut node_flags: i32 = 0; // c:431-432 fresh Builtin
-        if (flags & FEAT_AUTOALL as i32) != 0 {
-            // c:434
-            node_flags |= BINF_AUTOALL as i32; // c:435
-        }
-        let _ = node_flags; // would-be bn->node.flags
-                            // c:436 — addbuiltin(bn). Rust ledger is keyed on name; insert
-                            // returns the prior mapping if any (the "conflict" case).
-        let prior = self
-            .autoload_builtins
-            .insert(name.to_string(), module.to_string());
-        if prior.is_some() {
-            // c:436 ret != 0
-            // c:437 — builtintab->freenode(&bn->node) (we dropped insert val)
+        // Faithful port of c:426-441:
+        //   Builtin bn = zshcalloc(sizeof(*bn));
+        //   bn->node.nam = ztrdup(bnam);
+        //   bn->optstr = ztrdup(module);
+        //   if (flags & FEAT_AUTOALL)
+        //       bn->node.flags |= BINF_AUTOALL;
+        //   if ((ret = addbuiltin(bn))) {
+        //       builtintab->freenode(&bn->node);
+        //       if (!(flags & FEAT_IGNORE))
+        //           return 1;
+        //   }
+        //   return 0;
+        //
+        // Prior port did a ledger-only insert into autoload_builtins
+        // without ever calling the canonical addbuiltin. Now constructs
+        // the builtin struct and routes through the free addbuiltin
+        // (c:303 port) which probes createbuiltintable() for the
+        // BINF_ADDED clash gate. Ledger entry preserved on success so
+        // resolve_autoload_builtin() / del_autobin's fast path can
+        // find it without re-scanning.
+        let node_flags: i32 = if (flags & FEAT_AUTOALL as i32) != 0 {
+            BINF_AUTOALL as i32 // c:435
+        } else {
+            0
+        };
+        let mut bn = builtin {
+            // c:431-433 — zshcalloc + populate.
+            node: hashnode {
+                next: None,
+                nam: name.to_string(),
+                flags: node_flags,
+            },
+            handlerfunc: None,
+            minargs: 0,
+            maxargs: 0,
+            funcid: 0,
+            optstr: Some(module.to_string()),
+            defopts: None,
+        };
+        // c:436 — `if ((ret = addbuiltin(bn)))`. Clash gate via the
+        // canonical builtintab.
+        if addbuiltin(&mut bn) != 0 {
+            // c:437 — freenode drops the input via Rust's Drop.
             if (flags & FEAT_IGNORE as i32) == 0 {
-                // c:438
                 return 1; // c:439
             }
+            // c:440 — FEAT_IGNORE masks → fall through to ret 0 but
+            // don't insert into the ledger (the canonical table has
+            // this name already).
+            return 0;
         }
-        0 // c:441
+        // c:441 success path: register in the autoload ledger.
+        self.autoload_builtins
+            .insert(name.to_string(), module.to_string());
+        0
     }
 
     // Remove an autoloaded added by add_autobin                             // c:464
