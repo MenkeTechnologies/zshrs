@@ -1346,10 +1346,24 @@ pub fn zfread(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 {
         return n as i32; // c:1312
     }
 
-    // c:1314-1318 — setjmp guard; Rust port uses ZFDRRRRING as polled
-    // signal-trip indicator instead of longjmp.
+    // c:1314-1318 — `if (setjmp(zfalrmbuf)) { alarm(0); zwarnnam(...,
+    //                "timeout on network read"); return -1; }`. C uses
+    // setjmp/longjmp; the SIGALRM handler calls longjmp(zfalrmbuf, 1)
+    // which unwinds back into this if-block. Rust port can't use
+    // setjmp/longjmp (UB across drop boundaries) so models the same
+    // semantic via the ZFDRRRRING atomic flag that zfhandler sets at
+    // alarm fire. Two check sites needed:
+    //   1. Before alarm install — handle "previous alarm fired between
+    //      zfread calls" (rare but possible if user code chained reads
+    //      with no intermediate zfalarm reset).
+    //   2. After read returns — handle "alarm fired during THIS read,
+    //      kernel returned EINTR but Rust has no setjmp jump-back".
+    //      Prior port had only the first check; the second was the
+    //      gap — a SIGALRM-interrupted read returned -1 silently with
+    //      no "timeout on network read" warning, leaving the user
+    //      unable to distinguish timeout from other I/O failure.
     if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
-        // c:1314 setjmp
+        // c:1314 setjmp — stale alarm from before this call.
         unsafe {
             libc::alarm(0);
         } // c:1315
@@ -1358,11 +1372,18 @@ pub fn zfread(fd: i32, bf: &mut [u8], sz: libc::off_t, tmout: i32) -> i32 {
     }
     zfalarm(tmout); // c:1319
 
-    // c:1321 — ret = read(fd, bf, sz);
+    // c:1321 — `ret = read(fd, bf, sz);`
     ret = unsafe { libc::read(fd, bf.as_mut_ptr() as *mut libc::c_void, sz as libc::size_t) };
-    // c:1324 — alarm(0);
+    // c:1324 — `alarm(0);`
     unsafe {
         libc::alarm(0);
+    }
+    // c:1314 setjmp counterpart for THIS call — alarm fired during read.
+    // ZFDRRRRING was zeroed inside zfalarm at line 212; if non-zero now,
+    // the handler set it during read.
+    if ZFDRRRRING.load(Ordering::Relaxed) != 0 {
+        zwarnnam("zftp", "timeout on network read"); // c:1316
+        return -1; // c:1317
     }
     ret as i32 // c:1325
 }
