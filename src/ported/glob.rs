@@ -4020,6 +4020,45 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 }
                 qs.qualifiers.push(qualifier::Eval(body));
             }
+            // c:Src/glob.c:1708-1722 `case '+':` — `(+FUNC)` invokes
+            // shell function FUNC on each candidate; keep file iff
+            // function returns 0. C's glob_exec_string (c:1085) reads
+            // the identifier name via `itype_end(s, IIDENT, 0)` when
+            // the qualifier letter was '+'. The body wraps the call as
+            // a shell expression `FUNC` that qualsheval (c:4769 zshrs
+            // qualifier::Eval) runs as a one-shot. Bug #N — this arm
+            // was missing entirely, so `*(+func)` and `*(s+0)`-style
+            // mixed-qualifier strings errored "unknown file attribute:
+            // +" instead of routing through the Eval path that would
+            // either match files or fall through to "no matches found".
+            '+' => {
+                // c:1090-1097 — `tt = itype_end(s, IIDENT, 0); if
+                // (tt == s) zerr("missing identifier after `+'")`.
+                // Read identifier chars greedily.
+                let mut ident = String::new();
+                while let Some(&pc) = chars.peek() {
+                    if pc.is_ascii_alphanumeric() || pc == '_' {
+                        ident.push(pc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if ident.is_empty() {
+                    crate::ported::utils::zerr(
+                        "missing identifier after `+'",
+                    ); // c:1095
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs;
+                }
+                // c:1109-1117 — the identifier IS the body that
+                // qualsheval will run. Push as Eval so the same
+                // per-file evaluator at c:4769 fires.
+                qs.qualifiers.push(qualifier::Eval(ident));
+            }
             // c:Src/glob.c:1758-1762 — `default: zerr("unknown file
             // attribute: %c", *s); restore_globstate(saved); return;`.
             // Bug #583: zshrs's `_ => {}` arm silently accepted any
