@@ -116,8 +116,19 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) ->
     PCRE_PATTERN.with(|r| *r.borrow_mut() = None);
 
     // c:91-92 — target = ztrdup(*args); unmetafy(target, &target_len);
-    target = args.first().cloned().unwrap_or_default();
-    target_len = target.len() as i32;
+    // The pattern can contain zsh-metafied bytes (the Meta + (byte ^ 32)
+    // encoding C uses for NUL and certain shell-special bytes in
+    // internal strings). Prior Rust port skipped the unmetafy step,
+    // so a pattern compiled from a value that had been round-tripped
+    // through zsh's internal string store (e.g. `pcre_compile $pat`
+    // where `$pat` had been read from `print -PN` output, or via the
+    // POSIX-EXTENDED bracket expression that bumped a byte into the
+    // Meta range) would see literal 0x83 / 0xa3 / etc. bytes instead
+    // of the canonical NUL / control / 8th-bit byte the user wrote.
+    let raw = args.first().cloned().unwrap_or_default();
+    let mut buf = raw.into_bytes();
+    target_len = crate::ported::utils::unmetafy(&mut buf) as i32; // c:92
+    target = String::from_utf8_lossy(&buf).into_owned();
     let _ = target_len;
 
     // c:94-95 — pcre_pattern = pcre2_compile(target, ...)
