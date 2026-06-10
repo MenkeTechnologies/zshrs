@@ -2684,10 +2684,51 @@ pub fn module_func(m: &module, name: &str) -> usize {
 ///             (m->u.linked->setup)(m) : dyn_setup_module(m));
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(_table, _name) vs C=(m)
-pub fn setup_module(_table: &mut modulestab, _name: &str) -> i32 {
+/// Symmetric with boot_module/cleanup_module/finish_module: routes
+/// to the per-module `setup_(m)`. C `setup_` is the first lifecycle
+/// hook called when load_module loads the module (before
+/// do_module_features registers features and before boot_ runs).
+/// Most per-module setup_ bodies are `return 0;` — exceptions
+/// initialise module-private state (curses screen handle, regex
+/// compile cache, etc.).
+/// WARNING: param names don't match C — Rust=(_table, name) vs C=(m)
+pub fn setup_module(_table: &mut modulestab, name: &str) -> i32 {
     // c:1884
-    0 // c:1884 (setup)(m)
+    match name {
+        "zsh/attr" => crate::ported::modules::attr::setup_(std::ptr::null()),
+        "zsh/cap" => crate::ported::modules::cap::setup_(std::ptr::null()),
+        "zsh/clone" => crate::ported::modules::clone::setup_(std::ptr::null()),
+        "zsh/curses" => crate::ported::modules::curses::setup_(std::ptr::null()),
+        "zsh/datetime" => crate::ported::modules::datetime::setup_(std::ptr::null()),
+        "zsh/db/gdbm" => crate::ported::modules::db_gdbm::setup_(std::ptr::null()),
+        "zsh/example" => crate::ported::modules::example::setup_(std::ptr::null()),
+        "zsh/files" => crate::ported::modules::files::setup_(std::ptr::null()),
+        "zsh/hlgroup" => crate::ported::modules::hlgroup::setup_(std::ptr::null()),
+        "zsh/ksh93" => crate::ported::modules::ksh93::setup_(std::ptr::null()),
+        "zsh/langinfo" => crate::ported::modules::langinfo::setup_(std::ptr::null()),
+        "zsh/mapfile" => crate::ported::modules::mapfile::setup_(std::ptr::null()),
+        "zsh/mathfunc" => crate::ported::modules::mathfunc::setup_(std::ptr::null()),
+        "zsh/nearcolor" => crate::ported::modules::nearcolor::setup_(std::ptr::null()),
+        "zsh/newuser" => crate::ported::modules::newuser::setup_(std::ptr::null()),
+        "zsh/parameter" => crate::ported::modules::parameter::setup_(std::ptr::null()),
+        "zsh/param/private" => crate::ported::modules::param_private::setup_(std::ptr::null()),
+        "zsh/pcre" => crate::ported::modules::pcre::setup_(std::ptr::null()),
+        "zsh/random" => crate::ported::modules::random::setup_(std::ptr::null()),
+        "zsh/regex" => crate::ported::modules::regex::setup_(std::ptr::null()),
+        "zsh/net/socket" => crate::ported::modules::socket::setup_(std::ptr::null()),
+        "zsh/stat" => crate::ported::modules::stat::setup_(std::ptr::null()),
+        "zsh/system" => crate::ported::modules::system::setup_(std::ptr::null()),
+        "zsh/net/tcp" => crate::ported::modules::tcp::setup_(std::ptr::null()),
+        "zsh/termcap" => crate::ported::modules::termcap::setup_(std::ptr::null()),
+        "zsh/terminfo" => crate::ported::modules::terminfo::setup_(std::ptr::null()),
+        "zsh/watch" => crate::ported::modules::watch::setup_(std::ptr::null()),
+        "zsh/zftp" => crate::ported::modules::zftp::setup_(std::ptr::null()),
+        "zsh/zprof" => crate::ported::modules::zprof::setup_(std::ptr::null()),
+        "zsh/zpty" => crate::ported::modules::zpty::setup_(std::ptr::null()),
+        "zsh/zselect" => crate::ported::modules::zselect::setup_(std::ptr::null()),
+        "zsh/zutil" => crate::ported::modules::zutil::setup_(std::ptr::null()),
+        _ => 0,
+    }
 }
 
 /// Port of `features_module(Module m, char ***features)` from `Src/module.c:1892`.
@@ -2700,10 +2741,69 @@ pub fn setup_module(_table: &mut modulestab, _name: &str) -> i32 {
 ///             dyn_features_module(m, features));
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(_table, _name, _features) vs C=(m, features)
-pub fn features_module(_table: &mut modulestab, _name: &str, _features: &mut Vec<String>) -> i32 {
+///
+/// Per-module features_ populates the out-array with each feature
+/// the module provides — `b:bn`, `c:cn`, `C:Cn`, `f:fn`, `p:pn`
+/// per featuresarray (Src/module.c:3279). Used by zmodload -L to
+/// list feature surfaces.
+/// WARNING: param names don't match C — Rust=(_table, name, features) vs C=(m, features)
+pub fn features_module(
+    _table: &mut modulestab,
+    name: &str,
+    features: &mut Vec<String>,
+) -> i32 {
     // c:1892
-    0 // c:1892 (features)(m,features)
+    match name {
+        "zsh/attr" => crate::ported::modules::attr::features_(std::ptr::null(), features),
+        "zsh/cap" => crate::ported::modules::cap::features_(std::ptr::null(), features),
+        "zsh/clone" => crate::ported::modules::clone::features_(std::ptr::null(), features),
+        "zsh/curses" => crate::ported::modules::curses::features_(std::ptr::null(), features),
+        "zsh/datetime" => {
+            crate::ported::modules::datetime::features_(std::ptr::null(), features)
+        }
+        "zsh/db/gdbm" => crate::ported::modules::db_gdbm::features_(std::ptr::null(), features),
+        "zsh/example" => crate::ported::modules::example::features_(std::ptr::null(), features),
+        "zsh/files" => crate::ported::modules::files::features_(std::ptr::null(), features),
+        "zsh/hlgroup" => crate::ported::modules::hlgroup::features_(std::ptr::null(), features),
+        "zsh/ksh93" => crate::ported::modules::ksh93::features_(std::ptr::null(), features),
+        "zsh/langinfo" => {
+            crate::ported::modules::langinfo::features_(std::ptr::null(), features)
+        }
+        "zsh/mapfile" => crate::ported::modules::mapfile::features_(std::ptr::null(), features),
+        "zsh/mathfunc" => {
+            crate::ported::modules::mathfunc::features_(std::ptr::null(), features)
+        }
+        "zsh/nearcolor" => {
+            crate::ported::modules::nearcolor::features_(std::ptr::null(), features)
+        }
+        "zsh/newuser" => crate::ported::modules::newuser::features_(std::ptr::null(), features),
+        "zsh/parameter" => {
+            crate::ported::modules::parameter::features_(std::ptr::null(), features)
+        }
+        "zsh/param/private" => {
+            crate::ported::modules::param_private::features_(std::ptr::null(), features)
+        }
+        "zsh/pcre" => crate::ported::modules::pcre::features_(std::ptr::null(), features),
+        "zsh/random" => crate::ported::modules::random::features_(std::ptr::null(), features),
+        "zsh/regex" => crate::ported::modules::regex::features_(std::ptr::null(), features),
+        "zsh/net/socket" => {
+            crate::ported::modules::socket::features_(std::ptr::null(), features)
+        }
+        "zsh/stat" => crate::ported::modules::stat::features_(std::ptr::null(), features),
+        "zsh/system" => crate::ported::modules::system::features_(std::ptr::null(), features),
+        "zsh/net/tcp" => crate::ported::modules::tcp::features_(std::ptr::null(), features),
+        "zsh/termcap" => crate::ported::modules::termcap::features_(std::ptr::null(), features),
+        "zsh/terminfo" => {
+            crate::ported::modules::terminfo::features_(std::ptr::null(), features)
+        }
+        "zsh/watch" => crate::ported::modules::watch::features_(std::ptr::null(), features),
+        "zsh/zftp" => crate::ported::modules::zftp::features_(std::ptr::null(), features),
+        "zsh/zprof" => crate::ported::modules::zprof::features_(std::ptr::null(), features),
+        "zsh/zpty" => crate::ported::modules::zpty::features_(std::ptr::null(), features),
+        "zsh/zselect" => crate::ported::modules::zselect::features_(std::ptr::null(), features),
+        "zsh/zutil" => crate::ported::modules::zutil::features_(std::ptr::null(), features),
+        _ => 0,
+    }
 }
 
 /// Port of `enables_module(Module m, int **enables)` from `Src/module.c:1901`.
@@ -2716,14 +2816,58 @@ pub fn features_module(_table: &mut modulestab, _name: &str, _features: &mut Vec
 ///             dyn_enables_module(m, enables));
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=(_table, _name, _enables) vs C=(m, enables)
+///
+/// Per-module enables_ populates the enable-bit array parallel to
+/// the features_ surface — getfeatureenables (c:3314) emits 1 for
+/// each currently-active feature (BINF_ADDED / CONDF_ADDED /
+/// MFF_ADDED / pd->pm non-null), 0 otherwise. Used by zmodload -L
+/// to report enabled-vs-disabled features per module.
+/// WARNING: param names don't match C — Rust=(_table, name, enables) vs C=(m, enables)
 pub fn enables_module(
     _table: &mut modulestab,
-    _name: &str,
-    _enables: &mut Option<Vec<i32>>,
+    name: &str,
+    enables: &mut Option<Vec<i32>>,
 ) -> i32 {
     // c:1901
-    0 // c:1901 (enables)(m,enables)
+    match name {
+        "zsh/attr" => crate::ported::modules::attr::enables_(std::ptr::null(), enables),
+        "zsh/cap" => crate::ported::modules::cap::enables_(std::ptr::null(), enables),
+        "zsh/clone" => crate::ported::modules::clone::enables_(std::ptr::null(), enables),
+        "zsh/curses" => crate::ported::modules::curses::enables_(std::ptr::null(), enables),
+        "zsh/datetime" => crate::ported::modules::datetime::enables_(std::ptr::null(), enables),
+        "zsh/db/gdbm" => crate::ported::modules::db_gdbm::enables_(std::ptr::null(), enables),
+        "zsh/example" => crate::ported::modules::example::enables_(std::ptr::null(), enables),
+        "zsh/files" => crate::ported::modules::files::enables_(std::ptr::null(), enables),
+        "zsh/hlgroup" => crate::ported::modules::hlgroup::enables_(std::ptr::null(), enables),
+        "zsh/ksh93" => crate::ported::modules::ksh93::enables_(std::ptr::null(), enables),
+        "zsh/langinfo" => crate::ported::modules::langinfo::enables_(std::ptr::null(), enables),
+        "zsh/mapfile" => crate::ported::modules::mapfile::enables_(std::ptr::null(), enables),
+        "zsh/mathfunc" => crate::ported::modules::mathfunc::enables_(std::ptr::null(), enables),
+        "zsh/nearcolor" => {
+            crate::ported::modules::nearcolor::enables_(std::ptr::null(), enables)
+        }
+        "zsh/newuser" => crate::ported::modules::newuser::enables_(std::ptr::null(), enables),
+        "zsh/parameter" => crate::ported::modules::parameter::enables_(std::ptr::null(), enables),
+        "zsh/param/private" => {
+            crate::ported::modules::param_private::enables_(std::ptr::null(), enables)
+        }
+        "zsh/pcre" => crate::ported::modules::pcre::enables_(std::ptr::null(), enables),
+        "zsh/random" => crate::ported::modules::random::enables_(std::ptr::null(), enables),
+        "zsh/regex" => crate::ported::modules::regex::enables_(std::ptr::null(), enables),
+        "zsh/net/socket" => crate::ported::modules::socket::enables_(std::ptr::null(), enables),
+        "zsh/stat" => crate::ported::modules::stat::enables_(std::ptr::null(), enables),
+        "zsh/system" => crate::ported::modules::system::enables_(std::ptr::null(), enables),
+        "zsh/net/tcp" => crate::ported::modules::tcp::enables_(std::ptr::null(), enables),
+        "zsh/termcap" => crate::ported::modules::termcap::enables_(std::ptr::null(), enables),
+        "zsh/terminfo" => crate::ported::modules::terminfo::enables_(std::ptr::null(), enables),
+        "zsh/watch" => crate::ported::modules::watch::enables_(std::ptr::null(), enables),
+        "zsh/zftp" => crate::ported::modules::zftp::enables_(std::ptr::null(), enables),
+        "zsh/zprof" => crate::ported::modules::zprof::enables_(std::ptr::null(), enables),
+        "zsh/zpty" => crate::ported::modules::zpty::enables_(std::ptr::null(), enables),
+        "zsh/zselect" => crate::ported::modules::zselect::enables_(std::ptr::null(), enables),
+        "zsh/zutil" => crate::ported::modules::zutil::enables_(std::ptr::null(), enables),
+        _ => 0,
+    }
 }
 
 /// Port of `boot_module(Module m)` from `Src/module.c:1910`.
