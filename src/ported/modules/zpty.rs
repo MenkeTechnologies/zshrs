@@ -490,58 +490,60 @@ pub fn ptywritestr(cmd: &mut ptycmd, s: &[u8]) -> i32 {
     }
 }
 
-/// Port of `ptywrite(Ptycmd cmd, char **args, int nonl)` from `Src/Modules/zpty.c:743`. Writes
-/// the joined argv to the pty master fd (or copies stdin to the
-/// pty when argv is empty). `nonl` suppresses the trailing
-/// newline.
+/// Port of `ptywrite(Ptycmd cmd, char **args, int nonl)` from
+/// Src/Modules/zpty.c:742-769. Routes every write through
+/// `ptywritestr` so partial-write retry + control-flow bail
+/// (errflag/breaks/retflag/contflag) + nblock EWOULDBLOCK
+/// stash all apply uniformly. Prior implementation used raw
+/// `libc::write` four times inline and threw away all of those
+/// guarantees.
 ///
 /// C signature: `static int ptywrite(Ptycmd cmd, char **args, int nonl)`.
-pub fn ptywrite(cmd: &ptycmd, args: &[&str], nonl: i32) -> i32 {
-    // c:743
+pub fn ptywrite(cmd: &mut ptycmd, args: &[&str], nonl: i32) -> i32 {
+    // c:744
     if !args.is_empty() {
-        // c:743
+        // c:745
+        // c:746 — `char sp = ' ', *tmp;` + `int len;`
+        let sp = b' '; // c:746
+        // c:749 — `while (*args)` — iterate argv with peek-ahead for
+        // the inter-arg space write at c:751.
         for (i, a) in args.iter().enumerate() {
-            // c:751
-            // c:752 — unmetafy + ptywritestr.
-            let unmeta = crate::ported::utils::unmeta(a);
-            let bytes = unmeta.as_bytes();
-            let r = unsafe { libc::write(cmd.master_fd, bytes.as_ptr() as *const _, bytes.len()) };
-            if r < 0 {
+            // c:750 — `unmetafy((tmp = dupstring(*args)), &len);`
+            let tmp = crate::ported::utils::unmeta(a);
+            let bytes = tmp.as_bytes();
+            // c:751-752 — `if (ptywritestr(cmd, tmp, len) ||
+            //                  (*++args && ptywritestr(cmd, &sp, 1)))
+            //                  return 1;`
+            if ptywritestr(cmd, bytes) != 0 {
                 return 1;
-            } // c:753
-            if i + 1 < args.len() {
-                // c:754 sp = ' '
-                let sp = b' ';
-                let r = unsafe { libc::write(cmd.master_fd, &sp as *const u8 as *const _, 1) };
-                if r < 0 {
-                    return 1;
-                }
+            }
+            if i + 1 < args.len() && ptywritestr(cmd, &[sp]) != 0 {
+                return 1;
             }
         }
+        // c:755 — `if (!nonl) { sp = '\n'; if (ptywritestr(cmd, &sp, 1)) return 1; }`
         if nonl == 0 {
-            // c:757
-            let nl = b'\n'; // c:758
-            let r = unsafe { libc::write(cmd.master_fd, &nl as *const u8 as *const _, 1) };
-            if r < 0 {
-                return 1;
-            } // c:760
+            let nl = b'\n'; // c:756
+            if ptywritestr(cmd, &[nl]) != 0 {
+                return 1; // c:758
+            }
         }
     } else {
-        // c:763
-        // c:764-768 — `while ((n = read(0, buf, BUFSIZ)) > 0)` copy stdin.
+        // c:760-767 — `while ((n = read(0, buf, BUFSIZ)) > 0) if (ptywritestr(...)) return 1;`
         let mut buf = [0u8; 4096];
         loop {
             let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 {
-                break;
+                break; // c:764
             }
-            let r = unsafe { libc::write(cmd.master_fd, buf.as_ptr() as *const _, n as usize) };
-            if r < 0 {
+            // c:765 — `if (ptywritestr(cmd, buf, n)) return 1;`
+            if ptywritestr(cmd, &buf[..n as usize]) != 0 {
                 return 1;
-            } // c:768
+            }
         }
     }
-    0 // c:771
+    // c:768 — `return 0;`
+    0
 }
 
 /// Port of `bin_zpty(char *nam, char **args, Options ops, UNUSED(int func))` from `Src/Modules/zpty.c:773`.
