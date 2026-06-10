@@ -3584,29 +3584,86 @@ pub fn paramsubst(
                         sub_flags_bits |= SUB_EGLOB;
                     } // c:2167-2169 (* / Star)
                     'I' => {
-                        // c:2189 (I:N:)
-                        // (I:N:) — match the Nth occurrence in
-                        // \${var//pat/repl}. Direct port of
-                        // subst.c:2189 which calls get_intarg to
-                        // pull the digits and stash in flnum. The
-                        // Rust port stashes on state.match_index
-                        // so the BUILTIN_PARAM_REPLACE arm reads
-                        // it via with_executor.
+                        // c:2189-2195 (I:N:) — match the Nth occurrence in
+                        // ${var//pat/repl}. C:
+                        //   case 'I':
+                        //       s++;
+                        //       flnum = get_intarg(&s, &dellen);
+                        //       if (flnum < 0) goto flagerr;
+                        //       s--;
+                        //       break;
+                        // get_intarg expects a delimited integer
+                        // (`(I:N:)`, `(I.N.)`, etc.). If the byte after
+                        // `I` is not a delimiter (e.g. `(I)foo` with no
+                        // numeric arg) or no matching close-delim is
+                        // found, get_intarg returns -1 and the C arm
+                        // jumps to flagerr. Previous Rust port read bare
+                        // digits with no delimiter and silently accepted
+                        // `(I)foo`, diverging from zsh's "error in flags
+                        // near position N" diagnostic.
                         idx += 1; // c:2190 (s++)
-                        let mut digits = String::new(); // c:2191
-                        while idx < body_chars.len()        // c:2191
-                            && body_chars[idx].is_ascii_digit()
-                        // c:2191
+                        if idx >= body_chars.len() {
+                            let pos_1based = idx + 1;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
+                        let del = body_chars[idx]; // c:1431 get_strarg del
+                        let close_del = match del {
+                            '(' => ')',
+                            '[' => ']',
+                            '{' => '}',
+                            '<' => '>',
+                            other => other,
+                        };
+                        idx += 1; // get_strarg(s) past opening delimiter
+                        let n_start = idx;
+                        while idx < body_chars.len()
+                            && body_chars[idx] != close_del
+                            && body_chars[idx] != ')'
+                            && body_chars[idx] != Outpar
                         {
-                            // c:2191
-                            digits.push(body_chars[idx]); // c:2191
-                            idx += 1; // c:2191
-                        } // c:2191
-                        if let Ok(n) = digits.parse::<u32>() {
-                            // c:2191
-                            flnum = n; // c:2191
-                        } // c:2191
-                        continue; // c:2195
+                            idx += 1;
+                        }
+                        // c:1436-1437 get_strarg returns -1 if `!*t`
+                        // (no close delim found before end of input).
+                        if idx >= body_chars.len() || body_chars[idx] != close_del {
+                            let pos_1based = idx + 1;
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                pos_1based,
+                                body.as_str()
+                            ));
+                            errflag_set_error();
+                            return (String::new(), new_pos, vec![]);
+                        }
+                        let raw_expr: String = body_chars[n_start..idx].iter().collect();
+                        let expanded = singsub(&raw_expr); // c:1444 singsub
+                        let n: i64 = if expanded.is_empty() {
+                            0
+                        } else {
+                            match crate::ported::math::mathevali(&expanded) {
+                                Ok(v) => v.abs(), // c:1451-1452 ret = -ret
+                                Err(msg) => {
+                                    zerr(&msg);
+                                    let pos_1based = idx + 1;
+                                    zerr(&format!(
+                                        "error in flags near position {} in '${{{}}}'",
+                                        pos_1based,
+                                        body.as_str()
+                                    ));
+                                    errflag_set_error();
+                                    return (String::new(), new_pos, vec![]);
+                                }
+                            }
+                        };
+                        flnum = n as u32; // c:2191
+                        idx += 1; // step past the closing delimiter (c:1453 *delmatchp += arglen)
+                        continue; // c:2195 break (next outer flag iter)
                     } // c:2195
                     'M' => {
                         sub_flags_bits |= SUB_MATCH;
