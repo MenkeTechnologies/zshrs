@@ -1468,108 +1468,160 @@ impl modulestab {
     /// and we operate on the static registry.
     /// WARNING: param names don't match C — Rust=(name) vs C=(name, enablesarr, silent)
     pub fn load_module(&mut self, name: &str) -> bool {
-        // c:2206
-        // c:2213 — modname_ok(name)
+        // c:2200
+        // Faithful port of the find_module-found branch (c:2249-2320).
+        // The !find_module branch (c:2219-2247) requires DSO loading and
+        // never fires in zshrs's static-link path: every linked module
+        // is pre-registered by register_builtin_modules.
+        //
+        // C body c:2249-2320:
+        //   if (m->flags & MOD_SETUP) return 0;
+        //   if (m->flags & MOD_UNLOAD) m->flags &= ~MOD_UNLOAD;
+        //   else if (m->u.linked / m->u.handle) return 0;
+        //   if (m->flags & MOD_BUSY) {
+        //       zerr("circular dependencies for module ;%s", name);
+        //       return 1;
+        //   }
+        //   m->flags |= MOD_BUSY;
+        //   if (m->deps) for each dep: load_module(dep, NULL, silent);
+        //   m->flags &= ~MOD_BUSY;
+        //   if (!m->u.handle) {
+        //       module_linked / do_load_module
+        //       if (handle) m->u.handle = handle, m->flags |= MOD_SETUP
+        //       else m->u.linked = linked, m->flags |= MOD_SETUP|MOD_LINKED
+        //       if (setup_module(m)) { finish, NULL handles, ~SETUP, return 1; }
+        //       m->flags |= MOD_INIT_S;
+        //   }
+        //   m->flags |= MOD_SETUP;
+        //   if ((bootret = do_boot_module(m, enablesarr, silent)) == 1) {
+        //       do_cleanup_module(m); finish_module(m);
+        //       m->u.linked/handle = NULL;
+        //       m->flags &= ~MOD_SETUP;
+        //       return 1;
+        //   }
+        //   m->flags |= MOD_INIT_B;
+        //   m->flags &= ~MOD_SETUP;
+        //   return bootret;
+
+        // c:2208 — modname_ok(name)
         if modname_ok(name) == 0 {
-            // c:2213
-            // c:2214-2215 — zerr if !silent
-            return false; // c:2216 return 1 → false
+            // c:2210 — zerr if !silent (silent flag not threaded yet)
+            return false;
         }
-        crate::ported::signals::queue_signals(); // c:2223
-                                                 // c:2224 — find_module(name, FINDMOD_ALIASP, &name)
-        let exists = self.modules.contains_key(name);
-        if !exists {
-            // c:2224 !find_module
-            // c:2225-2229 — module_linked + do_load_module: zshrs has
-            // no DSO loader; only statically linked modules exist.
-            unqueue_signals(); // c:2227
-            return false; // c:2228 return 1
+        crate::ported::signals::queue_signals(); // c:2218
+                                                 // c:2219 — find_module(name, FINDMOD_ALIASP)
+        if !self.modules.contains_key(name) {
+            // c:2219 — !m branch: static-link path can't dlopen.
+            unqueue_signals(); // c:2222
+            return false; // c:2223 return 1
         }
-        // c:2254 — flags & MOD_SETUP: already in setup, return 0.
-        if let Some(m) = self.modules.get(name) {
-            if (m.node.flags & MOD_SETUP) != 0 {
-                // c:2254
-                unqueue_signals(); // c:2255
-                return true; // c:2256 return 0
+
+        // c:2249 — if (MOD_SETUP) return 0;
+        let flags = self.modules.get(name).unwrap().node.flags;
+        if (flags & MOD_SETUP) != 0 {
+            unqueue_signals(); // c:2250
+            return true; // c:2251 return 0
+        }
+        // c:2253-2254 — if (MOD_UNLOAD) clear it; else if loaded, return 0.
+        if (flags & MOD_UNLOAD) != 0 {
+            self.modules.get_mut(name).unwrap().node.flags &= !MOD_UNLOAD;
+        } else if (flags & MOD_LINKED) != 0 && (flags & MOD_INIT_B) != 0 {
+            // c:2255 — `m->u.linked` already set ↔ MOD_INIT_B in
+            // static-link terms (boot has run). Without the MOD_INIT_B
+            // gate, the early-return fires on every zmodload of a
+            // pre-registered builtin module because they enter with
+            // MOD_LINKED already set.
+            unqueue_signals(); // c:2256
+            return true; // c:2257 return 0
+        }
+        // c:2259-2262 — circular-dependency detection.
+        if (flags & MOD_BUSY) != 0 {
+            unqueue_signals(); // c:2260
+            crate::ported::utils::zerr(&format!(
+                "circular dependencies for module ;{}",
+                name
+            ));
+            return false; // c:2262 return 1
+        }
+        self.modules.get_mut(name).unwrap().node.flags |= MOD_BUSY; // c:2264
+
+        // c:2269-2277 — recurse into m->deps.
+        let deps_snapshot: Vec<String> = self
+            .modules
+            .get(name)
+            .and_then(|m| m.deps.as_ref())
+            .map(|d| d.iter().cloned().collect())
+            .unwrap_or_default();
+        for dep in &deps_snapshot {
+            if !self.load_module(dep) {
+                // c:2272 — return 1 on dep failure
+                self.modules.get_mut(name).unwrap().node.flags &= !MOD_BUSY; // c:2273
+                unqueue_signals(); // c:2274
+                return false; // c:2275 return 1
             }
         }
-        if let Some(m) = self.modules.get_mut(name) {
-            if (m.node.flags & MOD_UNLOAD) != 0 {
-                // c:2258
-                m.node.flags &= !MOD_UNLOAD; // c:2259
-            } else if (m.node.flags & MOD_LINKED) != 0 && (m.node.flags & MOD_INIT_B) != 0 {
-                // c:Src/module.c:2260 — already loaded (handle exists
-                // AND boot ran). For statically-linked builtin modules
-                // (registered with MOD_LINKED set at module::new),
-                // MOD_INIT_B is only set after this fn walks the
-                // setup/boot steps — so MOD_LINKED alone must NOT
-                // short-circuit. Previously the early-return fired on
-                // every `zmodload zsh/mathfunc` for builtin modules
-                // because they enter this fn with MOD_LINKED already
-                // set but MOD_INIT_B clear; the setup arms below were
-                // skipped, so MOD_INIT_B never got set. Parity bug.
-                unqueue_signals(); // c:2261
-                return true; // c:2262 return 0
+        self.modules.get_mut(name).unwrap().node.flags &= !MOD_BUSY; // c:2278
+
+        // c:2279-2304 — `if (!m->u.handle)` setup branch. Static-link
+        // analog: `MOD_INIT_S` clear (setup hasn't run yet). zshrs's
+        // pre-registered modules enter here with MOD_LINKED set but
+        // MOD_INIT_S clear.
+        let needs_setup = (self.modules.get(name).unwrap().node.flags & MOD_INIT_S) == 0;
+        if needs_setup {
+            // c:2287-2291 — `m->u.linked = linked; MOD_SETUP|MOD_LINKED`.
+            self.modules.get_mut(name).unwrap().node.flags |= MOD_SETUP | MOD_LINKED;
+            // c:2293 — setup_module(m). Routes through the dispatcher
+            // (839f32249b) to per-module setup_(m). Most modules return
+            // 0; some initialise module-private state.
+            if setup_module(self, name) != 0 {
+                // c:2294-2301 — failure: finish, clear handles, return 1.
+                let _ = finish_module(self, name);
+                if let Some(m) = self.modules.get_mut(name) {
+                    m.node.flags &= !MOD_SETUP;
+                }
+                unqueue_signals(); // c:2300
+                return false; // c:2301 return 1
             }
-            if (m.node.flags & MOD_BUSY) != 0 {
-                // c:2264
-                unqueue_signals(); // c:2265
-                return false; // c:2267 return 1
-            }
-            m.node.flags |= MOD_BUSY; // c:2269
-                                      // c:2274-2282 — recurse into m->deps (omitted: per-module
-                                      // deps tracker lives in the Linkedmod records in C).
-            m.node.flags &= !MOD_BUSY; // c:2283
-                                       // c:2284-2309 — !m->u.handle path: load + setup_module
-            m.node.flags |= MOD_LINKED; // c:2296 MOD_LINKED for linked
-            m.node.flags |= MOD_INIT_S; // c:2308
-            m.node.flags |= MOD_SETUP; // c:2310
-                                       // c:2311 — do_boot_module(m, enablesarr, silent)
-            m.node.flags |= MOD_INIT_B; // c:2322
-            m.node.flags &= !MOD_SETUP; // c:2323
+            // c:2303 — `m->flags |= MOD_INIT_S;`
+            self.modules.get_mut(name).unwrap().node.flags |= MOD_INIT_S;
         }
-        // c:Src/Modules/system.c:902,904 + zsh/mapfile — `SPECIALPMDEF`
+        // c:2305 — `m->flags |= MOD_SETUP;`
+        self.modules.get_mut(name).unwrap().node.flags |= MOD_SETUP;
+
+        // c:Src/Modules/system.c:902,904 + zsh/mapfile — SPECIALPMDEF
         // entries get added to paramtab via the module's feature
-        // dispatch (`enables_` → `handlefeatures` → addparam). zshrs's
-        // simplified module framework runs that path implicitly via
-        // PARTAB, but `init_partab_params` skips zmodload-gated names
-        // to avoid them appearing before explicit load (bug #69 in
-        // docs/BUGS.md). Re-seed them here once boot completes.
+        // dispatch (enables_ → handlefeatures → addparam). zshrs's
+        // vm_helper::init_partab_params skips zmodload-gated names to
+        // avoid them appearing before explicit load (bug #69). Re-seed
+        // here once boot completes. This is a Rust-only bridge — no
+        // direct C counterpart since C's handlefeatures runs implicitly
+        // inside do_boot_module → enables_module.
         for nm in crate::vm_helper::module_gated_params_for(name) {
             crate::vm_helper::seed_partab_param(nm);
         }
-        // c:Src/module.c:1884+1910 — C dispatches per-module setup_/
-        // boot_ via `(m->u.linked->setup)(m)` + `(m->u.linked->boot)(m)`.
-        // zshrs's module table doesn't carry function pointers, so a
-        // name-keyed dispatch lives here. Each arm is the canonical
-        // setup_/boot_(m) port from that module's C file.
-        match name {
-            // c:Src/Modules/watch.c:734 — registers `watch` (PM_ARRAY |
-            // PM_SPECIAL) and `WATCH` (PM_SCALAR | PM_SPECIAL) plus
-            // the checksched preprompt hook. Bug #270.
-            "zsh/watch" => {
-                crate::ported::modules::watch::boot_(std::ptr::null());
+
+        // c:2306 — `bootret = do_boot_module(m, enablesarr, silent);`
+        // The Rust do_boot_module routes through boot_module dispatcher
+        // (b474b62898) to the per-module boot_(m) — the real partab
+        // and bintab installations land here.
+        let bootret = do_boot_module(self, "", 0);
+        if bootret == 1 {
+            // c:2306-2315 — boot failure: cleanup + finish + clear, return 1.
+            let _ = cleanup_module(self, name);
+            let _ = finish_module(self, name);
+            if let Some(m) = self.modules.get_mut(name) {
+                m.node.flags &= !MOD_SETUP;
             }
-            // c:Src/Modules/datetime.c:25-30 — registers EPOCHSECONDS
-            // (PM_INTEGER), EPOCHREALTIME (PM_FFLOAT), epochtime
-            // (PM_ARRAY), each with PM_READONLY|PM_HIDE|PM_HIDEVAL|
-            // PM_SPECIAL. Bug #512.
-            "zsh/datetime" => {
-                crate::ported::modules::datetime::boot_(std::ptr::null());
-            }
-            // c:Src/Modules/example.c:198 — setup_ prints
-            // "The example module has now been set up." then boot_
-            // seeds the demo params (intparam=42, strparam="example",
-            // arrparam=("example","array")). `zmodload zsh/example`
-            // in zsh -fc emits the setup_ message.
-            "zsh/example" => {
-                crate::ported::modules::example::setup_(std::ptr::null());
-                crate::ported::modules::example::boot_(std::ptr::null());
-            }
-            _ => {}
+            unqueue_signals(); // c:2314
+            return false; // c:2315 return 1
         }
-        unqueue_signals(); // c:2324
-        true // c:2325 return bootret (0)
+        // c:2317-2318 — `m->flags |= MOD_INIT_B; m->flags &= ~MOD_SETUP;`
+        if let Some(m) = self.modules.get_mut(name) {
+            m.node.flags |= MOD_INIT_B;
+            m.node.flags &= !MOD_SETUP;
+        }
+        unqueue_signals(); // c:2319
+        true // c:2320 return bootret (0)
     }
 
     // Backend handler for zmodload -u                                       // c:2813
