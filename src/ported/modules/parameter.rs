@@ -1477,18 +1477,36 @@ pub fn scanbuiltins(
     _ht: *mut HashTable,
     func: Option<ScanFunc>, // c:813
     flags: i32,
-    _dis: i32,
+    dis: i32,
 ) {
     // C body (c:816-840): loop through builtintab nodes; for each
     // matching DISABLED filter, emit a scalar Param via func().
     // Static-link path: walk BUILTINS table from src/ported/builtin.rs
     // (the Rust canonical source for builtin entries).
-    let _ = flags;
+    //
+    // c:Src/Modules/parameter.c:825 — `if (dis ? (hn->flags & DISABLED)
+    // : !(hn->flags & DISABLED))`. With `dis=0` (the `builtins`
+    // param), emit only enabled entries; with `dis=DISABLED` (the
+    // `dis_builtins` param), emit only disabled entries. The Rust
+    // BUILTINS table currently carries no DISABLED bit at construction
+    // (every entry's `flags == 0`), so dis=DISABLED → no entries
+    // (matches zsh: empty dis_builtins by default). Previously the
+    // filter was ignored, so `${#dis_builtins}` returned 159 instead
+    // of 0.
     if let Some(f) = func {
         for b in BUILTINS.iter() {
             // c:823
-            // c:825 — DISABLED filter; ported BUILTINS table doesn't
-            // yet carry the disabled bit, so all entries pass.
+            let b_flags = b.node.flags; // c:825 hn->flags
+            let pass = if dis != 0 {
+                // c:825 dis ? (hn->flags & DISABLED)
+                (b_flags & DISABLED) != 0
+            } else {
+                // c:825 !(hn->flags & DISABLED)
+                (b_flags & DISABLED) == 0
+            };
+            if !pass {
+                continue;
+            }
             let node = Box::new(hashnode {
                 next: None,
                 nam: b.node.nam.clone(),
