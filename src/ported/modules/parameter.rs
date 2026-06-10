@@ -4028,26 +4028,56 @@ pub fn scanpmusergroups(
     func: Option<ScanFunc>, // c:2143
     flags: i32,
 ) {
-    if let Some(f) = func {
-        unsafe {
-            libc::setgrent();
-        } // c:2148
-        loop {
-            let grp = unsafe { libc::getgrent() }; // c:2152
-            if grp.is_null() {
-                break;
-            }
-            let name = unsafe { std::ffi::CStr::from_ptr((*grp).gr_name) };
-            let node = Box::new(hashnode {
-                next: None,
-                nam: name.to_string_lossy().into_owned(), // c:2160
-                flags: 0,
-            });
-            f(&node, flags); // c:2167
+    // c:2143
+    // Faithful port of c:2146-2167:
+    //   gs = get_all_groups();
+    //   if (!gs) { zerr(...); return; }
+    //   for (gaptr = gs->array; gaptr < gs->array + gs->num; gaptr++) {
+    //       pm.node.nam = gaptr->name;
+    //       ... emit gid as %d ...
+    //       func(&pm.node, flags);
+    //   }
+    //
+    // C iterates ONLY the current user's groups. Prior Rust port
+    // used getgrent() which walks every group in the system database
+    // — same semantic divergence as getpmusergroups before the
+    // 7b5a68a79f fix. \${(k)usergroups} listed every system group,
+    // breaking scripts that iterate the user's actual memberships.
+    //
+    // Build the user group set the same way getpmusergroups now
+    // does: getgroups(2) + getegid(2) + getgrgid(3).
+    let f = match func {
+        Some(f) => f,
+        None => return,
+    };
+
+    let n_groups = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if n_groups < 0 {
+        return; // c:2155 — get_all_groups NULL → zerr + return.
+    }
+    let mut gids: Vec<libc::gid_t> = vec![0; n_groups as usize];
+    let got = unsafe { libc::getgroups(n_groups, gids.as_mut_ptr()) };
+    if got < 0 {
+        return;
+    }
+    // c:2081-2083 — get_all_groups appends egid if not in the
+    // supplementary list.
+    let egid = unsafe { libc::getegid() };
+    if !gids.iter().any(|&g| g == egid) {
+        gids.push(egid);
+    }
+    for gid in gids {
+        let grp = unsafe { libc::getgrgid(gid) };
+        if grp.is_null() {
+            continue; // c:2088
         }
-        unsafe {
-            libc::endgrent();
-        } // c:2169
+        let name = unsafe { std::ffi::CStr::from_ptr((*grp).gr_name) };
+        let node = Box::new(hashnode {
+            next: None,
+            nam: name.to_string_lossy().into_owned(), // c:2160
+            flags: 0,
+        });
+        f(&node, flags); // c:2167
     }
 }
 
