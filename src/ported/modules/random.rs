@@ -226,10 +226,33 @@ pub fn math_zrand_int(
 /// Port of `math_zrand_float(UNUSED(char *name), UNUSED(int argc), UNUSED(mnumber *argv), UNUSED(int id))` from Src/Modules/random.c:204 —
 /// the C source's math-function entry point that returns a
 /// uniform double in `[0, 1)`.
+///
+/// C body (verbatim):
+///   r = random_real();
+///   if (r < 0) {
+///       zwarnnam(name, "Failed to get sufficient random data.");
+///   }
+///   ret.type = MN_FLOAT;
+///   ret.u.d = r;
+///   return ret;
+///
+/// `random_real` returns -1 (via the thread_local sentinel set in
+/// random_real.rs) when the entropy syscall fails. C warns then still
+/// returns -1 as the math-function result; prior Rust port skipped
+/// the warn so callers had no signal that `[[ $((zrand_float())) ]]`
+/// produced a sentinel instead of a real probability.
 /// WARNING: param names don't match C — Rust=() vs C=(name, argc, argv, id)
 pub fn math_zrand_float() -> f64 {
     // c:204
-    random_real()
+    let r = random_real(); // c:210
+    if r < 0.0 {
+        // c:211
+        crate::ported::utils::zwarnnam(
+            "zrand_float", // c:212 — C uses `name`, the math-function name.
+            "Failed to get sufficient random data.",
+        );
+    }
+    r // c:215
 }
 
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/random.c:243`.
