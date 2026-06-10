@@ -107,15 +107,47 @@ pub fn printmodulenode(hn: &str, m: &module, flags: i32) -> String {
         return out;
     }
 
-    // c:195-201 — PRINTMOD_EXIST branch.
+    // c:189-201 — PRINTMOD_EXIST branch.
+    // C body:
+    //   if (m->node.flags & MOD_ALIAS) {
+    //       if (!(flags & PRINTMOD_ALIAS) ||
+    //           !(m = find_module(m->u.alias, FINDMOD_ALIASP, NULL)))
+    //           return;
+    //   }
+    //   if (!m->u.handle || (m->node.flags & MOD_UNLOAD))
+    //       return;
+    //   nicezputs(modname, stdout);
+    //
+    // The MOD_ALIAS arm at c:194-198 reassigns m to the alias target
+    // before the u.handle check at c:199 — without a table handle we
+    // can't chase the alias here; the caller (bin_zmodload_exist /
+    // bin_zmodload_alias) is responsible for the chase when feeding
+    // us the canonical module. For the local check we read the alias
+    // entry's flags, which is the right behaviour when the caller
+    // already resolved.
     if flags & PRINTMOD_EXIST != 0 {
-        if (m.node.flags & MOD_ALIAS) != 0 && (flags & PRINTMOD_ALIAS == 0 || m.alias.is_none()) {
+        if (m.node.flags & MOD_ALIAS) != 0 {
+            if (flags & PRINTMOD_ALIAS) == 0 || m.alias.is_none() {
+                // c:195-197 — alias entry + caller didn't pass
+                // PRINTMOD_ALIAS, OR the alias is dangling.
+                return out;
+            }
+            // Alias resolves: emit the alias entry's name; the
+            // caller chased and decided it counts as "exists".
+        }
+        // c:199 — `!m->u.handle || MOD_UNLOAD` skip.
+        // Static-link analog of `!u.handle` is `!MOD_INIT_B`
+        // (boot hasn't run = no loaded handle). The prior port
+        // missed this gate, so PRINTMOD_EXIST listed every
+        // pre-registered module even when zmodload zsh/files had
+        // never fired — diverging from `zsh -fc 'zmodload -e'`
+        // which emits only the actually-loaded `zsh/main`.
+        let booted = (m.node.flags & MOD_INIT_B) != 0;
+        let unloading = (m.node.flags & MOD_UNLOAD) != 0;
+        if !booted || unloading {
             return out;
         }
-        if m.node.flags & MOD_UNLOAD != 0 {
-            return out;
-        }
-        out.push_str(modname);
+        out.push_str(modname); // c:201 nicezputs(modname)
         return out;
     }
 
@@ -4061,15 +4093,33 @@ pub fn bin_zmodload_exist(
     table: &mut modulestab,
     _nam: &str,
     args: &[String],
-    _ops: &options,
+    ops: &options,
 ) -> i32 {
     // c:2623
     if args.is_empty() {
-        // c:2623
-        // c:2628-2630 — scanhashtable + printnode listing.
-        // Static-link path: dump the modules registry.
-        for (name, _) in &table.modules {
-            println!("{}", name);
+        // c:2627
+        // c:2628-2630 — scanhashtable(modulestab, 1, 0, 0,
+        //                              modulestab->printnode,
+        //                              OPT_ISSET(ops,'A')
+        //                                  ? PRINTMOD_EXIST|PRINTMOD_ALIAS
+        //                                  : PRINTMOD_EXIST);
+        // Sorted walk (the `1` 2nd arg) over the full table (no
+        // INCLUDE/EXCLUDE filters), dispatching every entry through
+        // printmodulenode. -A toggles PRINTMOD_ALIAS so alias entries
+        // emit their alias target alongside the existence line.
+        let printflags = if OPT_ISSET(ops, b'A') {
+            PRINTMOD_EXIST | PRINTMOD_ALIAS
+        } else {
+            PRINTMOD_EXIST
+        };
+        let mut names: Vec<&String> = table.modules.keys().collect();
+        names.sort(); // c:2628 sorted=1
+        for name in names {
+            let m = &table.modules[name];
+            let line = printmodulenode(name, m, printflags);
+            if !line.is_empty() {
+                println!("{}", line);
+            }
         }
         return 0; // c:2631
     }
