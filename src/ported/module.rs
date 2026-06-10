@@ -2246,17 +2246,54 @@ impl modulestab {
     /// Port of `addconddef(Conddef c)` from `Src/module.c:703`.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(c)
     ///
-    /// Like `addbuiltin`, C inserts into the canonical `condtab` table
-    /// (Src/cond.c); the real registration lives in `cond.rs::CONDTAB`.
-    pub fn addconddef(&mut self, _name: &str, _module: &str) { // c:703
+    /// Like `addbuiltin`, the real registration lives in
+    /// `cond.rs::CONDTAB`; the routing fn here delegates to the free
+    /// `addconddef` (4304-port) so the canonical name+infix-flag
+    /// clash gate fires.
+    ///
+    /// Returns 0 on success, 1 on clash (matches C's signature).
+    pub fn addconddef(&mut self, name: &str, module: &str) -> i32 {
+        // c:703
+        // Construct a probe conddef matching what add_autocond /
+        // setconddefs build. handler/min/max/condid stay default
+        // (filled in by the actual module on load).
+        let cd = conddef {
+            next: None,
+            name: name.to_string(),
+            flags: 0, // c:703 entries here aren't infix by default
+            handler: None,
+            min: 0,
+            max: 0,
+            condid: 0,
+            module: Some(module.to_string()),
+        };
+        // c:705-715 — addconddef walks CONDTAB for clash, replaces
+        // autoload entries, prepends on success. Returns 0/1.
+        addconddef(cd)
     }
 
     /// Unregister a condition (from module.c deleteconddef)
     /// Port of `deleteconddef(Conddef c)` from `Src/module.c:724`.
+    /// Returns 0 on success (entry was found + removed), -1 on miss.
+    /// Mirrors C's deleteconddef return contract.
     /// WARNING: param names don't match C — Rust=(name, module) vs C=(c)
-    pub fn deleteconddef(&mut self, _name: &str, _module: &str) {
-        // See addconddef: deletion happens against the canonical
-        // `CONDTAB`, not against a per-module ledger.
+    pub fn deleteconddef(&mut self, name: &str, _module: &str) -> i32 {
+        // c:724
+        // Build a probe conddef and call the free deleteconddef
+        // (4304-port) which walks CONDTAB by (name, infix-flag) for
+        // identity. infix=0 here matches the prefix-style default
+        // used by the auto* registrations.
+        let probe = conddef {
+            next: None,
+            name: name.to_string(),
+            flags: 0,
+            handler: None,
+            min: 0,
+            max: 0,
+            condid: 0,
+            module: None,
+        };
+        deleteconddef(&probe)
     }
 
     /// Get condition definition (from module.c getconddef)
