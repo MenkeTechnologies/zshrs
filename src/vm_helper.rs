@@ -826,10 +826,17 @@ impl ShellExecutor {
             "ZSH_PATCHLEVEL",
             crate::ported::patchlevel::ZSH_PATCHLEVEL,
         );
-        setsparam(
-            "ZSHRS_VERSION",
-            crate::ported::patchlevel::ZSHRS_VERSION,
-        );
+        // Skip ZSHRS_VERSION in `--zsh` parity mode so `${(k)parameters}`
+        // doesn't carry a name zsh doesn't ship — matches the guard
+        // in `ported::params::createparamtable`. Scripts running under
+        // `--zsh` mode can still detect zshrs via `$ZSH_VERSION` which
+        // carries a `-test` suffix.
+        if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            setsparam(
+                "ZSHRS_VERSION",
+                crate::ported::patchlevel::ZSHRS_VERSION,
+            );
+        }
         setsparam("ZSH_NAME", "zsh");
         // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271).
         // The bin entrypoint overrides this with the script path for
@@ -888,6 +895,41 @@ impl ShellExecutor {
             })
             .unwrap_or_else(|| "!^#".to_string());
         setsparam("histchars", &histchars_val);
+
+        // c:Src/params.c:870-871 — `setsparam("TIMEFMT", ...)` etc.
+        // Seed TIMEFMT explicitly so `${(k)parameters}` lists it
+        // (the createparamtable() ported in ported::params isn't
+        // invoked from this bin entry — its setsparam calls don't
+        // run, so TIMEFMT only existed via the lookup_special_var
+        // fallback, which scanpmparameters can't see).
+        setsparam(
+            "TIMEFMT",
+            crate::ported::zsh_system_h::DEFAULT_TIMEFMT,
+        );
+        // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`.
+        // Even in non-interactive -fc mode zsh creates the param;
+        // mirror so ${(k)parameters} count matches.
+        let tty_str = unsafe {
+            let p = libc::ttyname(0);
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p)
+                    .to_str()
+                    .unwrap_or("")
+                    .to_string()
+            }
+        };
+        setsparam("TTY", &tty_str);
+        // c:Src/params.c:968-979 — `setaparam("signals", ...)`.
+        // Build the signal-name array. Mirror by inserting directly
+        // into paramtab so ${(k)parameters} sees it.
+        {
+            use crate::ported::signals_h::SIGS;
+            let signals_arr: Vec<String> =
+                SIGS.iter().map(|(n, _)| n.to_string()).collect();
+            crate::ported::params::setaparam("signals", signals_arr);
+        }
         // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
         // PS4 to "+%N:%i> " for ZSH emulation ("+ " for KSH/SH).
         // Without seeding, PS4 reads empty and `set -x` output has

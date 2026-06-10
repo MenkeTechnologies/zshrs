@@ -693,22 +693,27 @@ pub const special_params: &[special_paramdef] = &[
         tied_name: None,
     },
     special_paramdef {
-        // c:Src/loop.c:719 — `zlong try_errflag = -1`. PM_UNSET so the
-        // reader returns the -1 sentinel until something writes the
-        // entry (either BUILTIN_SET_TRY_BLOCK_ERROR after a try block,
-        // or `TRY_BLOCK_ERROR=N` direct assignment — both go through
-        // assignstrvalue which clears PM_UNSET at c:3660). Bug #143.
+        // c:Src/params.c:364 — `IPDEF6("TRY_BLOCK_ERROR", &try_errflag,
+        // varinteger_gsu)` = PM_INTEGER | PM_SPECIAL | PM_DONTIMPORT.
+        // No PM_UNSET on the table entry — C reads -1 via the getfn
+        // reading the global `try_errflag`. zshrs's earlier port set
+        // PM_UNSET as a "no-write-yet" sentinel which broke
+        // `${(k)parameters}` parity (zsh emits the name; with PM_UNSET
+        // here scanpmparameters skipped it). The -1 default is now
+        // surfaced via the special-var getter (params.rs sentinel
+        // override on PM_UNSET removal).
         name: "TRY_BLOCK_ERROR",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT | PM_UNSET,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     special_paramdef {
-        // c:Src/loop.c — `try_interrupt = -1`. Same PM_UNSET pattern
-        // as TRY_BLOCK_ERROR.
+        // c:Src/loop.c — `try_interrupt = -1`. Same pattern as
+        // TRY_BLOCK_ERROR: no PM_UNSET on the table entry; -1
+        // default emerges via the special-var getter.
         name: "TRY_BLOCK_INTERRUPT",
         pm_type: PM_INTEGER,
-        pm_flags: PM_DONTIMPORT | PM_UNSET,
+        pm_flags: PM_DONTIMPORT,
         tied_name: None,
     },
     // Scalar variables bound to C globals
@@ -1647,6 +1652,7 @@ pub fn createparamtable() {
     setsparam("TMPPREFIX", &ztrdup_metafy(DEFAULT_TMPPREFIX)); // c:870
     setsparam("TIMEFMT", &ztrdup_metafy(DEFAULT_TIMEFMT)); // c:871
 
+
     // c:873-876 — HOST from gethostname() (ztrdup_metafy wrap c:875).
     let mut host_buf = [0u8; 256];
     let host_rc = unsafe { libc::gethostname(host_buf.as_mut_ptr() as *mut libc::c_char, 256) };
@@ -1869,10 +1875,19 @@ pub fn createparamtable() {
     // detect zshrs (vs. upstream zsh) cleanly without inspecting a
     // `-test` suffix on `$ZSH_VERSION`. See `patchlevel::ZSHRS_VERSION`
     // for the value and bug #73 in docs/BUGS.md for the rationale.
-    setsparam(
-        "ZSHRS_VERSION",
-        &ztrdup_metafy(crate::ported::patchlevel::ZSHRS_VERSION),
-    );
+    //
+    // In `--zsh` parity mode, suppress this so `${(k)parameters}`
+    // matches reference zsh's name set (PM_HIDE doesn't filter from
+    // the (k) listing path — C's scanpmparameters only skips PM_UNSET,
+    // not PM_HIDE; outright skipping the setsparam call is the only
+    // way to keep the name out of the listing). Direct access falls
+    // back to an empty value, same as any other unset name.
+    if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        setsparam(
+            "ZSHRS_VERSION",
+            &ztrdup_metafy(crate::ported::patchlevel::ZSHRS_VERSION),
+        );
+    }
 
     // c:968-979 — `setaparam("signals", sigptr = zalloc((TRAPCOUNT
     // + 1) * sizeof(char *))); t = sigs; while (t - sigs <= SIGCOUNT)
