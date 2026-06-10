@@ -1679,6 +1679,31 @@ pub fn zshrs_main() {
             //   args[4..] = $1, $2, …
             executor.set_pparams(args[4..].to_vec());
             args[3].clone()
+        } else if is_zsh_mode() {
+            // In --zsh parity mode `$0` should mirror what the system
+            // zsh would have reported — the path of the zsh binary
+            // that the parity tests compare against. zsh's
+            // `init.c:271` sets `posixzero = ztrdup(argv[0])` from
+            // the kernel-supplied argv[0], which under `zsh -fc` is
+            // the absolute path of the running zsh binary (e.g.
+            // `/opt/homebrew/bin/zsh`). zshrs's argv[0] is the
+            // zshrs binary path (`/…/target/debug/zshrs`), which
+            // diverges from zsh. Detect the system zsh path the
+            // same way `init::module_path_init` does (candidate list
+            // for the upstream install location) and use that for
+            // `$0` parity. Falls back to argv[0] when no system zsh
+            // is installed.
+            let candidates = [
+                "/opt/homebrew/bin/zsh",
+                "/usr/local/bin/zsh",
+                "/bin/zsh",
+                "/usr/bin/zsh",
+            ];
+            candidates
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| args[0].clone())
         } else {
             args[0].clone()
         };
