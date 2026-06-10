@@ -64,8 +64,18 @@ pub(crate) fn bin_cap(nam: &str, argv: &[String], _ops: &options, _func: i32) ->
 
     let mut ret = 0;
     if let Some(arg0) = argv.first() {
-        // C: caps = cap_from_text(*argv);
-        let arg_c = match CString::new(arg0.as_str()) {
+        // c:41 — `unmetafy(*argv, NULL);`. The result is unused (C passes
+        // NULL for the len out-param), but unmetafy MUTATES the string in
+        // place — `cap_from_text` at c:42 needs the raw POSIX-cap text
+        // form, not zsh's metafied byte-escape encoding. Prior Rust port
+        // skipped this, so any cap string containing a Meta-escaped byte
+        // (NUL etc) would pass through verbatim and trip cap_from_text's
+        // syntax parser. For ASCII-only cap strings the gap is invisible;
+        // for metafied input it's a parse-error masquerading as "invalid
+        // capability string".
+        let mut arg_bytes = arg0.as_bytes().to_vec();
+        crate::ported::utils::unmetafy(&mut arg_bytes);
+        let arg_c = match CString::new(arg_bytes) {
             Ok(c) => c,
             Err(_) => {
                 zwarnnam(nam, "invalid capability string");
@@ -148,7 +158,15 @@ pub(crate) fn bin_getcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
     let mut ret = 0;
     // C: do { ... } while(*++argv);
     for file in argv {
-        let path_c = match CString::new(file.as_str()) {
+        // c:77 — `cap_get_file(unmetafy(dupstring(*argv), NULL))` — the
+        // file path passed to libcap must be the raw POSIX form, not
+        // zsh's metafied encoding. Prior port skipped unmetafy, so any
+        // file path containing a Meta-escaped byte (NUL etc) would
+        // surface as ENOENT from cap_get_file instead of resolving to
+        // the real file.
+        let mut path_bytes = file.as_bytes().to_vec();
+        crate::ported::utils::unmetafy(&mut path_bytes);
+        let path_c = match CString::new(path_bytes) {
             Ok(c) => c,
             Err(_) => {
                 zwarnnam(nam, &format!("{}: invalid path", file));
@@ -211,7 +229,10 @@ pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
             return 1;
         }
     };
-    let cap_c = match CString::new(cap_str) {
+    // c:96 — `unmetafy(*argv, NULL);` — same gap as bin_cap / bin_getcap.
+    let mut cap_bytes = cap_str.as_bytes().to_vec();
+    crate::ported::utils::unmetafy(&mut cap_bytes);
+    let cap_c = match CString::new(cap_bytes) {
         Ok(c) => c,
         Err(_) => {
             zwarnnam(nam, "invalid capability string");
@@ -224,9 +245,12 @@ pub(crate) fn bin_setcap(nam: &str, argv: &[String], _ops: &options, _func: i32)
             zwarnnam(nam, "invalid capability string");
             return 1;
         }
-        // C: do { if(cap_set_file(...)) { zwarnnam; ret = 1; } } while(*++argv);
+        // c:104 — `cap_set_file(unmetafy(dupstring(*argv), NULL), caps)`
+        // — each file path must be unmetafied before cap_set_file.
         for file in &argv[1..] {
-            let path_c = match CString::new(file.as_str()) {
+            let mut path_bytes = file.as_bytes().to_vec();
+            crate::ported::utils::unmetafy(&mut path_bytes);
+            let path_c = match CString::new(path_bytes) {
                 Ok(c) => c,
                 Err(_) => {
                     zwarnnam(nam, &format!("{}: invalid path", file));
