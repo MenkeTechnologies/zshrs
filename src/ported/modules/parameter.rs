@@ -1090,16 +1090,41 @@ pub fn scanfunctions(
     _ht: *mut HashTable,
     func: Option<ScanFunc>, // c:458
     flags: i32,
-    _dis: i32,
+    dis: i32,
 ) {
-    // C body (c:461-516): loop through shfunctab nodes filtered by
-    // DISABLED; for each non-counting func, build the body string
-    // (autoload-X form for PM_UNDEFINED, otherwise getpermtext +
-    // EF_RUN tail "\n\t<name> $@") and emit via func().
-    // Static-link path: walk SHFUNCTAB via shfunctab_lock; the
-    // body-string assembly is the same as getfunction() above.
+    // C body (c:464-514):
+    //   for (i = 0; i < shfunctab->hsize; i++)
+    //       for (hn = shfunctab->nodes[i]; hn; hn = hn->next) {
+    //           if (dis ? (hn->flags & DISABLED)
+    //                   : !(hn->flags & DISABLED)) {
+    //               pm.node.nam = hn->nam;
+    //               ... build body ...
+    //               func(&pm.node, flags);
+    //           }
+    //       }
+    //
+    // Prior Rust port iterated every shfunctab entry and emitted
+    // unconditionally — neither the dis parameter nor the DISABLED
+    // bit was honoured. \${(k)dis_functions} returned every function
+    // (wrong: should list ONLY disabled), \${(k)functions} included
+    // disabled ones too. Both diverging from zsh -fc parity.
+    //
+    // Now reads the DISABLED bit from each entry and matches against
+    // dis per C's c:470 gate. shfunctab.iter() exposes all entries
+    // including disabled ones, so the flag check is what discriminates.
     let names: Vec<String> = if let Ok(g) = shfunctab_lock().read() {
-        g.iter().map(|(n, _)| n.clone()).collect() // c:469-470
+        // c:468-470 — walk all shfunctab entries; filter by DISABLED.
+        g.iter()
+            .filter_map(|(n, shf)| {
+                let is_disabled = (shf.node.flags & DISABLED as i32) != 0;
+                let pass = if dis != 0 { is_disabled } else { !is_disabled };
+                if pass {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     } else {
         Vec::new()
     };
@@ -1108,7 +1133,7 @@ pub fn scanfunctions(
             let node = Box::new(hashnode {
                 next: None,
                 nam: name,
-                flags: 0, // c:472
+                flags: 0, // c:472 fresh pm.node.nam
             });
             f(&node, flags); // c:514
         }
