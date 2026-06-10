@@ -56,11 +56,15 @@ pub fn reverse_strftime(
     // defaults to mirror strptime + mktime semantics. Bug #324.
     let mut parsed = Parsed::new();
     if chrono::format::parse(&mut parsed, input, StrftimeItems::new(format)).is_err() {
-        // c:67-71 mismatch
+        // c:64-69 — `if (!endp) { if (!quiet) zwarnnam(nam,
+        //                          'format not matched'); return 1; }`
+        // C emits the bare 'format not matched' string with no
+        // input echo; prior Rust port appended ': {input}' which
+        // diverged from zsh -fc parity.
         if quiet == 0 {
-            zwarnnam(nam, &format!("format not matched: {}", input));
+            zwarnnam(nam, "format not matched"); // c:67
         }
-        return 1;
+        return 1; // c:68
     }
     let year = parsed.year.or_else(|| parsed.year_div_100.zip(parsed.year_mod_100).map(|(d, m)| d * 100 + m)).unwrap_or(1970);
     let month = parsed.month.unwrap_or(1);
@@ -71,8 +75,14 @@ pub fn reverse_strftime(
     let date = match NaiveDate::from_ymd_opt(year, month, day) {
         Some(d) => d,
         None => {
+            // c:67 — same bare 'format not matched' for out-of-range
+            // date components (e.g. month 13). C's strptime → mktime
+            // chain doesn't distinguish parse-mismatch from invalid-
+            // date because mktime normalises any out-of-range tm
+            // fields rather than failing; chrono's from_ymd_opt is
+            // stricter, so we emit the same diagnostic.
             if quiet == 0 {
-                zwarnnam(nam, &format!("format not matched: {}", input));
+                zwarnnam(nam, "format not matched");
             }
             return 1;
         }
