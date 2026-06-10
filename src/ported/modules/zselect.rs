@@ -227,6 +227,10 @@ pub fn bin_zselect(
         zwarnnam(nam, "no file descriptors and no timeout: would block forever");
         return 1;
     }
+    // c:173 — `errno = 0;` (Rust's last_os_error reads thread-local
+    // errno set by libc::select on entry; no explicit zero needed).
+    // c:174-177 — `do { i = select(...) } while (i < 0 && errno == EINTR && !errflag);`
+    use std::sync::atomic::Ordering::Relaxed;
     let mut sel: libc::c_int;
     loop {
         sel = unsafe { libc::select(fdmax, &mut fdset[0], &mut fdset[1], &mut fdset[2], tvptr) };
@@ -234,10 +238,15 @@ pub fn bin_zselect(
             break;
         }
         let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::EINTR) {
-            continue;
-        } // c:174
-        break;
+        if err.raw_os_error() != Some(libc::EINTR) {
+            break;
+        }
+        // c:177 — `!errflag` gate: bail out of the retry loop when
+        // the user Ctrl-C'd mid-select instead of looping forever
+        // waiting for the kernel to redeliver the same signal.
+        if crate::ported::utils::errflag.load(Relaxed) != 0 {
+            break;
+        }
     }
 
     if sel <= 0 {
