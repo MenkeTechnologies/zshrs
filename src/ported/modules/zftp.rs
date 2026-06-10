@@ -3188,13 +3188,29 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
         if progress != 0 && getshfunc("zftp_progress").is_some() {
             let mut sz: libc::off_t = -1; // c:2567
             let mut _mdtm: Option<String> = None;
-            // c:2576-2585 — DUMB-gated SIZE probe. C also consults
-            // ZFST_NOSZ/ZFST_TRSZ status bits to avoid re-probing when
-            // the server already proved it doesn't send the size; that
-            // cache isn't ported per-session, so the gate collapses
-            // to !DUMB ON RECV (matches behavior on first transfer).
+            // c:2576-2585 — SIZE probe gate:
+            //   if ((!(zfprefs & ZFPF_DUMB) &&
+            //        (zfstatusp[zfsessno] & (ZFST_NOSZ|ZFST_TRSZ))
+            //         != ZFST_TRSZ)
+            //       || !recv) {
+            //       zfstats(...);
+            //       if (recv && sz == -1) getsize = 1;
+            //   } else
+            //       getsize = 1;
+            // i.e. "probe SIZE if (not DUMB AND cache says re-probe) OR
+            // we're sending (need local file size)." The ZFST_NOSZ /
+            // ZFST_TRSZ per-session cache isn't modelled in the Rust
+            // session struct yet, so the status & (NOSZ|TRSZ) term is
+            // always 0 (fresh-session default); 0 != ZFST_TRSZ so the
+            // cache-says-re-probe leg is always true. Net condition:
+            // !DUMB || !recv (probe unless DUMB and receiving).
+            //
+            // Prior Rust port had `!dumb && (recv || (flags & ZFTP_REST)
+            // == 0)` which doesn't match anything in C — for DUMB
+            // upload it skipped the local fstat (c:2580 needs to read
+            // the local file's st_size for the progress callback).
             let dumb = (zfprefs.load(Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2576
-            if !dumb && (recv || (flags & ZFTP_REST) == 0) {
+            if !dumb || !recv {
                 // c:2576-2578
                 let _ = zfstats(
                     arg,
