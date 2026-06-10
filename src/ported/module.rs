@@ -2158,21 +2158,101 @@ pub trait ModuleLifecycle {
 /// `ensurefeature("f:", name)`. Returns the resolved entry or NULL.
 ///
 /// Rust port returns `Some(module_name)` on hit, `None` on miss.
-/// Honors the autoload flag by triggering `ensurefeature` when set.
+///
+/// Faithful port of c:1283-1306:
+/// ```c
+/// MathFunc
+/// getmathfunc(const char *name, int autol)
+/// {
+///     MathFunc p, q = NULL;
+///     for (p = mathfuncs; p; q = p, p = p->next)
+///         if (!strcmp(name, p->name)) {
+///             if (autol && p->module && !(p->flags & MFF_USERFUNC)) {
+///                 char *n = dupstring(p->module);
+///                 int flags = p->flags;
+///                 removemathfunc(q, p);
+///                 (void)ensurefeature(n, "f:",
+///                                     (flags & MFF_AUTOALL) ? NULL : name);
+///                 p = getmathfunc(name, 0);
+///                 if (!p) {
+///                     zerr("autoloading module %s failed to define math function: %s", n, name);
+///                 }
+///             }
+///             return p;
+///         }
+///     return NULL;
+/// }
+/// ```
+///
+/// C walks `mathfuncs` (file-static linked list) — Rust walks
+/// MATHFUNCS (same shape, Vec). The MFF_USERFUNC filter
+/// (`functions -M` user-defined math) keeps user fns from being
+/// autoloaded out from under the caller. The autoload arm:
+///   1. snapshot module name + flags
+///   2. removemathfunc(name) — drop the autoload stub
+///   3. ensurefeature(module, "f:", AUTOALL?NULL:name) — load real
+///   4. re-query mathfuncs (autol=0) — return the loaded entry
+///   5. zerr if still missing (load failed to populate the table)
 /// WARNING: param names don't match C — Rust=(table, name, autol) vs C=(name, autol)
 pub fn getmathfunc(table: &mut modulestab, name: &str, autol: i32) -> Option<String> {
     // c:1283
-    if let Some(module) = table.autoload_mathfuncs.get(name).cloned() {
-        // c:1283-1288
-        if autol != 0 {
-            // c:1289
-            // c:1295 — ensurefeature(n, "f:", ...)
-            let _ = ensurefeature(table, &module, "f:", Some(name));
-            return table.autoload_mathfuncs.get(name).cloned();
+    // c:1287-1288 — `for (p = mathfuncs; p; q = p, p = p->next)`:
+    // walk MATHFUNCS for the first name match. Snapshot under the
+    // lock so we can release before mutating (autoload arm calls
+    // ensurefeature which can re-enter MATHFUNCS via addmathfunc).
+    let hit: Option<(String, i32, bool)> = {
+        let tab = MATHFUNCS.lock().unwrap();
+        tab.iter().find_map(|p| {
+            if p.name == name {
+                Some((
+                    p.module.clone().unwrap_or_default(),
+                    p.flags,
+                    p.module.is_some(),
+                ))
+            } else {
+                None
+            }
+        })
+    };
+    let (module, flags, has_module) = match hit {
+        Some(t) => t,
+        None => return None, // c:1306 `return NULL;`
+    };
+    // c:1289 — `if (autol && p->module && !(p->flags & MFF_USERFUNC))`.
+    if autol != 0 && has_module && (flags & MFF_USERFUNC) == 0 {
+        // c:1290-1291 — snapshot already done above.
+        // c:1293 — `removemathfunc(q, p)`: drop the stub before load.
+        removemathfunc(name);
+        // c:1295-1296 — `ensurefeature(n, "f:", AUTOALL?NULL:name)`.
+        let feature_arg = if (flags & crate::ported::zsh_h::MFF_AUTOALL) != 0 {
+            None
+        } else {
+            Some(name)
+        };
+        let _ = ensurefeature(table, &module, "f:", feature_arg);
+        // c:1298 — `p = getmathfunc(name, 0);` recurse w/o autol.
+        let after = {
+            let tab = MATHFUNCS.lock().unwrap();
+            tab.iter()
+                .find_map(|p| if p.name == name { p.module.clone() } else { None })
+        };
+        // c:1299-1301 — `if (!p) zerr(...)`.
+        if after.is_none() {
+            crate::ported::utils::zerr(&format!(
+                "autoloading module {} failed to define math function: {}",
+                module, name
+            ));
         }
-        return Some(module); // c:1303
+        return after; // c:1303 `return p;`
     }
-    None // c:1306
+    // c:1303 — non-autoload (or user-fn) hit: return the entry.
+    if has_module {
+        Some(module)
+    } else {
+        // User-fn entries (`functions -M`) have no module — return
+        // an empty string so the caller still observes the hit.
+        Some(String::new())
+    }
 }
 
 /// Port of `add_automathfunc(const char *module, const char *fnam, int flags)` from `Src/module.c:1410`.
