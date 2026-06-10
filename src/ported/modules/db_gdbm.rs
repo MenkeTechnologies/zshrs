@@ -227,16 +227,19 @@ pub fn bin_zuntie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 
              // Static-link path: tied_gdbm_param doesn't carry a flags
              // field separately; readonly is on gdbm_database.readonly.
         }
-        // c:224 — `if (unsetparam_pm(pm, 0, 1))` — registry remove
-        match TIED_PARAMS.lock() {
-            Ok(mut p) => {
-                p.remove(pmname);
-            }
-            Err(_) => {
-                ret = 1;
-            }
-        }
-        // c:568 — `remove_tied_name(pm->node.nam);` (called from gdbmuntie())
+        // c:224 — `if (unsetparam_pm(pm, 0, 1))` — registry remove.
+        // C calls unsetparam_pm which fires the gdbmhashunsetfn callback
+        // (c:580) which calls gdbmuntie(pm) (c:585) — that's where the
+        // fdtable clear + gdbm_close + tied-list removal happen. Route
+        // through the canonical gdbmuntie helper here so the c:561
+        // fdtable[fd] = FDT_UNUSED clear isn't skipped; raw TIED_PARAMS
+        // .remove() would drop the Arc (closing the gdbm fd) but leave
+        // the fdtable entry as FDT_INTERNAL, leaking the slot for any
+        // future fd that lands on the same number.
+        gdbmuntie(pmname);
+        // c:568 — `remove_tied_name(pm->node.nam);` (gdbmuntie's c:568
+        // line happens out-of-process here per the helper's docstring;
+        // the caller-side call is the canonical remove site).
         remove_tied_name(pmname);
         // c:228 — `unqueue_signals();`
         unqueue_signals();
@@ -565,17 +568,45 @@ extern "C" {
     static gdbm_errno: c_int;
 }
 
-/// Port of `gdbmuntie(Param pm)` from `Src/Modules/db_gdbm.c:555`.
+/// Port of `gdbmuntie(Param pm)` from `Src/Modules/db_gdbm.c:555-577`.
 ///
-/// C body: `gdbm_close(dbf); pm->u.hash->tmpdata = NULL;`
-/// Removes the tied param from the registry, dropping the
-/// `Arc<tied_gdbm_param>` which closes the underlying GDBM handle
-/// (via `Drop` on `gdbm_database`).
+/// C body sequence:
+///   1. `fdtable[gdbm_fdesc(dbf)] = FDT_UNUSED;`   (c:561)
+///   2. `gdbm_close(dbf);`                          (c:562)
+///   3. clear tmpdata + reset HashTable callbacks  (c:564-573)
+///   4. `pm->node.flags &= ~(PM_SPECIAL|PM_READONLY);` (c:575)
+///
+/// The Rust port collapses the gdbm_close + tmpdata clear into the
+/// Arc drop (`gdbm_database::Drop` calls libgdbm gdbm_close via FFI),
+/// but the fdtable clear at c:561 still needs an explicit step — it
+/// must happen BEFORE the drop so the fd is reachable from the Arc.
 pub fn gdbmuntie(pm: &str) {
     // c:555
-    if let Ok(mut params) = TIED_PARAMS.lock() {
-        params.remove(pm); // c:560 gdbm_close + clear
+    // c:561 — `fdtable[gdbm_fdesc(dbf)] = FDT_UNUSED;`. Without this
+    // clear, the fdtable entry stays FDT_INTERNAL after the gdbm fd
+    // is closed; the kernel reuses lowest-numbered free fds, so the
+    // next `open(2)` or `socket(2)` is likely to land on the same
+    // number — but classified as FDT_INTERNAL ("gdbm's fd, don't
+    // touch") instead of FDT_UNUSED. Future closem(FDT_UNUSED, 0)
+    // calls would then SKIP closing that fd thinking it's gdbm-owned,
+    // leaking it indefinitely while the actual gdbm session is gone.
+    let fd_to_clear: Option<i32> = match TIED_PARAMS.lock() {
+        Ok(p) => p.get(pm).map(|t| t.db.fd()),
+        Err(_) => None,
+    };
+    if let Some(fd) = fd_to_clear {
+        if fd >= 0 {
+            crate::ported::utils::fdtable_set(fd, crate::ported::zsh_h::FDT_UNUSED);
+        }
     }
+    // c:562 — `gdbm_close(dbf);` happens via Arc drop when the
+    // last reference is removed from TIED_PARAMS.
+    if let Ok(mut params) = TIED_PARAMS.lock() {
+        params.remove(pm);
+    }
+    // c:568 — `remove_tied_name(pm->node.nam);`. Already called from
+    // bin_zuntie's per-param loop; consolidating it here would double-
+    // remove. Keep the caller-side call.
 }
 
 impl gdbm_database {
