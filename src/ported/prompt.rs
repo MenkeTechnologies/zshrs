@@ -376,6 +376,8 @@ pub fn promptexpand(
     _ns: i32,
     _marker: Option<&str>,
 ) -> (String, Option<usize>, Option<usize>) {
+    // c:189-190 init_term lazy-load — lives in expand_prompt (the
+    // shared Rust entry; bin_print -P / PS1 / PS4 call it directly).
     let expanded = expand_prompt(s);
     // C: `*rs = bv.bp - bv.buf` at `%E` / `%>` markers. Rust
     // expander loses that metadata, so a second pass on `s` is the
@@ -2459,15 +2461,16 @@ pub fn applytextattributes(flags: i32) -> String {
             result.push_str("\x1b[4m");
         }
         if new_s {
-            // c:Src/prompt.c — `%S` resolves to terminfo `smso` cap.
-            // Observed via `zsh -fc 'print -P %S | od -c'` on
-            // /opt/homebrew/bin/zsh 5.9.1 (arm-apple-darwin25): emits
-            // ESC `[7m` (reverse video — the SGR-standout spec
-            // default). Pin SGR 7 to match byte-for-byte. A prior
-            // port used SGR 3 (italic) under the assumption that
-            // smso was remapped on iTerm; the live observation
-            // contradicts that.
-            result.push_str("\x1b[7m");
+            // c:1703 — `tsetcap(TCSTANDOUTBEG, flags);` — the `so`
+            // termcap cap fetched by init_term (TERM-dependent:
+            // xterm* → \e[7m reverse, screen*/tmux* → \e[3m italic).
+            // Fall back to the SGR-standout spec default when the
+            // cap table was never initialised (lib tests, TERM-less
+            // environments).
+            let cap = crate::ported::init::tcstr.lock().unwrap()
+                [crate::ported::zsh_h::TCSTANDOUTBEG as usize]
+                .clone();
+            result.push_str(if cap.is_empty() { "\x1b[7m" } else { &cap });
         }
         fg_emit_color(new, &mut result);
         bg_emit_color(new, &mut result);
@@ -2478,12 +2481,13 @@ pub fn applytextattributes(flags: i32) -> String {
         result.push_str("\x1b[24m");
     }
     if standout_off {
-        // c:Src/prompt.c — `%s` resolves to terminfo `rmso` cap;
-        // /opt/homebrew/bin/zsh 5.9.1 emits SGR 27 (standout off,
-        // spec default). Prior port used SGR 23 (italic-off) under
-        // the same incorrect smso-as-italic assumption; the
-        // observed bytes pin 27.
-        result.push_str("\x1b[27m");
+        // c:1685 — `tsetcap(TCSTANDOUTEND, flags);` — the `se`
+        // termcap cap (xterm* → \e[27m, screen*/tmux* → \e[23m).
+        // SGR 27 spec-default fallback for uninitialised cap table.
+        let cap = crate::ported::init::tcstr.lock().unwrap()
+            [crate::ported::zsh_h::TCSTANDOUTEND as usize]
+            .clone();
+        result.push_str(if cap.is_empty() { "\x1b[27m" } else { &cap });
     }
     if attr_on {
         if !old_b && new_b {
@@ -2493,10 +2497,12 @@ pub fn applytextattributes(flags: i32) -> String {
             result.push_str("\x1b[4m");
         }
         if !old_s && new_s {
-            // c:Src/prompt.c — `%S` resolves to terminfo `smso` cap;
-            // /opt/homebrew/bin/zsh 5.9.1 emits SGR 7 (verified via
-            // `print -P %S | od -c`).
-            result.push_str("\x1b[7m");
+            // c:1703 — `tsetcap(TCSTANDOUTBEG, flags);` — `so` cap
+            // (TERM-dependent); SGR 7 spec-default fallback.
+            let cap = crate::ported::init::tcstr.lock().unwrap()
+                [crate::ported::zsh_h::TCSTANDOUTBEG as usize]
+                .clone();
+            result.push_str(if cap.is_empty() { "\x1b[7m" } else { &cap });
         }
         // Re-apply colors after attribute-on so terminal that
         // resets colors on bold-cap doesn't lose them. Mirrors
