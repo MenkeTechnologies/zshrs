@@ -606,7 +606,7 @@ pub fn ptyread(
         }
         let p = args[1];
         // c:565 — `patcompile(p, PAT_ZDUP, NULL)` — PAT_ZDUP = 0x100 per zsh.h.
-        match crate::ported::pattern::patcompile(p, 0x100, None) {
+        match crate::ported::pattern::patcompile(&{ let mut __pat_tok = (p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0x100, None) {
             Some(pp) => prog = Some(pp),
             None => {
                 // c:566

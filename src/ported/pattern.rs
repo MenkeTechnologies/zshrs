@@ -551,6 +551,84 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // so the statics are race-free there; Rust must serialise.
     let _compile_guard = PATCOMPILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     patcompstart();
+    // === C-contract input decode (zpc_chars, Src/pattern.c:248) =====
+    // C's patcompile consumes the LEXER'S tokenized encoding: glob
+    // metachars arrive as token bytes (`Pound`..`Bang`, zsh.h:159-183
+    // — zpc_chars holds `Star`/`Quest`/`Inbrack`/... so a raw `*`
+    // NEVER dispatches as ZPC_STAR), quoted/escaped chars arrive as
+    // `Bnull`/`Bnullkeep` + payload (zsh.h:195-200), and `Nularg` is
+    // stripped (remnulargs). Callers pair `tokenize()` with
+    // `patcompile()` exactly like C (zutil.c:734, etc.).
+    //
+    // The Rust parser below uses a raw-ASCII internal encoding with
+    // `\X` as its literal form; transpose the C contract onto it:
+    //   token char (U+0084..=U+009E)         -> ztokens[c - Pound]  (meta)
+    //   Bnull/Bnullkeep + X (U+009F/U+00A0)  -> \X                  (literal)
+    //   Nularg (U+00A1)                      -> dropped
+    //   Meta (U+0083) + X                    -> \X                  (literal)
+    //   raw `\` + X                          -> \X  passthrough — raw
+    //       backslash is the parser's established Bnull-equivalent
+    //       (see the `\X` arm below); C's lexer encodes the same
+    //       quoting info as Bnull+X before zshtokenize ever runs.
+    //   raw ASCII glob metachar              -> \X                  (literal)
+    // `/`, `+`, `!`, `@` stay verbatim — C's zpc_chars keeps those
+    // slots RAW (path split + ksh-glob triggers fire on raw bytes).
+    let exp: String = {
+        let ztokens: Vec<char> = crate::ported::glob::ZTOKENS.chars().collect();
+        let chars: Vec<char> = exp.chars().collect();
+        let mut out = String::with_capacity(exp.len());
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            let cu = c as u32;
+            if cu == 0x83 || cu == 0x9f || cu == 0xa0 {
+                // Meta / Bnull / Bnullkeep — payload is a literal.
+                if i + 1 < chars.len() {
+                    out.push('\\');
+                    out.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            if cu == 0xa1 {
+                // Nularg — stripped like C's remnulargs.
+                i += 1;
+                continue;
+            }
+            if (0x84..=0x9e).contains(&cu) {
+                // Token -> the raw metachar the parser dispatches on.
+                out.push(ztokens[(cu - 0x84) as usize]);
+                i += 1;
+                continue;
+            }
+            if c == '\\' {
+                // Raw `\X` — Bnull-equivalent quoting marker in the
+                // zshrs pipeline; pass both through to the parser's
+                // `\X` literal arm. Trailing lone `\` stays itself.
+                out.push('\\');
+                if i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            if matches!(c, '*' | '?' | '[' | '(' | ')' | '|' | '~' | '^' | '#' | '<') {
+                // Untokenized ASCII metachar — literal per zpc_chars.
+                out.push('\\');
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            out.push(c);
+            i += 1;
+        }
+        out
+    };
+    let exp = exp.as_str();
     *patstart.lock().unwrap() = exp.to_string();
     *patparse.lock().unwrap() = exp.to_string();
     patflags.store(
@@ -4962,7 +5040,7 @@ mod tests {
 
     fn compile(p: &str) -> Patprog {
         let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        patcompile(p, PAT_HEAPDUP as i32, None).expect("compile failed")
+        patcompile(&{ let mut __pat_tok = (p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).expect("compile failed")
     }
 
     /// Test-only `patcompile + pattry` pair (Rule 3 exempt — `#[cfg(test)]`).
@@ -4976,7 +5054,7 @@ mod tests {
     /// calling, `patcompile_concurrent_safe` exercises 8 threads that
     /// would serialise via this fn instead of through the real engine).
     fn patmatch(pat: &str, text: &str) -> bool {
-        patcompile(pat, PAT_HEAPDUP as i32, None).map_or(false, |prog| pattry(&prog, text))
+        patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |prog| pattry(&prog, text))
     }
 
     #[test]

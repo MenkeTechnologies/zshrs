@@ -3625,7 +3625,7 @@ impl ShellExecutor {
 /// and the VM bridge; `src/ported/*` files inline the compile+match
 /// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    let Some(prog) = patcompile(pattern, PAT_HEAPDUP as i32, None) else {
+    let Some(prog) = patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None) else {
         return false;
     };
     // (#b) (GF_BACKREF) — capture-aware path. Use pattryrefs so the

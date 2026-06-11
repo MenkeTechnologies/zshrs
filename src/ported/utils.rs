@@ -3888,7 +3888,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     // c:3173-3178 — compile CORRECT_IGNORE pattern if set.
     if let Some(ci) = getsparam("CORRECT_IGNORE") {
         // c:3173
-        let prog = patcompile(&ci, PAT_HEAPDUP, None); // c:3176
+        let prog = patcompile(&{ let mut __pat_tok = (&ci).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None); // c:3176
         SPCK_PAT.with(|p| *p.borrow_mut() = prog);
     } else {
         SPCK_PAT.with(|p| *p.borrow_mut() = None); // c:3178
@@ -3896,7 +3896,7 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     // c:3180-3185 — compile CORRECT_IGNORE_FILE pattern if set.
     if let Some(ci) = getsparam("CORRECT_IGNORE_FILE") {
         // c:3180
-        let prog = patcompile(&ci, PAT_HEAPDUP, None); // c:3183
+        let prog = patcompile(&{ let mut __pat_tok = (&ci).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None); // c:3183
         SPCK_NAMEPAT.with(|p| *p.borrow_mut() = prog);
     } else {
         SPCK_NAMEPAT.with(|p| *p.borrow_mut() = None); // c:3185

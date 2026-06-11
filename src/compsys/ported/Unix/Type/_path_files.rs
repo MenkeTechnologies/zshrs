@@ -253,7 +253,7 @@ pub fn _path_files(args: &[String]) -> i32 {
 
     // Compile glob (default `*` — matches anything when no -g)
     let glob_pat = p.glob.clone().unwrap_or_else(|| "*".to_string());
-    let glob_prog = patcompile(&glob_pat, 0, None);
+    let glob_prog = patcompile(&{ let mut __pat_tok = (&glob_pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None);
 
     // sh:500 — ignored-patterns + ignored-suffixes filtering.
     let curcontext = getsparam("curcontext").unwrap_or_default();
@@ -261,7 +261,7 @@ pub fn _path_files(args: &[String]) -> i32 {
         lookupstyle(&format!(":completion:{}:", curcontext), "ignored-patterns")
             .into_iter()
             .filter_map(|pat| {
-                patcompile(&pat, 0, None).map(|prog| {
+                patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None).map(|prog| {
                     Box::new(move |name: &str| pattry(&prog, name)) as Box<dyn Fn(&str) -> bool>
                 })
             })

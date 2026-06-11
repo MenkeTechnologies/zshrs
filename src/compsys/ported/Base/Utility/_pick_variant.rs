@@ -145,7 +145,7 @@ pub fn _pick_variant(args: &[String]) -> i32 {
 
     // sh:38-43 — for each (name, pattern), test output match
     for (name, pat) in &var {
-        let matched = match patcompile(pat, 0, None) {
+        let matched = match patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None) {
             Some(prog) => pattry(&prog, &output),
             None => output.contains(pat),
         };

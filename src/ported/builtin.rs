@@ -1020,8 +1020,7 @@ pub fn bin_enable(
         for arg in argv {
             // c:562
             queue_signals(); // c:563
-            let pprog = patcompile(
-                arg, // c:566
+            let pprog = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:566
                 PAT_HEAPDUP,
                 None,
             );
@@ -2526,8 +2525,7 @@ pub fn bin_fc(
         // c:1494
         let pat = argv.remove(0);
         // c:1495 — tokenize(*argv); — Rust `patcompile` handles tokenisation.
-        match patcompile(
-            &pat, // c:1496
+        match patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:1496
             PAT_HEAPDUP,
             None,
         ) {
@@ -2948,7 +2946,7 @@ pub fn fclist(
         //          Rust compiles per-call. Most fc -l calls have no
         //          pattern so the gate is cheap.
         if let Some(pat) = pprog {
-            let prog = patcompile(pat, 0, None);
+            let prog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None);
             let matched = prog.as_ref().map(|p| pattry(p, &line)).unwrap_or(true);
             if !matched {
                 if ev == last {
@@ -4206,8 +4204,7 @@ pub fn bin_typeset(
             // c:3061 — `patcompile(asg->name, 0, NULL)` glob-compile.
             // Use the canonical pattern.rs port. On compile failure,
             // emit "bad pattern" and continue to the next arg.
-            let pat = crate::ported::pattern::patcompile(
-                pattern,
+            let pat = crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
                 crate::ported::zsh_h::PAT_HEAPDUP as i32,
                 None,
             );
@@ -4776,8 +4773,7 @@ pub fn bin_typeset(
                     // (matches the C zglob no-wild short-circuit and
                     // suppresses the spurious "bad pattern" zerr).
                     if crate::ported::pattern::haswilds(&re) {
-                        let compilable = crate::ported::pattern::patcompile(
-                            &re,
+                        let compilable = crate::ported::pattern::patcompile(&{ let mut __pat_tok = (&re).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
                             crate::ported::zsh_h::PAT_HEAPDUP as i32,
                             None,
                         )
@@ -6053,7 +6049,7 @@ pub fn bin_functions(
             for arg in argv.iter() {
                 queue_signals(); // c:3488
                                  // c:3489 — `tokenize(*argv)`; Rust patcompile handles it.
-                if let Some(pprog) = patcompile(arg, PAT_STATIC, None) {
+                if let Some(pprog) = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_STATIC, None) {
                     // c:3490
                     if OPT_PLUS(ops, b'M') {
                         // c:3497
@@ -6332,8 +6328,7 @@ pub fn bin_functions(
             // c:3675
             queue_signals(); // c:3676
                              // c:3678 — `tokenize(*argv)` + `patcompile(...)`
-            let pprog = patcompile(
-                pat, // c:3680
+            let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:3680
                 PAT_HEAPDUP,
                 None,
             );
@@ -6603,8 +6598,7 @@ pub fn bin_unset(
         for s in argv {
             // c:3832
             queue_signals(); // c:3833
-            let pprog = patcompile(
-                s, // c:3836
+            let pprog = patcompile(&{ let mut __pat_tok = (s).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:3836
                 PAT_HEAPDUP,
                 None,
             );
@@ -6922,8 +6916,7 @@ pub fn bin_whence(
             // c:4035
             // c:4037 — `tokenize(*argv);` (Rust patcompile handles the
             // tokenize step internally; explicit call is a no-op here).
-            let pprog = patcompile(
-                pat, // c:4038
+            let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4038
                 PAT_HEAPDUP,
                 None,
             );
@@ -7515,8 +7508,7 @@ pub fn bin_hash(
         if OPT_ISSET(ops, b'm') {
             // c:4279
             // c:4280-4290 — glob-match path.
-            let pprog = patcompile(
-                arg, // c:4282
+            let pprog = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4282
                 PAT_HEAPDUP,
                 None,
             );
@@ -7816,8 +7808,7 @@ pub fn bin_unhash(
         for arg in argv {
             // c:4396
             queue_signals(); // c:4397
-            let pprog = patcompile(
-                arg, // c:4400
+            let pprog = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4400
                 PAT_HEAPDUP,
                 None,
             );
@@ -7991,8 +7982,7 @@ pub fn bin_alias(
             // c:4504
             queue_signals(); // c:4505
                              // c:4506 — `tokenize + patcompile`.
-            let pprog = patcompile(
-                pat, // c:4507
+            let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4507
                 PAT_HEAPDUP,
                 None,
             );
@@ -8390,7 +8380,7 @@ pub fn bin_print(
         }
         // c:4728 — `patcompile(*args, PAT_STATIC, NULL)`.
         let pat = &args[0];
-        let pprog = patcompile(pat, PAT_STATIC, None);
+        let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_STATIC, None);
         match pprog {
             None => {
                 zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730

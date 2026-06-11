@@ -2607,8 +2607,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     let matched = if exact {
                                         elem == pat
                                     } else {
-                                        crate::ported::pattern::patcompile(
-                                            pat,
+                                        crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
                                             crate::ported::zsh_h::PAT_HEAPDUP as i32,
                                             None,
                                         )
@@ -2663,8 +2662,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                         let matched = if exact {
                                             cand == pat
                                         } else {
-                                            crate::ported::pattern::patcompile(
-                                                pat,
+                                            crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
                                                 crate::ported::zsh_h::PAT_HEAPDUP as i32,
                                                 None,
                                             )
@@ -2691,8 +2689,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                             let matched = if exact {
                                                 cand == pat
                                             } else {
-                                                crate::ported::pattern::patcompile(
-                                                    pat,
+                                                crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
                                                     crate::ported::zsh_h::PAT_HEAPDUP as i32,
                                                     None,
                                                 )

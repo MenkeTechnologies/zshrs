@@ -133,7 +133,7 @@ pub fn _value(args: &[String]) -> i32 {
     let suffix = getsparam("SUFFIX").unwrap_or_default();
     let assign_match = if !pats.is_empty() {
         let joined = pats.join("|");
-        match patcompile(&joined, 0, None) {
+        match patcompile(&{ let mut __pat_tok = (&joined).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None) {
             Some(p) => pattry(&p, &param),
             None => false,
         }

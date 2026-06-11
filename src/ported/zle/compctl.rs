@@ -2382,7 +2382,7 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
         // c:2542
         // c:2543 — patcompile(pc->pat) compiles the pattern once.
         // c:2544-2545 — pattry(prog, cmdstr) || (s && pattry(prog, s)).
-        let matches = patcompile(pat, PAT_HEAPDUP as i32, None).map_or(false, |prog| {
+        let matches = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |prog| {
             pattry(&prog, &cmdstr)             // c:2544
                     || s_resolved.as_deref()
                         .map(|sr| pattry(&prog, sr)) // c:2545

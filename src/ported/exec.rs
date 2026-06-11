@@ -8033,7 +8033,7 @@ pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
             } else {
                 pat_raw
             };
-            if let Some(pprog) = patcompile(&pat, PAT_STATIC, None) {
+            if let Some(pprog) = patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_STATIC, None) {
                 // c:660 — `if (pprog && pattry(pprog, word)) patok = anypatok = 1;`
                 if pattry(&pprog, &word) {
                     patok = true;
