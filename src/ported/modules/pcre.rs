@@ -583,8 +583,11 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
     if OPT_ISSET(ops, b'b') {
         want_offset_pair = 1;
     }
-    let _ = want_offset_pair;
-    let _ = use_dfa;
+    // c:372-389 — the -d pcre2_dfa_match engine has no regex-crate
+    // equivalent; -d approximates as a normal match. The OBSERVABLE
+    // -d contract is still honored: no scalar (matched_portion stays
+    // None per c:348-350), no named assoc, full match as receptacle
+    // element 0 (matchedinarr, c:402) — see the success block below.
 
     // c:364-365 — plaintext = ztrdup(*args); unmetafy(plaintext, &subject_len);
     // The subject can carry Meta-escaped bytes (NUL / 0x80-range bytes
@@ -694,16 +697,27 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                 crate::ported::params::setsparam("ZPCRE_OP", &zop); // c:181
             }
         }
-        if let Some(m) = full_match.as_deref() {
-            // c:Src/Modules/pcre.c:405 — `setsparam(matched_portion, ztrdup(m))`.
-            crate::ported::params::setsparam(matched_portion.unwrap_or("MATCH"), m);
+        // c:188-191 — `if (matchvar) { ... setsparam(matchvar, match_all); }`
+        // matchvar is NULL under -d (the c:348-350 else-arm never
+        // assigns it), so DFA matches set NO scalar. A prior
+        // `.unwrap_or("MATCH")` default re-introduced the scalar for
+        // -d, where C leaves $MATCH untouched.
+        if let (Some(mv), Some(m)) = (matched_portion, full_match.as_deref()) {
+            crate::ported::params::setsparam(mv, m); // c:190
         }
-        // c:410-413 — `setaparam(receptacle, captured_subs)`.
-        let subs: Vec<String> = captures
+        // c:169-172 + c:206-212 — receptacle array. matchedinarr
+        // (use_dfa, c:402's 9th arg) sets capture_start = 0: the
+        // bash-style array INCLUDES the entire match as element 0.
+        let mut subs: Vec<String> = captures
             .iter()
             .map(|opt| opt.clone().unwrap_or_default())
             .collect();
-        crate::ported::params::setaparam(receptacle, subs);
+        if use_dfa != 0 {
+            // c:170-171 — `/* bash-style ovec[0] entire-matched string
+            // in the array */ capture_start = 0;`
+            subs.insert(0, full_match.clone().unwrap_or_default());
+        }
+        crate::ported::params::setaparam(receptacle, subs); // c:212
         // c:215-231 — named-captures assoc. The c:216 `&& ncount` gate
         // means the assoc is touched ONLY when the pattern actually
         // declares named groups — a pattern without names leaves the
@@ -728,7 +742,6 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
     // wiped $MATCH instead of leaving "foo" in place.
     ret = if full_match.is_some() { 1 } else { 0 }; // c:398/c:399 sentinel
     let _ = ret;
-    let _ = use_dfa;
     let _ = subject_len;
 
     // c:422-415 — free match_data + context, zsfree(plaintext) — Rust Drop.
