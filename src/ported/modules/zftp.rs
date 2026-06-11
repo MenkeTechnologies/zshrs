@@ -4921,7 +4921,12 @@ impl zftp_session {
             return Err(io::Error::other(resp.1));
         }
 
-        let (ip, port) = parse_pasv_response(&resp.1)?;
+        // c:934-936 — "lastmsg already has the reply code expunged":
+        // the C parse operates on lastmsg, which zfgetmsg stored with
+        // the "NNN " / "NNN-" prefix stripped (c:781). read_response
+        // returns the raw line, so strip the 4-byte code prefix here;
+        // passing it through would parse "227" as the first IP octet.
+        let (ip, port) = parse_pasv_response(resp.1.get(4..).unwrap_or(""))?;
         let addr = format!("{}:{}", ip, port);
 
         TcpStream::connect_timeout(
@@ -5682,7 +5687,9 @@ mod tests {
     #[test]
     fn test_parse_pasv_response() {
         let _g = crate::test_util::global_state_lock();
-        let msg = "227 Entering Passive Mode (192,168,1,1,4,1)";
+        // c:934-936 — input is lastmsg, which "already has the reply
+        // code expunged" (no leading "227 ").
+        let msg = "Entering Passive Mode (192,168,1,1,4,1)";
         let (ip, port) = parse_pasv_response(msg).unwrap();
         assert_eq!(ip, "192.168.1.1");
         assert_eq!(port, 1025);
@@ -6011,19 +6018,20 @@ mod tests {
     /// `Src/Modules/zftp.c:940-950` — `sscanf("%d,...")` then
     /// `(unsigned char) nums[i]` cast. The PASV reply `(h1,h2,h3,h4,
     /// p1,p2)` builds IP as h1.h2.h3.h4 and port as p1*256+p2. Pin
-    /// the well-formed case round-trip.
+    /// the well-formed case round-trip. Inputs are lastmsg-form: the
+    /// reply code is already expunged (c:934-936).
     #[test]
     fn parse_pasv_response_well_formed_round_trips() {
         let _g = crate::test_util::global_state_lock();
         let (ip, port) =
-            parse_pasv_response("227 Entering Passive Mode (192,168,1,1,4,1)").unwrap();
+            parse_pasv_response("Entering Passive Mode (192,168,1,1,4,1)").unwrap();
         assert_eq!(ip, "192.168.1.1");
         assert_eq!(port, 4 * 256 + 1, "p1*256+p2 = 1025");
         // High-port case: p1=255, p2=255 → port=65535.
-        let (_, port) = parse_pasv_response("227 ok (10,0,0,1,255,255)").unwrap();
+        let (_, port) = parse_pasv_response("ok (10,0,0,1,255,255)").unwrap();
         assert_eq!(port, 65535);
         // Low-port: p1=0, p2=21 → port=21.
-        let (_, port) = parse_pasv_response("227 ok (127,0,0,1,0,21)").unwrap();
+        let (_, port) = parse_pasv_response("ok (127,0,0,1,0,21)").unwrap();
         assert_eq!(port, 21);
     }
 
@@ -6039,7 +6047,7 @@ mod tests {
     fn parse_pasv_response_out_of_range_octet_truncates_low_byte() {
         let _g = crate::test_util::global_state_lock();
         // p1=300 → low byte = 44 (300 & 0xff). port = 44*256 + 1 = 11265.
-        let (_, port) = parse_pasv_response("227 ok (192,168,1,1,300,1)").unwrap();
+        let (_, port) = parse_pasv_response("ok (192,168,1,1,300,1)").unwrap();
         assert_eq!(
             port,
             44 * 256 + 1,
@@ -6047,7 +6055,7 @@ mod tests {
         );
         // No panic on absurd-but-parseable values. Previous Rust port
         // would panic in debug here.
-        let (_, port) = parse_pasv_response("227 ok (1,2,3,4,1000,2000)").unwrap();
+        let (_, port) = parse_pasv_response("ok (1,2,3,4,1000,2000)").unwrap();
         let expected_p1 = (1000i32 as u8) as u16; // 232
         let expected_p2 = (2000i32 as u8) as u16; // 208
         assert_eq!(port, (expected_p1 << 8) | expected_p2);
@@ -6062,49 +6070,53 @@ mod tests {
     fn parse_pasv_response_ip_octets_truncate_to_u8() {
         let _g = crate::test_util::global_state_lock();
         // h1=300 → 300 & 0xff = 44.
-        let (ip, _) = parse_pasv_response("227 ok (300,168,1,1,0,21)").unwrap();
+        let (ip, _) = parse_pasv_response("ok (300,168,1,1,0,21)").unwrap();
         assert_eq!(
             ip, "44.168.1.1",
             "c:947 — octets truncate; out-of-range becomes low byte"
         );
     }
 
-    /// `Src/Modules/zftp.c:940-941` — `sscanf` failure (not 6 numbers).
-    /// Wrong count → error return. Pin so a server with malformed
-    /// PASV reply doesn't silently produce a wrong IP/port.
+    /// `Src/Modules/zftp.c:940-941` — `sscanf(...) != 6` is the error
+    /// gate: FEWER than 6 numbers errors; MORE than 6 succeeds (sscanf
+    /// consumes the first 6 and ignores the rest). Pin so a server
+    /// with a short PASV reply doesn't silently produce a wrong
+    /// IP/port, and a chatty one still parses.
     #[test]
     fn parse_pasv_response_wrong_number_count_errors() {
         let _g = crate::test_util::global_state_lock();
         assert!(
-            parse_pasv_response("227 ok (1,2,3,4)").is_err(),
+            parse_pasv_response("ok (1,2,3,4)").is_err(),
             "only 4 numbers → error"
         );
         assert!(
-            parse_pasv_response("227 ok (1,2,3,4,5)").is_err(),
+            parse_pasv_response("ok (1,2,3,4,5)").is_err(),
             "only 5 numbers → error"
         );
-        assert!(
-            parse_pasv_response("227 ok (1,2,3,4,5,6,7)").is_err(),
-            "7 numbers → error"
-        );
+        // c:940 — sscanf returns 6 with 7 numbers present; the 7th is
+        // ignored, not an error.
+        let (ip, port) = parse_pasv_response("ok (1,2,3,4,5,6,7)").unwrap();
+        assert_eq!(ip, "1.2.3.4", "first 4 of 7 are the IP");
+        assert_eq!(port, 5 * 256 + 6, "5th/6th are the port; 7th ignored");
     }
 
-    /// `Src/Modules/zftp.c:925` — missing parentheses → error path.
-    /// Pin so unexpected responses without the `(N,N,N,N,N,N)` shape
-    /// don't silently parse partial values.
+    /// `Src/Modules/zftp.c:937-941` — no digits at all → the first-
+    /// digit scan runs off the string and sscanf gets nothing → error.
+    /// (C's IPv4 path doesn't require parens; the error here is the
+    /// absence of any numbers.)
     #[test]
     fn parse_pasv_response_missing_parens_errors() {
         let _g = crate::test_util::global_state_lock();
         assert!(
-            parse_pasv_response("227 ok no parens here").is_err(),
+            parse_pasv_response("ok no parens here").is_err(),
             "missing both parens → error"
         );
         assert!(
-            parse_pasv_response("227 ok (no_close").is_err(),
+            parse_pasv_response("ok (no_close").is_err(),
             "missing close paren → error"
         );
         assert!(
-            parse_pasv_response("227 ok no_open)").is_err(),
+            parse_pasv_response("ok no_open)").is_err(),
             "missing open paren → error"
         );
     }
@@ -6198,35 +6210,38 @@ mod tests {
     // Additional C-parity tests for Src/Modules/zftp.c utilities.
     // ═══════════════════════════════════════════════════════════════════
 
-    /// c:546-570 — `zfargstring("CMD", &[])` returns just the cmd
-    /// (no trailing space, no extra chars).
+    /// c:546-562 — `zfargstring("CMD", &[])` returns the cmd plus the
+    /// CRLF terminator (c:559 `strcat(line, "\r\n")`); no trailing
+    /// space, no extra chars before the CRLF.
     #[test]
     fn zfargstring_no_args_returns_cmd_verbatim() {
-        assert_eq!(zfargstring("RETR", &[]), "RETR");
-        assert_eq!(zfargstring("", &[]), "");
+        assert_eq!(zfargstring("RETR", &[]), "RETR\r\n");
+        assert_eq!(zfargstring("", &[]), "\r\n");
     }
 
-    /// c:546-570 — single arg joined with single space.
+    /// c:546-562 — single arg joined with single space, CRLF appended
+    /// (c:556-559).
     #[test]
     fn zfargstring_one_arg_joins_with_single_space() {
-        assert_eq!(zfargstring("CWD", &["/tmp"]), "CWD /tmp");
-        assert_eq!(zfargstring("USER", &["anonymous"]), "USER anonymous");
+        assert_eq!(zfargstring("CWD", &["/tmp"]), "CWD /tmp\r\n");
+        assert_eq!(zfargstring("USER", &["anonymous"]), "USER anonymous\r\n");
     }
 
-    /// c:546-570 — multiple args joined with single space each.
+    /// c:546-562 — multiple args joined with single space each, CRLF
+    /// appended (c:556-559).
     #[test]
     fn zfargstring_multiple_args_each_space_separated() {
         let r = zfargstring("FOO", &["a", "b", "c"]);
-        assert_eq!(r, "FOO a b c", "exactly one space between each arg");
+        assert_eq!(r, "FOO a b c\r\n", "exactly one space between each arg");
     }
 
-    /// c:546-570 — empty arg becomes empty word with surrounding
-    /// spaces preserved (matches C sprintf "%s %s" with "" arg).
+    /// c:546-562 — empty arg becomes empty word with surrounding
+    /// spaces preserved (c:556-557 strcat " " then strcat "").
     #[test]
     fn zfargstring_empty_arg_preserves_separators() {
         let r = zfargstring("CMD", &["", "after"]);
-        // C: "CMD" + " " + "" + " " + "after" = "CMD  after"
-        assert_eq!(r, "CMD  after", "empty arg → double space");
+        // C: "CMD" + " " + "" + " " + "after" + "\r\n" = "CMD  after\r\n"
+        assert_eq!(r, "CMD  after\r\n", "empty arg → double space");
     }
 
     /// c:267, c:273 — type and mode masks are non-overlapping bit
