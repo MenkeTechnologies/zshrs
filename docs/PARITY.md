@@ -11,15 +11,18 @@ dev box).
 | Metric              | Count  |
 | ------------------- | ------ |
 | Total tests         | 43,904 |
-| Passing             | 43,892 |
-| **Failing**         | **9**  |
+| Passing             | 43,893 |
+| **Failing**         | **8**  |
 | Ignored             | 8      |
 | Pass rate           | 99.98% |
 | Test binaries       | 82     |
 | Binaries with fails | 4      |
 
 Delta vs the earlier 2026-06-11 full-sweep snapshot: 28 → 9 stable
-failures (19 closed), 9 → 4 binaries. Closed this pass:
+failures (19 closed), 9 → 4 binaries — then 8 after merging the
+parallel branch: its zle commit (7a3c00cf53, every iwidgets.list
+thingy binds a widget per Src/Zle/zle_thingy.c:1022) closed
+bulk_i_hash_num_widgets. Closed this pass:
 
 - **cd_options_parity ×9** — validated PWD/OLDPWD override after env
   import per Src/init.c:1241-1257 + set_pwd_env (Src/params.c:955);
@@ -71,11 +74,10 @@ Flaky (pass solo / under low load; not counted):
   the whole `$'...'` region. Needs the paramstrsub quote-retention
   quirk (Src/subst.c:4274 area).
 
-### zsh_compat_parity_gaps (4)
+### zsh_compat_parity_gaps (3)
 
 - `corpus_dash_fc_bulk_b::bulk_b_zcompile_tmpfile`
 - `corpus_dash_fc_bulk_h::bulk_h_zcompile_then_rm_zwc`
-- `corpus_dash_fc_bulk_i::bulk_i_hash_num_widgets`
 - `corpus_dash_fc_bulk_p::bulk_p_fc_zcompile_empty_file`
 
 ## Themes
@@ -83,8 +85,6 @@ Flaky (pass solo / under low load; not counted):
 - **zcompile / zcompdump binary formats.** binary_parity ×3 +
   zsh_compat ×3 — byte-identical `.zwc`/`.zcompdump` emission; the
   dominant remaining arm.
-- **widget table count.** `bulk_i_hash_num_widgets` — `${#widgets}`
-  386 (zsh) vs 254 (zshrs); needs more zle widget registry entries.
 - **AST corpus.** `corpus_parity` — 10 parser-sexp shape rows.
 - **fzf-tab NUL-delimiter swap.** paramstrsub `$'...'`
   quote-retention quirk.
