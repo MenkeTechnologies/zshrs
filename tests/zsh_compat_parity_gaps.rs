@@ -317,7 +317,10 @@ mod coproc {
     use super::*;
 
     parity_gap_tests! {
-        coproc_sets_bang_to_child_pid => (r#"coproc $!"#, r#"coproc cat; echo "coproc=$!""#);
+        // $! is a live pid — different in every run of both shells, so
+        // printing it raw can never compare equal. Pin that coproc
+        // SETS $! to a real (positive) pid instead.
+        coproc_sets_bang_to_child_pid => (r#"coproc $!"#, r#"coproc cat; echo "coproc_set=$(( $! > 0 ))""#);
     }
 }
 
@@ -719,7 +722,9 @@ mod corpus_dash_fc_bulk_a {
         bulk_opt_xtrace => (r#"options[xtrace]"#, r#"print $options[xtrace]"#);
         bulk_opt_octalzeroes => (r#"options[octalzeroes]"#, r#"print $options[octalzeroes]"#);
         bulk_opt_cbases => (r#"options[cbases]"#, r#"print $options[cbases]"#);
-        bulk_background_pid_wait => (r#"$! wait"#, r#"true & print bang_$!; wait; print waited_gap"#);
+        // Raw $! pid differs per run; compare validity. The wait +
+        // ordering semantics still pin the background-job flow.
+        bulk_background_pid_wait => (r#"$! wait"#, r#"true & print bang_$(( $! > 0 )); wait; print waited_gap"#);
         bulk_read_herestring_scalar => (r#"read <<<"#, r#"read rv_gap <<< rd_here_val; print $rv_gap"#);
         bulk_emulate_sh_dash_c_inline => (r#"emulate sh -c"#, r#"emulate sh -c 'print emulate_flag_$0'"#);
         bulk_getopts_f_takes_arg => (r#"getopts f:"#, r#"OPTIND=1; getopts "f:" og_go -f gv; print -r "og=${og_go} arg=${OPTARG}""#);
@@ -864,7 +869,8 @@ mod corpus_dash_fc_bulk_c {
         bulk_c_zmodload_parameter_module => (r#"zmodload zsh/parameter"#, r##"zmodload zsh/parameter 2>&1; print -r "ex=$?""##);
         bulk_c_printf_q_escaped => (r#"printf %q"#, r##"printf '%q\n' 'two words c'"##);
         bulk_c_ifs_read_two_parts => (r#"IFS read :"#, r#"IFS=: read -r rc1_c rc2_c <<< 'u:v'; print $rc1_c $rc2_c"#);
-        bulk_c_coproc_cat_bang => (r#"coproc cat"#, r##"coproc cat; print -r "cop=$!""##);
+        // Raw $! pid differs per run; pin validity.
+        bulk_c_coproc_cat_bang => (r#"coproc cat"#, r##"coproc cat; print -r "cop_set=$(( $! > 0 ))""##);
         bulk_c_dollar_under_after_command => (r#"$_ after cmd"#, r#"true gap_under_c; print $_"#);
         bulk_c_argv_one_after_set => (r#"$argv set --"#, r#"set -- xc1_c; print $argv[1]"#);
         bulk_c_set_capital_A_array => (r#"set -A"#, r#"set -A arrset_c a b c; print $arrset_c[2]"#);
@@ -1229,7 +1235,8 @@ mod corpus_dash_fc_bulk_g {
         bulk_g_strftime_epoch_zero => (r#"strftime %s 0"#, r##"zmodload zsh/datetime 2>/dev/null; strftime %s 0; print stfg=$?"##);
         bulk_g_nameref_typeset_n => (r#"typeset -n"#, r#"typeset -n nrg=trg_g; trg_g=valn_g; print $nrg"#);
         bulk_g_mktemp_rel_path_glob => (r#"tmpd glob one file"#, r##"tdg=$(mktemp -d); mkdir -p $tdg/d_g; touch $tdg/d_g/f_g; ( builtin cd $tdg && print d_g/f_g ); ec=$?; command rm -rf $tdg; exit $ec"##);
-        bulk_g_coproc_builtin_true => (r#"coproc true"#, r##"coproc true; print -r "cpid=$!""##);
+        // Raw $! pid differs per run; pin validity.
+        bulk_g_coproc_builtin_true => (r#"coproc true"#, r##"coproc true; print -r "cpid_set=$(( $! > 0 ))""##);
         bulk_g_zsh_subshell_depth => (r#"ZSH_SUBSHELL"#, r#"print $ZSH_SUBSHELL"#);
         bulk_g_whence_p_missing_binary => (r#"whence -p missing"#, r##"whence -p __missing_bin_g__ 2>/dev/null; print wex=$?""##);
         bulk_g_hash_no_such_command => (r#"hash missing"#, r##"hash __no_such_cmd_g__ 2>/dev/null; print hex=$?""##);
