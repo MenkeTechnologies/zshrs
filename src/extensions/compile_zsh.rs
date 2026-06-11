@@ -8751,6 +8751,21 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         {
             return None;
         }
+        // Special single-char params take the length form too:
+        // `${#-}` = length of $- (option letters), `${#?}` = length
+        // of $?, `${#$}` = length of $$, `${#0}`/`${#1}`… = string
+        // length of $0/positional. zsh REJECTS `${#!}` ("bad
+        // substitution") so `!` stays excluded. Verified against
+        // zsh 5.9. The runtime BUILTIN_PARAM_LENGTH -> paramsubst
+        // path already resolves these names (the quoted "${#-}"
+        // form worked; only this unquoted parse rejected them and
+        // fell through to a ${#}-shaped misparse printing argc).
+        if matches!(body, "-" | "?" | "$") || (!body.is_empty() && body.chars().all(|c| c.is_ascii_digit())) {
+            return Some(ParamModifier {
+                name: body.to_string(),
+                kind: ParamModifierKind::Length,
+            });
+        }
         if !body
             .chars()
             .next()
