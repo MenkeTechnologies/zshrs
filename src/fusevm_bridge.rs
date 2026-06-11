@@ -2485,13 +2485,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ASSOC_HAS_KEY, |vm, _argc| {
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
-        let exists = crate::ported::params::gethkparam(&name)
-            .map(|keys| keys.iter().any(|k| k == &key))
-            .unwrap_or(false);
-        if exists {
-            Value::str(key)
-        } else {
-            Value::str("")
+        // c:Src/params.c:3131 gethkparam covers ordinary PM_HASHED
+        // paramtab entries only. Special/magic hashes (`parameters`,
+        // `options`, … — the zsh/parameter module's partab-backed
+        // params, Src/Modules/parameter.c) aren't in that storage, so
+        // a None here doesn't mean "no such assoc". Route those
+        // through paramsubst, whose assoc materialization handles the
+        // magic hashes and whose getarg port (c:Src/params.c:1591 +
+        // Src/subst.c:2922) returns the KEY for `(k)` on a plain
+        // subscript. zsh 5.9: `${(k)parameters[PATH]}` → "PATH".
+        match crate::ported::params::gethkparam(&name) {
+            Some(keys) => {
+                if keys.iter().any(|k| k == &key) {
+                    Value::str(key)
+                } else {
+                    Value::str("")
+                }
+            }
+            None => paramsubst_to_value(&format!("${{(k){}[{}]}}", name, key)),
         }
     });
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
