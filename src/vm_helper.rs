@@ -3895,3 +3895,48 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     }
     matched
 }
+
+/// Bridge helper — EXACT semantics of C `untokenize(char *s)` from
+/// `Src/exec.c:2077`: maps EVERY itok char to its ASCII original via
+/// the ztokens table (`Src/lex.c:38`), dropping only Nularg (c:2089
+/// `if (c != Nularg)`). No `$'...'` inline decode, no quote-marker
+/// stripping.
+///
+/// Distinct from the two ported variants in `src/ported/lex.rs`:
+///   - `untokenize` — substitution-stream variant: strips Snull/Dnull
+///     and inline-decodes `$'...'` regions (see its doc block).
+///   - `untokenize_preserve_quotes` — ztokens mapping EXCEPT Qstring
+///     stays a raw marker (its callers need stringsubst's qt
+///     detection) and Nularg is retained.
+///
+/// Callers porting C sites that literally call C `untokenize` on text
+/// that is then RE-LEXED or RE-PARSED need this exact variant:
+///   - `parsestrnoerr` (c:Src/lex.c:1716) — the dquote_parse re-lex
+///     must see ASCII `$`/`'`/`"` so nested `${k}` re-tokenizes and
+///     assoc-subscript quote chars survive to getarg's key lookup.
+///   - `untok_and_escape` (c:Src/subst.c:1543) — paramsubst flag args
+///     like `(j.$'\n'.)` must render as the literal text `$'\n'`
+///     (zsh 5.9 `print -r ${(j.$'\n'.)a}` → `x$'\n'y`), not decode
+///     to a bare newline. Bug #626 in docs/BUGS.md.
+pub fn untokenize_ztokens(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        let cu = c as u32;
+        // c:Src/ztype.h:52 ITOK — Pound (0x84) ..= Nularg (0xa1).
+        if (0x84..=0xa1).contains(&cu) {
+            // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
+            if c != crate::ported::zsh_h::Nularg {
+                let idx = (cu - 0x84) as usize;
+                result.push(
+                    crate::ported::lex::ztokens
+                        .chars()
+                        .nth(idx)
+                        .unwrap_or(c),
+                );
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}

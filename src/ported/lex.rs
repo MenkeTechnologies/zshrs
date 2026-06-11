@@ -2708,7 +2708,23 @@ pub fn parsestr(s: &str) -> Result<String, String> {
 /// they do during a normal command parse. Returns the tokenized
 /// string on success.
 pub fn parsestrnoerr(s: &str) -> Result<String, String> {
-    let untok = untokenize(s); // c:1716 `untokenize(*s);`
+    // c:1716 `untokenize(*s);` — C's untokenize (Src/exec.c:2077 +
+    // Src/lex.c:38 ztokens) maps EVERY itok char to its ASCII
+    // original: Dnull → `"`, Snull → `'`, Bnull → `\`. The Rust
+    // plain `untokenize` deliberately STRIPS Snull/Dnull (see the
+    // lex.rs untokenize doc block) — wrong for this call site: the
+    // re-lex below must see the quote chars so a tokenized assoc
+    // subscript like `Dnull a␠b Dnull` (from `${H["a b"]}`) round-
+    // trips to the literal 5-char key `"a b"`. dquote_parse with
+    // endchar='\0' adds a bare `"` literally (c:Src/lex.c:1615-1617
+    // `if (intick || (endchar != '"' && !bct)) break;` → add(c)),
+    // so the quotes survive to getarg's lookup as C intends. The
+    // full ztokens mapping also matters for Qstring → `$`: the
+    // dquote_parse re-lex below re-tokenizes nested `${k}`
+    // (Src/lex.c:1519-1556 `case '$'`); a raw 0x8c marker would pass
+    // through unrecognized and a nested-param subscript like
+    // `${H["${k}"]}` would never expand `$k`.
+    let untok = crate::vm_helper::untokenize_ztokens(s); // c:1716 `untokenize(*s);`
     let dup = dupstring_wlen(&untok, untok.len()); // c:1717
                                                    // c:1715 `zcontext_save();`
     zcontext_save();

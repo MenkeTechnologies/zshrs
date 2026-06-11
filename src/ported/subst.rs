@@ -2686,7 +2686,14 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
         // c:1542
         Some(d) => d, // c:1542
         None => {
-            let untoked = untokenize(s); // c:1543
+            // c:1543 — C's untokenize maps tokens to ASCII per
+            // ztokens (Stringg/Qstring → `$`, Snull → `'`, Dnull →
+            // `"`). The Rust plain `untokenize` strips quote markers
+            // AND inline-decodes `$'...'` regions, which collapsed a
+            // flag arg like `(j.$'\n'.)` to a bare newline; zsh 5.9
+            // keeps the wrapper literal: `print -r ${(j.$'\n'.)a}`
+            // → `x$'\n'y`. Bug #626 in docs/BUGS.md.
+            let untoked = crate::vm_helper::untokenize_ztokens(s); // c:1543
             if escapes {
                 // c:1544
                 // C: `dst = getkeystring(dst, &klen,
