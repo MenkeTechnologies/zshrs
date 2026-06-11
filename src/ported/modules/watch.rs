@@ -12,7 +12,6 @@
 
 use crate::ported::builtin::BUILTIN;
 use crate::ported::zsh_h::{builtin, module};
-use chrono::{Local, TimeZone};
 #[cfg(unix)]
 use std::ffi::CStr;
 use std::io::{BufRead, Write};
@@ -212,9 +211,26 @@ pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -
                 result.push_str(trimmed);
             }
             'm' => {
-                // c:299
-                let short = host.split('.').next().unwrap_or(&host);
-                result.push_str(short);
+                // c:299-305 — `for (p = u->ut_host, i = sizeof(u->ut_host);
+                //               i && *p; i--, p++) {
+                //                   if (*p == '.' && !idigit(p[1])) break;
+                //                   putchar(*p);
+                //               }`
+                // Stop at a dot ONLY when the next char is a non-digit —
+                // numeric IPs ("192.168.1.5") print whole, DNS names
+                // ("host.example.com") truncate to the first label.
+                // Prior split('.') truncated IPs to their first octet.
+                let hb = host.as_bytes();
+                let mut k = 0usize;
+                while k < hb.len() {
+                    if hb[k] == b'.'
+                        && !hb.get(k + 1).is_some_and(|c| c.is_ascii_digit())
+                    {
+                        break; // c:302-303
+                    }
+                    k += 1; // c:304 putchar(*p)
+                }
+                result.push_str(&host[..k]);
             }
             'M' => result.push_str(&host), // c:307
             'T' | 't' | '@' | 'W' | 'w' | 'D' => {
@@ -222,9 +238,9 @@ pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -
                 let time = getlogtime(u, inout);
                 let mut fm2: String = match directive {
                     '@' | 't' => "%l:%M%p".to_string(), // c:321
-                    'T' => "%H:%M".to_string(),         // c:324
-                    'w' => "%a %e".to_string(),         // c:328
-                    'W' => "%m/%d/%y".to_string(),      // c:331
+                    'T' => "%K:%M".to_string(),         // c:324
+                    'w' => "%a %f".to_string(),         // c:327
+                    'W' => "%m/%d/%y".to_string(),      // c:330
                     'D' => {
                         // c:333
                         if chars.peek() == Some(&'{') {
@@ -261,11 +277,19 @@ pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -
                     }
                     _ => unreachable!(),
                 };
-                let formatted = Local
-                    .timestamp_opt(time, 0)
-                    .single()
-                    .map(|dt| dt.format(&fm2).to_string())
-                    .unwrap_or_default();
+                // c:350-352 — `timet = getlogtime(u, inout);
+                //              tm = localtime(&timet);
+                //              len = ztrftime(buf, 40, fm2, tm, 0L);`
+                // Route through the canonical ztrftime port (utils.rs:4231)
+                // — it implements zsh's %K / %L / %f strftime extensions
+                // that the C format strings above rely on. The prior
+                // chrono-based formatting substituted "%H:%M" / "%a %e"
+                // because chrono lacks those specifiers: %H zero-pads
+                // where %K doesn't ("09:30" vs "9:30"), and %e space-pads
+                // the day where %f doesn't ("Mon  5" vs "Mon 5").
+                let st = std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(time.max(0) as u64);
+                let formatted = crate::ported::utils::ztrftime(&fm2, st, false);
                 // c:355-356 — strip leading space (strftime %l left-pads).
                 let trimmed = formatted.strip_prefix(' ').unwrap_or(&formatted);
                 result.push_str(trimmed);
