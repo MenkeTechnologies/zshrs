@@ -2623,8 +2623,13 @@ pub fn bin_zparseopts(
     }
     #[derive(Clone)]
     struct Val {
-        name: String,        // option name as it appeared
+        name: String,        // c:1645 — `dyncat("-", d->name)`, NOT the raw param
         arg: Option<String>, // arg if any
+        // c:1661-1681 — `v->str`: the pre-combined single-element
+        // form ("-name" + ["="] + arg) built for ZOF_OPT / ZOF_SAME /
+        // ZOF_GNUL-with-arg options. When Some, the array emit pushes
+        // ONE element; when None, name (+ arg) as separate elements.
+        str_: Option<String>,
         // sh-C semantic (c:2076 `for (v = a->vals; v; v = v->next)`):
         //   the C `a->vals` is a linked list appended to in argv
         //   order across ALL specs that point at the same array.
@@ -2635,6 +2640,56 @@ pub fn bin_zparseopts(
         seq: usize,
     }
     let mut val_seq: usize = 0;
+    // Port of `add_opt_val(Zoptdesc d, char *arg)` from c:1641-1681,
+    // operating on the local Desc/Val collection (the standalone
+    // zoptdesc-based port at add_opt_val() serves the older struct
+    // family). Three C behaviors centralised here:
+    //   c:1645  — v->name = dyncat("-", d->name): the DASHED option
+    //             name, never the raw argv word (which for same-param
+    //             args like "-xfoo" includes the arg).
+    //   c:1652-1659 — non-ZOF_MULT options REUSE the existing val
+    //             (v = d->vals) so repeats overwrite: last arg wins,
+    //             original list position kept.
+    //   c:1661-1681 — v->str: ZOF_OPT/ZOF_SAME/GNUL-with-arg options
+    //             pre-combine into ONE element "-name[=]arg"; plain
+    //             mandatory-arg options stay two-element (str NULL).
+    fn push_val(descs: &mut [Desc], idx: usize, arg: Option<String>, val_seq: &mut usize) {
+        let dflags = descs[idx].flags;
+        let n = format!("-{}", descs[idx].name); // c:1645
+        let str_: Option<String> = if (dflags & ZOF_ARG) != 0
+            && (dflags & (ZOF_OPT | ZOF_SAME)) == 0
+        {
+            None // c:1661-1664 — two-element (name, arg) form
+        } else if arg.is_some() || (dflags & ZOF_GNUL) != 0 {
+            // c:1665-1676 — combined "-name" + ["="] + arg
+            let mut s = n.clone();
+            if (dflags & ZOF_GNUL) != 0 {
+                s.push('='); // c:1671-1672
+            }
+            if let Some(a) = &arg {
+                s.push_str(a); // c:1673
+            }
+            Some(s) // c:1674
+        } else {
+            None // c:1677-1681
+        };
+        if (dflags & ZOF_MULT) == 0 {
+            // c:1652-1653 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
+            if let Some(v) = descs[idx].vals.first_mut() {
+                v.arg = arg; // c:1660 overwrite
+                v.str_ = str_;
+                return;
+            }
+        }
+        let s = *val_seq;
+        *val_seq += 1;
+        descs[idx].vals.push(Val {
+            name: n,
+            arg,
+            str_,
+            seq: s,
+        });
+    }
 
     let mut del = false; // c:1742
     let mut flags_map = 0i32; // c:1742
@@ -2938,71 +2993,32 @@ pub fn bin_zparseopts(
             if (dflags & ZOF_ARG) != 0 {
                 let e = &body[dn_len..]; // pointer past name
                 if (dflags & ZOF_GNUL) != 0 && e.starts_with('=') {
-                    // c:2031
+                    // c:2031-2032 — `add_opt_val(d, ++e);`
                     let arg = e[1..].to_string();
-                    descs[idx].vals.push(Val {
-                        name: o_raw.clone(),
-                        arg: Some(arg),
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
                 } else if !e.is_empty() {
-                    // c:2038
-                    descs[idx].vals.push(Val {
-                        name: o_raw.clone(),
-                        arg: Some(e.to_string()),
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    // c:2038-2039 — `add_opt_val(d, e);`
+                    push_val(&mut descs, idx, Some(e.to_string()), &mut val_seq);
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
                         && pi + 1 < params.len()
                         && !params[pi + 1].starts_with('-'))
                 {
-                    // c:2044
+                    // c:2044-2052 — `add_opt_val(d, *++pp);`
                     if pi + 1 >= params.len() {
                         zwarnnam(nam, &format!("missing argument for option: -{}", dname));
                         return 1;
                     }
                     pi += 1;
                     let arg = params[pi].clone();
-                    descs[idx].vals.push(Val {
-                        name: o_raw.clone(),
-                        arg: Some(arg),
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
                 } else {
-                    // c:2055
-                    descs[idx].vals.push(Val {
-                        name: o_raw.clone(),
-                        arg: None,
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    // c:2055 — `add_opt_val(d, NULL);`
+                    push_val(&mut descs, idx, None, &mut val_seq);
                 }
             } else {
-                descs[idx].vals.push(Val {
-                    name: o_raw.clone(),
-                    arg: None,
-                    seq: {
-                        let _s = val_seq;
-                        val_seq += 1;
-                        _s
-                    },
-                });
+                // c:2058 — `add_opt_val(d, NULL);`
+                push_val(&mut descs, idx, None, &mut val_seq);
             }
             pi += 1;
             continue;
@@ -3034,17 +3050,9 @@ pub fn bin_zparseopts(
             let dname = descs[idx].name.clone();
             if (dflags & ZOF_ARG) != 0 {
                 if ci + 1 < chars.len() {
-                    // arg in same param: rest of chars
+                    // arg in same param: rest of chars — `add_opt_val(d, e)`
                     let arg: String = chars[ci + 1..].iter().collect();
-                    descs[idx].vals.push(Val {
-                        name: format!("-{}", ch),
-                        arg: Some(arg),
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
                     break;
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
@@ -3057,36 +3065,14 @@ pub fn bin_zparseopts(
                     }
                     pi += 1;
                     let arg = params[pi].clone();
-                    descs[idx].vals.push(Val {
-                        name: format!("-{}", ch),
-                        arg: Some(arg),
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
                 } else {
-                    descs[idx].vals.push(Val {
-                        name: format!("-{}", ch),
-                        arg: None,
-                        seq: {
-                            let _s = val_seq;
-                            val_seq += 1;
-                            _s
-                        },
-                    });
+                    // missing optional optarg — `add_opt_val(d, NULL)`
+                    push_val(&mut descs, idx, None, &mut val_seq);
                 }
             } else {
-                descs[idx].vals.push(Val {
-                    name: format!("-{}", ch),
-                    arg: None,
-                    seq: {
-                        let _s = val_seq;
-                        val_seq += 1;
-                        _s
-                    },
-                });
+                // boolean short opt — `add_opt_val(d, NULL)`
+                push_val(&mut descs, idx, None, &mut val_seq);
             }
             ci += 1;
         }
@@ -3123,23 +3109,42 @@ pub fn bin_zparseopts(
     //   name, arg) across all descs that share a target array,
     //   sorting by seq, and flattening into [name, arg?, name,
     //   arg?, …] form.
-    let mut arr_buckets: std::collections::BTreeMap<String, Vec<(usize, String, Option<String>)>> =
-        std::collections::BTreeMap::new();
+    // c:2076-2084 — per-val emission:
+    //
+    //     if (v->str)
+    //         *ap = ztrdup(v->str);
+    //     else {
+    //         *ap = ztrdup(v->name);
+    //         if (v->arg)
+    //             *++ap = ztrdup(v->arg);
+    //     }
+    //
+    // v->str (built in add_opt_val c:1665-1676) is the COMBINED
+    // single element for ZOF_OPT/ZOF_SAME/GNUL options; plain
+    // mandatory-arg options emit (name, arg) as two elements.
+    let mut arr_buckets: std::collections::BTreeMap<
+        String,
+        Vec<(usize, String, Option<String>, Option<String>)>,
+    > = std::collections::BTreeMap::new();
     for d in &descs {
         let target = d.arr_name.clone().or_else(|| defarr.clone());
         let Some(tgt) = target else { continue };
         let entry = arr_buckets.entry(tgt).or_default();
         for v in &d.vals {
-            entry.push((v.seq, v.name.clone(), v.arg.clone()));
+            entry.push((v.seq, v.name.clone(), v.arg.clone(), v.str_.clone()));
         }
     }
     for (name, mut bucket) in arr_buckets {
         bucket.sort_by_key(|t| t.0);
         let mut out: Vec<String> = Vec::with_capacity(bucket.len() * 2);
-        for (_seq, n, a) in bucket {
-            out.push(n);
-            if let Some(av) = a {
-                out.push(av);
+        for (_seq, n, a, s) in bucket {
+            if let Some(combined) = s {
+                out.push(combined); // c:2077-2078 v->str one-element form
+            } else {
+                out.push(n); // c:2080
+                if let Some(av) = a {
+                    out.push(av); // c:2081-2082
+                }
             }
         }
         if !keep || !out.is_empty() {
