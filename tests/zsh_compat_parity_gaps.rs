@@ -440,7 +440,12 @@ mod corpus_behavior_expansion_b {
         join_flag_newline_brace => (r#"(j.\n.) brace"#, r#"print ${(j.\n.){x,y}}"#);
         integer_literal_with_base_hash => (r#"typeset -i 3#8"#, r#"typeset -i x=3#8; print $x"#);
         ksh_zero_subscript_first_element => (r#"kshzerosubscript [0]"#, r#"setopt kshzerosubscript; a=(q); print $a[0]"#);
-        typeset_float_seconds_builtin => (r#"typeset -F SECONDS"#, r#"typeset -F SECONDS; SECONDS=1; print $SECONDS"#);
+        // Raw `print $SECONDS` includes the real microseconds elapsed
+        // between assignment and read — different in every process,
+        // so raw-stdout parity could never pass. Compare the integer
+        // part (pins -F conversion + assignment resetting the timer
+        // base) and the fractional WIDTH (pins the %.10f float form).
+        typeset_float_seconds_builtin => (r#"typeset -F SECONDS"#, r#"typeset -F SECONDS; SECONDS=1; print ${SECONDS%.*} ${#${SECONDS#*.}}"#);
         arith_rand48 => (r#"rand48()"#, r#"print $(( rand48() ))"#);
     }
 }
