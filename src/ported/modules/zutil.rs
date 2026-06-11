@@ -3187,7 +3187,36 @@ pub fn bin_zparseopts(
             flat.push(joined);
         }
         if !keep || !flat.is_empty() {
-            sethparam(&aname, flat);
+            // c:2096-2097 — `if (!keep || num) {
+            //                  ap = zalloc_default_array(&aval, assoc, keep, num);`
+            // zalloc_default_array (c:1709-1735) PREPENDS the assoc's
+            // existing key/value pairs when keep is set: `-K -A assoc`
+            // merges — unmatched existing keys survive, while new pairs
+            // (appended after) override matching keys via normal assoc
+            // assignment semantics. Prior port replaced the whole assoc
+            // with only the new pairs, dropping every unmatched key.
+            if keep {
+                // c:1715-1728 — fetch existing pairs, copy first.
+                let existing: Vec<String> = crate::ported::params::paramtab_hashed_storage()
+                    .lock()
+                    .ok()
+                    .and_then(|store| {
+                        store.get(&aname).map(|m| {
+                            let mut kv = Vec::with_capacity(m.len() * 2);
+                            for (k, v) in m {
+                                kv.push(k.clone()); // c:1723-1726
+                                kv.push(v.clone());
+                            }
+                            kv
+                        })
+                    })
+                    .unwrap_or_default();
+                let mut merged = existing;
+                merged.extend(flat); // new pairs after → override same keys
+                sethparam(&aname, merged); // c:2121
+            } else {
+                sethparam(&aname, flat); // c:2121
+            }
         }
     }
 
