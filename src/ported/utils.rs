@@ -4657,26 +4657,26 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
     if arr.is_empty() {
         return String::new();
     }
-    // c:3936-3946 — if sep is NULL, derive from ifs[0]; default " " when
-    //               ifs[0] is space (common case). Use first MB char of
-    //               IFS otherwise. Rust mirrors via paramtab IFS lookup.
+    // c:3936-3945 — `if (!sep)` default-sep arm:
+    //   if (ifs && *ifs != ' ') sep = dupstrpfx(ifs, MB_METACHARLEN(ifs));
+    //   else sep = " ";
+    // IFS SET-but-EMPTY takes the first branch (`*ifs` is '\0' != ' ')
+    // and dupstrpfx("", …) yields an EMPTY separator — `"$*"` with
+    // IFS="" concatenates. Only IFS UNSET (ifs == NULL → getsparam
+    // None) or starting with a space falls back to " ".
     let ifs_storage: String;
     let sep_str: &str = match sep {
         Some(s) => s, // c:3936
         None => {
-            let ifs = getsparam("IFS").unwrap_or_default();
-            // c:3938 — if (ifs && *ifs != ' ') sep = first MB char of ifs;
-            if !ifs.is_empty() && !ifs.starts_with(' ') {
-                ifs_storage = ifs
-                    .chars()
-                    .next()
-                    .map(|c| c.to_string())
-                    .unwrap_or_default();
-                &ifs_storage
-            } else {
-                // c:3942-3944 — else sep = " ";
-                " "
-            }
+            ifs_storage = match getsparam("IFS") {
+                // c:3938-3940 — set, first char not space (empty → "").
+                Some(ifs) if !ifs.starts_with(' ') => {
+                    ifs.chars().next().map(|c| c.to_string()).unwrap_or_default()
+                }
+                // c:3941-3944 — unset (NULL) or leading space → " ".
+                _ => " ".to_string(),
+            };
+            &ifs_storage
         }
     };
     // c:3947-3956 — pre-compute total length, alloc, copy elements

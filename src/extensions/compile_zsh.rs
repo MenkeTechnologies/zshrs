@@ -1261,10 +1261,18 @@ impl ZshCompiler {
                         0,
                     );
                     self.builder.emit(Op::SetStatus, 0);
-                } else if !chain_had_cmd_subst {
-                    // nullexec=2 with assigns: redirs applied to current
-                    // shell; preserve cmd-subst $? or reset to 0.
-                    self.builder.emit(Op::LoadInt(0), 0);
+                } else {
+                    // nullexec=2 with assigns: c:Src/exec.c:3977 —
+                    // `lastval = errflag ? errflag : cmdoutval;`.
+                    // Runtime builtin consults errflag (readonly
+                    // reassign etc. → 1), else preserves a cmd-subst
+                    // $? or resets to 0.
+                    self.builder
+                        .emit(Op::LoadInt(chain_had_cmd_subst as i64), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSIGN_ONLY_STATUS, 1),
+                        0,
+                    );
                     self.builder.emit(Op::SetStatus, 0);
                 }
                 self.builder.emit(Op::WithRedirectsEnd, 0);
@@ -1276,14 +1284,22 @@ impl ZshCompiler {
                 self.emit_errexit_check();
                 return;
             }
-            // c:Src/exec.c:3395-3396 — `lastval = cmdoutval;`
-            // For the assignment-only path: if no $() ran in any RHS
-            // the post-assignment $? is 0; if any did, last_status
-            // already holds that subst's exit.
-            if !chain_had_cmd_subst {
-                self.builder.emit(Op::LoadInt(0), 0);
-                self.builder.emit(Op::SetStatus, 0);
-            }
+            // c:Src/exec.c:3393-3396 — `if (errflag) lastval = 1;
+            // else lastval = cmdoutval;` (execsimple shape at c:1322:
+            // `lv = (errflag ? errflag : cmdoutval)`).
+            // For the assignment-only path: errflag set (readonly
+            // reassign etc.) → 1; else if no $() ran in any RHS the
+            // post-assignment $? is 0; if any did, last_status
+            // already holds that subst's exit. Resolved at runtime
+            // by BUILTIN_ASSIGN_ONLY_STATUS since errflag is a
+            // runtime fact.
+            self.builder
+                .emit(Op::LoadInt(chain_had_cmd_subst as i64), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSIGN_ONLY_STATUS, 1),
+                0,
+            );
+            self.builder.emit(Op::SetStatus, 0);
             // xtrace: emit the trailing `\n` + flush iff a prior
             // BUILTIN_XTRACE_ASSIGN this line emitted PS4. Mirrors
             // C's `fputc('\n', xtrerr); fflush(xtrerr);` at
@@ -4940,6 +4956,18 @@ impl ZshCompiler {
                         if cleaned.contains('*')
                             || cleaned.contains('?')
                             || cleaned.contains('[')
+                            // c:Src/pattern.c:4326-4335 — haswilds fires
+                            // on ANY Inpar unless SHGLOB is set (no `|`
+                            // required): `a=x; print ($a)` is a glob
+                            // group that NOMATCH-errors in zsh. Check
+                            // the raw segment for the Inpar TOKEN byte
+                            // (\u{88}) — quoted parens (`'('` / `"("`)
+                            // stay literal `(` inside Snull/Dnull spans
+                            // and never carry the token, so this can't
+                            // over-trigger on quoted text. The runtime
+                            // zglob → haswilds short-circuits under
+                            // SHGLOB, keeping `setopt shglob` literal.
+                            || lit.contains('\u{88}')
                             || (cleaned.contains('(')
                                 && cleaned.contains('|')
                                 && cleaned.contains(')'))

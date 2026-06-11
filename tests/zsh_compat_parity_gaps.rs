@@ -131,7 +131,11 @@ mod special_parameters {
         ifs_glob_flag_t_reports_scalar_special => (r#"${(t)IFS}"#, r#"print ${(t)IFS}"#);
         histchars_non_empty_like_zsh => (r#"HISTCHARS"#, r#"print -r "$HISTCHARS""#);
         module_path_element_count => (r#"${#module_path}"#, r#"print ${#module_path}"#);
-        argv0_is_shell_binary_path => (r#"$0"#, r#"print -r "$0""#);
+        // $0 in -c mode is each shell's OWN argv[0] (c:Src/init.c:271
+        // posixzero) — /opt/homebrew/bin/zsh vs target/debug/zshrs.
+        // Byte comparison is provably impossible (machine-specific
+        // binary paths); compare set-ness of $0 instead.
+        argv0_is_shell_binary_path => (r#"$0"#, r#"print -r "${0:+set}""#);
         errno_scalar_after_startup => (r#"ERRNO"#, r#"print -r "$ERRNO""#);
         host_parameter_type_and_plus_line => (r#"HOST (t)+"#, r#"print -r "t=${(t)HOST} plus=$+HOST""#);
         dirstacksize_parameter_type_and_plus_line => (r#"DIRSTACKSIZE (t)+"#, r#"print -r "t=${(t)DIRSTACKSIZE} plus=$+DIRSTACKSIZE""#);
@@ -413,7 +417,11 @@ mod corpus_behavior_expansion {
         param_s_join_dot_brace => (r#"${(s.:.) brace}"#, r#"print ${(s.:.)a:b:c}"#);
         param_qqq_multiquote => (r#"${(qqq) } words"#, r#"print ${(qqq)hi there}"#);
         positional_argv_slice_subscript => (r#"$@[@] with set --"#, r#"set -- 1 2; print $@[@]"#);
-        argv_zero_colon_htail => (r#"$0:t"#, r#"print $0:t"#);
+        // $0:t is each shell's OWN binary basename ("zsh" vs "zshrs")
+        // — machine/build-specific, byte comparison provably
+        // impossible. Exercise the `:t` modifier on $0 and compare
+        // only that it yields a non-empty tail.
+        argv_zero_colon_htail => (r#"$0:t"#, r#"t=$0:t; print ${t:+have_tail}"#);
         pad_left_l_colon_zeros => (r#"${(l:8::0:) }"#, r#"print ${(l:8::0:)7}"#);
         pad_right_r_colon_zeros => (r#"${(r:8::0:) }"#, r#"print ${(r:8::0:)7}"#);
         arith_ksh_nvl2 => (r#"NVL2 math"#, r#"print $(( NVL2(0,1,2) ))"#);
@@ -537,7 +545,11 @@ mod corpus_dash_fc_language_surface {
         typeset_plus_m_name_list => (r#"typeset +m"#, r#"typeset +m 2>/dev/null | sed 's/=.*//'; print after"#);
         typeset_plus_list_all => (r#"typeset +"#, r#"typeset +; print after_typeset_plus"#);
         local_decl_top_level_visibility => (r#"local at top-level -fc"#, r#"local x=1 2>/dev/null; print defined:$+x"#);
-        dot_slash_argv_zero_tail => (r#"./$0:t"#, r#"print ./$0:t"#);
+        // ./$0:t embeds each shell's OWN binary basename ("./zsh" vs
+        // "./zshrs") — machine/build-specific, byte comparison
+        // provably impossible. Verify the `./` prefix survives the
+        // modifier and the tail is non-empty.
+        dot_slash_argv_zero_tail => (r#"./$0:t"#, r#"t=./$0:t; print ${t[1,2]}${${t#./}:+_tail}"#);
         equals_form_splits_parameter_value => (r#"$=PWD"#, r#"print $=PWD"#);
         array_subscript_capital_i_on_empty => (r#"empty $a[(I)2]"#, r#"a=(); : ${a[(I)2]}; print tail"#);
         reswords_hash_for => (r#"$reswords[for]"#, r#"print $reswords[for]"#);
@@ -738,7 +750,11 @@ mod corpus_dash_fc_bulk_a {
         // ordering semantics still pin the background-job flow.
         bulk_background_pid_wait => (r#"$! wait"#, r#"true & print bang_$(( $! > 0 )); wait; print waited_gap"#);
         bulk_read_herestring_scalar => (r#"read <<<"#, r#"read rv_gap <<< rd_here_val; print $rv_gap"#);
-        bulk_emulate_sh_dash_c_inline => (r#"emulate sh -c"#, r#"emulate sh -c 'print emulate_flag_$0'"#);
+        // `emulate sh` makes $0 report posixzero = each shell's OWN
+        // argv[0] (c:Src/init.c:271) — machine-specific binary paths,
+        // byte comparison provably impossible. Keep the emulate-sh
+        // dispatch under test; compare only $0 set-ness.
+        bulk_emulate_sh_dash_c_inline => (r#"emulate sh -c"#, r#"emulate sh -c 'print emulate_flag_${0:+set}'"#);
         bulk_getopts_f_takes_arg => (r#"getopts f:"#, r#"OPTIND=1; getopts "f:" og_go -f gv; print -r "og=${og_go} arg=${OPTARG}""#);
         bulk_arith_logical_and_or => (r#"$(( && || ))"#, r#"print $(( 1 && 0 )) $(( 0 || 1 ))"#);
         bulk_arith_power_int => (r#"** 10"#, r#"print $(( 2 ** 10 ))"#);
@@ -1434,7 +1450,10 @@ mod corpus_dash_fc_bulk_i {
         bulk_i_hash_num_builtins => (r#"count builtins"#, r#"print ${#builtins}"#);
         bulk_i_hash_num_widgets => (r#"count widgets"#, r#"print ${#widgets}"#);
         bulk_i_param_ZSH_EXEC_CONTEXT => (r#"ZSH_EXEC_CONTEXT"#, r#"print $ZSH_EXEC_CONTEXT"#);
-        bulk_i_param_ZSH_ARGZERO => (r#"ZSH_ARGZERO"#, r#"print ${ZSH_ARGZERO:-no_zarg}"#);
+        // ZSH_ARGZERO is each shell's OWN argv[0] (c:Src/params.c:971
+        // ← posixzero, init.c:271) — machine-specific binary paths,
+        // byte comparison provably impossible. Compare set-ness.
+        bulk_i_param_ZSH_ARGZERO => (r#"ZSH_ARGZERO"#, r#"print ${ZSH_ARGZERO:+zarg_set}"#);
         bulk_i_param_CPUTYPE => (r#"CPUTYPE"#, r#"print ${CPUTYPE:-nocpu}"#);
         bulk_i_param_HOSTTYPE => (r#"HOSTTYPE"#, r#"print ${HOSTTYPE:-nohostt}"#);
         bulk_i_param_PPID => (r#"PPID"#, r#"print $PPID"#);
@@ -1570,7 +1589,14 @@ mod corpus_dash_fc_bulk_j {
         bulk_j_cond_nul_and_nonempty => (r#"[[ -z -n ]]"#, r##"[[ -z '' && -n x ]]; print -r "znj=$?""##);
         bulk_j_alias_define_invoke_remove => (r#"alias cycle"#, r##"alias aj_pr='print ajv'; aj_pr; unalias aj_pr; print -r "has=${+aliases[aj_pr]}""##);
         bulk_j_array_subscript_range_slice => (r#"ary[2,4]"#, r##"arj_sl=(1 2 3 4); print -r "${arj_sl[2,4]}""##);
-        bulk_j_print_OSTYPE_VENDOR_UID => (r#"OSTYPE VENDOR UID"#, r##"print -r "$OSTYPE $VENDOR $UID""##);
+        // $OSTYPE's kernel-release suffix is baked at zsh BUILD time
+        // (configure host triple, e.g. darwin25.4.0 for a zsh built
+        // on an older kernel) while zshrs derives it from uname at
+        // startup (darwin25.5.0 on the same host) — the numeric
+        // suffix comparison is provably impossible across binaries
+        // built at different times. Compare the OS-name prefix;
+        // VENDOR and UID stay exact.
+        bulk_j_print_OSTYPE_VENDOR_UID => (r#"OSTYPE VENDOR UID"#, r##"print -r "${OSTYPE%%[0-9]*} $VENDOR $UID""##);
         bulk_j_count_modules_tables => (r#"#modules #loaded"#, r##"print -r "${#modules} ${#loaded_modules}""##);
         bulk_j_module_path_first => (r#"module_path[1]"#, r##"print -r "${module_path[1]:-nompath}""##);
         bulk_j_zmodload_list_silent => (r#"zmodload -L"#, r##"zmodload -L >/dev/null 2>&1; print -r "zLLj=$?""##);
@@ -1610,7 +1636,10 @@ mod corpus_dash_fc_bulk_j {
         bulk_j_arith_float_less_than => (r#"float <"#, r##"(( 1.1 < 2.2 )); print -r "flj=$?""##);
         bulk_j_array_prepend_copy => (r#"a=(1 $a)"#, r##"arj_pr=(2 3); arj_pr=(1 $arj_pr); print -r "${arj_pr[@]}""##);
         bulk_j_set_doubledash_preserved => (r#"set -- --"#, r##"set -- -- -xj; print -r "$1""##);
-        bulk_j_print_argv_zero_string => (r#"$0"#, r##"print -r "$0""##);
+        // $0 in -c mode is each shell's OWN argv[0] (c:Src/init.c:271)
+        // — machine-specific binary paths, byte comparison provably
+        // impossible. Compare set-ness.
+        bulk_j_print_argv_zero_string => (r#"$0"#, r##"print -r "${0:+zero_set}""##);
         bulk_j_zmodload_e_datetime_probe => (r#"zmodload -e"#, r##"zmodload -e zsh/datetime; print -r "zej=$?""##);
         bulk_j_typeset_export_uppercase_t => (r#"typeset -x (t)"#, r##"typeset -x exj_v=1; print -r "${(t)exj_v}""##);
         bulk_j_float_equals_integer_compare => (r#"2.0 == 2"#, r##"(( 2.0 == 2 )); print -r "feqj=$?""##);

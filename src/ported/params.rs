@@ -6514,8 +6514,14 @@ pub fn resetparam(pm: &mut param, flags: i32) -> i32 {
 /// global. No live callers used the old 4-arg form (all use
 /// `paramtab().write().remove(...)` directly), so renaming is
 /// safe.
-pub fn unsetparam(name: &str) {
-    // c:3819
+pub fn unsetparam(name: &str) -> i32 {
+    // c:3819 — C's unsetparam is void and discards unsetparam_pm's
+    // status; bin_unset (c:Src/builtin.c:3952-3953) does the
+    // paramtab lookup itself and calls `if (unsetparam_pm(pm, 0, 1))
+    // returnval = 1;`. The Rust bin_unset routes through this
+    // wrapper for the bridge plumbing (tied names, hashed-storage
+    // shadow, special regenerators), so the rejection status is
+    // surfaced here instead: 1 = readonly rejection, 0 = unset ok.
     // c:Src/params.c:3853-3935 — unsetparam_pm's tied-alt-name
     // removal block. zsh's PATH/path, FPATH/fpath, MANPATH/manpath,
     // CDPATH/cdpath, PSVAR/psvar pairs are tied (`pm->ename` points
@@ -6575,8 +6581,9 @@ pub fn unsetparam(name: &str) {
     if is_readonly_special {
         zerr(&format!("read-only variable: {}", name));
         unqueue_signals();
-        return;
+        return 1; // c:3854 — unsetparam_pm's readonly rejection status
     }
+    let mut retval = 0i32;
     let (found, is_nameref) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
@@ -6593,6 +6600,7 @@ pub fn unsetparam(name: &str) {
         let mut pm_owned = paramtab().write().unwrap().remove(name).unwrap();
         let rejected = unsetparam_pm(&mut pm_owned, 0, 1); // c:3831
         if rejected != 0 {
+            retval = 1; // c:Src/builtin.c:3952-3953 surfaced to bin_unset
             // Readonly rejection — restore the entry so the state
             // is unchanged.
             paramtab()
@@ -6674,6 +6682,7 @@ pub fn unsetparam(name: &str) {
         }
     }
     unqueue_signals(); // c:3832
+    retval
 }
 
 /// Unset parameter (from params.c unsetparam_pm)
@@ -11221,19 +11230,15 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
                 crate::ported::modules::clone::lastpid.load(std::sync::atomic::Ordering::Relaxed);
             Some(pid.to_string())
         }
-        // $* / $@ join positional params via IFS first char.
-        "*" | "@" => {
-            let sep = paramtab()
-                .read()
-                .ok()
-                .and_then(|t| t.get("IFS").map(|pm| ifsgetfn(pm)))
-                .unwrap_or_else(|| " ".to_string())
-                .chars()
-                .next()
-                .unwrap_or(' ')
-                .to_string();
-            pparams_lock().lock().ok().map(|p| p.join(&sep))
-        }
+        // $* / $@ join positional params via sepjoin's IFS default —
+        // c:Src/utils.c:3936-3945: set-but-empty IFS joins with ""
+        // (`IFS=""; echo "$*"` concatenates); unset IFS joins with
+        // " ". The previous `.unwrap_or(' ')` collapsed empty-IFS to
+        // a space.
+        "*" | "@" => pparams_lock()
+            .lock()
+            .ok()
+            .map(|p| crate::ported::utils::sepjoin(&p, None)),
         // $- : current option-letter set.
         // c:Src/params.c:3262 (IPDEF) → dashparamgetfn in options.c:890.
         // Canonical C body walks `zshletters[FIRST_OPT..=LAST_OPT]`

@@ -4398,6 +4398,22 @@ pub fn bin_typeset(
             .read()
             .map(|t| t.get(arg_name).is_some())
             .unwrap_or(false);
+        // c:2062-2064 — `usepm = pm && (!(pm->node.flags & PM_UNSET)
+        // || ...)`: snapshot BEFORE any createparam this iteration
+        // runs (the PM_LOCAL shadow block and the pre-assign type
+        // stamps both create fresh pms). Only the reuse-existing-pm
+        // branch of typeset_single carries the c:2336 `if (errflag)
+        // return NULL` post-assign check; the fresh-param path
+        // (c:2577+ createparam → c:2604 assignsparam) has NO errflag
+        // check — `typeset -i x=3#8` zerrs the math but bin_typeset
+        // still returns 0 (zsh 5.9 exit 0, lastval untouched).
+        let usepm_existing = paramtab()
+            .read()
+            .map(|t| {
+                t.get(arg_name)
+                    .is_some_and(|pm| (pm.node.flags as u32 & PM_UNSET) == 0)
+            })
+            .unwrap_or(false);
         let first_is_digit = arg_name
             .as_bytes()
             .first()
@@ -4416,6 +4432,10 @@ pub fn bin_typeset(
                     &format!("not valid in this context: {}", arg_name),
                 );
             }
+            // c:3153-3156 — `if (!typeset_single(...)) returnval = 1;`
+            // — the NULL return from the validation gate makes
+            // bin_typeset's per-arg loop record failure.
+            returnval = 1;
             continue; // c:2551 return NULL
         }
 
@@ -4916,6 +4936,20 @@ pub fn bin_typeset(
                     // c:2980-2995 — plain array.
                     crate::ported::exec_hooks::set_array(n, elems.clone());
                 }
+                // c:2330-2337 (typeset_single) — `if (!(pm =
+                // assignaparam(pname, ..., flags))) return NULL;
+                // ... if (errflag) return NULL;` A readonly
+                // rejection inside setarrvalue (c:Src/params.c:2900)
+                // sets errflag and refuses the value; typeset_single
+                // returns NULL and bin_typeset records `returnval = 1`
+                // (c:3153-3156). Skip the attribute stamps — C never
+                // reaches them on this path. Gated on usepm: the
+                // c:2336 check lives ONLY in the reuse-existing-pm
+                // branch.
+                if usepm_existing && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+                    returnval = 1; // c:3156
+                    continue; // c:2337 return NULL
+                }
                 // c:2510-2520 — `on = pm->node.flags;` then stamp the
                 // attribute bits on the just-assigned param. The
                 // scalar-assign arm below does the same; the array /
@@ -5019,6 +5053,22 @@ pub fn bin_typeset(
                     }
                 }
                 setsparam(n, &folded); // c:params.c:3350
+                // c:2326-2328 + c:2336-2337 (typeset_single) —
+                // `if (asg->value.scalar && !(pm = assignsparam(
+                //     pname, ztrdup(asg->value.scalar), 0)))
+                //      return NULL;
+                //  ... if (errflag) return NULL;`
+                // A readonly rejection inside assignstrvalue
+                // (c:Src/params.c:2697) sets errflag and the value is
+                // refused; typeset_single returns NULL and bin_typeset
+                // records `returnval = 1` (c:3153-3156). Skip the
+                // attribute stamps — C never reaches them on this path.
+                // Gated on usepm: the c:2336 check lives ONLY in the
+                // reuse-existing-pm branch.
+                if usepm_existing && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
+                    returnval = 1; // c:3156
+                    continue; // c:2337 return NULL
+                }
                                        // c:2510-2520 — `on = pm->node.flags;` then stamp the
                                        // attribute bits on the just-assigned param.
                 let post_assign_mask = (PM_READONLY
@@ -6828,13 +6878,22 @@ pub fn bin_unset(
                 // are NOT touched by params.rs::unsetparam so we
                 // wipe them directly here; using exec_hooks::unset_*
                 // would loop back into unsetparam.
-                unsetparam(nm);
-                let _ = crate::ported::params::paramtab_hashed_storage()
-                    .lock()
-                    .ok()
-                    .as_deref_mut()
-                    .map(|m| m.remove(nm));
-                env::remove_var(nm); // c:3905 delenv
+                // c:Src/builtin.c:3952-3953 — `if (unsetparam_pm(pm,
+                // 0, 1)) returnval = 1;` (readonly rejection). On
+                // rejection the param is untouched, so the shadow-
+                // storage wipe and env delenv (which unsetparam_pm
+                // only runs on its success path, c:Src/params.c:3872)
+                // must not fire either.
+                if unsetparam(nm) != 0 {
+                    returnval = 1; // c:3953
+                } else {
+                    let _ = crate::ported::params::paramtab_hashed_storage()
+                        .lock()
+                        .ok()
+                        .as_deref_mut()
+                        .map(|m| m.remove(nm));
+                    env::remove_var(nm); // c:3905 delenv
+                }
             }
         }
     }
