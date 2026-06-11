@@ -2080,14 +2080,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 let values = flat;
-                if !values.len().is_multiple_of(2) {
-                    eprintln!(
-                        "{}:1: bad set of key/value pairs for associative array",
-                        shname()
-                    );
+                // Odd-count rejection lives in the canonical port:
+                // sethparam → (inlined arrhashsetfn pair-walk) zerr
+                // "bad set of key/value pairs" per Src/params.c:4128-4131.
+                // zerr sets ERRFLAG_ERROR, which aborts the remaining
+                // list at the next command boundary (BUILTIN_ERREXIT_CHECK
+                // trigger 4) — matching `zsh -fc 'typeset -A m;
+                // m=(odd); print x'` printing nothing after the error.
+                if crate::ported::params::sethparam(&name, values.clone()).is_none() {
+                    // c:Src/exec.c:2632-2633 addvars — `if
+                    // (!assignaparam(name, arr, myflags)) lastval = 1;`
+                    // — failed assignment sets lastval so the errflag
+                    // abort exits 1 (init.c loop() breaks, zsh_main
+                    // returns lastval).
+                    exec.set_last_status(1);
                     return true;
                 }
-                let _ = crate::ported::params::sethparam(&name, values.clone());
                 #[cfg(feature = "recorder")]
                 if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                     let ctx = exec.recorder_ctx();
