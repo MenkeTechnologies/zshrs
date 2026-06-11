@@ -270,10 +270,35 @@ pub fn bin_zuntie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 
 
         // c:220 — `queue_signals();`
         queue_signals();
-        if OPT_ISSET(ops, b'u') { // c:221
-             // c:222 — `pm->node.flags &= ~PM_READONLY;`
-             // Static-link path: tied_gdbm_param doesn't carry a flags
-             // field separately; readonly is on gdbm_database.readonly.
+        // c:221-227 — `-u` clears PM_READONLY before unsetparam_pm:
+        //
+        //     if (OPT_ISSET(ops,'u')) {
+        //         pm->node.flags &= ~PM_READONLY;
+        //     }
+        //     if (unsetparam_pm(pm, 0, 1)) {
+        //         /* assume already reported */
+        //         ret = 1;
+        //     }
+        //
+        // Without -u, a param tied via `ztie -r` carries PM_READONLY
+        // (c:127 pmflags |= PM_READONLY) and unsetparam_pm rejects it
+        // at Src/params.c:3846-3851 with "read-only variable: %s".
+        // Rust readonly state lives on tied_gdbm_param.readonly; prior
+        // port skipped the check entirely so `zuntie` on a -r tie
+        // succeeded where C errors.
+        if !OPT_ISSET(ops, b'u') {
+            let is_ro = TIED_PARAMS
+                .lock()
+                .ok()
+                .and_then(|p| p.get(pmname).map(|t| t.readonly))
+                .unwrap_or(false);
+            if is_ro {
+                // params.c:3847-3849 — zerr("read-only %s: %s", ...)
+                crate::ported::utils::zerr(&format!("read-only variable: {}", pmname));
+                ret = 1; // c:226
+                unqueue_signals(); // c:228
+                continue;
+            }
         }
         // c:224 — `if (unsetparam_pm(pm, 0, 1))` — registry remove.
         // C calls unsetparam_pm which fires the gdbmhashunsetfn callback
