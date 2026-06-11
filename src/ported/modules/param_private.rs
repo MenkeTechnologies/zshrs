@@ -35,7 +35,8 @@ use crate::ported::builtin::bin_typeset;
 use crate::ported::mem::{queue_signals, unqueue_signals};
 use crate::ported::options::optlookup;
 use crate::ported::params::{
-    deleteparamtable, endparamscope, locallevel, newparamtable, printparamnode, startparamscope,
+    deleteparamtable, endparamscope, locallevel, newparamtable, paramtab, printparamnode,
+    startparamscope,
 };
 use crate::ported::utils::{zerr, zwarn, zwarnnam};
 use crate::ported::zsh_h::{
@@ -421,11 +422,20 @@ pub fn bin_private(
     });
     startparamscope(&mut paramscope_buf); // c:250
     from_typeset = bin_typeset("private", args, ops, func); // c:251
-                                                            // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
-                                                            // walks paramtab calling makeprivate on each entry to promote
-                                                            // assignments made during bin_typeset. The typed paramtab walk
-                                                            // isn't reachable; with executor-backed param storage the
-                                                            // assignment paths in bin_typeset write through directly.
+    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
+    // walk paramtab calling makeprivate on each entry. makeprivate
+    // self-filters on `pm->level == locallevel` (c:83): only the
+    // params bin_typeset just created inside the startparamscope-
+    // bumped scope are promoted (PM_HIDE|PM_SPECIAL|PM_REMOVABLE|
+    // PM_RO_BY_DESIGN, then `pm->level -= 1` so the upcoming
+    // endparamscope at c:253 does NOT pop them back out of the
+    // function's real scope).
+    {
+        let mut tab = paramtab().write().unwrap();
+        for (_name, pm) in tab.iter_mut() {
+            makeprivate(&mut **pm as *mut param, 0); // c:252
+        }
+    }
     endparamscope(); // c:253
     FAKELEVEL.store(ofake, Ordering::Relaxed); // c:254
     unqueue_signals(); // c:255

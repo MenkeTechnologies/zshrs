@@ -4419,6 +4419,42 @@ pub fn getsparam(name: &str) -> Option<String> {
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
+            // c:Src/Modules/param_private.c:568-617 getprivatenode —
+            // when zsh/param/private is active, C swaps
+            // `realparamtab->getnode` to getprivatenode (c:678) so
+            // every lookup skips private params that belong to an
+            // OUTER scope when read from a DEEPER one (`private x` in
+            // f is invisible to g called by f; g sees the global).
+            // zshrs's HashMap paramtab has no getnode vtable, so the
+            // c:580 `pm = pm->old` walk is inlined here. The
+            // per-param private test uses the flag combo makeprivate
+            // installs at c:174 (PM_HIDE|PM_SPECIAL|PM_RO_BY_DESIGN)
+            // instead of is_private()'s name-keyed registry — the
+            // registry can't distinguish the private pm from the
+            // global it shadows on the same name.
+            let mut pm: &param = pm;
+            loop {
+                let privflags = PM_HIDE | PM_SPECIAL | PM_RO_BY_DESIGN;
+                let fakelvl =
+                    crate::ported::modules::param_private::FAKELEVEL.load(Ordering::Relaxed);
+                let pwl = crate::ported::modules::param_private::private_wraplevel
+                    .load(Ordering::Relaxed);
+                if fakelvl == 0 // c:580 `!fakelevel`
+                    && locallevel.load(Ordering::Relaxed) > pm.level // c:580
+                    && (pm.node.flags as u32 & privflags) == privflags // c:580 is_private(pm)
+                    && pm.level != pwl + 1
+                // c:581 wraplevel escape
+                {
+                    match pm.old.as_deref() {
+                        Some(old) => {
+                            pm = old; // c:607 `pm = pm->old`
+                            continue;
+                        }
+                        None => return None, // c:609 walk exhausted — no visible node
+                    }
+                }
+                break;
+            }
             // c:Src/params.c:2335-2358 — `if (pm->node.flags & PM_UNSET)
             // return ""`. Unset specials kept in paramtab (PM_SPECIAL
             // retention path, c:3911) read as empty, not as their stale
