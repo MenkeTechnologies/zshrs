@@ -11,12 +11,12 @@ dev box).
 | Metric              | Count  |
 | ------------------- | ------ |
 | Total tests         | 43,904 |
-| Passing             | 43,898 |
-| **Failing**         | **3**  |
+| Passing             | 43,901 |
+| **Failing**         | **0**  |
 | Ignored             | 8      |
-| Pass rate           | 99.99% |
+| Pass rate           | 100%   |
 | Test binaries       | 82     |
-| Binaries with fails | 1      |
+| Binaries with fails | 0      |
 
 Delta vs the earlier 2026-06-11 full-sweep snapshot: 28 → 9 stable
 failures (19 closed), 9 → 4 binaries — then 8 after merging the
@@ -77,14 +77,17 @@ Flaky (pass solo / under low load; not counted):
 
 ## Per-binary failures
 
-### binary_parity (3)
+None. The final three (`binary_parity`:
+`zcompdump_byte_identical_roundtrip`, `zcompdump_synthesize_format`,
+`zstyle_canonical_roundtrip`) exercise the daemon RPC and need
+`cargo build -p zshrs-daemon` first — cargo does not provide
+`CARGO_BIN_EXE_zshrs-daemon` to the root crate's integration tests,
+so the fallback path expects the binary pre-built. With the daemon
+built they pass (4/4, verified 2026-06-12); there was no code gap.
 
-- `zcompdump_byte_identical_roundtrip`
-- `zcompdump_synthesize_format`
-- `zstyle_canonical_roundtrip`
-
-## Themes
-
-- **zcompdump / zstyle byte formats.** The single remaining arm:
-  byte-identical `.zcompdump` synthesis/roundtrip + the zstyle
-  canonical dump (`.zwc` emission itself landed 2026-06-12).
+Also landed 2026-06-12: the `.zwc` LOAD side — `getfpfunc` tries
+`try_dump_file` per fpath dir before the plain file
+(Src/exec.c:6238), `check_dump_file` loads the real body
+(Src/parse.c:3833), `source`/`.` try the dump (Src/init.c:1566).
+Cross-verified live in both directions: a zshrs-compiled `.zwc`
+autoloads in real zsh 5.9.1 and vice versa, source deleted.
