@@ -2080,14 +2080,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 let values = flat;
-                // Odd-count rejection lives in the canonical port:
-                // sethparam → (inlined arrhashsetfn pair-walk) zerr
-                // "bad set of key/value pairs" per Src/params.c:4128-4131.
-                // zerr sets ERRFLAG_ERROR, which aborts the remaining
-                // list at the next command boundary (BUILTIN_ERREXIT_CHECK
-                // trigger 4) — matching `zsh -fc 'typeset -A m;
-                // m=(odd); print x'` printing nothing after the error.
-                if crate::ported::params::sethparam(&name, values.clone()).is_none() {
+                // Odd-count rejection lives in the canonical chain:
+                // sethparam → setarrvalue (c:3651/c:2920) →
+                // arrhashsetfn's zerr "bad set of key/value pairs"
+                // (Src/params.c:4128-4131). zerr sets ERRFLAG_ERROR,
+                // which aborts the remaining list at the next command
+                // boundary (BUILTIN_ERREXIT_CHECK trigger 4) —
+                // matching `zsh -fc 'typeset -A m; m=(odd); print x'`
+                // printing nothing after the error. Like C's sethparam
+                // (c:3652-3653 returns v->pm regardless), the Rust
+                // port returns Some on the odd-count path — the
+                // failure travels via errflag, so check BOTH.
+                let pre_err = crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    & crate::ported::zsh_h::ERRFLAG_ERROR;
+                let res = crate::ported::params::sethparam(&name, values.clone());
+                let now_err = crate::ported::utils::errflag
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    & crate::ported::zsh_h::ERRFLAG_ERROR;
+                if res.is_none() || (pre_err == 0 && now_err != 0) {
                     // c:Src/exec.c:2632-2633 addvars — `if
                     // (!assignaparam(name, arr, myflags)) lastval = 1;`
                     // — failed assignment sets lastval so the errflag

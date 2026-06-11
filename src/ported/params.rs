@@ -6164,29 +6164,10 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
         check_warn_pm(pm_ref, "associative array", checkcreate as i32, 1); // c:3649
     }
 
-    // c:3651 setarrvalue → c:2918 arrhashsetfn(v->pm, val, 0).
-    // The Rust port inlines arrhashsetfn's pair-walk below, so its
-    // odd-count gate is hoisted here:
-    // c:4124-4127 — `for (aptr = val; *aptr; aptr++) alen++;`
-    // c:4128-4131 — `if (alen % 2) { freearray(val);
-    //                  zerr("bad set of key/value pairs for
-    //                  associative array"); return; }`
-    let alen = val.iter().filter(|s| !s.starts_with(Marker as char)).count();
-    if alen % 2 != 0 {
-        zerr("bad set of key/value pairs for associative array"); // c:4131
-        return None;
-    }
-
-    // Build the IndexMap from flat (k,v) pairs (mirrors c:arrhashsetfn
-    // pair-walking at c:4140-4166).
-    let mut map: IndexMap<String, String> = IndexMap::new();
-    let mut iter = val.into_iter();
-    while let Some(k) = iter.next() {
-        let v = iter.next().unwrap_or_default();
-        map.insert(k, v);
-    }
-
-    // c:3640 — install in paramtab + paramtab_hashed_storage.
+    // c:3651 — `setarrvalue(v, val);` — full-replace dispatch for a
+    // PM_HASHED param (setarrvalue c:2919-2920) collapses to
+    // `arrhashsetfn(v->pm, val, 0)`, which owns the odd-count gate
+    // (c:4128-4131, zerr + ERRFLAG_ERROR) and the pair walk.
     let mut tab = paramtab().write().unwrap();
     let pm = tab.get_mut(name)?;
     if pm.node.flags & PM_SPECIAL as i32 == 0 {
@@ -6195,14 +6176,13 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     }
     pm.u_arr = None;
     pm.u_str = None;
+    arrhashsetfn(pm, val, 0); // c:3651 via setarrvalue c:2920
     let cloned = pm.clone();
     drop(tab);
 
-    paramtab_hashed_storage()
-        .lock()
-        .unwrap()
-        .insert(name.to_string(), map);
-
+    // c:3652-3653 — `unqueue_signals(); return v->pm;` — C returns
+    // the param even when arrhashsetfn errored; the failure travels
+    // via errflag (callers like the SET_ARRAY bridge check it).
     Some(cloned)
 }
 
@@ -6971,16 +6951,17 @@ pub fn hashsetfn(pm: &mut param, x: HashTable) {
 ///      val, eltflags)` (c:4140-4166).
 ///   4. `pm->gsu.h->setfn(pm, ht)` to install (c:4168).
 ///
-/// The Rust port partially mirrors: counts pairs, rejects odd
-/// counts via zerr, installs a fresh hashtable. The per-pair
-/// createparam+assignstrvalue cycle requires assoc storage
-/// shape we don't yet have wired through `u_hash`; this stays as
-/// a structural port and emits diagnostic on the odd-count path.
+/// Storage model: C's per-pair `createparam(k)` + `assignstrvalue`
+/// builds child Params inside a fresh `newparamtable`; zshrs's assoc
+/// values live in the `paramtab_hashed_storage` IndexMap keyed by the
+/// owning param's name, so the pair walk writes there. `pm.u_hash`
+/// stays untouched — the IndexMap is the authoritative store (same
+/// contract sethparam/gethparam already use).
 pub fn arrhashsetfn(
     // c:4113
     pm: &mut param,
     val: Vec<String>,
-    _flags: i32,
+    flags: i32,
 ) {
     // c:4124-4127 — count non-Marker entries.
     let alen: usize = val
@@ -6994,28 +6975,53 @@ pub fn arrhashsetfn(
         return;
     }
 
-    // c:4132-4138 — install or augment. Skip the createparam
-    // sub-hash walk pending assoc-storage wiring; install an
-    // empty hashtable so hashgetfn doesn't return stale data.
-    pm.u_hash = Some(Box::new(hashtable {
-        hsize: 0,
-        ct: 0,
-        nodes: Vec::new(),
-        tmpdata: 0,
-        hash: None,
-        emptytable: None,
-        filltable: None,
-        cmpnodes: None,
-        addnode: None,
-        getnode: None,
-        getnode2: None,
-        removenode: None,
-        disablenode: None,
-        enablenode: None,
-        freenode: None,
-        printnode: None,
-        scantab: None,
-    }));
+    // c:4135-4139 — ASSPM_AUGMENT starts from the existing hash
+    // (`ht = paramtab = pm->gsu.h->getfn(pm)`); otherwise a fresh
+    // table (`newparamtable(17, pm->node.nam)`).
+    let mut map: IndexMap<String, String> = if (flags & ASSPM_AUGMENT) != 0 {
+        paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .get(&pm.node.nam)
+            .cloned()
+            .unwrap_or_default() // c:4136
+    } else {
+        IndexMap::new() // c:4138-4139
+    };
+
+    // c:4141-4166 — pair walk. keyvalpairelement (Src/subst.c:49)
+    // emits `[Marker, key, value]` triples for `[k]=v` / `[k]+=v`
+    // forms ("Either all elements have Marker or none. Checked in
+    // caller." c:4144); plain input is flat `[k, v, ...]` pairs.
+    let mut it = val.into_iter();
+    while let Some(first) = it.next() {
+        let (elt_augment, key) = if first.starts_with(Marker as char) {
+            // c:4145-4151 — `(*aptr)[1] == '+'` → per-element append
+            // (ASSPM_AUGMENT via the setsparam INT_MAX trick).
+            let aug = first[Marker.len_utf8()..].starts_with('+');
+            match it.next() {
+                Some(k) => (aug, k),
+                None => break,
+            }
+        } else {
+            (false, first)
+        };
+        let v = it.next().unwrap_or_default(); // c:4166 assignstrvalue value
+        if elt_augment {
+            // c:4147-4150 — `[k]+=v` appends to the existing element.
+            map.entry(key).or_default().push_str(&v);
+        } else {
+            // c:4156-4166 — createparam(k, PM_SCALAR|PM_UNSET) +
+            // assignstrvalue: plain insert in the IndexMap model.
+            map.insert(key, v);
+        }
+    }
+
+    // c:4168-4169 — `pm->gsu.h->setfn(pm, ht)` installs the table.
+    paramtab_hashed_storage()
+        .lock()
+        .unwrap()
+        .insert(pm.node.nam.clone(), map);
     // c:4170 — free(val). Rust drops automatically.
 }
 
