@@ -1085,12 +1085,41 @@ pub fn zfopendata(name: &str) -> (i32, bool) {
         zwarnnam(name, "only sendport mode available for data"); // c:978
         return (1, false); // c:979
     }
-    let listener = match std::net::TcpListener::bind("0.0.0.0:0") {
-        // c:967 bind
+    // c:982-992 — `*zdsockp = zfsess->control->sock;` then zero the
+    // port and bind:
+    //
+    //     *zdsockp = zfsess->control->sock;
+    //     ...
+    //     zdsockp->in.sin_port = 0;	/* to be set by bind() */
+    //     len = sizeof(struct sockaddr_in);
+    //     ...
+    //     if (bind(zfsess->dfd, (struct sockaddr *)zdsockp, len) < 0)
+    //
+    // The data socket binds to the CONTROL connection's LOCAL address
+    // — the interface the server can actually reach back on — and
+    // that address is what the c:1003+ PORT command advertises. A
+    // prior bind to "0.0.0.0:0" made local_addr() report 0.0.0.0, so
+    // active mode sent `PORT 0,0,0,0,p1,p2` — every server either
+    // rejects it or dials a black hole; PORT-mode transfers could
+    // never work, on any host.
+    let ctrl_local_ip: std::net::IpAddr = zftp_state()
+        .lock()
+        .ok()
+        .and_then(|s| {
+            s.get_session(None).and_then(|sess| {
+                sess.control
+                    .as_ref()
+                    .and_then(|c| c.local_addr().ok())
+                    .map(|a| a.ip())
+            })
+        })
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let listener = match std::net::TcpListener::bind((ctrl_local_ip, 0)) {
+        // c:994 bind(zfsess->dfd, zdsockp, len)
         Ok(l) => l,
         Err(_) => {
             zwarnnam(name, "can't bind data socket");
-            return (1, false); // c:870
+            return (1, false);
         }
     };
     let local = match listener.local_addr() {
