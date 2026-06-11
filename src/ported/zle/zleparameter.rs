@@ -51,7 +51,8 @@ pub fn getpmwidgets(
     // c:33
     use crate::ported::zsh_h::{hashnode, param, Param, PM_READONLY, PM_SCALAR, PM_UNSET};
     // c:Src/Zle/zle_thingy.c:1022 init_thingies — populates thingytab
-    // with the 254 internal widget entries. zshrs's non-interactive
+    // with the internal widget entries (every iwidgets.list name in
+    // bare and dotted form). zshrs's non-interactive
     // script mode skips the zsh/zle module load that triggers this,
     // so `$widgets[accept-line]` returned empty until something
     // (bindkey, zle -l, etc.) forced lazy init. Trigger here so

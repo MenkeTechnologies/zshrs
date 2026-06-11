@@ -1841,13 +1841,18 @@ pub fn init_thingies() -> i32 {
             .find(|(n, _)| *n == *nam)
             .map(|(_, f)| *f)
             .unwrap_or(0);
-        let w = fn_ptr.map(|f| {
-            Arc::new(widget {
-                flags: WIDGET_INT | extra_flags,
-                first: None,
-                u: WidgetImpl::Internal(f),
-            })
-        });
+        // c:zle_bindings.c:72 — every `thingies[]` entry generated from
+        // iwidgets.list binds a real `widgets[]` struct, so every
+        // thingy is enabled and appears in `$widgets` as "builtin".
+        // Names whose C body has no Rust port yet still get an
+        // Internal widget here (undefined-key body as placeholder)
+        // so enumeration matches; the real body is a later port.
+        let f = fn_ptr.unwrap_or(|_| crate::ported::zle::zle_misc::undefinedkey());
+        let w = Some(Arc::new(widget {
+            flags: WIDGET_INT | extra_flags,
+            first: None,
+            u: WidgetImpl::Internal(f),
+        }));
 
         // Bare `name` thingy — mortal.
         if !tab.contains_key(*nam) {
