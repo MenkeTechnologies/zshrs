@@ -3300,7 +3300,7 @@ pub fn clearpatterndisables() {
 /// token-only check would miss every wildcard from those sites.
 /// This Rust port therefore accepts **both** the literal ASCII
 /// metachars (`*`, `?`, `[`, `(`, `|`, `<`, `#`, `^`) and the
-/// matching token bytes, and tracks `\\<x>` escapes inline so that
+/// matching token chars, and tracks `\\<x>` escapes inline so that
 /// un-tokenized patterns like `r"\*.txt"` correctly report no
 /// wildcards. All option- and `zpc_disables[]`-gated decisions
 /// mirror the C source verbatim (SHGLOB/KSHGLOB on `(`, EXTENDEDGLOB
@@ -3316,8 +3316,16 @@ pub fn clearpatterndisables() {
 /// where bare `[` is still the start of a char-class wildcard.
 pub fn haswilds(str: &str) -> bool {
     // c:4306
-    let bytes = str.as_bytes(); // c:4324
-    let len = bytes.len();
+    // C scans a metafied byte stream where every raw input byte that
+    // collides with a token value was Meta-escaped by the lexer, so
+    // `*str == Hat` can never false-positive on text. zshrs words are
+    // Rust `&str` holding token chars as CODEPOINTS (Star = U+0087,
+    // encoded C2 87), so the scan must walk chars, not bytes: a byte
+    // scan matches UTF-8 continuation bytes of unrelated text (`↔` =
+    // E2 86 94 carries 0x86/0x94 which equal Hat/Inang as u8) and
+    // fired NOMATCH on plain multibyte words (zinit.zsh:251 `col-↔`).
+    let chars: Vec<char> = str.chars().collect(); // c:4324
+    let len = chars.len();
     if len == 0 {
         return false;
     }
@@ -3336,15 +3344,15 @@ pub fn haswilds(str: &str) -> bool {
     // BEFORE the metachar-scan switch (c:4310 is above the `for`
     // loop at c:4322), so both literal and tokenized single-byte
     // brackets get the bypass.
-    if len == 1 && (bytes[0] == b'[' || bytes[0] == b']'
-        || bytes[0] == Inbrack as u8 || bytes[0] == Outbrack as u8)
+    if len == 1 && (chars[0] == '[' || chars[0] == ']'
+        || chars[0] == Inbrack || chars[0] == Outbrack)
     {
         return false;
     }
 
     // c:4317-4318 — `%?foo` job-ref: skip position 1 if it's a `?` or
     // `Quest` immediately after a leading `%`.
-    let skip_pos_1 = len >= 2 && bytes[0] == b'%' && (bytes[1] == b'?' || bytes[1] == Quest as u8);
+    let skip_pos_1 = len >= 2 && chars[0] == '%' && (chars[1] == '?' || chars[1] == Quest);
 
     let disp = zpc_disables.lock().unwrap(); // c:read zpc_disables[]
 
@@ -3355,63 +3363,63 @@ pub fn haswilds(str: &str) -> bool {
         if skip_pos_1 && i == 1 {
             continue;
         }
-        let b = bytes[i];
+        let c = chars[i];
         if escape {
             // Backslash-escape from the previous iteration — current
-            // byte is literal, regardless of whether it is also a
+            // char is literal, regardless of whether it is also a
             // metachar or token. (C doesn't do this because escapes
             // are pre-resolved by the tokenizer.)
             escape = false;
             continue;
         }
-        if b == b'\\' {
+        if c == '\\' {
             escape = true;
             continue;
         }
-        let prev: u8 = if i > 0 { bytes[i - 1] } else { 0 };
+        let prev: char = if i > 0 { chars[i - 1] } else { '\0' };
 
         // c:4326-4335 — Inpar / literal `(`: wild unless SHGLOB is set,
         // OR under KSHGLOB when preceded by `?/*/+/!/Bang/@`.
-        if b == Inpar as u8 || b == b'(' {
+        if c == Inpar || c == '(' {
             if (!isset(SHGLOB) && disp[ZPC_INPAR as usize] == 0)
                 || (i > 0
                     && isset(KSHGLOB)
-                    && (((prev == Quest as u8 || prev == b'?')
+                    && (((prev == Quest || prev == '?')
                         && disp[ZPC_KSH_QUEST as usize] == 0)
-                        || ((prev == Star as u8 || prev == b'*')
+                        || ((prev == Star || prev == '*')
                             && disp[ZPC_KSH_STAR as usize] == 0)
-                        || (prev == b'+' && disp[ZPC_KSH_PLUS as usize] == 0)
-                        || (prev == Bang as u8 && disp[ZPC_KSH_BANG as usize] == 0)
-                        || (prev == b'!' && disp[ZPC_KSH_BANG2 as usize] == 0)
-                        || (prev == b'@' && disp[ZPC_KSH_AT as usize] == 0)))
+                        || (prev == '+' && disp[ZPC_KSH_PLUS as usize] == 0)
+                        || (prev == Bang && disp[ZPC_KSH_BANG as usize] == 0)
+                        || (prev == '!' && disp[ZPC_KSH_BANG2 as usize] == 0)
+                        || (prev == '@' && disp[ZPC_KSH_AT as usize] == 0)))
             {
                 return true; // c:4335
             }
-        } else if b == Bar as u8 || b == b'|' {
+        } else if c == Bar || c == '|' {
             if disp[ZPC_BAR as usize] == 0 {
                 return true; // c:4340
             }
-        } else if b == Star as u8 || b == b'*' {
+        } else if c == Star || c == '*' {
             if disp[ZPC_STAR as usize] == 0 {
                 return true; // c:4345
             }
-        } else if b == Inbrack as u8 || b == b'[' {
+        } else if c == Inbrack || c == '[' {
             if disp[ZPC_INBRACK as usize] == 0 {
                 return true; // c:4350
             }
-        } else if b == Inang as u8 || b == b'<' {
+        } else if c == Inang || c == '<' {
             if disp[ZPC_INANG as usize] == 0 {
                 return true; // c:4355
             }
-        } else if b == Quest as u8 || b == b'?' {
+        } else if c == Quest || c == '?' {
             if disp[ZPC_QUEST as usize] == 0 {
                 return true; // c:4360
             }
-        } else if b == Pound as u8 || b == b'#' {
+        } else if c == Pound || c == '#' {
             if isset(EXTENDEDGLOB) && disp[ZPC_HASH as usize] == 0 {
                 return true; // c:4365
             }
-        } else if b == Hat as u8 || b == b'^' {
+        } else if c == Hat || c == '^' {
             if isset(EXTENDEDGLOB) && disp[ZPC_HAT as usize] == 0 {
                 return true; // c:4370
             }
@@ -3419,6 +3427,7 @@ pub fn haswilds(str: &str) -> bool {
     }
     false // c:4374
 }
+
 
 // =====================================================================
 // 4. struct patprog — zsh.h:1601

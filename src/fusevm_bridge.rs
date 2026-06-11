@@ -246,6 +246,102 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
     }
 }
 
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+///
+/// Token-only variant of `haswilds` (`Src/pattern.c:4306`) for the
+/// dispatcher's PRE-untokenize glob gate below. This is the C-VERBATIM
+/// check set: C's haswilds matches ONLY the token codes (Inpar/Bar/
+/// Star/Inbrack/Inang/Quest/Pound/Hat), never their literal ASCII
+/// counterparts, because by the time C runs it the lexer has tokenized
+/// every unquoted source-level metachar and Meta-escaped every
+/// colliding raw byte. The canonical `pattern.rs::haswilds` is the
+/// ADAPTED version (accepts literal ASCII too) for callers that pass
+/// un-tokenized strings; this one serves the dispatcher call site
+/// whose input IS tokenized (lexer output, pre-untokenize), where
+/// literal `[`/`*`/`?` from `$'...'` decode, `:-` default values, or
+/// nested-substitution results must stay literal — C subst.c:3231 sets
+/// globsubst=0 in the `:-` arm. Bug #625. Lives here (not src/ported/)
+/// because the name has no C counterpart — build-gate rule.
+///
+/// Scans CHARS, not bytes: token chars are codepoints (Star = U+0087,
+/// encoded C2 87) in zshrs strings, and a byte scan false-positives on
+/// UTF-8 continuation bytes of plain text (`↔` = E2 86 94 carries
+/// 0x86/0x94 = Hat/Inang as u8 — fired NOMATCH on zinit.zsh:251
+/// `col-↔`).
+fn haswilds_tokens_only(str: &str) -> bool {
+    use crate::ported::zsh_h::{
+        isset, Bang, Bar, Hat, Inang, Inbrack, Inpar, Outbrack, Pound, Quest, Star, EXTENDEDGLOB,
+        KSHGLOB, SHGLOB, ZPC_BAR, ZPC_HASH, ZPC_HAT, ZPC_INANG, ZPC_INBRACK, ZPC_INPAR,
+        ZPC_KSH_AT, ZPC_KSH_BANG, ZPC_KSH_BANG2, ZPC_KSH_PLUS, ZPC_KSH_QUEST, ZPC_KSH_STAR,
+        ZPC_QUEST, ZPC_STAR,
+    };
+    let chars: Vec<char> = str.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return false;
+    }
+    // c:4310-4312 — single bare Inbrack/Outbrack is a legal pattern.
+    if len == 1 && (chars[0] == Inbrack || chars[0] == Outbrack) {
+        return false;
+    }
+    // c:4317-4318 — `%?foo` job-ref skip.
+    let skip_pos_1 = len >= 2 && chars[0] == '%' && chars[1] == Quest;
+
+    let disp = crate::ported::pattern::zpc_disables.lock().unwrap(); // c:read zpc_disables[]
+    for i in 0..len {
+        if skip_pos_1 && i == 1 {
+            continue;
+        }
+        let c = chars[i];
+        let prev: char = if i > 0 { chars[i - 1] } else { '\0' };
+        // c:4326-4335 — Inpar: wild unless SHGLOB, OR under KSHGLOB
+        // when preceded by `?/*/+/!/Bang/@`.
+        if c == Inpar {
+            if (!isset(SHGLOB) && disp[ZPC_INPAR as usize] == 0)
+                || (i > 0
+                    && isset(KSHGLOB)
+                    && ((prev == Quest && disp[ZPC_KSH_QUEST as usize] == 0)
+                        || (prev == Star && disp[ZPC_KSH_STAR as usize] == 0)
+                        || (prev == '+' && disp[ZPC_KSH_PLUS as usize] == 0)
+                        || (prev == Bang && disp[ZPC_KSH_BANG as usize] == 0)
+                        || (prev == '!' && disp[ZPC_KSH_BANG2 as usize] == 0)
+                        || (prev == '@' && disp[ZPC_KSH_AT as usize] == 0)))
+            {
+                return true; // c:4335
+            }
+        } else if c == Bar {
+            if disp[ZPC_BAR as usize] == 0 {
+                return true; // c:4340
+            }
+        } else if c == Star {
+            if disp[ZPC_STAR as usize] == 0 {
+                return true; // c:4345
+            }
+        } else if c == Inbrack {
+            if disp[ZPC_INBRACK as usize] == 0 {
+                return true; // c:4350
+            }
+        } else if c == Inang {
+            if disp[ZPC_INANG as usize] == 0 {
+                return true; // c:4355
+            }
+        } else if c == Quest {
+            if disp[ZPC_QUEST as usize] == 0 {
+                return true; // c:4360
+            }
+        } else if c == Pound {
+            if isset(EXTENDEDGLOB) && disp[ZPC_HASH as usize] == 0 {
+                return true; // c:4365
+            }
+        } else if c == Hat {
+            if isset(EXTENDEDGLOB) && disp[ZPC_HAT as usize] == 0 {
+                return true; // c:4370
+            }
+        }
+    }
+    false // c:4374
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // c:Bugs #475/#504/#555 — bash-only builtins (`mapfile`,
     // `readarray`, `compopt`) should emit "command not found" in
@@ -6336,101 +6432,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // PRE-untokenize so source-level Star tokens
                         // (`*.toml`) survive while substituted bare
                         // glob chars stay literal.
-                        let is_glob_pre = if noglob {
-                            false
-                        } else {
-                            use crate::ported::zsh_h::{
-                                isset, Bar, Bang, EXTENDEDGLOB, Hat, Inang, Inbrack, Inpar,
-                                KSHGLOB, Outbrack, Pound, Quest, SHGLOB, Star,
-                            };
-                            // c:Src/pattern.c:4310-4312 — single-byte
-                            // bare Inbrack/Outbrack is legal pattern.
-                            let bytes = s.as_bytes();
-                            let len = bytes.len();
-                            let single_bracket = len == 1
-                                && (bytes[0] == Inbrack as u8 || bytes[0] == Outbrack as u8);
-                            // c:4317-4318 — `%?foo` job-ref skip.
-                            let skip_pos_1 = len >= 2
-                                && bytes[0] == b'%'
-                                && bytes[1] == Quest as u8;
-                            let mut found = false;
-                            if !single_bracket {
-                                let disp = crate::ported::pattern::zpc_disables
-                                    .lock()
-                                    .unwrap();
-                                for i in 0..len {
-                                    if skip_pos_1 && i == 1 {
-                                        continue;
-                                    }
-                                    let b = bytes[i];
-                                    // c:4326-4335 Inpar — KSHGLOB
-                                    // prev-char gating mirrors C.
-                                    if b == Inpar as u8 {
-                                        let prev = if i > 0 { bytes[i - 1] } else { 0 };
-                                        if (!isset(SHGLOB)
-                                            && disp[crate::ported::zsh_h::ZPC_INPAR as usize] == 0)
-                                            || (i > 0
-                                                && isset(KSHGLOB)
-                                                && ((prev == Quest as u8
-                                                    && disp[crate::ported::zsh_h::ZPC_KSH_QUEST as usize] == 0)
-                                                    || (prev == Star as u8
-                                                        && disp[crate::ported::zsh_h::ZPC_KSH_STAR as usize] == 0)
-                                                    || (prev == b'+'
-                                                        && disp[crate::ported::zsh_h::ZPC_KSH_PLUS as usize] == 0)
-                                                    || (prev == Bang as u8
-                                                        && disp[crate::ported::zsh_h::ZPC_KSH_BANG as usize] == 0)
-                                                    || (prev == b'!'
-                                                        && disp[crate::ported::zsh_h::ZPC_KSH_BANG2 as usize] == 0)
-                                                    || (prev == b'@'
-                                                        && disp[crate::ported::zsh_h::ZPC_KSH_AT as usize] == 0)))
-                                        {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Bar as u8 {
-                                        if disp[crate::ported::zsh_h::ZPC_BAR as usize] == 0 {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Star as u8 {
-                                        if disp[crate::ported::zsh_h::ZPC_STAR as usize] == 0 {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Inbrack as u8 {
-                                        if disp[crate::ported::zsh_h::ZPC_INBRACK as usize] == 0 {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Inang as u8 {
-                                        if disp[crate::ported::zsh_h::ZPC_INANG as usize] == 0 {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Quest as u8 {
-                                        if disp[crate::ported::zsh_h::ZPC_QUEST as usize] == 0 {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Pound as u8 {
-                                        if isset(EXTENDEDGLOB)
-                                            && disp[crate::ported::zsh_h::ZPC_HASH as usize] == 0
-                                        {
-                                            found = true;
-                                            break;
-                                        }
-                                    } else if b == Hat as u8 {
-                                        if isset(EXTENDEDGLOB)
-                                            && disp[crate::ported::zsh_h::ZPC_HAT as usize] == 0
-                                        {
-                                            found = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            found
-                        };
+                        // Char-domain scan, NOT bytes: token chars are
+                        // codepoints in zshrs strings (Star = U+0087),
+                        // and a byte scan false-positives on UTF-8
+                        // continuation bytes of plain multibyte text
+                        // (`↔` = E2 86 94 carries 0x86/0x94 = Hat/Inang
+                        // as u8 — fired NOMATCH on zinit.zsh:251).
+                        let is_glob_pre = !noglob && haswilds_tokens_only(&s);
                         let s = crate::lex::untokenize(&s);
                         // Skip glob expansion for assignment-shaped
                         // words (`NAME=value`). zsh doesn't expand the
