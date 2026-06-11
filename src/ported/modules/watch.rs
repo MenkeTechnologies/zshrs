@@ -593,9 +593,9 @@ pub fn readwtab(initial_sz: i32) -> Vec<libc::utmpx> {
 // forward declaration. The Rust port consolidates both at the
 // same site so the inline ternary helper sits next to its caller.
 
-// printtime helper deleted — C uses inline strftime() at each format
-// directive in watchlog2() (c:319-340), so the Rust port inlines the
-// chrono equivalent at each callsite to match.
+// printtime helper deleted — C uses inline ztrftime() at the time
+// directives in watchlog2() (c:350-352), so the Rust port calls the
+// canonical ztrftime port (utils.rs:4231) inline at that site to match.
 
 /// Perform watch check and return login/logout events
 /// Run one tick of the watch loop, returning login/logout events.
@@ -1249,19 +1249,40 @@ fn watch3ary_inline(inout: i32, u: &libc::utmpx, rest: &str, prnt: i32) -> (Stri
     let user = utmp_user(u);
     let line = utmp_line(u);
     let host = utmp_host(u);
+    // c:208 — `int truth = 1, sep;` — truth DEFAULTS to 1.
+    // c:229-231 — `default: prnt = 0; break;` /* Skip unknown
+    // conditionals entirely */ — an unrecognized conditional letter
+    // suppresses OUTPUT for both branches (prnt=0) while truth stays
+    // 1, so the cursor still walks both sub-formats. Prior Rust
+    // mapped unknown→truth=false, which RENDERED the false branch —
+    // exactly what C skips.
+    let mut prnt = prnt;
     let truth = match cond {
-        'n' => !user.is_empty(),
-        'a' => inout != 0,
+        'n' => !user.is_empty(), // c:211-212
+        'a' => inout != 0,       // c:214-215
         'l' => {
+            // c:217-221
             if line.starts_with("tty") {
                 line.len() > 3
             } else {
                 !line.is_empty()
             }
         }
-        'm' | 'M' => !host.is_empty(),
-        _ => false,
+        'm' | 'M' => !host.is_empty(), // c:224-226
+        _ => {
+            prnt = 0; // c:230
+            true // c:208 truth = 1 stays
+        }
     };
+    // c:233-235 — `sep = *fmt++; fmt = watchlog2(..., sep);
+    //              return watchlog2(..., END3);`
+    // C re-feeds the remainder through watchlog2 with `sep` / `)` as
+    // the fini delimiter; watchlog2's own `\X` arm (c:256-267)
+    // consumes escape pairs so `\.` / `\)` never match the
+    // delimiter. The Rust scanner below mirrors that: a `\X` pair is
+    // copied verbatim into the branch text (re-processed when the
+    // branch is fed back through watchlog2) and never tested as
+    // sep/close.
     let mut true_branch = String::new();
     let mut false_branch = String::new();
     let mut depth = 1;
@@ -1270,6 +1291,19 @@ fn watch3ary_inline(inout: i32, u: &libc::utmpx, rest: &str, prnt: i32) -> (Stri
     while consumed < bytes.len() {
         let c = bytes[consumed];
         consumed += 1;
+        if c == '\\' && consumed < bytes.len() {
+            // c:256-262 — escape pair: copy both, never delimiter-test.
+            let esc = bytes[consumed];
+            consumed += 1;
+            let target = if in_true {
+                &mut true_branch
+            } else {
+                &mut false_branch
+            };
+            target.push('\\');
+            target.push(esc);
+            continue;
+        }
         if c == ')' {
             depth -= 1;
             if depth == 0 {
