@@ -238,9 +238,17 @@ mod recursive {
 mod definition_replacement {
     use super::*;
 
-    /// Redefining an alias replaces the body.
+    /// Redefining an alias replaces the body. The use goes through
+    /// `eval` because aliases never apply to commands in the SAME
+    /// parse unit (`zsh -fc '...; x'` parses the whole string before
+    /// the alias exists) — the old bare-`x` form never exercised the
+    /// alias at all and instead executed whatever `x` was on PATH:
+    /// on macOS with XQuartz, /opt/X11/bin/x is the X server, which
+    /// blocks for minutes in BOTH shells and stalled the whole
+    /// parity sweep. `eval` re-parses with the live alias table, so
+    /// both shells print the redefined body.
     #[test]
     fn alias_redefinition_replaces_body() {
-        assert_parity(r#"alias x='echo first'; alias x='echo second'; x"#);
+        assert_parity(r#"alias zr_alias_t='echo first'; alias zr_alias_t='echo second'; eval zr_alias_t"#);
     }
 }
