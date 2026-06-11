@@ -3779,13 +3779,48 @@ pub fn bin_typeset(
         //     PM_ARRAY / PM_HASHED values printed as empty.
         // printparamnode (params.c:6123) handles all of these.
         let printflags_final = printflags | if roff != 0 { PRINT_NAMEONLY } else { 0 }; // c:2792
+        // c:2792 scanmatchtable flags1=on|roff, flags2=0.
+        let on_roff = (on as u32) | (roff as u32);
+        // PM_RO_BY_DESIGN expansion: zshrs's special-param
+        // setup (vm_helper.rs:1054+) replaces the dropped
+        // PM_READONLY bit with PM_RO_BY_DESIGN so internal
+        // writes still pass assignstrvalue's PM_READONLY
+        // guard. `typeset -r` listing must match on either
+        // bit to surface those entries. Mirrors C zsh's
+        // PM_READONLY_SPECIAL (= PM_SPECIAL | PM_READONLY |
+        // PM_RO_BY_DESIGN) where the scanhashtable bit-mask
+        // implicitly matches RO_BY_DESIGN too (both bits
+        // set on the same params in C). #97 in docs/BUGS.md.
+        let on_roff_expanded = if (on_roff & PM_READONLY) != 0 {
+            on_roff | PM_RO_BY_DESIGN
+        } else {
+            on_roff
+        };
+        // c:Src/module.c:1218-1219 add_autoparam — in `zsh -f`, every
+        // autoloadable module parameter (WATCH/watch, aliases…,
+        // widgets/keymaps, termcap/terminfo, zsh_scheduled_events) is
+        // a real paramtab stub: a scalar whose value is the module
+        // name, flagged PM_AUTOLOAD. scanhashtable feeds the stubs to
+        // printparamnode which prints `undefined NAME` (pmtypes row at
+        // Src/params.c:6011) and suppresses them under -p
+        // (Src/params.c:6150-6155). zshrs keeps always-functional
+        // placeholder params instead, so synthesize the stub rows here
+        // for every not-yet-loaded module and suppress the placeholder
+        // rows for the same names (zsh -f shows `undefined WATCH`, not
+        // a set `WATCH`).
+        let stubs: Vec<(&'static str, &'static str)> = crate::vm_helper::autoload_param_stubs();
         let names: Vec<String> = {
             let tab = paramtab().read().unwrap();
             let mut names: Vec<String> = tab
                 .iter()
-                .filter(|(_, pm)| {
+                .filter(|(k, pm)| {
                     let f = pm.node.flags as u32;
                     if (f & PM_UNSET) != 0 {
+                        return false;
+                    }
+                    // Unloaded-module names print as autoload stubs
+                    // (merged below) — never as their placeholder row.
+                    if stubs.iter().any(|(n, _)| n == k) {
                         return false;
                     }
                     // c:Src/Modules/parameter.c — magic-assoc names
@@ -3802,27 +3837,19 @@ pub fn bin_typeset(
                     if (f & PM_HIDE) != 0 {
                         return false;
                     }
-                    // c:2792 scanmatchtable flags1=on|roff, flags2=0.
-                    let on_roff = (on as u32) | (roff as u32);
-                    // PM_RO_BY_DESIGN expansion: zshrs's special-param
-                    // setup (vm_helper.rs:1054+) replaces the dropped
-                    // PM_READONLY bit with PM_RO_BY_DESIGN so internal
-                    // writes still pass assignstrvalue's PM_READONLY
-                    // guard. `typeset -r` listing must match on either
-                    // bit to surface those entries. Mirrors C zsh's
-                    // PM_READONLY_SPECIAL (= PM_SPECIAL | PM_READONLY |
-                    // PM_RO_BY_DESIGN) where the scanhashtable bit-mask
-                    // implicitly matches RO_BY_DESIGN too (both bits
-                    // set on the same params in C). #97 in docs/BUGS.md.
-                    let on_roff_expanded = if (on_roff & PM_READONLY) != 0 {
-                        on_roff | PM_RO_BY_DESIGN
-                    } else {
-                        on_roff
-                    };
                     on_roff_expanded == 0 || (f & on_roff_expanded) != 0
                 })
                 .map(|(k, _)| k.clone())
                 .collect();
+            // Stub flags are PM_SCALAR|PM_AUTOLOAD (module.c:1218-1219)
+            // — apply the same scanmatchtable flags1 test (PM_AUTOLOAD
+            // is never in on|roff, so any flag filter excludes them:
+            // `typeset +x -r` / `typeset +i` list none, matching zsh).
+            for (n, _) in &stubs {
+                if on_roff_expanded == 0 || (PM_AUTOLOAD & on_roff_expanded) != 0 {
+                    names.push((*n).to_string());
+                }
+            }
             names.sort_by(|a, b| hnamcmp(a, b));
             names
         };
@@ -3835,6 +3862,38 @@ pub fn bin_typeset(
         // #410) — the mutation lands on the local clone only,
         // matching C's "throwaway-print-side" semantics.
         for k in names {
+            // c:Src/module.c:1218-1219 — autoload stub: scalar param,
+            // u.str = module name, PM_AUTOLOAD. printparamnode prints
+            // `undefined NAME` (PRINT_TYPE) / `NAME` (PRINT_NAMEONLY)
+            // and returns early under -p.
+            if let Some((_, module)) = stubs.iter().find(|(n, _)| *n == k) {
+                let mut stub_pm = crate::ported::zsh_h::param {
+                    node: crate::ported::zsh_h::hashnode {
+                        next: None,
+                        nam: k.clone(),
+                        flags: (PM_SCALAR | PM_AUTOLOAD) as i32, // c:1219
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: Some((*module).to_string()), // c:1218 setsparam(pnam, module)
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                };
+                printparamnode(&mut stub_pm, printflags_final); // c:2792
+                continue;
+            }
             let mut pm_clone = match paramtab().read() {
                 Ok(tab) => match tab.get(&k) {
                     Some(pm) => pm.clone(),

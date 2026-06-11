@@ -1404,6 +1404,15 @@ impl ShellExecutor {
                 // all because USER was never in paramtab.
                 use crate::ported::zsh_h::hashnode as _hn;
                 use crate::ported::zsh_h::{PM_EXPORTED, PM_SCALAR};
+                // c:Src/params.c:4329-4342 colonarrsetfn — assigning a
+                // tied IPDEF8 scalar (MANPATH, CDPATH, MODULE_PATH, …)
+                // colonsplit()s the value into the partner array,
+                // preserving empty components. The env import below
+                // bypasses the GSU setfn, so collect the tied pairs
+                // here and pour them through setaparam after the
+                // paramtab lock drops. PATH→path / FPATH→fpath are
+                // seeded earlier (vm_helper ~1160-1199) and skipped.
+                let mut tied_env_arrays: Vec<(String, Vec<String>)> = Vec::new();
                 for (env_name, env_value) in std::env::vars() {
                     if env_name.is_empty() || env_name.contains('[') {
                         continue;
@@ -1415,6 +1424,20 @@ impl ShellExecutor {
                         continue;
                     }
                     if let Some(pm) = tab.get_mut(&env_name) {
+                        // c:Src/params.c:902-906 — the import loop runs
+                        // `dontimport(pm->node.flags)` BEFORE doing
+                        // anything to the entry; PM_DONTIMPORT names
+                        // (`_`, IFS, GID/EGID, KEYBOARD_HACK — the
+                        // IPDEF7/IPDEF2 rows, c:796-800) are skipped
+                        // ENTIRELY: no PM_EXPORTED stamp, no value
+                        // seed. zshrs previously OR'd PM_EXPORTED
+                        // first, so an inherited env `_` made the
+                        // special `_` exported and it leaked into
+                        // `typeset +x -r` / `export -p` listings where
+                        // zsh shows nothing.
+                        if (pm.node.flags as u32 & crate::ported::zsh_h::PM_DONTIMPORT) != 0 {
+                            continue; // c:905 `continue;`
+                        }
                         pm.node.flags |= PM_EXPORTED as i32;
                         // c:Src/params.c:893-924 — C's env-import calls
                         // `assignsparam(..., ASSPM_ENV_IMPORT)` which
@@ -1428,13 +1451,6 @@ impl ShellExecutor {
                         // back "" even though HOME is in env. Mirror
                         // C by copying the env value into pm.u_str and
                         // (for cached specials) the matching global.
-                        //
-                        // IFS / `_` carry PM_DONTIMPORT (Src/params.c
-                        // IPDEF7) — skip those; their env value MUST
-                        // NOT override the shell-set default.
-                        let dontimport = (pm.node.flags as u32
-                            & crate::ported::zsh_h::PM_DONTIMPORT)
-                            != 0;
                         // Only seed cached state when the param was
                         // still marked PM_UNSET — i.e. nothing has set
                         // it yet. ShellExecutor::new's earlier init
@@ -1451,7 +1467,7 @@ impl ShellExecutor {
                         let still_unset = (pm.node.flags as u32
                             & crate::ported::zsh_h::PM_UNSET)
                             != 0;
-                        if !dontimport && still_unset {
+                        if still_unset {
                             pm.u_str = Some(env_value.clone());
                             pm.env = Some(format!("{}={}", env_name, env_value));
                             // c:Src/params.c:3660 — `assignstrvalue`
@@ -1499,6 +1515,23 @@ impl ShellExecutor {
                                 _ => {}
                             }
                         }
+                        // c:Src/params.c:907-908 — env import always
+                        // assigns through the GSU setfn; for tied
+                        // IPDEF8 scalars that is colonarrsetfn
+                        // (c:4329-4342), which colonsplit()s the value
+                        // into the partner array, empties preserved.
+                        // Not gated on still_unset: C re-assigns on
+                        // import regardless.
+                        if (pm.node.flags as u32 & crate::ported::zsh_h::PM_TIED) != 0 {
+                            if let Some(ref peer) = pm.ename {
+                                if peer != "path" && peer != "fpath" {
+                                    tied_env_arrays.push((
+                                        peer.clone(),
+                                        env_value.split(':').map(String::from).collect(), // c:4339 colonsplit
+                                    ));
+                                }
+                            }
+                        }
                     } else {
                         // Fresh entry — PM_SCALAR + PM_EXPORTED, value
                         // taken from env. Mirrors C zsh's c:907-908
@@ -1529,6 +1562,17 @@ impl ShellExecutor {
                             level: 0,
                         });
                         tab.insert(env_name, pm);
+                    }
+                }
+                // Apply the collected tied-pair splits after the env
+                // walk. setaparam (the canonical store) needs the
+                // same paramtab write lock held here, so write u_arr
+                // directly on the peer entry — array reads route
+                // through paramtab so this is the single store.
+                for (peer, parts) in tied_env_arrays {
+                    if let Some(apm) = tab.get_mut(peer.as_str()) {
+                        apm.u_arr = Some(parts); // c:4339 — `*dptr = colonsplit(x, …)`
+                        apm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
                     }
                 }
             }
@@ -3580,6 +3624,88 @@ pub fn seed_partab_param(name: &str) {
         level: 0,
     });
     tab.insert(name.to_string(), pm);
+}
+
+/// Default autoloadable parameters: name → owning module. Port of the
+/// `autofeatures` `p:` rows in Src/Modules/parameter.mdd, watch.mdd,
+/// termcap.mdd, terminfo.mdd, Src/Zle/zleparameter.mdd and
+/// Src/Builtins/sched.mdd, registered at startup through
+/// `setautofeatures` → `add_autoparam` (Src/module.c:1198-1229): each
+/// name becomes a scalar paramtab stub whose VALUE is the module name,
+/// flagged PM_AUTOLOAD (module.c:1218-1219). Matches `zmodload -ap`
+/// output of the reference zsh build.
+pub const AUTOLOAD_PARAMS: &[(&str, &str)] = &[
+    // Src/Modules/watch.mdd:5 autofeatures
+    ("WATCH", "zsh/watch"),
+    ("watch", "zsh/watch"),
+    // Src/Modules/parameter.mdd:5 autofeatures
+    ("aliases", "zsh/parameter"),
+    ("builtins", "zsh/parameter"),
+    ("commands", "zsh/parameter"),
+    ("dirstack", "zsh/parameter"),
+    ("dis_aliases", "zsh/parameter"),
+    ("dis_builtins", "zsh/parameter"),
+    ("dis_functions", "zsh/parameter"),
+    ("dis_functions_source", "zsh/parameter"),
+    ("dis_galiases", "zsh/parameter"),
+    ("dis_patchars", "zsh/parameter"),
+    ("dis_reswords", "zsh/parameter"),
+    ("dis_saliases", "zsh/parameter"),
+    ("funcfiletrace", "zsh/parameter"),
+    ("funcsourcetrace", "zsh/parameter"),
+    ("funcstack", "zsh/parameter"),
+    ("functions", "zsh/parameter"),
+    ("functions_source", "zsh/parameter"),
+    ("functrace", "zsh/parameter"),
+    ("galiases", "zsh/parameter"),
+    ("history", "zsh/parameter"),
+    ("historywords", "zsh/parameter"),
+    ("jobdirs", "zsh/parameter"),
+    ("jobstates", "zsh/parameter"),
+    ("jobtexts", "zsh/parameter"),
+    ("modules", "zsh/parameter"),
+    ("nameddirs", "zsh/parameter"),
+    ("options", "zsh/parameter"),
+    ("parameters", "zsh/parameter"),
+    ("patchars", "zsh/parameter"),
+    ("reswords", "zsh/parameter"),
+    ("saliases", "zsh/parameter"),
+    ("userdirs", "zsh/parameter"),
+    ("usergroups", "zsh/parameter"),
+    // Src/Zle/zleparameter.mdd:5 autofeatures
+    ("keymaps", "zsh/zleparameter"),
+    ("widgets", "zsh/zleparameter"),
+    // Src/Modules/termcap.mdd:5 / terminfo.mdd:5 autofeatures
+    ("termcap", "zsh/termcap"),
+    ("terminfo", "zsh/terminfo"),
+    // Src/Builtins/sched.mdd:5 autofeatures
+    ("zsh_scheduled_events", "zsh/sched"),
+];
+
+/// Autoload stubs whose owning module is NOT loaded — the rows zsh's
+/// `typeset` listings print as `undefined NAME` (printparamnode's
+/// PM_AUTOLOAD pmtypes row, Src/params.c:6011 + the PM_AUTOLOAD
+/// NAMEONLY arm at Src/params.c:6146-6155). Once a module loads, its
+/// stubs drop out and the real params list instead.
+pub fn autoload_param_stubs() -> Vec<(&'static str, &'static str)> {
+    use crate::ported::zsh_h::{MOD_INIT_B, MOD_UNLOAD};
+    let tab = crate::ported::module::MODULESTAB.lock().unwrap();
+    AUTOLOAD_PARAMS
+        .iter()
+        .copied()
+        .filter(|(_, m)| {
+            // "Boot ran" is MOD_INIT_B && !MOD_UNLOAD (the criterion
+            // printmodulenode uses, src/ported/module.rs:246 — C's
+            // `m->u.handle` union check at Src/module.c:218-241).
+            // modulestab::is_loaded checks MOD_LINKED which
+            // register_builtin_modules pre-seeds for EVERY compiled-in
+            // module, so it would report zsh/parameter "loaded" in a
+            // fresh `zsh -f` where real zsh still shows the stubs.
+            !tab.modules.get(*m).is_some_and(|md| {
+                (md.node.flags & MOD_INIT_B) != 0 && (md.node.flags & MOD_UNLOAD) == 0
+            })
+        })
+        .collect()
 }
 
 /// Names provided by `zsh/system` / `zsh/mapfile` etc. that are
