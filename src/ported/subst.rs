@@ -5614,6 +5614,13 @@ pub fn paramsubst(
                     } else {
                         None
                     }
+                } else if let Some(elem) = crate::vm_helper::partab_array_index(&var_name, sub) {
+                    // c:Src/Modules/system.c:880 errnosgetfn — PM_ARRAY
+                    // magic params subscript like ordinary arrays
+                    // (getindex → getarg, Src/params.c:2110-2150).
+                    // Previously only the assoc-keyed partab_get ran
+                    // here, so ${errnos[1]} returned empty.
+                    Some(elem)
                 } else {
                     crate::vm_helper::partab_get(&var_name, sub)
                 }
@@ -11577,6 +11584,12 @@ pub fn paramsubst(
                     } else {
                         None
                     }
+                } else if let Some(elem) = crate::vm_helper::partab_array_index(&var_name, sub) {
+                    // c:Src/Modules/system.c:880 errnosgetfn — PM_ARRAY
+                    // magic params subscript like ordinary arrays
+                    // (getindex → getarg, Src/params.c:2110-2150).
+                    // Mirrors the braced-form dispatch above.
+                    Some(elem)
                 } else {
                     crate::vm_helper::partab_get(&var_name, sub)
                 }
