@@ -122,6 +122,7 @@ use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::vm_helper::ShellExecutor;
 use crate::ported::vm_helper::*;
 use crate::ported::zsh_h::PM_UNDEFINED;
+use chrono::{Datelike, TimeZone};
 use rand::seq::SliceRandom;
 use rand::Rng;
 use sha2::{Digest, Sha256};
@@ -2890,15 +2891,50 @@ impl ShellExecutor {
             let mut chars = 0usize;
             let mut max_line: usize = 0;
 
-            for line in reader.lines().map_while(Result::ok) {
-                lines += 1;
-                words += line.split_whitespace().count();
-                bytes += line.len() + 1; // +1 for the trailing \n
-                chars += line.chars().count() + 1; // +1 for the \n codepoint
-                let w = line.chars().count();
-                if w > max_line {
-                    max_line = w;
+            // POSIX wc: -l counts NEWLINE characters (a final line
+            // without `\n` adds no line), -c counts raw bytes. The
+            // previous `reader.lines()` loop stripped `\n`/`\r\n`
+            // and re-added a flat `+1` per line — `printf "\r" |
+            // wc -c` reported 2 (1 content byte + phantom newline)
+            // where wc(1) reports 1, and CRLF input undercounted.
+            // Stream raw bytes: count `\n` for lines, UTF-8 lead
+            // bytes (non-0x80-continuation) for -m chars, ASCII
+            // isspace transitions for words.
+            let mut rdr = reader;
+            let mut in_word = false;
+            let mut cur_line_len = 0usize;
+            let mut chunk = [0u8; 65536];
+            loop {
+                let n = match rdr.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+                bytes += n;
+                for &b in &chunk[..n] {
+                    let is_lead = (b & 0xC0) != 0x80;
+                    if is_lead {
+                        chars += 1;
+                    }
+                    if b == b'\n' {
+                        lines += 1;
+                        if cur_line_len > max_line {
+                            max_line = cur_line_len;
+                        }
+                        cur_line_len = 0;
+                    } else if is_lead {
+                        cur_line_len += 1;
+                    }
+                    if matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+                        in_word = false;
+                    } else if !in_word {
+                        in_word = true;
+                        words += 1;
+                    }
                 }
+            }
+            if cur_line_len > max_line {
+                max_line = cur_line_len;
             }
 
             total_lines += lines;
@@ -3093,8 +3129,9 @@ impl ShellExecutor {
 
     pub(crate) fn builtin_touch(&self, args: &[String]) -> i32 {
         // coreutils touch(1) port: -a/-m, -c (no create), -r REF
-        // (copy times from REF). -d / -t / -h are accepted but
-        // not yet honored — they need date-string parsing through
+        // (copy times from REF), -t [[CC]YY]MMDDhhmm[.SS] (POSIX
+        // timestamp, local time). -d / -h are rejected as
+        // unrecognized — they need date-string parsing through
         // reverse_strftime.
 
         if args.is_empty() {
@@ -3106,6 +3143,7 @@ impl ShellExecutor {
         let mut mtime_only = false;
         let mut no_create = false;
         let mut reference: Option<String> = None;
+        let mut stamp: Option<String> = None;
         let mut files: Vec<&str> = Vec::new();
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -3118,6 +3156,13 @@ impl ShellExecutor {
                         reference = Some(r.clone());
                     }
                 }
+                "-t" => match iter.next() {
+                    Some(t) => stamp = Some(t.clone()),
+                    None => {
+                        eprintln!("touch: option requires an argument: '-t'");
+                        return 1;
+                    }
+                },
                 "--" => {} // accept; remaining are files
                 s if s.starts_with('-') && s.len() > 1 => {
                     // -ac, -am combos: walk chars.
@@ -3140,8 +3185,46 @@ impl ShellExecutor {
             }
         }
 
-        // Determine the target times: from -r REF, or now.
-        let (target_atime, target_mtime) = if let Some(ref refpath) = reference {
+        // -t [[CC]YY]MMDDhhmm[.SS] — POSIX touch(1) timestamp,
+        // interpreted in local time. YY 69-99 → 19YY, 00-68 → 20YY
+        // (POSIX rule); 8-digit form defaults to the current year.
+        fn parse_t_stamp(s: &str) -> Option<filetime::FileTime> {
+            let (main, ss) = match s.split_once('.') {
+                Some((m, sec)) => (m, sec.parse::<u32>().ok()?),
+                None => (s, 0u32),
+            };
+            if !main.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let (year, rest): (i32, &str) = match main.len() {
+                12 => (main[..4].parse().ok()?, &main[4..]),
+                10 => {
+                    let yy: i32 = main[..2].parse().ok()?;
+                    (if yy >= 69 { 1900 + yy } else { 2000 + yy }, &main[2..])
+                }
+                8 => (chrono::Local::now().year(), main),
+                _ => return None,
+            };
+            let month: u32 = rest[..2].parse().ok()?;
+            let day: u32 = rest[2..4].parse().ok()?;
+            let hour: u32 = rest[4..6].parse().ok()?;
+            let min: u32 = rest[6..8].parse().ok()?;
+            let dt = chrono::Local
+                .with_ymd_and_hms(year, month, day, hour, min, ss)
+                .single()?;
+            Some(filetime::FileTime::from_unix_time(dt.timestamp(), 0))
+        }
+
+        // Determine the target times: from -t STAMP, -r REF, or now.
+        let (target_atime, target_mtime) = if let Some(ref st) = stamp {
+            match parse_t_stamp(st) {
+                Some(ft) => (ft, ft),
+                None => {
+                    eprintln!("touch: out of range or illegal time specification: {}", st);
+                    return 1;
+                }
+            }
+        } else if let Some(ref refpath) = reference {
             match std::fs::metadata(refpath) {
                 Ok(meta) => (
                     filetime::FileTime::from_last_access_time(&meta),
@@ -3545,6 +3628,27 @@ impl ShellExecutor {
                 }
             }
         }
+        // Locale-collating compare, mirroring src/ported/sort.rs:246-253
+        // (truncate at first NUL, then libc::strcoll).
+        fn strcoll_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+            #[cfg(unix)]
+            {
+                let cstr_head = |s: &str| -> std::ffi::CString {
+                    let bs = s.as_bytes();
+                    let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());
+                    std::ffi::CString::new(&bs[..n])
+                        .unwrap_or_else(|_| std::ffi::CString::new(vec![0u8]).expect("nul"))
+                };
+                let ca = cstr_head(a);
+                let cb = cstr_head(b);
+                let r = unsafe { libc::strcoll(ca.as_ptr(), cb.as_ptr()) };
+                r.cmp(&0)
+            }
+            #[cfg(not(unix))]
+            {
+                a.cmp(b)
+            }
+        }
         let cmp_keys = |a: &str, b: &str| -> std::cmp::Ordering {
             let ka = extract_key(a);
             let kb = extract_key(b);
@@ -3567,9 +3671,18 @@ impl ShellExecutor {
                     .unwrap_or(0.0);
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
             } else if fold {
-                ka.to_lowercase().cmp(&kb.to_lowercase())
+                strcoll_cmp(&ka.to_lowercase(), &kb.to_lowercase())
             } else {
-                ka.cmp(&kb)
+                // sort(1) compares with strcoll under LC_COLLATE
+                // (POSIX: "comparisons ... based on the collating
+                // sequence of the current locale"). Byte-order
+                // ka.cmp(&kb) diverged from /usr/bin/sort whenever
+                // LC_ALL/LC_COLLATE is a non-C locale ("X" < "baz"
+                // bytewise, "baz" < "X" in en_US.UTF-8). setlocale
+                // (LC_ALL, "") runs at startup (vm_helper.rs), so
+                // strcoll sees the user's locale — same pattern as
+                // the zsh-sort port at src/ported/sort.rs:253.
+                strcoll_cmp(&ka, &kb)
             }
         };
 
