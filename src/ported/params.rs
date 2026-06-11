@@ -8676,9 +8676,7 @@ pub fn term_reinit_from_pm() {
         // c:5167
         TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::Relaxed); // c:5168
     } else {
-        // c:5170 — `init_term();` lives in ZLE; flag the next prompt
-        // to re-init via TERM_UNKNOWN so the lazy path picks it up.
-        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::Relaxed); // c:5170
+        crate::ported::init::init_term(); // c:5170
     }
 }
 

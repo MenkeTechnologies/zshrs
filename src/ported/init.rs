@@ -21,7 +21,8 @@ use crate::ported::utils::{callhookfunc, errflag, movefd, unmeta, ERRFLAG_ERROR}
 use crate::ported::zsh_h::{
     eprog, hookdef, interact, islogin, isset, jobbing, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS,
     HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOKF_ALL, HOOK_SUFFIX, HUP, INTERACTIVE,
-    LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, TERM_UNKNOWN, ZEXIT_NORMAL,
+    LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, TERM_BAD, TERM_NOUP, TERM_UNKNOWN,
+    ZEXIT_NORMAL,
     ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
 };
 // =========================================================================
@@ -531,115 +532,184 @@ pub fn tccap_get_name(cap: usize) -> &'static str {
 /// Port of `mod_export int init_term(void)` from Src/init.c:771.
 ///
 /// Reads `$TERM` from the param table, and on a recognised term
-/// populates `tcstr[]`/`tclen[]` with the VT100/xterm/ANSI escape
-/// sequences for the standard capability set. This is the
-/// substrate every `tcmultout` / `tc_leftcurs` / cursor-positioning
-/// call site reads — without it those emit ASCII fallbacks only.
+/// populates `tcstr[]`/`tclen[]` from the system termcap/terminfo
+/// DB via `tgetent` + `tgetstr` over `tccapnams[]`, exactly like C.
+/// This is the substrate every `tcmultout` / `tc_leftcurs` /
+/// `tsetcap` call site reads.
 ///
-/// **Divergence from C:** zsh routes through `setupterm`/`tgetent`
-/// against the system terminfo/termcap DB. zshrs hardcodes the
-/// canonical ANSI/VT100 escapes that cover every modern terminal
-/// (xterm, screen, tmux, kitty, alacritty, iTerm2, foot, st, etc.)
-/// — the cost of a curses dependency for the cap subset we
-/// actually use isn't worth it. Unknown `$TERM` flips `TERM_BAD`
-/// so callers fall back to portable defaults; `dumb` flips
-/// `TERM_UNKNOWN`.
+/// ncurses is already linked (build.rs `rustc-link-lib=ncurses`, the
+/// same lib the zsh/terminfo module's `tigetstr` externs use), so
+/// the termcap-emulation entry points are available. The previous
+/// Rust body hardcoded ANSI/VT100 escapes — under `TERM=screen-*` /
+/// `tmux-*` that diverged from zsh on standout (`so` is `\e[3m`
+/// there, not the hardcoded `\e[7m`).
 pub fn init_term() -> i32 {
-    // c:777 — `if (!*term) { termflags |= TERM_UNKNOWN; return 0; }`
+    // c:766 — termcap emulation entry points from ncurses (the
+    // prototypes_h.rs pin forbids declaring these there; local
+    // extern block matches the modules/terminfo.rs pattern).
+    extern "C" {
+        fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
+        fn tgetstr(
+            id: *const libc::c_char,
+            area: *mut *mut libc::c_char,
+        ) -> *mut libc::c_char;
+        fn tgetflag(id: *const libc::c_char) -> libc::c_int;
+        fn tgetnum(id: *const libc::c_char) -> libc::c_int;
+    }
+    use crate::ported::zsh_h::{
+        TCBACKSPACE, TCCLEARSCREEN, TCDOWN, TCFAINTBEG, TCITALICSBEG, TCITALICSEND, TCLEFT,
+        TCRESTRCURSOR, TCSAVECURSOR, TCUP, TC_COUNT,
+    };
+
+    // c:776-779 — `if (!*term) { termflags |= TERM_UNKNOWN; return 0; }`
     let term = getsparam("TERM").unwrap_or_default();
     if term.is_empty() {
         TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::SeqCst);
         return 0;
     }
 
-    // c:782-784 — `if (!strcmp(term, "emacs")) opts[USEZLE] = 0;`
+    // c:782-783 — `if (!strcmp(term, "emacs")) opts[USEZLE] = 0;`
+    // C proceeds to tgetent afterwards; zshrs keeps the USEZLE-off
+    // via the option layer.
     if term == "emacs" {
-        // USEZLE-off path lives in the option layer; flagging
-        // TERM_UNKNOWN keeps every cap probe in fallback mode for
-        // emacs's `M-x shell` which doesn't honour cursor escapes.
-        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::SeqCst);
-        return 0;
-    }
-    if term == "dumb" {
-        TERMFLAGS.fetch_or(TERM_UNKNOWN, Ordering::SeqCst);
-        return 0;
+        crate::ported::options::opt_state_set("zle", false); // c:783 opts[USEZLE] = 0
     }
 
-    // c:798-892 — populate tcstr/tclen with the canonical ANSI/VT100
-    // escapes for the capability set zsh's refresh path uses.
-    use crate::ported::zsh_h::{
-        TCALLATTRSOFF, TCBACKSPACE, TCBGCOLOUR, TCBOLDFACEBEG, TCCLEAREOD, TCCLEAREOL,
-        TCCLEARSCREEN, TCCURINV, TCCURVIS, TCDEL, TCDELLINE, TCDOWN, TCDOWNCURSOR, TCFAINTBEG,
-        TCFGCOLOUR, TCHORIZPOS, TCINS, TCINSLINE, TCITALICSBEG, TCITALICSEND, TCLEFT, TCLEFTCURSOR,
-        TCMULTDEL, TCMULTDOWN, TCMULTINS, TCMULTLEFT, TCMULTRIGHT, TCMULTUP, TCNEXTTAB,
-        TCRESTRCURSOR, TCRIGHT, TCRIGHTCURSOR, TCSAVECURSOR, TCSTANDOUTBEG, TCSTANDOUTEND,
-        TCUNDERLINEBEG, TCUNDERLINEEND, TCUP, TCUPCURSOR,
+    let cterm = match std::ffi::CString::new(term.as_str()) {
+        Ok(c) => c,
+        Err(_) => {
+            TERMFLAGS.fetch_or(TERM_BAD, Ordering::SeqCst);
+            return 0;
+        }
     };
-    let mut s = tcstr.lock().unwrap();
-    let mut l = tclen.lock().unwrap();
-    let mut set = |idx: i32, esc: &str| {
-        let i = idx as usize;
-        s[i] = esc.to_string();
-        l[i] = esc.len() as i32;
-    };
-    // Cursor movement.
-    set(TCLEFT, "\x08");
-    set(TCMULTLEFT, "\x1b[%dD");
-    set(TCRIGHT, "\x1b[C");
-    set(TCMULTRIGHT, "\x1b[%dC");
-    set(TCUP, "\x1b[A");
-    set(TCMULTUP, "\x1b[%dA");
-    set(TCDOWN, "\x1b[B");
-    set(TCMULTDOWN, "\x1b[%dB");
-    set(TCBACKSPACE, "\x08");
-    set(TCHORIZPOS, "\x1b[%dG");
-    // Cursor keys (input side — used by add_cursor_key).
-    set(TCUPCURSOR, "\x1b[A");
-    set(TCDOWNCURSOR, "\x1b[B");
-    set(TCRIGHTCURSOR, "\x1b[C");
-    set(TCLEFTCURSOR, "\x1b[D");
-    // Clearing.
-    set(TCCLEARSCREEN, "\x1b[H\x1b[2J");
-    set(TCCLEAREOD, "\x1b[J");
-    set(TCCLEAREOL, "\x1b[K");
-    // Insert / delete.
-    set(TCDEL, "\x1b[P");
-    set(TCMULTDEL, "\x1b[%dP");
-    set(TCINS, "\x1b[@");
-    set(TCMULTINS, "\x1b[%d@");
-    set(TCINSLINE, "\x1b[L");
-    set(TCDELLINE, "\x1b[M");
-    set(TCNEXTTAB, "\t");
-    // Attributes.
-    set(TCBOLDFACEBEG, "\x1b[1m");
-    set(TCFAINTBEG, "\x1b[2m");
-    set(TCSTANDOUTBEG, "\x1b[7m");
-    set(TCSTANDOUTEND, "\x1b[27m");
-    set(TCUNDERLINEBEG, "\x1b[4m");
-    set(TCUNDERLINEEND, "\x1b[24m");
-    set(TCITALICSBEG, "\x1b[3m");
-    set(TCITALICSEND, "\x1b[23m");
-    set(TCALLATTRSOFF, "\x1b[m");
-    // Cursor save/restore.
-    set(TCSAVECURSOR, "\x1b7");
-    set(TCRESTRCURSOR, "\x1b8");
-    // Cursor visibility.
-    set(TCCURINV, "\x1b[?25l");
-    set(TCCURVIS, "\x1b[?25h");
-    // Colour (parametrised by emit-site).
-    set(TCFGCOLOUR, "\x1b[3%dm");
-    set(TCBGCOLOUR, "\x1b[4%dm");
+    // c:785-797 — `if (tgetent(termbuf, term) != TGETENT_SUCCESS) {
+    //   zerr(...); errflag &= ~ERRFLAG_ERROR; termflags |= TERM_BAD;
+    //   return 0; }`. ncurses tgetent accepts NULL (the
+    //   TGETENT_ACCEPTS_NULL arm at c:786-787).
+    let ent = unsafe { tgetent(std::ptr::null_mut(), cterm.as_ptr()) };
+    if ent != 1 {
+        // c:791 — `if (interact) zerr("can't find terminal definition
+        // for %s", term);` — interact gate keeps -fc scripts quiet.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
+            crate::ported::utils::zerr(&format!(
+                "can't find terminal definition for {}",
+                term
+            )); // c:792
+        }
+        crate::ported::utils::errflag.fetch_and(
+            !crate::ported::utils::ERRFLAG_ERROR,
+            Ordering::Relaxed,
+        ); // c:793
+        TERMFLAGS.fetch_or(TERM_BAD, Ordering::SeqCst); // c:794
+        return 0; // c:795
+    }
 
-    // c:802-803 — `termflags &= ~TERM_BAD; termflags &= ~TERM_UNKNOWN;`
-    // on tgetent success. c:826-833 — tccan(TCUP) clears TERM_NOUP;
-    // the table above always populates TCUP, so the clear is
-    // unconditional here.
+    // c:801-802 — `termflags &= ~TERM_BAD; termflags &= ~TERM_UNKNOWN;`
+    TERMFLAGS.fetch_and(!(TERM_BAD | TERM_UNKNOWN), Ordering::SeqCst);
+
+    // c:803-815 — `for (t0 = 0; t0 != TC_COUNT; t0++) { ... tgetstr
+    // (tccapnams[t0], &pp) ... }` — fetch every capability string.
     {
-        use crate::ported::zsh_h::{TERM_BAD, TERM_NOUP};
-        TERMFLAGS.fetch_and(!(TERM_BAD | TERM_UNKNOWN | TERM_NOUP), Ordering::SeqCst);
+        let mut s = tcstr.lock().unwrap();
+        let mut l = tclen.lock().unwrap();
+        let mut tbuf = [0i8; 1024]; // c:798 `char tbuf[1024]`
+        for t0 in 0..TC_COUNT as usize {
+            let cap = std::ffi::CString::new(tccapnams[t0]).unwrap();
+            let mut pp: *mut libc::c_char = tbuf.as_mut_ptr(); // c:804 `pp = tbuf;`
+            let got = unsafe { tgetstr(cap.as_ptr(), &mut pp) }; // c:808
+            if got.is_null() || got as isize == -1 {
+                // c:809 — `tcstr[t0] = NULL, tclen[t0] = 0;`
+                s[t0] = String::new();
+                l[t0] = 0;
+            } else {
+                // c:811-813 — dup the cap string + record length.
+                let bytes = unsafe { std::ffi::CStr::from_ptr(got) }.to_bytes();
+                s[t0] = String::from_utf8_lossy(bytes).into_owned();
+                l[t0] = bytes.len() as i32;
+            }
+        }
     }
 
-    1 // c:909 success
+    // c:817-818 — automargin / newline-glitch flags.
+    let flag = |name: &str| -> i32 {
+        let c = std::ffi::CString::new(name).unwrap();
+        unsafe { tgetflag(c.as_ptr()) }
+    };
+    let num = |name: &str| -> i32 {
+        let c = std::ffi::CString::new(name).unwrap();
+        unsafe { tgetnum(c.as_ptr()) }
+    };
+    hasam.store(flag("am"), Ordering::SeqCst); // c:818 `hasam = tgetflag("am");`
+    hasxn.store(flag("xn"), Ordering::SeqCst); // c:819 `hasxn = tgetflag("xn");`
+    tclines.store(num("li"), Ordering::SeqCst); // c:821 `tclines = tgetnum("li");`
+    tccolumns.store(num("co"), Ordering::SeqCst); // c:822 `tccolumns = tgetnum("co");`
+    tccolours.store(num("Co"), Ordering::SeqCst); // c:823 `tccolours = tgetnum("Co");`
+
+    // Post-fetch fixups — all operate on tcstr/tclen under one lock.
+    {
+        let mut s = tcstr.lock().unwrap();
+        let mut l = tclen.lock().unwrap();
+        let can = |l: &[i32; 39], cap: i32| l[cap as usize] != 0; // tccan()
+
+        // c:825-833 — no cursor-up cap → single-line mode (TERM_NOUP).
+        if can(&l, TCUP) {
+            TERMFLAGS.fetch_and(!TERM_NOUP, Ordering::SeqCst); // c:829
+        } else {
+            s[TCUP as usize] = String::new(); // c:831-832
+            l[TCUP as usize] = 0;
+            TERMFLAGS.fetch_or(TERM_NOUP, Ordering::SeqCst); // c:833
+        }
+
+        // c:836-840 — most termcaps don't define "bc"; default `\b`.
+        if !can(&l, TCBACKSPACE) {
+            s[TCBACKSPACE as usize] = "\u{8}".to_string(); // c:838
+            l[TCBACKSPACE as usize] = 1; // c:839
+        }
+
+        // c:843-847 — no cursor-left cap → use backspace.
+        if !can(&l, TCLEFT) {
+            s[TCLEFT as usize] = s[TCBACKSPACE as usize].clone(); // c:845
+            l[TCLEFT as usize] = l[TCBACKSPACE as usize]; // c:846
+        }
+
+        // c:849-853 — save-cursor without restore-cursor is useless.
+        if can(&l, TCSAVECURSOR) && !can(&l, TCRESTRCURSOR) {
+            l[TCSAVECURSOR as usize] = 0; // c:850
+            s[TCSAVECURSOR as usize] = String::new(); // c:851-852
+        }
+
+        // c:856-860 — if the down cap is `\n`, don't use it.
+        if can(&l, TCDOWN) && s[TCDOWN as usize].starts_with('\n') {
+            l[TCDOWN as usize] = 0; // c:857
+            s[TCDOWN as usize] = String::new(); // c:858-859
+        }
+
+        // c:863-867 — no clear cap → ^L.
+        if !can(&l, TCCLEARSCREEN) {
+            s[TCCLEARSCREEN as usize] = "\u{c}".to_string(); // c:865
+            l[TCCLEARSCREEN as usize] = 1; // c:866
+        }
+
+        // c:868 — `rprompt_indent = 1;` lives in the params layer
+        // (rprompt_indent_unsetfn keeps it there); no-op here.
+
+        // c:876-884 — no italics caps → CSI 3 m / CSI 23 m.
+        if !can(&l, TCITALICSBEG) {
+            s[TCITALICSBEG as usize] = "\x1b[3m".to_string(); // c:878
+            l[TCITALICSBEG as usize] = 4; // c:879
+        }
+        if !can(&l, TCITALICSEND) {
+            s[TCITALICSEND as usize] = "\x1b[23m".to_string(); // c:882
+            l[TCITALICSEND as usize] = 5; // c:883
+        }
+        // c:885-888 — no faint cap → CSI 2 m.
+        if !can(&l, TCFAINTBEG) {
+            s[TCFAINTBEG as usize] = "\x1b[2m".to_string(); // c:887
+            l[TCFAINTBEG as usize] = 4; // c:888
+        }
+    }
+
+    1 // c:890 `return 1;`
 }
 
 /// Port of `static char *getmypath(const char *name, const char *cwd)` from Src/init.c:909.
