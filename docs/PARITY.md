@@ -11,12 +11,12 @@ dev box).
 | Metric              | Count  |
 | ------------------- | ------ |
 | Total tests         | 43,904 |
-| Passing             | 43,893 |
-| **Failing**         | **8**  |
+| Passing             | 43,894 |
+| **Failing**         | **7**  |
 | Ignored             | 8      |
 | Pass rate           | 99.98% |
 | Test binaries       | 82     |
-| Binaries with fails | 4      |
+| Binaries with fails | 3      |
 
 Delta vs the earlier 2026-06-11 full-sweep snapshot: 28 → 9 stable
 failures (19 closed), 9 → 4 binaries — then 8 after merging the
@@ -41,6 +41,17 @@ bulk_i_hash_num_widgets. Closed this pass:
   operator position); quoted-brace-body words route to the bridge so
   paramsubst's gate actually runs.
 - **zsh_compat bulk_ah_fc_row_089** — reclassified flaky (below).
+- **corpus_parity (10 rows → 0, now 128/128)** — (a) the parity
+  decoder's strings now stay tokenized (byte→char widened) so BOTH
+  harness sides canonicalize through the one ported untokenize
+  (Src/exec.c:2077 + Src/lex.c:38 ztokens) in `ast_sexp::emit_str`;
+  the byte-level `zwc::untokenize` it previously used had no
+  Qstring/Qtick/OutangProc arms and dropped Bnull, so `"$(...)"`,
+  ``"`...`"``, `>(...)`, dq-escapes and `$'...'` rows falsely
+  diverged. (b) `[[ x =~ pat ]]` now builds the Regex cond node for
+  the lexer's token forms (Equals `\u{8d}`/Tilde `\u{98}`) per
+  par_cond_triple Src/parse.c:2685-2691 — the old check only matched
+  ASCII `=~`, so every real regex cond decoded as Binary.
 
 Flaky (pass solo / under low load; not counted):
 - `read_parity::count_chars::read_k_reads_n_chars` — read -k timing
@@ -58,13 +69,6 @@ Flaky (pass solo / under low load; not counted):
 - `zcompdump_byte_identical_roundtrip`
 - `zcompdump_synthesize_format`
 - `zstyle_canonical_roundtrip`
-
-### parity_harness (1)
-
-- `corpus_parity` — AST-sexp harness, 118/128 corpus rows passing;
-  the 10 divergent rows are parser-AST shape gaps (cmdsubst word
-  re-rendering, `=~` Regex vs Binary node, proc-subst `>(...)` word
-  text, herestring escape re-rendering).
 
 ### zinit_p10k_parity (1)
 
@@ -85,6 +89,5 @@ Flaky (pass solo / under low load; not counted):
 - **zcompile / zcompdump binary formats.** binary_parity ×3 +
   zsh_compat ×3 — byte-identical `.zwc`/`.zcompdump` emission; the
   dominant remaining arm.
-- **AST corpus.** `corpus_parity` — 10 parser-sexp shape rows.
 - **fzf-tab NUL-delimiter swap.** paramstrsub `$'...'`
   quote-retention quirk.

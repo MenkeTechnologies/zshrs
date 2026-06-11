@@ -9066,7 +9066,18 @@ fn parse_cond_primary() -> Option<ZshCond> {
         }
     };
 
-    if op == "=~" {
+    // c:Src/parse.c:2685-2691 par_cond_triple —
+    //   `(b[0] == Equals || b[0] == '=') && (b[1] == '~' || b[1] == Tilde)
+    //    && !b[2]` → COND_REGEX.
+    // The lexer emits the TOKEN forms inside cond bodies (`=` at word
+    // start → Equals `\u{8d}`, `~` → Tilde `\u{98}`), so an ASCII-only
+    // `op == "=~"` check missed every real `[[ x =~ pat ]]` and fell
+    // through to Binary.
+    let opc: Vec<char> = op.chars().collect();
+    let is_regex_op = opc.len() == 2
+        && (opc[0] == '=' || opc[0] == Equals)
+        && (opc[1] == '~' || opc[1] == Tilde);
+    if is_regex_op {
         Some(ZshCond::Regex(s1, s2))
     } else {
         Some(ZshCond::Binary(s1, op, s2))
