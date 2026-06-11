@@ -784,14 +784,21 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                     1 // c:485 return_value = 1
                 }
                 None => {
-                    // c:483 — no-match: clear whichever variable family
-                    // BASHREMATCH selected.
-                    if bashre {
-                        crate::ported::params::setaparam("BASH_REMATCH", Vec::new());
-                    } else {
-                        crate::ported::params::setsparam("MATCH", "");
-                        crate::ported::params::setaparam("match", Vec::new());
-                    }
+                    // c:474-477 — `else if (r == PCRE2_ERROR_NOMATCH)
+                    //                   { return_value = 0; /* no match */
+                    //                     break; }`
+                    //
+                    // C leaves $MATCH / $match / $BASH_REMATCH untouched
+                    // on no-match — only sets return_value=0 and bails.
+                    // Same as bin_pcre_match's no-match arm (abb0046210):
+                    // the chain of `[[ s -pcre-match pat ]]` calls is
+                    // expected to preserve "last successful match" so
+                    // a subsequent test like `[[ -n $MATCH ]]` can act
+                    // as a "did anything match in this chain?" gate.
+                    //
+                    // Prior Rust port cleared both families which broke
+                    // that gate.
+                    let _ = bashre;
                     0
                 }
             }
