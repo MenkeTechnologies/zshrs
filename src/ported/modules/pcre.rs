@@ -615,6 +615,30 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
         } else {
             0
         };
+    // c:405-409 — the generic match-error arm:
+    //
+    //     else {
+    //         PCRE2_UCHAR buffer[256];
+    //         pcre2_get_error_message(ret, buffer, sizeof(buffer));
+    //         zwarnnam(nam, "error in pcre matching for %s: %s", *args, buffer);
+    //     }
+    //
+    // PCRE2 in UTF mode rejects a -n offset that lands inside a
+    // multibyte character with PCRE2_ERROR_BADUTFOFFSET ("bad offset
+    // into UTF string"), routed through this arm with exit 1. The
+    // Rust byte-slice below would PANIC on the same offset (&str
+    // indexing off a char boundary aborts the whole shell) — surface
+    // the C-shaped diagnostic instead.
+    if search_base_offset > 0 && !plaintext.is_char_boundary(search_base_offset) {
+        zwarnnam(
+            nam,
+            &format!(
+                "error in pcre matching for {}: bad offset into UTF string",
+                args[0]
+            ),
+        ); // c:408
+        return 1; // c:417 return_value stays 1
+    }
     let (full_match, full_range, captures, named_pairs) = PCRE_PATTERN.with(
         |r| -> (
             Option<String>,
