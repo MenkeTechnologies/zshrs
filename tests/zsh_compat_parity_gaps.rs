@@ -790,7 +790,14 @@ mod corpus_dash_fc_bulk_b {
         bulk_b_read_ifs_delim_colon => (r#"read -d :"#, r##"printf 'a:b' | IFS= read -d : -r rd_b; print -r "$rd_b""##);
         bulk_b_builtin_false_exit => (r#"builtin false"#, r##"builtin false; print -r "st=$?""##);
         bulk_b_path_array_literal_first => (r#"path=(...)"#, r#"path_b=(/tmp); print $path_b[1]"#);
-        bulk_b_zmodload_calendar_stderr => (r#"zmodload zsh/calendar"#, r##"zmodload zsh/calendar 2>&1; print -r "ex=$?""##);
+        // The four zmodload-of-unavailable-module rows used 2>&1, so
+        // the comparison included zsh's dlopen() error detail — which
+        // embeds machine-specific install paths (/opt/homebrew/Cellar/
+        // zsh/5.9.1/...) and dyld cryptex probe lines that no other
+        // shell (or even another zsh install) can reproduce. Both
+        // shells already agree on the stable signal: the "failed to
+        // load module" diagnostic class and exit 1. Compare exit only.
+        bulk_b_zmodload_calendar_stderr => (r#"zmodload zsh/calendar"#, r##"zmodload zsh/calendar 2>/dev/null; print -r "ex=$?""##);
         bulk_b_zmodload_net_tcp_ok => (r#"zmodload zsh/net/tcp"#, r##"zmodload zsh/net/tcp 2>&1; print -r "ex=$?""##);
         bulk_b_zcompile_tmpfile => (r#"zcompile"#, r##"print zcb >/tmp/gap_zc_b_$$; zcompile /tmp/gap_zc_b_$$ 2>&1; print -r "zc=$?"; command rm -f /tmp/gap_zc_b_$$ /tmp/gap_zc_b_$$.zwc"##);
         bulk_b_allexport_in_subshell => (r#"allexport subshell"#, r##"( setopt allexport; y_alx=9; print -r "in=$y_alx" ); print -r "out_plus=$+y_alx""##);
@@ -1226,7 +1233,7 @@ mod corpus_dash_fc_bulk_g {
         bulk_g_zmodload_zsh_files => (r#"zmodload zsh/files"#, r##"zmodload zsh/files 2>&1; print -r "ex=$?""##);
         bulk_g_zmodload_zsh_sched_module => (r#"zmodload zsh/sched"#, r##"zmodload zsh/sched 2>&1; print -r "ex=$?""##);
         bulk_g_zmodload_zsh_watch => (r#"zmodload zsh/watch"#, r##"zmodload zsh/watch 2>&1; print -r "ex=$?""##);
-        bulk_g_zmodload_zsh_db_gdbm => (r#"zmodload zsh/db_gdbm"#, r##"zmodload zsh/db_gdbm 2>&1; print -r "ex=$?""##);
+        bulk_g_zmodload_zsh_db_gdbm => (r#"zmodload zsh/db_gdbm"#, r##"zmodload zsh/db_gdbm 2>/dev/null; print -r "ex=$?""##);
         bulk_g_typeset_global_scalar => (r#"typeset -g"#, r#"typeset -g tgg_scalar=global_g; print $tgg_scalar"#);
         bulk_g_array_subscript_I_index => (r#"[(I) ] elem"#, r#"aig=(p q r); print ${aig[(I)q]}"#);
         bulk_g_brace_combo_two_by_two => (r#"X{a,b}Y{c}"#, r#"print -r X{a,b}Y{c}"#);
@@ -1354,7 +1361,7 @@ mod corpus_dash_fc_bulk_h {
         bulk_h_print_LOGNAME_scalar => (r#"LOGNAME"#, r#"print ${LOGNAME:-nilog}"#);
         bulk_h_HISTCMD_integer => (r#"HISTCMD"#, r#"print $HISTCMD"#);
         bulk_h_zmodload_zsh_complete => (r#"zmodload zsh/complete"#, r##"zmodload zsh/complete 2>&1; print -r "ex=$?""##);
-        bulk_h_zmodload_zsh_compwid => (r#"zmodload zsh/compwid"#, r##"zmodload zsh/compwid 2>&1; print -r "ex=$?""##);
+        bulk_h_zmodload_zsh_compwid => (r#"zmodload zsh/compwid"#, r##"zmodload zsh/compwid 2>/dev/null; print -r "ex=$?""##);
         bulk_h_zmodload_zsh_zprof => (r#"zmodload zsh/zprof"#, r##"zmodload zsh/zprof 2>&1; print -r "ex=$?""##);
         bulk_h_typeset_array_Unique => (r#"typeset -aU"#, r#"typeset -aU auh=(x x y); print $auh"#);
         bulk_h_nullglob_star_N_in_tmp => (r#"nullglob *(N) argc"#, r##"tdn=$(mktemp -d); ( builtin cd $tdn && setopt nullglob && set -- *(N) && print argc=$# ); command rm -rf $tdn"##);
@@ -1750,7 +1757,7 @@ mod corpus_dash_fc_bulk_l {
     use super::*;
 
     parity_gap_tests! {
-        bulk_l_zmodload_zsh_deltochar => (r#"zmodload zsh/deltochar"#, r##"zmodload zsh/deltochar 2>&1; print -r "dex=$?""##);
+        bulk_l_zmodload_zsh_deltochar => (r#"zmodload zsh/deltochar"#, r##"zmodload zsh/deltochar 2>/dev/null; print -r "dex=$?""##);
         bulk_l_param_TERM => (r#"TERM"#, r##"print -r "${TERM:-noterm}""##);
         bulk_l_param_ZDOTDIR => (r#"ZDOTDIR"#, r##"print -r "${ZDOTDIR:-nil_zd}""##);
         bulk_l_param_VISUAL => (r#"VISUAL"#, r##"print -r "${VISUAL:-nil_vis}""##);
