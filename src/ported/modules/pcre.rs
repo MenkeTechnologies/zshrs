@@ -656,12 +656,19 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
         // surface not yet exposed by the regex crate without compile-
         // time hashmap; document gap).
         let _ = named;
-    } else {
-        // c:415-419 — unset $MATCH/$match on no-match. Mirror by setting
-        // to empty so subsequent reads don't see stale values.
-        crate::ported::params::setsparam(matched_portion.unwrap_or("MATCH"), "");
-        crate::ported::params::setaparam(receptacle, Vec::new());
     }
+    // c:398-409 — no-match / error paths LEAVE $MATCH / $match alone:
+    //   if (ret == PCRE2_ERROR_NOMATCH) /* no match */;
+    //   else if (ret > 0) { install MATCH/match... }
+    //   else { /* error, warn */ }
+    //
+    // C never explicitly unsets MATCH/match on no-match — the previous
+    // invocation's values remain visible. This matters because pcre
+    // users commonly chain `pcre_match` calls and expect "last
+    // successful match" semantics. Prior Rust port cleared both on
+    // no-match (line 660-663 previously) which broke that chain:
+    // a successful `$MATCH=foo` followed by a failed `pcre_match`
+    // wiped $MATCH instead of leaving "foo" in place.
     ret = if full_match.is_some() { 1 } else { 0 }; // c:398/c:399 sentinel
     let _ = ret;
     let _ = use_dfa;
