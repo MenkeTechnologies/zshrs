@@ -526,6 +526,17 @@ fn stringsubst(
     asssub: bool,        // c:237
 ) -> Option<usize> {
     // c:237
+    // c:339 — C's stringsubst reassigns its live node from
+    // paramsubst's return (`node = paramsubst(l, node, &str, ...)`)
+    // and finally `return n;` — the LAST node the substitution
+    // produced. prefork's incnode then continues AFTER it, so
+    // splat-inserted nodes are never re-scanned (re-scanning
+    // double-expands substituted VALUES — a literal `$'\0'` coming
+    // out of a replacement decoded as ANSI-C on the second pass).
+    // The Rust port previously pinned node_idx and returned the
+    // ORIGINAL index; shadow it mutable and advance on multi-node
+    // splices exactly like C's `node`.
+    let mut node_idx = node_idx;
     let mut str3 = list.getdata(node_idx)?.to_string(); // c:237
     let mut pos = 0; // c:237
 
@@ -1000,13 +1011,23 @@ fn stringsubst(
                     zerr("closing bracket missing"); // c:237
                     return None; // c:237
                 } // c:237
-            } else if next_c == Some(Snull) || next_c == Some('\'') {
+            } else if next_c == Some(Snull) || (next_c == Some('\'') && !qt) {
                 // c:237
                 // $'...' ANSI-C quoting. Accept either the lexer-
                 // tokenized Snull marker OR the raw `'` — recursive
                 // operator-operand paths (e.g. multsub on a `:=`
                 // operand) hand us the literal text without prior
                 // tokenization, so dispatch on the literal too.
+                //
+                // c:Src/subst.c:301 — C triggers ONLY on the Snull
+                // TOKEN. Inside double quotes the lexer emits Qstring
+                // followed by a RAW `'` (dquote_parse has no $'...'
+                // arm, Src/lex.c:1519-1556) and C's stringsubst
+                // routes that to paramsubst, which leaves the `$`
+                // literal — oracle: `"${a/x/$'\t'q}"` emits LITERAL
+                // `$'\t'q` in zsh 5.9. Gate the raw-quote concession
+                // on !qt so a Qstring dollar (qt == true) follows the
+                // C path instead of decoding.
                 let (new_str, new_pos) = stringsubstquote(&str3, pos); // c:237
                 str3 = new_str; // c:237
                 pos = new_pos; // c:237
@@ -1060,6 +1081,7 @@ fn stringsubst(
                     // c:237
                     list.setdata(node_idx, String::new()); // c:237
                 } else {
+                    let multi = new_nodes.len() > 1;
                     let mut current_idx = node_idx; // c:237
                     for (i, node_data) in new_nodes.into_iter().enumerate() {
                         // c:237
@@ -1072,6 +1094,17 @@ fn stringsubst(
                             // c:237
                         } // c:237
                     } // c:237
+                    if multi {
+                        // c:339 — continue scanning in the LAST
+                        // spliced node (the suffix after `${...}`
+                        // lives there); paramsubst's returned pos is
+                        // the suffix offset WITHIN that node for the
+                        // multi-node case. Advancing also makes the
+                        // final `return Some(node_idx)` report the
+                        // last node, so prefork skips the inserted
+                        // VALUES instead of re-scanning them.
+                        node_idx = current_idx;
+                    }
                 }
 
                 str3 = list.getdata(node_idx)?.to_string(); // c:237
@@ -7797,6 +7830,34 @@ pub fn paramsubst(
                     (pat_buf, String::new())
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
+                // c:Src/lex.c:1519-1556 + c:Src/subst.c:301 — inside
+                // double quotes `$'` is Qstring + RAW `'` and is NOT
+                // ANSI-C; C's getmatch replacement keeps it literal
+                // (oracle: `"${a/x/$'\t'q}"` → `$'\t'q`, while the
+                // UNQUOTED form decodes). The rest builder folded
+                // Qstring to ASCII `$`, so the replacement singsub
+                // would re-read it as top-level ANSI-C. Restore the
+                // canonical token form for `$` immediately followed
+                // by `'` when this paramsubst is DQ-context (qt) —
+                // replacement-only: the pattern side must keep its
+                // (decoded) behavior, verified against the oracle.
+                let raw_repl = if qt && raw_repl.contains("$'") {
+                    let cs: Vec<char> = raw_repl.chars().collect();
+                    let mut out = String::with_capacity(raw_repl.len());
+                    let mut i = 0;
+                    while i < cs.len() {
+                        let prev_bnull = i > 0 && cs[i - 1] == Bnull;
+                        if cs[i] == '$' && cs.get(i + 1) == Some(&'\'') && !prev_bnull {
+                            out.push(Qstring); // DQ-context token form
+                        } else {
+                            out.push(cs[i]);
+                        }
+                        i += 1;
+                    }
+                    out
+                } else {
+                    raw_repl
+                };
                 // c:Src/subst.c — `${X//#pat/repl}` start-anchor
                 // and `${X//%pat/repl}` end-anchor variants for the
                 // global-replace form. The leading `#`/`%` peel off
@@ -8190,6 +8251,34 @@ pub fn paramsubst(
                     (pat_buf, String::new())
                 };
                 let (raw_pat, raw_repl) = split_unescaped(rep);
+                // c:Src/lex.c:1519-1556 + c:Src/subst.c:301 — inside
+                // double quotes `$'` is Qstring + RAW `'` and is NOT
+                // ANSI-C; C's getmatch replacement keeps it literal
+                // (oracle: `"${a/x/$'\t'q}"` → `$'\t'q`, while the
+                // UNQUOTED form decodes). The rest builder folded
+                // Qstring to ASCII `$`, so the replacement singsub
+                // would re-read it as top-level ANSI-C. Restore the
+                // canonical token form for `$` immediately followed
+                // by `'` when this paramsubst is DQ-context (qt) —
+                // replacement-only: the pattern side must keep its
+                // (decoded) behavior, verified against the oracle.
+                let raw_repl = if qt && raw_repl.contains("$'") {
+                    let cs: Vec<char> = raw_repl.chars().collect();
+                    let mut out = String::with_capacity(raw_repl.len());
+                    let mut i = 0;
+                    while i < cs.len() {
+                        let prev_bnull = i > 0 && cs[i - 1] == Bnull;
+                        if cs[i] == '$' && cs.get(i + 1) == Some(&'\'') && !prev_bnull {
+                            out.push(Qstring); // DQ-context token form
+                        } else {
+                            out.push(cs[i]);
+                        }
+                        i += 1;
+                    }
+                    out
+                } else {
+                    raw_repl
+                };
                 // c:Src/subst.c — unquoted-context replacement: `\X`
                 // escapes are stripped by the surrounding shell
                 // word-evaluation pipeline AFTER the substitution
@@ -11845,10 +11934,35 @@ pub fn paramsubst(
             // `a=(x y z); echo ${a%x*}` doesn't leak a leading-empty
             // arg ` y z` instead of zsh's `y z`. Bug #578. Skip the
             // drop in qt (DQ keeps empties — `"${(@s./.)X}"` shape).
+            // Stash the last element's rendered length BEFORE the
+            // empties-drop: the multi-node return contract (below)
+            // reports the suffix offset within the LAST node.
+            let last_value_chars = parts
+                .last()
+                .map(|p| emit_part(p).chars().count())
+                .unwrap_or(0);
+            let pre_retain_len = nodes.len();
             if !qt && nodes.len() > 1 {
                 nodes.retain(|n| !n.is_empty());
             }
             let first = nodes.first().cloned().unwrap_or_default();
+            if nodes.len() > 1 {
+                // Multi-node contract (paired with stringsubst's
+                // splice advance, C subst.c:339): returned pos =
+                // suffix offset in the LAST node (last node =
+                // emit_part(last) + suffix), so scanning resumes at
+                // the suffix and the element VALUES are never
+                // re-expanded. If the empties-drop removed nodes the
+                // original last may be gone — consume the whole (new)
+                // last node; only empty nodes were dropped, so
+                // nothing scannable is skipped.
+                let last_pos = if nodes.len() == pre_retain_len {
+                    last_value_chars
+                } else {
+                    nodes.last().map(|n| n.chars().count()).unwrap_or(0)
+                };
+                return (first, last_pos, nodes);
+            }
             let new_pos_in_full = prefix.chars().count()
                 + first.chars().count().saturating_sub(prefix.chars().count());
             return (first, new_pos_in_full, nodes);
