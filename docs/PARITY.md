@@ -2,7 +2,7 @@
 
 Snapshot of `cargo test --test '*parity*' --no-fail-fast` results.
 
-**Last run:** 2026-06-11 (late evening — full zsh_compat sweep + every
+**Last run:** 2026-06-12 (full zsh_compat sweep + every
 previously-failing binary re-run individually on the macOS aarch64
 dev box).
 
@@ -11,12 +11,12 @@ dev box).
 | Metric              | Count  |
 | ------------------- | ------ |
 | Total tests         | 43,904 |
-| Passing             | 43,894 |
-| **Failing**         | **7**  |
+| Passing             | 43,898 |
+| **Failing**         | **3**  |
 | Ignored             | 8      |
-| Pass rate           | 99.98% |
+| Pass rate           | 99.99% |
 | Test binaries       | 82     |
-| Binaries with fails | 3      |
+| Binaries with fails | 1      |
 
 Delta vs the earlier 2026-06-11 full-sweep snapshot: 28 → 9 stable
 failures (19 closed), 9 → 4 binaries — then 8 after merging the
@@ -41,6 +41,19 @@ bulk_i_hash_num_widgets. Closed this pass:
   operator position); quoted-brace-body words route to the bridge so
   paramsubst's gate actually runs.
 - **zsh_compat bulk_ah_fc_row_089** — reclassified flaky (below).
+- **2026-06-12: fzf-tab NUL-delimiter swap** (zinit_p10k 192/192) —
+  DQ `$'` stays literal in `/`-replacements per Src/subst.c:301
+  (Snull-token-only ANSI-C trigger; dquote_parse emits Qstring + raw
+  `'`, Src/lex.c:1519-1556), BUILTIN_PARAM_REPLACE honors its dq
+  flag, and stringsubst advances to the LAST spliced node per
+  Src/subst.c:339 so prefork never re-scans (= double-expands)
+  splat-inserted values.
+- **2026-06-12: zsh_compat zcompile rows ×3** — `.zwc` wordcode dump
+  emission (Src/parse.c:3334-3482 port); zsh_compat now 40924/1
+  (the -N flake).
+- **2026-06-12: invariant gates green** — no_tree_walker_dispatch
+  160/160 (dynamic-name AOP intercept gate added; two stale pins
+  repaired in fcda59d530), tree_walker_absent 8/8.
 - **corpus_parity (10 rows → 0, now 128/128)** — (a) the parity
   decoder's strings now stay tokenized (byte→char widened) so BOTH
   harness sides canonicalize through the one ported untokenize
@@ -70,24 +83,8 @@ Flaky (pass solo / under low load; not counted):
 - `zcompdump_synthesize_format`
 - `zstyle_canonical_roundtrip`
 
-### zinit_p10k_parity (1)
-
-- `megamonsters::fzf_tab_swap_around_null_delim` — zsh leaves the
-  literal `$'` + `'` quote chars around the decoded NUL in
-  `${arr/pat/$match[2]$'\0'$match[1]}` replacements; zshrs decodes
-  the whole `$'...'` region. Needs the paramstrsub quote-retention
-  quirk (Src/subst.c:4274 area).
-
-### zsh_compat_parity_gaps (3)
-
-- `corpus_dash_fc_bulk_b::bulk_b_zcompile_tmpfile`
-- `corpus_dash_fc_bulk_h::bulk_h_zcompile_then_rm_zwc`
-- `corpus_dash_fc_bulk_p::bulk_p_fc_zcompile_empty_file`
-
 ## Themes
 
-- **zcompile / zcompdump binary formats.** binary_parity ×3 +
-  zsh_compat ×3 — byte-identical `.zwc`/`.zcompdump` emission; the
-  dominant remaining arm.
-- **fzf-tab NUL-delimiter swap.** paramstrsub `$'...'`
-  quote-retention quirk.
+- **zcompdump / zstyle byte formats.** The single remaining arm:
+  byte-identical `.zcompdump` synthesis/roundtrip + the zstyle
+  canonical dump (`.zwc` emission itself landed 2026-06-12).
