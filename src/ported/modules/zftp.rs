@@ -2749,19 +2749,41 @@ pub fn zftp_login(name: &str, args: &[&str], flags: i32) -> i32 {
         .and_then(|s| s.get_session(None).map(|sess| sess.syst_probed))
         .unwrap_or(false);
     let dumb = (zfprefs.load(Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2207
-    if !dumb && !already_probed && zfsendcmd("SYST\r\n") == 2 {
-        // c:2208
-        let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
-        if systype.starts_with("UNIX Type: L8") {
-            // c:2212-2218
-            if let Ok(mut state) = zftp_state().lock() {
-                if let Some(sess) = state.get_session_mut(None) {
-                    sess.transfer_type = ZFST_IMAG; // c:2220
+    // c:2206-2225 — SYST probe block. Structure differs from a one-liner
+    // because the ZFST_SYST cache bit must be set REGARDLESS of whether
+    // zfsendcmd succeeds:
+    //   if (!DUMB && !(status & ZFST_SYST)) {
+    //       if (zfsendcmd("SYST\r\n") == 2) {
+    //           ... parse + zfsetparam("ZFTP_SYSTEM", ...) ...
+    //       }
+    //       zfstatusp[zfsessno] |= ZFST_SYST;   <-- always set
+    //   }
+    //
+    // C only retries SYST when the cache is unset; setting the cache
+    // unconditionally inside the `!ZFST_SYST` guard means failed probes
+    // (server returns 5xx for SYST) don't re-probe on every subsequent
+    // zftp call within the same session.
+    //
+    // Prior Rust port collapsed both checks into a single `&&` chain so
+    // `sess.syst_probed = true` only ran when the SYST send returned 2.
+    // Servers that 5xx'd SYST got re-probed on every dispatch, wasting
+    // one round-trip per zftp subcommand.
+    if !dumb && !already_probed {
+        if zfsendcmd("SYST\r\n") == 2 {
+            // c:2208
+            let systype = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
+            if systype.starts_with("UNIX Type: L8") {
+                // c:2212-2218
+                if let Ok(mut state) = zftp_state().lock() {
+                    if let Some(sess) = state.get_session_mut(None) {
+                        sess.transfer_type = ZFST_IMAG; // c:2220
+                    }
                 }
             }
+            zfsetparam("ZFTP_SYSTEM", &systype, ZFPM_READONLY); // c:2222
         }
-        zfsetparam("ZFTP_SYSTEM", &systype, ZFPM_READONLY); // c:2222
-                                                            // c:2224 — zfstatusp[zfsessno] |= ZFST_SYST.
+        // c:2224 — `zfstatusp[zfsessno] |= ZFST_SYST;` — set the cache
+        // bit unconditionally so a failed-SYST server isn't re-probed.
         if let Ok(mut state) = zftp_state().lock() {
             if let Some(sess) = state.get_session_mut(None) {
                 sess.syst_probed = true; // c:2224
