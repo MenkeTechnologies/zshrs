@@ -607,24 +607,29 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
         } else {
             0
         };
-    let (full_match, full_range, captures) = PCRE_PATTERN.with(
-        |r| -> (Option<String>, Option<(usize, usize)>, Vec<Option<String>>) {
+    let (full_match, full_range, captures, named_pairs) = PCRE_PATTERN.with(
+        |r| -> (
+            Option<String>,
+            Option<(usize, usize)>,
+            Vec<Option<String>>,
+            Vec<String>,
+        ) {
             let guard = r.borrow();
             let re = match guard.as_ref() {
                 Some(re) => re,
-                None => return (None, None, Vec::new()),
+                None => return (None, None, Vec::new(), Vec::new()),
             };
             let search_text: &str =
                 if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
                     &plaintext[offset_start as usize..]
                 } else if (offset_start as usize) > plaintext.len() {
-                    return (None, None, Vec::new());
+                    return (None, None, Vec::new(), Vec::new());
                 } else {
                     &plaintext
                 };
             let caps = match re.captures(search_text) {
                 Some(c) => c,
-                None => return (None, None, Vec::new()),
+                None => return (None, None, Vec::new(), Vec::new()),
             };
             let full_m = caps.get(0); // c:401 matched_portion
             let full = full_m.map(|m| m.as_str().to_string());
@@ -637,7 +642,36 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                 // c:401 ovector capture loop
                 subs.push(caps.get(i).map(|m| m.as_str().to_string()));
             }
-            (full, range, subs)
+            // c:215-229 — named-capture table walk:
+            //
+            //     if (namedassoc
+            //             && !pcre2_pattern_info(pat, PCRE2_INFO_NAMECOUNT, &ncount) && ncount
+            //             && ...NAMEENTRYSIZE... && ...NAMETABLE...)
+            //     {
+            //         hashptr = hash = (char **)zshcalloc((ncount+1)*2*sizeof(char *));
+            //         for (nidx = 0; nidx < ncount; nidx++) {
+            //             vec_off = (ntable[nsize * nidx] << 9) + 2 * ntable[nsize * nidx + 1];
+            //             /* would metafy the key but pcre limits characters in the name */
+            //             *hashptr++ = ztrdup((char *) ntable + nsize * nidx + 2);
+            //             *hashptr++ = metafy(arg + ovec[vec_off],
+            //                     ovec[vec_off+1]-ovec[vec_off], META_DUP);
+            //         }
+            //         sethparam(namedassoc, hash);
+            //     }
+            //
+            // The regex crate exposes the same name table via
+            // capture_names(): index-aligned Option<&str>. Keys stay
+            // raw (PCRE limits name chars, per the C comment); values
+            // metafy like every capture.
+            let mut named_kv: Vec<String> = Vec::new();
+            for (idx, name_opt) in re.capture_names().enumerate() {
+                if let Some(nm) = name_opt {
+                    let val = caps.get(idx).map(|m| m.as_str()).unwrap_or("");
+                    named_kv.push(nm.to_string()); // c:226 key
+                    named_kv.push(crate::ported::utils::metafy(val)); // c:227-228 value
+                }
+            }
+            (full, range, subs, named_kv)
         },
     );
 
@@ -670,10 +704,15 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             .map(|opt| opt.clone().unwrap_or_default())
             .collect();
         crate::ported::params::setaparam(receptacle, subs);
-        // c:407-409 — -A named hash unimplemented (PCRE2 named-capture
-        // surface not yet exposed by the regex crate without compile-
-        // time hashmap; document gap).
-        let _ = named;
+        // c:215-231 — named-captures assoc. The c:216 `&& ncount` gate
+        // means the assoc is touched ONLY when the pattern actually
+        // declares named groups — a pattern without names leaves the
+        // -A target (default `.pcre.match` per c:350) untouched.
+        if !named_pairs.is_empty() {
+            if let Some(na) = named {
+                crate::ported::params::sethparam(na, named_pairs); // c:230
+            }
+        }
     }
     // c:398-409 — no-match / error paths LEAVE $MATCH / $match alone:
     //   if (ret == PCRE2_ERROR_NOMATCH) /* no match */;
