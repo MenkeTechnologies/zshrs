@@ -1540,6 +1540,19 @@ pub fn split_env_string(env: &str) -> Option<(String, String)> {
 ///     Rust port, so the `noerrs = 2` guard at c:850 is a no-op.
 ///   The rest of the C body (ALLEXPORT toggle, set_pwd_env,
 ///   signals[] build with SIGRTMIN..MAX) is fully wired below.
+/// Port of `extern char **environ` (POSIX, read by `createparamtable`
+/// at Src/params.c:893). C reads the environment EXACTLY as it was at
+/// process entry — nothing mutates `environ` before zsh walks it. In
+/// the Rust binary, linked frameworks can rewrite the live environment
+/// during their lazy init before our import runs (observed on macOS:
+/// CoreFoundation recomputes `__CF_USER_TEXT_ENCODING`, so `export -p`
+/// showed `0x1F5:0x0:0x0` while zsh, inheriting the same env, printed
+/// the original `0x0:0:0`). `main()` snapshots `std::env::vars()` as
+/// its first statement; the import loops below prefer the snapshot and
+/// fall back to the live env (lib tests never run `main`).
+#[allow(non_upper_case_globals)]
+pub static environ: OnceLock<Vec<(String, String)>> = OnceLock::new();
+
 pub fn createparamtable() {
     // c:817
 
@@ -1696,8 +1709,14 @@ pub fn createparamtable() {
     // loop so per-iter allocations land on the heap zone.
     pushheap(); // c:891
 
-    // c:893-924 — environment import loop.
-    for (iname, ivalue) in env::vars() {
+    // c:893-924 — environment import loop. Walk the process-entry
+    // `environ` snapshot like C, not the live (possibly framework-
+    // mutated) environment — see the `environ` static above.
+    let environ_vars: Vec<(String, String)> = environ
+        .get()
+        .cloned()
+        .unwrap_or_else(|| env::vars().collect());
+    for (iname, ivalue) in environ_vars {
         if iname.is_empty() {
             continue;
         }

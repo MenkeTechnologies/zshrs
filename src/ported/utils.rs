@@ -7343,23 +7343,28 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         // c:6533 — RCQUOTES: wrap entire string in `'…'`; each
         // embedded `'` becomes `''` (the rc-style doubled quote).
         out.push('\''); // c:6539
+        // c:6540-6547 — C walks METAFIED bytes; the Rust String is
+        // UTF-8, so the faithful transposition walks CHARS (a byte
+        // walk Latin-1-casts every multibyte char: em-dash E2 80 94
+        // became "â" + a token byte that downstream passes ate).
+        // Token chars (Dash U+009B, Meta U+0083) are codepoints here.
+        let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
-        while i < bytes.len() {
-            // c:6540-6547 — decode current byte through Meta/Dash.
-            let c = if bytes[i] as char == Dash {
+        while i < chars_v.len() {
+            let c = if chars_v[i] == Dash {
                 // c:6541 — `if (*s == Dash) c = '-';`
                 i += 1;
                 '-'
-            } else if bytes[i] == Meta && i + 1 < bytes.len() {
+            } else if chars_v[i] as u32 == Meta as u32 && i + 1 < chars_v.len() {
                 // c:6543 — `else if (*s == Meta) c = *++s ^ 32;`
-                let dec = bytes[i + 1] ^ 32;
+                let n = chars_v[i + 1] as u32;
                 i += 2;
-                dec as char
+                char::from_u32(n ^ 32).unwrap_or(chars_v[i - 1])
             } else {
                 // c:6546 — `else c = *s;`
-                let dec = bytes[i];
+                let dec = chars_v[i];
                 i += 1;
-                dec as char
+                dec
             };
             if c == '\'' {
                 // c:6548-6553 — `if (c == '\'') *ptr++ = '\'';` (the
@@ -7380,20 +7385,22 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         // strings". Tracks `inquote` so that `it's` becomes
         // `'it'\''s'` (no empty `''` runs).
         let mut inquote = false; // c:6466 (initialised at top of C fn)
+        // c:6579-6586 — char-wise decode, same transposition as the
+        // RCQUOTES arm above (C's byte walk is over metafied bytes).
+        let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
-        while i < bytes.len() {
-            // c:6579-6586 — decode current byte.
-            let c = if bytes[i] as char == Dash {
+        while i < chars_v.len() {
+            let c = if chars_v[i] == Dash {
                 i += 1;
                 '-' // c:6581
-            } else if bytes[i] == Meta && i + 1 < bytes.len() {
-                let dec = bytes[i + 1] ^ 32; // c:6583
+            } else if chars_v[i] as u32 == Meta as u32 && i + 1 < chars_v.len() {
+                let n = chars_v[i + 1] as u32; // c:6583
                 i += 2;
-                dec as char
+                char::from_u32(n ^ 32).unwrap_or(chars_v[i - 1])
             } else {
-                let dec = bytes[i]; // c:6585
+                let dec = chars_v[i]; // c:6585
                 i += 1;
-                dec as char
+                dec
             };
             if c == '\'' {
                 // c:6587-6602 — `'` closes any open inquote then emits

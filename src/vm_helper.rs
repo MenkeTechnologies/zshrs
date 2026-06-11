@@ -1436,7 +1436,14 @@ impl ShellExecutor {
                 // paramtab lock drops. PATH→path / FPATH→fpath are
                 // seeded earlier (vm_helper ~1160-1199) and skipped.
                 let mut tied_env_arrays: Vec<(String, Vec<String>)> = Vec::new();
-                for (env_name, env_value) in std::env::vars() {
+                // c:Src/params.c:893 — walk the process-entry environ
+                // snapshot, not the live env (frameworks can mutate it
+                // before init — see params.rs `environ` static).
+                let environ_vars: Vec<(String, String)> = crate::ported::params::environ
+                    .get()
+                    .cloned()
+                    .unwrap_or_else(|| std::env::vars().collect());
+                for (env_name, env_value) in environ_vars {
                     if env_name.is_empty() || env_name.contains('[') {
                         continue;
                     }

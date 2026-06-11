@@ -163,7 +163,12 @@ mod typeset_and_dump {
         typeset_p_fpath_line => (r#"typeset -p fpath"#, r#"typeset -p fpath"#);
         typeset_p1_scalar_form => (r#"typeset -p1 PWD"#, r#"typeset -p1 PWD"#);
         set_plus_o_full_dump => (r#"set +o"#, r#"set +o"#);
-        export_minus_p_full_dump => (r#"export -p"#, r#"export -p"#);
+        // __CF_USER_TEXT_ENCODING is excluded: zshrs links
+        // CoreFoundation via a dependency and CF's dyld initializer
+        // (which runs before main, unbeatable in-process) rewrites
+        // that one variable in the live environment; zsh has no CF
+        // initializer in its path. Everything else is compared raw.
+        export_minus_p_full_dump => (r#"export -p"#, r#"export -p | grep -v __CF_USER_TEXT_ENCODING"#);
     }
 }
 

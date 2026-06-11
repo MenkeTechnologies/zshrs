@@ -943,6 +943,19 @@ pub fn is_zsh_compat() -> bool {
 }
 
 fn main() {
+    // c:Src/params.c:893 createparamtable reads `environ` exactly as
+    // it was at process entry. Snapshot it as the first statement so
+    // nothing later in shell init (setenv from builtins, lazy crate
+    // init) skews the import.
+    //
+    // Known unfixable artifact: zshrs links CoreFoundation through a
+    // dependency, and CF's dyld initializer runs BEFORE main and may
+    // rewrite __CF_USER_TEXT_ENCODING in the live environment (zsh
+    // has no such initializer, so it imports the original). The
+    // kernel's exec-image copy (sysctl KERN_PROCARGS2) was tried and
+    // REJECTED: it silently truncates large environments (tail vars
+    // vanish), which corrupts far more than the one CF variable.
+    let _ = zsh::ported::params::environ.set(std::env::vars().collect());
     // Restore default SIGPIPE behavior before anything writes to
     // stdout/stderr. Rust runtime installs SIG_IGN on SIGPIPE in
     // some Linux builds and ignores it on macOS — either way,
