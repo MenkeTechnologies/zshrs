@@ -4070,9 +4070,25 @@ impl ZshCompiler {
                     // through executor state (in_dq_context /
                     // in_scalar_assign) at runtime — no sentinel
                     // prefix on the flag string.
+                    // c:Src/exec.c:2077 + Src/subst.c:1543 — the flag
+                    // text that reaches paramsubst's flag parser must
+                    // keep quote chars and `$'...'` wrappers LITERAL:
+                    // C's untok_and_escape untokenizes flag args via
+                    // ztokens (Snull → `'`, Stringg → `$`), so
+                    // `${(j.$'\n'.)a}` joins with the five literal
+                    // chars `$'\n'` and `${(j.':'.)a}` joins with
+                    // `':'` (zsh 5.9 verified). `untoked` (plain
+                    // untokenize) strips quotes and inline-decodes
+                    // `$'...'`, pre-collapsing the arg to a bare
+                    // newline before paramsubst ever saw it. Re-derive
+                    // the emitted flag text from the C-untokenize
+                    // (ztokens) rendering. Bug #626 in docs/BUGS.md.
+                    let flags_lit = parse_zsh_flag(&crate::vm_helper::untokenize_ztokens(s))
+                        .map(|(f, _)| f.to_string())
+                        .unwrap_or_else(|| flags.to_string());
                     let name_const = self.builder.add_constant(Value::str(name));
                     self.builder.emit(Op::LoadConst(name_const), 0);
-                    let flags_const = self.builder.add_constant(Value::str(flags));
+                    let flags_const = self.builder.add_constant(Value::str(flags_lit));
                     self.builder.emit(Op::LoadConst(flags_const), 0);
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_PARAM_FLAG, 2), 0);

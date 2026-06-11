@@ -21,7 +21,36 @@ CI green pending the underlying fix.
 
 ## #626 — `${(j.$'\n'.)a}` joins with a bare newline; zsh joins with literal `$'` + NL + `'`
 
-**Status:** `port-bug`
+**Status:** `fixed` 2026-06-11
+
+**Fix:** three coordinated changes, all converging on C's exact
+`untokenize` semantics (`Src/exec.c:2077` — map every itok char to
+ASCII via ztokens, drop only Nularg, NO `$'...'` inline decode):
+
+1. New bridge helper `vm_helper::untokenize_ztokens` — the exact
+   C `untokenize` mapping. (Distinct from the ported `untokenize`,
+   which strips Snull/Dnull and inline-decodes `$'...'` for the
+   substitution stream, and from `untokenize_preserve_quotes`,
+   which keeps Qstring as a raw marker.)
+2. `untok_and_escape` (subst.rs, c:Src/subst.c:1543) now uses it —
+   flag args arriving with raw lexer markers (`Stringg Snull \ n
+   Snull` from the default expand route, e.g. nested-name
+   `${(j.$'\n'.)${a}}`) render as the literal text `$'\n'` instead
+   of decoding to a bare newline.
+3. The `BUILTIN_PARAM_FLAG` compile fast path (compile_zsh.rs)
+   re-derives the emitted flag text from the ztokens rendering, so
+   quote chars and `$'...'` wrappers stay literal: `${(j.':'.)a}`
+   joins with `':'` (3 chars), `${(j.$'\n'.)a}` with the five
+   literal chars `$'\n'` — both zsh-5.9-verified via `print -r`+od.
+
+Note the earlier C-reference paragraph below is imprecise on one
+point: the lexer does NOT decode `\n` inside `$'...'` (Src/lex.c:
+1294-1306 only Bnull-marks `\\` and `\'`); the bare-newline in the
+original reproducer's zsh output came from `print` (no `-r`)
+decoding the literal `\n` AFTER the join. `print -r` ground truth:
+sep = the five literal chars `$ ' \ n '`.
+
+**Original status:** `port-bug`
 
 **Reproducer:**
 ```
