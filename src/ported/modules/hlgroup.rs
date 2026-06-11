@@ -151,10 +151,24 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {
         // c:49-72 — strip `\033[` prefix and `m` suffix, join with `;`,
         // skip non-digit / non-`;` / non-`:` chars, replace `;`/`:` with `;`.
         // Always return at least "0" (c:67-70).
+        //
+        // C pointer discipline: `t` tracks the last-written char. After
+        // a complete escape (`*c == 'm'`), c:64 writes a `;` separator
+        // AT `t` (not past it), so when the while-loop exits via the
+        // c:52 condition (next char isn't `\033[`), the c:71 `*t='\0'`
+        // OVERWRITES that final separator — exactly ONE trailing `;`
+        // is dropped, and only on that exit path. When the loop exits
+        // via the c:62 `*c != 'm'` break, `t` was already advanced one
+        // past (c:61 `t++`) and `*t='\0'` keeps everything accumulated,
+        // INCLUDING a payload-trailing `;` from a `;`/`:` byte. A
+        // trim-all-trailing-semicolons approach over-trims `\033[1;m`
+        // (C: "1;") down to "1" — mirror the flag instead.
         let bytes = esc_stream.as_bytes();
         let mut out = String::new();
         let mut i = 0;
+        let mut ended_after_m = false;
         while i + 1 < bytes.len() && bytes[i] == 0x1b && bytes[i + 1] == b'[' {
+            // c:52
             i += 2; // c:53 c += 2
                     // c:54-60 — accumulate digits, treat ; or : as separator,
                     // break on anything else.
@@ -172,15 +186,19 @@ pub fn convertattr(attrstr: &str, sgr: bool) -> String {
                     break; // c:59
                 }
             }
+            // c:61 — `t++;` (conceptually: out.len() already one past).
             // c:62-65 — `if (*c != 'm') break;` else continue with `;`.
             if i >= bytes.len() || bytes[i] != b'm' {
-                break; // c:62-63
+                ended_after_m = false; // c:62-63 break — keep everything
+                break;
             }
-            out.push(';'); // c:64
+            out.push(';'); // c:64 *t = ';'
+            ended_after_m = true;
             i += 1; // c:65 c++
         }
-        // Trim trailing ';'.
-        while out.ends_with(';') {
+        // c:71 — `*t = '\0';` overwrites the c:64 separator when the
+        // loop ended after a complete escape.
+        if ended_after_m {
             out.pop();
         }
         // c:67-70 — `if (t <= s) { *s = '0'; t = s + 1; }`
