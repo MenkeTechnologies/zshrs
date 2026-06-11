@@ -6128,6 +6128,19 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
         check_warn_pm(pm_ref, "associative array", checkcreate as i32, 1); // c:3649
     }
 
+    // c:3651 setarrvalue → c:2918 arrhashsetfn(v->pm, val, 0).
+    // The Rust port inlines arrhashsetfn's pair-walk below, so its
+    // odd-count gate is hoisted here:
+    // c:4124-4127 — `for (aptr = val; *aptr; aptr++) alen++;`
+    // c:4128-4131 — `if (alen % 2) { freearray(val);
+    //                  zerr("bad set of key/value pairs for
+    //                  associative array"); return; }`
+    let alen = val.iter().filter(|s| !s.starts_with(Marker as char)).count();
+    if alen % 2 != 0 {
+        zerr("bad set of key/value pairs for associative array"); // c:4131
+        return None;
+    }
+
     // Build the IndexMap from flat (k,v) pairs (mirrors c:arrhashsetfn
     // pair-walking at c:4140-4166).
     let mut map: IndexMap<String, String> = IndexMap::new();
