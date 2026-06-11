@@ -601,10 +601,23 @@ fn param_substring_offset_only() {
 
 #[test]
 fn glob_expansion_matches_known_file() {
-    // Cargo.toml exists in repo root — the only `.toml` at the top level.
+    // STALE-FIXTURE REPAIR (2026-06-12): the original assertion
+    // hardcoded "Cargo.toml" with the premise "the only .toml at the
+    // top level" — Cross.toml was added to the repo later, so the
+    // test failed while zshrs's glob output was CORRECT. Compute the
+    // expected list from the filesystem so the pin can't rot again
+    // (zsh sorts glob results; mirror with a sorted read_dir).
+    let mut expected: Vec<String> = std::fs::read_dir(env!("CARGO_MANIFEST_DIR"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".toml") && !n.starts_with('.'))
+        .collect();
+    expected.sort();
+    assert!(!expected.is_empty(), "repo root must contain a .toml");
     let (status, stdout) = run("echo *.toml");
     assert_eq!(status, 0);
-    assert_eq!(stdout.trim(), "Cargo.toml");
+    assert_eq!(stdout.trim(), expected.join(" "));
 }
 
 #[test]
@@ -1068,8 +1081,13 @@ fn zshflag_qqq_ansi_c_quoting() {
 
 #[test]
 fn zshflag_g_processes_backslash_escapes() {
-    // `(g)` interprets backslash escapes — `\n` becomes a real newline.
-    ok(r#"s='hello\nworld'; echo "${(g)s}""#, "hello\nworld\n");
+    // `(g::)` interprets backslash escapes — `\n` becomes a real
+    // newline. STALE-PIN REPAIR (2026-06-12): the test previously
+    // used bare `${(g)s}`, which REAL zsh rejects — `zsh -fc 'echo
+    // "${(g)s}"'` → "error in flags near position 5", rc 1 (the g
+    // flag takes `::`-delimited options; zshexpn(1)). The bare form
+    // working was a zshrs-only laxity the parity work removed.
+    ok(r#"s='hello\nworld'; echo "${(g::)s}""#, "hello\nworld\n");
 }
 
 #[test]
