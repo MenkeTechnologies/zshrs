@@ -553,9 +553,12 @@ pub fn freecolorpairnode(hn: &str) { // c:422
 /// WARNING: param names don't match C — Rust=(_args) vs C=(nam, args)
 pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
     if zcurses_getwindowbyname("stdscr") {
-        // c:438 — `settyinfo(&curses_tty_state);` — restore the saved
-        // tty state captured during the first init so re-entry doesn't
-        // re-set the termios from scratch.
+        // c:495-496 — `} else { settyinfo(&curses_tty_state); }` —
+        // re-entry restores the CURSES-mode termios captured at c:494
+        // (post-cbreak/noecho), re-ENTERING curses mode. The prior
+        // port restored the pre-init cooked state here — exactly
+        // inverted: `zcurses init` after an `end` dropped the
+        // terminal back to cooked mode instead of re-arming cbreak.
         if let Ok(saved) = curses_tty_state.lock() {
             if let Some(ti) = saved.as_ref() {
                 unsafe {
@@ -565,10 +568,11 @@ pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
         }
         return 0;
     }
-    // c:442-443 — `gettyinfo(&curses_tty_state);` — snapshot initial
-    // termios before we mutate it via cbreak().
+    // c:443 — `gettyinfo(&saved_tty_state);` — snapshot the
+    // PRE-curses termios; zccmd_endwin's c:830 settyinfo restores
+    // this to hand the terminal back to the shell.
     {
-        let mut saved = curses_tty_state.lock().unwrap();
+        let mut saved = saved_tty_state.lock().unwrap();
         if saved.is_none() {
             let mut ti: libc::termios = unsafe { std::mem::zeroed() };
             if unsafe { libc::tcgetattr(0, &mut ti) } == 0 {
@@ -579,7 +583,16 @@ pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
     let mut stdout = io::stdout();
     let _ = write!(stdout, "\x1b[?1049h\x1b[2J\x1b[H");
     let _ = stdout.flush();
-    let _ = cbreak();
+    let _ = cbreak(); // c:492-493 cbreak(); noecho();
+    // c:494 — `gettyinfo(&curses_tty_state);` — snapshot the termios
+    // AFTER cbreak/noecho; this is what re-entry restores.
+    {
+        let mut cur = curses_tty_state.lock().unwrap();
+        let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(0, &mut ti) } == 0 {
+            *cur = Some(ti);
+        }
+    }
     let (rows, cols) = terminal_size().unwrap_or((24, 80));
     let mut stdscr = zc_win::new("stdscr", rows, cols, 0, 0);
     stdscr.flags = ZCWF_PERMANENT;
@@ -1038,16 +1051,39 @@ pub(crate) fn zccmd_border(nam: &str, args: &[String]) -> i32 {
 /// Port of `zccmd_endwin(UNUSED(const char *nam), UNUSED(char **args))` from `Src/Modules/curses.c:823`.
 /// WARNING: param names don't match C — Rust=(_args) vs C=(nam, args)
 pub(crate) fn zccmd_endwin(_nam: &str, _args: &[String]) -> i32 {
+    // c:825-838:
+    //
+    //     if (stdscr_win) {
+    //         endwin();
+    //         /* Restore TTY as it was before zcurses -i */
+    //         settyinfo(&saved_tty_state);
+    //         gettyinfo(&shttyinfo);
+    //     }
+    //     return 0;
     if !zcurses_getwindowbyname("stdscr") {
         return 0;
     }
     let mut stdout = io::stdout();
-    let _ = write!(stdout, "\x1b[?1049l\x1b[0m");
+    let _ = write!(stdout, "\x1b[?1049l\x1b[0m"); // c:828 endwin()
     let _ = stdout.flush();
-    windows_lock().lock().unwrap().clear();
-    order_lock().lock().unwrap().clear();
-    colorpairs_lock().lock().unwrap().clear();
-    0
+    // c:830 — `settyinfo(&saved_tty_state);` — hand the terminal back
+    // to the shell in its pre-`zcurses init` mode. Prior port skipped
+    // this entirely, leaving the tty in cbreak/noecho after
+    // `zcurses end` — a cooked-mode shell with no echo and no canonical
+    // line editing until the user blind-typed `stty sane`.
+    if let Ok(saved) = saved_tty_state.lock() {
+        if let Some(ti) = saved.as_ref() {
+            unsafe {
+                libc::tcsetattr(0, libc::TCSANOW, ti as *const _);
+            }
+        }
+    }
+    // C endwin does NOT free the window list — windows survive so a
+    // later `zcurses init` re-enters curses mode with state intact
+    // (c:495-496 settyinfo path); only module cleanup_ frees them.
+    // Prior port cleared windows/order/colorpairs here, destroying
+    // every window across an end/init bounce.
+    0 // c:838
 }
 
 // =====================================================================
@@ -1883,6 +1919,13 @@ static zc_errno_cell: OnceLock<Mutex<i32>> = OnceLock::new();
 /// init (c:443), restored by settyinfo on re-entry (c:438).
 #[allow(non_upper_case_globals)]
 static curses_tty_state: Mutex<Option<libc::termios>> = Mutex::new(None); // c:75
+
+/// `saved_tty_state` — file-static `struct ttyinfo saved_tty_state;`
+/// from `Src/Modules/curses.c:74`. The PRE-`zcurses init` termios
+/// snapshot (c:443 gettyinfo); zccmd_endwin's c:830 settyinfo
+/// restores it to hand the terminal back to the shell.
+#[allow(non_upper_case_globals)]
+static saved_tty_state: Mutex<Option<libc::termios>> = Mutex::new(None); // c:74
 
 /// `ZCF_MOUSE_ACTIVE` flag (curses.c:116).
 pub const ZCF_MOUSE_ACTIVE: u32 = 1 << 0;
