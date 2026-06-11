@@ -224,3 +224,25 @@ mod special_param_introspect {
         assert_eq!(z.stdout, r.stdout);
     }
 }
+
+/// c:Src/text.c gettext2 WC_CASE arm (~520) — `functions f` re-emits
+/// case bodies with the per-arm terminator (`;;` / `;&` / `;|`),
+/// `(pat)` parens, and `case W in` / `esac` on their own lines.
+mod functions_display_case_terminators {
+    use super::*;
+
+    #[test]
+    fn case_body_keeps_dsemi_and_semiamp() {
+        assert_parity(r#"f() { case a in a) :;; b) :;& esac }; functions f"#);
+    }
+
+    #[test]
+    fn case_body_multi_statement_and_semibar() {
+        assert_parity(r#"f() { case $x in a|b) print x; print y;; (c*) :;| esac }; functions f"#);
+    }
+
+    #[test]
+    fn case_between_sibling_statements() {
+        assert_parity(r#"f() { pre; case a in a) :;; esac; post }; functions f"#);
+    }
+}

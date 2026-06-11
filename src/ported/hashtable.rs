@@ -1419,7 +1419,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
             //     the matching `}` with depth+1, then `\n\t` * depth
             //     + `}`.
             let canonicalize_body = |source: &str| -> String {
-                fn fmt_body(s: &str, depth: usize) -> String {
+                fn fmt_body(s: &str, depth: usize, lead: bool) -> String {
                     let chars: Vec<char> = s.chars().collect();
                     let mut out = String::with_capacity(s.len());
                     let mut in_sq = false;
@@ -1430,11 +1430,11 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     let mut i = 0;
                     // NOTE: caller (the funcdef emit at hashtable.rs:1364)
                     // already wrote one leading `\t` via zoutputtab. Don't
-                    // double-indent the first statement. For depth > 1
+                    // double-indent the first statement. With `lead`
                     // (recursive nested-fn body), we DO need the leading
                     // indent because the caller writes `name () {\n` then
                     // recurses without a prior tab.
-                    if depth > 1 && !chars.is_empty() {
+                    if lead && !chars.is_empty() {
                         out.push_str(&stmt_indent);
                     }
                     while i < chars.len() {
@@ -1463,6 +1463,38 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                         // when in_sq/in_dq == false and brace/paren
                         // depth == 0.
                         if !in_sq && !in_dq && brace_depth == 0 && paren_depth == 0 {
+                            // c:Src/text.c gettext2 WC_CASE arm (~520) —
+                            // C re-emits case statements from wordcode as
+                            //   case W in
+                            //           (p | q) body ;;
+                            //   esac
+                            // with `;;`/`;&`/`;|` per WC_CASE_TYPE. The
+                            // generic `;`-break below ATE the `;;` (it
+                            // skips runs of `;`), so `functions f`
+                            // displayed case bodies without terminators
+                            // and with `;&` mangled to `&`. Re-render the
+                            // whole case..esac region case-aware.
+                            if out.is_empty() || out.ends_with('\n') || out.ends_with('\t') {
+                                if let Some((next_i, txt)) = try_render_case(&chars, i, depth) {
+                                    out.push_str(&txt);
+                                    i = next_i;
+                                    // Consume trailing `;` + ws; emit a
+                                    // statement break if more follows.
+                                    while i < chars.len()
+                                        && (chars[i] == ' '
+                                            || chars[i] == '\t'
+                                            || chars[i] == '\n'
+                                            || chars[i] == ';')
+                                    {
+                                        i += 1;
+                                    }
+                                    if i < chars.len() {
+                                        out.push('\n');
+                                        out.push_str(&stmt_indent);
+                                    }
+                                    continue;
+                                }
+                            }
                             // Try to match `<ident>\s*\(\s*\)\s*\{` at
                             // current position, OR `function\s+<ident>...{`.
                             let fn_start = try_match_fn_def(&chars, i);
@@ -1481,7 +1513,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                                         .to_string();
                                     out.push_str(&name_str);
                                     out.push_str(" () {\n");
-                                    out.push_str(&fmt_body(&body_trim, depth + 1));
+                                    out.push_str(&fmt_body(&body_trim, depth + 1, true));
                                     out.push('\n');
                                     out.push_str(&stmt_indent);
                                     out.push('}');
@@ -1605,6 +1637,265 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     }
                     Some((i + 1, name))
                 }
+                /// Keyword match at `i` with word boundaries on both
+                /// sides (start/ws/`;` before; end/ws/`;` after).
+                fn matches_kw(chars: &[char], i: usize, kw: &str) -> bool {
+                    let kl = kw.len();
+                    if i + kl > chars.len() {
+                        return false;
+                    }
+                    if !chars[i..i + kl].iter().copied().eq(kw.chars()) {
+                        return false;
+                    }
+                    let before_ok = i == 0
+                        || chars[i - 1].is_whitespace()
+                        || chars[i - 1] == ';';
+                    let after_ok = i + kl == chars.len()
+                        || chars[i + kl].is_whitespace()
+                        || chars[i + kl] == ';';
+                    before_ok && after_ok
+                }
+                /// Split a case-pattern alternation on top-level `|`
+                /// (quote/paren aware), trimming each alternative —
+                /// `a|b` → ["a", "b"], rendered `(a | b)` like
+                /// C:Src/text.c gettext2's `taddstr(" | ")` walk.
+                fn split_top_bar(pat: &str) -> Vec<String> {
+                    let chars: Vec<char> = pat.chars().collect();
+                    let mut alts = Vec::new();
+                    let mut cur = String::new();
+                    let (mut in_sq, mut in_dq) = (false, false);
+                    let mut pd = 0i32;
+                    let mut i = 0;
+                    while i < chars.len() {
+                        let c = chars[i];
+                        if !in_sq && !in_dq && c == '\\' && i + 1 < chars.len() {
+                            cur.push(c);
+                            cur.push(chars[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        if !in_dq && c == '\'' {
+                            in_sq = !in_sq;
+                        } else if !in_sq && c == '"' {
+                            in_dq = !in_dq;
+                        } else if !in_sq && !in_dq {
+                            match c {
+                                '(' => pd += 1,
+                                ')' => pd = (pd - 1).max(0),
+                                '|' if pd == 0 => {
+                                    alts.push(cur.trim().to_string());
+                                    cur.clear();
+                                    i += 1;
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                        cur.push(c);
+                        i += 1;
+                    }
+                    alts.push(cur.trim().to_string());
+                    alts
+                }
+                /// Case-aware re-render of one `case W in … esac`
+                /// region starting at `start` (which must point at the
+                /// `case` keyword). Returns (index-after-`esac`,
+                /// rendered text) or None when the region doesn't
+                /// parse (caller falls back to generic emission).
+                /// Output shape mirrors C:Src/text.c gettext2 WC_CASE:
+                ///   case W in
+                ///   \t(p | q) body ;;
+                ///   esac
+                /// with arm bodies recursively formatted at depth+2
+                /// (continuation statements land one level deeper than
+                /// the arm line, matching zsh 5.9 output).
+                fn try_render_case(
+                    chars: &[char],
+                    start: usize,
+                    depth: usize,
+                ) -> Option<(usize, String)> {
+                    let n = chars.len();
+                    let mut i = start;
+                    if !matches_kw(chars, i, "case") {
+                        return None;
+                    }
+                    i += 4;
+                    if i >= n || !chars[i].is_whitespace() {
+                        return None;
+                    }
+                    while i < n && chars[i].is_whitespace() {
+                        i += 1;
+                    }
+                    // Scrutinee word: scan to unquoted whitespace.
+                    let word_start = i;
+                    let (mut in_sq, mut in_dq) = (false, false);
+                    while i < n {
+                        let c = chars[i];
+                        if !in_sq && !in_dq && c == '\\' && i + 1 < n {
+                            i += 2;
+                            continue;
+                        }
+                        if !in_dq && c == '\'' {
+                            in_sq = !in_sq;
+                        } else if !in_sq && c == '"' {
+                            in_dq = !in_dq;
+                        } else if !in_sq && !in_dq && c.is_whitespace() {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    if i == word_start || in_sq || in_dq {
+                        return None;
+                    }
+                    let word: String = chars[word_start..i].iter().collect();
+                    while i < n && chars[i].is_whitespace() {
+                        i += 1;
+                    }
+                    if !matches_kw(chars, i, "in") {
+                        return None;
+                    }
+                    i += 2;
+                    let indent_case = "\t".repeat(depth);
+                    let indent_arm = "\t".repeat(depth + 1);
+                    let mut rendered = format!("case {} in", word);
+                    loop {
+                        while i < n && chars[i].is_whitespace() {
+                            i += 1;
+                        }
+                        if i >= n {
+                            return None; // unterminated — bail out
+                        }
+                        if matches_kw(chars, i, "esac") {
+                            i += 4;
+                            break;
+                        }
+                        // Pattern: optional leading `(`, alts to `)`.
+                        if chars[i] == '(' {
+                            i += 1;
+                        }
+                        let pat_start = i;
+                        let (mut in_sq, mut in_dq) = (false, false);
+                        let mut pd = 0i32;
+                        while i < n {
+                            let c = chars[i];
+                            if !in_sq && !in_dq && c == '\\' && i + 1 < n {
+                                i += 2;
+                                continue;
+                            }
+                            if !in_dq && c == '\'' {
+                                in_sq = !in_sq;
+                            } else if !in_sq && c == '"' {
+                                in_dq = !in_dq;
+                            } else if !in_sq && !in_dq {
+                                if c == '(' {
+                                    pd += 1;
+                                } else if c == ')' {
+                                    if pd == 0 {
+                                        break;
+                                    }
+                                    pd -= 1;
+                                }
+                            }
+                            i += 1;
+                        }
+                        if i >= n || chars[i] != ')' {
+                            return None;
+                        }
+                        let pat_src: String = chars[pat_start..i].iter().collect();
+                        i += 1; // consume `)`
+                        while i < n && (chars[i] == ' ' || chars[i] == '\t') {
+                            i += 1;
+                        }
+                        // Body: scan to `;;`/`;&`/`;|` or this case's
+                        // `esac` (last arm without terminator), quote/
+                        // paren/brace aware, nested case…esac tracked.
+                        let body_start = i;
+                        let mut body_end = i;
+                        let mut term: Option<&str> = None;
+                        let (mut in_sq, mut in_dq) = (false, false);
+                        let (mut bd, mut pd) = (0i32, 0i32);
+                        let mut nested_case = 0i32;
+                        loop {
+                            if i >= n {
+                                return None; // unterminated — bail out
+                            }
+                            let c = chars[i];
+                            if !in_sq && !in_dq && c == '\\' && i + 1 < n {
+                                i += 2;
+                                continue;
+                            }
+                            if !in_dq && c == '\'' {
+                                in_sq = !in_sq;
+                                i += 1;
+                                continue;
+                            }
+                            if !in_sq && c == '"' {
+                                in_dq = !in_dq;
+                                i += 1;
+                                continue;
+                            }
+                            if in_sq || in_dq {
+                                i += 1;
+                                continue;
+                            }
+                            match c {
+                                '{' => bd += 1,
+                                '}' => bd = (bd - 1).max(0),
+                                '(' => pd += 1,
+                                ')' => pd = (pd - 1).max(0),
+                                _ => {}
+                            }
+                            if bd == 0 && pd == 0 {
+                                if matches_kw(chars, i, "case") {
+                                    nested_case += 1;
+                                    i += 4;
+                                    continue;
+                                }
+                                if matches_kw(chars, i, "esac") {
+                                    if nested_case == 0 {
+                                        body_end = i;
+                                        break;
+                                    }
+                                    nested_case -= 1;
+                                    i += 4;
+                                    continue;
+                                }
+                                if nested_case == 0
+                                    && c == ';'
+                                    && i + 1 < n
+                                    && matches!(chars[i + 1], ';' | '&' | '|')
+                                {
+                                    body_end = i;
+                                    term = Some(match chars[i + 1] {
+                                        ';' => ";;",
+                                        '&' => ";&",
+                                        _ => ";|",
+                                    });
+                                    i += 2;
+                                    break;
+                                }
+                            }
+                            i += 1;
+                        }
+                        let body_src: String =
+                            chars[body_start..body_end].iter().collect();
+                        let body_trim = body_src.trim().trim_end_matches(';').trim_end();
+                        rendered.push('\n');
+                        rendered.push_str(&indent_arm);
+                        rendered.push('(');
+                        rendered.push_str(&split_top_bar(&pat_src).join(" | "));
+                        rendered.push_str(") ");
+                        rendered.push_str(&fmt_body(body_trim, depth + 2, false));
+                        if let Some(t) = term {
+                            rendered.push(' ');
+                            rendered.push_str(t);
+                        }
+                    }
+                    rendered.push('\n');
+                    rendered.push_str(&indent_case);
+                    rendered.push_str("esac");
+                    Some((i, rendered))
+                }
                 fn find_matching_brace(chars: &[char], open: usize) -> Option<usize> {
                     let mut depth = 1i32;
                     let mut in_sq = false;
@@ -1646,7 +1937,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     s.pop();
                     s = s.trim_end().to_string();
                 }
-                fmt_body(&s, 1)
+                fmt_body(&s, 1, false)
             };
             t = hn.body.clone().map(|s| canonicalize_body(&s));
         }

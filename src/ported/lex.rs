@@ -2061,8 +2061,18 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         && (LEX_INCMDPOS.get() || LEX_INTYPESET.get())
                         && bct == 0
                         && brct == 0
-                        && LEX_INCASEPAT.get() == 0
+                        && LEX_INCASEPAT.get() <= 0
                     {
+                        // c:1229-1230 — C gates only on
+                        // `(incmdpos || intypeset) && !bct && !brct`;
+                        // incasepat is not consulted. par_case sets
+                        // incasepat=-1 with incmdpos=1 before lexing
+                        // the token after a whole-`(...)` case
+                        // pattern (parse.c:1300-1302) — that token
+                        // may be the body's first word, and
+                        // `out+=hit` there must still become
+                        // ENVSTRING. Keep blocking only the >0
+                        // in-pattern states.
                         // Check for VAR=value assignment (but not in case pattern context)
                         let tok_so_far = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
                         if is_valid_assignment_target(&tok_so_far) {

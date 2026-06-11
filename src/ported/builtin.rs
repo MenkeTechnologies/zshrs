@@ -4878,6 +4878,39 @@ pub fn bin_typeset(
                         elems.push(re);
                     }
                 }
+                // c:Src/builtin.c:2355-2378 — tc (type-conversion)
+                // branch: the requested type differs from the
+                // existing param's type. zsh keeps readonly/exported
+                // status across the conversion (`on |= ~off &
+                // (PM_READONLY|PM_EXPORTED) & pm->node.flags`) but
+                // turns PM_READONLY OFF on the old pm so the delete/
+                // recreate succeeds — `typeset -r h2=(); typeset -A
+                // h2=(k v)` is legal in zsh. The Rust assignment
+                // funnel (sethparam/setaparam) performs the type
+                // rewrite in place, so clearing PM_READONLY here is
+                // the c:2359 step and the post-assign stamp below
+                // restores it from `on` (c:2357 carry).
+                {
+                    let requested = if is_hashed { PM_HASHED } else { PM_ARRAY };
+                    let existing_flags = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(n).map(|pm| pm.node.flags as u32));
+                    if let Some(f) = existing_flags {
+                        if (f & PM_UNSET) == 0
+                            && crate::ported::zsh_h::PM_TYPE(f) != requested
+                        {
+                            // c:2357 — carry readonly/exported into `on`.
+                            on |= !off & (PM_READONLY | PM_EXPORTED) & f;
+                            // c:2359 — `pm->node.flags &= ~PM_READONLY;`
+                            if let Ok(mut tab) = paramtab().write() {
+                                if let Some(pm) = tab.get_mut(n) {
+                                    pm.node.flags &= !(PM_READONLY as i32);
+                                }
+                            }
+                        }
+                    }
+                }
                 // c:Src/builtin.c:2476-2479 + c:2691 + c:4087 arrsetfn —
                 // pre-stamp value-affecting flags on the pm BEFORE the
                 // array-init setarrvalue runs, so PM_UNIQUE drives dedup

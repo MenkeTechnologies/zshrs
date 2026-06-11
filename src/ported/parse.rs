@@ -1617,24 +1617,51 @@ fn par_case() -> Option<ZshCommand> {
 
                 // c:1322-1354 hack: when this is the first alt AND
                 // the string starts with the Inpar marker, the lexer
-                // absorbed the whole `(...)` as one token. Strip the
+                // absorbed the whole `(...)` as one token. Chuck the
+                // blanks around `|`/parens at depth 1 (c:1332-1338 —
+                // `( d | e )` must become `(d|e)`), then strip the
                 // surrounding parens — the remainder IS the pattern.
                 // The closing arm-paren was absorbed too, so we don't
                 // expect a separate OUTPAR token afterward.
                 if patterns.is_empty() && str_val.starts_with(crate::ported::zsh_h::Inpar) {
-                    let mut pct = 0i32;
+                    use crate::ported::zsh_h::{Bar, Inpar, Outpar};
+                    let meta = crate::ported::zsh_h::Meta as char;
+                    let blank = |c: char| c.is_ascii() && crate::ported::ztype_h::iblank(c as u8);
                     let mut chars: Vec<char> = str_val.chars().collect();
+                    let mut pct = 0i32;
+                    let mut i = 0usize;
                     let mut end_idx: Option<usize> = None;
-                    for (idx, &c) in chars.iter().enumerate() {
-                        if c == crate::ported::zsh_h::Inpar {
+                    while i < chars.len() {
+                        if chars[i] == Inpar {
                             pct += 1;
-                        } else if c == crate::ported::zsh_h::Outpar {
+                        }
+                        if pct == 1 {
+                            // c:1332-1334 — chuck blanks AFTER `|`/`(`.
+                            if chars[i] == Bar || chars[i] == Inpar {
+                                while i + 1 < chars.len() && blank(chars[i + 1]) {
+                                    chars.remove(i + 1);
+                                }
+                            }
+                            // c:1335-1338 — chuck blanks BEFORE `|`/`)`
+                            // (not Meta-escaped blanks).
+                            if chars[i] == Bar || chars[i] == Outpar {
+                                while i >= 1
+                                    && blank(chars[i - 1])
+                                    && (i < 2 || chars[i - 2] != meta)
+                                {
+                                    chars.remove(i - 1);
+                                    i -= 1;
+                                }
+                            }
+                        }
+                        if chars[i] == Outpar {
                             pct -= 1;
                             if pct == 0 {
-                                end_idx = Some(idx);
+                                end_idx = Some(i);
                                 break;
                             }
                         }
+                        i += 1;
                     }
                     if let Some(idx) = end_idx {
                         chars.remove(idx);
@@ -1644,7 +1671,18 @@ fn par_case() -> Option<ZshCommand> {
                     }
                 }
                 patterns.push(str_val);
-                set_incasepat(2);
+                if absorbed_outpar {
+                    // c:Src/parse.c:1300-1302 — after a whole-`(...)`
+                    // pattern the next token may be the body's first
+                    // command word; C lexes it with `incasepat = -1;
+                    // incmdpos = 1;` so assignments (`out+=hit`)
+                    // become ENVSTRING instead of a plain STRING
+                    // (lex.c:1229-1230 gates ENVSTRING on incmdpos).
+                    set_incasepat(-1);
+                    set_incmdpos(true);
+                } else {
+                    set_incasepat(2);
+                }
                 zshlex();
                 // When the hack fired the closing `)` is already
                 // consumed; don't read alt-`|` continuations either.
@@ -6058,10 +6096,82 @@ pub fn par_case_wordcode(_cmplx: &mut i32) {
                 set_incasepat(1);
                 set_incmdpos(false);
             }
-            // c:1321-1357 — else { ... `(...)` whole-pattern hack
-            // (Inpar at str[0]); else YYERRORV. Not yet ported —
-            // err out on unexpected. }
+            // c:1321-1357 — else { ... `(...)` whole-pattern hack:
+            // the lexer absorbed a complete `(...)` as one STRING
+            // (str[0] == Inpar) and the current tok is already the
+            // body's first token. Massage blanks around `|`/parens
+            // at depth 1, validate balance, strip the surrounding
+            // parens; the remainder IS the pattern. }
             else {
+                use crate::ported::zsh_h::{Bar, Inpar, Outpar};
+                if nalts == 0 && str.starts_with(Inpar) {
+                    let meta = crate::ported::zsh_h::Meta as char;
+                    let blank = |c: char| c.is_ascii() && crate::ported::ztype_h::iblank(c as u8);
+                    let mut chars: Vec<char> = str.chars().collect();
+                    // c:1323 — `int pct = 0, sl;`
+                    let mut pct = 0i32;
+                    let mut i = 0usize;
+                    // c:1326-1344 — scan/massage loop. `s` ↔ `i`;
+                    // chuck(p) ↔ chars.remove(idx).
+                    let mut early_break = false;
+                    while i < chars.len() {
+                        if chars[i] == Inpar {
+                            pct += 1;
+                        }
+                        // c:1329-1330 — `if (!pct) break;` (char past
+                        // the balanced close → trailing garbage).
+                        if pct == 0 {
+                            early_break = true;
+                            break;
+                        }
+                        if pct == 1 {
+                            // c:1332-1334 — chuck blanks AFTER `|`/`(`.
+                            if chars[i] == Bar || chars[i] == Inpar {
+                                while i + 1 < chars.len() && blank(chars[i + 1]) {
+                                    chars.remove(i + 1);
+                                }
+                            }
+                            // c:1335-1338 — chuck blanks BEFORE `|`/`)`
+                            // (not Meta-escaped blanks).
+                            if chars[i] == Bar || chars[i] == Outpar {
+                                while i >= 1
+                                    && blank(chars[i - 1])
+                                    && (i < 2 || chars[i - 2] != meta)
+                                {
+                                    chars.remove(i - 1);
+                                    i -= 1;
+                                }
+                            }
+                        }
+                        if chars[i] == Outpar {
+                            pct -= 1;
+                        }
+                        i += 1;
+                    }
+                    // c:1345-1346 — `if (*s || pct || s == str)
+                    // YYERRORV(oecused);`
+                    if early_break || pct != 0 || chars.is_empty() {
+                        zerr("par_case: expected `)` or `|`");
+                        return;
+                    }
+                    // c:1347-1352 — strip surrounding `(...)`.
+                    chars.pop();
+                    chars.remove(0);
+                    let stripped: String = chars.into_iter().collect();
+                    // c:1353-1355 — `ecstr(str); ecadd(ecnpats++); nalts++;`
+                    ecstr(&stripped);
+                    let np = ECNPATS.with(|cc| {
+                        let v = cc.get();
+                        cc.set(v + 1);
+                        v
+                    }) as u32;
+                    ecadd(np);
+                    nalts += 1;
+                    // c:1356 — `break;` — tok is already the body's
+                    // first token; fall through to par_save_list.
+                    break;
+                }
+                // c:1358 — `YYERRORV(oecused);`
                 zerr("par_case: expected `)` or `|`");
                 return;
             }

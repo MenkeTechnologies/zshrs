@@ -378,3 +378,36 @@ fn source_zwc_sibling_and_zwc_only() {
     assert_eq!(r.stdout, z.stdout, "zshrs source of zwc-only path broken");
     assert_eq!(z.exit, r.exit);
 }
+
+/// zshrs zcompile of a function file whose case arms use the
+/// open-paren `(pat)` form (c:Src/parse.c:1321-1357 whole-pattern
+/// hack in par_case). The wordcode parser previously errored
+/// "par_case: expected `)` or `|`" on every such file. Both shells
+/// must load + run the zshrs-written dump.
+#[test]
+fn autoload_zwc_open_paren_case_arms() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("opfn"),
+        "case $1 in\n  (a) print A;;\n  (b|c) print BC;;\n  ( d | e ) print DE;;\n  (*) print other;;\nesac\n",
+    )
+    .unwrap();
+    let r = run_zshrs_in(d.path(), "zcompile opfn");
+    assert_eq!(r.exit, 0, "zshrs zcompile of (pat) case arms failed: {}", r.stdout);
+    std::fs::remove_file(d.path().join("opfn")).unwrap();
+    for (arg, want) in [("a", "A"), ("c", "BC"), ("e", "DE"), ("zz", "other")] {
+        let script = format!(
+            r#"fpath=({}); autoload -Uz opfn; opfn {}"#,
+            d.path().display(),
+            arg
+        );
+        let z = run_zsh_in(d.path(), &script);
+        let r = run_zshrs_in(d.path(), &script);
+        assert_eq!(z.stdout.trim(), want, "real zsh rejected zshrs dump: {}", z.stdout);
+        assert_eq!(r.stdout, z.stdout, "zshrs cannot run its own (pat) dump");
+        assert_eq!(z.exit, r.exit);
+    }
+}

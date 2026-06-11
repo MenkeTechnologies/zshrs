@@ -476,3 +476,37 @@ mod m_pattern_listing {
         assert_parity(r#"TPSM_K=v; f() { typeset -gm 'TPSM_K'; }; f; echo END"#);
     }
 }
+
+/// c:Src/builtin.c:2355-2378 — type conversion of a READONLY param:
+/// zsh carries readonly/exported into the new param's flags, turns
+/// PM_READONLY off during the delete/recreate, and the converted
+/// param comes out readonly again. Same-type readonly reassignment
+/// still errors.
+mod readonly_type_conversion {
+    use super::*;
+
+    #[test]
+    fn readonly_array_to_assoc_allowed() {
+        assert_parity(r#"typeset -r h2=(); typeset -A h2=(k v); typeset -p h2"#);
+    }
+
+    #[test]
+    fn readonly_scalar_to_array_allowed() {
+        assert_parity(r#"typeset -r s=x; typeset -a s=(1 2); typeset -p s"#);
+    }
+
+    #[test]
+    fn readonly_assoc_to_array_allowed() {
+        assert_parity(r#"typeset -rA h=(a b); typeset -a h=(1 2); typeset -p h"#);
+    }
+
+    #[test]
+    fn readonly_exported_conversion_keeps_export() {
+        assert_parity(r#"typeset -rx e=(); typeset -A e=(k v); typeset -p e"#);
+    }
+
+    #[test]
+    fn readonly_same_type_reassign_still_errors() {
+        assert_parity(r#"typeset -rA h=(a b); typeset -A h=(c d); typeset -p h"#);
+    }
+}

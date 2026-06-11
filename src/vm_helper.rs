@@ -2121,6 +2121,12 @@ impl ShellExecutor {
     }
 
     pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
+        // Nested scope for `>(cmd)` fd ownership — builtins running
+        // inside the function body must not close the CALLER's
+        // pending psub fds (`myfn >(cmd)` keeps /dev/fd/N alive for
+        // the whole function, like C's per-job filelist). See
+        // PSUB_SCOPE_DEPTH in fusevm_bridge.rs.
+        let _psub_scope = crate::fusevm_bridge::PsubScope::enter();
         // c:Src/exec.c — `disable -f NAME` flips the DISABLED flag on
         // the shfunctab entry. `lookupshfunc` (which dispatch consults)
         // returns NULL for DISABLED entries, falling through to PATH
