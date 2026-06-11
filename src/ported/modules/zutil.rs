@@ -3155,12 +3155,30 @@ pub fn bin_zparseopts(
                 continue;
             }
             flat.push(format!("-{}", d.name));
+            // c:2110-2117 — the value-assembly loop:
+            //
+            //     for (v = d->vals; v; v = v->onext) {
+            //         if (v->arg) {
+            //             strcpy(n, v->arg);
+            //             n += strlen(v->arg);
+            //         }
+            //         *n = ' ';
+            //     }
+            //     *n = '\0';
+            //
+            // `*n = ' '` does NOT advance n, so the space it writes is
+            // overwritten by the next iteration's strcpy (and the final
+            // one by the c:2117 NUL). Net effect: multi-occurrence
+            // option args CONCATENATE with NO separator. Verified
+            // against real zsh: `zparseopts -A opts x+:` with
+            // `-x a -x b` → opts[-x]="ab". Prior port joined with a
+            // space ("a b"), inventing a separator the C never emits.
             let joined: String = d
                 .vals
                 .iter()
                 .filter_map(|v| v.arg.clone())
                 .collect::<Vec<_>>()
-                .join(" ");
+                .concat();
             flat.push(joined);
         }
         if !keep || !flat.is_empty() {
