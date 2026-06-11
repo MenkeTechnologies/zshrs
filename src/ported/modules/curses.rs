@@ -617,10 +617,50 @@ pub(crate) fn zccmd_addwin(nam: &str, args: &[String]) -> i32 {
         );
         return 1;
     }
-    let nlines: usize = args[1].parse().unwrap_or(0);
-    let ncols: usize = args[2].parse().unwrap_or(0);
-    let begin_y: usize = args[3].parse().unwrap_or(0);
-    let begin_x: usize = args[4].parse().unwrap_or(0);
+    // c:514-517 — `nlines = atoi(args[1]); ncols = atoi(args[2]);
+    //              begin_y = atoi(args[3]); begin_x = atoi(args[4]);`
+    // atoi keeps the sign; the geometry contract is then newwin(3)'s:
+    //   - nlines/ncols == 0 → extend to the screen's bottom/right
+    //     edge (NOT an empty window — prior port created a 0x0
+    //     buffer that silently "worked")
+    //   - negative dims / origin off-screen → newwin returns NULL →
+    //     c:551-555 "failed to create window `%s'" + exit 1 (prior
+    //     port clamped negatives to 0 via parse::<usize> and never
+    //     failed)
+    let (nlines_raw, _) = crate::ported::utils::zstrtol(&args[1], 10); // c:514
+    let (ncols_raw, _) = crate::ported::utils::zstrtol(&args[2], 10); // c:515
+    let (begin_y_raw, _) = crate::ported::utils::zstrtol(&args[3], 10); // c:516
+    let (begin_x_raw, _) = crate::ported::utils::zstrtol(&args[4], 10); // c:517
+    let (scr_rows, scr_cols) = {
+        let wins = windows_lock().lock().unwrap();
+        wins.get("stdscr")
+            .map(|s| (s.rows as i64, s.cols as i64))
+            .unwrap_or((24, 80))
+    };
+    let fail_create = |nam: &str| -> i32 {
+        // c:551-555 — `zwarnnam(nam, "failed to create window `%s'", w->name);`
+        zwarnnam(nam, &format!("failed to create window `{}'", args[0]));
+        1
+    };
+    if nlines_raw < 0 || ncols_raw < 0 || begin_y_raw < 0 || begin_x_raw < 0
+        || begin_y_raw >= scr_rows
+        || begin_x_raw >= scr_cols
+    {
+        return fail_create(nam); // c:551 newwin NULL
+    }
+    // newwin(3): zero dims default to the distance to the screen edge.
+    let nlines = if nlines_raw == 0 {
+        (scr_rows - begin_y_raw) as usize
+    } else {
+        nlines_raw as usize
+    };
+    let ncols = if ncols_raw == 0 {
+        (scr_cols - begin_x_raw) as usize
+    } else {
+        ncols_raw as usize
+    };
+    let begin_y = begin_y_raw as usize;
+    let begin_x = begin_x_raw as usize;
     let mut w = zc_win::new(args[0].as_str(), nlines, ncols, begin_y, begin_x);
     if let Some(parent_name) = args.get(5) {
         // C: node = zcurses_validate_window(args[5], ZCURSES_USED);
