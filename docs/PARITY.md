@@ -10,12 +10,22 @@ box — all 82 binaries, no extrapolation).
 | Metric              | Count  |
 | ------------------- | ------ |
 | Total tests         | 43,904 |
-| Passing             | 43,868 |
-| **Failing**         | **28** |
+| Passing             | 43,877 |
+| **Failing**         | **19** |
 | Ignored             | 8      |
-| Pass rate           | 99.94% |
+| Pass rate           | 99.96% |
 | Test binaries       | 82     |
-| Binaries with fails | 9      |
+| Binaries with fails | 8      |
+
+2026-06-11 (late): cd_options_parity ×9 closed — root cause was not
+env-specific but a startup-PWD port gap: the bin entry imported the
+process-entry environ snapshot's stale `$PWD` into paramtab and never
+ran `set_pwd_env()` after the import (C: Src/params.c:955), and
+`set_pwd_env` itself read paramtab circularly instead of the validated
+`pwd`/`oldpwd` globals (C: Src/builtin.c:800-827). ShellExecutor::new
+now ports the full Src/init.c:1236-1259 chain (HOME-if-ispwd → env
+PWD-if-ispwd → zgetcwd, plus OLDPWD fallback) and calls set_pwd_env
+after the env import. cd_options_parity is 13/13.
 
 Delta vs the 2026-06-11 morning snapshot: the 74-failure list dropped
 to 13 (61 closed by the day's fixes), but the full sweep surfaces 15
@@ -45,18 +55,6 @@ Flaky (not counted as stable failures):
 - `zcompdump_byte_identical_roundtrip`
 - `zcompdump_synthesize_format`
 - `zstyle_canonical_roundtrip`
-
-### cd_options_parity (9) — predates 2026-06-11 work; env-specific
-
-- `auto_cd::auto_cd_bare_dirname`
-- `basic_cd::cd_dash_goes_to_oldpwd`
-- `basic_cd::cd_to_subdir_then_pwd`
-- `cd_L_P_flags::cd_dash_L_keeps_logical_path`
-- `cd_L_P_flags::cd_dash_P_resolves_physical`
-- `cd_two_args::cd_two_arg_substitutes`
-- `chase_links::chase_links_resolves_symlink`
-- `oldpwd::oldpwd_set_after_cd`
-- `oldpwd::pwd_var_updates_on_cd`
 
 ### discovered_parity_failures (2)
 
@@ -97,10 +95,6 @@ Flaky (not counted as stable failures):
 
 ## Themes
 
-- **cd / PWD / OLDPWD arm.** cd_options_parity ×9 — largest remaining
-  block; logical-vs-physical path handling and PWD/OLDPWD updates on
-  this machine (macOS `/tmp` → `/private/tmp` symlink likely
-  implicated).
 - **zcompile / zcompdump binary formats.** `zcompdump_*`,
   `zstyle_canonical_roundtrip`, `bulk_b_zcompile_tmpfile`,
   `bulk_h_zcompile_then_rm_zwc`, `bulk_p_fc_zcompile_empty_file` —
