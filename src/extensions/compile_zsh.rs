@@ -6468,19 +6468,57 @@ impl ZshCompiler {
                         // because the RHS became 5-byte `ab\\c`.
                         // qq_then_Q_roundtrip_specials parity test.
                         let segments = split_pattern_for_glob_subst(right);
+                        // c:Src/subst.c — the `~` substitution flag
+                        // (`${~P}` / `$~P`) turns on GLOB_SUBST for
+                        // THAT substitution: C shtokenizes the spliced
+                        // value so its metachars stay pattern-active
+                        // regardless of the global option. Skip the
+                        // guard for `~`-flagged segments. (`${~~...}`
+                        // forced-off is not yet modelled; it falls to
+                        // the option default.)
+                        let tilde_glob = |text: &str| -> bool {
+                            // The compiler's word text may carry the
+                            // lexer's token form: `{` arrives as
+                            // Inbrace (U+008F). Accept both.
+                            let cs: Vec<char> = text.chars().take(4).collect();
+                            // `$` arrives as String (U+0085) or
+                            // Qstring (U+008C) from the lexer.
+                            let dollar = matches!(
+                                cs.first().map(|c| *c as u32),
+                                Some(0x24) | Some(0x85) | Some(0x8c)
+                            );
+                            if !dollar {
+                                return false;
+                            }
+                            let (flag_at, brace) = match cs.get(1) {
+                                Some(c) if *c == '{' || *c as u32 == 0x8f => (2, true),
+                                _ => (1, false),
+                            };
+                            let _ = brace;
+                            // `~` may itself arrive as the Tilde token
+                            // (U+0098) from the lexer.
+                            let is_tilde =
+                                |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0x98);
+                            is_tilde(cs.get(flag_at)) && !is_tilde(cs.get(flag_at + 1))
+                        };
                         if segments.len() <= 1 {
                             // Single segment — preserve original
                             // shape (the lone substitution case).
                             self.dq_context_depth += 1;
                             self.compile_word_str(right);
                             self.dq_context_depth -= 1;
-                            self.builder.emit(
-                                Op::CallBuiltin(
-                                    crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
-                                    1,
-                                ),
-                                0,
-                            );
+                            // NOTE: no .trim() here — the String token
+                            // U+0085 is Unicode whitespace and trim()
+                            // would eat the leading `$` token.
+                            if !tilde_glob(right) {
+                                self.builder.emit(
+                                    Op::CallBuiltin(
+                                        crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
+                                        1,
+                                    ),
+                                    0,
+                                );
+                            }
                         } else {
                             // Multiple segments — emit each, concat
                             // sequentially. First segment establishes
@@ -6492,13 +6530,15 @@ impl ZshCompiler {
                                         self.dq_context_depth += 1;
                                         self.compile_word_str(text);
                                         self.dq_context_depth -= 1;
-                                        self.builder.emit(
-                                            Op::CallBuiltin(
-                                                crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
-                                                1,
-                                            ),
-                                            0,
-                                        );
+                                        if !tilde_glob(text) {
+                                            self.builder.emit(
+                                                Op::CallBuiltin(
+                                                    crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
+                                                    1,
+                                                ),
+                                                0,
+                                            );
+                                        }
                                     }
                                     PatSeg::Literal(text) => {
                                         // Untokenize source-level
