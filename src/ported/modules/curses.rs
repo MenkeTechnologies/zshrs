@@ -713,16 +713,25 @@ pub(crate) fn zccmd_move(nam: &str, args: &[String]) -> i32 {
         );
         return 1;
     }
-    let new_y: usize = args[1].parse().unwrap_or(0);
-    let new_x: usize = args[2].parse().unwrap_or(0);
+    // c:681-687 — `y = atoi(args[1]); x = atoi(args[2]);
+    //              if (wmove(w->win, y, x) != OK) return 1;`
+    // atoi: garbage/negative input parses to whatever leading int
+    // exists (0 for pure garbage, negative for "-1"); wmove then
+    // REJECTS any (y,x) outside the window with ERR → exit 1. Prior
+    // port parsed as usize (negative → 0) and silently swallowed
+    // out-of-bounds moves, returning 0 — `zcurses move w 999 0`
+    // exited 0 without moving where zsh exits 1.
+    let (new_y, _) = crate::ported::utils::zstrtol(&args[1], 10); // c:681 atoi
+    let (new_x, _) = crate::ported::utils::zstrtol(&args[2], 10); // c:682 atoi
     let mut wins = windows_lock().lock().unwrap();
     if let Some(w) = wins.get_mut(args[0].as_str()) {
-        if new_y < w.rows && new_x < w.cols {
-            w.cursor_y = new_y;
-            w.cursor_x = new_x;
+        if new_y < 0 || new_x < 0 || new_y as usize >= w.rows || new_x as usize >= w.cols {
+            return 1; // c:686-687 wmove != OK
         }
+        w.cursor_y = new_y as usize;
+        w.cursor_x = new_x as usize;
     }
-    0
+    0 // c:689
 }
 
 // =====================================================================
