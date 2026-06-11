@@ -981,32 +981,58 @@ pub(crate) fn zccmd_attr(nam: &str, args: &[String]) -> i32 {
         );
         return 1;
     }
+    let mut ret = 0; // c:848
     let mut wins = windows_lock().lock().unwrap();
     let w = match wins.get_mut(args[0].as_str()) {
         Some(w) => w,
         None => return 1,
     };
     for spec in &args[1..] {
-        let (mode, attr_name) = match spec.as_bytes().first() {
-            Some(b'+') => (ZCURSES_ATTRON, &spec[1..]),
-            Some(b'-') => (ZCURSES_ATTROFF, &spec[1..]),
-            _ => (ZCURSES_ATTRON, spec.as_str()),
-        };
-        let entry = match zcurses_attrget(w, attr_name) {
-            Some(e) => e,
-            None => {
-                drop(wins);
-                zwarnnam(nam, &format!("attribute `{}' not known", attr_name));
-                return 1;
+        // c:861
+        if spec.contains('/') {
+            // c:862-866 — `if (strchr(*attrs, '/')) {
+            //                  if ((cpn = zcurses_colorget(nam, *attrs)) == NULL ||
+            //                      wcolor_set(w->win, cpn->colorpair, NULL) == ERR)
+            //                      ret = 1;
+            //              }`
+            // Color-pair spec "fg/bg". Prior port had NO `/` arm —
+            // `zcurses attr win red/black` fell into the attribute
+            // lookup and errored "attribute `red/black' not known".
+            // The pair index lands in the chtype-convention high bits
+            // of w.attrs (same COLOR_PAIR(n)<<16 encoding zccmd_bg
+            // uses) for the refresh-time SGR emitter.
+            let cp = colorpair_get_or_alloc(spec);
+            if cp < 0 {
+                ret = 1; // c:866
+            } else {
+                w.attrs = (w.attrs & 0xffff) | ((cp as u32) << 16); // c:865 wcolor_set
             }
+            continue;
+        }
+        // c:872-885 — leading +/- selects ATTRON/ATTROFF; bare name
+        // defaults to ATTRON.
+        let (mode, attr_name) = match spec.as_bytes().first() {
+            Some(b'+') => (ZCURSES_ATTRON, &spec[1..]), // c:877-879
+            Some(b'-') => (ZCURSES_ATTROFF, &spec[1..]), // c:873-875
+            _ => (ZCURSES_ATTRON, spec.as_str()), // c:881-883
         };
-        match mode {
-            ZCURSES_ATTRON => w.attrs |= entry.number as u32,
-            ZCURSES_ATTROFF => w.attrs &= !(entry.number as u32),
-            _ => {}
+        match zcurses_attrget(w, attr_name) {
+            Some(entry) => match mode {
+                ZCURSES_ATTRON => w.attrs |= entry.number as u32, // c:892 wattron
+                ZCURSES_ATTROFF => w.attrs &= !(entry.number as u32), // c:896 wattroff
+                _ => {}
+            },
+            None => {
+                // c:886-888 — `zwarnnam(nam, "attribute `%s' not
+                // known", ptr); ret = 1;` — C CONTINUES the loop so
+                // later specs still apply; prior port returned 1
+                // immediately, dropping every spec after the bad one.
+                zwarnnam(nam, &format!("attribute `{}' not known", attr_name));
+                ret = 1; // c:888
+            }
         }
     }
-    0
+    ret // c:903
 }
 
 // =====================================================================
@@ -1063,15 +1089,18 @@ pub(crate) fn zccmd_bg(nam: &str, args: &[String]) -> i32 {
             match zcurses_attrget(w, attr_name) {
                 Some(p) => {
                     if mode == ZCURSES_ATTRON {
-                        ch |= p.number as u32;
+                        ch |= p.number as u32; // c:967 wattron
                     } else {
-                        ch &= !(p.number as u32);
+                        ch &= !(p.number as u32); // c:971 wattroff
                     }
                 }
                 None => {
-                    drop(wins);
+                    // c:961-963 — `zwarnnam(...); ret = 1;` — C
+                    // continues the spec loop; prior port returned 1
+                    // immediately, dropping later specs AND skipping
+                    // the c:979 wbkgd gate below.
                     zwarnnam(nam, &format!("attribute `{}' not known", attr_name));
-                    return 1;
+                    ret = 1; // c:963
                 }
             }
         }
