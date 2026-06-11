@@ -803,10 +803,33 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                 }
             }
         }
-        Err(_) => {
-            // c:439 — pcre2_compile failed. C zwarnnam's; Rust returns
-            // 0 (no match) since the lexer-driven path already
-            // reported the compile error.
+        Err(e) => {
+            // c:459-462 — `pcre2_compile failed: zwarn("failed to compile
+            //              regexp /%s/: %s", rhre, buffer); break;`
+            //
+            // C emits a one-line diagnostic naming the rejected pattern
+            // and the engine's error message. Prior Rust port returned
+            // 0 silently with a comment claiming "the lexer-driven path
+            // already reported the compile error" — incorrect: nothing
+            // upstream of cond_pcre_match validates the pattern, so a
+            // bad PCRE in `[[ $s -pcre-match badpat ]]` produced 0
+            // (no match) with no diagnostic. A user typo (unclosed `(`)
+            // is then indistinguishable from a real "no match".
+            //
+            // Format the regex crate's structured Error into the same
+            // "failed to compile regexp /<pat>/: <reason>" shape.
+            let raw = e.to_string();
+            let detail = raw
+                .lines()
+                .rev()
+                .find_map(|l| l.trim().strip_prefix("error: "))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| raw.replace('\n', " "));
+            crate::ported::utils::zwarn(&format!(
+                "failed to compile regexp /{}/: {}",
+                rhre,
+                detail
+            ));
             0
         }
     }
