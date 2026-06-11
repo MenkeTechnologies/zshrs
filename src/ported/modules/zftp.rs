@@ -11,7 +11,7 @@ use crate::ported::builtin::{LASTVAL, SFCONTEXT};
 use crate::ported::params::getiparam;
 use crate::ported::utils::{errflag, getshfunc, zwarnnam};
 use crate::ported::zsh_h::{module, options, SFC_HOOK};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::os::unix::io::AsRawFd;
@@ -3666,7 +3666,7 @@ pub fn zftp_close(name: &str, args: &[&str], flags: i32) -> i32 {
 #[allow(non_snake_case)]
 pub fn newsession(nm: &str) -> Box<zftp_session> {
     // c:2806-2812 — walk zfsessions looking for a session matching `nm`.
-    //                In Rust the linked-list walk collapses to a HashMap
+    //                In Rust the linked-list walk collapses to an IndexMap
     //                contains_key; on hit we drop through (C `break`s out
     //                of the loop with zfsess still pointing at the match)
     //                without re-inserting.
@@ -4471,17 +4471,12 @@ pub fn bin_zftp(
                         None => return (1, String::new()), // c:2929-2930
                     },
                 };
-                let was_current = zftp.current_name() == Some(target.as_str());
                 if zftp.remove_session(&target).is_none() {
                     return (1, String::new()); // c:2929-2930 silent
                 }
-                // c:2941-2946 — freed the current session: switch to
-                // the first remaining one, if any.
-                if was_current {
-                    if let Some(next) = zftp.session_names().first().map(|s| s.to_string()) {
-                        zftp.set_current(&next); // c:2945
-                    }
-                }
+                // c:2941-2946 current-session switch and c:2985-2992
+                // last-session newsession("default") both live inside
+                // remove_session (the c:2958 remnode tail).
                 (0, String::new())
             }
 
@@ -5137,18 +5132,26 @@ impl zftp_globals {
             .or_insert_with(|| zftp_session::new(name))
     }
 
-    /// Port of `zftp_rmsession(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2915`.
+    /// Port of `zftp_rmsession(UNUSED(char *name), char **args, UNUSED(int flags))` from `Src/Modules/zftp.c:2915`
+    /// (tail — c:2941-2992 list surgery after the lookup in bin_zftp's arm).
     pub fn remove_session(&mut self, name: &str) -> Option<zftp_session> {
-        let sess = self.sessions.remove(name);
-        if self.current.as_deref() == Some(name) {
-            // After dropping the current session, pick the
-            // alphabetically-first remaining session (deterministic;
-            // HashMap::keys().next() picks at random).
-            let mut keys: Vec<&String> = self.sessions.keys().collect();
-            keys.sort();
-            self.current = keys.first().map(|s| (*s).clone());
+        // c:2958 — remnode(zfsessions, nptr); shift_remove keeps the
+        // remaining entries in list order like C's remnode.
+        let sess = self.sessions.shift_remove(name)?;
+        if self.sessions.is_empty() {
+            // c:2985-2992 —
+            //     We've just deleted the last session, so we need to
+            //     start again from scratch.
+            //     newsession("default");
+            self.sessions
+                .insert("default".to_string(), zftp_session::new("default"));
+            self.current = Some("default".to_string());
+        } else if self.current.as_deref() == Some(name) {
+            // c:2941-2946 + c:2983 — freed the current session: switch
+            // to the first in the list excluding the one just freed.
+            self.current = self.sessions.keys().next().cloned();
         }
-        sess
+        Some(sess)
     }
 
     /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
@@ -5171,12 +5174,10 @@ impl zftp_globals {
     /// WARNING: NOT IN ZFTP.C — method on Rust-only `zftp_globals` wrapper.
     /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     pub fn session_names(&self) -> Vec<&str> {
-        // Sorted so `zftp session` listing is deterministic across
-        // runs. Matches zsh's table-walk order for the underlying
-        // sessions hash.
-        let mut names: Vec<&str> = self.sessions.keys().map(|s| s.as_str()).collect();
-        names.sort();
-        names
+        // c:2894 — for (nptr = firstnode(zfsessions); nptr; incnode(nptr))
+        // zfsessions is a LinkList (c:311) appended by zaddlinknode
+        // (c:2819), so the walk yields creation order — NOT sorted.
+        self.sessions.keys().map(|s| s.as_str()).collect()
     }
 }
 
@@ -5444,7 +5445,10 @@ pub const ZFPF_DUMB: i32 = 0x04; // c:282
 #[allow(non_camel_case_types)]
 #[derive(Debug, Default)]
 pub struct zftp_globals {
-    sessions: HashMap<String, zftp_session>,
+    // c:311 — `static LinkList zfsessions;` appended by zaddlinknode
+    // (c:2819): IndexMap keeps the same insertion order the C linked
+    // list has, so listing/first-remaining walks match C.
+    sessions: IndexMap<String, zftp_session>,
     current: Option<String>,
 }
 
