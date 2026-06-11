@@ -2279,21 +2279,37 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
     let modtab = MODULESTAB.lock().unwrap();
     let (module_present, is_alias, alias_target) = match modtab.modules.get(name) {
         // c:1055 gate: m->u.handle && !MOD_UNLOAD. Static-link analog
-        // is MOD_LINKED && !MOD_UNLOAD (same gate is_loaded() encodes).
+        // is MOD_INIT_B && !MOD_UNLOAD — the SAME criterion
+        // scanpmmodules uses. is_loaded() checks MOD_LINKED, which
+        // register_builtin_modules pre-seeds for every compiled-in
+        // module, so per-key reads reported "loaded" for modules the
+        // scan (and zsh -fc) reports "autoloaded".
         Some(m) => {
-            let loaded = m.is_loaded();
+            let loaded = (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                && (m.node.flags & crate::ported::zsh_h::MOD_UNLOAD) == 0;
             let alias = (m.node.flags & crate::ported::zsh_h::MOD_ALIAS) != 0;
             (loaded, alias, m.alias.clone().unwrap_or_default())
         }
         None => (false, false, String::new()),
     };
+    // c:1051-1059 — this getfn IS zsh/parameter's: it can only run
+    // with the module loaded, so it self-reports "loaded" (matches
+    // scanpmmodules' self-report and zsh -fc).
+    let module_present = module_present || name == "zsh/parameter";
     // c:1060 autoload check: C uses per-module m->autoloads linklist.
-    // Rust equivalent: any autoload_* map entry whose value == name.
+    // Rust equivalent: any autoload_* map entry whose value == name,
+    // plus the canonical .mdd autofeatures stub table.
     let autoload_present = modtab.autoload_builtins.values().any(|v| v == name)
         || modtab.autoload_conditions.values().any(|v| v == name)
         || modtab.autoload_params.values().any(|v| v == name)
         || modtab.autoload_mathfuncs.values().any(|v| v == name);
     drop(modtab);
+    // After the lock drop — autoload_param_stubs re-locks MODULESTAB
+    // for its loaded-filter; calling it under the lock deadlocks.
+    let autoload_present = autoload_present
+        || crate::vm_helper::autoload_param_stubs()
+            .iter()
+            .any(|(_, m)| *m == name);
     // c:1056-1063 — emit 'alias:<target>' / 'loaded' / 'autoloaded' / unset.
     let typ = if module_present {
         if is_alias {
@@ -2411,17 +2427,31 @@ pub fn scanpmmodules(
         let node = emit(&name, &val); // c:1093 emit value-side
         func(&Box::new(node), flags); // c:1096
     }
+    // c:1088-1099 — this scan IS zsh/parameter's getfn: in C it can
+    // only run with zsh/parameter loaded, so the module reports
+    // itself "loaded" (zsh -fc 'print ${(k)modules}' includes
+    // zsh/parameter). zshrs builds the param in statically; emit the
+    // self-report when the modulestab walk didn't.
+    if done.insert("zsh/parameter".to_string()) {
+        let node = emit("zsh/parameter", "loaded");
+        func(&Box::new(node), flags);
+    }
     // c:1102-1110 — builtintab autoloaded (BINF_ADDED clear with optstr → module).
-    let bt = crate::ported::builtin::createbuiltintable();
-    for (_nam, b) in bt.iter() {
-        if (b.node.flags & crate::ported::zsh_h::BINF_ADDED as i32) == 0 {
-            if let Some(opt) = b.optstr.as_ref() {
-                // c:1106 optstr is module name
-                if done.insert(opt.clone()) {
-                    let node = emit(opt, "autoloaded"); // c:1108
-                    func(&Box::new(node), flags); // c:1109
-                }
-            }
+    // C stores the OWNING MODULE NAME in `bn->optstr` only for
+    // BINF_ADDED-clear autoload STUB entries (`zmodload -ab`); real
+    // builtins' optstr is the option string. zshrs's builtintab holds
+    // the real statically-linked builtins (BINF_ADDED clear), so
+    // walking it emitted ~75 OPTION STRINGS as module names in
+    // ${(k)modules}. The autoload-stub registry is
+    // MODULESTAB.autoload_builtins (builtin -> owning module).
+    let auto_bin_modules: Vec<String> = {
+        let tab = MODULESTAB.lock().unwrap();
+        tab.autoload_builtins.values().cloned().collect()
+    };
+    for opt in auto_bin_modules {
+        if done.insert(opt.clone()) {
+            let node = emit(&opt, "autoloaded"); // c:1108
+            func(&Box::new(node), flags); // c:1109
         }
     }
     // c:1112-1117 — condtab autoloaded (p->module set).
@@ -2438,7 +2468,17 @@ pub fn scanpmmodules(
             func(&Box::new(node), flags); // c:1116
         }
     }
-    // c:1119-1124 — realparamtab PM_AUTOLOAD entries.
+    // c:1119-1124 — realparamtab PM_AUTOLOAD entries. The canonical
+    // stub registry is vm_helper::autoload_param_stubs (the .mdd
+    // autofeatures table filtered to unloaded owners) — MODULESTAB's
+    // autoload_params map only carries explicitly-registered names
+    // and missed zsh/zleparameter.
+    for (_pname, m) in crate::vm_helper::autoload_param_stubs() {
+        if done.insert(m.to_string()) {
+            let node = emit(m, "autoloaded");
+            func(&Box::new(node), flags); // c:1124
+        }
+    }
     let auto_param_modules: Vec<String> = {
         let tab = MODULESTAB.lock().unwrap();
         tab.autoload_params.values().cloned().collect() // c:1121

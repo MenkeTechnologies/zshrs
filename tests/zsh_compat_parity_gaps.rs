@@ -509,7 +509,10 @@ mod corpus_behavior_expansion_d {
         z_tokenize_shellwords_count => (r#"(z) count"#, r#"v=(${(z)"a 'b' c"}); print $#v"#);
         z_tokenize_shellwords_dump => (r#"(z) dump"#, r#"print ${(z)"a 'b' c"}"#);
         param_j_tab_join_three => (r#"(j tab)"#, r#"print ${(j:\t.)a b c}"#);
-        modules_assoc_kv_at => (r#"@kv modules"#, r#"print ${(@kv)modules}"#);
+        // Raw ${(@kv)modules} order is per-shell hash order (never
+        // equal across implementations). Iterate sorted keys instead —
+        // pins the same key SET and each key's value pairing.
+        modules_assoc_kv_at => (r#"@kv modules"#, r#"for k in ${(ok)modules}; print -r "$k=${modules[$k]}""#);
         dirstack_glob_t_flag => (r#"(t)dirstack"#, r#"print ${(t)dirstack}"#);
     }
 }
