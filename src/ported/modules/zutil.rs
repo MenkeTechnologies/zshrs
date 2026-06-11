@@ -13,6 +13,7 @@ use crate::ported::options::opt_state_set;
 use crate::ported::params::{
     assignaparam, getaparam, getsparam, paramtab, setaparam, sethparam, setsparam, unsetparam,
 };
+use crate::ported::glob::tokenize;
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{errflag, zwarnnam};
@@ -1095,18 +1096,26 @@ pub fn bin_zstyle(
             if args.len() < 3 {
                 return 1;
             }
-            let pat = &args[2];
-            let prog = match patcompile(pat, PAT_STATIC, None) {
+            queue_signals(); // c:732 — Protect PAT_STATIC
+            let mut pat = args[2].clone();
+            tokenize(&mut pat); // c:734 — shell metachar → Patprog token
+            let prog = match patcompile(&pat, PAT_STATIC, None) {
+                // c:737
                 Some(p) => p,
-                None => return 1,
+                None => {
+                    unqueue_signals(); // c:745
+                    return 1;
+                }
             };
             for v in &vals {
                 // c:738
                 if pattry(&prog, v) {
                     // c:739
+                    unqueue_signals(); // c:740
                     return 0; // c:741
                 }
             }
+            unqueue_signals(); // c:745
             return 1; // c:746
         }
         // -s CONTEXT STYLE NAME [SEP]: join vals with SEP (default " "),
