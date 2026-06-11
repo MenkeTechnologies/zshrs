@@ -6169,7 +6169,22 @@ pub fn paramsubst(
                         if sub.contains(',') {
                             None
                         } else {
-                            crate::ported::math::mathevali(sub).ok()
+                            // c:Src/params.c getindex -> matheval —
+                            // a subscript that fails math parse zerrs
+                            // and aborts EVEN when the param is unset:
+                            // `${a[b*]}` with no `a` is rc=1 in zsh.
+                            // (The set-array arm raises the same zerr
+                            // upstream.)
+                            match crate::ported::math::mathevali(sub) {
+                                Ok(n) => Some(n),
+                                Err(e) => {
+                                    crate::ported::utils::zerr(&format!(
+                                        "bad math expression: {}",
+                                        e
+                                    ));
+                                    None
+                                }
+                            }
                         }
                     })
                 {
