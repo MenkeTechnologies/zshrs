@@ -714,7 +714,7 @@ extern "C" {
     fn gdbm_close(dbf: GdbmFile);
     fn gdbm_store(dbf: GdbmFile, key: Datum, content: Datum, flag: c_int) -> c_int;
     fn gdbm_fetch(dbf: GdbmFile, key: Datum) -> Datum;
-    fn gdbmunsetfn(dbf: GdbmFile, key: Datum) -> c_int;
+    fn gdbm_delete(dbf: GdbmFile, key: Datum) -> c_int;
     fn gdbm_exists(dbf: GdbmFile, key: Datum) -> c_int;
     fn gdbm_firstkey(dbf: GdbmFile) -> Datum;
     fn gdbm_nextkey(dbf: GdbmFile, key: Datum) -> Datum;
@@ -910,8 +910,13 @@ impl gdbm_database {
 
         let key_datum = Datum::from(key.as_bytes());
 
+        // c:389 — `(void)gdbm_delete(dbf, key);` — the libgdbm API
+        // symbol. (Prior extern mistakenly declared zsh's own static
+        // `gdbmunsetfn` as the foreign symbol — no such export exists
+        // in libgdbm; would have failed at link/call the day the gdbm
+        // feature flag gets wired into Cargo.toml.)
         let ret = unsafe {
-            gdbmunsetfn(
+            gdbm_delete(
                 self.dbf,
                 Datum {
                     dptr: key_datum.dptr,
