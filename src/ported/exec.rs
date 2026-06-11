@@ -604,7 +604,8 @@ pub fn loadautofn(
     let name = unsafe { (*shf).node.nam.clone() };
     // c:5070 — `path = getfpfunc(name, &dir_path, NULL, 0)`.
     let mut dir_path: Option<String> = None;
-    let path = match getfpfunc(&name, &mut dir_path, None, 0) {
+    let mut dump_hit: Option<(eprog, i32)> = None;
+    let path = match getfpfunc(&name, &mut dir_path, None, 0, &mut dump_hit) {
         Some(p) => p,
         None => {
             // c:Src/exec.c:5713-5719 — file not found path. C:
@@ -649,9 +650,37 @@ pub fn loadautofn(
     // c:5100-5140 — read the file. C uses zopen + read + parse_string +
     // execsave; Rust port stores raw text on the ShFunc and defers
     // parse-to-Eprog until the first call.
-    let body = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(_) => return 1,
+    //
+    // c:Src/exec.c:6238 / parse.c:3833 — when getfpfunc resolved the
+    // function out of a compiled `.zwc` dump, there is no source file
+    // to read; the wordcode Eprog came back through `dump_hit`. C
+    // executes that wordcode directly (`shf->funcdef = stripkshdef(
+    // prog, ...)`, exec.c:5753-5755). zshrs executes function bodies
+    // through the fusevm bytecode pipeline which consumes source
+    // text, so bridge wordcode → text with the canonical text.c
+    // renderer (`getpermtext`, ported at text.rs:189) — the same
+    // walker `functions NAME` printing uses for wordcode-backed
+    // funcdefs (C hashtable.c:954). The downstream
+    // `autoload_register_source` step (vm_helper.rs:3162) performs
+    // the `stripkshdef` shape decision, matching c:5725-5760.
+    // c:5706-5710 — the ksh-mode precedence chain:
+    //   `if (ksh == 1) { ksh = fksh; if (ksh == 1)
+    //        ksh = PM_KSHSTORED ? 2 : PM_ZSHSTORED ? 0 : 1; }`
+    // The dump header flag (FDHF_KSHLOAD/FDHF_ZSHLOAD via `*ksh`
+    // from try_dump_file) outranks the stub's PM_*STORED bits, which
+    // are only consulted when the dump says 1 (no explicit style).
+    // zshrs's load/register split (vm_helper's
+    // `autoload_register_source` makes the c:5725 ksh-vs-zsh
+    // decision later, from the tab entry's flags + KSHAUTOLOAD) —
+    // fold a decisive dump flag into the PM bits so the downstream
+    // decision sees the same precedence.
+    let dump_ksh = dump_hit.as_ref().map(|(_, k)| *k);
+    let body = match dump_hit {
+        Some((prog, _ksh)) => crate::ported::text::getpermtext(Box::new(prog), None, 0),
+        None => match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(_) => return 1,
+        },
     };
     // c:Src/exec.c:5735/5757 — `loadautofnsetfile(shf, fdir)`. The
     // helper stamps PM_LOADDIR alongside the filename when fdir is
@@ -667,18 +696,35 @@ pub fn loadautofn(
     unsafe {
         (*shf).node.flags &= !(PM_UNDEFINED as i32);
     }
+    // c:5706-5710 fold (see comment above): decisive dump style wins
+    // over the stub's stored-style bits.
+    let (ksh_on, ksh_off): (i32, i32) = match dump_ksh {
+        Some(2) => (
+            crate::ported::zsh_h::PM_KSHSTORED as i32,
+            crate::ported::zsh_h::PM_ZSHSTORED as i32,
+        ),
+        Some(0) => (
+            crate::ported::zsh_h::PM_ZSHSTORED as i32,
+            crate::ported::zsh_h::PM_KSHSTORED as i32,
+        ),
+        _ => (0, 0),
+    };
+    unsafe {
+        (*shf).node.flags = ((*shf).node.flags | ksh_on) & !ksh_off;
+    }
     // Sync the body string into the Rust-side ShFunc table so the
     // lazy-parse path can find it later.
     if let Ok(mut tab) = shfunctab_lock().write() {
         if let Some(existing) = tab.get_mut(&name) {
             existing.body = Some(body);
             existing.filename = dir_path;
+            existing.node.flags = (existing.node.flags | ksh_on) & !ksh_off;
         } else {
             tab.add(shfunc {
                 node: hashnode {
                     next: None,
                     nam: name.clone(),
-                    flags: 0,
+                    flags: ksh_on, // c:5706-5710 dump-style fold
                 },
                 filename: dir_path,
                 lineno: 0,
@@ -692,15 +738,26 @@ pub fn loadautofn(
     0
 }
 
-/// Port of `getfpfunc(char *s, int *ksh, char **fdir, char **alt_path, int test_only)` from Src/exec.c:5260. Walks `$fpath` (or the
+/// Port of `getfpfunc(char *s, int *ksh, char **fdir, char **alt_path, int test_only)` from Src/exec.c:6219. Walks `$fpath` (or the
 /// supplied `spec_path` slice) for a file named `name` and writes the
 /// resolved directory through `*dir_path_out` (matching the C `char **dir_path`).
-/// Returns `Some(file_contents_path)` on success, `None` when not found.
+/// Returns `Some(file_path)` on success, `None` when not found.
+///
+/// Per dir, the compiled-dump lookup runs FIRST (c:6238
+/// `try_dump_file(*pp, s, buf, ksh, test_only)`) — a directory
+/// digest `<dir>.zwc` or per-function `<dir>/<name>.zwc` wins over
+/// the plain file when newer (mtime logic inside try_dump_file,
+/// c:parse.c:3762-3784). On a dump hit the loaded program + ksh
+/// mode (C's `*ksh` out-param) are written through `dump_out` and
+/// the nominal `<dir>/<name>` path is returned; the caller must
+/// check `dump_out` before reading the returned path as a plain
+/// file.
 pub fn getfpfunc(
     name: &str,
-    dir_path_out: &mut Option<String>, // c:5260 (Src/exec.c)
+    dir_path_out: &mut Option<String>, // c:6219 (Src/exec.c)
     spec_path: Option<&[String]>,
-    _all_loaded: i32,
+    test_only: i32, // c:6219 `int test_only`
+    dump_out: &mut Option<(eprog, i32)>, // c:6219 `int *ksh` + dump Eprog return
 ) -> Option<String> {
     // C reads $fpath via `getaparam("fpath")` (the param-table array form
     // tied to scalar `FPATH` via `typeset -T`). Reading `std::env::var`
@@ -724,8 +781,19 @@ pub fn getfpfunc(
         if dir.is_empty() {
             continue;
         }
-        let path = format!("{}/{}", dir, name);
+        let path = format!("{}/{}", dir, name); // c:6230 snprintf(buf, ..., "%s/%s", *pp, s)
+        // c:6238 — `if ((r = try_dump_file(*pp, s, buf, ksh, test_only)))`
+        // — the .zwc digest / per-function dump is tried BEFORE the
+        // plain file in each directory.
+        if let Some(hit) =
+            crate::ported::parse::try_dump_file(dir, name, &path, test_only != 0)
+        {
+            *dump_out = Some(hit);
+            *dir_path_out = Some(dir.clone()); // c:6240 `*fdir = *pp;`
+            return Some(path); // c:6241
+        }
         if std::path::Path::new(&path).exists() {
+            // c:6245 access(buf, R_OK)
             *dir_path_out = Some(dir.clone());
             return Some(path);
         }

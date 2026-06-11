@@ -189,10 +189,14 @@ pub fn taddnl(no_semicolon: i32) {
 pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
     queue_signals();
     useeprog(&prog);
+    // c:292 — `s.strs = prog->strs;` — pooled (>3-byte) strings live in
+    // the eprog string table; estate must carry it or ecgetstr returns
+    // "" for every pooled string.
+    let strs = prog.strs.clone();
     let mut state = estate {
         prog,
         pc: c.unwrap_or(0),
-        strs: None,
+        strs,
         strs_offset: 0,
     };
     tbuf.with(|tb| tb.borrow_mut().clear());
@@ -211,17 +215,32 @@ pub fn getpermtext(prog: Eprog, c: Option<usize>, start_indent: i32) -> String {
     let p = state.prog;
     freeeprog(&p);
     unqueue_signals();
-    lex::untokenize(&raw)
+    // c:304 — `untokenize(tbuf);` — the utils.c untokenize maps EVERY
+    // ITOK char through ztokens (Snull → `'`, Dnull → `"`, Qstring →
+    // `$`, Bnull → `\`) and drops Nularg. `lex::untokenize` is the
+    // substitution-stream variant that STRIPS the quote markers —
+    // using it here loses the quoting from rendered function text
+    // (`"$@"` → `$@`), which breaks re-parsing of `.zwc`-loaded
+    // bodies. Use the quote-preserving variant, then apply the two
+    // print-side mappings it intentionally defers (Qstring → `$`,
+    // Nularg dropped) per c:Src/utils.c:4204-4208.
+    lex::untokenize_preserve_quotes(&raw)
+        .chars()
+        .filter(|&c| c != zsh_h::Nularg)
+        .map(|c| if c == zsh_h::Qstring { '$' } else { c })
+        .collect()
 }
 
 /// Port of `getjobtext(Eprog prog, Wordcode c)` from `Src/text.c:315`.
 pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
     queue_signals();
     useeprog(&prog);
+    // c:329 — `s.strs = prog->strs;` (same fix as getpermtext).
+    let strs = prog.strs.clone();
     let mut state = estate {
         prog,
         pc: c.unwrap_or(0),
-        strs: None,
+        strs,
         strs_offset: 0,
     };
     tbuf.with(|tb| tb.borrow_mut().clear());
@@ -243,7 +262,13 @@ pub fn getjobtext(prog: Eprog, c: Option<usize>) -> String {
     let p = state.prog;
     freeeprog(&p);
     unqueue_signals();
-    lex::untokenize(&raw)
+    // c:342 — `untokenize(jbuf);` — same print-side mapping as
+    // getpermtext (see comment there).
+    lex::untokenize_preserve_quotes(&raw)
+        .chars()
+        .filter(|&c| c != zsh_h::Nularg)
+        .map(|c| if c == zsh_h::Qstring { '$' } else { c })
+        .collect()
 }
 
 #[allow(non_camel_case_types)]
@@ -1370,6 +1395,39 @@ pub fn zoutputtab<W: std::io::Write>(outf: &mut W) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn getpermtext_renders_parse_string_eprog_with_pooled_strings() {
+        let _g = crate::test_util::global_state_lock();
+        // "echo hello world" pools the >3-char strings into eprog.strs;
+        // getpermtext must resolve them (C text.c:292 `s.strs = prog->strs`).
+        let prog = crate::ported::exec::parse_string("echo hello world", 0).expect("parse");
+        let txt = getpermtext(Box::new(prog), None, 0);
+        assert!(
+            txt.contains("echo") && txt.contains("hello") && txt.contains("world"),
+            "got: {txt:?}"
+        );
+    }
+
+    #[test]
+    fn getpermtext_case_arms_emit_terminators() {
+        let _g = crate::test_util::global_state_lock();
+        // c:text.c:765-770 — each case arm closes with ` ;;` (or ;&/;|).
+        // Arms use the unparenthesized form: the ported par_case
+        // cannot yet parse `(pat)` arms (pre-existing gap, surfaces
+        // as `par_case: expected )` — the renderer under test here
+        // is independent of that parser arm).
+        let prog = crate::ported::exec::parse_string(
+            "case x in\na) echo A ;;\n*) echo other ;;\nesac",
+            0,
+        )
+        .expect("parse");
+        let txt = getpermtext(Box::new(prog), None, 0);
+        assert!(
+            txt.matches(";;").count() == 2,
+            "expected two ;; terminators, got: {txt:?}"
+        );
+    }
 
     #[test]
     fn is_cond_binary_matches_zsh_set() {

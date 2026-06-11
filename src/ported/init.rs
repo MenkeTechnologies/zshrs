@@ -1337,8 +1337,14 @@ pub fn source(s: &str) -> i32 {
     // c:1551
     let us = unmeta(s); // c:1551
     let path = std::path::Path::new(&us);
-    if !path.exists() {
-        // c:1565-1568
+    // c:1565-1568 — `if (!s || (!(prog = try_source_file(us)) &&
+    // (tempfd = ... open(us, ...)) == -1)) return SOURCE_NOT_FOUND;`
+    // — a loadable `<file>.zwc` rescues a missing/unreadable plain
+    // file; only BOTH failing is NOT_FOUND. The compiled prog itself
+    // is fetched below (the Rust port defers it to the contents
+    // read so the state save/restore stays in one place).
+    let zwc_prog = crate::ported::parse::try_source_file(&us);
+    if zwc_prog.is_none() && !path.exists() {
         return 1; /* SOURCE_NOT_FOUND */
     }
 
@@ -1354,7 +1360,16 @@ pub fn source(s: &str) -> i32 {
     // fusevm executor for the actual parse+exec; if no executor
     // context (out-of-band call), fall back to the partial
     // read-for-side-effects path so errors still surface.
-    let contents = std::fs::read_to_string(path);
+    //
+    // c:1566 — `try_source_file(us)` runs FIRST: a sibling
+    // `<file>.zwc` newer than the file (or `s` itself being a
+    // `.zwc`) supplies the compiled wordcode instead of the plain
+    // read. Bridge wordcode → text via getpermtext (same as the
+    // `.zwc` autoload path in exec.rs::loadautofn).
+    let contents = match zwc_prog {
+        Some(prog) => Ok(crate::ported::text::getpermtext(Box::new(prog), None, 0)),
+        None => std::fs::read_to_string(path),
+    };
     if let Ok(body) = contents {
         let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(&body);
     }
