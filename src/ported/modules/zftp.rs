@@ -1787,7 +1787,13 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
             fdout = 1; // c:1484
                        // c:1485 — `rtmout = getiparam("ZFTP_TMOUT");`. paramtab read.
             rtmout = getiparam("ZFTP_TMOUT") as i32;
-            if sess.transfer_type == ZFST_ASCI as i32 {
+            // c:1486 — `if (ZFST_CTYP(zfstatusp[zfsessno]) == ZFST_ASCI)`
+            // CTYP is the type the SERVER currently has (current_type),
+            // not the user-requested ZFST_TYPE slice. zfsettype sends
+            // TYPE lazily (c:1213/c:2559) and only updates CTYP on a
+            // successful response — translating on the requested slice
+            // would \r\n-decode a stream the server sent as IMAGE.
+            if sess.current_type == ZFST_ASCI as i32 {
                 // c:1486
                 fromasc = 1; // c:1487
             }
@@ -1801,7 +1807,9 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
             fdout = sess.dfd; // c:1492
                               // c:1493 — `wtmout = getiparam("ZFTP_TMOUT");`. paramtab read.
             wtmout = getiparam("ZFTP_TMOUT") as i32;
-            if sess.transfer_type == ZFST_ASCI as i32 {
+            // c:1494 — `if (ZFST_CTYP(...) == ZFST_ASCI)` — same CTYP
+            // (server-side current type) read as the recv arm above.
+            if sess.current_type == ZFST_ASCI as i32 {
                 // c:1494
                 toasc = 1; // c:1495
             }
