@@ -1045,13 +1045,33 @@ pub fn bin_zstyle(
         return 0; // c:585
     }
     if OPT_ISSET(ops, b'd') {
-        // c:520
-        // -d: delete the style. C: `args[0]` is pattern (optional),
-        // `args[1]` is style (optional). With no args → wipe all.
+        // c:610-641 — three -d forms:
+        //
+        //     if (args[1]) {
+        //         if (args[2]) {
+        //             char *pat = args[1];
+        //             for (args += 2; *args; args++) { ... freestypat per style ... }
+        //         } else {
+        //             zstyle_patname = args[1];
+        //             scanhashtable(zstyletab, 0, 0, 0, scanpatstyles, ZSPAT_REMOVE);
+        //         }
+        //     } else
+        //         zstyletab->emptytable(zstyletab);
+        //
+        // Form 1 takes pattern + MULTIPLE style names (the c:618 loop
+        // walks args+2 to the end). Prior port read only args[1] —
+        // `zstyle -d pat sty1 sty2 sty3` silently dropped sty2/sty3.
         let pat = args.first().map(|s| s.as_str());
-        let sty = args.get(1).map(|s| s.as_str());
         if let Ok(mut t) = zstyletab.lock() {
-            t.delete(pat, sty); // c:521-523
+            if args.len() > 1 {
+                // c:615-631 — per-style deletion of one pattern.
+                for sty in &args[1..] {
+                    t.delete(pat, Some(sty.as_str())); // c:626 freestypat
+                }
+            } else {
+                // c:632-638 pattern-only / c:639-640 wipe-all.
+                t.delete(pat, None);
+            }
         }
         return 0; // c:524
     }
@@ -1214,19 +1234,35 @@ pub fn bin_zstyle(
             return code; // c:672/675
         }
         // -a CONTEXT STYLE NAME: setaparam(NAME, vals).
-        // C: zutil.c:682-699.
+        // C: zutil.c:682-699:
+        //
+        //     if ((vals = lookupstyle(args[1], args[2]))) {
+        //         ret = zarrdup(vals);
+        //         val = 0;
+        //     } else {
+        //         char *dummy = NULL;
+        //         ret = zarrdup(&dummy);
+        //         val = 1;
+        //     }
+        //     setaparam(args[3], ret);
+        //
+        // Exit code keys on the lookupstyle POINTER, not vals[0]: a
+        // pattern that matched with ZERO values still exits 0 (array
+        // set empty). Rust lookupstyle collapses NULL and empty to
+        // one Vec, so probe the table for the defined/undefined
+        // distinction — same shape as the -t tri-state fix.
         if OPT_ISSET(ops, b'a') {
             // c:682
             if args.len() < 3 {
                 return 1;
             }
             let pname = &args[2];
-            let found = !vals.is_empty();
-            setaparam(
-                pname, // c:696
-                if found { vals } else { Vec::new() },
-            );
-            return if found { 0 } else { 1 }; // c:689/694
+            let defined = match zstyletab.lock() {
+                Ok(t) => t.get(ctxt, style).is_some(), // c:687 vals != NULL
+                Err(_) => false,
+            };
+            setaparam(pname, vals); // c:696 (empty when undefined)
+            return if defined { 0 } else { 1 }; // c:689/694
         }
         // -g: handled below (different arg layout).
         // -e: NOT a per-context lookup arm. C c:504-507 routes -e
