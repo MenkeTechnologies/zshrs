@@ -3759,6 +3759,15 @@ pub fn bin_zftp(
     // of `PS` (ZFPF_SNDP|ZFPF_PASV from c:3219) was the only value
     // zfprefs ever held — user `ZFTP_PREFS=D` (dumb mode) was a
     // silent no-op.
+    //
+    // c:3074 + c:3105 — `queue_signals(); ... unqueue_signals();`.
+    // C wraps the getsparam_u read + zfprefs mutation pair in
+    // queue_signals so a SIGINT mid-parse can't observe a half-rewritten
+    // zfprefs bitfield (a partial `D` parse without the prior `PS` left
+    // intact would silently drop both sendport and passive modes for
+    // any subsequent transfer in the signal handler chain). Mirror
+    // exactly so the visible side-effect window matches C.
+    crate::ported::signals_h::queue_signals(); // c:3074
     if let Some(prefs) = crate::ported::params::getsparam_u("ZFTP_PREFS") {
         zfprefs.store(0, Ordering::Relaxed); // c:3076 — zfprefs = 0;
         for ch in prefs.chars() {
@@ -3787,6 +3796,7 @@ pub fn bin_zftp(
             }
         }
     }
+    crate::ported::signals_h::unqueue_signals(); // c:3105
 
     let mut zftp_guard = zftp_state().lock().unwrap_or_else(|e| {
         zftp_state_clear_poison();
