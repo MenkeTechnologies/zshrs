@@ -6467,6 +6467,40 @@ impl ZshCompiler {
             ZshCond::Binary(left, op, right) => {
                 let left_clean = crate::lex::untokenize(left);
                 let op_clean = crate::lex::untokenize(op);
+                // Bare `$~name` rhs (String + Tilde tokens, no braces)
+                // expands EMPTY through the rhs fast paths (the name
+                // parse swallows the Tilde token); the braced
+                // `${~name}` spelling expands correctly. Same C
+                // semantics either way (zshexpn $~spec), so normalize
+                // bare to braced HERE so every downstream rhs path —
+                // including the fast-path the direct braced source
+                // takes — sees the working form.
+                let right_tilde_braced: Option<String> = {
+                    let cs: Vec<char> = right.chars().collect();
+                    let dollar = matches!(
+                        cs.first().map(|c| *c as u32),
+                        Some(0x24) | Some(0x85) | Some(0x8c)
+                    );
+                    let tilde_bare = dollar
+                        && matches!(cs.get(1).map(|c| *c as u32), Some(0x7e) | Some(0x98))
+                        && cs
+                            .get(2)
+                            .map_or(false, |c| c.is_ascii_alphanumeric() || *c == '_')
+                        && cs[2..]
+                            .iter()
+                            .all(|c| c.is_ascii_alphanumeric() || *c == '_');
+                    if tilde_bare {
+                        let mut s = String::new();
+                        s.push(cs[0]);
+                        s.push('\u{8f}'); // Inbrace
+                        s.extend(&cs[1..]);
+                        s.push('\u{90}'); // Outbrace
+                        Some(s)
+                    } else {
+                        None
+                    }
+                };
+                let right: &String = right_tilde_braced.as_ref().unwrap_or(right);
                 // The port packs unary file tests as Binary too: `-d /tmp`
                 // arrives as Binary("-d", "/tmp", ""). If left starts with
                 // `-` and looks like a test flag, treat it as Unary with
@@ -6655,6 +6689,7 @@ impl ZshCompiler {
                         if segments.len() <= 1 {
                             // Single segment — preserve original
                             // shape (the lone substitution case).
+                            //
                             self.dq_context_depth += 1;
                             self.compile_word_str(right);
                             self.dq_context_depth -= 1;
