@@ -188,6 +188,18 @@ pub struct zftp_session {
     /// `zfopendata` calls skip PASV and go directly to PORT mode.
     /// Reset to false on session re-open.
     pub nops_probed: bool,
+    /// Mirrors the ZFST_TRSZ bit (0x0080, "tried getting `size' from
+    /// reply"). Set by zfgetdata's first RETR (c:1102) regardless of
+    /// whether the size hint parsed; gates the c:1093 "only parse the
+    /// 150 reply on the FIRST RETR" check and the c:2577 SIZE-probe
+    /// cache test in zfgetput.
+    pub trsz: bool,
+    /// Mirrors the ZFST_NOSZ bit (0x0040, "server doesn't send
+    /// `(XXXX bytes)' reply"). Set alongside trsz at c:1102, CLEARED
+    /// at c:1109 when the byte-count hint parses — trsz && !nosz means
+    /// the server embeds sizes in 150 replies, so zfgetput skips the
+    /// separate SIZE round-trip (c:2577-2585).
+    pub nosz: bool,
 }
 
 /// `zfprefs` — file-scope `static int zfprefs;` from
@@ -1217,12 +1229,46 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
     }
 
     // c:1093-1116 — parse "Opening data connection for file (N bytes)"
-    // hint to populate ZFTP_SIZE without a separate SIZE request.
-    if getsize != 0 || cmd.starts_with("RETR") {
+    // hint to populate ZFTP_SIZE without a separate SIZE request:
+    //
+    //     if (getsize || (!(zfstatusp[zfsessno] & ZFST_TRSZ) &&
+    //                     !strncmp(cmd, "RETR", 4))) {
+    //         char *ptr = strstr(lastmsg, "bytes");
+    //         zfstatusp[zfsessno] |= ZFST_NOSZ|ZFST_TRSZ;
+    //         if (ptr) {
+    //             ...walk back to digit run...
+    //             if (idigit(*ptr)) {
+    //                 zfstatusp[zfsessno] &= ~ZFST_NOSZ;
+    //                 if (getsize) { ...zfsetparam("ZFTP_SIZE", ...)... }
+    //             }
+    //         }
+    //     }
+    //
+    // The ZFST_TRSZ gate limits the free-parse attempt to the FIRST
+    // RETR; NOSZ|TRSZ pessimistically assume no embedded size, then
+    // NOSZ clears when the hint parses. zfgetput's c:2577 cache test
+    // reads these to skip the SIZE round-trip on servers that embed
+    // sizes. Prior port re-parsed every RETR and never recorded the
+    // bits, so the SIZE-avoidance optimization the c:1098 comment
+    // describes never engaged.
+    let trsz_known = zftp_state()
+        .lock()
+        .ok()
+        .and_then(|s| s.get_session(None).map(|sess| sess.trsz))
+        .unwrap_or(false);
+    if getsize != 0 || (!trsz_known && cmd.starts_with("RETR")) {
+        // c:1093-1094
         let cur_last = lastmsg.lock().ok().map(|m| m.clone()).unwrap_or_default();
+        // c:1102 — pessimistic default: tried, assume no size.
+        if let Ok(mut st) = zftp_state().lock() {
+            if let Some(sess) = st.get_session_mut(None) {
+                sess.trsz = true; // c:1102 ZFST_TRSZ
+                sess.nosz = true; // c:1102 ZFST_NOSZ
+            }
+        }
         if let Some(byte_idx) = cur_last.find("bytes") {
-            // c:1101
-            // Walk backward to find the start of the digit run.
+            // c:1101 strstr
+            // c:1104-1107 — walk backward to the start of the digit run.
             let prefix = &cur_last[..byte_idx];
             let trimmed: String = prefix
                 .chars()
@@ -1233,9 +1279,19 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
                 .chars()
                 .rev()
                 .collect();
-            if !trimmed.is_empty() && getsize != 0 {
-                zfsetparam("ZFTP_SIZE", &trimmed, ZFPM_READONLY | ZFPM_INTEGER);
-                // c:1112
+            if !trimmed.is_empty() {
+                // c:1108 idigit(*ptr)
+                // c:1109 — server DOES embed sizes; clear NOSZ.
+                if let Ok(mut st) = zftp_state().lock() {
+                    if let Some(sess) = st.get_session_mut(None) {
+                        sess.nosz = false; // c:1109
+                    }
+                }
+                if getsize != 0 {
+                    // c:1110
+                    zfsetparam("ZFTP_SIZE", &trimmed, ZFPM_READONLY | ZFPM_INTEGER);
+                    // c:1112
+                }
             }
         }
     }
@@ -3261,10 +3317,6 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
 
         // c:2566-2587 — getsize hint via zfstats + initial progress
         // callback. Only fires when a zftp_progress shfunc is defined.
-        // ZFST_NOSZ/ZFST_TRSZ per-session status bits aren't ported;
-        // the c:2577-2585 cache check collapses to "always probe SIZE"
-        // (or "always set getsize on STOR") — matching C's behavior
-        // when those bits are unset on a fresh session.
         if progress != 0 && getshfunc("zftp_progress").is_some() {
             let mut sz: libc::off_t = -1; // c:2567
             let mut _mdtm: Option<String> = None;
@@ -3277,20 +3329,20 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
             //       if (recv && sz == -1) getsize = 1;
             //   } else
             //       getsize = 1;
-            // i.e. "probe SIZE if (not DUMB AND cache says re-probe) OR
-            // we're sending (need local file size)." The ZFST_NOSZ /
-            // ZFST_TRSZ per-session cache isn't modelled in the Rust
-            // session struct yet, so the status & (NOSZ|TRSZ) term is
-            // always 0 (fresh-session default); 0 != ZFST_TRSZ so the
-            // cache-says-re-probe leg is always true. Net condition:
-            // !DUMB || !recv (probe unless DUMB and receiving).
-            //
-            // Prior Rust port had `!dumb && (recv || (flags & ZFTP_REST)
-            // == 0)` which doesn't match anything in C — for DUMB
-            // upload it skipped the local fstat (c:2580 needs to read
-            // the local file's st_size for the progress callback).
+            // "Probe SIZE if (not DUMB AND the cache doesn't say the
+            // server embeds sizes) OR we're sending (need the LOCAL
+            // file's size)." `(status & (NOSZ|TRSZ)) == ZFST_TRSZ`
+            // ⟺ trsz && !nosz ⟺ first RETR's 150 reply parsed a
+            // byte count — skip the SIZE round-trip and let zfgetdata
+            // re-parse the reply (getsize = 1, c:2585). The session
+            // trsz/nosz mirrors are written by zfgetdata (c:1102/1109).
             let dumb = (zfprefs.load(Ordering::Relaxed) & ZFPF_DUMB) != 0; // c:2576
-            if !dumb || !recv {
+            let server_embeds_size = zftp_state()
+                .lock()
+                .ok()
+                .and_then(|s| s.get_session(None).map(|sess| sess.trsz && !sess.nosz))
+                .unwrap_or(false); // c:2577 (status & (NOSZ|TRSZ)) == ZFST_TRSZ
+            if (!dumb && !server_embeds_size) || !recv {
                 // c:2576-2578
                 let _ = zfstats(
                     arg,
@@ -4553,6 +4605,8 @@ impl zftp_session {
             passive: true,
             syst_probed: false,
             nops_probed: false,
+            trsz: false, // ZFST_TRSZ fresh-session default
+            nosz: false, // ZFST_NOSZ fresh-session default
         }
     }
 
