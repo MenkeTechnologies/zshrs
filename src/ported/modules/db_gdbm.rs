@@ -576,9 +576,16 @@ pub fn scangdbmkeys(ht: &str, mut func: impl FnMut(&str, &str, i32), flags: i32)
     drop(params);
     // c:449-466 — gdbm_firstkey / gdbm_nextkey loop
     for key in tied.keys() {
-        // c:455 — metafy + getgdbmnode + scanfn
-        let _ = getgdbmnode(ht, &key); // c:456
-        func(ht, &key, flags); // c:459
+        // c:455 — `char *zkey = metafy(key.dptr, key.dsize, META_DUP);`
+        // DB keys are raw bytes; the shell-side name handed to
+        // getgdbmnode/func must be the metafied form (the inverse of
+        // gdbmgetfn's c:305 unmetafy). Prior port passed the raw key
+        // through, so a scan over a DB containing high-byte keys
+        // yielded names that failed the round-trip back through
+        // gdbmgetfn's unmetafy.
+        let zkey = crate::ported::utils::metafy(&key); // c:455
+        let _ = getgdbmnode(ht, &zkey); // c:456
+        func(ht, &zkey, flags); // c:459
     }
 }
 
@@ -679,9 +686,18 @@ pub fn gdbmhashsetfn(pm: &str, ht: &[(String, String)]) {
     // even without reorganize.
 
     // c:514-545 — `for (i = 0; i < ht->hsize; i++) for (hn = ht->nodes[i]; ...)
+    //                  umkey = unmetafy_zalloc(v.pm->node.nam, &umlen);
+    //                  umval = unmetafy_zalloc(getstrvalue(&v), &umlen);
     //                  gdbm_store(dbf, key, content, GDBM_REPLACE);`
+    // Same boundary contract as gdbmsetfn (c:372/379): shell-side
+    // metafied pairs are decoded to raw bytes before the store. Prior
+    // port called param.set with the metafied forms directly,
+    // bypassing the decode that whole-hash assignment requires for
+    // on-disk parity with per-key writes.
     for (key, value) in ht {
-        let _ = param.set(key, value); // c:530 gdbm_store
+        let (umkey, _klen) = unmetafy_zalloc(key); // c:526
+        let (umval, _vlen) = unmetafy_zalloc(value); // c:534
+        let _ = param.set(&umkey, &umval); // c:539 gdbm_store
     }
 }
 
