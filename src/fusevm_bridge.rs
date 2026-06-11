@@ -5726,15 +5726,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
         if errflag_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
-            // Clear errflag so the abort doesn't keep re-triggering;
-            // the script-end last_status gives the caller the
-            // failing status. Update BOTH executor's last_status
-            // (LASTVAL) AND the VM's last_status so run_chunk's
-            // post-script sync sees the failing value.
+            // Clear errflag so the abort doesn't keep re-triggering.
+            // c:Src/init.c:234 — loop() BREAKS on errflag and
+            // zsh_main exits with the UNTOUCHED lastval, NOT a
+            // forced 1: `typeset -i x=3#8` (math error during the
+            // assignment, before typeset sets a status) exits 0 in
+            // zsh; a failed command that set lastval=1 itself (glob
+            // NOMATCH path) still exits 1. Sync the VM counter from
+            // the executor's live lastval instead of overwriting.
             crate::ported::utils::errflag
                 .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-            with_executor(|exec| exec.set_last_status(1));
-            vm.last_status = 1;
+            vm.last_status = with_executor(|exec| exec.last_status());
             // c:Src/init.c loop() — a non-interactive errflag-fired
             // abort propagates to the SHELL, not just the current
             // function/sourced file. Inside a function, the local
