@@ -4686,16 +4686,28 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
         if let Some(pm) = tab.get(name) {
             if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
                 // c:3137
-                // c:3138 — `paramvalarr(hashgetfn(pm), SCANPM_WANTKEYS)`.
-                // Same backing as gethparam — return keys instead of values.
-                // Empty-storage fallback identical: Some(empty Vec) for
-                // "exists, no entries" shape.
-                let store = paramtab_hashed_storage().lock().ok()?;
-                let keys = store
-                    .get(name)
-                    .map(|m| m.keys().cloned().collect())
-                    .unwrap_or_default();
-                return Some(keys); // c:3138
+                // c:3138 — `paramvalarr(pm->gsu.h->getfn(pm),
+                // SCANPM_WANTKEYS)`. Same backing as gethparam —
+                // return keys instead of values. Empty-storage
+                // fallback identical: Some(empty Vec) for "exists,
+                // no entries" shape.
+                {
+                    let store = paramtab_hashed_storage().lock().ok()?;
+                    if let Some(m) = store.get(name) {
+                        return Some(m.keys().cloned().collect()); // c:3138
+                    }
+                }
+                // c:3138 — for SPECIALPMDEF magic hashes (parameters/
+                // options/commands/…, Src/Modules/parameter.c) the
+                // `getfn` is the module's scan fn, not hashgetfn;
+                // there's no paramtab_hashed_storage backing. The
+                // partab_scan_keys port (vm_helper.rs:3486) is that
+                // scan. Without this, `${(k)parameters[PATH]}` saw an
+                // empty key set and returned "" where zsh prints PATH.
+                if let Some(keys) = crate::vm_helper::partab_scan_keys(name) {
+                    return Some(keys); // c:3138
+                }
+                return Some(Vec::new()); // c:3138
             }
         }
     }

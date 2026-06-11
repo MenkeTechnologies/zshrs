@@ -464,7 +464,12 @@ mod corpus_behavior_expansion_c {
         param_ok_assoc_keys_single => (r#"(ok) parameters[]"#, r#"print ${(ok)parameters[PATH]}"#);
         param_i_capital_ident_flag => (r#"(I) name"#, r#"print ${(I)ZSH_VERSION}"#);
         param_zb_base_flag => (r#"(Zb)"#, r#"print ${(Zb)foo}"#);
-        options_assoc_keys_sorted => (r#"(k)options"#, r#"print ${(k)options}"#);
+        // (ok) not (k): unsorted assoc-key enumeration emits per-shell
+        // HASH-TABLE order — it can never match byte-for-byte across
+        // implementations. The sorted form pins the real invariant
+        // (the option-NAME SET must be identical); verified both
+        // shells emit identical `${(ok)options}` output.
+        options_assoc_keys_sorted => (r#"(ok)options"#, r#"print ${(ok)options}"#);
         param_uas_upper_segments => (r#"(UAs) per segment"#, r#"s=hi; print ${(UAs)s}"#);
         param_las_lower_segments => (r#"(LAs) per segment"#, r#"s=hi; print ${(LAs)s}"#);
         param_j_dot_join_brace => (r#"(j.S.) brace"#, r#"print ${(j.S.){a,b}}"#);
@@ -1960,7 +1965,12 @@ mod corpus_dash_fc_bulk_o {
 hc_line_o
 HD_O"##);
         bulk_o_fc_proc_subst_cat_read => (r#"cat < <( )"#, r##"read -r lr_o < <( print -r proc_so ); print -r "$lr_o""##);
-        bulk_o_fc_assoc_sorted_values_ov => (r#"(ov) assoc"#, r##"typeset -A Aov_o=(zk va zi vb); print -r "${(ov)Aov_o}""##);
+        // Unquoted, not "${(ov)…}": in DQ the c:Src/subst.c:3032 qt
+        // sepjoin runs BEFORE the sort flag, so (o) operates on ONE
+        // joined word (no-op) and the output is per-shell hash order —
+        // unmatchable across implementations. Unquoted, (o) really
+        // sorts the values; verified both shells print `va vb`.
+        bulk_o_fc_assoc_sorted_values_ov => (r#"(ov) assoc"#, r##"typeset -A Aov_o=(zk va zi vb); print -r ${(ov)Aov_o}"##);
         bulk_o_fc_regex_match_MATCH_var => (r#"=~ MATCH"#, r##"[[ str_oob =~ oob ]]; print -r "$MATCH""##);
         bulk_o_fc_print_P_cond_yes => (r#"print -P %(\?.)"#, r##"setopt promptsubst; true; print -P '%(?.y_p.n_p)'"##);
         bulk_o_fc_noglob_literal_star => (r#"noglob *literal"#, r##"noglob print -r '*.no_glob_expand_o_zz'"##);

@@ -5388,7 +5388,42 @@ pub fn paramsubst(
                     // c:Src/params.c:1419 — bare `(e)KEY` exact-key
                     // lookup on assoc (no pattern interpretation).
                     // Bug #407.
-                    map.get(key).cloned().unwrap_or_default()
+                    // c:Src/params.c:1492-1494 + 1591 — same WANTKEYS
+                    // → SCANPM_WANTINDEX promotion as the plain-key
+                    // arm below ((e) only disables pattern compile;
+                    // the inv derivation is shared).
+                    if (hkeys & SCANPM_WANTKEYS) != 0
+                        && (hvals & SCANPM_WANTVALS) == 0
+                    {
+                        if map.contains_key(key) {
+                            key.to_string()
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        map.get(key).cloned().unwrap_or_default()
+                    }
+                } else if (hkeys & SCANPM_WANTKEYS) != 0
+                    && (hvals & SCANPM_WANTVALS) == 0
+                {
+                    // c:Src/params.c:1492-1494 — `if (v->scanflags &
+                    // SCANPM_WANTKEYS) *inv = (ind || !(v->scanflags &
+                    // SCANPM_WANTVALS))`: the `(k)` flag (without `(v)`)
+                    // on a plain-key assoc subscript sets inv. Then
+                    // c:1591 `v->scanflags = (*inv ? SCANPM_WANTINDEX :
+                    // 0)` and c:Src/subst.c:2922 `val = dupstring(
+                    // v->pm->node.nam)` — the hash node's NAME, i.e.
+                    // the KEY, is returned instead of the value.
+                    // Missing key: c:1586 createparam(s, PM_SCALAR|
+                    // PM_UNSET) leaves the node unset → empty result
+                    // (zsh 5.9: `${(k)H[missing]}` → ""). `(kv)`
+                    // keeps WANTVALS so it stays on the value arm
+                    // (zsh 5.9: `${(kv)H[k1]}` → "v1").
+                    if map.contains_key(sub) {
+                        sub.to_string()
+                    } else {
+                        String::new()
+                    }
                 } else {
                     map.get(sub).cloned().unwrap_or_default()
                 }
@@ -5864,6 +5899,20 @@ pub fn paramsubst(
                     // Previously only the assoc-keyed partab_get ran
                     // here, so ${errnos[1]} returned empty.
                     Some(elem)
+                } else if (hkeys & SCANPM_WANTKEYS) != 0
+                    && (hvals & SCANPM_WANTVALS) == 0
+                {
+                    // c:Src/params.c:1492-1494 + 1591 — `(k)` without
+                    // `(v)` on a plain-key hash subscript sets inv →
+                    // SCANPM_WANTINDEX; c:Src/subst.c:2922 then
+                    // returns the hash node's NAME (the key). Same
+                    // rule as the ordinary-assoc arm above; magic
+                    // hashes (parameters/options/…) hit getarg's
+                    // identical path in C. zsh 5.9:
+                    // `${(ok)parameters[PATH]}` → "PATH". Missing key
+                    // → None falls to the scalar arm (empty), matching
+                    // C's PM_UNSET createparam result.
+                    crate::vm_helper::partab_get(&var_name, sub).map(|_| sub.to_string())
                 } else {
                     crate::vm_helper::partab_get(&var_name, sub)
                 }

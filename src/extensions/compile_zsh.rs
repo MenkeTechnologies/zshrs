@@ -4368,7 +4368,26 @@ impl ZshCompiler {
                         // quoted metachars is correct in all cases
                         // that reach this gate.
                         let inner_safe = strip_brace_wrap_for_bridge(s).unwrap_or_else(|| inner.to_string());
-                        let body_const = self.builder.add_constant(Value::str(&inner_safe));
+                        // c:Src/subst.c:3032 — in DQ without `(@)`, the
+                        // qt sepjoin runs BEFORE the SUB_FILTER getmatch
+                        // at c:3540, so `"${(M)a:#pat}"` tests ONE joined
+                        // word, not each element. Prefix Qstring
+                        // (\u{8c}) — same DQ signal the zip path below
+                        // uses — so BRIDGE_BRACE_ARRAY bumps
+                        // in_dq_context and paramsubst sees qt=true.
+                        // Without this, the filter ran per-element in DQ
+                        // (zshrs printed "ha he hi" for
+                        // `"${(M)a:#h?}"` where zsh prints "").
+                        let in_dq_ba = (s.starts_with('\u{9e}')
+                            && s.ends_with('\u{9e}')
+                            && s.len() >= 2)
+                            || self.dq_context_depth > 0;
+                        let body_text = if in_dq_ba {
+                            format!("\u{8c}{}", inner_safe)
+                        } else {
+                            inner_safe
+                        };
+                        let body_const = self.builder.add_constant(Value::str(&body_text));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
                             Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
