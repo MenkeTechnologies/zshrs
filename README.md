@@ -119,7 +119,7 @@ Every command compiles to [fusevm](https://github.com/MenkeTechnologies/fusevm) 
 ```
 Interactive command  ──► lex::zshlex ──► parse::parse ──► ZshCompiler ──► fusevm::Op ──► VM::run()
                          (port of    (port of      (original;
-                          Src/lex.c)  Src/parse.c)  ~1.4k LOC)
+                          Src/lex.c)  Src/parse.c)  ~10.6k LOC)
 Script file (first)  ──► lex::zshlex ──► parse::parse ──► ZshCompiler ──► VM::run() ──► persist rkyv shard
 Script file (cached) ──► index.rkyv + mmap shard ──► deserialize Chunk ──► VM::run()
                          (no lex, no parse, no compile)
@@ -479,13 +479,13 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | `zsh_construct_corpus` | 392 | Every sh/zsh construct outside modules |
-| `zsh_corpus_via_new_pipeline` | 123 | Native lex+parse+ZshCompiler path |
+| `zsh_corpus_via_new_pipeline` | 124 | Native lex+parse+ZshCompiler path |
 | `no_tree_walker_dispatch` | 160 | Behavioral pins for the no-tree-walker invariant |
 | `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
 | `zsh_parser_probe` | 87 | AST-shape probes for every construct |
 | `ztst_runner` | 70 | Real `.ztst` files from upstream zsh |
-| **Total** | **868** | All green on the new (default) pipeline |
+| **Total** | **869** | All green on the new (default) pipeline |
 
 ---
 
@@ -529,7 +529,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │     (default)        (--features recorder)  (--features zd)    │
                   ├────────────────────────────────────────────────────────────────┤
                   │                       fusevm (bytecode VM)                    │
-                  │            223 opcodes · fused superinstructions · JIT         │
+                  │            224 opcodes · fused superinstructions · JIT         │
                   └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -621,7 +621,7 @@ Plugin features:
 
 - **File types**: `.zsh` + every dot-rc (`.zshrc`, `.zshenv`, `.zlogin`,
   `.zlogout`, `.zprofile`, `.zpreztorc`).
-- **Hand-rolled lexer** with 42 independently-themeable color slots
+- **Hand-rolled lexer** with 45 independently-themeable color slots
   (*Settings → Editor → Color Scheme → zshrs*).
 - **LSP client** auto-starts `zshrs --lsp` on first file open. Hover,
   completion, goto-definition, references, rename, document symbols,
