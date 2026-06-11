@@ -503,7 +503,13 @@ mod corpus_dash_fc_language_surface {
         param_flag_dot_caret_parse => (r#"${(.)^RANDOM}"#, r#"print ${(.)^RANDOM}"#);
         close_fd_stdout_print => (r#"print >&-"#, r#"print >&-"#);
         print_to_explicit_fd_one => (r#"print -u1"#, r#"print -u1 direct"#);
-        typeset_plus_m_name_list => (r#"typeset +m"#, r#"typeset +m; print after"#);
+        // `typeset +m` dumps NAME=value rows; values include $$ /
+        // RANDOM / __CF_USER_TEXT_ENCODING, which differ per process,
+        // so raw-stdout parity on the full dump can never pass. Strip
+        // the values: the type-prefixed name rows ("integer 10
+        // readonly '#'", "array readonly '*'", ...) still pin the
+        // listing semantics + parameter set + order.
+        typeset_plus_m_name_list => (r#"typeset +m"#, r#"typeset +m 2>/dev/null | sed 's/=.*//'; print after"#);
         typeset_plus_list_all => (r#"typeset +"#, r#"typeset +; print after_typeset_plus"#);
         local_decl_top_level_visibility => (r#"local at top-level -fc"#, r#"local x=1 2>/dev/null; print defined:$+x"#);
         dot_slash_argv_zero_tail => (r#"./$0:t"#, r#"print ./$0:t"#);

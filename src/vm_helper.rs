@@ -926,8 +926,20 @@ impl ShellExecutor {
         // into paramtab so ${(k)parameters} sees it.
         {
             use crate::ported::signals_h::SIGS;
-            let signals_arr: Vec<String> =
-                SIGS.iter().map(|(n, _)| n.to_string()).collect();
+            // c:signames.c sigs[] (generated) — index 0 is "EXIT",
+            // entries 1..=SIGCOUNT are in PLATFORM SIGNAL-NUMBER
+            // order, tail is "ZERR", "DEBUG" (zsh.h SIGZERR/SIGDEBUG).
+            // SIGS is declared in Linux textual order, so sort by the
+            // libc number to reproduce the generated table's order on
+            // every platform. Same construction as params.rs — keep
+            // in sync.
+            let mut by_num: Vec<(&str, i32)> = SIGS.to_vec();
+            by_num.sort_by_key(|&(_, n)| n);
+            let mut signals_arr: Vec<String> = Vec::with_capacity(by_num.len() + 3);
+            signals_arr.push("EXIT".to_string()); // c:sigs[0]
+            signals_arr.extend(by_num.iter().map(|(n, _)| n.to_string()));
+            signals_arr.push("ZERR".to_string()); // c:sigs tail
+            signals_arr.push("DEBUG".to_string()); // c:sigs tail
             crate::ported::params::setaparam("signals", signals_arr);
         }
         // c:Src/init.c:1186-1193 — default prompt strings. zsh sets
@@ -977,12 +989,23 @@ impl ShellExecutor {
             setsparam(name, default);
         };
         seed_prompt("PS4", Some("PROMPT4"), "+%N:%i> ");
-        // c:Src/init.c:1188-1189 — `prompt = ztrdup("%m%# "); prompt2
-        // = ztrdup("%_> ");` for the interactive primary/secondary
-        // prompts. PS1 may be reset by the prompt-theme layer; only
-        // seed when the slot is empty so any prior theme write wins.
-        seed_prompt("PS1", Some("PROMPT"), "%m%# ");
-        seed_prompt("PS2", Some("PROMPT2"), "%_> ");
+        // c:Src/init.c:1181-1190 —
+        //     if(unset(INTERACTIVE)) {
+        //         prompt = ztrdup("");
+        //         prompt2 = ztrdup("");
+        //     } else ... {
+        //         prompt  = ztrdup("%m%# ");
+        //         prompt2 = ztrdup("%_> ");
+        //     }
+        // Non-interactive shells get EMPTY primary/secondary prompts
+        // — `zsh -fc 'typeset'` lists PS1='' — while interactive ones
+        // get the %m%# defaults. PS3/PS4/SPROMPT are seeded
+        // unconditionally in C (c:1191-1194). PS1 may be reset by the
+        // prompt-theme layer; only seed when the slot is empty so any
+        // prior theme write wins.
+        let interactive = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
+        seed_prompt("PS1", Some("PROMPT"), if interactive { "%m%# " } else { "" });
+        seed_prompt("PS2", Some("PROMPT2"), if interactive { "%_> " } else { "" });
         // c:Src/init.c:1191 — `prompt3 = ztrdup("?# ");`
         seed_prompt("PS3", Some("PROMPT3"), "?# ");
         // c:Src/init.c:1194 — `sprompt = ztrdup("zsh: correct '%R'
