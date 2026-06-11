@@ -223,6 +223,11 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
     // c:115
     let mut n = 8; // c:120
     let mut last_err: i32 = 0;
+    // c:121 — `char const *rpath = unmeta(path);` — strip Meta escapes
+    // BEFORE the mkdir(2)/stat(2) calls so the kernel sees the raw
+    // POSIX path, not zsh's metafied encoding. Diagnostic at c:142
+    // uses the ORIGINAL metafied `path` for the user-visible message.
+    let rpath = crate::ported::utils::unmeta(path);
     while n > 0 {
         // c:122
         n -= 1;
@@ -241,7 +246,7 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
         if p != 0 {
             builder.recursive(true);
         }
-        let result = builder.create(path); // c:124 mkdir
+        let result = builder.create(&rpath); // c:124 mkdir(rpath, mode)
         unsafe {
             libc::umask(oumask);
         } // c:125
@@ -252,7 +257,7 @@ pub fn domkdir(nam: &str, path: &str, mode: u32, p: i32) -> i32 {
         if p == 0 || last_err != libc::EEXIST {
             break;
         } // c:129
-        match std::fs::metadata(path) {
+        match std::fs::metadata(&rpath) {
             // c:130 stat
             Ok(meta) if meta.is_dir() => return 0, // c:138
             Ok(_) => break,                        // c:139
@@ -299,20 +304,29 @@ pub fn bin_rmdir(
     let mut err = 0i32;
     for arg in args {
         // c:154
-        let cpath = match std::ffi::CString::new(arg.as_str()) {
-            // c:155
+        // c:155 — `char *rpath = unmeta(*args);`. The path must be the
+        // raw POSIX form (Meta-escapes decoded back to their literal
+        // bytes) before reaching rmdir(2). Prior port passed the
+        // metafied bytes straight through CString::new, so any arg
+        // containing a Meta-escaped byte (e.g. `foo\x83\x12` for the
+        // literal "foo2") tried to rmdir the metafied filename
+        // instead of the real one.
+        let rpath = crate::ported::utils::unmeta(arg);
+        let cpath = match std::ffi::CString::new(rpath.as_str()) {
             Ok(c) => c,
             Err(_) => {
-                zwarnnam(
-                    nam, // c:158
-                    &format!("{}: {}", arg, "name too long"),
-                );
+                // c:157-158 — `if (!rpath) zwarnnam(nam,"%s: %e",*args,ENAMETOOLONG)`.
+                // Rust unmeta doesn't NULL-return; the only failure
+                // path here is interior NUL after Meta-decode, which
+                // we surface with the same ENAMETOOLONG diagnostic
+                // shape since that's the only "path too long / bad"
+                // class C surfaces from this site.
+                zwarnnam(nam, &format!("{}: {}", arg, "name too long"));
                 err = 1;
                 continue;
             }
         };
-        let r = unsafe { libc::rmdir(cpath.as_ptr()) }; // c:160
-        if r != 0 {
+        if unsafe { libc::rmdir(cpath.as_ptr()) } != 0 {
             // c:160
             zwarnnam(
                 nam, // c:161
