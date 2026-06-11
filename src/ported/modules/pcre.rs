@@ -148,7 +148,12 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) ->
         pattern_str.push_str("(?x)");
     }
     if (pcre_opts & 1) != 0 {
-        pattern_str.push('^');
+        // c:78 PCRE2_ANCHORED — pins the match to the start of the
+        // subject (or the -n offset) REGARDLESS of multiline mode.
+        // `\A` is the regex-crate equivalent; a bare `^` would
+        // combine with the (?m) prepended above for `pcre_compile
+        // -a -m` and anchor at EVERY line start instead.
+        pattern_str.push_str(r"\A");
     }
     pattern_str.push_str(&target);
 
