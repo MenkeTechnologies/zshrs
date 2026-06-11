@@ -2411,10 +2411,21 @@ pub fn applytextattributes(flags: i32) -> String {
     //   - `%k` (bg off):         selective \e[49m.
     //   - `%B`/`%U`/`%S` (attr on): emit attr-on cap + re-apply
     //     active colors.
-    let bold_off = old_b && !new_b;
-    let underline_off = old_u && !new_u;
-    let standout_off = old_s && !new_s;
-    let attr_on = (!old_b && new_b) || (!old_u && new_u) || (!old_s && new_s);
+    // c:Src/prompt.c:1085 — tsetcap() is a no-op when `termflags &
+    // (TERM_NOUP|TERM_BAD|TERM_UNKNOWN)`; every attribute transition
+    // in the C body routes through tsetcap, so an unknown/bad/dumb
+    // terminal emits no attribute SGRs at all (probe: TERM=dumb
+    // `zsh -fc 'print -P "%Shi%s"' | od -c` → plain `hi`). Colours
+    // are NOT gated — set_colour_attribute (c:Src/prompt.c:2440)
+    // falls back to raw SGR colour sequences when termcap caps are
+    // unavailable, so `%F`/`%K` still emit under TERM=dumb.
+    let tc_ok = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst)
+        & (TERM_NOUP | TERM_BAD | TERM_UNKNOWN)
+        == 0;
+    let bold_off = tc_ok && old_b && !new_b;
+    let underline_off = tc_ok && old_u && !new_u;
+    let standout_off = tc_ok && old_s && !new_s;
+    let attr_on = tc_ok && ((!old_b && new_b) || (!old_u && new_u) || (!old_s && new_s));
     let fg_emit_color = |attrs, out: &mut String| {
         if attrs & TXTFGCOLOUR != 0 {
             let raw = (attrs & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT;
@@ -3545,6 +3556,16 @@ fn zattr_set_bg_rgb(attrs: zattr, r: u8, g: u8, b: u8) -> zattr {
 /// promptexpand c:1286), runs the per-`%X` walker, then unmetafies
 /// the resulting buffer back to a UTF-8 String for display.
 pub fn expand_prompt(s: &str) -> String {
+    // c:Src/prompt.c:189-190 — `if ((termflags & TERM_UNKNOWN) &&
+    // (unset(INTERACTIVE))) init_term();` — lazy terminal init so
+    // non-interactive `print -P` / PS4 expansion resolves termcap
+    // attrs (or leaves TERM_UNKNOWN set for dumb/empty $TERM, which
+    // suppresses tsetcap-routed attribute output).
+    if crate::ported::params::TERMFLAGS.load(Ordering::SeqCst) & TERM_UNKNOWN != 0
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+    {
+        crate::ported::init::init_term();
+    }
     // c:Src/prompt.c:192-212 — when PROMPTSUBST is set, run
     //   parsestr + singsub on the prompt string BEFORE the `%`
     //   escape expansion. This expands `$()`, `${var}`, `$((expr))`

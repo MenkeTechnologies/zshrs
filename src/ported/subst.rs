@@ -4669,6 +4669,27 @@ pub fn paramsubst(
         // `=`, `?`, `[`, `(`) are valid. zsh's paramsubst at
         // subst.c:2147+ rejects this combination with
         // "bad substitution"; mirror that here so $? matches.
+        // c:Src/subst.c:2986-3004 — "We're now past the name or
+        // subexpression; the only things which can happen now are a
+        // closing brace, one of the standard parameter postmodifiers,
+        // or a history-style colon-modifier." A quote char (Dnull /
+        // Snull / Tick) in operand position is not in that set →
+        // `zerr("bad substitution")`. This is the `${(Q)"abc"}` /
+        // `${(L)'lit'}` / `${"abc"}` shape (probe: `zsh -fc 'print --
+        // ${(Q)"abc"}'` → `zsh:1: bad substitution`, exit 1). The
+        // pre-name loop above skips the OPENING quote (c:2623-2631
+        // inull skip, mirrored at the Snull|Dnull `continue` arm), so
+        // after the name walk idx sits on the CLOSING quote — exactly
+        // the state C's c:2990 check rejects. The quoted-subexp idiom
+        // `${(f)"$(cmd)"}` is unaffected — it carries subexp_value.
+        if subexp_value.is_none() && idx < body_chars.len() {
+            let nx = body_chars[idx];
+            if nx == Dnull || nx == Snull || nx == Tick {
+                zerr("bad substitution");
+                errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+                return (String::new(), new_pos, Vec::new());
+            }
+        }
         if (var_name == "!" || var_name == "\u{96}") && idx < body_chars.len() {
             let nx = body_chars[idx];
             if nx.is_ascii_alphanumeric()

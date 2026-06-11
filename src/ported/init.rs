@@ -630,6 +630,15 @@ pub fn init_term() -> i32 {
     set(TCFGCOLOUR, "\x1b[3%dm");
     set(TCBGCOLOUR, "\x1b[4%dm");
 
+    // c:802-803 — `termflags &= ~TERM_BAD; termflags &= ~TERM_UNKNOWN;`
+    // on tgetent success. c:826-833 — tccan(TCUP) clears TERM_NOUP;
+    // the table above always populates TCUP, so the clear is
+    // unconditional here.
+    {
+        use crate::ported::zsh_h::{TERM_BAD, TERM_NOUP};
+        TERMFLAGS.fetch_and(!(TERM_BAD | TERM_UNKNOWN | TERM_NOUP), Ordering::SeqCst);
+    }
+
     1 // c:909 success
 }
 
@@ -898,7 +907,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;                             // c:1097-1098
     // bangchar = '!'; hashchar = '#'; hatchar = '^';                        // c:1100-1102
     // termflags = TERM_UNKNOWN;                                             // c:1103
-    TERMFLAGS.store(1, Ordering::SeqCst);
+    TERMFLAGS.store(TERM_UNKNOWN, Ordering::SeqCst);
     // curjob = prevjob = coprocin = coprocout = -1;                         // c:1104
     // zgettime_monotonic_if_available(&shtimer);                            // c:1105
     // srand((unsigned)(shtimer.tv_sec + shtimer.tv_nsec));                  // c:1106
