@@ -659,11 +659,58 @@ pub(crate) fn zccmd_delwin(nam: &str, args: &[String]) -> i32 {
         );
         return 1;
     }
+    // c:582-591 — pre-delete guards:
+    //
+    //     if (w->flags & ZCWF_PERMANENT) {
+    //         zwarnnam(nam, "window `%s' can't be deleted", args[0]);
+    //         return 1;
+    //     }
+    //     if (w->children && firstnode(w->children)) {
+    //         zwarnnam(nam, "window `%s' has subwindows, delete those first",
+    //                  w->name);
+    //         return 1;
+    //     }
+    //
+    // Prior port had no subwindow guard at all (a parent could be
+    // deleted out from under its children, orphaning their parent
+    // back-references) and the PERMANENT diagnostic dropped the
+    // window name.
+    let parent_name: Option<String> = {
+        let wins = windows_lock().lock().unwrap();
+        let w = match wins.get(args[0].as_str()) {
+            Some(w) => w,
+            None => return 1,
+        };
+        if w.flags & ZCWF_PERMANENT != 0 {
+            // c:582-584
+            zwarnnam(nam, &format!("window `{}' can't be deleted", args[0]));
+            return 1;
+        }
+        if !w.children.is_empty() {
+            // c:587-590
+            zwarnnam(
+                nam,
+                &format!("window `{}' has subwindows, delete those first", args[0]),
+            );
+            return 1;
+        }
+        w.parent.clone()
+    };
     if zcurses_free_window(args[0].as_str()) != 0 {
-        zwarnnam(nam, "can't delete permanent window");
+        zwarnnam(nam, &format!("window `{}' can't be deleted", args[0])); // c:583
         return 1;
     }
-    0
+    // c:601-611 — `if (w->parent) { ...remnode(wpc, pcnode)... }` —
+    // unlink the deleted window from its parent's children list so
+    // the parent's subwindow guard above doesn't permanently wedge
+    // on a stale name.
+    if let Some(pname) = parent_name {
+        let mut wins = windows_lock().lock().unwrap();
+        if let Some(parent) = wins.get_mut(pname.as_str()) {
+            parent.children.retain(|c| c != &args[0]); // c:608 remnode
+        }
+    }
+    0 // c:627
 }
 
 // =====================================================================
