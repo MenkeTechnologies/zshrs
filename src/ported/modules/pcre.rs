@@ -158,9 +158,27 @@ pub fn bin_pcre_compile(nam: &str, args: &[String], ops: &options, func: i32) ->
             0 // c:107
         }
         Err(e) => {
-            // c:112-105 — pcre2_get_error_message + zwarnnam
-            zwarnnam(nam, &format!("error in regex: {}", e)); // c:112
-            1 // c:112
+            // c:101-104 — `pcre2_get_error_message(pcre_error, buffer,
+            //                                       sizeof(buffer));
+            //              zwarnnam(nam, "error in regex: %s", buffer);
+            //              return 1;`
+            //
+            // C emits a one-line summary from the PCRE2 error table.
+            // The regex crate's Display impl renders a multi-line
+            // breakdown by default (pattern excerpt + caret arrow +
+            // explanation); collapse it to a single line matching C's
+            // shape so callers parsing `2>&1` output see one line per
+            // failed compile (the existing cond_pcre_match diagnostic
+            // at 47a3bd8191 used the same collapse).
+            let raw = e.to_string();
+            let detail = raw
+                .lines()
+                .rev()
+                .find_map(|l| l.trim().strip_prefix("error: "))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| raw.replace('\n', " "));
+            zwarnnam(nam, &format!("error in regex: {}", detail)); // c:103
+            1 // c:104
         }
     }
 }
