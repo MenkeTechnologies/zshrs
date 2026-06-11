@@ -5607,6 +5607,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             eprintln!("{}:{}: permission denied: ", script_name, lineno);
             return Value::Status(126);
         }
+        // AOP intercepts (zshrs extension, no C counterpart) — same
+        // gate as host_exec_external (the static-head path): dynamic
+        // command names (`cmd=/bin/echo; $cmd payload`) must consult
+        // registered intercepts before dispatch, else `intercept
+        // before /bin/echo ...` fires for the literal spelling but
+        // not the variable one. run_intercepts runs before-advice
+        // in-place and returns None to continue; Some(status) means
+        // an around/after advice fully handled the command.
+        let intercepted = with_executor(|exec| {
+            if exec.intercepts.is_empty() {
+                return None;
+            }
+            let full_cmd = if args.len() == 1 {
+                args[0].clone()
+            } else {
+                args.join(" ")
+            };
+            let rest: Vec<String> = args[1..].to_vec();
+            exec.run_intercepts(&args[0], &full_cmd, &rest)
+        });
+        if let Some(result) = intercepted {
+            return Value::Status(result.unwrap_or(127));
+        }
         // c:Src/exec.c:2900 execcmd_exec — canonical simple-command
         // dispatcher. Runs precmd-modifier walk (c:3013-3091), then
         // dispatches to execbuiltin (c:4233) / runshfunc (c:3431+) /
