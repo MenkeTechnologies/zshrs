@@ -411,10 +411,20 @@ pub fn gdbmgetfn(param_name: &str, key: &str) -> String {
         None => return String::new(),
     };
     drop(params);
+    // c:304-308 — `umkey = unmetafy_zalloc(pm->node.nam, &umlen);
+    //              key.dptr = umkey; key.dsize = umlen;`
+    // The DATABASE stores raw (unmetafied) bytes — that's what makes
+    // a zshrs-written .gdbm interchangeable with a real-zsh-written
+    // one. The shell-side key arrives metafied; decode before the
+    // lookup.
+    let (umkey, _umlen) = unmetafy_zalloc(key); // c:305
     // c:312 — `gdbm_exists(dbf, key)` then `gdbm_fetch(dbf, key)`
-    match tied.get(key) {
-        Some(v) => v,          // c:347 return pm->u.str
-        None => String::new(), // c:347 return ""
+    match tied.get(&umkey) {
+        // c:326 — `pm->u.str = metafy(content.dptr, content.dsize,
+        //          META_DUP);` — fetched raw bytes are re-encoded to
+        //          the shell-side metafied form before returning.
+        Some(v) => crate::ported::utils::metafy(&v), // c:334 return pm->u.str
+        None => String::new(),                       // c:342 return ""
     }
 }
 
@@ -445,14 +455,23 @@ pub fn gdbmsetfn(param_name: &str, key: &str, val: Option<&str>) {
         crate::ported::utils::zwarn(&format!("read-only variable: {}", param_name));
         return;
     }
+    // c:371-375 — `umkey = unmetafy_zalloc(pm->node.nam, &umlen);
+    //              key.dptr = umkey; key.dsize = umlen;`
+    // gdbm stores raw bytes; the shell-side key/value arrive metafied.
+    // Decode both before the store so the on-disk format matches what
+    // real zsh writes (and what gdbmgetfn's c:326 metafy round-trips).
+    let (umkey, _umlen) = unmetafy_zalloc(key); // c:372
     match val {
-        // c:357-378 — `gdbm_store(dbf, key, content, GDBM_REPLACE);`
+        // c:377-387 — `umval = unmetafy_zalloc(val, &umlen);
+        //              content.dptr = umval; content.dsize = umlen;
+        //              gdbm_store(dbf, key, content, GDBM_REPLACE);`
         Some(v) => {
-            let _ = tied.set(key, v);
+            let (umval, _vlen) = unmetafy_zalloc(v); // c:379
+            let _ = tied.set(&umkey, &umval); // c:384
         }
-        // c:399-388 — NULL val triggers `gdbm_delete(dbf, key);`
+        // c:388-389 — NULL val triggers `gdbm_delete(dbf, key);`
         None => {
-            let _ = tied.delete(key);
+            let _ = tied.delete(&umkey);
         }
     }
 }
