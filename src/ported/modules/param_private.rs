@@ -113,33 +113,106 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
     let pm_removable = (pm_flags & PM_REMOVABLE as i32) != 0;
     let pm_norestore = (pm_flags & PM_NORESTORE as i32) != 0;
 
-    // c:84-89 — outer rejection branch: hn has ename, or PM_NORESTORE,
-    // or shadows a preexisting param.
-    let outer_cond = pm_ename
-        || pm_norestore
-        || (has_old
-            && (
-                // We can't easily inspect hn->old->level / hn->old->flags
-                // through a Box reference and locallevel arithmetic; the
-                // C `(hn->old->level == locallevel - 1 || ...)` check
-                // approximates as "an old entry exists at the parent scope".
-                true
-            ));
+    // c:84-89 — outer rejection gate, verbatim:
+    //
+    //     if (pm->ename || (pm->node.flags & PM_NORESTORE) ||
+    //         (pm->old &&
+    //          (pm->old->level == locallevel - 1 ||
+    //           ((pm->node.flags & (PM_SPECIAL|PM_REMOVABLE)) == PM_SPECIAL &&
+    //            /* typeset_single() line 2300 discards PM_REMOVABLE -- why? */
+    //            !is_private(pm->old))))) {
+    //
+    // The has-old leg fires ONLY when the shadowed entry sits at
+    // EXACTLY the parent scope (locallevel-1) or is a special-non-
+    // removable shadowing a non-private. Shadowing a global from
+    // depth ≥ 2, or anything with no old at all, falls through to
+    // the promotion path. A prior placeholder treated EVERY has_old
+    // as a rejection — `private x` over a global x always errored.
+    let _ = has_old;
+    let (old_level, old_flags, old_is_private) = unsafe {
+        match (*hn).old.as_ref() {
+            Some(old) => (
+                Some(old.level),
+                old.node.flags,
+                // During makeprivate the registry holds the name iff a
+                // PRIOR makeprivate inserted it (this call's insert
+                // happens below) — so name-presence ⟺ old is private.
+                is_private(&**old as *const param) != 0,
+            ),
+            None => (None, 0, false),
+        }
+    };
+    let inner_reject = match old_level {
+        Some(ol) => {
+            ol == cur_local - 1 // c:86
+                || ((pm_flags & (PM_SPECIAL | PM_REMOVABLE) as i32) == PM_SPECIAL as i32
+                    && !old_is_private) // c:87-89
+        }
+        None => false,
+    };
+    let _ = (pm_special, pm_removable);
+    let outer_cond = pm_ename || pm_norestore || inner_reject;
 
     if outer_cond {
-        // c:90-137 — handle name-clash. The full C body's switch on
-        // PM_TYPE(hn->node.flags) for the four scalar/int/float/array/
-        // hash setfn dispatches lives here. Static-link path: report
-        // the rejection via MAKEPRIVATE_ERROR and return.
-        if pm_special && !pm_removable {
-            // c:87-89
-            zerr(
-                &format!("can't change scope of existing param: {}", unsafe {
-                    (*hn).node.nam.clone()
-                }), // c:133
-            );
+        // c:90-137 — name-clash arms.
+        let name = unsafe { (*hn).node.nam.clone() };
+        if old_is_private {
+            // c:90
+            let old_readonly = (old_flags & PM_READONLY as i32) != 0;
+            if old_readonly {
+                // c:91-93
+                zerr(&format!("read-only variable: {}", name)); // c:92
+                MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:93
+            } else if (pm_flags | old_flags) == old_flags {
+                // c:94-95 — `private` called twice on the same param:
+                // copy the NEW declaration's value down into the old
+                // (still-live) private and re-arm it. C's c:99/c:123
+                // --locallevel/++locallevel dance exists so gsu->setfn
+                // sees the outer scope; the static-link direct field
+                // copy doesn't dispatch through setfn so no scope
+                // shuffle is needed.
+                /* why have a union if we need this switch anyway? */
+                unsafe {
+                    let (u_str, u_val, u_dval, u_arr, u_hash, tpm_unset) = {
+                        let t = &*hn;
+                        (
+                            t.u_str.clone(),  // c:104 PM_SCALAR/PM_NAMEREF
+                            t.u_val,          // c:108 PM_INTEGER
+                            t.u_dval,         // c:112 PM_EFLOAT/PM_FFLOAT
+                            t.u_arr.clone(),  // c:115 PM_ARRAY
+                            t.u_hash.clone(), // c:119 PM_HASHED
+                            (t.node.flags & PM_UNSET as i32) != 0,
+                        )
+                    };
+                    if let Some(old) = (*hn).old.as_mut() {
+                        old.u_str = u_str; // c:104 gsu.s->setfn
+                        old.u_val = u_val; // c:108 gsu.i->setfn
+                        old.u_dval = u_dval; // c:112 gsu.f->setfn
+                        old.u_arr = u_arr; // c:115 gsu.a->setfn
+                        old.u_hash = u_hash; // c:119 gsu.h->setfn
+                        // c:124-125 — `if (!(tpm->node.flags & PM_UNSET))
+                        //               pm->node.flags &= ~PM_UNSET;`
+                        if !tpm_unset {
+                            old.node.flags &= !(PM_UNSET as i32); // c:125
+                        }
+                    }
+                }
+            } else {
+                // c:126-131 — declaration changes the param's type.
+                zerr(&format!(
+                    "private: can't change type of private param: {}",
+                    name
+                )); // c:127-129
+                MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:130
+            }
+        } else {
+            // c:132-136
+            zerr(&format!(
+                "private: can't change scope of existing param: {}",
+                name
+            )); // c:133-134
+            MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:135
         }
-        MAKEPRIVATE_ERROR.store(1, Ordering::Relaxed); // c:130/135
         return; // c:137
     }
 
