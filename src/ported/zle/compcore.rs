@@ -1895,19 +1895,27 @@ pub fn addmatches(
         let mut literal_suffixes: Vec<String> = Vec::new();
         let mut pat_progs: Vec<crate::ported::pattern::Patprog> = Vec::new();
         for entry in aign_raw {
-            // c:2233-2236 — `?*xxx` / `*?xxx` short-circuit: trailing
-            // literal suffix.
-            let bytes = entry.as_bytes();
-            let star_prefix = bytes.len() >= 3
-                && ((bytes[0] == b'?' && bytes[1] == b'*')
-                    || (bytes[0] == b'*' && bytes[1] == b'?'))
-                && !crate::ported::pattern::haswilds(
-                    std::str::from_utf8(&bytes[2..]).unwrap_or(""),
-                );
+            // c:2231-2232 — `tokenize(tmp); remnulargs(tmp);` — fignore
+            // entries are param values (untokenized text); C tokenizes
+            // each BEFORE the token checks below and the patcompile.
+            let mut tmp = entry.clone();
+            crate::ported::glob::tokenize(&mut tmp); // c:2231
+            crate::ported::glob::remnulargs(&mut tmp); // c:2232
+            // c:2233-2236 — `(tmp[0] == Quest && tmp[1] == Star) ||
+            // (tmp[1] == Quest && tmp[0] == Star)` token short-circuit:
+            // trailing literal suffix.
+            let tch: Vec<char> = tmp.chars().collect();
+            let suffix: String = tch.iter().skip(2).collect();
+            let star_prefix = tch.len() >= 3
+                && ((tch[0] == crate::ported::zsh_h::Quest && tch[1] == crate::ported::zsh_h::Star)
+                    || (tch[1] == crate::ported::zsh_h::Quest
+                        && tch[0] == crate::ported::zsh_h::Star))
+                && !crate::ported::pattern::haswilds(&suffix);
             if star_prefix {
-                literal_suffixes.push(std::str::from_utf8(&bytes[2..]).unwrap_or("").to_string());
+                // c:2236 — `untokenize(*sp++ = tmp + 2);`
+                literal_suffixes.push(crate::ported::lex::untokenize(&suffix));
             } else if let Some(prog) =
-                crate::ported::pattern::patcompile(&{ let mut __pat_tok = (&entry).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None::<&mut String>)
+                crate::ported::pattern::patcompile(&tmp, 0, None::<&mut String>)
             {
                 pat_progs.push(prog);
             }

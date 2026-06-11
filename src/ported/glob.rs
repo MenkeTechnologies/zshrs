@@ -3315,7 +3315,14 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // Now check wildcards on the qualifier-stripped pattern. A pure
     // literal with a qualifier (`name(.)`) still needs to enter the
     // scanner so the qualifier filter can run against the literal name.
-    if !haswilds(&pat) && state.qualifiers.is_none() {
+    // haswilds scans TOKENIZED strings (c:Src/glob.c:1230 runs on the
+    // lexer-tokenized word); glob_path receives both tokenized (zglob)
+    // and untokenized (expand_glob fast paths) patterns, so tokenize a
+    // local copy for the check — existing token chars pass through
+    // zshtokenize untouched, untokenized metachars gain their tokens.
+    let mut pat_tok = pat.clone();
+    tokenize(&mut pat_tok); // c:Src/glob.c:3548
+    if !haswilds(&pat_tok) && state.qualifiers.is_none() {
         return vec![pattern.to_string()];
     }
 
@@ -5711,11 +5718,19 @@ mod tests {
     #[test]
     fn test_haswilds() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*.txt"));
-        assert!(haswilds("file?.txt"));
-        assert!(haswilds("file[12].txt"));
-        assert!(!haswilds("file.txt"));
-        assert!(!haswilds("path/to/file.txt"));
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("*.txt")));
+        assert!(haswilds(&tok("file?.txt")));
+        assert!(haswilds(&tok("file[12].txt")));
+        assert!(!haswilds(&tok("file.txt")));
+        assert!(!haswilds(&tok("path/to/file.txt")));
     }
 
     #[test]
@@ -6050,9 +6065,17 @@ mod tests {
     #[test]
     fn haswilds_respects_backslash_escape() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*.txt"), "bare * is wild");
-        assert!(!haswilds(r"\*.txt"), "escaped \\* is literal — NOT wild");
-        assert!(!haswilds(r"\?.txt"), "escaped \\? is literal — NOT wild");
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("*.txt")), "bare * is wild");
+        assert!(!haswilds(&tok(r"\*.txt")), "escaped \\* is literal — NOT wild");
+        assert!(!haswilds(&tok(r"\?.txt")), "escaped \\? is literal — NOT wild");
     }
 
     /// c:4306 — `[` immediately enters bracket mode AND counts as a
@@ -6062,8 +6085,16 @@ mod tests {
     #[test]
     fn haswilds_open_bracket_alone_is_a_wildcard() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("[abc]"), "char-class is wild");
-        assert!(haswilds("foo["), "even unterminated [ is wild");
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("[abc]")), "char-class is wild");
+        assert!(haswilds(&tok("foo[")), "even unterminated [ is wild");
     }
 
     /// c:4306 — wildcard chars `*` `?` inside an OPEN bracket-context
@@ -6075,9 +6106,17 @@ mod tests {
     #[test]
     fn haswilds_extglob_chars_inside_bracket_dont_double_count() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
         // Once `[` is seen, function returns true immediately, so the
         // post-bracket chars don't matter. But this docs the contract.
-        assert!(haswilds("[*]"));
+        assert!(haswilds(&tok("[*]")));
     }
 
     /// c:4306 — plain text returns false. Catches a regression where
@@ -6086,10 +6125,18 @@ mod tests {
     #[test]
     fn haswilds_plain_text_not_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!haswilds("plain"));
-        assert!(!haswilds(""));
-        assert!(!haswilds("/usr/local/bin"));
-        assert!(!haswilds("file.txt"));
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
+        assert!(!haswilds(&tok("plain")));
+        assert!(!haswilds(&tok("")));
+        assert!(!haswilds(&tok("/usr/local/bin")));
+        assert!(!haswilds(&tok("file.txt")));
     }
 
     /// c:4363-4371 — `#` and `^` are recognised as wildcards by
@@ -6103,19 +6150,27 @@ mod tests {
     #[test]
     fn haswilds_extended_glob_chars_recognised() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
         // EXTENDEDGLOB off → `#` and `^` are not wild.
         crate::ported::options::opt_state_set("extendedglob", false);
-        assert!(!haswilds("foo#bar"), "# not wild without EXTENDEDGLOB");
-        assert!(!haswilds("foo^bar"), "^ not wild without EXTENDEDGLOB");
+        assert!(!haswilds(&tok("foo#bar")), "# not wild without EXTENDEDGLOB");
+        assert!(!haswilds(&tok("foo^bar")), "^ not wild without EXTENDEDGLOB");
         // EXTENDEDGLOB on → `#` and `^` are wild (c:4364, c:4369).
         crate::ported::options::opt_state_set("extendedglob", true);
-        assert!(haswilds("foo#bar"), "# is extglob wild");
-        assert!(haswilds("foo^bar"), "^ is extglob wild");
+        assert!(haswilds(&tok("foo#bar")), "# is extglob wild");
+        assert!(haswilds(&tok("foo^bar")), "^ is extglob wild");
         crate::ported::options::opt_state_set("extendedglob", false);
         // `~` is NOT in haswilds' switch (c:4324-4373) — tilde expansion
         // is a separate pipeline stage.
         assert!(
-            !haswilds("~/file"),
+            !haswilds(&tok("~/file")),
             "~ is NOT a filename-generation wildcard"
         );
     }
@@ -6508,20 +6563,36 @@ mod tests {
     #[test]
     fn haswilds_each_glob_meta() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*"));
-        assert!(haswilds("?"));
-        assert!(haswilds("[abc]"));
-        assert!(haswilds("a*b"));
-        assert!(haswilds("a?b"));
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("*")));
+        assert!(haswilds(&tok("?")));
+        assert!(haswilds(&tok("[abc]")));
+        assert!(haswilds(&tok("a*b")));
+        assert!(haswilds(&tok("a?b")));
     }
 
     #[test]
     fn haswilds_plain_strings_have_no_wildcards() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!haswilds(""));
-        assert!(!haswilds("plain.txt"));
-        assert!(!haswilds("/abs/path/file.rs"));
-        assert!(!haswilds("./rel/file"));
+        // c:Src/glob.c:3548 — full glob tokenize (shadows the
+        // brace-only `fn tok` test helper above on purpose:
+        // haswilds consumes glob tokens, not just braces).
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            tokenize(&mut t);
+            t
+        };
+        assert!(!haswilds(&tok("")));
+        assert!(!haswilds(&tok("plain.txt")));
+        assert!(!haswilds(&tok("/abs/path/file.rs")));
+        assert!(!haswilds(&tok("./rel/file")));
     }
 
     // ── xpandbraces: brace expansion (zsh extension, not POSIX) ─────

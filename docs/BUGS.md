@@ -53,14 +53,34 @@ carrying 0x84–0xA0: `↔` (U+2194, `E2 86 94`) hits Hat (0x86,
 EXTENDEDGLOB-gated) and Inang (0x94, ungated); `⇇` (U+21C7,
 `E2 87 87`) hits Star (0x87, ungated).
 
-**Fix:** both scans converted from bytes to chars — token
-comparisons are codepoint comparisons, so U+2194 ≠ U+0094 and
-plain multibyte text never marks a word wild, while real lexer
-tokens (`'\u{87}'` etc.) still fire. The ~95-line inline bridge
-gate was extracted to `fusevm_bridge.rs::haswilds_tokens_only`
-(Rust-only helper, C-verbatim token-only check set; lives outside
-src/ported/ because the name has no C counterpart). Pinned by
-`multibyte_text_is_not_glob` in tests/glob_parity.rs.
+**Fix (C-faithful rework):** `pattern.rs::haswilds` restored to the
+C-exact body — a char-walk (the zshrs unit for C's metafied byte)
+over TOKEN codes only, exactly pattern.c:4306-4374: no literal-ASCII
+acceptance, no hand-rolled escape tracking. Those adaptations
+existed because some Rust callers passed un-tokenized strings; per
+the C contract every haswilds input is tokenized, so those call
+sites now `tokenize()` (the ported Src/glob.c:3548) first — the
+same preparation C itself applies to runtime-built strings
+(compcore.c:2231 tokenizes fignore entries right before its c:2235
+haswilds call). Escapes are handled by tokenize's Bnull mechanism
+(`\*` stays literal) instead of ad-hoc scan state. Call sites:
+
+- dispatcher pre-untokenize gate (fusevm_bridge.rs) — input already
+  tokenized; calls canonical `haswilds` directly (the interim
+  `haswilds_tokens_only` helper from the first fix is deleted)
+- `vm_helper.rs::expand_glob`, `glob.rs::glob_path`,
+  `subst.rs` c:glob.c:1232 mirror, `builtin.rs` typeset-array glob —
+  untokenized fast-path inputs; tokenize a local copy for the check
+- `compcore.rs` fignore loop — now ports c:2231-2236 verbatim
+  (tokenize + remnulargs + token `Quest`/`Star` checks + untokenize
+  of the literal suffix)
+- `glob.rs::zglob`, `exec.rs` c:2555, computil.rs sites — inputs
+  already tokenized per C; unchanged
+
+Multibyte text (`↔`, U+2194) passes through tokenize unchanged and
+matches no token codepoint. Pinned by `multibyte_text_is_not_glob`
+in tests/glob_parity.rs; haswilds unit tests now build inputs
+through `tokenize` per the C contract.
 
 ---
 

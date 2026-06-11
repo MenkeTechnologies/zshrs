@@ -4831,8 +4831,16 @@ pub fn bin_typeset(
                     // element can't be a real glob — keep it literal
                     // (matches the C zglob no-wild short-circuit and
                     // suppresses the spurious "bad pattern" zerr).
-                    if crate::ported::pattern::haswilds(&re) {
-                        let compilable = crate::ported::pattern::patcompile(&{ let mut __pat_tok = (&re).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
+                    // haswilds scans TOKENIZED strings — tokenize a
+                    // local copy of the untokenized element first
+                    // (c:Src/glob.c:3548), as C does for runtime-built
+                    // strings (compcore.c:2231); patcompile consumes
+                    // the same tokenized form.
+                    let mut re_tok = re.to_string();
+                    crate::ported::glob::tokenize(&mut re_tok);
+                    if crate::ported::pattern::haswilds(&re_tok) {
+                        let compilable = crate::ported::pattern::patcompile(
+                            &re_tok,
                             crate::ported::zsh_h::PAT_HEAPDUP as i32,
                             None,
                         )

@@ -1326,8 +1326,15 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
                                                                          // c:Src/glob.c:1232 — `if (!haswilds(str))` test that
                                                                          // bypasses zglob entirely. We mirror it here so plain
                                                                          // literals like `echo foo` don't trip NOMATCH.
-            let has_glob_chars = data.chars().any(|c| matches!(c, '*' | '?' | '[' | ']'))
-                || crate::ported::pattern::haswilds(&data);
+                                                                         // haswilds scans TOKENIZED strings; `data` is untokenized
+                                                                         // at this point, so tokenize a local copy first
+                                                                         // (c:Src/glob.c:3548), as C does for runtime-built
+                                                                         // strings (compcore.c:2231).
+            let has_glob_chars = {
+                let mut data_tok = data.clone();
+                crate::ported::glob::tokenize(&mut data_tok);
+                crate::ported::pattern::haswilds(&data_tok)
+            };
             if has_glob_chars && !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH)
             // c:1876
             {

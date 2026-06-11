@@ -3282,7 +3282,19 @@ impl ShellExecutor {
         // trailing-`(...)` qualifiers, leaving mid-word groups and
         // unclosed parens to fall through to the literal-passthrough
         // branch. #170 in docs/BUGS.md.
-        let is_glob = crate::ported::pattern::haswilds(pattern);
+        //
+        // haswilds scans TOKENIZED strings (C's zglob gets the
+        // lexer-tokenized word at Src/glob.c:1230); this entry point
+        // receives untokenized fast-path patterns, so tokenize a
+        // local copy first — the same preparation C applies to
+        // runtime-built strings (compcore.c:2231 tokenizes fignore
+        // entries before its haswilds call). tokenize Bnull's
+        // backslash-escaped metachars, so `\*` stays literal here
+        // exactly as in C. Bug #627: plain multibyte text (`↔`)
+        // passes through tokenize unchanged and matches no token.
+        let mut pattern_tok = pattern.to_string();
+        crate::ported::glob::tokenize(&mut pattern_tok); // c:Src/glob.c:3548
+        let is_glob = crate::ported::pattern::haswilds(&pattern_tok);
         if nomatch && is_glob {
             // c:Src/glob.c:1876-1880 — `else if (isset(NOMATCH)) {`
             //   `zerr("no matches found: %s", ostr);`

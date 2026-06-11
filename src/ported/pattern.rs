@@ -3290,104 +3290,61 @@ pub fn clearpatterndisables() {
 ///
 /// Check whether `str` is eligible for filename generation.
 ///
-/// **Rust-port adaptation.** The C body scans a *tokenized* byte
-/// stream and matches against `Inpar`/`Star`/`Inbrack`/…
-/// token bytes (0x84–0x9c) assigned by the tokenizer; backslash
-/// escapes have already been resolved by the lexer before
-/// `haswilds` runs. zshrs callers in `src/ported/{glob.rs, exec.rs,
-/// zle/compcore.rs, zle/computil.rs}` pass *un-tokenized* `&str`
-/// values where `\*` is literal `\` + `*`, so the C-faithful
-/// token-only check would miss every wildcard from those sites.
-/// This Rust port therefore accepts **both** the literal ASCII
-/// metachars (`*`, `?`, `[`, `(`, `|`, `<`, `#`, `^`) and the
-/// matching token chars, and tracks `\\<x>` escapes inline so that
-/// un-tokenized patterns like `r"\*.txt"` correctly report no
-/// wildcards. All option- and `zpc_disables[]`-gated decisions
-/// mirror the C source verbatim (SHGLOB/KSHGLOB on `(`, EXTENDEDGLOB
-/// on `#`/`^`, per-token `ZPC_*` mask checks).
+/// C scans a TOKENIZED string: every input reaching it has been
+/// through the lexer or `tokenize()`/`shtokenize()` (glob.c:3548/
+/// 3563), so glob metachars are token codes and escaped/quoted
+/// chars are Bnull'd literals. Callers holding un-tokenized strings
+/// must `tokenize()` a copy first — exactly what C does for
+/// runtime-built strings (compcore.c:2231 tokenizes fignore entries
+/// immediately before its c:2235 haswilds call). The switch matches
+/// ONLY token codes, never literal ASCII metachars.
+///
+/// The walk is over chars: zshrs strings hold token chars as
+/// codepoints (Star = U+0087) and the input layer is char-domain
+/// (input.rs `shingetline`/`ingetc`), so the char is the unit that
+/// the metafied byte is in C. Scanning bytes here false-positived
+/// on UTF-8 continuation bytes of plain text (`↔` = E2 86 94
+/// carries 0x86/0x94 = Hat/Inang as u8) — bug #627.
 ///
 /// The C source's `%?foo` job-ref special case (c:4317-4318), which
 /// mutates `str[1]` in place to demote the `?`, becomes a "skip
 /// position 1" scan adjustment here since `&str` is immutable.
-///
-/// The C source's single-byte `[` / `]` exception (c:4310-4312) is
-/// dropped: it targets tokenized input where bare `Inbrack` is
-/// pathological; Rust callers pass un-tokenized `[abc]` patterns
-/// where bare `[` is still the start of a char-class wildcard.
 pub fn haswilds(str: &str) -> bool {
     // c:4306
-    // C scans a metafied byte stream where every raw input byte that
-    // collides with a token value was Meta-escaped by the lexer, so
-    // `*str == Hat` can never false-positive on text. zshrs words are
-    // Rust `&str` holding token chars as CODEPOINTS (Star = U+0087,
-    // encoded C2 87), so the scan must walk chars, not bytes: a byte
-    // scan matches UTF-8 continuation bytes of unrelated text (`↔` =
-    // E2 86 94 carries 0x86/0x94 which equal Hat/Inang as u8) and
-    // fired NOMATCH on plain multibyte words (zinit.zsh:251 `col-↔`).
-    let chars: Vec<char> = str.chars().collect(); // c:4324
+    let chars: Vec<char> = str.chars().collect();
     let len = chars.len();
     if len == 0 {
         return false;
     }
 
-    // c:4310-4312 — `[' and `]' are legal even if bad patterns are
-    // usually not. Single-byte bare `[` or `]` (un-tokenized literal
-    // OR tokenized `Inbrack`/`Outbrack`) returns 0 so `echo [` /
-    // `echo ]` work as zsh does (print the literal) without the
-    // NOMATCH option firing "no matches found: [".
-    //
-    // Previously dropped — the dropped-comment claimed the exception
-    // only targeted tokenized input, but `echo [` (literal `[` from
-    // the user's argv) also needs it: glob expansion sees length-1
-    // `[` first, decides it's a glob, finds zero matches, fires
-    // NOMATCH error. Real zsh's C source applies the exception
-    // BEFORE the metachar-scan switch (c:4310 is above the `for`
-    // loop at c:4322), so both literal and tokenized single-byte
-    // brackets get the bypass.
-    if len == 1 && (chars[0] == '[' || chars[0] == ']'
-        || chars[0] == Inbrack || chars[0] == Outbrack)
-    {
-        return false;
+    // c:4309 — `[' and `]' are legal even if bad patterns are usually not.
+    if len == 1 && (chars[0] == Inbrack || chars[0] == Outbrack) {
+        return false; // c:4311
     }
 
-    // c:4317-4318 — `%?foo` job-ref: skip position 1 if it's a `?` or
-    // `Quest` immediately after a leading `%`.
-    let skip_pos_1 = len >= 2 && chars[0] == '%' && (chars[1] == '?' || chars[1] == Quest);
+    // c:4313-4315 — If % is immediately followed by ?, then that ? is
+    // not treated as a wildcard.  This is so you don't have
+    // to escape job references such as %?foo.
+    let skip_pos_1 = len >= 2 && chars[0] == '%' && chars[1] == Quest; // c:4316-4317
 
+    // c:4319-4321 — Note that at this point zpc_special has not been set up.
     let disp = zpc_disables.lock().unwrap(); // c:read zpc_disables[]
 
-    let mut escape = false;
-    // c:4323-4373 — main scan. Each metachar checked in both literal
-    // and tokenized form (see Rust-port adaptation note above).
     for i in 0..len {
+        // c:4323 for (; *str; str++)
         if skip_pos_1 && i == 1 {
-            continue;
+            continue; // c:4317 `str[1] = '?'` demote
         }
-        let c = chars[i];
-        if escape {
-            // Backslash-escape from the previous iteration — current
-            // char is literal, regardless of whether it is also a
-            // metachar or token. (C doesn't do this because escapes
-            // are pre-resolved by the tokenizer.)
-            escape = false;
-            continue;
-        }
-        if c == '\\' {
-            escape = true;
-            continue;
-        }
-        let prev: char = if i > 0 { chars[i - 1] } else { '\0' };
+        let c = chars[i]; // c:4324 switch (*str)
+        let prev: char = if i > 0 { chars[i - 1] } else { '\0' }; // c: str[-1]
 
-        // c:4326-4335 — Inpar / literal `(`: wild unless SHGLOB is set,
-        // OR under KSHGLOB when preceded by `?/*/+/!/Bang/@`.
-        if c == Inpar || c == '(' {
+        if c == Inpar {
+            // c:4325-4335
             if (!isset(SHGLOB) && disp[ZPC_INPAR as usize] == 0)
                 || (i > 0
                     && isset(KSHGLOB)
-                    && (((prev == Quest || prev == '?')
-                        && disp[ZPC_KSH_QUEST as usize] == 0)
-                        || ((prev == Star || prev == '*')
-                            && disp[ZPC_KSH_STAR as usize] == 0)
+                    && ((prev == Quest && disp[ZPC_KSH_QUEST as usize] == 0)
+                        || (prev == Star && disp[ZPC_KSH_STAR as usize] == 0)
                         || (prev == '+' && disp[ZPC_KSH_PLUS as usize] == 0)
                         || (prev == Bang && disp[ZPC_KSH_BANG as usize] == 0)
                         || (prev == '!' && disp[ZPC_KSH_BANG2 as usize] == 0)
@@ -3395,31 +3352,31 @@ pub fn haswilds(str: &str) -> bool {
             {
                 return true; // c:4335
             }
-        } else if c == Bar || c == '|' {
+        } else if c == Bar {
             if disp[ZPC_BAR as usize] == 0 {
                 return true; // c:4340
             }
-        } else if c == Star || c == '*' {
+        } else if c == Star {
             if disp[ZPC_STAR as usize] == 0 {
                 return true; // c:4345
             }
-        } else if c == Inbrack || c == '[' {
+        } else if c == Inbrack {
             if disp[ZPC_INBRACK as usize] == 0 {
                 return true; // c:4350
             }
-        } else if c == Inang || c == '<' {
+        } else if c == Inang {
             if disp[ZPC_INANG as usize] == 0 {
                 return true; // c:4355
             }
-        } else if c == Quest || c == '?' {
+        } else if c == Quest {
             if disp[ZPC_QUEST as usize] == 0 {
                 return true; // c:4360
             }
-        } else if c == Pound || c == '#' {
+        } else if c == Pound {
             if isset(EXTENDEDGLOB) && disp[ZPC_HASH as usize] == 0 {
                 return true; // c:4365
             }
-        } else if c == Hat || c == '^' {
+        } else if c == Hat {
             if isset(EXTENDEDGLOB) && disp[ZPC_HAT as usize] == 0 {
                 return true; // c:4370
             }
@@ -5231,10 +5188,16 @@ mod tests {
     #[test]
     fn haswilds_detects_meta() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*"));
-        assert!(haswilds("foo?"));
-        assert!(haswilds("[abc]"));
-        assert!(!haswilds("plain"));
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("*")));
+        assert!(haswilds(&tok("foo?")));
+        assert!(haswilds(&tok("[abc]")));
+        assert!(!haswilds(&tok("plain")));
     }
 
     #[test]
@@ -6110,15 +6073,21 @@ mod tests {
     #[test]
     fn haswilds_recognizes_each_meta() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*"));
-        assert!(haswilds("?"));
-        // Length-1 `[` is the c:4310-4312 exception (bare `[` not wild),
-        // pinned in `haswilds_single_open_bracket_is_not_wild`. Use the
-        // multi-char form here to verify the Inbrack arm in the main
-        // metachar scan.
-        assert!(haswilds("[abc]"));
-        assert!(!haswilds(""));
-        assert!(!haswilds("plain.txt"));
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("*")));
+        assert!(haswilds(&tok("?")));
+        // Length-1 `[` is the c:4309-4311 exception (bare Inbrack not
+        // wild), pinned in `haswilds_single_open_bracket_is_not_wild`.
+        // Use the multi-char form here to verify the Inbrack arm in the
+        // main metachar scan.
+        assert!(haswilds(&tok("[abc]")));
+        assert!(!haswilds(&tok("")));
+        assert!(!haswilds(&tok("plain.txt")));
     }
 
     // ── range_type: POSIX class name lookup ──────────────────────────
@@ -6134,11 +6103,11 @@ mod tests {
     // 4374. Each test name pins to a specific C line range; the body
     // asserts the behavior that C source mandates.
     //
-    // Rust-port adaptation note: pattern.rs::haswilds matches both the
-    // literal ASCII metachars (un-tokenized callers, e.g. exec.rs:5135
-    // pass raw `&str`) AND the tokenized `Inpar`/`Star`/… byte values
-    // (post-tokenizer callers). Tests below cover the literal form
-    // since that's what every Rust caller passes.
+    // haswilds scans TOKENIZED strings (C contract — every C caller
+    // passes lexer- or tokenize()-prepared input). Tests build their
+    // inputs through the ported `tokenize` (Src/glob.c:3548), the
+    // same preparation C applies to runtime-built strings
+    // (compcore.c:2231).
     // ═══════════════════════════════════════════════════════════════════
 
     /// `Src/pattern.c:4310-4312` — bare `[` and `]` single-byte
@@ -6156,8 +6125,14 @@ mod tests {
     #[test]
     fn haswilds_single_open_bracket_is_not_wild() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         assert!(
-            !haswilds("["),
+            !haswilds(&tok("[")),
             "single literal `[` is NOT wild (c:4310-4312 exception)"
         );
     }
@@ -6169,8 +6144,14 @@ mod tests {
     #[test]
     fn haswilds_single_close_bracket_is_not_wild() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         assert!(
-            !haswilds("]"),
+            !haswilds(&tok("]")),
             "single literal `]` is NOT wild (c:4310-4312 exception)"
         );
     }
@@ -6181,10 +6162,16 @@ mod tests {
     #[test]
     fn haswilds_percent_question_job_ref_is_not_wild() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         crate::ported::options::opt_state_set("extendedglob", false);
-        assert!(!haswilds("%?foo"), "%?foo is a job ref (c:4318), not wild");
+        assert!(!haswilds(&tok("%?foo")), "%?foo is a job ref (c:4318), not wild");
         // But the `?` later in the string IS wild.
-        assert!(haswilds("%?foo?bar"), "%? exempt, later ? still wild");
+        assert!(haswilds(&tok("%?foo?bar")), "%? exempt, later ? still wild");
     }
 
     /// `Src/pattern.c:4338-4341` — `Bar` / `|`: wild when
@@ -6192,37 +6179,67 @@ mod tests {
     #[test]
     fn haswilds_pipe_bar_is_wild_by_default() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("a|b"), "literal `|` is wild (c:4340)");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("a|b")), "literal `|` is wild (c:4340)");
     }
 
     /// `Src/pattern.c:4343-4346` — `Star` / `*`.
     #[test]
     fn haswilds_star_is_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("*"), "bare * (c:4345)");
-        assert!(haswilds("a*b"), "* mid-string");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("*")), "bare * (c:4345)");
+        assert!(haswilds(&tok("a*b")), "* mid-string");
     }
 
     /// `Src/pattern.c:4348-4351` — `Inbrack` / `[`.
     #[test]
     fn haswilds_inbrack_is_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("[abc]"), "[abc] (c:4350)");
-        assert!(haswilds("a[xyz]b"), "[xyz] mid-string");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("[abc]")), "[abc] (c:4350)");
+        assert!(haswilds(&tok("a[xyz]b")), "[xyz] mid-string");
     }
 
     /// `Src/pattern.c:4353-4356` — `Inang` / `<`.
     #[test]
     fn haswilds_inang_is_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("a<1-9>"), "<n-m> numeric range (c:4355)");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("a<1-9>")), "<n-m> numeric range (c:4355)");
     }
 
     /// `Src/pattern.c:4358-4361` — `Quest` / `?`.
     #[test]
     fn haswilds_question_is_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(haswilds("a?b"), "? (c:4360)");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(haswilds(&tok("a?b")), "? (c:4360)");
     }
 
     /// `Src/pattern.c:4363-4366` — `Pound` / `#`: wild ONLY when
@@ -6230,10 +6247,16 @@ mod tests {
     #[test]
     fn haswilds_pound_gated_on_extendedglob() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         crate::ported::options::opt_state_set("extendedglob", false);
-        assert!(!haswilds("a#"), "# without EXTENDEDGLOB is literal");
+        assert!(!haswilds(&tok("a#")), "# without EXTENDEDGLOB is literal");
         crate::ported::options::opt_state_set("extendedglob", true);
-        assert!(haswilds("a#"), "# with EXTENDEDGLOB is wild (c:4365)");
+        assert!(haswilds(&tok("a#")), "# with EXTENDEDGLOB is wild (c:4365)");
         crate::ported::options::opt_state_set("extendedglob", false);
     }
 
@@ -6241,10 +6264,16 @@ mod tests {
     #[test]
     fn haswilds_hat_gated_on_extendedglob() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         crate::ported::options::opt_state_set("extendedglob", false);
-        assert!(!haswilds("a^b"), "^ without EXTENDEDGLOB is literal");
+        assert!(!haswilds(&tok("a^b")), "^ without EXTENDEDGLOB is literal");
         crate::ported::options::opt_state_set("extendedglob", true);
-        assert!(haswilds("a^b"), "^ with EXTENDEDGLOB is wild (c:4370)");
+        assert!(haswilds(&tok("a^b")), "^ with EXTENDEDGLOB is wild (c:4370)");
         crate::ported::options::opt_state_set("extendedglob", false);
     }
 
@@ -6253,12 +6282,18 @@ mod tests {
     #[test]
     fn haswilds_inpar_blocked_by_shglob() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         crate::ported::options::opt_state_set("shglob", false);
         crate::ported::options::opt_state_set("kshglob", false);
-        assert!(haswilds("(a|b)"), "( wild without SHGLOB (c:4327)");
+        assert!(haswilds(&tok("(a|b)")), "( wild without SHGLOB (c:4327)");
         crate::ported::options::opt_state_set("shglob", true);
         assert!(
-            !haswilds("(a|b)") || haswilds("(a|b)"),
+            !haswilds(&tok("(a|b)")) || haswilds(&tok("(a|b)")),
             "( gated by SHGLOB at c:4327 — kept loose since `|` itself still triggers wild"
         );
         crate::ported::options::opt_state_set("shglob", false);
@@ -6270,13 +6305,19 @@ mod tests {
     #[test]
     fn haswilds_kshglob_question_paren_is_wild() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         crate::ported::options::opt_state_set("shglob", true);
         crate::ported::options::opt_state_set("kshglob", true);
         // `?` itself triggers wild at c:4360, so this test is mainly
         // for documenting the c:4329 branch — `?(pat)` is recognized.
-        assert!(haswilds("?(a|b)"), "?(...) under KSHGLOB (c:4329)");
-        assert!(haswilds("@(a|b)"), "@(...) under KSHGLOB (c:4334)");
-        assert!(haswilds("+(a|b)"), "+(...) under KSHGLOB (c:4331)");
+        assert!(haswilds(&tok("?(a|b)")), "?(...) under KSHGLOB (c:4329)");
+        assert!(haswilds(&tok("@(a|b)")), "@(...) under KSHGLOB (c:4334)");
+        assert!(haswilds(&tok("+(a|b)")), "+(...) under KSHGLOB (c:4331)");
         crate::ported::options::opt_state_set("shglob", false);
         crate::ported::options::opt_state_set("kshglob", false);
     }
@@ -6288,9 +6329,15 @@ mod tests {
     #[test]
     fn haswilds_tilde_is_not_a_filename_wildcard() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!haswilds("~"), "~ alone (tilde-expand, not haswilds)");
-        assert!(!haswilds("~/file"), "~/file is tilde-expand candidate");
-        assert!(!haswilds("~user/file"), "~user is tilde-expand");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(!haswilds(&tok("~")), "~ alone (tilde-expand, not haswilds)");
+        assert!(!haswilds(&tok("~/file")), "~/file is tilde-expand candidate");
+        assert!(!haswilds(&tok("~user/file")), "~user is tilde-expand");
     }
 
     /// Rust-port adaptation: backslash escape disables the next byte's
@@ -6300,12 +6347,18 @@ mod tests {
     #[test]
     fn haswilds_backslash_escape_disables_next_byte() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!haswilds(r"\*"), r"\* is literal asterisk");
-        assert!(!haswilds(r"\?"), r"\? is literal question");
-        assert!(!haswilds(r"\["), r"\[ is literal bracket");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(!haswilds(&tok(r"\*")), r"\* is literal asterisk");
+        assert!(!haswilds(&tok(r"\?")), r"\? is literal question");
+        assert!(!haswilds(&tok(r"\[")), r"\[ is literal bracket");
         // Escape only consumes ONE next byte.
-        assert!(haswilds(r"\**"), r"\* eats first *, second * still wild");
-        assert!(haswilds(r"\?b?c"), r"\? eats first ?, later ? still wild");
+        assert!(haswilds(&tok(r"\**")), r"\* eats first *, second * still wild");
+        assert!(haswilds(&tok(r"\?b?c")), r"\? eats first ?, later ? still wild");
     }
 
     /// Empty + plain literal: `Src/pattern.c:4324` `for (; *str; …)`
@@ -6313,10 +6366,16 @@ mod tests {
     #[test]
     fn haswilds_empty_and_plain_are_not_wild() {
         let _g = crate::test_util::global_state_lock();
-        assert!(!haswilds(""), "empty (c:4324 loop body never enters)");
-        assert!(!haswilds("plain.txt"), "plain text");
-        assert!(!haswilds("path/to/file"), "path with slashes");
-        assert!(!haswilds("a.b.c.d"), "dot-separated literals");
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
+        assert!(!haswilds(&tok("")), "empty (c:4324 loop body never enters)");
+        assert!(!haswilds(&tok("plain.txt")), "plain text");
+        assert!(!haswilds(&tok("path/to/file")), "path with slashes");
+        assert!(!haswilds(&tok("a.b.c.d")), "dot-separated literals");
     }
 
     /// `Src/pattern.c:4327` — wild check honors `zpc_disables[ZPC_*]`.
@@ -6325,13 +6384,19 @@ mod tests {
     #[test]
     fn haswilds_respects_zpc_disables_star() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         // Default: star is enabled, * is wild.
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 0;
-        assert!(haswilds("*"), "star wild when ZPC_STAR enabled");
+        assert!(haswilds(&tok("*")), "star wild when ZPC_STAR enabled");
         // Disable star → not wild.
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
         assert!(
-            !haswilds("*"),
+            !haswilds(&tok("*")),
             "star NOT wild when ZPC_STAR disabled (c:4344)"
         );
         // Restore.
@@ -6342,11 +6407,17 @@ mod tests {
     #[test]
     fn haswilds_respects_zpc_disables_inbrack() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 0;
-        assert!(haswilds("[abc]"), "[ wild when ZPC_INBRACK enabled");
+        assert!(haswilds(&tok("[abc]")), "[ wild when ZPC_INBRACK enabled");
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 1;
         assert!(
-            !haswilds("[abc]"),
+            !haswilds(&tok("[abc]")),
             "[ NOT wild when ZPC_INBRACK disabled (c:4349)"
         );
         zpc_disables.lock().unwrap()[ZPC_INBRACK as usize] = 0;
@@ -6364,13 +6435,19 @@ mod tests {
 
     /// `Src/pattern.c:4196-4204` — disabling `|` sets
     /// `zpc_disables[ZPC_BAR] = !enable` (1 for disable). Verifies via
-    /// the downstream observable: haswilds("|") returns false.
+    /// the downstream observable: haswilds(&tok("|")) returns false.
     #[test]
     fn pat_enables_disables_bar_clears_haswilds() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         // Baseline: | is wild.
         zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
-        assert!(haswilds("a|b"));
+        assert!(haswilds(&tok("a|b")));
         // Disable.
         let ret = pat_enables("disable", &["|"], false);
         assert_eq!(ret, 0, "disable -p | returns 0 on success (c:4173)");
@@ -6379,7 +6456,7 @@ mod tests {
             1,
             "c:4201 *disp = !enable → 1 for disable"
         );
-        assert!(!haswilds("a|b"), "after disable, | is literal");
+        assert!(!haswilds(&tok("a|b")), "after disable, | is literal");
         // Restore.
         zpc_disables.lock().unwrap()[ZPC_BAR as usize] = 0;
     }
@@ -6389,9 +6466,15 @@ mod tests {
     #[test]
     fn pat_enables_re_enables_disabled_token() {
         let _g = crate::test_util::global_state_lock();
+        // c:Src/glob.c:3548 — tokenize input as every C caller does.
+        let tok = |s: &str| {
+            let mut t = s.to_string();
+            crate::ported::glob::tokenize(&mut t);
+            t
+        };
         // Pre-disable.
         zpc_disables.lock().unwrap()[ZPC_STAR as usize] = 1;
-        assert!(!haswilds("*"));
+        assert!(!haswilds(&tok("*")));
         // Re-enable.
         let ret = pat_enables("enable", &["*"], true);
         assert_eq!(ret, 0);
@@ -6400,7 +6483,7 @@ mod tests {
             0,
             "c:4201 *disp = !enable → 0 for enable"
         );
-        assert!(haswilds("*"));
+        assert!(haswilds(&tok("*")));
     }
 
     /// `Src/pattern.c:4205-4208` — unknown token returns 1 and the
