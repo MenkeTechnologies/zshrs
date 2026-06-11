@@ -282,6 +282,11 @@ pub struct SubshellSnapshot {
     /// `bindkey -N km` / `bindkey -D km` mutates only the child's
     /// keymap registry in C zsh. Bug #454 in docs/BUGS.md.
     pub keymapnamtab: HashMap<String, crate::ported::zle::zle_keymap::KeymapName>,
+    /// Parent's `$!` (clone::lastpid) at subshell entry. C zsh forks
+    /// for `(...)`, so a background job started INSIDE the subshell
+    /// sets the child's `lastpid` only — `( : & ); echo $!` prints 0
+    /// in zsh. zshrs runs subshells in-process, so restore on end.
+    pub lastpid: i32,
 }
 
 #[allow(unused_imports)]

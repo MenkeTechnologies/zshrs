@@ -7748,6 +7748,11 @@ impl fusevm::ShellHost for ZshrsHost {
                     .ok()
                     .map(|t| t.clone())
                     .unwrap_or_default(),
+                // c:Src/exec.c::entersubsh fork semantics — `$!`
+                // (clone::lastpid) set by a `&` INSIDE the subshell
+                // dies with the child: `( : & ); echo $!` -> 0.
+                lastpid: crate::ported::modules::clone::lastpid
+                    .load(std::sync::atomic::Ordering::Relaxed),
             });
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
@@ -7823,6 +7828,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 {
                     *tab = snap.paramtab;
                 }
+                // c:Src/exec.c::entersubsh fork semantics — restore
+                // the parent's `$!`; a background job inside `(...)`
+                // dies with the child in C zsh.
+                crate::ported::modules::clone::lastpid
+                    .store(snap.lastpid, std::sync::atomic::Ordering::Relaxed);
                 if let Some(m) = crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .ok()
