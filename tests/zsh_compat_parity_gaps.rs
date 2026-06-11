@@ -256,7 +256,11 @@ mod expansion_eval_arithmetic {
     use super::*;
 
     parity_gap_tests! {
-        process_substitution_word => (r#"<(true) word form"#, r#"print -r <(true)"#);
+        // The fd NUMBER in /dev/fd/N is allocation-state-dependent in
+        // BOTH shells (zsh prints /dev/fd/11 here, /dev/fd/12 under a
+        // different rc state). Pin the stable contract: the word IS a
+        // /dev/fd path.
+        process_substitution_word => (r#"<(true) word form"#, r#"print -r ${$(print -r <(true))%%/fd/*}/fd"#);
         eval_parse_error_stderr => (r#"eval parse error"#, r#"eval ')syntax_error_gap_paren' 2>&1; print ex:$?"#);
         sysparams_pid_subscript => (r#"sysparams[pid]"#, r#"print -r "pid=<${sysparams[pid]}>""#);
         arithmetic_hex_output_form => (r#"$(( [##16] )) output"#, r#"print $(( [##16] 255 ))"#);
