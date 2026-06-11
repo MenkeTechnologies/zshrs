@@ -4807,7 +4807,16 @@ pub fn paramsubst(
                             String::new()
                         }
                     };
-                    crate::lex::untokenize(&singsub(&parsed)) // c:1571 + c:1584
+                    // c:1584 — C's untokenize maps quote markers back
+                    // to their ztokens chars (Dnull -> '"', Snull ->
+                    // '\''): assoc keys are LITERAL text including
+                    // quote characters — `H["a b"]=v` stores the
+                    // 5-char key `"a b"` and `${H["a b"]}` must
+                    // produce the same bytes to match (verified zsh
+                    // 5.9; the plain Rust untokenize strips the
+                    // markers, so the lookup key lost its quotes and
+                    // missed).
+                    crate::ported::lex::untokenize_preserve_quotes(&singsub(&parsed)) // c:1571 + c:1584
                 } else {
                     crate::ported::lex::untokenize_preserve_quotes(&raw_sub)
                 };
