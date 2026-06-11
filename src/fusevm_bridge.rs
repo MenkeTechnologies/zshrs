@@ -2485,6 +2485,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ASSOC_HAS_KEY, |vm, _argc| {
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // c:Src/params.c getindex — the subscript text is substituted
+        // (singsub) before the lookup; `${(k)H[$k]}` must resolve $k.
+        // The compiler hands this opcode the RAW subscript text, so a
+        // dynamic key arrived literally ("$k") and matched nothing.
+        // singsub is identity for plain keys.
+        let key = if key.contains('$') || key.contains('`') || key.contains('\u{8c}') {
+            crate::ported::subst::singsub(&key)
+        } else {
+            key
+        };
         // c:Src/params.c:3131 gethkparam covers ordinary PM_HASHED
         // paramtab entries only. Special/magic hashes (`parameters`,
         // `options`, … — the zsh/parameter module's partab-backed
