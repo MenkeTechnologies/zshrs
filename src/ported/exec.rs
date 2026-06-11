@@ -5797,7 +5797,36 @@ pub fn doshfunc(
     // instead of the call's arg. Bug surfaced via
     // test_dollar_underscore_after_function_call.
     let saved_zunderscore = crate::ported::params::getsparam("_").unwrap_or_default();
-    let body_status = body_runner();
+    // c:6042 — `runshfunc(prog, wrappers, name)`: the FuncWrap chain.
+    // zsh/param/private registers `wrap_private` (param_private.c:550)
+    // on module load; C's runshfunc invokes it around every function
+    // body so `private_wraplevel` tracks the callee's locallevel and
+    // outer-scope privates get scopeprivate-hidden (PM_UNSET) for the
+    // duration. zshrs links the module statically — gate on the
+    // PRIVATE_PARAMS registry being non-empty (the moral equivalent
+    // of "module loaded"): with zero privates, wrap_private's two
+    // scopeprivate paramtab scans are no-ops not worth paying on
+    // every function call. The pwl < locallevel pre-check mirrors
+    // wrap_private's own c:552 gate so the closure is guaranteed to
+    // run when routed through it.
+    let run_wrap_private = crate::ported::modules::param_private::PRIVATE_PARAMS
+        .lock()
+        .map(|p| !p.is_empty())
+        .unwrap_or(false)
+        && crate::ported::modules::param_private::private_wraplevel.load(Ordering::Relaxed)
+            < crate::ported::params::locallevel.load(Ordering::Relaxed);
+    let body_status = if run_wrap_private {
+        let mut st = 0;
+        let _ = crate::ported::modules::param_private::wrap_private(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            || st = body_runner(), // c:556 runshfunc(prog, w, name)
+        );
+        st
+    } else {
+        body_runner()
+    };
     crate::ported::params::set_zunderscore(std::slice::from_ref(&saved_zunderscore));
     crate::ported::lex::set_lineno(saved_lineno);
     LASTVAL.store(body_status, Ordering::Relaxed);
