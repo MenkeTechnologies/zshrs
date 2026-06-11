@@ -6023,9 +6023,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // switches to multsub so `"${(@)arr}"`/`"$@"`/
                 // `"${arr[@]}"` in argv context emit multiple words
                 // as the C path would.
+                // c:Src/lex.c untokenize — the final argv pass C runs
+                // on every expanded word (glob.c:1862 / exec.c) drops
+                // the Nularg empty-word sentinel remnulargs left in
+                // place and folds any remaining token chars. Without
+                // it, quoted splits with empty pieces
+                // ("${(s:|:)x}" on "|a|b|") leak U+00A1 into argv.
                 let result_value = if mode == 5 {
                     let out = crate::ported::subst::singsub(&prepped);
-                    Value::str(out)
+                    Value::str(crate::ported::lex::untokenize(&out))
                 } else {
                     let (_first, nodes, _ms_ws, _ret) = crate::ported::subst::multsub(&prepped, 0);
                     // c:Src/subst.c:655 — multsub returns Vec::new()
@@ -6039,9 +6045,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if nodes.is_empty() {
                         Value::Array(Vec::new())
                     } else if nodes.len() == 1 {
-                        Value::str(nodes.into_iter().next().unwrap())
+                        Value::str(crate::ported::lex::untokenize(
+                            &nodes.into_iter().next().unwrap(),
+                        ))
                     } else {
-                        Value::Array(nodes.into_iter().map(Value::str).collect())
+                        Value::Array(
+                            nodes
+                                .into_iter()
+                                .map(|n| Value::str(crate::ported::lex::untokenize(&n)))
+                                .collect(),
+                        )
                     }
                 };
                 if mode == 5 {
@@ -6553,6 +6566,18 @@ fn paramsubst_to_value(body: &str) -> Value {
     if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed) != 0 {
         with_executor(|exec| exec.set_last_status(1));
     }
+    // c:Src/lex.c untokenize — the final argv pass C runs on every
+    // expanded word (glob.c:1862 / exec.c) DROPS the Nularg
+    // empty-word sentinel (c:2089 `if (c != Nularg)`) that
+    // remnulargs faithfully leaves in place (glob.c:3673 re-adds it
+    // for all-empty results). These fast-path bridges are terminal —
+    // their output lands directly in argv slots — so apply it here.
+    // Without it, quoted splits with empty pieces ("${(s:|:)x}" on
+    // "|a|b|") leak U+00A1 into argv.
+    let nodes: Vec<String> = nodes
+        .into_iter()
+        .map(|n| crate::ported::lex::untokenize(&n))
+        .collect();
     nodes_to_value(nodes)
 }
 
