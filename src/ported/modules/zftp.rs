@@ -4196,13 +4196,58 @@ pub fn bin_zftp(
             }
 
             "test" => {
-                // c:158 zftpcmdtab entry — inline check (zftp_test re-acquires
-                // the lock; doing it here avoids cross-fn deadlock).
-                let sess = zftp.get_session(None);
-                if sess.map(|s| s.connected).unwrap_or(false) {
-                    (0, String::new())
+                // c:158 zftpcmdtab — dispatches to zftp_test, which
+                // does a real poll(2) liveness check at c:2271-2293
+                // (consumes any unsolicited "421 Timeout" via zfgetmsg
+                // then returns `zfsess->control ? 0 : 2`). The Rust
+                // dispatch here can't call zftp_test directly because
+                // bin_zftp holds the global zftp_state lock and
+                // zftp_test would re-acquire it — deadlock.
+                //
+                // Inline the c:2271-2293 logic: read the control fd
+                // off the held session, poll(2) it, and on POLLIN
+                // call into a helper that doesn't re-lock. Without
+                // the poll, server-side timeouts that closed the
+                // control fd would report "connected" until the next
+                // subcommand tried to use the dead fd.
+                let control_fd: i32 = zftp
+                    .get_session(None)
+                    .and_then(|s| s.control.as_ref().map(|c| c.as_raw_fd()))
+                    .unwrap_or(-1);
+                if control_fd < 0 {
+                    (1, String::new()) // c:2263 — no control fd
                 } else {
-                    (1, String::new())
+                    // c:2271-2280 — poll(0). POLLIN means unsolicited
+                    // server message (almost always 421 Timeout).
+                    let mut pfd = libc::pollfd {
+                        fd: control_fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
+                    let errno = std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(0);
+                    if ret < 0 && errno != libc::EINTR && errno != libc::EAGAIN {
+                        // c:2273 — bad fd or hard error: connection dead.
+                        if let Some(sess) = zftp.get_session_mut(None) {
+                            sess.control = None;
+                            sess.connected = false;
+                            sess.dfd = -1;
+                        }
+                        (2, String::new()) // c:2305 — control gone
+                    } else {
+                        // c:2305 — return 0 if control still alive.
+                        let alive = zftp
+                            .get_session(None)
+                            .map(|s| s.control.is_some())
+                            .unwrap_or(false);
+                        if alive {
+                            (0, String::new())
+                        } else {
+                            (2, String::new())
+                        }
+                    }
                 }
             }
 
