@@ -4308,6 +4308,13 @@ pub type Color_rgb = Box<color_rgb>;
 pub const TSC_RAW: i32 = 0x0001; // c:2764
 /// `TSC_PROMPT` constant.
 pub const TSC_PROMPT: i32 = 0x0002;
+/// `TSC_DIRTY` constant — zsh 5.9.1 zsh.h:2766. The 5.9 release's
+/// tsetcap re-applies the still-active attributes + colours after a
+/// cap that may have clobbered them (every END cap, ALLATTRSOFF, and
+/// BOLDFACEBEG). Master's prompt.c rewrite (applytextattributes)
+/// dropped the flag, but the zshrs parity floor is the 5.9.x release
+/// binary, whose emission sequences depend on it.
+pub const TSC_DIRTY: i32 = 0x0004;
 
 // =============================================================================
 // 38. Prompt %_ command stack (zsh.h:2773-2809).

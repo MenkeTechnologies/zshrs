@@ -1084,103 +1084,149 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     stradd(bv, &out);
                 }
                 // c:563-570 — `%S` (standout on) / `%s` (off)
+                // zsh-5.9.1 release model (the parity floor): each
+                // %X arm updates the live attr state then emits its
+                // cap UNCONDITIONALLY via tsetcap — no change-dedup
+                // (`%Sa%Sb` emits smso twice, oracle-verified). END
+                // caps, ALLATTRSOFF, and BOLDFACEBEG carry TSC_DIRTY
+                // so still-active attrs + colours are re-applied.
+                // Master's source routes these through the
+                // applytextattributes rewrite whose sequences diverge
+                // from the 5.9.x binary the parity suite diffs
+                // against. tsetcap's TSC_PROMPT mode wraps each
+                // emission in its own Inpar/Outpar pair (the markers
+                // are chars in the returned String — write them as
+                // raw token bytes, everything else through pputc).
                 b'S' => {
-                    let _ = tsetattrs(TXTSTANDOUT); // c:564
-                                                    // c:565 — `applytextattributes(TSC_PROMPT);`. C body emits
-                                                    // SGR diff into `bv->buf` framed by Inpar/Outpar markers
-                                                    // (the width-ignore wrappers). Rust splits the work:
-                                                    // `applytextattributes(flags)` returns the SGR diff string;
-                                                    // the prompt-buffer write + Inpar/Outpar bracketing inlined
-                                                    // here matching the C `tsetcap(..., TSC_PROMPT)` path
-                                                    // (prompt.c:1101-1108).
-                    let sgr = applytextattributes(TSC_PROMPT);
-                    if !sgr.is_empty() {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
+                    // zsh-5.9.1 prompt.c — txtset(TXTSTANDOUT);
+                    // tsetcap(TCSTANDOUTBEG, TSC_PROMPT); no DIRTY:
+                    // smso clobbers nothing (oracle: `%F{red}%Sx`
+                    // emits no colour re-apply).
+                    let _ = tsetattrs(TXTSTANDOUT);
+                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
+                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                    let sgr = tsetcap(crate::ported::zsh_h::TCSTANDOUTBEG, TSC_PROMPT);
+                    for ch in sgr.chars() {
+                        if ch == Inpar || ch == Outpar {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = ch as u8;
+                            bv.bp += 1;
+                        } else {
+                            let mut tmp = [0u8; 4];
+                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                                pputc(bv, b);
+                            }
                         }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
                     }
                 }
                 b's' => {
-                    let _ = tunsetattrs(TXTSTANDOUT); // c:568
-                    let sgr = applytextattributes(TSC_PROMPT); // c:569
-                    if !sgr.is_empty() {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
+                    // zsh-5.9.1 — txtunset(TXTSTANDOUT);
+                    // tsetcap(TCSTANDOUTEND, TSC_PROMPT|TSC_DIRTY):
+                    // rmso can clear other attrs, re-apply (oracle:
+                    // `%B%F{red}%Sx%sy` → rmso, bold, colour).
+                    let _ = tunsetattrs(TXTSTANDOUT);
+                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
+                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                    let sgr = tsetcap(crate::ported::zsh_h::TCSTANDOUTEND, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    for ch in sgr.chars() {
+                        if ch == Inpar || ch == Outpar {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = ch as u8;
+                            bv.bp += 1;
+                        } else {
+                            let mut tmp = [0u8; 4];
+                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                                pputc(bv, b);
+                            }
                         }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
                     }
                 }
                 // c:571-578 — `%B` (bold on) / `%b` (off)
                 b'B' => {
-                    let _ = tsetattrs(TXTBOLDFACE); // c:572
-                    let sgr = applytextattributes(TSC_PROMPT); // c:573
-                    if !sgr.is_empty() {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
+                    // zsh-5.9.1 — txtset(TXTBOLDFACE);
+                    // tsetcap(TCBOLDFACEBEG, TSC_PROMPT|TSC_DIRTY):
+                    // bold-begin resets colours on some terminals
+                    // (oracle: `%F{red}%Bx` → `[31m[1m[31m`).
+                    let _ = tsetattrs(TXTBOLDFACE);
+                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
+                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                    let sgr = tsetcap(crate::ported::zsh_h::TCBOLDFACEBEG, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    for ch in sgr.chars() {
+                        if ch == Inpar || ch == Outpar {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = ch as u8;
+                            bv.bp += 1;
+                        } else {
+                            let mut tmp = [0u8; 4];
+                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                                pputc(bv, b);
+                            }
                         }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
                     }
                 }
                 b'b' => {
-                    let _ = tunsetattrs(TXTBOLDFACE); // c:576
-                    let sgr = applytextattributes(TSC_PROMPT); // c:577
-                    if !sgr.is_empty() {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
+                    // zsh-5.9.1 — txtunset(TXTBOLDFACE); no bold-off
+                    // cap exists, so `me` = TCALLATTRSOFF + DIRTY
+                    // re-applies the surviving attrs + colours
+                    // (oracle: `%U%B%F{red}x%by` → `[0m[4m[31m`).
+                    let _ = tunsetattrs(TXTBOLDFACE);
+                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
+                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                    let sgr = tsetcap(crate::ported::zsh_h::TCALLATTRSOFF, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    for ch in sgr.chars() {
+                        if ch == Inpar || ch == Outpar {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = ch as u8;
+                            bv.bp += 1;
+                        } else {
+                            let mut tmp = [0u8; 4];
+                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                                pputc(bv, b);
+                            }
                         }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
                     }
                 }
                 // c:579-586 — `%U` (underline on) / `%u` (off)
                 b'U' => {
-                    let _ = tsetattrs(TXTUNDERLINE); // c:580
-                    let sgr = applytextattributes(TSC_PROMPT); // c:581
-                    if !sgr.is_empty() {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
+                    // zsh-5.9.1 — txtset(TXTUNDERLINE);
+                    // tsetcap(TCUNDERLINEBEG, TSC_PROMPT); no DIRTY
+                    // (oracle: `%S%F{red}%Ux` emits no re-apply).
+                    let _ = tsetattrs(TXTUNDERLINE);
+                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
+                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                    let sgr = tsetcap(crate::ported::zsh_h::TCUNDERLINEBEG, TSC_PROMPT);
+                    for ch in sgr.chars() {
+                        if ch == Inpar || ch == Outpar {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = ch as u8;
+                            bv.bp += 1;
+                        } else {
+                            let mut tmp = [0u8; 4];
+                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                                pputc(bv, b);
+                            }
                         }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
                     }
                 }
                 b'u' => {
-                    let _ = tunsetattrs(TXTUNDERLINE); // c:584
-                    let sgr = applytextattributes(TSC_PROMPT); // c:585
-                    if !sgr.is_empty() {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
-                        for &b in sgr.as_bytes() {
-                            pputc(bv, b);
+                    // zsh-5.9.1 — txtunset(TXTUNDERLINE);
+                    // tsetcap(TCUNDERLINEEND, TSC_PROMPT|TSC_DIRTY)
+                    // (oracle: `%S%F{red}%Ux%uy` → rmul, smso, colour).
+                    let _ = tunsetattrs(TXTUNDERLINE);
+                    *current_attrs_lock().lock().expect("current_attrs poisoned") =
+                        *pending_attrs_lock().lock().expect("pending_attrs poisoned");
+                    let sgr = tsetcap(crate::ported::zsh_h::TCUNDERLINEEND, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    for ch in sgr.chars() {
+                        if ch == Inpar || ch == Outpar {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = ch as u8;
+                            bv.bp += 1;
+                        } else {
+                            let mut tmp = [0u8; 4];
+                            for &b in ch.encode_utf8(&mut tmp).as_bytes() {
+                                pputc(bv, b);
+                            }
                         }
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Outpar as u8;
-                        bv.bp += 1;
                     }
                 }
                 // c:621-644 — `%F` (fg color, fall through to `%f` if invalid).
@@ -2029,6 +2075,17 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
 
     let mut out = String::new();
 
+    // zsh-5.9.1 prompt.c tsetcap — TSC_DIRTY is a post-emission
+    // modifier (re-apply still-active attrs + colours after a cap
+    // that may clobber them); strip it for the mode dispatch below
+    // and run the dirty pass at the end. Master's source dropped
+    // TSC_DIRTY in the applytextattributes rewrite; the zshrs
+    // parity floor is the 5.9.x release binary whose emission
+    // sequences (oracle-probed: %B-beg, every END cap, and
+    // ALLATTRSOFF re-apply bold→standout→underline→FG→BG) need it.
+    let dirty = (flags & crate::ported::zsh_h::TSC_DIRTY) != 0;
+    let flags = flags & !crate::ported::zsh_h::TSC_DIRTY;
+
     // c:1085 — `if (tccan(cap) && !(termflags & ...))`
     let tclen_guard = crate::ported::init::tclen.lock().unwrap();
     let cap_ok = cap >= 0 && (cap as usize) < tclen_guard.len() && tclen_guard[cap as usize] != 0;
@@ -2082,6 +2139,65 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
             let out_fd = if fd >= 0 { fd } else { 1 };
             let _ = crate::ported::utils::write_loop(out_fd, cap_str.as_bytes());
         }
+    }
+    // zsh-5.9.1 tsetcap dirty pass — re-apply the attributes still
+    // recorded as active (skipping the attribute this cap just set,
+    // so BOLDFACEBEG doesn't re-emit itself) and then the active
+    // colours. Order pinned by the 5.9.1 oracle probes:
+    // bold, standout, underline, FG, BG. Recursion passes the
+    // stripped flags so the re-applied caps share this cap's mode
+    // (and each gets its own Inpar/Outpar wrap in TSC_PROMPT).
+    if dirty {
+        use crate::ported::zsh_h::{
+            TCBOLDFACEBEG, TCSTANDOUTBEG, TCUNDERLINEBEG, TXTBGCOLOUR, TXTBOLDFACE,
+            TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
+            TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
+            TXT_ATTR_FG_COL_SHIFT,
+        };
+        let cur = *current_attrs_lock().lock().expect("current_attrs poisoned");
+        if cur & TXTBOLDFACE != 0 && cap != TCBOLDFACEBEG {
+            out.push_str(&tsetcap(TCBOLDFACEBEG, flags));
+        }
+        if cur & TXTSTANDOUT != 0 && cap != TCSTANDOUTBEG {
+            out.push_str(&tsetcap(TCSTANDOUTBEG, flags));
+        }
+        if cur & TXTUNDERLINE != 0 && cap != TCUNDERLINEBEG {
+            out.push_str(&tsetcap(TCUNDERLINEBEG, flags));
+        }
+        // 5.9.1 set_colour_attribute(txtattrs, COL_SEQ_FG/BG,
+        // TSC_PROMPT) — Inpar/Outpar-wrapped for prompt mode
+        // (5.9.1 prompt.c is_prompt arm).
+        let mut emit_colour = |on_bit: u64, mask: u64, shift: u32, b24: u64, is_fg: bool| {
+            if cur & on_bit != 0 {
+                let raw = (cur & mask) >> shift;
+                let c = if cur & b24 != 0 {
+                    COLOR_24BIT | (raw as Color & 0x00ff_ffff)
+                } else {
+                    raw as Color
+                };
+                if flags == TSC_PROMPT {
+                    out.push(Inpar);
+                    out.push_str(&color_to_ansi(c, is_fg));
+                    out.push(Outpar);
+                } else {
+                    out.push_str(&color_to_ansi(c, is_fg));
+                }
+            }
+        };
+        emit_colour(
+            TXTFGCOLOUR,
+            TXT_ATTR_FG_COL_MASK,
+            TXT_ATTR_FG_COL_SHIFT,
+            TXT_ATTR_FG_24BIT,
+            true,
+        );
+        emit_colour(
+            TXTBGCOLOUR,
+            TXT_ATTR_BG_COL_MASK,
+            TXT_ATTR_BG_COL_SHIFT,
+            TXT_ATTR_BG_24BIT,
+            false,
+        );
     }
     out
 }
@@ -4368,13 +4484,18 @@ mod tests {
         assert_eq!(expand("%B"), "\x01\x1b[1m\x02");
     }
 
-    /// `%b` with NO prior bold emits nothing — matches C
-    /// `applytextattributes` early-out `if (!change) return;`
-    /// (Src/prompt.c:1647). Previous test asserted `\e[0m` which
-    /// reflected the deleted Rust impl's always-emit-reset hack.
+    /// `%b` with NO prior bold STILL emits the `me` reset cap —
+    /// zsh 5.9.1 oracle: `zsh -fc 'print -Prn -- "%bx"' | cat -v`
+    /// → `^[[0mx` (caps emit unconditionally; the release model has
+    /// no change-dedup). Master's applytextattributes rewrite added
+    /// an early-out (`if (!change) return;`, prompt.c:1652) that
+    /// suppresses this — the parity floor is the 5.9.x release
+    /// binary, so the unconditional emission is the pinned behavior.
+    /// (History: originally asserted `\e[0m`, was flipped to `""`
+    /// citing master, now restored per the oracle.)
     #[test]
-    fn promptexpand_lowercase_b_alone_no_reset_emitted() {
-        assert_eq!(expand("%b"), "");
+    fn promptexpand_lowercase_b_alone_emits_reset_cap() {
+        assert_eq!(expand("%b"), "\x01\x1b[0m\x02");
     }
 
     /// `%U` → SGR underline on.
