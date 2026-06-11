@@ -1942,7 +1942,25 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
             // c:1602
             break; // c:1603
         }
-        // c:1604-1613 — progress hook (zftp_progress shfunc dispatch).
+        // c:1604-1613 — progress hook (zftp_progress shfunc dispatch):
+        //
+        //     if (!ret && sofar != last_sofar && progress &&
+        //         (shfunc = getshfunc("zftp_progress"))) {
+        //         int osc = sfcontext;
+        //
+        //         zfsetparam("ZFTP_COUNT", &sofar, ZFPM_READONLY|ZFPM_INTEGER);
+        //         sfcontext = SFC_HOOK;
+        //         doshfunc(shfunc, NULL, 1);
+        //         sfcontext = osc;
+        //         last_sofar = sofar;
+        //     }
+        //
+        // The hook lookup is part of the GATE — with no zftp_progress
+        // function defined, C touches NOTHING: no ZFTP_COUNT update,
+        // no last_sofar bump. The mid-transfer ZFTP_COUNT param exists
+        // solely as the hook's input. A prior else-arm here updated
+        // ZFTP_COUNT on every chunk regardless (param churn the C
+        // never does) and bumped last_sofar outside the gate.
         if ret == 0 && sofar != last_sofar && progress != 0 {
             if let Some(mut shfunc) = getshfunc("zftp_progress") {
                 // c:1605
@@ -1965,16 +1983,9 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                     true,
                     body_runner,
                 );
-                SFCONTEXT.store(osc, Ordering::Relaxed);
-            // c:1611
-            } else {
-                zfsetparam(
-                    "ZFTP_COUNT",
-                    &sofar.to_string(),
-                    ZFPM_READONLY | ZFPM_INTEGER,
-                ); // c:1608
+                SFCONTEXT.store(osc, Ordering::Relaxed); // c:1611
+                last_sofar = sofar; // c:1612
             }
-            last_sofar = sofar; // c:1612
         }
     }
     zfunpipe(); // c:1615
