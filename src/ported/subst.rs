@@ -5638,7 +5638,23 @@ pub fn paramsubst(
                             } else {
                                 sub.to_string()
                             };
-                            crate::ported::math::mathevali(&untoked).ok()
+                            // c:Src/params.c getindex -> getarg miss ->
+                            // mathevali; C's matheval zerrs ("bad math
+                            // expression: ...") and raises errflag on
+                            // parse failure, aborting the input —
+                            // `${a[b*]}` is a fatal math error in zsh
+                            // (rc=1), not a silent empty. The previous
+                            // .ok() swallowed it.
+                            match crate::ported::math::mathevali(&untoked) {
+                                Ok(n) => Some(n),
+                                Err(e) => {
+                                    crate::ported::utils::zerr(&format!(
+                                        "bad math expression: {}",
+                                        e
+                                    ));
+                                    None
+                                }
+                            }
                         }
                     })
                 {
