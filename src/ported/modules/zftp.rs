@@ -488,12 +488,25 @@ pub fn zfunsetparam(name: &str) {
 /// C: `char *zfargstring(char *cmd, char **args)` — joins cmd + args.
 #[allow(non_snake_case)]
 pub fn zfargstring(cmd: &str, args: &[&str]) -> String {
-    // c:546-570 — zhalloc + sprintf joining cmd + space-sep args.
+    // c:546-562 — join cmd + space-separated args + CRLF terminator:
+    //
+    //     strcpy(line, cmd);
+    //     for (aptr = args; *aptr; aptr++) {
+    //         strcat(line, " ");
+    //         strcat(line, *aptr);
+    //     }
+    //     strcat(line, "\r\n");
+    //
+    // The "\r\n" is part of THIS fn's contract (c:559) — C callers
+    // (zftp_dir c:2318, zftp_quote c:2695-2696) pass the result to
+    // zfsendcmd verbatim. A prior Rust version omitted it and made
+    // every call site compensate with `+ "\r\n"`.
     let mut s = cmd.to_string();
     for a in args {
-        s.push(' ');
-        s.push_str(a);
+        s.push(' '); // c:556
+        s.push_str(a); // c:557
     }
+    s.push_str("\r\n"); // c:559
     s
 }
 
@@ -2887,7 +2900,7 @@ pub fn zftp_dir(name: &str, args: &[&str], flags: i32) -> i32 {
     } else {
         "LIST"
     };
-    cmd = zfargstring(verb, args) + "\r\n";
+    cmd = zfargstring(verb, args); // c:2318 — terminator from zfargstring c:559
     // c:2319 — ret = zfgetdata(name, NULL, cmd, 0);
     ret = zfgetdata(name, "", &cmd, 0);
     // c:2332 zsfree(cmd) — Rust Drop.
@@ -3438,12 +3451,12 @@ pub fn zftp_quote(name: &str, args: &[&str], flags: i32) -> i32 {
     let argv: Vec<&str> = args.to_vec();
     let cmd = if (flags & ZFTP_SITE) != 0 {
         // c:2695
-        zfargstring("SITE", &argv) + "\r\n"
+        zfargstring("SITE", &argv) // c:2695 — terminator from zfargstring c:559
     } else {
         if argv.is_empty() {
             return 1;
         }
-        zfargstring(argv[0], &argv[1..]) + "\r\n" // c:2696
+        zfargstring(argv[0], &argv[1..]) // c:2696
     };
     ret = (zfsendcmd(&cmd) > 2) as i32; // c:2697
                                         // c:2698 zsfree — Rust Drop.
@@ -5792,16 +5805,16 @@ mod tests {
         assert_eq!(ZFST_MODE(many), 0);
     }
 
-    /// `Src/Modules/zftp.c:546-570` — `zfargstring(cmd, args)` joins
-    /// `cmd` with space-separated `args`. Empty argv yields just `cmd`.
-    /// A regression appending a trailing space on empty argv would mess
-    /// up `zftp_send` calls that compare-against a known FTP verb.
+    /// `Src/Modules/zftp.c:546-562` — `zfargstring(cmd, args)` joins
+    /// `cmd` with space-separated `args` and appends the c:559 CRLF
+    /// terminator (part of the fn's contract — C callers pass the
+    /// result straight to zfsendcmd). Empty argv yields cmd + CRLF.
     #[test]
     fn zfargstring_empty_args_returns_cmd() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zfargstring("RETR", &[]), "RETR");
-        assert_eq!(zfargstring("QUIT", &[]), "QUIT");
-        assert_eq!(zfargstring("", &[]), "");
+        assert_eq!(zfargstring("RETR", &[]), "RETR\r\n");
+        assert_eq!(zfargstring("QUIT", &[]), "QUIT\r\n");
+        assert_eq!(zfargstring("", &[]), "\r\n");
     }
 
     /// `Src/Modules/zftp.c:546-570` — one argument case: single space
@@ -5809,8 +5822,8 @@ mod tests {
     #[test]
     fn zfargstring_single_arg_one_space() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zfargstring("RETR", &["file.txt"]), "RETR file.txt");
-        assert_eq!(zfargstring("USER", &["anonymous"]), "USER anonymous");
+        assert_eq!(zfargstring("RETR", &["file.txt"]), "RETR file.txt\r\n");
+        assert_eq!(zfargstring("USER", &["anonymous"]), "USER anonymous\r\n");
     }
 
     /// `Src/Modules/zftp.c:546-570` — multi-arg: space-separated, no
@@ -5821,11 +5834,11 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(
             zfargstring("USER", &["anonymous", "pass@example.com"]),
-            "USER anonymous pass@example.com"
+            "USER anonymous pass@example.com\r\n"
         );
         assert_eq!(
             zfargstring("PORT", &["192", "168", "1", "1", "4", "1"]),
-            "PORT 192 168 1 1 4 1"
+            "PORT 192 168 1 1 4 1\r\n"
         );
     }
 
@@ -5837,8 +5850,8 @@ mod tests {
     #[test]
     fn zfargstring_empty_arg_emits_space() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zfargstring("CMD", &["", "after"]), "CMD  after");
-        assert_eq!(zfargstring("CMD", &["before", ""]), "CMD before ");
+        assert_eq!(zfargstring("CMD", &["", "after"]), "CMD  after\r\n");
+        assert_eq!(zfargstring("CMD", &["before", ""]), "CMD before \r\n");
     }
 
     /// `Src/Modules/zftp.c:3902-3905` — ZFST_ASCI is 0, ZFST_IMAG is 1.
