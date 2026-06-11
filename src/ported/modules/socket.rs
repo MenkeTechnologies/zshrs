@@ -5,7 +5,7 @@
 //! (`bin_zsocket`, `setup_`/`features_`/`enables_`/`boot_`/
 //! `cleanup_`/`finish_`).
 
-use crate::ported::params::setiparam;
+use crate::ported::params::setiparam_no_convert;
 use crate::ported::utils::{
     addmodulefd, errflag, fdtable_get, fdtable_set, movefd, redup, zerrnam, zwarnnam,
 };
@@ -144,7 +144,7 @@ pub fn bin_zsocket(
             return 1; // c:130
         }
         fdtable_set(sfd, FDT_EXTERNAL); // c:134
-        setiparam("REPLY", sfd as i64); // c:136 setiparam_no_convert
+        setiparam_no_convert("REPLY", sfd as i64); // c:135 setiparam_no_convert
         if verbose != 0 {
             // c:138
             println!("{} listener is on fd {}", localfn, sfd); // c:139
@@ -246,7 +246,7 @@ pub fn bin_zsocket(
         } else {
             sfd = rfd; // c:217
         }
-        setiparam("REPLY", sfd as i64); // c:220 setiparam_no_convert
+        setiparam_no_convert("REPLY", sfd as i64); // c:223 setiparam_no_convert
         if verbose != 0 {
             // c:222
             let path = soun
@@ -327,7 +327,7 @@ pub fn bin_zsocket(
             sfd = targetfd; // c:260
             fdtable_set(sfd, FDT_EXTERNAL); // c:260
         }
-        setiparam("REPLY", sfd as i64); // c:263 setiparam_no_convert
+        setiparam_no_convert("REPLY", sfd as i64); // c:264 setiparam_no_convert
         if verbose != 0 {
             // c:265
             let path = &args[0];
