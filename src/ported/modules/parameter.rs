@@ -4525,6 +4525,13 @@ pub static PARTAB: &[PartabHashEntry] = &[
         getfn: crate::ported::modules::system::getpmsysparams,
         scanfn: crate::ported::modules::system::scanpmsysparams,
     },
+    // Src/Modules/langinfo.c:455 SPECIALPMDEF("langinfo", PM_READONLY, ...).
+    PartabHashEntry {
+        name: "langinfo",
+        flags: PM_HASHED as i32 | PM_READONLY as i32, // langinfo.c:455
+        getfn: crate::ported::modules::langinfo::getlanginfo,
+        scanfn: crate::ported::modules::langinfo::scanlanginfo,
+    },
 ];
 
 // scanpmfunction_source / scanpmdisfunction_source already ported
