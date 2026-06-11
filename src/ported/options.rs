@@ -543,7 +543,7 @@ pub fn bin_setopt(
                 .map(|c| c.to_ascii_lowercase())
                 .collect();
             // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
-            let prog = patcompile(&normalized, PAT_HEAPDUP, None);
+            let prog = patcompile(&{ let mut __pat_tok = (&normalized).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None);
             if prog.is_none() {
                 // c:670
                 zwarnnam(nam, &format!("bad pattern: {}", raw)); // c:671
@@ -554,7 +554,7 @@ pub fn bin_setopt(
             // setoption, !isun): the `setoption` static at c:572 calls
             // `dosetopt(optname->optno, !isun, 0, opts)` on each match.
             let v = (isun == 0) as i32;
-            if let Some(prog) = patcompile(&normalized, PAT_HEAPDUP as i32, None) {
+            if let Some(prog) = patcompile(&{ let mut __pat_tok = (&normalized).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None) {
                 for opt_name in ZSH_OPTIONS_SET.iter() {
                     // c:676
                     if pattry(&prog, opt_name) {

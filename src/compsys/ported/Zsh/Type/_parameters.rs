@@ -138,11 +138,11 @@ pub fn _parameters(args: &[String]) -> i32 {
     let argv = getaparam(src).unwrap_or_default();
 
     // Build the filter against (R)pattern + excl PM_LOCAL + pfilt.
-    let pat_prog = patcompile(&pattern_val, 0, None);
+    let pat_prog = patcompile(&{ let mut __pat_tok = (&pattern_val).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None);
     let pfilt_prog = if pfilt.is_empty() {
         None
     } else {
-        patcompile(&pfilt, 0, None)
+        patcompile(&{ let mut __pat_tok = (&pfilt).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None)
     };
 
     let all_params = enumerate_params();

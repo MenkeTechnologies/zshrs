@@ -1907,7 +1907,7 @@ pub fn addmatches(
             if star_prefix {
                 literal_suffixes.push(std::str::from_utf8(&bytes[2..]).unwrap_or("").to_string());
             } else if let Some(prog) =
-                crate::ported::pattern::patcompile(&entry, 0, None::<&mut String>)
+                crate::ported::pattern::patcompile(&{ let mut __pat_tok = (&entry).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None::<&mut String>)
             {
                 pat_progs.push(prog);
             }

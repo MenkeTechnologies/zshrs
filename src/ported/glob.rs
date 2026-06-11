@@ -1972,7 +1972,7 @@ pub fn matchpat(pattern_in: &str, text_in: &str, extended: bool, case_sensitive:
     // c:2521 — `if (!(p = patcompile(b, PAT_STATIC, NULL)))`. Rust uses
     // PAT_HEAPDUP (=0) — pattern::patmatch's canonical compile path;
     // PAT_STATIC's static-buffer path is incomplete in zshrs.
-    let p_opt = crate::ported::pattern::patcompile(&b_eff, crate::ported::zsh_h::PAT_HEAPDUP, None);
+    let p_opt = crate::ported::pattern::patcompile(&{ let mut __pat_tok = (&b_eff).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, crate::ported::zsh_h::PAT_HEAPDUP, None);
     if let Some(v) = prev_extended {
         crate::ported::options::opt_state_set("extendedglob", v);
     }
@@ -2443,7 +2443,7 @@ pub fn igetmatch(
 // `ztokens[]` from `Src/lex.c:38` — the source-char ↔ token-byte
 // table the C tokenizer indexes with `(t - ztokens) + Pound`. Each
 // position N in the string maps to high-bit byte `Pound + N`.
-const ZTOKENS: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
+pub const ZTOKENS: &str = "#$^*(())$=|{}[]`<>>?~`,-!'\"\\\\";
 
 /// Tokenize a glob pattern in place — port of `tokenize(char *s)` from
 /// `Src/glob.c:3548`. One-line C delegation: `zshtokenize(s, 0)`.

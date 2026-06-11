@@ -5121,7 +5121,7 @@ pub fn paramsubst(
                         let matched = if exact || (match_against_key && !key_glob) {
                             hay == pat.as_str()
                         } else {
-                            patcompile(&pat, PAT_HEAPDUP as i32, None)
+                            patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, hay))
                         };
                         if matched {
@@ -5275,7 +5275,7 @@ pub fn paramsubst(
                         let matched = if exact {
                             elem == &pat
                         } else {
-                            patcompile(&pat, PAT_HEAPDUP as i32, None)
+                            patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, elem))
                         };
                         if matched {
@@ -5596,7 +5596,7 @@ pub fn paramsubst(
                             let matched = if exact {
                                 hay == pat
                             } else {
-                                patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                     .map_or(false, |__p| pattry(&__p, &hay))
                             };
                             if matched {
@@ -5770,7 +5770,7 @@ pub fn paramsubst(
                             let matched = if exact {
                                 cand == pat
                             } else {
-                                patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                     .map_or(false, |__p| pattry(&__p, &cand))
                             };
                             if matched {
@@ -5787,7 +5787,7 @@ pub fn paramsubst(
                         for start in (0..=n).rev() {
                             for len in 1..=(n - start) {
                                 let cand: String = s_chars[start..start + len].iter().collect();
-                                if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                                if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                     .map_or(false, |__p| pattry(&__p, &cand))
                                 {
                                     found = Some((start, start + len));
@@ -6933,7 +6933,7 @@ pub fn paramsubst(
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Sibling of #605/#606. Bug #607.
                 if !p.is_empty()
-                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                    && patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).is_none()
                 {
                     zerr(&format!("bad pattern: {}", p));
                     errflag_set_error();
@@ -6989,7 +6989,7 @@ pub fn paramsubst(
                         // c:3417 — empty pattern ⇔ empty subject
                         elem.is_empty()
                     } else {
-                        patcompile(&p, PAT_HEAPDUP as i32, None)
+                        patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                             .map_or(false, |__p| pattry(&__p, elem))
                     }
                 };
@@ -7339,7 +7339,7 @@ pub fn paramsubst(
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
-                            if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                            if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, &elem))
                             {
                                 repl.clone()
@@ -7350,7 +7350,7 @@ pub fn paramsubst(
                         .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
-                } else if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                } else if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                     .map_or(false, |__p| pattry(&__p, &raw_value))
                 {
                     value = repl; // c:3870
@@ -7477,7 +7477,7 @@ pub fn paramsubst(
                 let prog_opt = if pat.is_empty() {
                     None
                 } else {
-                    patcompile(&pat, PAT_HEAPDUP as i32, None)
+                    patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                 };
                 if !pat.is_empty() && prog_opt.is_none() {
                     zerr(&format!("bad pattern: {}", pat));
@@ -7860,7 +7860,7 @@ pub fn paramsubst(
                 // pattern" diagnostic. Single replace arm same as `//`
                 // arm above. Bug #605.
                 if !pat_body.is_empty()
-                    && patcompile(&pat_body, PAT_HEAPDUP as i32, None).is_none()
+                    && patcompile(&{ let mut __pat_tok = (&pat_body).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).is_none()
                 {
                     zerr(&format!("bad pattern: {}", pat_body));
                     errflag_set_error();
@@ -8178,7 +8178,7 @@ pub fn paramsubst(
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
-                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                    && patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).is_none()
                 {
                     zerr(&format!("bad pattern: {}", p));
                     errflag_set_error();
@@ -8293,7 +8293,7 @@ pub fn paramsubst(
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
-                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                    && patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).is_none()
                 {
                     zerr(&format!("bad pattern: {}", p));
                     errflag_set_error();
@@ -8397,7 +8397,7 @@ pub fn paramsubst(
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
-                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                    && patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).is_none()
                 {
                     zerr(&format!("bad pattern: {}", p));
                     errflag_set_error();
@@ -8526,7 +8526,7 @@ pub fn paramsubst(
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
-                    && patcompile(&p, PAT_HEAPDUP as i32, None).is_none()
+                    && patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).is_none()
                 {
                     zerr(&format!("bad pattern: {}", p));
                     errflag_set_error();
@@ -11461,7 +11461,7 @@ pub fn paramsubst(
                         let matched = if exact {
                             hay == pat.as_str()
                         } else {
-                            patcompile(&pat, PAT_HEAPDUP as i32, None)
+                            patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, hay))
                         };
                         if matched {
@@ -11502,7 +11502,7 @@ pub fn paramsubst(
                     let return_all = flags.contains('I') || flags.contains('R');
                     let mut out: Vec<String> = Vec::new();
                     for (idx, elem) in arr.iter().enumerate() {
-                        if patcompile(&pat, PAT_HEAPDUP as i32, None)
+                        if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                             .map_or(false, |__p| pattry(&__p, elem))
                         {
                             if return_index {
@@ -12693,7 +12693,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     for start in 0..=n {
                         for end in start..=n {
                             let span: String = cv[start..end].iter().collect();
-                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                            if patcompile(&{ let mut __pat_tok = (&eff_pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, &span))
                             {
                                 // Convert char positions to byte positions.
@@ -12728,7 +12728,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                         let mut found: Option<usize> = None;
                         for end in 0..=n {
                             let span: String = cv[..end].iter().collect();
-                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                            if patcompile(&{ let mut __pat_tok = (&eff_pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, &span))
                             {
                                 found = Some(cv[..end].iter().map(|c| c.len_utf8()).sum());
@@ -12754,7 +12754,7 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                         let mut found: Option<usize> = None;
                         for start in 0..=n {
                             let span: String = cv[start..].iter().collect();
-                            if patcompile(&eff_pat, PAT_HEAPDUP as i32, None)
+                            if patcompile(&{ let mut __pat_tok = (&eff_pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                                 .map_or(false, |__p| pattry(&__p, &span))
                             {
                                 found = Some(cv[..start].iter().map(|c| c.len_utf8()).sum());

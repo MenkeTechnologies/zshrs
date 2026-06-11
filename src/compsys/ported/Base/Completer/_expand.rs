@@ -197,7 +197,7 @@ fn glob_match(pat: &str) -> Result<Vec<String>, ()> {
         None => (".".to_string(), pat.to_string()),
     };
     let scan_dir = if dir.is_empty() { "." } else { &dir };
-    let prog = patcompile(&name_pat, 0, None).ok_or(())?;
+    let prog = patcompile(&{ let mut __pat_tok = (&name_pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None).ok_or(())?;
     let entries = std::fs::read_dir(std::path::Path::new(scan_dir)).map_err(|_| ())?;
     let mut out: Vec<String> = Vec::new();
     for ent in entries.flatten() {

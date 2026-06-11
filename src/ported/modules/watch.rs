@@ -342,7 +342,7 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {
     // tokenization internally per Src/pattern.c:547.
     // c:445 — PAT_STATIC = 0x80 per zsh.h.
     use crate::ported::pattern::{patcompile, pattry};
-    match patcompile(pattern, 0x80, None) {
+    match patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0x80, None) {
         Some(prog) => {
             // c:446-449 — queue_signals + pattry + unqueue_signals.
             // pattry doesn't actually touch the signal queue from the

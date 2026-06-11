@@ -116,7 +116,7 @@ pub fn _combination(args: &[String]) -> i32 {
 
     // Build a single combined glob pattern: `pat1{sep}pat2{sep}...`
     let combined_pat = pats.join(&sep);
-    let prog = patcompile(&combined_pat, 0, None);
+    let prog = patcompile(&{ let mut __pat_tok = (&combined_pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None);
 
     let mut matches: Vec<String> = Vec::new();
     for entry in &style_vals {

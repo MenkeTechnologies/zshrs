@@ -246,7 +246,7 @@ fn run_default_sort(ctx: &str, argv: &[String]) {
 /// `pattry`, mirroring the C `xpandredir` / `pattry` flow.
 fn zsh_glob_match(pat: &str, s: &str) -> bool {
     // PAT_HEAPDUP=0; permanent prog OK for a one-shot match.
-    if let Some(prog) = crate::ported::pattern::patcompile(pat, 0, None) {
+    if let Some(prog) = crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None) {
         crate::ported::pattern::pattry(&prog, s)
     } else {
         // Invalid pattern: fall back to literal compare so a broken

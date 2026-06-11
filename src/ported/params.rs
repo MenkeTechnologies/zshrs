@@ -1225,7 +1225,7 @@ pub fn scanparamvals(
         // patcompile(pm.node.nam) + pattry(prog, scanstr)
         let scanstr = scanstr_lock().lock().unwrap().clone();
         if let Some(s) = scanstr {
-            let matched = patcompile(&pm.node.nam, PAT_HEAPDUP as i32, None)
+            let matched = patcompile(&{ let mut __pat_tok = (&pm.node.nam).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                 .map_or(false, |p| pattry(&p, &s));
             if !matched {
                 return;
@@ -1236,7 +1236,7 @@ pub fn scanparamvals(
     } else if (f & SCANPM_MATCHKEY) != 0 {
         let prog = scanprog_lock().lock().unwrap().clone();
         if let Some(p) = prog {
-            let matched = patcompile(&p, PAT_HEAPDUP as i32, None)
+            let matched = patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                 .map_or(false, |prog| pattry(&prog, &pm.node.nam));
             if !matched {
                 return;
@@ -1271,7 +1271,7 @@ pub fn scanparamvals(
     if (f & SCANPM_MATCHVAL) != 0 {
         let prog = scanprog_lock().lock().unwrap().clone();
         let matched = prog
-            .and_then(|p| patcompile(&p, PAT_HEAPDUP as i32, None))
+            .and_then(|p| patcompile(&{ let mut __pat_tok = (&p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None))
             .map_or(false, |prog| pattry(&prog, &s));
         if matched {
             paramvals_lock().lock().unwrap().push(s);
@@ -2706,7 +2706,7 @@ pub(crate) fn getarg<'a>(
             } else if exact {
                 target == pat
             } else {
-                patcompile(pat, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, target))
+                patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, target))
             }
         };
         if return_all {
@@ -2863,7 +2863,7 @@ pub(crate) fn getarg<'a>(
             let hit = if exact {
                 s == pat
             } else {
-                patcompile(pat_used, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s))
+                patcompile(&{ let mut __pat_tok = (pat_used).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, s))
             };
             if hit {
                 remaining -= 1;
@@ -2977,7 +2977,7 @@ pub(crate) fn getarg<'a>(
                     let hit = if flags.contains('e') {
                         cand == pat
                     } else {
-                        patcompile(pat, PAT_HEAPDUP as i32, None)
+                        patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                             .map_or(false, |p| pattry(&p, &cand))
                     };
                     if hit {

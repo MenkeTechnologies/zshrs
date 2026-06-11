@@ -323,7 +323,7 @@ impl style_table {
                     if p.pat == "*" {
                         true
                     } else {
-                        patcompile(&p.pat, PAT_HEAPDUP as i32, None)
+                        patcompile(&{ let mut __pat_tok = (&p.pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                             .map_or(false, |prog| pattry(&prog, context))
                     }
                 })
@@ -370,7 +370,7 @@ impl style_table {
                     let matches = if pat.pat == "*" {
                         true
                     } else {
-                        patcompile(&pat.pat, PAT_HEAPDUP as i32, None)
+                        patcompile(&{ let mut __pat_tok = (&pat.pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
                             .map_or(false, |prog| pattry(&prog, ctx))
                     };
                     if !matches {
@@ -1179,14 +1179,8 @@ pub fn bin_zstyle(
                 return 1;
             }
             queue_signals(); // c:732 — Protect PAT_STATIC
-            let pat = args[2].clone();
-            // c:734 — `tokenize(args[3])`. C's patcompile consumes
-            // TOKENIZED strings (Star = 0x87); the Rust patcompile's
-            // zpc table holds raw ASCII (pattern.rs:439 sp[ZPC_STAR]
-            // = b'*'), so pre-tokenizing turns every glob char into
-            // a literal and no pattern ever matches. Skip the
-            // tokenize like every other patcompile call site (c:339
-            // arm above, subst.rs).
+            let mut pat = args[2].clone();
+            tokenize(&mut pat); // c:734 — shell metachar → pattern token
             let prog = match patcompile(&pat, PAT_STATIC, None) {
                 // c:737
                 Some(p) => p,
@@ -1341,10 +1335,8 @@ pub fn bin_zstyle(
     // patterns with the canonical "invalid pattern: %s" diagnostic
     // before they reach the style table.
     {
-        let pat = ctxt.clone(); // c:524 dupstring
-        // c:525 — `tokenize(pat)`. Skipped: Rust patcompile reads raw
-        // glob chars (pattern.rs:439), so validating the tokenized
-        // form would accept patterns the raw compile rejects.
+        let mut pat = ctxt.clone(); // c:524 dupstring
+        tokenize(&mut pat); // c:525
         if patcompile(&pat, crate::ported::zsh_h::PAT_ZDUP, None).is_none() {
             // c:527
             zwarnnam(nam, &format!("invalid pattern: {}", ctxt)); // c:528
@@ -2028,13 +2020,11 @@ pub fn rmatch(sm: &RParseResult, subj: &str, var1: &str, var2: &str, comp: i32) 
                 )
             };
             if need_compile {
-                let pat_str = {
+                let mut pat_str = {
                     let n = next_rc.borrow();
                     n.pattern.clone().unwrap_or_default()
                 };
-                // c:1403 — `tokenize(next->pattern)`. Skipped: Rust
-                // patcompile reads raw glob chars (pattern.rs:439);
-                // tokenizing first turns globs into literals.
+                crate::ported::glob::tokenize(&mut pat_str); // c:1403
                 let prog = patcompile(&pat_str, 0, None); // c:1404
                 let mut n = next_rc.borrow_mut();
                 n.pattern = Some(pat_str);

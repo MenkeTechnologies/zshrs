@@ -2868,7 +2868,7 @@ fn simple_glob_match(pattern: &str, name: &str) -> bool {
     // c:hashtable.c:412 — `scanmatchtable` callers pass a compiled
     // `Patprog`; this helper inlines the compile+match since callers
     // here have only the raw pattern string.
-    patcompile(pattern, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, name))
+    patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, name))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

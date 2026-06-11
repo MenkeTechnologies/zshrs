@@ -81,7 +81,7 @@ pub fn _widgets(args: &[String]) -> i32 {
         .unwrap_or_else(|| "*".to_string());
 
     // Collect widget keys whose value-string matches the pattern.
-    let prog = patcompile(&pat, 0, None);
+    let prog = patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None);
     let mut keys: Vec<String> = Vec::new();
     if let Ok(tab) = thingytab().lock() {
         for (name, t) in tab.iter() {
