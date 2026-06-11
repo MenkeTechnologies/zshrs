@@ -3659,16 +3659,31 @@ impl ShellExecutor {
                     .partial_cmp(&human_value(&kb))
                     .unwrap_or(std::cmp::Ordering::Equal)
             } else if numeric {
-                let na: f64 = ka
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
-                let nb: f64 = kb
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
+                // sort(1) -n converts via strtod: the LEADING numeric
+                // prefix counts, trailing text is ignored ("5.txt" →
+                // 5, "10.txt" → 10). Whole-token parse() failed on
+                // any suffix and collapsed everything to 0.0.
+                let numeric_prefix = |s: &str| -> f64 {
+                    let s = s.trim_start();
+                    let mut end = 0;
+                    let mut seen_dot = false;
+                    for (i, c) in s.char_indices() {
+                        if i == 0 && (c == '+' || c == '-') {
+                            end = c.len_utf8();
+                        } else if c.is_ascii_digit() {
+                            end = i + c.len_utf8();
+                        } else if c == '.' && !seen_dot {
+                            seen_dot = true;
+                        } else {
+                            break;
+                        }
+                    }
+                    // A bare sign or dot with no digits parses as 0,
+                    // matching strtod's no-conversion result.
+                    s[..end].parse().unwrap_or(0.0)
+                };
+                let na = numeric_prefix(&ka);
+                let nb = numeric_prefix(&kb);
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
             } else if fold {
                 strcoll_cmp(&ka.to_lowercase(), &kb.to_lowercase())
