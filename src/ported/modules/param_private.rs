@@ -257,14 +257,25 @@ pub fn bin_private(
     //     bits inside (e.g. ops->ind[X] toggles in fallback branches).
     let mut ops_local = ops_in.clone();
     let ops = &mut ops_local;
-    let mut assigns: Vec<(String, String)> = Vec::new();
-    let assigns = &mut assigns;
     // c:220 — `int from_typeset = 1;`
     let mut from_typeset: i32 = 1; // c:220
                                    // c:221 — `int ofake = fakelevel;`
     let ofake = FAKELEVEL.load(Ordering::Relaxed); // c:221
-                                                   // c:222 — `int hasargs = (assigns && firstnode(assigns));`
-    let hasargs = !assigns.is_empty(); // c:222
+    // c:222 — `int hasargs = /* *args != NULL || */ (assigns &&
+    //           firstnode(assigns));`
+    // C's `assigns` is the BINF_ASSIGN-split LinkList: execbuiltin
+    // (Src/builtin.c) peels `name=value` words off into `assigns`,
+    // leaving bare names in `args`. The commented-out `*args != NULL`
+    // shows hasargs deliberately counts ONLY assignment forms.
+    // zshrs's dispatcher doesn't split — `name=value` words arrive
+    // in `args` — so the faithful adaptation detects them there.
+    // Prior port computed `!assigns.is_empty()` on a hardcoded-empty
+    // local Vec: always false, making `private +r x=1` take the
+    // `(!hasargs && '+')` bin_typeset shortcut at c:243 even though
+    // an assignment was present.
+    let hasargs = args
+        .iter()
+        .any(|a| a.find('=').is_some_and(|p| p > 0)); // c:222
                                        // c:223 — `makeprivate_error = 0;`
     MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed); // c:223
 
