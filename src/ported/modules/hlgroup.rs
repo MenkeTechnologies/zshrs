@@ -251,34 +251,25 @@ pub fn getgroup(name: &str, sgr: bool) -> Option<String> {
     if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) != crate::ported::zsh_h::PM_HASHED {
         return None; // c:102-103 PM_UNSET
     }
-    // c:98 — `|| !(hlg = v->pm->gsu.h->getfn(v->pm))` — fetch backing hash.
-    let hlg = match pm.u_hash.as_ref() {
-        Some(h) => h,
-        None => return None, // c:102-103 PM_UNSET
+    drop(table);
+    // c:98-99 — `|| !(hlg = v->pm->gsu.h->getfn(v->pm))
+    //            || !(hn = gethashnode2(hlg, name))`
+    // gsu.h->getfn returns the assoc's backing hash; the canonical
+    // Rust mirror is paramtab_hashed_storage — the SAME store
+    // scangroup (below) and gethparam read. A prior lookup walked
+    // pm.u_hash.nodes (name-only HashNode shells with no values) and
+    // then probed a composite "VAR[name]" paramtab key the table
+    // never indexes — so `${.zle.esc[name]}` returned unset even
+    // when `${(k).zle.esc}` listed the group.
+    let store = match crate::ported::params::paramtab_hashed_storage().lock() {
+        Ok(s) => s,
+        Err(_) => return None,
     };
-    // c:99 — `|| !(hn = gethashnode2(hlg, name))` — lookup by name.
-    let hn = hlg.nodes.iter().find_map(|opt| {
-        opt.as_ref()
-            .and_then(|hn| if hn.nam == name { Some(hn) } else { None })
-    });
-    let hn = match hn {
-        Some(h) => h,
-        None => return None, // c:102-103 PM_UNSET
+    let raw_attr = match store.get(var).and_then(|m| m.get(name)) {
+        Some(v) => v.clone(), // c:99 gethashnode2 hit → c:105 ((Param)hn)->u.str
+        None => return None,  // c:102-103 PM_UNSET (presence ⟺ set in the mirror)
     };
-    // c:100 — `|| (((Param) hn)->node.flags & PM_UNSET)`
-    if (hn.flags & crate::ported::zsh_h::PM_UNSET as i32) != 0 {
-        return None; // c:102-103 PM_UNSET
-    }
-    // The hashnode's value lives on the associated Param. The Rust
-    // HashTable.nodes stores `HashNode` (just nam+flags), not the
-    // wrapping Param — so the attribute string lookup needs a
-    // companion Param lookup. The user-facing param table indexes
-    // hash-entry params under "VAR[name]" composite keys; try that.
-    let composite_key = format!("{}[{}]", var, name);
-    let raw_attr = match table.get(&composite_key) {
-        Some(child_pm) => child_pm.u_str.clone().unwrap_or_default(),
-        None => return None, // attribute string unreachable
-    };
+    drop(store);
     // c:105 — `pm->u.str = convertattr(((Param) hn)->u.str, sgr);`
     Some(convertattr(&raw_attr, sgr)) // c:105
 }
