@@ -3798,8 +3798,22 @@ impl ZshCompiler {
             }
         }
 
+        // c:Src/subst.c:2990-3004 — `${(flags)"literal"}` and the
+        // flagless `${"literal"}` are "bad substitution" in zsh: the
+        // quote char lands in operand/operator position. The plain
+        // untokenize used by the fast paths below STRIPS the quotes
+        // (`${(Q)"abc"}` → `${(Q)abc}`), disguising the literal as a
+        // parameter NAME. Detect the quote on the quote-preserving
+        // ztokens rendering and skip the fast paths so the runtime
+        // paramsubst walk raises the canonical error.
+        let flag_operand_quoted =
+            flag_operand_is_quoted_literal(&crate::vm_helper::untokenize_ztokens(s));
+
         // Fast path: `${NAME}` — braced bare ref, equivalent to `$NAME`.
-        if !has_bnull {
+        // `flag_operand_quoted` also covers the flagless `${"abc"}`
+        // shape — untokenize strips the quotes so braced_var_ref would
+        // misread the literal as a NAME (c:Src/subst.c:2990-3004).
+        if !has_bnull && !flag_operand_quoted {
             if let Some(name) = braced_var_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
@@ -4052,10 +4066,20 @@ impl ZshCompiler {
 
         // c:Src/subst.c — `${(flags)"literal"}` is a "bad substitution"
         // parse error in zsh; paramsubst's name walker hits the `"` after
-        // the flag block, finds it's not a valid name char, and errors.
-        // Earlier this used a `\u{01}` sentinel fast path to short-circuit
-        // to the same error; removed in favor of letting paramsubst's
-        // natural body walk fire the error organically (matches C).
+        // the flag block, finds it's not a valid name char, and errors
+        // (c:Src/subst.c:2990-3004). Earlier this used a `\u{01}` sentinel
+        // fast path to short-circuit to the same error; removed in favor
+        // of letting paramsubst's natural body walk fire the error
+        // organically (matches C). But `untoked` (plain untokenize)
+        // STRIPS the quotes — `${(Q)"abc"}` untokenizes to `${(Q)abc}`,
+        // which the fast paths below misread as a parameter NAME and
+        // lower to a silent (empty) lookup instead of the error. Detect
+        // the quote on the quote-preserving ztokens rendering and skip
+        // every fast path so the runtime paramsubst walk raises the
+        // canonical error (probe: `zsh -fc 'print -- ${(Q)"abc"}'` →
+        // `zsh:1: bad substitution`, exit 1). `flag_operand_quoted`
+        // is computed above the `${NAME}` fast path, which the
+        // flagless `${"abc"}` shape would otherwise hijack.
 
         // Fast path: `${(flags)NAME}` — zsh parameter flags. Emit
         // BUILTIN_PARAM_FLAG with [name, flags] on the stack.
@@ -4070,7 +4094,7 @@ impl ZshCompiler {
         // and the Qstring-preserving `untokenize_preserve_quotes`
         // ensures the `$` is tokenized as `\u{8c}` so stringsubst
         // sees Qstring and sets qt=true. This is the C path.
-        if !has_bnull {
+        if !has_bnull && !flag_operand_quoted {
             if let Some((flags, name)) = parse_zsh_flag(&untoked) {
                 // DQ context: either the raw word is itself DQ-wrapped,
                 // OR we're recursing into an Expansion segment from a
@@ -4119,7 +4143,7 @@ impl ZshCompiler {
         // sentinel so BUILTIN_PARAM_FLAG treats the operand as a
         // pre-resolved scalar instead of doing a name lookup. Closes
         // the `${(f)mapfile[/path]}` and `${(s:,:)assoc[k]}` shapes.
-        if !has_bnull {
+        if !has_bnull && !flag_operand_quoted {
             if let Some((flags, base, key)) = parse_zsh_flag_subscript(&untoked) {
                 // `(t)NAME[KEY]` — type-flag form. zsh's `(t)`
                 // evaluates the PARAMETER's type-string first (e.g.
@@ -9346,6 +9370,29 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     }
 
     None
+}
+
+/// True when a `${(flags)…}` form's operand begins with a quote in the
+/// quote-preserving (ztokens) rendering — the `${(Q)"abc"}` /
+/// `${(L)'x'}` shapes. c:Src/subst.c:2990-3004 — zsh's paramsubst
+/// raises "bad substitution" for these: after the flag block the name
+/// walker stops at the quote char, which is also not a valid operator
+/// char. The compile fast paths work on plain-untokenized text where
+/// the quotes are already stripped, so they must consult this check
+/// (on the ztokens rendering) to avoid misreading the quoted literal
+/// as a parameter NAME.
+fn flag_operand_is_quoted_literal(s_ztok: &str) -> bool {
+    let Some(inner) = s_ztok.strip_prefix("${").and_then(|t| t.strip_suffix('}')) else {
+        return false;
+    };
+    // Flagless `${"abc"}` / `${'abc'}` — same "bad substitution" per
+    // c:Src/subst.c:2990-3004 (the closing quote lands in operator
+    // position after the name walk).
+    let operand = match matching_paren_close(inner) {
+        Some(close) => &inner[close + 1..],
+        None => inner,
+    };
+    matches!(operand.chars().next(), Some('"') | Some('\''))
 }
 
 fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {

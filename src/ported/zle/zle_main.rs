@@ -661,6 +661,11 @@ pub fn zleread(
     // `RAW_LP`/`RAW_RP` statics (zle_main.rs).
     *RAW_LP.lock().unwrap() = lprompt.to_string();
     *RAW_RP.lock().unwrap() = rprompt.to_string();
+    // c:1260-1261 — `if (termflags & TERM_UNKNOWN) init_term();` —
+    // make sure the terminal caps are set up before the first paint.
+    if crate::ported::params::TERMFLAGS.load(SeqCst) & crate::ported::zsh_h::TERM_UNKNOWN != 0 {
+        crate::ported::init::init_term();
+    }
     *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
     *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
     ZLEREADFLAGS.store(flags, SeqCst);

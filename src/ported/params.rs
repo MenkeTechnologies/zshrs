@@ -7709,7 +7709,12 @@ pub fn uidgetfn() -> i64 {
 // `termflags` from Src/init.c — bitmap of terminal-state flags. Set
 // from term_reinit_from_pm and consulted by ZLE before first paint.
 /// `TERMFLAGS` static.
-pub static TERMFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// Starts as TERM_UNKNOWN (0x02) — c:Src/init.c:1103 `termflags =
+/// TERM_UNKNOWN;` in init_setup. Cleared by init_term() on success
+/// (c:Src/init.c:802-803); promptexpand/zleread lazily call
+/// init_term() when the bit is still set (c:Src/prompt.c:189-190,
+/// c:Src/Zle/zle_main.c:1260-1261).
+pub static TERMFLAGS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0x02);
 // `TERM_UNKNOWN` re-exported from canonical zsh_h.rs (port of
 // `Src/zsh.h:1986`). The local declaration here had the value
 // `1 << 0 = 0x01` — which is C's TERM_BAD (Src/zsh.h:1985), NOT
