@@ -1090,25 +1090,66 @@ pub fn bin_zstyle(
                                              // c:559-732 — per-flag return semantics: just check found vs not.
                                              // For -t: 0 if found AND first value matches one of the "true"
                                              // tokens (when arg given) or first ∈ {true,yes,on,1}.
-        if OPT_ISSET(ops, b't') {
-            // c:660
-            let t = match zstyletab.lock() {
-                Ok(g) => g,
-                Err(_) => return 1,
-            };
-            return if t.test(ctxt, style, None) { 0 } else { 1 };
-        }
-        if OPT_ISSET(ops, b'T') {
-            // c:692
-            // -T: same as -t but missing entries succeed (return 0).
-            let t = match zstyletab.lock() {
-                Ok(g) => g,
-                Err(_) => return 1,
-            };
-            if t.get(ctxt, style).is_some() {
-                return if t.test(ctxt, style, None) { 0 } else { 1 };
+        if OPT_ISSET(ops, b't') || OPT_ISSET(ops, b'T') {
+            // c:700-724 — shared t/T arm:
+            //
+            //     if ((vals = lookupstyle(args[1], args[2])) && vals[0]) {
+            //         if (args[3]) {
+            //             char **ap = args + 3, **p;
+            //             while (*ap) {
+            //                 p = vals;
+            //                 while (*p)
+            //                     if (!strcmp(*ap, *p++))
+            //                         return 0;
+            //                 ap++;
+            //             }
+            //             return 1;
+            //         } else
+            //             return !(!strcmp(vals[0], "true") ||
+            //                      !strcmp(vals[0], "yes") ||
+            //                      !strcmp(vals[0], "on") ||
+            //                      !strcmp(vals[0], "1"));
+            //     }
+            //     return (args[0][1] == 't' ? (vals ? 1 : 2) : 0);
+            //
+            // Two contracts the prior arms missed:
+            //   1. Extra args = value-membership test: exit 0 when ANY
+            //      style value string-equals ANY extra arg. Both arms
+            //      ignored args[3..] entirely.
+            //   2. -t's tri-state exit: 2 when the style is UNDEFINED
+            //      for the context, 1 when defined-but-empty (or
+            //      non-boolean first value). Prior -t collapsed both
+            //      to 1.
+            if !vals.is_empty() {
+                // c:706 vals && vals[0]
+                if args.len() > 2 {
+                    // c:707-717
+                    for ap in &args[2..] {
+                        if vals.iter().any(|v| v == ap) {
+                            return 0; // c:714
+                        }
+                    }
+                    return 1; // c:717
+                }
+                // c:719-722 — boolean first value.
+                return if matches!(vals[0].as_str(), "true" | "yes" | "on" | "1") {
+                    0
+                } else {
+                    1
+                };
             }
-            return 0;
+            // c:724 — `return (args[0][1] == 't' ? (vals ? 1 : 2) : 0);`
+            // vals here is the C pointer: non-NULL when a pattern
+            // matched but carried zero values. Probe the table for the
+            // defined-but-empty vs undefined distinction.
+            if OPT_ISSET(ops, b't') {
+                let defined = match zstyletab.lock() {
+                    Ok(t) => t.get(ctxt, style).is_some(),
+                    Err(_) => false,
+                };
+                return if defined { 1 } else { 2 }; // c:724
+            }
+            return 0; // c:724 -T arm
         }
         // -m PATTERN: pattern-match args[2] against each value, return
         // 0 if any matches. C: zutil.c:727-747.
