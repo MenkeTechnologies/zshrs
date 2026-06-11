@@ -3845,7 +3845,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp login: not connected\n".to_string()),
+                    None => return (1, "zftp login: not connected.\n".to_string()),
                 };
 
                 match sess.login(user, pass) {
@@ -3867,7 +3867,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp cd: not connected\n".to_string()),
+                    None => return (1, "zftp cd: not connected.\n".to_string()),
                 };
 
                 match sess.cd(args[1]) {
@@ -3885,7 +3885,7 @@ pub fn bin_zftp(
             "cdup" => {
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp cdup: not connected\n".to_string()),
+                    None => return (1, "zftp cdup: not connected.\n".to_string()),
                 };
 
                 match sess.cdup() {
@@ -3903,7 +3903,7 @@ pub fn bin_zftp(
             "pwd" => {
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp pwd: not connected\n".to_string()),
+                    None => return (1, "zftp pwd: not connected.\n".to_string()),
                 };
 
                 match sess.pwd() {
@@ -3924,7 +3924,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp dir: not connected\n".to_string()),
+                    None => return (1, "zftp dir: not connected.\n".to_string()),
                 };
 
                 let result = if use_nlst {
@@ -3955,7 +3955,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp get: not connected\n".to_string()),
+                    None => return (1, "zftp get: not connected.\n".to_string()),
                 };
 
                 match sess.get(remote, Path::new(local)) {
@@ -3980,7 +3980,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp put: not connected\n".to_string()),
+                    None => return (1, "zftp put: not connected.\n".to_string()),
                 };
 
                 match sess.put(Path::new(local), remote) {
@@ -4002,7 +4002,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp delete: not connected\n".to_string()),
+                    None => return (1, "zftp delete: not connected.\n".to_string()),
                 };
 
                 match sess.delete(args[1]) {
@@ -4024,7 +4024,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp mkdir: not connected\n".to_string()),
+                    None => return (1, "zftp mkdir: not connected.\n".to_string()),
                 };
 
                 match sess.mkdir(args[1]) {
@@ -4046,7 +4046,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp rmdir: not connected\n".to_string()),
+                    None => return (1, "zftp rmdir: not connected.\n".to_string()),
                 };
 
                 match sess.rmdir(args[1]) {
@@ -4068,7 +4068,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp rename: not connected\n".to_string()),
+                    None => return (1, "zftp rename: not connected.\n".to_string()),
                 };
 
                 match sess.rename(args[1], args[2]) {
@@ -4091,7 +4091,7 @@ pub fn bin_zftp(
                         if args.len() < 2 {
                             let sess = match zftp.get_session(None) {
                                 Some(s) => s,
-                                None => return (1, "zftp type: not connected\n".to_string()),
+                                None => return (1, "zftp type: not connected.\n".to_string()),
                             };
                             return (
                                 0,
@@ -4116,7 +4116,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp type: not connected\n".to_string()),
+                    None => return (1, "zftp type: not connected.\n".to_string()),
                 };
 
                 match sess.set_type(transfer_type) {
@@ -4140,7 +4140,7 @@ pub fn bin_zftp(
 
                 let sess = match zftp.get_session_mut(None) {
                     Some(s) => s,
-                    None => return (1, "zftp bslashquote: not connected\n".to_string()),
+                    None => return (1, "zftp bslashquote: not connected.\n".to_string()),
                 };
 
                 match sess.bslashquote(&cmd) {
