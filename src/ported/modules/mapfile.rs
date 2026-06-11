@@ -207,14 +207,20 @@ pub fn setpmmapfile(name: &str, value: &str, readonly: bool) {
 /// `pm->node.nam` (unless the param is readonly, c:133).
 ///
 /// C signature: `static void unsetpmmapfile(Param pm, int exp)`. The
-/// `exp` arg is `UNUSED` (c:126).
-pub fn unsetpmmapfile(pm: &str, exp: bool) {
+/// `exp` arg is `UNUSED` (c:126) — it never gates anything.
+/// WARNING: param names don't match C — Rust=(pm, readonly) vs C=(pm, exp).
+/// The second Rust arg carries the `pm->node.flags & PM_READONLY` bit
+/// that C reads off the Param struct at c:133; zshrs's adapter doesn't
+/// thread the full Param here, so the caller passes the bit directly.
+/// It is NOT C's (unused) `exp`. A prior signature named it `exp`,
+/// which misread the C guard as explicit-unset gating.
+pub fn unsetpmmapfile(pm: &str, readonly: bool) {
     // c:126
     // c:126 — `char *fname = ztrdup(pm->node.nam);`
     // c:131 — `unmetafy(fname, &dummy);`
     let fname = unmeta(pm); // c:129+131
                             // c:133-134 — `if (!(pm->node.flags & PM_READONLY)) unlink(fname);`
-    if !exp {
+    if !readonly {
         // c:133
         let _ = std::fs::remove_file(&fname); // c:134
     }
@@ -258,10 +264,16 @@ pub fn setpmmapfiles(entries: &[(String, String)], readonly: bool) {
 }
 
 /// Port of `get_contents(char *fname)` from `Src/Modules/mapfile.c:167`. Reads
-/// the file at `fname` and returns its contents as a metafied
-/// zsh-internal string (per `metafy(buf, size, META_HEAPDUP)` at
-/// c:195/202). Returns `None` on any of the C source's
-/// short-circuit failure paths (open, fstat, mmap all return NULL).
+/// the file at `fname` and returns its contents.
+///
+/// DIVERGENCE from C: the c:195/202 `metafy(buf, size, META_HEAPDUP)`
+/// step is deliberately SKIPPED — zshrs param strings are native
+/// UTF-8 `String`s, and a metafied byte stream (Meta + byte^32 pairs,
+/// not valid UTF-8) can't round-trip through `String` without
+/// corruption. Binary file content goes through `from_utf8_lossy`
+/// instead (U+FFFD for invalid sequences). Revisit when a byte-string
+/// param substrate lands. Returns `None` on the C short-circuit
+/// failure paths (open, fstat, mmap all return NULL).
 ///
 /// C signature: `static char *get_contents(char *fname)`. Returns
 /// `char *` (NULL on failure); Rust port returns `Option<String>`.
