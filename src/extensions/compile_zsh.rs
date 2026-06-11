@@ -3522,6 +3522,46 @@ impl ZshCompiler {
         // and the fast-path reads the wrong name). The bridge below
         // handles those correctly by routing through expand_string.
         let has_quote_markers = s.contains('\u{9d}') || s.contains('\u{9e}');
+        // c:Src/subst.c:2622 (inull skip) + c:2696 (post-subexp skip)
+        // + c:2993-3004 (operator gate) — quote markers INSIDE a
+        // `${…}` body are paramsubst's business: `${(f)"$(cmd)"}` is
+        // legal (skipped around the subexp), `${"abc"}` /
+        // `${(Q)"abc"}` are "bad substitution" (raw Dnull at the
+        // operator position). untokenize DROPS Snull/Dnull, so every
+        // untoked-based `${…}` fast path below silently misreads a
+        // quoted body as a bare name and the error path never fires.
+        // Route such words to the EXPAND_TEXT bridge, which hands the
+        // RAW tokenized body to multsub → stringsubst → paramsubst.
+        let quoted_brace_body = {
+            let mut depth = 0i32;
+            let mut found = false;
+            for c in s.chars() {
+                match c {
+                    '\u{8f}' => depth += 1,                       // Inbrace
+                    '\u{90}' => depth = (depth - 1).max(0),       // Outbrace
+                    '\u{9d}' | '\u{9e}' if depth > 0 => {
+                        found = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            found
+        };
+        if quoted_brace_body {
+            let preserved: String = s.to_string();
+            let mode = if self.dq_context_depth > 0 {
+                1
+            } else {
+                expand_text_mode(s, &preserved)
+            };
+            let idx = self.builder.add_constant(Value::str(preserved.as_str()));
+            self.builder.emit(Op::LoadConst(idx), 0);
+            self.builder.emit(Op::LoadInt(mode as i64), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
+            return;
+        }
         if !has_bnull && !has_quote_markers {
             if let Some(name) = bare_var_ref(&untoked) {
                 // c:Src/subst.c — `$#@` / `$#*` are bare-form shorthand

@@ -4705,6 +4705,28 @@ pub fn paramsubst(
                 return (String::new(), new_pos, Vec::new());
             }
         }
+        // c:2993-3004 — after the name walk, the only valid next
+        // chars are an operator start (`-+:%/=#?`) or the closing
+        // brace. A Dnull/Snull quote marker here means the body
+        // quoted a BARE NAME (`${(Q)"abc"}` / `${"abc"}`) — C's
+        // gate sees the raw Dnull (not in the allowed set) and
+        // zerr's "bad substitution". Check the RAW char HERE because
+        // the `rest` builder below silently drops quote markers
+        // before the downstream operator gate runs. Subexp bodies
+        // (`${(f)"$(cmd)"}`) are exempt: C's post-subexp
+        // `while (inull(*s)) s++;` at c:2696-2697 eats the closing
+        // quote before the gate; the Rust subexp path mirrors that
+        // via the marker-dropping rest builder (subexp_value /
+        // subexp_array_temp are Some only on that path).
+        if subexp_value.is_none()
+            && subexp_array_temp.is_none()
+            && idx < body_chars.len()
+            && (body_chars[idx] == Snull || body_chars[idx] == Dnull)
+        {
+            zerr("bad substitution"); // c:3001
+            errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            return (String::new(), new_pos, Vec::new()); // c:3002
+        }
         // If the subexp produced an array (multsub path above), bind
         // var_name to the temp slot in state.arrays so the rest of
         // paramsubst — splat, subscript, filter, replace — operates
