@@ -869,9 +869,22 @@ pub(crate) fn zccmd_string(nam: &str, args: &[String]) -> i32 {
         );
         return 1;
     }
+    // c:780-788 — `mb_charinit();
+    //              while (*str && (clen = mb_metacharlenconv(str, &wc))) {
+    //                  str += clen;
+    //                  if (wc == WEOF) continue;
+    //                  *wptr++ = wc;
+    //              }`
+    // mb_metacharlenconv is the META-AWARE wide decoder: it strips
+    // zsh's Meta+(byte^32) encoding while assembling each wchar. The
+    // shell-side arg arrives metafied; walking chars() on it directly
+    // fed the raw Meta escape pairs into the window buffer for any
+    // high-byte text. Decode first, then per-char walk.
+    let raw = crate::ported::utils::unmeta(&args[1]); // c:783 Meta strip
     let mut wins = windows_lock().lock().unwrap();
     if let Some(w) = wins.get_mut(args[0].as_str()) {
-        for ch in args[1].chars() {
+        for ch in raw.chars() {
+            // c:783 wide-char walk
             if w.cursor_y < w.rows && w.cursor_x < w.cols {
                 w.buffer[w.cursor_y][w.cursor_x] = ch;
                 w.cursor_x += 1;
