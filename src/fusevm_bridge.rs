@@ -2467,34 +2467,72 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
-        // c:Src/subst.c subscript parsing — when paramsubst re-parses
-        // the synthesized `${name[idx]}` body, characters like `'`
-        // `"` `\` `$` etc. are LEXER-active inside the `[…]` and get
-        // reinterpreted (quote-strip, paramsubst recursion, …). For
-        // PRE-EVALUATED key strings (the dynamic-key fast path at
-        // compile_zsh.rs:3234 already expanded `$k` via EXPAND_TEXT),
-        // the idx is a literal string that must match the stored key
-        // byte-for-byte — no further reinterpretation. Direct assoc
-        // lookup bypasses the lexer for this case, avoiding the
-        // quote-strip bug where `h[a'b]` failed to resolve because
-        // paramsubst's subscript lexer treated the `'` as a quote.
-        // Bug #338. Only fires for simple assoc-name + non-flag idx
-        // (no outer-flag sentinels, no `(…)` flag prefix on idx, no
-        // splat operator). Other paths (slice, splat, flag-based
-        // search, magic-assoc) still flow through paramsubst.
-        let idx_is_simple = !idx.starts_with('(')
-            && idx != "@"
-            && idx != "*"
-            && !idx.contains(',');
-        if idx_is_simple {
-            if let Some(v) = with_executor(|exec| {
-                exec.assoc(&name).and_then(|m| m.get(&idx).cloned())
-            }) {
-                return Value::str(v);
+        array_index_lookup(&name, &idx)
+    });
+    // BUILTIN_ARRAY_INDEX_UNBRACED — bare `$name[idx]` (no braces).
+    // Same subscript dispatch as BUILTIN_ARRAY_INDEX when KSHARRAYS
+    // is unset, but under KSHARRAYS the UNBRACED form does NOT
+    // subscript at all:
+    //   c:Src/subst.c:2800-2802 — fetchvalue's bracket-parse arg is
+    //     `(unset(KSHARRAYS) || inbrace) ? 1 : -1`; -1 inhibits
+    //     subscript parsing for the bare form under KSHARRAYS.
+    //   c:Src/subst.c:2867 — the bracket-consuming loop only runs
+    //     `while (v || ((inbrace || (unset(KSHARRAYS) && vunset)) &&
+    //     isbrack(*s)))` — bare + KSHARRAYS leaves `[...]` as literal
+    //     trailing text.
+    // The bare `$name` expands (first element for identifier-named
+    // arrays per c:Src/params.c:2293-2296 `v->end = 1, v->isarr = 0`),
+    // the literal `[idx]` (+ any literal suffix) joins the last word,
+    // and the word undergoes filename generation: `[...]` is a glob
+    // char class, so unquoted it hits the c:Src/glob.c:1873-1886
+    // nomatch/nullglob dispatch (reused via exec.expand_glob).
+    // Operands: [name, idx, suffix, quoted] — `quoted` set when the
+    // word carries DQ markers (no filename generation in DQ; zsh 5.9:
+    // `setopt ksharrays; a=(x y z); print "$a[0]"` → `x[0]`).
+    // Verbatim zsh 5.9 ground truth for the unquoted form:
+    //   `setopt ksharrays; a=(x y z); print -- $a[0]` →
+    //   stderr `zsh:1: no matches found: x[0]`, rc=1, empty stdout.
+    vm.register_builtin(BUILTIN_ARRAY_INDEX_UNBRACED, |vm, _argc| {
+        let quoted = vm.pop().to_str() == "1";
+        let suffix = vm.pop().to_str();
+        let idx = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+            let v = array_index_lookup(&name, &idx);
+            if suffix.is_empty() {
+                return v;
             }
+            // Mirrors the previous compile-shape `ARRAY_INDEX +
+            // Op::Concat` exactly: Concat stringifies via as_str_cow
+            // (fusevm value.rs:132-146, arrays join with " ").
+            return Value::str(format!("{}{}", v.to_str(), suffix));
         }
-        let body = format!("${{{}[{}]}}", name, idx);
-        paramsubst_to_value(&body)
+        // KSHARRAYS bare form: no subscript. Bare-`$name` words +
+        // literal `[idx]suffix` glued onto the last word.
+        let mut words = ksharrays_bare_words(&name);
+        let last = format!(
+            "{}[{}]{}",
+            words.pop().unwrap_or_default(),
+            idx,
+            suffix
+        );
+        if quoted {
+            // DQ context — no filename generation, bracket text stays
+            // literal.
+            words.push(last);
+            return Value::str(words.join(" "));
+        }
+        // c:Src/glob.c:1873-1886 — expand_glob handles nullglob /
+        // NOMATCH (zerr "no matches found" + errflag + the
+        // current_command_glob_failed cell consumed at the command
+        // dispatch boundary) / literal passthrough for glob-free text.
+        let matches = with_executor(|exec| exec.expand_glob(&last));
+        let mut out: Vec<Value> = words.into_iter().map(Value::str).collect();
+        out.extend(matches.into_iter().map(Value::str));
+        if out.len() == 1 {
+            return out.pop().unwrap();
+        }
+        Value::Array(out)
     });
     // BUILTIN_ASSOC_HAS_KEY — `${(k)assoc[name]}` key-existence query.
     // Pops [assoc_name, key]; returns key (Str) if present in the
@@ -3502,6 +3540,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Distinguish "name IS a magic-assoc with no entries"
             // (return Array(empty)) from "name is unknown — fall
             // through to get_variable".
+            // c:Src/params.c:2293-2296 — KSHARRAYS bare reference
+            // collapses to the FIRST element in scan order
+            // (`v->end = 1, v->isarr = 0`). For `options` the scan
+            // order is optiontab bucket order (OPTIONTAB), so zsh 5.9
+            // prints `off` (posixargzero) for
+            // `setopt ksharrays; print $options`.
+            if opt_state_get("ksharrays").unwrap_or(false) {
+                return Value::str(vals.into_iter().next().unwrap_or_default());
+            }
             return Value::Array(vals.into_iter().map(Value::str).collect());
         }
         // Indexed-array path: return Value::Array so pop_args splats
@@ -6607,6 +6654,94 @@ impl ZshrsHost {
     }
 }
 
+/// Shared `${name[idx]}` subscript dispatch for BUILTIN_ARRAY_INDEX
+/// and the KSHARRAYS-unset arm of BUILTIN_ARRAY_INDEX_UNBRACED.
+///
+/// c:Src/subst.c subscript parsing — when paramsubst re-parses the
+/// synthesized `${name[idx]}` body, characters like `'` `"` `\` `$`
+/// etc. are LEXER-active inside the `[…]` and get reinterpreted
+/// (quote-strip, paramsubst recursion, …). For PRE-EVALUATED key
+/// strings (the dynamic-key fast path at compile_zsh.rs:3234 already
+/// expanded `$k` via EXPAND_TEXT), the idx is a literal string that
+/// must match the stored key byte-for-byte — no further
+/// reinterpretation. Direct assoc lookup bypasses the lexer for this
+/// case, avoiding the quote-strip bug where `h[a'b]` failed to
+/// resolve because paramsubst's subscript lexer treated the `'` as a
+/// quote. Bug #338. Only fires for simple assoc-name + non-flag idx
+/// (no outer-flag sentinels, no `(…)` flag prefix on idx, no splat
+/// operator). Other paths (slice, splat, flag-based search,
+/// magic-assoc) still flow through paramsubst.
+fn array_index_lookup(name: &str, idx: &str) -> Value {
+    let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
+    if idx_is_simple {
+        if let Some(v) =
+            with_executor(|exec| exec.assoc(name).and_then(|m| m.get(idx).cloned()))
+        {
+            return Value::str(v);
+        }
+    }
+    let body = format!("${{{}[{}]}}", name, idx);
+    paramsubst_to_value(&body)
+}
+
+/// KSHARRAYS bare-`$name` expansion words for the unbraced
+/// no-subscript form (BUILTIN_ARRAY_INDEX_UNBRACED's KSHARRAYS arm).
+///
+/// - `@` / `*` stay the full positional list (the c:Src/params.c:
+///   2293-2296 first-element collapse is gated on
+///   `itype_end(t, IIDENT, 1) != t` — an identifier-shaped name —
+///   which `@`/`*` are not). The literal `[idx]` then joins the LAST
+///   word, matching zsh 5.9: `setopt ksharrays; set -- p q;
+///   print -- $@[0]` → `zsh:1: no matches found: q[0]`.
+/// - Identifier-named arrays collapse to the FIRST element
+///   (c:Src/params.c:2293-2296 `v->end = 1, v->isarr = 0`).
+/// - Assocs collapse to the first value in scan order; the `options`
+///   magic assoc's scan order is `OPTIONTAB` bucket order (first key
+///   `posixargzero`), matching zsh 5.9: `emulate sh -L;
+///   print $options[posixargzero]` → `off[posixargzero]`.
+/// - Scalars / unset names expand to their value / empty (zsh 5.9:
+///   `setopt ksharrays; print -- $unsetvar[0]` →
+///   `zsh:1: no matches found: [0]`).
+fn ksharrays_bare_words(name: &str) -> Vec<String> {
+    if name == "@" || name == "*" {
+        return with_executor(|exec| exec.pparams());
+    }
+    // Magic special-parameter lookups first — mirrors the
+    // BUILTIN_GET_VAR precedence (partab before executor tables).
+    if let Some(vals) = crate::vm_helper::partab_array_get(name) {
+        return vec![vals.into_iter().next().unwrap_or_default()];
+    }
+    if let Some(keys) = crate::vm_helper::partab_scan_keys(name) {
+        let v = keys
+            .first()
+            .and_then(|k| crate::vm_helper::partab_get(name, k))
+            .unwrap_or_default();
+        return vec![v];
+    }
+    let arr_or_assoc = with_executor(|exec| {
+        if let Some(arr) = exec.array(name) {
+            // c:Src/params.c:2293-2296 — first element only.
+            return Some(arr.first().cloned().unwrap_or_default());
+        }
+        if let Some(map) = exec.assoc(name) {
+            // Mirrors BUILTIN_GET_VAR's bare-assoc ordering
+            // (sorted keys, first value).
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            return Some(
+                keys.first()
+                    .and_then(|k| map.get(*k).cloned())
+                    .unwrap_or_default(),
+            );
+        }
+        None
+    });
+    if let Some(v) = arr_or_assoc {
+        return vec![v];
+    }
+    vec![with_executor(|exec| exec.get_variable(name))]
+}
+
 /// Run `body` through `crate::ported::subst::paramsubst` and convert
 /// the resulting node list into a fusevm `Value`. Centralises the
 /// pattern duplicated across ~10 BUILTIN_* handlers:
@@ -7408,6 +7543,14 @@ pub const BUILTIN_PIPE_OUTPUT_MARK: u16 = 620;
 /// dispatch head is `alias`; BUILTIN_ALIAS itself no longer
 /// preforks (it would double-fire the diagnostic).
 pub const BUILTIN_MAGIC_EQUALS_PREFORK: u16 = 621;
+
+/// Bare (unbraced) `$name[idx]` subscript — same dispatch as
+/// `BUILTIN_ARRAY_INDEX` while KSHARRAYS is unset, but under
+/// KSHARRAYS the unbraced form does NOT subscript (c:Src/subst.c:
+/// 2800-2802 + 2867): `$name` expands bare and `[idx]` stays literal
+/// trailing text that undergoes filename generation. Operands:
+/// [name, idx, suffix, quoted].
+pub const BUILTIN_ARRAY_INDEX_UNBRACED: u16 = 622;
 
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword

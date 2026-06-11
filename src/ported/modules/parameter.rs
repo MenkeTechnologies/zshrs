@@ -2235,7 +2235,11 @@ pub fn scanpmoptions(
     func: Option<ScanFunc>, // c:1016
     flags: i32,
 ) {
-    let names: Vec<String> = crate::ported::options::ZSH_OPTIONS_SET
+    // c:1025-1026 — `for (i = 0; i < optiontab->hsize; i++)
+    //   for (hn = optiontab->nodes[i]; hn; hn = hn->next)`:
+    // the walk is in optiontab BUCKET order, not sorted/random order.
+    // OPTIONTAB models that scan order (first element: posixargzero).
+    let names: Vec<String> = crate::ported::options::OPTIONTAB
         .iter()
         .map(|s| s.to_string())
         .collect();

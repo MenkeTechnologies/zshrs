@@ -1174,227 +1174,82 @@ pub static EMULATION: AtomicI32 = AtomicI32::new(EMULATE_ZSH);
 pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 /// `ZSH_OPTIONS_SET` static.
-pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "aliases",
-        // c:Src/options.c:81 — ALIASFUNCDEF.
-        "aliasfuncdef",
-        "allexport",
-        "alwayslastprompt",
-        "alwaystoend",
-        "appendcreate",
-        "appendhistory",
-        "autocd",
-        "autocontinue",
-        "autolist",
-        "automenu",
-        "autonamedirs",
-        "autoparamkeys",
-        "autoparamslash",
-        "autopushd",
-        "autoremoveslash",
-        "autoresume",
-        "badpattern",
-        "banghist",
-        "bareglobqual",
-        "bashautolist",
-        "bashrematch",
-        "beep",
-        "bgnice",
-        "braceccl",
-        "bsdecho",
-        "caseglob",
-        "casematch",
-        // c:Src/options.c:108 — CASEPATHS.
-        "casepaths",
-        "cbases",
-        "cdablevars",
-        "cdsilent",
-        "chasedots",
-        "chaselinks",
-        "checkjobs",
-        "checkrunningjobs",
-        "clobber",
-        // c:Src/options.c:118 — CLOBBEREMPTY.
-        "clobberempty",
-        "combiningchars",
-        "completealiases",
-        "completeinword",
-        "continueonerror",
-        "correct",
-        "correctall",
-        "cprecedences",
-        "cshjunkiehistory",
-        "cshjunkieloops",
-        "cshjunkiequotes",
-        "cshnullcmd",
-        "cshnullglob",
-        "debugbeforecmd",
-        "dotglob",
-        "dvorak",
-        "emacs",
-        "equals",
-        "errexit",
-        "errreturn",
-        "evallineno",
-        "exec",
-        "extendedglob",
-        "extendedhistory",
-        "flowcontrol",
-        "forcefloat",
-        "functionargzero",
-        "glob",
-        "globassign",
-        "globcomplete",
-        "globdots",
-        "globstarshort",
-        "globsubst",
-        "globalexport",
-        "globalrcs",
-        "hashall",
-        "hashcmds",
-        "hashdirs",
-        "hashexecutablesonly",
-        "hashlistall",
-        "histallowclobber",
-        "histappend",
-        "histbeep",
-        "histexpand",
-        "histexpiredupsfirst",
-        "histfcntllock",
-        "histfindnodups",
-        "histignorealldups",
-        "histignoredups",
-        "histignorespace",
-        "histlexwords",
-        "histnofunctions",
-        "histnostore",
-        "histreduceblanks",
-        "histsavebycopy",
-        "histsavenodups",
-        "histsubstpattern",
-        "histverify",
-        "hup",
-        "ignorebraces",
-        "ignoreclosebraces",
-        "ignoreeof",
-        "incappendhistory",
-        "incappendhistorytime",
-        "interactive",
-        "interactivecomments",
-        "ksharrays",
-        "kshautoload",
-        "kshglob",
-        "kshoptionprint",
-        "kshtypeset",
-        "kshzerosubscript",
-        "listambiguous",
-        "listbeep",
-        "listpacked",
-        "listrowsfirst",
-        "listtypes",
-        "localloops",
-        "localoptions",
-        "localpatterns",
-        "localtraps",
-        "log",
-        "login",
-        "longlistjobs",
-        "magicequalsubst",
-        "mailwarn",
-        "mailwarning",
-        "markdirs",
-        "menucomplete",
-        "monitor",
-        "multibyte",
-        "multifuncdef",
-        "multios",
-        "nomatch",
-        "notify",
-        "nullglob",
-        "numericglobsort",
-        "octalzeroes",
-        "onecmd",
-        "overstrike",
-        "pathdirs",
-        "pathscript",
-        "physical",
-        "pipefail",
-        "posixaliases",
-        "posixargzero",
-        "posixbuiltins",
-        "posixcd",
-        "posixidentifiers",
-        "posixjobs",
-        "posixstrings",
-        "posixtraps",
-        "printeightbit",
-        "printexitvalue",
-        "privileged",
-        "promptbang",
-        "promptcr",
-        "promptpercent",
-        "promptsp",
-        "promptsubst",
-        "promptvars",
-        "pushdignoredups",
-        "pushdminus",
-        "pushdsilent",
-        "pushdtohome",
-        "rcexpandparam",
-        "rcquotes",
-        "rcs",
-        "recexact",
-        "rematchpcre",
-        "restricted",
-        "rmstarsilent",
-        "rmstarwait",
-        "sharehistory",
-        "shfileexpansion",
-        "shglob",
-        "shinstdin",
-        "shnullcmd",
-        "shoptionletters",
-        "shortloops",
-        "shortrepeat",
-        "shwordsplit",
-        "singlecommand",
-        "singlelinezle",
-        "sourcetrace",
-        "stdin",
-        "sunkeyboardhack",
-        "trackall",
-        "transientrprompt",
-        "trapsasync",
-        "typesetsilent",
-        "typesettounset",
-        "unset",
-        "verbose",
-        "vi",
-        "warncreateglobal",
-        "warnnestedvar",
-        "xtrace",
-        "zle",
-        // bash/ksh-compat aliases — the canonical zsh names live in
-        // alias-resolution match in set_option (port of optns[]:269-280),
-        // but for the runtime
-        // `setopt`/`unsetopt` "no such option" check we accept the
-        // alias spellings too so scripts written for bash/ksh (e.g.
-        // p10k's `setopt brace_expand`, `dotglob` users) don't error.
-        "braceexpand", // alias of `noignorebraces`
-        "dotglob",     // alias of `globdots`
-        "hashall",     // alias of `hashcmds`
-        "histappend",  // alias of `appendhistory`
-        "histexpand",  // alias of `banghist`
-        "log",         // alias of `nohistnofunctions`
-        "mailwarn",    // alias of `mailwarning`
-        "onecmd",      // alias of `singlecommand`
-        "physical",    // alias of `chaselinks`
-        "promptvars",  // alias of `promptsubst`
-    ]
-    .into_iter()
-    .collect()
+/// Port of the static `optns[]` table's NAME COLUMN in its C source
+/// order (`Src/options.c:80-280`). Order is load-bearing: it is the
+/// `createoptiontable()` (c:471) insertion sequence that determines
+/// the `optiontab` bucket-chain layout, and therefore the scan order
+/// of `${(k)options}` / `${(v)options}` (`scanpmoptions`,
+/// Src/Modules/parameter.c:1025-1026) and the KSHARRAYS bare-`$options`
+/// first element. The 13 trailing names are the `OPT_ALIAS` tail
+/// (c:269-280). `restricted` sits between `rematchpcre` and
+/// `rmstarsilent` per zsh 5.9 (removed from master in workers/54181);
+/// kept for 5.9 parity.
+pub static OPTNS: &[&str] = &[
+    "aliases", "aliasfuncdef", "allexport", "alwayslastprompt", "alwaystoend", "appendcreate",
+    "appendhistory", "autocd", "autocontinue", "autolist", "automenu", "autonamedirs",
+    "autoparamkeys", "autoparamslash", "autopushd", "autoremoveslash", "autoresume",
+    "badpattern", "banghist", "bareglobqual", "bashautolist", "bashrematch", "beep", "bgnice",
+    "braceccl", "bsdecho", "caseglob", "casematch", "casepaths", "cbases", "cprecedences",
+    "cdablevars", "cdsilent", "chasedots", "chaselinks", "checkjobs", "checkrunningjobs",
+    "clobber", "clobberempty", "combiningchars", "completealiases", "completeinword",
+    "continueonerror", "correct", "correctall", "cshjunkiehistory", "cshjunkieloops",
+    "cshjunkiequotes", "cshnullcmd", "cshnullglob", "debugbeforecmd", "emacs", "equals",
+    "errexit", "errreturn", "exec", "extendedglob", "extendedhistory", "evallineno",
+    "flowcontrol", "forcefloat", "functionargzero", "glob", "globalexport", "globalrcs",
+    "globassign", "globcomplete", "globdots", "globstarshort", "globsubst", "hashcmds",
+    "hashdirs", "hashexecutablesonly", "hashlistall", "histallowclobber", "histbeep",
+    "histexpiredupsfirst", "histfcntllock", "histfindnodups", "histignorealldups",
+    "histignoredups", "histignorespace", "histlexwords", "histnofunctions", "histnostore",
+    "histsubstpattern", "histreduceblanks", "histsavebycopy", "histsavenodups", "histverify",
+    "hup", "ignorebraces", "ignoreclosebraces", "ignoreeof", "incappendhistory",
+    "incappendhistorytime", "interactive", "interactivecomments", "ksharrays", "kshautoload",
+    "kshglob", "kshoptionprint", "kshtypeset", "kshzerosubscript", "listambiguous", "listbeep",
+    "listpacked", "listrowsfirst", "listtypes", "localoptions", "localloops", "localpatterns",
+    "localtraps", "login", "longlistjobs", "magicequalsubst", "mailwarning", "markdirs",
+    "menucomplete", "monitor", "multibyte", "multifuncdef", "multios", "nomatch", "notify",
+    "nullglob", "numericglobsort", "octalzeroes", "overstrike", "pathdirs", "pathscript",
+    "pipefail", "posixaliases", "posixargzero", "posixbuiltins", "posixcd", "posixidentifiers",
+    "posixjobs", "posixstrings", "posixtraps", "printeightbit", "printexitvalue", "privileged",
+    "promptbang", "promptcr", "promptpercent", "promptsp", "promptsubst", "pushdignoredups",
+    "pushdminus", "pushdsilent", "pushdtohome", "rcexpandparam", "rcquotes", "rcs", "recexact",
+    "rematchpcre", "restricted", "rmstarsilent", "rmstarwait", "sharehistory",
+    "shfileexpansion", "shglob", "shinstdin", "shnullcmd", "shoptionletters", "shortloops",
+    "shortrepeat", "shwordsplit", "singlecommand", "singlelinezle", "sourcetrace",
+    "sunkeyboardhack", "transientrprompt", "trapsasync", "typesetsilent", "typesettounset",
+    "unset", "verbose", "vi", "warncreateglobal", "warnnestedvar", "xtrace", "zle",
+    "braceexpand", "dotglob", "hashall", "histappend", "histexpand", "log", "mailwarn",
+    "onecmd", "physical", "promptvars", "stdin", "trackall", "dvorak",
+];
+
+/// Scan order of the C global `optiontab` (`Src/options.c:14`).
+/// `createoptiontable()` (c:471) inserts every `OPTNS` entry into a
+/// 101-bucket table (`newhashtable(101, "optiontab", NULL)`, c:473)
+/// via `addhashnode2` (Src/hashtable.c:168): bucket =
+/// `hasher(name) % hsize` (hashtable.c:176), new nodes PREPEND to
+/// the chain (hashtable.c:217-218). 197 entries < hsize*2 = 202, so
+/// `expandhashtable` (hashtable.c:183-184/219-220 trigger) never
+/// fires and the table stays at 101 buckets. Scan order = buckets
+/// 0..hsize, chain head-to-tail (`scanpmoptions`,
+/// Src/Modules/parameter.c:1025-1026). First element is
+/// `posixargzero` — observable as `setopt ksharrays; print $options`
+/// printing `off` in zsh 5.9. Verified against
+/// `zsh -fc 'print -rl ${(k)options}'` (full 197-key order match).
+pub static OPTIONTAB: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let hsize = 101usize; // c:Src/options.c:473 newhashtable(101, ...)
+    let mut buckets: Vec<Vec<&'static str>> = vec![Vec::new(); hsize];
+    for name in OPTNS {
+        // c:Src/hashtable.c:176 — hashval = hash(nam) % hsize
+        let b = (crate::ported::hashtable::hasher(name) as usize) % hsize;
+        // c:Src/hashtable.c:217-218 — add at the FRONT of the chain
+        buckets[b].insert(0, name);
+    }
+    // c:Src/Modules/parameter.c:1025-1026 — bucket walk, chain order
+    buckets.into_iter().flatten().collect()
 });
+
+/// `ZSH_OPTIONS_SET` static — membership set over `OPTNS`.
+pub static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| OPTNS.iter().copied().collect());
 
 /// Names flagged `OPT_ALIAS` in `Src/options.c:269-280`. The
 /// no-arg `setopt` / `unsetopt` walk skips these (the C code
@@ -1644,7 +1499,7 @@ fn optns_flags(name: &str) -> u16 {
         "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16),    // c:207
         "pipefail" => OPT_EMULATE,                            // c:208
         "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:209
-        "posixargzero" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:210
+        "posixargzero" => OPT_EMULATE,                        // c:219 — no OPT_BOURNE (unlike the other posix* options); `emulate sh` leaves it off
         "posixbuiltins" => OPT_EMULATE | (OPT_BOURNE as u16), // c:211
         "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16),       // c:212
         "posixidentifiers" => OPT_EMULATE | (OPT_BOURNE as u16), // c:213
