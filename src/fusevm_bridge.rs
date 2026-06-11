@@ -247,6 +247,26 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
+    // c:Src/exec.c:2700-2717 — `private` is an autoloaded builtin in
+    // zsh (autofeature b:private of zsh/param/private): first use
+    // runs ensurefeature → require_module → load_module → boot_,
+    // marking the module MOD_INIT_B (what `zmodload -e` reads) and
+    // installing the wrap_private FuncWrap (param_private.c:712).
+    // doshfunc gates the wrapper dispatch on that load state, so
+    // this require_module is what activates private scoping. The
+    // raw dispatcher is the chokepoint every builtin route funnels
+    // through; require_module is idempotent after the first call
+    // (needs_load checks MOD_INIT_B).
+    if name == "private" {
+        if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+            let _ = crate::ported::module::require_module(
+                &mut tab,
+                "zsh/param/private",
+                None,
+                0,
+            ); // c:2710 ensurefeature
+        }
+    }
     // c:Bugs #475/#504/#555 — bash-only builtins (`mapfile`,
     // `readarray`, `compopt`) should emit "command not found" in
     // `--zsh` mode matching zsh's external-command-lookup miss.
@@ -9247,7 +9267,9 @@ impl ShellExecutor {
             }
             "private" => {
                 // c:Src/Modules/param_private.c:217 — bin_private via
-                // BUILTINS["private"].
+                // BUILTINS["private"]. The autoload require_module
+                // (exec.c:2700-2717) fires inside
+                // dispatch_builtin_raw, the chokepoint for all routes.
                 return dispatch_builtin("private", rest_vec.clone());
             }
             "zformat" => return dispatch_builtin("zformat", rest_vec.clone()),
