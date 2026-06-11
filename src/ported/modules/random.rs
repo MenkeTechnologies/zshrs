@@ -179,47 +179,62 @@ pub fn math_zrand_int(
     let lower = lower.unwrap_or(0);
     let upper = upper.unwrap_or(u32::MAX as i64);
 
-    // c:179-185 — `lower < 0 || lower >= UINT32_MAX` — note `>=` not `>`.
-    // C's check disallows lower=UINT32_MAX (4294967295) because the
-    // subsequent `diff = upper - lower + incl` calc would push diff
-    // into the carry-bit and wrap to 0 under uint32 arithmetic — the
-    // `if (diff == 0)` branch at c:187 would then return upper as a
-    // non-random fixed value. Prior Rust port used `> u32::MAX as i64`
-    // (a `>` not `>=`), allowing the out-of-range case and silently
-    // returning `upper` (non-random) when inclusive=true and upper
-    // pegged at UINT32_MAX.
+    // c:179-185 — bound checks are a WARN-ONLY if/else-if chain:
+    //
+    //     if (lower < 0 || lower >= UINT32_MAX) {
+    //         zwarn("Lower bound (%z) out of range: 0-4294967295",lower);
+    //     } else if (upper < lower) {
+    //         zwarn("Upper bound (%z) must be greater than Lower Bound (%z)",upper,lower);
+    //     } else if (upper < 0 || upper >= UINT32_MAX) {
+    //         zwarn("Upper bound (%z) out of range: 0-4294967295",upper);
+    //     }
+    //
+    //     if ( diff == 0 ) {
+    //         ret.u.l=upper; /* still not convinced this shouldn't be an error. */
+    //     } else {
+    //         get_bound_random_buffer(&i,1,(uint32_t) diff);
+    //         ret.u.l=i+lower;
+    //     }
+    //
+    // No return after any warning — C falls through to the diff
+    // computation and random draw, with `(uint32_t) diff` truncating
+    // wrapped values exactly as written (the c:188 comment shows the
+    // author knew and shipped it anyway). At most ONE warning fires
+    // (else-if chain). The prior Rust port aborted with Err on each
+    // check: `zrand_int(5, 10)` (upper<lower) errored out where zsh
+    // warns once and still yields a number from the wrapped range.
+    let incl: i64 = if inclusive { 1 } else { 0 }; // c:173
+    let diff: i64 = upper - lower + incl; // c:176
+
     if lower < 0 || lower >= u32::MAX as i64 {
-        return Err(format!(
+        // c:179
+        crate::ported::utils::zwarn(&format!(
             "Lower bound ({}) out of range: 0-4294967295",
             lower
-        ));
-    }
-
-    if upper < lower {
-        return Err(format!(
+        )); // c:180
+    } else if upper < lower {
+        // c:181
+        crate::ported::utils::zwarn(&format!(
             "Upper bound ({}) must be greater than Lower Bound ({})",
             upper, lower
-        ));
-    }
-
-    // c:183 — `upper < 0 || upper >= UINT32_MAX` — same `>=` semantic as
-    // the lower check at c:179, for the same overflow-on-diff reason.
-    if upper < 0 || upper >= u32::MAX as i64 {
-        return Err(format!(
+        )); // c:182
+    } else if upper < 0 || upper >= u32::MAX as i64 {
+        // c:183
+        crate::ported::utils::zwarn(&format!(
             "Upper bound ({}) out of range: 0-4294967295",
             upper
-        ));
+        )); // c:184
     }
-
-    let incl = if inclusive { 1 } else { 0 };
-    let diff = (upper - lower + incl) as u32;
 
     if diff == 0 {
-        return Ok(upper);
+        // c:187
+        /* still not convinced this shouldn't be an error. */
+        return Ok(upper); // c:188
     }
-
-    let r = bounded(diff);
-    Ok(r as i64 + lower)
+    // c:190 — `get_bound_random_buffer(&i,1,(uint32_t) diff);` — the
+    // cast truncates exactly like C for warned out-of-range inputs.
+    let r = bounded(diff as u32);
+    Ok(r as i64 + lower) // c:191
 }
 
 /// `math_zrand_float()` math function.
@@ -588,10 +603,13 @@ mod tests {
     }
 
     #[test]
-    fn test_zrand_int_errors() {
+    fn test_zrand_int_bad_bounds_warn_and_continue() {
         let _g = crate::test_util::global_state_lock();
-        assert!(math_zrand_int(Some(50), Some(100), false).is_err());
-        assert!(math_zrand_int(Some(-1), None, false).is_err());
+        // c:179-185 — bound violations WARN (zwarn, no return); C
+        // falls through to the (uint32_t)diff truncating draw, so the
+        // call still yields a value.
+        assert!(math_zrand_int(Some(50), Some(100), false).is_ok());
+        assert!(math_zrand_int(Some(-1), None, false).is_ok());
     }
 
     #[test]
@@ -769,38 +787,33 @@ mod tests {
         assert!(r <= u32::MAX as i64, "result must fit in u32 range");
     }
 
-    /// c:161 — `lower < 0` returns Err.
+    /// c:179-180 — `lower < 0` fires the "Lower bound" zwarn but the
+    /// draw proceeds: diff = 100-(-1) = 101, result ∈ [-1, 99].
     #[test]
-    fn math_zrand_int_negative_lower_returns_err() {
+    fn math_zrand_int_negative_lower_warns_and_continues() {
         let _g = crate::test_util::global_state_lock();
         let r = math_zrand_int(Some(100), Some(-1), false);
-        assert!(r.is_err(), "negative lower must error");
-        let msg = r.unwrap_err();
-        assert!(msg.contains("Lower bound"), "error mentions Lower bound");
+        let v = r.expect("c:179 warns without returning");
+        assert!((-1..100).contains(&v), "result in wrapped range, got {}", v);
     }
 
-    /// c:161 — `upper > u32::MAX` returns Err on lower-check (since
-    /// lower defaults check runs first, but upper validation is also
-    /// pinned).
+    /// c:179-180 — `lower >= UINT32_MAX` warns; C still computes the
+    /// (negative) diff and truncates it through (uint32_t).
     #[test]
-    fn math_zrand_int_lower_above_u32_max_returns_err() {
+    fn math_zrand_int_lower_above_u32_max_warns_and_continues() {
         let _g = crate::test_util::global_state_lock();
         let r = math_zrand_int(Some(100), Some((u32::MAX as i64) + 1), false);
-        assert!(r.is_err(), "lower > u32::MAX must error");
+        assert!(r.is_ok(), "c:179 warns without returning");
     }
 
-    /// c:161 — `upper < lower` returns Err with "must be greater" msg.
+    /// c:181-182 — `upper < lower` fires the "must be greater" zwarn;
+    /// the wrapped-diff draw still happens (C's else-if chain has no
+    /// return).
     #[test]
-    fn math_zrand_int_upper_below_lower_returns_err() {
+    fn math_zrand_int_upper_below_lower_warns_and_continues() {
         let _g = crate::test_util::global_state_lock();
         let r = math_zrand_int(Some(5), Some(10), false);
-        assert!(r.is_err());
-        let msg = r.unwrap_err();
-        assert!(
-            msg.contains("greater"),
-            "msg mentions 'greater', got: {}",
-            msg
-        );
+        assert!(r.is_ok(), "c:181 warns without returning");
     }
 
     /// c:161 — `upper == lower` with exclusive returns the bound
