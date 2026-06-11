@@ -940,6 +940,7 @@ pub fn bin_zstyle(
                     | b't'
                     | b'T'
                     | b'm'
+                    | b'q'
                     | b'g'
                     | b'n'
                     | b'H'
@@ -979,7 +980,8 @@ pub fn bin_zstyle(
         || OPT_ISSET(ops, b'm')
     {
         3
-    } else if OPT_ISSET(ops, b't') || OPT_ISSET(ops, b'T') {
+    } else if OPT_ISSET(ops, b't') || OPT_ISSET(ops, b'T') || OPT_ISSET(ops, b'q') {
+        // c:592-595 — t/T min 2; q min 2 max 2
         2
     } else if OPT_ISSET(ops, b'g') {
         1
@@ -1062,12 +1064,28 @@ pub fn bin_zstyle(
         || OPT_ISSET(ops, b'T')
         || OPT_ISSET(ops, b'a')
         || OPT_ISSET(ops, b'm')
+        || OPT_ISSET(ops, b'q')
     {
         if args.len() < 2 {
             return 1;
         }
         let ctxt = &args[0]; // c:541
         let style = &args[1];
+        // c:749-757 — `case 'q': {
+        //                  int success;
+        //                  queue_signals();	/* Protect PAT_STATIC */
+        //                  success = testforstyle(args[1], args[2]);
+        //                  unqueue_signals();
+        //                  return success;
+        //              }`
+        // Prior port had no -q arm at all — the option-letter matcher
+        // rejected `zstyle -q ctx sty` with "invalid option: -q".
+        if OPT_ISSET(ops, b'q') {
+            queue_signals(); // c:752
+            let success = testforstyle(ctxt, style); // c:753
+            unqueue_signals(); // c:754
+            return success; // c:755
+        }
         let vals = lookupstyle(ctxt, style); // c:443
                                              // c:559-732 — per-flag return semantics: just check found vs not.
                                              // For -t: 0 if found AND first value matches one of the "true"
