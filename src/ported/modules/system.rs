@@ -1552,6 +1552,7 @@ pub static SYS_ERRNAMES: &[(&str, i32)] = &[
     ("ENOTRECOVERABLE", 104),
     ("EOWNERDEAD", 105),
     ("EQFULL", 106),
+    ("ENOTCAPABLE", 107), // sys/errno.h:265 — ELAST on current macOS SDKs
 ];
 
 /// Fallback for platforms zshrs doesn't have a verified table for —

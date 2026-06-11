@@ -3349,6 +3349,41 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
     None
 }
 
+/// `${name[N]}` on a PM_ARRAY magic param (errnos etc.) — applies
+/// zsh array index semantics (Src/params.c:2110-2150: 1-based,
+/// negative counts from the end, [0] per KSHZEROSUBSCRIPT,
+/// KSH_ARRAYS 0-based) to the PARTAB_ARRAY value. Returns None when
+/// `name` isn't a PARTAB_ARRAY entry so callers can fall through to
+/// the assoc-keyed partab_get path.
+pub fn partab_array_index(name: &str, sub: &str) -> Option<String> {
+    let arr = partab_array_get(name)?;
+    let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
+    let len = arr.len() as i64;
+    let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+    let i = if ksh_arrays {
+        if idx_n < 0 {
+            len + idx_n
+        } else {
+            idx_n
+        }
+    } else if idx_n == 0 {
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) {
+            0 // c:2140
+        } else {
+            -1 // c:2148
+        }
+    } else if idx_n < 0 {
+        len + idx_n
+    } else {
+        idx_n - 1
+    };
+    Some(if i >= 0 && (i as usize) < arr.len() {
+        arr[i as usize].clone()
+    } else {
+        String::new()
+    })
+}
+
 /// Look up a PARTAB_ARRAY entry's flags, OR'd with the implicit
 /// PM_SPECIAL | PM_HIDE | PM_HIDEVAL the C SPECIALPMDEF macro adds
 /// (zsh.h:2123). Used by `${(t)name}` so reserved/special arrays
