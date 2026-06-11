@@ -3325,6 +3325,7 @@ fn module_gated_partab_module(name: &str) -> Option<&'static str> {
     match name {
         "sysparams" | "errnos" => Some("zsh/system"),
         "mapfile" => Some("zsh/mapfile"),
+        "langinfo" => Some("zsh/langinfo"),
         _ => None,
     }
 }
@@ -3511,6 +3512,7 @@ pub fn init_partab_params() {
         "sysparams", // zsh/system
         "errnos",    // zsh/system
         "mapfile",   // zsh/mapfile
+        "langinfo",  // zsh/langinfo
     ];
     for entry in PARTAB.iter() {
         if module_gated.contains(&entry.name) {
@@ -3587,6 +3589,7 @@ pub fn module_gated_params_for(module: &str) -> &'static [&'static str] {
     match module {
         "zsh/system" => &["sysparams", "errnos"],
         "zsh/mapfile" => &["mapfile"],
+        "zsh/langinfo" => &["langinfo"],
         _ => &[],
     }
 }

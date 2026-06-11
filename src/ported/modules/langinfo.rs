@@ -9,6 +9,9 @@
 //! `nl_langinfo(3)`.
 
 use crate::ported::zsh_h::features;
+use crate::ported::zsh_h::{
+    hashnode, param, HashTable, Param, ScanFunc, PM_READONLY, PM_SCALAR,
+};
 use crate::utils::unmetafy;
 use crate::zsh_h::module;
 /// `nl_names[]` — port of the static name-array at `langinfo.c:65`.
@@ -107,16 +110,11 @@ pub fn liitem(name: &str) -> Option<i32> {
 
 /// Port of `getlanginfo(UNUSED(HashTable ht), const char *name)` from `Src/Modules/langinfo.c:396`. The
 /// magic-assoc lookup callback for `${langinfo[NAME]}`. Looks up
-/// `name` via `liitem`, runs `nl_langinfo(*elem)`, and returns
-/// the resulting locale string (or `None` for unset).
-///
-/// C signature: `static HashNode getlanginfo(HashTable ht,
-///                                            const char *name)`.
-/// Rust port returns `Option<String>` matching the observable
-/// "u.str + PM_UNSET" duality C builds into the Param node.
+/// `name` via `liitem`, runs `nl_langinfo(*elem)`, and returns a
+/// Param carrying the locale string (or `None` for unset) —
+/// PARTAB-dispatch shape matching `getpmsysparams`.
 #[cfg(unix)]
-/// WARNING: param names don't match C — Rust=(name) vs C=(ht, name)
-pub fn getlanginfo(name: &str) -> Option<String> {
+pub fn getlanginfo(_ht: *mut HashTable, name: &str) -> Option<Param> {
     // c:396
     // c:403-404 — `nameu = dupstring(name); unmetafy(nameu, &len);`
     let mut buf = name.as_bytes().to_vec(); // c:403
@@ -124,7 +122,7 @@ pub fn getlanginfo(name: &str) -> Option<String> {
     let nameu = std::str::from_utf8(&buf).ok()?;
     // c:411-415 — `if (name) elem = liitem(name); else elem = NULL;`
     let elem = liitem(nameu)?; // c:412
-    unsafe {
+    let listr = unsafe {
         // c:416 — `listr = nl_langinfo(*elem)`. C only sets PM_UNSET
         // when `elem` is NULL or `listr` is NULL — an empty result
         // string is treated as a valid (present) value, NOT unset:
@@ -144,17 +142,41 @@ pub fn getlanginfo(name: &str) -> Option<String> {
         if ptr.is_null() {
             return None; // c:421-423 PM_UNSET
         }
-        let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
-        Some(s) // c:417 dupstring — empty string is a valid value
-    }
+        CStr::from_ptr(ptr).to_string_lossy().into_owned() // c:417 dupstring
+    };
+    // c:406-409 — pm = hcalloc(...); PM_SCALAR | PM_READONLY.
+    Some(Box::new(param {
+        node: hashnode {
+            next: None,
+            nam: name.to_string(),
+            flags: PM_SCALAR as i32 | PM_READONLY as i32, // c:408
+        },
+        u_data: 0,
+        u_arr: None,
+        u_str: Some(listr), // c:417 pm->u.str
+        u_val: 0,
+        u_dval: 0.0,
+        u_hash: None,
+        gsu_s: None,
+        gsu_i: None,
+        gsu_f: None,
+        gsu_a: None,
+        gsu_h: None,
+        base: 0,
+        width: 0,
+        env: None,
+        ename: None,
+        old: None,
+        level: 0,
+    }))
 }
 
 /// Port of `getlanginfo(UNUSED(HashTable ht), const char *name)` from `Src/Modules/langinfo.c:396`.
 /// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is
 /// POSIX-only.
 #[cfg(not(unix))]
-/// WARNING: param names don't match C — Rust=(_name) vs C=(ht, name)
-pub fn getlanginfo(_name: &str) -> Option<String> {
+#[allow(unused_variables)]
+pub fn getlanginfo(_ht: *mut HashTable, _name: &str) -> Option<Param> {
     // c:396
     None
 }
@@ -162,25 +184,23 @@ pub fn getlanginfo(_name: &str) -> Option<String> {
 /// Port of `scanlanginfo(UNUSED(HashTable ht), ScanFunc func, int flags)` from `Src/Modules/langinfo.c:430`. The
 /// magic-assoc scan callback for `${(k)langinfo}` /
 /// `${(kv)langinfo}`. Walks the `nl_names[]` array, calls
-/// `nl_langinfo` for each entry, and yields every (name, value)
-/// pair where the value is non-NULL.
-///
-/// C signature: `static void scanlanginfo(HashTable ht, ScanFunc
-///                                         func, int flags)`.
-/// Rust port returns the (name, value) pairs as a Vec since the
-/// callback-driven C API doesn't translate cleanly.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, func, flags)
-pub fn scanlanginfo() -> Vec<(String, String)> {
+/// `nl_langinfo` for each entry, and dispatches every present
+/// (name, value) pair through `func` — PARTAB-dispatch shape
+/// matching `scanpmsysparams`.
+pub fn scanlanginfo(_ht: *mut HashTable, func: Option<ScanFunc>, flags: i32) {
     // c:430
-    let mut out = Vec::new();
+    let f = match func {
+        Some(f) => f,
+        None => return,
+    };
     for &name in NL_NAMES {
         // c:444 walk nl_names
-        if let Some(v) = getlanginfo(name) {
+        if let Some(pm) = getlanginfo(std::ptr::null_mut(), name) {
             // c:446 nl_langinfo
-            out.push((name.to_string(), v)); // c:451 emit
+            let node_box = Box::new(pm.node.clone());
+            f(&node_box, flags); // c:451 func(&pm->node, flags)
         }
     }
-    out
 }
 
 // `partab` — port of `static struct paramdef partab[]` (langinfo.c:455).
@@ -375,6 +395,33 @@ fn module_features() -> &'static Mutex<features> {
 mod tests {
     use super::*;
 
+    /// Test fixture — unwraps the canonical `getlanginfo` Param to
+    /// the value string, like `vm_helper::partab_get` does.
+    fn getli(name: &str) -> Option<String> {
+        getlanginfo(std::ptr::null_mut(), name).and_then(|p| p.u_str)
+    }
+
+    /// Test fixture — collects the canonical `scanlanginfo` callback
+    /// stream into (key, value) pairs, composing scan + per-key get
+    /// the same way `vm_helper::partab_scan_keys` + `partab_get` do.
+    fn scanli() -> Vec<(String, String)> {
+        use std::cell::RefCell;
+        thread_local! {
+            static KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        }
+        KEYS.with(|k| k.borrow_mut().clear());
+        fn cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+            KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
+        }
+        scanlanginfo(std::ptr::null_mut(), Some(cb), 0);
+        KEYS.with(|k| {
+            k.borrow()
+                .iter()
+                .map(|name| (name.clone(), getli(name).unwrap_or_default()))
+                .collect()
+        })
+    }
+
     #[test]
     fn nl_names_includes_codeset() {
         let _g = crate::test_util::global_state_lock();
@@ -386,13 +433,13 @@ mod tests {
     #[test]
     fn getlanginfo_codeset_is_some() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("CODESET").is_some());
+        assert!(getli("CODESET").is_some());
     }
 
     #[test]
     fn getlanginfo_invalid_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("INVALID_NAME").is_none());
+        assert!(getli("INVALID_NAME").is_none());
     }
 
     #[cfg(unix)]
@@ -407,7 +454,7 @@ mod tests {
     #[test]
     fn scanlanginfo_emits_items() {
         let _g = crate::test_util::global_state_lock();
-        let v = scanlanginfo();
+        let v = scanli();
         assert!(!v.is_empty());
         assert!(v.iter().any(|(k, _)| k == "CODESET"));
     }
@@ -488,7 +535,7 @@ mod tests {
     #[test]
     fn scanlanginfo_keys_are_subset_of_nl_names() {
         let _g = crate::test_util::global_state_lock();
-        for (k, _) in scanlanginfo() {
+        for (k, _) in scanli() {
             assert!(
                 NL_NAMES.contains(&k.as_str()),
                 "scanlanginfo emitted {:?} which is not in NL_NAMES",
@@ -504,9 +551,9 @@ mod tests {
     #[test]
     fn getlanginfo_is_case_sensitive() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("CODESET").is_some());
+        assert!(getli("CODESET").is_some());
         assert!(
-            getlanginfo("codeset").is_none(),
+            getli("codeset").is_none(),
             "getlanginfo must be case-sensitive per the C source's strcmp lookup"
         );
     }
@@ -559,11 +606,11 @@ mod tests {
         assert!(liitem("").is_none());
     }
 
-    /// `getlanginfo("CODESET")` returns a non-empty string (system locale).
+    /// `getli("CODESET")` returns a non-empty string (system locale).
     #[test]
     fn langinfo_corpus_getlanginfo_codeset_nonempty() {
         let _g = crate::test_util::global_state_lock();
-        let r = getlanginfo("CODESET");
+        let r = getli("CODESET");
         assert!(r.is_some(), "CODESET resolves to a string");
         let s = r.unwrap();
         assert!(!s.is_empty(), "CODESET non-empty (e.g. 'UTF-8'), got {s:?}");
@@ -573,7 +620,7 @@ mod tests {
     #[test]
     fn langinfo_corpus_scanlanginfo_returns_entries() {
         let _g = crate::test_util::global_state_lock();
-        let entries = scanlanginfo();
+        let entries = scanli();
         assert!(
             !entries.is_empty(),
             "scanlanginfo should return some entries"
@@ -607,12 +654,12 @@ mod tests {
         }
     }
 
-    /// c:396 — `getlanginfo("")` returns None (empty name not in table).
+    /// c:396 — `getli("")` returns None (empty name not in table).
     #[test]
     #[cfg(unix)]
     fn getlanginfo_empty_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("").is_none());
+        assert!(getli("").is_none());
     }
 
     /// c:396 — `getlanginfo` of unknown name returns None.
@@ -620,7 +667,7 @@ mod tests {
     #[cfg(unix)]
     fn getlanginfo_unknown_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("zzz_never_a_real_key").is_none());
+        assert!(getli("zzz_never_a_real_key").is_none());
     }
 
     /// c:430 — `scanlanginfo` output contains CODESET on every system
@@ -629,7 +676,7 @@ mod tests {
     #[cfg(unix)]
     fn scanlanginfo_includes_codeset() {
         let _g = crate::test_util::global_state_lock();
-        let entries = scanlanginfo();
+        let entries = scanli();
         let has_codeset = entries.iter().any(|(k, _)| k == "CODESET");
         assert!(has_codeset, "POSIX CODESET must appear in scan output");
     }
@@ -639,8 +686,8 @@ mod tests {
     #[cfg(unix)]
     fn scanlanginfo_is_deterministic_for_static_locale() {
         let _g = crate::test_util::global_state_lock();
-        let a = scanlanginfo();
-        let b = scanlanginfo();
+        let a = scanli();
+        let b = scanli();
         assert_eq!(a, b, "two consecutive scans must agree");
     }
 
@@ -689,7 +736,7 @@ mod tests {
     #[test]
     fn getlanginfo_returns_option_string_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: Option<String> = getlanginfo("CODESET");
+        let _: Option<String> = getli("CODESET");
     }
 
     /// c:119 — `getlanginfo` is deterministic for same locale.
@@ -697,12 +744,12 @@ mod tests {
     #[test]
     fn getlanginfo_deterministic_for_codeset() {
         let _g = crate::test_util::global_state_lock();
-        let first = getlanginfo("CODESET");
+        let first = getli("CODESET");
         for _ in 0..3 {
             assert_eq!(
-                getlanginfo("CODESET"),
+                getli("CODESET"),
                 first,
-                "getlanginfo('CODESET') must be deterministic"
+                "getli('CODESET') must be deterministic"
             );
         }
     }
@@ -711,7 +758,7 @@ mod tests {
     #[test]
     fn scanlanginfo_returns_vec_tuple_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: Vec<(String, String)> = scanlanginfo();
+        let _: Vec<(String, String)> = scanli();
     }
 
     /// c:163 — `scanlanginfo` is deterministic full-sweep.
@@ -719,10 +766,10 @@ mod tests {
     #[test]
     fn scanlanginfo_full_sweep_deterministic() {
         let _g = crate::test_util::global_state_lock();
-        let first = scanlanginfo();
+        let first = scanli();
         for _ in 0..3 {
             assert_eq!(
-                scanlanginfo(),
+                scanli(),
                 first,
                 "scanlanginfo must be fully deterministic"
             );
@@ -748,7 +795,7 @@ mod tests {
     #[test]
     fn scanlanginfo_entries_are_ascii_keys() {
         let _g = crate::test_util::global_state_lock();
-        let entries = scanlanginfo();
+        let entries = scanli();
         for (k, _v) in &entries {
             assert!(k.is_ascii(), "key {:?} must be ASCII", k);
         }
@@ -800,13 +847,13 @@ mod tests {
         );
     }
 
-    /// c:119 — `getlanginfo("")` for empty name returns None (alt pin).
+    /// c:119 — `getli("")` for empty name returns None (alt pin).
     #[cfg(unix)]
     #[test]
     fn getlanginfo_empty_name_returns_none_alt() {
         let _g = crate::test_util::global_state_lock();
         assert!(
-            getlanginfo("").is_none(),
+            getli("").is_none(),
             "empty langinfo name must yield None"
         );
     }
@@ -816,7 +863,7 @@ mod tests {
     #[test]
     fn getlanginfo_nonsense_name_returns_none() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("___bogus_langinfo_xyz___").is_none());
+        assert!(getli("___bogus_langinfo_xyz___").is_none());
     }
 
     /// c:163 — `scanlanginfo` no-args is fast (deterministic snapshot).
@@ -825,7 +872,7 @@ mod tests {
     #[test]
     fn scanlanginfo_no_empty_keys() {
         let _g = crate::test_util::global_state_lock();
-        for (k, _v) in scanlanginfo() {
+        for (k, _v) in scanli() {
             assert!(!k.is_empty(), "no scanlanginfo entry may have empty key");
         }
     }
@@ -835,7 +882,7 @@ mod tests {
     #[test]
     fn scanlanginfo_no_duplicate_keys() {
         let _g = crate::test_util::global_state_lock();
-        let entries = scanlanginfo();
+        let entries = scanli();
         let mut seen = std::collections::HashSet::new();
         for (k, _) in &entries {
             assert!(
@@ -851,7 +898,7 @@ mod tests {
     #[test]
     fn scanlanginfo_keys_are_uppercase_ascii() {
         let _g = crate::test_util::global_state_lock();
-        for (k, _) in scanlanginfo() {
+        for (k, _) in scanli() {
             assert!(
                 k.chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'),
@@ -947,35 +994,35 @@ mod tests {
         );
     }
 
-    /// c:119 — `getlanginfo("")` empty name returns None (alt 2).
+    /// c:119 — `getli("")` empty name returns None (alt 2).
     #[test]
     fn getlanginfo_empty_name_returns_none_alt_2() {
         let _g = crate::test_util::global_state_lock();
-        assert!(getlanginfo("").is_none(), "empty name must yield None");
+        assert!(getli("").is_none(), "empty name must yield None");
     }
 
     /// c:119 — `getlanginfo` deterministic for same input.
     #[test]
     fn getlanginfo_deterministic_for_same_input() {
         let _g = crate::test_util::global_state_lock();
-        let a = getlanginfo("CODESET");
-        let b = getlanginfo("CODESET");
-        assert_eq!(a, b, "getlanginfo(CODESET) must be deterministic");
+        let a = getli("CODESET");
+        let b = getli("CODESET");
+        assert_eq!(a, b, "getli(CODESET) must be deterministic");
     }
 
     /// c:163 — `scanlanginfo` returns Vec<(String, String)>.
     #[test]
     fn scanlanginfo_returns_vec_tuple_string_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: Vec<(String, String)> = scanlanginfo();
+        let _: Vec<(String, String)> = scanli();
     }
 
     /// c:163 — `scanlanginfo` is deterministic across calls.
     #[test]
     fn scanlanginfo_deterministic_repeated_calls() {
         let _g = crate::test_util::global_state_lock();
-        let a = scanlanginfo();
-        let b = scanlanginfo();
+        let a = scanli();
+        let b = scanli();
         assert_eq!(a, b, "scanlanginfo must be deterministic");
     }
 

@@ -9648,6 +9648,7 @@ pub fn paramsubst(
                                 | "errnos"
                                 | "sysparams"
                                 | "mapfile"
+                                | "langinfo"
                         ) {
                             // Magic-assoc params — type is association.
                             // Direct port of subst.c:2814 paramtab
