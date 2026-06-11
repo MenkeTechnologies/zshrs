@@ -517,6 +517,7 @@ pub fn zprof_wrapper(
     prog: *const eprog, // c:236
     w: *const funcwrap,
     name: &str,
+    runshfunc: impl FnOnce(),
 ) -> i32 {
     let mut active: i32 = 0; // c:238
     let mut sf = Sfunc { p: 0, beg: 0.0 }; // c:239 struct sfunc sf
@@ -606,11 +607,15 @@ pub fn zprof_wrapper(
         }
     }
 
-    // c:285 — `runshfunc(prog, w, name);`
-    // runshfunc isn't yet ported as a free fn — the wrapped invocation
-    // happens at the executor level (src/vm_helper::dispatch_function_call).
-    // Keep the C call slot visible; live integration occurs there.
-    let _ = (prog, w); // c:285 runshfunc(prog, w, name)
+    // c:285 — `runshfunc(prog, w, name);` — the function-under-profile
+    // runs HERE, between the c:282 start-timestamp and the c:289 end
+    // read. Taken as the FnOnce runner (same shape as param_private's
+    // wrap_private, 90dfda9df7) so the timing actually brackets the
+    // call. A prior discarded placeholder meant every profiled time
+    // measured the wrapper's own overhead (~0ms) instead of the
+    // function.
+    let _ = (prog, w);
+    runshfunc(); // c:285
 
     if active != 0 {
         // c:286
@@ -1007,7 +1012,10 @@ mod tests {
     #[test]
     fn zprof_wrapper_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(zprof_wrapper(std::ptr::null(), std::ptr::null(), "foo"), 0,);
+        assert_eq!(
+            zprof_wrapper(std::ptr::null(), std::ptr::null(), "foo", || {}),
+            0,
+        );
     }
 
     /// Verifies `name_for_anonymous_function` formats as
@@ -1473,7 +1481,7 @@ mod tests {
     #[test]
     fn zprof_wrapper_empty_name_no_panic() {
         let _g = crate::test_util::global_state_lock();
-        let _ = zprof_wrapper(std::ptr::null(), std::ptr::null(), "");
+        let _ = zprof_wrapper(std::ptr::null(), std::ptr::null(), "", || {});
     }
 
     /// c:418 — `name_for_anonymous_function` is deterministic.
@@ -1567,7 +1575,7 @@ mod tests {
     #[test]
     fn zprof_wrapper_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = zprof_wrapper(std::ptr::null(), std::ptr::null(), "x");
+        let _: i32 = zprof_wrapper(std::ptr::null(), std::ptr::null(), "x", || {});
     }
 
     /// c:105 — `freepfuncs` empties the vec.
