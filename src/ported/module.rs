@@ -22,7 +22,8 @@ use crate::ported::utils::{zwarn, zwarnnam};
 use crate::ported::zsh_h::{
     builtin, conddef, funcwrap, hookdef, linklist, linknode, mathfunc, options, paramdef, Hookfn,
     Param, BINF_AUTOALL, CASMOD_LOWER, CASMOD_UPPER, CONDF_AUTOALL, HOOKF_ALL, MFF_USERFUNC,
-    MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD, OPT_ISSET,
+    linkedmod, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD,
+    OPT_ISSET,
     PM_ARRAY, PM_AUTOALL, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
     PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, PRINT_LIST,
 };
@@ -1572,7 +1573,19 @@ impl modulestab {
         // — matching `/opt/homebrew/bin/zsh -fc 'zmodload'` output
         // exactly. Bug #76 in docs/BUGS.md.
         let mut main = module::new("zsh/main");
-        main.node.flags |= crate::ported::zsh_h::MOD_INIT_B; // c:2244
+        main.node.flags |= crate::ported::zsh_h::MOD_INIT_B | MOD_INIT_S; // c:2244
+        // c:2289 — load_module("zsh/main") assigns `m->u.linked`; the
+        // union must be non-NULL so `zmodload -e zsh/main` (c:2637
+        // `!m->u.handle`) reports the master module as loaded.
+        main.linked = Some(Box::new(linkedmod {
+            name: "zsh/main".to_string(),
+            setup: None,
+            features: None,
+            enables: None,
+            boot: None,
+            cleanup: None,
+            finish: None,
+        }));
         self.modules.insert("zsh/main".to_string(), main);
     }
 
@@ -1646,15 +1659,27 @@ impl modulestab {
             unqueue_signals(); // c:2250
             return true; // c:2251 return 0
         }
-        // c:2253-2254 — if (MOD_UNLOAD) clear it; else if loaded, return 0.
+        // c:2253-2257 —
+        //   if (m->node.flags & MOD_UNLOAD)
+        //       m->node.flags &= ~MOD_UNLOAD;
+        //   else if ((m->node.flags & MOD_LINKED) ? m->u.linked
+        //                                         : m->u.handle) {
+        //       unqueue_signals();
+        //       return 0;
+        //   }
+        // The union read is real now: load assigns m.linked at c:2289,
+        // so already-loaded modules early-return here while
+        // pre-registered-but-unloaded ones (linked: None) fall through.
         if (flags & MOD_UNLOAD) != 0 {
             self.modules.get_mut(name).unwrap().node.flags &= !MOD_UNLOAD;
-        } else if (flags & MOD_LINKED) != 0 && (flags & MOD_INIT_B) != 0 {
-            // c:2255 — `m->u.linked` already set ↔ MOD_INIT_B in
-            // static-link terms (boot has run). Without the MOD_INIT_B
-            // gate, the early-return fires on every zmodload of a
-            // pre-registered builtin module because they enter with
-            // MOD_LINKED already set.
+        } else if {
+            let m = self.modules.get(name).unwrap();
+            if (flags & MOD_LINKED) != 0 {
+                m.linked.is_some() // c:2255 m->u.linked
+            } else {
+                m.handle.is_some() // c:2255 m->u.handle
+            }
+        } {
             unqueue_signals(); // c:2256
             return true; // c:2257 return 0
         }
@@ -1686,21 +1711,42 @@ impl modulestab {
         }
         self.modules.get_mut(name).unwrap().node.flags &= !MOD_BUSY; // c:2278
 
-        // c:2279-2304 — `if (!m->u.handle)` setup branch. Static-link
-        // analog: `MOD_INIT_S` clear (setup hasn't run yet). zshrs's
-        // pre-registered modules enter here with MOD_LINKED set but
-        // MOD_INIT_S clear.
-        let needs_setup = (self.modules.get(name).unwrap().node.flags & MOD_INIT_S) == 0;
+        // c:2279-2304 — `if (!m->u.handle)` setup branch. The union
+        // read means "no live binding yet" — neither handle (DSO) nor
+        // linked (static) assigned. A deferred-unload reload re-enters
+        // with m.linked still set and skips straight to boot, like C.
+        let needs_setup = {
+            let m = self.modules.get(name).unwrap();
+            m.handle.is_none() && m.linked.is_none() // c:2279 !m->u.handle
+        };
         if needs_setup {
-            // c:2287-2291 — `m->u.linked = linked; MOD_SETUP|MOD_LINKED`.
-            self.modules.get_mut(name).unwrap().node.flags |= MOD_SETUP | MOD_LINKED;
+            // c:2281 — `linked = module_linked(name)`: every zshrs
+            // module is statically linked, so the lookup always hits;
+            // callbacks dispatch by name (839f32249b), the record
+            // carries the name like C's linkedmod.
+            // c:2289-2291 — `m->u.linked = linked;
+            //                m->node.flags |= MOD_SETUP | MOD_LINKED;`
+            if let Some(m) = self.modules.get_mut(name) {
+                m.linked = Some(Box::new(linkedmod {
+                    name: name.to_string(),
+                    setup: None,
+                    features: None,
+                    enables: None,
+                    boot: None,
+                    cleanup: None,
+                    finish: None,
+                }));
+                m.node.flags |= MOD_SETUP | MOD_LINKED;
+            }
             // c:2293 — setup_module(m). Routes through the dispatcher
             // (839f32249b) to per-module setup_(m). Most modules return
             // 0; some initialise module-private state.
             if setup_module(self, name) != 0 {
                 // c:2294-2301 — failure: finish, clear handles, return 1.
+                //   else m->u.linked = NULL;  (c:2298)
                 let _ = finish_module(self, name);
                 if let Some(m) = self.modules.get_mut(name) {
+                    m.linked = None; // c:2298
                     m.node.flags &= !MOD_SETUP;
                 }
                 unqueue_signals(); // c:2300
@@ -1731,9 +1777,11 @@ impl modulestab {
         let bootret = do_boot_module(self, name, None, 0);
         if bootret == 1 {
             // c:2306-2315 — boot failure: cleanup + finish + clear, return 1.
+            //   else m->u.linked = NULL;  (c:2312)
             let _ = cleanup_module(self, name);
             let _ = finish_module(self, name);
             if let Some(m) = self.modules.get_mut(name) {
+                m.linked = None; // c:2312
                 m.node.flags &= !MOD_SETUP;
             }
             unqueue_signals(); // c:2314
@@ -1840,11 +1888,27 @@ impl modulestab {
             m.node.flags &= !MOD_UNLOAD;
         }
 
-        // c:2849-2859 — finish hook. Static-link branch (MOD_LINKED set)
-        // routes through finish_module which dispatches to the
-        // per-module finish_(m) (839f32249b). C clears u.linked after
-        // the call; the Rust mirror has no u.linked field to null.
-        let _ = finish_module(self, &target_name);
+        // c:2849-2859 — finish hook:
+        //   if (m->node.flags & MOD_LINKED) {
+        //       if (m->u.linked) {
+        //           m->u.linked->finish(m);
+        //           m->u.linked = NULL;
+        //       }
+        //   }
+        // Static-link branch routes through finish_module which
+        // dispatches to the per-module finish_(m) (839f32249b), gated
+        // and cleared exactly like C's u.linked.
+        let was_linked = self
+            .modules
+            .get(&target_name)
+            .map(|m| m.linked.is_some())
+            .unwrap_or(false);
+        if was_linked {
+            let _ = finish_module(self, &target_name); // c:2851
+            if let Some(m) = self.modules.get_mut(&target_name) {
+                m.linked = None; // c:2852
+            }
+        }
 
         // c:2861-2902 — deferred dep walk: when del was set, find every
         // dep that has MOD_UNLOAD and check no other live module
