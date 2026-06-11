@@ -19,6 +19,40 @@ CI green pending the underlying fix.
 
 ---
 
+## #626 — `${(j.$'\n'.)a}` joins with a bare newline; zsh joins with literal `$'` + NL + `'`
+
+**Status:** `port-bug`
+
+**Reproducer:**
+```
+$ ./zshrs --zsh -fc "jne=(l1 l2); print \${(j.\$'\n'.)jne}" | od -c
+l1 \n l2                          ← zshrs: separator = bare newline
+$ /opt/homebrew/bin/zsh -fc "..." | od -c
+l1 $ ' \n ' l2                    ← zsh: five literal chars $ ' <NL> '
+```
+
+**C reference:** the lexer converts `$'\n'` inside the `${...}` body to
+`Qstring Snull <NL> Snull` (escape decoded, markers kept); the flag-arg
+reader (`get_strarg`, Src/subst.c:1366) takes the span verbatim and
+`untok_and_escape` (c:1528-1554) untokenizes via ztokens — Qstring→`$`,
+Snull→`'` — so the wrapper renders back as literal text around the
+decoded newline. `getkeystring(GETKEYS_SEP)` then only decodes
+backslash escapes.
+
+**zshrs root cause (diagnosed 2026-06-11):** the flag arg reaches
+`untok_and_escape` already fully decoded to `[0x0A]` — the compiler's
+word-prep pipeline (the `$'...'`-decode arm in
+`lex::untokenize`/`getkeystring_dollar_quote`, which runs on the whole
+word before paramsubst) strips the wrapper eagerly. Fixing inside
+`untok_and_escape` (switching to `untokenize_preserve_quotes`) is a
+no-op because the markers are gone by then; the real fix is keeping
+the lexer markers intact through the `${...}` body until paramsubst's
+flag parser, which has a wide blast radius across compile_word_str
+consumers. Pinned by `bulk_e_join_newline_j_flag` in
+tests/zsh_compat_parity_gaps.rs.
+
+---
+
 ## #625 — `${${X}:-$'\e[hi]'}` nested-subst loses `$'...'` glob-protection — NOMATCH on literal `[`
 
 **Status:** `fixed` 2026-06-06
