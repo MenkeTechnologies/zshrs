@@ -343,7 +343,9 @@ pub fn complete_at(req: CompsysRequest<'_>) -> CompsysResponse {
         Some(v) => {
             let _ = crate::ported::params::setsparam("curcontext", &v);
         }
-        None => crate::ported::params::unsetparam("curcontext"),
+        None => {
+            let _ = crate::ported::params::unsetparam("curcontext");
+        }
     }
 
     let is_incomplete = started.elapsed() >= req.deadline.saturating_duration_since(started);

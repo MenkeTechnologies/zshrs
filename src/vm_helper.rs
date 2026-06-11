@@ -874,32 +874,15 @@ impl ShellExecutor {
             );
         }
         setsparam("ZSH_NAME", "zsh");
-        // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271).
-        // The bin entrypoint overrides this with the script path for
-        // -c / runscript invocations.
-        //
-        // In --zsh parity mode, the parity tests compare zshrs's
-        // `$ZSH_ARGZERO` to the system zsh's value (an absolute path
-        // to the zsh binary, e.g. `/opt/homebrew/bin/zsh`). zshrs's
-        // own argv[0] is the zshrs binary path, which diverges. Probe
-        // the system zsh install location the same way `bins/zshrs.rs`
-        // does for `$0` and use that. Falls back to argv[0] when no
-        // system zsh is on the candidate list.
-        let argzero_default = if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            let candidates = [
-                "/opt/homebrew/bin/zsh",
-                "/usr/local/bin/zsh",
-                "/bin/zsh",
-                "/usr/bin/zsh",
-            ];
-            candidates
-                .iter()
-                .find(|p| std::path::Path::new(p).exists())
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| env::args().next().unwrap_or_else(|| "zsh".to_string()))
-        } else {
-            env::args().next().unwrap_or_else(|| "zsh".to_string())
-        };
+        // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271):
+        // the kernel-supplied argv[0] of THIS binary, in --zsh parity
+        // mode too. The bin entrypoint overrides this with the script
+        // path for -c / runscript invocations. (A previous revision
+        // probed the system zsh install path and reported THAT as
+        // ZSH_ARGZERO for byte-parity — faking the shell's identity.
+        // Parity tests that compare the value must normalize the
+        // machine-specific binary path in the test row instead.)
+        let argzero_default = env::args().next().unwrap_or_else(|| "zsh".to_string());
         setsparam("ZSH_ARGZERO", &argzero_default);
         setsparam("WORDCHARS", "*?_-.[]~=/&;!#$%^(){}<>");
         let shlvl = env::var("SHLVL")

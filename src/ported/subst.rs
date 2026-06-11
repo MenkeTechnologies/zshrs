@@ -8090,10 +8090,9 @@ pub fn paramsubst(
                     } else {
                         // Scalar-join path (c:subst.c sepjoin). Use
                         // $IFS first char; default is space.
-                        let ifs = crate::ported::params::getsparam("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        let sep = ifs.chars().next().unwrap_or(' ').to_string();
-                        let joined = arr.join(&sep);
+                        // c:Src/utils.c:3936-3945 — set-but-empty IFS
+                        // joins with "" (not " ").
+                        let joined = crate::ported::utils::sepjoin(&arr, None);
                         value = replace_global(&joined);
                         // c:Src/subst.c:3034 — DQ `[*]` sepjoins to scalar
                         // BEFORE the operator runs; suppress downstream
@@ -8503,10 +8502,9 @@ pub fn paramsubst(
                         // then one replacement. Mirrors C's getmatch
                         // (not getmatcharr) dispatch at subst.c:3451
                         // for the array-collapsed-to-scalar case.
-                        let ifs = crate::ported::params::getsparam("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        let sep = ifs.chars().next().unwrap_or(' ').to_string();
-                        let joined = arr.join(&sep);
+                        // c:Src/utils.c:3936-3945 — set-but-empty IFS
+                        // joins with "" (not " ").
+                        let joined = crate::ported::utils::sepjoin(&arr, None);
                         value = replace_one(&joined);
                         // c:Src/subst.c:3034 — DQ `[*]` sepjoins to scalar
                         // BEFORE the operator runs; suppress downstream
@@ -12623,13 +12621,13 @@ pub fn paramsubst(
             // Direct port of subst.c c:1625 dispatch — only $* with
             // any quoting joins; $@ always preserves array shape.
             let value = if c == '*' {
-                // c:1625
-                let join_sep = vars_get("IFS")
-                    .as_ref()
-                    .and_then(|s| s.chars().next())
-                    .map(String::from)
-                    .unwrap_or_else(|| " ".to_string());
-                values.join(&join_sep) // c:1625
+                // c:1625 — `$*` joins via sepjoin(arr, NULL, 1).
+                // c:Src/utils.c:3936-3945 — set-but-empty IFS joins
+                // with "" (`IFS=""; echo "$*"` concatenates); only
+                // unset / space-leading IFS yields " ". The previous
+                // `.and_then(chars().next())` collapsed empty-IFS to
+                // a space.
+                crate::ported::utils::sepjoin(&values, None) // c:1625
             } else {
                 // c:1625
                 // $@ / "$@" in unquoted/SINGLE-aware context

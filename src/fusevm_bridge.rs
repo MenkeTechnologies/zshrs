@@ -3591,14 +3591,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         });
         if let Some((items, in_dq)) = arr_assoc_data {
             if in_dq {
-                let sep = with_executor(|exec| {
-                    exec.get_variable("IFS")
-                        .chars()
-                        .next()
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| " ".to_string())
-                });
-                return Value::str(items.join(&sep));
+                // c:Src/utils.c:3936-3945 sepjoin default-sep rule:
+                // set-but-empty IFS joins with "" (`IFS=""; echo
+                // "$arr"` concatenates); only unset / space-leading
+                // IFS yields " ". The previous get_variable read
+                // couldn't distinguish unset from set-empty.
+                return Value::str(crate::ported::utils::sepjoin(&items, None));
             }
             return Value::Array(items.into_iter().map(Value::str).collect());
         }
@@ -4607,22 +4605,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let dq_suppress = argc == 1;
         let rc_expand = !dq_suppress
             && with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
-        let ifs_first = || -> String {
-            with_executor(|exec| {
-                exec.get_variable("IFS")
-                    .chars()
-                    .next()
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| " ".to_string())
-            })
-        };
-        // Helper: join an Array to scalar via IFS-first.
+        // Helper: join an Array to scalar via sepjoin's IFS default.
+        // c:Src/utils.c:3936-3945 — set-but-empty IFS joins with ""
+        // (`IFS=""; echo "x$*y"` → `xabcy`); only unset /
+        // space-leading IFS yields " ".
         let join_arr = |arr: Vec<Value>| -> String {
-            let sep = ifs_first();
-            arr.iter()
+            let strs: Vec<String> = arr
+                .iter()
                 .map(|v| v.as_str_cow().into_owned())
-                .collect::<Vec<_>>()
-                .join(&sep)
+                .collect();
+            crate::ported::utils::sepjoin(&strs, None)
         };
         if !rc_expand {
             // Default: join any Array side to scalar, then concat.
@@ -5872,6 +5864,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // so execute_script returns `last` as the script's exit
         // status (same observable behavior as a process::exit).
         Value::Int(1)
+    });
+
+    // BUILTIN_ASSIGN_ONLY_STATUS — status of an assignment-only
+    // simple command. c:Src/exec.c:3393-3396 (execcmd_exec, no
+    // command word + varspc): `if (errflag) lastval = 1; else
+    // lastval = cmdoutval;`; same shape at c:1322 (execsimple
+    // WC_ASSIGN: `lv = (errflag ? errflag : cmdoutval)`) and
+    // c:3977 (nullexec=2 redir variant). cmdoutval is the exit of
+    // a `$()` that ran in an RHS (already in vm.last_status via
+    // compile_assign's per-assign SetStatus), 0 otherwise. The
+    // store goes to the canonical LASTVAL too — that IS C's single
+    // `lastval` global; without it the errflag-abort path
+    // (BUILTIN_ERREXIT_CHECK trigger 4) syncs vm.last_status from
+    // a stale LASTVAL and `readonly r=1; r=2` exited 0, not 1.
+    vm.register_builtin(BUILTIN_ASSIGN_ONLY_STATUS, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let had_cmd_subst = vm.pop().to_int() != 0;
+        let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0;
+        let status = if errflag_set {
+            1 // c:Src/exec.c:3394 `lastval = 1`
+        } else if had_cmd_subst {
+            vm.last_status // c:3396 `lastval = cmdoutval` (subst exit)
+        } else {
+            0 // c:3396 `lastval = cmdoutval` (cmdoutval = 0)
+        };
+        with_executor(|exec| exec.set_last_status(status));
+        Value::Status(status)
     });
 
     // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
@@ -7448,6 +7469,18 @@ pub const BUILTIN_MAGIC_EQUALS_PREFORK: u16 = 621;
 /// trailing text that undergoes filename generation. Operands:
 /// [name, idx, suffix, quoted].
 pub const BUILTIN_ARRAY_INDEX_UNBRACED: u16 = 622;
+
+/// Assignment-only simple-command exit status. Direct port of
+/// `lv = (errflag ? errflag : cmdoutval)` (c:Src/exec.c:1322,
+/// execsimple's WC_ASSIGN arm) / `if (errflag) lastval = 1; else
+/// lastval = cmdoutval;` (c:Src/exec.c:3393-3396, execcmd_exec's
+/// no-command-word varspc path; redir variant at c:3977). Pops
+/// [had_cmd_subst]; cmdoutval is the live vm.last_status when a
+/// `$()` ran in any RHS of the chain, 0 otherwise. Writes the
+/// canonical LASTVAL (C's single `lastval` global) so the
+/// non-interactive errflag abort exits with this value per
+/// Src/init.c:234. Caller pairs with SetStatus.
+pub const BUILTIN_ASSIGN_ONLY_STATUS: u16 = 623;
 
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword
