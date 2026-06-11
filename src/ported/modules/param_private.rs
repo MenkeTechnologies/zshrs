@@ -924,11 +924,18 @@ pub static private_wraplevel: std::sync::atomic::AtomicI32 = std::sync::atomic::
 /// every private param `PM_UNSET|PM_READONLY` so the wrapped function
 /// can't see them; on exit, restores their saved state. Returns 0
 /// when the wrapper ran (private_wraplevel < locallevel), 1 otherwise.
-/// WARNING: param names don't match C — Rust=(_prog, _name) vs C=(prog, w, name)
+///
+/// The c:556 `runshfunc(prog, w, name)` call sits BETWEEN the two
+/// scopeprivate scans — Rust takes it as the `runshfunc` closure so
+/// the hide/restore pair brackets the wrapped function exactly like C
+/// (same shape as the doshfunc body_runner pattern used by the zftp
+/// hooks).
+/// WARNING: param names don't match C — Rust=(_prog, _w, _name, runshfunc) vs C=(prog, w, name)
 pub fn wrap_private(
     _prog: *const eprog, // c:550
     _w: *const funcwrap,
     _name: *mut libc::c_char,
+    runshfunc: impl FnOnce(),
 ) -> i32 {
     // c:550
     let local = locallevel.load(Ordering::Relaxed);
@@ -937,14 +944,21 @@ pub fn wrap_private(
         // c:552
         let owl = pwl; // c:553
         private_wraplevel.store(local, Ordering::Relaxed); // c:554
-                                                           // c:555 — scopeprivate(PM_UNSET) on every private param.
-                                                           // Iterate the registry — each entry is a private param name
-                                                           // we'd need a `*mut param` for. Static-link path skips the
-                                                           // per-param scope flip since we don't have the global paramtab
-                                                           // wired. The wraplevel bookkeeping below preserves correctness
-                                                           // for the locallevel == private_wraplevel test in `*_setfn`.
-                                                           // c:556 — runshfunc(prog, w, name) — handled by caller.
-                                                           // c:557 — scopeprivate(0) restore on exit.
+        // c:555 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, PM_UNSET);`
+        // Hide every private param from the function we're about to run.
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for pm in tab.values_mut() {
+                scopeprivate(&mut **pm as *mut param, PM_UNSET as i32); // c:555
+            }
+        }
+        runshfunc(); // c:556 — runshfunc(prog, w, name);
+        // c:557 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);`
+        // Restore each param's saved PM_UNSET/PM_READONLY state.
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            for pm in tab.values_mut() {
+                scopeprivate(&mut **pm as *mut param, 0); // c:557
+            }
+        }
         private_wraplevel.store(owl, Ordering::Relaxed); // c:558
         return 0; // c:559
     }
