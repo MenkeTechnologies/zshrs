@@ -1380,21 +1380,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // BUILTIN_ALIAS previously passed args straight to bin_alias with
     // no expansion — `alias x=~/foo` stored literal `~/foo` (no tilde
     // expand), `alias bad===` stored a broken entry without firing
-    // the "= not found" diagnostic. Run prefork(PREFORK_TYPESET) here
-    // before dispatch_builtin so the C-faithful expansion chain fires.
-    vm.register_builtin(BUILTIN_ALIAS, |vm, argc| {
-        let args = pop_args(vm, argc);
-        // c:Src/exec.c:3304 — `prefork(args, esprefork, NULL)`. prefork's
-        // filesub trigger (subst.c:678 `strchr(*namptr+1, Equals)`)
-        // looks for the EQUALS TOKEN, not literal `=`. The fusevm
-        // path delivers args already-untokenized, so re-tokenize each
-        // arg via `shtokenize` (the same call C's lexer makes implicitly
-        // when assembling the word) so prefork sees Equals tokens at
-        // `=` boundaries and Tilde tokens at `~` starts. After prefork
-        // expands, untokenize for storage.
+    // the "= not found" diagnostic. The prefork(PREFORK_TYPESET) runs
+    // per arg word via BUILTIN_MAGIC_EQUALS_PREFORK ops that
+    // compile_simple emits BEFORE the redirect scope opens (matching
+    // c:3304 prefork-before-addfd order), so the dispatch here is a
+    // plain passthrough — re-running prefork would double-fire the
+    // "= not found" diagnostic.
+    reg_passthru!(vm, BUILTIN_ALIAS, "alias");
+    // c:Src/exec.c:3298-3304 — per-word magic-equals prefork; see the
+    // const doc at BUILTIN_MAGIC_EQUALS_PREFORK. prefork's filesub
+    // trigger (subst.c:678 `strchr(*namptr+1, Equals)`) looks for the
+    // EQUALS TOKEN, not literal `=`. The fusevm path delivers args
+    // already-untokenized, so re-tokenize each element via
+    // `shtokenize` (the same call C's lexer makes implicitly when
+    // assembling the word) so prefork sees Equals tokens at `=`
+    // boundaries and Tilde tokens at `~` starts. After prefork
+    // expands, untokenize for storage.
+    vm.register_builtin(BUILTIN_MAGIC_EQUALS_PREFORK, |vm, _argc| {
+        let raw = vm.pop();
+        let inputs: Vec<String> = match raw {
+            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+            other => vec![other.to_str()],
+        };
         let mut as_linklist: crate::ported::linklist::LinkList<String> =
             Default::default();
-        for s in &args {
+        for s in &inputs {
             let mut tokd = s.clone();
             crate::ported::glob::shtokenize(&mut tokd);
             as_linklist.push_back(tokd);
@@ -1405,11 +1415,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::zsh_h::PREFORK_TYPESET,
             &mut rf,
         );
-        let mut expanded: Vec<String> = Vec::with_capacity(args.len());
+        let mut expanded: Vec<String> = Vec::with_capacity(inputs.len());
         while let Some(s) = as_linklist.pop_front() {
             expanded.push(crate::ported::lex::untokenize(&s).to_string());
         }
-        Value::Status(dispatch_builtin("alias", expanded))
+        if expanded.len() == 1 {
+            Value::str(expanded.into_iter().next().unwrap())
+        } else {
+            Value::Array(expanded.into_iter().map(Value::str).collect())
+        }
     });
 
     // Options. `setopt` (BIN_SETOPT=0) / `unsetopt` (BIN_UNSETOPT=1)
@@ -7378,6 +7392,20 @@ pub const BUILTIN_EXEC_PERM_REDIRS: u16 = 619;
 /// walks the stage command's redirect list; mfds is per-execcmd, so
 /// nested body commands (`{ echo a > f; } | cat`) never see it.
 pub const BUILTIN_PIPE_OUTPUT_MARK: u16 = 620;
+
+/// Magic-equals prefork for a single arg word of a
+/// `BINF_MAGICEQUALS` builtin head (`alias`). Direct port of
+/// c:Src/exec.c:3298-3304 — `esprefork = PREFORK_TYPESET;
+/// prefork(args, esprefork, NULL)` runs on the argv BEFORE the addfd
+/// redirect loop at c:3720, so an expansion zerr (`alias bad===` →
+/// equalsubstr "= not found" at Src/subst.c:726) prints to the
+/// command's UN-redirected stderr. argc=1: pops the just-pushed
+/// word value, runs shtokenize → prefork(PREFORK_TYPESET) →
+/// untokenize on it (each element for Array splices), pushes the
+/// result back. Emitted by compile_simple per arg word when the
+/// dispatch head is `alias`; BUILTIN_ALIAS itself no longer
+/// preforks (it would double-fire the diagnostic).
+pub const BUILTIN_MAGIC_EQUALS_PREFORK: u16 = 621;
 
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword

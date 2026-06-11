@@ -1376,12 +1376,16 @@ impl ZshCompiler {
         // scope so subsequent commands see the original fds. Without the
         // scope, `cmd > out.txt` would leave fd 1 pointing at out.txt for
         // every following command in the script.
+        //
+        // c:Src/exec.c:3285-3304 (prefork) + c:3702 (globlist) run
+        // BEFORE the addfd redirect loop at c:3720+ — so a word-
+        // expansion error (`= not found` from equalsubstr c:726,
+        // `no matches found` from glob.c NOMATCH, `${var?msg}` zerr)
+        // prints to the command's UN-redirected stderr and the
+        // command aborts. The scope-begin emission therefore happens
+        // per-dispatch-arm AFTER the arg-word ops, not here. Each arm
+        // calls emit_redir_scope_begin() once its words are pushed.
         let has_redirects = !simple.redirs.is_empty();
-        if has_redirects {
-            self.builder
-                .emit(Op::WithRedirectsBegin(simple.redirs.len() as u8), 0);
-            self.compile_redirs_multios(&simple.redirs);
-        }
 
         // ── Dispatch by first-word kind ───────────────────────────────
         // Operates on raw &str inputs and decomposes at compile time.
@@ -1423,6 +1427,12 @@ impl ZshCompiler {
             for w in &simple.words {
                 self.compile_word_str(w);
             }
+            // c:Src/exec.c:3285-3304 → c:3720 — redirect scope opens
+            // AFTER the word ops so an expansion zerr (`=cmd` not
+            // found, nomatch) hits the original stderr.
+            if has_redirects {
+                self.emit_redir_scope_begin(&simple.redirs);
+            }
             // Replace fusevm's Op::Exec with BUILTIN_EXEC_DYNAMIC so
             // empty-argv expansion (`\$(exit 1)` produces "") preserves
             // the cmd-subst's last_status. Op::Exec hardcodes 0 for
@@ -1445,6 +1455,12 @@ impl ZshCompiler {
         // N` target the N-th enclosing loop (1 = innermost, 2 = next
         // out, etc.). zsh clamps N to the available depth.
         if first == "break" {
+            // Redirect scope opens before the xtrace/dispatch ops —
+            // `break N` args are literal numerals (no expansion-error
+            // window), so the C prefork-before-addfd order is moot.
+            if has_redirects {
+                self.emit_redir_scope_begin(&simple.redirs);
+            }
             // c:Src/exec.c:2055 execcmd_exec emits xtrace for every
             // simple command before dispatching the handler. Our
             // special-case path here jumps directly to the enclosing
@@ -1513,6 +1529,11 @@ impl ZshCompiler {
             return;
         }
         if first == "continue" {
+            // Redirect scope: same placement rationale as the `break`
+            // arm above.
+            if has_redirects {
+                self.emit_redir_scope_begin(&simple.redirs);
+            }
             // c:Src/exec.c:2055 — xtrace emit, same rationale as the
             // `break` arm above.
             let mut trace_text = String::from("continue");
@@ -1636,6 +1657,11 @@ impl ZshCompiler {
                 for word in &simple.words[1..] {
                     self.compile_word_str(word);
                 }
+                // c:Src/exec.c:3285-3304 → c:3720 — redirect scope
+                // opens after arg expansion, before addvars/dispatch.
+                if has_redirects {
+                    self.emit_redir_scope_begin(&simple.redirs);
+                }
                 // c:Src/exec.c — inline-env assigns must commit AFTER
                 // arg expansion (above) but BEFORE the precmd dispatch
                 // consumes the args, so the spawned command sees
@@ -1687,6 +1713,12 @@ impl ZshCompiler {
             // command word is a parse error in zsh. The previous
             // Rust port silently returned rc=0 via the empty-cmd
             // path. Bug #534.
+            //
+            // The zerr at c:3342 fires BEFORE the addfd loop
+            // (c:3720+): the error prints to the un-redirected
+            // stderr and the redirects (including target expansion)
+            // never apply — `noglob 2>/dev/null` still shows the
+            // error. No WithRedirectsBegin/End scope here.
             if has_redirects {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_REDIR_NO_CMD, 0),
@@ -1695,13 +1727,62 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
                 self.builder.emit(Op::LoadInt(1), 0);
                 self.builder.emit(Op::SetStatus, 0);
-                self.builder.emit(Op::WithRedirectsEnd, 0);
                 return;
             }
             self.builder.emit(Op::LoadInt(0), 0); // c:3399 lastval = cmdoutval
             self.builder.emit(Op::SetStatus, 0); // c:3399
             return; // c:3406
         }
+
+        // Head-name resolution — used by the magic-equals gate in the
+        // word loop below AND by the builtin_id dispatch lookup after
+        // xtrace.
+        let dispatch_first_raw: &str = if precmd_skip > 0 && precmd_skip < simple.words.len() {
+            &simple.words[precmd_skip]
+        } else {
+            first
+        };
+        // c:Src/subst.c:169 + Src/glob.c:3649 — `prefork` runs
+        // `remnulargs(getdata(node))` on every word before command
+        // dispatch. remnulargs strips standalone Bnull / Snull / Dnull
+        // / Nularg sentinels in-place (Bnullkeep folds to literal `\`),
+        // so `\echo` (lex emits `Bnull echo`) reaches the cmd-name
+        // table as plain `echo`. zshrs's compile-time dispatch path
+        // skipped this strip and went straight to untokenize, which
+        // maps Bnull → `\` per c:Src/lex.c:38 ztokens. Result: the
+        // builtin/function table was probed with `\echo`, missed
+        // every entry, and fell through to "command not found:
+        // \echo". Run remnulargs first to mirror C's prefork chain
+        // before untokenize converts any surviving sentinels.
+        let first_clean = {
+            let mut tmp = dispatch_first_raw.to_string();
+            crate::ported::glob::remnulargs(&mut tmp);
+            // remnulargs may stamp `Nularg` on a wholly-empty word; drop
+            // it so the lookup sees `""` instead of a sentinel.
+            if tmp == crate::ported::zsh_h::Nularg.to_string() {
+                tmp.clear();
+            }
+            crate::lex::untokenize(&tmp)
+        };
+        // c:Src/exec.c::execcmd — runtime function lookup wins over
+        // builtins (shfunctab → bintab order). When the user defined a
+        // function with the dispatch name earlier in this compile unit,
+        // skip the builtin fast-path so the call routes through
+        // CallFunction (host.call_function → dispatch_function_call →
+        // doshfunc). Bug #27 in docs/BUGS.md: zshrs-extension-only
+        // builtins (caller, help, …) shadowed user functions because
+        // the builtin_id table beat the shfunctab check.
+        let user_function_shadow = self.defined_functions.contains(&first_clean)
+            || self.defined_functions.contains(dispatch_first_raw);
+        // c:Src/exec.c:3298-3304 — `magic_assign = (hn->flags &
+        // BINF_MAGICEQUALS) && type != WC_TYPESET` → esprefork =
+        // PREFORK_TYPESET → `prefork(args, esprefork, NULL)` BEFORE
+        // the addfd loop (c:3720). For an `alias` head, emit a
+        // per-word BUILTIN_MAGIC_EQUALS_PREFORK so the equals/tilde
+        // expansion (and its zerr, e.g. `alias bad===` → "= not
+        // found") fires before the redirect scope opens.
+        let head_is_magic_equals = !user_function_shadow
+            && (dispatch_first_raw == "alias" || first_clean == "alias");
 
         // Builtin or function or external. Push args first (post-strip).
         let argc = (simple.words.len() - precmd_skip - 1) as u8;
@@ -1724,6 +1805,29 @@ impl ZshCompiler {
                     0,
                 );
             }
+            // c:Src/exec.c:3298-3304 — magic-equals prefork per arg
+            // word for BINF_MAGICEQUALS heads, before the redirect
+            // scope (see head_is_magic_equals above).
+            if head_is_magic_equals {
+                self.builder.emit(
+                    Op::CallBuiltin(
+                        crate::vm_helper::BUILTIN_MAGIC_EQUALS_PREFORK,
+                        1,
+                    ),
+                    0,
+                );
+            }
+        }
+
+        // c:Src/exec.c:3285-3304 (prefork) + c:3702 (globlist) →
+        // c:3720+ (addfd loop) — open the redirect scope only after
+        // every arg word's expansion ops are emitted. An expansion
+        // zerr (nomatch, `${var?msg}`, `=cmd` not found) therefore
+        // prints to the shell's original stderr, not the command's
+        // redirected one, and the dispatch op aborts via the
+        // glob_failed/errflag gates in dispatch_builtin.
+        if has_redirects {
+            self.emit_redir_scope_begin(&simple.redirs);
         }
 
         // c:Src/exec.c — addvars runs AFTER prefork. With inline-env
@@ -1783,43 +1887,9 @@ impl ZshCompiler {
         // strips at line 891 above; mirror for builtin_id lookup
         // so `builtin false` runs `false` (returning 1) instead of
         // falling through to BUILTIN_BUILTIN no-op.
-        let dispatch_first_raw: &str = if precmd_skip > 0 && precmd_skip < simple.words.len() {
-            &simple.words[precmd_skip]
-        } else {
-            first
-        };
-        // c:Src/subst.c:169 + Src/glob.c:3649 — `prefork` runs
-        // `remnulargs(getdata(node))` on every word before command
-        // dispatch. remnulargs strips standalone Bnull / Snull / Dnull
-        // / Nularg sentinels in-place (Bnullkeep folds to literal `\`),
-        // so `\echo` (lex emits `Bnull echo`) reaches the cmd-name
-        // table as plain `echo`. zshrs's compile-time dispatch path
-        // skipped this strip and went straight to untokenize, which
-        // maps Bnull → `\` per c:Src/lex.c:38 ztokens. Result: the
-        // builtin/function table was probed with `\echo`, missed
-        // every entry, and fell through to "command not found:
-        // \echo". Run remnulargs first to mirror C's prefork chain
-        // before untokenize converts any surviving sentinels.
-        let first_clean = {
-            let mut tmp = dispatch_first_raw.to_string();
-            crate::ported::glob::remnulargs(&mut tmp);
-            // remnulargs may stamp `Nularg` on a wholly-empty word; drop
-            // it so the lookup sees `""` instead of a sentinel.
-            if tmp == crate::ported::zsh_h::Nularg.to_string() {
-                tmp.clear();
-            }
-            crate::lex::untokenize(&tmp)
-        };
-        // c:Src/exec.c::execcmd — runtime function lookup wins over
-        // builtins (shfunctab → bintab order). When the user defined a
-        // function with the dispatch name earlier in this compile unit,
-        // skip the builtin fast-path so the call routes through
-        // CallFunction (host.call_function → dispatch_function_call →
-        // doshfunc). Bug #27 in docs/BUGS.md: zshrs-extension-only
-        // builtins (caller, help, …) shadowed user functions because
-        // the builtin_id table beat the shfunctab check.
-        let user_function_shadow = self.defined_functions.contains(&first_clean)
-            || self.defined_functions.contains(dispatch_first_raw);
+        // (dispatch_first_raw / first_clean / user_function_shadow
+        // are computed ABOVE the arg-word loop so the magic-equals
+        // head gate can use them.)
         let builtin_id = if user_function_shadow {
             None
         } else if dispatch_first_raw == "shopt" || first_clean == "shopt" {
@@ -1923,6 +1993,20 @@ impl ZshCompiler {
             );
             self.builder.emit(Op::Pop, 0);
         }
+    }
+
+    /// Open a simple command's redirect scope: WithRedirectsBegin +
+    /// the MULTIOS-coalesced redirect ops. Called by each dispatch
+    /// arm of compile_simple AFTER the arg-word ops are emitted so
+    /// runtime word expansion (prefork c:Src/exec.c:3285-3304 +
+    /// globlist c:3702) errors print to the un-redirected stderr,
+    /// matching C's order where the addfd loop (c:3720+) runs after
+    /// expansion. Redirect TARGETS still expand here — i.e. after the
+    /// arg words — mirroring xpandredir inside the addfd loop.
+    fn emit_redir_scope_begin(&mut self, redirs: &[crate::parse::ZshRedir]) {
+        self.builder
+            .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
+        self.compile_redirs_multios(redirs);
     }
 
     /// Translate a ZshRedir → fusevm Redirect/HereDoc/HereString op.
