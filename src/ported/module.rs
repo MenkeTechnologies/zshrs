@@ -3605,7 +3605,19 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/net/tcp" => crate::ported::modules::tcp::boot_(std::ptr::null()),
         "zsh/termcap" => crate::ported::modules::termcap::boot_(std::ptr::null()),
         "zsh/terminfo" => crate::ported::modules::terminfo::boot_(std::ptr::null()),
-        "zsh/watch" => crate::ported::modules::watch::boot_(std::ptr::null()),
+        // c:1912 — C passes the real Module m to boot. watch::boot_
+        // reads m->node.flags (MOD_SETUP = mid-load_module) to gate
+        // its WATCHFMT/LOGCHECK seeding under --zsh; passing the
+        // table entry avoids re-locking MODULESTAB (the caller chain
+        // load_module -> do_boot_module already holds it).
+        "zsh/watch" => {
+            let mptr = _table
+                .modules
+                .get(name)
+                .map(|m| m as *const crate::ported::zsh_h::module)
+                .unwrap_or(std::ptr::null());
+            crate::ported::modules::watch::boot_(mptr)
+        }
         "zsh/zftp" => crate::ported::modules::zftp::boot_(std::ptr::null()),
         "zsh/zprof" => crate::ported::modules::zprof::boot_(std::ptr::null()),
         "zsh/zpty" => crate::ported::modules::zpty::boot_(std::ptr::null()),
