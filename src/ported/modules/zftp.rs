@@ -4421,40 +4421,68 @@ pub fn bin_zftp(
             }
 
             "session" => {
+                // c:2891-2897 — no args: plain name list, one per line:
+                //
+                //     for (nptr = firstnode(zfsessions); nptr; incnode(nptr))
+                //         printf("%s\n", ((Zftp_session)nptr->dat)->name);
+                //
+                // NO current-session marker, no indentation — a prior
+                // arm decorated with "* "/"  " prefixes C never prints.
                 if args.len() < 2 {
                     let names = zftp.session_names();
-                    let current = zftp.current_name();
                     let mut out = String::new();
                     for name in names {
-                        let marker = if Some(name) == current { "* " } else { "  " };
-                        out.push_str(&format!("{}{}\n", marker, name));
+                        out.push_str(&format!("{}\n", name)); // c:2895
                     }
                     return (0, out);
                 }
-
+                // c:2903-2904 — same-session no-op; c:2906-2907 —
+                // savesession + switchsession (creates when absent).
                 let name = args[1];
                 if zftp.sessions.contains_key(name) {
-                    zftp.set_current(name);
+                    zftp.set_current(name); // c:2907
                 } else {
-                    zftp.create_session(name);
+                    zftp.create_session(name); // switchsession's newsession leg
                     zftp.set_current(name);
                 }
                 (0, String::new())
             }
 
             "rmsession" => {
-                if args.len() < 2 {
-                    return (1, "zftp rmsession: session name required\n".to_string());
+                // c:2922-2930 — target is the named session, or the
+                // CURRENT one when no name is given:
+                //
+                //     for (no = 0, nptr = firstnode(zfsessions); nptr; ...) {
+                //         sptr = (Zftp_session) nptr->dat;
+                //         if ((!*args && sptr == zfsess) ||
+                //             (*args && !strcmp(sptr->name, *args)))
+                //             break;
+                //     }
+                //     if (!nptr)
+                //         return 1;
+                //
+                // Not-found exits 1 SILENTLY (no diagnostic). A prior
+                // arm required a name and printed invented messages
+                // for both the no-args and not-found cases.
+                let target: String = match args.get(1) {
+                    Some(n) => (*n).to_string(),
+                    None => match zftp.current_name() {
+                        Some(c) => c.to_string(), // c:2925 sptr == zfsess
+                        None => return (1, String::new()), // c:2929-2930
+                    },
+                };
+                let was_current = zftp.current_name() == Some(target.as_str());
+                if zftp.remove_session(&target).is_none() {
+                    return (1, String::new()); // c:2929-2930 silent
                 }
-
-                if zftp.remove_session(args[1]).is_some() {
-                    (0, String::new())
-                } else {
-                    (
-                        1,
-                        format!("zftp rmsession: session {} not found\n", args[1]),
-                    )
+                // c:2941-2946 — freed the current session: switch to
+                // the first remaining one, if any.
+                if was_current {
+                    if let Some(next) = zftp.session_names().first().map(|s| s.to_string()) {
+                        zftp.set_current(&next); // c:2945
+                    }
                 }
+                (0, String::new())
             }
 
             "test" => {
