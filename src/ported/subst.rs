@@ -2874,68 +2874,266 @@ pub fn paramsubst(
     let mut pos = start_pos + 1; // Skip $ or Qstring       // c:1625
     let mut result_nodes = Vec::new(); // c:1625
 
-    // c:Src/pattern.c:248 — pre-tokenize `|` for `${var%pat}` /
-    // `${var#pat}` strip patterns. In C zsh the shell lexer
-    // tokenizes bare `|` to `Bar` (0x8e) only INSIDE `(...)` groups;
-    // outside groups it stays literal `|` (0x7c). `patcompile`
-    // depends on that distinction (`zpc_chars[ZPC_BAR] = Bar` at
-    // pattern.c:248 means `patcompbranch` only treats Bar — not
-    // ASCII `|` — as an alternation terminator). zshrs doesn't yet
-    // run a pre-tokenize pass, so raw ASCII `|` would be mis-read
-    // as alternation. This closure escapes every bare `|` at depth
-    // 0 (literal context) by prefixing `\` — matches C zsh's bug
-    // #12 behavior in docs/BUGS.md: `${p%|*}` strips `|key` from
-    // "hello|key". Pipes inside `(...)`, inside `[...]`, or already
-    // escaped with `\` are left untouched.
-    let escape_bare_alt_pipes = |s: &str| -> String {
-        // Bug #365: iterate by CHAR not byte. Previous byte-loop
-        // pushed each byte as a separate char via `c as char`, which
-        // for multibyte UTF-8 (e.g. `é` = 0xC3 0xA9) produced two
-        // Latin-1 chars `Ã©` — re-encoding as 4 UTF-8 bytes and
-        // mangling the pattern. All meta chars handled here (`\\`,
-        // `[`, `]`, `(`, `)`, `|`) are ASCII, so a char-iter is the
-        // correct shape.
+    // c:Src/subst.c:3360-3412 — in C the pattern argument of the
+    // `${x#pat}` / `${x%pat}` / `${x/pat/repl}` operators reaches
+    // paramsubst LEXER-TOKENIZED: source glob metachars are token
+    // bytes (`case '%': case '#': case Pound: case '/':` at
+    // subst.c:3360-3363, re-established by `parse_subst_string(s)`
+    // at subst.c:3374 when the text arrives untokenized). Then
+    // `singsub(&s)` (subst.c:3412) splices parameter values in RAW
+    // (untokenized = literal to patcompile, per the zpc_chars
+    // contract at Src/pattern.c:248), and splices only become
+    // active under GLOBSUBST via the `if (... isset(GLOBSUBST))
+    // shtokenize(s)` in stringsubst (Src/subst.c:1669 globsubst +
+    // c:1756 ssub path). zshrs's `rest` walker (subst.rs:4698)
+    // folds the lexer's token bytes back to raw ASCII, losing the
+    // source-vs-splice distinction, so previously the spliced
+    // value of `${x#$p}` acted as a glob without GLOBSUBST. This
+    // closure restores the C pre-singsub encoding: source glob
+    // metachars -> their zsh.h:159-183 token chars, while passing
+    // through UNTOUCHED: `\X` pairs, Bnull/Bnullkeep + payload,
+    // `$name` / `${...}` / `$(...)` / backtick spans (so singsub
+    // still sees raw substitution syntax). Two deliberate
+    // non-uniformities, both pinned to real-zsh probes:
+    //   - `|` at paren depth 0 outside `[...]` stays LITERAL even
+    //     under GLOBSUBST (`setopt globsubst; x="hello|key";
+    //     echo ${x%|*}` -> `hello` in zsh 5.9): escape to `\|`
+    //     here rather than leaving it for the post-singsub pass,
+    //     which must treat leftover raw `|` as a splice. C-lexer
+    //     rule: the lexer tokenizes `|` to Bar only INSIDE `(...)`
+    //     groups; zpc_chars[ZPC_BAR] = Bar (Src/pattern.c:248)
+    //     means only Bar — never ASCII `|` — terminates an
+    //     alternation branch. Bugs #12/#365/#596 history lives in
+    //     docs/BUGS.md (formerly the escape_bare_alt_pipes closure,
+    //     subsumed here).
+    //   - `<` / `>` only tokenize as the `<N-N>` numeric-range
+    //     pair, mirroring zshtokenize's digit scan at
+    //     Src/glob.c:3605-3614 (a stray `<` is not a glob opener).
+    let pretokenize_src_pat = |s: &str| -> String {
+        use crate::ported::zsh_h::{
+            Bar, Bnull, Bnullkeep, Hat, Inang, Inbrace, Inbrack, Inpar, Outang, Outbrace,
+            Outbrack, Outpar, Pound, Quest, Star, Tilde,
+        };
+        let chars: Vec<char> = s.chars().collect();
         let mut out = String::with_capacity(s.len());
         let mut depth = 0i32;
         let mut in_class = false;
-        let chars: Vec<char> = s.chars().collect();
-        let mut i = 0;
+        let mut i = 0usize;
         while i < chars.len() {
             let c = chars[i];
+            // Source `\X` escape — both chars verbatim.
             if c == '\\' && i + 1 < chars.len() {
                 out.push(c);
                 out.push(chars[i + 1]);
                 i += 2;
                 continue;
             }
-            if in_class {
-                if c == ']' {
-                    in_class = false;
+            // Lexer quote markers Bnull/Bnullkeep — payload is
+            // user-literal; pass the pair through untouched.
+            if (c == Bnull || c == Bnullkeep) && i + 1 < chars.len() {
+                out.push(c);
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            // Backtick span — copy verbatim so singsub sees the
+            // raw command substitution.
+            if c == '`' {
+                out.push(c);
+                i += 1;
+                while i < chars.len() {
+                    let d = chars[i];
+                    out.push(d);
+                    i += 1;
+                    if d == '\\' && i < chars.len() {
+                        out.push(chars[i]);
+                        i += 1;
+                        continue;
+                    }
+                    if d == '`' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            // `$…` substitution span — copy verbatim. Nested
+            // `${…}` bodies may carry Inbrace/Outbrace tokens
+            // (preserved by the rest walker at subst.rs:4698), so
+            // the brace balance counts both raw and token forms.
+            if c == '$' {
+                out.push(c);
+                i += 1;
+                let next = chars.get(i).copied().unwrap_or('\0');
+                if next == '{' || next == Inbrace {
+                    let mut bd = 0i32;
+                    while i < chars.len() {
+                        let d = chars[i];
+                        out.push(d);
+                        i += 1;
+                        if d == '{' || d == Inbrace {
+                            bd += 1;
+                        } else if d == '}' || d == Outbrace {
+                            bd -= 1;
+                            if bd == 0 {
+                                break;
+                            }
+                        }
+                    }
+                } else if next == '(' {
+                    // `$(…)` / `$((…))` — balanced raw parens.
+                    let mut pd = 0i32;
+                    while i < chars.len() {
+                        let d = chars[i];
+                        out.push(d);
+                        i += 1;
+                        if d == '(' {
+                            pd += 1;
+                        } else if d == ')' {
+                            pd -= 1;
+                            if pd == 0 {
+                                break;
+                            }
+                        }
+                    }
+                } else if matches!(next, '?' | '#' | '$' | '!' | '@' | '*' | '-')
+                    || next.is_ascii_digit()
+                {
+                    // Special single-char parameter — copy so the
+                    // metachar map below never sees it.
+                    out.push(next);
+                    i += 1;
+                } else {
+                    while i < chars.len()
+                        && (chars[i].is_alphanumeric() || chars[i] == '_')
+                    {
+                        out.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+            // `<N-N>` numeric range — Src/glob.c:3605-3614 shape:
+            // `<` digits `-` digits `>` (both digit runs optional).
+            if c == '<' {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '-' {
+                    let mut k = j + 1;
+                    while k < chars.len() && chars[k].is_ascii_digit() {
+                        k += 1;
+                    }
+                    if k < chars.len() && chars[k] == '>' {
+                        out.push(Inang);
+                        for &d in &chars[i + 1..k] {
+                            out.push(d);
+                        }
+                        out.push(Outang);
+                        i = k + 1;
+                        continue;
+                    }
                 }
                 out.push(c);
                 i += 1;
                 continue;
             }
             match c {
-                '[' => {
-                    in_class = true;
-                    out.push('[');
-                }
+                '#' => out.push(Pound),
+                '^' => out.push(Hat),
+                '*' => out.push(Star),
+                '?' => out.push(Quest),
+                '~' => out.push(Tilde),
                 '(' => {
                     depth += 1;
-                    out.push('(');
+                    out.push(Inpar);
                 }
                 ')' => {
                     if depth > 0 {
                         depth -= 1;
                     }
-                    out.push(')');
+                    out.push(Outpar);
                 }
-                '|' if depth == 0 => {
-                    out.push('\\');
-                    out.push('|');
+                '[' => {
+                    in_class = true;
+                    out.push(Inbrack);
                 }
-                _ => out.push(c),
+                ']' => {
+                    in_class = false;
+                    out.push(Outbrack);
+                }
+                '|' => {
+                    if depth > 0 || in_class {
+                        out.push(Bar);
+                    } else {
+                        // Literal per Src/pattern.c:248 — see header.
+                        out.push('\\');
+                        out.push('|');
+                    }
+                }
+                other => out.push(other),
+            }
+            i += 1;
+        }
+        out
+    };
+
+    // Post-singsub half of the Src/subst.c:3412 contract: after
+    // `singsub` splices parameter values RAW into the pre-tokenized
+    // pattern, every remaining raw ASCII glob metachar came from a
+    // splice and must stay LITERAL to patcompile (Src/pattern.c:248
+    // zpc_chars dispatch on token bytes only) — unless GLOBSUBST is
+    // set, where C shtokenizes spliced values (Src/subst.c:1669 +
+    // c:1756 ssub path) making them active. The downstream matchers
+    // at these sites (`glob_match_static`, vm_helper.rs:3627) run
+    // their own `tokenize` + `patcompile` on a RAW-encoded pattern
+    // string, so this pass transposes back to that encoding:
+    //   token char (pre-tokenized source meta) -> raw ASCII meta
+    //       (the downstream tokenize re-activates it),
+    //   raw ASCII glob meta (splice)           -> `\`-escaped
+    //       (downstream tokenize folds `\X` to Bnull+X = literal),
+    //       or left raw under GLOBSUBST (re-activated downstream),
+    //   `\X` / Bnull/Bnullkeep pairs           -> verbatim.
+    let literalize_spliced_metas = |s: &str| -> String {
+        use crate::ported::zsh_h::{
+            Bar, Bnull, Bnullkeep, Hat, Inang, Inbrack, Inpar, Outang, Outbrack, Outpar,
+            Pound, Quest, Star, Tilde,
+        };
+        let glob_subst =
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        let chars: Vec<char> = s.chars().collect();
+        let mut out = String::with_capacity(s.len());
+        let mut i = 0usize;
+        while i < chars.len() {
+            let c = chars[i];
+            if (c == '\\' || c == Bnull || c == Bnullkeep) && i + 1 < chars.len() {
+                out.push(c);
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            match c {
+                x if x == Pound => out.push('#'),
+                x if x == Hat => out.push('^'),
+                x if x == Star => out.push('*'),
+                x if x == Inpar => out.push('('),
+                x if x == Outpar => out.push(')'),
+                x if x == Bar => out.push('|'),
+                x if x == Inbrack => out.push('['),
+                x if x == Outbrack => out.push(']'),
+                x if x == Inang => out.push('<'),
+                x if x == Outang => out.push('>'),
+                x if x == Quest => out.push('?'),
+                x if x == Tilde => out.push('~'),
+                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '^' | '#' | '~' => {
+                    if glob_subst {
+                        out.push(c); // c:1669 — GLOBSUBST: splice active
+                    } else {
+                        out.push('\\');
+                        out.push(c);
+                    }
+                }
+                other => out.push(other),
             }
             i += 1;
         }
@@ -6929,7 +7127,12 @@ pub fn paramsubst(
                 // the disposition inverts (keep matching, drop
                 // non-matching). Direct port of subst.c:3540
                 // SUB_FILTER + getmatch SUB_MATCH branch.
-                let p = singsub(pat); // c:3540
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). Same contract as the
+                // strip/replace arms below; `:#` rides the same
+                // `case '#'` + singsub + getmatch C path.
+                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat))); // c:3540
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Sibling of #605/#606. Bug #607.
                 if !p.is_empty()
@@ -7333,7 +7536,11 @@ pub fn paramsubst(
                 // the whole element. Different from `//` which is
                 // sliding-window mid-element replace.
                 let parts: Vec<&str> = rep.splitn(2, '/').collect();
-                let pat = singsub(parts[0]);
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). Same contract as the
+                // `//`/`/` arms below.
+                let pat = literalize_spliced_metas(&singsub(&pretokenize_src_pat(parts[0])));
                 let repl = parts.get(1).map(|s| singsub(s)).unwrap_or_default();
                 if let Some(arr) = arrays_get(&var_name) {
                     let new_arr: Vec<String> = arr
@@ -7439,16 +7646,18 @@ pub fn paramsubst(
                 } else {
                     ('\0', raw_pat.clone())
                 };
-                // c:Src/pattern.c:248 — bare top-level `|` is literal
-                // in `${var/PAT/REPL}` patterns; only `(a|b)` group
-                // syntax makes `|` an alternation operator. zshrs's
-                // patcompile treats raw ASCII `|` as a tokenized
-                // alternation terminator regardless of depth, so
-                // `${a/h|w/X}` mis-matched empty at the bare `|`
-                // boundary. The `escape_bare_alt_pipes` closure
-                // (declared at line 2790) escapes depth-0 `|` to
-                // `\|` for the patcompile pass. Bug #596.
-                let pat = escape_bare_alt_pipes(&singsub(&pat_after_anchor));
+                // c:Src/subst.c:3360-3412 — C order transposed: the
+                // pattern is pre-tokenized (source metas -> token
+                // chars, as the lexer leaves them for paramsubst),
+                // THEN singsub splices values raw, THEN leftover raw
+                // metas are literalized (GLOBSUBST-gated, c:1669).
+                // Bare top-level `|` stays literal per
+                // Src/pattern.c:248 (handled inside the pre-tokenize
+                // closure; subsumes the old escape_bare_alt_pipes
+                // call here). Bug #596.
+                let pat = literalize_spliced_metas(&singsub(&pretokenize_src_pat(
+                    &pat_after_anchor,
+                )));
                 // c:Src/glob.c:2674-2677 — `p = patcompile(pat,
                 // patflags, NULL); if (!p) { zerr("bad pattern: %s",
                 // pat); return NULL; }`. The replace path silently
@@ -7851,11 +8060,15 @@ pub fn paramsubst(
                 // drops Bnull but pat still carries `\X` from the
                 // split-walk above for the "match this literal X"
                 // form).
-                // c:Src/pattern.c:248 — bare `|` outside `(...)` groups
-                // is literal; escape it to `\|` so patcompile doesn't
-                // read it as alternation. Same fix as the `//` arm
-                // above. Bug #596.
-                let pat_body = escape_bare_alt_pipes(&singsub(&pat_after_anchor));
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). Bare `|` outside `(...)`
+                // stays literal per Src/pattern.c:248 (handled inside
+                // the pre-tokenize closure; subsumes the old
+                // escape_bare_alt_pipes call). Bug #596.
+                let pat_body = literalize_spliced_metas(&singsub(&pretokenize_src_pat(
+                    &pat_after_anchor,
+                )));
                 // c:Src/glob.c:2674-2677 — `patcompile` failure → "bad
                 // pattern" diagnostic. Single replace arm same as `//`
                 // arm above. Bug #605.
@@ -8174,7 +8387,11 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix("##") {
                 // c:3540 (longest prefix strip)
-                let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). See the closure pair at
+                // the top of this fn for the full contract.
+                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
@@ -8289,7 +8506,11 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix('#') {
                 // c:3540 (shortest prefix strip)
-                let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). See the closure pair at
+                // the top of this fn for the full contract.
+                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
@@ -8393,7 +8614,11 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix("%%") {
                 // c:3540 (longest suffix strip)
-                let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). See the closure pair at
+                // the top of this fn for the full contract.
+                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
@@ -8522,7 +8747,11 @@ pub fn paramsubst(
                 }
             } else if let Some(pat) = r.strip_prefix('%') {
                 // c:3540 (shortest suffix strip)
-                let p = escape_bare_alt_pipes(&singsub(pat));
+                // c:Src/subst.c:3360-3412 — pre-tokenize source metas,
+                // singsub splices raw, literalize leftover raw metas
+                // (GLOBSUBST-gated, c:1669). See the closure pair at
+                // the top of this fn for the full contract.
+                let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat)));
                 // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                 // pattern" diagnostic. Bug #606 (sibling of #605).
                 if !p.is_empty()
