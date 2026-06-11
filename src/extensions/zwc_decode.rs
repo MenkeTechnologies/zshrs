@@ -123,20 +123,27 @@ impl<'a> Walker<'a> {
         }
         if (wc & 2) != 0 {
             // Short: 1-3 bytes packed in bits 3-10, 11-18, 19-26.
-            // Pack the raw bytes then run them through untokenize so the
-            // result matches the long-string path (string_at also calls
-            // untokenize on the raw bytes). Without this, short strings
-            // like `$x` (`\x85x`) and `-f` (`\x9bf`) leak the raw token
-            // bytes (Pound, String, Dash, …) into the AST sexp.
-            let mut bytes: Vec<u8> = Vec::new();
+            // Keep the raw token bytes, widened byte→char (token bytes
+            // 0x84..=0xa1 become the same `char` the zshrs lexer stores
+            // in tokstr). Canonicalization to source text happens in
+            // `ast_sexp::emit_str` via `ported::lex::untokenize`
+            // (port of Src/exec.c:2077 + Src/lex.c:38 ztokens) — the
+            // SAME function the zshrs-parser side goes through, so both
+            // sides of the parity harness render tokens identically.
+            // The previous pre-untokenize here used the byte-level
+            // `zwc::untokenize`, which diverged from the canonical
+            // table (no Qstring/Qtick/OutangProc arms, Bnull dropped
+            // instead of `\`, no `$'...'` decode) and produced false
+            // parity divergences.
+            let mut s = String::new();
             for shift in [3, 11, 19] {
                 let c = ((wc >> shift) & 0xff) as u8;
                 if c == 0 {
                     break;
                 }
-                bytes.push(c);
+                s.push(c as char);
             }
-            crate::zwc::untokenize(&bytes)
+            s
         } else {
             // Long: byte offset into strings table.
             let offset = self.strs_base + (wc >> 2) as usize;
@@ -153,10 +160,12 @@ impl<'a> Walker<'a> {
             .position(|&b| b == 0)
             .map(|p| offset + p)
             .unwrap_or(self.strings.len());
-        // Untokenize zsh's internal markers (Bnull, Snull, Star, etc.) back
-        // to source bytes. Reuse zwc.rs's helper.
+        // Keep token bytes, widened byte→char — canonicalization happens
+        // in `ast_sexp::emit_str` via `ported::lex::untokenize` so both
+        // parity-harness sides share one untokenizer (see
+        // decode_string_word above).
         let raw = &self.strings[offset..end];
-        crate::zwc::untokenize(raw)
+        raw.iter().map(|&b| b as char).collect()
     }
 
     /// Top-level: walk a complete program until WC_END.
