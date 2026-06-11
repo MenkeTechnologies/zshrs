@@ -7850,14 +7850,28 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     // Top-level (depth 0) markers are real concat boundaries.
     let mut brace_depth = 0i32;
     let mut brack_depth = 0i32;
+    // Snull (`\u{9d}`) span tracking — c:Src/subst.c:282-330
+    // stringsubst only fires substitution on String/Qstring TOKENS;
+    // chars inside a single-quoted span stay plain ASCII and are
+    // never expansion boundaries. Without this, the literal `$` in
+    // `*(e:'[[ $REPLY = keep ]]':)` matched
+    // is_literal_dollar_with_expansion (followed by ident char) and
+    // got pulled out as an Expansion segment — the qualifier body
+    // reached the glob with `$REPLY` already substituted (empty).
+    let mut inside_sq = false;
     while i < n {
         let c = chars[i];
         match c {
+            '\u{9d}' => inside_sq = !inside_sq,                 // Snull
             '\u{8f}' => brace_depth += 1,                       // Inbrace
             '\u{90}' => brace_depth = (brace_depth - 1).max(0), // Outbrace
             '\u{91}' => brack_depth += 1,                       // Inbrack
             '\u{92}' => brack_depth = (brack_depth - 1).max(0), // Outbrack
             _ => {}
+        }
+        if inside_sq {
+            i += 1;
+            continue;
         }
         // Recognize segment boundaries:
         // - META-$ (\u{85}) and META-Qstring (\u{8c}) — emitted by the
