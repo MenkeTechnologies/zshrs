@@ -990,7 +990,11 @@ pub fn bin_zstyle(
         crate::ported::utils::zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') {
+    if args.is_empty()
+        && !OPT_ISSET(ops, b'L')
+        && !OPT_ISSET(ops, b'l')
+        && !OPT_ISSET(ops, b'e')
+    {
         // c:491-492 + c:580-581 — bare `zstyle` invocation:
         // `list = ZSLIST_BASIC; scanhashtable(zstyletab, ..., printstylenode, list);`
         //
@@ -1057,7 +1061,6 @@ pub fn bin_zstyle(
         || OPT_ISSET(ops, b't')
         || OPT_ISSET(ops, b'T')
         || OPT_ISSET(ops, b'a')
-        || OPT_ISSET(ops, b'e')
         || OPT_ISSET(ops, b'm')
     {
         if args.len() < 2 {
@@ -1166,20 +1169,10 @@ pub fn bin_zstyle(
             );
             return if found { 0 } else { 1 }; // c:689/694
         }
-        // -e: deferred-eval style lookup. For now: bind joined value.
-        if OPT_ISSET(ops, b'e') {
-            if args.len() < 3 {
-                return 1;
-            }
-            let pname = &args[2];
-            if vals.is_empty() {
-                return 1;
-            }
-            let val = vals.join(" ");
-            setsparam(pname, &val);
-            return 0;
-        }
         // -g: handled below (different arg layout).
+        // -e: NOT a per-context lookup arm. C c:504-507 routes -e
+        // through the add path (eval = add = 1), handled in the
+        // canonical setstypat block below.
         if vals.is_empty() {
             return 1;
         }
@@ -1231,16 +1224,33 @@ pub fn bin_zstyle(
         return 0;
     }
 
-    // c:945 — set/replace style: addstyle each value.
-    if args.len() < 3 {
-        zwarnnam(nam, "not enough arguments"); // c:947
+    // c:515-534 — add path: zstyle [-e] PATTERN STYLE [VALUES...]
+    if args.len() < 2 {
+        zwarnnam(nam, "not enough arguments"); // c:521
         return 1;
     }
-    let ctxt = &args[0]; // c:945
+    let ctxt = &args[0]; // c:524
     let style = &args[1];
-    let values: Vec<String> = args[2..].to_vec(); // c:949
+    let values: Vec<String> = if args.len() >= 3 {
+        args[2..].to_vec() // c:533 args+2
+    } else {
+        Vec::new()
+    };
+    // c:524-530 — tokenize + patcompile validation. Reject invalid
+    // patterns with the canonical "invalid pattern: %s" diagnostic
+    // before they reach the style table.
+    {
+        let mut pat = ctxt.clone(); // c:524 dupstring
+        tokenize(&mut pat); // c:525
+        if patcompile(&pat, crate::ported::zsh_h::PAT_ZDUP, None).is_none() {
+            // c:527
+            zwarnnam(nam, &format!("invalid pattern: {}", ctxt)); // c:528
+            return 1; // c:529
+        }
+    }
+    let eval = OPT_ISSET(ops, b'e'); // c:505 eval = add = 1
     if let Ok(mut t) = zstyletab.lock() {
-        t.set(ctxt, style, values.clone(), false); // c:295 setstypat
+        t.set(ctxt, style, values.clone(), eval); // c:533 setstypat
     }
     // PFA-SMR: one event per zstyle call. `rest` carries the style
     // name + values so replay can re-emit the full setter.
