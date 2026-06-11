@@ -1897,8 +1897,17 @@ pub fn createparamtable() {
     // $signals array: indices 0..=SIGCOUNT walked from the static
     // sigs[] name table, then SIGRTMIN..SIGRTMAX names, then the
     // trailing tail (DEBUG / ERR / EXIT / ZERR sentinels).
-    let mut signals_arr: Vec<String> = Vec::new();
-    for &(name, _num) in SIGS.iter() {
+    // c:signames.c sigs[] (generated) — index 0 is "EXIT", entries
+    // 1..=SIGCOUNT in PLATFORM SIGNAL-NUMBER order, tail "ZERR",
+    // "DEBUG" (zsh.h SIGZERR/SIGDEBUG). SIGS is declared in Linux
+    // textual order — sort by libc number to reproduce the generated
+    // table on every platform. Same construction as vm_helper.rs —
+    // keep in sync.
+    let mut by_num: Vec<(&str, i32)> = SIGS.to_vec();
+    by_num.sort_by_key(|&(_, n)| n);
+    let mut signals_arr: Vec<String> = Vec::with_capacity(by_num.len() + 3);
+    signals_arr.push(ztrdup_metafy("EXIT")); // c:sigs[0]
+    for &(name, _num) in by_num.iter() {
         signals_arr.push(ztrdup_metafy(name));
     }
     // RT-signal range (Linux-only; macOS SIGS table already includes
@@ -1912,6 +1921,8 @@ pub fn createparamtable() {
             }
         }
     }
+    signals_arr.push(ztrdup_metafy("ZERR")); // c:sigs tail
+    signals_arr.push(ztrdup_metafy("DEBUG")); // c:sigs tail
     {
         let mut tab = paramtab().write().unwrap();
         let pm = Box::new(param {
