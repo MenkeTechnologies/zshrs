@@ -3283,11 +3283,34 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
         }
         // c:2600 — zsfree(ln) — Rust Drop.
 
-        // c:2606-2616 — final progress callback (zftp_progress shfunc).
+        // c:2601-2616 — final progress callback:
+        //
+        //     /*
+        //      * The progress report isn't started till zfsenddata(), where
+        //      * it's the first item.  Hence we send a final progress report
+        //      * if and only if we called zfsenddata();
+        //      */
+        //     if (progress && ret != 2 &&
+        //         (shfunc = getshfunc("zftp_progress"))) {
+        //         /* progress to finish: ZFTP_TRANSFER set to GF or PF */
+        //         int osc = sfcontext;
+        //
+        //         zfsetparam("ZFTP_TRANSFER", ztrdup(recv ? "GF" : "PF"),
+        //                    ZFPM_READONLY);
+        //         sfcontext = SFC_HOOK;
+        //         doshfunc(shfunc, NULL, 1);
+        //         sfcontext = osc;
+        //     }
+        //
+        // The hook lookup is part of the gate (same shape as the
+        // per-chunk c:1604 block): no zftp_progress function → no
+        // "GF"/"PF" finish-marker write — zfendtrans (c:2624) unsets
+        // ZFTP_TRANSFER moments later regardless. A prior else-arm
+        // wrote the marker even without a hook.
         if progress != 0 && ret != 2 {
             if let Some(mut shfunc) = getshfunc("zftp_progress") {
                 // c:2607
-                let osc = SFCONTEXT.load(Ordering::Relaxed); // c:2610
+                let osc = SFCONTEXT.load(Ordering::Relaxed); // c:2609
                 zfsetparam(
                     "ZFTP_TRANSFER", // c:2611-2612
                     if recv { "GF" } else { "PF" },
@@ -3304,14 +3327,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
                     true,
                     body_runner,
                 );
-                SFCONTEXT.store(osc, Ordering::Relaxed);
-                // c:2615
-            } else {
-                zfsetparam(
-                    "ZFTP_TRANSFER", // c:2611-2612 fallback
-                    if recv { "GF" } else { "PF" },
-                    ZFPM_READONLY,
-                );
+                SFCONTEXT.store(osc, Ordering::Relaxed); // c:2615
             }
         }
         // c:2617-2620 — REST consumed two args.
