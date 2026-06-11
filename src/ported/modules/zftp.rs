@@ -3855,6 +3855,68 @@ pub fn bin_zftp(
     }
     crate::ported::signals_h::unqueue_signals(); // c:3105
 
+    // c:3052-3061 — pre-dispatch connection probe:
+    //
+    //     if (zfsess->control && !(zptr->flags & (ZFTP_TEST|ZFTP_SESS))) {
+    //         /*
+    //          * Test the connection for a bad fd or incoming message, but
+    //          * only if the connection was last heard of open, and
+    //          * if we are not about to call the test command anyway.
+    //          * Not worth it unless we have select() or poll().
+    //          */
+    //         ret = zftp_test("zftp test", NULL, 0);
+    //     }
+    //
+    // zftp_test (c:2270-2293): zero-timeout poll on the control fd;
+    // poll error (non-EINTR/EAGAIN) → zfclose(0); readable → zfgetmsg()
+    // drains the pending reply (the "421 Timeout" case — zfgetmsg's
+    // own EOF handling closes the session). Returns 2 when the session
+    // got dumped. The c:3063-3071 ZFTP_CONN gate then suppresses the
+    // "not connected." message when ret == 2 ("enough messages
+    // already"). Prior dispatcher skipped the probe entirely, so a
+    // server-side timeout/disconnect surfaced as a confusing failure
+    // of the NEXT command instead of the canonical 421 drain.
+    let probe_dumped: bool = {
+        let is_test = argv.first() == Some(&"test"); // ZFTP_TEST c:147
+        let is_sess = matches!(argv.first(), Some(&"session") | Some(&"rmsession")); // ZFTP_SESS c:148
+        let ctrl_fd: Option<i32> = zftp_state()
+            .lock()
+            .ok()
+            .and_then(|s| {
+                s.get_session(None).and_then(|sess| {
+                    use std::os::unix::io::AsRawFd;
+                    sess.control.as_ref().map(|c| c.as_raw_fd())
+                })
+            });
+        match (ctrl_fd, is_test || is_sess) {
+            (Some(fd), false) => {
+                // c:2270-2272 — poll(&pfd, 1, 0).
+                let mut pfd = libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let ret = unsafe { libc::poll(&mut pfd, 1, 0) };
+                if ret < 0 {
+                    let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    if eno != libc::EINTR && eno != libc::EAGAIN {
+                        zfclose(0); // c:2273
+                    }
+                } else if ret > 0 && pfd.revents != 0 {
+                    /* handles 421 (maybe a bit noisily?) */
+                    zfgetmsg(); // c:2276
+                }
+                // c:2293 — dumped iff control is gone now.
+                zftp_state()
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.get_session(None).and_then(|sess| sess.control.as_ref().map(|_| ())))
+                    .is_none()
+            }
+            _ => false,
+        }
+    };
+
     let mut zftp_guard = zftp_state().lock().unwrap_or_else(|e| {
         zftp_state_clear_poison();
         e.into_inner()
@@ -3864,6 +3926,24 @@ pub fn bin_zftp(
     let (status, output): (i32, String) = (|| {
         if args.is_empty() {
             return (1, "zftp: subcommand required\n".to_string());
+        }
+
+        // c:3063-3072 — ZFTP_CONN gate with ret==2 suppression:
+        //     if ((zptr->flags & ZFTP_CONN) && !zfsess->control) {
+        //         if (ret != 2) {
+        //             /* with ret == 2, we just got dumped out in the
+        //              * test, so enough messages already. */
+        //             zwarnnam(fullname, "not connected.");
+        //         }
+        //         return 1;
+        //     }
+        // The per-arm "not connected." messages below are the normal
+        // path; when the probe just closed the session, exit 1 with
+        // no message.
+        if probe_dumped
+            && !matches!(args[0], "open" | "params" | "test" | "session" | "rmsession")
+        {
+            return (1, String::new()); // c:3064-3071
         }
 
         match args[0] {
