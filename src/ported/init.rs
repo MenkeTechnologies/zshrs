@@ -401,6 +401,30 @@ pub fn init_io(_cmd: Option<&str>) {
     // strict `== 1` check is brittle — match C's truthy test
     // so a future libc that returns any non-zero value still
     // hits the SHTTY-open path.
+    // ttystrname is the canonical "name of the controlling tty" global
+    // (init.c declares it; clone.c reads it for $TTY after fork). The
+    // C `init_io` keeps it in lockstep with `SHTTY`: every open-site
+    // and every dup-fallback either replaces it with `ttyname(fd)` of
+    // the new SHTTY or resets to "" / "/dev/tty" on failure. Mirror
+    // every store here so $TTY isn't empty after init.
+    let set_ttystrname = |s: String| {
+        // c:625 zsfree(ttystrname); ttystrname = ztrdup(...)
+        *crate::ported::modules::clone::ttystrname.lock().unwrap() = s;
+    };
+    #[cfg(unix)]
+    let ttyname_of = |fd: i32| -> Option<String> {
+        unsafe {
+            let p = libc::ttyname(fd);
+            if p.is_null() {
+                None
+            } else {
+                std::ffi::CStr::from_ptr(p)
+                    .to_str()
+                    .ok()
+                    .map(|s| s.to_string())
+            }
+        }
+    };
     #[cfg(unix)]
     unsafe {
         if libc::isatty(0) != 0 {
@@ -409,6 +433,8 @@ pub fn init_io(_cmd: Option<&str>) {
             if !name_ptr.is_null() {
                 let name = std::ffi::CStr::from_ptr(name_ptr);
                 let cstr = std::ffi::CString::new(name.to_bytes()).unwrap();
+                // c:626 ttystrname = ztrdup(ttyname(0))
+                set_ttystrname(name.to_string_lossy().into_owned());
                 let fd = libc::open(
                     cstr.as_ptr(), // c:627
                     libc::O_RDWR | libc::O_NOCTTY,
@@ -425,14 +451,27 @@ pub fn init_io(_cmd: Option<&str>) {
             // c:662
             SHTTY.store(movefd(libc::dup(1)), Ordering::SeqCst);
             // c:663
+            // c:664-665 — zsfree(ttystrname); ttystrname = ztrdup(ttyname(1));
+            if let Some(n) = ttyname_of(1) {
+                set_ttystrname(n);
+            }
         }
         if SHTTY.load(Ordering::SeqCst) == -1 {
             // c:667
             let dev_tty = std::ffi::CString::new("/dev/tty").unwrap();
             let fd = libc::open(dev_tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY); // c:668
             SHTTY.store(movefd(fd), Ordering::SeqCst);
+            if SHTTY.load(Ordering::SeqCst) != -1 {
+                // c:669-670 — ttystrname = ztrdup(ttyname(SHTTY));
+                if let Some(n) = ttyname_of(SHTTY.load(Ordering::SeqCst)) {
+                    set_ttystrname(n);
+                }
+            }
         }
-        if SHTTY.load(Ordering::SeqCst) != -1 {
+        if SHTTY.load(Ordering::SeqCst) == -1 {
+            // c:672-674 — failed all opens: ttystrname = "";
+            set_ttystrname(String::new());
+        } else {
             // c:675
             let fdflags = libc::fcntl(SHTTY.load(Ordering::SeqCst), libc::F_GETFD, 0); // c:677
             if fdflags != -1 {
@@ -442,6 +481,12 @@ pub fn init_io(_cmd: Option<&str>) {
                     libc::F_SETFD, // c:680
                     fdflags | libc::FD_CLOEXEC,
                 );
+            }
+            // c:683-684 — if (!ttystrname) ttystrname = ztrdup("/dev/tty");
+            // Rust mirrors NULL-check via empty-string check on the Mutex.
+            let mut guard = crate::ported::modules::clone::ttystrname.lock().unwrap();
+            if guard.is_empty() {
+                *guard = "/dev/tty".to_string();
             }
         }
     }
