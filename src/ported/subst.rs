@@ -4497,6 +4497,35 @@ pub fn paramsubst(
                 let saved_sub_flags = sub_flags_get();
                 let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
                 sub_flags_set(saved_sub_flags);
+                // c:Src/exec.c:4856-4871 readoutput — UNQUOTED `$(…)`
+                // output is IFS-word-split (`spacesplit(buf, 0, 1, 0)`,
+                // c:4865) into the word list after trailing newlines
+                // are stripped; only the quoted `"$(…)"` form (qt,
+                // c:4858-4864) keeps one word. The Rust multsub returns
+                // the raw output as one scalar, so apply the split here
+                // for the unquoted cmd-subst shape. This is what makes
+                // `${#$(cmd)}` count WORDS and `${(f)$(cmd)}` see an
+                // array that the c:3905 sepjoin then re-joins — zsh:
+                // `${#${(f)$(typeset +i)}}` = chars of the space-joined
+                // scalar, not the line count.
+                let inner_is_cmdsubst =
+                    matches!(body_chars.get(start + 1).copied(), Some('(') | Some(Inpar));
+                let (joined, arr_parts, isarr) = if inner_is_cmdsubst
+                    && !qt
+                    && !peeled_quotes
+                    && body_chars[start] != Qstring
+                {
+                    // c:4865 spacesplit with default IFS — runs of
+                    // whitespace collapse, leading/trailing stripped.
+                    let words: Vec<String> = joined.split_whitespace().map(String::from).collect();
+                    if words.len() <= 1 {
+                        (words.into_iter().next().unwrap_or_default(), Vec::new(), false)
+                    } else {
+                        (words.join(" "), words, true)
+                    }
+                } else {
+                    (joined, arr_parts, isarr)
+                };
                 if isarr && !arr_parts.is_empty() {
                     // Generate a stable per-call temp name. We use a
                     // process-local counter; cleanup happens at end of
@@ -10181,14 +10210,33 @@ pub fn paramsubst(
                     s.split(sp.as_str()).map(String::from).collect()
                 }
             };
-            let parts: Vec<String> = if let Some(prev) = split_parts.clone() {
-                // Already-split source (e.g. earlier filter/operator);
-                // re-split each piece.
-                prev.iter().flat_map(|s| split_one(s)).collect()
-            } else if let Some(arr) = arrays_get(&var_name) {
-                arr.iter().flat_map(|s| split_one(s)).collect()
+            // c:Src/subst.c:3902-3917 — when the source is an ARRAY,
+            // it is JOINED before the force_split:
+            //   nojoin==0 (or explicit sep): `val = sepjoin(aval, sep,
+            //   1); isarr = 0;` (c:3905-3907; sep NULL joins with the
+            //   IFS space), then c:3920 sepsplit(val, spsep) re-splits
+            //   the joined scalar. So `${(f)$(cmd)}` joins the
+            //   IFS-split words with spaces and the newline split
+            //   finds nothing — zsh yields ONE scalar, not lines.
+            //   nojoin==2 ((@) flag): joins on spsep itself
+            //   (c:3913-3916 `sepjoin(aval, spsep, 1)`) — re-splitting
+            //   on the same spsep ≡ per-element split.
+            let src_elems: Option<Vec<String>> = if let Some(prev) = split_parts.clone() {
+                Some(prev)
             } else {
-                split_one(&value)
+                arrays_get(&var_name)
+            };
+            let parts: Vec<String> = match src_elems {
+                Some(elems) if nojoin == 2 => {
+                    // c:3913-3916 + c:3920 — per-element split.
+                    elems.iter().flat_map(|s| split_one(s)).collect()
+                }
+                Some(elems) => {
+                    // c:3905-3907 sepjoin then c:3920 sepsplit.
+                    let joiner = sep.clone().unwrap_or_else(|| " ".to_string());
+                    split_one(&elems.join(&joiner))
+                }
+                None => split_one(&value),
             };
             // c:Src/subst.c:3920-3928 — `if (force_split && !isarr) {
             //   aval = sepsplit(val, spsep, 0, 1); ... }` does NOT
@@ -10263,14 +10311,26 @@ pub fn paramsubst(
                 }
                 parts = collapsed;
             }
-            split_parts = Some(parts); // c:3950
-                                       // c:3274 — `isarr = nojoin ? 1 : 2;`. The value 2 is
-                                       // C's "array came from splitting a scalar" sentinel
-                                       // (Src/subst.c:1647-1657 comment). The c:3317 qt-sepjoin
-                                       // transition skips when `spsep` is set, so isarr=2
-                                       // survives DQ and the splat block at c:4245 fires —
-                                       // matching zsh's `"${(s. .)str}"` per-word output.
-            isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
+            split_parts = Some(parts.clone()); // c:3950
+                                               // c:3922-3927 — `if (!aval || !aval[0]) val = dupstring("");
+                                               // else if (!aval[1]) val = aval[0]; else isarr = nojoin ? 1 : 2;`
+                                               // isarr is marked ONLY for a 2+-element split result; an empty
+                                               // or single-element split stays scalar (isarr remains 0), so
+                                               // `${#${(f)$(cmd)}}` measures the joined scalar's chars.
+                                               // The value 2 is C's "array came from splitting a scalar"
+                                               // sentinel (Src/subst.c:1647-1657 comment). The c:3317
+                                               // qt-sepjoin transition skips when `spsep` is set, so isarr=2
+                                               // survives DQ and the splat block at c:4245 fires —
+                                               // matching zsh's `"${(s. .)str}"` per-word output.
+            isarr = if parts.len() >= 2 {
+                if nojoin != 0 {
+                    1
+                } else {
+                    2
+                }
+            } else {
+                0
+            }; // c:3922-3927
                                                      // c:Src/subst.c:4215 — `if (isarr && ssub)
                                                      //   val = sepjoin(aval, NULL, 1); isarr = 0`.
                                                      //   PREFORK_SINGLE callers (scalar
