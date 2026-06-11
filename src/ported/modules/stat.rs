@@ -493,9 +493,13 @@ pub fn bin_stat(
         // List elements + return.
         if let Some(ref name) = arrnam {
             // c:469
-            // c:472 — `setaparam(arrnam, names);` — array of element names.
-            let joined: Vec<&str> = STATELTS.iter().copied().collect();
-            setsparam(name, &joined.join(":"));
+            // c:485 — `setaparam(arrnam, array);` — REAL array of
+            // element names. Prior port colon-joined into a scalar
+            // via setsparam — `$names[1]` returned the first CHAR of
+            // "device:inode:mode:..." instead of "device", and
+            // ${(t)names} reported scalar where zsh reports array.
+            let names: Vec<String> = STATELTS.iter().map(|s| s.to_string()).collect();
+            setaparam(name, names); // c:485
         } else {
             let joined: Vec<&str> = STATELTS.iter().copied().collect();
             println!("{}", joined.join(" ")); // c:478 putchar
