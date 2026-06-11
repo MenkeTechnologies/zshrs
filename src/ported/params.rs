@@ -12967,10 +12967,14 @@ mod tests {
         // The set_argzero call mirrors to posixzero only if unset,
         // and we set posixzero first → mirror skipped. Confirm separation.
 
+        // pm is UNUSED in argzerogetfn (C signature matches Rust).
+        // Use param::default() as the dummy carrier.
+        let pm = param::default();
+
         // POSIXARGZERO off → returns argzero.
         opt_state_set("posixargzero", false);
         assert_eq!(
-            argzerogetfn(),
+            argzerogetfn(&pm),
             "rewritten-name",
             "c:4960 — !POSIXARGZERO returns argzero (current display name)"
         );
@@ -12978,7 +12982,7 @@ mod tests {
         // POSIXARGZERO on → returns posixzero (the preserved startup argv[0]).
         opt_state_set("posixargzero", true);
         assert_eq!(
-            argzerogetfn(),
+            argzerogetfn(&pm),
             "/bin/zsh",
             "c:4959 — POSIXARGZERO on returns posixzero (original startup argv[0])"
         );

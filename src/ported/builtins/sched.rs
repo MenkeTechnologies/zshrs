@@ -960,7 +960,7 @@ mod tests {
         }));
         drop(head);
         // schedgetfn's `Param pm` is UNUSED — pass null pointer.
-        let arr = schedgetfn(std::ptr::null());
+        let arr = schedgetfn(std::ptr::null_mut());
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0], "1700000000::echo test");
         assert_eq!(arr[1], "1700001000:-o:echo zle");
@@ -1076,7 +1076,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
         *schedcmds_lock().lock().unwrap() = None;
-        let arr = schedgetfn(std::ptr::null());
+        let arr = schedgetfn(std::ptr::null_mut());
         assert!(
             arr.is_empty(),
             "empty schedule must serialize to empty Vec, got {:?}",
@@ -1129,7 +1129,7 @@ mod tests {
         *schedcmds_lock().lock().unwrap() = None;
         let ops = empty_ops();
         bin_sched("sched", &[s("+60"), s("only")], &ops, 0);
-        let arr = schedgetfn(std::ptr::null());
+        let arr = schedgetfn(std::ptr::null_mut());
         assert_eq!(arr.len(), 1, "1 entry after 1 add, got {arr:?}");
     }
 
@@ -1143,7 +1143,7 @@ mod tests {
         bin_sched("sched", &[s("+10"), s("a")], &ops, 0);
         bin_sched("sched", &[s("+20"), s("b")], &ops, 0);
         bin_sched("sched", &[s("+30"), s("c")], &ops, 0);
-        let arr = schedgetfn(std::ptr::null());
+        let arr = schedgetfn(std::ptr::null_mut());
         assert_eq!(arr.len(), 3, "3 entries after 3 adds, got {arr:?}");
     }
 
@@ -1176,7 +1176,7 @@ mod tests {
     fn schedgetfn_returns_vec_string_type() {
         let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
-        let _: Vec<String> = schedgetfn(std::ptr::null());
+        let _: Vec<String> = schedgetfn(std::ptr::null_mut());
     }
 
     /// c:624 — `setup_(NULL)` returns 0.
@@ -1252,10 +1252,10 @@ mod tests {
         let _serial = reset_with_lock();
         let ops = empty_ops();
         bin_sched("sched", &[s("+10"), s("alpha")], &ops, 0);
-        let first = schedgetfn(std::ptr::null());
+        let first = schedgetfn(std::ptr::null_mut());
         for _ in 0..3 {
             assert_eq!(
-                schedgetfn(std::ptr::null()),
+                schedgetfn(std::ptr::null_mut()),
                 first,
                 "schedgetfn must be deterministic on unchanged schedule"
             );
@@ -1300,7 +1300,7 @@ mod tests {
     #[test]
     fn schedgetfn_returns_vec_string_pin_alt() {
         let _g = crate::test_util::global_state_lock();
-        let _: Vec<String> = schedgetfn(std::ptr::null());
+        let _: Vec<String> = schedgetfn(std::ptr::null_mut());
     }
 
     /// c:582 — `schedgetfn(NULL)` on empty schedule returns empty Vec.
@@ -1308,7 +1308,7 @@ mod tests {
     fn schedgetfn_empty_schedule_returns_empty() {
         let _g = crate::test_util::global_state_lock();
         let _serial = reset_with_lock();
-        let v = schedgetfn(std::ptr::null());
+        let v = schedgetfn(std::ptr::null_mut());
         assert!(
             v.is_empty(),
             "empty schedule must yield empty Vec; got {:?}",
