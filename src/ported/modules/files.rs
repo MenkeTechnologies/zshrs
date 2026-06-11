@@ -418,37 +418,42 @@ pub fn bin_ln(
     if last_idx > 0 {
         // c:233
         let target = &args[last_idx];
-        if let Ok(meta) = std::fs::metadata(target) {
-            // c:235 stat
+        // c:232 — `rp = unmeta(*a);` — strip Meta escapes before stat/
+        // lstat/unlink so the kernel sees the raw POSIX target path.
+        // Diagnostics (zwarnnam) keep the original metafied form.
+        let rp = crate::ported::utils::unmeta(target);
+        if let Ok(meta) = std::fs::metadata(&rp) {
+            // c:233 stat(rp, &st)
             if meta.is_dir() {
-                // c:235 S_ISDIR
+                // c:233 S_ISDIR
                 have_dir = true;
                 if (flags & MV_NOCHASETARGET) != 0 {
-                    // c:237
-                    if let Ok(lmeta) = std::fs::symlink_metadata(target) {
+                    // c:235
+                    if let Ok(lmeta) = std::fs::symlink_metadata(&rp) {
+                        // c:236 lstat(rp, &st)
                         if lmeta.file_type().is_symlink() {
-                            // c:237 S_ISLNK
-                            // c:245-256 — multi-source symlink-to-dir
+                            // c:236 S_ISLNK
+                            // c:244-256 — multi-source symlink-to-dir
                             // resolution: error unless -f and exactly
                             // one source.
                             if last_idx > 1 {
-                                // c:245
+                                // c:244
                                 zwarnnam(
-                                    nam, // c:247
+                                    nam, // c:246
                                     &format!("{}: not a directory", target),
                                 );
-                                return 1; // c:248
+                                return 1; // c:247
                             }
                             if (flags & MV_FORCE) != 0 {
-                                // c:250
-                                let _ = std::fs::remove_file(target); // c:251 unlink
-                                have_dir = false; // c:252
+                                // c:249
+                                let _ = std::fs::remove_file(&rp); // c:250 unlink(rp)
+                                have_dir = false; // c:251
                             } else {
                                 zwarnnam(
-                                    nam, // c:255
+                                    nam, // c:254
                                     &format!("{}: file exists", target),
                                 );
-                                return 1; // c:256
+                                return 1; // c:255
                             }
                         }
                     }
