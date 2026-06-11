@@ -62,7 +62,11 @@ fn run_zsh(s: &str) -> ShellResult {
 
 fn run_zshrs(s: &str) -> ShellResult {
     let o = Command::new(zshrs_bin())
-        .args(["--zsh", "-c", s])
+        // `-fc` to MATCH run_zsh above (the suite name says fc): the
+        // zsh side skips rc files, so the zshrs side must too —
+        // plain `-c` loaded the user's full zshrc per test, which is
+        // slow, environment-dependent, and wedged whole sweep runs.
+        .args(["--zsh", "-fc", s])
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("invoke zshrs");
@@ -480,11 +484,19 @@ mod glob_qualifiers {
     use super::*;
 
     fn with_tmp(setup: &str, glob_test: &str) -> (ShellResult, ShellResult) {
+        // One tempdir PER SHELL: with a shared dir, zsh ran the setup
+        // first (creating files + `mkdir d`), so zshrs's `mkdir d`
+        // failed on the existing dir and the `&&` chain skipped the
+        // glob entirely — every with_tmp test compared zsh's real
+        // output against "" regardless of glob behavior.
         let dir = tempfile::tempdir().expect("tempdir");
+        let dir_r = tempfile::tempdir().expect("tempdir");
         let dp = dir.path().to_str().unwrap().to_string();
+        let dp_r = dir_r.path().to_str().unwrap().to_string();
         let script = format!("cd {} && {} && {}", dp, setup, glob_test);
+        let script_r = format!("cd {} && {} && {}", dp_r, setup, glob_test);
         let z = run_zsh(&script);
-        let r = run_zshrs(&script);
+        let r = run_zshrs(&script_r);
         (z, r)
     }
 
