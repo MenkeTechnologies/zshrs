@@ -11887,7 +11887,18 @@ pub fn paramsubst(
         // dropped through to scalar lookup, then `[a]` glob'd.
         let mut subscript_str: Option<String> = None; // c:1625
         let opener = chars.get(pos).copied();
-        if opener == Some('[') || opener == Some(Inbrack) {
+        // c:Src/subst.c:2800-2802 — fetchvalue's bracket-parse arg is
+        // `(unset(KSHARRAYS) || inbrace) ? 1 : -1`: the BARE form
+        // under KSHARRAYS does NOT parse a subscript; c:2867 keeps the
+        // bracket loop off for bare+KSHARRAYS too. The `[...]` stays
+        // literal trailing text (any `$refs` inside it are expanded by
+        // the continuing stringsubst scan) and undergoes filename
+        // generation downstream. zsh 5.9: `setopt ksharrays;
+        // i=0; a=(x y z); print -- $a[$i]` →
+        // `zsh:1: no matches found: x[0]`, rc=1.
+        let ksharrays_bare =
+            crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+        if !ksharrays_bare && (opener == Some('[') || opener == Some(Inbrack)) {
             // c:1625
             // Collect until matching `]` / Outbrack (depth-tracked
             // so `$arr[$other[1]]` works).
@@ -12147,6 +12158,19 @@ pub fn paramsubst(
                     String::new() // c:1625
                 } // c:1625
             } // c:1625
+        } else if ksharrays_bare {
+            // c:Src/params.c:2293-2296 — KSHARRAYS bare reference to
+            // an identifier-named array/assoc collapses to the FIRST
+            // element (`v->end = 1, v->isarr = 0`), not the joined
+            // whole.
+            arrays_get(&var_name)
+                .map(|arr| arr.first().cloned().unwrap_or_default())
+                .or_else(|| {
+                    assoc_get(&var_name)
+                        .map(|m| m.values().next().cloned().unwrap_or_default())
+                })
+                .or_else(|| exec_getsparam(&var_name))
+                .unwrap_or_default()
         } else {
             // c:1625
             // No subscript: route through the canonical getsparam
@@ -12222,6 +12246,7 @@ pub fn paramsubst(
         let splat_assoc = (splat_full || splat_range)        // c:3950
             && assoc_contains(&var_name); // c:3950
         if !qt                                                // c:3950
+            && !ksharrays_bare // c:Src/params.c:2293-2296 — isarr=0, no splat
             && pf_flags & PREFORK_SINGLE == 0          // c:3950
             && (subscript_str.is_none() || splat_full || splat_range) // c:3950
             && (arrays_contains(&var_name) || splat_assoc)

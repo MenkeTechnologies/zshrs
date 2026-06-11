@@ -2769,6 +2769,34 @@ impl ZshCompiler {
         }
     }
 
+    /// Emit the UNBRACED `$name[key]` subscript call. The subscript
+    /// decision is a RUNTIME one — `setopt ksharrays` can flip mid-
+    /// script — so the compiler always emits
+    /// BUILTIN_ARRAY_INDEX_UNBRACED ([name, key, suffix, quoted])
+    /// and the bridge dispatches:
+    ///   - KSHARRAYS unset → identical to BUILTIN_ARRAY_INDEX
+    ///     (+ literal suffix concat).
+    ///   - KSHARRAYS set → NO subscript (c:Src/subst.c:2800-2802 +
+    ///     2867): bare `$name` expansion + literal `[key]suffix`
+    ///     undergoing filename generation (unless `quoted`).
+    /// `quoted` is the word's Snull/Dnull marker presence — the
+    /// matched shapes start with an unescaped `$`, so markers can
+    /// only come from a quote span wrapping the expansion (e.g.
+    /// `"$a[0]"`), where zsh suppresses filename generation.
+    fn emit_unbraced_subscript(&mut self, name: &str, key: &str, suffix: &str, quoted: bool) {
+        let name_const = self.builder.add_constant(Value::str(name));
+        let key_const = self.builder.add_constant(Value::str(key));
+        let suffix_const = self.builder.add_constant(Value::str(suffix));
+        self.builder.emit(Op::LoadConst(name_const), 0);
+        self.builder.emit(Op::LoadConst(key_const), 0);
+        self.builder.emit(Op::LoadConst(suffix_const), 0);
+        self.builder.emit(Op::LoadInt(quoted as i64), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX_UNBRACED, 4),
+            0,
+        );
+    }
+
     /// Compile a raw word string. Detects $-triggers, glob, tilde,
     /// brace, ZshFlag, array-access at compile time and emits native
     /// ops where possible. Words that hit no fast path fall through
@@ -3456,14 +3484,10 @@ impl ZshCompiler {
                             // `[` / `]` — those would be a nested subscript
                             // or paramsubst that needs the runtime path.
                             if !key.contains('$') && !key.contains('[') && !key.contains(']') {
-                                let name_const = self.builder.add_constant(Value::str(nm));
-                                let key_const = self.builder.add_constant(Value::str(key));
-                                self.builder.emit(Op::LoadConst(name_const), 0);
-                                self.builder.emit(Op::LoadConst(key_const), 0);
-                                self.builder.emit(
-                                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2),
-                                    0,
-                                );
+                                let quoted = self.dq_context_depth > 0
+                                    || s.contains('\u{9d}')
+                                    || s.contains('\u{9e}');
+                                self.emit_unbraced_subscript(nm, key, "", quoted);
                                 return;
                             }
                         }
@@ -3725,34 +3749,35 @@ impl ZshCompiler {
 
         // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
         // `$NAME` as the variable name and `[KEY]` as a subscript that
-        // applies to it (NOT a literal `[KEY]` suffix). Emit name+key
-        // through BUILTIN_ARRAY_INDEX.
+        // applies to it (NOT a literal `[KEY]` suffix) — UNLESS
+        // KSHARRAYS is set at expansion time (c:Src/subst.c:2800-2802
+        // + 2867), which is a runtime decision: emit the UNBRACED
+        // subscript opcode and let the bridge dispatch.
         if !has_bnull {
             if let Some((name, key)) = bare_subscript_ref(&untoked) {
-                let name_const = self.builder.add_constant(Value::str(name));
-                let key_const = self.builder.add_constant(Value::str(key));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(Op::LoadConst(key_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
+                self.emit_unbraced_subscript(
+                    name,
+                    key,
+                    "",
+                    has_quote_markers || self.dq_context_depth > 0,
+                );
                 return;
             }
         }
 
         // Fast path: bare `$NAME[KEY]suffix` — same as above but with a
-        // literal suffix appended. Emit name+key, ARRAY_INDEX, then
-        // concat the suffix.
+        // literal suffix appended (under KSHARRAYS the suffix joins the
+        // literal `[KEY]` text BEFORE filename generation: zsh 5.9
+        // `setopt ksharrays; a=(x y z); print -- $a[0]suffix` →
+        // `zsh:1: no matches found: x[0]suffix`).
         if !has_bnull {
             if let Some((name, key, suffix)) = bare_subscript_with_suffix(&untoked) {
-                let name_const = self.builder.add_constant(Value::str(name));
-                let key_const = self.builder.add_constant(Value::str(key));
-                self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(Op::LoadConst(key_const), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_INDEX, 2), 0);
-                let suffix_const = self.builder.add_constant(Value::str(suffix));
-                self.builder.emit(Op::LoadConst(suffix_const), 0);
-                self.builder.emit(Op::Concat, 0);
+                self.emit_unbraced_subscript(
+                    name,
+                    key,
+                    suffix,
+                    has_quote_markers || self.dq_context_depth > 0,
+                );
                 return;
             }
         }
