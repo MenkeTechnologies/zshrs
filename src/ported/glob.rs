@@ -4814,32 +4814,16 @@ fn check_single_qualifier(qual: &qualifier, path: &Path, meta: &Metadata) -> boo
         }
         qualifier::Eval(code) => {
             // c:Src/glob.c:1599-1620 — `(e:CODE:)` shell-eval
-            // qualifier. C sets up REPLY to the current path,
-            // execstring(code, …), and keeps the file iff the body
-            // returned 0.
+            // qualifier; per-file evaluation is qualsheval
+            // (c:3907-3943): unsetparam("reply"), setsparam("REPLY",
+            // name), execode, errflag/lastval save+restore.
             //
-            // The Rust port routes through ShellExecutor::execute_script
-            // which parses + compiles + runs the body. Save/restore
-            // REPLY around the call so other code seeing $REPLY sees
-            // a sane value after the glob finishes.
-            let saved_reply = crate::ported::params::getsparam("REPLY");
-            // Set REPLY to the path being tested.
-            crate::ported::params::setsparam("REPLY", &path.to_string_lossy());
-            let mut keep = false;
-            crate::fusevm_bridge::with_executor(|exec| {
-                let rc = exec.execute_script(code).unwrap_or(1);
-                keep = rc == 0;
-            });
-            // Restore REPLY.
-            match saved_reply {
-                Some(v) => {
-                    crate::ported::params::setsparam("REPLY", &v);
-                }
-                None => {
-                    crate::ported::params::unsetparam("REPLY");
-                }
-            }
-            keep
+            // The name C hands qualsheval is scanner()'s pathbuf —
+            // relative globs never carry a "./" prefix ($REPLY is
+            // `keep`, not `./keep`, for `*(e:'[[ $REPLY = keep ]]':)`).
+            // entry.path() here DOES prefix "./", so normalize through
+            // the same glob_emit_path used when the match is emitted.
+            qualsheval(&glob_emit_path(path), code)
         }
     }
 }
