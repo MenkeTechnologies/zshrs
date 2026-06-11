@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::{Mutex, OnceLock};
 
-use crate::ported::params::{getiparam, setsparam};
+use crate::ported::params::{getiparam, setaparam, setsparam};
 use crate::ported::utils::{zerrnam, zwarnnam};
 use crate::ported::zsh_h::{features, module, options};
 // =====================================================================
@@ -1315,9 +1315,12 @@ pub(crate) fn zccmd_position(nam: &str, args: &[String]) -> i32 {
         w.cols.to_string(),
     ];
     drop(wins);
-    // c — `setaparam(args[1], arr);`
-    setsparam(&args[1], &arr.join(":"));
-    0
+    // c:1376 — `setaparam(args[1], array);` — REAL array of six
+    // numbers (cury curx begy begx maxy maxx). Prior port colon-
+    // joined into a scalar, so `$pos[1]` indexed the first CHARACTER
+    // of "3:5:0:0:24:80" instead of the cursor row.
+    setaparam(&args[1], arr); // c:1376
+    0 // c:1377
 }
 
 // =====================================================================
@@ -1362,8 +1365,13 @@ pub(crate) fn zccmd_querychar(nam: &str, args: &[String]) -> i32 {
         }
     }
     drop(wins);
-    // c — `setaparam(var, clist);`
-    setsparam(&var, &clist.join(":"));
+    // c:1467 — `return !setaparam(args[1] ? args[1] : "reply",
+    //                             zlinklist2array(clist, 1));`
+    // REAL array: [char, color-name, attr...]. Prior port colon-
+    // joined into a scalar — `$reply[1]` returned the first char of
+    // the join instead of the queried character, and a literal `:`
+    // at the cursor corrupted the field split entirely.
+    setaparam(&var, clist); // c:1467
     0
 }
 
