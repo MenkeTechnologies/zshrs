@@ -423,20 +423,17 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     });
     if glob_failed {
         // c:Src/glob.c:1876-1880 + Src/exec.c — NOMATCH zerr sets
-        // ERRFLAG_ERROR (via utils.c:184); the C execlist loop's per-
-        // sublist post-exec path then resets the bit so subsequent
-        // sublists continue (verified: `zsh -fc 'ls /nope_*; echo
-        // after'` prints `after`). zshrs's vm dispatch doesn't have
-        // C's central execlist loop — the post-command-boundary
-        // equivalent is right HERE, where the dispatcher consumes
-        // `current_command_glob_failed` and surfaces status 1 for THIS
-        // command. Clear ERRFLAG_ERROR at the same boundary so the
-        // next command runs (while leaving ERRFLAG_INT etc. alone so
-        // ctrl-c still propagates).
-        crate::ported::utils::errflag.fetch_and(
-            !crate::ported::zsh_h::ERRFLAG_ERROR,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        // ERRFLAG_ERROR (via utils.c:184). For a BUILTIN command the
+        // expansion runs IN the shell process, so errflag stays set
+        // and the rest of the input aborts (zsh -fc 'echo /nope_*;
+        // echo after' prints nothing after the error — verified
+        // against zsh 5.9). The continue-after-nomatch behaviour
+        // belongs ONLY to externals: C forks BEFORE expansion there,
+        // so the child's zerr can't touch the parent's errflag (zsh
+        // -fc 'ls /nope_*; echo after' prints `after`) — that path's
+        // clear lives in fn exec / execute_external. Leave
+        // ERRFLAG_ERROR set here; BUILTIN_ERREXIT_CHECK trigger 4
+        // aborts the remaining script at the next command boundary.
         return 1; // c:1880 — command aborted, status 1
     }
     if let Some(status) = try_user_fn_override(name, &args) {
