@@ -295,6 +295,14 @@ pub(crate) use crate::ported::pattern::{
 };
 
 /// Top-level shell executor state.
+/// Fork-equivalent event counter — incremented on every external
+/// spawn and in-process subshell entry. C zsh's `time` keyword
+/// reports only for JOBS (forked work, Src/jobs.c printtime via the
+/// job table); zshrs runs builtins/braces/functions in-process with
+/// no job, so the TIME_SUBLIST handler compares this counter across
+/// the timed body to decide whether to emit the report.
+pub static FORK_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Port of the file-static globals + `Estate` chain Src/exec.c
 /// uses — `execlist()` (line 1349) drives every list, with
 /// `execpline()` (line 1668), `execpline2()` (line 1991),
@@ -2304,6 +2312,12 @@ impl ShellExecutor {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<i32, String> {
+        // c:Src/jobs.c — `time` reports only on JOBS (forked work).
+        // Count every fork-equivalent event so BUILTIN_TIME_SUBLIST
+        // can match zsh: `time true` (builtin, no fork) is silent,
+        // `time /usr/bin/true` reports. The in-process subshell entry
+        // increments too (C forks for `(...)`).
+        FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.execute_external_bg(cmd, args, redirects, false)
     }
 
