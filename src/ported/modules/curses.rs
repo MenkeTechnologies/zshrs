@@ -1191,12 +1191,17 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
             setsparam(name, &code_str);
         }
         if args.len() >= 4 {
-            // C: KEY_MOUSE branch handled the MOUSE event array.
-            // Mouse-event parsing requires xterm SGR-mouse decoding,
-            // deferred to a future port; emit empty array via the
-            // env-var bridge.
+            // c:1247-1248 — `if (keypadnum != KEY_MOUSE && nargs >= 4)
+            //               return !setaparam(args[3], mkarray(NULL));`
+            // Non-mouse reads clear the MOUSEVAR to an EMPTY ARRAY —
+            // mkarray(NULL) is a one-NULL-terminator char**, i.e. zero
+            // elements. Prior port set a scalar "" via setsparam,
+            // which (a) made `${(t)mousevar}` report scalar where zsh
+            // reports array and (b) broke `$mousevar[1]`-style empty
+            // checks. The KEY_MOUSE event-decode branch (c:1162-1216)
+            // stays deferred pending xterm SGR-mouse decoding.
             if let Some(mvar) = args.get(3) {
-                setsparam(mvar, "");
+                setaparam(mvar, Vec::<String>::new()); // c:1248
             }
         }
     }
