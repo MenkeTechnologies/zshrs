@@ -5798,20 +5798,32 @@ pub fn doshfunc(
     // test_dollar_underscore_after_function_call.
     let saved_zunderscore = crate::ported::params::getsparam("_").unwrap_or_default();
     // c:6042 — `runshfunc(prog, wrappers, name)`: the FuncWrap chain.
-    // zsh/param/private registers `wrap_private` (param_private.c:550)
-    // on module load; C's runshfunc invokes it around every function
-    // body so `private_wraplevel` tracks the callee's locallevel and
-    // outer-scope privates get scopeprivate-hidden (PM_UNSET) for the
-    // duration. zshrs links the module statically — gate on the
-    // PRIVATE_PARAMS registry being non-empty (the moral equivalent
-    // of "module loaded"): with zero privates, wrap_private's two
-    // scopeprivate paramtab scans are no-ops not worth paying on
-    // every function call. The pwl < locallevel pre-check mirrors
-    // wrap_private's own c:552 gate so the closure is guaranteed to
-    // run when routed through it.
-    let run_wrap_private = crate::ported::modules::param_private::PRIVATE_PARAMS
+    // zsh/param/private installs `wrap_private` via addwrapper at
+    // module boot (param_private.c:712); C's runshfunc invokes it
+    // around every function body so `private_wraplevel` tracks the
+    // callee's locallevel and outer-scope privates get
+    // scopeprivate-hidden for the duration. The gate here is module
+    // BOOT STATE (MOD_INIT_B — the bit `zmodload -e` reads and
+    // load_module sets after do_boot_module, module.c:2317) —
+    // exactly C's condition for the wrapper being in the chain: the
+    // `private` dispatch runs require_module per the exec.c:2710
+    // autofeature path, which boots the module. NOT is_loaded():
+    // default-registered static modules carry MOD_LINKED from
+    // startup, which would arm the wrapper before any `private`
+    // use. The dispatch is a named special-case rather than a
+    // WRAPPERS walk because the Rust wrap_private carries a
+    // body-delegate closure (fusevm chunk runner) that can't live
+    // in funcwrap's WrapFunc fn-pointer slot. The pwl < locallevel
+    // pre-check mirrors wrap_private's own c:552 gate so the
+    // closure is guaranteed to run when routed through it.
+    let run_wrap_private = crate::ported::module::MODULESTAB
         .lock()
-        .map(|p| !p.is_empty())
+        .map(|t| {
+            t.modules
+                .get("zsh/param/private")
+                .map(|m| (m.node.flags & crate::ported::zsh_h::MOD_INIT_B) != 0)
+                .unwrap_or(false)
+        })
         .unwrap_or(false)
         && crate::ported::modules::param_private::private_wraplevel.load(Ordering::Relaxed)
             < crate::ported::params::locallevel.load(Ordering::Relaxed);

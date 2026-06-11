@@ -1172,10 +1172,16 @@ pub fn boot_(m: *const module) -> i32 {
             *e = Some(t);
         }
     }
-    // c:717 — `return addwrapper(m, wrapper);` — the addwrapper
-    // substrate (paramtab swap-on-call) isn't ported; returns 0 to
-    // mirror "wrapper installed successfully".
-    0 // c:734
+    // c:712 — `return addwrapper(m, wrapper);` — installs wrap_private
+    // into the FuncWrap chain. The Rust wrap_private carries a
+    // body-delegate closure (fusevm chunk runner) that can't live in
+    // funcwrap's WrapFunc fn-pointer slot, so the activation is
+    // modeled by MODULE BOOT STATE instead: load_module sets
+    // MOD_INIT_B after this boot_ returns (module.c:2317), and
+    // doshfunc's runshfunc-position dispatch (exec.rs, c:6042 site)
+    // invokes wrap_private whenever that bit is set — the same
+    // "wrapper active ⇔ module booted" condition as C's chain.
+    0 // c:712 addwrapper success
 }
 
 /// Port of `cleanup_(UNUSED(Module m))` from `Src/Modules/param_private.c:717`.
