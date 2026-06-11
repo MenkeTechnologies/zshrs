@@ -6521,7 +6521,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // BUILTIN_PARAM_REPLACE — `${var/pat/repl}` / `${var//pat/repl}` /
     // `${var/#pat/repl}` / `${var/%pat/repl}`. PURE PASSTHRU.
     vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
-        let _dq_flag = vm.pop().to_int() != 0;
+        let dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
         let repl = vm.pop().to_str();
         let pattern = vm.pop().to_str();
@@ -6537,7 +6537,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             3 => format!("${{{}/%{}/{}}}", name, pattern, repl),
             _ => format!("${{{}/{}/{}}}", name, pattern, repl),
         };
-        paramsubst_to_value(&body)
+        // c:Src/subst.c:1625 — paramsubst's qt flag. The compiler
+        // threads the word's DQ context onto the stack; dropping it
+        // (the old `let _dq_flag`) ran the rebuilt body with qt=false
+        // whenever the opcode fired outside an EXPAND_TEXT scope, so
+        // DQ-only semantics inside the replacement (e.g. `$'` staying
+        // literal per Src/subst.c:301 — `"${a/x/$'\t'q}"`) were lost.
+        // Bump in_dq_context exactly like EXPAND_TEXT mode 1 so
+        // paramsubst_to_value's qt probe sees the right context.
+        if dq_flag {
+            with_executor(|exec| exec.in_dq_context += 1);
+        }
+        let ret = paramsubst_to_value(&body);
+        if dq_flag {
+            with_executor(|exec| exec.in_dq_context -= 1);
+        }
+        ret
     });
 
     vm.register_builtin(BUILTIN_REGISTER_COMPILED_FN, |vm, argc| {
