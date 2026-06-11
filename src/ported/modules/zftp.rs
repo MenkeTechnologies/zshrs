@@ -4251,7 +4251,13 @@ pub fn bin_zftp(
                 }
             }
 
-            _ => (1, format!("zftp: unknown subcommand {}\n", args[0])),
+            // c:3013-3015 — `if (!zptr->nam) { zwarnnam(name,
+            //   "no such subcommand: %s", cnam); return 1; }`. C uses
+            // "no such subcommand:" (with colon); prior Rust port used
+            // "unknown subcommand" (no colon). Match the exact C
+            // diagnostic so test harnesses pattern-matching the
+            // documented error string see the same bytes.
+            _ => (1, format!("zftp: no such subcommand: {}\n", args[0])),
         }
     })();
     drop(zftp_guard);
