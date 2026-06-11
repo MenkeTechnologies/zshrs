@@ -8458,62 +8458,101 @@ pub fn paramsubst(
                 // (leftmost), longest at that position. Bug #179 in
                 // docs/BUGS.md.
                 let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
+                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                // c:Src/glob.c:2626-2636 — (R) rest portion (only
+                // relevant here when B/E/N suppress the implied
+                // SUB_REST, c:Src/subst.c:3176-3177).
+                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
-                    match op {
+                    // Match bounds [b, e) in chars; None = no match.
+                    let bounds: Option<(usize, usize)> = match op {
                         1 => {
                             if substr_mode {
                                 // Leftmost longest substring match.
-                                for start in 0..=nn {
+                                let mut found = None;
+                                'outer: for start in 0..=nn {
                                     for k in (0..=(nn - start)).rev() {
                                         let candidate: String =
                                             cv[start..start + k].iter().collect();
                                         if crate::vm_helper::glob_match_static(&candidate, &p) {
-                                            if match_only {
-                                                return candidate;
-                                            }
-                                            let before: String = cv[..start].iter().collect();
-                                            let after: String =
-                                                cv[start + k..].iter().collect();
-                                            return before + &after;
+                                            found = Some((start, start + k));
+                                            break 'outer;
                                         }
                                     }
                                 }
-                                return if match_only {
-                                    String::new()
-                                } else {
-                                    val.to_string()
-                                };
-                            }
-                            let mut k = nn;
-                            loop {
-                                let prefix: String = cv[..k].iter().collect();
-                                // Route through `glob_match_static` so (#b)
-                                // capture groups populate `$match`/`$mbegin`/
-                                // `$mend` on the first successful match —
-                                // `${var##(#b)pat}` longest-prefix strip wants
-                                // the captures from the matched prefix. No-op
-                                // for patterns without (#b) (GF_BACKREF gate
-                                // inside the helper).
-                                if crate::vm_helper::glob_match_static(&prefix, &p) {
-                                    if match_only {
-                                        return prefix;
+                                found
+                            } else {
+                                let mut k = nn;
+                                let mut found = None;
+                                loop {
+                                    let prefix: String = cv[..k].iter().collect();
+                                    // Route through `glob_match_static` so (#b)
+                                    // capture groups populate `$match`/`$mbegin`/
+                                    // `$mend` on the first successful match —
+                                    // `${var##(#b)pat}` longest-prefix strip wants
+                                    // the captures from the matched prefix. No-op
+                                    // for patterns without (#b) (GF_BACKREF gate
+                                    // inside the helper).
+                                    if crate::vm_helper::glob_match_static(&prefix, &p) {
+                                        found = Some((0, k));
+                                        break;
                                     }
-                                    return cv[k..].iter().collect();
+                                    if k == 0 {
+                                        break;
+                                    }
+                                    k -= 1;
                                 }
-                                if k == 0 {
-                                    break;
-                                }
-                                k -= 1;
+                                found
                             }
+                        }
+                        _ => return val.to_string(),
+                    };
+                    if ben != 0 {
+                        // c:Src/glob.c:2575-2645 get_match_ret — compose
+                        // [match] [rest] B E N, space-joined, trailing
+                        // space trimmed. No match composes as the empty
+                        // match at (0,0) per c:Src/glob.c:3230.
+                        let (b, e) = bounds.unwrap_or((0, 0));
+                        let mut parts: Vec<String> = Vec::new();
+                        if match_only {
+                            parts.push(cv[b..e].iter().collect()); // c:2618
+                        }
+                        if rest_flag {
+                            let mut rest: String = cv[..b].iter().collect(); // c:2630
+                            rest.extend(cv[e..].iter()); // c:2634
+                            parts.push(rest);
+                        }
+                        if (ben & SUB_BIND) != 0 {
+                            parts.push((b + 1).to_string()); // c:2594 1-based start
+                        }
+                        if (ben & SUB_EIND) != 0 {
+                            parts.push((e + 1).to_string()); // c:2599 1-based end
+                        }
+                        if (ben & SUB_LEN) != 0 {
+                            parts.push((e - b).to_string()); // c:2605 char-length
+                        }
+                        return parts.join(" ");
+                    }
+                    match bounds {
+                        Some((b, e)) => {
+                            if match_only {
+                                cv[b..e].iter().collect()
+                            } else {
+                                let before: String = cv[..b].iter().collect();
+                                let after: String = cv[e..].iter().collect();
+                                before + &after
+                            }
+                        }
+                        None => {
                             if match_only {
                                 String::new()
                             } else {
                                 val.to_string()
                             }
                         }
-                        _ => val.to_string(),
                     }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
@@ -8578,51 +8617,90 @@ pub fn paramsubst(
                 // (leftmost), shortest at that position. Bug #179 in
                 // docs/BUGS.md.
                 let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
+                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                // c:Src/glob.c:2626-2636 — (R) rest portion.
+                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
-                    if substr_mode {
-                        // Leftmost shortest substring match.
-                        for start in 0..=total {
-                            for k in 0..=(total - start) {
-                                let candidate: String =
-                                    cv[start..start + k].iter().collect();
-                                if crate::vm_helper::glob_match_static(&candidate, &p) {
-                                    if match_only {
-                                        return candidate;
+                    // Match bounds [b, e) in chars; None = no match.
+                    let bounds: Option<(usize, usize)> = (|| {
+                        if substr_mode {
+                            // Leftmost shortest substring match.
+                            for start in 0..=total {
+                                for k in 0..=(total - start) {
+                                    let candidate: String =
+                                        cv[start..start + k].iter().collect();
+                                    if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                        return Some((start, start + k));
                                     }
-                                    let before: String = cv[..start].iter().collect();
-                                    let after: String = cv[start + k..].iter().collect();
-                                    return before + &after;
                                 }
                             }
+                            return None;
                         }
-                        return if match_only { String::new() } else { val.to_string() };
-                    }
-                    for k in 0..=total {
-                        let prefix: String = cv[..k].iter().collect();
-                        // (#b) capture wiring via glob_match_static.
-                        if crate::vm_helper::glob_match_static(&prefix, &p) {
-                            if match_only {
-                                return prefix;
+                        for k in 0..=total {
+                            let prefix: String = cv[..k].iter().collect();
+                            // (#b) capture wiring via glob_match_static.
+                            if crate::vm_helper::glob_match_static(&prefix, &p) {
+                                return Some((0, k));
                             }
-                            return cv[k..].iter().collect();
                         }
+                        None
+                    })();
+                    if ben != 0 {
+                        // c:Src/glob.c:2575-2645 get_match_ret — compose
+                        // [match] [rest] B E N, space-joined, trailing
+                        // space trimmed. No match composes as the empty
+                        // match at (0,0) per c:Src/glob.c:3230.
+                        let (b, e) = bounds.unwrap_or((0, 0));
+                        let mut parts: Vec<String> = Vec::new();
+                        if match_only {
+                            parts.push(cv[b..e].iter().collect()); // c:2618
+                        }
+                        if rest_flag {
+                            let mut rest: String = cv[..b].iter().collect(); // c:2630
+                            rest.extend(cv[e..].iter()); // c:2634
+                            parts.push(rest);
+                        }
+                        if (ben & SUB_BIND) != 0 {
+                            parts.push((b + 1).to_string()); // c:2594 1-based start
+                        }
+                        if (ben & SUB_EIND) != 0 {
+                            parts.push((e + 1).to_string()); // c:2599 1-based end
+                        }
+                        if (ben & SUB_LEN) != 0 {
+                            parts.push((e - b).to_string()); // c:2605 char-length
+                        }
+                        return parts.join(" ");
                     }
-                    if match_only {
-                        // No match under SUB_MATCH: empty result.
-                        // c:glob.c:2895 — getmatch SUB_MATCH no-match
-                        // arm clears *sp to "". Note: C's getmatcharr
-                        // additionally FILTERS out such empties from
-                        // arrays (c:2735-2738 while-igetmatch loop) —
-                        // not yet ported because doing so breaks `(@M)`
-                        // subscript shape parity (zsh keeps 3 elements
-                        // for `("${(@M)arr[@]#foo}")`, drops to 2 for
-                        // `(${(M)arr#foo})`). Both need distinct
-                        // codepaths to differentiate.
-                        String::new()
-                    } else {
-                        val.to_string()
+                    match bounds {
+                        Some((b, e)) => {
+                            if match_only {
+                                cv[b..e].iter().collect()
+                            } else {
+                                let before: String = cv[..b].iter().collect();
+                                let after: String = cv[e..].iter().collect();
+                                before + &after
+                            }
+                        }
+                        None => {
+                            if match_only {
+                                // No match under SUB_MATCH: empty result.
+                                // c:glob.c:2895 — getmatch SUB_MATCH no-match
+                                // arm clears *sp to "". Note: C's getmatcharr
+                                // additionally FILTERS out such empties from
+                                // arrays (c:2735-2738 while-igetmatch loop) —
+                                // not yet ported because doing so breaks `(@M)`
+                                // subscript shape parity (zsh keeps 3 elements
+                                // for `("${(@M)arr[@]#foo}")`, drops to 2 for
+                                // `(${(M)arr#foo})`). Both need distinct
+                                // codepaths to differentiate.
+                                String::new()
+                            } else {
+                                val.to_string()
+                            }
+                        }
                     }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
@@ -8678,9 +8756,15 @@ pub fn paramsubst(
                 // substring match (rightmost), longest at that position.
                 // Bug #179 in docs/BUGS.md.
                 let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
+                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                // c:Src/glob.c:2626-2636 — (R) rest portion.
+                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
+                    // Match bounds [b, e) in chars; None = no match.
+                    let bounds: Option<(usize, usize)> = (|| {
                     if substr_mode {
                         // Rightmost longest substring match.
                         let mut best: Option<(usize, usize)> = None;
@@ -8694,15 +8778,7 @@ pub fn paramsubst(
                                 }
                             }
                         }
-                        if let Some((start, end)) = best {
-                            if match_only {
-                                return cv[start..end].iter().collect();
-                            }
-                            let before: String = cv[..start].iter().collect();
-                            let after: String = cv[end..].iter().collect();
-                            return before + &after;
-                        }
-                        return if match_only { String::new() } else { val.to_string() };
+                        return best;
                     }
                     let mut k = total;
                     loop {
@@ -8742,20 +8818,58 @@ pub fn paramsubst(
                                     crate::ported::params::setaparam("mend", shifted);
                                 }
                             }
-                            if match_only {
-                                return suffix;
-                            }
-                            return cv[..suffix_start_char].iter().collect();
+                            return Some((suffix_start_char, total));
                         }
                         if k == 0 {
                             break;
                         }
                         k -= 1;
                     }
-                    if match_only {
-                        String::new()
-                    } else {
-                        val.to_string()
+                    None
+                    })();
+                    if ben != 0 {
+                        // c:Src/glob.c:2575-2645 get_match_ret — compose
+                        // [match] [rest] B E N, space-joined, trailing
+                        // space trimmed. No match composes as the empty
+                        // match at (0,0) per c:Src/glob.c:3230.
+                        let (b, e) = bounds.unwrap_or((0, 0));
+                        let mut parts: Vec<String> = Vec::new();
+                        if match_only {
+                            parts.push(cv[b..e].iter().collect()); // c:2618
+                        }
+                        if rest_flag {
+                            let mut rest: String = cv[..b].iter().collect(); // c:2630
+                            rest.extend(cv[e..].iter()); // c:2634
+                            parts.push(rest);
+                        }
+                        if (ben & SUB_BIND) != 0 {
+                            parts.push((b + 1).to_string()); // c:2594 1-based start
+                        }
+                        if (ben & SUB_EIND) != 0 {
+                            parts.push((e + 1).to_string()); // c:2599 1-based end
+                        }
+                        if (ben & SUB_LEN) != 0 {
+                            parts.push((e - b).to_string()); // c:2605 char-length
+                        }
+                        return parts.join(" ");
+                    }
+                    match bounds {
+                        Some((b, e)) => {
+                            if match_only {
+                                cv[b..e].iter().collect()
+                            } else {
+                                let before: String = cv[..b].iter().collect();
+                                let after: String = cv[e..].iter().collect();
+                                before + &after
+                            }
+                        }
+                        None => {
+                            if match_only {
+                                String::new()
+                            } else {
+                                val.to_string()
+                            }
+                        }
                     }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
@@ -8811,46 +8925,82 @@ pub fn paramsubst(
                 // substring match (rightmost), then take shortest/longest
                 // at that position. Bug #179 in docs/BUGS.md.
                 let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
+                let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
+                // c:Src/glob.c:2626-2636 — (R) rest portion.
+                let rest_flag = (sub_flags_get() & SUB_REST) != 0;
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
-                    if substr_mode {
-                        // Rightmost shortest substring match.
-                        let mut best: Option<(usize, usize)> = None;
-                        for start in 0..=total {
-                            for k in 0..=(total - start) {
-                                let candidate: String =
-                                    cv[start..start + k].iter().collect();
-                                if crate::vm_helper::glob_match_static(&candidate, &p) {
-                                    best = Some((start, start + k));
-                                    break;
+                    // Match bounds [b, e) in chars; None = no match.
+                    let bounds: Option<(usize, usize)> = (|| {
+                        if substr_mode {
+                            // Rightmost shortest substring match.
+                            let mut best: Option<(usize, usize)> = None;
+                            for start in 0..=total {
+                                for k in 0..=(total - start) {
+                                    let candidate: String =
+                                        cv[start..start + k].iter().collect();
+                                    if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                        best = Some((start, start + k));
+                                        break;
+                                    }
                                 }
                             }
+                            return best;
                         }
-                        if let Some((start, end)) = best {
-                            if match_only {
-                                return cv[start..end].iter().collect();
+                        for k in 0..=total {
+                            let suffix: String = cv[total - k..].iter().collect();
+                            // (#b) capture wiring via glob_match_static.
+                            if crate::vm_helper::glob_match_static(&suffix, &p) {
+                                return Some((total - k, total));
                             }
-                            let before: String = cv[..start].iter().collect();
-                            let after: String = cv[end..].iter().collect();
-                            return before + &after;
                         }
-                        return if match_only { String::new() } else { val.to_string() };
+                        None
+                    })();
+                    if ben != 0 {
+                        // c:Src/glob.c:2575-2645 get_match_ret — compose
+                        // [match] [rest] B E N, space-joined, trailing
+                        // space trimmed. No match composes as the empty
+                        // match at (0,0) per c:Src/glob.c:3230.
+                        let (b, e) = bounds.unwrap_or((0, 0));
+                        let mut parts: Vec<String> = Vec::new();
+                        if match_only {
+                            parts.push(cv[b..e].iter().collect()); // c:2618
+                        }
+                        if rest_flag {
+                            let mut rest: String = cv[..b].iter().collect(); // c:2630
+                            rest.extend(cv[e..].iter()); // c:2634
+                            parts.push(rest);
+                        }
+                        if (ben & SUB_BIND) != 0 {
+                            parts.push((b + 1).to_string()); // c:2594 1-based start
+                        }
+                        if (ben & SUB_EIND) != 0 {
+                            parts.push((e + 1).to_string()); // c:2599 1-based end
+                        }
+                        if (ben & SUB_LEN) != 0 {
+                            parts.push((e - b).to_string()); // c:2605 char-length
+                        }
+                        return parts.join(" ");
                     }
-                    for k in 0..=total {
-                        let suffix: String = cv[total - k..].iter().collect();
-                        // (#b) capture wiring via glob_match_static.
-                        if crate::vm_helper::glob_match_static(&suffix, &p) {
+                    match bounds {
+                        Some((b, e)) => {
                             if match_only {
-                                return suffix;
+                                cv[b..e].iter().collect()
+                            } else {
+                                let before: String = cv[..b].iter().collect();
+                                let after: String = cv[e..].iter().collect();
+                                before + &after
                             }
-                            return cv[..total - k].iter().collect();
                         }
-                    }
-                    if match_only {
-                        String::new()
-                    } else {
-                        val.to_string()
+                        None => {
+                            if match_only {
+                                String::new()
+                            } else {
+                                val.to_string()
+                            }
+                        }
                     }
                 };
                 if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
