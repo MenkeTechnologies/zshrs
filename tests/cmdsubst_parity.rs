@@ -255,3 +255,38 @@ mod chained {
         assert_parity(r#"arr=($(echo a b c)); print -l "${arr[@]}""#);
     }
 }
+
+/// c:Src/exec.c:5025 getproc (PATH_DEV_FD) — `>(cmd)` is a pipe whose
+/// write end the parent exposes as `/dev/fd/N` and closes when the
+/// consuming job finishes. The old FIFO port blocked the child in
+/// open(2) before running cmd, so `a=$(print -r -- >(true))` never
+/// EOF'd the capture pipe (shell hang).
+mod process_subst_out_dev_fd {
+    use super::*;
+
+    #[test]
+    fn procsubst_out_under_cmdsubst_does_not_hang() {
+        assert_parity(r#"a=$(print -r -- >(true)); print done"#);
+    }
+
+    #[test]
+    fn procsubst_out_path_is_dev_fd() {
+        assert_parity(r#"[[ $(print -r -- >(true)) == /dev/fd/* ]] && print devfd"#);
+    }
+
+    #[test]
+    fn procsubst_out_write_end_closes_after_command() {
+        // wc's stdin EOFs only when the parent's write end closes
+        // after tee finishes (c: addfilelist → deletefilelist).
+        assert_parity(
+            r#"t=$(mktemp); tee >(wc -c >$t) </dev/null >/dev/null; sleep 0.2; cat $t; command rm -f $t"#,
+        );
+    }
+
+    #[test]
+    fn procsubst_out_receives_piped_data() {
+        assert_parity(
+            r#"t=$(mktemp); print -n abcde | tee >(wc -c >$t) >/dev/null; sleep 0.2; cat $t; command rm -f $t"#,
+        );
+    }
+}

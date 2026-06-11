@@ -306,3 +306,42 @@ mod round_al_pins {
         assert_parity(r#"fn(){ return 3; }; fn; echo $?"#);
     }
 }
+
+/// Open-paren `(pat)` case arms — c:Src/parse.c:1321-1357 absorbs a
+/// complete `(...)` as the whole pattern; the token after it is the
+/// body's first word and must be lexed in command position
+/// (c:1300-1302), so `out+=hit` there is an assignment, not a
+/// command word.
+mod open_paren_arms {
+    use super::*;
+
+    #[test]
+    fn open_paren_literal_arm() {
+        assert_parity(r#"case a in (a) print A;; (*) print other;; esac"#);
+    }
+
+    #[test]
+    fn open_paren_alternation_arm() {
+        assert_parity(r#"case c in (b|c) print BC;; (*) print other;; esac"#);
+    }
+
+    #[test]
+    fn open_paren_spaced_alternation_arm() {
+        assert_parity(r#"case e in ( d | e ) print DE;; (*) print other;; esac"#);
+    }
+
+    #[test]
+    fn append_assignment_as_open_paren_arm_body() {
+        assert_parity(r#"case a in (a) out+=hit;; esac; print $out"#);
+    }
+
+    #[test]
+    fn array_append_as_open_paren_arm_body() {
+        assert_parity(r#"case a in (a) arr+=(1 2);; esac; print $arr"#);
+    }
+
+    #[test]
+    fn assoc_append_as_open_paren_arm_body() {
+        assert_parity(r#"typeset -A h; case a in (a) h+=(k v);; esac; print ${(kv)h}"#);
+    }
+}

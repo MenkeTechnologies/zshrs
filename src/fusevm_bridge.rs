@@ -113,6 +113,70 @@ thread_local! {
     /// instead of the cmdsub's fd 1. Bug #56 in docs/BUGS.md.
     pub static CMDSUBST_OUTER_FDS: RefCell<Vec<(i32, i32)>> =
         const { RefCell::new(Vec::new()) };
+    /// c:Src/exec.c:5025 getproc (PATH_DEV_FD branch) — the parent
+    /// keeps the `>(cmd)` pipe WRITE end open under `/dev/fd/N`,
+    /// parks it in the job's filelist (`fdtable[fd] =
+    /// FDT_PROC_SUBST; addfilelist(NULL, fd)`), and deletefilelist
+    /// closes it when the consuming job finishes — that close is
+    /// what lets the `>(cmd)` child's reader see EOF. zshrs runs
+    /// commands in-process, so the equivalent is: record
+    /// `(scope_depth, fd)` here and drain after the consuming
+    /// command (external exec or builtin dispatch) completes.
+    static PSUB_PENDING_FDS: RefCell<Vec<(usize, i32)>> = const { RefCell::new(Vec::new()) };
+    /// Scope depth for PSUB_PENDING_FDS tagging. Incremented around
+    /// nested execution contexts (cmd-subst bodies, shell-function
+    /// bodies) so a command running INSIDE the nested context only
+    /// drains its own `>(cmd)` fds, never the enclosing command's
+    /// (e.g. `tee >(wc) $(print x)` — print must not close tee's
+    /// fd). Mirrors C's per-job filelist ownership.
+    static PSUB_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// RAII guard bumping the psub scope depth — see PSUB_SCOPE_DEPTH.
+pub(crate) struct PsubScope;
+
+impl PsubScope {
+    pub(crate) fn enter() -> Self {
+        PSUB_SCOPE_DEPTH.with(|d| d.set(d.get() + 1));
+        PsubScope
+    }
+}
+
+impl Drop for PsubScope {
+    fn drop(&mut self) {
+        PSUB_SCOPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// Port of deletefilelist() from Src/jobs.c (the `>(cmd)` fd arm):
+/// closes every pending proc-subst write end created at or inside
+/// the current scope depth, exactly when C deletes the consuming
+/// job's filelist (getproc parks the fd there via
+/// `addfilelist(NULL, fd)`, Src/exec.c:5025+).
+fn close_pending_psub_fds() {
+    let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
+    PSUB_PENDING_FDS.with(|v| {
+        v.borrow_mut().retain(|&(d, fd)| {
+            if d >= depth {
+                unsafe { libc::close(fd) };
+                false
+            } else {
+                true
+            }
+        });
+    });
+}
+
+/// RAII drain guard — instantiated at the top of the consuming-
+/// command paths (dispatch_builtin, ZshrsHost::exec) so the pending
+/// `>(cmd)` write ends close on every exit path once the command
+/// finished, exactly when C's job filelist would be deleted.
+struct PsubFdGuard;
+
+impl Drop for PsubFdGuard {
+    fn drop(&mut self) {
+        close_pending_psub_fds();
+    }
 }
 
 /// Peek the outermost cmdsub-saved (stdout, stderr) fds, if any.
@@ -409,6 +473,10 @@ fn module_gated_files_builtin(name: &str) -> bool {
 }
 
 pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
+    // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close any
+    // `>(cmd)` write ends owned by this command once it finishes
+    // (drops on every return path below).
+    let _psub_fds = PsubFdGuard;
     // c:Src/exec.c — when any redirect in the current scope failed
     // (e.g. noclobber blocked a `>` overwrite), zsh refuses to
     // execute the command and exits with status 1. The Rust port
@@ -608,6 +676,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         ($vm:expr, $id:expr, $name:literal, $method:ident) => {
             $vm.register_builtin($id, |vm, argc| {
                 let args = pop_args(vm, argc);
+                // c:Src/exec.c getproc + Src/jobs.c deletefilelist —
+                // close `>(cmd)` write ends owned by this command
+                // once it finishes (shadows bypass dispatch_builtin
+                // and ZshrsHost::exec, so they need their own guard:
+                // `tee >(wc -c) </dev/null` left wc blocked).
+                let _psub_fds = PsubFdGuard;
                 if let Some(s) = try_user_fn_override($name, &args) {
                     return Value::Status(s);
                 }
@@ -7858,57 +7932,81 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn process_sub_out(&mut self, sub: &fusevm::Chunk) -> String {
-        // `>(cmd)` — consumer reads stdin from a FIFO that the parent
-        // writes to. Create a real named pipe, fork a child that
-        // dup2s the read end onto stdin and runs the sub-chunk; return
-        // the FIFO path to the parent so it writes there.
-        let fifo_path = format!(
-            "/tmp/zshrs_psub_out_{}_{}",
-            std::process::id(),
-            with_executor(|e| {
-                let n = e.process_sub_counter;
-                e.process_sub_counter += 1;
-                n
-            })
-        );
-        let _ = fs::remove_file(&fifo_path);
-        let cpath = match CString::new(fifo_path.clone()) {
-            Ok(c) => c,
-            Err(_) => return fifo_path,
-        };
-        if unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) } != 0 {
-            // Fall back to plain file if mkfifo fails.
-            let _ = fs::write(&fifo_path, "");
-            return fifo_path;
+        // c:Src/exec.c:5025 getproc, PATH_DEV_FD branch — `>(cmd)`
+        // (out == 0): `mpipe(pipes)`, fork; the CHILD `redup(pipes[0],
+        // 0)` (pipe read end onto stdin) and `closem` drops the write
+        // end; the PARENT closes pipes[0] and hands the consumer
+        // `/dev/fd/<pipes[1]>` (the write end). The previous Rust port
+        // used mkfifo + a child that BLOCKED in open(FIFO, O_RDONLY)
+        // before running cmd — with no writer the child never started,
+        // never exited, and kept its inherited stdout (e.g. a `$()`
+        // capture pipe) open forever: `a=$(print -r -- >(true))` hung.
+        // With the pipe shape the child runs immediately and exits,
+        // releasing inherited fds exactly like zsh (verified: zsh
+        // blocks ~2s on `a=$(print -r -- >(sleep 2))`, then EOFs).
+        let mut fds: [libc::c_int; 2] = [-1, -1];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            // Pipe creation failed — fall back to a plain temp file so
+            // the consumer at least has a writable path.
+            let fallback = format!(
+                "/tmp/zshrs_psub_out_{}_{}",
+                std::process::id(),
+                with_executor(|e| {
+                    let n = e.process_sub_counter;
+                    e.process_sub_counter += 1;
+                    n
+                })
+            );
+            let _ = fs::write(&fallback, "");
+            return fallback;
         }
-        let sub = sub.clone();
-        let fifo_for_child = fifo_path.clone();
+        let (read_end, write_end) = (fds[0], fds[1]);
+        let sub_for_child = sub.clone();
         match unsafe { libc::fork() } {
             -1 => {
-                let _ = fs::remove_file(&fifo_path);
+                unsafe {
+                    libc::close(read_end);
+                    libc::close(write_end);
+                }
+                String::from("/dev/null")
             }
             0 => {
-                // Child: open FIFO for read, dup onto stdin, run sub-chunk, exit.
-                if let Ok(f) = fs::OpenOptions::new().read(true).open(&fifo_for_child) {
-                    let fd = f.as_raw_fd();
-                    unsafe {
-                        libc::dup2(fd, libc::STDIN_FILENO);
-                    }
+                // Child: close the write end (c: closem after redup),
+                // dup the read end onto stdin (c: redup(pipes[0], 0)),
+                // run the sub-chunk, exit. Other std fds stay
+                // inherited — zsh's child keeps the surrounding
+                // command's stdout/stderr.
+                unsafe {
+                    libc::close(write_end);
+                    libc::dup2(read_end, libc::STDIN_FILENO);
+                    libc::close(read_end);
                 }
-                crate::fusevm_disasm::maybe_print_stdout("process_subst_out:child", &sub);
-                let mut vm = fusevm::VM::new(sub);
+                crate::fusevm_disasm::maybe_print_stdout("process_subst_out:child", &sub_for_child);
+                let mut vm = fusevm::VM::new(sub_for_child);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
                 let _ = vm.run();
                 unsafe { libc::_exit(0) };
             }
             _ => {
-                // Parent — return path; child handles cleanup of the FIFO
-                // once stdin EOFs. (The path may leak if the parent never
-                // writes; acceptable for common `>(cmd)` idioms.)
+                // Parent: close the read end, keep the write end open
+                // under its fd value so `/dev/fd/N` resolves to the
+                // pipe's write side. FD_CLOEXEC must STAY clear —
+                // consumers (`tee >(cmd)`) discover the fd via exec
+                // inheritance, matching process_sub_in above and C's
+                // fdtable[fd] = FDT_PROC_SUBST bookkeeping. Park the
+                // fd for close-after-consuming-command (c: addfilelist
+                // (NULL, fd) → deletefilelist) so the child's reader
+                // EOFs — without this `tee >(wc -c) </dev/null` left
+                // wc blocked until shell exit.
+                unsafe {
+                    libc::close(read_end);
+                }
+                let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
+                PSUB_PENDING_FDS.with(|v| v.borrow_mut().push((depth, write_end)));
+                format!("/dev/fd/{}", write_end)
             }
         }
-        fifo_path
     }
 
     fn subshell_begin(&mut self) {
@@ -8343,6 +8441,10 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn exec(&mut self, args: Vec<String>) -> i32 {
+        // c:Src/exec.c getproc + Src/jobs.c deletefilelist — close
+        // any `>(cmd)` write ends owned by this command once it
+        // finishes (drops on every return path below).
+        let _psub_fds = PsubFdGuard;
         // c:Src/subst.c paramsubst — when `${var:?msg}` or `${var?msg}`
         // triggered the "parameter null or not set" error, errflag
         // is raised and zsh aborts the simple command without
@@ -8485,6 +8587,11 @@ impl fusevm::ShellHost for ZshrsHost {
         // in-process cmdsub needs this thread-local stack so the
         // trap dispatcher can find the right destination fd.
         CMDSUBST_OUTER_FDS.with(|s| s.borrow_mut().push((saved_stdout, saved_stderr)));
+
+        // Nested scope for `>(cmd)` fd ownership — commands inside
+        // the cmdsub must not drain the enclosing command's pending
+        // psub fds (see PSUB_SCOPE_DEPTH).
+        let _psub_scope = PsubScope::enter();
 
         crate::fusevm_disasm::maybe_print_stdout("host.cmd_subst", sub);
         let mut vm = fusevm::VM::new(sub.clone());
