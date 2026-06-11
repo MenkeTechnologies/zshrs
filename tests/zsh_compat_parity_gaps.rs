@@ -364,7 +364,7 @@ mod corpus_additional_probes {
         underscore_after_simple_command => (r#"$_ after true"#, r#"true; print -r "$_""#);
         parameters_index_i_path => (r#"parameters[(i)PATH]"#, r#"print ${parameters[(i)PATH]}"#);
         emulate_sh_posixargzero_option => (r#"emulate sh -L posixargzero"#, r#"emulate sh -L; print $options[posixargzero]"#);
-        builtins_keys_line_count_wc => (r#"${(k)builtins} | wc -c"#, r#"print -l ${(k)builtins} 2>&1 | wc -c"#);
+        builtins_keys_line_count_wc => (r#"${(k)builtins} | wc -c"#, r#"print -lr -- ${(ok)builtins} | wc -c"#);
         getopts_leading_plus_colon_form => (r#"getopts '+:a:'"#, r#"OPTIND=1; getopts '+:a:' o -- -a 2>&1; print -r "o=$o""#);
         typeset_plus_x_with_r => (r#"typeset +x -r"#, r#"typeset +x -r 2>&1"#);
         unsetopt_glob_pattern_nomatch => (r#"unsetopt '*pattern'"#, r#"unsetopt '*badpattern_gapxyz' 2>&1"#);
@@ -4706,7 +4706,7 @@ mod corpus_dash_fc_bulk_bl {
         bulk_bl_fc_row_036 => (r#"bulk bl 036"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_bl_fc_row_037 => (r#"bulk bl 037"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_bl_fc_row_038 => (r#"bulk bl 038"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_bl_fc_row_039 => (r#"bulk bl 039"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_bl_fc_row_039 => (r#"bulk bl 039"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_bl_fc_row_040 => (r#"bulk bl 040"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_bl_fc_row_041 => (r#"bulk bl 041"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_bl_fc_row_042 => (r#"bulk bl 042"#, r###"str=%l; print -r ${(%)str}"###);
@@ -4745,7 +4745,7 @@ mod corpus_dash_fc_bulk_bm {
         bulk_bm_fc_row_020 => (r#"bulk bm 020"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_bm_fc_row_021 => (r#"bulk bm 021"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_bm_fc_row_022 => (r#"bulk bm 022"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_bm_fc_row_023 => (r#"bulk bm 023"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_bm_fc_row_023 => (r#"bulk bm 023"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_bm_fc_row_024 => (r#"bulk bm 024"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_bm_fc_row_025 => (r#"bulk bm 025"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_bm_fc_row_026 => (r#"bulk bm 026"#, r###"str=%l; print -r ${(%)str}"###);
@@ -4785,7 +4785,7 @@ mod corpus_dash_fc_bulk_bn {
         bulk_bn_fc_row_005 => (r#"bulk bn 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_bn_fc_row_006 => (r#"bulk bn 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_bn_fc_row_007 => (r#"bulk bn 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_bn_fc_row_008 => (r#"bulk bn 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_bn_fc_row_008 => (r#"bulk bn 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_bn_fc_row_009 => (r#"bulk bn 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_bn_fc_row_010 => (r#"bulk bn 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_bn_fc_row_011 => (r#"bulk bn 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -6407,7 +6407,7 @@ mod corpus_dash_fc_bulk_cq {
         bulk_cq_fc_row_032 => (r#"bulk cq 032"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_cq_fc_row_033 => (r#"bulk cq 033"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_cq_fc_row_034 => (r#"bulk cq 034"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_cq_fc_row_035 => (r#"bulk cq 035"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_cq_fc_row_035 => (r#"bulk cq 035"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_cq_fc_row_036 => (r#"bulk cq 036"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_cq_fc_row_037 => (r#"bulk cq 037"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_cq_fc_row_038 => (r#"bulk cq 038"#, r###"str=%l; print -r ${(%)str}"###);
@@ -6447,7 +6447,7 @@ mod corpus_dash_fc_bulk_cr {
         bulk_cr_fc_row_017 => (r#"bulk cr 017"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_cr_fc_row_018 => (r#"bulk cr 018"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_cr_fc_row_019 => (r#"bulk cr 019"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_cr_fc_row_020 => (r#"bulk cr 020"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_cr_fc_row_020 => (r#"bulk cr 020"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_cr_fc_row_021 => (r#"bulk cr 021"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_cr_fc_row_022 => (r#"bulk cr 022"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_cr_fc_row_023 => (r#"bulk cr 023"#, r###"str=%l; print -r ${(%)str}"###);
@@ -6490,7 +6490,7 @@ mod corpus_dash_fc_bulk_cs {
         bulk_cs_fc_row_005 => (r#"bulk cs 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_cs_fc_row_006 => (r#"bulk cs 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_cs_fc_row_007 => (r#"bulk cs 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_cs_fc_row_008 => (r#"bulk cs 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_cs_fc_row_008 => (r#"bulk cs 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_cs_fc_row_009 => (r#"bulk cs 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_cs_fc_row_010 => (r#"bulk cs 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_cs_fc_row_011 => (r#"bulk cs 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -8070,7 +8070,7 @@ mod corpus_dash_fc_bulk_du {
         bulk_du_fc_row_045 => (r#"bulk du 045"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_du_fc_row_046 => (r#"bulk du 046"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_du_fc_row_047 => (r#"bulk du 047"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_du_fc_row_048 => (r#"bulk du 048"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_du_fc_row_048 => (r#"bulk du 048"#, r###"str=%n; print -r ${(%)str}"###);
     }
 }
 
@@ -8108,7 +8108,7 @@ mod corpus_dash_fc_bulk_dv {
         bulk_dv_fc_row_028 => (r#"bulk dv 028"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_dv_fc_row_029 => (r#"bulk dv 029"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_dv_fc_row_030 => (r#"bulk dv 030"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_dv_fc_row_031 => (r#"bulk dv 031"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_dv_fc_row_031 => (r#"bulk dv 031"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_dv_fc_row_032 => (r#"bulk dv 032"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_dv_fc_row_033 => (r#"bulk dv 033"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_dv_fc_row_034 => (r#"bulk dv 034"#, r###"str=%l; print -r ${(%)str}"###);
@@ -8148,7 +8148,7 @@ mod corpus_dash_fc_bulk_dw {
         bulk_dw_fc_row_013 => (r#"bulk dw 013"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_dw_fc_row_014 => (r#"bulk dw 014"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_dw_fc_row_015 => (r#"bulk dw 015"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_dw_fc_row_016 => (r#"bulk dw 016"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_dw_fc_row_016 => (r#"bulk dw 016"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_dw_fc_row_017 => (r#"bulk dw 017"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_dw_fc_row_018 => (r#"bulk dw 018"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_dw_fc_row_019 => (r#"bulk dw 019"#, r###"str=%l; print -r ${(%)str}"###);
@@ -8193,7 +8193,7 @@ mod corpus_dash_fc_bulk_dx {
         bulk_dx_fc_row_003 => (r#"bulk dx 003"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_dx_fc_row_004 => (r#"bulk dx 004"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_dx_fc_row_005 => (r#"bulk dx 005"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_dx_fc_row_006 => (r#"bulk dx 006"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_dx_fc_row_006 => (r#"bulk dx 006"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_dx_fc_row_007 => (r#"bulk dx 007"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_dx_fc_row_008 => (r#"bulk dx 008"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_dx_fc_row_009 => (r#"bulk dx 009"#, r###"str=%l; print -r ${(%)str}"###);
@@ -9771,7 +9771,7 @@ mod corpus_dash_fc_bulk_ez {
         bulk_ez_fc_row_041 => (r#"bulk ez 041"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ez_fc_row_042 => (r#"bulk ez 042"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ez_fc_row_043 => (r#"bulk ez 043"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ez_fc_row_044 => (r#"bulk ez 044"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ez_fc_row_044 => (r#"bulk ez 044"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ez_fc_row_045 => (r#"bulk ez 045"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ez_fc_row_046 => (r#"bulk ez 046"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ez_fc_row_047 => (r#"bulk ez 047"#, r###"str=%l; print -r ${(%)str}"###);
@@ -9810,7 +9810,7 @@ mod corpus_dash_fc_bulk_fa {
         bulk_fa_fc_row_025 => (r#"bulk fa 025"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_fa_fc_row_026 => (r#"bulk fa 026"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_fa_fc_row_027 => (r#"bulk fa 027"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_fa_fc_row_028 => (r#"bulk fa 028"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_fa_fc_row_028 => (r#"bulk fa 028"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_fa_fc_row_029 => (r#"bulk fa 029"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_fa_fc_row_030 => (r#"bulk fa 030"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_fa_fc_row_031 => (r#"bulk fa 031"#, r###"str=%l; print -r ${(%)str}"###);
@@ -9849,7 +9849,7 @@ mod corpus_dash_fc_bulk_fb {
         bulk_fb_fc_row_009 => (r#"bulk fb 009"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_fb_fc_row_010 => (r#"bulk fb 010"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_fb_fc_row_011 => (r#"bulk fb 011"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_fb_fc_row_012 => (r#"bulk fb 012"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_fb_fc_row_012 => (r#"bulk fb 012"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_fb_fc_row_013 => (r#"bulk fb 013"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_fb_fc_row_014 => (r#"bulk fb 014"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_fb_fc_row_015 => (r#"bulk fb 015"#, r###"str=%l; print -r ${(%)str}"###);
@@ -9894,7 +9894,7 @@ mod corpus_dash_fc_bulk_fc {
 
     parity_gap_tests! {
         bulk_fc_fc_row_001 => (r#"bulk fc 001"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_fc_fc_row_002 => (r#"bulk fc 002"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_fc_fc_row_002 => (r#"bulk fc 002"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_fc_fc_row_003 => (r#"bulk fc 003"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_fc_fc_row_004 => (r#"bulk fc 004"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_fc_fc_row_005 => (r#"bulk fc 005"#, r###"str=%l; print -r ${(%)str}"###);
@@ -11472,7 +11472,7 @@ mod corpus_dash_fc_bulk_ge {
         bulk_ge_fc_row_037 => (r#"bulk ge 037"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ge_fc_row_038 => (r#"bulk ge 038"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ge_fc_row_039 => (r#"bulk ge 039"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ge_fc_row_040 => (r#"bulk ge 040"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ge_fc_row_040 => (r#"bulk ge 040"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ge_fc_row_041 => (r#"bulk ge 041"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ge_fc_row_042 => (r#"bulk ge 042"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ge_fc_row_043 => (r#"bulk ge 043"#, r###"str=%l; print -r ${(%)str}"###);
@@ -11511,7 +11511,7 @@ mod corpus_dash_fc_bulk_gf {
         bulk_gf_fc_row_021 => (r#"bulk gf 021"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_gf_fc_row_022 => (r#"bulk gf 022"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_gf_fc_row_023 => (r#"bulk gf 023"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_gf_fc_row_024 => (r#"bulk gf 024"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_gf_fc_row_024 => (r#"bulk gf 024"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_gf_fc_row_025 => (r#"bulk gf 025"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_gf_fc_row_026 => (r#"bulk gf 026"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_gf_fc_row_027 => (r#"bulk gf 027"#, r###"str=%l; print -r ${(%)str}"###);
@@ -11550,7 +11550,7 @@ mod corpus_dash_fc_bulk_gg {
         bulk_gg_fc_row_005 => (r#"bulk gg 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_gg_fc_row_006 => (r#"bulk gg 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_gg_fc_row_007 => (r#"bulk gg 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_gg_fc_row_008 => (r#"bulk gg 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_gg_fc_row_008 => (r#"bulk gg 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_gg_fc_row_009 => (r#"bulk gg 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_gg_fc_row_010 => (r#"bulk gg 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_gg_fc_row_011 => (r#"bulk gg 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -13173,7 +13173,7 @@ mod corpus_dash_fc_bulk_hj {
         bulk_hj_fc_row_033 => (r#"bulk hj 033"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_hj_fc_row_034 => (r#"bulk hj 034"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_hj_fc_row_035 => (r#"bulk hj 035"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_hj_fc_row_036 => (r#"bulk hj 036"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_hj_fc_row_036 => (r#"bulk hj 036"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_hj_fc_row_037 => (r#"bulk hj 037"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_hj_fc_row_038 => (r#"bulk hj 038"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_hj_fc_row_039 => (r#"bulk hj 039"#, r###"str=%l; print -r ${(%)str}"###);
@@ -13213,7 +13213,7 @@ mod corpus_dash_fc_bulk_hk {
         bulk_hk_fc_row_018 => (r#"bulk hk 018"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_hk_fc_row_019 => (r#"bulk hk 019"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_hk_fc_row_020 => (r#"bulk hk 020"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_hk_fc_row_021 => (r#"bulk hk 021"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_hk_fc_row_021 => (r#"bulk hk 021"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_hk_fc_row_022 => (r#"bulk hk 022"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_hk_fc_row_023 => (r#"bulk hk 023"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_hk_fc_row_024 => (r#"bulk hk 024"#, r###"str=%l; print -r ${(%)str}"###);
@@ -13255,7 +13255,7 @@ mod corpus_dash_fc_bulk_hl {
         bulk_hl_fc_row_005 => (r#"bulk hl 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_hl_fc_row_006 => (r#"bulk hl 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_hl_fc_row_007 => (r#"bulk hl 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_hl_fc_row_008 => (r#"bulk hl 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_hl_fc_row_008 => (r#"bulk hl 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_hl_fc_row_009 => (r#"bulk hl 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_hl_fc_row_010 => (r#"bulk hl 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_hl_fc_row_011 => (r#"bulk hl 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -14874,7 +14874,7 @@ mod corpus_dash_fc_bulk_io {
         bulk_io_fc_row_029 => (r#"bulk io 029"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_io_fc_row_030 => (r#"bulk io 030"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_io_fc_row_031 => (r#"bulk io 031"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_io_fc_row_032 => (r#"bulk io 032"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_io_fc_row_032 => (r#"bulk io 032"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_io_fc_row_033 => (r#"bulk io 033"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_io_fc_row_034 => (r#"bulk io 034"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_io_fc_row_035 => (r#"bulk io 035"#, r###"str=%l; print -r ${(%)str}"###);
@@ -14914,7 +14914,7 @@ mod corpus_dash_fc_bulk_ip {
         bulk_ip_fc_row_014 => (r#"bulk ip 014"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ip_fc_row_015 => (r#"bulk ip 015"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ip_fc_row_016 => (r#"bulk ip 016"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ip_fc_row_017 => (r#"bulk ip 017"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ip_fc_row_017 => (r#"bulk ip 017"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ip_fc_row_018 => (r#"bulk ip 018"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ip_fc_row_019 => (r#"bulk ip 019"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ip_fc_row_020 => (r#"bulk ip 020"#, r###"str=%l; print -r ${(%)str}"###);
@@ -14959,7 +14959,7 @@ mod corpus_dash_fc_bulk_iq {
         bulk_iq_fc_row_004 => (r#"bulk iq 004"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_iq_fc_row_005 => (r#"bulk iq 005"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_iq_fc_row_006 => (r#"bulk iq 006"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_iq_fc_row_007 => (r#"bulk iq 007"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_iq_fc_row_007 => (r#"bulk iq 007"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_iq_fc_row_008 => (r#"bulk iq 008"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_iq_fc_row_009 => (r#"bulk iq 009"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_iq_fc_row_010 => (r#"bulk iq 010"#, r###"str=%l; print -r ${(%)str}"###);
@@ -16537,7 +16537,7 @@ mod corpus_dash_fc_bulk_js {
         bulk_js_fc_row_042 => (r#"bulk js 042"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_js_fc_row_043 => (r#"bulk js 043"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_js_fc_row_044 => (r#"bulk js 044"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_js_fc_row_045 => (r#"bulk js 045"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_js_fc_row_045 => (r#"bulk js 045"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_js_fc_row_046 => (r#"bulk js 046"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_js_fc_row_047 => (r#"bulk js 047"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_js_fc_row_048 => (r#"bulk js 048"#, r###"str=%l; print -r ${(%)str}"###);
@@ -16576,7 +16576,7 @@ mod corpus_dash_fc_bulk_jt {
         bulk_jt_fc_row_026 => (r#"bulk jt 026"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_jt_fc_row_027 => (r#"bulk jt 027"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_jt_fc_row_028 => (r#"bulk jt 028"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_jt_fc_row_029 => (r#"bulk jt 029"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_jt_fc_row_029 => (r#"bulk jt 029"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_jt_fc_row_030 => (r#"bulk jt 030"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_jt_fc_row_031 => (r#"bulk jt 031"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_jt_fc_row_032 => (r#"bulk jt 032"#, r###"str=%l; print -r ${(%)str}"###);
@@ -16615,7 +16615,7 @@ mod corpus_dash_fc_bulk_ju {
         bulk_ju_fc_row_010 => (r#"bulk ju 010"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ju_fc_row_011 => (r#"bulk ju 011"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ju_fc_row_012 => (r#"bulk ju 012"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ju_fc_row_013 => (r#"bulk ju 013"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ju_fc_row_013 => (r#"bulk ju 013"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ju_fc_row_014 => (r#"bulk ju 014"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ju_fc_row_015 => (r#"bulk ju 015"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ju_fc_row_016 => (r#"bulk ju 016"#, r###"str=%l; print -r ${(%)str}"###);
@@ -16660,7 +16660,7 @@ mod corpus_dash_fc_bulk_jv {
     parity_gap_tests! {
         bulk_jv_fc_row_001 => (r#"bulk jv 001"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_jv_fc_row_002 => (r#"bulk jv 002"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_jv_fc_row_003 => (r#"bulk jv 003"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_jv_fc_row_003 => (r#"bulk jv 003"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_jv_fc_row_004 => (r#"bulk jv 004"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_jv_fc_row_005 => (r#"bulk jv 005"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_jv_fc_row_006 => (r#"bulk jv 006"#, r###"str=%l; print -r ${(%)str}"###);
@@ -18238,7 +18238,7 @@ mod corpus_dash_fc_bulk_kx {
         bulk_kx_fc_row_038 => (r#"bulk kx 038"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_kx_fc_row_039 => (r#"bulk kx 039"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_kx_fc_row_040 => (r#"bulk kx 040"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_kx_fc_row_041 => (r#"bulk kx 041"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_kx_fc_row_041 => (r#"bulk kx 041"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_kx_fc_row_042 => (r#"bulk kx 042"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_kx_fc_row_043 => (r#"bulk kx 043"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_kx_fc_row_044 => (r#"bulk kx 044"#, r###"str=%l; print -r ${(%)str}"###);
@@ -18277,7 +18277,7 @@ mod corpus_dash_fc_bulk_ky {
         bulk_ky_fc_row_022 => (r#"bulk ky 022"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ky_fc_row_023 => (r#"bulk ky 023"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ky_fc_row_024 => (r#"bulk ky 024"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ky_fc_row_025 => (r#"bulk ky 025"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ky_fc_row_025 => (r#"bulk ky 025"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ky_fc_row_026 => (r#"bulk ky 026"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ky_fc_row_027 => (r#"bulk ky 027"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ky_fc_row_028 => (r#"bulk ky 028"#, r###"str=%l; print -r ${(%)str}"###);
@@ -18316,7 +18316,7 @@ mod corpus_dash_fc_bulk_kz {
         bulk_kz_fc_row_006 => (r#"bulk kz 006"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_kz_fc_row_007 => (r#"bulk kz 007"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_kz_fc_row_008 => (r#"bulk kz 008"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_kz_fc_row_009 => (r#"bulk kz 009"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_kz_fc_row_009 => (r#"bulk kz 009"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_kz_fc_row_010 => (r#"bulk kz 010"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_kz_fc_row_011 => (r#"bulk kz 011"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_kz_fc_row_012 => (r#"bulk kz 012"#, r###"str=%l; print -r ${(%)str}"###);
@@ -19939,7 +19939,7 @@ mod corpus_dash_fc_bulk_mc {
         bulk_mc_fc_row_034 => (r#"bulk mc 034"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_mc_fc_row_035 => (r#"bulk mc 035"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_mc_fc_row_036 => (r#"bulk mc 036"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_mc_fc_row_037 => (r#"bulk mc 037"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_mc_fc_row_037 => (r#"bulk mc 037"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_mc_fc_row_038 => (r#"bulk mc 038"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_mc_fc_row_039 => (r#"bulk mc 039"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_mc_fc_row_040 => (r#"bulk mc 040"#, r###"str=%l; print -r ${(%)str}"###);
@@ -19979,7 +19979,7 @@ mod corpus_dash_fc_bulk_md {
         bulk_md_fc_row_019 => (r#"bulk md 019"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_md_fc_row_020 => (r#"bulk md 020"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_md_fc_row_021 => (r#"bulk md 021"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_md_fc_row_022 => (r#"bulk md 022"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_md_fc_row_022 => (r#"bulk md 022"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_md_fc_row_023 => (r#"bulk md 023"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_md_fc_row_024 => (r#"bulk md 024"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_md_fc_row_025 => (r#"bulk md 025"#, r###"str=%l; print -r ${(%)str}"###);
@@ -20020,7 +20020,7 @@ mod corpus_dash_fc_bulk_me {
         bulk_me_fc_row_005 => (r#"bulk me 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_me_fc_row_006 => (r#"bulk me 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_me_fc_row_007 => (r#"bulk me 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_me_fc_row_008 => (r#"bulk me 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_me_fc_row_008 => (r#"bulk me 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_me_fc_row_009 => (r#"bulk me 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_me_fc_row_010 => (r#"bulk me 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_me_fc_row_011 => (r#"bulk me 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -21640,7 +21640,7 @@ mod corpus_dash_fc_bulk_nh {
         bulk_nh_fc_row_030 => (r#"bulk nh 030"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_nh_fc_row_031 => (r#"bulk nh 031"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_nh_fc_row_032 => (r#"bulk nh 032"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_nh_fc_row_033 => (r#"bulk nh 033"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_nh_fc_row_033 => (r#"bulk nh 033"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_nh_fc_row_034 => (r#"bulk nh 034"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_nh_fc_row_035 => (r#"bulk nh 035"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_nh_fc_row_036 => (r#"bulk nh 036"#, r###"str=%l; print -r ${(%)str}"###);
@@ -21680,7 +21680,7 @@ mod corpus_dash_fc_bulk_ni {
         bulk_ni_fc_row_015 => (r#"bulk ni 015"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ni_fc_row_016 => (r#"bulk ni 016"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ni_fc_row_017 => (r#"bulk ni 017"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ni_fc_row_018 => (r#"bulk ni 018"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ni_fc_row_018 => (r#"bulk ni 018"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ni_fc_row_019 => (r#"bulk ni 019"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ni_fc_row_020 => (r#"bulk ni 020"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ni_fc_row_021 => (r#"bulk ni 021"#, r###"str=%l; print -r ${(%)str}"###);
@@ -21725,7 +21725,7 @@ mod corpus_dash_fc_bulk_nj {
         bulk_nj_fc_row_005 => (r#"bulk nj 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_nj_fc_row_006 => (r#"bulk nj 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_nj_fc_row_007 => (r#"bulk nj 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_nj_fc_row_008 => (r#"bulk nj 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_nj_fc_row_008 => (r#"bulk nj 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_nj_fc_row_009 => (r#"bulk nj 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_nj_fc_row_010 => (r#"bulk nj 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_nj_fc_row_011 => (r#"bulk nj 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -23303,7 +23303,7 @@ mod corpus_dash_fc_bulk_ol {
         bulk_ol_fc_row_043 => (r#"bulk ol 043"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ol_fc_row_044 => (r#"bulk ol 044"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ol_fc_row_045 => (r#"bulk ol 045"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ol_fc_row_046 => (r#"bulk ol 046"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ol_fc_row_046 => (r#"bulk ol 046"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ol_fc_row_047 => (r#"bulk ol 047"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ol_fc_row_048 => (r#"bulk ol 048"#, r###"str=%L; print -r ${(%)str}"###);
     }
@@ -23342,7 +23342,7 @@ mod corpus_dash_fc_bulk_om {
         bulk_om_fc_row_027 => (r#"bulk om 027"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_om_fc_row_028 => (r#"bulk om 028"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_om_fc_row_029 => (r#"bulk om 029"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_om_fc_row_030 => (r#"bulk om 030"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_om_fc_row_030 => (r#"bulk om 030"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_om_fc_row_031 => (r#"bulk om 031"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_om_fc_row_032 => (r#"bulk om 032"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_om_fc_row_033 => (r#"bulk om 033"#, r###"str=%l; print -r ${(%)str}"###);
@@ -23381,7 +23381,7 @@ mod corpus_dash_fc_bulk_on {
         bulk_on_fc_row_011 => (r#"bulk on 011"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_on_fc_row_012 => (r#"bulk on 012"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_on_fc_row_013 => (r#"bulk on 013"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_on_fc_row_014 => (r#"bulk on 014"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_on_fc_row_014 => (r#"bulk on 014"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_on_fc_row_015 => (r#"bulk on 015"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_on_fc_row_016 => (r#"bulk on 016"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_on_fc_row_017 => (r#"bulk on 017"#, r###"str=%l; print -r ${(%)str}"###);
@@ -23426,7 +23426,7 @@ mod corpus_dash_fc_bulk_oo {
         bulk_oo_fc_row_001 => (r#"bulk oo 001"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_oo_fc_row_002 => (r#"bulk oo 002"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_oo_fc_row_003 => (r#"bulk oo 003"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_oo_fc_row_004 => (r#"bulk oo 004"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_oo_fc_row_004 => (r#"bulk oo 004"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_oo_fc_row_005 => (r#"bulk oo 005"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_oo_fc_row_006 => (r#"bulk oo 006"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_oo_fc_row_007 => (r#"bulk oo 007"#, r###"str=%l; print -r ${(%)str}"###);
@@ -25004,7 +25004,7 @@ mod corpus_dash_fc_bulk_pq {
         bulk_pq_fc_row_039 => (r#"bulk pq 039"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_pq_fc_row_040 => (r#"bulk pq 040"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_pq_fc_row_041 => (r#"bulk pq 041"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_pq_fc_row_042 => (r#"bulk pq 042"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_pq_fc_row_042 => (r#"bulk pq 042"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_pq_fc_row_043 => (r#"bulk pq 043"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_pq_fc_row_044 => (r#"bulk pq 044"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_pq_fc_row_045 => (r#"bulk pq 045"#, r###"str=%l; print -r ${(%)str}"###);
@@ -25043,7 +25043,7 @@ mod corpus_dash_fc_bulk_pr {
         bulk_pr_fc_row_023 => (r#"bulk pr 023"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_pr_fc_row_024 => (r#"bulk pr 024"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_pr_fc_row_025 => (r#"bulk pr 025"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_pr_fc_row_026 => (r#"bulk pr 026"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_pr_fc_row_026 => (r#"bulk pr 026"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_pr_fc_row_027 => (r#"bulk pr 027"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_pr_fc_row_028 => (r#"bulk pr 028"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_pr_fc_row_029 => (r#"bulk pr 029"#, r###"str=%l; print -r ${(%)str}"###);
@@ -25082,7 +25082,7 @@ mod corpus_dash_fc_bulk_ps {
         bulk_ps_fc_row_007 => (r#"bulk ps 007"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ps_fc_row_008 => (r#"bulk ps 008"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ps_fc_row_009 => (r#"bulk ps 009"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ps_fc_row_010 => (r#"bulk ps 010"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ps_fc_row_010 => (r#"bulk ps 010"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ps_fc_row_011 => (r#"bulk ps 011"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ps_fc_row_012 => (r#"bulk ps 012"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ps_fc_row_013 => (r#"bulk ps 013"#, r###"str=%l; print -r ${(%)str}"###);
@@ -26705,7 +26705,7 @@ mod corpus_dash_fc_bulk_qv {
         bulk_qv_fc_row_035 => (r#"bulk qv 035"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_qv_fc_row_036 => (r#"bulk qv 036"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_qv_fc_row_037 => (r#"bulk qv 037"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_qv_fc_row_038 => (r#"bulk qv 038"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_qv_fc_row_038 => (r#"bulk qv 038"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_qv_fc_row_039 => (r#"bulk qv 039"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_qv_fc_row_040 => (r#"bulk qv 040"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_qv_fc_row_041 => (r#"bulk qv 041"#, r###"str=%l; print -r ${(%)str}"###);
@@ -26745,7 +26745,7 @@ mod corpus_dash_fc_bulk_qw {
         bulk_qw_fc_row_020 => (r#"bulk qw 020"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_qw_fc_row_021 => (r#"bulk qw 021"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_qw_fc_row_022 => (r#"bulk qw 022"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_qw_fc_row_023 => (r#"bulk qw 023"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_qw_fc_row_023 => (r#"bulk qw 023"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_qw_fc_row_024 => (r#"bulk qw 024"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_qw_fc_row_025 => (r#"bulk qw 025"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_qw_fc_row_026 => (r#"bulk qw 026"#, r###"str=%l; print -r ${(%)str}"###);
@@ -26785,7 +26785,7 @@ mod corpus_dash_fc_bulk_qx {
         bulk_qx_fc_row_005 => (r#"bulk qx 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_qx_fc_row_006 => (r#"bulk qx 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_qx_fc_row_007 => (r#"bulk qx 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_qx_fc_row_008 => (r#"bulk qx 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_qx_fc_row_008 => (r#"bulk qx 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_qx_fc_row_009 => (r#"bulk qx 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_qx_fc_row_010 => (r#"bulk qx 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_qx_fc_row_011 => (r#"bulk qx 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -28406,7 +28406,7 @@ mod corpus_dash_fc_bulk_sa {
         bulk_sa_fc_row_031 => (r#"bulk sa 031"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_sa_fc_row_032 => (r#"bulk sa 032"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_sa_fc_row_033 => (r#"bulk sa 033"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_sa_fc_row_034 => (r#"bulk sa 034"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_sa_fc_row_034 => (r#"bulk sa 034"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_sa_fc_row_035 => (r#"bulk sa 035"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_sa_fc_row_036 => (r#"bulk sa 036"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_sa_fc_row_037 => (r#"bulk sa 037"#, r###"str=%l; print -r ${(%)str}"###);
@@ -28446,7 +28446,7 @@ mod corpus_dash_fc_bulk_sb {
         bulk_sb_fc_row_016 => (r#"bulk sb 016"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_sb_fc_row_017 => (r#"bulk sb 017"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_sb_fc_row_018 => (r#"bulk sb 018"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_sb_fc_row_019 => (r#"bulk sb 019"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_sb_fc_row_019 => (r#"bulk sb 019"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_sb_fc_row_020 => (r#"bulk sb 020"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_sb_fc_row_021 => (r#"bulk sb 021"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_sb_fc_row_022 => (r#"bulk sb 022"#, r###"str=%l; print -r ${(%)str}"###);
@@ -28490,7 +28490,7 @@ mod corpus_dash_fc_bulk_sc {
         bulk_sc_fc_row_005 => (r#"bulk sc 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_sc_fc_row_006 => (r#"bulk sc 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_sc_fc_row_007 => (r#"bulk sc 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_sc_fc_row_008 => (r#"bulk sc 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_sc_fc_row_008 => (r#"bulk sc 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_sc_fc_row_009 => (r#"bulk sc 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_sc_fc_row_010 => (r#"bulk sc 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_sc_fc_row_011 => (r#"bulk sc 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -30069,7 +30069,7 @@ mod corpus_dash_fc_bulk_te {
         bulk_te_fc_row_044 => (r#"bulk te 044"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_te_fc_row_045 => (r#"bulk te 045"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_te_fc_row_046 => (r#"bulk te 046"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_te_fc_row_047 => (r#"bulk te 047"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_te_fc_row_047 => (r#"bulk te 047"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_te_fc_row_048 => (r#"bulk te 048"#, r###"str=%v; print -r ${(%)str}"###);
     }
 }
@@ -30107,7 +30107,7 @@ mod corpus_dash_fc_bulk_tf {
         bulk_tf_fc_row_027 => (r#"bulk tf 027"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_tf_fc_row_028 => (r#"bulk tf 028"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_tf_fc_row_029 => (r#"bulk tf 029"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_tf_fc_row_030 => (r#"bulk tf 030"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_tf_fc_row_030 => (r#"bulk tf 030"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_tf_fc_row_031 => (r#"bulk tf 031"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_tf_fc_row_032 => (r#"bulk tf 032"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_tf_fc_row_033 => (r#"bulk tf 033"#, r###"str=%l; print -r ${(%)str}"###);
@@ -30147,7 +30147,7 @@ mod corpus_dash_fc_bulk_tg {
         bulk_tg_fc_row_012 => (r#"bulk tg 012"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_tg_fc_row_013 => (r#"bulk tg 013"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_tg_fc_row_014 => (r#"bulk tg 014"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_tg_fc_row_015 => (r#"bulk tg 015"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_tg_fc_row_015 => (r#"bulk tg 015"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_tg_fc_row_016 => (r#"bulk tg 016"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_tg_fc_row_017 => (r#"bulk tg 017"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_tg_fc_row_018 => (r#"bulk tg 018"#, r###"str=%l; print -r ${(%)str}"###);
@@ -30192,7 +30192,7 @@ mod corpus_dash_fc_bulk_th {
         bulk_th_fc_row_002 => (r#"bulk th 002"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_th_fc_row_003 => (r#"bulk th 003"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_th_fc_row_004 => (r#"bulk th 004"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_th_fc_row_005 => (r#"bulk th 005"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_th_fc_row_005 => (r#"bulk th 005"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_th_fc_row_006 => (r#"bulk th 006"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_th_fc_row_007 => (r#"bulk th 007"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_th_fc_row_008 => (r#"bulk th 008"#, r###"str=%l; print -r ${(%)str}"###);
@@ -31770,7 +31770,7 @@ mod corpus_dash_fc_bulk_uj {
         bulk_uj_fc_row_040 => (r#"bulk uj 040"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_uj_fc_row_041 => (r#"bulk uj 041"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_uj_fc_row_042 => (r#"bulk uj 042"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_uj_fc_row_043 => (r#"bulk uj 043"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_uj_fc_row_043 => (r#"bulk uj 043"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_uj_fc_row_044 => (r#"bulk uj 044"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_uj_fc_row_045 => (r#"bulk uj 045"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_uj_fc_row_046 => (r#"bulk uj 046"#, r###"str=%l; print -r ${(%)str}"###);
@@ -31809,7 +31809,7 @@ mod corpus_dash_fc_bulk_uk {
         bulk_uk_fc_row_024 => (r#"bulk uk 024"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_uk_fc_row_025 => (r#"bulk uk 025"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_uk_fc_row_026 => (r#"bulk uk 026"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_uk_fc_row_027 => (r#"bulk uk 027"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_uk_fc_row_027 => (r#"bulk uk 027"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_uk_fc_row_028 => (r#"bulk uk 028"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_uk_fc_row_029 => (r#"bulk uk 029"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_uk_fc_row_030 => (r#"bulk uk 030"#, r###"str=%l; print -r ${(%)str}"###);
@@ -31848,7 +31848,7 @@ mod corpus_dash_fc_bulk_ul {
         bulk_ul_fc_row_008 => (r#"bulk ul 008"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ul_fc_row_009 => (r#"bulk ul 009"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ul_fc_row_010 => (r#"bulk ul 010"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ul_fc_row_011 => (r#"bulk ul 011"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ul_fc_row_011 => (r#"bulk ul 011"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ul_fc_row_012 => (r#"bulk ul 012"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ul_fc_row_013 => (r#"bulk ul 013"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ul_fc_row_014 => (r#"bulk ul 014"#, r###"str=%l; print -r ${(%)str}"###);
@@ -31893,7 +31893,7 @@ mod corpus_dash_fc_bulk_um {
     use super::*;
 
     parity_gap_tests! {
-        bulk_um_fc_row_001 => (r#"bulk um 001"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_um_fc_row_001 => (r#"bulk um 001"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_um_fc_row_002 => (r#"bulk um 002"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_um_fc_row_003 => (r#"bulk um 003"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_um_fc_row_004 => (r#"bulk um 004"#, r###"str=%l; print -r ${(%)str}"###);
@@ -33471,7 +33471,7 @@ mod corpus_dash_fc_bulk_vo {
         bulk_vo_fc_row_036 => (r#"bulk vo 036"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_vo_fc_row_037 => (r#"bulk vo 037"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_vo_fc_row_038 => (r#"bulk vo 038"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_vo_fc_row_039 => (r#"bulk vo 039"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_vo_fc_row_039 => (r#"bulk vo 039"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_vo_fc_row_040 => (r#"bulk vo 040"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_vo_fc_row_041 => (r#"bulk vo 041"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_vo_fc_row_042 => (r#"bulk vo 042"#, r###"str=%l; print -r ${(%)str}"###);
@@ -33510,7 +33510,7 @@ mod corpus_dash_fc_bulk_vp {
         bulk_vp_fc_row_020 => (r#"bulk vp 020"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_vp_fc_row_021 => (r#"bulk vp 021"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_vp_fc_row_022 => (r#"bulk vp 022"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_vp_fc_row_023 => (r#"bulk vp 023"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_vp_fc_row_023 => (r#"bulk vp 023"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_vp_fc_row_024 => (r#"bulk vp 024"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_vp_fc_row_025 => (r#"bulk vp 025"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_vp_fc_row_026 => (r#"bulk vp 026"#, r###"str=%l; print -r ${(%)str}"###);
@@ -33550,7 +33550,7 @@ mod corpus_dash_fc_bulk_vq {
         bulk_vq_fc_row_005 => (r#"bulk vq 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_vq_fc_row_006 => (r#"bulk vq 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_vq_fc_row_007 => (r#"bulk vq 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_vq_fc_row_008 => (r#"bulk vq 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_vq_fc_row_008 => (r#"bulk vq 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_vq_fc_row_009 => (r#"bulk vq 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_vq_fc_row_010 => (r#"bulk vq 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_vq_fc_row_011 => (r#"bulk vq 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -35172,7 +35172,7 @@ mod corpus_dash_fc_bulk_wt {
         bulk_wt_fc_row_032 => (r#"bulk wt 032"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_wt_fc_row_033 => (r#"bulk wt 033"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_wt_fc_row_034 => (r#"bulk wt 034"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_wt_fc_row_035 => (r#"bulk wt 035"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_wt_fc_row_035 => (r#"bulk wt 035"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_wt_fc_row_036 => (r#"bulk wt 036"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_wt_fc_row_037 => (r#"bulk wt 037"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_wt_fc_row_038 => (r#"bulk wt 038"#, r###"str=%l; print -r ${(%)str}"###);
@@ -35212,7 +35212,7 @@ mod corpus_dash_fc_bulk_wu {
         bulk_wu_fc_row_017 => (r#"bulk wu 017"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_wu_fc_row_018 => (r#"bulk wu 018"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_wu_fc_row_019 => (r#"bulk wu 019"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_wu_fc_row_020 => (r#"bulk wu 020"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_wu_fc_row_020 => (r#"bulk wu 020"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_wu_fc_row_021 => (r#"bulk wu 021"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_wu_fc_row_022 => (r#"bulk wu 022"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_wu_fc_row_023 => (r#"bulk wu 023"#, r###"str=%l; print -r ${(%)str}"###);
@@ -35255,7 +35255,7 @@ mod corpus_dash_fc_bulk_wv {
         bulk_wv_fc_row_005 => (r#"bulk wv 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_wv_fc_row_006 => (r#"bulk wv 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_wv_fc_row_007 => (r#"bulk wv 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_wv_fc_row_008 => (r#"bulk wv 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_wv_fc_row_008 => (r#"bulk wv 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_wv_fc_row_009 => (r#"bulk wv 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_wv_fc_row_010 => (r#"bulk wv 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_wv_fc_row_011 => (r#"bulk wv 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -36835,7 +36835,7 @@ mod corpus_dash_fc_bulk_aak {
         bulk_aak_fc_row_045 => (r#"bulk aak 045"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aak_fc_row_046 => (r#"bulk aak 046"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aak_fc_row_047 => (r#"bulk aak 047"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aak_fc_row_048 => (r#"bulk aak 048"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aak_fc_row_048 => (r#"bulk aak 048"#, r###"str=%n; print -r ${(%)str}"###);
     }
 }
 
@@ -36873,7 +36873,7 @@ mod corpus_dash_fc_bulk_aal {
         bulk_aal_fc_row_028 => (r#"bulk aal 028"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aal_fc_row_029 => (r#"bulk aal 029"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aal_fc_row_030 => (r#"bulk aal 030"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aal_fc_row_031 => (r#"bulk aal 031"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aal_fc_row_031 => (r#"bulk aal 031"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aal_fc_row_032 => (r#"bulk aal 032"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aal_fc_row_033 => (r#"bulk aal 033"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aal_fc_row_034 => (r#"bulk aal 034"#, r###"str=%l; print -r ${(%)str}"###);
@@ -36913,7 +36913,7 @@ mod corpus_dash_fc_bulk_aam {
         bulk_aam_fc_row_013 => (r#"bulk aam 013"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aam_fc_row_014 => (r#"bulk aam 014"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aam_fc_row_015 => (r#"bulk aam 015"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aam_fc_row_016 => (r#"bulk aam 016"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aam_fc_row_016 => (r#"bulk aam 016"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aam_fc_row_017 => (r#"bulk aam 017"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aam_fc_row_018 => (r#"bulk aam 018"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aam_fc_row_019 => (r#"bulk aam 019"#, r###"str=%l; print -r ${(%)str}"###);
@@ -36958,7 +36958,7 @@ mod corpus_dash_fc_bulk_aan {
         bulk_aan_fc_row_003 => (r#"bulk aan 003"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aan_fc_row_004 => (r#"bulk aan 004"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aan_fc_row_005 => (r#"bulk aan 005"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aan_fc_row_006 => (r#"bulk aan 006"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aan_fc_row_006 => (r#"bulk aan 006"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aan_fc_row_007 => (r#"bulk aan 007"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aan_fc_row_008 => (r#"bulk aan 008"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aan_fc_row_009 => (r#"bulk aan 009"#, r###"str=%l; print -r ${(%)str}"###);
@@ -38536,7 +38536,7 @@ mod corpus_dash_fc_bulk_abp {
         bulk_abp_fc_row_041 => (r#"bulk abp 041"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_abp_fc_row_042 => (r#"bulk abp 042"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_abp_fc_row_043 => (r#"bulk abp 043"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_abp_fc_row_044 => (r#"bulk abp 044"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abp_fc_row_044 => (r#"bulk abp 044"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_abp_fc_row_045 => (r#"bulk abp 045"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_abp_fc_row_046 => (r#"bulk abp 046"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_abp_fc_row_047 => (r#"bulk abp 047"#, r###"str=%l; print -r ${(%)str}"###);
@@ -38575,7 +38575,7 @@ mod corpus_dash_fc_bulk_abq {
         bulk_abq_fc_row_025 => (r#"bulk abq 025"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_abq_fc_row_026 => (r#"bulk abq 026"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_abq_fc_row_027 => (r#"bulk abq 027"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_abq_fc_row_028 => (r#"bulk abq 028"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abq_fc_row_028 => (r#"bulk abq 028"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_abq_fc_row_029 => (r#"bulk abq 029"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_abq_fc_row_030 => (r#"bulk abq 030"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_abq_fc_row_031 => (r#"bulk abq 031"#, r###"str=%l; print -r ${(%)str}"###);
@@ -38614,7 +38614,7 @@ mod corpus_dash_fc_bulk_abr {
         bulk_abr_fc_row_009 => (r#"bulk abr 009"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_abr_fc_row_010 => (r#"bulk abr 010"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_abr_fc_row_011 => (r#"bulk abr 011"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_abr_fc_row_012 => (r#"bulk abr 012"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abr_fc_row_012 => (r#"bulk abr 012"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_abr_fc_row_013 => (r#"bulk abr 013"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_abr_fc_row_014 => (r#"bulk abr 014"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_abr_fc_row_015 => (r#"bulk abr 015"#, r###"str=%l; print -r ${(%)str}"###);
@@ -38659,7 +38659,7 @@ mod corpus_dash_fc_bulk_abs {
 
     parity_gap_tests! {
         bulk_abs_fc_row_001 => (r#"bulk abs 001"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_abs_fc_row_002 => (r#"bulk abs 002"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_abs_fc_row_002 => (r#"bulk abs 002"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_abs_fc_row_003 => (r#"bulk abs 003"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_abs_fc_row_004 => (r#"bulk abs 004"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_abs_fc_row_005 => (r#"bulk abs 005"#, r###"str=%l; print -r ${(%)str}"###);
@@ -40237,7 +40237,7 @@ mod corpus_dash_fc_bulk_acu {
         bulk_acu_fc_row_037 => (r#"bulk acu 037"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_acu_fc_row_038 => (r#"bulk acu 038"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_acu_fc_row_039 => (r#"bulk acu 039"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_acu_fc_row_040 => (r#"bulk acu 040"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_acu_fc_row_040 => (r#"bulk acu 040"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_acu_fc_row_041 => (r#"bulk acu 041"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_acu_fc_row_042 => (r#"bulk acu 042"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_acu_fc_row_043 => (r#"bulk acu 043"#, r###"str=%l; print -r ${(%)str}"###);
@@ -40276,7 +40276,7 @@ mod corpus_dash_fc_bulk_acv {
         bulk_acv_fc_row_021 => (r#"bulk acv 021"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_acv_fc_row_022 => (r#"bulk acv 022"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_acv_fc_row_023 => (r#"bulk acv 023"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_acv_fc_row_024 => (r#"bulk acv 024"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_acv_fc_row_024 => (r#"bulk acv 024"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_acv_fc_row_025 => (r#"bulk acv 025"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_acv_fc_row_026 => (r#"bulk acv 026"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_acv_fc_row_027 => (r#"bulk acv 027"#, r###"str=%l; print -r ${(%)str}"###);
@@ -40315,7 +40315,7 @@ mod corpus_dash_fc_bulk_acw {
         bulk_acw_fc_row_005 => (r#"bulk acw 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_acw_fc_row_006 => (r#"bulk acw 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_acw_fc_row_007 => (r#"bulk acw 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_acw_fc_row_008 => (r#"bulk acw 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_acw_fc_row_008 => (r#"bulk acw 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_acw_fc_row_009 => (r#"bulk acw 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_acw_fc_row_010 => (r#"bulk acw 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_acw_fc_row_011 => (r#"bulk acw 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -41938,7 +41938,7 @@ mod corpus_dash_fc_bulk_adz {
         bulk_adz_fc_row_033 => (r#"bulk adz 033"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_adz_fc_row_034 => (r#"bulk adz 034"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_adz_fc_row_035 => (r#"bulk adz 035"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_adz_fc_row_036 => (r#"bulk adz 036"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_adz_fc_row_036 => (r#"bulk adz 036"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_adz_fc_row_037 => (r#"bulk adz 037"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_adz_fc_row_038 => (r#"bulk adz 038"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_adz_fc_row_039 => (r#"bulk adz 039"#, r###"str=%l; print -r ${(%)str}"###);
@@ -41978,7 +41978,7 @@ mod corpus_dash_fc_bulk_aea {
         bulk_aea_fc_row_018 => (r#"bulk aea 018"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aea_fc_row_019 => (r#"bulk aea 019"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aea_fc_row_020 => (r#"bulk aea 020"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aea_fc_row_021 => (r#"bulk aea 021"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aea_fc_row_021 => (r#"bulk aea 021"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aea_fc_row_022 => (r#"bulk aea 022"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aea_fc_row_023 => (r#"bulk aea 023"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aea_fc_row_024 => (r#"bulk aea 024"#, r###"str=%l; print -r ${(%)str}"###);
@@ -42020,7 +42020,7 @@ mod corpus_dash_fc_bulk_aeb {
         bulk_aeb_fc_row_005 => (r#"bulk aeb 005"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aeb_fc_row_006 => (r#"bulk aeb 006"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aeb_fc_row_007 => (r#"bulk aeb 007"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aeb_fc_row_008 => (r#"bulk aeb 008"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aeb_fc_row_008 => (r#"bulk aeb 008"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aeb_fc_row_009 => (r#"bulk aeb 009"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aeb_fc_row_010 => (r#"bulk aeb 010"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aeb_fc_row_011 => (r#"bulk aeb 011"#, r###"str=%l; print -r ${(%)str}"###);
@@ -43639,7 +43639,7 @@ mod corpus_dash_fc_bulk_afe {
         bulk_afe_fc_row_029 => (r#"bulk afe 029"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_afe_fc_row_030 => (r#"bulk afe 030"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_afe_fc_row_031 => (r#"bulk afe 031"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_afe_fc_row_032 => (r#"bulk afe 032"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_afe_fc_row_032 => (r#"bulk afe 032"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_afe_fc_row_033 => (r#"bulk afe 033"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_afe_fc_row_034 => (r#"bulk afe 034"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_afe_fc_row_035 => (r#"bulk afe 035"#, r###"str=%l; print -r ${(%)str}"###);
@@ -43679,7 +43679,7 @@ mod corpus_dash_fc_bulk_aff {
         bulk_aff_fc_row_014 => (r#"bulk aff 014"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aff_fc_row_015 => (r#"bulk aff 015"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aff_fc_row_016 => (r#"bulk aff 016"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aff_fc_row_017 => (r#"bulk aff 017"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aff_fc_row_017 => (r#"bulk aff 017"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aff_fc_row_018 => (r#"bulk aff 018"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aff_fc_row_019 => (r#"bulk aff 019"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aff_fc_row_020 => (r#"bulk aff 020"#, r###"str=%l; print -r ${(%)str}"###);
@@ -43724,7 +43724,7 @@ mod corpus_dash_fc_bulk_afg {
         bulk_afg_fc_row_004 => (r#"bulk afg 004"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_afg_fc_row_005 => (r#"bulk afg 005"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_afg_fc_row_006 => (r#"bulk afg 006"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_afg_fc_row_007 => (r#"bulk afg 007"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_afg_fc_row_007 => (r#"bulk afg 007"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_afg_fc_row_008 => (r#"bulk afg 008"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_afg_fc_row_009 => (r#"bulk afg 009"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_afg_fc_row_010 => (r#"bulk afg 010"#, r###"str=%l; print -r ${(%)str}"###);
@@ -45302,7 +45302,7 @@ mod corpus_dash_fc_bulk_agi {
         bulk_agi_fc_row_042 => (r#"bulk agi 042"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_agi_fc_row_043 => (r#"bulk agi 043"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_agi_fc_row_044 => (r#"bulk agi 044"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_agi_fc_row_045 => (r#"bulk agi 045"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_agi_fc_row_045 => (r#"bulk agi 045"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_agi_fc_row_046 => (r#"bulk agi 046"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_agi_fc_row_047 => (r#"bulk agi 047"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_agi_fc_row_048 => (r#"bulk agi 048"#, r###"str=%l; print -r ${(%)str}"###);
@@ -45341,7 +45341,7 @@ mod corpus_dash_fc_bulk_agj {
         bulk_agj_fc_row_026 => (r#"bulk agj 026"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_agj_fc_row_027 => (r#"bulk agj 027"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_agj_fc_row_028 => (r#"bulk agj 028"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_agj_fc_row_029 => (r#"bulk agj 029"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_agj_fc_row_029 => (r#"bulk agj 029"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_agj_fc_row_030 => (r#"bulk agj 030"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_agj_fc_row_031 => (r#"bulk agj 031"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_agj_fc_row_032 => (r#"bulk agj 032"#, r###"str=%l; print -r ${(%)str}"###);
@@ -45380,7 +45380,7 @@ mod corpus_dash_fc_bulk_agk {
         bulk_agk_fc_row_010 => (r#"bulk agk 010"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_agk_fc_row_011 => (r#"bulk agk 011"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_agk_fc_row_012 => (r#"bulk agk 012"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_agk_fc_row_013 => (r#"bulk agk 013"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_agk_fc_row_013 => (r#"bulk agk 013"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_agk_fc_row_014 => (r#"bulk agk 014"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_agk_fc_row_015 => (r#"bulk agk 015"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_agk_fc_row_016 => (r#"bulk agk 016"#, r###"str=%l; print -r ${(%)str}"###);
@@ -45425,7 +45425,7 @@ mod corpus_dash_fc_bulk_agl {
     parity_gap_tests! {
         bulk_agl_fc_row_001 => (r#"bulk agl 001"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_agl_fc_row_002 => (r#"bulk agl 002"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_agl_fc_row_003 => (r#"bulk agl 003"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_agl_fc_row_003 => (r#"bulk agl 003"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_agl_fc_row_004 => (r#"bulk agl 004"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_agl_fc_row_005 => (r#"bulk agl 005"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_agl_fc_row_006 => (r#"bulk agl 006"#, r###"str=%l; print -r ${(%)str}"###);
@@ -47003,7 +47003,7 @@ mod corpus_dash_fc_bulk_ahn {
         bulk_ahn_fc_row_038 => (r#"bulk ahn 038"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ahn_fc_row_039 => (r#"bulk ahn 039"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ahn_fc_row_040 => (r#"bulk ahn 040"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ahn_fc_row_041 => (r#"bulk ahn 041"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ahn_fc_row_041 => (r#"bulk ahn 041"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ahn_fc_row_042 => (r#"bulk ahn 042"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ahn_fc_row_043 => (r#"bulk ahn 043"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ahn_fc_row_044 => (r#"bulk ahn 044"#, r###"str=%l; print -r ${(%)str}"###);
@@ -47042,7 +47042,7 @@ mod corpus_dash_fc_bulk_aho {
         bulk_aho_fc_row_022 => (r#"bulk aho 022"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_aho_fc_row_023 => (r#"bulk aho 023"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_aho_fc_row_024 => (r#"bulk aho 024"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_aho_fc_row_025 => (r#"bulk aho 025"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_aho_fc_row_025 => (r#"bulk aho 025"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_aho_fc_row_026 => (r#"bulk aho 026"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_aho_fc_row_027 => (r#"bulk aho 027"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_aho_fc_row_028 => (r#"bulk aho 028"#, r###"str=%l; print -r ${(%)str}"###);
@@ -47081,7 +47081,7 @@ mod corpus_dash_fc_bulk_ahp {
         bulk_ahp_fc_row_006 => (r#"bulk ahp 006"#, r###"str=%c; print -r ${(%)str}"###);
         bulk_ahp_fc_row_007 => (r#"bulk ahp 007"#, r###"str=%D; print -r ${(%)str}"###);
         bulk_ahp_fc_row_008 => (r#"bulk ahp 008"#, r###"str=%W; print -r ${(%)str}"###);
-        bulk_ahp_fc_row_009 => (r#"bulk ahp 009"#, r###"str=%*; print -r ${(%)str}"###);
+        bulk_ahp_fc_row_009 => (r#"bulk ahp 009"#, r###"str=%n; print -r ${(%)str}"###);
         bulk_ahp_fc_row_010 => (r#"bulk ahp 010"#, r###"str=%v; print -r ${(%)str}"###);
         bulk_ahp_fc_row_011 => (r#"bulk ahp 011"#, r###"str=%L; print -r ${(%)str}"###);
         bulk_ahp_fc_row_012 => (r#"bulk ahp 012"#, r###"str=%l; print -r ${(%)str}"###);
