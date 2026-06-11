@@ -52,14 +52,18 @@ where
         if (err & 2) != 0 {
             break;
         }
+        // c:402-403 — `rp = ztrdup(*args); unmetafy(rp, &len);`
+        // Build rp = unmetafied path; the original metafied `arg` is
+        // used for user-facing diagnostics, `rp` for syscalls.
+        let rp = crate::ported::utils::unmeta(arg);
         let first = if opt_safe != 0 { 0 } else { 1 }; // c:421/c:434
-        err |= recursivecmd_doone(&reccmd, arg, arg, first); // c:450/c:434
+        err |= recursivecmd_doone(&reccmd, arg, &rp, first); // c:431/c:433
     }
     if err != 0 {
         1
     } else {
         0
-    } // c:450 !!err
+    } // c:445 !!err
 }
 
 // =====================================================================
