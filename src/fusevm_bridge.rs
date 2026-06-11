@@ -1820,6 +1820,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     unsafe {
                         libc::dup2(pipes[i].1, libc::STDOUT_FILENO);
                     }
+                    // (Pipe-output MULTIOS marking — c:Src/exec.c:3724 —
+                    // is emitted INTO the stage chunk by compile_pipe
+                    // via BUILTIN_PIPE_OUTPUT_MARK, gated on the stage's
+                    // top-level command actually carrying redirects, so
+                    // a nested `{ echo a > f; } | cat` body redirect
+                    // does not wrongly join the pipe.)
                     // Close all original pipe fds (keeping stdin/stdout dups)
                     for (r, w) in &pipes {
                         unsafe {
@@ -5428,6 +5434,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         });
         Value::Status(0)
     });
+    // c:Src/exec.c:3978-3986 — nullexec==1 marker. See the const's
+    // doc block. Arg: 1 = entering a bare-exec redirect, 0 = leaving.
+    vm.register_builtin(BUILTIN_EXEC_PERM_REDIRS, |vm, _argc| {
+        let on = vm.pop().to_int() != 0;
+        with_executor(|exec| exec.exec_redirs_permanent = on);
+        Value::Status(0)
+    });
+    // c:Src/exec.c:3722-3724 — see the const's doc block. No args.
+    vm.register_builtin(BUILTIN_PIPE_OUTPUT_MARK, |_vm, _argc| {
+        with_executor(|exec| exec.pipe_output_pending = true);
+        Value::Status(0)
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -7331,6 +7349,36 @@ pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
 ///      on exit).
 pub const BUILTIN_MULTIOS_READ: u16 = 618;
 
+/// Toggle `ShellExecutor::exec_redirs_permanent`. Emitted by
+/// compile_zsh's bare-`exec`-with-redirects arm tightly around each
+/// `Op::Redirect`: `LoadInt(1); CallBuiltin; …Redirect…; LoadInt(0);
+/// CallBuiltin`. While set, `host_apply_redirect` skips pushing the
+/// saved fd into the enclosing redirect scope, making the fd change
+/// permanent.
+///
+/// c:Src/exec.c:3978-3986 — nullexec==1 (`exec` carrying only
+/// redirections): "If nullexec is 1 we specifically *don't* restore
+/// the original fd's before returning" — the per-execcmd `save[]`
+/// dups are closed unrestored. An ENCLOSING group's own saves are a
+/// different execcmd's `save[]` and still restore (verified:
+/// `{ exec 2>/dev/null; } 2>&1; ls /nope` prints the ls error in zsh).
+pub const BUILTIN_EXEC_PERM_REDIRS: u16 = 619;
+
+/// Set `ShellExecutor::pipe_output_pending`. Emitted by compile_pipe
+/// at the head of a NON-LAST pipeline-stage sub-chunk when that
+/// stage's top-level command carries redirects (`Simple` with redirs
+/// or `Redirected` compound). The forked stage child runs the chunk
+/// with stdout already dup2'd onto the pipe; the first
+/// `host_redirect_scope_begin` (the stage command's own redirect
+/// list) consumes the flag into `pipe_output_scope`, enabling the
+/// MULTIOS stream-split for fd-1 write redirects in that list.
+///
+/// c:Src/exec.c:3722-3724 — `addfd(forked, save, mfds, 1, output, 1,
+/// NULL)` registers the pipe in mfds[1] in the SAME execcmd that
+/// walks the stage command's redirect list; mfds is per-execcmd, so
+/// nested body commands (`{ echo a > f; } | cat`) never see it.
+pub const BUILTIN_PIPE_OUTPUT_MARK: u16 = 620;
+
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword
 /// shapes with a redirect but no following command. Direct port
@@ -8579,26 +8627,162 @@ impl ShellExecutor {
                 }
             }
         }
-        let saved = unsafe { libc::dup(fd) };
-        if saved >= 0 {
-            if let Some(top) = self.redirect_scope_stack.last_mut() {
-                top.push((fd, saved));
-            } else {
-                // No scope — leave saved fd open and let the next scope
-                // reclaim it. (Caller without a scope leaks the dup; this
-                // matches `WithRedirects` parser construction always wrapping.)
-                unsafe { libc::close(saved) };
+        // c:Src/exec.c:3978-3986 — bare `exec` redirects (nullexec==1)
+        // skip the save entirely: "we specifically *don't* restore the
+        // original fd's". C's save[] is per-execcmd, so exec's redirs
+        // never enter an enclosing group's save list either; pushing
+        // into `redirect_scope_stack.last_mut()` here (the enclosing
+        // group's scope) made `{ exec 1>&-; … } 2>/dev/null` restore
+        // stdout at group end — diverging from zsh, which keeps fd 1
+        // closed for the rest of the script.
+        if !self.exec_redirs_permanent {
+            let saved = unsafe { libc::dup(fd) };
+            if saved >= 0 {
+                if let Some(top) = self.redirect_scope_stack.last_mut() {
+                    top.push((fd, saved));
+                } else {
+                    // No scope — leave saved fd open and let the next scope
+                    // reclaim it. (Caller without a scope leaks the dup; this
+                    // matches `WithRedirects` parser construction always wrapping.)
+                    unsafe { libc::close(saved) };
+                }
+            }
+            // For `&>` / `&>>` also save fd 2 so the scope restores it after
+            // the body. Otherwise stderr stays redirected past the command.
+            if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
+                let saved2 = unsafe { libc::dup(2) };
+                if saved2 >= 0 {
+                    if let Some(top) = self.redirect_scope_stack.last_mut() {
+                        top.push((2, saved2));
+                    } else {
+                        unsafe { libc::close(saved2) };
+                    }
+                }
             }
         }
-        // For `&>` / `&>>` also save fd 2 so the scope restores it after
-        // the body. Otherwise stderr stays redirected past the command.
-        if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
-            let saved2 = unsafe { libc::dup(2) };
-            if saved2 >= 0 {
-                if let Some(top) = self.redirect_scope_stack.last_mut() {
-                    top.push((2, saved2));
-                } else {
-                    unsafe { libc::close(saved2) };
+        // c:Src/exec.c:3722-3724 + 2447-2480 — MULTIOS split when this
+        // command's stdout IS the pipeline output. C registers the pipe
+        // in mfds[1] (`addfd(forked, save, mfds, 1, output, 1, NULL)`)
+        // BEFORE walking the explicit redirect list, so a write-side
+        // redirect of fd 1 finds mfds[1] occupied and, with MULTIOS
+        // set, "split[s] the stream": fd 1 becomes the write end of an
+        // internal pipe whose reader tees every chunk to BOTH the
+        // pipeline pipe and the new target. That is why
+        // `{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | cat` sends
+        // `a` to the pipe (via the tee) AND to stderr — plain dup2
+        // replacement loses the pipe stream. The scope-depth gate
+        // mirrors mfds being per-execcmd: only the redirect list
+        // attached to the stage's own command joins the pipe; nested
+        // commands inside the body (`{ echo a > f; } | cat`) get a
+        // fresh "mfds" and replace as usual.
+        if fd == 1
+            && self
+                .pipe_output_scope
+                .is_some_and(|d| d + 1 == self.redirect_scope_stack.len())
+            && crate::ported::options::opt_state_get("multios").unwrap_or(true)
+        {
+            // Resolve the new write target exactly as the plain arms
+            // below would, but as a raw fd for the tee.
+            let new_target_fd: i32 = match op_byte {
+                r::DUP_WRITE => {
+                    // Numeric `>&N` only; `-` (close) and `p` (coproc)
+                    // fall through to the plain arms.
+                    target
+                        .trim_start_matches('&')
+                        .parse::<i32>()
+                        .map(|src| unsafe { libc::dup(src) })
+                        .unwrap_or(-1)
+                }
+                r::WRITE | r::CLOBBER => fs::File::create(target)
+                    .map(|f| f.into_raw_fd())
+                    .unwrap_or(-1),
+                r::APPEND => fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(target)
+                    .map(|f| f.into_raw_fd())
+                    .unwrap_or(-1),
+                _ => -1,
+            };
+            if new_target_fd >= 0 {
+                let pipe_dup = unsafe { libc::dup(1) };
+                match (pipe_dup >= 0).then(os_pipe::pipe) {
+                    Some(Ok((read_end, write_end))) => {
+                        // Splitter: same read-loop shape as
+                        // BUILTIN_MULTIOS_REDIRECT, with one ordering
+                        // refinement. C's tee is a forked process
+                        // (closemn → teeproc) whose wakeup latency lets
+                        // the stage's DIRECT pipe writes land first —
+                        // observed zsh output for `{ echo a; echo b >&2; }
+                        // 3>&1 1>&2 2>&3 3>&- | cat` is `b` then `a`,
+                        // 15/15 runs. A Rust thread wakes faster than
+                        // the debug-build VM dispatches the next echo,
+                        // inverting the order. Emulate the C timing
+                        // observably: stream to the NEW target (file /
+                        // stderr dup) immediately, but defer the
+                        // pipe-bound copy until EOF (or a 64KB cap so a
+                        // long-running stream still flows instead of
+                        // growing memory unboundedly).
+                        let write_now = |tfd: i32, data: &[u8]| {
+                            let mut off = 0;
+                            while off < data.len() {
+                                let w = unsafe {
+                                    libc::write(
+                                        tfd,
+                                        data[off..].as_ptr() as *const libc::c_void,
+                                        data.len() - off,
+                                    )
+                                };
+                                if w <= 0 {
+                                    break;
+                                }
+                                off += w as usize;
+                            }
+                        };
+                        let handle = std::thread::spawn(move || {
+                            let mut rd = read_end;
+                            let mut buf = [0u8; 8192];
+                            let mut pipe_pending: Vec<u8> = Vec::new();
+                            loop {
+                                match std::io::Read::read(&mut rd, &mut buf) {
+                                    Ok(0) | Err(_) => break,
+                                    Ok(n) => {
+                                        write_now(new_target_fd, &buf[..n]);
+                                        pipe_pending.extend_from_slice(&buf[..n]);
+                                        if pipe_pending.len() >= 65536 {
+                                            write_now(pipe_dup, &pipe_pending);
+                                            pipe_pending.clear();
+                                        }
+                                    }
+                                }
+                            }
+                            write_now(pipe_dup, &pipe_pending);
+                            unsafe {
+                                libc::close(pipe_dup);
+                                libc::close(new_target_fd);
+                            }
+                        });
+                        let write_raw = AsRawFd::as_raw_fd(&write_end);
+                        unsafe { libc::dup2(write_raw, 1) };
+                        drop(write_end);
+                        // Scope-end closes this dup (the last writer once
+                        // the saved fd 1 is restored) → EOF → join.
+                        let close_on_end = unsafe { libc::dup(1) };
+                        if let Some(top) = self.multios_scope_stack.last_mut() {
+                            top.push((close_on_end, handle));
+                        } else {
+                            unsafe { libc::close(close_on_end) };
+                            let _ = handle.join();
+                        }
+                        return;
+                    }
+                    _ => unsafe {
+                        // pipe()/dup failure — fall through to plain replace.
+                        if pipe_dup >= 0 {
+                            libc::close(pipe_dup);
+                        }
+                        libc::close(new_target_fd);
+                    },
                 }
             }
         }
@@ -8803,6 +8987,16 @@ impl ShellExecutor {
     /// Push a fresh redirect scope. `_count` is informational — the actual
     /// saved fds are appended by host_apply_redirect into the top scope.
     pub fn host_redirect_scope_begin(&mut self, _count: u8) {
+        // c:Src/exec.c:3722-3724 — the pipeline child set
+        // `pipe_output_pending` right after dup2'ing its stdout onto
+        // the pipe; the FIRST redirect scope opened in that child is
+        // the stage command's own redirect list (same execcmd as the
+        // pipe's addfd into mfds[1]). Capture the depth so only THAT
+        // list's fd-1 write redirects MULTIOS-join the pipe.
+        if self.pipe_output_pending {
+            self.pipe_output_pending = false;
+            self.pipe_output_scope = Some(self.redirect_scope_stack.len());
+        }
         self.redirect_scope_stack.push(Vec::new());
         self.multios_scope_stack.push(Vec::new());
     }
@@ -8832,6 +9026,11 @@ impl ShellExecutor {
                 }
                 let _ = handle.join();
             }
+        }
+        // The scope that captured the pipeline-output marker is gone;
+        // deeper-nested future scopes must not re-match its depth.
+        if self.pipe_output_scope == Some(self.redirect_scope_stack.len()) {
+            self.pipe_output_scope = None;
         }
     }
 
