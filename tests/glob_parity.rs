@@ -241,3 +241,51 @@ mod hidden_files {
         assert_parity_in(d.path(), "print -l .*");
     }
 }
+
+mod multibyte_text_is_not_glob {
+    use super::*;
+
+    /// UTF-8 continuation bytes that collide with token byte values
+    /// (Hat = 0x86, Inang = 0x94, Star = 0x87 as u8) must not mark a
+    /// word as a glob. Pre-fix, the dispatcher's pre-untokenize gate
+    /// and pattern.rs::haswilds scanned BYTES, so `↔` (E2 86 94) and
+    /// `⇇` (E2 87 87) fired "no matches found" from nested parameter
+    /// substitutions — the zinit.zsh:251 `col-↔` load failure.
+    #[test]
+    fn nested_default_arm_with_u2194_arrow() {
+        let d = mkdir_with_files(&["only.txt"]);
+        assert_parity_in(d.path(), "echo ${${X}:-↔}");
+    }
+
+    #[test]
+    fn nested_plus_arm_with_u2194_arrow() {
+        let d = mkdir_with_files(&["only.txt"]);
+        assert_parity_in(d.path(), "X=1; echo ${${X}:+↔}");
+    }
+
+    /// `⇇` carries 0x87 (Star as u8) twice — Star fires with no option
+    /// gate, so this caught the bug even with extendedglob unset.
+    #[test]
+    fn nested_default_arm_with_u21c7_arrows() {
+        let d = mkdir_with_files(&["only.txt"]);
+        assert_parity_in(d.path(), "echo ${${X}:-⇇}");
+    }
+
+    /// Hat (0x86) is EXTENDEDGLOB-gated — pin the option-on path too.
+    #[test]
+    fn nested_default_arm_with_u2194_under_extendedglob() {
+        let d = mkdir_with_files(&["only.txt"]);
+        assert_parity_in(d.path(), "setopt extendedglob; echo ${${X}:-↔}");
+    }
+
+    /// The exact zinit.zsh:251 shape: nested `${(M)…:#…}` match flag
+    /// feeding a `:+` arm whose value is a multibyte arrow.
+    #[test]
+    fn zinit_col_lr_shape() {
+        let d = mkdir_with_files(&["only.txt"]);
+        assert_parity_in(
+            d.path(),
+            "LANG=en_US.UTF-8; echo ${${${(M)LANG:#*UTF-8*}:+↔}:-fallback}",
+        );
+    }
+}

@@ -19,6 +19,51 @@ CI green pending the underlying fix.
 
 ---
 
+## #627 — `${${X}:-↔}` fires "no matches found: ↔" — UTF-8 continuation bytes collide with token byte values in glob detection
+
+**Status:** `fixed` 2026-06-11
+
+**Reproducer (pre-fix):**
+```
+$ ./zshrs --zsh -fc 'echo ${${X}:-↔}'
+zsh:1: no matches found: ↔               ← zshrs: word treated as glob
+$ /opt/homebrew/bin/zsh -fc 'echo ${${X}:-↔}'
+↔                                        ← zsh: plain text
+```
+Surfaced as `/Users/wizard/.zinit/bin/zinit.zsh:123: no matches
+found: ↔` on every interactive launch — zinit.zsh:251 builds
+`col-↔` via the unquoted nested substitution
+`${${${(M)LANG:#*UTF-8*}:+$'…↔…'}:-…}`. (The reported line number
+123 vs actual 251 is a separate line-tracking divergence, not
+addressed by this fix.)
+
+**C reference:** `haswilds` (`Src/pattern.c:4306`) scans a metafied
+byte stream — `metafy` (`Src/utils.c`) escapes every raw input byte
+that collides with a token value as `Meta, byte^32` before the lexer
+runs, so `*str == Hat` can never false-positive on text bytes.
+
+**zshrs root cause:** zshrs words are Rust `&str` holding token
+chars as codepoints (Star = U+0087, encoded `C2 87`), not metafied
+bytes. Both `pattern.rs::haswilds` and the dispatcher's inline
+pre-untokenize glob gate (fusevm_bridge.rs, bug #625) scanned
+`s.as_bytes()` against `Hat as u8` / `Inang as u8` / etc. — that
+matched real tokens only by accident of UTF-8 low-byte encoding,
+and false-positived on the continuation bytes of any multibyte char
+carrying 0x84–0xA0: `↔` (U+2194, `E2 86 94`) hits Hat (0x86,
+EXTENDEDGLOB-gated) and Inang (0x94, ungated); `⇇` (U+21C7,
+`E2 87 87`) hits Star (0x87, ungated).
+
+**Fix:** both scans converted from bytes to chars — token
+comparisons are codepoint comparisons, so U+2194 ≠ U+0094 and
+plain multibyte text never marks a word wild, while real lexer
+tokens (`'\u{87}'` etc.) still fire. The ~95-line inline bridge
+gate was extracted to `fusevm_bridge.rs::haswilds_tokens_only`
+(Rust-only helper, C-verbatim token-only check set; lives outside
+src/ported/ because the name has no C counterpart). Pinned by
+`multibyte_text_is_not_glob` in tests/glob_parity.rs.
+
+---
+
 ## #626 — `${(j.$'\n'.)a}` joins with a bare newline; zsh joins with literal `$'` + NL + `'`
 
 **Status:** `fixed` 2026-06-11
