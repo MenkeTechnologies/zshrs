@@ -3864,6 +3864,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             libc::getrusage(libc::RUSAGE_CHILDREN, &mut r);
             r
         };
+        // c:Src/jobs.c — zsh's `time` reports only for JOBS (forked
+        // work). Builtins/brace-groups/functions run in the shell
+        // process with no job, so `zsh -fc 'time true'` emits NOTHING.
+        // Snapshot the fork-event counter; report only if the timed
+        // body forked (external command or subshell).
+        let forks_before =
+            crate::vm_helper::FORK_EVENTS.load(std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         crate::fusevm_disasm::maybe_print_stdout("time_sublist", &chunk);
         let mut sub_vm = fusevm::VM::new(chunk);
@@ -3903,8 +3910,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // source text (used by %J via printtime). The compiler now
         // threads the rendered source text through as the desc operand
         // (compile_zsh.rs Time arm, argc==2 form). Bug #66.
-        let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
-        eprintln!("{}", line);
+        // c:Src/jobs.c — no job, no report (see forks_before above).
+        let forked = crate::vm_helper::FORK_EVENTS.load(std::sync::atomic::Ordering::Relaxed)
+            != forks_before;
+        if forked {
+            let line = crate::ported::jobs::printtime(elapsed.as_secs_f64(), &ti, &fmt, &desc);
+            eprintln!("{}", line);
+        }
         Value::Status(status)
     });
 
@@ -7775,6 +7787,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 lastpid: crate::ported::modules::clone::lastpid
                     .load(std::sync::atomic::Ordering::Relaxed),
             });
+            // C forks for `(...)` — count the fork-equivalent so
+            // `time (builtin)` reports like zsh (see FORK_EVENTS).
+            crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
             // each subshell has its own trap context. Other signals
