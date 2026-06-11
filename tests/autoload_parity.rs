@@ -179,3 +179,202 @@ fn autoload_missing_function_reports_failure() {
     assert_ne!(z_code, "0", "zsh expected non-zero");
     assert_ne!(r_code, "0", "zshrs expected non-zero");
 }
+
+// =====================================================================
+// `.zwc` autoload — getfpfunc tries try_dump_file per fpath dir BEFORE
+// the plain file (Src/exec.c:6238), header/version/mtime checks in
+// try_dump_file / check_dump_file (Src/parse.c:3746/3833).
+// =====================================================================
+
+/// fpath dir containing ONLY `fn.zwc` (source deleted), compiled by
+/// REAL zsh — zshrs must locate the function in the dump and run it.
+/// Pins the c:exec.c:6238 try_dump_file arm of getfpfunc and the
+/// check_dump_file body load (c:parse.c:3919-3958).
+#[test]
+fn autoload_zwc_only_dir_real_zsh_compiled() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("zwfn"), "echo zw_body $1\n").unwrap();
+    let z = run_zsh_in(d.path(), "zcompile zwfn");
+    assert_eq!(z.exit, 0, "zsh zcompile sanity");
+    std::fs::remove_file(d.path().join("zwfn")).unwrap();
+    let script = format!(
+        r#"fpath=({}); autoload -Uz zwfn; zwfn arg1"#,
+        d.path().display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout.trim(), "zw_body arg1", "zsh sanity: {:?}", z.stdout);
+    assert_eq!(
+        r.stdout, z.stdout,
+        "zshrs failed to autoload from .zwc-only fpath dir"
+    );
+    assert_eq!(z.exit, r.exit);
+}
+
+/// Cross direction: ZSHRS zcompiles the function file; both shells
+/// must then load the dump (pins write_dump emission + the loader
+/// round-trip, and that real zsh accepts zshrs-written dumps).
+#[test]
+fn autoload_zwc_only_dir_zshrs_compiled() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("rwfn"), "echo rw_body $1\n").unwrap();
+    let r = run_zshrs_in(d.path(), "zcompile rwfn");
+    assert_eq!(r.exit, 0, "zshrs zcompile failed");
+    std::fs::remove_file(d.path().join("rwfn")).unwrap();
+    let script = format!(
+        r#"fpath=({}); autoload -Uz rwfn; rwfn arg1"#,
+        d.path().display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(
+        z.stdout.trim(),
+        "rw_body arg1",
+        "real zsh rejected zshrs-written dump: {:?}",
+        z.stdout
+    );
+    assert_eq!(r.stdout, z.stdout, "zshrs cannot load its own dump");
+    assert_eq!(z.exit, r.exit);
+}
+
+/// Both compiled + plain present: the dump wins only when its mtime
+/// is >= the source's (c:parse.c:3779 `stc.st_mtime >= stn.st_mtime`).
+/// Distinct bodies make the winner observable.
+#[test]
+fn autoload_zwc_mtime_preference() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("mtfn"), "echo compiled_body\n").unwrap();
+    let z = run_zsh_in(d.path(), "zcompile mtfn");
+    assert_eq!(z.exit, 0, "zsh zcompile sanity");
+    // Rewrite the source with different output, then backdate it so
+    // the dump is newer.
+    std::fs::write(d.path().join("mtfn"), "echo source_body\n").unwrap();
+    let old = filetime::FileTime::from_unix_time(1577836800, 0); // 2020-01-01
+    filetime::set_file_mtime(d.path().join("mtfn"), old).unwrap();
+    let script = format!(
+        r#"fpath=({}); autoload -Uz mtfn; mtfn"#,
+        d.path().display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout.trim(), "compiled_body", "zsh sanity (dump newer)");
+    assert_eq!(r.stdout, z.stdout, "zshrs ignored newer dump");
+    // Now make the source newer than the dump — the plain file wins.
+    let new = filetime::FileTime::now();
+    filetime::set_file_mtime(d.path().join("mtfn"), new).unwrap();
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout.trim(), "source_body", "zsh sanity (source newer)");
+    assert_eq!(r.stdout, z.stdout, "zshrs preferred stale dump over newer source");
+}
+
+/// `zcompile -k` marks the dump FDHF_KSHLOAD (c:parse.c:3149); the
+/// loader must then execute the file contents and call the defined
+/// function (c:exec.c:5725-5746) — observable as BOTH the trailing
+/// self-call output and the real-call output, in order.
+#[test]
+fn autoload_zwc_kshload_flag() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join("kfn"),
+        "kfn() { echo kbody $1; }\nkfn boot\n",
+    )
+    .unwrap();
+    let z = run_zsh_in(d.path(), "zcompile -k kfn");
+    assert_eq!(z.exit, 0, "zsh zcompile -k sanity");
+    std::fs::remove_file(d.path().join("kfn")).unwrap();
+    let script = format!(
+        r#"fpath=({}); autoload -Uz kfn; kfn arg1"#,
+        d.path().display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(
+        z.stdout, "kbody boot\nkbody arg1\n",
+        "zsh sanity: {:?}",
+        z.stdout
+    );
+    assert_eq!(
+        r.stdout, z.stdout,
+        "zshrs FDHF_KSHLOAD handling diverges (file-run + re-call)"
+    );
+    assert_eq!(z.exit, r.exit);
+}
+
+/// Directory digest: `<dir>.zwc` beside the fpath dir holds multiple
+/// functions (c:parse.c:3766 `dig = dyncat(path, FD_EXT)`); and an
+/// fpath element that IS a `.zwc` file (c:parse.c:3753 strsfx arm).
+#[test]
+fn autoload_zwc_digest_and_zwc_fpath_entry() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let fns = d.path().join("fns");
+    std::fs::create_dir(&fns).unwrap();
+    std::fs::write(fns.join("dg1"), "echo dg_one $1\n").unwrap();
+    std::fs::write(fns.join("dg2"), "echo dg_two $1\n").unwrap();
+    let z = run_zsh_in(d.path(), "zcompile fns.zwc fns/dg1 fns/dg2");
+    assert_eq!(z.exit, 0, "zsh digest zcompile sanity");
+    std::fs::remove_file(fns.join("dg1")).unwrap();
+    std::fs::remove_file(fns.join("dg2")).unwrap();
+    // Digest beside the dir.
+    let script = format!(
+        r#"fpath=({}); autoload -Uz dg1 dg2; dg1 a; dg2 b"#,
+        fns.display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout, "dg_one a\ndg_two b\n", "zsh digest sanity");
+    assert_eq!(r.stdout, z.stdout, "zshrs digest <dir>.zwc lookup broken");
+    // fpath entry pointing AT the .zwc file itself.
+    let script = format!(
+        r#"fpath=({}/fns.zwc); autoload -Uz dg1; dg1 c"#,
+        d.path().display()
+    );
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout, "dg_one c\n", "zsh zwc-as-fpath sanity");
+    assert_eq!(r.stdout, z.stdout, "zshrs zwc-as-fpath-entry lookup broken");
+}
+
+/// `source file` with a newer sibling `file.zwc` loads the compiled
+/// body (c:init.c:1566 try_source_file), including when the plain
+/// file is deleted entirely (slash-path arm, c:builtin.c:6092-6100).
+#[test]
+fn source_zwc_sibling_and_zwc_only() {
+    if !zsh_available() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("s.zsh"), "echo compiled_src\n").unwrap();
+    let z = run_zsh_in(d.path(), "zcompile s.zsh");
+    assert_eq!(z.exit, 0, "zsh zcompile sanity");
+    std::fs::write(d.path().join("s.zsh"), "echo plain_src\n").unwrap();
+    let old = filetime::FileTime::from_unix_time(1577836800, 0);
+    filetime::set_file_mtime(d.path().join("s.zsh"), old).unwrap();
+    let script = format!("source {}/s.zsh", d.path().display());
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout.trim(), "compiled_src", "zsh sanity (zwc newer)");
+    assert_eq!(r.stdout, z.stdout, "zshrs source ignored newer .zwc");
+    // zwc-only: plain file removed, slash path still sources the dump.
+    std::fs::remove_file(d.path().join("s.zsh")).unwrap();
+    let z = run_zsh_in(d.path(), &script);
+    let r = run_zshrs_in(d.path(), &script);
+    assert_eq!(z.stdout.trim(), "compiled_src", "zsh sanity (zwc only)");
+    assert_eq!(r.stdout, z.stdout, "zshrs source of zwc-only path broken");
+    assert_eq!(z.exit, r.exit);
+}

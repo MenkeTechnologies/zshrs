@@ -54,6 +54,41 @@ use crate::ported::zsh_h::{
 const Z_END: u32 = crate::ported::zsh_h::Z_END as u32;
 const Z_SIMPLE: u32 = crate::ported::zsh_h::Z_SIMPLE as u32;
 
+/// Decode one NUL-delimited entry from a C-convention wordcode
+/// string pool into the Rust-internal token-char `String` form.
+///
+/// Bridge for `ecgetstr` / `ecrawstr` (`Src/parse.c:2855/2891` ports):
+/// C treats `prog->strs` as raw `char *` — token codes (Pound `0x84`
+/// .. Nularg `0xa1`), Meta (`0x83`), and multibyte text all live as
+/// raw bytes. zshrs's internal convention stores tokens as `char`s
+/// (so a native eprog's pool is valid UTF-8 and passes through
+/// unchanged), but an eprog loaded from a C-zsh-written `.zwc`
+/// (`check_dump_file`, parse.c:3833 port) carries the raw single
+/// bytes. Widening each non-UTF-8 byte to the char of the same
+/// codepoint yields exactly the token representation
+/// `lex::untokenize` and the rest of the pipeline expect, while
+/// genuine UTF-8 text (e.g. literal `é`) survives intact.
+pub fn wordcode_pool_str(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(s) => {
+                out.push_str(s);
+                break;
+            }
+            Err(e) => {
+                let (valid, after) = rest.split_at(e.valid_up_to());
+                // SAFETY: `valid_up_to` guarantees this prefix is UTF-8.
+                out.push_str(unsafe { std::str::from_utf8_unchecked(valid) });
+                out.push(after[0] as char);
+                rest = &after[1..];
+            }
+        }
+    }
+    out
+}
+
 /// Untokenize a zsh tokenized string back to shell syntax
 pub(crate) fn untokenize(bytes: &[u8]) -> String {
     let mut result = String::new();

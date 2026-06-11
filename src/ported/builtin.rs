@@ -5688,6 +5688,7 @@ pub fn check_autoload(
                 &mut None, // c:3206
                 Some(&spec),
                 1,
+                &mut None, // c:3206 `&ksh` — unused on the test-only path
             )
             .is_some()
             {
@@ -5709,7 +5710,7 @@ pub fn check_autoload(
         }
         // c:3219-3231 — fpath walk via getfpfunc + dircache_set install.
         let mut dir_path: Option<String> = None;
-        if getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1).is_some()    // c:3219
+        if getfpfunc(&shf_mut.node.nam, &mut dir_path, None, 1, &mut None).is_some()    // c:3219
             && dir_path.is_some()
         {
             // c:3220-3228 — dircache_set + relative-path absolutize.
@@ -9736,6 +9737,15 @@ pub fn bin_dot(
         let p = Path::new(&arg0);
         if p.exists() && !p.is_dir() {
             found_path = Some(arg0.clone()); // c:6100
+        } else if Path::new(&format!("{}.zwc", arg0)).is_file() {
+            // c:6100 — C calls `source(arg0)` UNCONDITIONALLY for a
+            // slash path; `source()` (init.c:1566) then loads the
+            // sibling `<arg0>.zwc` via try_source_file even when the
+            // plain file is gone. zshrs's pre-resolved found_path
+            // gate must therefore accept the compiled form too —
+            // the try_source_file hook at the read site below
+            // supplies the body.
+            found_path = Some(arg0.clone());
         }
     }
 
@@ -9898,11 +9908,23 @@ pub fn bin_dot(
         true
     };
 
-    let result = match fs::read_to_string(&path) {
-        // c:6140
-        Ok(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1),
-        // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
-        Err(_) => 128 - 2,
+    // c:Src/init.c:1566 — `source()` tries the compiled form FIRST:
+    // `!(prog = try_source_file((us = unmeta(s)))) && (tempfd =
+    // open(us, ...)) == -1` — a sibling `<file>.zwc` newer than the
+    // file (or `s` itself being a `.zwc`) short-circuits the plain
+    // read. zshrs executes through the fusevm text pipeline, so the
+    // dump's wordcode bridges via getpermtext (same bridge as the
+    // `.zwc` autoload path in exec.rs::loadautofn).
+    let zwc_src = crate::ported::parse::try_source_file(&path)
+        .map(|prog| crate::ported::text::getpermtext(Box::new(prog), None, 0));
+    let result = match zwc_src {
+        Some(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1), // c:1566 prog path
+        None => match fs::read_to_string(&path) {
+            // c:6140
+            Ok(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1),
+            // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
+            Err(_) => 128 - 2,
+        },
     };
     if pushed_frame {
         // c:1643 — `funcstack = funcstack->prev;`

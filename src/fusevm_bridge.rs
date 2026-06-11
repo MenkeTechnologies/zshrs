@@ -6526,6 +6526,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let repl = vm.pop().to_str();
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // DQ context: C's lexer marks every `$` inside double quotes
+        // as the Qstring token (Src/lex.c dquote_parse) and keeps `'`
+        // a plain char — so a DQ replacement's `$'…'` is LITERAL in
+        // C (Src/subst.c:301 decodes only the tokenized Snull form;
+        // `"${a/X/$'\0'}"` keeps the five chars `$'\0'`). The body
+        // rebuilt below re-enters stringsubst as raw text, which
+        // would mis-decode `$'…'` as ANSI-C; stamp the Qstring
+        // marker on the repl's `$` so stringsubst sees the same DQ
+        // signal C's tokens carry. The PATTERN side keeps decoding
+        // (matches observed zsh: the pattern's `$'\0'` matches a
+        // real NUL while the repl's stays literal).
+        let repl = if dq_flag {
+            repl.replace('$', "\u{8c}")
+        } else {
+            repl
+        };
         // op encoding: 0 = first `/`, 1 = all `//`, 2 = anchor-prefix
         // `/#`, 3 = anchor-suffix `/%`. The brace form distinguishes
         // first-vs-all by single vs doubled slash, and anchored by

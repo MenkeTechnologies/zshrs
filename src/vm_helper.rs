@@ -2171,6 +2171,20 @@ impl ShellExecutor {
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let registered = autoload_register_source(name, &body);
                         let _ = self.execute_script_zsh_pipeline(&registered);
+                        if !self.functions_compiled.contains_key(name) {
+                            // c:Src/exec.c:5742-5745 — ksh-style load ran
+                            // the file (`execode`, "evalautofunc") but it
+                            // didn't define NAME:
+                            //   `zwarn("%s: function not defined by file", n);`
+                            // The wrap/strip zsh-style paths always define
+                            // NAME, so reaching here means the verbatim run
+                            // failed to — same condition as C.
+                            crate::ported::utils::zwarn(&format!(
+                                "{}: function not defined by file",
+                                name
+                            ));
+                            return Some(1);
+                        }
                     } else if load_rc != 0 {
                         // c:Src/exec.c:5713-5719 / 5635-5644 —
                         // `execautofn`'s `if (!loadautofn(...)) return 1`
@@ -3160,6 +3174,28 @@ impl ShellExecutor {
 // statements run inside the registered body, matching C's
 // behavior of using the whole prog as funcdef in that case.
 fn autoload_register_source(name: &str, body: &str) -> String {
+    // c:Src/exec.c:5725 — `if (ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD)))`
+    // — the ksh-style load branch. ksh derives from the stub's
+    // stored-style bits per c:5708-5709 (`PM_KSHSTORED ? 2 :
+    // PM_ZSHSTORED ? 0 : 1`; a decisive `.zwc` header flag was
+    // already folded into these bits by loadautofn). A ksh-style
+    // load executes the file contents at top level (c:5740-5746
+    // `execode(prog, 1, 0, "evalautofunc")`) and expects the file
+    // itself to define the function — so the body goes through the
+    // pipeline VERBATIM, never wrapped.
+    let flags = crate::ported::utils::getshfunc(name)
+        .map(|f| f.node.flags as u32)
+        .unwrap_or(0);
+    let ksh = if flags & crate::ported::zsh_h::PM_KSHSTORED != 0 {
+        2
+    } else if flags & crate::ported::zsh_h::PM_ZSHSTORED != 0 {
+        0
+    } else {
+        1
+    };
+    if ksh == 2 || (ksh == 1 && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHAUTOLOAD)) {
+        return body.to_string(); // c:5746 execode(prog, ..., "evalautofunc")
+    }
     let stripped = crate::ported::exec::parse_string(body, 0)
         .map(|prog| {
             let original_len = prog.prog.len();

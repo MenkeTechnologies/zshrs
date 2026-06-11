@@ -3375,7 +3375,10 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
         let b2 = ((c >> 19) & 0xff) as u8;
         let v = [b0, b1, b2];
         let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2869 strlen(buf)
-        String::from_utf8_lossy(&v[..end]).into_owned()
+        // C reads raw bytes (token codes included) — widen via the
+        // wordcode-pool bridge, never from_utf8_lossy (which mangles
+        // raw token bytes from C-zsh-written .zwc dumps to U+FFFD).
+        crate::zwc::wordcode_pool_str(&v[..end])
     } else {
         // c:2877 `else r = s->strs + (c >> 2);`
         let off = (c >> 2) as usize + s.strs_offset;
@@ -3385,7 +3388,7 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
         } else {
             let tail = &strs_bytes[off..];
             let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
-            String::from_utf8_lossy(&tail[..end]).into_owned()
+            crate::zwc::wordcode_pool_str(&tail[..end])
         }
     };
     // c:2891 `return ((dup == EC_DUP || (dup && (c & 1))) ? dupstring(r) : r);`
@@ -3428,7 +3431,8 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         let b2 = ((c >> 19) & 0xff) as u8;
         let v = [b0, b1, b2];
         let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2906 strlen(buf)
-        String::from_utf8_lossy(&v[..end]).into_owned()
+        // Raw-byte widening — see ecgetstr (same C-convention bridge).
+        crate::zwc::wordcode_pool_str(&v[..end])
     } else {
         // c:2911
         let off = (c >> 2) as usize;
@@ -3438,7 +3442,7 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         }
         let tail = &strs_bytes[off..];
         let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
-        String::from_utf8_lossy(&tail[..end]).into_owned()
+        crate::zwc::wordcode_pool_str(&tail[..end])
     }
 }
 
@@ -3778,8 +3782,9 @@ pub struct wcfunc {
 
 /// Port of `dump_find_func(Wordcode h, char *name)` from
 /// `Src/parse.c:3167`. Walks the header table inside a loaded
-/// dump for a function with the given basename; returns true on hit.
-pub fn dump_find_func(h: &[u32], name: &str) -> bool {
+/// dump for a function with the given basename; returns the
+/// matching `fdhead` record (C returns the `FDHead` pointer).
+pub fn dump_find_func(h: &[u32], name: &str) -> Option<fdhead> {
     // c:3167
     let header_words = fdheaderlen(h) as usize;
     let end = header_words; // walking u32 offsets, end-exclusive
@@ -3794,14 +3799,14 @@ pub fn dump_find_func(h: &[u32], name: &str) -> bool {
                 ""
             };
             if basename == name {
-                return true;
+                return Some(fh); // c:3173 `return n;`
             }
             cur = nextfdhead_offset(h, cur);
         } else {
             break;
         }
     }
-    false
+    None // c:3175
 }
 
 /// Port of `bin_zcompile(char *nam, char **args, Options ops, UNUSED(int func))`
@@ -3860,7 +3865,7 @@ pub fn bin_zcompile(
         if args.len() > 1 {
             for name in &args[1..] {
                 // c:3210
-                if !dump_find_func(&f, name) {
+                if dump_find_func(&f, name).is_none() {
                     // c:3212
                     return 1;
                 }
@@ -4378,7 +4383,7 @@ pub fn try_dump_file(
     name: &str,
     file: &str, // c:3746
     test_only: bool,
-) -> Option<(Vec<u32>, bool)> {
+) -> Option<(eprog, i32)> {
     use std::fs;
 
     // c:3753-3758 — if path ends in .zwc, treat as direct digest.
@@ -4442,8 +4447,10 @@ pub fn try_dump_file(
 
 /// Port of `try_source_file(char *file)` from `Src/parse.c:3795`.
 /// Returns an Eprog (the wordcode dump body) if `<file>.zwc` exists
-/// and is newer than `<file>`, else None.
-pub fn try_source_file(file: &str) -> Option<String> {
+/// and is newer than `<file>`, else None. The dump entry searched is
+/// the file's basename (`tail`), matching how `zcompile` names
+/// source-file entries.
+pub fn try_source_file(file: &str) -> Option<eprog> {
     // c:3795
 
     // c:3802-3805 — if ((tail = strrchr(file, '/'))) tail++; else tail = file;
@@ -4457,7 +4464,7 @@ pub fn try_source_file(file: &str) -> Option<String> {
         crate::ported::signals::queue_signals(); // c:3808
         let meta = fs::metadata(file);
         let prog = match meta {
-            Ok(m) => check_dump_file(file, &m, tail, false).map(|(_, _)| file.to_string()), // c:3809
+            Ok(m) => check_dump_file(file, &m, tail, false).map(|(p, _)| p), // c:3809
             Err(_) => None,
         };
         unqueue_signals(); // c:3810
@@ -4481,9 +4488,9 @@ pub fn try_source_file(file: &str) -> Option<String> {
         };
         if newer_than_src {
             let prog = check_dump_file(&wc, meta_c, tail, false); // c:3820
-            if prog.is_some() {
+            if let Some((p, _)) = prog {
                 unqueue_signals(); // c:3821
-                return Some(wc); // c:3822
+                return Some(p); // c:3822
             }
         }
     }
@@ -4527,17 +4534,19 @@ pub fn try_source_file(file: &str) -> Option<String> {
 ///     return NULL;
 /// }
 /// ```
-/// Rust port returns `Option<(Vec<u32>, bool)>` instead of the C
+/// Rust port returns `Option<(eprog, i32)>` instead of the C
 /// `Eprog` pointer + `*ksh` out-param: tuple element 0 is the
-/// wordcode slice, element 1 is true if the function was a ksh-
-/// loaded entry.
+/// loaded program (wordcode + string table per the fdhead record),
+/// element 1 is the ksh-load mode exactly as C writes `*ksh`:
+/// `FDHF_KSHLOAD → 2`, `FDHF_ZSHLOAD → 0`, neither → `1`
+/// (c:3954-3956).
 pub fn check_dump_file(
     // c:3833
     file: &str,
     sbuf: &fs::Metadata,
     name: &str,
     test_only: bool,
-) -> Option<(Vec<u32>, bool)> {
+) -> Option<(eprog, i32)> {
     use std::os::unix::fs::MetadataExt;
 
     // c:3842-3846 — `if (!sbuf) { zwcstat(file, &lsbuf); sbuf = &lsbuf; }`
@@ -4575,27 +4584,78 @@ pub fn check_dump_file(
 
     // c:3873 — `if ((h = dump_find_func(d, name)))`
     let dump = d?;
-    if !dump_find_func(&dump, name) {
-        // c:3873
-        return None;
-    }
+    let h = dump_find_func(&dump, name)?; // c:3873
 
     // c:3876-3879 — `if (test_only) return &dummy_eprog;`
     if test_only {
         // c:3876
-        return Some((Vec::new(), false)); // c:3879 dummy
+        return Some((eprog::default(), 0)); // c:3879 dummy
     }
 
-    // c:3884-3953 — allocate Eprog from the mmap area + ksh detection.
-    // The C source builds an `Eprog` struct wrapping the wordcode
-    // slice at h's offset; the Rust port returns the slice directly
-    // since Eprog construction lives at the call site (load_dump_file).
-    // ksh-load detection reads the FDHF_KSHLOAD flag on the FDHead.
-    // !!! STUB: FDHead parsing not yet wired through dump_find_func.
-    let is_ksh_load = false; // c:3905 fdhflags(h) & FDHF_KSHLOAD
+    // c:3954-3956 — `*ksh = ((fdhflags(h) & FDHF_KSHLOAD) ? 2 :
+    //                        ((fdhflags(h) & FDHF_ZSHLOAD) ? 0 : 1));`
+    let ksh = if (fdhflags(&h) & FDHF_KSHLOAD) != 0 {
+        2
+    } else if (fdhflags(&h) & FDHF_ZSHLOAD) != 0 {
+        0
+    } else {
+        1
+    };
 
-    // c:3950 — incrdumpcount(f). The Rust incrdumpcount takes a
-    // funcdump ref; look up the matching entry by dev/ino again.
+    // c:3919-3958 — the read (non-mmap) branch: open the file, seek
+    // to the function's wordcode, read `h->len` bytes (wordcode +
+    // string pool), and build an EF_REAL Eprog around it. zshrs has
+    // no mmap'd EF_MAP variant — DUMPS entries store the file words
+    // in `map`, so both branches funnel into the same read-and-copy.
+    //
+    //   if ((fd = open(file, O_RDONLY)) < 0 ||
+    //       lseek(fd, ((h->start * sizeof(wordcode)) +
+    //                  ((fdflags(d) & FDF_OTHER) ? fdother(d) : 0)), 0) < 0)
+    //       return NULL;
+    //   d = (Wordcode) zalloc(h->len + po);
+    //   if (read(fd, ((char *) d) + po, h->len) != (int)h->len) return NULL;
+    //   prog->flags = EF_REAL;
+    //   prog->len = h->len + po;
+    //   prog->npats = np = h->npats;
+    //   prog->prog = (Wordcode) (((char *) d) + po);
+    //   prog->strs = ((char *) prog->prog) + h->strs;
+    let body_off = (h.start as u64) * 4
+        + if (fdflags(&dump) & FDF_OTHER) != 0 {
+            fdother(&dump) as u64 // c:3924
+        } else {
+            0
+        };
+    let mut f = File::open(file).ok()?; // c:3922
+    f.seek(SeekFrom::Start(body_off)).ok()?; // c:3923
+    let mut bytes = vec![0u8; h.len as usize];
+    if f.read_exact(&mut bytes).is_err() {
+        // c:3931 `read(...) != h->len`
+        return None;
+    }
+    // `h->strs` is the byte offset of the string pool inside the read
+    // region; everything before it is wordcode.
+    let strs_off = (h.strs as usize).min(bytes.len());
+    let prog_words: Vec<u32> = bytes[..strs_off]
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    // SAFETY: same byte-not-char convention as `bld_eprog` (c:566) —
+    // consumers index `strs` by byte offset and never require UTF-8.
+    let strs_string = unsafe { String::from_utf8_unchecked(bytes[strs_off..].to_vec()) };
+    let po = h.npats as usize * size_of::<*const u8>(); // c:3920
+    let prog = eprog {
+        flags: EF_REAL,                  // c:3941
+        len: (h.len as usize + po) as i32, // c:3942
+        npats: h.npats as i32,           // c:3943
+        nref: 1,                         // c:3944
+        pats: Vec::new(),                // c:3945/3952 dummy_patprog1 fill
+        prog: prog_words,                // c:3946
+        strs: Some(strs_string),         // c:3947
+        shf: None,                       // c:3948
+        dump: None,                      // c:3949
+    };
+
+    // c:3899 — incrdumpcount(f) on the mmap-cache hit path.
     if found_mmap {
         let dumps_guard = DUMPS.lock().expect("dumps poisoned");
         if let Some(f) = dumps_guard.iter().find(|f| f.dev == dev && f.ino == ino) {
@@ -4603,7 +4663,7 @@ pub fn check_dump_file(
         }
     }
 
-    Some((dump, is_ksh_load)) // c:3953
+    Some((prog, ksh)) // c:3958
 }
 
 /// Port of `incrdumpcount(FuncDump f)` from `Src/parse.c:3970/4021`.
