@@ -441,6 +441,29 @@ pub struct ShellExecutor {
     /// are restored so the splitter drains every byte the body
     /// wrote into the pipe. Bug #36 in docs/BUGS.md.
     pub multios_scope_stack: Vec<Vec<(i32, std::thread::JoinHandle<()>)>>,
+    /// True while applying a bare `exec`'s redirect list (`exec 1>&-`,
+    /// `exec 2>/dev/null` — no command words). `host_apply_redirect`
+    /// then skips pushing the saved fd into the enclosing scope so the
+    /// fd change survives group/command teardown.
+    /// c:Src/exec.c:3978-3986 — nullexec==1: "we specifically *don't*
+    /// restore the original fd's before returning"; C's per-execcmd
+    /// `save[]` means exec's redirs never enter the enclosing group's
+    /// save list either. Toggled by `BUILTIN_EXEC_PERM_REDIRS`.
+    pub exec_redirs_permanent: bool,
+    /// Set in a forked pipeline-stage child right after its stdout is
+    /// dup2'd onto the pipe write-end. Consumed by the FIRST
+    /// `host_redirect_scope_begin` (the stage command's own redirect
+    /// list) into `pipe_output_scope`.
+    /// c:Src/exec.c:3722-3724 — `addfd(forked, save, mfds, 1, output,
+    /// 1, NULL)`: the pipe occupies mfds[1] in the SAME execcmd that
+    /// processes the stage command's redirect list.
+    pub pipe_output_pending: bool,
+    /// Index into `redirect_scope_stack` of the scope whose redirect
+    /// list shares an execcmd with the pipeline output on fd 1. A
+    /// write-side redirect of fd 1 applied at exactly this scope depth
+    /// MULTIOS-splits (tees) instead of replacing — c:Src/exec.c:
+    /// 2447-2480 addfd "split the stream". Cleared when that scope ends.
+    pub pipe_output_scope: Option<usize>,
     /// Set by `host_apply_redirect` when a redirect target couldn't be
     /// opened (permission denied, no such directory, etc). The next
     /// builtin/command checks this at entry and short-circuits with
@@ -1172,6 +1195,9 @@ impl ShellExecutor {
             next_async_id: 1,
             redirect_scope_stack: Vec::new(),
             multios_scope_stack: Vec::new(),
+            exec_redirs_permanent: false,
+            pipe_output_pending: false,
+            pipe_output_scope: None,
             redirect_failed: false,
             functions_compiled: HashMap::new(),
             function_source: HashMap::new(),

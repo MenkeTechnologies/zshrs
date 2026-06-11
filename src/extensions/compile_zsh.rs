@@ -731,6 +731,27 @@ impl ZshCompiler {
                 sub.builder
                     .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
             }
+            // c:Src/exec.c:3722-3724 — pipeline output occupies mfds[1]
+            // before the stage command's redirect list is walked, so
+            // that list's fd-1 write redirects MULTIOS-join the pipe
+            // (`{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | cat`
+            // sends `a` to BOTH the pipe and stderr). mfds is
+            // per-execcmd: only the stage's TOP-LEVEL redirects join —
+            // hence the gate on the command shape — and only non-last
+            // stages have their stdout on the pipe (the last runs
+            // inline in the parent).
+            let stage_has_toplevel_redirs = match stage_cmd {
+                ZshCommand::Simple(s) => !s.redirs.is_empty(),
+                ZshCommand::Redirected(_, redirs) => !redirs.is_empty(),
+                _ => false,
+            };
+            if i + 1 < stages.len() && stage_has_toplevel_redirs {
+                sub.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PIPE_OUTPUT_MARK, 0),
+                    0,
+                );
+                sub.builder.emit(Op::Pop, 0);
+            }
             sub.compile_command(stage_cmd);
             // Pop the i CS_PIPE pushes from the head.
             for _ in 0..i {
@@ -1339,7 +1360,10 @@ impl ZshCompiler {
             simple.words.len() == 1 && simple.words[0] == "exec" && !simple.redirs.is_empty();
         if bare_exec_redir {
             for redir in &simple.redirs {
-                self.compile_redir(redir);
+                // permanent=true: c:Src/exec.c:3978-3986 nullexec==1 —
+                // exec's fd changes skip save/restore even when an
+                // enclosing group scope is active.
+                self.compile_redir(redir, true);
             }
             // No CallBuiltin / CallFunction / Exec — just the redirects.
             // Status is 0 (zsh: `exec` with only redirs returns 0).
@@ -2024,13 +2048,13 @@ impl ZshCompiler {
                 && redir.varid.is_none()
                 && writes_per_fd.get(&fd).copied().unwrap_or(0) >= 2;
             if !is_multios_candidate {
-                self.compile_redir(redir);
+                self.compile_redir(redir, false);
                 continue;
             }
             let op_byte = match derive_op(redir) {
                 Some(o) => o,
                 None => {
-                    self.compile_redir(redir);
+                    self.compile_redir(redir, false);
                     continue;
                 }
             };
@@ -2073,7 +2097,13 @@ impl ZshCompiler {
         }
     }
 
-    fn compile_redir(&mut self, redir: &crate::parse::ZshRedir) {
+    /// `permanent` — bare-`exec` redirect list (c:Src/exec.c:3978-3986
+    /// nullexec==1): brackets the emitted `Op::Redirect` with
+    /// `BUILTIN_EXEC_PERM_REDIRS` 1/0 so `host_apply_redirect` skips
+    /// the enclosing scope's save/restore for this fd change. The
+    /// toggle is emitted AFTER the target word is computed so any
+    /// `$(…)` in the target runs with the flag clear.
+    fn compile_redir(&mut self, redir: &crate::parse::ZshRedir, permanent: bool) {
         // Default fd: stdin for read-side redirects, stdout for write-side.
         let fd_default: u8 = match redir.rtype {
             REDIR_READ | REDIR_HEREDOC | REDIR_HEREDOCDASH | REDIR_HERESTR | REDIR_READWRITE
@@ -2230,7 +2260,25 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
+        if permanent {
+            // Stack here: [target]. LoadInt+CallBuiltin(argc=1)+Pop is
+            // stack-neutral, leaving [target] for Op::Redirect.
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_PERM_REDIRS, 1),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+        }
         self.builder.emit(Op::Redirect(fd, op_byte), 0);
+        if permanent {
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_PERM_REDIRS, 1),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+        }
     }
 
     fn compile_assign(&mut self, assign: &ZshAssign) {
