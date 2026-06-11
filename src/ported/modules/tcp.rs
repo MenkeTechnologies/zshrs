@@ -664,23 +664,55 @@ pub fn bin_ztcp(
         if args.is_empty() {
             // c:576
             // c:578-616 — list-all path.
+            // c:581-590 — per-address name resolution:
+            //
+            //     zthost = gethostbyaddr((const void *)&(sess->sock.in.sin_addr),
+            //                            sizeof(sess->sock.in.sin_addr), AF_INET);
+            //     if (zthost)
+            //         localname = zthost->h_name;
+            //     else
+            //         localname = inet_ntoa(sess->sock.in.sin_addr);
+            //
+            // (and the ztpeer mirror for the remote side). C prints the
+            // REVERSE-DNS hostname when resolvable, falling back to the
+            // dotted quad only when gethostbyaddr fails. Prior port
+            // always printed the quad, dropping the hostname forms from
+            // `ztcp` / `ztcp -L` listings.
+            // gethostbyaddr(3) is POSIX but absent from the libc crate's
+            // exported bindings on this target; declare the libSystem/
+            // glibc symbol directly.
+            extern "C" {
+                fn gethostbyaddr(
+                    addr: *const libc::c_void,
+                    len: libc::socklen_t,
+                    type_: libc::c_int,
+                ) -> *mut libc::hostent;
+            }
+            let resolve_addr = |addr: libc::in_addr| -> String {
+                unsafe {
+                    let he = gethostbyaddr(
+                        &addr as *const _ as *const libc::c_void, // c:581
+                        std::mem::size_of::<libc::in_addr>() as libc::socklen_t,
+                        libc::AF_INET,
+                    );
+                    if !he.is_null() && !(*he).h_name.is_null() {
+                        // c:583 localname = zthost->h_name
+                        return std::ffi::CStr::from_ptr((*he).h_name)
+                            .to_string_lossy()
+                            .into_owned();
+                    }
+                }
+                // c:585 inet_ntoa fallback
+                let b = u32::from_be(addr.s_addr).to_be_bytes();
+                format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
+            };
             ZTCP_SESSIONS.with(|s| {
                 for sess in s.borrow().iter() {
                     // c:579
                     if sess.fd != -1 {
                         // c:582
-                        // c:587 — `inet_ntoa(sess->sock.in.sin_addr)` (libc).
-                        let lname = {
-                            let b = u32::from_be(unsafe { sess.sock.in_.sin_addr.s_addr })
-                                .to_be_bytes();
-                            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
-                        };
-                        // c:590 — `inet_ntoa(sess->peer.in.sin_addr)` (libc).
-                        let pname = {
-                            let b = u32::from_be(unsafe { sess.peer.in_.sin_addr.s_addr })
-                                .to_be_bytes();
-                            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
-                        };
+                        let lname = resolve_addr(unsafe { sess.sock.in_.sin_addr }); // c:581-585
+                        let pname = resolve_addr(unsafe { sess.peer.in_.sin_addr }); // c:586-590
                         let lport = u16::from_be(unsafe { sess.sock.in_.sin_port });
                         let pport = u16::from_be(unsafe { sess.peer.in_.sin_port });
                         if OPT_ISSET(ops, b'L') {
