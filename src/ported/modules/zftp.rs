@@ -2927,14 +2927,11 @@ pub fn zftp_cd(name: &str, args: &[&str], flags: i32) -> i32 {
 }
 
 /// Port of `zfgetcwd()` from `Src/Modules/zftp.c:2358`.
-/// C: `static int zfgetcwd(void)` — sends PWD, parses reply.
-///
-/// C body (c:2358-2386) is 29 lines covering the response-text
-/// parse (extract dir between `"`s in PWD reply) + parameter
-/// updates. Rust port focuses on the observable side-effect
-/// (send PWD, set/unset `$ZFTP_PWD`); the response-text mangling
-/// is layered above this entry once the `lastmsg` parser is
-/// wired. Rust idiom replacement covers the control-flow shape.
+/// C: `static int zfgetcwd(void)` — DUMB short-circuit, send PWD,
+/// parse the reply (directory between optional `"` delimiters per
+/// c:2370-2382), set `$ZFTP_PWD`, then fire the `zftp_chpwd` hook
+/// (c:2389-2394). Fully implemented below — the lastmsg parse and
+/// hook dispatch both run in this body.
 #[allow(non_snake_case)]
 pub fn zfgetcwd() -> i32 {
     // c:2358 — short-circuit when ZFPF_DUMB is set (don't fiddle with
