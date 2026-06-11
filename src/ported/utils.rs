@@ -4229,9 +4229,26 @@ pub fn ztrftimebuf(bufsizeptr: &mut i32, decr: i32) -> i32 {
 /// since the Rust signature takes `SystemTime` we hoist that choice into
 /// this bool param.
 pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String {
-    let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = duration.as_secs() as i64;
-    let nsec = duration.subsec_nanos() as u64;
+    // C takes `struct tm *` + nsec directly, so negative time_t
+    // (pre-1970) flows through localtime untouched. SystemTime
+    // pre-epoch surfaces as duration_since Err — recover the signed
+    // seconds rather than collapsing to 0 (the old unwrap_or_default
+    // pinned every pre-epoch timestamp to the epoch).
+    let (secs, nsec): (i64, u64) = match time.duration_since(UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as i64, d.subsec_nanos() as u64),
+        Err(e) => {
+            let d = e.duration();
+            let s = -(d.as_secs() as i64);
+            let n = d.subsec_nanos() as u64;
+            // sub-second part rolls the seconds down one: -1.25s
+            // before epoch is secs=-2, nsec=750ms in tm terms.
+            if n > 0 {
+                (s - 1, 1_000_000_000 - n)
+            } else {
+                (s, 0)
+            }
+        }
+    };
 
     #[cfg(unix)]
     unsafe {

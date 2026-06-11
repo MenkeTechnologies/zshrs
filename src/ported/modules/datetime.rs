@@ -265,59 +265,43 @@ pub fn output_strftime(
         (secs, nsec)
     };
 
-    // c:160 — `bufsize = strlen(argv[0]) * 8; buffer = zalloc(bufsize);`
-    // c:163-167 — retry up to 4 times growing the buffer.
-    // c:165 — `ztrftime(buffer, bufsize, argv[0], tm, ts.tv_nsec)`.
+    // c:136-140 — `tm = localtime(&ts.tv_sec); if (!tm) {
+    //               zwarnnam(nam, "%s: unable to convert to time", ...);
+    //               return 1; }`
     let format = argv[0];
-    let dt: DateTime<Local> = match Local.timestamp_opt(secs, nsec as u32) {
-        chrono::LocalResult::Single(d) => d,
-        chrono::LocalResult::Ambiguous(d, _) => d,
-        chrono::LocalResult::None => {
-            // c:171-174
-            zwarnnam(nam, &format!("bad/unsupported format: '{}'", format));
-            return 1; // c:174
+    #[cfg(unix)]
+    {
+        let secs_c: libc::time_t = secs as libc::time_t;
+        if unsafe { libc::localtime(&secs_c) }.is_null() {
+            // c:137-139
+            let what = argv.get(1).copied().unwrap_or("");
+            zwarnnam(nam, &format!("{}: unable to convert to time", what));
+            return 1;
         }
-    };
-    // First substitute %N variants (zsh extension at utils.c:3411-3429).
-    let mut work = String::with_capacity(format.len() * 2);
-    let bytes = format.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 1 < bytes.len() {
-            match bytes[i + 1] {
-                b'N' => {
-                    work.push_str(&format!("{:09}", nsec));
-                    i += 2;
-                    continue;
-                }
-                b'.' if i + 2 < bytes.len() && bytes[i + 2] == b'N' => {
-                    work.push_str(&format!(".{:09}", nsec));
-                    i += 3;
-                    continue;
-                }
-                d if d.is_ascii_digit() && i + 2 < bytes.len() && bytes[i + 2] == b'N' => {
-                    let digits = (d - b'0') as usize;
-                    let scaled = if digits >= 9 {
-                        nsec
-                    } else {
-                        nsec / 10i64.pow((9 - digits) as u32)
-                    };
-                    work.push_str(&format!("{:0width$}", scaled, width = digits));
-                    i += 3;
-                    continue;
-                }
-                b'%' => {
-                    work.push_str("%%");
-                    i += 2;
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        work.push(bytes[i] as char);
-        i += 1;
     }
-    let formatted = dt.format(&work).to_string();
+    // c:158-167 — `bufsize = strlen(argv[0]) * 8; buffer = zalloc(bufsize);
+    //              for (x=0; x < 4; x++) {
+    //                  if ((len = ztrftime(buffer, bufsize, argv[0], tm,
+    //                                      ts.tv_nsec)) >= 0 || x==3) break;
+    //                  buffer = zrealloc(buffer, bufsize *= 2); }`
+    // Route through the canonical ztrftime port (utils.rs:4231) — it
+    // implements zsh's strftime extensions per Src/utils.c ztrftime:
+    // %. (fractional seconds, optional digit-count prefix), %f, %e,
+    // %K/%k, %L/%l. The prior chrono-based path missed all of those
+    // AND invented a `%N` substitution that exists in neither zsh's
+    // ztrftime specifier set nor POSIX strftime (zsh passes %N through
+    // to the system strftime, which emits it literally). The bufsize
+    // retry loop is C buffer management; the port returns an owned
+    // String. Nanoseconds travel inside the SystemTime (ztrftime reads
+    // subsec_nanos for the %. specifier, mirroring the C `usec` arg).
+    let st = if secs >= 0 {
+        UNIX_EPOCH + Duration::new(secs as u64, nsec as u32)
+    } else {
+        // pre-epoch: subtract whole seconds, then add the positive
+        // nanosecond part back (tm convention: nsec ∈ [0, 1e9)).
+        UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs()) + Duration::from_nanos(nsec as u64)
+    };
+    let formatted = crate::ported::utils::ztrftime(format, st, false); // c:163
 
     // c:178 — `if (scalar) { setsparam(scalar, metafy(buffer, len, META_DUP)); }`
     if let Some(name) = scalar {
