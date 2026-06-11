@@ -497,23 +497,32 @@ pub fn bin_ln(
 /// then call movefn(src, dest) and report errno on failure.
 pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 {
     // c:298
+    // c:303-304 — `pbuf = ztrdup(unmeta(p)); qbuf = unmeta(q);`
+    // All syscalls below use pbuf/qbuf (unmetafied raw POSIX bytes);
+    // diagnostics use the original metafied `p` / `q`. Prior port
+    // routed every lstat / access / movefn / remove_file through the
+    // metafied form, so paths with high bytes operated on phantom
+    // filenames containing the literal `Meta + (byte^32)` two-byte
+    // encoding.
+    let pbuf = crate::ported::utils::unmeta(p);
+    let qbuf = crate::ported::utils::unmeta(q);
     if (flags & MV_NODIRS) != 0 {
-        // c:298
-        match std::fs::symlink_metadata(p) {
-            // c:308 lstat
+        // c:305
+        match std::fs::symlink_metadata(&pbuf) {
+            // c:307 lstat(pbuf, &st)
             Ok(meta) if meta.is_dir() => {
-                // c:308 S_ISDIR
-                zwarnnam(nam, &format!("{}: is a directory", p)); // c:310
-                return 1; // c:311
+                // c:307 S_ISDIR
+                zwarnnam(nam, &format!("{}: is a directory", p)); // c:308
+                return 1; // c:309
             }
             Err(e) => {
-                zwarnnam(nam, &format!("{}: {}", p, e)); // c:310
+                zwarnnam(nam, &format!("{}: {}", p, e)); // c:308
                 return 1;
             }
             _ => {}
         }
     }
-    if let Ok(qmeta) = std::fs::symlink_metadata(q) {
+    if let Ok(qmeta) = std::fs::symlink_metadata(&qbuf) {
         // c:315 lstat
         let mut doit = (flags & MV_FORCE) != 0; // c:316
         if qmeta.is_dir() {
@@ -530,8 +539,8 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
             doit = true; // c:331
         } else if (flags & MV_ASKNW) != 0                                    // c:333
                 && !qmeta.file_type().is_symlink()                           // c:334 !S_ISLNK
-                && unsafe {                                                  // c:335 access W_OK
-                    let cq = std::ffi::CString::new(q).ok();
+                && unsafe {                                                  // c:335 access(qbuf, W_OK)
+                    let cq = std::ffi::CString::new(qbuf.as_str()).ok();
                     cq.map(|c| libc::access(c.as_ptr(), libc::W_OK))
                         .unwrap_or(-1) != 0
                 }
@@ -546,20 +555,20 @@ pub fn domove(nam: &str, movefn: MoveFunc, p: &str, q: &str, flags: i32) -> i32 
         }
         if doit && (flags & MV_ATOMIC) == 0 {
             // c:347
-            let _ = std::fs::remove_file(q); // c:348 unlink
+            let _ = std::fs::remove_file(&qbuf); // c:348 unlink(qbuf)
         }
     }
     let r = {
-        // c:350 movefn(p, q)
-        let cp = std::ffi::CString::new(p).unwrap_or_default();
-        let cq = std::ffi::CString::new(q).unwrap_or_default();
+        // c:350 movefn(pbuf, qbuf)
+        let cp = std::ffi::CString::new(pbuf.as_str()).unwrap_or_default();
+        let cq = std::ffi::CString::new(qbuf.as_str()).unwrap_or_default();
         movefn(&cp, &cq)
     };
     if r != 0 {
         // c:350
         let osek = std::io::Error::last_os_error();
         let errfile = if osek.raw_os_error() == Some(libc::ENOENT)           // c:352-355
-            && std::fs::symlink_metadata(p).is_ok()
+            && std::fs::symlink_metadata(&pbuf).is_ok()
         {
             q
         } else {
