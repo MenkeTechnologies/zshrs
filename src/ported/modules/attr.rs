@@ -574,24 +574,23 @@ const XATTR_NOFOLLOW: i32 = 0x0001;
 // 2-arg variants that match the C signatures.
 // =====================================================================
 
-/// Port of `setsparam(char *s, char *val)` from `Src/params.c:3350` — delegates to
-/// `ksh93::setsparam(name, val)` which provides the env-var-shim
-/// implementation matching the C signature.
-/// WARNING: param names don't match C — Rust=(name, value) vs C=(PM_HASHED)
-
-/// Port of `setaparam(char *s, char **aval)` from `Src/params.c:3595` — delegates to
-/// `ksh93::setsparam` with the value colon-joined (PATH-style array
-/// shape that the env-var bridge unpacks at read time).
-/// WARNING: param names don't match C — Rust=(name, value) vs C=(s, val, flags)
+/// Route to the canonical `setaparam` port (Src/params.c:3595 /
+/// ported/params.rs). bin_listattr's c:202 `setaparam(param, array)`
+/// stores a REAL array of xattr names. A prior local shim colon-
+/// joined the names through setsparam (an env-var-era bridge) —
+/// `$names[1]` returned the first CHAR of the join, and any xattr
+/// name containing a literal `:` corrupted the split.
 fn setaparam(name: &str, value: Vec<String>) {
-    setsparam(name, &value.join(":"));
+    crate::ported::params::setaparam(name, value);
 }
 
-/// Port of `unsetparam(char *s)` from `Src/params.c:3819` — env::remove_var
-/// is the static-link equivalent of paramtab->removenode +
-/// freeparamnode for scalar params.
+/// Route to the canonical `unsetparam` port (Src/params.c:3819 /
+/// ported/params.rs) — paramtab removal, not env::remove_var. The
+/// prior local env shim never touched paramtab, so bin_getattr's
+/// c:110 `unsetparam(param)` (zero-length attr → unset the output
+/// var) left a stale paramtab entry visible to `${+param}`.
 fn unsetparam(v: &str) {
-    std::env::remove_var(v);
+    crate::ported::params::unsetparam(v);
 }
 
 // =====================================================================
