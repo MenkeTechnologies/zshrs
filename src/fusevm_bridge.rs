@@ -332,6 +332,24 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
             .unwrap_or(127);
         return status;
     }
+    // c:Src/Modules/stat.c:637-638 — zsh/stat registers BOTH `stat`
+    // and `zstat`. `zstat` is in the module_bound 127-gate above (no
+    // /usr/bin/zstat exists), but the bare `stat` name must FALL
+    // THROUGH to PATH when zsh/stat isn't loaded — zsh -fc
+    // 'stat -f %Lp f' runs /usr/bin/stat, while bin_stat's parser
+    // rejects stat(1) flags ("bad option: -c"). Same fall-through
+    // shape as the zsh/files gate above.
+    if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        && name == "stat"
+        && !crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded("zsh/stat"))
+            .unwrap_or(false)
+    {
+        let status =
+            with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
+        return status;
+    }
     // c:Src/exec.c:3050-3068 — builtin lookup hits `builtintab` (the
     // merged table containing module-provided builtins). The previous
     // port walked only the core `BUILTINS` slice, so per-module
