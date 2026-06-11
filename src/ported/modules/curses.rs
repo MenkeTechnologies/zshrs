@@ -739,15 +739,73 @@ pub(crate) fn zccmd_clear(nam: &str, args: &[String]) -> i32 {
         );
         return 1;
     }
+    // c:707-718 — submode dispatch:
+    //
+    //     if (!args[1]) {
+    //         return werase(w->win) != OK;
+    //     } else if (!strcmp(args[1], "redraw")) {
+    //         return wclear(w->win) != OK;
+    //     } else if (!strcmp(args[1], "eol")) {
+    //         return wclrtoeol(w->win) != OK;
+    //     } else if (!strcmp(args[1], "bot")) {
+    //         return wclrtobot(w->win) != OK;
+    //     } else {
+    //         zwarnnam(nam, "`clear' expects `redraw', `eol' or `bot'");
+    //         return 1;
+    //     }
+    //
+    // Prior port ignored args[1] entirely — every submode full-wiped
+    // the buffer AND homed the cursor (ncurses werase/wclear leave
+    // the cursor where it was; only the cell contents blank). `eol` /
+    // `bot` partial clears and the unknown-submode diagnostic were
+    // all missing.
+    let mode = args.get(1).map(|s| s.as_str());
+    match mode {
+        None | Some("redraw") => {} // validated below
+        Some("eol") | Some("bot") => {}
+        Some(_) => {
+            // c:716-717
+            zwarnnam(nam, "`clear' expects `redraw', `eol' or `bot'");
+            return 1;
+        }
+    }
     let mut wins = windows_lock().lock().unwrap();
     if let Some(w) = wins.get_mut(args[0].as_str()) {
-        for row in &mut w.buffer {
-            for cell in row {
-                *cell = ' ';
+        match mode {
+            None | Some("redraw") => {
+                // c:708 werase / c:710 wclear — blank every cell; the
+                // emulation has no clearok bit so both collapse to a
+                // full wipe. Cursor stays put per ncurses semantics.
+                for row in &mut w.buffer {
+                    for cell in row {
+                        *cell = ' ';
+                    }
+                }
             }
+            Some("eol") => {
+                // c:712 wclrtoeol — blank from cursor to end of line.
+                if w.cursor_y < w.rows {
+                    for x in w.cursor_x..w.cols {
+                        w.buffer[w.cursor_y][x] = ' ';
+                    }
+                }
+            }
+            Some("bot") => {
+                // c:714 wclrtobot — blank from cursor to end of line,
+                // then every row below.
+                if w.cursor_y < w.rows {
+                    for x in w.cursor_x..w.cols {
+                        w.buffer[w.cursor_y][x] = ' ';
+                    }
+                    for y in (w.cursor_y + 1)..w.rows {
+                        for x in 0..w.cols {
+                            w.buffer[y][x] = ' ';
+                        }
+                    }
+                }
+            }
+            Some(_) => unreachable!(),
         }
-        w.cursor_y = 0;
-        w.cursor_x = 0;
     }
     0
 }
