@@ -1383,29 +1383,36 @@ pub fn zfgetdata(name: &str, rest: &str, cmd: &str, getsize: i32) -> i32 {
 pub fn zfstats(
     fnam: &str,
     remote: i32, // c:1193
-    retsize: &mut libc::off_t,
-    retmdtm: &mut Option<String>,
+    mut retsize: Option<&mut libc::off_t>,
+    mut retmdtm: Option<&mut Option<String>>,
     fd: i32,
 ) -> i32 {
+    // C's retsize/retmdtm are NULLABLE pointers — callers request only
+    // what they want: zfgetput passes `zfstats(*args, recv, &sz, NULL,
+    // 0)` (c:2580). A prior non-optional signature forced every caller
+    // through BOTH probes: zfgetput's per-transfer stats fired an MDTM
+    // round-trip the C never sends, and on an MDTM-less server the
+    // c:1241 NOPE path returned 2 — failing the whole size lookup the
+    // caller actually wanted.
     // c:1195-1197 — locals at fn top.
     let mut sz: libc::off_t = -1; // c:1195
     let mut mt: Option<String> = None; // c:1196 char *mt
     let ret: i32; // c:1197
 
-    *retsize = -1; // c:1199-1200
-    *retmdtm = None; // c:1201-1202
+    if let Some(rs) = retsize.as_mut() {
+        **rs = -1; // c:1199-1200
+    }
+    if let Some(rm) = retmdtm.as_mut() {
+        **rm = None; // c:1201-1202
+    }
 
     if remote != 0 {
         // c:1203
         // c:1205-1207 — `if ((zfsess->has_size == ZFCP_NOPE && retsize) ||
         //                    (zfsess->has_mdtm == ZFCP_NOPE && retmdtm))
         //                    return 2;`
-        // Early-out when the server's known to not support SIZE/MDTM.
-        // Both fields are already on the session struct (c:306-307)
-        // and reset to ZFCP_UNKN at connect time (c:1952). Without
-        // this gate, every zfstats call re-sends SIZE/MDTM to a
-        // server that's already rejected them — wasted round-trip
-        // + spurious 5xx in the server's log.
+        // Early-out when the server's known to not support the
+        // SPECIFIC probes this caller wants.
         let (had_size_nope, had_mdtm_nope) = {
             let st = match zftp_state().lock() {
                 Ok(s) => s,
@@ -1419,80 +1426,90 @@ pub fn zfstats(
                 None => (false, false),
             }
         };
-        if had_size_nope || had_mdtm_nope {
-            return 2; // c:1207 — retsize/retmdtm both requested in this port.
+        if (had_size_nope && retsize.is_some()) || (had_mdtm_nope && retmdtm.is_some()) {
+            return 2; // c:1207
         }
 
-        // c:1213 — zfsettype(ZFST_TYPE(zfstatusp[zfsessno]));
-        zfsettype(ZFST_IMAG);
+        // c:1213 — `zfsettype(ZFST_TYPE(zfstatusp[zfsessno]));` — the
+        // session's REQUESTED type slice, not a hardcoded IMAGE: SIZE
+        // results are type-dependent (RFC 3659 — ASCII SIZE counts
+        // post-translation bytes), so the probe must run under the
+        // type the upcoming transfer will use.
+        let req_type = zftp_state()
+            .lock()
+            .ok()
+            .and_then(|s| s.get_session(None).map(|sess| ZFST_TYPE(sess.transfer_type)))
+            .unwrap_or(ZFST_IMAG);
+        zfsettype(req_type); // c:1213
 
-        // c:1214-1228 — SIZE command path.
-        let cmd = format!("SIZE {}\r\n", fnam); // c:1215
-        ret = zfsendcmd(&cmd); // c:1216
-        if ret == 6 {
-            // c:1218
-            return 1; // c:1219
-        }
-        let code = lastcode.load(Ordering::Relaxed);
-        if code < 300 {
-            // c:1220
-            // c:1221 — `sz = zstrtol(lastmsg, 0, 10);`
-            sz = lastmsg
-                .lock()
-                .ok()
-                .map(|m| m.trim().parse::<libc::off_t>().unwrap_or(-1))
-                .unwrap_or(-1);
-            // c:1222 — `zfsess->has_size = ZFCP_YUPP;` — record that
-            //           the server speaks SIZE.
-            if let Ok(mut st) = zftp_state().lock() {
-                if let Some(sess) = st.get_session_mut(None) {
-                    sess.has_size = ZFCP_YUPP;
-                }
+        if retsize.is_some() {
+            // c:1214-1228 — SIZE command path.
+            let cmd = format!("SIZE {}\r\n", fnam); // c:1215
+            ret = zfsendcmd(&cmd); // c:1216
+            if ret == 6 {
+                // c:1218
+                return 1; // c:1219
             }
-        } else if (500..=504).contains(&code) {
-            // c:1223 — server doesn't speak SIZE.
-            // c:1224 — `zfsess->has_size = ZFCP_NOPE;`
-            if let Ok(mut st) = zftp_state().lock() {
-                if let Some(sess) = st.get_session_mut(None) {
-                    sess.has_size = ZFCP_NOPE;
+            let code = lastcode.load(Ordering::Relaxed);
+            if code < 300 {
+                // c:1220
+                // c:1221 — `sz = zstrtol(lastmsg, 0, 10);`
+                sz = lastmsg
+                    .lock()
+                    .ok()
+                    .map(|m| m.trim().parse::<libc::off_t>().unwrap_or(-1))
+                    .unwrap_or(-1);
+                // c:1222 — `zfsess->has_size = ZFCP_YUPP;`
+                if let Ok(mut st) = zftp_state().lock() {
+                    if let Some(sess) = st.get_session_mut(None) {
+                        sess.has_size = ZFCP_YUPP;
+                    }
                 }
+            } else if (500..=504).contains(&code) {
+                // c:1223 — server doesn't speak SIZE.
+                if let Ok(mut st) = zftp_state().lock() {
+                    if let Some(sess) = st.get_session_mut(None) {
+                        sess.has_size = ZFCP_NOPE; // c:1224
+                    }
+                }
+                return 2; // c:1225
+            } else if code == 550 {
+                // c:1226 — file doesn't exist.
+                return 1; // c:1227
             }
-            return 2; // c:1225
-        } else if code == 550 {
-            // c:1226 — file doesn't exist.
-            return 1; // c:1227
         }
 
-        // c:1231-1245 — MDTM command path.
-        let cmd = format!("MDTM {}\r\n", fnam); // c:1232
-        let ret2 = zfsendcmd(&cmd); // c:1233
-        if ret2 == 6 {
-            // c:1235
-            return 1; // c:1236
-        }
-        let code = lastcode.load(Ordering::Relaxed);
-        if code < 300 {
-            // c:1237
-            // c:1238 — `mt = ztrdup(lastmsg);`
-            mt = lastmsg.lock().ok().map(|m| m.clone());
-            // c:1239 — `zfsess->has_mdtm = ZFCP_YUPP;`
-            if let Ok(mut st) = zftp_state().lock() {
-                if let Some(sess) = st.get_session_mut(None) {
-                    sess.has_mdtm = ZFCP_YUPP;
-                }
+        if retmdtm.is_some() {
+            // c:1231-1245 — MDTM command path.
+            let cmd = format!("MDTM {}\r\n", fnam); // c:1232
+            let ret2 = zfsendcmd(&cmd); // c:1233
+            if ret2 == 6 {
+                // c:1235
+                return 1; // c:1236
             }
-        } else if (500..=504).contains(&code) {
-            // c:1240 — server doesn't speak MDTM.
-            // c:1241 — `zfsess->has_mdtm = ZFCP_NOPE;`
-            if let Ok(mut st) = zftp_state().lock() {
-                if let Some(sess) = st.get_session_mut(None) {
-                    sess.has_mdtm = ZFCP_NOPE;
+            let code = lastcode.load(Ordering::Relaxed);
+            if code < 300 {
+                // c:1237
+                // c:1238 — `mt = ztrdup(lastmsg);`
+                mt = lastmsg.lock().ok().map(|m| m.clone());
+                // c:1239 — `zfsess->has_mdtm = ZFCP_YUPP;`
+                if let Ok(mut st) = zftp_state().lock() {
+                    if let Some(sess) = st.get_session_mut(None) {
+                        sess.has_mdtm = ZFCP_YUPP;
+                    }
                 }
+            } else if (500..=504).contains(&code) {
+                // c:1240 — server doesn't speak MDTM.
+                if let Ok(mut st) = zftp_state().lock() {
+                    if let Some(sess) = st.get_session_mut(None) {
+                        sess.has_mdtm = ZFCP_NOPE; // c:1241
+                    }
+                }
+                return 2; // c:1242
+            } else if code == 550 {
+                // c:1243
+                return 1; // c:1244
             }
-            return 2; // c:1242
-        } else if code == 550 {
-            // c:1243
-            return 1; // c:1244
         }
     } else {
         // c:1246
@@ -1531,8 +1548,12 @@ pub fn zfstats(
             .map(|s| s.to_string());
     }
 
-    *retsize = sz; // c:1265-1266
-    *retmdtm = mt; // c:1267-1268
+    if let Some(rs) = retsize.as_mut() {
+        **rs = sz; // c:1265-1266
+    }
+    if let Some(rm) = retmdtm.as_mut() {
+        **rm = mt; // c:1267-1268
+    }
     0 // c:1269
 }
 
@@ -3253,7 +3274,8 @@ pub fn zftp_local(name: &str, args: &[&str], flags: i32) -> i32 {
                                            // c:2497-2498 — zfstats(*args, !(flags & ZFTP_HERE), &sz, &mt, dofd ? 0 : -1);
         let remote = if (flags & ZFTP_HERE) != 0 { 0 } else { 1 };
         let fd = if dofd { 0 } else { -1 };
-        let newret = zfstats(arg, remote, &mut sz, &mut mt, fd);
+        // c:2497-2498 — zftp_local wants BOTH probes (&sz, &mt).
+        let newret = zfstats(arg, remote, Some(&mut sz), Some(&mut mt), fd);
         if newret == 2 {
             // c:2499
             return 2; // c:2500
@@ -3344,11 +3366,13 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
                 .unwrap_or(false); // c:2577 (status & (NOSZ|TRSZ)) == ZFST_TRSZ
             if (!dumb && !server_embeds_size) || !recv {
                 // c:2576-2578
+                // c:2580 — `zfstats(*args, recv, &sz, NULL, 0);` —
+                // size only, NO mdtm probe (NULL second out-param).
                 let _ = zfstats(
                     arg,
                     if recv { 1 } else { 0 }, // c:2580
-                    &mut sz,
-                    &mut _mdtm,
+                    Some(&mut sz),
+                    None,
                     0,
                 );
                 if recv && sz == -1 {
