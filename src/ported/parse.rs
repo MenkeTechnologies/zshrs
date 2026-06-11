@@ -3763,18 +3763,17 @@ pub const FDHF_KSHLOAD: u32 = 1;
 pub const FDHF_ZSHLOAD: u32 = 2;
 
 /// Port of `struct wcfunc` from `Src/parse.c:3158`. Build-time
-/// per-function aggregate before write_dump emits it. The Rust
-/// port stores the source-text body inline since the C-side
-/// `Eprog` ↔ `parse_string` chain isn't fully wired through this
-/// layer yet (`build_dump` falls back to source-text caching).
+/// per-function aggregate before write_dump emits it: the function
+/// (or source-file) name, the compiled `Eprog` from `parse_string`,
+/// and the FDHF_* autoload-style flag word.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
 pub struct wcfunc {
     pub name: String, // c:3159
-    pub flags: u32,   // c:3161
-    /// Compiled body wordcode (one `u32` array per fn). Empty until
-    /// the eprog emit-side lands; `write_dump` then walks each entry.
-    pub body: Vec<u32>,
+    /// Compiled program (`Eprog prog` c:3160) — wordcode + strs +
+    /// npats as built by `bld_eprog`.
+    pub prog: eprog, // c:3160
+    pub flags: u32, // c:3161
 }
 
 /// Port of `dump_find_func(Wordcode h, char *name)` from
@@ -3957,10 +3956,10 @@ pub fn load_dump_header(nam: &str, name: &str, err: i32) -> Option<Vec<u32>> {
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
 
-    // c:3270 — magic + version check. `ZSH_VERSION` (the C-side
-    // global) — zshrs reports "5.9" in `--zsh` mode (Src/init.c parity).
+    // c:3270 — magic + version check against `ZSH_VERSION` (C global;
+    // zshrs mirrors it in `patchlevel::ZSH_VERSION`).
     let magic_ok = fdmagic(&buf) == FD_MAGIC || fdmagic(&buf) == FD_OMAGIC;
-    let v_ok = fdversion(&buf) == "5.9";
+    let v_ok = fdversion(&buf) == crate::ported::patchlevel::ZSH_VERSION;
     if !magic_ok {
         if err != 0 {
             zwarnnam(nam, &format!("invalid zwc file: {}", name)); // c:3277
@@ -4042,50 +4041,60 @@ pub fn write_dump(
     hlen: i32,
     tlen: i32,
 ) -> std::io::Result<()> {
-    if map == 1 && (tlen as usize) >= FD_MINMAP {
-        // c:3344
-        map = 1;
-    } else if map == 1 {
-        map = 0;
+    // c:3345-3346 — `if (map == 1) map = (tlen >= FD_MINMAP);`
+    if map == 1 {
+        map = ((tlen as usize) >= FD_MINMAP) as i32;
     }
+
+    // C `sizeof(Patprog)` — pointer size (see bld_eprog len arithmetic).
+    let patprog_size = size_of::<*const u8>() as i32;
 
     let mut other = 0u32; // c:3338
     let ohlen = hlen;
-    let mut cur_hlen = hlen;
 
     loop {
-        cur_hlen = ohlen;
-        // c:3347 — build the prelude.
+        // c:3349 — `for (ohlen = hlen; ; hlen = ohlen)`.
+        let mut cur_hlen = ohlen;
+        // c:3348 — `memset(pre, 0, sizeof(wordcode) * FD_PRELEN);`
         let mut pre = vec![0u32; FD_PRELEN];
         pre[0] = if other != 0 { FD_OMAGIC } else { FD_MAGIC }; // c:3350
         let flags = (if map != 0 { FDF_MAP } else { 0 }) | other;
         fdsetflags(&mut pre, flags as u8); // c:3351
         fdsetother(&mut pre, tlen as u32); // c:3352
                                            // c:3353 — copy ZSH_VERSION C-string into pre[2..].
-        let ver = b"5.9";
+        let ver = crate::ported::patchlevel::ZSH_VERSION.as_bytes();
         for (i, &b) in ver.iter().enumerate() {
             let word = 2 + i / 4;
             let shift = (i % 4) * 8;
             pre[word] |= (b as u32) << shift;
         }
-        // Write prelude.
+        // c:3354 — write prelude.
         for w in &pre {
             dfd.write_all(&w.to_le_bytes())?;
         }
         // c:3356 — per-fn header records.
         for wcf in progs {
             let n = &wcf.name;
-            let prog = &wcf.body;
+            let prog = &wcf.prog;
+            // c:3362-3363 — body length in bytes excluding the
+            // pattern-prog slots: `prog->len - (prog->npats *
+            // sizeof(Patprog))`.
+            let len_bytes = prog.len - prog.npats * patprog_size;
             let mut head = fdhead {
-                start: cur_hlen as u32,                                     // c:3360
-                len: (prog.len() * 4) as u32,                               // c:3363
-                npats: 0, // c:3364 (npats not tracked yet)
-                strs: 0,  // c:3365
+                start: cur_hlen as u32, // c:3360
+                len: len_bytes as u32,  // c:3363
+                npats: prog.npats as u32, // c:3364
+                // c:3365 — `head.strs = prog->strs - ((char *) prog->prog);`
+                // In bld_eprog's layout strs sits right after the code
+                // words, so the byte offset is ecused * 4.
+                strs: (prog.prog.len() * 4) as u32, // c:3365
                 hlen: ((FDHEAD_WORDS as u32) + ((n.len() as u32 + 4) / 4)), // c:3366
                 flags: 0,
             };
-            cur_hlen += prog.len() as i32; // c:3361
-                                           // c:3368 — name tail offset from path basename.
+            // c:3361 — `hlen += (prog->len - npats*sizeof(Patprog) +
+            //                    sizeof(wordcode) - 1) / sizeof(wordcode);`
+            cur_hlen += (len_bytes + 3) / 4;
+            // c:3368-3371 — name tail offset from path basename.
             let tail = n.rfind('/').map(|p| p + 1).unwrap_or(0);
             head.flags = fdhbldflags(wcf.flags, tail as u32); // c:3372
                                                               // c:3373 — opposite-byte-order swap on second pass.
@@ -4098,23 +4107,40 @@ pub fn write_dump(
             for w in &head_words {
                 dfd.write_all(&w.to_le_bytes())?;
             }
-            // c:3376 — write the name + NUL + pad-to-4.
+            // c:3376-3379 — write the name + NUL, then pad to a word
+            // boundary with the leading bytes of `head` (C: `write_loop
+            // (dfd, (char *)&head, sizeof(wordcode) - tmp);`).
             dfd.write_all(n.as_bytes())?;
             dfd.write_all(&[0u8])?;
-            let pad = (4 - ((n.len() + 1) & 3)) & 3;
-            if pad > 0 {
-                dfd.write_all(&vec![0u8; pad])?;
+            let tmp = (n.len() + 1) & 3;
+            if tmp != 0 {
+                let head_bytes = head_words[0].to_le_bytes();
+                dfd.write_all(&head_bytes[..4 - tmp])?;
             }
         }
-        // c:3381 — per-fn body words.
+        // c:3381-3388 — per-fn bodies: code words then the strs region,
+        // padded to a word boundary. `tmp = (prog->len - npats*
+        // sizeof(Patprog) + sizeof(wordcode) - 1) / sizeof(wordcode);
+        // write_loop(dfd, (char *)prog->prog, tmp * sizeof(wordcode));`
         for wcf in progs {
-            let mut body = wcf.body.clone();
-            if other != 0 {
-                fdswap(&mut body);
+            let prog = &wcf.prog;
+            let len_bytes = (prog.len - prog.npats * patprog_size) as usize;
+            let tmp = (len_bytes + 3) / 4;
+            // c:3386-3387 — on the other pass only the code words are
+            // swapped (`fdswap(prog->prog, ((Wordcode) prog->strs) -
+            // prog->prog)`); the strs chars are byte-order neutral.
+            let mut body_bytes: Vec<u8> = Vec::with_capacity(tmp * 4);
+            for &w in &prog.prog {
+                let w = if other != 0 { w.swap_bytes() } else { w };
+                body_bytes.extend_from_slice(&w.to_le_bytes());
             }
-            for w in &body {
-                dfd.write_all(&w.to_le_bytes())?;
+            if let Some(s) = &prog.strs {
+                body_bytes.extend_from_slice(s.as_bytes());
             }
+            // C reads up to 3 bytes of heap slop past strs; emit NULs
+            // (readers never look past head.len so the value is free).
+            body_bytes.resize(tmp * 4, 0);
+            dfd.write_all(&body_bytes)?;
         }
         if other != 0 {
             // c:3389
@@ -4126,25 +4152,120 @@ pub fn write_dump(
 }
 
 /// Port of `build_dump(char *nam, char *dump, char **files, int ali, int map, int flags)`
-/// from `Src/parse.c:3397`. Source-file → wordcode dump compiler.
-///
-/// Status: scaffolded but the wordcode-emit step depends on
-/// `parse_string` returning a fully-wired `Eprog` with `prog/strs/
-/// npats` fields populated. The current `parse_string`/`parse` shape
-/// emits an AST (`ZshProgram`) but not yet the wordcode array C
-/// expects in this dump format. Until that lands, this returns 1
-/// with a clear "wordcode emit not yet ported" message so callers
-/// (autoload from `.zwc`, `zcompile path/to/file`) fail loud.
+/// from `Src/parse.c:3396`. Source-file → wordcode dump compiler:
+/// parses each source file via `parse_string` and serializes the
+/// resulting `Eprog`s through `write_dump` into `<dump>.zwc`.
 pub fn build_dump(
     nam: &str, // c:3397
     dump: &str,
-    _files: &[String],
-    _ali: i32,
-    _map: i32,
-    _flags: u32,
+    files: &[String],
+    ali: i32,
+    map: i32,
+    flags: u32,
 ) -> i32 {
-    zwarnnam(nam, &format!("{}: wordcode dump emit not yet ported", dump));
-    1
+    use crate::ported::utils::{errflag, ERRFLAG_ERROR};
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::Ordering;
+
+    // c:3403-3404 — append FD_EXT unless already suffixed.
+    let dump: String = if dump.ends_with(FD_EXT) {
+        dump.to_string()
+    } else {
+        format!("{}{}", dump, FD_EXT)
+    };
+
+    // c:3406 — `unlink(dump);`
+    let _ = fs::remove_file(&dump);
+    // c:3407-3410 — `open(dump, O_WRONLY|O_CREAT, 0444)`.
+    let mut dfd = match fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .mode(0o444)
+        .open(&dump)
+    {
+        Ok(f) => f,
+        Err(_) => {
+            zwarnnam(nam, &format!("can't write zwc file: {}", dump)); // c:3408
+            return 1;
+        }
+    };
+
+    let patprog_size = size_of::<*const u8>() as i32; // C sizeof(Patprog)
+    let ona = crate::ported::lex::noaliases(); // c:3398 `ona = noaliases`
+    crate::ported::lex::set_noaliases(ali != 0); // c:3412 `noaliases = ali;`
+
+    let mut progs: Vec<wcfunc> = Vec::new(); // c:3411
+    let mut flags = flags;
+    let mut hlen = FD_PRELEN as i32; // c:3414
+    let mut tlen: i32 = 0;
+
+    for fname in files {
+        // c:3418-3425 — `-k` / `-z` pseudo-args flip the autoload style.
+        if check_cond(fname, "k") {
+            flags = (flags & !(FDHF_KSHLOAD | FDHF_ZSHLOAD)) | FDHF_KSHLOAD; // c:3419
+            continue;
+        } else if check_cond(fname, "z") {
+            flags = (flags & !(FDHF_KSHLOAD | FDHF_ZSHLOAD)) | FDHF_ZSHLOAD; // c:3422
+            continue;
+        }
+        // c:3426-3437 — open + fstat + S_ISREG + read the whole file.
+        let fnam = crate::ported::utils::unmeta(fname); // c:3426
+        let is_reg = fs::metadata(&fnam).map(|m| m.is_file()).unwrap_or(false);
+        let bytes = if is_reg { fs::read(&fnam).ok() } else { None };
+        let bytes = match bytes {
+            Some(b) => b,
+            None => {
+                zwarnnam(nam, &format!("can't open file: {}", fname)); // c:3432
+                crate::ported::lex::set_noaliases(ona); // c:3433
+                let _ = fs::remove_file(&dump); // c:3434
+                return 1;
+            }
+        };
+        // c:3450 — `file = metafy(file, flen, META_REALLOC);` — keep
+        // raw bytes intact through the &str boundary (see bld_eprog's
+        // from_utf8_unchecked rationale).
+        let raw = unsafe { String::from_utf8_unchecked(bytes) };
+        let file = crate::ported::utils::metafy(&raw);
+
+        // c:3452-3460 — parse; any error aborts the whole dump.
+        let prog = crate::ported::exec::parse_string(&file, 1);
+        let errored = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+        let prog = match prog {
+            Some(p) if !errored => p,
+            _ => {
+                errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed); // c:3453
+                zwarnnam(nam, &format!("can't read file: {}", fname)); // c:3456
+                crate::ported::lex::set_noaliases(ona); // c:3457
+                let _ = fs::remove_file(&dump); // c:3458
+                return 1;
+            }
+        };
+
+        // c:3467-3472 — accumulate header + body length budgets.
+        let flen = (fname.len() as i32 + 4) / 4; // c:3469
+        hlen += (FDHEAD_WORDS as i32) + flen; // c:3470
+        tlen += (prog.len - prog.npats * patprog_size + 3) / 4; // c:3471
+
+        // c:3463-3466 — wcfunc node.
+        let wcf_flags = if (prog.flags & EF_RUN) != 0 {
+            FDHF_KSHLOAD // c:3465
+        } else {
+            flags
+        };
+        progs.push(wcfunc {
+            name: fname.clone(),
+            prog,
+            flags: wcf_flags,
+        });
+    }
+    crate::ported::lex::set_noaliases(ona); // c:3474
+
+    let tlen = (tlen + hlen) * 4; // c:3476
+
+    // c:3478 — `write_dump(dfd, progs, map, hlen, tlen);` (void in C).
+    let _ = write_dump(&mut dfd, &progs, map, hlen, tlen);
+
+    0 // c:3482
 }
 
 /// Port of `cur_add_func(char *nam, Shfunc shf, LinkList names, LinkList progs, int *hlen, int *tlen, int what)`
@@ -4175,11 +4296,11 @@ pub fn cur_add_func(
         zwarnnam(nam, &format!("function is already loaded: {}", shf_name)); // c:3514
         return 1;
     }
-    // c:3517 — would `dupeprog(shf->funcdef)`. Stub: empty body.
+    // c:3517 — would `dupeprog(shf->funcdef)`. Stub: empty program.
     let wcf = wcfunc {
         name: shf_name.to_string(),
         flags: FDHF_ZSHLOAD,
-        body: Vec::new(),
+        prog: eprog::default(),
     };
     progs.push(wcf);
     names.push(shf_name.to_string());
@@ -5011,8 +5132,11 @@ pub fn par_event_wordcode() -> usize {
             _ => break,
         }
     }
-    // parse.c:712 — `ecadd(WCB_END());`
-    ecadd(WCB_END());
+    // No trailing `ecadd(WCB_END())` here: C's `par_list` (c:769)
+    // emits none — the single terminating `WCB_END` comes from
+    // `bld_eprog` (c:555). Emitting one here too made every program
+    // one word longer than C's (double END), breaking .zwc dump
+    // byte-parity with `zcompile`.
     start
 }
 
