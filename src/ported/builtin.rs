@@ -1559,40 +1559,39 @@ pub fn bin_dirs(
 }
 
 /// Direct port of `void set_pwd_env(void)` from
-/// `Src/builtin.c:800`. Refreshes both `$PWD` and `$OLDPWD` to mirror
-/// the shell-side `pwd`/`oldpwd` globals. C clears `PM_READONLY` on
-/// each if it's currently typed as scalar (paranoid guard for users
-/// who did `typeset -r PWD`), then writes via `setsparam`.
+/// `Src/builtin.c:800`. Refreshes both `$PWD` and `$OLDPWD` shell
+/// parameters from the shell-side `pwd`/`oldpwd` globals
+/// (`assignsparam` at c:818-819), then `addenv`s each so child
+/// processes inherit them (c:821-826). C also clears `PM_READONLY`
+/// and unsets the param when a user retyped PWD/OLDPWD to a
+/// non-scalar (c:806-816).
 ///
-/// Rust port reads `$PWD`/`$OLDPWD` from paramtab (the shell-side
-/// truth), then writes them back via `setsparam` plus an OS-env
-/// mirror so child processes inherit the values. Was a fake that
-/// only wrote `getcwd()` into the OS env, bypassing paramtab and
-/// silently dropping `$OLDPWD`.
+/// Rust port: the bin entry's analog of C's `pwd`/`oldpwd` globals
+/// is the live OS env (validated against ispwd by ShellExecutor::new
+/// per c:Src/init.c:1242-1259 — see the subshell-snapshot comment in
+/// fusevm_bridge.rs treating `$PWD` env as the logical-pwd carrier).
+/// So the data flow matches C: globals (env) → paramtab → env. The
+/// previous revision read paramtab's own PWD and wrote it back — a
+/// circular no-op that left the stale environ-snapshot import in
+/// place when the inherited $PWD failed ispwd().
 pub fn set_pwd_env() {
     // c:800
-    // c:805-810 — `if ((pm = paramtab->getnode("PWD")) && ...) pm->node.flags &= ~PM_READONLY;`
-    //              The PM_READONLY clear isn't ported (no PM_READONLY
-    //              consumer breaks downstream); the canonical
-    //              refresh goes through setsparam which handles the
-    //              flag set.
-    // c:813 — `setsparam("PWD", pwd);`. Read paramtab's PWD if set;
-    //          fall back to getcwd so a fresh shell starts with PWD
-    //          populated.
-    let pwd = getsparam("PWD").or_else(|| {
+    // c:805-816 — PM_READONLY clear + unsetparam_pm for non-scalar
+    //             PWD/OLDPWD retypes isn't ported; setsparam below
+    //             overwrites the scalar value and flags directly.
+    // c:818 — `assignsparam("PWD", ztrdup(pwd), 0);`
+    let pwd = env::var("PWD").unwrap_or_else(|_| {
         env::current_dir()
-            .ok()
             .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
     });
-    if let Some(s) = pwd {
-        setsparam("PWD", &s); // c:813
-        env::set_var("PWD", &s);
+    setsparam("PWD", &pwd); // c:818
+    // c:819 — `assignsparam("OLDPWD", ztrdup(oldpwd), 0);`
+    if let Ok(oldpwd) = env::var("OLDPWD") {
+        setsparam("OLDPWD", &oldpwd); // c:819
+        env::set_var("OLDPWD", &oldpwd); // c:825-826 addenv(pm, oldpwd)
     }
-    // c:818 — `setsparam("OLDPWD", oldpwd);` mirror; only fires when
-    //          oldpwd is set (initially NULL on first shell).
-    if let Some(s) = getsparam("OLDPWD") {
-        env::set_var("OLDPWD", &s);
-    }
+    env::set_var("PWD", &pwd); // c:821-823 addenv(pm, pwd)
 }
 
 /// Port of `bin_cd(char *nam, char **argv, Options ops, int func)` from Src/builtin.c:840.

@@ -787,28 +787,54 @@ impl ShellExecutor {
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
 
-        // Validate the inherited $PWD against the real cwd before any
-        // builtin reads it as a logical-path base. Direct port of zsh's
-        // ispwd() at src/zsh/Src/utils.c:809-829: $PWD is honored only
-        // when it (a) is absolute, (b) stat's to the same dev+inode as
-        // ".", and (c) contains no `.`/`..` components. Otherwise zsh
-        // resets it to getcwd() (init.c:1247-1253).
+        // c:Src/init.c:1236-1259 — setupvals' pwd/oldpwd init, ported
+        // here because the bin entry skips setupvals (see the
+        // init_bltinmods note below). The validated value lands in the
+        // live OS env: the bin entry's `$PWD` carrier (the analog of
+        // C's `pwd` global — see the subshell-snapshot comment at
+        // fusevm_bridge.rs `cwd:` field). set_pwd_env() pours it into
+        // paramtab after the env-import loop, same order as C
+        // (params.c:955).
         //
-        // Without this check, a child process that inherits $PWD from
-        // a parent run in a different directory (cargo test setting
-        // current_dir(/tmp) but leaking PWD=/project/root) sees the
-        // stale PWD and `cd .` later snaps the real cwd to wherever
-        // PWD points, escaping the parent's sandbox. ztst harnesses
-        // hit this and polluted the project root with test artifacts.
-        if let Ok(pwd_env) = env::var("PWD") {
-            let valid = ispwd(&pwd_env);
-            if !valid {
-                if let Ok(real) = env::current_dir() {
-                    env::set_var("PWD", &real);
-                }
+        // c:1242-1245 — "Try a cheap test to see if we can initialize
+        // `PWD' from `HOME'." EMULATE_ZSH reads the `home` global,
+        // which setupvals derives from getpwuid(getuid())->pw_dir
+        // (c:1222-1225), falling back to "/" (c:1230-1232).
+        let home = unsafe {
+            let pw = libc::getpwuid(libc::getuid());
+            if pw.is_null() {
+                None
+            } else {
+                Some(
+                    std::ffi::CStr::from_ptr((*pw).pw_dir)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
             }
-        } else if let Ok(real) = env::current_dir() {
-            env::set_var("PWD", &real);
+        }
+        .unwrap_or_else(|| "/".to_string()); // c:1230-1232 EMULATE_ZSH home = "/"
+        // ispwd (src/zsh/Src/utils.c:809-829): a candidate is honored
+        // only when it (a) is absolute, (b) stat's to the same
+        // dev+inode as ".", and (c) has no `.`/`..` components.
+        // Without this chain, a child that inherits $PWD from a parent
+        // run in a different directory (cargo test setting
+        // current_dir(tempdir) while leaking PWD=/project/root) treats
+        // the stale PWD as the logical-path base, so `cd sub` resolves
+        // against the wrong directory.
+        let pwd_val = if ispwd(&home) {
+            home // c:1245-1246 — pwd = ztrdup(ptr) [HOME]
+        } else if let Some(p) = env::var("PWD")
+            .ok()
+            .filter(|p| p.len() < libc::PATH_MAX as usize && ispwd(p))
+        {
+            p // c:1247-1249 — pwd = ztrdup(getenv("PWD"))
+        } else {
+            crate::ported::compat::zgetcwd() // c:1250-1252 — pwd = zgetcwd()
+        };
+        env::set_var("PWD", &pwd_val);
+        // c:1255-1259 — oldpwd = getenv("OLDPWD") ?: ztrdup(pwd).
+        if env::var("OLDPWD").is_err() {
+            env::set_var("OLDPWD", &pwd_val); // c:1257
         }
 
         // Initialize fpath from FPATH env var or use defaults
@@ -1629,6 +1655,14 @@ impl ShellExecutor {
                 }
             }
         }
+        // c:Src/params.c:955 — `set_pwd_env();` runs AFTER the environ
+        // import loop, overwriting the imported $PWD/$OLDPWD paramtab
+        // entries with the ispwd()-validated values computed above
+        // (c:Src/init.c:1242-1259). Without this, a stale inherited
+        // $PWD (env-import snapshot taken at process entry) survives
+        // in paramtab even though the live env was corrected.
+        crate::ported::builtin::set_pwd_env();
+
         // Populate paramtab with PM_SPECIAL placeholder Params for
         // every PARTAB / PARTAB_ARRAY magic-assoc name. Mirrors
         // what C's zsh/parameter module boot_ → handlefeatures
