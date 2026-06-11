@@ -4419,42 +4419,24 @@ pub fn getsparam(name: &str) -> Option<String> {
     //    for PM_ARRAY (matches `getstrvalue` at params.c:2358).
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
-            // c:Src/Modules/param_private.c:568-617 getprivatenode —
-            // when zsh/param/private is active, C swaps
-            // `realparamtab->getnode` to getprivatenode (c:678) so
-            // every lookup skips private params that belong to an
-            // OUTER scope when read from a DEEPER one (`private x` in
-            // f is invisible to g called by f; g sees the global).
-            // zshrs's HashMap paramtab has no getnode vtable, so the
-            // c:580 `pm = pm->old` walk is inlined here. The
-            // per-param private test uses the flag combo makeprivate
-            // installs at c:174 (PM_HIDE|PM_SPECIAL|PM_RO_BY_DESIGN)
-            // instead of is_private()'s name-keyed registry — the
-            // registry can't distinguish the private pm from the
-            // global it shadows on the same name.
-            let mut pm: &param = pm;
-            loop {
-                let privflags = PM_HIDE | PM_SPECIAL | PM_RO_BY_DESIGN;
-                let fakelvl =
-                    crate::ported::modules::param_private::FAKELEVEL.load(Ordering::Relaxed);
-                let pwl = crate::ported::modules::param_private::private_wraplevel
-                    .load(Ordering::Relaxed);
-                if fakelvl == 0 // c:580 `!fakelevel`
-                    && locallevel.load(Ordering::Relaxed) > pm.level // c:580
-                    && (pm.node.flags as u32 & privflags) == privflags // c:580 is_private(pm)
-                    && pm.level != pwl + 1
-                // c:581 wraplevel escape
-                {
-                    match pm.old.as_deref() {
-                        Some(old) => {
-                            pm = old; // c:607 `pm = pm->old`
-                            continue;
-                        }
-                        None => return None, // c:609 walk exhausted — no visible node
-                    }
-                }
-                break;
+            // c:Src/Modules/param_private.c:568-617 + c:678 — C swaps
+            // `realparamtab->getnode` to getprivatenode when
+            // zsh/param/private is active, so every lookup skips
+            // private params belonging to an OUTER scope when read
+            // from a DEEPER one (`private x` in f is invisible to g
+            // called by f; g sees the global). zshrs's HashMap
+            // paramtab has no getnode vtable, so call the canonical
+            // walk at the lookup site. SAFETY: getprivatenode only
+            // follows the `pm->old` chain read-only; the chain is
+            // owned by this entry, which stays alive under the read
+            // guard held for the rest of this block.
+            let visible = crate::ported::modules::param_private::getprivatenode(
+                &**pm as *const param,
+            ); // c:678 getnode hook
+            if visible.is_null() {
+                return None; // c:609 walk exhausted — no visible node
             }
+            let pm: &param = unsafe { &*visible };
             // c:Src/params.c:2335-2358 — `if (pm->node.flags & PM_UNSET)
             // return ""`. Unset specials kept in paramtab (PM_SPECIAL
             // retention path, c:3911) read as empty, not as their stale
@@ -4641,6 +4623,16 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
     // paramtab entry. Then PM_TYPE check + `pm->u.arr` return.
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
+            // c:Src/Modules/param_private.c:678 — the getnode hook
+            // applies to every paramtab lookup; same canonical walk
+            // as getsparam (SAFETY: read-only old-chain walk under
+            // the held read guard).
+            let visible =
+                crate::ported::modules::param_private::getprivatenode(&**pm as *const param);
+            if visible.is_null() {
+                return None;
+            }
+            let pm: &param = unsafe { &*visible };
             if PM_TYPE(pm.node.flags as u32) == PM_ARRAY {
                 // c:3108
                 if let Some(arr) = pm.u_arr.as_ref() {
@@ -4688,6 +4680,17 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
     }
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
+            // c:Src/Modules/param_private.c:678 — getnode hook; same
+            // canonical walk as getsparam/getaparam. (Values below
+            // still come from the name-keyed hashed storage — a
+            // single slot per name; per-scope assoc shadowing is a
+            // storage-model limitation predating this walk.)
+            let visible =
+                crate::ported::modules::param_private::getprivatenode(&**pm as *const param);
+            if visible.is_null() {
+                return None;
+            }
+            let pm: &param = unsafe { &*visible };
             if PM_TYPE(pm.node.flags as u32) == PM_HASHED {
                 // c:3123
                 // c:3124 — `paramvalarr(hashgetfn(pm), SCANPM_WANTVALS)`.

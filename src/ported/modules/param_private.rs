@@ -273,13 +273,25 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
 /// is just a presence check there.
 pub fn is_private(pm: *const param) -> i32 {
     // c:181
-    // C walks `locallist` / `funcstack` / `params_unprivatized` to
-    // determine private-ness; the Rust idiom replacement is a direct
-    // presence check against the static `PRIVATE_PARAMS` registry
-    // populated at `bin_private` time. Covers c:181-210 verbatim
-    // semantics without the C linked-list walk.
+    // C tests whether THIS Param's per-type gsu `unsetfn` slot points
+    // at the pp{s,i,f,a,h}_unsetfn sentinel — a PER-PARAM check that
+    // distinguishes the private pm from the non-private old it
+    // shadows on the same name. The Rust makeprivate doesn't swap
+    // gsu vtables (direct u_str/u_arr access model); its equivalent
+    // per-Param marker is the flag combo it installs at c:174
+    // (PM_HIDE|PM_SPECIAL|PM_REMOVABLE|PM_RO_BY_DESIGN). Require
+    // BOTH the combo AND the name-keyed PRIVATE_PARAMS registry
+    // entry: the combo gives per-Param precision down the pm->old
+    // chain (the registry alone answered "yes" for every link of a
+    // shadow chain, breaking getprivatenode's stop condition); the
+    // registry keeps a coincidentally-flagged special from reading
+    // as private.
     if pm.is_null() {
         return 0;
+    }
+    let privflags = (PM_HIDE | PM_SPECIAL | PM_REMOVABLE | PM_RO_BY_DESIGN) as i32;
+    if unsafe { (*pm).node.flags } & privflags != privflags {
+        return 0; // c:183-207 gsu-sentinel mismatch
     }
     let name = unsafe { (*pm).node.nam.clone() };
     if PRIVATE_PARAMS
@@ -979,8 +991,12 @@ pub fn wrap_private(
 ///
 /// C body walks `pm->old` chain skipping private params at deeper
 /// scopes, then resolves nameref. Returns the visible Param node.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
-pub fn getprivatenode(pm: *mut param) -> *mut param {
+/// WARNING: param names don't match C — Rust=(pm) vs C=(ht, nam).
+/// Takes/returns *const: the walk is read-only (C's is too — it only
+/// follows `pm->old`), and callers like getsparam derive the pointer
+/// from a `&param` under the paramtab READ lock, so a *mut signature
+/// would force an aliasing-UB cast.
+pub fn getprivatenode(pm: *const param) -> *const param {
     let mut cur = pm;
     if cur.is_null() {
         return cur;
@@ -1006,9 +1022,9 @@ pub fn getprivatenode(pm: *mut param) -> *mut param {
         cur = unsafe {
             (*cur)
                 .old
-                .as_mut()
-                .map(|b| &mut **b as *mut _)
-                .unwrap_or(std::ptr::null_mut())
+                .as_ref()
+                .map(|b| &**b as *const _)
+                .unwrap_or(std::ptr::null())
         };
     }
     // c:610-612 — resolve nameref
@@ -1026,8 +1042,9 @@ pub fn getprivatenode(pm: *mut param) -> *mut param {
 /// Like `getprivatenode` but skips the autoload-precedence and
 /// nameref-resolve passes — used for direct `gethashnode2` lookups
 /// that mustn't follow indirection.
-/// WARNING: param names don't match C — Rust=() vs C=(ht, nam)
-pub fn getprivatenode2(pm: *mut param) -> *mut param {
+/// WARNING: param names don't match C — Rust=(pm) vs C=(ht, nam).
+/// *const for the same read-only-walk reason as getprivatenode.
+pub fn getprivatenode2(pm: *const param) -> *const param {
     let mut cur = pm;
     while !cur.is_null() {
         let cur_level = unsafe { (*cur).level };
@@ -1039,9 +1056,9 @@ pub fn getprivatenode2(pm: *mut param) -> *mut param {
         cur = unsafe {
             (*cur)
                 .old
-                .as_mut()
-                .map(|b| &mut **b as *mut _)
-                .unwrap_or(std::ptr::null_mut())
+                .as_ref()
+                .map(|b| &**b as *const _)
+                .unwrap_or(std::ptr::null())
         };
     }
     cur // c:627
