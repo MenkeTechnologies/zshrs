@@ -1416,49 +1416,26 @@ pub fn bin_zformat(
                     let after = std::str::from_utf8(&bytes[(k + 1)..]).unwrap_or("");
                     let mut buf = String::with_capacity(pre + sl + after.len());
                     let prefix = std::str::from_utf8(&copy[..left_len]).unwrap_or("");
-                    buf.push_str(prefix); // c:1062
-                    for _ in prefix.chars().count()..pre {
+                    buf.push_str(prefix); // c:1072 memcpy(buf, copy, cpp-copy)
+                    // c:1071 memset(buf, ' ', pre) — pad up to byte count
+                    // `pre` (matches C !MULTIBYTE_SUPPORT byte-counting; the
+                    // first pass already computed `pre = cp - *ap - nbc`
+                    // in bytes c:1015). Using prefix.len() (bytes) not
+                    // chars().count() — for non-ASCII labels chars<bytes,
+                    // so the prior char-count version over-padded.
+                    for _ in prefix.len()..pre {
                         buf.push(' ');
-                    } // c:1075-1076
-                    buf.push_str(middle); // c:1078
-                    buf.push_str(after); // c:1080
-                    ret.push(buf); // c:1081 ztrdup
+                    }
+                    buf.push_str(middle); // c:1073 strcpy past `suf` shift
+                    buf.push_str(after); // c:1073 (tail after `:`)
+                    ret.push(buf); // c:1075 ztrdup
                 } else {
                     ret.push(String::from_utf8_lossy(&copy).into_owned()); // c:1082
                 }
             }
-            // c:1083 — setaparam(args[0], ret). Direct write to paramtab
-            // since the canonical params::setaparam takes HashMap refs and
-            // the executor isn't threaded into bin_zformat.
-            if let Ok(mut tab) = paramtab().write() {
-                let pm: Param = Box::new(param {
-                    node: hashnode {
-                        next: None,
-                        nam: args[0].clone(),
-                        flags: PM_ARRAY as i32,
-                    },
-                    u_data: 0,
-                    u_arr: Some(ret.clone()),
-                    u_str: None,
-                    u_val: 0,
-                    u_dval: 0.0,
-                    u_hash: None,
-                    gsu_s: None,
-                    gsu_i: None,
-                    gsu_f: None,
-                    gsu_a: None,
-                    gsu_h: None,
-                    base: 0,
-                    width: 0,
-                    env: None,
-                    ename: None,
-                    old: None,
-                    level: 0,
-                });
-                tab.insert(args[0].clone(), pm);
-            }
             let _ = sl;
-            return 0; // c:1084
+            setaparam(&args[0], ret); // c:1081 setaparam(args[0], ret)
+            return 0; // c:1082
         }
         _ => {}
     }
