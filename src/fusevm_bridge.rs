@@ -1918,6 +1918,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                         t.remove("EXIT");
                     }
+                    // c:Src/exec.c:2862 → 1219 — pipeline children run
+                    // entersubsh with ESUB_PGRP, which clears the job
+                    // table (clearjobtab, Src/jobs.c:1780). Without
+                    // this, `sleep 5 & jobs -p | wc -l` reports 1 in
+                    // the forked stage where zsh reports 0. The fork
+                    // already copy-isolates the statics, so mutating
+                    // them here can't leak to the parent.
+                    with_executor(|exec| {
+                        let monitor = crate::ported::zsh_h::isset(
+                            crate::ported::zsh_h::MONITOR,
+                        ) as i32;
+                        crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
+                    });
+                    *crate::ported::jobs::THISJOB
+                        .get_or_init(|| std::sync::Mutex::new(-1))
+                        .lock()
+                        .unwrap() = -1;
                     // Child: wire stdin from previous pipe's read end
                     if i > 0 {
                         unsafe {
@@ -2069,17 +2086,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // `cmd &` background execution. Compile_list emits this for any item
-    // followed by ListOp::Amp: the cmd is compiled into a sub-chunk, its index
-    // pushed, then this builtin pops the index, looks up the chunk, forks. The
+    // followed by ListOp::Amp: the job text + the cmd's sub-chunk index are
+    // pushed, then this builtin pops both, looks up the chunk, forks. The
     // child detaches via setsid (so SIGINT to the foreground job doesn't kill
     // it), runs the bytecode on a fresh VM with builtins re-registered, exits
-    // with the last status. The parent returns Status(0) immediately. Job
-    // tracking via JobTable is deferred to Phase G6 — JobTable::add_job
-    // currently requires a std::process::Child, which a libc::fork doesn't
-    // produce. Until then, `jobs`/`fg`/`wait` can't see these pids.
-    //WARNING FAKE AND MUST BE DELETED
+    // with the last status. The parent registers the job in the canonical
+    // JOBTAB (c:Src/exec.c::execpline Z_ASYNC arm) and returns Status(0).
     vm.register_builtin(BUILTIN_RUN_BG, |vm, _argc| {
         let sub_idx = vm.pop().to_int() as usize;
+        let job_text = vm.pop().to_str();
         let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
             Some(c) => c,
             None => return Value::Status(1),
@@ -2110,8 +2125,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // canonical writer.
                 crate::ported::modules::clone::lastpid
                     .store(pid, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/exec.c:1700 — `thisjob = newjob = initjob()`:
+                // allocate the canonical jobtab slot. c:Src/exec.c:2950
+                // zfork path → addproc(pid, text, 0, &bgtime, ...) hangs
+                // the proc entry (with its display text) off the job.
+                // c:Src/exec.c:1744-1746 — `clearoldjobtab();
+                // jobtab[thisjob].stat |= STAT_NOSTTY;` then c:1758
+                // `spawnjob()` promotes it to curjob (top-level shell
+                // only), marks STAT_LOCKED and resets thisjob.
+                {
+                    use crate::ported::jobs;
+                    use std::sync::Mutex;
+                    let table = jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+                    let idx = {
+                        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                        let idx = jobs::initjob(&mut tab); // c:exec.c:1700
+                        jobs::addproc(
+                            &mut tab[idx],
+                            pid,
+                            &job_text,
+                            false,
+                            Some(std::time::Instant::now()),
+                            -1,
+                            -1,
+                        ); // c:exec.c:2950 addproc
+                        tab[idx].stat |= crate::ported::zsh_h::STAT_NOSTTY; // c:exec.c:1746
+                        idx
+                    };
+                    jobs::clearoldjobtab(); // c:exec.c:1744
+                    if let Ok(mut tj) = jobs::THISJOB
+                        .get_or_init(|| Mutex::new(-1))
+                        .lock()
+                    {
+                        *tj = idx as i32;
+                    }
+                    jobs::spawnjob(); // c:exec.c:1758
+                }
                 with_executor(|exec| {
-                    exec.jobs.add_pid_job(pid, String::new(), JobState::Running);
+                    exec.jobs
+                        .add_pid_job(pid, job_text.clone(), JobState::Running);
                 });
                 Value::Status(0)
             }
@@ -7095,10 +7147,12 @@ pub const BUILTIN_ARRAY_JOIN: u16 = 286;
 
 /// Builtin ID for `cmd &` background execution. IDs 287/288/289 are reserved
 /// for the planned array work in Phase G1 (SET_ARRAY/SET_ASSOC/ARRAY_INDEX),
-/// so this lands at 290. Pops one sub-chunk index; forks; child detaches
-/// (`setsid`), runs the sub-chunk on a fresh VM, exits with last_status; parent
-/// returns Status(0) immediately. Job-table registration (so `jobs`/`fg`/`wait`
-/// can see the pid) is deferred to Phase G6 — fire-and-forget for now.
+/// so this lands at 290. Pops the sub-chunk index then the job text; forks;
+/// child detaches (`setsid`), runs the sub-chunk on a fresh VM, exits with
+/// last_status; parent registers the job in the canonical JOBTAB
+/// (initjob/addproc/spawnjob per c:Src/exec.c:1700-1758) so `jobs` / `wait
+/// %N` / `kill %N` / `disown` and the zsh/parameter assocs all see it, then
+/// returns Status(0) immediately.
 pub const BUILTIN_RUN_BG: u16 = 290;
 
 /// Indexed-array assignment: `arr=(a b c)`. Compile_simple emits N element
@@ -8145,10 +8199,58 @@ impl fusevm::ShellHost for ZshrsHost {
                 // dies with the child: `( : & ); echo $!` -> 0.
                 lastpid: crate::ported::modules::clone::lastpid
                     .load(std::sync::atomic::Ordering::Relaxed),
+                // c:Src/exec.c::entersubsh fork semantics — the
+                // subshell gets a COPY of the job table; its disown/
+                // wait/`&` mutations die with it. Bug #462.
+                jobtab: crate::ported::jobs::JOBTAB
+                    .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    .lock()
+                    .map(|t| t.clone())
+                    .unwrap_or_default(),
+                curjob: *crate::ported::jobs::CURJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap(),
+                prevjob: *crate::ported::jobs::PREVJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap(),
+                maxjob: *crate::ported::jobs::MAXJOB
+                    .get_or_init(|| std::sync::Mutex::new(0))
+                    .lock()
+                    .unwrap(),
+                thisjob: *crate::ported::jobs::THISJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap(),
             });
             // C forks for `(...)` — count the fork-equivalent so
             // `time (builtin)` reports like zsh (see FORK_EVENTS).
             crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // c:Src/exec.c:2862 — subshell fork flags carry ESUB_PGRP,
+            // so entersubsh runs `clearjobtab(monitor)` (c:1219): the
+            // child gets an EMPTY job table plus the procless control
+            // job grabbed at Src/jobs.c:1828 (`thisjob = initjob()`).
+            // That's why zsh's `(jobs)` prints nothing and `(kill %1)`
+            // hits the empty control job instead of the parent's job 1.
+            // The snapshot pushed above restores the parent's table at
+            // subshell_end. Bug #462.
+            let monitor =
+                crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
+            crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
+            // clearjobtab left THISJOB on the control job (Src/jobs.c:
+            // 1828). In C the very next pipeline's execpline reassigns
+            // thisjob (Src/exec.c:1700 `thisjob = newjob = initjob()`),
+            // so by the time any builtin runs, thisjob never aliases
+            // the control job. zshrs has no per-pipeline job slot —
+            // model the between-pipelines state (-1) so getjob's
+            // `jobnum != thisjob` (c:jobs.c:2107) doesn't reject %1 and
+            // setcurjob doesn't demote an inherited curjob that
+            // collides with the control slot.
+            *crate::ported::jobs::THISJOB
+                .get_or_init(|| std::sync::Mutex::new(-1))
+                .lock()
+                .unwrap() = -1;
             // Subshell starts with EXIT trap cleared so the parent's
             // EXIT handler doesn't fire when the subshell ends. zsh:
             // each subshell has its own trap context. Other signals
@@ -8228,6 +8330,31 @@ impl fusevm::ShellHost for ZshrsHost {
                 // dies with the child in C zsh.
                 crate::ported::modules::clone::lastpid
                     .store(snap.lastpid, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/exec.c::entersubsh fork semantics — restore the
+                // parent's job table + curjob/prevjob/maxjob/thisjob.
+                // The subshell mutated only its own copy. Bug #462.
+                if let Ok(mut t) = crate::ported::jobs::JOBTAB
+                    .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    .lock()
+                {
+                    *t = snap.jobtab;
+                }
+                *crate::ported::jobs::CURJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap() = snap.curjob;
+                *crate::ported::jobs::PREVJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap() = snap.prevjob;
+                *crate::ported::jobs::MAXJOB
+                    .get_or_init(|| std::sync::Mutex::new(0))
+                    .lock()
+                    .unwrap() = snap.maxjob;
+                *crate::ported::jobs::THISJOB
+                    .get_or_init(|| std::sync::Mutex::new(-1))
+                    .lock()
+                    .unwrap() = snap.thisjob;
                 if let Some(m) = crate::ported::params::paramtab_hashed_storage()
                     .lock()
                     .ok()

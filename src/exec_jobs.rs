@@ -12,6 +12,87 @@
 //! state with no C counterpart by design.
 
 use std::process::Child;
+use std::sync::Mutex;
+
+use crate::ported::jobs::{deletejob, CURJOB, MAXJOB, PREVJOB, THISJOB};
+use crate::ported::jobs::stat;
+use crate::ported::zsh_h::job;
+
+/// Executor-side stand-in for C `printjob`'s done-job delete tail,
+/// `Src/jobs.c:1350-1363`:
+/// ```c
+/// if (jn->stat & STAT_DONE) {
+///     ...
+///     deletejob(jn, 0);
+///     if (job == curjob) { curjob = prevjob; prevjob = job; }
+///     if (job == prevjob) setprevjob();
+/// }
+/// ```
+/// The ported `printjob` (src/ported/jobs.rs) is a pure formatter
+/// returning a String; C's version mutates the table as a side
+/// effect. Every site that calls (or would call) printjob on a
+/// possibly-done job runs this tail so finished jobs leave the table
+/// exactly when they do in C. Lives here (not src/ported/) because
+/// it has no C name of its own — it is the side-effect half of
+/// printjob, split out by the Rust purity refactor.
+pub fn printjob_delete_tail(tab: &mut [job], idx: usize) {
+    if idx >= tab.len() || (tab[idx].stat & stat::DONE) == 0 {
+        return;
+    }
+    deletejob(&mut tab[idx], false); // c:Src/jobs.c:1356
+    let mut cj = CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+    let mut pj = PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+    if *cj == idx as i32 {
+        // c:Src/jobs.c:1357-1360
+        *cj = *pj;
+        *pj = idx as i32;
+    }
+    let need_setprev = *pj == idx as i32; // c:Src/jobs.c:1361
+    drop(cj);
+    drop(pj);
+    if need_setprev {
+        setprevjob_locked(tab); // c:Src/jobs.c:1362
+    }
+}
+
+/// `setprevjob` (Src/jobs.c:698-717) body operating on an
+/// already-locked table slice — `printjob_delete_tail` callers hold
+/// the JOBTAB lock, so the re-locking ported `setprevjob()` would
+/// deadlock. Same walk, same candidate order.
+fn setprevjob_locked(tab: &[job]) {
+    let maxjob = *MAXJOB
+        .get_or_init(|| Mutex::new(0))
+        .lock()
+        .expect("maxjob poisoned");
+    let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+    let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+    let pick = |want_stopped: bool| -> i32 {
+        for i in (1..=maxjob).rev() {
+            if i >= tab.len() {
+                continue;
+            }
+            let j = &tab[i];
+            let stat_ok = if want_stopped {
+                (j.stat & (stat::INUSE | stat::STOPPED)) == (stat::INUSE | stat::STOPPED)
+            } else {
+                (j.stat & stat::INUSE) != 0
+            };
+            if stat_ok
+                && (j.stat & stat::SUBJOB) == 0
+                && i as i32 != curjob
+                && i as i32 != thisjob
+            {
+                return i as i32;
+            }
+        }
+        -1
+    };
+    let mut found = pick(true); // c:Src/jobs.c:702-707
+    if found < 0 {
+        found = pick(false); // c:Src/jobs.c:709-714
+    }
+    *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = found; // c:716
+}
 
 /// Running-job state tracked alongside each `Child` handle.
 /// Maps to C's `STAT_*` bits but is exposed as a typed enum since

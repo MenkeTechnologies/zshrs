@@ -1679,21 +1679,12 @@ pub fn preprompt() {
     // zshrs's non-interactive `-c` path doesn't use.
 
     // c:1569-1572 — `if (unset(NOTIFY)) scanjobs();` — sync job-status
-    // print before prompt. C scanjobs walks jobtab[i] printing each
-    // STAT_CHANGED entry; inlined here per the same pattern used in
-    // exec.rs's execcmd_exec %job-resume AUTORESUME branch.
+    // print before prompt, via the canonical scanjobs port
+    // (Src/jobs.c:1993).
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY) {
         if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
-            let long_list = crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS);
-            for i in 1..guard.len() {
-                if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
-                    let s = crate::ported::jobs::printjob(&guard[i], i, long_list, None, None);
-                    if !s.is_empty() {
-                        eprint!("{}", s);
-                    }
-                }
-            }
+            crate::ported::jobs::scanjobs(&mut guard);
         }
     }
 

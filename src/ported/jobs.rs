@@ -1185,36 +1185,56 @@ pub fn sigmsg(sig: i32) -> &'static str {
 pub fn printjob(
     job: &job,
     job_num: usize,
-    long_format: bool,
+    lng: i32,
     cur_job: Option<usize>,
     prev_job: Option<usize>,
 ) -> String {
-    // Inline process-status formatter — mirrors the inline status-decode
-    // block at Src/jobs.c:1136-1400 inside printjob itself. SP_RUNNING
-    // → "running"; WIFEXITED → "done" / "exit N"; WIFSTOPPED → "suspended
-    // (sig)"; WIFSIGNALED → "sig" + " (core dumped)" if WCOREDUMP.
+    // c:1141 — `int job, len = 9, sig, sflag = 0, llen;` — the status
+    // column is `len + 2` wide where len starts at 9 and grows to the
+    // longest signal message among non-running procs (c:1180-1213).
+    let mut len = 9usize;
+    for pn in job.procs.iter() {
+        if pn.status == SP_RUNNING {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            if libc::WIFSIGNALED(pn.status) {
+                let mut llen = sigmsg(libc::WTERMSIG(pn.status)).len(); // c:1187
+                if (pn.status & 0x80) != 0 {
+                    llen += 14; // c:1188-1189 WCOREDUMP " (core dumped)"
+                }
+                len = len.max(llen); // c:1190-1191
+            } else if libc::WIFSTOPPED(pn.status) {
+                len = len.max(sigmsg(libc::WSTOPSIG(pn.status)).len()); // c:1201-1203
+            }
+        }
+    }
+    let width = len + 2; // c:1256 — `len2 = 10 + len; /* 2 spaces */`
+
+    // Per-proc status text, padded to `width` per the fprintf field
+    // widths at c:1293-1316.
     let fmt_proc_status = |status: i32| -> String {
-        if status == SP_RUNNING {
-            "running".to_string()
+        let s = if status == SP_RUNNING {
+            "running".to_string() // c:1295
         } else if (status & 0x7f) == 0 {
             let code = (status >> 8) & 0xff;
             if code == 0 {
-                "done".to_string()
+                "done".to_string() // c:1304
             } else {
-                format!("exit {}", code)
+                format!("exit {:<4}", code) // c:1301 "exit %-4d"
             }
         } else if (status & 0xff) == 0x7f {
-            let sig = (status >> 8) & 0xff;
-            format!("suspended ({})", sigmsg(sig))
+            sigmsg((status >> 8) & 0xff).to_string() // c:1306 WSTOPSIG
         } else {
             let sig = status & 0x7f;
-            let core = (status >> 7) & 1;
-            if core != 0 {
-                format!("{} (core dumped)", sigmsg(sig))
+            if (status & 0x80) != 0 {
+                format!("{} (core dumped)", sigmsg(sig)) // c:1309
             } else {
-                sigmsg(sig).to_string()
+                sigmsg(sig).to_string() // c:1314 WTERMSIG
             }
-        }
+        };
+        format!("{:<w$}", s, w = width)
     };
     let marker = if Some(job_num) == cur_job {
         '+'
@@ -1224,51 +1244,67 @@ pub fn printjob(
         ' '
     };
 
-    let status_str = if job.is_done() {
-        if let Some(last) = job.procs.last() {
-            fmt_proc_status(last.status)
-        } else {
-            "done".to_string()
-        }
-    } else if job.is_stopped() {
-        "suspended".to_string()
-    } else {
-        "running".to_string()
-    };
+    // c:1273-1277 — first line carries `[N]  M `; continuation lines
+    // (further proc groups) carry the matching indent.
+    let head_prefix = format!("[{}]  {} ", job_num, marker);
+    let cont_prefix = if job_num > 9 { "        " } else { "       " }; // c:1277
 
-    let header = if long_format {
-        let mut lines = Vec::new();
-        for (i, proc) in job.procs.iter().enumerate() {
-            let pstatus = fmt_proc_status(proc.status);
-            if i == 0 {
-                lines.push(format!(
-                    "[{}]  {} {:>5} {:16}  {}",
-                    job_num, marker, proc.pid, pstatus, proc.text
-                ));
-            } else {
-                lines.push(format!(
-                    "            {:>5} {:16}  | {}",
-                    proc.pid, pstatus, proc.text
-                ));
+    let header = if job.procs.is_empty() {
+        // c:1255 — `for (pn = jn->procs; pn;)` — a procless job (e.g.
+        // the subshell control slot grabbed at c:1828) produces NO
+        // output lines in C.
+        if job.text.is_empty() {
+            return String::new();
+        }
+        // Rust extension: jobs registered without proc entries carry
+        // their display text on `job.text` (C always has procs). Use
+        // the job-level stat bits for the status word.
+        let status_str = if job.is_done() {
+            format!("{:<w$}", "done", w = width)
+        } else if job.is_stopped() {
+            format!("{:<w$}", "suspended", w = width)
+        } else {
+            format!("{:<w$}", "running", w = width)
+        };
+        format!("{}{}{}", head_prefix, status_str, job.text)
+    } else {
+        // c:1255-1327 — group consecutive procs with the same status
+        // onto one line (text joined with " | "); `jobs -l` / `jobs -p`
+        // (lng & 3) put each proc on its own line.
+        let mut lines: Vec<String> = Vec::new();
+        let mut i = 0usize;
+        let mut fline = true;
+        let mut lng = lng;
+        while i < job.procs.len() {
+            let pn = &job.procs[i];
+            // c:1257-1267 — group extent.
+            let mut group_end = i + 1;
+            if (lng & 3) == 0 {
+                while group_end < job.procs.len()
+                    && job.procs[group_end].status == pn.status
+                {
+                    group_end += 1;
+                }
             }
+            let mut line = String::new();
+            line.push_str(if fline { &head_prefix } else { cont_prefix });
+            if (lng & 1) != 0 {
+                line.push_str(&format!("{} ", pn.pid)); // c:1281 "%ld "
+            } else if (lng & 2) != 0 {
+                line.push_str(&format!("{} ", job.gleader)); // c:1283-1285
+                lng &= !3; // c:1290
+            }
+            line.push_str(&fmt_proc_status(pn.status));
+            let texts: Vec<&str> = job.procs[i..group_end]
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect();
+            line.push_str(&texts.join(" | ")); // c:1318-1325
+            lines.push(line);
+            fline = false;
+            i = group_end;
         }
         lines.join("\n")
-    } else {
-        format!(
-            "[{}]  {} {:16}  {}",
-            job_num,
-            marker,
-            status_str,
-            if !job.text.is_empty() {
-                job.text.clone()
-            } else {
-                job.procs
-                    .iter()
-                    .map(|p| p.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            }
-        )
     };
 
     // c:1220-1221 — `if (should_report_time(jn)) dumptime(jn);`
@@ -1283,6 +1319,7 @@ pub fn printjob(
     }
     header
 }
+
 
 /// Port of `addfilelist(const char *name, int fd)` from `Src/jobs.c:1373`.
 ///
@@ -1839,6 +1876,16 @@ pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
             .lock()
             .unwrap() = snap; // c:1804
     }
+    // c:1818-1819 — `memset(jobtab, 0, jobtabsize * sizeof(struct job));
+    //                maxjob = 0;` — zero out the live table.
+    jobs.clear();
+    jobs.push(job::new()); // slot 0 — the shell's own entry
+    *MAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap() = 0; // c:1819
+    // c:1821-1828 — "Although we don't have job control in subshells,
+    // we sometimes need control structures for other purposes such as
+    // multios. Grab a job for this purpose." `thisjob = initjob();`
+    let control = initjob(&mut jobs); // c:1828
+    *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = control as i32;
 }
 
 /// Port of `clearoldjobtab()` from `Src/jobs.c:1835`.
@@ -1886,17 +1933,46 @@ pub fn initjob(jobtab: &mut Vec<job>) -> usize {
     // Find an empty slot or add a new one — START AT INDEX 1.
     for i in 1..jobtab.len() {
         if (jobtab[i].stat & stat::INUSE) == 0 {
-            jobtab[i] = job::new();
-            jobtab[i].stat = stat::INUSE;
-            return i;
+            return initnewjob(jobtab, i); // c:1868
         }
     }
-    // Expand table
+    // Expand table — C path c:1869-1872 (maxjob+1 within jobtabsize,
+    // else expandjobtab). Rust's Vec grows on demand.
     let idx = jobtab.len();
-    let mut job = job::new();
-    job.stat = stat::INUSE;
-    jobtab.push(job);
-    idx
+    jobtab.push(job::new());
+    initnewjob(jobtab, idx)
+}
+
+/// Direct port of `static int initnewjob(int i)` from `Src/jobs.c:1843`.
+///
+/// C body:
+/// ```c
+/// jobtab[i].stat = STAT_INUSE;
+/// if (jobtab[i].pwd) { zsfree(jobtab[i].pwd); jobtab[i].pwd = NULL; }
+/// jobtab[i].gleader = 0;
+/// if (i > maxjob) maxjob = i;
+/// return i;
+/// ```
+/// MAXJOB is the scan bound for setcurjob/setprevjob/getjob/
+/// selectjobtab; without the bump those walks see an empty table even
+/// when JOBTAB has live entries.
+/// WARNING: param names don't match C — Rust=(jobtab, i) vs C=(i);
+/// C reads the jobtab global, Rust callers pass the locked slice.
+fn initnewjob(jobtab: &mut [job], i: usize) -> usize {
+    // c:1843
+    jobtab[i] = job::new();
+    jobtab[i].stat = stat::INUSE; // c:1845
+    jobtab[i].pwd = None; // c:1846-1849
+    jobtab[i].gleader = 0; // c:1850
+    let mut mj = MAXJOB
+        .get_or_init(|| Mutex::new(0))
+        .lock()
+        .expect("maxjob poisoned");
+    if i > *mj {
+        // c:1852-1853
+        *mj = i;
+    }
+    i // c:1855
 }
 
 /// Port of `void setjobpwd(void)` from `Src/jobs.c:1881`.
@@ -1956,8 +2032,15 @@ pub fn spawnjob() {
 
     // c:1900 — `if (!subsh) {` — when this isn't a subshell.
     // `subsh` global tracks subshell-fork depth; mirror via FORKLEVEL
-    // (0 = top-level shell).
-    let in_subsh = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed) > 0;
+    // (0 = top-level shell) plus SUBSHELL_DEPTH, the depth counter the
+    // fusevm in-process `(...)` host bumps in subshell_begin. C's
+    // forked subshell sets `subsh` in entersubsh (Src/exec.c:1154);
+    // the in-process model never calls entersubsh, so without this
+    // a `(cmd &)` would promote the job to the parent's curjob —
+    // making `(sleep 1 & disown)` silently succeed where zsh errors
+    // "no current job". Bug #462.
+    let in_subsh = crate::ported::exec::FORKLEVEL.load(Ordering::Relaxed) > 0
+        || crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) > 0;
     if !in_subsh {
         // c:1901-1903 — `if (curjob == -1 || !(jobtab[curjob].stat & STAT_STOPPED))
         //                  { curjob = thisjob; setprevjob(); }`
@@ -2217,18 +2300,48 @@ pub fn shelltime(
 
 // see if jobs need printing                                                // c:1993
 /// Scan jobs and print changed status (from jobs.c scanjobs)
-pub fn scanjobs(table: &JobTable) -> Vec<String> {
+pub fn scanjobs(jobtab: &mut [job]) {
     // c:1993
-    let mut output = Vec::new();
-    for (id, job) in table.iter() {
-        let state_str = match job.state {
-            crate::exec_jobs::JobState::Running => "running",
-            crate::exec_jobs::JobState::Done => "done",
-            crate::exec_jobs::JobState::Stopped => "stopped",
-        };
-        output.push(format!("[{}]  {}  {}", id, state_str, job.command));
+    // C body:
+    // ```c
+    // for (i = 1; i <= maxjob; i++)
+    //     if (jobtab[i].stat & STAT_CHANGED)
+    //         printjob(jobtab + i, !!isset(LONGLISTJOBS), 1);
+    // ```
+    // printjob with synch=1 prints only when `(interact || synch) &&
+    // jobbing && ...` (c:1236-1238) — so in a non-MONITOR shell the
+    // call is a silent pass whose tail (c:1350-1363) deletes each
+    // finished entry and clears STAT_CHANGED otherwise (c:1364).
+    // WARNING: param names don't match C — Rust=(jobtab) vs C=(void);
+    // C reads the jobtab global, Rust callers pass the locked slice.
+    let long_list = isset(LONGLISTJOBS);
+    for i in 1..jobtab.len() {
+        // c:1998
+        if (jobtab[i].stat & stat::CHANGED) != 0 {
+            // c:1999
+            if crate::ported::zsh_h::jobbing() {
+                // c:1236-1238 print gate
+                let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                let s = printjob(
+                    &jobtab[i],
+                    i,
+                    long_list as i32,
+                    if curjob >= 0 { Some(curjob as usize) } else { None },
+                    if prevjob >= 0 { Some(prevjob as usize) } else { None },
+                ); // c:2000
+                if !s.is_empty() {
+                    eprintln!("{}", s);
+                }
+            }
+            if (jobtab[i].stat & stat::DONE) != 0 {
+                // c:1350-1363 — printjob's done-delete tail.
+                crate::exec_jobs::printjob_delete_tail(jobtab, i);
+            } else {
+                jobtab[i].stat &= !stat::CHANGED; // c:1364
+            }
+        }
     }
-    output
 }
 
 /// Port of `isanum(char *s)` from `Src/jobs.c:2010`.
@@ -2251,43 +2364,66 @@ pub fn isanum(s: &str) -> bool {
 }
 
 // Make sure we have a suitable current and previous job set.               // c:2023
-/// Direct port of `void setcurjob(void)` from `Src/jobs.c:2023`. Picks
-/// the highest stopped job as `curjob`, falling back to any in-use
-/// entry, then refreshes `prevjob` via `setprevjob`.
+/// Direct port of `void setcurjob(void)` from `Src/jobs.c:2023`.
+///
+/// C body:
+/// ```c
+/// if (curjob == thisjob ||
+///     (curjob != -1 && !(jobtab[curjob].stat & STAT_INUSE))) {
+///     curjob = prevjob;
+///     setprevjob();
+///     if (curjob == thisjob ||
+///         (curjob != -1 && !((jobtab[curjob].stat & STAT_INUSE) &&
+///                            curjob != thisjob))) {
+///         curjob = prevjob;
+///         setprevjob();
+///     }
+/// }
+/// ```
+/// REPAIRS an invalid `curjob` (gone, or equal to the in-flight
+/// thisjob) by promoting `prevjob`; it does NOT scan for a fresh
+/// candidate when curjob is -1 — promotion to curjob happens in
+/// spawnjob (c:1901-1903) and printjob's delete tail (c:1357-1360).
+/// The previous Rust body picked the highest in-use job
+/// unconditionally, which resurrected a current job inside subshells
+/// where zsh reports "no current job" (bug #462 probe
+/// `(sleep 0.2 & disown)` → rc=1 in zsh).
 pub fn setcurjob() {
     // c:2023
-    let tab = JOBTAB
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .expect("jobtab poisoned");
-    let maxjob = *MAXJOB
-        .get_or_init(|| Mutex::new(0))
-        .lock()
-        .expect("maxjob poisoned");
-    let mut found: i32 = -1;
-    for i in (1..=maxjob).rev() {
-        if i >= tab.len() {
-            continue;
-        }
-        if (tab[i].stat & (stat::INUSE | stat::STOPPED)) == (stat::INUSE | stat::STOPPED) {
-            found = i as i32;
-            break;
+    let inuse = |jobno: i32| -> bool {
+        let tab = JOBTAB
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("jobtab poisoned");
+        tab.get(jobno as usize)
+            .map(|j| (j.stat & stat::INUSE) != 0)
+            .unwrap_or(false)
+    };
+    let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+    let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+    // c:2025-2026. The `curjob == thisjob` test is guarded with
+    // `curjob != -1` here: in C, thisjob is never -1 while bin_fg runs
+    // (execpline c:Src/exec.c:1700 allocates a pipeline job slot before
+    // any builtin executes), so `-1 == -1` can't trigger the C branch.
+    // zshrs has no per-pipeline job allocation — thisjob is -1 between
+    // jobs — and an unguarded -1==-1 would promote prevjob/setprevjob,
+    // resurrecting a "current job" zsh reports as absent (bug #462).
+    if (curjob != -1 && curjob == thisjob) || (curjob != -1 && !inuse(curjob)) {
+        // c:2027-2028 — `curjob = prevjob; setprevjob();`
+        let pj = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = pj;
+        setprevjob();
+        let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+        // c:2029-2031 — same -1 guard as above.
+        if (curjob != -1 && curjob == thisjob)
+            || (curjob != -1 && !(inuse(curjob) && curjob != thisjob))
+        {
+            // c:2032-2033
+            let pj = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+            *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = pj;
+            setprevjob();
         }
     }
-    if found < 0 {
-        for i in (1..=maxjob).rev() {
-            if i >= tab.len() {
-                continue;
-            }
-            if (tab[i].stat & stat::INUSE) != 0 {
-                found = i as i32;
-                break;
-            }
-        }
-    }
-    *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = found;
-    drop(tab);
-    setprevjob();
 }
 
 // Find the job table for reporting jobs                                   // c:2042
@@ -2753,31 +2889,35 @@ pub fn bin_fg(
 
     // c:2467 — `queue_signals();`
     queue_signals();
+    let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
     // c:2474 — `wait_for_processes();` reap any newly-finished children
     // so the table reflects the current state before we list/dispatch.
-    wait_for_processes();
+    // C's wait_for_processes (Src/signals.c:249) routes each reaped
+    // (pid, status) through update_bg_job internally; the Rust port
+    // returns the pairs and leaves the routing to the caller. Then run
+    // the update_job→printjob done-delete chain (Src/jobs.c:639-641 →
+    // 1350-1363) so finished jobs leave the table before we list.
+    {
+        let reaped = wait_for_processes();
+        let mut tab = table.lock().expect("jobtab poisoned");
+        for (pid, status) in reaped {
+            update_bg_job(&mut tab, pid, status);
+        }
+        scanjobs(&mut tab);
+    }
 
-    // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();` — walk jobtab[i]
-    // printing each STAT_CHANGED entry inline. Same pattern used by
-    // preprompt (utils.rs) and execcmd_exec's AUTORESUME branch.
+    // c:2477-2478 — `if (unset(NOTIFY)) scanjobs();`. (The routing
+    // block above already swept STAT_CHANGED entries; this re-walk is
+    // the C-shaped call and is idempotent.)
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::NOTIFY) {
         if let Some(jt) = JOBTAB.get() {
             let mut guard = jt.lock().unwrap();
-            let long_list = crate::ported::zsh_h::isset(crate::ported::zsh_h::LONGLISTJOBS);
-            for i in 1..guard.len() {
-                if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
-                    let s = printjob(&guard[i], i, long_list, None, None);
-                    if !s.is_empty() {
-                        eprint!("{}", s);
-                    }
-                }
-            }
+            scanjobs(&mut guard); // c:2478
         }
     }
 
     // c:2480-2481 — refresh CURJOB unless we're listing a frozen
     // oldjobtab snapshot from `jobs` in a non-monitor shell.
-    let table = JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
     if func != BIN_JOBS || jobbing || *OLDMAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap() == 0
     {
         // c:2481 — `setcurjob()` operates on the global jobtab.
@@ -2796,7 +2936,12 @@ pub fn bin_fg(
     if argv.is_empty() {
         // c:2487
         if func == BIN_JOBS {
-            // c:2500-2523 — list jobs.
+            // c:2500-2523 — list jobs. `ignorejob = thisjob` (c:2512)
+            // — the C loop skips the job slot the shell is currently
+            // building (the foreground job), NOT curjob. Skipping
+            // curjob would hide every freshly-backgrounded job, since
+            // spawnjob promotes it to curjob (c:1901-1903).
+            let thisjob = *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
             let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
             let t = table.lock().expect("jobtab poisoned");
             let curmaxjob = t.len();
@@ -2804,7 +2949,7 @@ pub fn bin_fg(
             let s_only = OPT_ISSET(ops, b's');
             for job in 0..curmaxjob {
                 // c:2513
-                if job as i32 == curjob {
+                if job as i32 == thisjob {
                     // c:2514 ignorejob
                     continue;
                 }
@@ -2834,10 +2979,10 @@ pub fn bin_fg(
                     } else {
                         None
                     };
-                    print!(
-                        "{}",
-                        printjob(j, job, (lng & 1) != 0, curjob_opt, prevjob_opt)
-                    );
+                    let s = printjob(j, job, lng, curjob_opt, prevjob_opt);
+                    if !s.is_empty() {
+                        println!("{}", s);
+                    }
                 }
             }
             unqueue_signals(); // c:2522
@@ -2846,15 +2991,36 @@ pub fn bin_fg(
         if func == BIN_FG || func == BIN_BG || func == BIN_DISOWN {
             // c:2491-2499 — "no current job" gate. C body covers BIN_FG/
             // BIN_BG/BIN_DISOWN equivalently — disown with no args
-            // defaults to the current job, which must exist or the
-            // builtin errors out (exit 1).
+            // defaults to the current job (`firstjob = curjob`), which
+            // must exist (and be printable) or the builtin errors out.
             let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-            if curjob < 0 {
+            let cur_noprint = curjob >= 0
+                && table
+                    .lock()
+                    .expect("jobtab poisoned")
+                    .get(curjob as usize)
+                    .map(|j| (j.stat & stat::NOPRINT) != 0)
+                    .unwrap_or(true);
+            if curjob < 0 || cur_noprint {
+                // c:2494
                 zwarnnam(name, "no current job"); // c:2495
                 unqueue_signals();
                 return 1; // c:2497
             }
             if func == BIN_DISOWN {
+                // c:2498 firstjob = curjob → loop BIN_DISOWN arm c:2729
+                // `deletejob(jobtab + job, 1)` — drop the entry without
+                // killing/ waiting on the process.
+                let mut tab = table.lock().expect("jobtab poisoned");
+                if let Some(j) = tab.get_mut(curjob as usize) {
+                    deletejob(j, true); // c:2729
+                }
+                drop(tab);
+                // The deleted job was curjob — re-pick (printjob's
+                // shuffle shape, c:1357-1362).
+                let pj = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = pj;
+                setprevjob();
                 unqueue_signals();
                 return 0;
             }
@@ -2910,6 +3076,14 @@ pub fn bin_fg(
                     break;
                 }
             }
+            // c:639-641 → c:1350-1363 — every job we just reaped went
+            // through update_job (STAT_DONE|STAT_CHANGED); run the
+            // printjob done-delete chain so the table is empty after
+            // `wait`, matching C where the SIGCHLD-driven printjob
+            // deletes each finished entry.
+            if let Ok(mut tab) = table.lock() {
+                scanjobs(&mut tab);
+            }
             unqueue_signals();
             return 0;
         }
@@ -2919,33 +3093,77 @@ pub fn bin_fg(
 
     // c:2537+ — per-arg jobspec dispatch (full body handles wait pid,
     // STAT_SUPERJOB carry-through, killjb retry, etc.). Port the
-    // common path: `%jobspec` → getjob → continue/restart.
+    // common path: jobspec → getjob → per-func switch (c:2598-2731).
     for arg in argv {
-        let p = if arg.starts_with('%') {
-            getjob(arg, name) // c:2576 getjob
-        } else if let Ok(n) = arg.parse::<i32>() {
-            // jobs/fg numeric → treat as job index, not pid.
-            if n >= 0 {
-                n
-            } else {
-                -1
+        if func == BIN_WAIT && isanum(arg) {
+            // c:2541-2575 — `wait PID` waits for an arbitrary PID via
+            // waitpid(); if not a child of this shell, C falls back to
+            // getbgstatus (the reaped-status ring) and only then emits
+            // "pid %d is not a child of this shell" with exit 127.
+            if let Ok(pid) = arg.parse::<i32>() {
+                let mut status: libc::c_int = 0;
+                let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                if r == -1 {
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() == Some(libc::ECHILD) {
+                        // c:2566-2570 — getbgstatus fallback before
+                        // the diagnostic.
+                        if let Some(bg) = getbgstatus(pid) {
+                            returnval = bg;
+                        } else {
+                            zwarnnam(
+                                name,
+                                &format!("pid {} is not a child of this shell", pid),
+                            );
+                            returnval = 127;
+                        }
+                    } else {
+                        returnval = 1;
+                    }
+                } else {
+                    // c:1748-1750 waitforpid semantics — exit status or
+                    // 128+sig. Route the status into the canonical
+                    // jobtab so the job entry is marked done + deleted
+                    // (C's SIGCHLD handler chain does this while
+                    // waitforpid suspends).
+                    if libc::WIFEXITED(status) {
+                        returnval = libc::WEXITSTATUS(status);
+                    } else if libc::WIFSIGNALED(status) {
+                        returnval = 128 + libc::WTERMSIG(status);
+                    }
+                    if let Ok(mut tab) = table.lock() {
+                        update_bg_job(&mut tab, pid, status);
+                        scanjobs(&mut tab);
+                    }
+                }
             }
-        } else {
-            // c:Src/jobs.c:2144 — non-jobspec args. zsh's bin_fg/wait
-            // loop emits one diagnostic and BREAKS the loop on the
-            // first miss (verified vs /bin/zsh: `wait abc def` only
-            // reports `abc`). zshrs previously `continue`d, double-
-            // diagnosing.
-            zwarnnam(name, &format!("job not found: {}", arg));
-            returnval = 127; // c:Src/jobs.c:2589-2590 — `return 127;`
-            break;
-        };
+            continue; // c:2574
+        }
+        // c:2576 — `job = (*argv) ? getjob(*argv, name) : firstjob;`
+        // EVERY non-pid arg goes through getjob — a bare numeric like
+        // `jobs 1` is a job NAME (findjobnam) in zsh, not an index
+        // (verified: zsh -fc 'sleep 5 & jobs 1' → "job not found: 1"
+        // rc=127).
+        let p = getjob(arg, name);
         if p < 0 {
-            // c:Src/jobs.c:2580-2582 — `if (job == -1) { retval = 127; break; }`.
-            // getjob already emitted the diagnostic; just propagate 127.
-            // Bug #393.
+            // c:2578-2581 — `if (job == -1) { retval = 127; break; }`.
+            // getjob already emitted the diagnostic. Bug #393.
             returnval = 127;
-            continue;
+            break;
+        }
+        // c:2583-2592 — STAT_INUSE / STAT_NOPRINT recheck.
+        let jstat = table
+            .lock()
+            .expect("jobtab poisoned")
+            .get(p as usize)
+            .map(|j| j.stat)
+            .unwrap_or(0);
+        if (jstat & stat::INUSE) == 0 || (jstat & stat::NOPRINT) != 0 {
+            if !isset(POSIXBUILTINS) {
+                zwarnnam(name, &format!("{}: no such job", arg)); // c:2587
+            }
+            unqueue_signals(); // c:2588
+            return 127; // c:2589
         }
         if func == BIN_FG || func == BIN_BG {
             if killjb(p as usize, libc::SIGCONT) == -1 {
@@ -2956,56 +3174,109 @@ pub fn bin_fg(
                 returnval = 1;
             }
         } else if func == BIN_WAIT {
-            // c:Src/jobs.c — `wait PID` waits for an arbitrary PID via
-            // waitpid(); if not a child of this shell, kernel returns
-            // ECHILD and wait exits 127 (per POSIX). The numeric arg
-            // is treated as a raw PID, not a job index.
-            if !arg.starts_with('%') {
-                if let Ok(pid) = arg.parse::<i32>() {
-                    let mut status: libc::c_int = 0;
-                    let r = unsafe { libc::waitpid(pid, &mut status, 0) };
-                    if r == -1 {
-                        let err = std::io::Error::last_os_error();
-                        if err.raw_os_error() == Some(libc::ECHILD) {
-                            zwarnnam(name, &format!("pid {} is not a child of this shell", pid));
-                            returnval = 127;
-                        } else {
-                            returnval = 1;
+            // c:2655-2659 — `retval = zwaitjob(job, 1); if (!retval)
+            // retval = lastval2;`. The Rust zwaitjob takes `&mut job`
+            // and suspends on SIGCHLD; holding the JOBTAB lock across
+            // the suspend would deadlock against the handler's own
+            // lock, so wait proc-by-proc with a blocking waitpid and
+            // route each status through update_bg_job — the same
+            // chain C's SIGCHLD handler drives while zwaitjob
+            // suspends (Src/signals.c:249 → jobs.c:460).
+            loop {
+                let next_pid = {
+                    let tab = table.lock().expect("jobtab poisoned");
+                    match tab.get(p as usize) {
+                        Some(j) if (j.stat & stat::INUSE) != 0 && !j.is_done() => j
+                            .procs
+                            .iter()
+                            .chain(j.auxprocs.iter())
+                            .find(|pr| pr.status == SP_RUNNING)
+                            .map(|pr| pr.pid),
+                        _ => None,
+                    }
+                };
+                let pid = match next_pid {
+                    Some(pid) => pid,
+                    None => break,
+                };
+                let mut status: libc::c_int = 0;
+                let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                let mut tab = table.lock().expect("jobtab poisoned");
+                if r == pid {
+                    update_bg_job(&mut tab, pid, status);
+                } else {
+                    // ECHILD — already reaped elsewhere; mark via
+                    // update_job so the loop terminates.
+                    if let Some(j) = tab.get_mut(p as usize) {
+                        for pr in j.procs.iter_mut().chain(j.auxprocs.iter_mut()) {
+                            if pr.pid == pid && pr.status == SP_RUNNING {
+                                pr.status = 0;
+                            }
                         }
-                    } else if libc::WIFEXITED(status) {
-                        returnval = libc::WEXITSTATUS(status);
-                    } else if libc::WIFSIGNALED(status) {
-                        returnval = 128 + libc::WTERMSIG(status);
+                        update_job(j);
                     }
                 }
+            }
+            // c:2656-2657 — `if (!retval) retval = lastval2;`
+            returnval = LASTVAL2.load(Ordering::SeqCst);
+            // c:1350-1363 via the suspended-handler printjob — the
+            // finished entry leaves the table before wait returns
+            // (zsh: a second `wait %1` errors "no such job").
+            if let Ok(mut tab) = table.lock() {
+                crate::exec_jobs::printjob_delete_tail(&mut tab, p as usize);
             }
         } else if func == BIN_JOBS {
             let t = table.lock().expect("jobtab poisoned");
             if let Some(j) = t.get(p as usize) {
                 let curjob = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
                 let prevjob = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
-                print!(
-                    "{}",
-                    printjob(
-                        j,
-                        p as usize,
-                        (lng & 1) != 0,
-                        if curjob >= 0 {
-                            Some(curjob as usize)
-                        } else {
-                            None
-                        },
-                        if prevjob >= 0 {
-                            Some(prevjob as usize)
-                        } else {
-                            None
-                        }
-                    )
+                let s = printjob(
+                    j,
+                    p as usize,
+                    lng,
+                    if curjob >= 0 {
+                        Some(curjob as usize)
+                    } else {
+                        None
+                    },
+                    if prevjob >= 0 {
+                        Some(prevjob as usize)
+                    } else {
+                        None
+                    },
                 );
+                if !s.is_empty() {
+                    println!("{}", s);
+                }
             }
+        } else if func == BIN_DISOWN {
+            // c:2695-2727 — stopped-job warning, then c:2729
+            // `deletejob(jobtab + job, 1)`.
+            let mut tab = table.lock().expect("jobtab poisoned");
+            if let Some(j) = tab.get_mut(p as usize) {
+                if (j.stat & stat::STOPPED) != 0 {
+                    // c:2703-2705 — `sprintf(buf, " -%d", jobtab[job].gleader)`.
+                    zwarnnam(
+                        name,
+                        &format!(
+                            "warning: job is suspended, use `kill -CONT -{}' to resume",
+                            j.gleader
+                        ),
+                    ); // c:2717-2721
+                }
+                deletejob(j, true); // c:2729
+            }
+            drop(tab);
+            // curjob/prevjob re-pick if we just disowned one of them.
+            let cj = *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+            if cj == p {
+                let pj = *PREVJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap();
+                *CURJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = pj;
+            }
+            setprevjob();
         }
     }
-    unqueue_signals(); // c:2729
+    unqueue_signals(); // c:2733
     returnval // c:2734 retval
 }
 
@@ -4520,7 +4791,7 @@ mod tests {
         p.text = "echo hi".to_string();
         p.status = 0; // exited 0
         job.procs.push(p);
-        let out = printjob(&job, 1, false, Some(1), None);
+        let out = printjob(&job, 1, 0, Some(1), None);
         assert!(
             out.contains("echo hi"),
             "expected status line; got: {:?}",
@@ -4670,7 +4941,7 @@ mod tests {
         job.text = "vim file.txt".to_string();
         job.stat |= stat::STOPPED;
 
-        let formatted = printjob(&job, 1, false, Some(1), None);
+        let formatted = printjob(&job, 1, 0, Some(1), None);
         // Real zsh format: `[N]<space><space><marker><space>...`
         // The job number is followed by two spaces, then the
         // current/previous-job marker (`+`, `-`, ` `), then a

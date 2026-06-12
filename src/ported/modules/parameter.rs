@@ -3052,11 +3052,17 @@ pub fn pmjobdir(_jtab: *mut std::ffi::c_void, job: i32) -> String {
             return pwd.clone();
         } // c:1452 jtab[job].pwd
     }
-    // Fallback to global pwd (c:1452's `: pwd` arm).
-    std::env::current_dir()
-        .ok()
-        .and_then(|p| p.to_str().map(String::from))
-        .unwrap_or_default()
+    // Fallback to global pwd (c:1452's `: pwd` arm). C's `pwd` is the
+    // shell-tracked LOGICAL cwd (Src/params.c:108, written by bin_cd
+    // at Src/builtin.c:1239-1242) — read it through the canonical
+    // getsparam("PWD") accessor, not the symlink-resolved
+    // current_dir().
+    crate::ported::params::getsparam("PWD").unwrap_or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from))
+            .unwrap_or_default()
+    })
 }
 
 /// Port of `getpmjobdir(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1457.
