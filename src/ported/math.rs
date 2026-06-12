@@ -2301,16 +2301,34 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     } // close `if mathfunc_entry.is_some()`
 
     if is_module_func && !module_loaded {
-        crate::ported::utils::zerr(&format!("unknown function: {}", name));
-        crate::ported::utils::errflag.fetch_or(
-            crate::ported::zsh_h::ERRFLAG_ERROR,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        return mnumber {
-            l: 0,
-            d: 0.0,
-            type_: MN_INTEGER,
-        };
+        // c:Src/math.c:1050 — `if ((f = getmathfunc(n, 1)))`: the
+        // lookup with autol=1 IS the autoload fire. `zmodload -af
+        // zsh/mathfunc sin` installs a MATHFUNCS stub (module.c:1410
+        // add_automathfunc); getmathfunc removes the stub and
+        // ensurefeature-loads the owning module (module.c:1289-1301).
+        // On a hit, fall through to the evaluation arms below (the
+        // module is now booted). Without this, the registered
+        // autoload never fired and `$(( sin(0) ))` errored
+        // `unknown function: sin` despite the -af registration.
+        let autoloaded = crate::ported::module::MODULESTAB
+            .lock()
+            .ok()
+            .map(|mut tab| {
+                crate::ported::module::getmathfunc(&mut tab, name, 1).is_some()
+            })
+            .unwrap_or(false);
+        if !autoloaded {
+            crate::ported::utils::zerr(&format!("unknown function: {}", name));
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            return mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+        }
     }
     let args_str = if paren < call.len() {
         &call[paren + 1..call.len() - 1]

@@ -2438,6 +2438,26 @@ impl ShellExecutor {
                 return Ok(127);
             }
         }
+        // c:Src/exec.c:2700-2724 resolvebuiltin — names registered via
+        // `zmodload -ab MOD NAME` resolve through builtintab BEFORE
+        // PATH search in C (execcmd's builtin lookup precedes the
+        // external fork). Names the compiler didn't know as builtins
+        // land here; consult the autoload ledger, load the module,
+        // and re-dispatch through the builtin chokepoint. Without
+        // this, `zmodload -ab zsh/bogus mybltn; mybltn` skipped the
+        // C autoload-fire entirely (PATH miss → 127 instead of the
+        // load_module diagnostic → 1).
+        if !cmd.contains('/') {
+            if let Some(rc) = crate::ported::module::resolvebuiltin(cmd) {
+                if rc != 0 {
+                    return Ok(1);
+                }
+                return Ok(crate::fusevm_bridge::dispatch_builtin_raw(
+                    cmd,
+                    args.to_vec(),
+                ));
+            }
+        }
         let mut command = Command::new(cmd);
         // c:Src/exec.c execute — C unmetafies every arg before the
         // execve (the child must see raw bytes, not the shell's

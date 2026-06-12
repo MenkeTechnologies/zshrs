@@ -700,3 +700,32 @@ mod ps4_audit {
         );
     }
 }
+
+/// Bug #204 — PROMPTSUBST pre-pass (Src/prompt.c:192-212): when the
+/// option is set, the prompt body runs through parsestr/singsub BEFORE
+/// the `%`-escape walk, enabling `${var}` / `$(cmd)` / `$((expr))` in
+/// prompts. Without the option the dollar forms stay literal.
+/// Re-verified at HEAD 2026-06-12.
+mod promptsubst_pre_pass {
+    use super::*;
+
+    #[test]
+    fn promptsubst_enables_param_and_cmdsub() {
+        assert_parity(r#"setopt promptsubst; v=hi; print -P '${v} $(echo cmd)'"#);
+    }
+
+    #[test]
+    fn no_promptsubst_keeps_dollar_literal() {
+        assert_parity(r#"v=hi; print -P '${v} $(echo cmd)'"#);
+    }
+
+    #[test]
+    fn promptsubst_arith_expansion() {
+        assert_parity(r#"setopt promptsubst; print -P '$((1+1))'"#);
+    }
+
+    #[test]
+    fn promptsubst_late_ps1_expansion() {
+        assert_parity(r#"setopt promptsubst; PS1='${MY_VAR}'; MY_VAR=now; print -P "$PS1""#);
+    }
+}

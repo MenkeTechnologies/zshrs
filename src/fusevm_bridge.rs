@@ -346,6 +346,24 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
         let _ = args;
         return 127;
     }
+    // c:Src/exec.c:2700-2724 resolvebuiltin — autoloaded-builtin stub
+    // (registered by `zmodload -ab MOD NAME`, Src/module.c:426
+    // add_autobin) fires on first use: ensurefeature loads the owning
+    // module, then dispatch proceeds against the real builtin. Must
+    // run BEFORE the module-bound 127 gate below — `zmodload -ab
+    // zsh/zselect zselect; zselect` previously died there with
+    // `command not found` because the gate only checked is_loaded,
+    // never the autoload ledger.
+    if let Some(rc) = crate::ported::module::resolvebuiltin(name) {
+        if rc != 0 {
+            // Load failed or feature undefined — diagnostics already
+            // printed (load_module zwarn / resolvebuiltin zerr).
+            // C's execbuiltin head returns 1 (Src/builtin.c:264-267).
+            return 1;
+        }
+        // Module loaded — fall through; the is_loaded gates below now
+        // pass and the normal dispatch chain runs the real builtin.
+    }
     // c:Src/Modules/<mod>.c boot_/setup_ chain — module-bound builtins
     // (zftp, zsocket, ztcp, zstat, etc.) are only registered into
     // `builtintab` when their module is loaded via `zmodload`. In

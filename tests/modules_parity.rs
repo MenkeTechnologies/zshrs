@@ -1840,3 +1840,93 @@ zmodload -Fe zsh/system b:nope; echo c=$?"#,
         assert_eq!(z.stderr, r.stderr, "stderr divergence on:\n{}", script);
     }
 }
+
+/// `zmodload -ab MOD NAME` on-use dispatch — port of C resolvebuiltin
+/// (Src/exec.c:2700-2724): the autoload stub registered by add_autobin
+/// (Src/module.c:426) fires at first use, ensurefeature-loads the
+/// owning module, and the real builtin dispatches. Previously zshrs
+/// never consulted the autoload ledger at dispatch time — `zmodload
+/// -ab zsh/zselect zselect; zselect` died with `command not found`
+/// (127). The math-function analog (`zmodload -af zsh/mathfunc sin`)
+/// fires through getmathfunc(name, autol=1) (Src/module.c:1283 +
+/// Src/math.c:1050) and requires the mftab registration
+/// (Src/Modules/mathfunc.c:114-167 via setmathfuncs, module.c:1374).
+mod zmodload_autoload_on_use {
+    use super::*;
+
+    #[test]
+    fn autobin_zselect_fires_on_first_use() {
+        // zselect -t 0 with no fds: module loads, builtin runs, rc=1.
+        assert_parity(r#"zmodload -ab zsh/zselect zselect; zselect -t 0; echo "rc=$?""#);
+    }
+
+    #[test]
+    fn autobin_zsystem_fires_on_first_use() {
+        assert_parity(r#"zmodload -ab zsh/system zsystem; zsystem supports flock; echo "rc=$?""#);
+    }
+
+    #[test]
+    fn autobin_bogus_module_load_fails_rc1_then_127() {
+        // First call: load_module's `failed to load module` diagnostic,
+        // rc=1 (C's execbuiltin head deletes the stub, builtin.c:264-267).
+        // Second call: plain `command not found`, rc=127.
+        assert_parity(r#"zmodload -ab zsh/bogus mybltn 2>/dev/null; mybltn 2>/dev/null; echo "r1=$?"; mybltn 2>/dev/null; echo "r2=$?""#);
+    }
+
+    #[test]
+    fn autobin_name_module_does_not_define_errors() {
+        // Module loads but lacks feature b:notreal — ensurefeature
+        // cancels the autoload and resolvebuiltin zerrs (c:2716-2720);
+        // zerr aborts the remaining list, so no echo output, rc=1.
+        assert_parity(r#"zmodload -ab zsh/zselect notreal 2>/dev/null; notreal 2>/dev/null; echo "r1=$?""#);
+    }
+
+    #[test]
+    fn automathfunc_sin_fires_on_first_use() {
+        assert_parity(r#"zmodload -af zsh/mathfunc sin; echo $(( sin(0) ))"#);
+    }
+
+    #[test]
+    fn mathfunc_unknown_without_zmodload() {
+        assert_parity(r#"echo $(( sin(0) )) 2>/dev/null; echo "rc=$?""#);
+    }
+
+    #[test]
+    fn mathfunc_unload_deregisters() {
+        assert_parity(r#"zmodload zsh/mathfunc; zmodload -u zsh/mathfunc; echo $(( sin(0) )) 2>/dev/null; echo "rc=$?""#);
+    }
+}
+
+/// Bug #376 — `zmodload zsh/nonexistent` diagnostic. C load_module
+/// emits `zwarn("failed to load module `%s': %s", name, dlerror())`
+/// (Src/module.c:1618-1621 do_load_module); zshrs has no dlopen, so
+/// the faithful shape is the same zwarn prefix without the dlerror
+/// tail (documented stance in docs/BUGS.md #376). Pin: both shells'
+/// stderr starts with the identical prefix, rc=1.
+/// Re-verified at HEAD 2026-06-12.
+mod zmodload_nonexistent_diagnostic {
+    use super::*;
+
+    #[test]
+    fn nonexistent_module_prints_failed_to_load_prefix_rc1() {
+        if !zsh_available() {
+            return;
+        }
+        let script = "zmodload zsh/nonexistent";
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        let prefix = "zsh:1: failed to load module `zsh/nonexistent'";
+        assert!(
+            z.stderr.starts_with(prefix),
+            "zsh stderr lost the canonical prefix: {:?}",
+            z.stderr
+        );
+        assert!(
+            r.stderr.starts_with(prefix),
+            "zshrs stderr lost the canonical prefix: {:?}",
+            r.stderr
+        );
+        assert_eq!(z.exit, 1, "zsh rc");
+        assert_eq!(r.exit, 1, "zshrs rc");
+    }
+}

@@ -2859,10 +2859,22 @@ pub fn getmathfunc(table: &mut modulestab, name: &str, autol: i32) -> Option<Str
         };
         let _ = ensurefeature(table, &module, "f:", feature_arg);
         // c:1298 — `p = getmathfunc(name, 0);` recurse w/o autol.
+        // EXISTENCE check: C zerrs only when the re-lookup returns
+        // NULL. A freshly registered real entry has module == NULL
+        // (mftab entries, zsh.h:133 NUMMATHFUNC), so mapping the hit
+        // through `p.module.clone()` (None for real entries) wrongly
+        // reported a successful load as "failed to define". Mirror the
+        // non-autoload tail below: empty string marks a module-less
+        // hit.
         let after = {
             let tab = MATHFUNCS.lock().unwrap();
-            tab.iter()
-                .find_map(|p| if p.name == name { p.module.clone() } else { None })
+            tab.iter().find_map(|p| {
+                if p.name == name {
+                    Some(p.module.clone().unwrap_or_default())
+                } else {
+                    None
+                }
+            })
         };
         // c:1299-1301 — `if (!p) zerr(...)`.
         if after.is_none() {
@@ -3070,10 +3082,17 @@ pub fn hpux_dlsym(handle: usize, name: &str) -> usize {
 /// WARNING: param names don't match C — Rust=(table, name) vs C=(name)
 pub fn try_load_module(table: &modulestab, name: &str) -> i32 {
     // c:1583
-    if table.modules.contains_key(name) {
-        1
-    } else {
-        0
+    // C dlopens the module path (or falls back to module_linked for
+    // compiled-in modules). Static-link analog: the node must carry
+    // MOD_LINKED (seeded by register_module / register_builtin_modules
+    // for every compiled-in module). A bare FINDMOD_CREATE bookkeeping
+    // node (flags=0 per C's zshcalloc at c:1676) has no backing code —
+    // dlopen would fail, so the loadable probe must too. Without the
+    // flag gate, `zmodload -ab zsh/bogus x; x` "booted" the phantom
+    // module instead of emitting `failed to load module`.
+    match table.modules.get(name) {
+        Some(m) if (m.node.flags & MOD_LINKED) != 0 => 1,
+        _ => 0,
     }
 }
 
@@ -3166,9 +3185,16 @@ pub fn find_module(table: &mut modulestab, name: &str, flags: i32) -> Option<Str
                     return None;
                 }
                 // c:1676-1677 — m = zshcalloc(...); addnode(name, m);
-                table
-                    .modules
-                    .insert(cur_name.clone(), module::new(&cur_name));
+                // zshcalloc zero-fills: the created node has flags=0
+                // and NULL handle/linked — a bookkeeping entry (alias
+                // targets, autoload owners), NOT a loadable module.
+                // module::new() seeds MOD_LINKED (the register_module
+                // shape, c:359); that bit wrongly made phantom nodes
+                // (`zmodload -ab zsh/bogus x`) pass try_load_module's
+                // loadable gate and "boot" successfully.
+                let mut m = module::new(&cur_name);
+                m.node.flags = 0; // c:1676 zshcalloc — all-zero node
+                table.modules.insert(cur_name.clone(), m);
                 return Some(cur_name);
             }
         }
@@ -5757,6 +5783,89 @@ pub fn ensurefeature(
     }
 }
 
+/// Port of `static HashNode resolvebuiltin(const char *cmdarg, HashNode hn)`
+/// from `Src/exec.c:2700-2724` — the autoloaded-builtin stub firing.
+///
+/// C body:
+/// ```c
+/// if (!((Builtin) hn)->handlerfunc) {
+///     char *modname = dupstring(((Builtin) hn)->optstr);
+///     (void)ensurefeature(modname, "b:",
+///                         (hn->flags & BINF_AUTOALL) ? NULL : hn->nam);
+///     hn = builtintab->getnode(builtintab, cmdarg);
+///     if (!hn) {
+///         lastval = 1;
+///         zerr("autoloading module %s failed to define builtin: %s",
+///              modname, cmdarg);
+///         return NULL;
+///     }
+/// }
+/// return hn;
+/// ```
+///
+/// zshrs split: the C autoload stub (builtintab node with NULL
+/// handlerfunc, installed by `add_autobin` c:426) lives in the
+/// `autoload_builtins` ledger (name → module). This fn is the
+/// dispatch-time consult:
+///   - `None` — name has no autoload stub; caller continues its
+///     normal lookup chain.
+///   - `Some(0)` — module loaded; caller re-dispatches the (now
+///     registered) builtin.
+///   - `Some(1)` — load failed or the loaded module didn't define
+///     the feature; diagnostics already printed (load_module's
+///     `failed to load module` zwarn, or the c:2718 zerr here).
+///     Caller returns status 1.
+///
+/// Ledger upkeep: the entry is removed in every fired path —
+///   - success: C's addbuiltin (module.c:411-415) replaces the stub
+///     with the real node, so the stub is gone;
+///   - load failure: C's execbuiltin head (Src/builtin.c:264-267)
+///     hits the still-NULL handlerfunc and `deletebuiltin`s the
+///     stub — a second call reports `command not found` / 127
+///     (probed: zsh 5.9 `zmodload -ab zsh/bogus mybltn; mybltn;
+///     mybltn` → rc1=1, rc2=127).
+///
+/// AUTOALL note: the ledger doesn't carry BINF_AUTOALL, so the
+/// ensurefeature arg is always `Some(name)` (the non-AUTOALL form).
+/// The AUTOALL path is unreachable for builtins via `zmodload -a MOD`
+/// (both shells error "`/' is illegal in a builtin"); revisit if the
+/// ledger grows flags.
+pub fn resolvebuiltin(name: &str) -> Option<i32> {
+    // c:2700
+    let mut tab = MODULESTAB.lock().ok()?;
+    // c:2705 — `if (!((Builtin) hn)->handlerfunc)`: ledger hit IS the
+    // "no handlerfunc" stub in zshrs.
+    let module = tab.autoload_builtins.get(name)?.clone();
+    // c:2706 — `modname = dupstring(hn->optstr)` (done: `module`).
+    // Stub fires exactly once per registration (see ledger upkeep
+    // in the doc above).
+    tab.autoload_builtins.remove(name);
+    // c:2711-2713 — ensurefeature(modname, "b:", hn->nam).
+    let _ = ensurefeature(&mut tab, &module, "b:", Some(name));
+    // c:2714 — `hn = builtintab->getnode(builtintab, cmdarg);`
+    // zshrs analog: the module booted (is_loaded) AND the name is in
+    // the static builtintab (createbuiltintable pre-registers every
+    // module bintab entry).
+    let defined = tab.is_loaded(&module)
+        && crate::ported::builtin::createbuiltintable().contains_key(name);
+    if defined {
+        return Some(0); // c:2723 `return hn;`
+    }
+    if tab.is_loaded(&module) {
+        // c:2716-2720 — module loaded but feature missing.
+        crate::ported::builtin::LASTVAL
+            .store(1, std::sync::atomic::Ordering::Relaxed); // c:2717 lastval = 1
+        crate::ported::utils::zerr(&format!(
+            "autoloading module {} failed to define builtin: {}",
+            module, name
+        )); // c:2718
+    }
+    // Load failure: load_module already printed `failed to load
+    // module \`...'`; C's execbuiltin head returns 1 silently
+    // (Src/builtin.c:264-267).
+    Some(1)
+}
+
 /// Port of `addmathfunc(MathFunc f)` from `Src/module.c:1313`.
 ///
 /// C body: walks the global `mathfuncs` linked list, refuses to
@@ -6218,7 +6327,12 @@ pub fn setmathfuncs(
     let mut ret = 0; // c:1378
     for (i, entry) in f.iter_mut().enumerate() {
         // c:1380 while (size--)
-        let want_add = e.map(|es| es[i] != 0).unwrap_or(true); // c:1381
+        // c:1381 — `if (e && *e++)`: e == NULL means REMOVE all
+        // (same contract as setbuiltins, c:497-503 doc: "e is either
+        // NULL, in which case all builtins in the table are
+        // removed"). The previous `.unwrap_or(true)` inverted the
+        // None case into add-all.
+        let want_add = e.map(|es| es[i] != 0).unwrap_or(false); // c:1381
         if want_add {
             if (entry.flags & MFF_ADDED) != 0 {
                 continue;
@@ -6243,6 +6357,17 @@ pub fn setmathfuncs(
                 ret = 1;
             } else {
                 entry.flags |= MFF_ADDED; // c:1393
+                // c:1388+1393 — C links `f` ITSELF into mathfuncs and
+                // the flag-set above mutates that same (aliased) node.
+                // The Rust insert is a by-value dup, so mirror the flag
+                // onto the global-list entry; otherwise
+                // del_automathfunc / getfeatureenables reading
+                // MATHFUNCS never observe MFF_ADDED.
+                if let Ok(mut gtab) = MATHFUNCS.lock() {
+                    if let Some(p) = gtab.iter_mut().find(|p| p.name == entry.name) {
+                        p.flags |= MFF_ADDED;
+                    }
+                }
             }
         } else {
             if (entry.flags & MFF_ADDED) == 0 {
@@ -6255,6 +6380,13 @@ pub fn setmathfuncs(
                     &format!("math function `{}' already deleted", entry.name),
                 );
                 ret = 1;
+            } else {
+                // c:1356-1357 — C's deletemathfunc clears MFF_ADDED on
+                // the (aliased) static mftab struct; Rust's global-list
+                // entry is a dup, so clear it here on the caller's
+                // record. Without this, a disable→re-enable cycle hits
+                // the c:1383 `continue` and never re-registers.
+                entry.flags &= !MFF_ADDED;
             }
         }
     }
@@ -6492,20 +6624,25 @@ pub fn removemathfunc(name: &str) {
 /// ~MFF_ADDED` when f->module is null).
 pub fn deletemathfunc(f: &mathfunc) -> i32 {
     // c:1342
+    // c:1348-1352 — the node is unlinked from the global list in BOTH
+    // arms (`q->next = f->next` / `mathfuncs = f->next`); f->module
+    // only decides free-vs-keep of the struct itself. The struct for
+    // module=NULL entries lives in the module's static mftab (the C
+    // list links the static structs by pointer), so "keep" means the
+    // mftab record survives with MFF_ADDED cleared — in Rust the
+    // global-list entry is a by-value dup, so the unlink is a plain
+    // remove either way and the MFF_ADDED clear on the static record
+    // happens at the setmathfuncs caller (which holds `&mut` to the
+    // mftab entry). The previous port left module-less entries IN the
+    // global list, so a feature-disable never actually deregistered.
     let mut tab = MATHFUNCS.lock().unwrap();
     match tab.iter().position(|m| m.name == f.name) {
         // c:1346
         Some(i) => {
-            if tab[i].module.is_some() {
-                tab.remove(i);
-            }
-            // c:1352-1354 zsfree+zfree
-            else {
-                tab[i].flags &= !MFF_ADDED;
-            } // c:1357 ~MFF_ADDED
-            0
+            tab.remove(i); // c:1349-1352 unlink (+ Rust Drop ≙ c:1355-1357 free)
+            0 // c:1361
         }
-        None => -1, // c:1361
+        None => -1, // c:1363
     }
 }
 

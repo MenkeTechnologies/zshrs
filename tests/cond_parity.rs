@@ -536,3 +536,75 @@ mod round_pins {
         assert_parity(r#"[[ -k /tmp ]]; print -r $?"#);
     }
 }
+
+/// Bug #628 — single-char special parameters (`$$`, `$?`, `$#`, `$-`,
+/// `$*`) on the pattern side of `[[ == ]]` / `case`. The compile-time
+/// pattern splitter (`split_pattern_for_glob_subst`) consumed only
+/// `[A-Za-z0-9_]` after `$`, so a special leaked into the literal
+/// segment and the RHS compiled to the raw 2-char pattern (e.g. `$$`)
+/// instead of the substituted value. C: singsub → paramsubst handles
+/// these specials (Src/subst.c:2024+); Src/cond.c:303-310 singsubs the
+/// raw RHS before patcompile.
+mod special_param_pattern_rhs {
+    use super::*;
+
+    #[test]
+    fn dollar_dollar_eq_dollar_dollar() {
+        assert_parity(r#"[[ $$ == $$ ]]; echo $?"#);
+    }
+
+    #[test]
+    fn dollar_dollar_single_eq() {
+        assert_parity(r#"[[ $$ = $$ ]]; echo $?"#);
+    }
+
+    #[test]
+    fn var_lhs_dollar_dollar_rhs() {
+        assert_parity(r#"x=$$; [[ $x == $$ ]]; echo $?"#);
+    }
+
+    #[test]
+    fn dq_lhs_dollar_dollar_rhs() {
+        assert_parity(r#"[[ "$$" == $$ ]]; echo $?"#);
+    }
+
+    #[test]
+    fn literal_dollars_do_not_match_pid() {
+        assert_parity(r#"[[ "\$\$" == $$ ]]; echo $?"#);
+    }
+
+    #[test]
+    fn nonmatching_value_stays_false() {
+        assert_parity(r#"[[ 5 == $$ ]]; echo $?"#);
+    }
+
+    #[test]
+    fn status_special_rhs() {
+        assert_parity(r#"[[ $? == $? ]]; echo $?"#);
+    }
+
+    #[test]
+    fn argc_special_rhs() {
+        assert_parity(r#"[[ $# == $# ]]; echo $?"#);
+    }
+
+    #[test]
+    fn opts_special_rhs() {
+        assert_parity(r#"[[ $- == $- ]]; echo $?"#);
+    }
+
+    #[test]
+    fn splat_special_rhs() {
+        assert_parity(r#"set -- a b; [[ "$*" == $* ]]; echo $?"#);
+    }
+
+    #[test]
+    fn case_pattern_dollar_dollar() {
+        assert_parity(r#"case $$ in $$) echo M;; *) echo N;; esac"#);
+    }
+
+    #[test]
+    fn case_pattern_argc_special() {
+        assert_parity(r#"case $# in $#) echo M;; *) echo N;; esac"#);
+    }
+}
