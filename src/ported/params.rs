@@ -2150,10 +2150,22 @@ pub fn createparam(
         // endparamscope unwinds the PM_HASHED stale entry it can pop
         // and restore. Bug #415.
         let oldpm = if let Some(mut op) = oldpm {
-            if (op.node.flags as u32 & PM_SPECIAL) != 0 {
+            if (op.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0 {
+                // c:Src/builtin.c:2382-2424 copyparam — snapshot the
+                // CURRENT live value into the shadow chain. PM_TIED
+                // scalars (FPATH/PATH/CDPATH…) included: their value
+                // derives from the tied array's global storage, which
+                // the local's writes flow through — without the
+                // snapshot, `f() { local FPATH=/tmp }; f` left the
+                // GLOBAL fpath at ( /tmp ) and every later autoload
+                // failed (zinit's :zinit-tmp-subst-autoload does
+                // exactly this dance). Fall back to the name-routed
+                // getsparam when the pm carries no scalar gsu.
                 let getfn_ptr = op.gsu_s.as_ref().map(|g| g.getfn);
                 if let Some(getfn) = getfn_ptr {
                     op.u_str = Some(getfn(&op));
+                } else if let Some(v) = getsparam(&op.node.nam) {
+                    op.u_str = Some(v);
                 }
             }
             if (op.node.flags as u32 & PM_HASHED) != 0
@@ -9868,7 +9880,11 @@ pub fn endparamscope() {
     // them. Collect (name, setfn, value) into a deferred list inside
     // the lock, restore the pm.old chain, drop the lock, then re-fire
     // setfn on each special.
-    type DeferredSetfn = (String, fn(&mut param, String), String);
+    // setfn None → name-routed restore via setsparam (PM_TIED params
+    // whose pm carries no scalar gsu — FPATH/PATH/CDPATH…; setsparam
+    // dispatches to the tied setter by name, refilling the tied
+    // array's global storage).
+    type DeferredSetfn = (String, Option<fn(&mut param, String)>, String);
     let mut deferred: Vec<DeferredSetfn> = Vec::new();
     if let Ok(mut tab) = paramtab().write() {
         let stale: Vec<(String, bool)> = tab
@@ -9893,14 +9909,21 @@ pub fn endparamscope() {
                     .unwrap_or(false);
                 if let Some(prev) = pm.old {
                     // c:scanendscope:5933 pm->old = tpm->old
-                    let restored_is_special = (prev.node.flags as u32 & PM_SPECIAL) != 0;
+                    // PM_TIED counts too — the tied array's GLOBAL
+                    // storage was written through by the local's
+                    // assignments; the deferred restore re-fires the
+                    // saved value through the tied setter (by gsu
+                    // setfn when present, else name-routed setsparam)
+                    // so fpath/path/cdpath roll back with the scalar.
+                    let restored_is_special =
+                        (prev.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0;
                     let restored_val = prev.u_str.clone();
                     let restored_setfn =
                         prev.gsu_s.as_ref().map(|g| g.setfn);
                     tab.insert(n.clone(), prev); // restore outer binding (Box<param>)
                     if restored_is_special {
-                        if let (Some(setfn), Some(val)) = (restored_setfn, restored_val) {
-                            deferred.push((n.clone(), setfn, val));
+                        if let Some(val) = restored_val {
+                            deferred.push((n.clone(), restored_setfn, val));
                         }
                     }
                 }
@@ -9952,12 +9975,22 @@ pub fn endparamscope() {
     // paramtab read (via inittyptab / similar) so the deferred call
     // is the only deadlock-safe path.
     for (n, setfn, val) in deferred {
-        let mut pm_copy: Option<param> = None;
-        if let Ok(tab) = paramtab().read() {
-            pm_copy = tab.get(&n).map(|p| (**p).clone());
-        }
-        if let Some(mut pm) = pm_copy {
-            setfn(&mut pm, val);
+        match setfn {
+            Some(setfn) => {
+                let mut pm_copy: Option<param> = None;
+                if let Ok(tab) = paramtab().read() {
+                    pm_copy = tab.get(&n).map(|p| (**p).clone());
+                }
+                if let Some(mut pm) = pm_copy {
+                    setfn(&mut pm, val);
+                }
+            }
+            // PM_TIED without a scalar gsu — name-routed: setsparam
+            // reaches the tied setter and refills the tied array's
+            // global storage (fpath/path/cdpath…).
+            None => {
+                setsparam(&n, &val);
+            }
         }
     }
 

@@ -1902,26 +1902,45 @@ impl ZshCompiler {
             );
 
         // Builtin or function or external. Push args first (post-strip).
-        // `extra_pushed` accounts for args that expand to MORE than one
-        // stack value (the typeset paren-init splitter below) so the
-        // dispatch argc and xtrace count stay aligned with the stack.
-        let mut extra_pushed: usize = 0;
+        // Every word pushes exactly ONE stack value (the typeset
+        // paren-init arm packs its elements back into one via
+        // BUILTIN_TYPESET_PAREN_PACK).
         for word in &simple.words[precmd_skip + 1..] {
-            // Typeset-family paren-init: split `name=( e1 e2 … )` into
-            // `name=(` + one value per element + `)`. bin_typeset's
-            // existing opener-rejoin (builtin.rs ~3978, \u{1f}
-            // separator) reassembles them with element boundaries
-            // INTACT, so `$arr` elements splat instead of joining.
+            // Typeset-family paren-init: compile `name=( e1 e2 … )`
+            // ELEMENT BY ELEMENT (the parser's \u{1f} ENVARRAY rejoin
+            // already word-split them), then PACK back into one
+            // REJOIN_SEP-delimited arg via BUILTIN_TYPESET_PAREN_PACK.
+            // One arg in → one arg out: bin_typeset's single-arg
+            // splitter consumes it directly and its multi-arg rejoin
+            // (paren-depth scan, unsafe on expanded paren-literal
+            // elements like p10k's `')' ''`) never runs. `$arr`
+            // elements arrive as Value::Array and splice inside the
+            // pack op, so the splat survives without pop_args
+            // flattening into separate argv slots.
             if head_is_typeset_family {
                 if let Some((prefix, elems)) = split_typeset_paren_init(word) {
                     let pidx = self.builder.add_constant(Value::str(prefix.as_str()));
                     self.builder.emit(Op::LoadConst(pidx), 0);
-                    for e in &elems {
-                        self.compile_word_str(e);
+                    // CallBuiltin argc is u8 — chunk the EXTEND calls.
+                    // p10k's __p9k_colors has 408 elements; a single
+                    // call wrapped argc mod 256 and spilled the stack
+                    // into the arg list.
+                    for chunk in elems.chunks(200) {
+                        for e in chunk {
+                            self.compile_word_str(e);
+                        }
+                        self.builder.emit(
+                            Op::CallBuiltin(
+                                crate::vm_helper::BUILTIN_TYPESET_PAREN_PACK,
+                                (chunk.len() + 1) as u8,
+                            ),
+                            0,
+                        );
                     }
-                    let cidx = self.builder.add_constant(Value::str(")"));
-                    self.builder.emit(Op::LoadConst(cidx), 0);
-                    extra_pushed += 1 + elems.len(); // beyond this word's 1
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_TYPESET_PAREN_CLOSE, 1),
+                        0,
+                    );
                     continue;
                 }
             }
@@ -1973,7 +1992,7 @@ impl ZshCompiler {
             }
         }
 
-        let argc = (simple.words.len() - precmd_skip - 1 + extra_pushed) as u8;
+        let argc = (simple.words.len() - precmd_skip - 1) as u8;
 
         // c:Src/exec.c:3285-3304 (prefork) + c:3702 (globlist) →
         // c:3720+ (addfd loop) — open the redirect scope only after
@@ -5363,43 +5382,69 @@ impl ZshCompiler {
                 // at runtime, `zglob`'s own haswilds check
                 // short-circuits so the emit is harmless.
                 //
-                // Computed on the WHOLE raw word with the marker-aware
-                // `unquoted()` (Snull + Dnull span tracking), NOT per
-                // segment with untokenize — the previous per-segment
-                // scan stripped the quote markers and reset the span
-                // state at every segment boundary, so the ` x[a]`
-                // literal tail of `X"$V x[a]"` (whose `[` lives INSIDE
-                // the word-level Dnull span) flagged needs_glob and the
-                // assembled scalar NOMATCH-errored at runtime. Real-
-                // world load: fzf-zsh-plugin.plugin.zsh:76
-                // `export FZF_DEFAULT_OPTS="$FZF_DEFAULT_OPTS --preview
-                // '([[ -f {} ]] && …'"`.
-                let needs_glob = unquoted(s, '*')
-                    || unquoted(s, '\u{87}') // Star
-                    || unquoted(s, '?')
-                    || unquoted(s, '\u{97}') // Quest
-                    || unquoted(s, '[')
-                    || unquoted(s, '\u{91}') // Inbrack
-                    // c:Src/pattern.c:4326-4335 — haswilds fires on ANY
-                    // Inpar TOKEN unless SHGLOB is set. Quoted parens
-                    // stay literal inside Snull/Dnull spans and never
-                    // carry the token. The runtime zglob short-circuits
-                    // under SHGLOB.
-                    || unquoted(s, '\u{88}') // Inpar
-                    || (unquoted(s, '(') && unquoted(s, '|') && unquoted(s, ')'))
-                    || (crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB)
-                        && (unquoted(s, '#')
-                            || unquoted(s, '\u{84}') // Pound
-                            || unquoted(s, '^')
-                            || unquoted(s, '\u{86}'))); // Hat
-                // Brace expansion: an UNQUOTED `{` / `}` participates
-                // in an enclosing brace pattern. zsh: `{one,${a},three}`
-                // expands the outer brace AFTER ${a} substitution;
-                // `"{a,b}"` stays literal.
-                let needs_brace = unquoted(s, '{')
-                    || unquoted(s, '\u{8f}') // Inbrace
-                    || unquoted(s, '}')
-                    || unquoted(s, '\u{90}'); // Outbrace
+                // Scanned over LITERAL segments only (metas inside an
+                // Expansion segment — `${(@k)h}` flag parens, `$'\e[34m'`
+                // brackets, `$?` — are NOT glob triggers; substituted
+                // content doesn't glob without GLOB_SUBST), with the
+                // Snull/Dnull quote state threaded ACROSS segments at
+                // word level. The two prior shapes each failed one way:
+                //   * per-segment untokenize scan: stripped the quote
+                //     markers and reset span state per segment, so the
+                //     ` x[a]` literal tail of `X"$V x[a]"` (inside the
+                //     word-level Dnull span) flagged needs_glob →
+                //     NOMATCH (fzf-zsh-plugin:76);
+                //   * whole-word unquoted() scan: counted metas inside
+                //     EXPANSION segments, so `${(@k)AUTOPAIR_PAIRS}`'s
+                //     flag parens / PROMPT4's `$'\e[34m…'` bracket
+                //     triggered GLOB_EXPAND on the expanded value →
+                //     "bad pattern: (" (zsh-autopair init, zpwr).
+                let mut needs_glob = false;
+                let mut needs_brace = false;
+                {
+                    let mut in_sq = false;
+                    let mut in_dq = false;
+                    let extglob =
+                        crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+                    for seg in &segs {
+                        let lit = match seg {
+                            WordSegment::Literal(l) => l,
+                            WordSegment::Expansion(_) => continue,
+                        };
+                        let mut prev = ' ';
+                        let mut saw_inpar = false;
+                        let mut saw_bar = false;
+                        let mut saw_outpar = false;
+                        for c in lit.chars() {
+                            match c {
+                                '\u{9d}' => in_sq = !in_sq,
+                                '\u{9e}' => in_dq = !in_dq,
+                                _ if in_sq || in_dq || prev == '\u{9f}' || prev == '\0' => {}
+                                '*' | '\u{87}' | '?' | '\u{97}' | '[' | '\u{91}' => {
+                                    needs_glob = true;
+                                }
+                                // c:Src/pattern.c:4326-4335 — haswilds
+                                // fires on ANY Inpar TOKEN unless SHGLOB
+                                // is set; the runtime zglob short-
+                                // circuits under SHGLOB.
+                                '\u{88}' => needs_glob = true,
+                                '(' => saw_inpar = true,
+                                '|' => saw_bar = true,
+                                ')' => saw_outpar = true,
+                                '#' | '\u{84}' | '^' | '\u{86}' if extglob => {
+                                    needs_glob = true;
+                                }
+                                '{' | '\u{8f}' | '}' | '\u{90}' => {
+                                    needs_brace = true;
+                                }
+                                _ => {}
+                            }
+                            prev = c;
+                        }
+                        if saw_inpar && saw_bar && saw_outpar {
+                            needs_glob = true;
+                        }
+                    }
+                }
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
