@@ -3524,6 +3524,17 @@ pub fn features_module(
             crate::ported::modules::terminfo::features_(std::ptr::null(), features)
         }
         "zsh/watch" => crate::ported::modules::watch::features_(std::ptr::null(), features),
+        // c:Src/Zle/zle_main.c:2286 — zsh/zle's features_() returns
+        // b:zle/b:bindkey/b:vared + the p:BUFFER-family params via
+        // featuresarray. Without this arm the dispatch fell to the
+        // `_ => 0` default with an EMPTY features vec, so once any
+        // zle/bindkey use marked the module loaded, the NEXT
+        // autoloaded-builtin dispatch (ensurefeature → autofeatures
+        // c:3558-3577 loaded-module check) found no `b:bindkey` in
+        // the table and errored `module has no such feature` —
+        // breaking every zinit plugin that calls `zle -N` before
+        // `bindkey` (zsh-autopair, zsh-hist, zconvey, zui, …).
+        "zsh/zle" => crate::ported::zle::zle_main::features_(std::ptr::null(), features),
         "zsh/zftp" => crate::ported::modules::zftp::features_(std::ptr::null(), features),
         "zsh/zprof" => crate::ported::modules::zprof::features_(std::ptr::null(), features),
         "zsh/zpty" => crate::ported::modules::zpty::features_(std::ptr::null(), features),

@@ -496,11 +496,14 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
             .map(|t| t.is_loaded("zsh/files"))
             .unwrap_or(false)
     {
-        // Strip the `zf_` prefix when routing to PATH (Src/Modules/
-        // files.c:816-824 — `zf_*` aliases point at the same handler
-        // as the bare name; PATH only has `/bin/rm`, not `/bin/zf_rm`).
-        let path_name = name.strip_prefix("zf_").unwrap_or(name);
-        let status = with_executor(|exec| exec.execute_external(path_name, &args, &[]))
+        // PATH lookup uses the LITERAL name: bare `mkdir` finds
+        // /bin/mkdir; a `zf_*` alias finds nothing and exits 127 —
+        // matching zsh -fc `zf_mkdir d` → "command not found:
+        // zf_mkdir" (the aliases exist ONLY in the loaded module's
+        // builtintab, Src/Modules/files.c:816-824; PATH has no
+        // /bin/zf_rm). The previous zf_-strip silently ran the
+        // system binary instead.
+        let status = with_executor(|exec| exec.execute_external(name, &args, &[]))
             .unwrap_or(127);
         return status;
     }
@@ -686,9 +689,16 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // and gated the same way. Bug #28 in docs/BUGS.md.
     if module_gated_files_builtin(name) {
         if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded("zsh/files") {
-            // Strip the `zf_` prefix when routing to PATH so `zf_rm`
-            // (when zsh/files isn't loaded) still finds /bin/rm.
-            let path_name = name.strip_prefix("zf_").unwrap_or(name);
+            // PATH lookup uses the literal name. In --zsh parity mode
+            // `zf_rm` must 127 like zsh -fc (no /bin/zf_rm); default
+            // zshrs mode keeps the convenience zf_-strip so the alias
+            // still reaches the system binary.
+            let path_name = if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                name
+            } else {
+                name.strip_prefix("zf_").unwrap_or(name)
+            };
             let status = with_executor(|exec| exec.execute_external(path_name, &args, &[]))
                 .unwrap_or(127);
             crate::ported::builtin::LASTVAL
@@ -1195,28 +1205,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // standard utilities resolve even when the caller has
         // emptied $PATH. zsh restores the original PATH after the
         // command returns. Mirror via a scoped env::set_var.
-        let dash_p = args.iter().any(|a| {
-            a == "-p"
-                || a == "-pv"
-                || a == "-pV"
-                || (a.starts_with('-') && a.contains('p') && !a.starts_with("--"))
-        });
-        // The post slice from execcmd_compile_head may still contain
-        // `-p` as the first element because precmd-modifier opt
-        // parsing isn't wired here. Strip it manually so the dispatch
-        // below sees the real command name.
-        let mut post: Vec<String> = if dash_p {
-            post.iter()
-                .filter(|a| {
-                    let s = a.as_str();
-                    !(s.starts_with('-')
-                        && s.len() >= 2
-                        && s[1..].chars().all(|c| c == 'p' || c == 'v' || c == 'V'))
-                })
-                .cloned()
-                .collect()
-        } else {
-            post.to_vec()
+        //
+        // command's OWN options end at the first non-flag arg —
+        // everything after the command name belongs to IT. The
+        // previous `.any()` scan over ALL args stole `-p` from
+        // `command mkdir -p DIR` (zconvey.plugin.zsh:44), stripping
+        // the flag before /bin/mkdir ran → "File exists" errors on
+        // every re-source.
+        let mut lead = 0usize;
+        let mut dash_p = false;
+        let mut kept_flags: Vec<String> = Vec::new();
+        for a in post.iter() {
+            let s = a.as_str();
+            if s == "--" {
+                lead += 1;
+                break;
+            }
+            if s.starts_with('-')
+                && s.len() >= 2
+                && s[1..].chars().all(|c| c == 'p' || c == 'v' || c == 'V')
+            {
+                if s.contains('p') {
+                    dash_p = true;
+                }
+                // -v / -V drive the whence-style lookup downstream —
+                // keep them in post (only the PATH-reset `p` is
+                // consumed here).
+                let rest: String = s[1..].chars().filter(|c| *c != 'p').collect();
+                if !rest.is_empty() {
+                    kept_flags.push(format!("-{}", rest));
+                }
+                lead += 1;
+                continue;
+            }
+            break;
+        }
+        let mut post: Vec<String> = {
+            let mut v = kept_flags;
+            v.extend(post[lead..].iter().cloned());
+            v
         };
         // c:Src/exec.c:3176-3177 — `BINF_COMMAND` arm strips a single
         // leading `--` end-of-options marker.
@@ -1770,6 +1797,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_COMPDEF, |vm, argc| {
         let args = pop_args(vm, argc);
+        // A compsys-defined `compdef` FUNCTION (autoload compinit →
+        // compinit defines compdef) wins over the extension builtin
+        // in every mode.
+        if let Some(s) = try_user_fn_override("compdef", &args) {
+            return Value::Status(s);
+        }
+        // c:zsh -f — compdef is a FUNCTION defined by compinit, not
+        // a builtin; without compinit it's command-not-found (127).
+        // openshift-aliases sources `<(oc completion zsh)` whose
+        // compdef calls must error exactly like the oracle. Same
+        // gate shape as BUILTIN_COMPGEN/BUILTIN_COMPLETE above.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("zsh:1: command not found: compdef");
+            return Value::Status(127);
+        }
         Value::Status(with_executor(|exec| exec.builtin_compdef(&args)))
     });
 
@@ -10969,7 +11011,18 @@ impl ShellExecutor {
             // (files.c:816-824) — execbuiltin parses each fn's optstr
             // automatically.
             "mkdir" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod" | "zf_chown" | "zf_chgrp"
-            | "zf_ln" | "zf_mv" | "zf_sync" => {
+            | "zf_ln" | "zf_mv" | "zf_sync"
+                // `--zsh` parity gate: zsh -fc has zsh/files UNLOADED
+                // — bare `mkdir` is /bin/mkdir (so `command mkdir -p`
+                // honors the system flag set; zconvey.plugin.zsh:44
+                // got "File exists" from the in-process bin_mkdir
+                // that this arm intercepted) and `zf_*` names are
+                // command-not-found 127 until `zmodload zsh/files`.
+                // Fall through to the external/exec path in --zsh
+                // mode; default zshrs mode keeps the anti-fork
+                // intercept.
+                if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+            {
                 return dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
             // `zstat` — port of zsh/stat module (Src/Modules/stat.c
