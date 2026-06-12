@@ -568,9 +568,9 @@ zshrs --fmt [-w] [-t] [-i N] [FILE…]
                              # f () → f(), bare then/do join onto
                              # the opener as '; then'/'; do' per the
                              # zsh + OMZ style guides), heredoc-safe,
-                             # idempotent. Indent is 4 spaces per
-                             # level (the LSP floors editor tabSize
-                             # at 4; CLI -i N overrides explicitly).
+                             # idempotent. Indent defaults to 4
+                             # spaces per level; editor tabSize and
+                             # CLI -i N override explicitly.
                              # stdin→stdout with no files; -w rewrites
                              # in place; -i sets indent width (default
                              # 4); -t indents with tabs
