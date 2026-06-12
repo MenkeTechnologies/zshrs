@@ -1570,6 +1570,17 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
         if errflag.load(Ordering::SeqCst) != 0 {
             return;
         }
+        if !nullglob && csh_nullglob {
+            // c:1874-1875 — `if (isset(CSHNULLGLOB)) { badcshglob |= 1; }`
+            // (already recorded above). The else-if chain means the
+            // ordinary-string arm is NOT reached: the failed word is
+            // DROPPED like nullglob, and globlist's terminal check
+            // (subst.c:505-507, ported at subst.rs:1419) emits the
+            // csh-style `no match` when NO word on the line matched.
+            // Falling through to the literal insert here produced the
+            // NOMATCH-style "no matches found: PAT" instead.
+            return;
+        }
         if !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH) {
             // c:1876-1880 — `else if (isset(NOMATCH)) { zerr; return; }`
             crate::ported::utils::zerr(&format!("no matches found: {}", ostr));

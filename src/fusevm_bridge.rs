@@ -321,6 +321,28 @@ fn shname() -> String {
     crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string())
 }
 
+/// c:Src/subst.c:505-507 + Src/exec.c:3378-3380 — per-command
+/// CSH_NULL_GLOB outcome check. During this command's word expansion
+/// `expand_glob` accumulated `badcshglob |= 1` per failed glob and
+/// `|= 2` per successful one (Src/glob.c:1871-1875). Exactly 1 —
+/// failures and no successes — is the csh-style error: `no match`,
+/// command skipped, status 1. Any other value (0 = no globs, 2/3 =
+/// at least one matched) is silent. Always resets the counter for
+/// the next command (C resets at prefork entry, subst.rs:1307).
+/// Returns true when the error fired; callers mirror their
+/// glob_failed handling (builtins leave ERRFLAG_ERROR set so the
+/// script aborts, externals clear it so the next sublist runs —
+/// verified against zsh 5.9.1).
+fn consume_badcshglob() -> bool {
+    let v = crate::ported::glob::BADCSHGLOB.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if v == 1 {
+        crate::ported::utils::zerr("no match"); // c:Src/subst.c:507
+        true
+    } else {
+        false
+    }
+}
+
 /// Map a builtin name to the zsh module that owns it, IFF zsh does
 /// not auto-load that builtin on first use. Used by
 /// `dispatch_builtin_raw` to gate `--zsh` mode dispatch behind
@@ -603,6 +625,19 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         // ERRFLAG_ERROR set here; BUILTIN_ERREXIT_CHECK trigger 4
         // aborts the remaining script at the next command boundary.
         return 1; // c:1880 — command aborted, status 1
+    }
+    // c:Src/subst.c:505-507 — CSH_NULL_GLOB sibling of the NOMATCH
+    // gate above: all of this command's globs failed silently (words
+    // dropped, badcshglob accumulated 1s and no 2s) → `no match`,
+    // skip the builtin, status 1. Like the NOMATCH path, ERRFLAG
+    // from zerr stays set for builtins so the rest of the script
+    // aborts (zsh -fc 'setopt cshnullglob; print *nope* x; print
+    // after' prints only the error — verified zsh 5.9.1).
+    if consume_badcshglob() {
+        // c:Src/exec.c:3380 — `lastval = 1;` so the shell's final
+        // exit status reflects the aborted command.
+        with_executor(|exec| exec.set_last_status(1));
+        return 1;
     }
     if let Some(status) = try_user_fn_override(name, &args) {
         // c:Src/jobs.c:1748 waitonejob — canonical single-command
@@ -9818,6 +9853,19 @@ impl fusevm::ShellHost for ZshrsHost {
             with_executor(|exec| exec.set_last_status(1));
             return 1;
         }
+        // c:Src/subst.c:505-507 — CSH_NULL_GLOB external-path
+        // boundary: command skipped with `no match` but the NEXT
+        // sublist runs (zsh -fc 'setopt cshnullglob; ls *nope*;
+        // print after' prints the error then `after` — verified
+        // zsh 5.9.1), so clear ERRFLAG like the glob_failed arm.
+        if consume_badcshglob() {
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return 1;
+        }
         if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::SeqCst)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0
@@ -10793,6 +10841,18 @@ impl ShellExecutor {
         // too at the external-command post-command-boundary.
         if self.current_command_glob_failed.get() {
             self.current_command_glob_failed.set(false);
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.set_last_status(1);
+            return 1;
+        }
+        // c:Src/subst.c:505-507 — CSH_NULL_GLOB sibling of the
+        // NOMATCH gate above, same external-path semantics (skip
+        // command, `no match`, clear ERRFLAG so the next sublist
+        // runs).
+        if consume_badcshglob() {
             crate::ported::utils::errflag.fetch_and(
                 !crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,

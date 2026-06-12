@@ -3554,6 +3554,20 @@ impl ShellExecutor {
     pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
         let expanded = glob_path(pattern);
         if !expanded.is_empty() {
+            // c:Src/glob.c:1871-1872 — `if (matchct) badcshglob |= 2;`
+            // (at least one expansion on this command line worked).
+            // Only real glob patterns count — C's zglob early-returns
+            // before the matchct accounting for non-wild words, so
+            // gate on haswilds like the failure path below. Consumed
+            // per command by fusevm_bridge::consume_badcshglob.
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLGLOB) {
+                let mut pattern_tok = pattern.to_string();
+                crate::ported::glob::tokenize(&mut pattern_tok);
+                if crate::ported::pattern::haswilds(&pattern_tok) {
+                    crate::ported::glob::BADCSHGLOB
+                        .fetch_or(2, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             return expanded;
         }
         // No matches. Mirror zsh's `setopt nullglob` / `nomatch`
@@ -3596,6 +3610,17 @@ impl ShellExecutor {
         let mut pattern_tok = pattern.to_string();
         crate::ported::glob::tokenize(&mut pattern_tok); // c:Src/glob.c:3548
         let is_glob = crate::ported::pattern::haswilds(&pattern_tok);
+        // c:Src/glob.c:1874-1875 — `if (isset(CSHNULLGLOB)) {
+        // badcshglob |= 1; }` — the else-if chain means neither the
+        // NOMATCH error nor the literal passthrough runs: the failed
+        // word is silently DROPPED here, and the per-command boundary
+        // (fusevm_bridge::consume_badcshglob, Src/subst.c:505-507)
+        // emits the csh-style `no match` iff NO glob on the line
+        // matched.
+        if is_glob && crate::ported::zsh_h::isset(crate::ported::zsh_h::CSHNULLGLOB) {
+            crate::ported::glob::BADCSHGLOB.fetch_or(1, std::sync::atomic::Ordering::Relaxed);
+            return Vec::new();
+        }
         if nomatch && is_glob {
             // c:Src/glob.c:1876-1880 — `else if (isset(NOMATCH)) {`
             //   `zerr("no matches found: %s", ostr);`

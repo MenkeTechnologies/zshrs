@@ -317,6 +317,15 @@ static CORE_SHADOWS_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new(
 /// after first call.
 pub fn coreutils_shadows_enabled() -> bool {
     *CORE_SHADOWS_CACHE.get_or_init(|| {
+        // `--zsh` strict-parity mode NEVER shadows externals — `head`
+        // / `cat` / `sort` must be the system binaries with the
+        // system binaries' exact flag handling and diagnostics
+        // (`head -0` is an error on BSD head, the shadow accepted
+        // it). Unconditional: parity floor outranks the toml knob
+        // and the env override.
+        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
         // Env override wins for one-off testing:
         //   ZSHRS_COREUTILS_SHADOWS=1 — force ON
         //   ZSHRS_COREUTILS_SHADOWS=0 — force OFF
