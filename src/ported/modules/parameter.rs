@@ -608,52 +608,29 @@ pub fn unsetpmcommand(pm: Param, exp: i32) {
 /// C: `static void setpmcommands(Param pm, HashTable ht)` — bulk install.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn setpmcommands(pm: Param, ht: *mut HashTable) {
+/// WARNING: param shape doesn't match C — C passes the temporary
+/// HashTable built by `arrhashsetfn` (`Src/params.c:4113`) whose nodes
+/// are child Params carrying values in `u.str`; zshrs's `hashnode` has
+/// no value slot, so the (key, value) pairs are passed directly. The
+/// iteration semantics are identical: one install per pair, additive
+/// (existing `cmdnamtab` entries are NOT flushed).
+pub fn setpmcommands(pm: Param, ht: &[(String, String)]) {
     // c:173
-    // c:173-176 — locals at function top.
-    let mut i: i32; // c:175 int i
-    let mut hn: Option<HashNode>; // c:176 HashNode hn
-
-    // c:178-179 — if (!ht) return;
-    if ht.is_null() {
-        // c:178
-        return; // c:179
-    }
-    let ht_ref: &hashtable = unsafe { &**ht };
-    i = 0; // c:181 for (i = 0;
-    while i < ht_ref.hsize {
-        // c:181 i < ht->hsize; i++)
-        hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone()); // c:182 hn = ht->nodes[i]
-        while let Some(node) = hn.clone() {
-            // c:182 hn;
-            // c:184-189 — struct value v (block-scoped per C).
-            let mut v = value {
-                pm: None,        // c:189 v.pm = (Param) hn (cast deferred)
-                arr: Vec::new(), // c:188 v.arr = NULL
-                scanflags: 0,    // c:186
-                valflags: 0,     // c:186
-                start: 0,        // c:186
-                end: -1,         // c:187
-            };
-            // c:183/191/192 — `cn = zshcalloc(...); cn->node.flags
-            //   = HASHED; cn->u.cmd = ztrdup(getstrvalue(&v));`
-            let path = getstrvalue(Some(&mut v));
-            let cn = cmdnam_hashed(&node.nam, &path);
-            // c:194 — cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);
-            if let Ok(mut tab) = cmdnamtab_lock().write() {
-                tab.add(cn);
-            }
-            hn = node.next; // c:182 hn = hn->next
+    // c:178-179 — if (!ht) return; (an empty pair list is the
+    // equivalent no-op; the loop below simply doesn't run).
+    //
+    // c:181-194 — for each node: `cn = zshcalloc(...);
+    //   cn->node.flags = HASHED; cn->u.cmd = ztrdup(getstrvalue(&v));
+    //   cmdnamtab->addnode(cmdnamtab, ztrdup(hn->nam), &cn->node);`
+    for (nam, path) in ht {
+        let cn = cmdnam_hashed(nam, path); // c:183/191/192
+        if let Ok(mut tab) = cmdnamtab_lock().write() {
+            tab.add(cn); // c:194 addnode
         }
-        i += 1; // c:181 i++
     }
-    // c:196-205 — comment block about full-array vs append (informational).
-    // c:204 — if (ht != pm->u.hash) deleteparamtable(ht);
-    if !ht.is_null() {
-        // c:203
-        let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        deleteparamtable(Some(owned)); // c:204
-    }
+    // c:196-205 — `if (ht != pm->u.hash) deleteparamtable(ht);` —
+    // temp-table teardown; Rust drops the borrowed slice's owner.
+    let _ = pm;
 }
 
 /// Direct port of `getpmcommand(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:213.
@@ -975,52 +952,26 @@ pub fn unsetpmfunction(pm: Param, exp: i32) {
 /// all functions in `ht`.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn setfunctions(pm: Param, ht: *mut HashTable, dis: i32) {
+/// WARNING: param shape doesn't match C — C passes the temporary
+/// HashTable of value-carrying child Params (see setpmcommands);
+/// zshrs passes the (key, value) pairs directly. Additive: existing
+/// functions are NOT flushed.
+pub fn setfunctions(pm: Param, ht: &[(String, String)], dis: i32) {
     // c:344
-    // c:344-347 — locals at function top (Rule 5: same names, same scope).
-    let mut i: i32; // c:346 int i
-    let mut hn: Option<HashNode>; // c:347 HashNode hn
-
-    // c:349-350 — if (!ht) return;
-    if ht.is_null() {
-        // c:349
-        return; // c:350
-    }
-    let ht_ref: &hashtable = unsafe { &**ht };
-    i = 0; // c:352 for (i = 0;
-    while i < ht_ref.hsize {
-        // c:352 i < ht->hsize; i++)
-        hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone()); // c:353 hn = ht->nodes[i]
-        while let Some(node) = hn.clone() {
-            // c:353 hn;
-            // c:354-359 — struct value v; (block-scoped per C).
-            let mut v = value {
-                pm: None,        // c:359 v.pm = (Param) hn (cast deferred)
-                arr: Vec::new(), // c:358 v.arr = NULL
-                scanflags: 0,    // c:356 v.scanflags = 0
-                valflags: 0,     // c:356 v.valflags = 0
-                start: 0,        // c:356 v.start = 0
-                end: -1,         // c:357 v.end = -1
-            };
-            // c:361 — setfunction(hn->nam, ztrdup(getstrvalue(&v)), dis);
-            // EXTERN: getstrvalue reads v.pm — without a real Param cast
-            // we get empty. Future port: thread a paramtab lookup through.
-            setfunction(&node.nam, getstrvalue(Some(&mut v)), dis);
-            hn = node.next; // c:353 hn = hn->next
-        }
-        i += 1; // c:352 i++
+    // c:349-350 — if (!ht) return; (empty pair list = same no-op).
+    //
+    // c:352-362 — for each node:
+    //   `setfunction(hn->nam, ztrdup(getstrvalue(&v)), dis);`
+    for (nam, body) in ht {
+        setfunction(nam, body.clone(), dis); // c:361
     }
     // c:364-365 — if (ht != pm->u.hash) deleteparamtable(ht);
-    if !ht.is_null() {
-        // c:364
-        let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        deleteparamtable(Some(owned)); // c:365
-    }
+    let _ = pm;
 }
 
 /// Port of `setpmfunctions(Param pm, HashTable ht)` from Src/Modules/parameter.c:370.
 #[allow(non_snake_case)]
-pub fn setpmfunctions(pm: Param, ht: *mut HashTable) {
+pub fn setpmfunctions(pm: Param, ht: &[(String, String)]) {
     // c:370
     setfunctions(pm, ht, 0) // c:370
 }
@@ -1028,7 +979,7 @@ pub fn setpmfunctions(pm: Param, ht: *mut HashTable) {
 /// Port of `setpmdisfunctions(Param pm, HashTable ht)` from Src/Modules/parameter.c:377.
 /// C: `setfunctions(pm, ht, DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisfunctions(pm: Param, ht: *mut HashTable) {
+pub fn setpmdisfunctions(pm: Param, ht: &[(String, String)]) {
     // c:377
     setfunctions(pm, ht, DISABLED) // c:377
 }
@@ -2075,64 +2026,36 @@ pub fn unsetpmoption(pm: Param, exp: i32) {
 /// each shell option named in `ht` based on its "on"/"off" value.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn setpmoptions(pm: Param, ht: *mut HashTable) {
+/// WARNING: param shape doesn't match C — C passes the temporary
+/// HashTable of value-carrying child Params (see setpmcommands);
+/// zshrs passes the (key, value) pairs directly.
+pub fn setpmoptions(pm: Param, ht: &[(String, String)]) {
     // c:953
-    // c:953-956 — locals at function top.
-    let mut i: i32; // c:955 int i
-    let mut hn: Option<HashNode>; // c:956 HashNode hn
-
-    // c:958-959 — if (!ht) return;
-    if ht.is_null() {
-        // c:958
-        return; // c:959
-    }
-    let ht_ref: &hashtable = unsafe { &**ht };
-    i = 0; // c:961 for (i = 0;
-    while i < ht_ref.hsize {
-        // c:961 i < ht->hsize; i++)
-        hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone()); // c:962 hn = ht->nodes[i]
-        while let Some(node) = hn.clone() {
-            // c:962 hn;
-            // c:963-969 — struct value v (block-scoped).
-            let mut v = value {
-                pm: None,        // c:969 v.pm = (Param) hn (cast deferred)
-                arr: Vec::new(), // c:968 v.arr = NULL
-                scanflags: 0,
-                valflags: 0,
-                start: 0, // c:966
-                end: -1,  // c:967
-            };
-            // c:964 — char *val (block-scoped).
-            let val: String;
-            val = getstrvalue(Some(&mut v)); // c:971 val = getstrvalue(&v)
-            if val.is_empty() || (val != "on" && val != "off") {
-                // c:972
+    // c:958-959 — if (!ht) return; (empty pair list = same no-op).
+    //
+    // c:961-977 — per-pair walk.
+    for (nam, val) in ht {
+        if val.is_empty() || (val != "on" && val != "off") {
+            // c:972
+            zwarn(
+                // c:973
+                &format!("invalid value: {}", val),
+            );
+        } else {
+            // c:974 — dosetopt(optlookup(hn->nam), (val && strcmp(val, "off")), 0, opts);
+            let n = optlookup(nam);
+            let on: i32 = if val != "off" { 1 } else { 0 };
+            if n == 0 || dosetopt(n, on, 0) != 0 {
+                // c:975-976 — failure path: can't change option.
                 zwarn(
-                    // c:973
-                    &format!("invalid value: {}", val),
+                    // c:976
+                    &format!("can't change option: {}", nam),
                 );
-            } else {
-                // c:974 — dosetopt(optlookup(hn->nam), (val && strcmp(val, "off")), 0, opts);
-                let n = optlookup(&node.nam);
-                let on: i32 = if val != "off" { 1 } else { 0 };
-                if n == 0 || dosetopt(n, on, 0) != 0 {
-                    // c:975-976 — failure path: can't change option.
-                    zwarn(
-                        // c:976
-                        &format!("can't change option: {}", node.nam),
-                    );
-                }
             }
-            hn = node.next; // c:962 hn = hn->next
         }
-        i += 1; // c:961 i++
     }
     // c:979-980 — if (ht != pm->u.hash) deleteparamtable(ht);
-    if !ht.is_null() {
-        // c:979
-        let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        deleteparamtable(Some(owned)); // c:980
-    }
+    let _ = pm;
 }
 
 /// Port of `getpmoption(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:988.
@@ -3207,27 +3130,22 @@ pub fn unsetpmnameddir(pm: Param, exp: i32) {
 /// `nameddirtab` (preserving ND_USERNAME entries) with `ht`'s contents.
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
-pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
+/// WARNING: param shape doesn't match C — C passes the temporary
+/// HashTable of value-carrying child Params (see setpmcommands);
+/// zshrs passes the (key, value) pairs directly. Replace semantics:
+/// every non-ND_USERNAME named dir is flushed first (c:1552-1558).
+pub fn setpmnameddirs(pm: Param, ht: &[(String, String)]) {
     // c:1544
-    // c:1546-1547 — locals at function top (C: `int i; HashNode hn, next, hd;`).
-    let mut i: i32; // c:1546 int i
-    let mut hn: Option<HashNode>; // c:1547 HashNode hn
-    let mut next: Option<HashNode>; // c:1547 HashNode next
-                                    // c:1547 — HashNode hd (used only inside the flush branch below).
-
-    // c:1549-1550 — if (!ht) return;
-    if ht.is_null() {
-        // c:1549
-        return; // c:1550
-    }
+    // c:1549-1550 — if (!ht) return; (empty pair list still flushes
+    // in C? No — !ht returns BEFORE the flush; an empty-but-present
+    // table flushes and installs nothing. The pairs slice is always
+    // "present" here, so flush unconditionally.)
 
     // c:1552-1558 — for (i = 0; i < nameddirtab->hsize; i++) flush non-ND_USERNAME.
     // The Rust `HashMap<String, nameddir>` doesn't expose buckets by `i`;
     // we walk all entries collecting keys to remove (C's combined
     // removenode+freenode = HashMap::remove).
     if let Ok(mut tab) = nameddirtab().lock() {
-        i = 0;
-        let _ = i; // c:1552 (consumed by virtual walk)
         let to_remove: Vec<String> = tab
             .iter()
             .filter(|(_, nd)| (nd.node.flags & ND_USERNAME) == 0) // c:1555 !ND_USERNAME
@@ -3240,57 +3158,29 @@ pub fn setpmnameddirs(pm: Param, ht: *mut HashTable) {
     }
 
     // c:1560-1579 — second loop: install entries from `ht`.
-    let ht_ref: &hashtable = unsafe { &**ht };
-    i = 0; // c:1560 for (i = 0;
-    while i < ht_ref.hsize {
-        // c:1560 i < ht->hsize; i++)
-        hn = ht_ref.nodes.get(i as usize).and_then(|n| n.clone()); // c:1561 hn = ht->nodes[i]
-        while let Some(node) = hn.clone() {
-            // c:1561 hn;
-            next = node.next.clone(); // c:1561 hn = hn->next (lifted into named local)
-                                      // c:1562-1568 — struct value v (block-scoped per C).
-            let mut v = value {
-                pm: None,        // c:1568 v.pm = (Param) hn (cast deferred)
-                arr: Vec::new(), // c:1567 v.arr = NULL
-                scanflags: 0,
-                valflags: 0,
-                start: 0, // c:1565
-                end: -1,  // c:1566
+    for (nam, val) in ht {
+        if val.is_empty() {
+            // c:1570 !val
+            zwarn("invalid value: ''"); // c:1571
+        } else {
+            // c:1573 — Nameddir nd = zshcalloc(sizeof(*nd));
+            let nd = nameddir {
+                node: hashnode {
+                    next: None,
+                    nam: nam.clone(),
+                    flags: 0, // c:1575 nd->node.flags = 0
+                },
+                dir: val.clone(), // c:1576 nd->dir = ztrdup(val)
+                diff: 0,
             };
-            // c:1563 — char *val (block-scoped per C).
-            let val: String;
-            val = getstrvalue(Some(&mut v)); // c:1570 val = getstrvalue(&v)
-            if val.is_empty() {
-                // c:1570 !val
-                zwarn("invalid value: ''"); // c:1571
-            } else {
-                // c:1573 — Nameddir nd = zshcalloc(sizeof(*nd));
-                let nd = nameddir {
-                    node: hashnode {
-                        next: None,
-                        nam: node.nam.clone(),
-                        flags: 0, // c:1575 nd->node.flags = 0
-                    },
-                    dir: val, // c:1576 nd->dir = ztrdup(val)
-                    diff: 0,
-                };
-                addnameddirnode(&node.nam, nd); // c:1577
-            }
-            hn = next; // c:1561 hn = next
+            addnameddirnode(nam, nd); // c:1577
         }
-        i += 1; // c:1560 i++
     }
     // c:1581-1589 — opts[INTERACTIVE] guard around deleteparamtable
     // (avoid removing sub-pms eagerly when an interactive shell is
-    // watching).
-    let saved_interactive = isset(INTERACTIVE); // c:1584
-    opt_state_set(&opt_name(INTERACTIVE), false); // c:1585
-    if !ht.is_null() {
-        // c:1587
-        let owned: HashTable = unsafe { std::ptr::read(ht) }; // move Box out
-        deleteparamtable(Some(owned)); // c:1588
-    }
-    opt_state_set(&opt_name(INTERACTIVE), saved_interactive); // c:1589
+    // watching). The temp table is the borrowed slice here; nothing
+    // to delete, so the guard collapses.
+    let _ = pm;
 }
 
 /// Direct port of `getpmnameddir(UNUSED(HashTable ht), const char *name)` from Src/Modules/parameter.c:1597.
@@ -3645,17 +3535,20 @@ pub fn unsetpmsalias(pm: Param, exp: i32) {
 /// ```
 #[allow(non_snake_case)]
 #[allow(unused_variables)]
+/// WARNING: param shape doesn't match C — C passes `alht` (the live
+/// alias table) plus the temporary HashTable of value-carrying child
+/// Params; zshrs selects the live table from the ALIAS_SUFFIX bit in
+/// `flags` and takes the (key, value) pairs directly (see
+/// setpmcommands for why: zshrs's `hashnode` carries no value slot).
 pub fn setaliases(
     alht: *mut HashTable,
     pm: Param, // c:1769
-    ht: *mut HashTable,
+    ht: &[(String, String)],
     flags: i32,
 ) {
-    // c:1774-1775 — `if (!ht) return;`
-    if ht.is_null() {
-        // c:1774
-        return; // c:1775
-    }
+    // c:1774-1775 — `if (!ht) return;` — an empty pair list still
+    // performs the flag-class flush below, same as C's empty-but-
+    // present temp table.
 
     // c:1777-1789 — drop every alias currently in `alht` whose flags
     // exactly match the target flag-class.
@@ -3705,25 +3598,20 @@ pub fn setaliases(
     }
 
     // c:1791-1804 — walk every entry in the user-supplied `ht`,
-    // call createaliasnode(val, flags) and add it to alht.
-    // Rust port: the C HashTable* slot is the SCALAR-PARAM mirror
-    // (Param->u.hash) populated by parser-driven `name=(k v)` assign.
-    // zshrs's param-side hash assignment doesn't yet feed entries
-    // through this slot; when the wire-up lands, the loop below
-    // reads `ht`'s nodes via the typed accessor and adds each.
-    // For now the structural body is in place — the inner walk is
-    // a no-op until the param->u.hash mirror gets populated.
-    // c:1791-1804 — for (i=0; i<ht->hsize; i++) for (hn=...) addnode(...)
-    unsafe {
-        let _ht_ref = &*ht; // c:1791 ht->hsize
-                            // hsize == 0 on the default-constructed mirror struct, so the
-                            // outer loop body never executes. When upstream populates
-                            // ht->nodes via param-hash assignment, the iteration drives:
-                            //   v.pm = (Param)hn; val = getstrvalue(&v);
-                            //   alht->addnode(alht, ztrdup(hn->nam),
-                            //                 createaliasnode(ztrdup(val), flags));
-                            // which lands at aliastab_lock().write().add(createaliasnode(...)).
-        let _ = createaliasnode("", "", flags as u32); // c:1803 (binding-only)
+    // call createaliasnode(val, flags) and add it to alht:
+    //   v.pm = (Param)hn; val = getstrvalue(&v);
+    //   alht->addnode(alht, ztrdup(hn->nam),
+    //                 createaliasnode(ztrdup(val), flags));
+    for (nam, val) in ht {
+        let node = createaliasnode(nam, val, flags as u32); // c:1803
+        let mut tab = if suffix_table {
+            sufaliastab_lock()
+        } else {
+            aliastab_lock()
+        }
+        .write()
+        .expect("aliastab poisoned");
+        tab.add(node); // c:1802 addnode
     }
 
     // c:1806-1807 — `if (ht != pm->u.hash) deleteparamtable(ht);`
@@ -3738,21 +3626,21 @@ pub fn setaliases(
 
 /// Port of `setpmraliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1812.
 #[allow(non_snake_case)]
-pub fn setpmraliases(pm: Param, ht: *mut HashTable) {
+pub fn setpmraliases(pm: Param, ht: &[(String, String)]) {
     // c:1812
     setaliases(std::ptr::null_mut(), pm, ht, 0) // c:1812
 }
 
 /// Port of `setpmdisraliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1819.
 #[allow(non_snake_case)]
-pub fn setpmdisraliases(pm: Param, ht: *mut HashTable) {
+pub fn setpmdisraliases(pm: Param, ht: &[(String, String)]) {
     // c:1819
     setaliases(std::ptr::null_mut(), pm, ht, DISABLED) // c:1819
 }
 
 /// Port of `setpmgaliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1826.
 #[allow(non_snake_case)]
-pub fn setpmgaliases(pm: Param, ht: *mut HashTable) {
+pub fn setpmgaliases(pm: Param, ht: &[(String, String)]) {
     // c:1826
     setaliases(std::ptr::null_mut(), pm, ht, ALIAS_GLOBAL) // c:1826
 }
@@ -3760,21 +3648,21 @@ pub fn setpmgaliases(pm: Param, ht: *mut HashTable) {
 /// Port of `setpmdisgaliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1833.
 /// C: `setaliases(aliastab, pm, ht, ALIAS_GLOBAL|DISABLED);`
 #[allow(non_snake_case)]
-pub fn setpmdisgaliases(pm: Param, ht: *mut HashTable) {
+pub fn setpmdisgaliases(pm: Param, ht: &[(String, String)]) {
     // c:1833
     setaliases(std::ptr::null_mut(), pm, ht, ALIAS_GLOBAL | DISABLED) // c:1819
 }
 
 /// Port of `setpmsaliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1840.
 #[allow(non_snake_case)]
-pub fn setpmsaliases(pm: Param, ht: *mut HashTable) {
+pub fn setpmsaliases(pm: Param, ht: &[(String, String)]) {
     // c:1840
     setaliases(std::ptr::null_mut(), pm, ht, ALIAS_SUFFIX) // c:1840
 }
 
 /// Port of `setpmdissaliases(Param pm, HashTable ht)` from Src/Modules/parameter.c:1847.
 #[allow(non_snake_case)]
-pub fn setpmdissaliases(pm: Param, ht: *mut HashTable) {
+pub fn setpmdissaliases(pm: Param, ht: &[(String, String)]) {
     // c:1847
     setaliases(std::ptr::null_mut(), pm, ht, ALIAS_SUFFIX | DISABLED) // c:1847
 }

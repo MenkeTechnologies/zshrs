@@ -266,3 +266,70 @@ mod heredoc_pipeline {
         assert_parity("( cat <<EOF\nfrom subshell\nEOF\n)");
     }
 }
+
+mod heredoc_delimiter_word {
+    use super::*;
+
+    /// c:Src/exec.c:4569 gethere — the delimiter is the full lexed
+    /// WORD after `<<`; cmdsubst/backtick segments in it are NOT
+    /// executed, they're literal after single-word processing.
+    /// A04redirect.ztst "Here-documents don't perform shell expansion
+    /// on the initial word". This delimiter shape used to HANG the
+    /// zshrs lexer (gap #3 2026-06-12).
+    #[test]
+    fn multipart_delimiter_with_cmdsubst_is_literal() {
+        assert_parity(
+            "foo=bar\ncat <<-$'$HERE '`$(THERE) `'$((AND)) '\"\\EVERYWHERE\" #\n\tMan walks into a $foo.\n\t$HERE `$(THERE) `$((AND)) \\EVERYWHERE\necho after",
+        );
+    }
+
+    /// c:Src/utils.c:7189 — getkeystring(GETKEY_DOLLAR_QUOTE) stops
+    /// at the Snull close-quote token. A `$'...'` segment followed by
+    /// a dquoted segment must not C-escape-decode the latter.
+    #[test]
+    fn dollar_quote_then_dquote_delimiter() {
+        assert_parity("cat <<-$'A '\"\\E\"\n\tbody\n\tA \\E\necho after");
+    }
+
+    /// c:Src/exec.c:4631-4634 — `if (lexstop) { t = bptr; break; }`:
+    /// input exhaustion terminates the body read. An unterminated
+    /// heredoc takes everything to EOF instead of looping forever.
+    /// File-driven (not -c): zshrs's -c path appends a trailing
+    /// newline to the source, which shifts the doc tail by one byte —
+    /// a separate input-layer artifact; ztst runs scripts from files.
+    #[test]
+    fn unterminated_heredoc_reads_to_eof() {
+        if !zsh_available() {
+            return;
+        }
+        let path =
+            std::env::temp_dir().join(format!("zshrs_hd_unterm_{}.zsh", std::process::id()));
+        std::fs::write(&path, "cat <<XX\nbody\n").unwrap();
+        let z = Command::new(zsh_path())
+            .arg("-f")
+            .arg(&path)
+            .output()
+            .unwrap();
+        let r = Command::new(zshrs_bin())
+            .args(["--zsh", "-f"])
+            .arg(&path)
+            .env_remove("ZSHRS_CACHE")
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            String::from_utf8_lossy(&z.stdout),
+            String::from_utf8_lossy(&r.stdout),
+            "unterminated heredoc EOF body"
+        );
+        assert_eq!(z.status.code(), r.status.code());
+    }
+
+    /// `$'\x45\x4e\x44\t\x44\x4f\x43'` — hex escapes in the delimiter
+    /// are decoded ($'...' IS processed, unlike cmdsubst). A04
+    /// "Here-documents do perform $'...' expansion on the initial word".
+    #[test]
+    fn dollar_quote_hex_escapes_in_delimiter() {
+        assert_parity("cat <<-$'\\x45\\x4e\\x44\\t\\x44\\x4f\\x43'\n\tunfathomable\n\tEND\tDOC\necho after");
+    }
+}

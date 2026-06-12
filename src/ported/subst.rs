@@ -462,7 +462,15 @@ fn stringsubstquote(strstart: &str, pstrdpos: usize) -> (String, usize) {
             end += 1; // c:209
             continue; // c:209
         }
-        if chars[end] == '\'' {
+        // c:Src/utils.c:7189 — `(how & GETKEY_DOLLAR_QUOTE) && *s ==
+        // Snull` is the canonical terminator: in the LEXED stream the
+        // closing quote of `$'...'` is the Snull token, not a raw `'`.
+        // Without this check a tokenized `$'A '"\E"` word ran past the
+        // close and C-escape-decoded the following Dnull section
+        // (`\E` → ESC), corrupting heredoc terminators (gap #3
+        // 2026-06-12, A04 "no shell expansion on the initial word").
+        // The raw `'` arm stays for untokenized caller input.
+        if chars[end] == Snull || chars[end] == '\'' {
             break;
         } // c:209 (unescaped close)
         end += 1;

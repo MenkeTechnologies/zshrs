@@ -419,7 +419,14 @@ pub fn gethere(strp: &mut String, typ: i32) -> Option<String> {
             break;
         }
         // c:4631-4634 — if (lexstop) { t = bptr; break; }
-        if LEX_LEXSTOP.with(|f| f.get()) {
+        // C's ingetc sets `lexstop = 1` when input is exhausted
+        // (Src/input.c:289-292), so the flag check alone suffices
+        // there. zshrs's hgetc signals the same exhaustion by
+        // returning None WITHOUT setting LEX_LEXSTOP — treat both as
+        // the c:4631 condition, else an unterminated heredoc loops
+        // here forever appending '\n'. Gap #3 2026-06-12 (A04
+        // "Here-documents don't perform shell expansion" wedge).
+        if LEX_LEXSTOP.with(|f| f.get()) || c.is_none() {
             t = buf.len();
             break;
         }

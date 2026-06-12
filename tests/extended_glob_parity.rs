@@ -176,6 +176,68 @@ setopt EXTENDED_GLOB
 "#,
         );
     }
+
+    /// c:Src/pattern.c:775 — `(#b)` after a quoted literal prefix must
+    /// still number the following group. The flag activates wherever it
+    /// appears, not only at pattern start. Gap #1 2026-06-12.
+    #[test]
+    fn hash_b_after_literal_prefix() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ "%test" = "%"(#b)(test)* ]] && print -r "[$match[1]] $mbegin[1] $mend[1]""#,
+        );
+    }
+
+    /// `(#b)` after a `?` class prefix.
+    #[test]
+    fn hash_b_after_question_prefix() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ "xtesty" = ?(#b)(test)* ]] && print -r "[$match[1]] $mbegin[1] $mend[1]""#,
+        );
+    }
+
+    /// `(#b)` mid-pattern with multiple groups — indices count from the
+    /// flag onward (c:775 parno = patnpar++ only while GF_BACKREF live).
+    #[test]
+    fn hash_b_mid_pattern_multiple_groups() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ "abctestxyz" = abc(#b)(test)(x)* ]] && print -r "[$match[1]][$match[2]] $mbegin[*] $mend[*]""#,
+        );
+    }
+
+    /// Unmatched alternation branch: match[i]="" and mbegin/mend = -1
+    /// (c:Src/pattern.c:2607-2613).
+    #[test]
+    fn hash_b_unmatched_branch_minus_one() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ ab = (#b)((x)|ab) ]] && print -r "m1=[$match[1]] m2=[$match[2]] b=$mbegin[*] e=$mend[*] n=$#match""#,
+        );
+    }
+
+    /// `(#B)` switches backreferences back off — groups after it are
+    /// plain P_OPEN+0 and record nothing (c:Src/pattern.c:1088-1091).
+    #[test]
+    fn hash_capital_b_disables_captures() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ "%test" = "%"(#b)(#B)(test)* ]] && print -r "n=$#match""#,
+        );
+    }
+
+    /// Groups past NSUBEXP (9) are unnumbered, not a compile error
+    /// (c:Src/pattern.c:777-780 "we just use P_OPEN on its own").
+    #[test]
+    fn hash_b_more_than_nine_groups() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; [[ abcdefghijk = (#b)(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k) ]] && print -r "n=$#match last=[$match[9]]""#,
+        );
+    }
+
+    /// `(#b)` in a case arm.
+    #[test]
+    fn hash_b_in_case_arm() {
+        assert_parity(
+            r#"setopt EXTENDED_GLOB; case "%test" in ("%"(#b)(test)*) print -r "[$match[1]]";; esac"#,
+        );
+    }
 }
 
 mod caret_negation {

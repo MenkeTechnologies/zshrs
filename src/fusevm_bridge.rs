@@ -2353,6 +2353,50 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // assignaparam with ASSPM_WARN — handles PM_UNIQUE dedupe,
             // type-flag flip, PM_READONLY rejection.
             //
+            // Special PM_HASHED params (options, commands, aliases,
+            // nameddirs, ...) take this assignaparam route too —
+            // `exec.assoc()` above misses them because they live in
+            // paramtab, not the executor assoc store. Run the same
+            // keyvalpairelement split (c:Src/subst.c:49-79 via
+            // prefork(PREFORK_ASSIGN)) so `options=([noglob]=on)`
+            // works, and enforce C's all-or-none Marker rule for
+            // hashed targets (Src/params.c:3544-3560: "bad
+            // [key]=value syntax for associative array").
+            let mut values = values;
+            let is_special_hashed = {
+                let tab = crate::ported::params::paramtab().read().unwrap();
+                tab.get(&name)
+                    .map(|pm| {
+                        let f = pm.node.flags as u32;
+                        (f & crate::ported::zsh_h::PM_HASHED) != 0
+                            && (f & crate::ported::zsh_h::PM_SPECIAL) != 0
+                    })
+                    .unwrap_or(false)
+            };
+            if is_special_hashed {
+                let kv: Vec<Option<(String, String)>> =
+                    values.iter().map(|e| parse_kv_pair_element(e)).collect();
+                let n_kv = kv.iter().filter(|p| p.is_some()).count();
+                if n_kv > 0 {
+                    if n_kv != kv.len() {
+                        // c:Src/params.c:3553-3560 — mixed forms.
+                        crate::ported::utils::zerr(
+                            "bad [key]=value syntax for associative array",
+                        );
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        exec.set_last_status(1);
+                        return true;
+                    }
+                    values = kv
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|(k, v)| [k, v])
+                        .collect();
+                }
+            }
             // The tied-array mirror to a PM_TIED scalar
             // (`typeset -T PATH path`) lives canonically in
             // setarrvalue's dispatch in C zsh; until that wires
