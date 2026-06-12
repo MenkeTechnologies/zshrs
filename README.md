@@ -560,9 +560,15 @@ zshrs --dump-plugins         # JSON dump of every sourced plugin grouped
                              # antidote / antigen / zplug / loose);
                              # feeds the IDE's External Libraries view
 zshrs --docs <name>          # render the LSP hover card for <name>
+zshrs --fmt [-w] [-t] [-i N] [FILE…]
+                             # format zsh source: block-structure
+                             # reindent, heredoc-safe, idempotent.
+                             # stdin→stdout with no files; -w rewrites
+                             # in place; -i sets indent width (default
+                             # 4); -t indents with tabs
 ```
 
-All five flags dispatch from `bins/zshrs.rs` into `src/extensions/lsp.rs`,
+All six flags dispatch from `bins/zshrs.rs` into `src/extensions/lsp.rs`,
 `src/extensions/dap.rs`, and `src/extensions/plugin_cache.rs`. The LSP and
 DAP modules are dependency-free additions
 (no `lsp-server` / `lsp-types` / `dap-types` crates) — Content-Length
@@ -581,7 +587,7 @@ default build lean.
 | `foldingRange`                      | `{ … }` / `do … done` / `case … esac` blocks + ≥3 `#` comment runs |
 | `rename` (with `prepareRename`)     | word-boundary aware replace across document |
 | `semanticTokens/full`               | comment / string / number / keyword / variable / function classes |
-| `formatting`                        | trailing-whitespace strip, leading-indent normalize, final newline |
+| `formatting`                        | full syntax-aware reindent (`src/extensions/fmt.rs`, same engine as `--fmt`): if/fi, do/done, case arms, `{ }`, `( )`, `[[ ]]`, line continuations; heredoc bodies verbatim; trailing-ws strip + final newline |
 | `publishDiagnostics`                | brace + block matching, unclosed strings, lights up on `didOpen` / `didChange` / `didSave` |
 
 Trigger characters for completion: `$`, `{`, `-`, `:`. Optional

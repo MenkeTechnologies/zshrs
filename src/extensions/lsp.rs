@@ -7701,7 +7701,17 @@ fn formatting(state: &State, params: &Value) -> Value {
     let opts = &params["options"];
     let tab_size = opts["tabSize"].as_u64().unwrap_or(4) as usize;
     let insert_spaces = opts["insertSpaces"].as_bool().unwrap_or(true);
-    let formatted = simple_format(&text, tab_size, insert_spaces);
+    // Full syntax-aware reindenter (extensions/fmt.rs): block-structure
+    // indentation, heredoc-body passthrough, trailing-ws strip. The
+    // previous `simple_format` only normalized existing leading
+    // whitespace units without deriving depth from syntax.
+    let formatted = crate::fmt::format_source(
+        &text,
+        &crate::fmt::FmtOptions {
+            indent_width: tab_size,
+            use_tabs: !insert_spaces,
+        },
+    );
     if formatted == text {
         return Value::Array(vec![]);
     }
@@ -7715,39 +7725,6 @@ fn formatting(state: &State, params: &Value) -> Value {
         },
         "newText": formatted,
     })])
-}
-
-/// Minimal formatter: normalize trailing whitespace, ensure final newline,
-/// align indentation to multiples of `tab_size`. This is the lowest-risk
-/// transform we can apply; deeper reformatting belongs in a follow-up.
-fn simple_format(text: &str, tab_size: usize, insert_spaces: bool) -> String {
-    let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
-        // Strip trailing whitespace
-        let trimmed_end = line.trim_end();
-        // Normalize leading tabs ↔ spaces per options
-        let leading_spaces: usize = trimmed_end
-            .chars()
-            .take_while(|c| *c == ' ' || *c == '\t')
-            .map(|c| if c == '\t' { tab_size } else { 1 })
-            .sum();
-        let rest = trimmed_end.trim_start();
-        if insert_spaces {
-            for _ in 0..leading_spaces {
-                out.push(' ');
-            }
-        } else {
-            for _ in 0..(leading_spaces / tab_size) {
-                out.push('\t');
-            }
-            for _ in 0..(leading_spaces % tab_size) {
-                out.push(' ');
-            }
-        }
-        out.push_str(rest);
-        out.push('\n');
-    }
-    out
 }
 
 // ── Word-at-position helper ─────────────────────────────────────────────
@@ -10253,21 +10230,26 @@ foo() { echo second }\n\
         );
     }
 
-    // ── simple_format ───────────────────────────────────────────────────
+    // ── formatting engine (extensions/fmt.rs) ──────────────────────────
+    // simple_format (whitespace-only stub) was replaced by the full
+    // syntax-aware reindenter; these pin the same two guarantees
+    // through the new engine. Note the reindent: a top-level command
+    // with stray leading spaces now normalizes to column 0 (the stub
+    // preserved whatever indent it found).
 
     #[test]
-    fn simple_format_strips_trailing_whitespace() {
+    fn format_strips_trailing_whitespace() {
         let _g = crate::test_util::global_state_lock();
         let src = "echo hi   \n  echo bye\t\n";
-        let out = simple_format(src, 4, true);
-        assert_eq!(out, "echo hi\n  echo bye\n");
+        let out = crate::fmt::format_source(src, &crate::fmt::FmtOptions::default());
+        assert_eq!(out, "echo hi\necho bye\n");
     }
 
     #[test]
-    fn simple_format_ensures_trailing_newline() {
+    fn format_ensures_trailing_newline() {
         let _g = crate::test_util::global_state_lock();
         let src = "echo hi";
-        let out = simple_format(src, 4, true);
+        let out = crate::fmt::format_source(src, &crate::fmt::FmtOptions::default());
         assert!(out.ends_with('\n'));
     }
 
