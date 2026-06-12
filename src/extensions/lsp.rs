@@ -7704,15 +7704,15 @@ fn formatting(state: &State, params: &Value) -> Value {
     // Full syntax-aware reindenter (extensions/fmt.rs): block-structure
     // indentation, heredoc-body passthrough, trailing-ws strip.
     //
-    // Indent-width FLOOR of 4: zsh indent levels need the visual
-    // separation (zpwr house style; 2 is not enough). The client's
-    // tabSize is honored only upward — an IDE configured for 2/3
-    // still formats at 4, while 8 stays 8. The CLI `-i` flag remains
-    // an explicit override for callers who really want narrower.
+    // Indent width: DEFAULT is 4 (zpwr house style — set in
+    // FmtOptions::default and the unwrap_or above when the client
+    // sends no tabSize). An explicitly configured editor tabSize is
+    // honored verbatim in both directions, same as the CLI `-i`
+    // override.
     let formatted = crate::fmt::format_source(
         &text,
         &crate::fmt::FmtOptions {
-            indent_width: tab_size.max(4),
+            indent_width: tab_size,
             use_tabs: !insert_spaces,
         },
     );
