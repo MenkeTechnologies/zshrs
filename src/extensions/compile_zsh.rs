@@ -2891,15 +2891,59 @@ impl ZshCompiler {
                 // own WORD_SPLIT (for unquoted `$(…)`) is suppressed
                 // — the outer loop emits ONE WORD_SPLIT per element
                 // below.
-                let n = elements.len();
-                let trace_slots: Vec<u16> = (0..n)
-                    .map(|_| {
-                        let s = self.next_slot;
+                let mut trace_slots: Vec<u16> = Vec::with_capacity(elements.len());
+                let mut stack_values = 0usize;
+                for elem in elements.iter() {
+                    // c:Src/subst.c:49-79 keyvalpairelement, invoked
+                    // from prefork's PREFORK_ASSIGN walk (c:111-117).
+                    // An unquoted `[key]=value` / `[key]+=value`
+                    // element is rewritten into THREE list nodes:
+                    // Marker (or Marker `+`), key, value — with the
+                    // key and value each run through singsub (c:65,75:
+                    // substitution only, no glob / no word-split / no
+                    // brace expansion). The Marker triple flows into
+                    // assignaparam(ASSPM_KEY_VALUE) downstream. The
+                    // fusevm compile path performs the same split here
+                    // at compile time, where the raw token form still
+                    // distinguishes quoted (`"[k]=v"` — plain element,
+                    // c:54 start[0]==Inbrack is the TOKEN form only)
+                    // from unquoted.
+                    if let Some((key_raw, val_raw, is_append)) = split_kv_element(elem) {
+                        // c:Src/subst.c:59-60 marker / marker_plus.
+                        let marker = if is_append {
+                            format!("{}+", crate::ported::zsh_h::Marker)
+                        } else {
+                            crate::ported::zsh_h::Marker.to_string()
+                        };
+                        let mc = self.builder.add_constant(Value::str(marker.as_str()));
+                        self.builder.emit(Op::LoadConst(mc), 0);
+                        let ms = self.next_slot;
                         self.next_slot += 1;
-                        s
-                    })
-                    .collect();
-                for (i, elem) in elements.iter().enumerate() {
+                        self.builder.emit(Op::Dup, 0);
+                        self.builder.emit(Op::SetSlot(ms), 0);
+                        trace_slots.push(ms);
+                        for part in [&key_raw, &val_raw] {
+                            // c:Src/subst.c:65/75 `singsub(&dat)` —
+                            // PREFORK_SINGLE semantics: parameter /
+                            // command substitution runs, but no glob,
+                            // no IFS split, no brace expansion.
+                            // dq_context_depth>0 routes every emit
+                            // site to the no-glob / no-split variants
+                            // (EXPAND_TEXT mode 1, GLOB_EXPAND gated).
+                            self.assign_context_depth += 1;
+                            self.dq_context_depth += 1;
+                            self.compile_word_str(part);
+                            self.dq_context_depth -= 1;
+                            self.assign_context_depth -= 1;
+                            let ps = self.next_slot;
+                            self.next_slot += 1;
+                            self.builder.emit(Op::Dup, 0);
+                            self.builder.emit(Op::SetSlot(ps), 0);
+                            trace_slots.push(ps);
+                        }
+                        stack_values += 3;
+                        continue;
+                    }
                     self.assign_context_depth += 1;
                     self.compile_word_str(elem);
                     self.assign_context_depth -= 1;
@@ -2912,8 +2956,12 @@ impl ZshCompiler {
                     }
                     // Stash the expanded value for the trace, leaving
                     // the original on the stack for SET_ARRAY.
+                    let s = self.next_slot;
+                    self.next_slot += 1;
                     self.builder.emit(Op::Dup, 0);
-                    self.builder.emit(Op::SetSlot(trace_slots[i]), 0);
+                    self.builder.emit(Op::SetSlot(s), 0);
+                    trace_slots.push(s);
+                    stack_values += 1;
                 }
                 // c:Src/exec.c::addvars:2624-2632 — emit the trace
                 // line. C's emission:
@@ -2961,7 +3009,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                let argc = (elements.len() + 1) as u8;
+                let argc = (stack_values + 1) as u8;
                 let bid = if assign.append {
                     crate::vm_helper::BUILTIN_APPEND_ARRAY
                 } else {
@@ -7903,6 +7951,60 @@ fn looks_like_brace_expansion(s: &str) -> bool {
         }
     }
     false
+}
+
+/// Compile-time port of `keyvalpairelement` (c:Src/subst.c:49-79) shape
+/// detection: does this RAW token-encoded array-literal element have the
+/// `[key]=value` / `[key]+=value` form?
+///
+/// Returns `Some((key_raw, value_raw, is_append))` — both halves still
+/// token-encoded, ready for `compile_word_str` — or `None` when the
+/// element is a plain word.
+///
+/// - c:54 `start[0] == Inbrack`: the leading `[` must be the TOKEN form
+///   (i.e. unquoted). A quoted element (`"[k]=v"`) starts with a
+///   Dnull/Snull/Bnull marker in the raw form, so it never matches —
+///   matching C, where quoting prevents Inbrack tokenization.
+///   The literal-`[` first-char is also accepted because some compile
+///   entry paths carry pre-untokenized words.
+/// - c:55 `end = strchr(start+1, Outbrack)`: first CLOSING bracket in
+///   token form; a `]` inside a quote span stays literal in C (no
+///   Outbrack token), so the scan here skips quote-marker spans.
+/// - c:57-58 `end[1] == Equals || (end[1] == '+' && end[2] == Equals)`.
+fn split_kv_element(raw: &str) -> Option<(String, String, bool)> {
+    use crate::ported::zsh_h::{Equals, Inbrack, Outbrack};
+    let chars: Vec<char> = raw.chars().collect();
+    if chars.is_empty() || (chars[0] != Inbrack && chars[0] != '[') {
+        return None;
+    }
+    // Scan for the closing bracket, ignoring `]` inside Snull / Dnull
+    // quote spans (those are literal data, not Outbrack — c:55 strchr
+    // only finds the TOKEN).
+    let mut in_sq = false;
+    let mut in_dq = false;
+    let mut end: Option<usize> = None;
+    for (i, &c) in chars.iter().enumerate().skip(1) {
+        match c {
+            '\u{9d}' => in_sq = !in_sq, // Snull
+            '\u{9e}' => in_dq = !in_dq, // Dnull
+            _ if c == Outbrack || (c == ']' && !in_sq && !in_dq) => {
+                end = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    let is_eq = |c: Option<&char>| matches!(c, Some(&'=')) || c == Some(&Equals);
+    let is_append = chars.get(end + 1) == Some(&'+') && is_eq(chars.get(end + 2));
+    let is_assign = !is_append && is_eq(chars.get(end + 1));
+    if !is_assign && !is_append {
+        return None;
+    }
+    let key: String = chars[1..end].iter().collect();
+    let value_start = if is_append { end + 3 } else { end + 2 };
+    let value: String = chars[value_start..].iter().collect();
+    Some((key, value, is_append))
 }
 
 /// Determine the bslashquote-mode for the bridge replacement based on the
