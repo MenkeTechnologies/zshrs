@@ -478,7 +478,9 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
             // case: `bad math expression: unexpected ')'`.
             return Err("bad math expression: unexpected ')'".to_string());
         } else {
-            return Err(format!("illegal character: {}", c));
+            // c:1498-1499 — `if (*junk) zerr("bad math expression:
+            // illegal character: %c", *junk);`
+            return Err(format!("bad math expression: illegal character: {}", c));
         }
     }
 
@@ -1976,6 +1978,12 @@ pub(crate) fn zzlex() -> i32 {
                     return ID;
                 }
 
+                // c:842 — `default: if (idigit(*--ptr) ...` — the C
+                // default case BACKS UP so an unrecognized char (e.g.
+                // `'`) is left un-consumed; matheval's trailing-junk
+                // check (c:1498-1499) then reports THAT char:
+                // `$(( 'A' ))` → "illegal character: '" not ": A".
+                m_pos_sub(c.len_utf8());
                 return EOI;
             }
         }
