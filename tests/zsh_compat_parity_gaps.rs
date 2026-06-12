@@ -47279,3 +47279,410 @@ mod corpus_dash_fc_bulk_ahr {
         bulk_ahr_fc_row_048 => (r#"bulk ahr 048"#, r###"unset v; print -r ${v:-def}"###);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2026-06-12 probe sweep — divergence hunt over arithmetic edges, parameter
+// expansion flag combos, quoting levels, subscript flags, brace/numeric
+// ranges, prompt escapes, printf directives, read/coproc, alt control-flow
+// forms, and typeset -p shapes. 117 probes were run against zsh 5.9
+// (`zsh -fc` vs `zshrs --zsh -fc`); the matching 111 are pinned here.
+// The 6 divergent ones: 2 are binary-name artifacts ($0 reports the
+// invoking binary in BOTH shells — not comparable across different
+// binaries), 4 are real gaps fixed/tracked in the same change set:
+// ${x[(w)N]} word subscript, $ZSH_SUBSHELL in $(...), functrace toplevel
+// line number, and the alternative `while {cond} {body}` form.
+// ─────────────────────────────────────────────────────────────────────────
+mod probe_sweep_2026_06_12 {
+    use super::*;
+
+    parity_gap_tests! {
+        probe_print_l_8_0_42 => (r#"print -- ${(l:8::0:)${:-42}}"#, r###"print -- ${(l:8::0:)${:-42}}"###);
+        probe_print_r_6_ab => (r#"print -- ${(r:6::.:)${:-ab}}"#, r###"print -- ${(r:6::.:)${:-ab}}"###);
+        probe_print_l_3_toolong => (r#"print -- ${(l:3:)${:-toolong}}"#, r###"print -- ${(l:3:)${:-toolong}}"###);
+        probe_typeset_i_x_10_x_5_print_x => (r#"typeset -i x=10; x+=5; print $x"#, r###"typeset -i x=10; x+=5; print $x"###);
+        probe_typeset_i_2_b_5_print_b => (r#"typeset -i 2 b=5; print $b"#, r###"typeset -i 2 b=5; print $b"###);
+        probe_typeset_f_2_f_1_005_print_f => (r#"typeset -F 2 f=1.005; print $f"#, r###"typeset -F 2 f=1.005; print $f"###);
+        probe_print_16_255 => (r#"print $(( [#16] 255 ))"#, r###"print $(( [#16] 255 ))"###);
+        probe_print_16_255_2 => (r#"print $(( [##16] 255 ))"#, r###"print $(( [##16] 255 ))"###);
+        probe_print_2_10 => (r#"print $(( 2**10 ))"#, r###"print $(( 2**10 ))"###);
+        probe_print_7_3 => (r#"print $(( 7 % -3 ))"#, r###"print $(( 7 % -3 ))"###);
+        probe_print_7_3_2 => (r#"print $(( -7 % 3 ))"#, r###"print $(( -7 % 3 ))"###);
+        probe_print_1_2_3_4_5 => (r#"print $(( 1 ? 2 : 3 ? 4 : 5 ))"#, r###"print $(( 1 ? 2 : 3 ? 4 : 5 ))"###);
+        probe_integer_i_5_print_i_i => (r#"integer i=5; print $(( i++ + ++i ))"#, r###"integer i=5; print $(( i++ + ++i ))"###);
+        probe_print_0x1f_010_2_101 => (r#"print $(( 0x1f + 010 + 2#101 ))"#, r###"print $(( 0x1f + 010 + 2#101 ))"###);
+        probe_float_f_0_1_print_f_0_2 => (r#"float f=0.1; print $(( f + 0.2 ))"#, r###"float f=0.1; print $(( f + 0.2 ))"###);
+        probe_print_a_e_2 => (r#"print -- {a..e..2}"#, r###"print -- {a..e..2}"###);
+        probe_print_01_05 => (r#"print -- {01..05}"#, r###"print -- {01..05}"###);
+        probe_print_5_1 => (r#"print -- {5..1}"#, r###"print -- {5..1}"###);
+        probe_print_a_b_1_2 => (r#"print -- {a,b}{1,2}"#, r###"print -- {a,b}{1,2}"###);
+        probe_print_2_4_txt_n => (r#"print -- <2-4>.txt(N)"#, r###"print -- <2-4>.txt(N)"###);
+        probe_x_hello_print_x_0_2_x_3_x_1_1 => (r#"x=hello; print -- ${x:0:2} ${x: -3} ${x:"#, r###"x=hello; print -- ${x:0:2} ${x: -3} ${x:1:-1}"###);
+        probe_x_a_b_c_print_x_r_x_e_x_h_x_t => (r#"x=a.b.c; print -- ${x:r} ${x:e} ${x:h} $"#, r###"x=a.b.c; print -- ${x:r} ${x:e} ${x:h} ${x:t}"###);
+        probe_x_usr_local_bin_zsh_print_x_h2_x_t2 => (r#"x=/usr/local/bin/zsh; print -- ${x:h2} $"#, r###"x=/usr/local/bin/zsh; print -- ${x:h2} ${x:t2}"###);
+        probe_x_hello_world_print_c_x_l_x_u_x => (r#"x='Hello World'; print -- ${(C)x} ${(L)x"#, r###"x="Hello World"; print -- ${(C)x} ${(L)x} ${(U)x}"###);
+        probe_a_one_two_three_print_j_a_f_a_head_1 => (r#"a=(one two three); print -- ${(j:-:)a} $"#, r###"a=(one two three); print -- ${(j:-:)a} ${(F)a} | head -1"###);
+        probe_a_one_two_three_print_s_j_a => (r#"a=(one two three); print -- ${(s:-:)${(j"#, r###"a=(one two three); print -- ${(s:-:)${(j:-:)a}}"###);
+        probe_print_q_a_b_c => (r#"print -- ${(q)${:-a b'c}}"#, r###"print -- ${(q)${:-a b'c}}"###);
+        probe_print_qq_a_b => (r#"print -- ${(qq)${:-a b}}"#, r###"print -- ${(qq)${:-a b}}"###);
+        probe_print_qqq_a_b => (r#"print -- ${(qqq)${:-a b}}"#, r###"print -- ${(qqq)${:-a b}}"###);
+        probe_print_qqqq_a_b => (r#"print -- ${(qqqq)${:-a b}}"#, r###"print -- ${(qqqq)${:-a b}}"###);
+        probe_print_q_simple => (r#"print -- ${(q-)${:-simple}}"#, r###"print -- ${(q-)${:-simple}}"###);
+        probe_x_a_b_print_q_q_x => (r#"x='a b'; print -- ${(Q)${(q)x}}"#, r###"x='a b'; print -- ${(Q)${(q)x}}"###);
+        probe_a_3_1_2_print_o_a_o_a => (r#"a=(3 1 2); print -- ${(o)a} ${(O)a}"#, r###"a=(3 1 2); print -- ${(o)a} ${(O)a}"###);
+        probe_a_c_a_b_print_oi_a => (r#"a=(c A b); print -- ${(oi)a}"#, r###"a=(c A b); print -- ${(oi)a}"###);
+        probe_a_x1_x10_x2_print_n_a => (r#"a=(x1 x10 x2); print -- ${(n)a}"#, r###"a=(x1 x10 x2); print -- ${(n)a}"###);
+        probe_a_a_b_c_d_e_print_a_2_4_a_2_1_a_2_2 => (r#"a=(a b c d e); print -- ${a[2,4]} ${a[-2"#, r###"a=(a b c d e); print -- ${a[2,4]} ${a[-2,-1]} ${a[2,-2]}"###);
+        probe_a_a_b_c_print_e_a => (r#"a=(a b c); print -- ${(e):-'$a'}"#, r###"a=(a b c); print -- ${(e):-'$a'}"###);
+        probe_typeset_a_h_k1_v1_k2_v2_print_kv_h_tr_n_sort_tr => (r#"typeset -A h=(k1 v1 k2 v2); print -- ${("#, r###"typeset -A h=(k1 v1 k2 v2); print -- ${(kv)h} | tr ' ' '\n' | sort | tr '\n' ' '"###);
+        probe_typeset_a_h_k1_v1_k2_v2_print_h_i_v => (r#"typeset -A h=(k1 v1 k2 v2); print -- ${h"#, r###"typeset -A h=(k1 v1 k2 v2); print -- ${h[(i)v*]}"###);
+        probe_a_foo_bar_foobar_print_a_r_foo_a_r_bar => (r#"a=(foo bar foobar); print -- ${a[(r)foo*"#, r###"a=(foo bar foobar); print -- ${a[(r)foo*]} ${a[(R)*bar]}"###);
+        probe_a_foo_bar_foobar_print_a_n_2_foo => (r#"a=(foo bar foobar); print -- ${a[(n:2:)f"#, r###"a=(foo bar foobar); print -- ${a[(n:2:)foo*]}"###);
+        probe_a_aa_ab_ba_print_m_a_a_a_a => (r#"a=(aa ab ba); print -- ${(M)a:#a*} / ${a"#, r###"a=(aa ab ba); print -- ${(M)a:#a*} / ${a:#a*}"###);
+        probe_x_aabbcc_print_x_m_b_match => (r#"x=aabbcc; print -- ${x//(#m)b/[$MATCH]}"#, r###"x=aabbcc; print -- ${x//(#m)b/[$MATCH]}"###);
+        probe_setopt_extendedglob_x_foo123bar_print_sm_x_0_9 => (r#"setopt extendedglob; x=foo123bar; print "#, r###"setopt extendedglob; x=foo123bar; print -- ${(SM)x##[0-9]##}"###);
+        probe_setopt_extendedglob_print_abcdef_b_ab_cd_match_2 => (r#"setopt extendedglob; print -- ${${:-abcd"#, r###"setopt extendedglob; print -- ${${:-abcdef}//(#b)(ab)(cd)/$match[2]$match[1]}"###);
+        probe_x_abc_print_x_u_x_l => (r#"x=abc; print -- $x:u $x:l"#, r###"x=abc; print -- $x:u $x:l"###);
+        probe_print_p_b_f_red_x_f_b_cat_v => (r#"print -P -- '%B%F{red}x%f%b' | cat -v"#, r###"print -P -- '%B%F{red}x%f%b' | cat -v"###);
+        probe_print_p_1j_jobs_nojobs => (r#"print -P -- '%(1j.JOBS.nojobs)'"#, r###"print -P -- '%(1j.JOBS.nojobs)'"###);
+        probe_print_p_20_verylongtextthatistruncated_cat_v => (r#"print -P -- '%20<...<verylongtextthatist"#, r###"print -P -- '%20<...<verylongtextthatistruncated' | cat -v"###);
+        probe_print_true => (r#"print -- =true"#, r###"print -- =true"###);
+        probe_print => (r#"print -- ~+"#, r###"print -- ~+"###);
+        probe_print_0_anon_arg1_arg2 => (r#"() { print -- $0 $# anon } arg1 arg2"#, r###"() { print -- $0 $# anon } arg1 arg2"###);
+        probe_echo_a_b_c_read_a_arr_print_arr => (r#"echo a b c | read -A arr; print ${#arr}"#, r###"echo a b c | read -A arr; print ${#arr}"###);
+        probe_print_l_one_two_read_x_read_y_print_y_x => (r#"print -l one two | { read x; read y; pri"#, r###"print -l one two | { read x; read y; print "$y/$x" }"###);
+        probe_coproc_cat_print_p_hello_read_p_line_print_line => (r#"coproc cat; print -p hello; read -p line"#, r###"coproc cat; print -p hello; read -p line; print -- $line; coproc exit 2>/dev/null"###);
+        probe_true_false_true_print_pipestatus => (r#"true | false | true; print -- $pipestatu"#, r###"true | false | true; print -- $pipestatus"###);
+        probe_setopt_pipefail_true_false_print => (r#"setopt pipefail; true | false; print $?"#, r###"setopt pipefail; true | false; print $?"###);
+        probe_print_print_3_4 => (r#"print $(( $(print 3) + 4 ))"#, r###"print $(( $(print 3) + 4 ))"###);
+        probe_x_5_x_3_print_big => (r#"x=5; (( x > 3 )) && print big"#, r###"x=5; (( x > 3 )) && print big"###);
+        probe_repeat_3_print_n_x_print => (r#"repeat 3 print -n x; print"#, r###"repeat 3 print -n x; print"###);
+        probe_for_i_0_i_6_i_2_do_print_n_i_done_print => (r#"for ((i=0; i<6; i+=2)); do print -n '$i,"#, r###"for ((i=0; i<6; i+=2)); do print -n "$i,"; done; print"###);
+        probe_select_x_in_a_b_do_break_done_dev_null_2_dev_nul => (r#"select x in a b; do break; done < /dev/n"#, r###"select x in a b; do break; done < /dev/null 2>/dev/null; print rc=$?"###);
+        probe_case_abc_in_a_print_a_c_print_c_esac => (r#"case abc in (a*) print A ;| (*c) print C"#, r###"case abc in (a*) print A ;| (*c) print C ;; esac"###);
+        probe_case_x_in_a_b_print_fell_esac => (r#"case x in a) ;& b) print fell ;; esac"#, r###"case x in a) ;& b) print fell ;; esac"###);
+        probe_if_true_print_ok_else_print_no => (r#"if { true } { print ok } else { print no"#, r###"if { true } { print ok } else { print no }"###);
+        probe_for_x_1_2_3_print_n_x_print => (r#"for x (1 2 3) print -n $x; print"#, r###"for x (1 2 3) print -n $x; print"###);
+        probe_exit_5_print => (r#"(exit 5); print $?"#, r###"(exit 5); print $?"###);
+        probe_exit_3_always_print_n_cleanup_print => (r#"{ exit 3 } always { print -n cleanup- };"#, r###"{ exit 3 } always { print -n cleanup- }; print $?"###);
+        probe_setopt_nullglob_print_nonexist_print_rc => (r#"setopt nullglob; print -- nonexist*; pri"#, r###"setopt nullglob; print -- nonexist*; print rc=$?"###);
+        probe_unsetopt_nomatch_print_nonexist => (r#"unsetopt nomatch; print -- nonexist*"#, r###"unsetopt nomatch; print -- nonexist*"###);
+        probe_print_n_wc_l_tr_d => (r#"print -- *(N/) | wc -l | tr -d ' '"#, r###"print -- *(N/) | wc -l | tr -d ' '"###);
+        probe_print_print_usr_bin_env_t => (r#"print -- ${$(print /usr/bin/env):t}"#, r###"print -- ${$(print /usr/bin/env):t}"###);
+        probe_print_2 => (r#"print -- ${^~:-}"#, r###"print -- ${^~:-}"###);
+        probe_zmodload_zsh_mathfunc_2_dev_null_print_int_sqrt => (r#"zmodload zsh/mathfunc 2>/dev/null; print"#, r###"zmodload zsh/mathfunc 2>/dev/null; print $(( int(sqrt(16)) ))"###);
+        probe_print_abs_5 => (r#"print $(( abs(-5) ))"#, r###"print $(( abs(-5) ))"###);
+        probe_autoload_uz_is_at_least_is_at_least_1_0_print_ye => (r#"autoload -Uz is-at-least && is-at-least "#, r###"autoload -Uz is-at-least && is-at-least 1.0 && print yes"###);
+        probe_print_v_var_captured_print_var => (r#"print -v var -- captured; print $var"#, r###"print -v var -- captured; print $var"###);
+        probe_printf_v_var2_s_s_a_b_2_dev_null_print_var2_nope => (r#"printf -v var2 '%s-%s' a b 2>/dev/null; "#, r###"printf -v var2 '%s-%s' a b 2>/dev/null; print ${var2:-nope}"###);
+        probe_printf_05_2f_x_o_e_n_3_14159_255_8_12345_678 => (r#"printf '%05.2f|%x|%o|%e\n' 3.14159 255 8"#, r###"printf '%05.2f|%x|%o|%e\n' 3.14159 255 8 12345.678"###);
+        probe_printf_b_tab_there_n => (r#"printf '%b' 'tab\there\n'"#, r###"printf '%b' 'tab\there\n'"###);
+        probe_printf_q_n_a_b_c => (r#"printf '%q\n' 'a b$c'"#, r###"printf '%q\n' 'a b$c'"###);
+        probe_printf_3s_n_abcdef => (r#"printf '%.3s\n' abcdef"#, r###"printf '%.3s\n' abcdef"###);
+        probe_printf_5s_n_ab => (r#"printf '%-5s|\n' ab"#, r###"printf '%-5s|\n' ab"###);
+        probe_print_f_s_s_n_k1_v1_k2_v2 => (r#"print -f '%s=%s\n' k1 v1 k2 v2"#, r###"print -f '%s=%s\n' k1 v1 k2 v2"###);
+        probe_echo_e_a_tb => (r#"echo -e 'a\tb'"#, r###"echo -e 'a\tb'"###);
+        probe_echo_e_a_tb_2 => (r#"echo -E 'a\tb'"#, r###"echo -E 'a\tb'"###);
+        probe_print_rn_x41_x0a_od_c_head_1_tr_s => (r#"print -rn -- $'\x41\x0a' | od -c | head "#, r###"print -rn -- $'\x41\x0a' | od -c | head -1 | tr -s ' '"###);
+        probe_print_a_101 => (r#"print -- $'A' $'\101'"#, r###"print -- $'A' $'\101'"###);
+        probe_read_r_line_raw_ttext_print_line => (r#"read -r line <<< $'raw\ttext'; print -- "#, r###"read -r line <<< $'raw\ttext'; print -- "$line""###);
+        probe_ifs_read_r_a_b_x_y_print_a_b => (r#"IFS=: read -r a b <<< 'x:y'; print -- '$"#, r###"IFS=: read -r a b <<< "x:y"; print -- "$a/$b""###);
+        probe_vared_c_dummy_2_dev_null_print_rc => (r#"vared -c dummy 2>/dev/null; print rc=$?"#, r###"vared -c dummy 2>/dev/null; print rc=$?"###);
+        probe_typeset_p_path_head_c_14 => (r#"typeset -p PATH | head -c 14"#, r###"typeset -p PATH | head -c 14"###);
+        probe_typeset_a_h_a_1_typeset_p_h => (r#"typeset -A h=(a 1); typeset -p h"#, r###"typeset -A h=(a 1); typeset -p h"###);
+        probe_a_1_2_typeset_p_a => (r#"a=(1 2); typeset -p a"#, r###"a=(1 2); typeset -p a"###);
+        probe_typeset_r_ro_x_typeset_p_ro => (r#"typeset -r ro=x; typeset -p ro"#, r###"typeset -r ro=x; typeset -p ro"###);
+        probe_export_exp_v_typeset_p_exp => (r#"export EXP=v; typeset -p EXP"#, r###"export EXP=v; typeset -p EXP"###);
+        probe_local_2_dev_null_x_print_rc => (r#"local 2>/dev/null x; print rc=$?"#, r###"local 2>/dev/null x; print rc=$?"###);
+        probe_whence_v_print_head_1 => (r#"whence -v print | head -1"#, r###"whence -v print | head -1"###);
+        probe_whence_w_if => (r#"whence -w if"#, r###"whence -w if"###);
+        probe_type_f_zargs_2_dev_null_head_1_print_rc => (r#"type -f zargs 2>/dev/null | head -1; pri"#, r###"type -f zargs 2>/dev/null | head -1; print rc=$?"###);
+        probe_which_a_true_wc_l_tr_d => (r#"which -a true | wc -l | tr -d ' '"#, r###"which -a true | wc -l | tr -d ' '"###);
+        probe_command_v_print => (r#"command -v print"#, r###"command -v print"###);
+        probe_builtin_print_viabuiltin => (r#"builtin print -- viabuiltin"#, r###"builtin print -- viabuiltin"###);
+        probe_noglob_print_unexpanded => (r#"noglob print -- *unexpanded*"#, r###"noglob print -- *unexpanded*"###);
+        probe_unset_var_2_dev_null_print_var => (r#"unset var 2>/dev/null; print ${+var}"#, r###"unset var 2>/dev/null; print ${+var}"###);
+        probe_var_set_print_var => (r#"var=set; print ${+var}"#, r###"var=set; print ${+var}"###);
+        probe_print_print_a_b_c_2 => (r#"print -- ${$(print a b c)[2]}"#, r###"print -- ${$(print a b c)[2]}"###);
+        probe_x_a_b_c_print_s_x_wc_l_tr_d => (r#"x='a:b:c'; print -- '${(@s.:.)x}' | wc -"#, r###"x="a:b:c"; print -- "${(@s.:.)x}" | wc -l | tr -d ' '"###);
+        probe_print_f_print_l_1_2_3_wc_l_tr_d => (r#"print -- '${(@f)$(print -l 1 2 3)}' | wc"#, r###"print -- "${(@f)$(print -l 1 2 3)}" | wc -l | tr -d ' '"###);
+        probe_setopt_shwordsplit_v_a_b_args_print_args_v => (r#"setopt shwordsplit; v='a b'; args() { pr"#, r###"setopt shwordsplit; v="a b"; args() { print $#; }; args $v"###);
+        probe_unset_f_args_2_dev_null_print_rc => (r#"unset -f args 2>/dev/null; print rc=$?"#, r###"unset -f args 2>/dev/null; print rc=$?"###);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2026-06-12 probe sweep B — second divergence hunt of the day: parameter
+// flag combos ((l)/(r)/(j)/(o)/(b)/(q)), colon-substring forms (incl. the
+// bash-compat space-offset `${x: 1:1}`), typeset -T custom separators,
+// multibyte-off byte-length semantics, `${(b)?}` and other flagged special
+// params, print -X/-x, pipe-status edges. 196 probes ran against zsh 5.9.1
+// (`zsh -fc` vs `zshrs --zsh -fc`); the 191 matching are pinned here.
+// The 5 excluded: 2 typeset -n nameref probes (zshrs follows the vendored
+// master C source — namerefs don't exist in the 5.9.1 oracle binary), and
+// 3 `cmd | head -0` probes (zshrs's internal head applet accepts `-0`
+// GNU-style with rc 0 where BSD /usr/bin/head errors rc 1 — an absorbed-
+// applet semantic, not a zsh-port gap).
+// Gaps found by this sweep and fixed in the same change set: typeset -T
+// joinchar (tieddata.joinchar threaded through param.u_tied), Quest/Bang
+// token values in paramsubst's name walker (0x97/0x9c per Src/zsh.h:178,
+// 183 — were mislabeled 0x86/0x96, breaking `${(b)?}`/`${?:-x}`), and
+// `${#x}` byte-count under `unsetopt multibyte` (Src/utils.c:5662).
+// ─────────────────────────────────────────────────────────────────────────
+mod probe_sweep_2026_06_12_b {
+    use super::*;
+
+    parity_gap_tests! {
+        probe_b_row_001 => (r#"probe b 001"#, r###"print ${(l:8::0:)42}"###);
+        probe_b_row_002 => (r#"probe b 002"#, r###"print ${(r:8::.:)abc}"###);
+        probe_b_row_003 => (r#"probe b 003"#, r###"a=(b c a); print ${(j:+:)${(o)a}}"###);
+        probe_b_row_004 => (r#"probe b 004"#, r###"a=(x y z); b=(y z w); print ${a:|b}"###);
+        probe_b_row_005 => (r#"probe b 005"#, r###"a=(x y z); b=(y z w); print ${a:*b}"###);
+        probe_b_row_006 => (r#"probe b 006"#, r###"a=(1 2 3); b=(a b c); print ${a:^b}"###);
+        probe_b_row_007 => (r#"probe b 007"#, r###"a=(1 2 3); b=(a b); print ${a:^^b}"###);
+        probe_b_row_008 => (r#"probe b 008"#, r###"x="a:b:c"; print ${(s.:.)x}"###);
+        probe_b_row_009 => (r#"probe b 009"#, r###"x="a::b"; print -l ${(s.:.)x} | wc -l"###);
+        probe_b_row_010 => (r#"probe b 010"#, r###"x='a$b"c'; print ${(q)x}"###);
+        probe_b_row_011 => (r#"probe b 011"#, r###"x='a b'; print ${(qq)x}"###);
+        probe_b_row_012 => (r#"probe b 012"#, r###"x='a b'; print ${(qqq)x}"###);
+        probe_b_row_013 => (r#"probe b 013"#, r###"x='a b'; print ${(q-)x}"###);
+        probe_b_row_014 => (r#"probe b 014"#, r###"x=$'a\tb'; print -r ${(q+)x}"###);
+        probe_b_row_015 => (r#"probe b 015"#, r###"x='%a%'; print ${(V)x}"###);
+        probe_b_row_016 => (r#"probe b 016"#, r###"typeset -A h; h=(a 1 b 2); print ${(kv)h}"###);
+        probe_b_row_017 => (r#"probe b 017"#, r###"typeset -A h; h=(a 1 b 2); print ${(k)h}"###);
+        probe_b_row_018 => (r#"probe b 018"#, r###"typeset -A h; h=(b 2 a 1); print ${(ko)h}"###);
+        probe_b_row_019 => (r#"probe b 019"#, r###"typeset -A h; h=(a x b y); print ${h[(i)y]}"###);
+        probe_b_row_020 => (r#"probe b 020"#, r###"x=abc; print ${(C)x}"###);
+        probe_b_row_021 => (r#"probe b 021"#, r###"print ${(e):-'$((2+3))'}"###);
+        probe_b_row_022 => (r#"probe b 022"#, r###"print -- $(( [#16] 255 ))"###);
+        probe_b_row_023 => (r#"probe b 023"#, r###"print -- $(( [##16] 255 ))"###);
+        probe_b_row_024 => (r#"probe b 024"#, r###"print -- $(( [#8] 64 ))"###);
+        probe_b_row_025 => (r#"probe b 025"#, r###"print $(( 2 ** 10 ))"###);
+        probe_b_row_026 => (r#"probe b 026"#, r###"print $(( 7 / 2 )) $(( 7 % 2 ))"###);
+        probe_b_row_027 => (r#"probe b 027"#, r###"print $(( 7.0 / 2 ))"###);
+        probe_b_row_028 => (r#"probe b 028"#, r###"integer i=5; print $(( i++ )) $i"###);
+        probe_b_row_029 => (r#"probe b 029"#, r###"integer i=5; print $(( ++i )) $i"###);
+        probe_b_row_030 => (r#"probe b 030"#, r###"print $(( 1 ? 2 : 3 ))"###);
+        probe_b_row_031 => (r#"probe b 031"#, r###"print $(( ~5 )) $(( -7 & 3 )) $(( 5 ^ 3 ))"###);
+        probe_b_row_032 => (r#"probe b 032"#, r###"print $(( 0x1f )) $(( 8#777 ))"###);
+        probe_b_row_033 => (r#"probe b 033"#, r###"float f=1.5; print $f"###);
+        probe_b_row_034 => (r#"probe b 034"#, r###"print ${$(echo a b c)[2]}"###);
+        probe_b_row_035 => (r#"probe b 035"#, r###"x=hello; print ${x:1:2}"###);
+        probe_b_row_036 => (r#"probe b 036"#, r###"x=hello; print ${x:(-3):2}"###);
+        probe_b_row_037 => (r#"probe b 037"#, r###"x=abcdef; print ${x[2,4]} ${x[-2,-1]}"###);
+        probe_b_row_038 => (r#"probe b 038"#, r###"a=(q w e r); print ${a[2,3]} ${a[-1]}"###);
+        probe_b_row_039 => (r#"probe b 039"#, r###"a=(q w e r); print ${a[1,-2]}"###);
+        probe_b_row_040 => (r#"probe b 040"#, r###"x=a.b.c; print ${x%.*} ${x%%.*} ${x#*.} ${x##*.}"###);
+        probe_b_row_041 => (r#"probe b 041"#, r###"x=aXbXc; print ${x/X/-} ${x//X/-}"###);
+        probe_b_row_042 => (r#"probe b 042"#, r###"x=hello; print ${x/#he/HE} ${x/%lo/LO}"###);
+        probe_b_row_043 => (r#"probe b 043"#, r###"x=hello; print ${(S)x#l*l}"###);
+        probe_b_row_044 => (r#"probe b 044"#, r###"x=banana; print ${(S)x//an/AN}"###);
+        probe_b_row_045 => (r#"probe b 045"#, r###"setopt extendedglob; x=a1b22c333; print ${x//[0-9]##/N}"###);
+        probe_b_row_046 => (r#"probe b 046"#, r###"setopt extendedglob; x=abc; print ${x/(#i)ABC/y}"###);
+        probe_b_row_047 => (r#"probe b 047"#, r###"x=$'l1\nl2\nl3'; print ${(F)${(f)x}} | wc -l"###);
+        probe_b_row_048 => (r#"probe b 048"#, r###"a=(1 22 333); print ${#a}"###);
+        probe_b_row_049 => (r#"probe b 049"#, r###"print ${(t)PATH} ${(t)path}"###);
+        probe_b_row_050 => (r#"probe b 050"#, r###"print ${+PATH} ${+NOSUCHVAR9}"###);
+        probe_b_row_051 => (r#"probe b 051"#, r###"unset x; print ${x=def}; print $x"###);
+        probe_b_row_052 => (r#"probe b 052"#, r###"unset x; print ${x:=ghi}; print $x"###);
+        probe_b_row_053 => (r#"probe b 053"#, r###"x=set; print ${x+plus} ${x:+colonplus}"###);
+        probe_b_row_054 => (r#"probe b 054"#, r###"print first second | read a b; print "$a/$b""###);
+        probe_b_row_055 => (r#"probe b 055"#, r###"read a b <<< "one two"; print "$a-$b""###);
+        probe_b_row_056 => (r#"probe b 056"#, r###"IFS=: read a b <<< "x:y"; print "$a.$b""###);
+        probe_b_row_057 => (r#"probe b 057"#, r###"read -A arr <<< "p q r"; print ${#arr} ${arr[2]}"###);
+        probe_b_row_058 => (r#"probe b 058"#, r###"print -C 2 a b c d | wc -l"###);
+        probe_b_row_059 => (r#"probe b 059"#, r###"print -n abc | wc -c"###);
+        probe_b_row_060 => (r#"probe b 060"#, r###"echo -E 'a\tb'"###);
+        probe_b_row_061 => (r#"probe b 061"#, r###"printf '%5.2f\n' 3.14159"###);
+        probe_b_row_062 => (r#"probe b 062"#, r###"printf '%x %o\n' 255 8"###);
+        probe_b_row_063 => (r#"probe b 063"#, r###"printf '%-5s|\n' ab"###);
+        probe_b_row_064 => (r#"probe b 064"#, r###"whence -w print"###);
+        probe_b_row_065 => (r#"probe b 065"#, r###"whence -w if"###);
+        probe_b_row_066 => (r#"probe b 066"#, r###"LC_ALL=C builtin printf '%d\n' \'A"###);
+        probe_b_row_067 => (r#"probe b 067"#, r###"true && false || print fellthrough"###);
+        probe_b_row_068 => (r#"probe b 068"#, r###"! true; print rc=$?"###);
+        probe_b_row_069 => (r#"probe b 069"#, r###"for ((i=0; i<3; i++)) print -n $i; print"###);
+        probe_b_row_070 => (r#"probe b 070"#, r###"repeat 3 print -n x; print"###);
+        probe_b_row_071 => (r#"probe b 071"#, r###"i=0; while (( i < 3 )); do (( i++ )); done; print $i"###);
+        probe_b_row_072 => (r#"probe b 072"#, r###"i=0; until (( i >= 2 )); do (( i++ )); done; print $i"###);
+        probe_b_row_073 => (r#"probe b 073"#, r###"if [[ -n x ]] { print brace-if } else { print no }"###);
+        probe_b_row_074 => (r#"probe b 074"#, r###"for x (a b c) print -n $x; print"###);
+        probe_b_row_075 => (r#"probe b 075"#, r###"case zz in (z*) print starz ;; (*) print other ;; esac"###);
+        probe_b_row_076 => (r#"probe b 076"#, r###"case 5 in <3-7>) print inrange ;; *) print out ;; esac"###);
+        probe_b_row_077 => (r#"probe b 077"#, r###"() { print anon $1 } arg1"###);
+        probe_b_row_078 => (r#"probe b 078"#, r###"f() { return 3 }; f; print $?"###);
+        probe_b_row_079 => (r#"probe b 079"#, r###"f() { print $# }; f a b c"###);
+        probe_b_row_080 => (r#"probe b 080"#, r###"f() { local x=in; print $x }; x=out; f; print $x"###);
+        probe_b_row_081 => (r#"probe b 081"#, r###"fn() { typeset -g g1=set }; fn; print $g1"###);
+        probe_b_row_082 => (r#"probe b 082"#, r###"trap 'print exittrap' EXIT; :"###);
+        probe_b_row_083 => (r#"probe b 083"#, r###"(trap 'print subexit' EXIT; :)"###);
+        probe_b_row_084 => (r#"probe b 084"#, r###"print $ZSH_SUBSHELL; (print $ZSH_SUBSHELL)"###);
+        probe_b_row_085 => (r#"probe b 085"#, r###"( exit 7 ); print $?"###);
+        probe_b_row_086 => (r#"probe b 086"#, r###"{ print group; } always { print always-ran }"###);
+        probe_b_row_087 => (r#"probe b 087"#, r###"print $(( $(echo 2) + 1 ))"###);
+        probe_b_row_088 => (r#"probe b 088"#, r###"print `echo bt`"###);
+        probe_b_row_089 => (r#"probe b 089"#, r###"print "$(print nested "$(print inner)")""###);
+        probe_b_row_090 => (r#"probe b 090"#, r###"print ${${(z)${:-a b c}}[2]}"###);
+        probe_b_row_091 => (r#"probe b 091"#, r###"v="a b"; print "${(w)#v}""###);
+        probe_b_row_092 => (r#"probe b 092"#, r###"setopt shwordsplit; v="a b c"; set -- $v; print $#"###);
+        probe_b_row_093 => (r#"probe b 093"#, r###"unsetopt shwordsplit; v="a b c"; set -- $v; print $#"###);
+        probe_b_row_094 => (r#"probe b 094"#, r###"emulate sh -c 'v="a b"; set -- $v; echo $#'"###);
+        probe_b_row_095 => (r#"probe b 095"#, r###"print ${(M)$(print hi):#hi}"###);
+        probe_b_row_096 => (r#"probe b 096"#, r###"print ${commands[sh]:+found}"###);
+        probe_b_row_097 => (r#"probe b 097"#, r###"print ${functions[zzznot]:-absent}"###);
+        probe_b_row_098 => (r#"probe b 098"#, r###"alias ll='print LL'; ll"###);
+        probe_b_row_099 => (r#"probe b 099"#, r###"print -l {a..e} | wc -l"###);
+        probe_b_row_100 => (r#"probe b 100"#, r###"print {5..1}"###);
+        probe_b_row_101 => (r#"probe b 101"#, r###"print {a,b}{1,2}"###);
+        probe_b_row_102 => (r#"probe b 102"#, r###"print -l {01..03}"###);
+        probe_b_row_103 => (r#"probe b 103"#, r###"print x{,y}"###);
+        probe_b_row_104 => (r#"probe b 104"#, r###"print $((##A))"###);
+        probe_b_row_105 => (r#"probe b 105"#, r###"print ${(#):-65}"###);
+        probe_b_row_106 => (r#"probe b 106"#, r###"print -- -n"###);
+        probe_b_row_107 => (r#"probe b 107"#, r###"builtin print builtin-ok"###);
+        probe_b_row_108 => (r#"probe b 108"#, r###"unsetopt CASE_GLOB; [[ ABC == abc ]] && print nocase"###);
+        probe_b_row_109 => (r#"probe b 109"#, r###"unsetopt nomatch; print /zz_nope_*"###);
+        probe_b_row_110 => (r#"probe b 110"#, r###"print -P '%(1j.yes.no)'"###);
+        probe_b_row_111 => (r#"probe b 111"#, r###"zstyle ':x:*' col red; zstyle -s ':x:y' col v; print $v"###);
+        probe_b_row_112 => (r#"probe b 112"#, r###"zstyle ':a' k 1 2 3; zstyle -a ':a' k arr; print ${#arr}"###);
+        probe_b_row_113 => (r#"probe b 113"#, r###"zstyle -t ':none' nokey; print rc=$?"###);
+        probe_b_row_114 => (r#"probe b 114"#, r###"zstyle ':b' flag yes; zstyle -t ':b' flag; print rc=$?"###);
+        probe_b_row_115 => (r#"probe b 115"#, r###"zstyle -d ':b' 2>/dev/null; zstyle -s ':b' flag v2; print rc=$?"###);
+        probe_b_row_116 => (r#"probe b 116"#, r###"zparseopts -D -E a=fa b:=fb -- -a -b val rest 2>/dev/null; print ${#fa} ${fb[2]:-none}"###);
+        probe_b_row_117 => (r#"probe b 117"#, r###"set -- -x -y arg; zparseopts -D x=ox y=oy; print $#:$1"###);
+        probe_b_row_118 => (r#"probe b 118"#, r###"vared -c tmpv <<< edited 2>/dev/null; print rc=$?"###);
+        probe_b_row_119 => (r#"probe b 119"#, r###"print ${(P)${:-PATH}} > /dev/null; print rc=$?"###);
+        probe_b_row_120 => (r#"probe b 120"#, r###"a=(1 2 3 4 5); print ${a[2,-2]}"###);
+        probe_b_row_121 => (r#"probe b 121"#, r###"a=(1 2 3); a[5]=(x); print ${#a} "${a[4]:-empty}""###);
+        probe_b_row_122 => (r#"probe b 122"#, r###"a=(1 2 3); a[2]=(); print ${#a} $a"###);
+        probe_b_row_123 => (r#"probe b 123"#, r###"a=(1 2 3); a+=(4); print $a"###);
+        probe_b_row_124 => (r#"probe b 124"#, r###"a=(1 2 3); unset 'a[2]'; print ${#a} $a"###);
+        probe_b_row_125 => (r#"probe b 125"#, r###"typeset -A h; h[k]=v; h[k2]=v2; unset 'h[k]'; print ${(k)h}"###);
+        probe_b_row_126 => (r#"probe b 126"#, r###"typeset -A h=(a 1); h+=(b 2); print ${#h}"###);
+        probe_b_row_127 => (r#"probe b 127"#, r###"s=abcdef; print ${s[(i)c]} 2>/dev/null"###);
+        probe_b_row_128 => (r#"probe b 128"#, r###"s=hello; s[1]=H; print $s"###);
+        probe_b_row_129 => (r#"probe b 129"#, r###"s=hello; s[-1]=O; print $s"###);
+        probe_b_row_130 => (r#"probe b 130"#, r###"s=hello; print $s[2,3]"###);
+        probe_b_row_131 => (r#"probe b 131"#, r###"x=(a b); print $x[1]$x[2]"###);
+        probe_b_row_132 => (r#"probe b 132"#, r###"print $#PATH | grep -qcE '^[0-9]+$'; print rc=$?"###);
+        probe_b_row_133 => (r#"probe b 133"#, r###"print ${$(print one.two):e}"###);
+        probe_b_row_134 => (r#"probe b 134"#, r###"print ${$(print /a/b/c):h:t}"###);
+        probe_b_row_135 => (r#"probe b 135"#, r###"v=V; print "${(t)v}" "${(t)undefined_var_zz}""###);
+        probe_b_row_136 => (r#"probe b 136"#, r###"print ${(b)?:-'a*b'} 2>/dev/null; print rc=$?"###);
+        probe_b_row_137 => (r#"probe b 137"#, r###"x='a*b'; print ${(b)x}"###);
+        probe_b_row_138 => (r#"probe b 138"#, r###"x='a*b'; print ${(q)x} | cat"###);
+        probe_b_row_139 => (r#"probe b 139"#, r###"print ${(n)$(print 10 9 2)} 2>/dev/null"###);
+        probe_b_row_140 => (r#"probe b 140"#, r###"print ${(On)$(print 10 9 2)} 2>/dev/null"###);
+        probe_b_row_141 => (r#"probe b 141"#, r###"print ${(i)$(print B a C)} 2>/dev/null; print rc=$?"###);
+        probe_b_row_142 => (r#"probe b 142"#, r###"print ${(oi)$(print B a C)}"###);
+        probe_b_row_143 => (r#"probe b 143"#, r###"print ${(Oi)$(print B a C)}"###);
+        probe_b_row_144 => (r#"probe b 144"#, r###"wait 2>/dev/null; print rc=$?"###);
+        probe_b_row_145 => (r#"probe b 145"#, r###"sleep 0.05 & wait $!; print rc=$?"###);
+        probe_b_row_146 => (r#"probe b 146"#, r###"sleep 0.05 & sleep 0.06 & wait; print rc=$?"###);
+        probe_b_row_147 => (r#"probe b 147"#, r###"(sleep 0.02; exit 3) & wait $!; print rc=$?"###);
+        probe_b_row_148 => (r#"probe b 148"#, r###"jobs -p | wc -l"###);
+        probe_b_row_149 => (r#"probe b 149"#, r###"/bin/echo bg & disown 2>/dev/null; print rc=$?"###);
+        probe_b_row_150 => (r#"probe b 150"#, r###"suspend 2>/dev/null; print rc=$?"###);
+        probe_b_row_151 => (r#"probe b 151"#, r###"print $$ | grep -qcE '^[0-9]+$'; print rc=$?"###);
+        probe_b_row_152 => (r#"probe b 152"#, r###"(print $PPID | grep -qcE '^[0-9]+$'); print rc=$?"###);
+        probe_b_row_153 => (r#"probe b 153"#, r###"kill -0 $$; print rc=$?"###);
+        probe_b_row_154 => (r#"probe b 154"#, r###"kill -l | head -1"###);
+        probe_b_row_155 => (r#"probe b 155"#, r###"kill -l 9"###);
+        probe_b_row_156 => (r#"probe b 156"#, r###"trap '' INT; trap - INT; print rc=$?"###);
+        probe_b_row_157 => (r#"probe b 157"#, r###"trap 'print int' INT; kill -INT $$; print after"###);
+        probe_b_row_158 => (r#"probe b 158"#, r###"times > /dev/null; print rc=$?"###);
+        probe_b_row_159 => (r#"probe b 159"#, r###"ulimit -n > /dev/null; print rc=$?"###);
+        probe_b_row_160 => (r#"probe b 160"#, r###"umask 022; umask"###);
+        probe_b_row_161 => (r#"probe b 161"#, r###"umask -S | head -1"###);
+        probe_b_row_162 => (r#"probe b 162"#, r###"setopt | grep -qc norcs; print rc=$?"###);
+        probe_b_row_163 => (r#"probe b 163"#, r###"unsetopt beep; setopt | grep -c beep"###);
+        probe_b_row_164 => (r#"probe b 164"#, r###"set -o | grep -qc noglob; print rc=$?"###);
+        probe_b_row_165 => (r#"probe b 165"#, r###"set -e; false 2>/dev/null; print unreached 2>/dev/null"###);
+        probe_b_row_166 => (r#"probe b 166"#, r###"set -u; print ${undef_zz9} 2>/dev/null; print rc=$?"###);
+        probe_b_row_167 => (r#"probe b 167"#, r###"set -x; print traced 2>/dev/null; set +x"###);
+        probe_b_row_168 => (r#"probe b 168"#, r###"emulate -L sh; print rc=$?"###);
+        probe_b_row_169 => (r#"probe b 169"#, r###"emulate ksh -c 'echo ksh-ok'"###);
+        probe_b_row_170 => (r#"probe b 170"#, r###"emulate zsh; print $0 > /dev/null; print rc=$?"###);
+        probe_b_row_171 => (r#"probe b 171"#, r###"disable print; print x 2>/dev/null; enable print; print rc=$?"###);
+        probe_b_row_172 => (r#"probe b 172"#, r###"disable -p '*' 2>/dev/null; print rc=$?"###);
+        probe_b_row_173 => (r#"probe b 173"#, r###"functions -M zzmath 2>/dev/null; print rc=$?"###);
+        probe_b_row_174 => (r#"probe b 174"#, r###"unfunction zznot 2>/dev/null; print rc=$?"###);
+        probe_b_row_175 => (r#"probe b 175"#, r###"autoload zmv 2>/dev/null; whence -w zmv"###);
+        probe_b_row_176 => (r#"probe b 176"#, r###"compgen 2>/dev/null; print rc=$?"###);
+        probe_b_row_177 => (r#"probe b 177"#, r###"echotc co > /dev/null 2>&1; print rc=$?"###);
+        probe_b_row_178 => (r#"probe b 178"#, r###"echoti cols > /dev/null 2>&1; print rc=$?"###);
+        probe_b_row_179 => (r#"probe b 179"#, r###"print ${terminfo[cols]:-unset} > /dev/null 2>&1; print rc=$?"###);
+        probe_b_row_180 => (r#"probe b 180"#, r###"zcompile /tmp/zsprobe_f.zsh 2>/dev/null; print rc=$?"###);
+        probe_b_row_181 => (r#"probe b 181"#, r###"print 'print compiled' > /tmp/zsprobe_c.zsh; zcompile /tmp/zsprobe_c.zsh && source /tmp/zsprobe_c.zsh"###);
+        probe_b_row_182 => (r#"probe b 182"#, r###"which -a print | wc -l"###);
+        probe_b_row_183 => (r#"probe b 183"#, r###"where print | wc -l"###);
+        probe_b_row_184 => (r#"probe b 184"#, r###"type -w print"###);
+        probe_b_row_185 => (r#"probe b 185"#, r###"print -r "${(f)$(print -l 1 2)}" | wc -l"###);
+        probe_b_row_186 => (r#"probe b 186"#, r###"IFS=$'\n'; a=($(print -l x y)); print ${#a}; IFS=$' \t\n'"###);
+        probe_b_row_187 => (r#"probe b 187"#, r###"IFS=''; v="a b"; set -- $v; print $#"###);
+        probe_b_row_188 => (r#"probe b 188"#, r###"x=$'\ta '; print "[${x## }]" 2>/dev/null; print rc=$?"###);
+        probe_b_row_189 => (r#"probe b 189"#, r###"print ${(s::)${:-ab}} | wc -w"###);
+        probe_b_row_190 => (r#"probe b 190"#, r###"print ${(s: :)"$(print a b)"} | wc -w"###);
+        probe_b_row_191 => (r#"probe b 191"#, r###"v=a=b; print ${v#*=} ${v%%=*}"###);
+    }
+}
+
+/// Probe sweep 2026-06-12, round c — pins for the four real gaps the
+/// 117-probe sweep surfaced, fixed in this round:
+///
+/// 1. `$ZSH_SUBSHELL` inside `$( … )` — zsh's forked cmdsub child runs
+///    entersubsh() (`zsh_subshell++`, Src/exec.c:1161); zshrs's
+///    in-process cmdsub now bumps/restores via CmdSubstSubshellBump
+///    (fusevm_bridge.rs).
+/// 2. `$functrace` caller lineno — frame capture in doshfunc now reads
+///    the lex lineno mirror (zeroed during function bodies), so a call
+///    made inside a single-line caller records `g:0` like C
+///    (Src/exec.c:6013).
+/// 3. `${${:-…}[(w)N]}` — flagged subscripts on subexp results route
+///    through getarg (Src/params.c:1389-1480).
+/// 4. Brace short syntax — the gettokstr exit hack (Src/lex.c:1453-1469,
+///    "/* hack to get {foo} command syntax work */") sheds a trailing
+///    unmatched `}` so `{print hi}` / `f(){print x}` close their blocks,
+///    plus the C list-chaining rule (lists only continue across
+///    SEPER/AMPER/AMPERBANG, Src/parse.c:769-803) so `while {false}
+///    {print no}` parses cond/body correctly and `{a} {b}` is a parse
+///    error at top level (Src/parse.c:671-680).
+mod probe_sweep_2026_06_12_c {
+    use super::*;
+
+    parity_gap_tests! {
+        // --- ZSH_SUBSHELL in command substitution ---
+        probe_c_subshell_cmdsub => (r#"probe c subshell cmdsub"#, r###"print $ZSH_SUBSHELL $(print $ZSH_SUBSHELL)"###);
+        probe_c_subshell_nested => (r#"probe c subshell nested"#, r###"print $(print $(print $ZSH_SUBSHELL))"###);
+        probe_c_subshell_restored => (r#"probe c subshell restored"#, r###"print $ZSH_SUBSHELL; x=$(true); print $ZSH_SUBSHELL"###);
+        probe_c_subshell_subsh_in_cmdsub => (r#"probe c subshell subsh in cmdsub"#, r###"print $( (print $ZSH_SUBSHELL) )"###);
+        probe_c_subshell_backtick => (r#"probe c subshell backtick"#, r###"print `print $ZSH_SUBSHELL`"###);
+        // --- functrace caller lineno ---
+        probe_c_functrace_inner => (r#"probe c functrace inner"#, r###"f() { print $functrace[1] }; g() { f }; g"###);
+        probe_c_funcfiletrace_inner => (r#"probe c funcfiletrace inner"#, r###"f() { print $funcfiletrace[1] }; g() { f }; g"###);
+        // --- flagged subscripts on subexp values ---
+        probe_c_subexp_w2 => (r#"probe c subexp (w)2"#, r###"print -- ${${:-one two three}[(w)2]}"###);
+        probe_c_subexp_w3_var => (r#"probe c subexp (w)3 var"#, r###"x="a b c"; print -- ${${x}[(w)3]}"###);
+        probe_c_subexp_f2 => (r#"probe c subexp (f)2"#, r###"print -- ${${:-l1
+l2}[(f)2]}"###);
+        probe_c_subexp_plain_idx => (r#"probe c subexp plain idx"#, r###"print -- ${${:-one two}[2]}"###);
+        // --- brace short syntax: lexer trailing-} hack ---
+        probe_c_brace_inline_block => (r#"probe c brace inline block"#, r###"{print hi}"###);
+        probe_c_brace_fn_nospace => (r#"probe c brace fn nospace"#, r###"f(){print x}; f"###);
+        probe_c_brace_trailing_err => (r#"probe c brace trailing err"#, r###"echo hi} 2>/dev/null; print rc=$?"###);
+        probe_c_brace_midword_literal => (r#"probe c brace midword literal"#, r###"echo a}b"###);
+        probe_c_brace_leading_literal => (r#"probe c brace leading literal"#, r###"echo }x"###);
+        probe_c_brace_noncomma_literal => (r#"probe c brace noncomma literal"#, r###"echo {x}"###);
+        probe_c_brace_quoted => (r#"probe c brace quoted"#, r###"echo "}"; echo \}"###);
+        probe_c_brace_param_default => (r#"probe c brace param default"#, r###"echo ${x:-a}; echo ${x:-{}}"###);
+        probe_c_brace_repeat_body => (r#"probe c brace repeat body"#, r###"repeat 2 {print r}"###);
+        // --- list chaining: while brace-cond + brace-body ---
+        probe_c_while_brace_false => (r#"probe c while brace false"#, r###"while {false} {print no}"###);
+        probe_c_while_brace_break => (r#"probe c while brace break"#, r###"while {true} {print y; break}"###);
+        probe_c_while_paren_cond => (r#"probe c while paren cond"#, r###"while (false) {print no}"###);
+        probe_c_until_brace => (r#"probe c until brace"#, r###"until {true} {print u}"###);
+        probe_c_while_brace_semi_do => (r#"probe c while brace semi do"#, r###"while {false}; do print no; done"###);
+        probe_c_while_arith_brace => (r#"probe c while arith brace"#, r###"i=0; while (( i++ < 3 )) { echo $i }"###);
+        probe_c_adjacent_blocks_err => (r#"probe c adjacent blocks err"#, r###"{false} {print no} 2>/dev/null; print rc=$?"###);
+        probe_c_while_then_after => (r#"probe c while then after"#, r###"while {false} {print no}; print after"###);
+    }
+}
