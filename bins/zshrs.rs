@@ -1394,6 +1394,73 @@ pub fn zshrs_main() {
         }
     }
 
+    // --fmt: format zsh source (src/extensions/fmt.rs — the same
+    // engine the LSP's textDocument/formatting uses, so CLI and IDE
+    // Reformat agree byte-for-byte).
+    //   zshrs --fmt [-w] [-t] [-i N] [FILE…]
+    // No files → stdin to stdout. -w rewrites files in place.
+    // -i N sets the indent width (default 4); -t indents with tabs.
+    if let Some(fi) = args.iter().position(|a| a == "--fmt") {
+        let mut write_in_place = false;
+        let mut opts = zsh::fmt::FmtOptions::default();
+        let mut files: Vec<String> = Vec::new();
+        let mut j = fi + 1;
+        while j < args.len() {
+            match args[j].as_str() {
+                "-w" => write_in_place = true,
+                "-t" => opts.use_tabs = true,
+                "-i" => {
+                    if let Some(n) = args.get(j + 1).and_then(|s| s.parse().ok()) {
+                        opts.indent_width = n;
+                        j += 1;
+                    } else {
+                        eprintln!("zshrs: --fmt: -i requires a number");
+                        std::process::exit(1);
+                    }
+                }
+                f => files.push(f.to_string()),
+            }
+            j += 1;
+        }
+        let mut status = 0;
+        if files.is_empty() {
+            if write_in_place {
+                eprintln!("zshrs: --fmt: -w requires file arguments");
+                std::process::exit(1);
+            }
+            let mut src = String::new();
+            use std::io::Read as _;
+            if std::io::stdin().read_to_string(&mut src).is_err() {
+                eprintln!("zshrs: --fmt: stdin is not valid UTF-8");
+                std::process::exit(1);
+            }
+            print!("{}", zsh::fmt::format_source(&src, &opts));
+        } else {
+            for f in &files {
+                match std::fs::read_to_string(f) {
+                    Ok(src) => {
+                        let formatted = zsh::fmt::format_source(&src, &opts);
+                        if write_in_place {
+                            if formatted != src {
+                                if let Err(e) = std::fs::write(f, &formatted) {
+                                    eprintln!("zshrs: --fmt: {}: {}", f, e);
+                                    status = 1;
+                                }
+                            }
+                        } else {
+                            print!("{}", formatted);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("zshrs: --fmt: {}: {}", f, e);
+                        status = 1;
+                    }
+                }
+            }
+        }
+        std::process::exit(status);
+    }
+
     // --lsp: start the Language Server Protocol server on stdio.
     // Used by the IntelliJ plugin (editors/intellij) and any other LSP
     // client (Helix, Neovim, VS Code, etc.). Implementation lives in

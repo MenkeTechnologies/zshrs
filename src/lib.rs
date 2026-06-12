@@ -157,6 +157,10 @@ pub mod fds;
 /// `fish_features` submodule.
 #[path = "extensions/fish_features.rs"]
 pub mod fish_features;
+/// `fmt` submodule — zsh source formatter (CLI `--fmt` + LSP
+/// `textDocument/formatting`).
+#[path = "extensions/fmt.rs"]
+pub mod fmt;
 /// `func_body_fmt` submodule.
 #[path = "extensions/func_body_fmt.rs"]
 pub mod func_body_fmt;
