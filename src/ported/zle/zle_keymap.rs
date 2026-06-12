@@ -644,7 +644,13 @@ fn scankeys(
     // c:407-408 — `f = (k->nam[0] == Meta ? k->nam[1]^32 : k->nam[0])`.
     // Rust storage is raw bytes, so the Meta-decoded first byte is
     // just the first byte (high-bit values represent themselves).
-    let f = k_nam[0] as i32;
+    // Empty key name (C can't produce one — `k->nam` is at least
+    // one byte — but the Rust multi-byte bindkey path can hand an
+    // empty slice for a fully-consumed prefix): nothing to scan.
+    let Some(&f0) = k_nam.first() else {
+        return;
+    };
+    let f = f0 as i32;
     // c:412-419 — flush every single-byte slot with byte < f.
     while *skm_last < f {
         *skm_last += 1;

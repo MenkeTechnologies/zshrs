@@ -2849,6 +2849,36 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> {
 /// Port of paramsubst(LinkList l, LinkNode n, char **str, int qt, int pf_flags, int *ret_flags) from subst.c lines 1600-4922 (THIS IS THE BIG ONE)
 // parameter substitution                                                   // c:1601
 /// `paramsubst` — see implementation.
+thread_local! {
+    /// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+    /// C's `${~spec}` sets a paramsubst-LOCAL `globsubst` variable
+    /// (Src/subst.c:2596) and marks the RESULT via shtokenize; the
+    /// consumers read token bytes, never the option table. zshrs's
+    /// paramsubst carries the flag through the GLOBAL option table
+    /// so the compile-emitted glob ops downstream in the SAME word
+    /// pipeline can see it (documented deviation at subst.rs:2172).
+    /// This cell records "the option was flipped as a CARRIER, with
+    /// this saved user value" so the command-dispatch boundary
+    /// (fusevm_bridge::consume_tilde_globsubst_carrier) can restore
+    /// the user's setting once the word pipeline is done. Without
+    /// the restore, zinit.zsh:150 `ZINIT[PLUGINS_DIR]=${~ZINIT[…]}`
+    /// left GLOB_SUBST on for the WHOLE SESSION and every expanded
+    /// value with `(`/`[` glob-errored (autopair keys, PROMPT4,
+    /// fzf-tab ANSI strings).
+    pub static TILDE_GLOBSUBST_CARRIER: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Record the user's GLOB_SUBST value before the `${~}` carrier flip
+/// (first flip in a pipeline wins — that's the user's real setting).
+fn tilde_carrier_note(saved: bool) {
+    TILDE_GLOBSUBST_CARRIER.with(|c| {
+        if c.get().is_none() {
+            c.set(Some(saved));
+        }
+    });
+}
+
 pub fn paramsubst(
     // c:1625
     s: &str,             // c:1625
@@ -4358,11 +4388,13 @@ pub fn paramsubst(
                     .map_or(false, |n| n == '~' || n == Tilde);
                 if doubled {
                     if !qt {
+                        tilde_carrier_note(crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST));
                         opt_state_set("globsubst", false);
                     }
                     idx += 2;
                 } else {
                     if !qt {
+                        tilde_carrier_note(crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST));
                         opt_state_set("globsubst", true);
                     }
                     idx += 1;
@@ -11733,6 +11765,17 @@ pub fn paramsubst(
                     value = quoted.clone();
                     split_parts = Some(vec![quoted]);
                 }
+            } else if value.is_empty()
+                && is_at_subscript_splat
+                && assoc_get(&var_name).map_or(false, |m| m.is_empty())
+            {
+                // `${(q…)EMPTY_ASSOC[@]}` — zero elements splat to
+                // ZERO results; the scalar fallback quoted the empty
+                // join into a literal `''`. zinit stamps
+                // `${(j: :)${(qkv)ICE[@]}}` into every ZINIT_SICE
+                // entry, so the phantom `''` leaked into ice parsing.
+                split_parts = Some(Vec::new());
+                isarr = 1;
             } else {
                 value = quote_one(&value);
             }
@@ -12691,12 +12734,14 @@ pub fn paramsubst(
             .map_or(false, |n| n == '~' || n == Tilde)
         {
             if !qt {
-                opt_state_set("globsubst", false);
+                tilde_carrier_note(crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST));
+                        opt_state_set("globsubst", false);
             }
             2
         } else {
             if !qt {
-                opt_state_set("globsubst", true);
+                tilde_carrier_note(crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST));
+                        opt_state_set("globsubst", true);
             }
             1
         };
