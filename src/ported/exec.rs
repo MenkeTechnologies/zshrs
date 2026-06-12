@@ -8485,21 +8485,11 @@ pub fn execcmd_exec(
     {
         // c:2979-2981
         if unset(NOTIFY) {
-            // c:2982 — `scanjobs();` inlined: walk JOBTAB and printjob
-            // each STAT_CHANGED entry. C scanjobs body at jobs.c:1993
-            // is identical to this 5-line walk.
+            // c:2982 — `scanjobs();` via the canonical port
+            // (Src/jobs.c:1993).
             if let Some(jt) = JOBTAB.get() {
                 let mut guard = jt.lock().unwrap();
-                let long_list = isset(crate::ported::zsh_h::LONGLISTJOBS);
-                for i in 1..guard.len() {
-                    // jobs.c:1997 — `for (i = 1; i <= maxjob; i++)`
-                    if (guard[i].stat & crate::ported::zsh_h::STAT_CHANGED) != 0 {
-                        let s = crate::ported::jobs::printjob(&guard[i], i, long_list, None, None); // jobs.c:1999
-                        if !s.is_empty() {
-                            eprint!("{}", s);
-                        }
-                    }
-                }
+                crate::ported::jobs::scanjobs(&mut guard);
             }
         }
         // c:2984 — `if (findjobnam(peekfirst(args)) != -1)`

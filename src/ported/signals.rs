@@ -402,6 +402,13 @@ pub extern "C" fn zhandler(sig: libc::c_int) {
                         for (pid, status) in reaped {
                             let _ = crate::ported::jobs::update_bg_job(&mut guard, pid, status);
                         }
+                        // c:Src/jobs.c:639-641 — update_job's tail
+                        // dispatches printjob(jn, ..., 0) for LOCKED
+                        // jobs, whose own tail (c:1350-1363) deletes
+                        // each finished entry. Non-interactive shells
+                        // print nothing there; the deletion is the
+                        // observable effect.
+                        crate::ported::jobs::scanjobs(&mut guard);
                     }
                 }
             }

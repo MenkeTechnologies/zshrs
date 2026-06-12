@@ -287,6 +287,23 @@ pub struct SubshellSnapshot {
     /// sets the child's `lastpid` only — `( : & ); echo $!` prints 0
     /// in zsh. zshrs runs subshells in-process, so restore on end.
     pub lastpid: i32,
+    /// Job-control state at subshell entry: (JOBTAB clone, CURJOB,
+    /// PREVJOB, MAXJOB, THISJOB). C zsh forks for `(...)` so any
+    /// `disown` / `wait` / new `&` job inside the subshell mutates the
+    /// CHILD's copy of jobtab and dies with it (Src/exec.c::entersubsh
+    /// fork semantics); the parent's table is untouched. zshrs's
+    /// in-process subshell must snapshot/restore to match — without
+    /// this, `sleep 1 & (disown); jobs` shows an empty table where
+    /// zsh still lists the job. Bug #462.
+    pub jobtab: Vec<crate::ported::zsh_h::job>,
+    /// `curjob` at subshell entry (Src/jobs.c:75 global).
+    pub curjob: i32,
+    /// `prevjob` at subshell entry (Src/jobs.c:80 global).
+    pub prevjob: i32,
+    /// `maxjob` at subshell entry (Src/jobs.c:71 global).
+    pub maxjob: usize,
+    /// `thisjob` at subshell entry (Src/jobs.c:77 global).
+    pub thisjob: i32,
 }
 
 #[allow(unused_imports)]

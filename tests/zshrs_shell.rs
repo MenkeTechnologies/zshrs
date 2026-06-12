@@ -7921,14 +7921,14 @@ fn test_command_no_args_silent() {
 
 #[test]
 fn test_wait_missing_job_silent() {
-    // zsh: `sleep N & wait %1` works even after the bg process has
-    // already completed and been reaped — missing job spec is silent
-    // success. zshrs's job-table reaps and removes the entry before
-    // `wait %1` can find it, so we get "no such job" rc=127. Tracked
-    // as a substrate gap (needs `reaped-but-keep` table behavior).
-    // Pin current behavior so future progress flips the assertion.
+    // zsh: `sleep N & wait %1` resolves %1 through the canonical
+    // jobtab (getjob, c:Src/jobs.c:2063) and waits — exit 0. The old
+    // pin asserted the pre-#79 "no such job" rc=127 behavior with an
+    // explicit note to flip once the jobtab was populated; that
+    // landed with the #79/#369 port (BUILTIN_RUN_BG → initjob/addproc/
+    // spawnjob + bin_fg BIN_WAIT %spec arm).
     let (status, _, _stderr) = run_zshrs("sleep 0.05 & wait %1");
-    assert_ne!(status, 0);
+    assert_eq!(status, 0);
 }
 
 #[test]

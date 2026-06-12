@@ -375,9 +375,17 @@ impl ZshCompiler {
             }
             let sub_chunk = sub.builder.build();
             let sub_idx = self.builder.add_sub_chunk(sub_chunk);
+            // c:Src/exec.c::execpline — the async job's display text
+            // comes from `getjobtext(state->prog, ...)` (Src/text.c:235)
+            // and lands in the proc entry via addproc. Reconstruct the
+            // sublist text at compile time and pass it alongside the
+            // sub-chunk index so BUILTIN_RUN_BG can addproc with it.
+            let job_text = render_sublist_for_debug(&list.sublist);
+            let text_const = self.builder.add_constant(Value::str(&job_text));
+            self.builder.emit(Op::LoadConst(text_const), 0);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
             self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 1), 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 2), 0);
             self.builder.emit(Op::SetStatus, 0);
         } else {
             self.compile_sublist(&list.sublist);

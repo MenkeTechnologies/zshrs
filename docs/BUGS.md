@@ -5767,7 +5767,52 @@ Or use `printf '\e[%d;%dH' 6 11` directly to avoid the builtin.
 
 ## #79 — Job control table empty: `jobs`, `wait %N`, `kill %N`, `disown` all fail
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-12 — `BUILTIN_RUN_BG`
+([src/fusevm_bridge.rs](../src/fusevm_bridge.rs)) now populates the
+canonical `JOBTAB` at fork time, porting C's async-pipeline chain:
+
+1. **Spawn registration** — parent arm of the fork runs
+   `initjob()` → `addproc(pid, text, …)` → `stat |= STAT_NOSTTY` →
+   `clearoldjobtab()` → `spawnjob()` per `Src/exec.c:1700-1758` +
+   `Src/exec.c:2950` (zfork addproc). The job text is reconstructed at
+   compile time (`render_sublist_for_debug`, the Rust analog of
+   `getjobtext` Src/text.c:235) and passed through the bytecode as a
+   second `RUN_BG` operand.
+2. **`initjob` updated MAXJOB** — restructured around a faithful
+   `initnewjob` port (Src/jobs.c:1843) whose `if (i > maxjob) maxjob
+   = i` was missing, so every table walk (setprevjob/getjob/
+   selectjobtab) saw an empty table.
+3. **`setcurjob` re-ported** — old body picked the highest in-use job
+   unconditionally; C (Src/jobs.c:2023) only REPAIRS an invalid
+   curjob by promoting prevjob.
+4. **Reaping** — `wait_for_processes` results now route through
+   `update_bg_job` + the new faithful `scanjobs` port
+   (Src/jobs.c:1993), and `printjob_delete_tail`
+   ([src/exec_jobs.rs](../src/exec_jobs.rs), the side-effect half of
+   C printjob's done-delete tail c:1350-1363) removes finished
+   entries exactly when C does.
+5. **`printjob` format** fixed to C's column math (status field
+   `len + 2` wide, `len` ≥ 9; `jobs -l` pid + single space; `jobs -p`
+   gleader) per Src/jobs.c:1255-1316.
+6. **`bin_fg` arg loop** re-ported: every non-pid arg goes through
+   `getjob` (bare numerics are job NAMES, c:2070), STAT_INUSE/NOPRINT
+   recheck (c:2583-2592), `disown` deletes via `deletejob(j, 1)`
+   (c:2729), no-arg `disown` deletes curjob (c:2498→2729).
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'sleep 5 & jobs; kill %1'
+[1]  + running    sleep 5
+$ ./target/debug/zshrs --zsh -fc 'sleep 0.5 & wait %1; echo "exit=$?"'
+exit=0
+$ ./target/debug/zshrs --zsh -fc 'sleep 1 & kill %1' 2>&1
+(no output, kill succeeds)
+$ ./target/debug/zshrs --zsh -fc 'sleep 5 & disown; jobs; kill $!'
+(empty — job removed from table)
+```
+Pinned in tests/jobs_parity.rs (byte-vs-zsh, pid-normalized).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'sleep 0.5 & jobs; wait'
@@ -21348,7 +21393,27 @@ zstyle ':completion:*' menu 'yes select=long'
 
 ## #257 — `jobtexts[N]` introspection assoc not populated for running background jobs
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-12 — same root cause as #79: the
+`pmjobtext`/`getpmjobtext`/`scanpmjobtexts` ports
+([src/ported/modules/parameter.rs](../src/ported/modules/parameter.rs),
+Src/Modules/parameter.c:1255-1335) were already reading `JOBTAB`
+through `selectjobtab`, but `BUILTIN_RUN_BG` never inserted the job
+(and `initjob` never bumped MAXJOB), so every lookup saw an empty
+table. With the #79 spawn-registration chain in place (initjob +
+addproc carrying the compile-time job text), the assoc reads work
+unchanged.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'sleep 5 & print -r -- "[$jobtexts[1]]"; kill %1'
+[sleep 5]
+$ ./target/debug/zshrs --zsh -fc 'sleep 5 & sleep 4 & for n in ${(ko)jobtexts}; do print -r -- "[$n: $jobtexts[$n]]"; done; kill %1 %2'
+[1: sleep 5]
+[2: sleep 4]
+```
+Byte-identical to zsh 5.9; pinned in tests/jobs_parity.rs.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'sleep 0.5 & sleep 0.05; echo "jobtexts1=[${jobtexts[1]}]"; wait 2>/dev/null'
@@ -21505,7 +21570,22 @@ printf "Size: %d\n" "$size"
 
 ## #259 — `${jobstates[N]}` and `${jobdirs[N]}` introspection assocs not populated
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-12 — companion to #257; fixed by the #79
+spawn-registration chain. `pmjobstate` (Src/Modules/parameter.c:1340)
+now finds the job + proc entries (`running:+:PID=running` shape);
+`pmjobdir` (parameter.c:1447) reads `job.pwd` with the `: pwd` C
+fallback corrected to the canonical `getsparam("PWD")` (the logical
+shell pwd C's `pwd` global carries) instead of the symlink-resolved
+`current_dir()`.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'cd /tmp; sleep 5 & print -r -- "[$jobstates[1]][$jobdirs[1]]"; kill %1'
+[running:+:1558=running][/tmp]
+```
+Matches zsh byte-for-byte modulo pid; pinned in tests/jobs_parity.rs.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'cd /tmp; sleep 0.5 & sleep 0.05; echo "states=[${jobstates[1]}] dirs=[${jobdirs[1]}]"; wait 2>/dev/null'
@@ -31121,7 +31201,35 @@ process() {
 
 ## #369 — `wait %1` (wait by job-spec) errors "no such job" — fails when zsh succeeds
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-12 — two halves:
+
+1. `getjob` (Src/jobs.c:2063 port) was already correct but had no
+   table to resolve against (#79).
+2. `bin_fg`'s BIN_WAIT %spec arm was a stub — it resolved the spec and
+   then did nothing. Now ports c:2655-2657 (`retval = zwaitjob(job,1);
+   if (!retval) retval = lastval2;`): blocking `waitpid` per running
+   proc routed through `update_bg_job` (the same chain C's SIGCHLD
+   handler drives while zwaitjob suspends — Src/signals.c:249 →
+   jobs.c:460), then `printjob_delete_tail` so the finished entry
+   leaves the table (a second `wait %1` errors "no such job" rc 127,
+   matching zsh). `wait PID` (c:2541-2575 isanum arm) additionally
+   gained the `getbgstatus` fallback before the "not a child"
+   diagnostic.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'sleep 0.1 & wait %1; echo "ec=$?"'
+ec=0
+$ ./target/debug/zshrs --zsh -fc '{ sleep 0.2; exit 3 } & wait %1; echo "ec=$?"'
+ec=3
+$ ./target/debug/zshrs --zsh -fc 'wait %2; echo "ec=$?"' 2>&1
+zsh:wait:1: %2: no such job
+ec=127
+```
+All byte-identical to zsh; pinned in tests/jobs_parity.rs
+(`wait %name` and `%?str` resolution included).
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'sleep 0.1 & wait %1; echo "ec=$?"'
@@ -38756,7 +38864,54 @@ trap -- 'echo X' USR2
 
 ## #462 — `disown` in subshell errors "no current job" (zsh: silent no-op)
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-12 — the original report's "subshells have
+an empty job table" framing was close but the C mechanism is subtler
+(re-probed against zsh 5.9):
+
+- C subshells run `clearjobtab(monitor)` (entersubsh ESUB_PGRP,
+  Src/exec.c:2862 → 1219 → jobs.c:1780), which frees every job, zeroes
+  the table, and grabs a **procless control job at slot 1**
+  (`thisjob = initjob()`, c:1828). curjob/prevjob are inherited.
+- `sleep 0.3 & (disown)` is silent in zsh because the inherited
+  curjob=1 now points at the control job — disown deletes THAT
+  (vacuously), rc 0. `(kill %1)` likewise "succeeds" against the
+  procless slot.
+- `(sleep 0.2 & disown)` errors "no current job" rc 1 in zsh because
+  spawnjob skips the curjob promotion in subshells (c:1900 `if
+  (!subsh)`).
+
+Fix (in-process subshell model):
+1. `subshell_begin`/`subshell_end`
+   ([src/fusevm_bridge.rs](../src/fusevm_bridge.rs)) snapshot/restore
+   JOBTAB + CURJOB/PREVJOB/MAXJOB/THISJOB (fork-copy semantics), then
+   call the completed `clearjobtab` port (which now also zeroes the
+   table, resets MAXJOB, and grabs the control job per c:1818-1828).
+   THISJOB is then reset to -1 — C's next execpline reassigns it
+   (Src/exec.c:1700) before any builtin can observe the control-job
+   alias; zshrs has no per-pipeline job slot.
+2. `spawnjob`'s `!subsh` gate (c:1900) extended to cover the
+   in-process subshell depth (`SUBSHELL_DEPTH`) — FORKLEVEL alone
+   missed it.
+3. `setcurjob` re-ported (see #79) with a `curjob != -1` guard on the
+   `curjob == thisjob` test: in C thisjob is never -1 inside bin_fg,
+   in zshrs it is, and an unguarded `-1 == -1` resurrected a current
+   job via the prevjob-promotion chain.
+
+**Verify**
+```sh
+$ ./target/debug/zshrs --zsh -fc 'sleep 0.3 & (disown); jobs; kill %1'
+[1]  + running    sleep 0.3
+$ ./target/debug/zshrs --zsh -fc '(sleep 0.2 & disown); echo rc=$?' 2>&1
+zsh:disown:1: no current job
+rc=1
+$ ./target/debug/zshrs --zsh -fc 'sleep 5 & (jobs); kill %1'
+(empty — subshell table cleared)
+$ ./target/debug/zshrs --zsh -fc 'sleep 5 & (kill %1); echo rc=$?; kill %1'
+rc=0
+```
+All byte-identical to zsh; pinned in tests/jobs_parity.rs.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'sleep 0.3 & (disown); jobs'
