@@ -81,8 +81,18 @@ fn bug5_percent_T_prints_hhmm_not_literal() {
     }
     let trimmed = stdout.trim();
     assert_ne!(trimmed, "%T", "must NOT emit literal %T");
-    assert_eq!(trimmed.len(), 5, "HH:MM is 5 chars, got {:?}", trimmed);
-    assert_eq!(&trimmed[2..3], ":", "colon at offset 2 in {:?}", trimmed);
+    // zsh %T is %K:%M — hour has NO leading zero (zsh 5.9 at 00:50
+    // prints "0:50"), so the shape is H:MM or HH:MM, 4-5 chars. The
+    // old fixed len==5 assertion failed for ~10 hours of every day.
+    let parts: Vec<&str> = trimmed.split(':').collect();
+    assert_eq!(parts.len(), 2, "H:MM shape, got {:?}", trimmed);
+    assert!(
+        (1..=2).contains(&parts[0].len())
+            && parts[1].len() == 2
+            && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())),
+        "H:MM digits, got {:?}",
+        trimmed
+    );
 }
 
 #[test]
@@ -125,7 +135,18 @@ fn bug5_percent_star_prints_hhmmss() {
     }
     let trimmed = stdout.trim();
     assert_ne!(trimmed, "%*", "must NOT emit literal %*");
-    assert_eq!(trimmed.len(), 8, "HH:MM:SS is 8 chars, got {:?}", trimmed);
+    // zsh %* is %K:%M:%S — hour has no leading zero (see %T note
+    // above), so 7-8 chars depending on the hour.
+    let parts: Vec<&str> = trimmed.split(':').collect();
+    assert_eq!(parts.len(), 3, "H:MM:SS shape, got {:?}", trimmed);
+    assert!(
+        (1..=2).contains(&parts[0].len())
+            && parts[1].len() == 2
+            && parts[2].len() == 2
+            && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())),
+        "H:MM:SS digits, got {:?}",
+        trimmed
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -184,11 +205,14 @@ fn bug7_plain_array_element_no_dollar_equals_passes_through() {
         return;
     }
     assert_eq!(ec, 0, "exit 0 (stderr={:?})", stderr);
-    // Without $=, no IFS-split fires; "literal text" splits on
-    // whitespace per the existing split_whitespace pass → 4 elems.
+    // zsh truth (5.9, byte-verified): without $=, no splitting at
+    // all — $x stays one word, the DQ "literal text" stays one word,
+    // so n=3 and last is the intact quoted string. The old pin
+    // asserted the broken split_whitespace pass (n=4) that has
+    // since been fixed.
     assert!(
-        stdout.contains("n=4"),
-        "non-`$=` elements split on whitespace only, got {:?}",
+        stdout.contains("n=3 last=literal text"),
+        "no splitting without $=, got {:?}",
         stdout
     );
 }
@@ -578,4 +602,83 @@ fn bug562_substring_offset_still_works() {
         "substring [0:3] must yield 'hel', got {:?}",
         stdout
     );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #187 — `f() { :; } > /file` redirect on fn-def: the file is
+// created at CALL time, not at definition time (C: par_funcdef stores
+// the redir chain on the funcdef, Src/parse.c; doshfunc applies it on
+// entry, Src/exec.c — Shfunc.redir). zsh 5.9 reference output for the
+// probe below: "notyet\nx\n", rc=0. Re-verified at HEAD 2026-06-12.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug187_fn_def_redirect_applies_at_call_not_definition() {
+    let (ec, stdout, stderr) = run_zshrs(
+        r#"t=${TMPDIR:-/tmp}/zshrs_bug187_$$
+command rm -f -- $t
+f() { echo x; } > $t
+[[ -e $t ]] || print notyet
+f
+print -r "$(< $t)"
+command rm -f -- $t"#,
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "probe must exit 0 (stderr: {stderr:?})");
+    assert_eq!(
+        stdout, "notyet\nx\n",
+        "file must NOT exist at definition time and must contain the \
+         fn output after the call"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #490 — `>&N` / `<&N` on an unopened fd errors with zsh's
+// canonical diagnostic and rc=1 (C: the REDIR_MERGEOUT/MERGEIN dup
+// path in Src/exec.c — dup fails EBADF → zwarn("%d: bad file
+// descriptor") + execerr). zsh 5.9 reference: stderr
+// "zsh:1: 5: bad file descriptor", rc=1, empty stdout.
+// Re-verified at HEAD 2026-06-12.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug490_write_to_invalid_fd_errors_rc1() {
+    let (ec, stdout, stderr) = run_zshrs("print x >&5");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "rc=1 on >&5 with fd 5 unopened");
+    assert_eq!(stdout, "", "nothing written on the failed dup");
+    assert!(
+        stderr.contains("5: bad file descriptor"),
+        "canonical diagnostic, got {:?}",
+        stderr
+    );
+}
+
+#[test]
+fn bug490_read_from_invalid_fd_errors_rc1() {
+    let (ec, stdout, stderr) = run_zshrs("read x <&5");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 1, "rc=1 on <&5 with fd 5 unopened");
+    assert_eq!(stdout, "");
+    assert!(
+        stderr.contains("5: bad file descriptor"),
+        "canonical diagnostic, got {:?}",
+        stderr
+    );
+}
+
+#[test]
+fn bug490_valid_fd_dup_still_works() {
+    let (ec, stdout, _stderr) = run_zshrs("print x >&1");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0, "valid fd 1 dup must succeed");
+    assert_eq!(stdout, "x\n");
 }

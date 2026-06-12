@@ -3181,6 +3181,91 @@ use crate::ported::subst::*;
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
 use ::regex::{Error as RegexError, Regex, RegexBuilder};
 
+/// Bridge helper: translate POSIX-ERE bracket-expression semantics to
+/// the Rust `regex` crate's class syntax before compiling an `=~`
+/// pattern. zsh's `zsh/regex` module hands the pattern verbatim to
+/// `regcomp(3)` with `REG_EXTENDED` (c:Src/Modules/regex.c:78); per
+/// POSIX, INSIDE a bracket expression `[...]` a backslash is an
+/// ORDINARY character (a literal class member — `[a-z\n]` is the set
+/// {a..z, '\', 'n'}, NOT "a-z plus newline"). The Rust regex crate
+/// instead processes escapes inside classes (`\n` → newline) and
+/// reserves `[` (nested class), `&&` / `~~` / `--` (set operations),
+/// all of which are ordinary characters in POSIX. BUGS.md #558.
+///
+/// Translation rules, applied only INSIDE bracket expressions:
+///   - `\`, `[`, `&`, `~` are emitted backslash-escaped (literal).
+///   - a leading `]` (after optional `^`) is emitted as `\]`
+///     (POSIX: literal when first).
+///   - `[: :]` / `[= =]` / `[. .]` POSIX named classes / equivalence
+///     classes / collating elements are copied verbatim.
+/// Outside bracket expressions the pattern is copied unchanged
+/// (existing `\X` escape pairs pass through untouched).
+pub fn posix_ere_bracket_escape(pat: &str) -> String {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut out = String::with_capacity(pat.len() + 8);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            // Outside a class: copy the escape pair verbatim.
+            out.push(c);
+            i += 1;
+            if i < chars.len() {
+                out.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if c != '[' {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        // Bracket expression. POSIX: ends at the first `]` that is
+        // not in leading position (after optional `^`).
+        out.push('[');
+        i += 1;
+        if i < chars.len() && chars[i] == '^' {
+            out.push('^');
+            i += 1;
+        }
+        if i < chars.len() && chars[i] == ']' {
+            out.push('\\');
+            out.push(']');
+            i += 1;
+        }
+        while i < chars.len() && chars[i] != ']' {
+            // `[:alpha:]` / `[=a=]` / `[.x.]` — copy verbatim.
+            if chars[i] == '[' && i + 1 < chars.len() && matches!(chars[i + 1], ':' | '=' | '.') {
+                let close = chars[i + 1];
+                out.push('[');
+                out.push(close);
+                i += 2;
+                while i < chars.len() && !(chars[i] == close && chars.get(i + 1) == Some(&']')) {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    out.push(close);
+                    out.push(']');
+                    i += 2;
+                }
+                continue;
+            }
+            if matches!(chars[i], '\\' | '[' | '&' | '~') {
+                out.push('\\');
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+        if i < chars.len() {
+            out.push(']'); // class terminator
+            i += 1;
+        }
+    }
+    out
+}
+
 impl ShellExecutor {
     /// Every option name in `ZSH_OPTIONS_SET` (port of `optns[]` at
     /// `Src/options.c:79+`).

@@ -210,23 +210,13 @@ pub fn bin_zselect(
     } else {
         std::ptr::null_mut()
     };
-    // Guard: `select(0, all-empty, all-empty, all-empty, NULL)` blocks
-    // forever per POSIX (no fds to wait on, no timeout to wake the
-    // call). C zsh hits the same hang from userspace if invoked
-    // bare; in practice the parser never generates the empty form so
-    // it's never observed. zshrs's unit tests call bin_zselect
-    // directly with empty args (`fn bin_zselect_*_empty_args`) and
-    // the hang stalls the whole `cargo test --lib` run. Treat
-    // empty-fds + no-timeout as a usage error so the tests
-    // terminate. Verified vs Src/Modules/zselect.c:65 — no guard
-    // exists in C; this is a zshrs-side test-stability fix without
-    // observable user-visible behavior change (the only way to hit
-    // it from a script would be `zselect` with no args, which has no
-    // documented semantic).
-    if fdmax == 0 && !have_timeout {
-        zwarnnam(nam, "no file descriptors and no timeout: would block forever");
-        return 1;
-    }
+    // c:174 — bare `zselect` (no fds, no -t) passes an empty fd set
+    // and a NULL timeout straight to select(2), which blocks until a
+    // signal arrives. No guard exists in C; an earlier zshrs-only
+    // guard here invented a "no file descriptors and no timeout:
+    // would block forever" diagnostic (rc=1) that diverged from zsh
+    // (BUGS.md #630). Unit tests must therefore never call
+    // bin_zselect with empty args sans `-t` — they use `-t 0`.
     // c:173 — `errno = 0;` (Rust's last_os_error reads thread-local
     // errno set by libc::select on entry; no explicit zero needed).
     // c:174-177 — `do { i = select(...) } while (i < 0 && errno == EINTR && !errflag);`
@@ -780,9 +770,11 @@ mod tests {
         assert_eq!(r, 1, "empty string → 1");
     }
 
-    /// c:65 — `bin_zselect` with no args HANGS in zshrs port: it
-    /// calls select(2) on an empty fd set with no timeout. C handles
-    /// this differently — pin as ZSHRS BUG.
+    /// c:174-181 — `zselect -t 0` with no fds: select(2) returns 0
+    /// immediately (timeout) and bin_zselect returns 1. The bare
+    /// no-args form blocks in select(2) per C (BUGS.md #630) so unit
+    /// tests always pass `-t 0`; blocking parity is pinned at the
+    /// subprocess level in tests/modules_parity.rs.
     #[test]
     fn bin_zselect_no_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
@@ -792,8 +784,8 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zselect("zselect", &[], &ops, 0);
-        assert_ne!(r, 0, "no args → error");
+        let r = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
+        assert_ne!(r, 0, "-t 0 with no fds → 1 (timeout)");
     }
 
     /// Lifecycle (c:295/327/334/341) split per-hook.
@@ -891,14 +883,15 @@ mod tests {
         }
     }
 
-    /// c:68 — `bin_zselect` no-args HANGS in select(2) on empty fd_set.
-    /// C source guards against this; zshrs port does not.
+    /// c:174-181 — `-t 0` with no fds returns 1 (timeout). Bare
+    /// no-args blocks in select(2) per C (BUGS.md #630) — pinned at
+    /// the subprocess level in tests/modules_parity.rs, never here.
     #[test]
     fn bin_zselect_empty_args_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
-        let r = bin_zselect("zselect", &[], &ops, 0);
-        assert_ne!(r, 0, "no args → error");
+        let r = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
+        assert_ne!(r, 0, "-t 0 with no fds → 1 (timeout)");
     }
 
     /// c:295-341 — full lifecycle setup→features→enables→boot→cleanup→finish.
@@ -1112,16 +1105,17 @@ mod tests {
     fn bin_zselect_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
-        let _: i32 = bin_zselect("zselect", &[], &ops, 0);
+        let _: i32 = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
     }
 
-    /// c:68 — `bin_zselect` no-args returns nonzero (usage error, alt).
+    /// c:174-181 — `-t 0` no-fds returns nonzero (timeout, alt pin).
+    /// Bare no-args blocks in select(2) per C (BUGS.md #630).
     #[test]
     fn bin_zselect_no_args_usage_error_alt() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
-        let r = bin_zselect("zselect", &[], &ops, 0);
-        assert_ne!(r, 0, "no args → usage error");
+        let r = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
+        assert_ne!(r, 0, "-t 0 with no fds → 1 (timeout)");
     }
 
     /// c:68 — `bin_zselect` exit code is non-negative for usage-error paths.
@@ -1129,7 +1123,7 @@ mod tests {
     fn bin_zselect_usage_error_exit_codes_non_negative() {
         let _g = crate::test_util::global_state_lock();
         let ops = empty_ops_zs();
-        for argv in [vec![], vec!["bogus".into()], vec!["-X".into()]] {
+        for argv in [s(&["-t", "0"]), vec!["bogus".into()], vec!["-X".into()]] {
             let r = bin_zselect("zselect", &argv, &ops, 0);
             assert!(
                 r >= 0,
@@ -1232,7 +1226,8 @@ mod tests {
         let _: i32 = boot_(std::ptr::null());
     }
 
-    /// c:68 — `bin_zselect` empty args non-negative (alt).
+    /// c:174-181 — `-t 0` no-fds result non-negative (alt). Bare
+    /// no-args blocks in select(2) per C (BUGS.md #630).
     #[test]
     fn bin_zselect_empty_args_non_negative_alt_pin() {
         let _g = crate::test_util::global_state_lock();
@@ -1242,8 +1237,8 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r = bin_zselect("zselect", &[], &ops, 0);
-        assert!(r >= 0, "bin_zselect empty must be ≥ 0, got {}", r);
+        let r = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
+        assert!(r >= 0, "bin_zselect -t 0 must be ≥ 0, got {}", r);
     }
 
     /// c:68 — `bin_zselect` various func values don't panic.
@@ -1257,11 +1252,12 @@ mod tests {
             argsalloc: 0,
         };
         for func in [-1, 0, 1, 100, i32::MAX] {
-            let _ = bin_zselect("zselect", &[], &ops, func);
+            let _ = bin_zselect("zselect", &s(&["-t", "0"]), &ops, func);
         }
     }
 
-    /// c:68 — `bin_zselect` deterministic for empty args.
+    /// c:174-181 — `-t 0` no-fds deterministic. Bare no-args blocks
+    /// in select(2) per C (BUGS.md #630).
     #[test]
     fn bin_zselect_deterministic_for_empty_args() {
         let _g = crate::test_util::global_state_lock();
@@ -1271,9 +1267,9 @@ mod tests {
             argscount: 0,
             argsalloc: 0,
         };
-        let r1 = bin_zselect("zselect", &[], &ops, 0);
-        let r2 = bin_zselect("zselect", &[], &ops, 0);
-        assert_eq!(r1, r2, "bin_zselect empty args must be deterministic");
+        let r1 = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
+        let r2 = bin_zselect("zselect", &s(&["-t", "0"]), &ops, 0);
+        assert_eq!(r1, r2, "bin_zselect -t 0 must be deterministic");
     }
 
     /// c:312 — `features_` deterministic on null module.

@@ -467,7 +467,16 @@ pub fn evalcond(
                             // `dot_matches_new_line(true)` so
                             // multi-line `=~` behaves like zsh on
                             // `a\nb`-style inputs. Bug #557.
-                            match regex::RegexBuilder::new(&right)
+                            // c:Src/Modules/regex.c:78 — regcomp(3)
+                            // POSIX-ERE bracket semantics: inside
+                            // `[...]` a backslash is an ordinary
+                            // class member. Translate to the Rust
+                            // regex crate's class syntax via the
+                            // same bridge helper zcond_regex_match
+                            // uses. BUGS.md #558.
+                            let right_ere =
+                                crate::vm_helper::posix_ere_bracket_escape(&right);
+                            match regex::RegexBuilder::new(&right_ere)
                                 .dot_matches_new_line(true)
                                 .build()
                             {

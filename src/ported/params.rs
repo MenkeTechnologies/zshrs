@@ -5240,6 +5240,47 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 unqueue_signals();
                 return Some(pm);
             }
+            "commands" => {
+                // c:Src/Modules/parameter.c:151-160 setpmcommand —
+                // `commands[name]=path` installs a HASHED Cmdnam
+                // node in cmdnamtab (`cn->node.flags = HASHED;
+                // cn->u.cmd = ztrdup(value); cmdnamtab->addnode`),
+                // exactly like `hash name=path`. zsh ACCEPTS the
+                // write (verified vs zsh 5.9: rc=0, readback works,
+                // whence/hash see the entry). Build a synthetic
+                // Param whose node.nam carries the command name and
+                // dispatch to the canonical setpmcommand port.
+                // Bug #375.
+                use crate::ported::zsh_h::hashnode;
+                use crate::ported::zsh_h::param as ParamStruct;
+                let pm: Box<ParamStruct> = Box::new(ParamStruct {
+                    node: hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                crate::ported::modules::parameter::setpmcommand(pm.clone(), val.to_string());
+                unqueue_signals();
+                return Some(pm);
+            }
             _ => {}
         }
     }
@@ -5331,10 +5372,16 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         // `options[X]=on|off` writes through the canonical setpmoption
         // port, so by the time we reach here `options` has already
         // returned. Bug #342.
+        // `commands` is intentionally NOT in this list — C zsh's
+        // `setpmcommand` (Src/Modules/parameter.c:151-160) ACCEPTS
+        // `commands[name]=path` and installs a HASHED Cmdnam node in
+        // cmdnamtab (same effect as `hash name=path`). Verified vs
+        // zsh 5.9: `commands[x]=/y` → rc=0, ${commands[x]} → /y,
+        // `whence x` → /y. The `commands` arm above routes through
+        // the canonical setpmcommand port. Bug #375.
         let is_readonly_magic = matches!(
             name,
             "builtins"
-                | "commands"
                 | "modules"
                 | "parameters"
                 | "dis_builtins"

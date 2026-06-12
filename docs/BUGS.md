@@ -21,7 +21,22 @@ CI green pending the underlying fix.
 
 ## #630 — bare `zselect` (no fds, no timeout) prints invented "would block forever" error — C blocks in select(2)
 
-**Status:** `port-bug`
+**Status:** `fixed` 2026-06-12 — removed the zshrs-only guard in
+`bin_zselect` (src/ported/modules/zselect.rs, pre-fix lines 213-229)
+that emitted the invented diagnostic and returned 1. Bare `zselect`
+now reaches `select(2)` with an empty fd set and a NULL timeout
+exactly like C (Src/Modules/zselect.c:174) and blocks:
+`timeout 1 ./zshrs --zsh -fc 'zmodload zsh/zselect; zselect'` →
+rc=124, zero output, matching zsh. `-t 0` unchanged (rc=1 both
+shells). The guard's original motivation — unit tests calling
+`bin_zselect` with empty args hanging `cargo test --lib` — is
+addressed by switching those tests to `-t 0` forms (zselect.rs test
+mod); blocking parity is pinned at the subprocess level by
+`zselect_bare_blocks_in_select_like_c` in tests/modules_parity.rs
+(spawns both shells, asserts still-running + zero output after a
+grace period, then kills — never blocks CI).
+
+**Original report:**
 
 **Reproducer:**
 ```
@@ -15699,6 +15714,13 @@ fi
 ## #187 — `f() { :; } > /file` redirect on fn-def creates file at definition time
 
 **Status:** `fixed` 2026-06-02 — `compile_command`'s `Redirected(FuncDef, ...)` arm skips the redirect-open at def time (matches zsh's deferred semantic).
+Re-verified at HEAD 2026-06-12 — probe
+`f() { echo x; } > /tmp/f187; [[ -e /tmp/f187 ]] || print notyet; f;
+print -r "$(< /tmp/f187)"` emits `notyet` + `x` rc=0 on BOTH shells
+(file absent at definition, created+written at call — the full
+call-time semantic from #158 also holds). Pinned by
+`bug187_fn_def_redirect_applies_at_call_not_definition` in
+tests/bugs_md_regression.rs.
 
 **Root cause** — `f() { :; } > /tmp/zfr` parses as
 `Redirected(FuncDef(...), [redirs])`. The generic Redirected
@@ -31870,9 +31892,42 @@ specials is broadly missing.
 
 ## #375 — `commands[name]=value` user-overwrite accepted — commands (cmd-to-path map) not slice-protected
 
-**Status:** `fixed` 2026-06-03 — `assignsparam`'s
-readonly-magic-assoc list (added for #242) covers
-`commands`, so subscript writes are rejected with the
+**Status:** `fixed` 2026-06-12 — RE-FIXED in the opposite direction.
+The 2026-06-03 "fix" (readonly rejection, below) was NOT what C
+does: `setpmcommand` (Src/Modules/parameter.c:151-160) ACCEPTS
+`commands[name]=path` and installs a HASHED Cmdnam node in cmdnamtab
+(`cn->node.flags = HASHED; cn->u.cmd = ztrdup(value);
+cmdnamtab->addnode(...)`) — identical effect to `hash name=path`.
+Probed zsh 5.9 truth:
+```
+$ zsh -fc 'zmodload zsh/parameter; commands[x]=/y; echo rc=$? ${commands[x]}'
+rc=0 /y
+$ zsh -fc 'zmodload zsh/parameter; commands[x]=/y/z; whence x; hash | grep ^x='
+/y/z
+x=/y/z
+```
+The original report's "attempt to set slice" error was an older
+zsh; current zsh accepts, and the C source is unambiguous. Ported
+exactly: removed `commands` from `assignsparam`'s
+readonly-magic-assoc list (src/ported/params.rs) and added a
+`commands` dispatch arm (next to the `options` arm) routing
+`commands[key]=value` through the canonical `setpmcommand` port
+(src/ported/modules/parameter.rs:581). zshrs now byte-matches zsh:
+rc=0, element readback, whence/hash visibility. Other introspection
+assocs (`builtins[x]=y` → `read-only variable: builtins`, rc=1)
+unchanged and still parity-correct. Pinned by
+`commands_subscript_write_installs_cmdnam_node` in
+tests/modules_parity.rs.
+
+**Residual (separate, pre-existing):** whole-hash assignment
+`commands=(q /r)` still errors `can't change type of a special
+parameter` in zshrs where zsh accepts via `setpmcommands`
+(Src/Modules/parameter.c:173) — that's the assignaparam/whole-array
+path, untouched by this fix.
+
+**Superseded 2026-06-03 note:** `assignsparam`'s
+readonly-magic-assoc list (added for #242) covered
+`commands`, so subscript writes were rejected with the
 canonical `read-only variable: commands` error.
 
 **Verify**
@@ -41143,6 +41198,10 @@ Tedious; doesn't scale.
 correctly emits `5: bad file descriptor` rc=1 matching zsh. Same for
 `<&5` (read). Likely landed via earlier `host_apply_redirect` fcntl
 F_GETFD validation in `fusevm_bridge.rs`.
+Re-verified at HEAD 2026-06-12 — `print x >&5` and `read x <&5` both
+emit `zsh:1: 5: bad file descriptor` rc=1 byte-identical to zsh 5.9;
+valid-fd `print x >&1` unchanged (`x`, rc=0). Pinned by the three
+`bug490_*` tests in tests/bugs_md_regression.rs.
 
 **Verify**
 ```sh
@@ -45925,7 +45984,41 @@ via `=~`.
 
 ## #558 — regex `[a-z\n]` char-class with `\n` matches multiline aggressively in zshrs — zsh stops at line
 
-**Status:** `port-bug` — surfaced 2026-05-30 hunting.
+**Status:** `fixed` 2026-06-12 — the reproducer exercises the
+`zsh/regex` POSIX-ERE engine (no `setopt rematchpcre`):
+`zcond_regex_match` hands the pattern verbatim to `regcomp(3)` with
+`REG_EXTENDED` (Src/Modules/regex.c:78). Per POSIX, INSIDE a bracket
+expression a backslash is an ORDINARY character — `[a-z\n]` is the
+set {a..z, '\', 'n'}, NOT "a-z plus newline" — so zsh matches `a`
+and stops at the line break. zshrs compiled the pattern with the
+Rust `regex` crate, which processes escapes inside classes (`\n` →
+newline) and additionally reserves `[` (nested class) and `&&`/`~~`
+(set ops), none of which are special in POSIX.
+
+**Fix** — new bridge helper `posix_ere_bracket_escape`
+(src/vm_helper.rs): inside bracket expressions, `\`/`[`/`&`/`~` are
+emitted backslash-escaped (literal members), a leading `]` becomes
+`\]`, and `[: :]`/`[= =]`/`[. .]` named classes pass through
+verbatim; outside brackets the pattern is untouched. Wired at BOTH
+`=~` compile sites: the canonical port
+`src/ported/modules/regex.rs::zcond_regex_match` (the Op::RegexMatch
+runtime path, fusevm_bridge.rs regex_match) and the
+`src/ported/cond.rs::evalcond` COND_REGEX arm.
+
+**Verified vs zsh 5.9 (byte-equal, 8/8):** reproducer → `[a]`;
+`[[ "n" =~ "[\n]" ]]` → yes; real newline vs `[\n]` → no; literal
+backslash is a member (`a\b` fully matched); `[[:alpha:]]+`
+unchanged; `[]]` leading-]` literal; `[a&b]+` matches `a&b`;
+`[a-z-]+` trailing `-` literal; `[^\n]+` negated class matches
+across the newline. Pinned by `regex_bracket_*` (3 tests) in
+tests/cond_parity.rs.
+
+**Residual (separate gap, #557 family):** OUTSIDE bracket
+expressions `\<ordinary-char>` divergence remains — zsh's regcomp
+treats `"\n"` as literal `n` (`[[ "n" =~ "\n" ]]` → yes in zsh),
+the Rust crate as newline. Not part of this entry's reproducer.
+
+**Original report:**
 
 ```sh
 $ /opt/homebrew/bin/zsh -fc 'a=$'\''a\nb'\''; [[ "$a" =~ "[a-z\n]+" ]] && echo "[${MATCH}]"'

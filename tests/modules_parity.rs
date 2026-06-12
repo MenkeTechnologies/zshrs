@@ -711,6 +711,24 @@ zstyle -t ':x' disabled && echo Y2 || echo N2"#,
 mod parameter_module {
     use super::*;
 
+    /// BUGS.md #375 — `commands[name]=path` is ACCEPTED: C's
+    /// setpmcommand (Src/Modules/parameter.c:151-160) installs a
+    /// HASHED Cmdnam node in cmdnamtab (same effect as `hash
+    /// name=path`), it does NOT reject the write. Pin rc=0,
+    /// element readback, and whence/hash visibility.
+    #[test]
+    fn commands_subscript_write_installs_cmdnam_node() {
+        assert_parity(&with_modules(
+            &["parameter"],
+            r#"commands[x]=/y
+echo rc=$? "[${commands[x]}]"
+commands[zz_375]=/aa/bb
+whence zz_375
+echo wrc=$?
+hash | grep '^zz_375='"#,
+        ));
+    }
+
     #[test]
     fn aliases_assoc_returns_value() {
         assert_parity(&with_modules(
@@ -937,6 +955,67 @@ mod zselect_module {
         // zselect-with-no-fds is documented as 1 (timeout) but some
         // builds return 2 (error). Match shell-to-shell.
         assert_eq!(z.stdout, r.stdout);
+    }
+
+    /// BUGS.md #630 — bare `zselect` (no fds, no `-t`) must BLOCK in
+    /// select(2) exactly like C: bin_zselect passes an empty fd set
+    /// and a NULL timeout straight to select(2)
+    /// (Src/Modules/zselect.c:174). A zshrs-only guard used to print
+    /// an invented "no file descriptors and no timeout: would block
+    /// forever" diagnostic and return 1. Pin: after a grace period
+    /// the shell is still running with ZERO output, then it is
+    /// killed (blocking forever in CI is unacceptable; the kill is
+    /// the test's own timeout). The zsh reference is probed the same
+    /// way when available.
+    #[test]
+    fn zselect_bare_blocks_in_select_like_c() {
+        use std::process::Stdio;
+        use std::time::Duration;
+        // Pre-warm zshrs startup caches so a cold-start compile
+        // isn't mistaken for select(2) blocking.
+        let _ = run_zshrs(":");
+        let script = with_modules(&["zselect"], "zselect");
+        let spawn_and_probe = |mut cmd: Command| {
+            let mut child = cmd
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn shell");
+            std::thread::sleep(Duration::from_millis(1500));
+            let still_running = child.try_wait().expect("try_wait").is_none();
+            let _ = child.kill();
+            let out = child.wait_with_output().expect("collect output");
+            (
+                still_running,
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            )
+        };
+        let mut rs_cmd = Command::new(zshrs_bin());
+        rs_cmd
+            .args(["--zsh", "-c", &script])
+            .env_remove("ZSHRS_CACHE");
+        let (rs_alive, rs_out, rs_err) = spawn_and_probe(rs_cmd);
+        assert!(
+            rs_alive,
+            "zshrs bare zselect must block in select(2), not exit \
+             (stdout: {rs_out:?}, stderr: {rs_err:?})"
+        );
+        assert_eq!(rs_out, "", "no stdout while blocked in select(2)");
+        assert_eq!(
+            rs_err, "",
+            "no invented 'would block forever' diagnostic (BUGS.md #630)"
+        );
+        if zsh_available() {
+            let mut z_cmd = Command::new(zsh_path());
+            z_cmd.args(["-fc", &script]);
+            let (z_alive, z_out, z_err) = spawn_and_probe(z_cmd);
+            assert!(
+                z_alive,
+                "zsh reference must block too (stdout: {z_out:?}, stderr: {z_err:?})"
+            );
+        }
     }
 }
 
