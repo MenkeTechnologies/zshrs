@@ -156,6 +156,46 @@ pub fn format_source(src: &str, opts: &FmtOptions) -> String {
         let body = normalize_spacing(body, norm_ctx);
         let body = body.as_str();
 
+        // ── Idiomatic `; then` / `; do` joining ─────────────────────
+        // All three style authorities agree (zsh's own
+        // Etc/completion-style-guide: "the `then' or `do' should be
+        // on the end of the line after a semi-colon"; OMZ wiki: "Put
+        // `; do` and `; then` on the same line"; corpus counts:
+        // zsh Functions/Completion 4556 `; then` vs 164 bare, zpwr
+        // 636 vs 0). When the line is EXACTLY the keyword and the
+        // immediately preceding emitted line is the still-pending
+        // opener (top of stack If/Loop with open=false, previous
+        // line non-blank, no continuation), splice `; then` / `; do`
+        // onto it instead of emitting a bare-keyword line.
+        if !continuation {
+            let join_kw = match (body, stack.last()) {
+                ("then", Some(Block::If { open: false })) => Some("; then"),
+                ("do", Some(Block::Loop { open: false })) => Some("; do"),
+                _ => None,
+            };
+            if let Some(kw) = join_kw {
+                let prev_nonblank = out
+                    .rsplit_once('\n')
+                    .map(|(_, _last)| ())
+                    .is_some()
+                    && !out.ends_with("\n\n")
+                    && out.len() >= 2;
+                if prev_nonblank {
+                    // Mark the block open (the scanner would have).
+                    if let Some(b) = stack.last_mut() {
+                        match b {
+                            Block::If { open } | Block::Loop { open } => *open = true,
+                            _ => {}
+                        }
+                    }
+                    out.pop(); // trailing \n of the opener line
+                    out.push_str(kw);
+                    out.push('\n');
+                    continue;
+                }
+            }
+        }
+
         // ── Scan the line for structural tokens ─────────────────────
         let scan = scan_line(body, &mut stack, &mut pending_heredocs);
 
@@ -1109,6 +1149,25 @@ mod tests {
         };
         let got = format_source("if x; then\ny\nfi\n", &opts);
         assert_eq!(got, "if x; then\n\ty\nfi\n");
+    }
+
+    /// Bare `then` / `do` lines join onto their opener as `; then` /
+    /// `; do` — zsh Etc/completion-style-guide + OMZ rule, 96-100%
+    /// of both corpora (zsh Functions/Completion, zpwr).
+    #[test]
+    fn then_do_join_idiomatic() {
+        let src = "if true\nthen\nprint a\nfi\nfor i in 1 2\ndo\nprint $i\ndone\n";
+        let want = "if true; then\n    print a\nfi\nfor i in 1 2; do\n    print $i\ndone\n";
+        assert_eq!(fmt(src), want);
+    }
+
+    /// The join lands on the LAST condition line of a multi-line
+    /// condition, and a blank-line gap suppresses the join.
+    #[test]
+    fn then_join_multiline_condition_and_blank_gap() {
+        let src = "if true &&\nfalse\nthen\nx\nfi\nif true\n\nthen\ny\nfi\n";
+        let want = "if true &&\nfalse; then\n    x\nfi\nif true\n\nthen\n    y\nfi\n";
+        assert_eq!(fmt(src), want);
     }
 
     /// Inner spacing: runs dedupe to one space; `;` glues left with
