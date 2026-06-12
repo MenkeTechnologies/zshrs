@@ -4765,7 +4765,7 @@ pub fn bin_typeset(
         let mut nameref_rewrite: Option<String> = None;
         if (off as u32 & PM_NAMEREF) == 0
             && pname_in_tab
-            && crate::vm_helper::is_nameref(arg_name)
+            && crate::ported::params::is_nameref(arg_name)
         {
             let cur_ll = locallevel.load(Relaxed) as i32;
             let (pm_level, pm_refname) = paramtab()
@@ -4777,8 +4777,8 @@ pub fn bin_typeset(
                 // c:2033
                 let type_change =
                     (on as u32 & !(PM_NAMEREF | PM_LOCAL | PM_READONLY)) != 0; // c:2038
-                use crate::vm_helper::nameref_resolution;
-                match crate::vm_helper::resolve_nameref_name(arg_name, None) {
+                use crate::ported::params::nameref_resolution;
+                match crate::ported::params::resolve_nameref_name(arg_name, None) {
                     nameref_resolution::SelfRef
                     | nameref_resolution::OutOfScope => {
                         returnval = 1;
@@ -5695,7 +5695,7 @@ pub fn bin_typeset(
             // the +n type-conversion arm; K01 "remove nameref
             // attribute" expects `typeset ptr=var`).
             let saved_val = if (off as u32 & PM_NAMEREF) != 0
-                && crate::vm_helper::is_nameref(arg)
+                && crate::ported::params::is_nameref(arg)
             {
                 paramtab()
                     .read()
@@ -7337,12 +7337,12 @@ pub fn bin_unset(
                 let mut resolved_target: Option<String> = None; // non-ref target to unset
                 let mut ref_removal: Option<String> = None; // ref entry to remove
                 let mut handled = false;
-                if crate::vm_helper::is_nameref(nm) {
+                if crate::ported::params::is_nameref(nm) {
                     if OPT_ISSET(ops, b'n') {
                         ref_removal = Some(nm.to_string()); // unset -n: the ref itself
                     } else {
-                        use crate::vm_helper::nameref_resolution;
-                        match crate::vm_helper::resolve_nameref_name(nm, None) {
+                        use crate::ported::params::nameref_resolution;
+                        match crate::ported::params::resolve_nameref_name(nm, None) {
                             // c:3942-3943 — `if (!(pm = resolve_nameref(pm))) continue;`
                             nameref_resolution::SelfRef
                             | nameref_resolution::OutOfScope => continue,

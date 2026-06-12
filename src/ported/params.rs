@@ -4444,7 +4444,7 @@ pub fn getsparam(name: &str) -> Option<String> {
     // 1b. c:Src/params.c:570-575 — getparamnode resolves PM_NAMEREF
     //     chains before the value read (`pm = resolve_nameref(pm)`).
     //     Redirect the lookup to the resolved target.
-    if let Some(res) = crate::vm_helper::nameref_read_redirect(name) {
+    if let Some(res) = crate::ported::params::nameref_read_redirect(name) {
         return res;
     }
     // 2. Paramtab read — `(Value)gethashnode2(paramtab, name)`.
@@ -4655,7 +4655,7 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
     }
     // c:Src/params.c:570-575 — getvalue→fetchvalue→getparamnode
     // resolves PM_NAMEREF before the type check.
-    if let Some(res) = crate::vm_helper::nameref_aread_redirect(name) {
+    if let Some(res) = crate::ported::params::nameref_aread_redirect(name) {
         return res;
     }
     // c:3107-3109 — `getvalue(&vbuf, &s, 0)` resolves the name to a
@@ -4718,7 +4718,7 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
         return None;
     }
     // c:Src/params.c:570-575 — nameref deref before the type check.
-    let resolved = crate::vm_helper::nameref_final_name(name);
+    let resolved = crate::ported::params::nameref_final_name(name);
     let name: &str = &resolved;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
@@ -4966,20 +4966,20 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // Mirror by redirecting the assignment to the resolved target.
     {
         let base = s.split('[').next().unwrap_or(s);
-        if crate::vm_helper::is_nameref(base) {
-            match crate::vm_helper::resolve_nameref_name(base, None) {
-                crate::vm_helper::nameref_resolution::SelfRef => {
+        if crate::ported::params::is_nameref(base) {
+            match crate::ported::params::resolve_nameref_name(base, None) {
+                crate::ported::params::nameref_resolution::SelfRef => {
                     // zerr emitted inside the walk (c:6341-6343).
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     return None;
                 }
-                crate::vm_helper::nameref_resolution::OutOfScope => {
+                crate::ported::params::nameref_resolution::OutOfScope => {
                     // c:1108-1118 — createparam refuses the existing
                     // ref; assignment fails (status 1, no errflag —
                     // c:3255 is commented out in the C source).
                     return None;
                 }
-                crate::vm_helper::nameref_resolution::Placeholder(last) => {
+                crate::ported::params::nameref_resolution::Placeholder(last) => {
                     // Chain ends at a placeholder/unset ref: the value
                     // becomes its new refname (assignstrvalue
                     // PM_NAMEREF arm, c:2712-2717 + c:3258).
@@ -5023,7 +5023,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                             paramtab().read().ok()?.get(last_n).cloned()
                     })();
                 }
-                crate::vm_helper::nameref_resolution::Target {
+                crate::ported::params::nameref_resolution::Target {
                     name: t,
                     subscript: rsub,
                     pm: rpm,
@@ -5042,7 +5042,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                             .ok()
                             .and_then(|tb| tb.get(&t).map(|p| p.level));
                         if visible_level != Some(level) {
-                            return crate::vm_helper::nameref_hidden_scalar_assign(
+                            return crate::ported::params::nameref_hidden_scalar_assign(
                                 &t, level, val,
                             );
                         }
@@ -5060,7 +5060,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         return assignsparam(&new_s, val, flags);
                     }
                 }
-                crate::vm_helper::nameref_resolution::NotRef => {}
+                crate::ported::params::nameref_resolution::NotRef => {}
             }
         }
     }
@@ -6124,23 +6124,23 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // PM_NAMEREF chains; c:3395-3398 rejects an unresolvable ref.
     {
         let base = name.split('[').next().unwrap_or(name);
-        if crate::vm_helper::is_nameref(base) {
-            match crate::vm_helper::resolve_nameref_name(base, None) {
-                crate::vm_helper::nameref_resolution::SelfRef => {
+        if crate::ported::params::is_nameref(base) {
+            match crate::ported::params::resolve_nameref_name(base, None) {
+                crate::ported::params::nameref_resolution::SelfRef => {
                     errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                     return None;
                 }
-                crate::vm_helper::nameref_resolution::OutOfScope => {
+                crate::ported::params::nameref_resolution::OutOfScope => {
                     // see assignsparam — silent failure, status 1.
                     return None;
                 }
-                crate::vm_helper::nameref_resolution::Placeholder(_) => {
+                crate::ported::params::nameref_resolution::Placeholder(_) => {
                     // c:3396 — message uses the ORIGINAL assigned name
                     // (`t = s` saved at c:3361).
                     zwarn(&format!("{}: can't change type of a named reference", base));
                     return None;
                 }
-                crate::vm_helper::nameref_resolution::Target {
+                crate::ported::params::nameref_resolution::Target {
                     name: t,
                     subscript: rsub,
                     pm: rpm,
@@ -6154,7 +6154,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                             .ok()
                             .and_then(|tb| tb.get(&t).map(|p| p.level));
                         if visible_level != Some(level) {
-                            return crate::vm_helper::nameref_hidden_array_assign(
+                            return crate::ported::params::nameref_hidden_array_assign(
                                 &t, level, val,
                             );
                         }
@@ -6172,7 +6172,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                         return assignaparam(&new_s, val, flags);
                     }
                 }
-                crate::vm_helper::nameref_resolution::NotRef => {}
+                crate::ported::params::nameref_resolution::NotRef => {}
             }
         }
     }
@@ -6621,20 +6621,20 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     }
     // c:3630 — `fetchvalue(&vbuf, &s, 1, SCANPM_ASSIGNING)` resolves
     // PM_NAMEREF chains (same shape as assignaparam c:3392-3398).
-    if crate::vm_helper::is_nameref(name) {
-        match crate::vm_helper::resolve_nameref_name(name, None) {
-            crate::vm_helper::nameref_resolution::SelfRef => {
+    if crate::ported::params::is_nameref(name) {
+        match crate::ported::params::resolve_nameref_name(name, None) {
+            crate::ported::params::nameref_resolution::SelfRef => {
                 errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
                 return None;
             }
-            crate::vm_helper::nameref_resolution::OutOfScope => {
+            crate::ported::params::nameref_resolution::OutOfScope => {
                 return None;
             }
-            crate::vm_helper::nameref_resolution::Placeholder(_) => {
+            crate::ported::params::nameref_resolution::Placeholder(_) => {
                 zwarn(&format!("{}: can't change type of a named reference", name));
                 return None;
             }
-            crate::vm_helper::nameref_resolution::Target {
+            crate::ported::params::nameref_resolution::Target {
                 name: t,
                 subscript: None,
                 ..
@@ -10933,14 +10933,14 @@ pub fn resolve_nameref_rec(
         return None;
     }
     let stop_key = stop.map(|s| (s.node.nam.clone(), s.level));
-    match crate::vm_helper::resolve_nameref_name(
+    match crate::ported::params::resolve_nameref_name(
         &pm_ref.node.nam,
         stop_key.as_ref().map(|(n, l)| (n.as_str(), *l)),
     ) {
-        crate::vm_helper::nameref_resolution::Target {
+        crate::ported::params::nameref_resolution::Target {
             pm: Some(target), ..
         } => Some(target),
-        crate::vm_helper::nameref_resolution::Target { pm: None, .. } => {
+        crate::ported::params::nameref_resolution::Target { pm: None, .. } => {
             // c:6347 miss + keep_lastref (c:6353-6354).
             if keep_lastref != 0 {
                 pm
@@ -10948,15 +10948,15 @@ pub fn resolve_nameref_rec(
                 None
             }
         }
-        crate::vm_helper::nameref_resolution::Placeholder(last) => {
+        crate::ported::params::nameref_resolution::Placeholder(last) => {
             // Chain ended on an empty-refname ref: C returns that ref
             // (the early-exit at c:6336-6339 of the recursive call).
             let tab = paramtab().read().ok()?;
             tab.get(&last).cloned().or(pm)
         }
-        crate::vm_helper::nameref_resolution::SelfRef => None, // c:6343
-        crate::vm_helper::nameref_resolution::OutOfScope => None, // c:6347-6349
-        crate::vm_helper::nameref_resolution::NotRef => pm,
+        crate::ported::params::nameref_resolution::SelfRef => None, // c:6343
+        crate::ported::params::nameref_resolution::OutOfScope => None, // c:6347-6349
+        crate::ported::params::nameref_resolution::NotRef => pm,
     }
 }
 
@@ -11019,7 +11019,7 @@ pub fn setloopvar(name: &str, value: &str) {
     if nameref_branch {
         // c:6379 — `setscope(pm);` — run the full-table variant with
         // no lock held (it manages its own short-lived locks).
-        crate::vm_helper::setscope_by_name(name);
+        crate::ported::params::setscope_by_name(name);
     } else {
         // c:6381 — `setsparam(name, ztrdup(value));`
         setsparam(name, value);
