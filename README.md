@@ -562,7 +562,10 @@ zshrs --dump-plugins         # JSON dump of every sourced plugin grouped
 zshrs --docs <name>          # render the LSP hover card for <name>
 zshrs --fmt [-w] [-t] [-i N] [FILE…]
                              # format zsh source: block-structure
-                             # reindent, heredoc-safe, idempotent.
+                             # reindent + idiomatic spacing (dedupe
+                             # runs; a;b → a; b, a&&b → a && b,
+                             # a|b → a | b, cmd& → cmd &, x;; → x ;;,
+                             # f () → f()), heredoc-safe, idempotent.
                              # stdin→stdout with no files; -w rewrites
                              # in place; -i sets indent width (default
                              # 4); -t indents with tabs
@@ -587,7 +590,7 @@ default build lean.
 | `foldingRange`                      | `{ … }` / `do … done` / `case … esac` blocks + ≥3 `#` comment runs |
 | `rename` (with `prepareRename`)     | word-boundary aware replace across document |
 | `semanticTokens/full`               | comment / string / number / keyword / variable / function classes |
-| `formatting`                        | full syntax-aware reindent (`src/extensions/fmt.rs`, same engine as `--fmt`): if/fi, do/done, case arms, `{ }`, `( )`, `[[ ]]`, line continuations; heredoc bodies verbatim; trailing-ws strip + final newline |
+| `formatting`                        | full syntax-aware reindent + idiomatic spacing (`src/extensions/fmt.rs`, same engine as `--fmt`): if/fi, do/done, case arms, `{ }`, `( )`, `[[ ]]`, continuations; whitespace dedupe and canonical `;` `&&` `\|\|` `\|` `&` `;;` spacing with quote/`${…}`/fd-redirect/glob-pattern guards; heredoc bodies verbatim |
 | `publishDiagnostics`                | brace + block matching, unclosed strings, lights up on `didOpen` / `didChange` / `didSave` |
 
 Trigger characters for completion: `$`, `{`, `-`, `:`. Optional

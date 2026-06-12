@@ -7,10 +7,22 @@
 //!     the IntelliJ plugin's `LspFormattingSupport` drives via
 //!     Reformat Code.
 //!
-//! Design contract — CONSERVATIVE BY CONSTRUCTION:
-//!   * Only leading whitespace (indentation) and trailing whitespace
-//!     are ever rewritten. Inner spacing, quoting, line breaks and
-//!     token text are preserved byte-for-byte.
+//! Design contract:
+//!   * Indentation and trailing whitespace are rewritten; INNER
+//!     spacing is normalized to idiomatic zsh — whitespace runs
+//!     between tokens collapse to one space (never joining tokens,
+//!     never deleting a lone separator), and the command operators
+//!     get canonical spacing: `a;b` → `a; b`, `a&&b` → `a && b`,
+//!     `a||b` → `a || b`, `a|b` → `a | b`, `cmd&` → `cmd &`,
+//!     case terminators `x;;` → `x ;;`, funcdef `name ()` →
+//!     `name()`.
+//!   * Token TEXT is never rewritten, and spacing inside every
+//!     semantic-bearing region is preserved byte-for-byte: quoted
+//!     strings (`'…'`, `"…"`, `$'…'`, backticks), `${…}` bodies,
+//!     comments' text, heredoc operators' tags, and redirection fd
+//!     forms (`2>&1`, `&>`, `<&-`). Pattern contexts keep their `|`
+//!     untouched: inside any `( … )` (glob alternation is always
+//!     parenthesized) and in case arm-pattern position.
 //!   * Heredoc bodies (`<<TAG` … `TAG`) pass through verbatim,
 //!     including their terminators.
 //!   * Idempotent: `format(format(x)) == format(x)`.
@@ -125,6 +137,24 @@ pub fn format_source(src: &str, opts: &FmtOptions) -> String {
             out.push('\n');
             continue;
         }
+
+        // ── Normalize inner spacing to idiomatic zsh ────────────────
+        // Runs BEFORE the structural scan so heredoc-tag parsing and
+        // indent both see the canonical text. Seed the normalizer
+        // with the line-start context the stack knows about (pattern
+        // `|` and subshell-vs-glob disambiguation).
+        let norm_ctx = NormCtx {
+            paren_depth: stack
+                .iter()
+                .filter(|b| matches!(b, Block::Paren | Block::DCond))
+                .count(),
+            in_case_pattern: matches!(
+                stack.last(),
+                Some(Block::Case { sub: CaseSub::Pattern })
+            ),
+        };
+        let body = normalize_spacing(body, norm_ctx);
+        let body = body.as_str();
 
         // ── Scan the line for structural tokens ─────────────────────
         let scan = scan_line(body, &mut stack, &mut pending_heredocs);
@@ -599,6 +629,364 @@ fn scan_line(
     }
 }
 
+/// Line-start context for [`normalize_spacing`], seeded from the
+/// indent stack so multi-line constructs keep their guards.
+#[derive(Debug, Clone, Copy)]
+struct NormCtx {
+    /// Open `( … )` / `[[ … ]]` levels at line start — inside any
+    /// paren level `|` may be glob alternation, `;` may be a
+    /// `(( ; ; ))` separator: operator spacing is left alone.
+    paren_depth: usize,
+    /// Stack top is a case arm-pattern position — `|` is pattern
+    /// alternation, never a pipe.
+    in_case_pattern: bool,
+}
+
+/// Normalize inner spacing on one (indent-trimmed) line to idiomatic
+/// zsh. Token text is never rewritten; protected regions (quotes,
+/// `${…}`, comments, fd-redirections) pass through verbatim. The
+/// transform set:
+///   * whitespace runs between tokens → one space (never joins
+///     tokens, never deletes a lone separator),
+///   * `a ; b` / `a ;b` / `a;b` → `a; b` (no space before, one
+///     after) — skipped inside parens (`(( i=0; i<n; i++ ))`),
+///   * `x;;` / `x ;; ` → `x ;;` (one space before, case style),
+///     likewise `;&` / `;|`,
+///   * `&&` / `||` → one space each side (also inside `[[ … ]]`;
+///     skipped in paren/pattern contexts where `||` can be glob
+///     alternation),
+///   * `|` / `|&` at top level outside case patterns → one space
+///     each side,
+///   * background `&` (not `&&`, not fd forms `>&` `<&` `&>`, not
+///     `&|`/`&!` which keep one space before as a unit) → one space
+///     before,
+///   * funcdef `name ()` → `name()`.
+fn normalize_spacing(body: &str, ctx: NormCtx) -> String {
+    let b = body.as_bytes();
+    let n = b.len();
+    let mut out = String::with_capacity(n + 8);
+    let mut i = 0usize;
+    let mut paren_depth = ctx.paren_depth;
+    let mut case_pattern = ctx.in_case_pattern;
+    // Set when we saw `case` on this line and expect `in` → patterns.
+    let mut case_kw_seen = false;
+
+    // Emit exactly one space, collapsing whatever `out` already ends
+    // with; no-op at line start.
+    macro_rules! one_space {
+        () => {
+            while out.ends_with(' ') || out.ends_with('\t') {
+                out.pop();
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+        };
+    }
+    // Strip any spacing `out` currently ends with (glue next token).
+    macro_rules! no_space {
+        () => {
+            while out.ends_with(' ') || out.ends_with('\t') {
+                out.pop();
+            }
+        };
+    }
+
+    while i < n {
+        let c = b[i];
+        match c {
+            b' ' | b'\t' => {
+                // Whitespace run → single space (the operator arms
+                // below may re-trim it).
+                while i < n && (b[i] == b' ' || b[i] == b'\t') {
+                    i += 1;
+                }
+                if !out.is_empty() && i < n {
+                    out.push(' ');
+                }
+            }
+            b'\\' => {
+                // Escape: verbatim with its target (or trailing `\`).
+                out.push('\\');
+                if i + 1 < n {
+                    out.push(b[i + 1] as char);
+                }
+                i += 2;
+            }
+            b'\'' => {
+                let start = i;
+                i += 1;
+                while i < n && b[i] != b'\'' {
+                    i += 1;
+                }
+                i = (i + 1).min(n);
+                out.push_str(&body[start..i]);
+            }
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < n {
+                    if b[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == b'"' {
+                        break;
+                    }
+                    i += 1;
+                }
+                i = (i + 1).min(n);
+                out.push_str(&body[start..i]);
+            }
+            b'`' => {
+                let start = i;
+                i += 1;
+                while i < n && b[i] != b'`' {
+                    if b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                i = (i + 1).min(n);
+                out.push_str(&body[start..i]);
+            }
+            b'#' => {
+                // Comment: one space before (when not at line start),
+                // text verbatim.
+                one_space!();
+                out.push_str(&body[i..]);
+                i = n;
+            }
+            b'$' => {
+                if i + 1 < n && b[i + 1] == b'\'' {
+                    let start = i;
+                    i += 2;
+                    while i < n && b[i] != b'\'' {
+                        if b[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                    i = (i + 1).min(n);
+                    out.push_str(&body[start..i]);
+                } else if i + 1 < n && b[i + 1] == b'{' {
+                    let start = i;
+                    i += 2;
+                    let mut depth = 1usize;
+                    while i < n && depth > 0 {
+                        match b[i] {
+                            b'{' => depth += 1,
+                            b'}' => depth -= 1,
+                            b'\\' => i += 1,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    out.push_str(&body[start..i]);
+                } else {
+                    out.push('$');
+                    i += 1;
+                }
+            }
+            b'(' => {
+                // Funcdef glue: `name ()` → `name()`. Only when the
+                // pair is EMPTY and follows a word char.
+                let mut j = i + 1;
+                while j < n && (b[j] == b' ' || b[j] == b'\t') {
+                    j += 1;
+                }
+                let empty_pair = j < n && b[j] == b')';
+                let after_word = out
+                    .trim_end()
+                    .chars()
+                    .last()
+                    .map(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':' || ch == '-')
+                    .unwrap_or(false);
+                if empty_pair && after_word {
+                    no_space!();
+                    out.push_str("()");
+                    i = j + 1;
+                    continue;
+                }
+                paren_depth += 1;
+                out.push('(');
+                i += 1;
+            }
+            b')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                if case_pattern {
+                    // `pat)` — pattern ends; body follows.
+                    case_pattern = false;
+                }
+                out.push(')');
+                i += 1;
+            }
+            b'&' => {
+                let nx = b.get(i + 1).copied();
+                match nx {
+                    Some(b'&') => {
+                        // `&&` — one space each side, except in
+                        // paren/pattern contexts (glob `(a&&b)` is
+                        // nonsense but cheap to guard anyway).
+                        if paren_depth == 0 && !case_pattern {
+                            one_space!();
+                            out.push_str("&&");
+                            i += 2;
+                            while i < n && (b[i] == b' ' || b[i] == b'\t') {
+                                i += 1;
+                            }
+                            if i < n {
+                                out.push(' ');
+                            }
+                        } else {
+                            out.push_str("&&");
+                            i += 2;
+                        }
+                    }
+                    Some(b'>') => {
+                        // `&>` / `&>>` redirection unit: one space
+                        // before, glued to what follows.
+                        one_space!();
+                        out.push_str("&>");
+                        i += 2;
+                    }
+                    Some(b'|') | Some(b'!') => {
+                        // `&|` / `&!` — background + disown.
+                        if paren_depth == 0 && !case_pattern {
+                            one_space!();
+                        }
+                        out.push('&');
+                        out.push(nx.unwrap() as char);
+                        i += 2;
+                    }
+                    _ => {
+                        // Bare `&`: background — one space before,
+                        // UNLESS it's an fd target glue (`>&`, `<&`
+                        // already consumed by the `<`/`>` arms; a
+                        // digit-fd form like `2>&1` arrives here only
+                        // via the `>` arm, never as bare `&`).
+                        if paren_depth == 0 && !case_pattern {
+                            one_space!();
+                        }
+                        out.push('&');
+                        i += 1;
+                    }
+                }
+            }
+            b'|' => {
+                let nx = b.get(i + 1).copied();
+                if paren_depth == 0 && !case_pattern {
+                    if nx == Some(b'|') {
+                        one_space!();
+                        out.push_str("||");
+                        i += 2;
+                    } else if nx == Some(b'&') {
+                        one_space!();
+                        out.push_str("|&");
+                        i += 2;
+                    } else {
+                        one_space!();
+                        out.push('|');
+                        i += 1;
+                    }
+                    while i < n && (b[i] == b' ' || b[i] == b'\t') {
+                        i += 1;
+                    }
+                    if i < n {
+                        out.push(' ');
+                    }
+                } else {
+                    out.push('|');
+                    i += 1;
+                }
+            }
+            b';' => {
+                let nx = b.get(i + 1).copied();
+                if matches!(nx, Some(b';') | Some(b'&') | Some(b'|')) {
+                    // Case terminator `;;` / `;&` / `;|` — one space
+                    // before (idiomatic `cmd ;;`), one after if more
+                    // text follows.
+                    one_space!();
+                    out.push(';');
+                    out.push(nx.unwrap() as char);
+                    i += 2;
+                    while i < n && (b[i] == b' ' || b[i] == b'\t') {
+                        i += 1;
+                    }
+                    if i < n {
+                        out.push(' ');
+                    }
+                    case_pattern = true;
+                } else if paren_depth == 0 {
+                    // Command separator: glue left, one space right.
+                    no_space!();
+                    out.push(';');
+                    i += 1;
+                    while i < n && (b[i] == b' ' || b[i] == b'\t') {
+                        i += 1;
+                    }
+                    if i < n {
+                        out.push(' ');
+                    }
+                } else {
+                    // Inside `( … )` / `(( … ))` — e.g. the C-style
+                    // for header — leave untouched.
+                    out.push(';');
+                    i += 1;
+                }
+            }
+            b'<' | b'>' => {
+                // Redirection cluster: consume the full operator
+                // (`<`, `<<`, `<<-`, `<<<`, `>`, `>>`, `>&`, `<&`,
+                // `>>&`, `>|`) verbatim so its glued fd targets
+                // (`2>&1`, `<&-`) are never spaced.
+                let start = i;
+                i += 1;
+                while i < n && matches!(b[i], b'<' | b'>' | b'&' | b'-' | b'|') {
+                    i += 1;
+                }
+                // Glue trailing fd digit of `>&1` / `<&0` forms.
+                if i > start + 1 && b[i - 1] == b'&' {
+                    while i < n && b[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    if i < n && b[i] == b'-' {
+                        i += 1;
+                    }
+                }
+                out.push_str(&body[start..i]);
+            }
+            _ => {
+                // Word chunk: copy verbatim up to the next byte any
+                // arm above handles. `{`/`}`/`[`/`]` stay word-glued.
+                let start = i;
+                while i < n {
+                    match b[i] {
+                        b' ' | b'\t' | b'\\' | b'\'' | b'"' | b'`' | b'#'
+                        | b'$' | b'(' | b')' | b'&' | b'|' | b';' | b'<'
+                        | b'>' => break,
+                        _ => i += 1,
+                    }
+                }
+                if i == start {
+                    out.push(b[i] as char);
+                    i += 1;
+                    continue;
+                }
+                let word = &body[start..i];
+                out.push_str(word);
+                if word == "case" {
+                    case_kw_seen = true;
+                } else if word == "in" && case_kw_seen {
+                    case_kw_seen = false;
+                    case_pattern = true;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// True when the token starting at `i` with byte length `len` is
 /// delimited by whitespace / line boundaries on both sides.
 fn is_word_boundary(b: &[u8], i: usize, len: usize) -> bool {
@@ -721,6 +1109,43 @@ mod tests {
         };
         let got = format_source("if x; then\ny\nfi\n", &opts);
         assert_eq!(got, "if x; then\n\ty\nfi\n");
+    }
+
+    /// Inner spacing: runs dedupe to one space; `;` glues left with
+    /// one space right; `&&`/`||`/`|` get canonical spacing;
+    /// background `&` gets a space; quotes and `${…}` keep their
+    /// bytes.
+    #[test]
+    fn spacing_normalized_idiomatic() {
+        let src = "print  a   b;print c\nfoo&&bar||baz\nls -l|wc -l\nsleep 1&\nprint \"two  sp\" 'kept  sp' ${a:-  x}\n";
+        let want = "print a b; print c\nfoo && bar || baz\nls -l | wc -l\nsleep 1 &\nprint \"two  sp\" 'kept  sp' ${a:-  x}\n";
+        assert_eq!(fmt(src), want);
+    }
+
+    /// Funcdef `name ()` glues to `name()`; an empty subshell-ish
+    /// pair after a non-word char is left alone.
+    #[test]
+    fn funcdef_paren_glue() {
+        assert_eq!(fmt("f ()  {\nx\n}\n"), "f() {\n    x\n}\n");
+    }
+
+    /// Redirection fd forms are never spaced: `2>&1`, `>&-`, `<&0`,
+    /// `&>`; the C-style `for (( ; ; ))` semicolons and case-pattern
+    /// `a|b` alternation stay untouched.
+    #[test]
+    fn operator_guards_hold() {
+        let src = "print x >/tmp/o 2>&1\nexec 3>&-\ncmd &>/dev/null\nfor ((i=0;i<3;i++)); do\ny\ndone\ncase $x in\na|b) z ;;\nesac\n";
+        let want = "print x >/tmp/o 2>&1\nexec 3>&-\ncmd &>/dev/null\nfor ((i=0;i<3;i++)); do\n    y\ndone\ncase $x in\n    a|b) z ;;\nesac\n";
+        assert_eq!(fmt(src), want);
+    }
+
+    /// `;;` gets the idiomatic single space before it when trailing a
+    /// command, and one space after when text follows.
+    #[test]
+    fn case_terminator_spacing() {
+        let src = "case $x in\na) y;;\nb) z ;;\nesac\n";
+        let want = "case $x in\n    a) y ;;\n    b) z ;;\nesac\n";
+        assert_eq!(fmt(src), want);
     }
 
     /// extendedglob `#` inside a word doesn't start a comment and
