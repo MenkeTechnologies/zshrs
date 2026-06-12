@@ -4684,8 +4684,8 @@ pub fn paramsubst(
                         || bc == '@'
                         || bc == '*' || bc == '\u{87}' /* Star */
                         || bc == '#' || bc == Pound
-                        || bc == '?' || bc == '\u{86}' /* Quest */
-                        || bc == '!' || bc == '\u{96}' /* Bang */
+                        || bc == '?' || bc == '\u{97}' /* Quest, c:Src/zsh.h:178 */
+                        || bc == '!' || bc == '\u{9c}' /* Bang, c:Src/zsh.h:183 */
                         || bc == '0'
                         || bc == '-' || bc == '\u{9b}' /* Dash */
                         || bc == '$' || bc == Stringg
@@ -4700,8 +4700,8 @@ pub fn paramsubst(
                         && (matches!(first, '@' | '*' | '#' | '?' | '0' | '!' | '-' | '$')
                             || first == Pound
                             || first == '\u{87}' /* Star */
-                            || first == '\u{86}' /* Quest */
-                            || first == '\u{96}' /* Bang */
+                            || first == '\u{97}' /* Quest, c:Src/zsh.h:178 */
+                            || first == '\u{9c}' /* Bang, c:Src/zsh.h:183 */
                             || first == '\u{9b}' /* Dash */
                             || first == Stringg)
                     {
@@ -4756,7 +4756,7 @@ pub fn paramsubst(
                 return (String::new(), new_pos, Vec::new());
             }
         }
-        if (var_name == "!" || var_name == "\u{96}") && idx < body_chars.len() {
+        if (var_name == "!" || var_name == "\u{9c}") && idx < body_chars.len() {
             let nx = body_chars[idx];
             if nx.is_ascii_alphanumeric()
                 || nx == '_'
@@ -4764,7 +4764,7 @@ pub fn paramsubst(
                 || nx == '*'
                 || nx == '\u{87}'
                 || nx == '!'
-                || nx == '\u{96}'
+                || nx == '\u{9c}' /* Bang, c:Src/zsh.h:183 */
             {
                 zerr("bad substitution");
                 errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
@@ -6873,7 +6873,18 @@ pub fn paramsubst(
                             cs.eq_ignore_ascii_case("UTF-8") || cs.eq_ignore_ascii_case("utf8")
                         }
                     };
-                    if utf8 {
+                    // c:Src/utils.c:5662-5663 — `if (!isset(MULTIBYTE)
+                    // || MB_CUR_MAX == 1) return ztrlen(ptr);` — with
+                    // the MULTIBYTE option unset the length op counts
+                    // BYTES regardless of locale. Read the live slot
+                    // directly with the declared default (OPT_ALL,
+                    // c:Src/options.c:197) for a never-written slot —
+                    // `isset()` maps never-written to false, which
+                    // inverts the default-on semantics in contexts
+                    // that skip init's emulate() (unit tests).
+                    let multibyte_on =
+                        crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
+                    if utf8 && multibyte_on {
                         raw_value_for_len.chars().count()
                     } else {
                         raw_value_for_len.len()
@@ -9982,9 +9993,9 @@ pub fn paramsubst(
                     let is_op_start = matches!(
                         first,
                         ':' | '-' | '+' | '=' | '?' | '#' | '%' | '/'
-                            | '\u{9b}' // Dash
-                            | '\u{84}' // Pound
-                            | '\u{86}' // Quest
+                            | '\u{9b}' // Dash, c:Src/zsh.h:182
+                            | '\u{84}' // Pound, c:Src/zsh.h:159
+                            | '\u{97}' // Quest, c:Src/zsh.h:178
                     );
                     !is_op_start
                 }
