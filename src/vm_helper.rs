@@ -4095,3 +4095,41 @@ pub fn unmetafy_str(s: &str) -> Vec<u8> {
     }
     out
 }
+
+/// Render an errno the way zsh's `%e` warning format does —
+/// `zerrmsg` case `'e'` at `Src/utils.c:352-368`:
+///
+/// - `EINTR` → the literal string `interrupt` (C also sets
+///   `errflag |= ERRFLAG_ERROR` and truncates the rest of the
+///   format; every zshrs call site uses `%e` as the final
+///   conversion so the truncation is a no-op here).
+/// - `EIO` → `strerror(EIO)` verbatim ("I/O" reads wrong
+///   lowercased, per the c:361-364 comment).
+/// - everything else → `strerror(num)` with the first letter
+///   lowercased (`tulower(errmsg[0])`, c:366).
+///
+/// `std::io::Error::from_raw_os_error(n)` Display is NOT this
+/// format — it appends " (os error N)" and keeps the capital.
+/// That mismatch was the residual byte-diff in zsh/system's
+/// `sysopen`/`zsystem flock` warnings (docs/BUGS.md #316).
+pub fn zsh_errno_msg(num: i32) -> String {
+    if num == libc::EINTR {
+        return "interrupt".to_string(); // c:355-358
+    }
+    let msg = unsafe {
+        let p = libc::strerror(num); // c:360
+        if p.is_null() {
+            return String::new();
+        }
+        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+    };
+    if num == libc::EIO {
+        return msg; // c:363-364
+    }
+    // c:366 — `fputc(tulower(errmsg[0]), file);`
+    let mut chars = msg.chars();
+    match chars.next() {
+        Some(c) => c.to_lowercase().collect::<String>() + chars.as_str(),
+        None => msg,
+    }
+}

@@ -1496,3 +1496,347 @@ mod system_extra {
         ));
     }
 }
+
+// ──────────────── zsh/system #316 — builtins + features ────────────────
+
+/// Pinning suite for docs/BUGS.md #316: the full `zsh/system` builtin
+/// surface (sysopen/sysread/syswrite/sysseek/syserror/zsystem) plus
+/// the `zmodload -F` feature-listing arm (Src/module.c:3049-3226).
+/// Each case is byte-parity vs the same machine's zsh, so
+/// platform-variant strerror text / errno tables stay self-consistent.
+mod system_bug316 {
+    use super::*;
+
+    /// sysopen -w -o create → syswrite → sysopen -r → sysread roundtrip.
+    /// Pins bin_sysopen (Src/Modules/system.c:330), bin_syswrite (c:240),
+    /// bin_sysread (c:74) end to end through a real fd.
+    #[test]
+    fn sysopen_syswrite_sysread_roundtrip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("rt");
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"sysopen -w -o create -u wfd {p} || exit 9
+syswrite -o $wfd "hello-roundtrip" || exit 8
+exec {{wfd}}>&-
+sysopen -r -u rfd {p} || exit 7
+sysread -i $rfd buf
+echo "rc=$? buf=[$buf]""#,
+                p = f.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// `sysread -s N` partial reads walk the file, then EOF returns 5
+    /// (Src/Modules/system.c:64-70 exit-code contract). `-c countvar`
+    /// receives the byte count (c:178-180).
+    #[test]
+    fn sysread_partial_sizes_and_eof_code_5() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("ten");
+        std::fs::write(&f, "0123456789").expect("write");
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"sysopen -r -u fd {p}
+sysread -s 5 -i $fd a; echo "rc=$? a=[$a]"
+sysread -s 5 -c n -i $fd b; echo "rc=$? b=[$b] n=$n"
+sysread -s 5 -i $fd c; echo "eofrc=$? c=[$c]""#,
+                p = f.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// `sysread -i <closed fd>` → exit 2 (parameter/system error before
+    /// any read, c:64-66 contract).
+    #[test]
+    fn sysread_bad_fd_code_2() {
+        assert_parity(&with_modules(
+            &["system"],
+            "sysread -i 99 buf; echo rc=$?",
+        ));
+    }
+
+    /// `sysread -i in -o out` copies straight fd-to-fd without touching
+    /// a param (c:186-204).
+    #[test]
+    fn sysread_outfd_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("src");
+        let dst = dir.path().join("dst");
+        std::fs::write(&src, "fd-to-fd").expect("write");
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"sysopen -r -u i {s}
+sysopen -w -o create -u o {d}
+sysread -i $i -o $o; echo rc=$?
+exec {{o}}>&-
+sysread -i 0 -s 0 </dev/null
+print -rn -- "$(<{d})""#,
+                s = src.display(),
+                d = dst.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// sysseek whence forms: `-w start N`, `-w current -N`, `-w end`
+    /// then sysread at the new offset (bin_sysseek, c:446-490).
+    /// Seek-to-end + read pins the EOF rc=5 interaction.
+    #[test]
+    fn sysseek_whence_start_current_end() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("seek");
+        std::fs::write(&f, "0123456789").expect("write");
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"sysopen -r -u fd {p}
+sysseek -u $fd -w start 2 && sysread -s 3 -i $fd m && echo "m=[$m]"
+sysseek -u $fd -w current -1 && sysread -s 1 -i $fd b && echo "b=[$b]"
+sysseek -u $fd -w end 0
+sysread -i $fd e; echo "eofrc=$? e=[$e]""#,
+                p = f.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// `sysseek -u <closed fd>` → exit 2, ERRNO untouched on the
+    /// non-system param-error path stays empty (c:436-443 errno reset).
+    #[test]
+    fn sysseek_bad_fd_code_2() {
+        assert_parity(&with_modules(
+            &["system"],
+            "sysseek -u 99 -w start 0; echo rc=$?",
+        ));
+    }
+
+    /// syswrite partial-count contract: `-c countvar` reports bytes
+    /// written; append-mode fd from sysopen -a lands at EOF (c:240-303).
+    #[test]
+    fn syswrite_append_and_countvar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("ap");
+        // Reset the seed content INSIDE the script — assert_parity runs
+        // zsh then zshrs against the same tempdir, so state created by
+        // the first shell must not leak into the second's append.
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"print -n AB > {p}
+sysopen -a -u fd {p}
+syswrite -c n -o $fd CD && echo n=$n
+exec {{fd}}>&-
+print -rn -- "$(<{p})""#,
+                p = f.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// `syswrite -o <closed fd>` → exit 2 (c:236 contract).
+    #[test]
+    fn syswrite_bad_fd_code_2() {
+        assert_parity(&with_modules(
+            &["system"],
+            "syswrite -o 99 data; echo rc=$?",
+        ));
+    }
+
+    /// syserror by name, by number, and `-e var` / `-p prefix` forms
+    /// (bin_syserror, c:507-554). Message text comes from the same
+    /// machine's strerror so name- and number-forms must agree.
+    #[test]
+    fn syserror_name_number_evar_prefix() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"syserror -e a ENOENT; echo "a=[$a]"
+syserror -e b 2; echo "b=[$b]"
+syserror -e c EINTR; echo "c=[$c]"
+syserror -p "PFX: " -e d EACCES; echo "d=[$d]"
+syserror NOSUCHERR; echo rc=$?"#,
+        ));
+    }
+
+    /// sysopen explicit single-digit fd (`-u 7`) installs at exactly
+    /// that fd via redup (c:392 explicit branch).
+    #[test]
+    fn sysopen_explicit_digit_fd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("e7");
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"sysopen -w -o create -u 7 {p} && print -u7 -n EXPLICIT && exec 7>&-
+print -rn -- "$(<{p})""#,
+                p = f.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// Open-failure warning uses zsh's `%e` errno format — lowercased
+    /// strerror, NO " (os error N)" suffix (Src/utils.c:352-368 via
+    /// the c:389 `zwarnnam(..., "%e", errno)` site). Strict stderr.
+    #[test]
+    fn sysopen_open_failure_message_e_format() {
+        if !zsh_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("nodir").join("f");
+        let script = with_modules(
+            &["system"],
+            &format!("sysopen -w -u fd {}", f.display()),
+        );
+        let z = run_zsh(&script);
+        let r = run_zshrs(&script);
+        assert_eq!(z.stderr, r.stderr, "stderr divergence on:\n{}", script);
+        // Exit code intentionally NOT parity-checked: zsh 5.9.1 predates
+        // workers/50355 (return 1); the C spec at HEAD returns 2 and
+        // zshrs follows the spec (Src/Modules/system.c:390).
+        assert_eq!(r.exit, 2, "open-failure exit per system.c:390");
+    }
+
+    /// `zsystem flock` acquire + `-f fdvar` + `-u fd` release
+    /// (bin_zsystem_flock, c:559-781). fd numbers differ between
+    /// shells, so pin the rc shape, not the fd value.
+    #[test]
+    fn zsystem_flock_acquire_release() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("lk");
+        std::fs::write(&f, "").expect("write");
+        let script = with_modules(
+            &["system"],
+            &format!(
+                r#"zsystem flock -f lfd {p}; echo acq=$?
+[[ $lfd == <-> ]] && echo fdnum
+zsystem flock -u $lfd; echo rel=$?"#,
+                p = f.display()
+            ),
+        );
+        assert_parity(&script);
+    }
+
+    /// `zsystem flock -u` on an fd never used for locking → warning +
+    /// rc=1 (c:676-681). Strict stderr — message format is pinned.
+    #[test]
+    fn zsystem_flock_unlock_unknown_fd() {
+        if !zsh_available() {
+            return;
+        }
+        let script = with_modules(&["system"], "zsystem flock -u 87; echo rc=$?");
+        let z = run_zsh(&script);
+        let r = run_zshrs(&script);
+        assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{}", script);
+        assert_eq!(z.stderr, r.stderr, "stderr divergence on:\n{}", script);
+    }
+
+    /// flock open-failure warning also uses `%e` (c:689). Strict stderr.
+    #[test]
+    fn zsystem_flock_open_failure_message_e_format() {
+        if !zsh_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let f = dir.path().join("nodir").join("lk");
+        let script = with_modules(
+            &["system"],
+            &format!("zsystem flock -t 0 {}; echo rc=$?", f.display()),
+        );
+        let z = run_zsh(&script);
+        let r = run_zshrs(&script);
+        assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{}", script);
+        assert_eq!(z.stderr, r.stderr, "stderr divergence on:\n{}", script);
+    }
+
+    /// `zsystem supports` + unknown subcommand rcs (c:786-812).
+    #[test]
+    fn zsystem_supports_and_unknown_subcommand() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"zsystem supports flock; echo s=$?
+zsystem supports nope; echo n=$?
+zsystem bogus 2>/dev/null; echo b=$?
+zsystem 2>/dev/null; echo e=$?"#,
+        ));
+    }
+
+    /// `$sysparams` keys are exactly pid/ppid/procsubstpid
+    /// (fillpmsysparams surface, Src/Modules/system.c:842-880).
+    #[test]
+    fn sysparams_key_set() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"echo keys: ${(ko)sysparams}
+[[ $sysparams[pid] == <-> ]] && echo pidnum
+echo psp=$sysparams[procsubstpid]"#,
+        ));
+    }
+
+    /// `zmodload -FL zsh/system` emits the canonical feature line —
+    /// the with-modname `-l/-L/-e` arm of bin_zmodload_features
+    /// (Src/module.c:3049-3226).
+    #[test]
+    fn zmodload_feature_listing_forms() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"zmodload -FL zsh/system
+zmodload -FLl zsh/system
+zmodload -Fl zsh/system"#,
+        ));
+    }
+
+    /// `-FL module feature` filters to the named feature, keeping the
+    /// C terminator quirk (space while a later feature exists in the
+    /// FULL array — Src/module.c:3210-3216).
+    #[test]
+    fn zmodload_feature_listing_filtered() {
+        assert_parity(&with_modules(
+            &["system"],
+            "zmodload -FL zsh/system b:sysread; echo; echo after",
+        ));
+    }
+
+    /// `-F -P param -l` stores `+feature`/`-feature` strings into an
+    /// array instead of printing (Src/module.c:3158-3224).
+    #[test]
+    fn zmodload_feature_param_capture() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"zmodload -F -P feats -l zsh/system
+print -l -- $feats"#,
+        ));
+    }
+
+    /// `-Fe` existence testing: present feature → 0, absent → 1,
+    /// `+feature` checks enabled state (Src/module.c:3140-3157).
+    #[test]
+    fn zmodload_feature_existence_checks() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"zmodload -Fe zsh/system b:sysread; echo a=$?
+zmodload -Fe zsh/system +b:sysread; echo b=$?
+zmodload -Fe zsh/system b:nope; echo c=$?"#,
+        ));
+    }
+
+    /// `-FL` on a registered-but-unloaded module warns "not yet
+    /// loaded" + rc=1 (Src/module.c:3108-3112). Strict stderr.
+    #[test]
+    fn zmodload_feature_listing_unloaded_module() {
+        if !zsh_available() {
+            return;
+        }
+        let script = "zmodload -FL zsh/datetime; echo rc=$?";
+        let z = run_zsh(script);
+        let r = run_zshrs(script);
+        assert_eq!(z.stdout, r.stdout, "stdout divergence on:\n{}", script);
+        assert_eq!(z.stderr, r.stderr, "stderr divergence on:\n{}", script);
+    }
+}
