@@ -664,6 +664,17 @@ printf_format
 sess_get
 sess_with
 
+# tied_joinsep / tied_sepsplit (params.rs) — Rust-only borrow-checker
+# adapters for the tied-scalar setter's C pattern. tied_joinsep reads
+# the joinchar off the param's typed u_tied view (C dereferences
+# `(struct tieddata *)pm->u.data` inline, Src/params.c:4370-4380);
+# tied_sepsplit adapts `sepsplit(x, sepbuf, 0, 0)` (Src/params.c:4381
+# / Src/utils.c:3962) including the empty-separator char-split mode.
+# Both carry the mandatory RUST-ONLY HELPER WARNING block at their
+# definitions. Same class as sess_get / fdtable_get above.
+tied_joinsep
+tied_sepsplit
+
 # vared_zle_run (zle_main.rs) — Rust split of C bin_vared's c:1839-
 # 1860 inner zleread call. The canonical bin_vared free-fn handles
 # the flag-parse + variable-fetch (c:1678-1735), then delegates the
