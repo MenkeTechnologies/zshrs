@@ -2772,7 +2772,7 @@ pub fn parsestrnoerr(s: &str) -> Result<String, String> {
     // (Src/lex.c:1519-1556 `case '$'`); a raw 0x8c marker would pass
     // through unrecognized and a nested-param subscript like
     // `${H["${k}"]}` would never expand `$k`.
-    let untok = crate::vm_helper::untokenize_ztokens(s); // c:1716 `untokenize(*s);`
+    let untok = crate::ported::lex::untokenize_ztokens(s); // c:1716 `untokenize(*s);`
     let dup = dupstring_wlen(&untok, untok.len()); // c:1717
                                                    // c:1715 `zcontext_save();`
     zcontext_save();
@@ -4457,7 +4457,17 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                         // re-encoded 0xNN >= 0x80 as two UTF-8
                         // bytes); metafied per c:Src/utils.c:7289-
                         // 7294. Bug #127.
-                        crate::vm_helper::meta_encode_byte(&mut out, (val & 0xff) as u8);
+                        {
+                        // c:Src/utils.c metafy byte-encode step:
+                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                        let b_ = (val & 0xff) as u8;
+                        if b_ < 0x80 {
+                            out.push(b_ as char);
+                        } else {
+                            out.push('\u{83}');
+                            out.push(char::from(b_ ^ 32));
+                        }
+                    }
                     }
                     i += consumed;
                 }
@@ -4499,7 +4509,17 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                     // c:Src/utils.c — octal escape is one raw BYTE
                     // (`$'\377'` = 0xff), metafied per
                     // c:Src/utils.c:7289-7294. Bug #127.
-                    crate::vm_helper::meta_encode_byte(&mut out, (val & 0xff) as u8);
+                    {
+                        // c:Src/utils.c metafy byte-encode step:
+                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                        let b_ = (val & 0xff) as u8;
+                        if b_ < 0x80 {
+                            out.push(b_ as char);
+                        } else {
+                            out.push('\u{83}');
+                            out.push(char::from(b_ ^ 32));
+                        }
+                    }
                     i += consumed;
                 }
                 'C' | 'M' => {
@@ -4585,7 +4605,17 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                     // c:7289-7294. Multibyte base chars (> 0xff after
                     // masking) keep the codepoint form. Bug #127.
                     if byte <= 0xff {
-                        crate::vm_helper::meta_encode_byte(&mut out, byte as u8);
+                        {
+                        // c:Src/utils.c metafy byte-encode step:
+                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                        let b_ = byte as u8;
+                        if b_ < 0x80 {
+                            out.push(b_ as char);
+                        } else {
+                            out.push('\u{83}');
+                            out.push(char::from(b_ ^ 32));
+                        }
+                    }
                     } else {
                         ch = char::from_u32(byte).unwrap_or('\0');
                         out.push(ch);
@@ -6123,4 +6153,56 @@ mod tests {
     // and the regression run on `~/.zinit/bin/zinit.zsh` for the
     // parser-driven case — the standalone tests here pin the pure
     // lexer behavior that the cmd_or_math fix targets.
+}
+
+// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART AS A
+// FREE FUNCTION !!! Adapts the cited C pattern to the Rust
+// pipeline. EXACT C untokenize (Src/utils.c:4205 + ztokens table,
+// Src/lex.c:38): pure ITOK→ztokens mapping, Nularg dropped —
+// WITHOUT the $'...'-decode deviation the pipeline's
+// untokenize() above carries. Callers cite the C sites that
+// need the exact mapping (lex.c:1716, subst.c:1543).
+/// Bridge helper — EXACT semantics of C `untokenize(char *s)` from
+/// `Src/exec.c:2077`: maps EVERY itok char to its ASCII original via
+/// the ztokens table (`Src/lex.c:38`), dropping only Nularg (c:2089
+/// `if (c != Nularg)`). No `$'...'` inline decode, no quote-marker
+/// stripping.
+///
+/// Distinct from the two ported variants in `src/ported/lex.rs`:
+///   - `untokenize` — substitution-stream variant: strips Snull/Dnull
+///     and inline-decodes `$'...'` regions (see its doc block).
+///   - `untokenize_preserve_quotes` — ztokens mapping EXCEPT Qstring
+///     stays a raw marker (its callers need stringsubst's qt
+///     detection) and Nularg is retained.
+///
+/// Callers porting C sites that literally call C `untokenize` on text
+/// that is then RE-LEXED or RE-PARSED need this exact variant:
+///   - `parsestrnoerr` (c:Src/lex.c:1716) — the dquote_parse re-lex
+///     must see ASCII `$`/`'`/`"` so nested `${k}` re-tokenizes and
+///     assoc-subscript quote chars survive to getarg's key lookup.
+///   - `untok_and_escape` (c:Src/subst.c:1543) — paramsubst flag args
+///     like `(j.$'\n'.)` must render as the literal text `$'\n'`
+///     (zsh 5.9 `print -r ${(j.$'\n'.)a}` → `x$'\n'y`), not decode
+///     to a bare newline. Bug #626 in docs/BUGS.md.
+pub fn untokenize_ztokens(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        let cu = c as u32;
+        // c:Src/ztype.h:52 ITOK — Pound (0x84) ..= Nularg (0xa1).
+        if (0x84..=0xa1).contains(&cu) {
+            // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
+            if c != crate::ported::zsh_h::Nularg {
+                let idx = (cu - 0x84) as usize;
+                result.push(
+                    crate::ported::lex::ztokens
+                        .chars()
+                        .nth(idx)
+                        .unwrap_or(c),
+                );
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }

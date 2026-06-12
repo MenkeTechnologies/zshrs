@@ -2796,7 +2796,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let merged = exec.array(&name).unwrap_or_default();
                 let joined = merged.join(&sep);
                 exec.set_scalar(scalar_name.clone(), joined.clone());
-                crate::vm_helper::setenv_truncate_nul(&scalar_name, &joined);
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &scalar_name, &joined)); // c:Src/params.c:5354
             }
             false
         });
@@ -4525,7 +4525,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .last_mut()
                     .unwrap()
                     .push((name.clone(), prev_var, prev_env));
-                crate::vm_helper::setenv_truncate_nul(&name, &value);
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value)); // c:Src/params.c:5354
             }
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch. For Int values (arith assigns) route
@@ -4577,7 +4577,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                crate::vm_helper::setenv_truncate_nul(&name, &value);
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value)); // c:Src/params.c:5354
             }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
@@ -4627,7 +4627,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                crate::vm_helper::setenv_truncate_nul(&name, &value);
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value)); // c:Src/params.c:5354
             }
         });
         Value::Bool(true)
