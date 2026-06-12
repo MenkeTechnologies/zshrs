@@ -1,26 +1,39 @@
 //! ztst_runner — runs zsh's .ztst integration test files against zshrs
 //!
-//! Parses the %prep / %test / %clean sections from each .ztst file,
-//! runs each test as `zshrs -f -c` with prep prepended (idempotent),
-//! and compares exit status + stdout + stderr per test block.
+//! Parses the %prep / %test / %clean sections from each .ztst file and
+//! drives ONE persistent `zshrs --zsh -f` child per file, mirroring zsh's
+//! own harness Test/ztst.zsh: every chunk is eval'd in the SAME shell
+//! process (ztst.zsh:294-307 ZTST_execchunk), so variables, functions,
+//! options and aliases set by earlier chunks carry forward to later ones
+//! exactly as in the real harness. Exit status + stdout + stderr are
+//! captured to files (ztst.zsh:484) and compared per test block.
+//!
+//! Transport: zshrs does not yet execute a stdin script incrementally
+//! (it buffers to EOF — verified by probe), so chunks are delivered by
+//! sourcing a FIFO in a loop from a driver script; a marker line printed
+//! to the harness fd (ztst.zsh:198 `exec {ZTST_fd}>&1`) signals chunk
+//! completion and carries `$ZTST_status` (ztst.zsh:301).
 //!
 //! Run:  cargo test -p zsh --test ztst_runner -- [filter]
 //!       ZTST_VERBOSE=1 cargo test -p zsh --test ztst_runner -- --nocapture
 //!
 //! Env vars:
-//!   ZTST_TIMEOUT_MS=N — per-test-case timeout in milliseconds (default: 2000)
+//!   ZTST_TIMEOUT_MS=N — per-chunk timeout in milliseconds (default: 2000)
 //!   ZTST_VERBOSE=1  — print pass/skip results, not just failures
+//!   ZTST_ZSH_SOURCE=/path/to/zsh — zsh source tree used to build $fpath
+//!     the way ztst.zsh:112-114 does (default: $HOME/forkedRepos/zsh)
 
 use std::env;
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read as _, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // Parsed representations
@@ -495,119 +508,443 @@ fn glob_match_inner(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
     }
 }
 
-/// Build the `$ZTST_testdir` layout zsh's own harness guarantees.
-///
-/// ztst.zsh:70 sets `ZTST_testdir=$PWD` (the Test/ directory of a zsh
-/// build tree) and test chunks invoke the shell-under-test as
-/// `$ZTST_testdir/../Src/zsh` (e.g. A04redirect.ztst:465-525,
-/// A01grammar, E03posix). Our runner executes chunks standalone, so
-/// that variable was simply missing — every chunk using it failed
-/// with exit 127. Mirror the contract: create `<shim>/Test` and
-/// `<shim>/Src/zsh` (symlink to the zshrs binary) once per process
-/// and export ZTST_testdir=<shim>/Test to every chunk.
-fn ztst_testdir_shim(zshrs: &Path) -> &'static str {
-    use std::sync::OnceLock;
-    static SHIM: OnceLock<String> = OnceLock::new();
-    SHIM.get_or_init(|| {
-        let root = env::temp_dir().join(format!("zshrs_ztst_shim_{}", std::process::id()));
-        let testdir = root.join("Test");
-        let srcdir = root.join("Src");
-        let _ = fs::create_dir_all(&testdir);
-        let _ = fs::create_dir_all(&srcdir);
-        let link = srcdir.join("zsh");
-        if !link.exists() {
-            let _ = std::os::unix::fs::symlink(zshrs, &link);
-        }
-        testdir.to_string_lossy().into_owned()
-    })
+/// Single-quote a literal for embedding in shell source.
+fn sq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32, String, String) {
-    // Per-test-case timeout. 200ms (the previous default) is far too tight
-    // for cases that legitimately wait on subprocess work — `sleep`,
-    // `coproc`, `wait`, `kill -STOP/CONT` show up across A05execution,
-    // V08zpty, W02jobs, and several others and routinely need 1–3s of real
-    // time. A05execution end-to-end completes in ~12s with timeout=2000ms
-    // (well under any individual case's clock). Override via env when a
-    // case needs longer.
-    let timeout_ms: u64 = env::var("ZTST_TIMEOUT_MS")
+fn timeout_ms() -> u64 {
+    env::var("ZTST_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(2000);
+        .unwrap_or(2000)
+}
 
-    // Sandbox the spawned process so any `~/X` or `$ZTST_tmp/X` writes
-    // land in a per-process tempdir instead of the real $HOME. C02cond.ztst
-    // and others touch `~/newnewnew`-style paths during their %prep phase
-    // — without this redirection, the cargo test pollutes the user's
-    // home directory.
-    let sandbox = env::temp_dir().join(format!(
-        "zshrs_ztst_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
+/// Compute the $fpath the real harness builds at ztst.zsh:112-114:
+///   fpath=( $ZTST_srcdir/../Functions/*~*/CVS(/)
+///           $ZTST_srcdir/../Completion
+///           $ZTST_srcdir/../Completion/*/*~*/CVS(/) )
+/// In a zsh build tree those globs resolve against the source checkout;
+/// our corpus dir has no sibling Functions/Completion, so resolve them
+/// against the zsh source tree (ZTST_ZSH_SOURCE, default
+/// $HOME/forkedRepos/zsh). If the tree is absent the list is empty —
+/// same observable result as the globs matching nothing.
+fn compute_fpath() -> Vec<PathBuf> {
+    let root = env::var("ZTST_ZSH_SOURCE")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| env::var("HOME").ok().map(|h| PathBuf::from(h).join("forkedRepos/zsh")))
+        .filter(|p| p.is_dir());
+    let Some(root) = root else { return Vec::new() };
+
+    let subdirs = |dir: &Path| -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = fs::read_dir(dir)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir() && p.file_name().map(|n| n != "CVS").unwrap_or(false))
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+
+    let mut fpath = subdirs(&root.join("Functions"));
+    let completion = root.join("Completion");
+    if completion.is_dir() {
+        fpath.push(completion.clone());
+        for group in subdirs(&completion) {
+            fpath.extend(subdirs(&group));
+        }
+    }
+    fpath
+}
+
+/// Outcome of one chunk payload sent to the persistent shell.
+enum ChunkOutcome {
+    /// Marker came back: `$ZTST_status` plus the auxiliary field
+    /// (ZTST_skip message for tests, ZTST_unimplemented for prep).
+    Done { status: i32, aux: String },
+    /// No marker within the per-chunk timeout — shell killed.
+    Timeout,
+    /// Shell exited (EOF on its stdout) before the marker arrived.
+    Died,
+}
+
+/// One persistent `zshrs --zsh -f` process per .ztst file — the
+/// execution model of zsh's own harness, where a single shell sources
+/// every chunk so cross-chunk state carries forward (ztst.zsh:294-307).
+///
+/// Sandbox layout (one fresh tree per file):
+///   <root>/Test     — cwd; ZTST_testdir=$PWD per ztst.zsh:70. Chunks
+///                     invoke the shell-under-test as
+///                     `$ZTST_testdir/../Src/zsh` (A01grammar,
+///                     A04redirect.ztst:465-525, E03posix), so:
+///   <root>/Src/zsh  — symlink to the zshrs binary
+///   <root>/home     — $HOME (keeps `~/x` writes out of the real home)
+///   <root>/tmp      — $TMPDIR; holds the ztst.zsh:117-129 capture files
+///   <root>/cmd.fifo — chunk transport (sourced in a loop by driver.zsh)
+struct PersistentShell {
+    child: Child,
+    pgid: i32,
+    lines_rx: mpsc::Receiver<String>,
+    fifo: PathBuf,
+    sandbox: PathBuf,
+    seq: usize,
+    nonce: u128,
+    dead: bool,
+    ztst_in: PathBuf,
+    ztst_tout: PathBuf,
+    ztst_terr: PathBuf,
+    qout: PathBuf,
+    qerr: PathBuf,
+}
+
+impl PersistentShell {
+    fn spawn(zshrs: &Path, file_stem: &str, corpus: &Path) -> std::io::Result<PersistentShell> {
+        let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    let _ = std::fs::create_dir_all(&sandbox);
-    let sandbox_str = sandbox.to_string_lossy().into_owned();
-
-    let mut cmd = Command::new(zshrs);
-    cmd.arg("-f")
-        .arg("-c")
-        .arg(code)
-        .current_dir(workdir)
-        .env("LANG", "C")
-        .env("LC_ALL", "C")
-        .env("HOME", &sandbox_str)
-        .env("TMPDIR", &sandbox_str)
-        .env("ZTST_tmp", &sandbox_str)
-        .env("ZTST_testdir", ztst_testdir_shim(zshrs))
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setpgid(0, 0);
-            Ok(())
-        });
-    }
-
-    if !stdin_data.is_empty() {
-        cmd.stdin(std::process::Stdio::piped());
-    }
-
-    let mut child = cmd.spawn().expect("failed to spawn zshrs");
-
-    if !stdin_data.is_empty() {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(stdin_data.as_bytes());
+            .unwrap_or(0);
+        let sandbox = env::temp_dir().join(format!(
+            "zshrs_ztst_{}_{}_{}",
+            std::process::id(),
+            file_stem,
+            nonce
+        ));
+        let testdir = sandbox.join("Test");
+        let srcdir = sandbox.join("Src");
+        let home = sandbox.join("home");
+        let tmp = sandbox.join("tmp");
+        for d in [&testdir, &srcdir, &home, &tmp] {
+            fs::create_dir_all(d)?;
         }
-    }
+        std::os::unix::fs::symlink(zshrs, srcdir.join("zsh"))?;
 
-    let pgid = child.id() as i32;
-    let (tx, rx) = mpsc::channel();
-    let handle = thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-
-    let result = match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
-        Ok(Ok(output)) => {
-            let status = output.status.code().unwrap_or(-1);
-            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            (status, stdout, stderr)
+        let fifo = sandbox.join("cmd.fifo");
+        let cpath = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        if unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) } != 0 {
+            return Err(std::io::Error::last_os_error());
         }
-        Ok(Err(e)) => panic!("failed to wait on zshrs: {}", e),
-        Err(_) => {
-            unsafe {
-                libc::kill(-pgid, libc::SIGKILL);
+
+        // ZTST_tmp is fixed instead of ${TMPPREFIX}.ztst.$$ (ztst.zsh:117)
+        // because the runner must write $ZTST_in before each chunk and
+        // can't know the child's $$; per-file sandboxing supplies the
+        // uniqueness that $$ provides in the real harness.
+        let ztmp = tmp.join("zsh.ztst");
+        fs::create_dir_all(&ztmp)?;
+        let ztst_in = ztmp.join("ztst.in");
+        let ztst_tout = ztmp.join("ztst.tout");
+        let ztst_terr = ztmp.join("ztst.terr");
+        let qout = ztmp.join("ztst.qout");
+        let qerr = ztmp.join("ztst.qerr");
+
+        let fpath = compute_fpath()
+            .iter()
+            .map(|p| sq(&p.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // Driver = the ztst.zsh environment, minus the section-reading
+        // loop (ztst.zsh:397-561), which lives in the Rust parser, plus
+        // a FIFO source loop as the chunk transport.
+        let driver = format!(
+            r#"# Per-file persistent harness shell — mirrors Test/ztst.zsh.
+emulate -R zsh                          # ztst.zsh:26
+# ztst.zsh:33-43 verbatim
+ZTST_find_UTF8 () {{
+  setopt multibyte
+  local langs=(en_{{US,GB}}.{{UTF-,utf}}8 en.UTF-8
+               ${{(M)$(locale -a 2>/dev/null):#*.(utf8|UTF-8)}})
+  for LANG in $langs; do
+    if [[ é = ? ]]; then
+      echo $LANG
+      return
+    fi
+  done
+}}
+typeset +x WORDCHARS                    # ztst.zsh:46
+[[ -d Modules/zsh ]] && module_path=( $PWD/Modules )  # ztst.zsh:50
+ZTST_testdir=$PWD                       # ztst.zsh:70
+# ztst.zsh:80-100 verbatim
+tail() {{
+  emulate -L zsh
+
+  if [[ -z $TAIL_SUPPORTS_MINUS_N ]]; then
+    local test
+    test=$(echo "foo\nbar" | command tail -n 1 2>/dev/null)
+    if [[ $test = bar ]]; then
+      TAIL_SUPPORTS_MINUS_N=1
+    else
+      TAIL_SUPPORTS_MINUS_N=0
+    fi
+  fi
+
+  integer argi=${{argv[(i)-<->]}}
+
+  if [[ $argi -le $# && $TAIL_SUPPORTS_MINUS_N = 1 ]]; then
+    argv[$argi]=(-n ${{argv[$argi][2,-1]}})
+  fi
+
+  command tail "$argv[@]"
+}}
+ZTST_srcdir={srcdir}                    # ztst.zsh:104-109 ($0's directory)
+fpath=( {fpath} )                       # ztst.zsh:112-114 (resolved by runner)
+ZTST_tmp={ztmp}                         # ztst.zsh:116-117 (fixed path; see runner)
+ZTST_in=${{ZTST_tmp}}/ztst.in           # ztst.zsh:123
+ZTST_out=${{ZTST_tmp}}/ztst.out         # ztst.zsh:125
+ZTST_err=${{ZTST_tmp}}/ztst.err         # ztst.zsh:126
+ZTST_tout=${{ZTST_tmp}}/ztst.tout       # ztst.zsh:128
+ZTST_terr=${{ZTST_tmp}}/ztst.terr       # ztst.zsh:129
+setopt extendedglob nonomatch           # ztst.zsh:61 (mainopts; preamble only)
+rm -rf dummy.tmp *.tmp                  # ztst.zsh:142
+exec {{ZTST_fd}}>&1                     # ztst.zsh:198
+# ztst.zsh:294-307. The $options save/restore (ZTST_testopts /
+# ZTST_mainopts, ztst.zsh:296,303-304) is omitted: zshrs rejects
+# assignment to the special `options` array ("can't change type of a
+# special parameter" — see fall-over notes). Observable behavior is
+# preserved: in ztst.zsh, options a chunk sets are captured into
+# ZTST_testopts and re-applied before the next chunk, i.e. they
+# persist chunk-to-chunk — which is exactly what happens here with no
+# restore at all, since no harness shell code parses between chunks
+# (the section reader lives in the Rust runner).
+ZTST_execchunk() {{
+  setopt localloops # don't let continue & break propagate out
+  () {{
+      unsetopt localloops
+      eval "$ZTST_code"
+  }}
+  ZTST_status=$?
+  return $ZTST_status
+}}
+# Chunks run under the option state captured at ztst.zsh:59 — the
+# `emulate -R zsh` defaults from ztst.zsh:26, BEFORE the ztst.zsh:61
+# mainopts setopt. Re-enter that state for the first chunk (later
+# chunks inherit whatever earlier chunks set, as via ZTST_testopts).
+emulate -R zsh
+while true; do
+  . {fifo}
+done
+"#,
+            srcdir = sq(&corpus.to_string_lossy()),
+            fpath = fpath,
+            ztmp = sq(&ztmp.to_string_lossy()),
+            fifo = sq(&fifo.to_string_lossy()),
+        );
+        let driver_path = sandbox.join("driver.zsh");
+        fs::write(&driver_path, driver)?;
+
+        let mut cmd = Command::new(zshrs);
+        cmd.arg("--zsh")
+            .arg("-f")
+            .arg(&driver_path)
+            .current_dir(&testdir)
+            // ztst.zsh:29-30 — unset LC_*, export LANG=C only.
+            .env("LANG", "C")
+            .env("HOME", &home)
+            .env("TMPDIR", &tmp)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (k, _) in env::vars() {
+            if k.starts_with("LC_") {
+                cmd.env_remove(&k);
             }
-            let _ = handle.join();
-            (-1, String::new(), format!("TIMEOUT after {}ms", timeout_ms))
         }
-    };
-    let _ = std::fs::remove_dir_all(&sandbox);
-    result
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+
+        let mut child = cmd.spawn()?;
+        let pgid = child.id() as i32;
+
+        // Marker channel — the child's fd 1, i.e. what ZTST_fd dups
+        // (ztst.zsh:198). Byte-wise read with lossy conversion so a
+        // stray binary write can't kill the reader.
+        let stdout = child.stdout.take().expect("stdout piped");
+        let (tx, lines_rx) = mpsc::channel::<String>();
+        thread::spawn(move || {
+            let mut rd = BufReader::new(stdout);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match rd.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buf);
+                        if tx.send(line.trim_end_matches('\n').to_string()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        // Harness stderr (prep chunks write here — ztst.zsh:315 nulls
+        // only their stdout). Drain so the pipe never fills.
+        let stderr = child.stderr.take().expect("stderr piped");
+        thread::spawn(move || {
+            let mut sink = Vec::new();
+            let mut rd = BufReader::new(stderr);
+            let _ = rd.read_to_end(&mut sink);
+        });
+
+        let mut shell = PersistentShell {
+            child,
+            pgid,
+            lines_rx,
+            fifo,
+            sandbox,
+            seq: 0,
+            nonce,
+            dead: false,
+            ztst_in,
+            ztst_tout,
+            ztst_terr,
+            qout,
+            qerr,
+        };
+
+        // Startup handshake — proves the preamble ran (driver exits 1 at
+        // the ztst.zsh:118-121 mirror if $ZTST_tmp can't be created).
+        // Deadline is independent of the per-chunk timeout: when cargo
+        // runs the 70 per-file tests in parallel, a dozen cold zshrs
+        // instances (each with a fresh sandbox $HOME and cache) start at
+        // once and routinely need more than the 2s chunk budget.
+        let handshake = Duration::from_millis(timeout_ms().max(15_000));
+        match shell.run_payload("ZTST_status=0", "", handshake) {
+            ChunkOutcome::Done { .. } => Ok(shell),
+            _ => Err(std::io::Error::other("harness shell failed to start")),
+        }
+    }
+
+    /// Send one chunk payload and wait for its marker line.
+    /// `aux_expr` is interpolated into the marker print (e.g.
+    /// `${ZTST_unimplemented:-}` after prep chunks, `$ZTST_mskip` after
+    /// test chunks). Backslash-prefixed words so chunk-defined aliases
+    /// can't capture the wrapper (functions are still found).
+    fn run_payload(&mut self, body: &str, aux_expr: &str, timeout: Duration) -> ChunkOutcome {
+        if self.dead {
+            return ChunkOutcome::Died;
+        }
+        self.seq += 1;
+        let marker = format!("__ZTST_M_{}_{}__", self.nonce, self.seq);
+        let payload = format!(
+            "{body}\n\\builtin print -r -u $ZTST_fd -- \"{marker} $ZTST_status {aux_expr}\"\n"
+        );
+
+        let deadline = Instant::now() + timeout;
+
+        // The child only opens the FIFO for reading when it's idle at the
+        // `. fifo` line, so open with O_NONBLOCK (fails ENXIO until a
+        // reader exists) and retry until the deadline.
+        let file = loop {
+            match fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&self.fifo)
+            {
+                Ok(f) => break f,
+                Err(_) => {
+                    if Instant::now() >= deadline {
+                        self.kill();
+                        return ChunkOutcome::Timeout;
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+        };
+        // Clear O_NONBLOCK so large payloads block instead of EAGAIN.
+        unsafe {
+            use std::os::fd::AsRawFd;
+            let fd = file.as_raw_fd();
+            let fl = libc::fcntl(fd, libc::F_GETFL);
+            libc::fcntl(fd, libc::F_SETFL, fl & !libc::O_NONBLOCK);
+        }
+        let mut file = file;
+        if file.write_all(payload.as_bytes()).is_err() {
+            self.kill();
+            return ChunkOutcome::Died;
+        }
+        drop(file); // EOF ends the child's `.` of this payload
+
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.kill();
+                return ChunkOutcome::Timeout;
+            }
+            match self.lines_rx.recv_timeout(remaining) {
+                Ok(line) => {
+                    if let Some(rest) = line.strip_prefix(&marker) {
+                        let rest = rest.trim_start();
+                        let (status_s, aux) =
+                            rest.split_once(' ').unwrap_or((rest, ""));
+                        let status = status_s.parse::<i32>().unwrap_or(-1);
+                        return ChunkOutcome::Done {
+                            status,
+                            aux: aux.trim().to_string(),
+                        };
+                    }
+                    // Anything else on the harness fd is a leak from the
+                    // chunk; the real harness mixes it into the log too.
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    self.kill();
+                    return ChunkOutcome::Timeout;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    self.dead = true;
+                    let _ = self.child.wait();
+                    return ChunkOutcome::Died;
+                }
+            }
+        }
+    }
+
+    fn kill(&mut self) {
+        if !self.dead {
+            unsafe {
+                libc::kill(-self.pgid, libc::SIGKILL);
+            }
+            let _ = self.child.wait();
+            self.dead = true;
+        }
+    }
+
+    /// ZTST_cleanup analog (ztst.zsh:131-134) — ask the shell to exit,
+    /// then remove the whole sandbox.
+    fn shutdown(mut self) {
+        if !self.dead {
+            if let Ok(mut f) = fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&self.fifo)
+            {
+                let _ = f.write_all(b"exit 0\n");
+            }
+            let waited = Instant::now();
+            while waited.elapsed() < Duration::from_millis(1000) {
+                if let Ok(Some(_)) = self.child.try_wait() {
+                    self.dead = true;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            self.kill();
+        }
+        let _ = fs::remove_dir_all(&self.sandbox);
+    }
+}
+
+impl Drop for PersistentShell {
+    fn drop(&mut self) {
+        self.kill();
+        let _ = fs::remove_dir_all(&self.sandbox);
+    }
 }
 
 fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
@@ -618,127 +955,222 @@ fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
         return (0, 0, 0);
     }
 
-    // Prep runs in every test process since each is isolated.
-    // Make side-effect commands idempotent: mkdir → mkdir -p,
-    // suppress errors from re-execution so they don't pollute stderr.
-    let prep = ztst.prep.join("\n").replace("mkdir ", "mkdir -p ");
-
-    // Check if the prep sets ZTST_unimplemented — if so, skip all tests.
-    // Run the prep once with a probe for the variable.
-    if !prep.is_empty() && prep.contains("ZTST_unimplemented") {
-        let probe_code = format!(
-            "{{ {} ; }} 2>/dev/null; echo \"__ZTST_UNIMP=${{ZTST_unimplemented:-}}\"",
-            prep
-        );
-        let (_, probe_out, _) = run_code(zshrs, &probe_code, "", Path::new("/tmp"));
-        if let Some(line) = probe_out.lines().find(|l| l.starts_with("__ZTST_UNIMP=")) {
-            let val = &line["__ZTST_UNIMP=".len()..];
-            if !val.is_empty() {
-                if verbose {
-                    eprintln!("  SKIP all {} tests: {}", ztst.tests.len(), val);
-                }
-                return (0, 0, ztst.tests.len());
-            }
-        }
-    }
-
-    // Wrap prep so its stderr doesn't leak into test stderr
-    let prep_wrapped = if prep.is_empty() {
-        String::new()
-    } else {
-        format!("{{ {} ; }} 2>/dev/null\n", prep)
+    let timeout = Duration::from_millis(timeout_ms());
+    let corpus = ztst_path.parent().unwrap_or(Path::new("."));
+    let stem = ztst_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut shell = match PersistentShell::spawn(zshrs, &stem, corpus) {
+        Ok(s) => s,
+        Err(e) => panic!("failed to start persistent shell for {}: {}", ztst.name, e),
     };
 
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut skipped = 0usize;
 
-    // Single-quote a literal for embedding in shell source.
-    let sq = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
-
-    for (i, test) in ztst.tests.iter().enumerate() {
-        // ztst.zsh:295-300 ZTST_execchunk — the harness runs each
-        // chunk via `eval "$ZTST_code"`, so diagnostics carry the
-        // `(eval):N:` prefix with CHUNK-relative line numbers. The
-        // old direct-inline form (prep + chunk in one -c string)
-        // shifted every lineno by the prep length and stamped the
-        // binary name instead of `(eval)` — failing every test whose
-        // expected stderr contains `(eval):N:`.
-        let mut code = format!(
-            "{}ZTST_code={}\neval \"$ZTST_code\"",
-            prep_wrapped,
-            sq(&test.code)
-        );
-
-        // ztst.zsh:524-543 — `q` flag: the expected stdout/stderr
-        // lines get `${(e)...}` expansion AFTER the chunk ran, in the
-        // SAME shell (so variables set by %prep and the chunk itself
-        // are visible). Mirror by appending an epilogue that writes
-        // the expanded expectations to temp files, preserving the
-        // eval's exit status.
-        let mut qfiles: Option<(PathBuf, PathBuf)> = None;
-        if test.flags.contains('q')
-            && (!test.expected_stdout.is_empty() || !test.expected_stderr.is_empty())
-        {
-            let base = env::temp_dir().join(format!(
-                "zshrs_ztst_q_{}_{}",
-                std::process::id(),
-                i
-            ));
-            let outp = base.with_extension("qout");
-            let errp = base.with_extension("qerr");
-            code.push_str(&format!(
-                "\nZTST_qstatus=$?\nZTST_expect_out={}\nZTST_expect_err={}\n\
-                 print -r -- \"${{(e)ZTST_expect_out}}\" >{} 2>/dev/null\n\
-                 print -r -- \"${{(e)ZTST_expect_err}}\" >{} 2>/dev/null\n\
-                 exit $ZTST_qstatus",
-                sq(&test.expected_stdout),
-                sq(&test.expected_stderr),
-                outp.display(),
-                errp.display()
-            ));
-            qfiles = Some((outp, errp));
-        }
-
-        let (status, stdout, stderr) = run_code(zshrs, &code, &test.stdin_data, Path::new("/tmp"));
-
-        // Harvest the (e)-expanded expectations for q-flag tests.
-        let test_eff: TestBlock = if let Some((outp, errp)) = qfiles {
-            let mut t = test.clone();
-            if let Ok(s) = fs::read_to_string(&outp) {
-                if !test.expected_stdout.is_empty() {
-                    t.expected_stdout = s.trim_end_matches('\n').to_string();
+    // %prep — ZTST_prep (ztst.zsh:309-322): each chunk runs via
+    // ZTST_execchunk with stdout nulled (stderr flows to the harness log,
+    // not into any comparison). A chunk setting ZTST_unimplemented stops
+    // the remaining prep chunks (ztst.zsh:314) and skips every test
+    // (ztst.zsh:587,624-626). A nonzero prep status fails the whole file
+    // and the tests are not run (ztst.zsh:315-319,594,602).
+    let mut unimplemented: Option<String> = None;
+    let mut prep_failed: Option<String> = None;
+    for chunk in &ztst.prep {
+        let body = format!("ZTST_code={}\n\\ZTST_execchunk >/dev/null", sq(chunk));
+        match shell.run_payload(&body, "${ZTST_unimplemented:-}", timeout) {
+            ChunkOutcome::Done { status, aux } => {
+                if !aux.is_empty() {
+                    unimplemented = Some(aux);
+                    break;
+                }
+                if status != 0 {
+                    // ztst.zsh:316-317 "non-zero status from preparation code"
+                    prep_failed = Some(format!(
+                        "non-zero status {} from preparation code:\n{}",
+                        status, chunk
+                    ));
+                    break;
                 }
             }
-            if let Ok(s) = fs::read_to_string(&errp) {
-                if !test.expected_stderr.is_empty() {
-                    t.expected_stderr = s.trim_end_matches('\n').to_string();
-                }
+            ChunkOutcome::Timeout => {
+                prep_failed = Some(format!("TIMEOUT after {}ms in preparation code", timeout_ms()));
+                break;
             }
-            let _ = fs::remove_file(&outp);
-            let _ = fs::remove_file(&errp);
-            t
-        } else {
-            test.clone()
-        };
-        let result = compare_test(&test_eff, status, &stdout, &stderr);
-
-        if result.skipped {
-            skipped += 1;
-            if verbose {
-                eprintln!("  {}", result);
+            ChunkOutcome::Died => {
+                prep_failed = Some("shell exited during preparation code".into());
+                break;
             }
-        } else if result.passed {
-            passed += 1;
-            if verbose {
-                eprintln!("  {}", result);
-            }
-        } else {
-            failed += 1;
-            eprintln!("  [{}:{}] {}", ztst.name, i + 1, result);
         }
     }
 
+    if let Some(msg) = unimplemented {
+        if verbose {
+            eprintln!("  SKIP all {} tests: {}", ztst.tests.len(), msg);
+        }
+        shell.shutdown();
+        return (0, 0, ztst.tests.len());
+    }
+    if let Some(msg) = prep_failed {
+        // ztst.zsh:594,602 — tests are not run; the file is failed.
+        eprintln!("  [{}] prep failed: {}", ztst.name, msg);
+        shell.shutdown();
+        return (0, ztst.tests.len(), 0);
+    }
+
+    // %test — ZTST_test (ztst.zsh:397-561) with ZTST_continue=1 semantics
+    // (ztst.zsh:21,515,538,552): keep going after a failed case so every
+    // chunk is measured. Comparison per chunk is unchanged.
+    let mut wedged: Option<&'static str> = None;
+    for (i, test) in ztst.tests.iter().enumerate() {
+        if let Some(why) = wedged {
+            failed += 1;
+            eprintln!(
+                "  [{}:{}] FAIL: {}\n      not run — {}",
+                ztst.name,
+                i + 1,
+                test.message,
+                why
+            );
+            continue;
+        }
+
+        // ztst.zsh:404-405 — fresh $ZTST_in each case. ZTST_getredir
+        // writes redir bodies with `print -r --`, which terminates the
+        // last line with \n (ztst.zsh:286).
+        let mut body = String::new();
+        if test.flags.contains('q') && !test.stdin_data.is_empty() {
+            // ztst.zsh:282-285 — `q` + `<`: the stdin text gets ${(e)...}
+            // expansion in the harness shell before the chunk runs.
+            let _ = fs::write(&shell.ztst_in, "");
+            body.push_str(&format!(
+                "ZTST_redir={}\n\\builtin print -r -- \"${{(e)ZTST_redir}}\" >\"$ZTST_in\"\n",
+                sq(&test.stdin_data)
+            ));
+        } else if test.stdin_data.is_empty() {
+            let _ = fs::write(&shell.ztst_in, "");
+        } else {
+            let _ = fs::write(&shell.ztst_in, format!("{}\n", test.stdin_data));
+        }
+
+        // ztst.zsh:484 — the chunk runs in THIS shell via eval, with all
+        // three streams redirected to the capture files.
+        body.push_str(&format!(
+            "ZTST_code={}\n\\ZTST_execchunk <\"$ZTST_in\" >\"$ZTST_tout\" 2>\"$ZTST_terr\"",
+            sq(&test.code)
+        ));
+
+        // ztst.zsh:524-527,540-543 — `q` flag: expected stdout/stderr get
+        // ${(e)...} expansion AFTER the chunk ran, in the SAME shell, so
+        // variables set by %prep and earlier chunks are visible.
+        let use_q = test.flags.contains('q')
+            && (!test.expected_stdout.is_empty() || !test.expected_stderr.is_empty());
+        if use_q {
+            body.push_str(&format!(
+                "\nZTST_expect_out={}\nZTST_expect_err={}\n\
+                 \\builtin print -r -- \"${{(e)ZTST_expect_out}}\" >{} 2>/dev/null\n\
+                 \\builtin print -r -- \"${{(e)ZTST_expect_err}}\" >{} 2>/dev/null",
+                sq(&test.expected_stdout),
+                sq(&test.expected_stderr),
+                sq(&shell.qout.to_string_lossy()),
+                sq(&shell.qerr.to_string_lossy()),
+            ));
+        }
+
+        // ztst.zsh:486-488 — capture and reset ZTST_skip.
+        body.push_str("\nZTST_mskip=\"${ZTST_skip:-}\"\nZTST_skip=");
+
+        match shell.run_payload(&body, "$ZTST_mskip", timeout) {
+            ChunkOutcome::Done { status, aux } => {
+                if !aux.is_empty() {
+                    // ztst.zsh:486-494 "Test case skipped"
+                    skipped += 1;
+                    if verbose {
+                        eprintln!("  SKIP: {} ({})", test.message, aux);
+                    }
+                    continue;
+                }
+                let stdout =
+                    String::from_utf8_lossy(&fs::read(&shell.ztst_tout).unwrap_or_default())
+                        .into_owned();
+                let stderr =
+                    String::from_utf8_lossy(&fs::read(&shell.ztst_terr).unwrap_or_default())
+                        .into_owned();
+
+                // Harvest the (e)-expanded expectations for q-flag tests.
+                let test_eff: TestBlock = if use_q {
+                    let mut t = test.clone();
+                    if let Ok(s) = fs::read_to_string(&shell.qout) {
+                        if !test.expected_stdout.is_empty() {
+                            t.expected_stdout = s.trim_end_matches('\n').to_string();
+                        }
+                    }
+                    if let Ok(s) = fs::read_to_string(&shell.qerr) {
+                        if !test.expected_stderr.is_empty() {
+                            t.expected_stderr = s.trim_end_matches('\n').to_string();
+                        }
+                    }
+                    let _ = fs::remove_file(&shell.qout);
+                    let _ = fs::remove_file(&shell.qerr);
+                    t
+                } else {
+                    test.clone()
+                };
+                let result = compare_test(&test_eff, status, &stdout, &stderr);
+
+                if result.skipped {
+                    skipped += 1;
+                    if verbose {
+                        eprintln!("  {}", result);
+                    }
+                } else if result.passed {
+                    passed += 1;
+                    if verbose {
+                        eprintln!("  {}", result);
+                    }
+                } else {
+                    failed += 1;
+                    eprintln!("  [{}:{}] {}", ztst.name, i + 1, result);
+                }
+            }
+            ChunkOutcome::Timeout => {
+                // Hang kills the file's shell; remaining chunks can't run
+                // (a wedged ztst run loses them the same way).
+                failed += 1;
+                eprintln!(
+                    "  [{}:{}] FAIL: {}\n      TIMEOUT after {}ms",
+                    ztst.name,
+                    i + 1,
+                    test.message,
+                    timeout_ms()
+                );
+                wedged = Some("shell killed after earlier hang");
+            }
+            ChunkOutcome::Died => {
+                failed += 1;
+                eprintln!(
+                    "  [{}:{}] FAIL: {}\n      shell exited during chunk",
+                    ztst.name,
+                    i + 1,
+                    test.message
+                );
+                wedged = Some("shell exited during earlier chunk");
+            }
+        }
+    }
+
+    // %clean — ZTST_clean (ztst.zsh:310-322,610-616): chunk status is
+    // ignored, stdout nulled. Not reached when the shell is gone.
+    if wedged.is_none() {
+        for chunk in &ztst.clean {
+            let body = format!("ZTST_code={}\n\\ZTST_execchunk >/dev/null", sq(chunk));
+            let _ = shell.run_payload(&body, "", timeout);
+        }
+    }
+
+    shell.shutdown();
     (passed, failed, skipped)
 }
 
