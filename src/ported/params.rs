@@ -5725,15 +5725,20 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // ARRAY side via `splitstring(value, ":", &globalarr)`. zshrs
     // lacks per-name GSU setfns for these, so the array stayed
     // stale after `PATH=/a:/b`. Mirror the split cascade
-    // explicitly for the five canonical pairs (PATH↔path,
-    // FPATH↔fpath, MANPATH↔manpath, CDPATH↔cdpath, PSVAR↔psvar).
-    // Bug #423/#424.
+    // explicitly for the full IPDEF8 PM_TIED colonarr list
+    // (c:Src/params.c:395-422): PATH↔path, FPATH↔fpath,
+    // MANPATH↔manpath, CDPATH↔cdpath, PSVAR↔psvar,
+    // MODULE_PATH↔module_path, FIGNORE↔fignore,
+    // MAILPATH↔mailpath. Bug #423/#424.
     let alt: Option<&str> = match name {
         "PATH" => Some("path"),
         "FPATH" => Some("fpath"),
         "MANPATH" => Some("manpath"),
         "CDPATH" => Some("cdpath"),
         "PSVAR" => Some("psvar"),
+        "MODULE_PATH" => Some("module_path"),
+        "FIGNORE" => Some("fignore"),
+        "MAILPATH" => Some("mailpath"),
         _ => None,
     };
     if let Some(alt_name) = alt {
@@ -6574,6 +6579,12 @@ pub fn unsetparam(name: &str) -> i32 {
         "cdpath" => Some("CDPATH"),
         "PSVAR" => Some("psvar"),
         "psvar" => Some("PSVAR"),
+        "MODULE_PATH" => Some("module_path"),
+        "module_path" => Some("MODULE_PATH"),
+        "FIGNORE" => Some("fignore"),
+        "fignore" => Some("FIGNORE"),
+        "MAILPATH" => Some("mailpath"),
+        "mailpath" => Some("MAILPATH"),
         _ => None,
     };
     queue_signals(); // c:3825

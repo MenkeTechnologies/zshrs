@@ -29,6 +29,20 @@ fn run_zshrs_parity(code: &str) -> (i32, String, String) {
     run_zshrs_with_args(&["--zsh", "-f", "-c", code])
 }
 
+/// Like `run_zshrs_parity` but returns stdout as RAW BYTES — for
+/// pinning byte-exact output (`$'\xff'`, embedded NUL) that the
+/// lossy String capture would mangle into U+FFFD.
+fn run_zshrs_parity_bytes(code: &str) -> (i32, Vec<u8>) {
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", code])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("failed to spawn zshrs");
+    (out.status.code().unwrap_or(-1), out.stdout)
+}
+
 /// Create a per-test temp dir under $TMPDIR with a unique name.
 /// Caller is responsible for cleanup (or accept tmpfs cleanup).
 fn tempdir_for_test() -> String {
@@ -12198,4 +12212,162 @@ print -l -- "${(@)parts/(#b)(*)$'\1'(*)$'\1'(*)/[$match[1]]<$match[2]>{$match[3]
     // tracker shares behaviour here), so the first line ends `{c`,
     // the second `{z}`. We match real-zsh's behaviour exactly.
     assert_eq!(output.trim(), "[a]<b>{c\n[x]<y>{z}", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Bug #127 — $'\xNN' must emit the RAW byte (metafied internally),
+// not a Unicode codepoint re-encoded as UTF-8, and must not abort.
+// C: Src/utils.c getkeystring \x arm + c:7289-7294 metafy tail.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ansi_c_hex_escape_emits_raw_byte() {
+    // zsh oracle: `echo $'\xff' | od -An -c` → `377 \n` (ONE byte).
+    let (status, bytes) = run_zshrs_parity_bytes(r#"echo $'\xff'"#);
+    assert_eq!(status, 0, "shell must not abort on invalid-UTF-8 byte");
+    assert_eq!(bytes, b"\xff\n", "got: {bytes:x?}");
+    // Mid-string high byte.
+    let (status, bytes) = run_zshrs_parity_bytes(r#"echo $'a\xe9b'"#);
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"a\xe9b\n", "got: {bytes:x?}");
+    // Consecutive \x escapes combine into the exact byte sequence
+    // (here: the UTF-8 encoding of é).
+    let (_, bytes) = run_zshrs_parity_bytes(r#"echo $'\xc3\xa9'"#);
+    assert_eq!(bytes, "é\n".as_bytes(), "got: {bytes:x?}");
+    // Literal é (the \u/codepoint form) stays 2-byte UTF-8.
+    let (_, bytes) = run_zshrs_parity_bytes(r#"echo $'é'"#);
+    assert_eq!(bytes, "é\n".as_bytes(), "got: {bytes:x?}");
+    // Octal form is also a raw byte (zsh: $'\377' == $'\xff').
+    let (_, bytes) = run_zshrs_parity_bytes(r#"echo $'\377'"#);
+    assert_eq!(bytes, b"\xff\n", "got: {bytes:x?}");
+}
+
+#[test]
+fn test_ansi_c_hex_escape_segment_concat_and_printf() {
+    // Concatenated quoted segments take the lexer/untokenize path
+    // (getkeystring_dollar_quote), not the compile-time fast path —
+    // pin both.
+    let (status, bytes) = run_zshrs_parity_bytes(r#"echo "a"$'\xff'"b""#);
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"a\xffb\n", "got: {bytes:x?}");
+    // printf %s writes the bytes unmangled (binary-header use case).
+    let (_, bytes) = run_zshrs_parity_bytes(r#"printf "%s" $'\xff\xfe\x00\x01\x00\x02'"#);
+    assert_eq!(bytes, b"\xff\xfe\x00\x01\x00\x02", "got: {bytes:x?}");
+}
+
+#[test]
+fn test_ansi_c_high_byte_pattern_equality() {
+    // The metafied representation must stay pattern-comparable:
+    // [[ == ]], case, and ${s/pat/rep} all match the raw byte.
+    let (_, out, _) = run_zshrs_parity(r#"[[ $'\xff' == $'\xff' ]] && echo same"#);
+    assert_eq!(out.trim(), "same", "got: {out:?}");
+    let (_, out, _) = run_zshrs_parity(r#"[[ $'\xff' == $'\xfe' ]] || echo diff"#);
+    assert_eq!(out.trim(), "diff", "got: {out:?}");
+    let (_, out, _) = run_zshrs_parity(r#"case $'\xff' in $'\xff') echo m;; *) echo no;; esac"#);
+    assert_eq!(out.trim(), "m", "got: {out:?}");
+    let (_, bytes) = run_zshrs_parity_bytes(r#"s=$'a\xffb'; echo "${s/$'\xff'/X}""#);
+    assert_eq!(bytes, b"aXb\n", "got: {bytes:x?}");
+}
+
+// ---------------------------------------------------------------------------
+// Bug #560 — print/echo/printf preserve embedded NUL bytes.
+// C: Src/builtin.c bin_print length-aware fwrite (c:5124).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_print_preserves_embedded_nul() {
+    // zsh oracle: `print -- "a"$'\0'"b" | od -c` → `a \0 b \n`.
+    let (status, bytes) = run_zshrs_parity_bytes(r#"print -- "a"$'\0'"b""#);
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"a\0b\n", "got: {bytes:?}");
+    let (_, bytes) = run_zshrs_parity_bytes(r#"echo "a"$'\0'"b""#);
+    assert_eq!(bytes, b"a\0b\n", "got: {bytes:?}");
+    let (_, bytes) = run_zshrs_parity_bytes(r#"printf "%s" "a"$'\0'"b""#);
+    assert_eq!(bytes, b"a\0b", "got: {bytes:?}");
+    // The NUL survives variable storage too (${#s} counts it).
+    let (_, out, _) = run_zshrs_parity(r#"s="a"$'\0'"b"; echo ${#s}"#);
+    assert_eq!(out.trim(), "3", "got: {out:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Bug #373 — pipestatus vs assignment commands. zsh accepts the
+// write (Src/params.c:5270 pipestatsetfn stores it) but an ARRAY
+// assignment command then clobbers pipestats to [lastval] via the
+// no-procs waitjob branch (Src/jobs.c:1753-1755); a bare SCALAR
+// assignment creates no job and leaves pipestats alone.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pipestatus_array_assignment_clobbered_like_zsh() {
+    // zsh oracle: `pipestatus=(9); echo $pipestatus` → `0`.
+    let (_, out, _) = run_zshrs_parity(r#"pipestatus=(9); echo $pipestatus"#);
+    assert_eq!(out.trim(), "0", "got: {out:?}");
+    // Any array assignment clobbers to [lastval]...
+    let (_, out, _) = run_zshrs_parity(r#"false|true; x=(1 2); echo "[${pipestatus[@]}]""#);
+    assert_eq!(out.trim(), "[0]", "got: {out:?}");
+    let (_, out, _) = run_zshrs_parity(r#"false|true; x+=(3); echo "[${pipestatus[@]}]""#);
+    assert_eq!(out.trim(), "[0]", "got: {out:?}");
+    // ...but a bare scalar assignment does NOT (zsh: [1 0] preserved).
+    let (_, out, _) = run_zshrs_parity(r#"false|true; x=1; echo "[${pipestatus[@]}]""#);
+    assert_eq!(out.trim(), "[1 0]", "got: {out:?}");
+    // Scalar write to pipestatus itself is accepted and survives
+    // (zsh oracle: `pipestatus=9; echo $pipestatus` → `9`).
+    let (_, out, _) = run_zshrs_parity(r#"pipestatus=9; echo "[$pipestatus]""#);
+    assert_eq!(out.trim(), "[9]", "got: {out:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Bug #423 follow-up — remaining IPDEF8 PM_TIED colonarr pairs
+// (Src/params.c:395-422): MODULE_PATH/module_path, FIGNORE/fignore,
+// MAILPATH/mailpath, PSVAR/psvar — both tie directions.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_tied_module_path_fignore_mailpath_psvar_both_directions() {
+    for (scalar, arr) in [
+        ("MODULE_PATH", "module_path"),
+        ("FIGNORE", "fignore"),
+        ("MAILPATH", "mailpath"),
+        ("PSVAR", "psvar"),
+    ] {
+        // scalar → array (split on `:`).
+        let (_, out, _) = run_zshrs_parity(&format!(
+            r#"{scalar}=/x:/y; echo "[${{{arr}[@]}}]""#
+        ));
+        assert_eq!(out.trim(), "[/x /y]", "{scalar} scalar->array got: {out:?}");
+        // array → scalar (join with `:`).
+        let (_, out, _) = run_zshrs_parity(&format!(
+            r#"{arr}=(/a /b); echo "[${scalar}]""#
+        ));
+        assert_eq!(out.trim(), "[/a:/b]", "{arr} array->scalar got: {out:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bug #296 — `\\` in a paramsubst pattern is a QUOTED literal
+// backslash (lexer Bnull survives to patcompile), not an escape for
+// the next char. C: Src/lex.c:1508 add(Bnull) + patcompile's
+// Bnull-literal contract.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_replace_double_backslash_is_literal_backslash() {
+    // zsh oracle: no backslash in "a.b" → no match, value unchanged.
+    let (_, out, _) = run_zshrs_parity(r#"s="a.b"; echo "[${s/\\./X}]""#);
+    assert_eq!(out.trim(), "[a.b]", "got: {out:?}");
+    // With a real backslash+dot in the subject, `\\.` matches it.
+    let (_, out, _) = run_zshrs_parity(r#"s="a\\.b"; echo "[${s/\\./X}]""#);
+    assert_eq!(out.trim(), "[aXb]", "got: {out:?}");
+    // Single `\.` stays an escaped (literal) dot — matches the dot.
+    let (_, out, _) = run_zshrs_parity(r#"s="a.b"; echo "[${s/\./X}]""#);
+    assert_eq!(out.trim(), "[aXb]", "got: {out:?}");
+    // Same layering for the strip arms (#/%%).
+    let (_, out, _) = run_zshrs_parity(r#"s="\\.ab"; echo "[${s#\\.}]""#);
+    assert_eq!(out.trim(), "[ab]", "got: {out:?}");
+    let (_, out, _) = run_zshrs_parity(r#"s=".ab"; echo "[${s#\\.}]""#);
+    assert_eq!(out.trim(), "[.ab]", "got: {out:?}");
+    // `//` global arm agrees (already-correct path, pinned so the
+    // arms can't diverge again).
+    let (_, out, _) = run_zshrs_parity(r#"s="a\\.b"; echo "[${s//\\./X}]""#);
+    assert_eq!(out.trim(), "[aXb]", "got: {out:?}");
 }

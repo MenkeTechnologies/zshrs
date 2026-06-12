@@ -2238,7 +2238,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             false
         });
-        Value::Status(if blocked { 1 } else { 0 })
+        let status = if blocked { 1 } else { 0 };
+        // c:Src/jobs.c:1748-1757 waitonejob — in C an array-assignment
+        // simple command goes through execpline → waitjobs; with no
+        // procs the else-branch stores `pipestats[0] = lastval;
+        // numpipestats = 1`. Bare SCALAR assignments never create a
+        // job (no waitjobs), so this clobber is array/assoc-assignment
+        // specific: `false|true; x=(1 2); echo $pipestatus` → `0` in
+        // zsh while `x=1` preserves `1 0`. Bug #373.
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
+        Value::Status(status)
     });
     // `arr+=(d e f)` — array append. Same calling conventions as SET_ARRAY.
     //
@@ -2334,6 +2345,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 env::set_var(&scalar_name, &joined);
             }
         });
+        // c:Src/jobs.c:1748-1757 waitonejob — `arr+=(...)` is an
+        // array-assignment simple command and clobbers pipestats to
+        // `[lastval]` exactly like `arr=(...)` above. Bug #373.
+        crate::ported::builtin::LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);
+        let mut synth = crate::ported::zsh_h::job::default();
+        crate::ported::jobs::waitonejob(&mut synth);
         Value::Status(0)
     });
     vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {

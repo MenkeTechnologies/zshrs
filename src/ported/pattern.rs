@@ -581,8 +581,29 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         while i < chars.len() {
             let c = chars[i];
             let cu = c as u32;
-            if cu == 0x83 || cu == 0x9f || cu == 0xa0 {
-                // Meta / Bnull / Bnullkeep — payload is a literal.
+            if cu == 0x83 {
+                // Meta + payload — a metafied RAW byte
+                // (vm_helper::meta_encode_byte, c:Src/utils.c:7289-
+                // 7294). C's pattern matcher compares metafied bytes
+                // on BOTH sides, so the compiled pattern must match
+                // the pair AS STORED in the subject string: emit both
+                // chars as literals (`\Meta \payload`). The previous
+                // `\payload` form dropped the Meta char and never
+                // matched a metafied subject — `[[ $'\xff' ==
+                // $'\xff' ]]` failed. Bug #127.
+                out.push('\\');
+                out.push(c);
+                if i + 1 < chars.len() {
+                    out.push('\\');
+                    out.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            if cu == 0x9f || cu == 0xa0 {
+                // Bnull / Bnullkeep — payload is a literal.
                 if i + 1 < chars.len() {
                     out.push('\\');
                     out.push(chars[i + 1]);

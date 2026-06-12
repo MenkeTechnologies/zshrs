@@ -8520,7 +8520,10 @@ pub fn bin_print(
             use std::io::Write as _;
             let stdout = io::stdout();
             let mut lk = stdout.lock();
-            let _ = lk.write_all(out.as_bytes());
+            // c:Src/builtin.c:5408 — `print_val(unmetafy(stringval,
+            // &curlen))`: printf's values are unmetafied before the
+            // write. Decode Meta-char pairs to raw bytes. Bug #127.
+            let _ = lk.write_all(&crate::vm_helper::unmetafy_str(&out));
             let _ = lk.flush();
         }
         return 0;
@@ -8874,10 +8877,16 @@ pub fn bin_print(
         // coprocout (when present) over the `-u`-resolved fd. If
         // neither, fall through to stdout below.
         let dest_fd_active = print_dash_p_fd.or(dest_fd);
+        // c:Src/builtin.c:4752 — `unmetafy(args[n], &len[n])`: print's
+        // args are unmetafied before the fwrite. zshrs keeps values
+        // metafied (Meta-char pairs, vm_helper::meta_encode_byte)
+        // until the byte boundary, so decode here — `print $'\xff'`
+        // writes the single raw byte 0xff. Bug #127.
+        let body_bytes = crate::vm_helper::unmetafy_str(&body);
         if let Some(mut f) = dest_fd_active {
             // c:4847 — write to dup'd file descriptor.
             use std::io::Write as _;
-            let _ = f.write_all(body.as_bytes()); // c:5124 fwrite
+            let _ = f.write_all(&body_bytes); // c:5124 fwrite
             let _ = f.write_all(final_term); // c:5132
                                              // f closes on drop (close(dup_fd)) — user's original fd
                                              // remains open per c:4843 dup semantics.
@@ -8888,7 +8897,7 @@ pub fn bin_print(
             use std::io::Write as _;
             let stdout = io::stdout();
             let mut lk = stdout.lock();
-            let _ = lk.write_all(body.as_bytes()); // c:5124
+            let _ = lk.write_all(&body_bytes); // c:5124
             let _ = lk.write_all(final_term); // c:5132
             // c:Src/builtin.c — C printf goes through libc fwrite to
             // stdout (fd 1) which is unbuffered when the builtin runs

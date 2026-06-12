@@ -4413,8 +4413,13 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                         // Src/utils.c:7160-7163 fallthrough
                         out.push('\\');
                         out.push('x');
-                    } else if let Some(ch) = char::from_u32(val) {
-                        out.push(ch);
+                    } else {
+                        // c:Src/utils.c — `\xNN` is one raw BYTE, not
+                        // a Unicode codepoint (the old char::from_u32
+                        // re-encoded 0xNN >= 0x80 as two UTF-8
+                        // bytes); metafied per c:Src/utils.c:7289-
+                        // 7294. Bug #127.
+                        crate::vm_helper::meta_encode_byte(&mut out, (val & 0xff) as u8);
                     }
                     i += consumed;
                 }
@@ -4453,9 +4458,10 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                             break;
                         }
                     }
-                    if let Some(ch) = char::from_u32(val) {
-                        out.push(ch);
-                    }
+                    // c:Src/utils.c — octal escape is one raw BYTE
+                    // (`$'\377'` = 0xff), metafied per
+                    // c:Src/utils.c:7289-7294. Bug #127.
+                    crate::vm_helper::meta_encode_byte(&mut out, (val & 0xff) as u8);
                     i += consumed;
                 }
                 'C' | 'M' => {
@@ -4536,8 +4542,16 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                         // c:7272-7274 — OR 0x80.
                         byte |= 0x80;
                     }
-                    ch = char::from_u32(byte).unwrap_or('\0');
-                    out.push(ch);
+                    // c:Src/utils.c:7265-7275 — the masked result is
+                    // one raw BYTE (`$'\M-i'` = 0xe9), metafied per
+                    // c:7289-7294. Multibyte base chars (> 0xff after
+                    // masking) keep the codepoint form. Bug #127.
+                    if byte <= 0xff {
+                        crate::vm_helper::meta_encode_byte(&mut out, byte as u8);
+                    } else {
+                        ch = char::from_u32(byte).unwrap_or('\0');
+                        out.push(ch);
+                    }
                     i = j + advance;
                 }
                 _ => {

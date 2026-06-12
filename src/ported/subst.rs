@@ -2977,6 +2977,28 @@ pub fn paramsubst(
             }
             // Lexer quote markers Bnull/Bnullkeep — payload is
             // user-literal; pass the pair through untouched.
+            //
+            // EXCEPTION: Bnull + `\` (source `\\` — a QUOTED literal
+            // backslash) is rewritten to the parser's raw-ASCII
+            // literal form `\\` HERE, before singsub: stringsubst's
+            // Bnull arm (subst.rs:696) DROPS the marker and keeps the
+            // payload raw, which turned the quoted backslash into an
+            // ACTIVE escape prefix for patcompile — `${s/\\./X}`
+            // matched a plain dot instead of backslash+dot. C never
+            // loses the marker (Bnull survives the whole subst walk;
+            // remnulargs strips it only at the value boundary, and
+            // patcompile reads Bnull-marked chars as literal —
+            // Src/lex.c:1508 add(Bnull) + Src/pattern.c Bnull
+            // contract). Other payloads must KEEP the marker pair:
+            // raw `$` / `` ` `` would re-substitute inside
+            // stringsubst, and raw glob chars are already literalized
+            // downstream. Bug #296.
+            if c == Bnull && i + 1 < chars.len() && chars[i + 1] == '\\' {
+                out.push('\\');
+                out.push('\\');
+                i += 2;
+                continue;
+            }
             if (c == Bnull || c == Bnullkeep) && i + 1 < chars.len() {
                 out.push(c);
                 out.push(chars[i + 1]);

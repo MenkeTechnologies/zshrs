@@ -10191,6 +10191,46 @@ with substring syntax in zshrs to avoid silent failures.
 
 ## #127 — `$'\xNN'` interpreted as Unicode codepoint, then re-encoded as UTF-8
 
+**Status:** `fixed` 2026-06-12 — `$'\xNN'` / `$'\NNN'` / `$'\M-x'`
+now produce the raw byte, metafied internally per
+c:Src/utils.c:7289-7294 (`Meta` + `byte ^ 32`, stored as the
+char-level pair U+0083 + U+00XX so Rust Strings stay valid UTF-8 —
+an interim unsafe raw-byte push had made the String invalid UTF-8,
+aborting debug builds with a UB check inside any later `.chars()`
+walk). Decode boundaries unmetafy back to raw bytes.
+
+**Fix sites:**
+- `compile_zsh.rs::decode_ansi_c` — `\x`/octal/`\C`/`\M` arms emit
+  `vm_helper::meta_encode_byte` pairs (octal also now truncates to
+  one byte: `$'\777'` = 0xff like C).
+- `lex.rs::getkeystring_dollar_quote` — same three arms (the
+  concat/segment path: `"a"$'\xff'"b"`).
+- `utils.rs::getkeystring` — same (runtime stringsubstquote path).
+- `vm_helper.rs::meta_encode_byte` / `unmetafy_str` — the encode/
+  decode pair.
+- `builtin.rs::bin_print` body write + printf write — unmetafy
+  before `write_all` (c:Src/builtin.c:4752 `unmetafy(args[n], ...)`).
+- `vm_helper.rs::execute_external_bg` — unmetafy args to raw-byte
+  `OsStr` before spawn (C unmetafies before execve).
+- `pattern.rs::patcompile` token normalization — Meta+payload emits
+  BOTH chars as literals so patterns match the stored pair
+  (`[[ $'\xff' == $'\xff' ]]`).
+- `compile_zsh.rs::split_pattern_for_glob_subst` — `$'...'` spans
+  (Stringg+Snull...Snull) stay ONE Subst segment; the bare-$NAME arm
+  was splitting them into `$` + raw body, so the cond RHS compiled
+  to literal `$\xff` and never matched.
+
+**Verify** (all match /opt/homebrew/bin/zsh byte-for-byte via od -An -c):
+`echo $'\xff'` → `377 \n`; `echo $'a\xe9b'` → `a 351 b \n`;
+`echo $'\xc3\xa9'` / `echo $'é'` → 2-byte UTF-8 é; `"a"$'\xff'"b"` →
+`a 377 b \n`; `printf "%s" $'\xff\xfe\x00\x01\x00\x02'` → exact 6
+bytes; `/bin/echo $'\xff'` → `377 \n`; `[[ $'\xff' == $'\xff' ]]` →
+match; rc=0 everywhere (no abort). Known residual: `${#s}` for a
+metafied byte counts the pair (2) where zsh reports 1 — metafied-
+aware length is a separate gap.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -24949,6 +24989,32 @@ a=("${_new[@]}")
 
 ## #296 — `${s/\\./X}` pattern `\\X` interpretation diverges from zsh
 
+**Status:** `fixed` 2026-06-12 — source-level `\\` in a paramsubst
+pattern is now a QUOTED literal backslash, matching zsh.
+
+**Root cause** — the lexer is faithful (`\\` → Bnull + `\`, both DQ
+c:Src/lex.c:1508 and unquoted), but `stringsubst`'s Bnull arm
+(subst.rs:696) DROPS the marker and keeps the payload raw. For the
+`/` and `#`/`%` paramsubst arms the pattern runs through
+`singsub` → that drop turned the quoted literal `\` into an ACTIVE
+escape prefix for patcompile, so `\\.` compiled as "escaped dot"
+and matched a plain `.`. (The `//` arm had its own pre-walk that
+already converted Bnull+X → `\X` and was correct.)
+
+**Fix** — `subst.rs::pretokenize_src_pat` (the shared pattern
+pre-pass for the `/`, `#`, `%` arms): Bnull + `\` is rewritten to
+the parser's raw-ASCII literal form `\\` BEFORE singsub destroys
+the marker. Other Bnull payloads keep the marker pair (raw `$` /
+`` ` `` would re-substitute inside stringsubst).
+
+**Verify** (matches /opt/homebrew/bin/zsh on all rows):
+1–4 backslashes against subjects `a.b` and `a\.b`, e.g.
+`s="a.b"; "${s/\\./X}"` → `a.b` (no match), `s="a\.b"` → `aXb`;
+strip arms `${s#\\.}` / `${s%\\.}` likewise; `${s//\\\\n/X}` on
+`$'a\nb'` → unchanged (the original report's second reproducer).
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -31333,6 +31399,33 @@ PS1=$'\e[31m%F{red}error\e[0m '
 
 ## #373 — `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly
 
+**Status:** `fixed` 2026-06-12 — zshrs now matches zsh's ACTUAL
+behaviour, which is NOT readonly rejection.
+
+**Corrected diagnosis** — zsh accepts the write: `pipestatsetfn`
+(c:Src/params.c:5270) stores the values, and `pipestatus=9`
+(scalar) survives — `/opt/homebrew/bin/zsh -fc 'pipestatus=9; echo
+$pipestatus'` prints `9`. The reproducer's `[0]` comes from a
+different mechanism: an ARRAY assignment command creates a job, and
+the no-procs wait branch (c:Src/jobs.c:1738-1739 zwaitjob /
+1753-1755 waitonejob) then stores `pipestats[0] = lastval;
+numpipestats = 1` — clobbering whatever the setfn wrote. Bare
+SCALAR assignments never reach waitjobs (no job), so they don't
+clobber: `false|true; x=1` preserves `[1 0]` while `x=(1 2)`
+clobbers to `[0]` (verified against zsh 5.9 for `:`, `true`, `x=1`,
+`x=(1 2)`, `typeset x=1`, `x+=(3)`, `x=1 true`).
+
+**Fix** — `fusevm_bridge.rs` BUILTIN_SET_ARRAY and
+BUILTIN_APPEND_ARRAY handlers end with the same
+`LASTVAL.store + waitonejob(synthetic no-procs job)` sequence the
+builtin dispatch wrapper already used, replicating the C clobber for
+array/assoc assignment commands.
+
+**Verify** — full 7-shape matrix above matches zsh;
+`pipestatus=(9); echo $pipestatus` → `0`; `pipestatus=9` → `9`.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -35795,6 +35888,21 @@ bisect manually.
 
 (See diagnosis + verify block under #424 above — the same
 `assignsparam` tail cascade fixes both #423 and #424.)
+
+**Follow-up** `fixed` 2026-06-12 — re-probed all IPDEF8 PM_TIED
+colonarr pairs (c:Src/params.c:395-422) at HEAD. PATH/FPATH/
+CDPATH/MANPATH were fixed both directions; three pairs were still
+broken: MODULE_PATH→module_path (stale array after scalar write),
+FIGNORE↔fignore and MAILPATH↔mailpath (broken BOTH directions),
+psvar→PSVAR (array→scalar missing). Fixes:
+- `params.rs::assignsparam` scalar→array cascade: added
+  MODULE_PATH, FIGNORE, MAILPATH.
+- `vm_helper.rs` tied_array_to_scalar init table: added PSVAR/psvar,
+  FIGNORE/fignore, MAILPATH/mailpath.
+- `params.rs` unset tied_alt map: added the three pairs both ways
+  (zsh: `unset FIGNORE` also unsets `fignore`, verified).
+Verified all 8 pairs both directions against /opt/homebrew/bin/zsh
+(`X=/x:/y` → array `[/x /y]`; `x=(/a /b)` → scalar `/a:/b`).
 
 **Original report:**
 
@@ -40439,6 +40547,16 @@ pushd ~+1
 **Status:** `fixed` 2026-06-04 — `cd /no/such` now emits `no such file
 or directory: PATH` (lowercase, no `(os error N)` suffix) matching zsh.
 Likely landed via earlier `bin_cd` error-message parity work.
+
+**Re-verified 2026-06-12 at HEAD** — `cd`, `source`, `.`,
+`exec < missing`, `> /no/such/dir/file`, `command /missing`,
+`cd <non-dir>`, and `kill <bad pid>` all emit zsh-format messages
+with no `(os error N)` anywhere (probed byte-for-byte against
+/opt/homebrew/bin/zsh). The shared strip helper lives in
+`src/ported/compat.rs:140-167`; pinning tests
+`test_cd_missing_dir_zsh_format` (tests/zshrs_shell.rs) and
+`cd_missing_dir_stderr` (tests/zsh_compat_parity_gaps.rs:200)
+already cover the format.
 
 **Verify**
 ```sh
@@ -45511,6 +45629,31 @@ true; echo "$PS1 expanded would be..."
 
 ## #560 — `print -- "...\0..."` embedded NUL byte stripped from output — zsh: preserved
 
+**Status:** `fixed` 2026-06-12 — print, echo, AND printf all
+preserve embedded NULs now.
+
+**Root cause** — NOT in the print write path (bin_print already
+wrote `body.as_bytes()` length-aware, and a standalone `$'\0'` word
+survived). The drop happened at COMPILE time:
+`compile_zsh.rs::strip_quote_markers` removed every `\x00` char from
+literal/concatenated word segments as a "bslashquote sentinel" — but
+the current lexer marks quoted chars with Bnull `\u{9f}`
+(lex.rs:1723/2124/2256), never `\x00`, so the only NULs reaching
+that point were REAL data bytes decoded from `$'\0'`
+(c:Src/utils.c getkeystring → raw NUL). Any multi-segment word
+(`"a"$'\0'"b"`) lost the byte; `${#s}` reported 2 instead of 3.
+
+**Fix** — deleted `strip_quote_markers` and its two call sites
+(pure-literal arm + segment-literal arm in compile_zsh.rs); NULs in
+literal segments flow through to the constant pool and out through
+bin_print's length-aware write (c:Src/builtin.c:5124 fwrite).
+
+**Verify** (matches /opt/homebrew/bin/zsh via od -c):
+`print -- "a"$'\0'"b"` → `a \0 b \n`; same for echo; `printf "%s"`
+→ `a \0 b`; `s="a"$'\0'"b"; echo ${#s}` → 3.
+
+**Original report:**
+
 **Status:** `port-bug` — surfaced 2026-05-30 hunting.
 
 ```sh
@@ -49037,7 +49180,7 @@ no longer reports the internal trap-machinery scalar.
 | 124 | `typeset -f` source-as-typed vs zsh pretty-printed | **fixed** 2026-06-02 | normalize whitespace |
 | 125 | `var=${a[-1]}` assignment returns empty (echo works) | **fixed** 2026-06-02 | `var=${a[${#a}]}` positive idx |
 | 126 | `${s:N:}` empty length silently returns empty (zsh errors) | **fixed** 2026-06-02 | careful syntax |
-| 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **fixed** 2026-06-02 | `printf '\xNN'` direct |
+| 127 | `$'\xNN'` interpreted as Unicode codepoint + UTF-8 re-encode | **fixed** 2026-06-12 | n/a |
 | 128 | `${(C)arr[N]}` indexed-element case-flag errors "bad substitution" | **fixed** 2026-06-02 | assign to scalar first |
 | 129 | `local -a a=("$@")` splits quoted args (without `-a` works) | **fixed** 2026-06-02 | n/a |
 | 130 | `${var@X}` bash parameter-transform accepted (zsh errors) | **fixed** 2026-06-02 | `${(U)x}`/`${(L)x}`/`${(q)x}` |
@@ -49206,7 +49349,7 @@ no longer reports the internal trap-machinery scalar.
 | 293 | `arr[(i)pat]=value` — subscript flag on LHS of assignment silently fails | **fixed** 2026-06-02 | n/a |
 | 294 | Nested backtick `` `outer \`inner\` outer` `` parses wrong (backslash escape not honored) | **fixed** 2026-06-02 | convert to `$()` form |
 | 295 | Array splice `a[N,M]=X` single-value doesn't shrink range — replaces only last index (#275 family) | **fixed** 2026-06-02 | manual rebuild via slice concat |
-| 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **fixed** 2026-06-02 | bracket class `[.]` instead |
+| 296 | `${s/\\./X}` pattern `\\X` interpretation diverges — zsh: literal `\\` + glob `.`, zshrs: escaped `.` | **fixed** 2026-06-12 | n/a |
 | 297 | Bare `typeset` (no args) display format missing attribute prefix (`array readonly tied NAME`) | **fixed** 2026-06-02 | use `typeset -p` for reproducible form |
 | 298 | Bare var in slice subscript `${a[1,n]}` doesn't arith-deref `n` (zsh: evaluates as int) | **fixed** 2026-06-02 | explicit `$` deref `${a[1,$n]}` |
 | 299 | Glob qualifier `(YN)` count-limit not applied — returns all matches | **fixed** 2026-06-02 | n/a |
@@ -49283,7 +49426,7 @@ no longer reports the internal trap-machinery scalar.
 | 370 | `${(t)1}` positional-param type returns `scalar` instead of `array-special` | **fixed** 2026-06-02 | manual detection of positional context |
 | 371 | `typeset -A` with no args lists random assocs instead of being no-op (zsh: silent success) | **fixed** 2026-06-02 | n/a |
 | 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **fixed** 2026-06-02 | use ANSI escapes directly |
-| 373 | `pipestatus=(...)` user-overwrite accepted — pipestatus not readonly (zsh: silently rejects) | **fixed** 2026-06-02 | defensive copy before user-code |
+| 373 | `pipestatus=(...)` user-overwrite accepted — zsh truth: setfn stores it, then array-assignment commands clobber pipestats to [lastval] | **fixed** 2026-06-12 | n/a |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **fixed** 2026-06-02 | defensive copy |
 | 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | fixed | (assignsparam readonly-magic-assoc list rejects slice writes with `read-only variable: commands`; stricter than current brew zsh, blocks `commands[sudo]=` rewrite) |
 | 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **fixed** 2026-06-04 | probe module file existence manually |
@@ -49333,7 +49476,7 @@ no longer reports the internal trap-machinery scalar.
 | 420 | `eval` errors prefixed `zsh:` instead of `(eval):` — source-context lost (also affects funcname/sourced-file prefixes) | **fixed** 2026-06-04 | n/a |
 | 421 | `^` parsed as glob-negation even when `extended_glob` is off — gating missing on `^`/`~`/`#` extended-glob operators | **fixed** 2026-06-02 | escape with backslash `\\^` |
 | 422 | sourced-file errors prefixed `zsh:` instead of `/path/to/file:` — extends #420, breaks .zshrc plugin-bisect debugging | **fixed** 2026-06-04 | n/a |
-| 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **fixed** 2026-06-02 | always also `path=("${(@s/:/)PATH}")` after PATH= |
+| 423 | **CRITICAL** `PATH=str` doesn't update tied `path` array — one-way tie broken (path=arr→PATH works) | **fixed** 2026-06-02 (+2026-06-12 follow-up: MODULE_PATH/FIGNORE/MAILPATH/psvar ties) | n/a |
 | 424 | **CRITICAL** scalar→array tie broken for MANPATH/FPATH/CDPATH — generalizes #423 to all tied params | fixed | (covered by #423 fix — assignsparam tail cascades PATH/FPATH/MANPATH/CDPATH/PSVAR writes via colon-split) |
 | 425 | `(#cN)` glob exact-count flag not recognized — extends #409 family | **fixed** 2026-06-04 | n/a |
 | 426 | `command_not_found_handler` user-defined hook not invoked — entire ecosystem broken (apt/nix/asdf integration) | **fixed** 2026-06-04 | n/a |
@@ -49470,7 +49613,7 @@ no longer reports the internal trap-machinery scalar.
 | 557 | regex `.` doesn't match newline in zshrs — zsh: dot-matches-newline by default | **fixed** 2026-06-02 | explicit `[[:space:]]` class |
 | 558 | regex `[a-z\\n]` char-class matches multiline aggressively — extends #557 (different regex engine) | **fixed** 2026-06-02 | anchor with `^`/`$` |
 | 559 | `print -P "%(X.t.f)"` prompt-conditional always picks FALSE branch — `%(c..yes)`/`%(l..no-login)` diverge | **fixed** 2026-06-03 | n/a |
-| 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **fixed** 2026-06-02 | use `printf` (needs verification) |
+| 560 | `print -- "a\\0b"` strips embedded NUL byte from output — zsh: preserves | **fixed** 2026-06-12 | n/a |
 | 561 | `${(L99)a}` flag-with-trailing-digits error msg: "bad substitution" — zsh: "error in flags near position N" | **fixed** 2026-06-03 | n/a |
 | 562 | `${a:U}` / `${a:C}` / `${a:W}` invalid uppercase modifier suffixes silently accepted — zsh: "unrecognized modifier" | **fixed** 2026-06-02 | visual audit modifier-letter case |
 | 563 | `zformat -F` (no args) error msg: "missing arguments to -f/-F" — zsh: "not enough arguments" | **fixed** 2026-06-02 | match on rc only |
