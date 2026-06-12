@@ -3393,7 +3393,7 @@ pub fn paramsubst(
         let mut wantt = false; // c:1697
         // c:2232 — `${(!)…}` SCANPM_NONAMEREF RAII scope.
         #[allow(unused_assignments)]
-        let mut nonameref_guard: Option<crate::vm_helper::NamerefSuppressGuard> = None;
+        let mut nonameref_guard: Option<crate::ported::params::NamerefSuppressGuard> = None;
         let _ = &nonameref_guard;
 
         // c:1705 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT) &&
@@ -3650,7 +3650,7 @@ pub fn paramsubst(
                         // ref itself is the subject. Guard lives until
                         // this paramsubst returns.
                         nonameref_guard =
-                            Some(crate::vm_helper::NamerefSuppressGuard::new());
+                            Some(crate::ported::params::NamerefSuppressGuard::new());
                     }
                     'k' => {
                         // c:2390-2393
@@ -10128,15 +10128,15 @@ pub fn paramsubst(
             // (target never defined) emits the empty tag (fetchvalue
             // NULL → vunset, c:2855-2856).
             let mut nameref_dangling = false;
-            let var_name: String = if crate::vm_helper::is_nameref(&var_name) {
-                match crate::vm_helper::resolve_nameref_name(&var_name, None) {
-                    crate::vm_helper::nameref_resolution::Target { name: t, pm, .. } => {
+            let var_name: String = if crate::ported::params::is_nameref(&var_name) {
+                match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                    crate::ported::params::nameref_resolution::Target { name: t, pm, .. } => {
                         if pm.is_none() {
                             nameref_dangling = true;
                         }
                         t
                     }
-                    crate::vm_helper::nameref_resolution::Placeholder(p) => p,
+                    crate::ported::params::nameref_resolution::Placeholder(p) => p,
                     _ => var_name.clone(),
                 }
             } else {
@@ -14342,8 +14342,8 @@ fn vars_contains(name: &str) -> bool {
 /// instead of zsh's "1 2".
 fn arrays_get(name: &str) -> Option<Vec<String>> {
     // c:Src/params.c:570-575 — nameref deref before the read.
-    if crate::vm_helper::is_nameref(name) {
-        let t = crate::vm_helper::nameref_final_name(name);
+    if crate::ported::params::is_nameref(name) {
+        let t = crate::ported::params::nameref_final_name(name);
         if t != name {
             return arrays_get(&t);
         }
@@ -14444,8 +14444,8 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
 /// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
     // c:Src/params.c:570-575 — nameref deref before the read.
-    if crate::vm_helper::is_nameref(name) {
-        let t = crate::vm_helper::nameref_final_name(name);
+    if crate::ported::params::is_nameref(name) {
+        let t = crate::ported::params::nameref_final_name(name);
         if t != name {
             return arrays_contains(&t);
         }
@@ -14568,7 +14568,7 @@ fn arrays_insert(name: String, value: Vec<String>) {
 /// `paramtab_hashed_storage` (PM_HASHED values).
 fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
     // c:Src/params.c:570-575 — nameref deref before the read.
-    let resolved = crate::vm_helper::nameref_final_name(name);
+    let resolved = crate::ported::params::nameref_final_name(name);
     paramtab_hashed_storage()
         .lock()
         .ok()
@@ -14578,7 +14578,7 @@ fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.
 fn assoc_contains(name: &str) -> bool {
     // c:Src/params.c:570-575 — nameref deref before the read.
-    let resolved = crate::vm_helper::nameref_final_name(name);
+    let resolved = crate::ported::params::nameref_final_name(name);
     paramtab_hashed_storage()
         .lock()
         .map_or(false, |s| s.contains_key(resolved.as_str()))
