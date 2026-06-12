@@ -6757,6 +6757,50 @@ words through the glob runtime so the existing patcomppiece hash-
 quantifier dispatcher (`src/ported/pattern.rs:1703-1746`) actually
 fires.
 
+**Follow-up 2026-06-12** — re-reproduction at HEAD found one
+residual divergence in the substitution arm of the probe matrix:
+zero-length matches in `${v/pat/rep}` / `${v//pat/rep}` were
+dropped. `a#` matches the empty string, and C's igetmatch records
+the empty span:
+
+```sh
+$ /opt/homebrew/bin/zsh -fc 'setopt extendedglob; v=bbb; echo ${v//a#/X}'
+XbXbXb
+$ ./target/debug/zshrs --zsh -fc '...'   # before fix
+bbb
+```
+
+C spec (`Src/glob.c` igetmatch):
+  * c:3035-3061 `case (SUB_SUBSTR|SUB_LONG)` global loop —
+    `pattrylen` succeeds with `patmatchlen() == 0`; the empty span
+    is recorded and `if (mpos == t) mpos += mb_charlenconv(...)`
+    bumps one char which is KEPT (not replaced).
+  * c:3029 `for (; t <= send; ...)` — empty input still tries the
+    empty span once (`${v//a#/X}` with `v=""` → `X`).
+  * c:3008-3015 `case SUB_SUBSTR:` head pre-check — non-global
+    shortest replaces the empty span at offset 0 FIRST
+    (`${(S)v/a#/X}` on `abc` → `Xabc`, not `Xbc`).
+
+Fix in `src/ported/subst.rs` (both replace closures):
+  * `replace_global`: include the `e == q` window (greedy tries it
+    last, shortest first); on zero-length match emit repl then copy
+    the bump char; `nn == 0` emits repl iff the pattern matches
+    empty; `#`-anchor arm end range now includes 0
+    (`${v//#c#/X}` on `ab` → `Xab`).
+  * `replace_one`: shortest-mode empty pre-check per c:3008-3015;
+    start range `0..=nn` and end range includes `end == start`
+    (`${v/b#/X}` on `abc` → `Xabc`).
+
+Verified: 39-probe zero-length matrix byte-identical vs zsh
+(incl. `${v//a#/X}`, `${(S)v//a#/X}`, empty string, empty pattern
+`${v///X}` → `XaXb`, anchored forms, `(ab)#` group, array
+elements). Pinned in `tests/subst_flags_more_parity.rs`
+`zero_length_quantifier_replace` (12 tests). Regression suites
+clean: lib pattern 334/0, lib glob 302/0, lib subst 409/0,
+glob_numeric 14/0, qualifiers 13/0, cond 90/0, case 37/0,
+zsh_idioms 86/0, real_world 42/0, gates 160/0 + 8/0,
+subst_flags_more 52/0.
+
 **Root cause** — the bug wasn't in `pattern.rs` (its `#`/`##`
 dispatch was already correct). The reach problem was upstream:
 `compile_word_str`'s pure-literal fast path at `src/extensions
