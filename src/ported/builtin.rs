@@ -4525,10 +4525,239 @@ pub fn bin_typeset(
 
         // c:3117-3150 — `typeset -n NAME[=refname]` arm.
         if (on as u32 & PM_NAMEREF) != 0 {
-            if crate::vm_helper::typeset_nameref_arg(name, arg, arg_name, on as u32, off as u32, &ops) != 0 {
-                returnval = 1; // c:3153-3156
+        // c:Src/builtin.c:3117-3150 — the `-n` literal-name arm,
+        // INLINE in C's bin_typeset (no separate C function; the
+        // former vm_helper::typeset_nameref_arg helper relocated
+        // here 2026-06-12 per the no-fake-fns-in-ported rule).
+        // Combined with typeset_single's nameref pieces:
+        // subscripted-name reject (c:2452-2456), read-only
+        // reference guard (c:2249-2256), fresh-start unset
+        // (c:3127-3141), scalar→nameref conversion carrying the
+        // value as refname (c:3132-3135), creation + refname
+        // assignment (assignsparam → PM_NAMEREF arm → setscope).
+        let nameref_arm = |on: u32, off: u32| -> i32 {
+    let value: Option<&str> = arg.find('=').map(|i| &arg[i + 1..]);
+
+    // c:2452-2456 — `typeset -n ptr[1]=...` is invalid.
+    if arg_name.contains('[') {
+        zerrnam(
+            name,
+            &format!("{}: reference variable cannot be an array", arg_name),
+        );
+        return 1;
+    }
+
+    // c:3118-3126 — refname target that is itself a PM_SPECIAL nameref.
+    if let Some(v) = value {
+        let special_ref = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(v).map(|pm| {
+                    let f = pm.node.flags as u32;
+                    (f & PM_NAMEREF) != 0 && (f & PM_SPECIAL) != 0
+                })
+            })
+            .unwrap_or(false);
+        if special_ref {
+            zwarnnam(name, &format!("{}: invalid reference", v)); // c:3122
+            return 1; // c:3123-3124
+        }
+    }
+
+    let cur_ll = locallevel_param.load(Relaxed) as i32;
+    let existing = paramtab().read().ok().and_then(|t| {
+        t.get(arg_name)
+            .map(|pm| (pm.node.flags as u32, pm.level, pm.u_str.clone()))
+    });
+
+    let mut carried_value: Option<String> = value.map(String::from);
+    let mut reuse_existing = false;
+
+    let existing_level: Option<i32> = existing.as_ref().map(|(_, l, _)| *l);
+    if let Some((eflags, elevel, estr)) = existing {
+        // c:2249-2256 — read-only guard (typeset_single). Fires when
+        // the existing pm is readonly, +r wasn't given, and either the
+        // nameref-ness changes or a nameref gets a new value.
+        if (eflags & PM_READONLY) != 0
+            && (off & PM_READONLY) == 0
+            && !OPT_ISSET(&ops, b'p')
+        {
+            let kind = if (eflags & PM_NAMEREF) != 0 {
+                "reference"
+            } else {
+                "variable"
+            };
+            zerrnam(name, &format!("{}: read-only {}", arg_name, kind)); // c:2254
+            return 1; // c:2256
+        }
+        // c:3127-3141 — namerefs always start over fresh.
+        if elevel >= cur_ll || ((on & PM_LOCAL) == 0 && elevel < cur_ll) {
+            // c:3132-3135 — converting a scalar: its value becomes
+            // the refname.
+            if carried_value.is_none()
+                && PM_TYPE(eflags) == PM_SCALAR
+                && estr.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
+            {
+                carried_value = estr.clone();
             }
-            continue;
+            // c:3136-3140 — `if (!(hn->flags & PM_READONLY)) {
+            //   unsetparam_pm(oldpm, 0, 1); hn = NULL; }` — only a
+            // non-readonly ref starts over fresh; a readonly one is
+            // KEPT and handed to typeset_single (c:3148-3149), where
+            // `typeset +r -n ref[=val]` clears the flag in place and
+            // any =val ASSIGNS THROUGH the surviving refname.
+            if (eflags & PM_READONLY) != 0 {
+                reuse_existing = true;
+            } else if let Some(mut old) = paramtab()
+                .write()
+                .ok()
+                .and_then(|mut t| t.remove(arg_name))
+            {
+                // keep the shadowed outer binding for re-chaining
+                if let Some(prev) = old.old.take() {
+                    if let Ok(mut tab) = paramtab().write() {
+                        tab.insert(arg_name.to_string(), prev);
+                    }
+                }
+            }
+        } else if (eflags & PM_READONLY) != 0 {
+            // c:3142-3149 — only a READONLY ref survives as the pm
+            // handed to typeset_single (so `typeset -rn ref=var` can
+            // error properly); everything else gets `hn = NULL` and
+            // a fresh local SHADOW is created below (c:3148-3149).
+            reuse_existing = true;
+        }
+    }
+
+    // (Re)create the nameref param (typeset_single c:2577+ createparam
+    // with PM_NAMEREF type).
+    if !reuse_existing {
+        let shadowed = paramtab()
+            .write()
+            .ok()
+            .and_then(|mut t| {
+                if (on & PM_LOCAL) != 0 && cur_ll > 0 {
+                    t.remove(arg_name)
+                } else {
+                    None
+                }
+            });
+        let mut flags = PM_NAMEREF as i32;
+        // c:2544 — TYPESET_TO_UNSET: declared-but-unassigned.
+        if carried_value.is_none() && isset(crate::ported::zsh_h::TYPESETTOUNSET) {
+            flags |= crate::ported::zsh_h::PM_DEFAULTED as i32;
+        }
+        // crate::ported::zsh_h::PM_UPPER on a nameref marks the -u upscope variant (c:2698
+        // allows -u with -n); crate::ported::zsh_h::PM_HIDEVAL likewise.
+        flags |= (on & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL)) as i32;
+        // c:1108-1132 — createparam REUSES the just-unset node at its
+        // own level when !PM_LOCAL (`typeset -gn` rebind of a local
+        // ref keeps the ref's level; it does NOT hoist to level 0).
+        let level = if (on & PM_LOCAL) != 0 {
+            cur_ll
+        } else if let Some(elevel) = existing_level {
+            elevel
+        } else {
+            0
+        };
+        let pm = Box::new(crate::ported::zsh_h::param {
+            node: crate::ported::zsh_h::hashnode {
+                next: None,
+                nam: arg_name.to_string(),
+                flags,
+            },
+            u_data: 0,
+            u_tied: None,
+            u_arr: None,
+            u_str: if carried_value.is_none() && value.is_some() {
+                Some(String::new()) // `typeset -n ptr=` placeholder
+            } else {
+                None
+            },
+            u_val: 0,
+            u_dval: 0.0,
+            u_hash: None,
+            gsu_s: None,
+            gsu_i: None,
+            gsu_f: None,
+            gsu_a: None,
+            gsu_h: None,
+            base: 0,
+            width: 0,
+            env: None,
+            ename: None,
+            old: shadowed,
+            level,
+        });
+        if let Ok(mut tab) = paramtab().write() {
+            tab.insert(arg_name.to_string(), pm);
+        }
+    } else {
+        // reuse path (read-only refs surviving the fresh-start gate,
+        // c:3148-3149): apply on/off bits in place. A readonly
+        // SCALAR + `-n` converts to a nameref here — its current
+        // value becomes the refname (c:2117+ type-conversion inside
+        // typeset_single with the pm kept; the `typeset +r -n
+        // ref=RW` shape: "assignment occurs after type change").
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(pm) = tab.get_mut(arg_name) {
+                pm.node.flags |= (on & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL)) as i32;
+                pm.node.flags |= PM_NAMEREF as i32;
+                pm.node.flags &=
+                    !((off & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL | PM_READONLY)) as i32);
+            }
+        }
+    }
+
+    // Assign the refname (typeset_single c:2326 assignsparam →
+    // PM_NAMEREF assignstrvalue arm + valid_refname + setscope).
+    let mut rc = 0;
+    if reuse_existing {
+        // c:2326 — the surviving (previously-readonly) ref keeps its
+        // refname; a =value assignment goes through the canonical
+        // assignsparam which RESOLVES the chain (`typeset +r -n
+        // ref=RW` writes RW into the referent, not the ref).
+        if let Some(v) = value {
+            if crate::ported::params::setsparam(arg_name, v).is_none() {
+                rc = 1;
+            }
+        }
+    } else if let Some(v) = carried_value.as_deref() {
+        if v.is_empty() {
+            // `typeset -n ptr=` — empty placeholder, no setscope error.
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(pm) = tab.get_mut(arg_name) {
+                    pm.u_str = Some(String::new());
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_DEFAULTED as i32);
+                }
+            }
+        } else if crate::ported::params::setsparam(arg_name, v).is_none() {
+            // c:2326 — typeset_single's assignsparam; the fresh
+            // PM_NAMEREF pm routes to assignstrvalue's nameref arm
+            // (c:2690-2720: valid_refname + SETREFNAME + setscope).
+            rc = 1;
+        }
+    } else if !reuse_existing && crate::ported::params::is_nameref(arg_name) {
+        // bare placeholder — still run setscope for parity (no-op).
+        let _ = crate::ported::params::setscope_by_name(arg_name);
+    }
+
+    // c:2618 — `pm->node.flags |= (on & PM_READONLY);` AFTER the
+    // assignment so `typeset -rn ref=var` can set its initial value.
+    if (on & PM_READONLY) != 0 {
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(pm) = tab.get_mut(arg_name) {
+                pm.node.flags |= PM_READONLY as i32;
+            }
+        }
+    }
+    rc
+        };
+        if nameref_arm(on as u32, off as u32) != 0 {
+            returnval = 1; // c:3153-3156
+        }
+        continue;
         }
 
         // c:2032-2050 — existing pm is a nameref and ±n was not
