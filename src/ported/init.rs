@@ -612,7 +612,9 @@ pub fn init_term() -> i32 {
     {
         let mut s = tcstr.lock().unwrap();
         let mut l = tclen.lock().unwrap();
-        let mut tbuf = [0i8; 1024]; // c:798 `char tbuf[1024]`
+        // c:798 `char tbuf[1024]` — element type must be c_char: it is
+        // i8 on macOS/x86_64-linux but u8 on aarch64-linux.
+        let mut tbuf = [0 as libc::c_char; 1024];
         for t0 in 0..TC_COUNT as usize {
             let cap = std::ffi::CString::new(tccapnams[t0]).unwrap();
             let mut pp: *mut libc::c_char = tbuf.as_mut_ptr(); // c:804 `pp = tbuf;`
