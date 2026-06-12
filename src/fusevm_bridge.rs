@@ -2519,7 +2519,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let merged = exec.array(&name).unwrap_or_default();
                 let joined = merged.join(&sep);
                 exec.set_scalar(scalar_name.clone(), joined.clone());
-                env::set_var(&scalar_name, &joined);
+                crate::vm_helper::setenv_truncate_nul(&scalar_name, &joined);
             }
         });
         // c:Src/jobs.c:1748-1757 waitonejob — `arr+=(...)` is an
@@ -4181,7 +4181,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .last_mut()
                     .unwrap()
                     .push((name.clone(), prev_var, prev_env));
-                env::set_var(&name, &value);
+                crate::vm_helper::setenv_truncate_nul(&name, &value);
             }
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch. For Int values (arith assigns) route
@@ -4233,7 +4233,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                env::set_var(&name, &value);
+                crate::vm_helper::setenv_truncate_nul(&name, &value);
             }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
@@ -4283,7 +4283,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                env::set_var(&name, &value);
+                crate::vm_helper::setenv_truncate_nul(&name, &value);
             }
         });
         Value::Bool(true)
@@ -6575,17 +6575,81 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             htok: 0,
         };
         // input/output=0 → no pipe redirection (use shell stdio
-        // directly); `output != 0` at c:2988 forks immediately. last1=1
-        // marks this as the last/only command (no further pipe stages).
+        // directly); `output != 0` at c:2988 forks immediately. last1=2
+        // (c:Src/exec.c:2014 `last1 ? 1 : 2`): terminal pipe stage but
+        // the shell IS needed afterward — the VM keeps executing
+        // bytecode after this op. last1=1 would arm the fake-exec
+        // optimization (c:3646-3651, gate at c:3662 `last1 != 1`),
+        // making `execute()` execve THIS process for external heads:
+        // `p=/bin/echo; $p hi; echo after` replaced the shell and
+        // `after` never ran (D04parameter chunk 11 shell-killer).
+        // c:Src/exec.c:1690-1700 — execpline's job frame: save thisjob
+        // (`pj = thisjob`) and allocate the jobtab slot that
+        // execcmd_fork's addproc (c:2853) hangs the child pid off.
+        // Without a live thisjob, the fork at c:3662 (last1 != 1 →
+        // external must fork) registers no proc, nothing waits, and
+        // the child races the rest of the script.
+        let pj = {
+            use crate::ported::jobs;
+            *jobs::THISJOB
+                .get_or_init(|| std::sync::Mutex::new(-1))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+        };
+        let newjob = {
+            use crate::ported::jobs;
+            let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            jobs::initjob(&mut tab) // c:1700 `thisjob = newjob = initjob()`
+        };
+        {
+            use crate::ported::jobs;
+            *jobs::THISJOB
+                .get_or_init(|| std::sync::Mutex::new(-1))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = newjob as i32;
+        }
         crate::ported::exec::execcmd_exec(
             &mut state,
             &mut eparams,
             0,                                    // input  (c:2989)
             0,                                    // output (c:2988)
             crate::ported::zsh_h::Z_SYNC as i32,  // how
-            1,                                    // last1=1 last/only
+            2,                                    // last1=2 — shell continues (c:2014)
             -1,                                   // close_if_forked
         );
+        // c:Src/exec.c:1828-1835 — execpline's Z_SYNC tail: waitjobs()
+        // reaps the forked external. c:Src/jobs.c:487-495 + 551-552 —
+        // the job's LAST proc sets lastval (0200|sig when signalled,
+        // else WEXITSTATUS). Builtin/shfunc heads never forked (job
+        // has no procs) — LASTVAL was already set by execbuiltin /
+        // doshfunc inside execcmd_exec; skip the wait.
+        {
+            use crate::ported::jobs;
+            let table = jobs::JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+            if jobs::hasprocs(&tab, newjob) {
+                jobs::waitjobs(&mut tab, newjob); // c:1835
+                if let Some(p) = tab[newjob].procs.last() {
+                    let val = if p.is_signaled() {
+                        0o200 | p.term_sig() // c:Src/jobs.c:489-490
+                    } else {
+                        p.exit_status() // c:Src/jobs.c:494
+                    };
+                    crate::ported::builtin::LASTVAL
+                        .store(val, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            // c:1977-1979 — `deletejob(jn, 0)` once done; c:1981
+            // `thisjob = pj` restores the caller's job.
+            if newjob < tab.len() {
+                jobs::deletejob(&mut tab[newjob], false);
+            }
+            *jobs::THISJOB
+                .get_or_init(|| std::sync::Mutex::new(-1))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = pj;
+        }
         let status = crate::ported::builtin::LASTVAL
             .load(std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
@@ -9463,8 +9527,18 @@ impl fusevm::ShellHost for ZshrsHost {
         // so mirror the fork isolation by clearing ERRFLAG_ERROR at
         // the subshell boundary — exec.last_status() already carries
         // the child's lastval (synced by ERREXIT_CHECK trigger 4).
+        //
+        // ERRFLAG_HARD must die at this boundary too: `${u:?msg}` sets
+        // errflag |= ERRFLAG_HARD (c:Src/subst.c:3344) and then, in a
+        // C forked subshell, `_exit(1)` (c:3353) — the parent never
+        // sees ANY errflag bit. A leaked HARD bit here made every
+        // subsequent zerr() take the silent arm (c:Src/utils.c:175-177
+        // `if (errflag || noerrs) { errflag |= ERRFLAG_ERROR; return; }`),
+        // so the next eval/source's parse silently "failed" and the
+        // D04 harness shell wedged after chunk 10's
+        // `(print ${unset1:?exiting1})`.
         crate::ported::utils::errflag.fetch_and(
-            !crate::ported::zsh_h::ERRFLAG_ERROR,
+            !(crate::ported::zsh_h::ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
             std::sync::atomic::Ordering::Relaxed,
         );
         let exit_pending =
@@ -10517,19 +10591,44 @@ impl ShellExecutor {
         }
     }
 
-    /// Set up `content` as stdin (fd 0) for the next command via a real pipe.
+    /// Set up `content` as stdin (fd 0) for the next command.
     /// Used by `Op::HereDoc(idx)` and `Op::HereString`.
     ///
-    /// The pattern: dup2 the read end of a fresh pipe onto fd 0, save the
-    /// original fd 0 into the active redirect scope so `WithRedirectsEnd`
-    /// restores it, and spawn a thread that writes `content` to the write end
-    /// and closes it (so the consumer sees EOF after the body). A thread is
-    /// needed because writing could block on a finite pipe buffer.
+    /// c:Src/exec.c:4655 getherestr — C writes the body to a TEMP
+    /// FILE (gettempfile → write_loop → close → reopen O_RDONLY →
+    /// unlink), NOT a pipe. The previous pipe+writer-thread shape
+    /// SIGPIPE'd the whole shell when the consumer never read the
+    /// body (`: <<< ${(F)x/y}` — D04parameter chunk 211, flaky
+    /// rc=141): the redirect-scope teardown closed the read end
+    /// while the detached thread was still in write_all, and the
+    /// shell's SIGPIPE disposition is SIG_DFL. A temp file has no
+    /// reader/writer coupling — matching C exactly, including
+    /// lseek-ability of fd 0, which pipes don't give.
     pub fn host_set_pending_stdin(&mut self, content: String) {
-        let (read_end, write_end) = match os_pipe::pipe() {
-            Ok(p) => p,
-            Err(_) => return,
+        // c:4673 — `gettempfile(NULL, 1, &s)`.
+        let mut tmp = std::env::temp_dir();
+        tmp.push(format!(
+            "zshrs-herestr-{}-{:x}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        // c:4675 — `write_loop(fd, t, len); close(fd);`
+        if std::fs::write(&tmp, content.as_bytes()).is_err() {
+            return; // c:4674 — tempfile failure → no redirect
+        }
+        // c:4677 — `fd = open(s, O_RDONLY | O_NOCTTY);`
+        let file = match std::fs::File::open(&tmp) {
+            Ok(f) => f,
+            Err(_) => {
+                let _ = std::fs::remove_file(&tmp);
+                return;
+            }
         };
+        // c:4678 — `unlink(s);` — fd stays valid, name disappears.
+        let _ = std::fs::remove_file(&tmp);
         let saved = unsafe { libc::dup(libc::STDIN_FILENO) };
         if saved >= 0 {
             if let Some(top) = self.redirect_scope_stack.last_mut() {
@@ -10538,13 +10637,9 @@ impl ShellExecutor {
                 unsafe { libc::close(saved) };
             }
         }
-        let read_fd = AsRawFd::as_raw_fd(&read_end);
+        let read_fd = AsRawFd::as_raw_fd(&file);
         unsafe { libc::dup2(read_fd, libc::STDIN_FILENO) };
-        drop(read_end);
-        std::thread::spawn(move || {
-            let mut w = write_end;
-            let _ = w.write_all(content.as_bytes());
-        });
+        drop(file);
     }
 
     /// Spawn an external command using zshrs's full dispatch logic

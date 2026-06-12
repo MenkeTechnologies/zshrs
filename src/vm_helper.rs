@@ -2877,7 +2877,17 @@ impl ShellExecutor {
                 // echo "after $?"` prints `after 1`. Mirror the fork
                 // isolation by clearing ERRFLAG_ERROR at the
                 // cmd-subst boundary.
-                errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
+                //
+                // ERRFLAG_HARD dies here too: `${u:?msg}` inside the
+                // child sets it (c:Src/subst.c:3344) then `_exit(1)`s
+                // (c:3353) — C's parent never sees the bit. A leaked
+                // HARD bit makes every later zerr() silent
+                // (c:Src/utils.c:175-177) and silently fails every
+                // later parse. Same fix as subshell_end.
+                errflag.fetch_and(
+                    !(ERRFLAG_ERROR | crate::ported::zsh_h::ERRFLAG_HARD),
+                    Relaxed,
+                );
                 // c:Src/exec.c:4783 execcmdoutsubst — `$(...)` is a
                 // subshell, and zsh fires the EXIT trap when the
                 // subshell ends BUT only if the trap was installed
@@ -3253,6 +3263,29 @@ use ::regex::{Error as RegexError, Regex, RegexBuilder};
 /// reserves `[` (nested class), `&&` / `~~` / `--` (set operations),
 /// all of which are ordinary characters in POSIX. BUGS.md #558.
 ///
+/// NUL-safe process-env mirror — the single chokepoint for exporting
+/// shell-controlled values into the OS environment. C's `setenv`
+/// (c:Src/params.c:5354 via zputenv / addenv) treats the value as a
+/// NUL-terminated C string: an embedded NUL byte silently truncates
+/// the value there, and a name containing NUL is malformed (libc
+/// rejects). Rust's `std::env::set_var` PANICS on embedded NUL —
+/// `export foo; foo=$'\x7f\x00'` (D04parameter chunk 45) killed the
+/// whole shell. Mirror C: truncate the value at the first NUL, drop
+/// the env write for NUL-bearing names. The full raw value lives in
+/// the canonical param table; this is only the libc-env mirror.
+/// Bridge-file helper (no C-named counterpart) — every export-mirror
+/// `env::set_var` of a shell-controlled value routes through here.
+pub fn setenv_truncate_nul(name: &str, value: &str) {
+    if name.as_bytes().contains(&b'\0') {
+        return;
+    }
+    let safe_value: &str = match value.find('\0') {
+        Some(n) => &value[..n],
+        None => value,
+    };
+    env::set_var(name, safe_value);
+}
+
 /// Translation rules, applied only INSIDE bracket expressions:
 ///   - `\`, `[`, `&`, `~` are emitted backslash-escaped (literal).
 ///   - a leading `]` (after optional `^`) is emitted as `\]`
