@@ -1876,9 +1876,55 @@ impl ZshCompiler {
         let head_is_magic_equals = !user_function_shadow
             && (dispatch_first_raw == "alias" || first_clean == "alias");
 
+        // c:Src/builtin.c BUILTIN table — BINF_ASSIGN family: typeset /
+        // declare / local / export / readonly / integer / float /
+        // private. Their `name=( e1 e2 … )` args are ENVARRAY-shaped:
+        // C's par_simple (intypeset) keeps the ELEMENTS as separate
+        // wordcode strings so each expands independently and `$arr`
+        // splats. zshrs's one-word text form must be re-split at
+        // compile time (see the paren-init arm in the loop below) or
+        // the whole body funnels through segment-concat as ONE value
+        // — `typeset b=( x $a )` stored b=(x "1 2 3"). Real-world
+        // load: zsh-hist.plugin.zsh:9 `typeset -gU FPATH fpath=(
+        // $dir $fpath )` collapsed fpath to 2 entries and every
+        // subsequent autoload (add-zsh-hook) failed.
+        let head_is_typeset_family = !user_function_shadow
+            && matches!(
+                first_clean.as_str(),
+                "typeset"
+                    | "declare"
+                    | "local"
+                    | "export"
+                    | "readonly"
+                    | "integer"
+                    | "float"
+                    | "private"
+            );
+
         // Builtin or function or external. Push args first (post-strip).
-        let argc = (simple.words.len() - precmd_skip - 1) as u8;
+        // `extra_pushed` accounts for args that expand to MORE than one
+        // stack value (the typeset paren-init splitter below) so the
+        // dispatch argc and xtrace count stay aligned with the stack.
+        let mut extra_pushed: usize = 0;
         for word in &simple.words[precmd_skip + 1..] {
+            // Typeset-family paren-init: split `name=( e1 e2 … )` into
+            // `name=(` + one value per element + `)`. bin_typeset's
+            // existing opener-rejoin (builtin.rs ~3978, \u{1f}
+            // separator) reassembles them with element boundaries
+            // INTACT, so `$arr` elements splat instead of joining.
+            if head_is_typeset_family {
+                if let Some((prefix, elems)) = split_typeset_paren_init(word) {
+                    let pidx = self.builder.add_constant(Value::str(prefix.as_str()));
+                    self.builder.emit(Op::LoadConst(pidx), 0);
+                    for e in &elems {
+                        self.compile_word_str(e);
+                    }
+                    let cidx = self.builder.add_constant(Value::str(")"));
+                    self.builder.emit(Op::LoadConst(cidx), 0);
+                    extra_pushed += 1 + elems.len(); // beyond this word's 1
+                    continue;
+                }
+            }
             self.compile_word_str(word);
             // c:Src/options.c GLOB_SUBST + Src/subst.c — when an
             // unquoted parameter / cmd-subst reference produced the
@@ -1900,7 +1946,23 @@ impl ZshCompiler {
             // c:Src/exec.c:3298-3304 — magic-equals prefork per arg
             // word for BINF_MAGICEQUALS heads, before the redirect
             // scope (see head_is_magic_equals above).
-            if head_is_magic_equals {
+            //
+            // Quote-marker gate: the 621 handler reconstructs tokens
+            // via shtokenize on the FLATTENED word, so any Snull /
+            // Dnull / Bnull span in the raw word would lose its
+            // protection in the round-trip — `alias opclean='… $(oc
+            // get pods …) …'` re-tokenized the quoted `$(…)` and
+            // prefork EXECUTED it at alias-definition time
+            // (zsh-openshift-aliases.plugin.zsh:75). C's prefork
+            // runs on the lexed word with the markers intact, where
+            // quoted text is inert. Magic-equals expansion only acts
+            // on UNQUOTED `=`/`~` anyway, so a word carrying quoted
+            // spans skips the prefork emit entirely.
+            if head_is_magic_equals
+                && !word.contains('\u{9d}')
+                && !word.contains('\u{9e}')
+                && !word.contains('\u{9f}')
+            {
                 self.builder.emit(
                     Op::CallBuiltin(
                         crate::vm_helper::BUILTIN_MAGIC_EQUALS_PREFORK,
@@ -1910,6 +1972,8 @@ impl ZshCompiler {
                 );
             }
         }
+
+        let argc = (simple.words.len() - precmd_skip - 1 + extra_pushed) as u8;
 
         // c:Src/exec.c:3285-3304 (prefork) + c:3702 (globlist) →
         // c:3720+ (addfd loop) — open the redirect scope only after
@@ -1951,7 +2015,7 @@ impl ZshCompiler {
         // Stack has all words[1..] pushed; XTRACE_ARGS peeks the last
         // (trace_argc - 1) of them so the modifier-victim slot is
         // accounted for as the new cmd name.
-        let trace_argc = (simple.words.len() - precmd_skip) as u8;
+        let trace_argc = argc + 1;
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARGS, trace_argc),
             0,
@@ -2007,7 +2071,15 @@ impl ZshCompiler {
             Some(crate::vm_helper::BUILTIN_LOGOUT)
         } else if (dispatch_first_raw == "mapfile" || first_clean == "mapfile"
                 || dispatch_first_raw == "readarray" || first_clean == "readarray"
-                || dispatch_first_raw == "compopt" || first_clean == "compopt")
+                || dispatch_first_raw == "compopt" || first_clean == "compopt"
+                // compdef / compinit are FUNCTIONS defined via
+                // compsys autoload in zsh — `zsh -fc compdef` is 127
+                // until compinit runs. zshrs's extension builtins
+                // must not shadow that in parity mode; a compsys-
+                // defined function still wins via the
+                // user_function_shadow check above.
+                || dispatch_first_raw == "compdef" || first_clean == "compdef"
+                || dispatch_first_raw == "compinit" || first_clean == "compinit")
             && crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
         {
             // c:Bug #504 — bash `mapfile`/`readarray`/`compopt` map to
@@ -2018,6 +2090,22 @@ impl ZshCompiler {
             // host_exec_external prints the canonical
             // "command not found: <name>" diagnostic + rc=127 matching
             // zsh's external-command-lookup miss.
+            None
+        } else if matches!(
+            dispatch_first_raw,
+            "mkdir" | "rmdir" | "ln" | "mv" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod"
+                | "zf_chown" | "zf_chgrp" | "zf_ln" | "zf_mv" | "zf_sync"
+        ) && crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // c:Src/Modules/files.c — these are zsh/files builtins,
+            // and zsh -fc has zsh/files UNLOADED: bare names resolve
+            // to the system binaries (system flag sets + diagnostics),
+            // zf_* names are 127 until `zmodload zsh/files`. Skip the
+            // compile-time builtin fast-path in --zsh parity mode so
+            // dispatch falls to the external path (which has the
+            // matching runtime gate in fusevm_bridge's exec arm).
+            // zconvey.plugin.zsh:44 `command mkdir -p …` hit the
+            // in-process bin_mkdir and errored "File exists".
             None
         } else {
             // Try the raw form first (handles already-untokenized inputs
@@ -5266,56 +5354,52 @@ impl ZshCompiler {
                 // post-substitution string; without this we kept
                 // `$D/*` literal because the segment fast path
                 // skipped pathname expansion entirely.
-                let mut needs_glob = false;
-                let mut needs_brace = false;
-                for seg in &segs {
-                    if let WordSegment::Literal(lit) = seg {
-                        let cleaned = crate::lex::untokenize(lit);
-                        // Detect glob metachars. `*`, `?`, `[`, and the
-                        // `(...|...)` alternation are always glob chars.
-                        // `#` and `^` are glob chars under EXTENDEDGLOB
-                        // (#/## quantifiers, ^ and-not) — c:Src/pattern.c
-                        // :4365 / :4370 haswilds gates them on
-                        // `isset(EXTENDEDGLOB)`. Mirror that here so
-                        // `print -l /tmp/zh/a#` with `setopt
-                        // extended_glob` routes through BUILTIN_GLOB_
-                        // EXPAND instead of staying literal (#89/#117
-                        // in docs/BUGS.md). When EXTENDEDGLOB is off
-                        // at runtime, `zglob`'s own haswilds check
-                        // short-circuits so the emit is harmless.
-                        if cleaned.contains('*')
-                            || cleaned.contains('?')
-                            || cleaned.contains('[')
-                            // c:Src/pattern.c:4326-4335 — haswilds fires
-                            // on ANY Inpar unless SHGLOB is set (no `|`
-                            // required): `a=x; print ($a)` is a glob
-                            // group that NOMATCH-errors in zsh. Check
-                            // the raw segment for the Inpar TOKEN byte
-                            // (\u{88}) — quoted parens (`'('` / `"("`)
-                            // stay literal `(` inside Snull/Dnull spans
-                            // and never carry the token, so this can't
-                            // over-trigger on quoted text. The runtime
-                            // zglob → haswilds short-circuits under
-                            // SHGLOB, keeping `setopt shglob` literal.
-                            || lit.contains('\u{88}')
-                            || (cleaned.contains('(')
-                                && cleaned.contains('|')
-                                && cleaned.contains(')'))
-                            || (crate::ported::zsh_h::isset(
-                                crate::ported::zsh_h::EXTENDEDGLOB,
-                            ) && (cleaned.contains('#') || cleaned.contains('^')))
-                        {
-                            needs_glob = true;
-                        }
-                        // Brace expansion: a literal segment containing
-                        // `{` or `}` participates in an enclosing brace
-                        // pattern. zsh: `{one,${a},three}` expands the
-                        // outer brace AFTER ${a} substitution.
-                        if cleaned.contains('{') || cleaned.contains('}') {
-                            needs_brace = true;
-                        }
-                    }
-                }
+                // Detect glob metachars. `*`, `?`, `[`, and the
+                // `(...|...)` alternation are always glob chars.
+                // `#` and `^` are glob chars under EXTENDEDGLOB
+                // (#/## quantifiers, ^ and-not) — c:Src/pattern.c
+                // :4365 / :4370 haswilds gates them on
+                // `isset(EXTENDEDGLOB)`. When EXTENDEDGLOB is off
+                // at runtime, `zglob`'s own haswilds check
+                // short-circuits so the emit is harmless.
+                //
+                // Computed on the WHOLE raw word with the marker-aware
+                // `unquoted()` (Snull + Dnull span tracking), NOT per
+                // segment with untokenize — the previous per-segment
+                // scan stripped the quote markers and reset the span
+                // state at every segment boundary, so the ` x[a]`
+                // literal tail of `X"$V x[a]"` (whose `[` lives INSIDE
+                // the word-level Dnull span) flagged needs_glob and the
+                // assembled scalar NOMATCH-errored at runtime. Real-
+                // world load: fzf-zsh-plugin.plugin.zsh:76
+                // `export FZF_DEFAULT_OPTS="$FZF_DEFAULT_OPTS --preview
+                // '([[ -f {} ]] && …'"`.
+                let needs_glob = unquoted(s, '*')
+                    || unquoted(s, '\u{87}') // Star
+                    || unquoted(s, '?')
+                    || unquoted(s, '\u{97}') // Quest
+                    || unquoted(s, '[')
+                    || unquoted(s, '\u{91}') // Inbrack
+                    // c:Src/pattern.c:4326-4335 — haswilds fires on ANY
+                    // Inpar TOKEN unless SHGLOB is set. Quoted parens
+                    // stay literal inside Snull/Dnull spans and never
+                    // carry the token. The runtime zglob short-circuits
+                    // under SHGLOB.
+                    || unquoted(s, '\u{88}') // Inpar
+                    || (unquoted(s, '(') && unquoted(s, '|') && unquoted(s, ')'))
+                    || (crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB)
+                        && (unquoted(s, '#')
+                            || unquoted(s, '\u{84}') // Pound
+                            || unquoted(s, '^')
+                            || unquoted(s, '\u{86}'))); // Hat
+                // Brace expansion: an UNQUOTED `{` / `}` participates
+                // in an enclosing brace pattern. zsh: `{one,${a},three}`
+                // expands the outer brace AFTER ${a} substitution;
+                // `"{a,b}"` stays literal.
+                let needs_brace = unquoted(s, '{')
+                    || unquoted(s, '\u{8f}') // Inbrace
+                    || unquoted(s, '}')
+                    || unquoted(s, '\u{90}'); // Outbrace
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
@@ -10648,6 +10732,94 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
             format!("{} =~ {}", untok(left), untok(regex))
         }
     }
+}
+
+/// Split a typeset-family paren-init arg `name=( e1 e2 … )` /
+/// `name+=( … )` into the opener prefix (`name=(`) and the element
+/// words. Returns None when the word isn't a full paren-init (no
+/// rewrite — the generic path handles it). Element boundaries are
+/// unquoted whitespace; Snull/Dnull/Bnull-marked spans keep their
+/// markers so each element re-enters compile_word_str with quoting
+/// intact. Mirrors what C's par_simple (intypeset, ENVARRAY) does at
+/// parse time: elements stay separate wordcode strings.
+fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
+    let chars: Vec<char> = word.chars().collect();
+    // NAME — ident chars only (subscripted / quoted names take the
+    // generic path).
+    let mut i = 0;
+    while i < chars.len()
+        && (chars[i] == '_' || chars[i].is_ascii_alphanumeric())
+    {
+        i += 1;
+    }
+    if i == 0 || !chars.first().map_or(false, |c| *c == '_' || c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let name_end = i;
+    if chars.get(i) == Some(&'+') {
+        i += 1;
+    }
+    // `=` may arrive literal or as the Equals token (\u{8d}).
+    if !matches!(chars.get(i), Some('=') | Some('\u{8d}')) {
+        return None;
+    }
+    i += 1;
+    // `(` literal or Inpar token (\u{88}).
+    if !matches!(chars.get(i), Some('(') | Some('\u{88}')) {
+        return None;
+    }
+    i += 1;
+    // Body runs to the LAST `)` / Outpar (\u{89}) — must be the final
+    // char of the word.
+    if !matches!(chars.last(), Some(')') | Some('\u{89}')) {
+        return None;
+    }
+    let body = &chars[i..chars.len() - 1];
+    // Split on unquoted whitespace, tracking quote-marker spans.
+    let mut elems: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_sq = false;
+    let mut in_dq = false;
+    for &c in body {
+        match c {
+            '\u{9d}' => {
+                in_sq = !in_sq;
+                cur.push(c);
+            }
+            '\u{9e}' => {
+                in_dq = !in_dq;
+                cur.push(c);
+            }
+            // The parser's intypeset path (par_simple ENVARRAY) has
+            // already split the elements at WORD granularity and
+            // rejoined them with \u{1f} (ASCII US) — the same
+            // separator bin_typeset's paren-init splitter consumes.
+            // Split ONLY on it: raw whitespace inside an element is
+            // word-internal (`$(print q w)` is one cmdsub word; its
+            // spaces must not split it).
+            '\u{1f}' => {
+                if !cur.is_empty() {
+                    elems.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if in_sq || in_dq {
+        return None; // unbalanced markers — don't rewrite
+    }
+    if !cur.is_empty() {
+        elems.push(cur);
+    }
+    let prefix: String = {
+        let mut p: String = chars[..name_end].iter().collect();
+        if chars.get(name_end) == Some(&'+') {
+            p.push('+');
+        }
+        p.push_str("=(");
+        p
+    };
+    Some((prefix, elems))
 }
 
 fn unquoted(s: &str, target: char) -> bool {
