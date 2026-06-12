@@ -5110,14 +5110,21 @@ pub fn parse_init(input: &str) {
     // at shell startup; zshrs's parse-only test entry path bypasses
     // init_main, so we mirror the `zsh` emulation defaults here.
     //
-    // We unconditionally OVERWRITE these on every parse_init so cross-
+    // Under `cfg(test)` (lib unit tests share one process) we
+    // unconditionally OVERWRITE these on every parse_init so cross-
     // test option pollution (a prior test that flipped one of these
     // and panicked before its restore ran) doesn't leak into the
-    // parser's reserved-word recognition / one-liner detection. The
-    // `Only seeds when unset` shape we used before allowed `repeat 3
-    // do …`, `if …; then …`, and `function f() {}` parse pins to
-    // randomly fail when a sibling test had toggled `shortloops` /
-    // `multifuncdef` / etc. inside the same suite run.
+    // parser's reserved-word recognition / one-liner detection.
+    //
+    // In the REAL shell this overwrite is WRONG: parse_init runs for
+    // every -c string, eval, and cmd-subst body, so resetting
+    // `posixbuiltins` here silently wiped `zshrs -o POSIX_BUILTINS`
+    // and made `setopt posix_builtins` evaporate at the next parse
+    // (A04redirect.ztst POSIX_BUILTINS chunks). C zsh's parser READS
+    // options; it never writes them. Production seeds only entries
+    // that are missing entirely (parse-only test paths that bypass
+    // init_main still get the zsh-emulation defaults).
+    let overwrite = cfg!(test);
     for (name, default) in [
         ("shortloops", true),
         ("shortrepeat", false),
@@ -5130,7 +5137,9 @@ pub fn parse_init(input: &str) {
         ("kshautoload", false),
         ("aliases", true),
     ] {
-        crate::ported::options::opt_state_set(name, default);
+        if overwrite || crate::ported::options::opt_state_get(name).is_none() {
+            crate::ported::options::opt_state_set(name, default);
+        }
     }
     lex_init(input);
 }

@@ -11255,46 +11255,15 @@ pub fn lookup_special_var(name: &str) -> Option<String> {
             Some(crate::ported::zsh_system_h::DEFAULT_TIMEFMT.to_string())
         }
         // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
-        // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Same as
-        // TIMEFMT — createparamtable seeds these; without it,
-        // `${NULLCMD:-x}` reads empty. Route here so the canonical
-        // defaults stick when paramtab is empty.
-        "NULLCMD" => {
-            let tab_val = paramtab()
-                .read()
-                .ok()
-                .and_then(|t| t.get("NULLCMD").and_then(|pm| pm.u_str.clone()));
-            if let Some(v) = tab_val {
-                if !v.is_empty() {
-                    return Some(v);
-                }
-            }
-            Some("cat".to_string()) // c:Src/init.c:1214
-        }
-        // c:Src/init.c:1215 — `readnullcmd = ztrdup(DEFAULT_READNULLCMD);`.
-        // DEFAULT_READNULLCMD upstream default is "more" (configure.ac:413,
-        // 417). Apple's distribution and Homebrew zsh both ship with
-        // `--enable-readnullcmd=less` per the OS pager. Match the host
-        // build so /opt/homebrew/bin/zsh and zshrs print the same value.
-        "READNULLCMD" => {
-            let tab_val = paramtab()
-                .read()
-                .ok()
-                .and_then(|t| t.get("READNULLCMD").and_then(|pm| pm.u_str.clone()));
-            if let Some(v) = tab_val {
-                if !v.is_empty() {
-                    return Some(v);
-                }
-            }
-            #[cfg(target_os = "macos")]
-            {
-                Some("less".to_string())
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                Some("more".to_string())
-            }
-        }
+        // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. C seeds these
+        // into the REAL paramtab at startup; `unset NULLCMD` then
+        // removes the entry and getsparam returns NULL — which is
+        // load-bearing: A04redirect "null redir with NULLCMD unset"
+        // requires `unset NULLCMD; >file` to error "redirection with
+        // no command". The previous read-time fallback here faked the
+        // seed on EVERY lookup, making unset impossible. The seed now
+        // lives in ShellExecutor::new (vm_helper.rs, next to TIMEFMT)
+        // and absent means absent.
         // $0 routes through utils::argzero.
         "0" => argzero(),
         // POSIX shell-special scalars. C dispatches these through

@@ -304,6 +304,16 @@ pub struct SubshellSnapshot {
     pub maxjob: usize,
     /// `thisjob` at subshell entry (Src/jobs.c:77 global).
     pub thisjob: i32,
+    /// User-range fds (0-9) at subshell entry: `(fd, saved_dup)`
+    /// pairs where `saved_dup` is an `F_DUPFD >= 10` copy, or -1 when
+    /// the fd was closed at entry. C zsh forks for `(...)` so a bare
+    /// `exec >file` / `exec 3<&-` inside the child dies with it
+    /// (Src/exec.c entersubsh fork semantics); the in-process
+    /// subshell must restore the parent's fd table on End. Without
+    /// this, `(exec >t.log; ...); cat t.log` left the PARENT's fd 1
+    /// pointing at t.log and `cat` looped forever copying the file
+    /// into itself.
+    pub saved_fds: Vec<(i32, i32)>,
 }
 
 #[allow(unused_imports)]
@@ -968,6 +978,19 @@ impl ShellExecutor {
             "TIMEFMT",
             crate::ported::zsh_system_h::DEFAULT_TIMEFMT,
         );
+        // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
+        // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Real paramtab
+        // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
+        // unsets — the bare-redirect "redirection with no command"
+        // diagnostic depends on getsparam returning None afterwards.
+        // READNULLCMD default matches the host zsh build: Homebrew /
+        // Apple ship --enable-readnullcmd=less; upstream default is
+        // "more" (configure.ac:413-417).
+        setsparam("NULLCMD", "cat");
+        #[cfg(target_os = "macos")]
+        setsparam("READNULLCMD", "less");
+        #[cfg(not(target_os = "macos"))]
+        setsparam("READNULLCMD", "more");
         // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`.
         // Even in non-interactive -fc mode zsh creates the param;
         // mirror so ${(k)parameters} count matches.
@@ -2662,19 +2685,32 @@ impl ShellExecutor {
         // so post-run we can restore it; the write end is dup2'd onto
         // STDOUT_FILENO so all output the sub-VM emits (including from
         // forked children, which inherit fd 1) lands in the pipe.
+        //
+        // c:Src/exec.c:4753 — `if (mpipe(pipes) < 0)`. mpipe (c:5160)
+        // moves BOTH pipe ends to fd >= 10 via movefd and marks them
+        // FDT_INTERNAL. This is load-bearing: zsh's invariant is that
+        // shell-internal fds never live below 10, so user redirections
+        // like `exec 9>&-` (which close fd<10 unconditionally, no
+        // FDT_INTERNAL guard — c:Src/exec.c:3856-3868) can never hit
+        // them. A raw pipe() here landed the read end on fd 9 when
+        // fresh-HOME init held fds 3-7, and A04redirect's %prep
+        // `exec 9>&-` closed our own capture pipe → SIGPIPE killed
+        // the whole shell.
         let (read_fd, write_fd) = {
             let mut fds = [0i32; 2];
-            if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            if crate::ported::exec::mpipe(&mut fds) < 0 {
                 return String::new();
             }
             (fds[0], fds[1])
         };
-        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        // c:Src/utils.c:1996 — `movefd(dup(fd))`: saved copies of the
+        // user-visible fds are shell-internal, so they too must live
+        // at fd >= 10 / FDT_INTERNAL.
+        let saved_stdout =
+            crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
         if saved_stdout < 0 {
-            unsafe {
-                libc::close(read_fd);
-                libc::close(write_fd);
-            }
+            crate::ported::utils::zclose(read_fd);
+            crate::ported::utils::zclose(write_fd);
             return String::new();
         }
         // Flush Rust's stdout BufWriter against the ORIGINAL fd before
@@ -2694,15 +2730,19 @@ impl ShellExecutor {
         // c:Bug #56 — publish the saved outer stdout so a trap firing
         // during the nested run routes body output to the parent's
         // real stdout instead of the cmdsub's pipe-bound fd 1.
-        let saved_stderr_for_trap = unsafe { libc::dup(libc::STDERR_FILENO) };
+        // c:Src/utils.c:1996 — movefd(dup(fd)): internal fd, keep >= 10.
+        let saved_stderr_for_trap =
+            crate::ported::utils::movefd(unsafe { libc::dup(libc::STDERR_FILENO) });
         crate::fusevm_bridge::CMDSUBST_OUTER_FDS.with(|s| {
             s.borrow_mut()
                 .push((saved_stdout, saved_stderr_for_trap))
         });
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO);
-            libc::close(write_fd);
         }
+        // zclose (not raw close) so the FDT_INTERNAL mark set by mpipe
+        // is cleared from fdtable — c:Src/utils.c:2137.
+        crate::ported::utils::zclose(write_fd);
 
         // Parse + compile + run.
         // Push CS_CMDSUBST for `%_` xtrace prefix — direct port of
@@ -2944,17 +2984,25 @@ impl ShellExecutor {
         if saved_stderr_for_trap >= 0 {
             unsafe {
                 libc::dup2(saved_stderr_for_trap, libc::STDERR_FILENO);
-                libc::close(saved_stderr_for_trap);
             }
+            crate::ported::utils::zclose(saved_stderr_for_trap);
         }
         // Restore stdout and read what was captured.
         unsafe {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
-            libc::close(saved_stdout);
         }
-        let read_file = unsafe { File::from_raw_fd(read_fd) };
+        crate::ported::utils::zclose(saved_stdout);
         let mut output = String::new();
-        let _ = io::BufReader::new(read_file).read_to_string(&mut output);
+        {
+            // Borrow the fd for reading without letting File's Drop
+            // close it — the close must go through zclose so the
+            // FDT_INTERNAL mark from mpipe is cleared (c:Src/utils.c:2137).
+            let mut read_file = unsafe { File::from_raw_fd(read_fd) };
+            let _ = io::BufReader::new(&mut read_file).read_to_string(&mut output);
+            use std::os::unix::io::IntoRawFd;
+            let _ = read_file.into_raw_fd();
+        }
+        crate::ported::utils::zclose(read_fd);
 
         // POSIX: trailing newlines stripped from cmd-sub result.
         while output.ends_with('\n') {
