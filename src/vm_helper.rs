@@ -987,14 +987,22 @@ impl ShellExecutor {
         // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
         // unsets — the bare-redirect "redirection with no command"
         // diagnostic depends on getsparam returning None afterwards.
-        // READNULLCMD default matches the host zsh build: Homebrew /
-        // Apple ship --enable-readnullcmd=less; upstream default is
-        // "more" (configure.ac:413-417).
-        setsparam("NULLCMD", "cat");
-        #[cfg(target_os = "macos")]
-        setsparam("READNULLCMD", "less");
-        #[cfg(not(target_os = "macos"))]
-        setsparam("READNULLCMD", "more");
+        // c:config.h:48 DEFAULT_READNULLCMD "more" — the parity
+        // floor agrees: scrubbed-env Homebrew zsh 5.9.1 -fc reports
+        // READNULLCMD=more (probed; the previous macOS arm's "less"
+        // guess came from the USER's env exporting READNULLCMD=less
+        // — zpwr sets it). This block runs AFTER the env import, so
+        // these are DEFAULT seeds only: an env-imported value must
+        // win (C seeds before the import loop, c:854-885 vs c:893+).
+        if getsparam("NULLCMD").map_or(true, |v| v.is_empty()) {
+            setsparam("NULLCMD", "cat");
+        }
+        if getsparam("READNULLCMD").map_or(true, |v| v.is_empty()) {
+            setsparam(
+                "READNULLCMD",
+                crate::ported::config_h::DEFAULT_READNULLCMD,
+            );
+        }
         // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`.
         // Even in non-interactive -fc mode zsh creates the param;
         // mirror so ${(k)parameters} count matches.

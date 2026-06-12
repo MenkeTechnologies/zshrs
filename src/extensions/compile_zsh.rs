@@ -2851,8 +2851,24 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0); // value dup
                 self.builder.emit(Op::Pop, 0); // trace_name
                 // Stack restored to: [name, key, value]
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 3), 0);
+                // Dynamic-key marker: C's assignsparam sees the RAW
+                // subscript text (`H[$1$2]`) so its isident gate
+                // passes and the EXPANDED key — even empty — stores
+                // fine (zinit's .zinit-pack-ice writes
+                // ZINIT_SICE[$1…$2] with both empty). Only a
+                // SOURCE-LITERAL empty subscript (`H[]=v`) is the
+                // "not an identifier" error. zshrs expands the key
+                // before the bridge, so the handler needs the
+                // compile-time literal/dynamic bit to reproduce the
+                // split (argc 4 = dynamic).
+                if key_has_expansion {
+                    self.builder.emit(Op::LoadInt(1), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 4), 0);
+                } else {
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_ASSOC, 3), 0);
+                }
                 self.builder.emit(Op::Pop, 0);
                 return;
             }
@@ -4306,7 +4322,12 @@ impl ZshCompiler {
                     // the raw pattern reach the test runtime. Without
                     // this, `P="foo*"; [[ foobar == ${~P} ]]` ran
                     // `glob_path("foo*")`, hit NOMATCH, and failed.
-                    if self.dq_context_depth == 0 {
+                    // SCALAR assignment RHS does no filename
+                    // generation in zsh — `P="*zz"; x=${~P}` stores
+                    // the literal `*zz`. Array-literal ELEMENTS do
+                    // glob (`a=(${~P})` → matches), so gate on the
+                    // scalar-assign depth only.
+                    if self.dq_context_depth == 0 && self.scalar_assign_depth == 0 {
                         self.builder
                             .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
                     }

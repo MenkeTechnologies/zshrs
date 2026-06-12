@@ -333,6 +333,19 @@ fn shname() -> String {
 /// glob_failed handling (builtins leave ERRFLAG_ERROR set so the
 /// script aborts, externals clear it so the next sublist runs —
 /// verified against zsh 5.9.1).
+/// Restore the user's GLOB_SUBST after a `${~spec}` carrier flip
+/// (see subst::TILDE_GLOBSUBST_CARRIER). Runs at the same
+/// command-dispatch boundaries that consume glob_failed /
+/// badcshglob — by then every glob op of the current word pipeline
+/// has read the carrier.
+pub(crate) fn consume_tilde_globsubst_carrier() {
+    crate::ported::subst::TILDE_GLOBSUBST_CARRIER.with(|c| {
+        if let Some(saved) = c.take() {
+            crate::ported::options::opt_state_set("globsubst", saved);
+        }
+    });
+}
+
 fn consume_badcshglob() -> bool {
     let v = crate::ported::glob::BADCSHGLOB.swap(0, std::sync::atomic::Ordering::Relaxed);
     if v == 1 {
@@ -609,6 +622,7 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // guard at host_exec_external (line 5167). Without this:
     // `echo /never/*` would print empty (silently rolled back to ""
     // by the empty glob expansion). Parity bug #13.
+    consume_tilde_globsubst_carrier();
     let glob_failed = with_executor(|exec| {
         let f = exec.current_command_glob_failed.get();
         exec.current_command_glob_failed.set(false); // c:1879 cleanup
@@ -2421,6 +2435,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // PM_NAMEREF rejection, ASSPM_AUGMENT prepend, and createparam
     // for fresh names.
     vm.register_builtin(BUILTIN_SET_ARRAY, |vm, argc| {
+        // `${~spec}` carrier: an assignment statement is a word-
+        // pipeline boundary too — restore the user's GLOB_SUBST
+        // before the NEXT word expands (`Z[d]=${~Z[d]}; print
+        // ${options[globsubst]}` must read the user value).
+        consume_tilde_globsubst_carrier();
         let n = argc as usize;
         let mut popped: Vec<Value> = Vec::with_capacity(n);
         for _ in 0..n {
@@ -3184,9 +3203,45 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // auto-vivification, numeric-subscript bounds handling, and
     // PM_READONLY rejection.
     vm.register_builtin(BUILTIN_SET_ASSOC, |vm, _argc| {
+        // `${~spec}` carrier: an assignment statement is a word-
+        // pipeline boundary too — restore the user's GLOB_SUBST
+        // before the NEXT word expands (`Z[d]=${~Z[d]}; print
+        // ${options[globsubst]}` must read the user value).
+        consume_tilde_globsubst_carrier();
+        // argc 4 = compile flagged the subscript as DYNAMIC (`H[$k]`):
+        // an EXPANDED-empty key is then a legal assoc key (C's
+        // assignsparam isident gate sees the raw `$k` text and the
+        // empty key stores at getindex time — zinit's
+        // ZINIT_SICE[$1…$2] relies on it). argc 3 = source-literal
+        // key; `H[]` stays the "not an identifier" error.
+        let key_is_dynamic = if _argc == 4 {
+            vm.pop().to_int() != 0
+        } else {
+            false
+        };
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        if key_is_dynamic && key.is_empty() {
+            with_executor(|exec| {
+                let _ = exec;
+            });
+            // Mirror assignsparam's PM_HASHED tail directly (the
+            // textual `name[]` reconstruction can't pass isident).
+            if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+                let entry = store.entry(name.clone()).or_default();
+                let newval = if let Some(old) = entry.get("") {
+                    // `+=` arrives pre-concatenated by the compile
+                    // read-modify-write; plain `=` overwrites.
+                    let _ = old;
+                    value.clone()
+                } else {
+                    value.clone()
+                };
+                entry.insert(String::new(), newval);
+            }
+            return Value::Status(0);
+        }
         with_executor(|exec| {
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
@@ -4420,6 +4475,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   - recorder emission (PFA-SMR)
     //   - vm.last_status propagation for `a=$(cmd)` exit-code chaining
     vm.register_builtin(BUILTIN_SET_VAR, |vm, argc| {
+        // `${~spec}` carrier: an assignment statement is a word-
+        // pipeline boundary too — restore the user's GLOB_SUBST
+        // before the NEXT word expands (`Z[d]=${~Z[d]}; print
+        // ${options[globsubst]}` must read the user value).
+        consume_tilde_globsubst_carrier();
         // Snapshot the raw Values BEFORE pop_args's to_str
         // flattening — needed to distinguish Int (arith assignment,
         // integer-typed param) from Str (scalar assignment).
@@ -9939,7 +9999,8 @@ impl fusevm::ShellHost for ZshrsHost {
         // genuine script-fatal errors (parse, redirect, paramsubst
         // `${:?msg}`) does NOT come paired with glob_failed, so
         // those still short-circuit + propagate.
-        let glob_failed = with_executor(|exec| {
+        consume_tilde_globsubst_carrier();
+    let glob_failed = with_executor(|exec| {
             let f = exec.current_command_glob_failed.get();
             exec.current_command_glob_failed.set(false);
             f
@@ -10938,6 +10999,7 @@ impl ShellExecutor {
         // so subsequent commands run. Symmetric with the builtin
         // dispatcher's clear at fusevm_bridge.rs:299 — clear it here
         // too at the external-command post-command-boundary.
+        consume_tilde_globsubst_carrier();
         if self.current_command_glob_failed.get() {
             self.current_command_glob_failed.set(false);
             crate::ported::utils::errflag.fetch_and(
