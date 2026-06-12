@@ -5303,6 +5303,24 @@ pub fn paramsubst(
                                 }
                             }
                         }
+                    } else if sub.starts_with('(') {
+                        // c:Src/params.c:1389-1480 — FLAGGED
+                        // subscripts on a subexp result ((w)N word
+                        // pick, (f)N line pick, (r)/(i) searches)
+                        // route through the same getarg engine the
+                        // named-variable path uses. The anonymous
+                        // forms `${${:-one two three}[(w)2]}` /
+                        // `${${x}[(w)3]}` previously fell through to
+                        // whole-value.
+                        match crate::ported::params::getarg(
+                            sub,
+                            arr_shape.as_deref(),
+                            None,
+                            Some(&sv),
+                        ) {
+                            Some(crate::ported::params::getarg_out::Value(v)) => v.to_str(),
+                            _ => sv,
+                        }
                     } else {
                         sv
                     }
@@ -14322,56 +14340,25 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
         return crate::vm_helper::partab_array_get(name);
     }
     if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
-        if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
-            // c:Src/Modules/parameter.c:679-710 funcsourcetracegetfn —
-            // emits `<f->filename>:<f->flineno>` per frame, where
-            // filename is the SOURCE file where the function was
-            // DEFINED and flineno is the definition line.
-            // c:Src/Modules/parameter.c:711-760 funcfiletracegetfn —
-            // similar but joins caller-relative lineno.
-            // c:Src/Modules/parameter.c:778+ functracegetfn — emits
-            // `<f->name>:<f->lineno>` (the call-site, NOT the def).
-            // The previous Rust port used `fs.name:fs.lineno` for
-            // BOTH `funcsourcetrace` AND `functrace`, so
-            // `funcsourcetrace[1]` reported the function name +
-            // caller-line instead of the source file + def-line —
-            // `${funcsourcetrace[1]}` showed `f:1` where zsh shows
-            // `zsh:1` in `-fc` mode. Bug #515.
-            return Some(
-                f.iter()
-                    .rev()
-                    .map(|fs| match name {
-                        // c:Src/Modules/parameter.c:711-760
-                        // funcfiletracegetfn — emits
-                        // `<filename>:<lineno>` (caller's source +
-                        // line).
-                        "funcfiletrace" => format!(
-                            "{}:{}",
-                            fs.filename.as_deref().unwrap_or(""),
-                            fs.lineno
-                        ),
-                        "funcsourcetrace" => format!(
-                            "{}:{}",
-                            fs.filename.as_deref().unwrap_or(""),
-                            fs.flineno
-                        ),
-                        // c:Src/Modules/parameter.c:648-672
-                        // functracegetfn — emits `<f->caller>:<lineno>`
-                        // where `caller` is the file/function that
-                        // invoked this frame (NOT `f->name` which is
-                        // this frame's own function name). Bug #585
-                        // extends #515 to functrace: zshrs was using
-                        // `fs.name` so `functrace[1]` reported the
-                        // function-name instead of the caller-file.
-                        _ => format!(
-                            "{}:{}",
-                            fs.caller.as_deref().unwrap_or(""),
-                            fs.lineno
-                        ),
-                    })
-                    .collect(),
-            );
-        }
+        // Route through the canonical ported getfns
+        // (Src/Modules/parameter.c:648 functracegetfn, :679
+        // funcsourcetracegetfn, :711 funcfiletracegetfn) instead of
+        // duplicating the frame-walk inline. The previous inline copy
+        // emitted `<filename>:<lineno>` for funcfiletrace, missing
+        // the C `f->prev->flineno + f->lineno` join for frames whose
+        // parent is a function/eval (parameter.c:747) — so
+        // `funcfiletrace[1]` inside a nested call showed the raw
+        // caller-relative line (0) instead of the absolute file line.
+        // Bug #515/#585 history retained in the getfns' doc comments.
+        return Some(match name {
+            "funcfiletrace" => {
+                crate::ported::modules::parameter::funcfiletracegetfn(std::ptr::null_mut())
+            }
+            "funcsourcetrace" => {
+                crate::ported::modules::parameter::funcsourcetracegetfn(std::ptr::null_mut())
+            }
+            _ => crate::ported::modules::parameter::functracegetfn(std::ptr::null_mut()),
+        });
     }
     let tab = paramtab().read().ok()?;
     let pm = tab.get(name)?;

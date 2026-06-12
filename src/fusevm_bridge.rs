@@ -148,6 +148,54 @@ impl Drop for PsubScope {
     }
 }
 
+/// RAII guard bumping `$ZSH_SUBSHELL` for the duration of an
+/// in-process command substitution.
+///
+/// c:Src/exec.c:1161 — entersubsh() does `zsh_subshell++;` and zsh's
+/// cmdsub FORKS, so the increment dies with the child and the parent's
+/// value is untouched. zshrs runs cmdsubs in-process on a nested VM,
+/// so the visible param must be bumped on entry and restored on exit.
+/// Writes paramtab u_val directly because ZSH_SUBSHELL is PM_READONLY
+/// (same bypass pattern as the subshell-builtin bump below); also
+/// mirrors into ported::exec::zsh_subshell so exec.c:4376-style
+/// `forked | zsh_subshell` reads agree.
+pub(crate) struct CmdSubstSubshellBump {
+    saved_val: i64,
+    saved_str: Option<String>,
+}
+
+impl CmdSubstSubshellBump {
+    pub(crate) fn enter() -> Self {
+        let mut saved_val = 0i64;
+        let mut saved_str = None;
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("ZSH_SUBSHELL") {
+                saved_val = pm.u_val;
+                saved_str = pm.u_str.clone();
+                pm.u_val = saved_val + 1;
+                pm.u_str = Some((saved_val + 1).to_string());
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
+        crate::ported::exec::zsh_subshell
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        CmdSubstSubshellBump { saved_val, saved_str }
+    }
+}
+
+impl Drop for CmdSubstSubshellBump {
+    fn drop(&mut self) {
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("ZSH_SUBSHELL") {
+                pm.u_val = self.saved_val;
+                pm.u_str = self.saved_str.take();
+            }
+        }
+        crate::ported::exec::zsh_subshell
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Port of deletefilelist() from Src/jobs.c (the `>(cmd)` fd arm):
 /// closes every pending proc-subst write end created at or inside
 /// the current scope depth, exactly when C deletes the consuming
@@ -3655,22 +3703,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 name.as_str(),
                 "funcstack" | "funcfiletrace" | "funcsourcetrace" | "functrace"
             ) {
-                if let Ok(f) = crate::ported::modules::parameter::FUNCSTACK.lock() {
-                    let vals: Vec<Value> = f
-                        .iter()
-                        .rev()
-                        .map(|fs| {
-                            let s = match name.as_str() {
-                                "funcstack" => fs.name.clone(),
-                                "funcfiletrace" => fs.filename.clone().unwrap_or_default(),
-                                // funcsourcetrace / functrace
-                                _ => format!("{}:{}", fs.name, fs.lineno),
-                            };
-                            Value::str(s)
-                        })
-                        .collect();
-                    return Value::Array(vals);
-                }
+                // Route the three trace arrays through the canonical
+                // ported getfns (Src/Modules/parameter.c:648/:679/:711)
+                // — the previous inline copy emitted wrong shapes
+                // (bare filename for funcfiletrace, `name:lineno` for
+                // functrace instead of `caller:lineno`); same dedup as
+                // the parallel arrays_get handler in subst.rs.
+                let vals: Vec<String> = match name.as_str() {
+                    "funcstack" => crate::ported::modules::parameter::FUNCSTACK
+                        .lock()
+                        .map(|f| f.iter().rev().map(|fs| fs.name.clone()).collect())
+                        .unwrap_or_default(),
+                    "funcfiletrace" => crate::ported::modules::parameter::funcfiletracegetfn(
+                        std::ptr::null_mut(),
+                    ),
+                    "funcsourcetrace" => crate::ported::modules::parameter::funcsourcetracegetfn(
+                        std::ptr::null_mut(),
+                    ),
+                    _ => crate::ported::modules::parameter::functracegetfn(std::ptr::null_mut()),
+                };
+                return Value::Array(vals.into_iter().map(Value::str).collect());
             }
             // c:Src/params.c — `${assoc[@]}` enumerates VALUES (per
             // params.c:1696-1750 hashparam splat). Check assoc
@@ -9878,6 +9930,10 @@ impl fusevm::ShellHost for ZshrsHost {
         // the cmdsub must not drain the enclosing command's pending
         // psub fds (see PSUB_SCOPE_DEPTH).
         let _psub_scope = PsubScope::enter();
+
+        // c:Src/exec.c:1161 — forked cmdsub child runs entersubsh()
+        // which does `zsh_subshell++`; in-process equivalent.
+        let _subshell_bump = CmdSubstSubshellBump::enter();
 
         crate::fusevm_disasm::maybe_print_stdout("host.cmd_subst", sub);
         let mut vm = fusevm::VM::new(sub.clone());

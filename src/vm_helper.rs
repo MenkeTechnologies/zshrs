@@ -2750,6 +2750,11 @@ impl ShellExecutor {
         // is cleared from fdtable — c:Src/utils.c:2137.
         crate::ported::utils::zclose(write_fd);
 
+        // c:Src/exec.c:1161 — forked cmdsub child runs entersubsh()
+        // which does `zsh_subshell++`; in-process equivalent (RAII,
+        // restored on every return path below).
+        let _subshell_bump = crate::fusevm_bridge::CmdSubstSubshellBump::enter();
+
         // Parse + compile + run.
         // Push CS_CMDSUBST for `%_` xtrace prefix — direct port of
         // Src/exec.c:4783 `cmdpush(CS_CMDSUBST);` around execode().
