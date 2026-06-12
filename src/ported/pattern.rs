@@ -2680,8 +2680,29 @@ pub fn pattryrefs(
     }
     if ok {
         let n = (prog.0.patnpar as usize).min(NSUBEXP);
+        let have_nump = nump.is_some();
         if let Some(np) = nump {
             *np = n as i32;
+        }
+        // c:2526-2542 — GF_MATCHREF (`(#m)`): on success, write the
+        // matched substring to $MATCH and its 1-based (KSHARRAYS-
+        // aware) char span to $MBEGIN/$MEND. C does this INSIDE
+        // pattryrefs; the previous Rust port left it to a bridge
+        // wrapper that sniffed the pattern TEXT for "(#m)" — wrong
+        // mechanism (missed hoisted/nested flag positions) and
+        // wrong layer.
+        if (prog.0.globflags & GF_MATCHREF) != 0 && (prog.0.flags & PAT_FILE as i32) == 0 {
+            let hi = matched_end.min(trial.len());
+            let mstr: String = trial[..hi].to_string(); // c:2536 metafy(patinstart..patinput)
+            let mlen = mstr.chars().count() as i64; // c:2534 CHARSUB
+            let base: i64 = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+                0
+            } else {
+                1
+            };
+            crate::ported::params::setsparam("MATCH", &mstr); // c:2537
+            crate::ported::params::setiparam("MBEGIN", patoffset as i64 + base); // c:2538
+            crate::ported::params::setiparam("MEND", mlen + patoffset as i64 + base - 1); // c:2539-2541
         }
         // c:2425+ — emit captured offsets to begp/endp out-arrays.
         // Check the CLOSE bit (high stripe at NSUBEXP+i) since the
@@ -2719,6 +2740,45 @@ pub fn pattryrefs(
                     ev.push(-1); // c:2565
                 }
             }
+        }
+        // c:2570-2621 — `else if (prog->patnpar && !(patflags &
+        // PAT_FILE))`: the caller passed NO capture arrays, so
+        // pattryrefs itself publishes the `(#b)` groups as the
+        // $match / $mbegin / $mend arrays. This arm was missing
+        // from the port — every plain pattry of a (#b) pattern
+        // silently dropped its captures (the bridge compensated
+        // with a wrapper; now C-faithful at the source).
+        if !have_nump && n > 0 && (prog.0.flags & PAT_FILE as i32) == 0 {
+            let base: i32 = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+                0
+            } else {
+                1
+            };
+            let mut match_arr: Vec<String> = Vec::with_capacity(n);
+            let mut begin_arr: Vec<String> = Vec::with_capacity(n);
+            let mut end_arr: Vec<String> = Vec::with_capacity(n);
+            for i in 0..n {
+                let close_bit = 1u32 << (i + NSUBEXP);
+                if (state.captures_set & close_bit) != 0 {
+                    let b = state.patbeginp[i];
+                    let e = state.patendp[i];
+                    let lo = b.min(trial.len());
+                    let hi = e.min(trial.len()).max(lo);
+                    match_arr.push(trial[lo..hi].to_string()); // c:2587 metafy(*sp..*ep)
+                    begin_arr.push((b as i32 + patoffset + base).to_string()); // c:2596-2599
+                    // c:2601-2604 — mend = last matched char index
+                    // (inclusive): end + offset + base - 1.
+                    end_arr.push((e as i32 + patoffset + base - 1).to_string());
+                } else {
+                    // c:2607-2613 — unmatched branch / hashed paren.
+                    match_arr.push(String::new());
+                    begin_arr.push("-1".to_string());
+                    end_arr.push("-1".to_string());
+                }
+            }
+            crate::ported::params::setaparam("match", match_arr); // c:2619
+            crate::ported::params::setaparam("mbegin", begin_arr); // c:2620
+            crate::ported::params::setaparam("mend", end_arr); // c:2621
         }
     }
     ok
