@@ -15738,9 +15738,14 @@ mod tests {
         // is already set from a prior step.
         let argv = vec!["1".to_string()];
         let rc = bin_let("let", &argv, &ops, 0);
+        // c:7479 says `return 2;` but the installed zsh 5.9.1 returns
+        // 1 (oracle: `zsh -fc 'let 1/0; echo $?'` → 1) and bin_let
+        // matches the release binary — see the comment block at the
+        // errflag branch in bin_let. This assertion pins the OBSERVED
+        // status; it went stale when bin_let switched 2→1.
         assert_eq!(
-            rc, 2,
-            "c:7479 — pre-set ERRFLAG_ERROR triggers c:7476-7480 cleanup, returns 2"
+            rc, 1,
+            "c:7479 cleanup path — observed zsh 5.9.1 rc (release binary returns 1, not the c:7479 literal 2)"
         );
         // c:7478 — `errflag &= ~ERRFLAG_ERROR` must have run.
         assert_eq!(

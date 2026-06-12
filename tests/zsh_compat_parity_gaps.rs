@@ -1268,7 +1268,6 @@ mod corpus_dash_fc_bulk_g {
         bulk_g_arith_bit_and => (r#"7 & 3"#, r#"print $(( 7 & 3 ))"#);
         bulk_g_arith_bit_or_pipe => (r#"4 | 2"#, r#"print $(( 4 | 2 ))"#);
         bulk_g_strftime_epoch_zero => (r#"strftime %s 0"#, r##"zmodload zsh/datetime 2>/dev/null; strftime %s 0; print stfg=$?"##);
-        bulk_g_nameref_typeset_n => (r#"typeset -n"#, r#"typeset -n nrg=trg_g; trg_g=valn_g; print $nrg"#);
         bulk_g_mktemp_rel_path_glob => (r#"tmpd glob one file"#, r##"tdg=$(mktemp -d); mkdir -p $tdg/d_g; touch $tdg/d_g/f_g; ( builtin cd $tdg && print d_g/f_g ); ec=$?; command rm -rf $tdg; exit $ec"##);
         // Raw $! pid differs per run; pin validity.
         bulk_g_coproc_builtin_true => (r#"coproc true"#, r##"coproc true; print -r "cpid_set=$(( $! > 0 ))""##);
@@ -1337,6 +1336,24 @@ mod corpus_dash_fc_bulk_g {
         bulk_g_opt_multifuncdef => (r#"options[multifuncdef]"#, r#"print $options[multifuncdef]"#);
         bulk_g_opt_mailpath => (r#"options[mailpath]"#, r#"print $options[mailpath]"#);
         bulk_g_opt_proxynext => (r#"options[proxynext]"#, r#"print $options[proxynext]"#);
+    }
+
+    /// `typeset -n` nameref — zshrs-behavior pin, NOT an oracle-parity
+    /// row. zshrs ports namerefs from the vendored master C source
+    /// (PM_NAMEREF, Src/params.c:6332); the zsh 5.9.1 release binary
+    /// predates them and rejects `-n` ("bad option: -n"), so oracle
+    /// comparison is impossible by design (spec-over-oracle: the
+    /// vendored source IS the spec for features the release binary
+    /// lacks). Previously pinned as parity row
+    /// `bulk_g_nameref_typeset_n`, which passed only while zshrs's
+    /// nameref resolution was still unwired (both shells printed
+    /// empty); once resolution landed, the row inverted into a
+    /// permanent failure.
+    #[test]
+    fn bulk_g_nameref_typeset_n_zshrs_pin() {
+        let r = run_zshrs("typeset -n nrg=trg_g; trg_g=valn_g; print $nrg");
+        assert_eq!(r.stdout, "valn_g\n", "nameref read-through; stderr: {}", r.stderr);
+        assert_eq!(r.exit, 0);
     }
 }
 
