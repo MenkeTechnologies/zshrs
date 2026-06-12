@@ -3696,6 +3696,17 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(idx), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+            if !in_dq {
+                // c:Src/subst.c:184-187 — prefork's empty-word
+                // removal applies to the UNQUOTED positional splat:
+                // `set -- a '' b; print -l -- $@` → 2 lines in zsh.
+                // Quoted "$@" keeps the empty slot (and "$*" joins),
+                // so the filter is compile-gated on !in_dq.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                    0,
+                );
+            }
             if in_dq && name == "*" {
                 // Discard the GET_VAR result and route the quoted
                 // `"$*"` through BUILTIN_EXPAND_TEXT mode 1 with body
@@ -3840,6 +3851,17 @@ impl ZshCompiler {
                     crate::vm_helper::BUILTIN_GET_VAR
                 };
                 self.builder.emit(Op::CallBuiltin(opcode, 1), 0);
+                if matches!(name, "argv" | "@" | "*") {
+                    // c:Src/subst.c:184-187 — unquoted positional
+                    // splat drops empty words (`set -- a '' b;
+                    // print -l -- $@` → 2 lines in zsh). The quoted
+                    // "$@" form routes through the bare_target DQ
+                    // path above, never here.
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        0,
+                    );
+                }
                 return;
             }
         }
@@ -5833,6 +5855,14 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 0), 0);
+                // c:Src/subst.c:184-187 — this shape is UNQUOTED by
+                // construction (the DQ-marker checks above), so
+                // prefork's empty-word removal applies: `a=(y '' x);
+                // for i in $a` iterates twice in zsh.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                    0,
+                );
                 continue;
             }
             // c:Src/exec.c — `for x in $(cmd)` undergoes ONE wordsplit
