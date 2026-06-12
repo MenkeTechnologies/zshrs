@@ -1752,3 +1752,27 @@ module_path_init
 # block at the definition. Fixes the session-wide GLOB_SUBST leak
 # from zinit.zsh:150 `${~ZINIT[PLUGINS_DIR]}`.
 tilde_carrier_note
+
+# Nameref by-name walk adapters (params.rs, relocated from
+# vm_helper.rs 2026-06-12 — ported code was calling bridge-resident
+# helpers, inverting the layering rule). C's nameref machinery
+# (Src/params.c:6325-6500 resolve_nameref/resolve_nameref_rec/
+# upscope/setscope, fetchvalue c:2247-2270, assignstrvalue
+# c:2690-2720) walks live Param POINTERS; zshrs's paramtab hands out
+# clones behind an RwLock, so the chain walk re-looks-up each hop BY
+# NAME. These are that walk plus its carriers — same borrow-adapter
+# class as fdtable_get / sess_get. The C-named ports
+# (resolve_nameref, resolve_nameref_rec, upscope) delegate into
+# resolve_nameref_name. Block banner with the full WARNING at the
+# definitions.
+resolve_nameref_name
+upscope_clone
+is_nameref
+nameref_final_name
+nameref_hidden_scalar_assign
+nameref_hidden_array_assign
+nameref_read_redirect
+nameref_aread_redirect
+nameref_element_read
+param_scalar_value
+setscope_by_name
