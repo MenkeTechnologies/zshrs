@@ -1766,13 +1766,7 @@ tilde_carrier_note
 # resolve_nameref_name. Block banner with the full WARNING at the
 # definitions.
 resolve_nameref_name
-upscope_clone
 is_nameref
-nameref_final_name
-nameref_hidden_scalar_assign
-nameref_hidden_array_assign
-nameref_read_redirect
-nameref_aread_redirect
 nameref_element_read
 param_scalar_value
 setscope_by_name
