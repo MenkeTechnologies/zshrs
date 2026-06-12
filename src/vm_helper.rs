@@ -4109,8 +4109,15 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     // (#b) isn't on — that matches the previous behaviour exactly
     // and avoids the small extra cost (state clone + Vec<i32> alloc)
     // for the (#b)-free common case.
-    let gf = prog.0.globflags;
-    let has_backref = (gf & crate::ported::zsh_h::GF_BACKREF as i32) != 0;
+    // c:Src/pattern.c:2543 / 2570 — the C gate for capture reporting is
+    // `prog->patnpar` (count of NUMBERED groups), not a globflags bit.
+    // patcomppiece (pattern.rs, c:775 arm) only numbers a group when
+    // GF_BACKREF was live at the point the `(` compiled, so patnpar>0
+    // ⇔ the pattern had an effective `(#b)` REGARDLESS of position.
+    // The old `globflags & GF_BACKREF` gate only saw flags hoisted from
+    // a LEADING `(#...)` spec, so `"%"(#b)(test)*` (literal prefix
+    // before the flag) never populated $match. Bug: gap #1 2026-06-12.
+    let has_backref = prog.0.patnpar > 0;
     let matched;
     if has_backref {
         let mut nump: i32 = 0;
@@ -4138,8 +4145,18 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
             let ksharrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
             let base = if ksharrays { 0 } else { 1 };
             for i in 0..n {
-                let b = begp[i].max(0) as usize;
-                let e = endp[i].max(0) as usize;
+                // c:2607-2613 — unset group (unmatched alternation
+                // branch / hashed paren): matcharr[i]="",
+                // mbeginarr[i]="-1", mendarr[i]="-1". pattryrefs
+                // reports these as begp/endp = -1 (c:2563-2566).
+                if begp[i] < 0 || endp[i] < 0 {
+                    match_arr.push(String::new());
+                    begin_arr.push("-1".to_string());
+                    end_arr.push("-1".to_string());
+                    continue;
+                }
+                let b = begp[i] as usize;
+                let e = endp[i] as usize;
                 let lo = b.min(s.len());
                 let hi = e.min(s.len()).max(lo);
                 match_arr.push(s[lo..hi].to_string());

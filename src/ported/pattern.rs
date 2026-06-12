@@ -1724,10 +1724,25 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 // `(`; patcompnot drained through to `)`. Verify here.
                 return starter_off;
             }
-            let n = patnpar.fetch_add(1, Ordering::Relaxed);
-            if n >= NSUBEXP as i32 {
-                return -1;
-            }
+            // c:775-783 — `if (paren && (patglobflags & GF_BACKREF) &&
+            // patnpar <= NSUBEXP) { parno = patnpar++; starter =
+            // patnode(P_OPEN + parno); } else starter = 0;`. A group is
+            // NUMBERED (capture slot allocated) only when GF_BACKREF is
+            // live in patglobflags at the point the `(` is compiled —
+            // wherever the `(#b)` appeared (leading, after a literal
+            // prefix, mid-pattern). Beyond NSUBEXP, C "just use[s]
+            // P_OPEN on its own" (c:777-780): parno stays 0 and the
+            // match arms record nothing (c:2957 `if (no && ...)`).
+            // The previous Rust arm numbered EVERY paren and returned
+            // -1 past NSUBEXP — both divergent.
+            let gf_now = patglobflags.load(Ordering::Relaxed);
+            let n = if (gf_now & GF_BACKREF) != 0
+                && patnpar.load(Ordering::Relaxed) <= NSUBEXP as i32
+            {
+                patnpar.fetch_add(1, Ordering::Relaxed)
+            } else {
+                0 // plain (uncaptured) group — P_OPEN+0 / P_CLOSE+0
+            };
             let opcode = P_OPEN + n as u8;
             let open_off = patnode(opcode);
             let mut inner_flags: i32 = 0;
@@ -2688,7 +2703,9 @@ pub fn pattryrefs(
                 if (state.captures_set & close_bit) != 0 {
                     bv.push(state.patbeginp[i] as i32 + patoffset);
                 } else {
-                    bv.push(0);
+                    // c:2563-2566 — unset group (unmatched alternation
+                    // branch): `*begp++ = -1; *endp++ = -1;`.
+                    bv.push(-1);
                 }
             }
         }
@@ -2699,7 +2716,7 @@ pub fn pattryrefs(
                 if (state.captures_set & close_bit) != 0 {
                     ev.push(state.patendp[i] as i32 + patoffset);
                 } else {
-                    ev.push(0);
+                    ev.push(-1); // c:2565
                 }
             }
         }
@@ -4646,8 +4663,10 @@ fn patmatch(
                 let save = s_off;
                 let saved_state = state.clone();
                 // c:2957 — `if (no && !(parsfound & (1 << (no - 1))))`.
-                // Open-bit is the LOW stripe: `1 << (n-1)`.
-                let open_bit = 1u32 << (n - 1);
+                // Open-bit is the LOW stripe: `1 << (n-1)`. n==0 is the
+                // plain (uncaptured) P_OPEN — c:2957's `no &&` guard
+                // means it records nothing; bit value is moot (0).
+                let open_bit = if n > 0 { 1u32 << (n - 1) } else { 0 };
                 if next == 0 {
                     // No continuation — leaf P_OPEN; just commit and continue.
                     if n > 0 && n <= NSUBEXP && (state.captures_set & open_bit) == 0 {
@@ -4699,7 +4718,8 @@ fn patmatch(
                 let saved_state = state.clone();
                 // c:2989 — `if (no && !(parsfound & (1 << (no+NSUBEXP-1))))`.
                 // Close-bit is the HIGH stripe: `1 << (n-1+NSUBEXP)`.
-                let close_bit = 1u32 << (n - 1 + NSUBEXP);
+                // n==0 = plain P_CLOSE, records nothing (c:2989 `no &&`).
+                let close_bit = if n > 0 { 1u32 << (n - 1 + NSUBEXP) } else { 0 };
                 if next == 0 {
                     if n > 0 && n <= NSUBEXP && (state.captures_set & close_bit) == 0 {
                         state.patendp[n - 1] = save;

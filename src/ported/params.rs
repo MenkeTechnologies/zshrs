@@ -6156,15 +6156,118 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
-    // c:3415-3420 — `if (PM_TYPE(pm->node.flags) != PM_ARRAY &&
-    //                   (pm->node.flags & PM_SPECIAL)) { zerr; return; }`
-    // Special params have fixed types (e.g., $SECONDS is INTEGER);
-    // can't promote them to PM_ARRAY through assignment.
+    // c:3395-3401 — the type-reset arm only fires for params that are
+    // NOT (PM_ARRAY|PM_HASHED) and NOT PM_SPECIAL|PM_TIED. A special
+    // param falls THROUGH the reset: `v` stays set and the assignment
+    // reaches setarrvalue (c:3585), which dispatches:
+    //   - PM_HASHED whole-assign (v->start==0, v->end==-1) →
+    //     arrhashsetfn (c:2918-2920) → pm->gsu.h->setfn(pm, ht) — for
+    //     the zsh/parameter specials that's setpmoptions /
+    //     setpmcommands / setaliases / setfunctions / setpmnameddirs
+    //     (Src/Modules/parameter.c).
+    //   - non-array, non-hash special (e.g. $SECONDS) → zerr
+    //     "%s: attempt to assign array value to non-array" (c:2905).
+    // The previous Rust arm rejected EVERY non-array special with
+    // "can't change type of a special parameter" — a message C's
+    // assignaparam never emits. Gap #2 2026-06-12.
     if existed {
         let pm_type = prior_flags as u32 & PM_TYPE(u32::MAX);
         if pm_type != PM_ARRAY && (prior_flags as u32 & PM_SPECIAL) != 0 {
+            if pm_type == PM_HASHED {
+                // c:4124-4131 (arrhashsetfn) — count non-Marker
+                // entries; odd → zerr + abort. zsh 5.9 truth:
+                // `options=(noglob)` → "bad set of key/value pairs
+                // for associative array", rc=1, script aborts.
+                let alen = val
+                    .iter()
+                    .filter(|s| !s.starts_with(Marker as char))
+                    .count();
+                if alen % 2 != 0 {
+                    zerr("bad set of key/value pairs for associative array");
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    return None;
+                }
+                // c:4141-4166 (arrhashsetfn pair walk) — flatten the
+                // value list to (key, value) pairs; `[k]=v` triples
+                // arrive as [Marker, k, v].
+                let mut pairs: Vec<(String, String)> = Vec::with_capacity(alen / 2);
+                let mut it = val.iter();
+                while let Some(first) = it.next() {
+                    let key = if first.starts_with(Marker as char) {
+                        match it.next() {
+                            Some(k) => k.clone(),
+                            None => break,
+                        }
+                    } else {
+                        first.clone()
+                    };
+                    let v = it.next().cloned().unwrap_or_default();
+                    pairs.push((key, v));
+                }
+                // pm->gsu.h->setfn(pm, ht) — per-name dispatch to the
+                // canonical Src/Modules/parameter.c setfn ports. The
+                // synthetic Param mirrors the established per-element
+                // pattern (assignsparam "options"/"commands" arms).
+                let synth: Param = Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: name.to_string(),
+                        flags: prior_flags,
+                    },
+                    u_data: 0,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                use crate::ported::modules::parameter as pmod;
+                match name {
+                    // SPECIALPMDEF entries with writable hash gsu
+                    // (Src/Modules/parameter.c:2235-2298, no
+                    // PM_READONLY_SPECIAL):
+                    "options" => pmod::setpmoptions(synth.clone(), &pairs), // c:2285
+                    "commands" => pmod::setpmcommands(synth.clone(), &pairs), // c:2238
+                    "functions" => pmod::setpmfunctions(synth.clone(), &pairs), // c:2263
+                    "dis_functions" => pmod::setpmdisfunctions(synth.clone(), &pairs), // c:2245
+                    "aliases" => pmod::setpmraliases(synth.clone(), &pairs), // c:2235
+                    "dis_aliases" => pmod::setpmdisraliases(synth.clone(), &pairs), // c:2241
+                    "galiases" => pmod::setpmgaliases(synth.clone(), &pairs), // c:2269
+                    "dis_galiases" => pmod::setpmdisgaliases(synth.clone(), &pairs), // c:2249
+                    "saliases" => pmod::setpmsaliases(synth.clone(), &pairs), // c:2293
+                    "dis_saliases" => pmod::setpmdissaliases(synth.clone(), &pairs), // c:2255
+                    "nameddirs" => pmod::setpmnameddirs(synth.clone(), &pairs), // c:2283
+                    _ => {
+                        // PM_READONLY_SPECIAL hashed specials (builtins,
+                        // modules, parameters, history, jobtexts, ...) —
+                        // C's PM_READONLY check (setarrvalue c:2900-2903)
+                        // rejects before any setfn. zsh 5.9 truth:
+                        // `modules=(a b)` → "read-only variable: modules",
+                        // rc=1. zshrs strips PM_READONLY off the paramtab
+                        // stubs (vm_helper init), so match by family.
+                        zerr(&format!("read-only variable: {}", name));
+                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                        return None;
+                    }
+                }
+                return Some(synth);
+            }
+            // c:2905-2909 (setarrvalue) — non-hash special target.
+            // zsh 5.9 truth: `SECONDS=(1 2)` → "SECONDS: attempt to
+            // assign array value to non-array", rc=1.
             zerr(&format!(
-                "{}: can't change type of a special parameter",
+                "{}: attempt to assign array value to non-array",
                 name
             ));
             errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);

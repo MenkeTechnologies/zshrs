@@ -31998,11 +31998,21 @@ unchanged and still parity-correct. Pinned by
 `commands_subscript_write_installs_cmdnam_node` in
 tests/modules_parity.rs.
 
-**Residual (separate, pre-existing):** whole-hash assignment
-`commands=(q /r)` still errors `can't change type of a special
-parameter` in zshrs where zsh accepts via `setpmcommands`
-(Src/Modules/parameter.c:173) — that's the assignaparam/whole-array
-path, untouched by this fix.
+**Residual — CLOSED 2026-06-12:** whole-hash assignment
+`commands=(q /r)` (and the whole writable family: `options=(...)`,
+`functions=(...)`, `dis_functions=(...)`, `aliases=(...)` ×6,
+`nameddirs=(...)`) now routes through the canonical setfn ports —
+assignaparam's PM_HASHED|PM_SPECIAL arm (src/ported/params.rs)
+dispatches per name to setpmcommands / setpmoptions / setpmfunctions
+/ setaliases / setpmnameddirs (src/ported/modules/parameter.rs),
+mirroring C's assignaparam → setarrvalue → arrhashsetfn →
+pm->gsu.h->setfn chain (Src/params.c:3357 → 2918-2920 → 4168).
+PM_READONLY_SPECIAL hashed specials (modules, history, userdirs,
+builtins, parameters, ...) reject with `read-only variable: NAME`
+rc=1; non-hash specials (`SECONDS=(1 2)`) emit C's setarrvalue
+message `attempt to assign array value to non-array` rc=1
+(Src/params.c:2905). Pinned by the `*_whole_assoc_*` tests in
+tests/modules_parity.rs.
 
 **Superseded 2026-06-03 note:** `assignsparam`'s
 readonly-magic-assoc list (added for #242) covered
@@ -50048,7 +50058,7 @@ no longer reports the internal trap-machinery scalar.
 | 372 | `print -P "%F{invalid}"` drops entire format instead of emitting default-color escape | **fixed** 2026-06-02 | use ANSI escapes directly |
 | 373 | `pipestatus=(...)` user-overwrite accepted — zsh truth: setfn stores it, then array-assignment commands clobber pipestats to [lastval] | **fixed** 2026-06-12 | n/a |
 | 374 | `reswords=...` user-overwrite accepted — reswords not readonly (zsh: "read-only variable") | **fixed** 2026-06-02 | defensive copy |
-| 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | fixed | (assignsparam readonly-magic-assoc list rejects slice writes with `read-only variable: commands`; stricter than current brew zsh, blocks `commands[sudo]=` rewrite) |
+| 375 | `commands[name]=path` slice-write accepted — security-relevant cmd-cache poisoning (zsh: "attempt to set slice") | fixed | (re-fixed to match C: setpmcommand ACCEPTS subscript writes per Src/Modules/parameter.c:151-160; whole-hash `commands=(...)` + the options/functions/aliases/nameddirs family route through their setpm* setfns per Src/params.c:4168) |
 | 376 | `zmodload zsh/nonexistent` silent failure — missing dlopen error message (zsh: "failed to load module: dlopen…") | **fixed** 2026-06-04 | probe module file existence manually |
 | 377 | `zmodload` no-args lists *available* modules instead of *loaded* modules (zsh: just `zsh/main`) | **fixed** 2026-06-02 | track loaded modules manually in user assoc |
 | 378 | `${#var}` ignores locale — always char count even in C/POSIX (zsh: byte count when LC_CTYPE not UTF-8) | **fixed** 2026-06-02 | `wc -c` for byte count |

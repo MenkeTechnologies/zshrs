@@ -711,6 +711,92 @@ zstyle -t ':x' disabled && echo Y2 || echo N2"#,
 mod parameter_module {
     use super::*;
 
+    /// setpmoptions (Src/Modules/parameter.c:953) — whole-hash
+    /// `options=(name on|off ...)` toggles each named option via
+    /// dosetopt. The assignment reaches the setfn through
+    /// assignaparam → setarrvalue → arrhashsetfn (Src/params.c:
+    /// 3357 → 2918-2920 → 4168).
+    #[test]
+    fn options_whole_assoc_assignment_sets_options() {
+        assert_parity(r#"options=(noglob on); [[ -o noglob ]] && echo noglob-on; echo rc=$?"#);
+    }
+
+    /// setpmoptions c:972-976 — unknown option name warns
+    /// "can't change option" but the assignment itself succeeds
+    /// (zwarn, not zerr — script continues, rc stays 0).
+    #[test]
+    fn options_whole_assoc_unknown_option_warns_but_continues() {
+        assert_parity(r#"options=(bogus_no_such on); echo after rc=$?"#);
+    }
+
+    /// arrhashsetfn c:4128-4131 — odd pair count aborts with
+    /// "bad set of key/value pairs for associative array", rc=1.
+    #[test]
+    fn options_whole_assoc_odd_count_errors() {
+        assert_parity(r#"options=(noglob); echo after"#);
+    }
+
+    /// `[key]=value` form for a special assoc — keyvalpairelement
+    /// (Src/subst.c:49-79) splits before assignaparam; mixed
+    /// kv/plain forms reject per Src/params.c:3553-3560.
+    #[test]
+    fn options_whole_assoc_key_value_syntax() {
+        assert_parity(r#"options=([noglob]=on); [[ -o noglob ]] && echo kv-on"#);
+        assert_parity(r#"options=([noglob]=on localoptions off); echo after"#);
+    }
+
+    /// setpmcommands (Src/Modules/parameter.c:173) — whole-hash
+    /// `commands=(name path)` is ADDITIVE: installs HASHED Cmdnam
+    /// nodes without flushing existing cmdnamtab entries.
+    #[test]
+    fn commands_whole_assoc_assignment_additive() {
+        assert_parity(
+            r#"hash foo375=/bin/ls; commands=(bar375 /bin/cat); print -r "foo=$commands[foo375] bar=$commands[bar375]""#,
+        );
+    }
+
+    /// setpmfunctions (Src/Modules/parameter.c:370) — whole-hash
+    /// `functions=(name body)` defines functions additively.
+    #[test]
+    fn functions_whole_assoc_assignment_defines_function() {
+        assert_parity(r#"fn() { echo orig; }; functions=(f "echo hi"); f; whence -w fn"#);
+    }
+
+    /// setaliases (Src/Modules/parameter.c:1768) — whole-hash
+    /// `aliases=(...)` REPLACES the regular-alias class (flags==0
+    /// removal loop c:1777-1789) but leaves global aliases alone.
+    #[test]
+    fn aliases_whole_assoc_replaces_regular_class_only() {
+        assert_parity(
+            r#"alias old="echo old"; alias -g G="| cat"; aliases=(x "echo x"); alias old; alias x; alias -g G; echo done"#,
+        );
+    }
+
+    /// setpmnameddirs (Src/Modules/parameter.c:1544) — whole-hash
+    /// `nameddirs=(name dir)` readback via element fetch.
+    #[test]
+    fn nameddirs_whole_assoc_assignment_readback() {
+        assert_parity(r#"nameddirs=(d375 /tmp); print -r $nameddirs[d375]"#);
+    }
+
+    /// PM_READONLY_SPECIAL hashed specials reject whole-assignment
+    /// with "read-only variable", rc=1 (setarrvalue c:2900-2903).
+    #[test]
+    fn readonly_special_assocs_reject_whole_assignment() {
+        assert_parity(r#"modules=(a b); echo after"#);
+        assert_parity(r#"userdirs=(a /tmp); echo after"#);
+        assert_parity(r#"history=(1 x); echo after"#);
+    }
+
+    /// Non-hash special (SECONDS) — setarrvalue c:2905-2909:
+    /// "attempt to assign array value to non-array", rc=1. C's
+    /// assignaparam never emits "can't change type of a special
+    /// parameter" for this case.
+    #[test]
+    fn non_hash_special_array_assignment_error_message() {
+        assert_parity(r#"SECONDS=(1 2); echo after"#);
+    }
+
     /// BUGS.md #375 — `commands[name]=path` is ACCEPTED: C's
     /// setpmcommand (Src/Modules/parameter.c:151-160) installs a
     /// HASHED Cmdnam node in cmdnamtab (same effect as `hash
