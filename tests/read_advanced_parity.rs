@@ -241,6 +241,28 @@ mod prompt_with_dash_p {
     fn zsh_prompt_via_question_mark() {
         assert_parity_stdin(r#"read "?Name: " x 2>/dev/null; echo "[$x]""#, b"jacob\n");
     }
+
+    /// `read var?prompt` — c:Src/builtin.c:6534-6543 splits the FIRST
+    /// arg at its first `?`: name before, prompt after (printed only
+    /// when interactive; suppressed here since stdin is a pipe).
+    #[test]
+    fn zsh_prompt_embedded_in_first_name() {
+        assert_parity_stdin(r#"read "v?myprompt: "; echo "[$v]""#, b"hi\n");
+    }
+
+    /// Only the first name carries the `?prompt`; later names are
+    /// plain variable names (c:6445 firstarg aliases args[0] only).
+    #[test]
+    fn zsh_prompt_split_with_second_var() {
+        assert_parity_stdin(r#"read "x?p: " y; echo "[$x][$y]""#, b"a b\n");
+    }
+
+    /// Leading-`?` arg is prompt-only — reply defaults to REPLY
+    /// (c:6445-6446 `*args++` consumes it before the reply pick).
+    #[test]
+    fn zsh_prompt_only_arg_defaults_reply() {
+        assert_parity_stdin(r#"read "?just prompt"; echo "[$REPLY]""#, b"hi\n");
+    }
 }
 
 mod eof_handling {

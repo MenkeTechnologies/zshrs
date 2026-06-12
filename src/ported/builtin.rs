@@ -10545,18 +10545,36 @@ pub fn bin_read(
         }
     }
 
-    // c:6444-6446 — first arg may be `?prompt`; reply name (or REPLY/reply).
+    // c:6445-6446 — `firstarg = (*args && **args == '?' ? *args++ :
+    // *args); reply = *args ? *args++ : ...`. When the first arg
+    // starts with `?` it is a prompt-only arg (consumed; the NEXT arg
+    // is the reply name). Otherwise firstarg ALIASES the reply name —
+    // and the prompt block at c:6534-6543 scans it for an embedded
+    // `?`, prints the tail as the prompt, and truncates the name in
+    // place (`readpmpt[-1] = '\0'`). So `read v?prompt: ` reads into
+    // `v` with prompt `prompt: `. Bug #387 follow-up: the leading-`?`
+    // form was handled but the `var?prompt` split was missing, so
+    // zshrs errored "not an identifier: v?prompt".
     let mut argi = 0usize;
     let mut prompt: Option<String> = None;
     if argi < args.len() && args[argi].starts_with('?') {
-        // c:6444
+        // c:6445 — prompt-only first arg.
         prompt = Some(args[argi][1..].to_string());
         argi += 1;
     }
     let want_array = OPT_ISSET(ops, b'A');
     let reply = if argi < args.len() {
-        let r = args[argi].clone();
+        let mut r = args[argi].clone();
         argi += 1;
+        // c:6534-6543 — firstarg (== this arg when no leading-`?` arg
+        // was consumed) splits at its first `?`: name before, prompt
+        // after.
+        if prompt.is_none() {
+            if let Some(q) = r.find('?') {
+                prompt = Some(r[q + 1..].to_string());
+                r.truncate(q); // c:6542 readpmpt[-1] = '\0'
+            }
+        }
         r
     } else if want_array {
         "reply".to_string() // c:6446

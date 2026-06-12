@@ -3529,6 +3529,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // write_fd. We follow that: arrays[name] = [read_fd_str, write_fd_str].
     vm.register_builtin(BUILTIN_RUN_COPROC, |vm, _argc| {
         let sub_idx = vm.pop().to_int() as usize;
+        let job_text = vm.pop().to_str();
         let raw_name = vm.pop().to_str();
         let name = if raw_name.is_empty() {
             "COPROC".to_string()
@@ -3539,6 +3540,32 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Some(c) => c,
             None => return Value::Status(1),
         };
+
+        // c:Src/exec.c:1710-1712 — starting a new coproc closes the
+        // previous one's fds FIRST:
+        //     if (coprocin >= 0) { zclose(coprocin); zclose(coprocout); }
+        // The old coproc child then sees EOF on its stdin and exits on
+        // its own schedule (its job-table entry stays until it's
+        // reaped) — zsh does NOT deletejob it here. This is also what
+        // makes the `exec 4<&p; coproc exit; read -u4` EOF idiom work:
+        // the replacement coproc closes the shell's write end to the
+        // old one.
+        {
+            use std::sync::atomic::Ordering;
+            let old_in = crate::ported::modules::clone::coprocin.load(Ordering::Relaxed);
+            if old_in >= 0 {
+                let old_out =
+                    crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
+                unsafe {
+                    libc::close(old_in);
+                    if old_out >= 0 {
+                        libc::close(old_out);
+                    }
+                }
+                crate::ported::modules::clone::coprocin.store(-1, Ordering::Relaxed);
+                crate::ported::modules::clone::coprocout.store(-1, Ordering::Relaxed);
+            }
+        }
 
         // (parent_read ← child_stdout)
         let mut p2c = [0i32; 2]; // parent writes, child reads
@@ -3552,6 +3579,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 libc::close(p2c[1]);
             }
             return Value::Status(1);
+        }
+        // c:Src/exec.c:5160 mpipe — both pipes' fds are moved above
+        // the user-visible range (movefd → F_DUPFD ≥ 10) so the
+        // coproc fds never collide with explicit user fds like
+        // `exec 3>&p`.
+        for fd in p2c.iter_mut().chain(c2p.iter_mut()) {
+            *fd = crate::ported::utils::movefd(*fd);
         }
 
         match unsafe { libc::fork() } {
@@ -3612,6 +3646,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .store(read_fd, std::sync::atomic::Ordering::Relaxed);
                 crate::ported::modules::clone::coprocout
                     .store(write_fd, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/exec.c:1725 — `fdtable[coprocin] =
+                // fdtable[coprocout] = FDT_UNUSED;`: the two kept ends
+                // are user-reachable (via `>&p` / `<&p`), so they drop
+                // the FDT_INTERNAL mark movefd gave them.
+                crate::ported::utils::fdtable_set(
+                    read_fd,
+                    crate::ported::zsh_h::FDT_UNUSED,
+                );
+                crate::ported::utils::fdtable_set(
+                    write_fd,
+                    crate::ported::zsh_h::FDT_UNUSED,
+                );
                 // c:Src/exec.c:2837 — `lastpid = (zlong) pid;`. zsh
                 // sets the `$!` global to the coproc child's PID so
                 // subsequent `$!` reads return it. The Rust port at
@@ -3620,6 +3666,47 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // assignment, leaving `$!` at 0 after `coproc cmd`.
                 crate::ported::modules::clone::lastpid
                     .store(pid, std::sync::atomic::Ordering::Relaxed);
+                // c:Src/exec.c:1700-1758 — the coproc rides the SAME
+                // Z_ASYNC job-table path as `cmd &`: `thisjob = newjob
+                // = initjob()` (c:1700), addproc hangs the pid+text
+                // proc entry off the job, `jobtab[thisjob].stat |=
+                // STAT_NOSTTY` (c:1746), `clearoldjobtab()` (c:1744)
+                // and `spawnjob()` (c:1758) promote it to curjob. This
+                // is what makes `jobs` list the coproc as
+                // `[1]  + running    cat` and `kill %1` resolve it.
+                // Mirrors the BUILTIN_RUN_BG parent arm exactly.
+                {
+                    use crate::ported::jobs;
+                    use std::sync::Mutex;
+                    let table = jobs::JOBTAB.get_or_init(|| Mutex::new(Vec::new()));
+                    let idx = {
+                        let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                        let idx = jobs::initjob(&mut tab); // c:exec.c:1700
+                        jobs::addproc(
+                            &mut tab[idx],
+                            pid,
+                            &job_text,
+                            false,
+                            Some(std::time::Instant::now()),
+                            -1,
+                            -1,
+                        );
+                        tab[idx].stat |= crate::ported::zsh_h::STAT_NOSTTY; // c:exec.c:1746
+                        idx
+                    };
+                    jobs::clearoldjobtab(); // c:exec.c:1744
+                    if let Ok(mut tj) = jobs::THISJOB
+                        .get_or_init(|| Mutex::new(-1))
+                        .lock()
+                    {
+                        *tj = idx as i32;
+                    }
+                    jobs::spawnjob(); // c:exec.c:1758
+                }
+                with_executor(|exec| {
+                    exec.jobs
+                        .add_pid_job(pid, job_text.clone(), JobState::Running);
+                });
                 Value::Status(0)
             }
         }
