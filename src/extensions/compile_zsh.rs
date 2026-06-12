@@ -8860,6 +8860,32 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                             }
                             i += 1;
                         }
+                    } else if matches!(nxt, '$' | '?' | '#' | '*' | '@' | '-' | '!')
+                        || matches!(
+                            nxt,
+                            '\u{85}' /* Stringg `$` */
+                            | '\u{97}' /* Quest `?` */
+                            | '\u{84}' /* Pound `#` */
+                            | '\u{87}' /* Star `*` */
+                            | '\u{9b}' /* Dash `-` */
+                            | '\u{9c}' /* Bang `!` */
+                        )
+                    {
+                        // Single-char special parameter — `$$` / `$?` /
+                        // `$#` / `$*` / `$@` / `$-` / `$!`. The lexer
+                        // tokenizes the second char (`$$` arrives as
+                        // Stringg Stringg, `$?` as Stringg Quest), so
+                        // accept both ASCII and token forms. Consume
+                        // exactly ONE char into the Subst segment;
+                        // without this arm the name walk below consumed
+                        // nothing and the special leaked into the
+                        // Literal segment — `[[ $$ == $$ ]]` compiled
+                        // its RHS to the literal 2-char pattern `$$`
+                        // and never matched (bug #628). C: singsub →
+                        // paramsubst handles these specials at
+                        // Src/subst.c:2024+ (`case '$': case '?': …`).
+                        subst.push(nxt);
+                        i += 1;
                     } else {
                         // Bare `$NAME` — consume identifier chars.
                         while i < chars.len() {

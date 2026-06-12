@@ -19,9 +19,114 @@ CI green pending the underlying fix.
 
 ---
 
+## #630 — bare `zselect` (no fds, no timeout) prints invented "would block forever" error — C blocks in select(2)
+
+**Status:** `port-bug`
+
+**Reproducer:**
+```
+$ ./zshrs --zsh -fc 'zmodload zsh/zselect; zselect'
+zsh:zselect:1: no file descriptors and no timeout: would block forever
+rc=1
+$ timeout 5 /opt/homebrew/bin/zsh -fc 'zmodload zsh/zselect; zselect'
+(blocks until timeout kills it; rc=124)
+```
+
+**C reference:** `bin_zselect` (Src/Modules/zselect.c) with no fds
+and no `-t` passes an empty fd set and a NULL timeout straight to
+`select(2)`, which blocks indefinitely. The zshrs error message is
+invented — no such diagnostic exists in the C source. Surfaced
+2026-06-12 while verifying #629; the `-t 0` form already matches
+(pinned in modules_parity::zmodload_autoload_on_use).
+
+---
+
+## #629 — `zmodload -ab MOD NAME` autoload never fires on use — `command not found` 127
+
+**Status:** `fixed` 2026-06-12 — the on-use dispatch gap noted open in
+commit dded583745 ("runtime -ab marks don't fire on use").
+
+**Reproducer (pre-fix):**
+```sh
+$ ./zshrs --zsh -fc 'zmodload -ab zsh/zselect zselect; zselect -t 0'
+zsh:1: command not found: zselect      ← rc=127
+$ /opt/homebrew/bin/zsh -fc 'zmodload -ab zsh/zselect zselect; zselect -t 0'
+(module autoloads, zselect runs)       ← rc=1
+```
+
+**C reference** — `resolvebuiltin` (Src/exec.c:2700-2724): an
+add_autobin stub (builtintab node with NULL handlerfunc,
+Src/module.c:426) fires at dispatch — `ensurefeature(modname, "b:",
+nam)` loads the owning module, the lookup re-runs, and on a
+still-missing node it zerrs `autoloading module %s failed to define
+builtin: %s` with lastval=1. Math functions analog:
+`getmathfunc(name, autol=1)` (Src/module.c:1283, fired from
+Src/math.c:1050).
+
+**Fix** —
+- `module.rs::resolvebuiltin` (new port of Src/exec.c:2700): consults
+  the `autoload_builtins` ledger, ensurefeature-loads, removes the
+  fired stub (C: addbuiltin replaces it on success, module.c:411-415;
+  execbuiltin head deletes it on load failure, builtin.c:264-267 —
+  second call is a plain 127).
+- Wired at both dispatch chokepoints: `fusevm_bridge.rs::
+  dispatch_builtin_raw` (before the module-bound 127 gate) and
+  `vm_helper.rs::execute_external_bg` (before PATH spawn — C resolves
+  builtintab before the external fork; on load success the call
+  re-dispatches through dispatch_builtin_raw).
+- `find_module` FINDMOD_CREATE nodes now carry flags=0 per C's
+  zshcalloc (module.c:1676) and `try_load_module` gates on MOD_LINKED
+  — a phantom `zsh/bogus` bookkeeping node no longer "boots"; the
+  bogus path emits C's `failed to load module \`zsh/bogus'` zwarn,
+  rc=1, then 127 on the second call (probed against zsh 5.9).
+- Math-function side: `math.rs` unknown-function arm now fires
+  `getmathfunc(name, 1)` per Src/math.c:1050; the mftab registration
+  it re-queries is ported (Src/Modules/mathfunc.c:114-167 →
+  MFTAB in modules/mathfunc.rs, committed through the
+  handlefeatures/setfeatureenables shims → setmathfuncs,
+  module.c:1374). Latent setmathfuncs/deletemathfunc divergences
+  fixed en route: `e == NULL` means remove-all (c:1381), the
+  global-list dup now carries/clears MFF_ADDED like C's aliased
+  static struct, and deletemathfunc always unlinks (c:1348-1352).
+
+**Verified (all byte/rc-match zsh 5.9):** zselect -t 0 (rc=1),
+`zmodload -ab zsh/system zsystem; zsystem supports flock` (rc=0),
+bogus module r1=1/r2=127, `-ab zsh/zselect notreal` (autoload
+cancelled + failed-to-define, rc=1, list aborts), `-af zsh/mathfunc
+sin` → `0.`, no-zmodload `sin` still unknown, load→unload→`sin`
+unknown again. Pinned by `zmodload_autoload_on_use` (7 cases) in
+tests/modules_parity.rs.
+
+---
+
 ## #628 — `[[ $$ == $$ ]]` is false — `$$` on the `==`/`=` RHS never matches in `[[ ]]`
 
-**Status:** `port-bug` — surfaced 2026-06-11 while probing #316
+**Status:** `fixed` 2026-06-12 — the compile-time cond/case pattern
+splitter `split_pattern_for_glob_subst` (compile_zsh.rs) consumed only
+`[A-Za-z0-9_]` after a `$`/Stringg marker, so every single-char
+special parameter (`$$`, `$?`, `$#`, `$-`, `$!`, `$*`) on the pattern
+side leaked into the Literal segment — the RHS compiled to the raw
+2-char pattern `$$` instead of the substituted PID. Probe that nailed
+it: `[[ "\$\$" == $$ ]]` matched (literal `$$` == literal pattern
+`$$`). Same root cause hit `case $$ in $$)`, `[[ $? == $? ]]`,
+`[[ $# == $# ]]` — both `case` arm patterns and cond `==`/`=`/`!=`
+RHS route through the same splitter.
+
+**Fix:** new splitter arm consumes exactly ONE char after `$` when it
+is a single-char special — ASCII `$ ? # * @ - !` or the lexer token
+forms (Stringg `\u{85}`, Quest `\u{97}`, Pound `\u{84}`, Star
+`\u{87}`, Dash `\u{9b}`, Bang `\u{9c}`; `$$` arrives as Stringg
+Stringg per lex.rs's LX2_STRING default arm). The Subst segment then
+routes through compile_word_str / BUILTIN_EXPAND_TEXT like any
+`$NAME`. C: singsub → paramsubst handles these specials
+(Src/subst.c:2024+); Src/cond.c:303-310 singsubs the raw RHS before
+patcompile. Pinned by the `special_param_pattern_rhs` module in
+tests/cond_parity.rs (12 cases incl. case-arm shapes); cond suite
+87/0.
+
+**Original report:**
+
+surfaced 2026-06-11 while probing #316
 (`[[ $sysparams[pid] == $$ ]]` returned 1 with identical values on
 both sides).
 
@@ -16801,7 +16906,11 @@ process_file() {
 
 ## #204 — `setopt promptsubst` doesn't enable `$(...)` / `${var}` expansion in prompts
 
-**Status:** `fixed` 2026-06-02 — `expand_prompt` in
+**Status:** `fixed` 2026-06-02; re-verified at HEAD 2026-06-12
+(`setopt promptsubst; v=hi; print -P '${v} $(echo cmd)'` → `hi cmd`,
+option-off form stays literal — both byte-match zsh 5.9). Pinned by
+the `promptsubst_pre_pass` module in tests/prompt_escapes_parity.rs
+(suite 93/0). Original fix notes below: `expand_prompt` in
 `src/ported/prompt.rs` skipped the C `Src/prompt.c:192-212`
 PROMPTSUBST pre-pass entirely; the `%`-escape parser never saw
 a substituted prompt body, so `$()` / `${var}` / `$((expr))`
@@ -31839,7 +31948,17 @@ do the actual PATH search, not the cached assoc).
 
 ## #376 — `zmodload zsh/nonexistent` silent failure — missing dlopen error message
 
-**Status:** `partially-fixed` 2026-06-05 — `require_module`
+**Status:** `fixed` 2026-06-12 — re-verified at HEAD: zshrs emits the
+canonical zwarn prefix (`zsh:1: failed to load module
+\`zsh/nonexistent'`), rc=1, matching C's
+`zwarn("failed to load module \`%s': %s", name, dlerror())`
+(Src/module.c do_load_module) minus the dlerror tail, which is
+intentionally omitted (zshrs is statically linked — no dlopen, no
+dlerror; a synthetic path-not-found tail would be a fabricated
+diagnostic). This omission is the FINAL intended state, so the
+status graduates from partially-fixed. Pinned by
+`zmodload_nonexistent_diagnostic` in tests/modules_parity.rs
+(prefix + rc on both shells). Original notes: `require_module`
 (`src/ported/module.rs:2602`) now emits the canonical
 `zsh:1: failed to load module \`zsh/nonexistent'` diagnostic, so
 scripts checking exit code + stderr regex on "failed to load"

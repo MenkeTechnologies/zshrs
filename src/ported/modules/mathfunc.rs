@@ -12,7 +12,7 @@
 #![allow(clippy::approx_constant)]
 
 use crate::ported::math::{mnumber, MN_FLOAT, MN_INTEGER};
-use crate::ported::zsh_h::{features, module};
+use crate::ported::zsh_h::{features, mathfunc, module};
 use crate::random_real::random_real;
 use std::sync::{Mutex, OnceLock};
 
@@ -584,6 +584,24 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
 
 static MODULE_FEATURES: OnceLock<Mutex<features>> = OnceLock::new();
 
+/// Port of `static struct mathfunc mftab[]` from `Src/Modules/mathfunc.c:114-167`.
+///
+/// C macro per entry: `NUMMATHFUNC(name, math_func, min, max, id)` =
+/// `{ NULL, name, 0, func, NULL, NULL, min, max, id }` (zsh.h:133) —
+/// flags 0, module NULL. The table is the registration source for
+/// `setmathfuncs` (module.c:1374): feature-enable inserts entries into
+/// the global MATHFUNCS list with `MFF_ADDED`; disable removes them.
+/// Entry order MUST match `featuresarray` below — enables bitmaps are
+/// positional (module.c:3284 featuresarray ↔ c:3319 getfeatureenables).
+///
+/// `STRMATHFUNC("rand48", math_string, MS_RAND48)` (c:153) is omitted
+/// to match this module's existing 48-name feature surface (rand48
+/// dispatches through `math_string` directly in math.rs).
+/// Initialized inline by `setfeatureenables` below via
+/// `MFTAB.get_or_init` (single consumer; the src/ported/ build gate
+/// forbids a Rust-only named accessor fn).
+static MFTAB: OnceLock<Mutex<Vec<mathfunc>>> = OnceLock::new();
+
 // Local stubs for the per-module entry points. C uses generic
 // `featuresarray`/`handlefeatures`/`setfeatureenables` (module.c:
 // 3275/3370/3445) but those take `Builtin` + `Features` pointer
@@ -647,19 +665,113 @@ fn featuresarray(_m: *const module, _f: &Mutex<features>) -> Vec<String> {
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn handlefeatures(_m: *const module, _f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
-    if enables.is_none() {
-        *enables = Some(vec![1; 48]);
+fn handlefeatures(m: *const module, f: &Mutex<features>, enables: &mut Option<Vec<i32>>) -> i32 {
+    // c:Src/module.c:3370-3377 — `if (!enables || !*enables)
+    // *enables = getfeatureenables(m, f); else return
+    // setfeatureenables(m, f, *enables);`. The Some arm COMMITS the
+    // bits: do_module_features' final enables_module call lands here
+    // and must register/deregister the mftab entries in the global
+    // MATHFUNCS list. Previously a no-op — `zmodload zsh/mathfunc`
+    // never populated MATHFUNCS, so getmathfunc's post-autoload
+    // re-query (module.c:1298) always missed and `zmodload -af
+    // zsh/mathfunc sin; $(( sin(0) ))` errored.
+    match enables.as_deref() {
+        None => {
+            *enables = Some(vec![1; 48]); // c:3372 getfeatureenables
+            0
+        }
+        Some(e) => {
+            let e_owned: Vec<i32> = e.to_vec();
+            setfeatureenables(m, f, Some(&e_owned)) // c:3375
+        }
     }
-    0
 }
 
 // WARNING: NOT IN MATHFUNC.C — Rust-only module-framework shim.
 // C uses generic featuresarray/handlefeatures/setfeatureenables from
 // Src/module.c:3275/3370/3445 with C-side Builtin/Features pointers;
 // Rust per-module shims hardcode the bintab/conddefs/mathfuncs/paramdefs.
-fn setfeatureenables(_m: *const module, _f: &Mutex<features>, _e: Option<&[i32]>) -> i32 {
-    0
+fn setfeatureenables(_m: *const module, _f: &Mutex<features>, e: Option<&[i32]>) -> i32 {
+    // c:Src/module.c:3445-3460 setfeatureenables → c:1374 setmathfuncs:
+    // walk mftab against the positional enables bitmap; 1 → addmathfunc
+    // into the global MATHFUNCS list (+MFF_ADDED), 0/None → remove.
+    //
+    // MFTAB get_or_init — port of `static struct mathfunc mftab[]`
+    // from Src/Modules/mathfunc.c:114-167. C macro per entry:
+    // `NUMMATHFUNC(name, math_func, min, max, id)` = `{ NULL, name, 0,
+    // func, NULL, NULL, min, max, id }` (zsh.h:133) — flags 0, module
+    // NULL. Entry order MUST match `featuresarray` above — enables
+    // bitmaps are positional (module.c:3284 featuresarray ↔ c:3319
+    // getfeatureenables). `STRMATHFUNC("rand48", math_string,
+    // MS_RAND48)` (c:153) is omitted to match this module's existing
+    // 48-name feature surface (rand48 dispatches through `math_string`
+    // directly in math.rs).
+    let tab_mutex = MFTAB.get_or_init(|| {
+        // NUMMATHFUNC expansion — zsh.h:133.
+        let num = |name: &str, min: i32, max: i32, id: i32| mathfunc {
+            next: None,
+            name: name.to_string(),
+            flags: 0,
+            nfunc: Some(math_func as crate::ported::zsh_h::NumMathFunc),
+            sfunc: None,
+            module: None,
+            minargs: min,
+            maxargs: max,
+            funcid: id,
+        };
+        Mutex::new(vec![
+            num("abs", 1, 1, MF_ABS | tflag(TF_NOCONV | TF_NOASS)), // c:115
+            num("acos", 1, 1, MF_ACOS),                             // c:117
+            num("acosh", 1, 1, MF_ACOSH),                           // c:118
+            num("asin", 1, 1, MF_ASIN),                             // c:119
+            num("asinh", 1, 1, MF_ASINH),                           // c:120
+            num("atan", 1, 2, MF_ATAN),                             // c:121
+            num("atanh", 1, 1, MF_ATANH),                           // c:122
+            num("cbrt", 1, 1, MF_CBRT),                             // c:123
+            num("ceil", 1, 1, MF_CEIL),                             // c:124
+            num("copysign", 2, 2, MF_COPYSIGN),                     // c:125
+            num("cos", 1, 1, MF_COS),                               // c:126
+            num("cosh", 1, 1, MF_COSH),                             // c:127
+            num("erf", 1, 1, MF_ERF),                               // c:128
+            num("erfc", 1, 1, MF_ERFC),                             // c:129
+            num("exp", 1, 1, MF_EXP),                               // c:130
+            num("expm1", 1, 1, MF_EXPM1),                           // c:131
+            num("fabs", 1, 1, MF_FABS),                             // c:132
+            num("float", 1, 1, MF_FLOAT),                           // c:133
+            num("floor", 1, 1, MF_FLOOR),                           // c:134
+            num("fmod", 2, 2, MF_FMOD),                             // c:135
+            num("gamma", 1, 1, MF_GAMMA),                           // c:136
+            num("hypot", 2, 2, MF_HYPOT),                           // c:137
+            num("ilogb", 1, 1, MF_ILOGB | tflag(TF_NOASS)),         // c:138
+            num("int", 1, 1, MF_INT | tflag(TF_NOASS)),             // c:139
+            num("isinf", 1, 1, MF_ISINF | tflag(TF_NOASS)),         // c:140
+            num("isnan", 1, 1, MF_ISNAN | tflag(TF_NOASS)),         // c:141
+            num("j0", 1, 1, MF_J0),                                 // c:142
+            num("j1", 1, 1, MF_J1),                                 // c:143
+            num("jn", 2, 2, MF_JN | tflag(TF_INT1)),                // c:144
+            num("ldexp", 2, 2, MF_LDEXP | tflag(TF_INT2)),          // c:145
+            num("lgamma", 1, 1, MF_LGAMMA),                         // c:146
+            num("log", 1, 1, MF_LOG),                               // c:147
+            num("log10", 1, 1, MF_LOG10),                           // c:148
+            num("log1p", 1, 1, MF_LOG1P),                           // c:149
+            num("log2", 1, 1, MF_LOG2),                             // c:150
+            num("logb", 1, 1, MF_LOGB),                             // c:151
+            num("nextafter", 2, 2, MF_NEXTAFTER),                   // c:152
+            num("rint", 1, 1, MF_RINT),                             // c:156
+            num("scalb", 2, 2, MF_SCALB | tflag(TF_INT2)),          // c:157
+            num("signgam", 0, 0, MF_SIGNGAM | tflag(TF_NOASS)),     // c:159
+            num("sin", 1, 1, MF_SIN),                               // c:161
+            num("sinh", 1, 1, MF_SINH),                             // c:162
+            num("sqrt", 1, 1, MF_SQRT),                             // c:163
+            num("tan", 1, 1, MF_TAN),                               // c:164
+            num("tanh", 1, 1, MF_TANH),                             // c:165
+            num("y0", 1, 1, MF_Y0),                                 // c:166
+            num("y1", 1, 1, MF_Y1),                                 // c:167
+            num("yn", 2, 2, MF_YN | tflag(TF_INT1)),                // c:168
+        ])
+    });
+    let mut tab = tab_mutex.lock().unwrap();
+    crate::ported::module::setmathfuncs("zsh/mathfunc", &mut tab, e)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
