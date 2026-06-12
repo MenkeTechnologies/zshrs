@@ -45374,6 +45374,13 @@ multiple "wrong direction" errors:
 **Workaround** — visual audit / CI grep for paramexp
 flags against the documented list (S/I/V/q/Q/C/U/L/...).
 
+**Follow-up (2026-06-12)** — `typeset -n` namerefs are now ported (PM_NAMEREF,
+`resolve_nameref` Src/params.c:6325, `setscope` c:6382, bin_typeset arm
+c:3117-3150; bridge helpers in src/vm_helper.rs `nameref_bridge`). The `!`
+flag arm is RESTORED: `${(!)ref}` enters a SCANPM_NONAMEREF scope
+(Src/params.c:2232-2235) so the ref itself is read instead of its target.
+The `error in flags` rejection now only applies to genuinely unknown flags.
+
 ---
 
 ## #547 — `echo "$~"` emits literal `$~` — zsh: empty (drops invalid `$X`)

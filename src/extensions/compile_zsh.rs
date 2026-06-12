@@ -5696,9 +5696,11 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadConst(var_const), 0);
         self.builder.emit(Op::GetSlot(i_slot), 0);
         self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
+        // c:Src/loop.c execfor → setloopvar (params.c:6362) — see
+        // compile_for_words for the nameref-rebind rationale.
         self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
-        self.builder.emit(Op::Pop, 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2), 0);
+        let loop_var_abort = self.builder.emit(Op::JumpIfFalse(0), 0);
         // c:Src/exec.c::execlist:28+292 — restore `lineno` to the
         // for-statement's line before the per-iter trace; matches
         // execlist's save/restore around each body. See compile_for_words
@@ -5743,6 +5745,7 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        self.builder.patch_jump(loop_var_abort, loop_exit);
 
         if let Some(breaks) = self.break_patches.pop() {
             for bp in breaks {
@@ -5881,6 +5884,7 @@ impl ZshCompiler {
         // keeps the original 2-byte SET_VAR shape.
         let names: Vec<&str> = var.split_whitespace().collect();
         let n = names.len() as i64;
+        let mut loop_var_abort_jumps: Vec<usize> = Vec::new();
         for (k, name) in names.iter().enumerate() {
             let var_const = self.builder.add_constant(Value::str(*name));
             self.builder.emit(Op::LoadConst(var_const), 0);
@@ -5892,9 +5896,15 @@ impl ZshCompiler {
                 self.builder.emit(Op::Add, 0);
             }
             self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
+            // c:Src/loop.c execfor → setloopvar (params.c:6362): the
+            // loop var binds via SET_LOOP_VAR so PM_NAMEREF vars
+            // REBIND per iteration; Bool(false) return = zerr fired
+            // (invalid self reference / read-only reference) → abort
+            // the loop (C errflag check in execfor).
             self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_VAR, 2), 0);
-            self.builder.emit(Op::Pop, 0);
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2), 0);
+            let aj = self.builder.emit(Op::JumpIfFalse(0), 0);
+            loop_var_abort_jumps.push(aj);
             // c:Src/exec.c::execlist:28+292 — restore `lineno` to
             // the for-statement's line before the per-iter trace.
             // execlist saves `oldlineno = lineno` at entry and
@@ -5958,6 +5968,9 @@ impl ZshCompiler {
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+        for aj in loop_var_abort_jumps {
+            self.builder.patch_jump(aj, loop_exit);
+        }
 
         if let Some(breaks) = self.break_patches.pop() {
             for bp in breaks {

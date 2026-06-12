@@ -3658,19 +3658,15 @@ pub fn bin_typeset(
     }
     // c:2708-2715 — -n / +n conflict resolution.
     if OPT_MINUS(&ops, b'n') {
-        // c:Src/builtin.c — zsh -fc rejects `typeset -n` as
-        // "bad option: -n" because PM_NAMEREF support requires
-        // a specific build flag / option mode that the default
-        // `-fc` non-interactive shell doesn't enable. The Rust
-        // port had partial nameref support that set PM_NAMEREF
-        // without the dereference machinery, so `typeset -n REF=
-        // TARGET; echo $REF` printed "TARGET" instead of erroring.
-        // Reject -n for typeset entirely to match zsh -fc; use
-        // zwarnnam (not zerrnam) so this is a per-command warning
-        // that doesn't set errflag — zsh's script loop continues
-        // past bad-option diagnostics in non-interactive mode.
-        zwarnnam(name, "bad option: -n");
-        return 1;
+        // c:2709-2711 — only readonly/upper/hideval combine with -n;
+        // anything else is a (silent) status-1 rejection (the zwarnnam
+        // here is commented out in C — the per-bit loop above already
+        // warned).
+        if ((on | off) & !(PM_READONLY | PM_UPPER | PM_HIDEVAL)) != 0 {
+            // c:2710
+            return 1; // c:2711
+        }
+        on |= PM_NAMEREF; // c:2712
     } else if OPT_PLUS(&ops, b'n') {
         // c:2714
         off |= PM_NAMEREF; // c:2715
@@ -3814,7 +3810,12 @@ pub fn bin_typeset(
                 .iter()
                 .filter(|(k, pm)| {
                     let f = pm.node.flags as u32;
-                    if (f & PM_UNSET) != 0 {
+                    // c:2793 — scanhashtable passes PM_UNSET entries
+                    // through; printparamnode (c:6133-6144) prints
+                    // PM_DEFAULTED (declared-but-unset) ones name-only
+                    // and drops the rest. Keep DEFAULTED here so
+                    // `typeset -n` lists placeholder refs by name.
+                    if (f & PM_UNSET) != 0 && (f & PM_DEFAULTED) != PM_DEFAULTED {
                         return false;
                     }
                     // Unloaded-module names print as autoload stubs
@@ -4237,6 +4238,11 @@ pub fn bin_typeset(
     if OPT_ISSET(&ops, b'm') && !argv.is_empty() {
         // c:3043-3055 — printflags for the +m direct-scan path.
         if !OPT_ISSET(&ops, b'p') {
+            // c:3044-3050 — mass-changing types is fatal for namerefs.
+            if (on & PM_NAMEREF) != 0 && OPT_MINUS(&ops, b'm') {
+                zerrnam(name, "-m not allowed with -n"); // c:3048
+                return 1; // c:3049
+            }
             if (on | roff) == 0 {
                 printflags |= PRINT_TYPE; // c:3052
             }
@@ -4480,6 +4486,103 @@ pub fn bin_typeset(
             }
             continue;
         }
+
+        // c:3117-3150 — `typeset -n NAME[=refname]` arm.
+        if (on as u32 & PM_NAMEREF) != 0 {
+            if crate::vm_helper::typeset_nameref_arg(name, arg, arg_name, on as u32, off as u32, &ops) != 0 {
+                returnval = 1; // c:3153-3156
+            }
+            continue;
+        }
+
+        // c:2032-2050 — existing pm is a nameref and ±n was not
+        // requested: resolve the chain and operate on the target.
+        let mut nameref_rewrite: Option<String> = None;
+        if (off as u32 & PM_NAMEREF) == 0
+            && pname_in_tab
+            && crate::vm_helper::is_nameref(arg_name)
+        {
+            let cur_ll = locallevel.load(Relaxed) as i32;
+            let (pm_level, pm_refname) = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg_name).map(|p| (p.level, p.u_str.clone())))
+                .unwrap_or((0, None));
+            if pm_level == cur_ll || (on as u32 & PM_LOCAL) == 0 {
+                // c:2033
+                let type_change =
+                    (on as u32 & !(PM_NAMEREF | PM_LOCAL | PM_READONLY)) != 0; // c:2038
+                use crate::vm_helper::nameref_resolution;
+                match crate::vm_helper::resolve_nameref_name(arg_name, None) {
+                    nameref_resolution::SelfRef
+                    | nameref_resolution::OutOfScope => {
+                        returnval = 1;
+                        continue;
+                    }
+                    nameref_resolution::Placeholder(last) => {
+                        // c:2036-2048 — unresolved ref + type change.
+                        if type_change {
+                            zwarnnam(
+                                name, // c:2046
+                                &format!(
+                                    "{}: can't change type of a named reference",
+                                    last
+                                ),
+                            );
+                            returnval = 1;
+                            continue; // c:2048 return NULL
+                        }
+                        // plain `typeset ref=value` on a placeholder
+                        // falls through — the scalar-assign arm routes
+                        // through assignsparam which writes the refname.
+                    }
+                    nameref_resolution::Target {
+                        name: t,
+                        subscript,
+                        ..
+                    } => {
+                        if subscript.is_some() && type_change {
+                            // c:2041-2044 — pm->width set: subscripted ref.
+                            zwarnnam(
+                                name,
+                                &format!(
+                                    "{}: can't change type via subscript reference",
+                                    pm_refname.as_deref().unwrap_or(arg_name)
+                                ),
+                            );
+                            returnval = 1;
+                            continue;
+                        }
+                        // c:2034-2035 — pname = pm->node.nam (resolved).
+                        let tail = arg.find('=').map(|i| &arg[i..]).unwrap_or("");
+                        let mut new_arg = t.clone();
+                        if let Some(sub) = &subscript {
+                            new_arg.push('[');
+                            new_arg.push_str(sub);
+                            new_arg.push(']');
+                        }
+                        new_arg.push_str(tail);
+                        nameref_rewrite = Some(new_arg);
+                    }
+                    nameref_resolution::NotRef => {}
+                }
+            }
+        }
+        let arg: &String = nameref_rewrite.as_ref().unwrap_or(arg);
+        let arg_name: &str = match arg.find('=') {
+            Some(i) => &arg[..i],
+            None => arg.as_str(),
+        };
+        // Recompute the existing-pm snapshots for the rewritten name.
+        let (pname_in_tab, usepm_existing) = if nameref_rewrite.is_some() {
+            let tab = paramtab().read().unwrap();
+            match tab.get(arg_name.split('[').next().unwrap_or(arg_name)) {
+                Some(pm) => (true, (pm.node.flags as u32 & PM_UNSET) == 0),
+                None => (false, false),
+            }
+        } else {
+            (pname_in_tab, usepm_existing)
+        };
 
         // c:2930 — `else if (pm)` reuse decision for the bin_typeset
         // literal-name loop: `if ((!(pm->node.flags & PM_UNSET) ||
@@ -5084,6 +5187,24 @@ pub fn bin_typeset(
                         }
                     }
                 }
+                // c:2289 — `pm->node.flags = (pm->node.flags | (on &
+                // ~PM_READONLY)) & ~(off | PM_UNSET);` — `+n` / `+r`
+                // WITH a value clear the bits BEFORE the assignment
+                // runs (`typeset +rn ref=RW`: type change first, so
+                // the = writes the now-plain scalar, not through the
+                // old refname).
+                let off_pre = (off as u32 & (PM_NAMEREF | PM_READONLY)) as i32;
+                if off_pre != 0 {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(n) {
+                            pm.node.flags &= !off_pre;
+                            if (off as u32 & PM_NAMEREF) != 0 {
+                                pm.width = 0;
+                                pm.base = 0;
+                            }
+                        }
+                    }
+                }
                 setsparam(n, &folded); // c:params.c:3350
                 // c:2326-2328 + c:2336-2337 (typeset_single) —
                 // `if (asg->value.scalar && !(pm = assignsparam(
@@ -5303,7 +5424,21 @@ pub fn bin_typeset(
             // c:2374 — `s = ztrdup(getsparam(pname));`. Capture the
             // pre-conversion scalar value so the re-assignment after
             // type flip preserves it through the new setfn.
-            let saved_val = getsparam(arg);
+            // `typeset +n ref`: the stored REFNAME (u_str raw) becomes
+            // the scalar value — getsparam would deref through the
+            // chain and return the target's value instead (c:2374 via
+            // the +n type-conversion arm; K01 "remove nameref
+            // attribute" expects `typeset ptr=var`).
+            let saved_val = if (off as u32 & PM_NAMEREF) != 0
+                && crate::vm_helper::is_nameref(arg)
+            {
+                paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(arg.as_str()).and_then(|p| p.u_str.clone()))
+            } else {
+                getsparam(arg)
+            };
             // c:Src/builtin.c:3072 — `if (!getsparam(pname))
             //     setsparam(pname, "");`. C zsh's getsparam returns the
             // join-of-values for PM_HASHED and PM_ARRAY so this gate
@@ -5360,8 +5495,14 @@ pub fn bin_typeset(
                 as i32;
             if pre_assign_to_clear != 0 {
                 if let Ok(mut tab) = paramtab().write() {
-                    if let Some(pm) = tab.get_mut(arg) {
+                    if let Some(pm) = tab.get_mut(arg.as_str()) {
                         pm.node.flags &= !pre_assign_to_clear;
+                        // `+n` — drop the nameref scope/subscript info
+                        // along with the flag (c:2374-2378 conversion).
+                        if (off as u32 & PM_NAMEREF) != 0 {
+                            pm.width = 0;
+                            pm.base = 0;
+                        }
                     }
                 }
                 // Restore the captured scalar so the cleared-type
@@ -6898,6 +7039,133 @@ pub fn bin_unset(
                 }
             }
             None => {
+                // c:3939-3951 — nameref handling. Without -n the ref
+                // resolves and the TARGET is unset; refs bound to an
+                // outer scope are just marked unset (kept in table,
+                // PM_DECLARED). With -n the ref itself is removed.
+                let mut nm: &str = nm;
+                let mut resolved_target: Option<String> = None; // non-ref target to unset
+                let mut ref_removal: Option<String> = None; // ref entry to remove
+                let mut handled = false;
+                if crate::vm_helper::is_nameref(nm) {
+                    if OPT_ISSET(ops, b'n') {
+                        ref_removal = Some(nm.to_string()); // unset -n: the ref itself
+                    } else {
+                        use crate::vm_helper::nameref_resolution;
+                        match crate::vm_helper::resolve_nameref_name(nm, None) {
+                            // c:3942-3943 — `if (!(pm = resolve_nameref(pm))) continue;`
+                            nameref_resolution::SelfRef
+                            | nameref_resolution::OutOfScope => continue,
+                            nameref_resolution::Placeholder(last) => {
+                                // chain ends at a ref → that ref is the
+                                // unset object (resolve_nameref returns it).
+                                ref_removal = Some(last);
+                            }
+                            nameref_resolution::Target {
+                                name: t,
+                                subscript,
+                                pm,
+                                level,
+                            } => {
+                                if subscript.is_some() {
+                                    // c:3897 — subscripted ref: resolve_nameref
+                                    // early-exits (pm->width); the REF itself
+                                    // is the unset object.
+                                    ref_removal = Some(nm.to_string());
+                                } else if pm.is_none() {
+                                    // dangling — nothing to unset (c:3942).
+                                    continue;
+                                } else {
+                                    let cur_ll = locallevel.load(Relaxed) as i32;
+                                    let ro = pm
+                                        .as_ref()
+                                        .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
+                                        .unwrap_or(false);
+                                    if level < cur_ll && !ro {
+                                        // c:3944-3949 — mark unset, keep in
+                                        // table (stdunsetfn + PM_DECLARED).
+                                        if let Ok(mut tab) = paramtab().write() {
+                                            if let Some(p) = tab.get_mut(&t) {
+                                                p.node.flags |= (PM_UNSET | PM_DECLARED) as i32;
+                                                p.u_str = None;
+                                                p.u_arr = None;
+                                                p.u_val = 0;
+                                            }
+                                        }
+                                        let _ = crate::ported::params::paramtab_hashed_storage()
+                                            .lock()
+                                            .ok()
+                                            .as_deref_mut()
+                                            .map(|m| m.remove(&t));
+                                        handled = true;
+                                    } else {
+                                        resolved_target = Some(t);
+                                    }
+                                }
+                            }
+                            nameref_resolution::NotRef => {}
+                        }
+                    }
+                    if handled {
+                        continue;
+                    }
+                    if let Some(refnam) = ref_removal {
+                        // unsetparam() deliberately skips namerefs, so
+                        // do the table surgery here with the readonly
+                        // guard (c:3850 via unsetparam_pm).
+                        let ro = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| {
+                                t.get(&refnam)
+                                    .map(|p| (p.node.flags as u32 & PM_READONLY) != 0)
+                            })
+                            .unwrap_or(false);
+                        if ro {
+                            zerr(&format!("read-only variable: {}", refnam)); // c:3850
+                            returnval = 1;
+                            continue;
+                        }
+                        // c:3911-3913 — a LOCAL ref is kept in the
+                        // table marked PM_UNSET (scope-end removes it);
+                        // only globals/level-0 refs drop out entirely.
+                        let cur_ll = locallevel.load(Relaxed) as i32;
+                        let keep_local = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| {
+                                t.get(&refnam)
+                                    .map(|p| p.level > 0 && cur_ll >= p.level)
+                            })
+                            .unwrap_or(false);
+                        if keep_local {
+                            if let Ok(mut tab) = paramtab().write() {
+                                if let Some(p) = tab.get_mut(&refnam) {
+                                    // c:3858 + c:3870 stdunsetfn
+                                    p.node.flags &= !(PM_DECLARED as i32);
+                                    p.node.flags |= PM_UNSET as i32;
+                                    p.u_str = None;
+                                    p.base = 0;
+                                    p.width = 0;
+                                }
+                            }
+                        } else if let Some(mut pm) =
+                            paramtab().write().ok().and_then(|mut t| t.remove(&refnam))
+                        {
+                            if let Some(prev) = pm.old.take() {
+                                if let Ok(mut tab) = paramtab().write() {
+                                    tab.insert(refnam.clone(), prev);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+                let target_buf;
+                if let Some(t) = resolved_target {
+                    target_buf = t;
+                    nm = &target_buf;
+                }
                 // c:3900-3905 — whole-param unset.
                 // Route through `unsetparam` (params.rs) so the
                 // canonical readonly-guard + pm.old uncover restore

@@ -4413,6 +4413,12 @@ pub fn getsparam(name: &str) -> Option<String> {
     if let Some(v) = lookup_special_var(name) {
         return Some(v);
     }
+    // 1b. c:Src/params.c:570-575 — getparamnode resolves PM_NAMEREF
+    //     chains before the value read (`pm = resolve_nameref(pm)`).
+    //     Redirect the lookup to the resolved target.
+    if let Some(res) = crate::vm_helper::nameref_read_redirect(name) {
+        return res;
+    }
     // 2. Paramtab read — `(Value)gethashnode2(paramtab, name)`.
     //    Walk the global paramtab for the named param, returning
     //    `pm->u.str` for PM_SCALAR/PM_NAMEREF or `sepjoin(pm->u.arr)`
@@ -4619,6 +4625,11 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
         // c:3107
         return None;
     }
+    // c:Src/params.c:570-575 — getvalue→fetchvalue→getparamnode
+    // resolves PM_NAMEREF before the type check.
+    if let Some(res) = crate::vm_helper::nameref_aread_redirect(name) {
+        return res;
+    }
     // c:3107-3109 — `getvalue(&vbuf, &s, 0)` resolves the name to a
     // paramtab entry. Then PM_TYPE check + `pm->u.arr` return.
     if let Ok(tab) = paramtab().read() {
@@ -4678,6 +4689,9 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
         // c:3122
         return None;
     }
+    // c:Src/params.c:570-575 — nameref deref before the type check.
+    let resolved = crate::vm_helper::nameref_final_name(name);
+    let name: &str = &resolved;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
             // c:Src/Modules/param_private.c:678 — getnode hook; same
@@ -4918,6 +4932,71 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             Ordering::Relaxed,
         );
         return None; // c:3207
+    }
+    // c:3233/3252 — `getvalue(&vbuf, &s, 1)` routes through
+    // fetchvalue which resolves PM_NAMEREF chains (c:2247-2270).
+    // Mirror by redirecting the assignment to the resolved target.
+    {
+        let base = s.split('[').next().unwrap_or(s);
+        if crate::vm_helper::is_nameref(base) {
+            match crate::vm_helper::resolve_nameref_name(base, None) {
+                crate::vm_helper::nameref_resolution::SelfRef => {
+                    // zerr emitted inside the walk (c:6341-6343).
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    return None;
+                }
+                crate::vm_helper::nameref_resolution::OutOfScope => {
+                    // c:1108-1118 — createparam refuses the existing
+                    // ref; assignment fails (status 1, no errflag —
+                    // c:3255 is commented out in the C source).
+                    return None;
+                }
+                crate::vm_helper::nameref_resolution::Placeholder(last) => {
+                    // Chain ends at a placeholder/unset ref: the value
+                    // becomes its new refname (assignstrvalue
+                    // PM_NAMEREF arm, c:2712-2717 + c:3258).
+                    return crate::vm_helper::nameref_assign_refname(&last, val);
+                }
+                crate::vm_helper::nameref_resolution::Target {
+                    name: t,
+                    subscript: rsub,
+                    pm: rpm,
+                    level,
+                } => {
+                    // Rebuild the target expression: ref subscript
+                    // first (REFSLICE, c:2264-2268), then any caller
+                    // subscript.
+                    let user_sub = s.find('[').map(|i| &s[i..]);
+                    // Hidden (old-chain) binding — the upscope walk
+                    // (c:6455) resolved past the visible binding;
+                    // write through the chain node directly.
+                    if rsub.is_none() && user_sub.is_none() && rpm.is_some() {
+                        let visible_level = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|tb| tb.get(&t).map(|p| p.level));
+                        if visible_level != Some(level) {
+                            return crate::vm_helper::nameref_hidden_scalar_assign(
+                                &t, level, val,
+                            );
+                        }
+                    }
+                    let mut new_s = t.clone();
+                    if let Some(rs) = &rsub {
+                        new_s.push('[');
+                        new_s.push_str(rs);
+                        new_s.push(']');
+                    }
+                    if let Some(us) = user_sub {
+                        new_s.push_str(us);
+                    }
+                    if new_s != s {
+                        return assignsparam(&new_s, val, flags);
+                    }
+                }
+                crate::vm_helper::nameref_resolution::NotRef => {}
+            }
+        }
     }
     // c:Src/params.c randomsetfn / secondssetfn — re-assigning a
     // regenerator-style special clears the PM_UNSET flag so the
@@ -5963,6 +6042,62 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
+    // c:3392 — `fetchvalue(&vbuf, &s, 1, SCANPM_ASSIGNING)` resolves
+    // PM_NAMEREF chains; c:3395-3398 rejects an unresolvable ref.
+    {
+        let base = name.split('[').next().unwrap_or(name);
+        if crate::vm_helper::is_nameref(base) {
+            match crate::vm_helper::resolve_nameref_name(base, None) {
+                crate::vm_helper::nameref_resolution::SelfRef => {
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    return None;
+                }
+                crate::vm_helper::nameref_resolution::OutOfScope => {
+                    // see assignsparam — silent failure, status 1.
+                    return None;
+                }
+                crate::vm_helper::nameref_resolution::Placeholder(_) => {
+                    // c:3396 — message uses the ORIGINAL assigned name
+                    // (`t = s` saved at c:3361).
+                    zwarn(&format!("{}: can't change type of a named reference", base));
+                    return None;
+                }
+                crate::vm_helper::nameref_resolution::Target {
+                    name: t,
+                    subscript: rsub,
+                    pm: rpm,
+                    level,
+                } => {
+                    let user_sub = name.find('[').map(|i| &name[i..]);
+                    // Hidden (old-chain) binding — upscope write.
+                    if rsub.is_none() && user_sub.is_none() && rpm.is_some() {
+                        let visible_level = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|tb| tb.get(&t).map(|p| p.level));
+                        if visible_level != Some(level) {
+                            return crate::vm_helper::nameref_hidden_array_assign(
+                                &t, level, val,
+                            );
+                        }
+                    }
+                    let mut new_s = t.clone();
+                    if let Some(rs) = &rsub {
+                        new_s.push('[');
+                        new_s.push_str(rs);
+                        new_s.push(']');
+                    }
+                    if let Some(us) = user_sub {
+                        new_s.push_str(us);
+                    }
+                    if new_s != name {
+                        return assignaparam(&new_s, val, flags);
+                    }
+                }
+                crate::vm_helper::nameref_resolution::NotRef => {}
+            }
+        }
+    }
 
     // c:3375 — `if ((ss = strchr(s, '['))) { ... slice path ... }`
     //          Extract the base name when there's a subscript and
@@ -6112,6 +6247,10 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     pm.u_arr = Some(val_final.clone());
     pm.u_str = None;
     pm.u_hash = None;
+    // c:2712 (setarrvalue head) — `v->pm->node.flags &= ~PM_UNSET;`
+    // a declared-but-unset (TYPESET_TO_UNSET) array becomes set on
+    // its first assignment.
+    pm.node.flags &= !((PM_UNSET | PM_DECLARED) as i32);
     let ename_for_envsync: Option<String> = if setfn_ptr.is_some() {
         pm.ename.clone()
     } else {
@@ -6173,6 +6312,33 @@ pub fn sethparam(name: &str, val: Vec<String>) -> Option<Param> {
     if !isident(name) {
         zerr(&format!("not an identifier: {}", name));
         return None;
+    }
+    // c:3630 — `fetchvalue(&vbuf, &s, 1, SCANPM_ASSIGNING)` resolves
+    // PM_NAMEREF chains (same shape as assignaparam c:3392-3398).
+    if crate::vm_helper::is_nameref(name) {
+        match crate::vm_helper::resolve_nameref_name(name, None) {
+            crate::vm_helper::nameref_resolution::SelfRef => {
+                errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                return None;
+            }
+            crate::vm_helper::nameref_resolution::OutOfScope => {
+                return None;
+            }
+            crate::vm_helper::nameref_resolution::Placeholder(_) => {
+                zwarn(&format!("{}: can't change type of a named reference", name));
+                return None;
+            }
+            crate::vm_helper::nameref_resolution::Target {
+                name: t,
+                subscript: None,
+                ..
+            } => {
+                if t != name {
+                    return sethparam(&t, val);
+                }
+            }
+            _ => {}
+        }
     }
     // c:3617-3621 — `if (strchr(s, '[')) { zerr; return NULL }`.
     if name.contains('[') {
@@ -6697,7 +6863,10 @@ pub fn unsetparam(name: &str) -> i32 {
                 .write()
                 .unwrap()
                 .insert(name.to_string(), pm_owned);
-        } else if pm_owned.old.is_some() {
+        } else if pm_owned.old.is_some()
+            || (pm_owned.level > 0
+                && locallevel.load(Ordering::Relaxed) as i32 >= pm_owned.level)
+        {
             // c:Src/params.c:3892-3925 — when the unset'd pm is a
             // local that shadowed an outer binding (chained via
             // pm.old by `addparam` at c:1137), the local pm STAYS
@@ -6710,6 +6879,12 @@ pub fn unsetparam(name: &str) -> i32 {
             //     zsh hides the outer until scope end), or
             //   - pm.old would be dropped (wrong: outer never
             //     comes back).
+            // c:3911-3913 — `if ((pm->level && locallevel >= pm->level)
+            // ...) return 0;` — locals are kept in the table marked
+            // PM_UNSET even WITHOUT an outer binding ("foo() { local
+            // bar; unset bar; } makes the global bar available? The
+            // following makes the answer no"), and `typeset -p bar`
+            // still finds the node (prints nothing, status 0).
             paramtab()
                 .write()
                 .unwrap()
@@ -10350,13 +10525,15 @@ pub fn resolve_nameref(
 
 /// Port of `resolve_nameref_rec(Param pm, const Param stop, int keep_lastref)` from `Src/params.c:6332`. C
 /// recursive helper for `resolve_nameref()`. Walks the chain of
-/// `${(P)var}` indirections via `gethashnode2(realparamtab, refname)`
+/// nameref indirections via `gethashnode2(realparamtab, refname)`
 /// + `loadparamnode(paramtab, upscope(pm, ref), refname)`,
 /// checking PM_TAGGED for cycle detection, and returns the
 /// final non-nameref Param. Returns the input `pm` unchanged
 /// for the early-exit path (no NAMEREF / UNSET / has subscript /
-/// empty refname). Full chain walk requires `gethashnode2` on
-/// `realparamtab` — pending the HashTable vtable.
+/// empty refname). The chain walk delegates to
+/// `resolve_nameref_name` which operates on the live paramtab by
+/// name (the Rust table hands out clones, so the by-name walk is
+/// the canonical chain follower).
 #[allow(unused_variables)]
 pub fn resolve_nameref_rec(
     pm: Option<Param>,
@@ -10365,24 +10542,49 @@ pub fn resolve_nameref_rec(
 ) -> Option<Param> {
     let pm_ref = pm.as_deref()?;
     let f = pm_ref.node.flags as u32;
+    // c:6336-6339 — early exits return pm unchanged.
     if (f & PM_NAMEREF) == 0 || (f & PM_UNSET) != 0 || pm_ref.width != 0 {
         return pm;
     }
     let refname = pm_ref.u_str.as_deref().unwrap_or("");
     if refname.is_empty() {
-        return pm;
+        if keep_lastref != 0 {
+            return pm; // c:6353-6354
+        }
+        return pm; // empty refname is also an early-exit shape (c:6339)
     }
     if (f & PM_TAGGED) != 0 {
-        // c: `zerr("%s: invalid self reference", pm->node.nam)`.
-        let nam = pm.as_ref().map(|p| p.node.nam.clone()).unwrap_or_default();
+        // c:6340-6343 — `zerr("%s: invalid self reference", pm->node.nam)`.
+        let nam = pm_ref.node.nam.clone();
         zerr(&format!("{}: invalid self reference", nam));
         return None;
     }
-    // Real walk needs realparamtab.gethashnode2(refname). Until
-    // that lands, return the input — this matches the no-target
-    // behaviour the C source falls back to when keep_lastref is 0
-    // and the lookup fails.
-    pm
+    let stop_key = stop.map(|s| (s.node.nam.clone(), s.level));
+    match crate::vm_helper::resolve_nameref_name(
+        &pm_ref.node.nam,
+        stop_key.as_ref().map(|(n, l)| (n.as_str(), *l)),
+    ) {
+        crate::vm_helper::nameref_resolution::Target {
+            pm: Some(target), ..
+        } => Some(target),
+        crate::vm_helper::nameref_resolution::Target { pm: None, .. } => {
+            // c:6347 miss + keep_lastref (c:6353-6354).
+            if keep_lastref != 0 {
+                pm
+            } else {
+                None
+            }
+        }
+        crate::vm_helper::nameref_resolution::Placeholder(last) => {
+            // Chain ended on an empty-refname ref: C returns that ref
+            // (the early-exit at c:6336-6339 of the recursive call).
+            let tab = paramtab().read().ok()?;
+            tab.get(&last).cloned().or(pm)
+        }
+        crate::vm_helper::nameref_resolution::SelfRef => None, // c:6343
+        crate::vm_helper::nameref_resolution::OutOfScope => None, // c:6347-6349
+        crate::vm_helper::nameref_resolution::NotRef => pm,
+    }
 }
 
 /// ```c
@@ -10404,9 +10606,12 @@ pub fn resolve_nameref_rec(
 /// Port of `setloopvar(char *name, char *value)` from `Src/params.c:6362`.
 pub fn setloopvar(name: &str, value: &str) {
     // c:6367 — `Param pm = (Param) gethashnode2(realparamtab, name);`
+    // realparamtab and paramtab are the same backing store in zshrs
+    // (the alias-flip during assoc iteration isn't modelled); the
+    // operative table is `paramtab()`.
     // Scope the write lock so we drop it before calling setsparam below.
     let nameref_branch = {
-        let mut tab = realparamtab().write().unwrap();
+        let mut tab = paramtab().write().unwrap();
         if let Some(pm) = tab.get_mut(name) {
             // c:6369 — `if (pm && (pm->node.flags & PM_NAMEREF))`
             if (pm.node.flags as u32 & PM_NAMEREF) != 0 {
@@ -10439,13 +10644,9 @@ pub fn setloopvar(name: &str, value: &str) {
         }
     };
     if nameref_branch {
-        // c:6379 — `setscope(pm);` — re-borrow under a fresh write
-        // lock since we dropped the earlier one before crossing the
-        // fn boundary.
-        let mut tab = realparamtab().write().unwrap();
-        if let Some(pm) = tab.get_mut(name) {
-            setscope(pm);
-        }
+        // c:6379 — `setscope(pm);` — run the full-table variant with
+        // no lock held (it manages its own short-lived locks).
+        crate::vm_helper::setscope_by_name(name);
     } else {
         // c:6381 — `setsparam(name, ztrdup(value));`
         setsparam(name, value);
@@ -10458,12 +10659,12 @@ pub fn setloopvar(name: &str, value: &str) {
 /// `loadparamnode` (skipping self) → `setscope_base(pm,
 /// basepm->level)`; if pm->base > pm->level emits the KSH global
 /// reference error or WARNNESTEDVAR diagnostic; finally walks the
-/// `resolve_nameref_rec` chain to detect self-references with
-/// queue_signals/restore_queue_signals bracketing. Non-nameref
-/// params: no-op. The base lookup and resolve_nameref_rec helpers
-/// are stubbed elsewhere; this port wires the structural path
-/// against existing helpers and falls through cleanly when the
-/// nameref chain backend isn't available.
+/// `resolve_nameref_rec` chain to detect self-references.
+/// In-place variant: operates only on the passed `&mut param`
+/// (width computation + literal self-name check). Callers that
+/// hold no paramtab lock should use `setscope_by_name` which runs
+/// the full base-scope + chain self-ref detection against the
+/// live table.
 /// Port of `setscope(Param pm)` from `Src/params.c:6382`.
 pub fn setscope(pm: &mut param) {
     queue_signals();
@@ -10471,29 +10672,9 @@ pub fn setscope(pm: &mut param) {
         // Refname is stored in pm.u_str for nameref-typed params.
         let refname = pm.u_str.clone();
         if let Some(rn) = refname {
-            // Compute pm->width by finding the first `[`.
-            let head: &str = match rn.find('[') {
-                Some(i) => {
-                    pm.width = i as i32;
-                    &rn[..i]
-                }
-                None => rn.as_str(),
-            };
-            // Self-reference check (basepm == pm) — without a working
-            // hashtable lookup we can only detect literal self-name.
-            if !head.is_empty() && head == pm.node.nam {
-                // c: `zerr("%s: invalid self reference", refname);`
-                //    `unsetparam_pm(pm, 0, 1);`
-                // The previous Rust port left both as comment-only
-                // stubs. Emit the diagnostic so users see why a
-                // typeset -n self-loop fails.
-                zerr(&format!("{}: invalid self reference", rn));
-                pm.node.flags |= PM_UNSET as i32;
-            } else {
-                // basepm = (Param)gethashnode2(realparamtab, refname)
-                //   → loadparamnode(...) → setscope_base(pm, basepm->level)
-                // Resolved on demand once the paramtab vtable is wired;
-                // the call shape is preserved here.
+            // c:6391-6400 — compute pm->width by finding the first `[`.
+            if let Some(i) = rn.find('[') {
+                pm.width = i as i32;
             }
         }
     }
@@ -10712,7 +10893,7 @@ pub(crate) fn paramtab_hashed_storage() -> &'static Mutex<HashMap<String, IndexM
 /// pops on PM_HASHED restoration so the outer scope's bag comes
 /// back. Mirrors C's `copyparam` (Src/builtin.c:2382-2424) via
 /// parallel storage. Bug #415.
-static PARAMTAB_HASHED_SHADOW_STACK: OnceLock<Mutex<HashMap<String, Vec<Option<IndexMap<String, String>>>>>> =
+pub(crate) static PARAMTAB_HASHED_SHADOW_STACK: OnceLock<Mutex<HashMap<String, Vec<Option<IndexMap<String, String>>>>>> =
     OnceLock::new();
 
 /// Mirror the global `paramtab` (and the parallel hashed-storage
@@ -11873,9 +12054,14 @@ mod tests {
         opt_state_set("exec", false);
     }
 
-    /// `assignaparam` rejects type change of a PM_NAMEREF param
-    /// (c:3397-3400). The nameref's value can be reassigned in-place
-    /// but its TYPE can't flip to array.
+    /// `assignaparam` on a PM_NAMEREF param resolves the chain first
+    /// (fetchvalue at c:3392): a ref bound to a not-yet-defined name
+    /// REDIRECTS the array assignment, creating the TARGET as an
+    /// array (K01nameref.ztst "assign new array via nameref":
+    /// `typeset -n ptr=var; ptr=(val1 val2)` → `typeset -g -a var`).
+    /// The "can't change type of a named reference" rejection
+    /// (c:3395-3398) only fires for PLACEHOLDER refs (empty refname),
+    /// covered by the K01 test-setting-ref matrix.
     #[test]
     fn assignaparam_rejects_nameref_type_change() {
         let _g = crate::test_util::global_state_lock();
@@ -11911,13 +12097,30 @@ mod tests {
             .unwrap()
             .insert("aa_nr".to_string(), Box::new(pm));
 
+        unsetparam("target");
         let result = assignaparam("aa_nr", vec!["a".to_string(), "b".to_string()], 0);
-        assert!(result.is_none(), "nameref type change must return None");
+        assert!(
+            result.is_some(),
+            "assignment redirects to the ref's target (c:3392 fetchvalue resolve)"
+        );
 
-        // PM_NAMEREF flag should still be present (not stripped).
+        // PM_NAMEREF flag still present on the REF (not stripped).
         let pm = paramtab().read().unwrap().get("aa_nr").cloned().unwrap();
         assert_ne!(pm.node.flags as u32 & PM_NAMEREF, 0, "PM_NAMEREF preserved");
+        assert_eq!(
+            pm.u_str.as_deref(),
+            Some("target"),
+            "refname unchanged by assignment-through"
+        );
+        // The TARGET was created as an array with the value.
+        let t = paramtab().read().unwrap().get("target").cloned().unwrap();
+        assert_eq!(
+            t.u_arr.as_deref(),
+            Some(&["a".to_string(), "b".to_string()][..]),
+            "target holds the assigned array"
+        );
 
+        unsetparam("target");
         unsetparam("aa_nr");
         opt_state_set("exec", false);
     }
