@@ -3960,6 +3960,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         };
         if name == "@" || name == "*" {
+            // Quoting decides empty-word retention (c:Src/subst.c:
+            // 184-187): the COMPILE site knows it and emits
+            // BUILTIN_ARRAY_DROP_EMPTY after this read for the
+            // unquoted form only — in_dq_context is NOT a valid
+            // discriminator here (the quoted "$@" fast path emits
+            // GET_VAR directly without an EXPAND_TEXT wrapper).
             return with_executor(|exec| {
                 sync_status(exec);
                 Value::Array(exec.pparams().iter().map(Value::str).collect())
@@ -4062,6 +4068,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             None
         });
         if let Some((items, in_dq)) = arr_assoc_data {
+            // c:Src/subst.c:184-187 — prefork's `else if (!keep)
+            // uremnode(list, node)`: UNQUOTED expansion drops empty
+            // list nodes before they reach argv, so `a=(y '' x);
+            // print -- $a` passes TWO args in zsh (`y x`), while the
+            // quoted "${a[@]}" splat keeps the empty slot. The
+            // paramsubst splat path already does this (Bug #578
+            // retain); this GET_VAR fast path bypassed it and leaked
+            // empty argv slots (visible double-space, wrong arg
+            // counts in `for`/`print -l`).
+            let items: Vec<String> = if in_dq {
+                items
+            } else {
+                items.into_iter().filter(|s| !s.is_empty()).collect()
+            };
             if in_dq {
                 // c:Src/utils.c:3936-3945 sepjoin default-sep rule:
                 // set-but-empty IFS joins with "" (`IFS=""; echo
