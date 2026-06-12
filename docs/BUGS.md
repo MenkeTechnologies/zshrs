@@ -2530,6 +2530,41 @@ a1
 a2
 ```
 
+**Follow-up 2026-06-12** — four gaps in the original fix closed
+(all byte-verified against `/opt/homebrew/bin/zsh -fc`):
+
+1. **NO_MULTIOS semantics** — `unsetopt multios; print x > a > b`
+   now leaves `a` created-but-empty and writes only `b` (the C
+   `unset(MULTIOS)` replace arm at c:Src/exec.c:2418: every target
+   still opened/truncated, last dup2 wins). Input side reads only
+   the last source. Previously both arms tee'd/concatenated
+   regardless of the option.
+2. **`>&N` dup participation** — numeric `>&1`-style dups join the
+   multio for their fd (c:Src/exec.c:3895-3917 REDIR_MERGEOUT →
+   `movefd(dup(fd))` + addfd). Members resolve sequentially with
+   replace-on-first (c:2448-2450), so `print x >&1 > f` tees to the
+   ORIGINAL stdout + f, while `print x > f >&1` writes f twice.
+   Inside a pipeline the pipe seeds the multio (c:3722-3724):
+   `print x >&1 > f | cat` emits `x` down the pipe twice + f once
+   (previously this shape HUNG — nested splitter deadlock, also
+   fixed by closing all writer dups before joining any splitter in
+   `host_redirect_scope_end`).
+3. **Glob redirect targets** — `echo hi > *.txt` with two matches
+   writes both (c:Src/glob.c:2195-2203 xpandredir match loop →
+   Value::Array spliced into the multio); `wc -c < *.txt`
+   concatenates matches. Under NO_MULTIOS the target is never
+   globbed (c:Src/glob.c:2161-2167 PREFORK_SINGLE — creates the
+   literal `*.txt` file), routed via new EXPAND_TEXT mode 7 +
+   `BUILTIN_REDIR_GLOB_EXPAND`.
+4. **noclobber inside a multio** — `setopt noclobber; touch a;
+   print x > a > b` errors `file exists: a`, st=1, and `b` is
+   never created (C execerr aborts the remaining redirect list).
+
+`BUILTIN_MULTIOS_READ` stack layout changed to `[source, op]` pairs
+(argc = 2N+1) so `<&N` dup members and glob arrays ride the same
+shape as the write side. Pinned in `tests/redirection_parity.rs`
+`mod multios` (17 tests).
+
 **Original report:** below.
 
 ---

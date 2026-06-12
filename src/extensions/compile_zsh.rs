@@ -145,6 +145,18 @@ pub struct ZshCompiler {
     /// matching C zsh's `execlist` save/restore of `lineno`
     /// around each body execution (c:Src/exec.c::execlist:28,292).
     pub current_sublist_line: i64,
+    /// Depth tracker for "compiling a redirect target word".
+    /// c:Src/glob.c:2161 xpandredir — `prefork(&fake, isset(MULTIOS)
+    /// ? 0 : PREFORK_SINGLE, NULL)` then "Globbing is only done for
+    /// multios". When > 0, compile_word_str's glob-expansion emit
+    /// sites route through BUILTIN_REDIR_GLOB_EXPAND (which checks
+    /// `isset(MULTIOS)` at runtime and passes the word through
+    /// literally when the option is off) instead of the
+    /// unconditional BUILTIN_GLOB_EXPAND. Without this,
+    /// `unsetopt multios; echo hi > *.txt` globbed the target and
+    /// wrote to the matches instead of creating the literal file
+    /// `*.txt` (Bug #36 follow-up in docs/BUGS.md).
+    pub redir_word_depth: i32,
 }
 
 impl Default for ZshCompiler {
@@ -175,6 +187,20 @@ impl ZshCompiler {
             defined_functions: std::collections::HashSet::new(),
             is_function_body: false,
             current_sublist_line: 1,
+            redir_word_depth: 0,
+        }
+    }
+
+    /// Pick the glob-expansion builtin for the current word context.
+    /// Redirect-target words (redir_word_depth > 0) use the
+    /// MULTIOS-gated variant per c:Src/glob.c:2162-2167 xpandredir
+    /// ("Globbing is only done for multios."); everything else keeps
+    /// the unconditional argv glob.
+    fn glob_expand_builtin(&self) -> u16 {
+        if self.redir_word_depth > 0 {
+            crate::vm_helper::BUILTIN_REDIR_GLOB_EXPAND
+        } else {
+            crate::vm_helper::BUILTIN_GLOB_EXPAND
         }
     }
 
@@ -2084,10 +2110,47 @@ impl ZshCompiler {
                 || t == REDIR_APPNOW
         };
         let is_read_side = |t: i32| -> bool { t == REDIR_READ };
+        // c:Src/exec.c:3884-3917 REDIR_MERGEIN/REDIR_MERGEOUT — a
+        // numeric `>&N` / `<&N` dup runs `fil = movefd(dup(fd))` and
+        // feeds addfd, so it participates in the multio for its fd
+        // exactly like a file target (`print x >&1 > f` tees to the
+        // original stdout AND f). Non-numeric forms (`-` close, `p`
+        // coproc, `>& file` ERRWRITE conversion) keep the plain path.
+        let name_is_numeric_fd = |r: &crate::parse::ZshRedir| -> bool {
+            let n = crate::lex::untokenize(&r.name);
+            !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
+        };
+        let is_write_member = |r: &crate::parse::ZshRedir| -> bool {
+            r.varid.is_none()
+                && (is_write_side(r.rtype)
+                    || (r.rtype == REDIR_MERGEOUT && name_is_numeric_fd(r)))
+        };
+        let is_read_member = |r: &crate::parse::ZshRedir| -> bool {
+            r.varid.is_none()
+                && (is_read_side(r.rtype)
+                    || (r.rtype == REDIR_MERGEIN && name_is_numeric_fd(r)))
+        };
+        // c:Src/glob.c:2150-2207 xpandredir — under MULTIOS the
+        // target word is globbed; multiple matches duplicate the
+        // redirect per match ("Loop over matches, duplicating the
+        // redirection for each file found", c:2195-2203), all feeding
+        // one multio. A SINGLE `> *.txt` therefore still needs the
+        // multios builtin so the runtime can splice the match array
+        // (the plain Op::Redirect path stringifies an Array target
+        // into one space-joined filename).
+        let has_glob_tokens = |r: &crate::parse::ZshRedir| -> bool {
+            let s = r.name.as_str();
+            unquoted(s, '*')
+                || unquoted(s, '\u{87}') // Star (parse/tokens.rs:14)
+                || unquoted(s, '?')
+                || unquoted(s, '\u{97}') // Quest (parse/tokens.rs:30)
+                || unquoted(s, '[')
+                || unquoted(s, '\u{91}') // Inbrack (parse/tokens.rs:24)
+        };
         for r in redirs {
-            if is_write_side(r.rtype) && r.varid.is_none() {
+            if is_write_member(r) {
                 *writes_per_fd.entry(fd_of(r)).or_insert(0) += 1;
-            } else if is_read_side(r.rtype) && r.varid.is_none() {
+            } else if is_read_member(r) {
                 *reads_per_fd.entry(fd_of(r)).or_insert(0) += 1;
             }
         }
@@ -2109,7 +2172,7 @@ impl ZshCompiler {
             u8,
             Vec<(String, u8)>,
         > = std::collections::HashMap::new();
-        let mut pending_multios_read: std::collections::HashMap<u8, Vec<String>> =
+        let mut pending_multios_read: std::collections::HashMap<u8, Vec<(String, u8)>> =
             std::collections::HashMap::new();
         // We don't have direct access to op_byte without re-deriving
         // it, so do a small helper.
@@ -2120,16 +2183,35 @@ impl ZshCompiler {
                 Some(fusevm::op::redirect_op::CLOBBER)
             } else if r.rtype == REDIR_APP || r.rtype == REDIR_APPNOW {
                 Some(fusevm::op::redirect_op::APPEND)
+            } else if r.rtype == REDIR_MERGEOUT {
+                Some(fusevm::op::redirect_op::DUP_WRITE)
+            } else if r.rtype == REDIR_READ {
+                Some(fusevm::op::redirect_op::READ)
+            } else if r.rtype == REDIR_MERGEIN {
+                Some(fusevm::op::redirect_op::DUP_READ)
             } else {
                 None
             }
         };
         for redir in redirs {
             let fd = fd_of(redir);
-            let is_multios_read_candidate = is_read_side(redir.rtype)
-                && redir.varid.is_none()
-                && reads_per_fd.get(&fd).copied().unwrap_or(0) >= 2;
+            let read_total = reads_per_fd.get(&fd).copied().unwrap_or(0);
+            // Bag membership: ≥2 members on the fd, OR a single
+            // glob-bearing `< pattern` whose match array must splice
+            // (c:Src/glob.c:2195-2203).
+            let is_multios_read_candidate = is_read_member(redir)
+                && (read_total >= 2
+                    || (read_total == 1
+                        && is_read_side(redir.rtype)
+                        && has_glob_tokens(redir)));
             if is_multios_read_candidate {
+                let op_byte = match derive_op(redir) {
+                    Some(o) => o,
+                    None => {
+                        self.compile_redir(redir, false);
+                        continue;
+                    }
+                };
                 // Stash the RAW token-bearing redir.name so emit-time
                 // `compile_word_str` runs full word expansion (var +
                 // cmd-subst + arith) on the read source. Mirrors the
@@ -2138,20 +2220,26 @@ impl ZshCompiler {
                 pending_multios_read
                     .entry(fd)
                     .or_default()
-                    .push(redir.name.clone());
+                    .push((redir.name.clone(), op_byte));
                 let bag_now = pending_multios_read
                     .get(&fd)
                     .map(|v| v.len())
                     .unwrap_or(0);
-                let total = reads_per_fd.get(&fd).copied().unwrap_or(0);
+                let total = read_total;
                 if bag_now == total {
-                    if let Some(sources) = pending_multios_read.remove(&fd) {
-                        let n = sources.len();
-                        for source in &sources {
+                    if let Some(pairs) = pending_multios_read.remove(&fd) {
+                        let n = pairs.len();
+                        // Push (source, op_byte) pairs in compile order.
+                        // The op distinguishes file opens (READ) from
+                        // numeric dups (DUP_READ, `<&N`).
+                        for (source, op_byte) in &pairs {
+                            self.redir_word_depth += 1;
                             self.compile_word_str(source.as_str());
+                            self.redir_word_depth -= 1;
+                            self.builder.emit(Op::LoadInt(*op_byte as i64), 0);
                         }
                         self.builder.emit(Op::LoadInt(fd as i64), 0);
-                        let argc = (n + 1) as u8;
+                        let argc = (2 * n + 1) as u8;
                         self.builder.emit(
                             Op::CallBuiltin(
                                 crate::vm_helper::BUILTIN_MULTIOS_READ,
@@ -2164,9 +2252,12 @@ impl ZshCompiler {
                 }
                 continue;
             }
-            let is_multios_candidate = is_write_side(redir.rtype)
-                && redir.varid.is_none()
-                && writes_per_fd.get(&fd).copied().unwrap_or(0) >= 2;
+            let write_total = writes_per_fd.get(&fd).copied().unwrap_or(0);
+            let is_multios_candidate = is_write_member(redir)
+                && (write_total >= 2
+                    || (write_total == 1
+                        && is_write_side(redir.rtype)
+                        && has_glob_tokens(redir)));
             if !is_multios_candidate {
                 self.compile_redir(redir, false);
                 continue;
@@ -2191,13 +2282,15 @@ impl ZshCompiler {
             // every multios entry counted in pass 1), emit the
             // coalesced op.
             let bag_now = pending_multios.get(&fd).map(|v| v.len()).unwrap_or(0);
-            let total = writes_per_fd.get(&fd).copied().unwrap_or(0);
+            let total = write_total;
             if bag_now == total {
                 if let Some(pairs) = pending_multios.remove(&fd) {
                     let n = pairs.len();
                     // Push (target, op_byte) pairs in compile order.
                     for (target, op_byte) in &pairs {
+                        self.redir_word_depth += 1;
                         self.compile_word_str(target.as_str());
+                        self.redir_word_depth -= 1;
                         self.builder.emit(Op::LoadInt(*op_byte as i64), 0);
                     }
                     // Then push fd.
@@ -2365,7 +2458,12 @@ impl ZshCompiler {
             }
         };
 
+        // Redirect-target words gate their glob expansion on MULTIOS
+        // (c:Src/glob.c:2162-2167 xpandredir: "Globbing is only done
+        // for multios.") — see glob_expand_builtin().
+        self.redir_word_depth += 1;
         self.compile_word_str(&redir.name);
+        self.redir_word_depth -= 1;
         // `{varid}>file` named-fd allocation: instead of dup2'ing onto
         // a fixed fd, BUILTIN_OPEN_NAMED_FD opens the file fresh, dup's
         // to fd >= 10, and stores the fd number in $varid.
@@ -3825,7 +3923,7 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
                 if do_glob {
                     self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
+                        .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
                 }
                 return;
             }
@@ -3952,7 +4050,7 @@ impl ZshCompiler {
                     // `glob_path("foo*")`, hit NOMATCH, and failed.
                     if self.dq_context_depth == 0 {
                         self.builder
-                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
+                            .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
                     }
                     return;
                 }
@@ -5149,7 +5247,7 @@ impl ZshCompiler {
                     // builtin pops a Value::Str, runs expand_glob, and
                     // pushes Value::Array (or single-elem when no match).
                     self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_EXPAND, 0), 0);
+                        .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
                 }
                 return;
             }
@@ -5197,10 +5295,18 @@ impl ZshCompiler {
         // on to walk `:`-separated path components for `~`/`=`
         // re-expansion). Without this, `X=/usr/bin:~/bin` left the
         // `~/bin` literal because filesub was called with assign=0.
+        // Mode 7: "unquoted redirect-target word" — same as default
+        // mode 0 but the bridge's glob pass is gated on MULTIOS
+        // (c:Src/glob.c:2161-2167 xpandredir: PREFORK_SINGLE +
+        // "Globbing is only done for multios."). Without this,
+        // `unsetopt multios; echo hi > *.txt` globbed the target
+        // instead of creating the literal file `*.txt`.
         let mode = if base_mode == 1 && self.scalar_assign_depth > 0 {
             5
         } else if base_mode == 0 && self.scalar_assign_depth > 0 {
             6
+        } else if base_mode == 0 && self.redir_word_depth > 0 {
+            7
         } else {
             base_mode
         };

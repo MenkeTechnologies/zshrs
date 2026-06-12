@@ -3201,54 +3201,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Pop a scalar pattern, run expand_glob, push Value::Array. Used
     // by the segment-concat compile path for `$D/*`-style words.
     vm.register_builtin(BUILTIN_GLOB_EXPAND, |vm, _argc| {
-        // c:Src/glob.c:1872 — `zglob` runs per-word in the argv
-        // pipeline. When the upstream EXPAND_TEXT returned an array
-        // (e.g. `${a:e}` splat → ["txt","md"]), we must glob each
-        // element separately, not collapse to a sepjoin'd scalar.
-        // Without this, `print -l ${a:e}` saw the array stringified
-        // by `pop().to_str()` and emitted one joined arg.
-        let raw = vm.pop();
-        let patterns: Vec<String> = match raw {
-            Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
-            other => vec![other.to_str()],
-        };
         // c:Src/glob.c:1872 — honour `setopt noglob` / `noglob CMD`
         // precommand. When the option is on, the word stays literal
         // (zsh skips the glob expansion entirely). Without this, the
         // segment-fast-path BUILTIN_GLOB_EXPAND fired even after
         // `noglob` set the option, so `noglob echo *.xyz` saw the
         // NOMATCH error instead of the literal pass-through.
+        let raw = vm.pop();
         let noglob =
             opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
-        if noglob {
-            return if patterns.is_empty() {
-                Value::Array(Vec::new())
-            } else if patterns.len() == 1 {
-                Value::str(patterns.into_iter().next().unwrap())
-            } else {
-                Value::Array(patterns.into_iter().map(Value::str).collect())
-            };
-        }
-        let mut out: Vec<String> = Vec::with_capacity(patterns.len());
-        for pattern in &patterns {
-            let matches = with_executor(|exec| exec.expand_glob(pattern));
-            if matches.is_empty() {
-                // c:1872 nullglob — drop this word, don't emit a hole
-                continue;
-            }
-            for m in matches {
-                out.push(m);
-            }
-        }
-        if out.is_empty() {
-            return Value::Array(Vec::new());
-        }
-        if patterns.len() == 1 && out.len() == 1 && out[0] == patterns[0] {
-            // No real matches; expand_glob returned the literal. Pass
-            // back as scalar so downstream ops don't re-flatten.
-            return Value::str(out.into_iter().next().unwrap());
-        }
-        Value::Array(out.into_iter().map(Value::str).collect())
+        glob_expand_word_value(raw, noglob)
+    });
+    // Redirect-target variant of BUILTIN_GLOB_EXPAND. c:Src/glob.c:
+    // 2161-2167 xpandredir — `prefork(&fake, isset(MULTIOS) ? 0 :
+    // PREFORK_SINGLE, NULL)` then "Globbing is only done for
+    // multios.": a redirect target word is only globbed when the
+    // MULTIOS option is set. With it unset, `echo hi > *.txt`
+    // creates the literal file `*.txt`, and `wc -c < *.txt` errors
+    // "no such file or directory: *.txt". Bug #36 follow-up in
+    // docs/BUGS.md.
+    vm.register_builtin(BUILTIN_REDIR_GLOB_EXPAND, |vm, _argc| {
+        let raw = vm.pop();
+        let noglob =
+            opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
+        let multios = opt_state_get("multios").unwrap_or(true);
+        glob_expand_word_value(raw, noglob || !multios)
     });
 
     // `break`/`continue` from a sub-VM body. The compile path emits
@@ -5511,39 +5488,193 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // Pop fd first (top of stack).
         let fd = vm.pop().to_int() as i32;
-        // Then pop (op, target) pairs in reverse compile order.
+        // Then pop (op, target) pairs in reverse compile order. Keep
+        // targets as Values — a glob-bearing target arrives as a
+        // Value::Array of matches.
         let n_targets = ((argc - 1) / 2) as usize;
-        let mut pairs: Vec<(u8, String)> = Vec::with_capacity(n_targets);
+        let mut pairs: Vec<(u8, Value)> = Vec::with_capacity(n_targets);
         for _ in 0..n_targets {
             let op_byte = vm.pop().to_int() as u8;
-            let target = vm.pop().to_str();
+            let target = vm.pop();
             pairs.push((op_byte, target));
         }
         // Restore compile order (target_1 first).
         pairs.reverse();
 
-        // Open every target per its op_byte.
-        let mut target_fds: Vec<i32> = Vec::with_capacity(pairs.len());
-        for (op_byte, target) in &pairs {
-            let open_result = match *op_byte {
-                r::WRITE | r::CLOBBER => fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(target),
+        // c:Src/glob.c:2195-2203 xpandredir — "Loop over matches,
+        // duplicating the redirection for each file found": a glob
+        // target with N matches becomes N members of the same multio
+        // (`echo hi > *.txt` with two matches writes both files).
+        let mut entries: Vec<(u8, String)> = Vec::with_capacity(pairs.len());
+        for (op_byte, target) in pairs {
+            match target {
+                Value::Array(items) => {
+                    for item in items {
+                        entries.push((op_byte, item.to_str()));
+                    }
+                }
+                other => entries.push((op_byte, other.to_str())),
+            }
+        }
+        if entries.is_empty() {
+            return Value::Status(1);
+        }
+
+        // c:Src/exec.c:2418 — `else if (!mfds[fd1] || unset(MULTIOS))`:
+        // with MULTIOS unset every redirect takes the REPLACE path in
+        // script order — each target is still opened (created /
+        // truncated) and dup2'd over the fd, so the LAST one wins and
+        // earlier files end up empty (`unsetopt multios; print x > a
+        // > b` leaves `a` empty, `x` in `b`). host_apply_redirect is
+        // exactly one replace step, noclobber gate included.
+        let multios_on = opt_state_get("multios").unwrap_or(true);
+        if !multios_on {
+            with_executor(|exec| {
+                for (op_byte, target) in &entries {
+                    exec.host_apply_redirect(fd as u8, *op_byte, target);
+                    if exec.redirect_failed {
+                        // c:Src/exec.c execerr — abort the remaining
+                        // redirect list on failure.
+                        break;
+                    }
+                }
+            });
+            return Value::Status(0);
+        }
+
+        if entries.len() == 1 {
+            // Single member after splicing — a plain replace
+            // (c:2418 new-multio arm). Route through
+            // host_apply_redirect so the noclobber gate, the
+            // pipeline-output split partial, and error handling all
+            // apply exactly as for an un-bagged redirect.
+            let (op_byte, target) = &entries[0];
+            with_executor(|exec| {
+                exec.host_apply_redirect(fd as u8, *op_byte, target);
+            });
+            return Value::Status(0);
+        }
+
+        // c:Src/exec.c:3722-3724 — when this command's stdout IS the
+        // pipeline output, C seeds mfds[1] with the pipe BEFORE
+        // walking the redirect list, so the pipe is the multio's
+        // first member (`print x >&1 > f | cat` sends `x` down the
+        // pipe TWICE: once for the seed, once for the `>&1` dup).
+        let pipe_seed = fd == 1
+            && with_executor(|exec| {
+                exec.pipe_output_scope
+                    .is_some_and(|d| d + 1 == exec.redirect_scope_stack.len())
+            });
+
+        // Save current fd state for scope-end restoration — BEFORE
+        // the first member's replace dup2 below.
+        let saved = unsafe { libc::dup(fd) };
+        if saved >= 0 {
+            with_executor(|exec| {
+                if let Some(top) = exec.redirect_scope_stack.last_mut() {
+                    top.push((fd, saved));
+                } else {
+                    unsafe { libc::close(saved) };
+                }
+            });
+        }
+
+        // Accumulate member fds in redirect order. c:Src/exec.c:
+        // 2447-2480 addfd — the FIRST member REPLACES the fd
+        // (c:2448-2450 `mfds[fd1]->ct=1; mfds[fd1]->fds[0]=fd1;`), so
+        // a later numeric `>&N` self-dup resolves against the fd's
+        // value at that point in the sequence: `print x > f >&1`
+        // writes f TWICE; `print x >&1 > f` writes the ORIGINAL
+        // stdout + f.
+        let mut target_fds: Vec<i32> = Vec::with_capacity(entries.len() + 1);
+        if pipe_seed {
+            let p = unsafe { libc::dup(fd) };
+            if p >= 0 {
+                target_fds.push(p);
+            }
+        }
+        let noclobber = opt_state_get("noclobber").unwrap_or(false)
+            || !opt_state_get("clobber").unwrap_or(true);
+        for (i, (op_byte, target)) in entries.iter().enumerate() {
+            let open_result: std::io::Result<i32> = match *op_byte {
+                r::DUP_WRITE | r::DUP_READ => {
+                    // Numeric `>&N` — dup the LIVE fd N (after any
+                    // earlier member's replace).
+                    match target.trim_start_matches('&').parse::<i32>() {
+                        Ok(src) => {
+                            let d = unsafe { libc::dup(src) };
+                            if d >= 0 {
+                                Ok(d)
+                            } else {
+                                Err(std::io::Error::last_os_error())
+                            }
+                        }
+                        Err(_) => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+                    }
+                }
+                r::WRITE => {
+                    // c:Src/exec.c clobber_open — noclobber applies
+                    // to multio file targets too; failure aborts the
+                    // remaining redirect list (execerr), so `setopt
+                    // noclobber; touch a; print x > a > b` errors on
+                    // `a` and never creates `b`.
+                    let target_is_regular_file = std::fs::metadata(target)
+                        .map(|m| m.file_type().is_file())
+                        .unwrap_or(false);
+                    if noclobber && target_is_regular_file {
+                        eprintln!("{}:1: file exists: {}", shname(), target);
+                        for prev in &target_fds {
+                            unsafe {
+                                libc::close(*prev);
+                            }
+                        }
+                        with_executor(|exec| {
+                            exec.redirect_failed = true;
+                        });
+                        // Sink the upcoming command's output (mirrors
+                        // the single-redirect noclobber arm in
+                        // host_apply_redirect).
+                        if let Ok(file) =
+                            fs::OpenOptions::new().write(true).open("/dev/null")
+                        {
+                            let new_fd = file.into_raw_fd();
+                            unsafe {
+                                libc::dup2(new_fd, fd);
+                                libc::close(new_fd);
+                            }
+                        }
+                        return Value::Status(1);
+                    }
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(target)
+                        .map(|f| f.into_raw_fd())
+                }
                 r::APPEND => fs::OpenOptions::new()
                     .write(true)
                     .create(true)
                     .append(true)
-                    .open(target),
+                    .open(target)
+                    .map(|f| f.into_raw_fd()),
                 _ => fs::OpenOptions::new()
                     .write(true)
                     .create(true)
                     .truncate(true)
-                    .open(target),
+                    .open(target)
+                    .map(|f| f.into_raw_fd()),
             };
             match open_result {
-                Ok(file) => target_fds.push(file.into_raw_fd()),
+                Ok(tfd) => {
+                    if i == 0 && !pipe_seed {
+                        // c:2448-2450 — first member replaces the fd.
+                        unsafe {
+                            libc::dup2(tfd, fd);
+                        }
+                    }
+                    target_fds.push(tfd);
+                }
                 Err(e) => {
                     let msg = match e.kind() {
                         std::io::ErrorKind::PermissionDenied => "permission denied",
@@ -5564,18 +5695,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::Status(1);
                 }
             }
-        }
-
-        // Save current fd state for scope-end restoration.
-        let saved = unsafe { libc::dup(fd) };
-        if saved >= 0 {
-            with_executor(|exec| {
-                if let Some(top) = exec.redirect_scope_stack.last_mut() {
-                    top.push((fd, saved));
-                } else {
-                    unsafe { libc::close(saved) };
-                }
-            });
         }
 
         // Create the splitter pipe.
@@ -5662,37 +5781,120 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
     // c:Src/exec.c:2418 input-arm — MULTIOS read fan-in. Stack
-    // layout pushed by compile_zsh:
-    //   [source_1, source_2, …, source_N, fd]
-    // argc = N + 1. Opens every source, sets up a pipe + producer
-    // thread that reads each source in order and writes to the
-    // pipe write-end, then closes its write-end so the consumer
-    // gets EOF. dup2 the pipe read-end onto fd. Bug #36 input
-    // side in docs/BUGS.md.
+    // layout pushed by compile_zsh (mirrors the write side):
+    //   [source_1, op_1, source_2, op_2, …, source_N, op_N, fd]
+    // argc = 2N + 1; op distinguishes file opens (READ) from numeric
+    // `<&N` dups (DUP_READ); a glob source arrives as Value::Array
+    // and splices into one member per match (c:Src/glob.c:2195-2203).
+    // Opens every source, sets up a pipe + producer thread that
+    // reads each source in order and writes to the pipe write-end,
+    // then closes its write-end so the consumer gets EOF. dup2 the
+    // pipe read-end onto fd. Bug #36 input side in docs/BUGS.md.
     vm.register_builtin(BUILTIN_MULTIOS_READ, |vm, argc| {
-        if argc < 2 {
+        if argc < 3 || argc % 2 == 0 {
             return Value::Status(1);
         }
         let fd = vm.pop().to_int() as i32;
-        let n_sources = (argc - 1) as usize;
-        let mut sources: Vec<String> = Vec::with_capacity(n_sources);
+        let n_sources = ((argc - 1) / 2) as usize;
+        let mut pairs: Vec<(u8, Value)> = Vec::with_capacity(n_sources);
         for _ in 0..n_sources {
-            sources.push(vm.pop().to_str());
+            let op_byte = vm.pop().to_int() as u8;
+            let source = vm.pop();
+            pairs.push((op_byte, source));
         }
-        sources.reverse();
+        pairs.reverse();
 
-        // Open every source.
-        let mut source_fds: Vec<i32> = Vec::with_capacity(sources.len());
-        for path in &sources {
-            match fs::File::open(path) {
-                Ok(f) => source_fds.push(f.into_raw_fd()),
+        // Splice glob match arrays (c:Src/glob.c:2195-2203).
+        let mut entries: Vec<(u8, String)> = Vec::with_capacity(pairs.len());
+        for (op_byte, source) in pairs {
+            match source {
+                Value::Array(items) => {
+                    for item in items {
+                        entries.push((op_byte, item.to_str()));
+                    }
+                }
+                other => entries.push((op_byte, other.to_str())),
+            }
+        }
+        if entries.is_empty() {
+            return Value::Status(1);
+        }
+
+        // c:Src/exec.c:2418 — `unset(MULTIOS)`: sequential replace,
+        // last source wins (`unsetopt multios; cat < a < b` reads
+        // only b; a is still opened — and errors still surface).
+        let multios_on = opt_state_get("multios").unwrap_or(true);
+        if !multios_on {
+            with_executor(|exec| {
+                for (op_byte, source) in &entries {
+                    exec.host_apply_redirect(fd as u8, *op_byte, source);
+                    if exec.redirect_failed {
+                        break;
+                    }
+                }
+            });
+            return Value::Status(0);
+        }
+
+        if entries.len() == 1 {
+            // Single member after splicing — plain replace.
+            let (op_byte, source) = &entries[0];
+            with_executor(|exec| {
+                exec.host_apply_redirect(fd as u8, *op_byte, source);
+            });
+            return Value::Status(0);
+        }
+
+        // Save current fd state for scope-end restoration — BEFORE
+        // the first member's replace dup2 below.
+        let saved = unsafe { libc::dup(fd) };
+        if saved >= 0 {
+            with_executor(|exec| {
+                if let Some(top) = exec.redirect_scope_stack.last_mut() {
+                    top.push((fd, saved));
+                } else {
+                    unsafe { libc::close(saved) };
+                }
+            });
+        }
+
+        // Open every source in redirect order; numeric `<&N` dups
+        // resolve against the LIVE fd table. First member replaces
+        // the fd (c:2448-2450) so later self-dups see it.
+        let mut source_fds: Vec<i32> = Vec::with_capacity(entries.len());
+        for (i, (op_byte, source)) in entries.iter().enumerate() {
+            let open_result: std::io::Result<i32> = match *op_byte {
+                r::DUP_READ | r::DUP_WRITE => {
+                    match source.trim_start_matches('&').parse::<i32>() {
+                        Ok(src) => {
+                            let d = unsafe { libc::dup(src) };
+                            if d >= 0 {
+                                Ok(d)
+                            } else {
+                                Err(std::io::Error::last_os_error())
+                            }
+                        }
+                        Err(_) => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+                    }
+                }
+                _ => fs::File::open(source).map(|f| f.into_raw_fd()),
+            };
+            match open_result {
+                Ok(tfd) => {
+                    if i == 0 {
+                        unsafe {
+                            libc::dup2(tfd, fd);
+                        }
+                    }
+                    source_fds.push(tfd);
+                }
                 Err(e) => {
                     let msg = match e.kind() {
                         std::io::ErrorKind::PermissionDenied => "permission denied",
                         std::io::ErrorKind::NotFound => "no such file or directory",
                         _ => "open failed",
                     };
-                    eprintln!("{}:1: {}: {}", shname(), msg, path);
+                    eprintln!("{}:1: {}: {}", shname(), msg, source);
                     for prev in &source_fds {
                         unsafe {
                             libc::close(*prev);
@@ -5704,18 +5906,6 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::Status(1);
                 }
             }
-        }
-
-        // Save current fd state for scope-end restoration.
-        let saved = unsafe { libc::dup(fd) };
-        if saved >= 0 {
-            with_executor(|exec| {
-                if let Some(top) = exec.redirect_scope_stack.last_mut() {
-                    top.push((fd, saved));
-                } else {
-                    unsafe { libc::close(saved) };
-                }
-            });
         }
 
         // Create the concatenator pipe.
@@ -6487,6 +6677,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   2 = SingleQuoted — strip outer `'…'`, no expansion
     //         (kept for symmetry; Snull early-return covers most SQ)
     //   3 = AltBackquote — strip backticks, run as cmd-sub
+    //   7 = RedirTarget — same as Default but glob gated on MULTIOS
+    //         (c:Src/glob.c:2161-2167 xpandredir)
     // Single result → Value::str; multi → Value::Array.
     vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
         let mode = vm.pop().to_int() as u8;
@@ -6704,9 +6896,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
+                // Mode 7 = redirect-target word: glob only under
+                // MULTIOS (c:Src/glob.c:2161-2167 xpandredir,
+                // "Globbing is only done for multios.").
                 let noglob = opt_state_get("noglob").unwrap_or(false)
                     || opt_state_get("GLOB").map(|v| !v).unwrap_or(false)
-                    || !opt_state_get("glob").unwrap_or(true);
+                    || !opt_state_get("glob").unwrap_or(true)
+                    || (mode == 7 && !opt_state_get("multios").unwrap_or(true));
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
@@ -7698,6 +7894,55 @@ pub const BUILTIN_SET_LINENO: u16 = 342;
 /// pass and would otherwise leak the glob meta to argv as a literal.
 pub const BUILTIN_GLOB_EXPAND: u16 = 343;
 
+/// MULTIOS-gated glob expansion for redirect-target words
+/// (c:Src/glob.c:2161-2167 xpandredir: "Globbing is only done for
+/// multios."). Same stack shape as BUILTIN_GLOB_EXPAND; additionally
+/// passes the word through literally when `unsetopt multios`.
+pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 624;
+
+/// Shared body of BUILTIN_GLOB_EXPAND / BUILTIN_REDIR_GLOB_EXPAND.
+/// c:Src/glob.c:1872 — `zglob` runs per-word in the argv pipeline.
+/// When the upstream EXPAND_TEXT returned an array (e.g. `${a:e}`
+/// splat → ["txt","md"]), glob each element separately, not a
+/// sepjoin'd scalar. `skip_glob` short-circuits to a literal
+/// pass-through (noglob, or a redirect target under
+/// `unsetopt multios`).
+fn glob_expand_word_value(raw: Value, skip_glob: bool) -> Value {
+    let patterns: Vec<String> = match raw {
+        Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
+        other => vec![other.to_str()],
+    };
+    if skip_glob {
+        return if patterns.is_empty() {
+            Value::Array(Vec::new())
+        } else if patterns.len() == 1 {
+            Value::str(patterns.into_iter().next().unwrap())
+        } else {
+            Value::Array(patterns.into_iter().map(Value::str).collect())
+        };
+    }
+    let mut out: Vec<String> = Vec::with_capacity(patterns.len());
+    for pattern in &patterns {
+        let matches = with_executor(|exec| exec.expand_glob(pattern));
+        if matches.is_empty() {
+            // c:1872 nullglob — drop this word, don't emit a hole
+            continue;
+        }
+        for m in matches {
+            out.push(m);
+        }
+    }
+    if out.is_empty() {
+        return Value::Array(Vec::new());
+    }
+    if patterns.len() == 1 && out.len() == 1 && out[0] == patterns[0] {
+        // No real matches; expand_glob returned the literal. Pass
+        // back as scalar so downstream ops don't re-flatten.
+        return Value::str(out.into_iter().next().unwrap());
+    }
+    Value::Array(out.into_iter().map(Value::str).collect())
+}
+
 /// Push a `CmdState` token onto the command-context stack. Direct
 /// port of zsh's `cmdpush(int cmdtok)` (Src/prompt.c:1623). The
 /// stack is consulted by `%_` in PS4/prompt expansion to produce
@@ -7813,19 +8058,29 @@ pub const BUILTIN_EXEC_HERESTR_FD: u16 = 615;
 ///
 /// Stack layout (pushed by compile_zsh's compile_redirs coalescing
 /// pass): `[target_1, op_byte_1, target_2, op_byte_2, …, target_N,
-/// op_byte_N, fd]`. Pops 2N+1 elements; `argc = 2*N + 1`.
+/// op_byte_N, fd]`. Pops 2N+1 elements; `argc = 2*N + 1`. A target
+/// may be a Value::Array of glob matches (spliced into one member
+/// per match, c:Src/glob.c:2195-2203); an op may be DUP_WRITE for a
+/// numeric `>&N` member (c:Src/exec.c:3895-3917).
 ///
-/// Runtime:
-///   1. Open all targets per their op_byte (WRITE truncate /
-///      APPEND).
-///   2. Save `dup(fd)` onto the active redirect_scope_stack so
+/// Runtime (MULTIOS set):
+///   1. Seed the member list with `dup(1)` when this command's
+///      stdout is the pipeline output (c:Src/exec.c:3722-3724).
+///   2. Open/dup all targets per their op_byte in redirect order
+///      (WRITE truncate + noclobber gate / APPEND / DUP_WRITE live
+///      dup); the first member replaces the fd (c:2448-2450).
+///   3. Save `dup(fd)` onto the active redirect_scope_stack so
 ///      `host_redirect_scope_end` restores the original fd.
-///   3. Create a pipe; spawn a thread that reads from the pipe
+///   4. Create a pipe; spawn a thread that reads from the pipe
 ///      read-end and writes every chunk to every opened target.
-///   4. dup2 the pipe write-end onto `fd` so the command's writes
+///   5. dup2 the pipe write-end onto `fd` so the command's writes
 ///      go through the splitter.
-///   5. Track `(pipe_write_fd, JoinHandle)` so scope-end can close
+///   6. Track `(pipe_write_fd, JoinHandle)` so scope-end can close
 ///      the pipe (draining the thread) and join before restoring.
+///
+/// MULTIOS unset (c:2418 `unset(MULTIOS)` replace arm): each entry
+/// is applied as a plain sequential replace via host_apply_redirect
+/// — every file still opened/truncated, last one wins.
 pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
 
 /// MULTIOS input-side concatenation for `cmd < a < b` shapes
@@ -7834,12 +8089,15 @@ pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
 /// target the same fd, mfds[fd] grows and addfd splices a
 /// concatenating cat into the pipe.
 ///
-/// Stack layout: `[source_1, source_2, …, source_N, fd]`. Pops
-/// N + 1 elements (argc = N + 1). All sources are file paths; the
-/// op_byte is implicitly READ.
+/// Stack layout (mirrors the write side): `[source_1, op_1,
+/// source_2, op_2, …, source_N, op_N, fd]`. Pops 2N + 1 elements
+/// (argc = 2N + 1). op is READ for file sources, DUP_READ for
+/// numeric `<&N` members; a source may be a Value::Array of glob
+/// matches (spliced, c:Src/glob.c:2195-2203).
 ///
-/// Runtime:
-///   1. Open every source file for reading.
+/// Runtime (MULTIOS set):
+///   1. Open/dup every source in redirect order; first member
+///      replaces the fd (c:Src/exec.c:2448-2450).
 ///   2. Save `dup(fd)` onto the redirect_scope_stack.
 ///   3. Create a pipe; spawn a thread that reads each source in
 ///      order and writes every chunk to the pipe write-end. Close
@@ -7848,6 +8106,9 @@ pub const BUILTIN_MULTIOS_REDIRECT: u16 = 617;
 ///   5. Track the JoinHandle so scope-end joins (no fd-close needed
 ///      here — the producer thread closes its own pipe write-end
 ///      on exit).
+///
+/// MULTIOS unset: sequential replace via host_apply_redirect — last
+/// source wins (c:2418).
 pub const BUILTIN_MULTIOS_READ: u16 = 618;
 
 /// Toggle `ShellExecutor::exec_redirs_permanent`. Emitted by
@@ -9677,12 +9938,23 @@ impl ShellExecutor {
             }
         }
         if let Some(scope) = self.multios_scope_stack.pop() {
+            // Close ALL tracked writer dups BEFORE joining any
+            // thread. When one splitter holds a dup of another's
+            // pipe write-end (two multios in one scope where a later
+            // one duped fd 1 while an earlier splitter owned it),
+            // joining in push order deadlocks: splitter A's EOF
+            // waits on splitter B's writer dup, which only closes
+            // after B's thread exits — blocked behind A's join.
+            let mut handles = Vec::with_capacity(scope.len());
             for (write_fd, handle) in scope {
                 if write_fd >= 0 {
                     unsafe {
                         libc::close(write_fd);
                     }
                 }
+                handles.push(handle);
+            }
+            for handle in handles {
                 let _ = handle.join();
             }
         }
