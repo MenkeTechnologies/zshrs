@@ -10616,6 +10616,22 @@ pub fn bin_emulate(
     // structural opt-application below is enough for the common
     // `emulate -LR zsh -o NAME …` form.
     let _ = opt_r;
+    // c:6303 — `memcpy(saveopts, opts, sizeof(opts));` + c:6326
+    // `saveemulation = emulation;` — snapshot the live option table
+    // and both emulation cells BEFORE applying the new emulation.
+    // C builds the new state in a LOCAL `new_opts` and only commits
+    // it at c:6328; the Rust port writes the live table directly, so
+    // this snapshot is the rollback for the `-c` eval (restore2 at
+    // c:6377-6379) and the parse-error path (goto restore, c:6311).
+    // Without the restore, `emulate sh -c 'f() { ...; }'` left the
+    // shell PERMANENTLY in sh-emulation option state — a later
+    // `bad substitution` zerr then aborted the whole non-interactive
+    // shell (D04parameter chunk 159 poisoned chunk 225 into a
+    // shell-exit).
+    let saveopts = crate::ported::options::opt_state_snapshot(); // c:6303
+    let saveemulation = emulation.load(Relaxed); // c:6326
+    let saveemulation_live =
+        crate::ported::options::EMULATION.load(Relaxed); // c:6326 (port keeps 2 cells)
     // c:6306 — `emulate(shname, opt_R, &new_emulation, new_opts);` —
     // apply emulation defaults to the live opts table.
     crate::ported::options::emulate(shname.as_str(), opt_r);
@@ -10653,6 +10669,11 @@ pub fn bin_emulate(
     let mut i = 1; // skip shname (argv[0])
     let mut optionbreak = false;
     let mut cmd_body: Option<String> = None; // c:6310 — `-c command` capture.
+    // c:6308 `optlist` — parseopts records each explicitly-set option
+    // (as an index into new_opts) so the `-c` arm can build the
+    // sticky struct's on_opts/off_opts at c:6347-6373. Rust tracks
+    // (canonical-name, on?) pairs.
+    let mut optlist: Vec<(String, bool)> = Vec::new();
     while !optionbreak && i < argv.len() {
         let arg = &argv[i];
         // c:Src/init.c:418 — only `-` / `+` start an option arg.
@@ -10688,10 +10709,9 @@ pub fn bin_emulate(
                     .iter()
                     .collect::<String>()
                     .replace('-', "_");
-                crate::ported::options::opt_state_set(
-                    &name.to_lowercase().replace('_', ""),
-                    action,
-                );
+                let canon = name.to_lowercase().replace('_', "");
+                crate::ported::options::opt_state_set(&canon, action);
+                optlist.push((canon, action)); // c:6308 optlist record
                 break;
             }
             if ch == 'o' || ch == 'O' {
@@ -10707,10 +10727,9 @@ pub fn bin_emulate(
                     consumed_next_arg = true;
                     argv[i + 1].clone()
                 };
-                crate::ported::options::opt_state_set(
-                    &name.to_lowercase().replace('_', ""),
-                    action,
-                );
+                let canon = name.to_lowercase().replace('_', "");
+                crate::ported::options::opt_state_set(&canon, action);
+                optlist.push((canon, action)); // c:6308 optlist record
                 break; // c:505 — break out of char walk after `-o`
             }
             if ch == 'c' {
@@ -10758,22 +10777,72 @@ pub fn bin_emulate(
             i += 1;
         }
     }
-    // c:6332-6377 — `-c command` evaluator. After applying emulation
-    // and option overrides, run the cmd body via eval() and restore
-    // the prior emulation. The full sticky-emulation struct (c:6346)
-    // tracking per-pattern enables isn't ported; the eval/restore
-    // wrapper captures the visible behavior (cmd runs under new
-    // emulation, prior emulation restored on return).
+    // c:6332-6377 — `-c command` evaluator: save patterns, install
+    // the pending `sticky` struct (functions defined in the body get
+    // stamped via shfunc_set_sticky at c:5402), eval the body, then
+    // restore sticky + emulation + opts + patterns (restore2: at
+    // c:6377-6379).
     if let Some(body) = cmd_body {
         if opt_l_arg {
             // c:6333-6336 — `-L` is incompatible with `-c`.
             zwarnnam(nam, "option -L incompatible with -c");
+            // c:6336 `goto restore2` — undo the emulation switch.
+            emulation.store(saveemulation, Relaxed);
+            crate::ported::options::EMULATION.store(saveemulation_live, Relaxed);
+            crate::ported::options::opt_state_restore(saveopts);
             return 1;
         }
-        // Run the body under the now-applied emulation. The body is
-        // passed as a single string; eval() joins-with-space, which
-        // for a one-element argv is a no-op.
-        let r = eval(&[body]);
+        // c:6319 — `savepatterns = savepatterndisables();`
+        let savepatterns = crate::ported::pattern::savepatterndisables();
+        // c:6324 — `clearpatterndisables();` — every emulation starts
+        // with an empty pattern-disable set.
+        crate::ported::pattern::clearpatterndisables();
+        // c:6344-6373 — `save_sticky = sticky; sticky = hcalloc(...);`
+        // Build the sticky struct: target emulation + the on/off
+        // option indices the optlist recorded.
+        let save_sticky = crate::ported::options::sticky
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take(); // c:6344
+        {
+            let mut on_opts: Vec<crate::ported::zsh_h::OptIndex> = Vec::new();
+            let mut off_opts: Vec<crate::ported::zsh_h::OptIndex> = Vec::new();
+            for (name, on) in &optlist {
+                // c:6366-6372 — Data is index into new_opts.
+                let optno = optlookup(name);
+                if optno > 0 {
+                    if *on {
+                        on_opts.push(optno as crate::ported::zsh_h::OptIndex);
+                    } else {
+                        off_opts.push(optno as crate::ported::zsh_h::OptIndex);
+                    }
+                }
+            }
+            *crate::ported::options::sticky
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) =
+                Some(Box::new(crate::ported::zsh_h::emulation_options {
+                    emulation:
+                        crate::ported::options::EMULATION.load(Relaxed), // c:6346
+                    n_on_opts: on_opts.len() as i32,    // c:6351
+                    n_off_opts: off_opts.len() as i32,  // c:6353
+                    on_opts,                            // c:6356-6358
+                    off_opts,                           // c:6360-6362
+                }));
+        }
+        let r = eval(&[body]); // c:6374 — `ret = eval(argv);`
+        // c:6375 — `sticky = save_sticky;`
+        *crate::ported::options::sticky
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = save_sticky;
+        // c:6377-6379 restore2: — emulation + opts + patterns.
+        emulation.store(saveemulation, Relaxed); // c:6377
+        crate::ported::options::EMULATION.store(saveemulation_live, Relaxed); // c:6377
+        crate::ported::options::opt_state_restore(saveopts); // c:6378
+        crate::ported::pattern::restorepatterndisables(savepatterns); // c:6379
+        // c:6381-6382 restore: — keyboardhackchar + inittyptab()
+        // (keyboard hack char isn't ported; typtab rebuild is a
+        // no-op in the Rust lexer).
         return r;
     }
 
@@ -10783,6 +10852,12 @@ pub fn bin_emulate(
     // arm doesn't fire — but mirror the C behavior for other callers.
     if i < argv.len() && !optionbreak {
         zwarnnam(nam, &format!("unknown argument: {}", argv[i]));
+        // c:6315 `goto restore` — C's LIVE opts were never touched on
+        // this path (parseopts wrote the local new_opts); the Rust
+        // loop wrote live state, so roll back the snapshot to match.
+        emulation.store(saveemulation, Relaxed);
+        crate::ported::options::EMULATION.store(saveemulation_live, Relaxed);
+        crate::ported::options::opt_state_restore(saveopts);
         return 1;
     }
 
