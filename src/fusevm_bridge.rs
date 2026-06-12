@@ -4112,6 +4112,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // assignments still take the setsparam path below.
         let int_assign = matches!(value_raw, Some(fusevm::Value::Int(_)));
         let float_assign = matches!(value_raw, Some(fusevm::Value::Float(_)));
+        let mut assign_failed = false;
         with_executor(|exec| {
             // c:Src/params.c assignsparam — PM_READONLY rejection
             // BEFORE any env mutation. The inline-env-prefix path
@@ -4150,7 +4151,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 if let Some(fusevm::Value::Int(i)) = value_raw {
                     crate::ported::params::setiparam(&name, i);
                 } else {
-                    crate::ported::params::setsparam(&name, &value);
+                    assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
                 }
             } else if float_assign {
                 if let Some(fusevm::Value::Float(f)) = value_raw {
@@ -4173,10 +4174,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         crate::ported::params::setnparam(&name, mnval);
                     }
                 } else {
-                    crate::ported::params::setsparam(&name, &value);
+                    assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
                 }
             } else {
-                crate::ported::params::setsparam(&name, &value);
+                // c:Src/exec.c addvars — a NULL return from
+                // assignsparam (e.g. nameref resolving out of scope,
+                // createparam refusal at c:1108-1118) fails the
+                // assignment with status 1.
+                assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
             }
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam
             // so the flag bit reflects any GSU setfn side-effects.
@@ -4200,6 +4205,44 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         });
         Value::Status(vm.last_status)
+    });
+
+    // c:Src/exec.c execfor → Src/params.c:6362 setloopvar — the
+    // for-loop variable bind. Distinct from BUILTIN_SET_VAR because a
+    // PM_NAMEREF loop variable REBINDS (new refname) instead of
+    // assigning through the resolved chain.
+    vm.register_builtin(BUILTIN_SET_LOOP_VAR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let name = args.first().cloned().unwrap_or_default();
+        let value = args.get(1).cloned().unwrap_or_default();
+        if crate::vm_helper::is_nameref(&name) {
+            let ef_before = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            crate::ported::params::setloopvar(&name, &value); // c:6362
+            let ef_after = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            if (ef_after & crate::ported::utils::ERRFLAG_ERROR) != 0 && ef_after != ef_before {
+                // zerr fired (read-only reference / invalid self
+                // reference) — abort the loop, status 1 (C errflag).
+                vm.last_status = 1;
+                return Value::Bool(false);
+            }
+            return Value::Bool(true);
+        }
+        // Plain loop var — canonical scalar path (same shape as
+        // BUILTIN_SET_VAR's setsparam arm).
+        with_executor(|exec| {
+            if exec.is_readonly_param(&name) {
+                crate::ported::utils::zerr(&format!("read-only variable: {}", name));
+                return;
+            }
+            crate::ported::params::setsparam(&name, &value);
+            let allexport = opt_state_get("allexport").unwrap_or(false);
+            let already_exported =
+                (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
+            if allexport || already_exported {
+                env::set_var(&name, &value);
+            }
+        });
+        Value::Bool(true)
     });
 
     // Pre-compiled function registration — used by compile_zsh.rs's
@@ -6808,8 +6851,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
-        let status = if errflag_set {
-            1 // c:Src/exec.c:3394 `lastval = 1`
+        // c:Src/exec.c addvars — `if (!pm) { lastval = 1; if
+        // (!cmdoutval) cmdoutval = 1; }` (assignment-failed cheat).
+        let assign_failed = ASSIGN_FAILED_FLAG.swap(false, std::sync::atomic::Ordering::Relaxed);
+        let status = if errflag_set || assign_failed {
+            1 // c:Src/exec.c:3394 `lastval = 1` / addvars cmdoutval=1
         } else if had_cmd_subst {
             vm.last_status // c:3396 `lastval = cmdoutval` (subst exit)
         } else {
@@ -8267,6 +8313,13 @@ pub const BUILTIN_GLOB_EXPAND: u16 = 343;
 // last-registration-wins, so a duplicate id silently shadows the
 // earlier handler.
 pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 628;
+/// `BUILTIN_SET_LOOP_VAR` constant — for-loop variable binding via
+/// `setloopvar` (Src/params.c:6362): a PM_NAMEREF loop var REBINDS
+/// to each word (SETREFNAME + setscope) instead of assigning
+/// through the chain. Returns Bool(false) when zerr fired
+/// (read-only reference / invalid self reference) so the loop
+/// driver aborts, mirroring C execfor's errflag check.
+pub const BUILTIN_SET_LOOP_VAR: u16 = 629;
 
 /// Shared body of BUILTIN_GLOB_EXPAND / BUILTIN_REDIR_GLOB_EXPAND.
 /// c:Src/glob.c:1872 — `zglob` runs per-word in the argv pipeline.
@@ -8542,6 +8595,15 @@ pub const BUILTIN_ARRAY_INDEX_UNBRACED: u16 = 622;
 /// non-interactive errflag abort exits with this value per
 /// Src/init.c:234. Caller pairs with SetStatus.
 pub const BUILTIN_ASSIGN_ONLY_STATUS: u16 = 623;
+
+/// c:Src/exec.c addvars — `if (!pm) { lastval = 1; if (!cmdoutval)
+/// cmdoutval = 1; }`. Set by BUILTIN_SET_VAR on assignsparam
+/// failure, consumed by BUILTIN_ASSIGN_ONLY_STATUS so the
+/// assignment-only command reports status 1. Process-global like
+/// C's `cmdoutval` (function bodies may run on a different thread
+/// than the opcode that reads the status back).
+pub static ASSIGN_FAILED_FLAG: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// `redirection with no command` parse-time error for bare
 /// `builtin 2>&1` / `command < file` / `exec >&-` precmd-keyword

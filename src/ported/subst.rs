@@ -3353,6 +3353,10 @@ pub fn paramsubst(
         // c:1691 — `int vunset = 0;` — value-was-unset flag.
         // c:1697 — `int wantt = 0;` (t) typeinfo flag.
         let mut wantt = false; // c:1697
+        // c:2232 — `${(!)…}` SCANPM_NONAMEREF RAII scope.
+        #[allow(unused_assignments)]
+        let mut nonameref_guard: Option<crate::vm_helper::NamerefSuppressGuard> = None;
+        let _ = &nonameref_guard;
 
         // c:1705 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT) &&
         // !(pf_flags & PREFORK_SINGLE) && !qt;`
@@ -3602,15 +3606,14 @@ pub fn paramsubst(
                     't' => {
                         wantt = true;
                     } // c:2807
-                    // `!` SCANPM_NONAMEREF support is gated on `typeset
-                    // -n` (nameref) which zsh 5.9.1 (the user's installed
-                    // version) does not ship. To match 5.9.1's lex-time
-                    // rejection of `${(!)var}` as `error in flags near
-                    // position N in '${...}'`, `!` falls through to the
-                    // default flag-error arm below — same outcome as
-                    // upstream zsh emits when `!` is dropped from the
-                    // flag dispatch table. Re-enable this arm only if
-                    // zshrs ports nameref support.
+                    '!' => {
+                        // c:2232-2235 — SCANPM_NONAMEREF: the lookup
+                        // skips resolve_nameref (getnode2 path); the
+                        // ref itself is the subject. Guard lives until
+                        // this paramsubst returns.
+                        nonameref_guard =
+                            Some(crate::vm_helper::NamerefSuppressGuard::new());
+                    }
                     'k' => {
                         // c:2390-2393
                         if (hkeys & !SCANPM_WANTKEYS) != 0 {
@@ -10042,6 +10045,27 @@ pub fn paramsubst(
             // build the tag directly with the full implicit flags
             // (PM_ARRAY | PM_READONLY | PM_SPECIAL | PM_HIDE |
             // PM_HIDEVAL).
+            // c:2800-2806 — fetchvalue resolves PM_NAMEREF chains
+            // (getparamnode c:570-575) before the (t) flag read, so
+            // the TARGET's type is reported; an unresolvable ref
+            // reports its own `nameref` type, and a DANGLING ref
+            // (target never defined) emits the empty tag (fetchvalue
+            // NULL → vunset, c:2855-2856).
+            let mut nameref_dangling = false;
+            let var_name: String = if crate::vm_helper::is_nameref(&var_name) {
+                match crate::vm_helper::resolve_nameref_name(&var_name, None) {
+                    crate::vm_helper::nameref_resolution::Target { name: t, pm, .. } => {
+                        if pm.is_none() {
+                            nameref_dangling = true;
+                        }
+                        t
+                    }
+                    crate::vm_helper::nameref_resolution::Placeholder(p) => p,
+                    _ => var_name.clone(),
+                }
+            } else {
+                var_name.clone()
+            };
             let partab_array_tag = crate::vm_helper::partab_array_flags(&var_name).map(|f| {
                 let mut tag = if f & PM_HASHED != 0 {
                     "association".to_string()
@@ -10395,6 +10419,11 @@ pub fn paramsubst(
                         }
                     })
             };
+            // c:2855-2856 — dangling nameref: fetchvalue returned
+            // NULL, so the (t) tag is empty.
+            if nameref_dangling {
+                value = String::new();
+            }
             // c:2882-2883 — after wantt, C clears `v = NULL; isarr = 0;`
             // so the array-splat path at c:3950 doesn't fire on the
             // type string. Without this, ${(t)arr} would splat the
@@ -14213,6 +14242,13 @@ fn vars_contains(name: &str) -> bool {
 /// arm never fired — `set -- 1 2; print $@[@]` produced "1 2[@]"
 /// instead of zsh's "1 2".
 fn arrays_get(name: &str) -> Option<Vec<String>> {
+    // c:Src/params.c:570-575 — nameref deref before the read.
+    if crate::vm_helper::is_nameref(name) {
+        let t = crate::vm_helper::nameref_final_name(name);
+        if t != name {
+            return arrays_get(&t);
+        }
+    }
     if name == "@" || name == "*" || name == "argv" {
         // c:Src/params.c:3262 IPDEF9 — pparams via getaparam alias.
         let pp = crate::ported::builtin::PPARAMS.lock().ok()?;
@@ -14325,6 +14361,13 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
 
 /// True if `name` is an array in `paramtab`.
 fn arrays_contains(name: &str) -> bool {
+    // c:Src/params.c:570-575 — nameref deref before the read.
+    if crate::vm_helper::is_nameref(name) {
+        let t = crate::vm_helper::nameref_final_name(name);
+        if t != name {
+            return arrays_contains(&t);
+        }
+    }
     // c:Src/params.c:3262 IPDEF9 — pparams is the @/argv array.
     if name == "@" || name == "*" || name == "argv" {
         return true;
@@ -14441,17 +14484,21 @@ fn arrays_insert(name: String, value: Vec<String>) {
 /// Read an associative array parameter from the parallel
 /// `paramtab_hashed_storage` (PM_HASHED values).
 fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
+    // c:Src/params.c:570-575 — nameref deref before the read.
+    let resolved = crate::vm_helper::nameref_final_name(name);
     paramtab_hashed_storage()
         .lock()
         .ok()
-        .and_then(|s| s.get(name).cloned())
+        .and_then(|s| s.get(resolved.as_str()).cloned())
 }
 
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.
 fn assoc_contains(name: &str) -> bool {
+    // c:Src/params.c:570-575 — nameref deref before the read.
+    let resolved = crate::vm_helper::nameref_final_name(name);
     paramtab_hashed_storage()
         .lock()
-        .map_or(false, |s| s.contains_key(name))
+        .map_or(false, |s| s.contains_key(resolved.as_str()))
 }
 
 /// Flags for SUB_* matching — verbatim port of zsh.h:1981-1996.
