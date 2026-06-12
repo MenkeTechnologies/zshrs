@@ -47926,3 +47926,92 @@ EOF2"###);
         probe_e_row_095 => (r#"probe e 095"#, r###"integer ii; print ${(t)ii}"###);
     }
 }
+
+/// Probe sweep 2026-06-12, round F — repros distilled from sourcing
+/// all 44 ~/.zinit/plugins through both shells (`source plugin.zsh`
+/// diff). Plugin loads went 30/44 → 43/44 identical this round; the
+/// remaining divergence (zsh-openshift-aliases) is environmental
+/// (/dev/fd/N number + sourced-file diagnostic lineno).
+///
+/// Fixes pinned here:
+/// 1. zsh/zle missing from features_module dispatch — `zle -N` then
+///    `bindkey` errored `module has no such feature: b:bindkey`
+///    (zsh-autopair, zsh-hist, zconvey, zui, fsh, +4 more).
+/// 2. if/elif cond is an ordinary list (Src/parse.c:1414) —
+///    `if [[ … ]] { … } elif { type curl } { … }` (fsh:365-375).
+/// 3. needs_glob/needs_brace marker-aware on the whole word —
+///    `X"$V x[a]"` mixed words NOMATCH-errored (fzf-zsh-plugin:76).
+/// 4. magic-equals prefork skips quoted-span words — `alias
+///    opclean='… $(oc get pods …) …'` EXECUTED the quoted cmdsub at
+///    alias-definition time (zsh-openshift-aliases:75).
+/// 5. typeset-family paren-init compiles per element — `typeset -gU
+///    FPATH fpath=( $dir $fpath )` collapsed fpath to 2 entries and
+///    broke every later autoload (zsh-hist:9).
+/// 6. `command`'s own flags end at the command name — `command
+///    mkdir -p D` lost mkdir's -p (zconvey:44).
+/// 7. zsh/files names external in --zsh mode until zmodload; zf_*
+///    are 127 (no zf_-strip PATH fallback).
+/// 8. compdef/compinit are 127 in --zsh mode until compsys defines
+///    them as functions (oc completion via psub source).
+mod probe_sweep_2026_06_12_f {
+    use super::*;
+
+    parity_gap_tests! {
+        // 1 — zle feature table
+        probe_f_zle_then_bindkey => (r#"probe f zle then bindkey"#, r###"zle -N w; bindkey "x" w; print rc=$?"###);
+        probe_f_bindkey_lookup => (r#"probe f bindkey lookup"#, r###"bindkey " " | head -1"###);
+        probe_f_zle_n_zle_n_bindkey => (r#"probe f zle x2 bindkey"#, r###"zle -N w1; zle -N w2; bindkey "q" w2; bindkey "p" self-insert; print rc=$?"###);
+        // 2 — if/elif brace-form grammar (trailing newline embedded:
+        // the -c-without-newline EOF rejection is a separate zsh
+        // quirk, see GAPS.md)
+        probe_f_if_dbrack_brace => (r#"probe f if dbrack brace"#, r###"if [[ -n x ]] { print t }
+"###);
+        probe_f_if_brace_else => (r#"probe f if brace else"#, r###"if [[ -z x ]] { print t } else { print e }
+"###);
+        probe_f_if_elif_cursh => (r#"probe f if elif cursh"#, r###"if [[ -z x ]] { print a } elif { true } { print b }
+"###);
+        probe_f_if_elif_false_else => (r#"probe f if elif false else"#, r###"if [[ -z x ]] { print a } elif { false } { print b } else { print c }
+"###);
+        probe_f_if_arith_brace => (r#"probe f if arith brace"#, r###"if (( 1 )) { print arith }
+"###);
+        probe_f_if_cursh_cond => (r#"probe f if cursh cond"#, r###"if { true } { print cursh }
+"###);
+        probe_f_if_cursh_false => (r#"probe f if cursh false"#, r###"if { false } { print no } else { print e }
+"###);
+        probe_f_if_or_cond_then => (r#"probe f if or-cond then"#, r###"if { true } || { false }; then print or-cond; fi"###);
+        // 3 — mixed-word glob protection
+        probe_f_mixed_dq_brackets => (r#"probe f mixed dq brackets"#, r###"V=b; print -r V="$V x[a]""###);
+        probe_f_mixed_prefix_dq => (r#"probe f mixed prefix dq"#, r###"V=b; print -r X"$V x[a]""###);
+        probe_f_export_grow_opts => (r#"probe f export grow opts"#, r###"V=b; export V="$V --preview '([[ -f {} ]] && (bat {} || cat {}))'"; print -r -- $V"###);
+        probe_f_mixed_dq_glob_suffix => (r#"probe f mixed dq glob suffix"#, r###"V=b; print X"$V"*zzz* 2>&1"###);
+        // 4 — magic-equals quoted spans stay inert
+        probe_f_alias_quoted_cmdsub => (r#"probe f alias quoted cmdsub"#, r###"alias x='for p in $(definitely_not_a_cmd_zz); do d;done'; alias x | head -1"###);
+        probe_f_alias_bad_equals => (r#"probe f alias bad equals"#, r###"alias bad=== 2>&1"###);
+        probe_f_alias_sq_awk => (r#"probe f alias sq awk"#, r###"alias opclean='for p in $(oc get pods | grep T | awk ''{print $1}''); do oc delete pod $p;done'; alias opclean | wc -l"###);
+        // 5 — typeset paren-init element semantics
+        probe_f_typeset_splat => (r#"probe f typeset splat"#, r###"a=(1 2 3); typeset b=( x $a ); typeset -p b"###);
+        probe_f_typeset_multiname => (r#"probe f typeset multiname"#, r###"a=(1 2 3); typeset -gU A b=( x $a ); print ${#b} -- $b"###);
+        probe_f_local_double_splat => (r#"probe f local double splat"#, r###"f() { a=(1 2); local c=( $a $a ); print ${#c} }; f"###);
+        probe_f_typeset_assoc_init => (r#"probe f typeset assoc init"#, r###"typeset -A h=( k1 v1 k2 v2 ); print ${h[k2]}"###);
+        probe_f_typeset_assoc_empty_key => (r#"probe f typeset assoc empty key"#, r###"typeset -A h=( "" e k v ); print ${#h}"###);
+        probe_f_typeset_empty_arr => (r#"probe f typeset empty arr"#, r###"typeset -a arr=(); print ${#arr}"###);
+        probe_f_typeset_spaced_elem => (r#"probe f typeset spaced elem"#, r###"typeset b=( "sp ace" lone ); print ${#b} -- ${b[1]}"###);
+        probe_f_typeset_cmdsub_elem => (r#"probe f typeset cmdsub elem"#, r###"typeset b=( $(print q w) e ); print ${#b}"###);
+        probe_f_typeset_brace_elem => (r#"probe f typeset brace elem"#, r###"typeset b=( {1..3} x ); print ${#b} $b"###);
+        probe_f_fpath_grow_autoload => (r#"probe f fpath grow autoload"#, r###"f() { typeset -gU FPATH fpath=( /tmp $fpath ); autoload -Uz add-zsh-hook; add-zsh-hook -d precmd nofn }; f; print rc=$?"###);
+        // 6 — command's own flags end at the command name
+        probe_f_command_mkdir_p => (r#"probe f command mkdir -p"#, r###"command mkdir -p ${TMPDIR:-/tmp}/zsprobe_f_dir; print rc=$?; command mkdir -p ${TMPDIR:-/tmp}/zsprobe_f_dir; print rc=$?"###);
+        probe_f_command_echo_dash_p => (r#"probe f command echo -p"#, r###"command echo -p"###);
+        probe_f_command_dashdash => (r#"probe f command dashdash"#, r###"command -- echo dd"###);
+        // 7 — zsh/files gating
+        probe_f_zf_mkdir_127 => (r#"probe f zf_mkdir 127"#, r###"zf_mkdir ${TMPDIR:-/tmp}/zsprobe_zf 2>&1; print rc=$?"###);
+        probe_f_zmodload_files_zf => (r#"probe f zmodload files zf"#, r###"zmodload zsh/files; zf_mkdir -p ${TMPDIR:-/tmp}/zsprobe_f_dir; print rc=$?"###);
+        probe_f_mv_usage => (r#"probe f mv usage"#, r###"mv 2>&1 | head -1; print rc=$?"###);
+        // 8 — compsys names gated until defined
+        probe_f_compdef_127 => (r#"probe f compdef 127"#, r###"compdef x y; print rc=$?"###);
+        probe_f_compdef_user_fn => (r#"probe f compdef user fn"#, r###"compdef() { print user-compdef $1 }; compdef a"###);
+        probe_f_compinit_127 => (r#"probe f compinit 127"#, r###"compinit 2>&1 | head -1; print rc=$?"###);
+        // continuation after 127 inside psub source
+        probe_f_psub_source_cnf => (r#"probe f psub source cnf"#, r###"print -l 'definitely_not_a_cmd_zz a' 'print mid' > ${TMPDIR:-/tmp}/zsprobe_cnf.zsh; source ${TMPDIR:-/tmp}/zsprobe_cnf.zsh 2>/dev/null; print rc=$?"###);
+    }
+}
