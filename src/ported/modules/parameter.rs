@@ -200,6 +200,7 @@ pub fn getpmparameter(ht: *mut HashTable, name: &str) -> Option<Param> {
             }, // c:209
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:208
         u_val: 0,
@@ -233,6 +234,7 @@ mod paramtypestr_tests {
                 flags: flags as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -553,6 +555,7 @@ pub fn scanpmparameters(
                 flags: (PM_SCALAR | PM_READONLY) as i32, // c:129
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some(val), // c:144 pm.u.str
             u_val: 0,
@@ -710,6 +713,7 @@ pub fn getpmcommand(ht: *mut HashTable, name: &str) -> Option<Param> {
             }, // c:226 / c:239
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:230 / c:233 / c:238
         u_val: 0,
@@ -1087,6 +1091,7 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
             }, // c:440
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:402/431/438
         u_val: 0,
@@ -1274,6 +1279,7 @@ pub fn getfunction_source(_ht: *mut HashTable, name: &str, dis: i32) -> Option<P
             }, // c:587
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:553 / c:586
         u_val: 0,
@@ -1628,6 +1634,7 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
             }, // c:794
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:790 / c:793
         u_val: 0,
@@ -2129,6 +2136,7 @@ pub fn getpmoption(ht: *mut HashTable, name: &str) -> Option<Param> {
             },
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:1005 / c:1008
         u_val: 0,
@@ -2263,6 +2271,7 @@ pub fn getpmmodule(_ht: *mut HashTable, name: &str) -> Option<Param> {
             flags: (PM_SCALAR | PM_READONLY) as i32 | extra_flags,
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(val),
         u_val: 0,
@@ -2536,6 +2545,7 @@ pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {
             },
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(val), // c:1188 / c:1204
         u_val: 0,
@@ -2596,6 +2606,7 @@ pub fn scanpmhistory(
                 flags: (PM_SCALAR | PM_READONLY) as i32,           // c:1195
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: if want_val { Some(cmd) } else { None }, // c:1204 pm.u.str = he->node.nam
             u_val: 0,
@@ -2768,6 +2779,7 @@ pub fn scanpmjobtexts(
                         flags: (PM_SCALAR | PM_READONLY) as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(val),
                     u_val: 0,
@@ -2937,6 +2949,7 @@ pub fn scanpmjobstates(
                         flags: (PM_SCALAR | PM_READONLY) as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(val),
                     u_val: 0,
@@ -3063,6 +3076,7 @@ pub fn scanpmjobdirs(
                         flags: (PM_SCALAR | PM_READONLY) as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(val),
                     u_val: 0,
@@ -3230,6 +3244,7 @@ pub fn getpmnameddir(ht: *mut HashTable, name: &str) -> Option<Param> {
             },
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:1609 / c:1611
         u_val: 0,
@@ -3327,6 +3342,7 @@ pub fn getpmuserdir(ht: *mut HashTable, name: &str) -> Option<Param> {
             }, // c:1663
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:1659 / c:1662
         u_val: 0,
@@ -3779,6 +3795,7 @@ pub fn getalias(
             flags: 0,
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:1913 / c:1916
         u_val: 0,
@@ -4096,6 +4113,7 @@ pub fn getpmusergroups(ht: *mut HashTable, name: &str) -> Option<Param> {
             }, // c:2135
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(value), // c:2128 / c:2134
         u_val: 0,
@@ -4721,6 +4739,7 @@ fn make_empty_special_pm(name: &str) -> Param {
             flags: (PM_SCALAR | PM_READONLY | PM_UNSET | PM_SPECIAL) as i32,
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(String::new()),
         u_val: 0,
@@ -4895,6 +4914,7 @@ mod scan_callback_tests {
                 flags: PM_SCALAR as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some("v".to_string()),
             u_val: 0,
@@ -5025,6 +5045,7 @@ mod setalias_tests {
                 flags: PM_SCALAR as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -5065,6 +5086,7 @@ mod paramtypestr_table_tests {
                 flags: flags as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -5375,6 +5397,7 @@ mod paramtypestr_table_tests {
                 flags: flags as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -5887,6 +5910,7 @@ mod paramtypestr_table_tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -5919,6 +5943,7 @@ mod paramtypestr_table_tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -5951,6 +5976,7 @@ mod paramtypestr_table_tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -6043,6 +6069,7 @@ mod paramtypestr_table_tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -6074,6 +6101,7 @@ mod paramtypestr_table_tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
