@@ -6174,6 +6174,22 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         let pm_type = prior_flags as u32 & PM_TYPE(u32::MAX);
         if pm_type != PM_ARRAY && (prior_flags as u32 & PM_SPECIAL) != 0 {
             if pm_type == PM_HASHED {
+                // c:3544-3560 — under ASSPM_KEY_VALUE, associative
+                // arrays strictly enforce `[key]=value` syntax: walk
+                // in strides of 3; every stride must start with a
+                // Marker (a Marker can only introduce a
+                // Marker/key/value triad, never appear by accident).
+                if (flags & ASSPM_KEY_VALUE) != 0 {
+                    let mut i = 0usize;
+                    while i < val.len() {
+                        if !val[i].starts_with(Marker) {
+                            zerr("bad [key]=value syntax for associative array");
+                            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                            return None;
+                        }
+                        i += 3;
+                    }
+                }
                 // c:4124-4131 (arrhashsetfn) — count non-Marker
                 // entries; odd → zerr + abort. zsh 5.9 truth:
                 // `options=(noglob)` → "bad set of key/value pairs
@@ -6275,6 +6291,115 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         }
     }
 
+    // c:3436-3541 — ASSPM_KEY_VALUE on an ordinary array: the value
+    // list contains Marker / index / value triads (from
+    // keyvalpairelement, Src/subst.c:49) interleaved with plain
+    // elements. Resolve them into a dense array:
+    //   - First pass (c:3465-3486): matheval each index; reject < 0,
+    //     and 0 unless KSH_ARRAYS (zerr "bad subscript for direct
+    //     array assignment"); KSH_ARRAYS keeps 0-based, otherwise
+    //     1-based → decrement; track `nextind` (a plain element lands
+    //     just after the previously placed one) and `maxlen`.
+    //   - Allocate `fullval` of maxlen (c:3487-3495), pre-filled with
+    //     the existing elements under ASSPM_AUGMENT (c:3496-3502).
+    //   - Second pass (c:3503-3525): place each value; a `Marker +`
+    //     triad concatenates onto the slot's current value (c:3510-
+    //     3515 bicat); plain elements advance nextind.
+    //   - Unset slots become "" — no sparse arrays (c:3530-3537).
+    // C returns straight after `setarrvalue(v, fullval)` (c:3538-
+    // 3540): the resolved vec REPLACES the whole array, so the tail
+    // AUGMENT prepend below must not run again — clear the flag.
+    let mut val = val;
+    let mut flags = flags;
+    if (flags & ASSPM_KEY_VALUE) != 0 {
+        let ksh = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+        let orig: Vec<String> = if (flags & ASSPM_AUGMENT) != 0 && existed {
+            let tab = paramtab().read().unwrap();
+            tab.get(name)
+                .and_then(|pm| pm.u_arr.clone())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let mut maxlen = orig.len(); // c:3460-3462
+        let mut nextind: i64 = 0; // c:3464
+        let mut subscripts: Vec<i64> = Vec::new(); // c:3455-3456
+        let mut i = 0usize;
+        while i < val.len() {
+            // c:3466-3481
+            if val[i].starts_with(Marker) {
+                let key_str = val.get(i + 1).cloned().unwrap_or_default();
+                let idx = match crate::ported::math::mathevali(&key_str) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        // C mathevali zerr's internally (Src/math.c);
+                        // surface the message and abort the assign.
+                        zerr(&e);
+                        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                        return None;
+                    }
+                };
+                if idx < 0 || (!ksh && idx == 0) {
+                    // c:3468-3474
+                    zerr(&format!(
+                        "bad subscript for direct array assignment: {}",
+                        key_str
+                    ));
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+                    return None;
+                }
+                let ix = if ksh { idx } else { idx - 1 }; // c:3475-3476
+                subscripts.push(ix);
+                nextind = ix + 1; // c:3477
+                i += 3; // c:3479
+            } else {
+                nextind += 1; // c:3481-3482
+                i += 1;
+            }
+            if nextind > maxlen as i64 {
+                // c:3484-3485
+                maxlen = nextind as usize;
+            }
+        }
+        // c:3487-3495 fullval = zshcalloc((maxlen+1) * sizeof(char*)).
+        let mut fullval: Vec<Option<String>> = vec![None; maxlen];
+        // c:3496-3502 — AUGMENT: copy the original elements in first.
+        for (j, o) in orig.iter().enumerate() {
+            fullval[j] = Some(o.clone());
+        }
+        // Second pass — c:3503-3525.
+        let mut si = 0usize;
+        let mut nextind = 0usize;
+        let mut i = 0usize;
+        while i < val.len() {
+            if val[i].starts_with(Marker) {
+                let augment_elt = val[i].len() > Marker.len_utf8(); // c:3507 `(*aptr)[1] == '+'`
+                let ix = subscripts[si] as usize;
+                si += 1;
+                let old = fullval[ix].take();
+                fullval[ix] = Some(match old {
+                    // c:3510-3512 bicat(old, value)
+                    Some(o) if augment_elt => format!("{}{}", o, val[i + 2]),
+                    _ => val[i + 2].clone(),
+                });
+                nextind = ix + 1; // c:3516
+                i += 3;
+            } else {
+                fullval[nextind] = Some(val[i].clone()); // c:3519-3520
+                nextind += 1;
+                i += 1;
+            }
+        }
+        // c:3530-3537 — unfilled slots become "".
+        val = fullval
+            .into_iter()
+            .map(|o| o.unwrap_or_default())
+            .collect();
+        // c:3538-3540 — setarrvalue(v, fullval); return. The orig
+        // elements are already merged in; don't prepend them again.
+        flags &= !ASSPM_AUGMENT;
+    }
+
     // c:3402-3412 — ASSPM_AUGMENT preserve-old prepend. When the
     // previous value was a scalar (not array/hashed) and we're
     // augmenting (`a+=val`), prepend that scalar's string form as
@@ -6282,7 +6407,6 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     let was_scalar_array_target = existed
         && prior_flags & (PM_ARRAY | PM_HASHED) as i32 == 0
         && prior_flags & PM_SPECIAL as i32 == 0;
-    let mut val = val;
     if (flags & ASSPM_AUGMENT) != 0 && was_scalar_array_target && prior_flags & PM_UNSET as i32 == 0
     {
         if let Some(old_scalar) = prior_scalar {

@@ -2288,25 +2288,78 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // canonical sethparam (Src/params.c:3602) which parses the
             // flat (k,v) pair list internally.
             if exec.assoc(&name).is_some() {
-                // c:Src/subst.c:49-79 `keyvalpairelement` — recognise
-                // `[k]=v` / `[k]+=v` syntax in array literals and split
-                // into separate key/value entries before passing to
-                // sethparam. C zsh's prefork(PREFORK_ASSIGN) drives this
-                // at exec.c::addvars time (c:2547 `prefork(vl, ...,
-                // PREFORK_ASSIGN)`), but the fusevm SET_ARRAY path
-                // bypasses prefork — process the elements here so
-                // `a=([k]=v)` and `a+=([k]=v)` write the assoc instead
-                // of erroring "no matches found: [k]=v".
-                let mut flat: Vec<String> = Vec::with_capacity(values.len() * 2);
-                for elem in &values {
-                    if let Some((k, v)) = parse_kv_pair_element(elem) {
-                        flat.push(k);
-                        flat.push(v);
-                    } else {
-                        flat.push(elem.clone());
+                // `[k]=v` / `[k]+=v` elements arrive from the compiler
+                // as Marker / key / value triples (compile_zsh's port
+                // of keyvalpairelement, c:Src/subst.c:49-79).
+                let marker = crate::ported::zsh_h::Marker;
+                let values = if values.iter().any(|e| e.starts_with(marker)) {
+                    // c:Src/params.c:3544-3560 — under ASSPM_KEY_VALUE
+                    // assocs strictly enforce `[key]=value`: every
+                    // stride-of-3 element must be a Marker. Mixing
+                    // plain pairs with kv triads is an error.
+                    let mut i = 0usize;
+                    while i < values.len() {
+                        if !values[i].starts_with(marker) {
+                            crate::ported::utils::zerr(
+                                "bad [key]=value syntax for associative array",
+                            );
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            exec.set_last_status(1);
+                            return true;
+                        }
+                        i += 3;
                     }
-                }
-                let values = flat;
+                    if values.len() % 3 != 0 {
+                        // c:Src/params.c:4124-4131 arrhashsetfn — a
+                        // truncated triad leaves an odd non-Marker
+                        // count → "bad set of key/value pairs".
+                        crate::ported::utils::zerr(
+                            "bad set of key/value pairs for associative array",
+                        );
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        exec.set_last_status(1);
+                        return true;
+                    }
+                    // c:Src/params.c:4136-4168 arrhashsetfn — whole
+                    // assignment builds a FRESH table; a `Marker +`
+                    // triad (`[k]+=v`) appends to the value inserted
+                    // EARLIER IN THIS SAME LITERAL (assignstrvalue
+                    // with eltflags=ASSPM_AUGMENT against the new ht),
+                    // so `h=([k]=a [k]+=b)` yields "ab". Resolve the
+                    // appends here, then hand flat pairs to sethparam.
+                    let mut order: Vec<String> = Vec::new();
+                    let mut map: std::collections::HashMap<String, String> =
+                        std::collections::HashMap::new();
+                    for ch in values.chunks(3) {
+                        let elt_append = ch[0].chars().nth(1) == Some('+');
+                        let k = ch[1].clone();
+                        let v = ch[2].clone();
+                        let nv = if elt_append {
+                            format!("{}{}", map.get(&k).cloned().unwrap_or_default(), v)
+                        } else {
+                            v
+                        };
+                        if !map.contains_key(&k) {
+                            order.push(k.clone());
+                        }
+                        map.insert(k, nv);
+                    }
+                    order
+                        .into_iter()
+                        .flat_map(|k| {
+                            let v = map.get(&k).cloned().unwrap_or_default();
+                            [k, v]
+                        })
+                        .collect()
+                } else {
+                    values
+                };
                 // Odd-count rejection lives in the canonical chain:
                 // sethparam → setarrvalue (c:3651/c:2920) →
                 // arrhashsetfn's zerr "bad set of key/value pairs"
@@ -2353,50 +2406,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // assignaparam with ASSPM_WARN — handles PM_UNIQUE dedupe,
             // type-flag flip, PM_READONLY rejection.
             //
-            // Special PM_HASHED params (options, commands, aliases,
-            // nameddirs, ...) take this assignaparam route too —
-            // `exec.assoc()` above misses them because they live in
-            // paramtab, not the executor assoc store. Run the same
-            // keyvalpairelement split (c:Src/subst.c:49-79 via
-            // prefork(PREFORK_ASSIGN)) so `options=([noglob]=on)`
-            // works, and enforce C's all-or-none Marker rule for
-            // hashed targets (Src/params.c:3544-3560: "bad
-            // [key]=value syntax for associative array").
-            let mut values = values;
-            let is_special_hashed = {
-                let tab = crate::ported::params::paramtab().read().unwrap();
-                tab.get(&name)
-                    .map(|pm| {
-                        let f = pm.node.flags as u32;
-                        (f & crate::ported::zsh_h::PM_HASHED) != 0
-                            && (f & crate::ported::zsh_h::PM_SPECIAL) != 0
-                    })
-                    .unwrap_or(false)
-            };
-            if is_special_hashed {
-                let kv: Vec<Option<(String, String)>> =
-                    values.iter().map(|e| parse_kv_pair_element(e)).collect();
-                let n_kv = kv.iter().filter(|p| p.is_some()).count();
-                if n_kv > 0 {
-                    if n_kv != kv.len() {
-                        // c:Src/params.c:3553-3560 — mixed forms.
-                        crate::ported::utils::zerr(
-                            "bad [key]=value syntax for associative array",
-                        );
-                        crate::ported::utils::errflag.fetch_or(
-                            crate::ported::zsh_h::ERRFLAG_ERROR,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        exec.set_last_status(1);
-                        return true;
-                    }
-                    values = kv
-                        .into_iter()
-                        .flatten()
-                        .flat_map(|(k, v)| [k, v])
-                        .collect();
-                }
-            }
+            // `[k]=v` elements arrive as Marker / key / value triples
+            // (compile_zsh's keyvalpairelement port). Mirror
+            // c:Src/exec.c:2552-2553 — `if (prefork_ret &
+            // PREFORK_KEY_VALUE) myflags |= ASSPM_KEY_VALUE;` — so
+            // assignaparam runs its kv-resolution block (sparse fill
+            // for PM_ARRAY, c:3447-3541; strict-triad enforcement for
+            // special PM_HASHED targets like `options`, c:3544-3560).
+            let values = values;
+            let has_kv = values
+                .iter()
+                .any(|e| e.starts_with(crate::ported::zsh_h::Marker));
             // The tied-array mirror to a PM_TIED scalar
             // (`typeset -T PATH path`) lives canonically in
             // setarrvalue's dispatch in C zsh; until that wires
@@ -2406,7 +2426,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let joined = values.join(&sep);
                 exec.set_scalar(scalar_name, joined);
             }
-            let _ = crate::ported::params::setaparam(&name, values.clone());
+            // c:Src/exec.c:2632-2633 addvars — `if (!assignaparam(...))
+            // lastval = 1;` — a failed assignment (bad subscript, bad
+            // [key]=value syntax, readonly) exits 1 and the errflag
+            // abort stops the remaining list. Track errflag pre/post
+            // like the assoc branch above.
+            let kv_flag = if has_kv {
+                crate::ported::zsh_h::ASSPM_KEY_VALUE
+            } else {
+                0
+            };
+            let pre_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR;
+            let res = crate::ported::params::assignaparam(
+                &name,
+                values.clone(),
+                crate::ported::zsh_h::ASSPM_WARN | kv_flag,
+            );
+            let now_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR;
+            if res.is_none() && pre_err == 0 && now_err != 0 {
+                exec.set_last_status(1);
+                return true;
+            }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
@@ -2458,7 +2500,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 other => values.push(other.to_str()),
             }
         }
-        with_executor(|exec| {
+        let blocked = with_executor(|exec| -> bool {
             // Assoc append `m+=(k1 v1 ...)`: merge the (k,v) pairs into
             // the existing map and write back via canonical sethparam
             // (Src/params.c:3602). The canonical C path would go
@@ -2469,41 +2511,98 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // lands, do the augment + write here so the storage
             // actually mutates.
             if exec.assoc(&name).is_some() {
-                // c:Src/subst.c:49-79 keyvalpairelement — recognise
-                // `[k]=v` / `[k]+=v` in array elements (the C source
-                // applies via prefork(PREFORK_ASSIGN) before
-                // assignaparam; the fusevm path bypasses prefork so
-                // run the same kv-pair detection inline here).
-                let mut flat: Vec<String> = Vec::with_capacity(values.len() * 2);
-                for elem in &values {
-                    if let Some((k, v)) = parse_kv_pair_element(elem) {
-                        flat.push(k);
-                        flat.push(v);
-                    } else {
-                        flat.push(elem.clone());
-                    }
-                }
+                // `[k]=v` / `[k]+=v` elements arrive as Marker / key /
+                // value triples (compile_zsh's port of
+                // keyvalpairelement, c:Src/subst.c:49-79).
+                let marker = crate::ported::zsh_h::Marker;
                 let mut map = exec.assoc(&name).unwrap_or_default();
-                let mut it = flat.into_iter();
-                while let Some(k) = it.next() {
-                    if let Some(v) = it.next() {
-                        map.insert(k, v);
+                if values.iter().any(|e| e.starts_with(marker)) {
+                    // c:Src/params.c:3544-3560 — strict triad rule.
+                    let mut i = 0usize;
+                    while i < values.len() {
+                        if !values[i].starts_with(marker) {
+                            crate::ported::utils::zerr(
+                                "bad [key]=value syntax for associative array",
+                            );
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            exec.set_last_status(1);
+                            return true;
+                        }
+                        i += 3;
+                    }
+                    if values.len() % 3 != 0 {
+                        // c:Src/params.c:4124-4131 — odd pair count.
+                        crate::ported::utils::zerr(
+                            "bad set of key/value pairs for associative array",
+                        );
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        exec.set_last_status(1);
+                        return true;
+                    }
+                    // c:Src/params.c:4133-4168 arrhashsetfn with
+                    // ASSPM_AUGMENT — ht = the EXISTING table, so
+                    // `[k]+=v` appends to the current value
+                    // (assignstrvalue eltflags=ASSPM_AUGMENT,
+                    // c:4144-4150) and `[k]=v` overwrites.
+                    for ch in values.chunks(3) {
+                        let elt_append = ch[0].chars().nth(1) == Some('+');
+                        let k = ch[1].clone();
+                        let v = ch[2].clone();
+                        let nv = if elt_append {
+                            format!("{}{}", map.get(&k).cloned().unwrap_or_default(), v)
+                        } else {
+                            v
+                        };
+                        map.insert(k, nv);
+                    }
+                } else {
+                    let mut it = values.iter().cloned();
+                    while let Some(k) = it.next() {
+                        if let Some(v) = it.next() {
+                            map.insert(k, v);
+                        }
                     }
                 }
                 exec.set_assoc(name, map);
-                return;
+                return false;
             }
             // Indexed-array append `arr+=(d e f)` — route directly
             // through canonical assignaparam with ASSPM_AUGMENT
             // (`Src/params.c:3570-3585` append-on-array branch).
             // assignaparam reads the prior array internally and
             // appends the new values, so the bridge no longer needs
-            // to pre-concat manually.
-            let _ = crate::ported::params::assignaparam(
+            // to pre-concat manually. Marker triples from `[k]=v`
+            // elements add ASSPM_KEY_VALUE (c:Src/exec.c:2552-2553)
+            // so the kv sparse-fill block (c:Src/params.c:3447-3541)
+            // resolves them against the existing elements.
+            let kv_flag = if values
+                .iter()
+                .any(|e| e.starts_with(crate::ported::zsh_h::Marker))
+            {
+                crate::ported::zsh_h::ASSPM_KEY_VALUE
+            } else {
+                0
+            };
+            let pre_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR;
+            let res = crate::ported::params::assignaparam(
                 &name,
                 values.clone(),
-                crate::ported::zsh_h::ASSPM_AUGMENT,
+                crate::ported::zsh_h::ASSPM_AUGMENT | kv_flag,
             );
+            let now_err = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR;
+            if res.is_none() && pre_err == 0 && now_err != 0 {
+                // c:Src/exec.c:2632-2633 — failed assignment → lastval 1.
+                exec.set_last_status(1);
+                return true;
+            }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
@@ -2521,14 +2620,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_scalar(scalar_name.clone(), joined.clone());
                 crate::vm_helper::setenv_truncate_nul(&scalar_name, &joined);
             }
+            false
         });
         // c:Src/jobs.c:1748-1757 waitonejob — `arr+=(...)` is an
         // array-assignment simple command and clobbers pipestats to
         // `[lastval]` exactly like `arr=(...)` above. Bug #373.
-        crate::ported::builtin::LASTVAL.store(0, std::sync::atomic::Ordering::Relaxed);
+        let status = if blocked { 1 } else { 0 };
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
-        Value::Status(0)
+        Value::Status(status)
     });
     vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {
         if argc < 2 {
@@ -7865,52 +7966,6 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
     } else {
         Value::Array(stripped.into_iter().map(Value::str).collect())
     }
-}
-
-/// Detect `[key]=value` / `[key]+=value` shapes in a single string and
-/// split into the (key, value) pair. Returns `None` when the shape
-/// doesn't match (caller treats the element as a singleton word).
-///
-/// Mirrors the visible behavior of `Src/subst.c:49-79
-/// keyvalpairelement`, which is called by `prefork(PREFORK_ASSIGN)` on
-/// each word in an assignment array literal. The fusevm SET_ARRAY path
-/// bypasses prefork, so this helper runs the same check at the
-/// SET_ARRAY entry point for PM_HASHED targets.
-///
-/// Accepts both literal `[`/`]`/`=` and the lexer's `Inbrack`/`Outbrack`/
-/// `Equals` token forms — array elements can arrive in either
-/// representation depending on the compile_zsh entry path.
-fn parse_kv_pair_element(s: &str) -> Option<(String, String)> {
-    use crate::ported::zsh_h::{Equals, Inbrack, Outbrack};
-    let chars: Vec<char> = s.chars().collect();
-    if chars.is_empty() || (chars[0] != '[' && chars[0] != Inbrack) {
-        return None;
-    }
-    // Find matching `]` (or Outbrack TOKEN). c:subst.c:55 — first match
-    // wins (no nesting handled in keyvalpairelement).
-    let end = chars
-        .iter()
-        .enumerate()
-        .skip(1)
-        .find(|(_, &c)| c == ']' || c == Outbrack)
-        .map(|(i, _)| i)?;
-    if end + 1 >= chars.len() {
-        return None;
-    }
-    // c:subst.c:57-60 — `]=...` (assign) or `]+=...` (append). The
-    // value side starts after the `=` token.
-    let is_equals_char = |c: Option<&char>| -> bool {
-        matches!(c, Some(&'=')) || matches!(c, Some(&ch) if ch == Equals)
-    };
-    let is_append = chars.get(end + 1) == Some(&'+') && is_equals_char(chars.get(end + 2));
-    let is_assign = !is_append && is_equals_char(chars.get(end + 1));
-    if !is_assign && !is_append {
-        return None;
-    }
-    let key: String = chars[1..end].iter().collect();
-    let value_start = if is_append { end + 3 } else { end + 2 };
-    let value: String = chars[value_start..].iter().collect();
-    Some((key, value))
 }
 
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
