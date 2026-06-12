@@ -5351,10 +5351,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // don't execute. Returns Int(1) when noexec is set so the
         // emit-side JumpIfTrue skips the statement body.
         if opt_state_get("noexec").unwrap_or(false) {
-            Value::Int(1)
-        } else {
-            Value::Int(0)
+            return Value::Int(1);
         }
+        // c:Src/exec.c:1390 — execlist's list-loop gate:
+        //   `while (wc_code(code) == WC_LIST && !breaks && !retflag
+        //          && !errflag)`
+        // — once errflag is set, the NEXT sublist never starts, so
+        // lastval survives untouched to the shell exit. Without this
+        // prologue gate the follow-up statement RAN, its dispatch
+        // saw errflag, returned 1, and SetStatus clobbered lastval —
+        // `[[ x == [a- ]]; print rc=$?` exited 1 instead of zsh's 2
+        // (the cond syntax error set lastval=2 per exec.c:5216-5221).
+        if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+        {
+            return Value::Int(1);
+        }
+        Value::Int(0)
     });
     vm.register_builtin(BUILTIN_DONETRAP_RESET, |_vm, _argc| {
         // c:Src/exec.c:1455 — `donetrap = 0;` at sublist start.
@@ -5818,6 +5832,62 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Mirror C zsh: when the word list is empty after expansion,
     // \$? becomes whatever the inner cmd-subst's last_status is
     // (preserved here by returning Value::Status(last_status)).
+    // c:Src/cond.c:308-316 — `if (!(pprog = patcompile(right, ...)))
+    //   { zwarnnam(fromtest, "bad pattern: %s", right); return 2; }`.
+    // The cond path must NOT use str_match/glob_match_static: the
+    // case-statement consumer of those follows Src/loop.c:667 zerr
+    // semantics (errflag abort), while cond is a zwarn + status-2
+    // soft failure. COND_BAD_PATTERN carries the 2 across the
+    // Bool-shaped stack contract (so `!=`'s LogNot can't lose it).
+    thread_local! {
+        static COND_BAD_PATTERN: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+    vm.register_builtin(BUILTIN_COND_STRMATCH, |vm, _argc| {
+        let pat = vm.pop().to_str();
+        let s = vm.pop().to_str();
+        let mut pat_tok = pat.clone();
+        crate::ported::glob::tokenize(&mut pat_tok);
+        if crate::ported::pattern::patcompile(
+            &pat_tok,
+            crate::ported::zsh_h::PAT_STATIC as i32,
+            None,
+        )
+        .is_none()
+        {
+            // c:314 — zwarnnam(fromtest, "bad pattern: %s", right).
+            crate::ported::utils::zwarn(&format!("bad pattern: {}", pat));
+            COND_BAD_PATTERN.with(|c| c.set(true));
+            return Value::Bool(false);
+        }
+        // Match via the shared engine so `(#b)`/`(#m)` backref and
+        // MATCH-variable population stays in one place.
+        Value::Bool(crate::vm_helper::glob_match_static(&s, &pat))
+    });
+    vm.register_builtin(BUILTIN_COND_STATUS_FROM_BOOL, |vm, _argc| {
+        let ok = vm.pop().to_int() != 0;
+        let bad = COND_BAD_PATTERN.with(|c| {
+            let b = c.get();
+            c.set(false);
+            b
+        });
+        if bad {
+            // c:Src/exec.c:5216-5221 — `stat = evalcond(...);
+            //   /* 2 indicates a syntax error. For compatibility,
+            //      turn this into a shell error. */
+            //   if (stat == 2) errflag |= ERRFLAG_ERROR;`
+            // The errflag abort exits the script with lastval (2),
+            // matching `zsh -fc '[[ x == [a- ]]; print rc=$?'`
+            // printing nothing after the diagnostic and exiting 2.
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(2));
+            return Value::Int(2); // c:Src/cond.c:316 `return 2;`
+        }
+        Value::Int(if ok { 0 } else { 1 })
+    });
     vm.register_builtin(BUILTIN_EXEC_DYNAMIC, |vm, argc| {
         let raw = pop_args(vm, argc);
         // Flatten Array entries into argv slots (matches fusevm
@@ -6097,7 +6167,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // `f() { local -r x=5; x=10; }; f; echo after` printed
             // `after` because errflag-clear above let the script-level
             // check see a clean state.
-            crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+            //
+            // c:Src/init.c:234 loop() — the errflag abort exits with
+            // the UNTOUCHED lastval, never a hardcoded 1: a cond
+            // syntax error set lastval=2 (exec.c:5216-5221) and zsh
+            // exits 2; the readonly-reassign case exits 1 because
+            // ITS lastval is 1. vm.last_status was synced from the
+            // executor above — propagate it instead of pinning 1.
+            crate::ported::builtin::EXIT_VAL.store(vm.last_status, Ordering::Relaxed);
             crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
             return Value::Int(1);
         }
@@ -7487,6 +7564,18 @@ pub const BUILTIN_REDIRECT_FAILED_CHECK: u16 = 605;
 /// "permission denied" when `argv[0]` is empty, otherwise routes
 /// through executor.host_exec_external like Op::Exec did.
 pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
+/// `[[ lhs == pat ]]` / `!=` glob compare — cond-specific so the
+/// bad-pattern diagnostic follows Src/cond.c:308-316: zwarnnam
+/// "bad pattern: %s" WITHOUT errflag (the script continues) and the
+/// cond statement exits 2. Stack: [lhs, pat] → Bool. On compile
+/// failure pushes Bool(false) and arms COND_BAD_PATTERN so
+/// BUILTIN_COND_STATUS_FROM_BOOL reports 2.
+pub const BUILTIN_COND_STRMATCH: u16 = 624;
+/// Pops the cond result Bool → Int status per Src/cond.c: true→0,
+/// false→1, but 2 when COND_BAD_PATTERN was armed during this cond
+/// (covers `!=` where LogNot flips the Bool before status time).
+pub const BUILTIN_COND_STATUS_FROM_BOOL: u16 = 625;
+
 /// `< file` / `> file` with no command word (NULLCMD path).
 /// Resolves NULLCMD (default "cat") / READNULLCMD (default "more")
 /// at runtime per Src/exec.c:3340-3364 and exec's it through
@@ -8008,8 +8097,26 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {
-        // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
-        // `case` arms, and any other point that compares against a glob pattern.
+        // Shell glob match — `*`, `?`, `[...]`, alternation. After the
+        // cond path moved to BUILTIN_COND_STRMATCH, the consumer here
+        // is the `case` arm dispatch, whose bad-pattern semantics are
+        // Src/loop.c:663-667: `if (!(pprog = patcompile(pat, ...)))
+        // zerr("bad pattern: %s", pat);` — errflag set, the arm
+        // doesn't match, and the script aborts at the next command
+        // boundary (matching `zsh -fc 'case x in [a-) ...'` printing
+        // the diagnostic with exit 0 = untouched lastval).
+        let mut pat_tok = pattern.to_string();
+        crate::ported::glob::tokenize(&mut pat_tok);
+        if crate::ported::pattern::patcompile(
+            &pat_tok,
+            crate::ported::zsh_h::PAT_STATIC as i32,
+            None,
+        )
+        .is_none()
+        {
+            crate::ported::utils::zerr(&format!("bad pattern: {}", pattern)); // c:667
+            return false;
+        }
         glob_match_static(s, pattern)
     }
 

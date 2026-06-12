@@ -3128,7 +3128,7 @@ These are pre-existing bugs the audit exposed, NOT regressions from the iter-86 
 - **`${(s:l:)hello}` empty-element handling** — zsh drops empty elements when splitting (`hello` split by `l` → `he`, `o`); zshrs keeps empties (`he`, ``, `o`). Niche.
 - **`${#:-empty}` length-of-default** — zsh returns 5 (length of "empty"); zshrs returns 0. Esoteric edge case in `${#name:-default}` parsing.
 - **`*` glob ordering caseglob** — zsh sorts `bench bins Cargo.lock …` (case-insensitive); zshrs sorts `Cargo.lock … bench bins` (case-sensitive). Glob expansion needs to honor the `caseglob` option (default-on in zsh).
-- **`declare -A h; h[foo bar]=baz`** — zsh: "bad pattern: h[foo"; zshrs: "command not found: h[foo". Both error; format/source differs.
+- **`declare -A h; h[foo bar]=baz`** — zsh: "bad pattern: h[foo"; zshrs: "command not found: h[foo". Both error; format/source differs. (Re-verified 2026-06-12 after the unclosed-class patcompile fix: unchanged — this one comes from word-splitting the assignment, not pattern compilation.)
 - **`declare -i` / `declare -a` / `declare -A` no-args listing** — zsh includes shell-internal params (`!`, `$`, `EUID`, `fpath`, etc.) in their respective type listings. zshrs's special params aren't typed, so the filter would return empty. Needs typed-special-param infrastructure.
 - **Math funcs without `zmodload zsh/mathfunc`** — zshrs auto-provides `sqrt`, `sin`, `cos`, `floor`, `ceil`, `min`, `max`, etc.; zsh requires `zmodload zsh/mathfunc` first and errors with "unknown function" otherwise. zshrs is more permissive (likely a feature for daily use); leaving as documented divergence.
 
@@ -3138,7 +3138,7 @@ These are pre-existing bugs the audit exposed, NOT regressions from the iter-86 
 The following items have been investigated and confirmed as false positives or fundamentally compatible:
 
 - **`read -d DELIM` / `read -A array` / `read -r raw`** — verified working when not run inside a pipeline subshell. The original probe diff was a `cmd | read v` pipeline-isolation artifact (the `read` runs in a subshell so `$v` doesn't survive — same behavior in zsh).
-- **`print -m PATTERN args...`** — match-arg flag still missing (cosmetic; rarely used).
+- **`print -m PATTERN args...`** — closed 2026-06-12: the flag was already wired for the plain form; the `-f` (printf-format) branch now applies the C-ordered filter too (Src/builtin.c:4712-4741 — pattern first, `if (fmt && !*args) return 0`), and an uncompilable pattern errors "bad pattern" instead of silently matching nothing (patcompile now rejects unclosed `[` classes per Src/pattern.c:1497-1498).
 - **`${(M)arr:#pat}` DQ context** — zsh's behavior here is subtle (the `(M)` flag stays active in DQ to flip filter direction on the joined scalar). zshrs's array-context filter logic differs only when the WHOLE expression is DQ-wrapped AND uses `(M)` AND has a `:#pat` filter. Niche edge case; deferred.
 - **`cd -`** — output style differs by one leading "print pwd" line that zsh's interactive cd suppresses but `-c` doesn't. Cosmetic.
 - **`select` PS3 customization** — uses `?# ` default; users with custom PS3 see their own value. Cosmetic in `-c` mode.

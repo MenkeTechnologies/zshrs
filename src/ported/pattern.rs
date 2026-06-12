@@ -1521,29 +1521,28 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             h as i64
         }
         b'[' => {
-            // c:Src/pattern.c:1438 `case Inbrack` — the C dispatch fires
-            // ONLY on the Inbrack token (lexer-tokenized `[`), not on
-            // raw `[`. An escaped `\[` reaches patcompile as raw `[`
-            // (the lexer dropped the `\`) and must be treated as a
-            // literal char. Probe forward for a matching `]`; if none,
-            // fall through to the literal-byte path below so the `[`
-            // emits an exact-match. Bug #564.
+            // c:Src/pattern.c:1438 `case Inbrack` + c:1497-1498 —
+            // `if (*patparse != Outbrack) return 0;`: an ACTIVE `[`
+            // (token-derived; the patcompile entry normalization maps
+            // the Inbrack token to raw `[` and every literal/escaped
+            // bracket to `\[`, which the `\X` arm consumed before
+            // reaching here) with no closing `]` is a BAD PATTERN.
+            // Callers zerr "bad pattern: %s" exactly like zsh:
+            // `print [a-` / `[[ x == [a- ]]` / `case x in [a-)`.
+            //
+            // History: a 2026-06-03 partial fix for Bug #564 made
+            // this case fall back to a literal `[` because the cond
+            // path then stripped `\` before patcompile. The escape
+            // now survives into the `\X` literal arm (all three #564
+            // probes pass), so the leniency only masked genuine bad
+            // patterns.
             let probe_off = off + 1;
             let parse_check = patparse.lock().unwrap();
             let check_bytes = parse_check.as_bytes();
             let has_close = check_bytes[probe_off..].contains(&b']');
             drop(parse_check);
             if !has_close {
-                // Treat `[` as literal — fall through to the default
-                // (exact-match emit) arm via the explicit literal path.
-                patparse_off.fetch_add(1, Ordering::Relaxed);
-                let h = patnode(P_EXACTLY);
-                let mut buf = patout.lock().unwrap();
-                let len: u32 = 1;
-                buf.extend_from_slice(&len.to_le_bytes());
-                buf.push(b'[');
-                *tail_out = h;
-                return h as i64;
+                return -1; // c:1498 `return 0;` — bad pattern
             }
             patparse_off.fetch_add(1, Ordering::Relaxed);
             *flagp |= P_SIMPLE;

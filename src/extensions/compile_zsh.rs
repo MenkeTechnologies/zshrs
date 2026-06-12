@@ -6454,17 +6454,16 @@ impl ZshCompiler {
         // Result on stack: bool. Status set after this returns.
         self.compile_cond_expr(c);
         self.emit_cmd_pop();
-        // Convert bool → status (true=0, false=1)
-        let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
-        self.builder.emit(Op::LoadInt(1), 0);
+        // Convert bool → status. c:Src/cond.c — true→0, false→1,
+        // and 2 when a `==`/`!=` pattern failed to compile during
+        // this cond (BUILTIN_COND_STRMATCH armed the cell; the
+        // builtin consumes it). Routed through the builtin instead
+        // of inline jumps so the tri-state survives `!=`'s LogNot.
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STATUS_FROM_BOOL, 1),
+            0,
+        );
         self.builder.emit(Op::SetStatus, 0);
-        let end_jump = self.builder.emit(Op::Jump(0), 0);
-        let true_target = self.builder.current_pos();
-        self.builder.patch_jump(true_jump, true_target);
-        self.builder.emit(Op::LoadInt(0), 0);
-        self.builder.emit(Op::SetStatus, 0);
-        let end = self.builder.current_pos();
-        self.builder.patch_jump(end_jump, end);
         let _ = ZshCond::Not;
     }
 
@@ -7156,9 +7155,22 @@ impl ZshCompiler {
 
     fn emit_binary_test(&mut self, op: &str) {
         match op {
-            "=" | "==" => self.builder.emit(Op::StrMatch, 0),
+            // c:Src/cond.c:308-316 — cond glob compare carries its
+            // own bad-pattern semantics (zwarn + status 2, no abort),
+            // distinct from case's Src/loop.c:667 zerr. Dedicated
+            // builtin instead of Op::StrMatch so the diagnostic path
+            // splits per consumer.
+            "=" | "==" => {
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STRMATCH, 2),
+                    0,
+                )
+            }
             "!=" => {
-                self.builder.emit(Op::StrMatch, 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STRMATCH, 2),
+                    0,
+                );
                 self.builder.emit(Op::LogNot, 0)
             }
             // `=~` arrives via ZshCond::Binary not ZshCond::Regex (the
