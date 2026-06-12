@@ -47686,3 +47686,120 @@ l2}[(f)2]}"###);
         probe_c_while_then_after => (r#"probe c while then after"#, r###"while {false} {print no}; print after"###);
     }
 }
+
+/// Probe sweep 2026-06-12, round D — 88 zsh-probed `-fc` pins over
+/// territory the earlier rounds did not cover: fd redirections +
+/// process substitution, traps (USR1/EXIT/reset), getopts, wait on
+/// background jobs, local/typeset scoping + display flags
+/// (-F/-E/-Z/-L/-R/-u/-l/-i/float), hash -d named dirs, pushd/popd,
+/// zmodload (mathfunc/datetime/parameter), printf/print flag matrix
+/// (-P/-D/-N/-o/-O/-i, %x %o %e), read (-k/-A/IFS/-t 0), math
+/// edges (##A, 'A' illegal-char message, min/abs), whence/command/
+/// builtin resolution, alias/unalias, setopt glob variants
+/// (nullglob/cshnullglob/nomatch/extendedglob).
+///
+/// Round-D fixes pinned here: BSD-exact externals in --zsh mode
+/// (coreutils shadows forced off — `head -0` must error like
+/// /usr/bin/head), CSH_NULL_GLOB badcshglob protocol
+/// (Src/glob.c:1871-1875 + Src/subst.c:505-507 + Src/exec.c:3378),
+/// math zzlex default-case backup so the trailing-junk diagnostic
+/// names the offending char (Src/math.c:842 `*--ptr`) with the C
+/// message prefix (Src/math.c:1498-1499).
+///
+/// Excluded: `suspend` (killpg(0, SIGTSTP) stops the harness'
+/// process group by design — environment-dependent, untestable
+/// in-suite).
+mod probe_sweep_2026_06_12_d {
+    use super::*;
+
+    parity_gap_tests! {
+        probe_d_row_001 => (r#"probe d 001"#, r###"exec 3>/tmp/zsprobe_fd3; print -u3 x; exec 3>&-; cat /tmp/zsprobe_fd3"###);
+        probe_d_row_002 => (r#"probe d 002"#, r###"print one >&2 2>/dev/null; print rc=$?"###);
+        probe_d_row_003 => (r#"probe d 003"#, r###"{ print a; print b } | wc -l"###);
+        probe_d_row_004 => (r#"probe d 004"#, r###"print x | { read v; print "got:$v" }"###);
+        probe_d_row_005 => (r#"probe d 005"#, r###"cat <(print psub) 2>/dev/null"###);
+        probe_d_row_006 => (r#"probe d 006"#, r###"print >(true) > /dev/null; print rc=$?"###);
+        probe_d_row_007 => (r#"probe d 007"#, r###"diff <(print a) <(print a); print rc=$?"###);
+        probe_d_row_008 => (r#"probe d 008"#, r###"trap 'print T' USR1; kill -USR1 $$; sleep 0.1"###);
+        probe_d_row_009 => (r#"probe d 009"#, r###"trap 'print E' EXIT; true"###);
+        probe_d_row_010 => (r#"probe d 010"#, r###"trap '' INT; trap - INT; print rc=$?"###);
+        probe_d_row_011 => (r#"probe d 011"#, r###"getopts ab opt -a; print "$opt $OPTIND""###);
+        probe_d_row_012 => (r#"probe d 012"#, r###"while getopts x:y opt -x val -y; do print "$opt:$OPTARG"; done"###);
+        probe_d_row_013 => (r#"probe d 013"#, r###"true & wait $!; print rc=$?"###);
+        probe_d_row_014 => (r#"probe d 014"#, r###"false & wait $!; print rc=$?"###);
+        probe_d_row_015 => (r#"probe d 015"#, r###"(exit 7) & wait $!; print rc=$?"###);
+        probe_d_row_016 => (r#"probe d 016"#, r###"local x=1 2>/dev/null; print rc=$?"###);
+        probe_d_row_017 => (r#"probe d 017"#, r###"f() { local v=in; print $v }; v=out; f; print $v"###);
+        probe_d_row_018 => (r#"probe d 018"#, r###"f() { typeset -i n=5; print $((n*2)) }; f"###);
+        probe_d_row_019 => (r#"probe d 019"#, r###"f() { typeset -g gv=set }; f; print $gv"###);
+        probe_d_row_020 => (r#"probe d 020"#, r###"f() { typeset -a la; la=(1 2); print ${#la} }; f"###);
+        probe_d_row_021 => (r#"probe d 021"#, r###"hash -d zz=/tmp; print ~zz"###);
+        probe_d_row_022 => (r#"probe d 022"#, r###"hash foo=/bin/ls 2>/dev/null; hash | grep -c foo"###);
+        probe_d_row_023 => (r#"probe d 023"#, r###"pushd /tmp > /dev/null && popd > /dev/null; print rc=$?"###);
+        probe_d_row_024 => (r#"probe d 024"#, r###"pushd /tmp > /dev/null; dirs; popd > /dev/null"###);
+        probe_d_row_025 => (r#"probe d 025"#, r###"cd /tmp && print $PWD"###);
+        probe_d_row_026 => (r#"probe d 026"#, r###"print $OLDPWD > /dev/null; print rc=$?"###);
+        probe_d_row_027 => (r#"probe d 027"#, r###"zmodload zsh/mathfunc 2>/dev/null; print $(( int(sqrt(16)) ))"###);
+        probe_d_row_028 => (r#"probe d 028"#, r###"zmodload -e zsh/parameter; print rc=$?"###);
+        probe_d_row_029 => (r#"probe d 029"#, r###"zmodload zsh/datetime; print ${#EPOCHSECONDS}"###);
+        probe_d_row_030 => (r#"probe d 030"#, r###"print $(( abs(-5) )) 2>/dev/null; print rc=$?"###);
+        probe_d_row_031 => (r#"probe d 031"#, r###"print $(( min(3,2) )) 2>/dev/null"###);
+        probe_d_row_032 => (r#"probe d 032"#, r###"float fl=1.5; print $fl"###);
+        probe_d_row_033 => (r#"probe d 033"#, r###"integer iv=0x1f; print $iv"###);
+        probe_d_row_034 => (r#"probe d 034"#, r###"typeset -F2 f2=3.14159; print $f2"###);
+        probe_d_row_035 => (r#"probe d 035"#, r###"typeset -E e1=12345.6789; print $e1"###);
+        probe_d_row_036 => (r#"probe d 036"#, r###"typeset -Z3 z1=7; print $z1"###);
+        probe_d_row_037 => (r#"probe d 037"#, r###"typeset -L4 l1="abcdef"; print "[$l1]""###);
+        probe_d_row_038 => (r#"probe d 038"#, r###"typeset -R4 r1=ab; print "[$r1]""###);
+        probe_d_row_039 => (r#"probe d 039"#, r###"typeset -u up=mixedCase; print $up"###);
+        probe_d_row_040 => (r#"probe d 040"#, r###"typeset -l lo=MixedCase; print $lo"###);
+        probe_d_row_041 => (r#"probe d 041"#, r###"readonly ro=v 2>/dev/null; ro=w 2>/dev/null; print rc=$?"###);
+        probe_d_row_042 => (r#"probe d 042"#, r###"noglob print *unlikelyglob*; print rc=$?"###);
+        probe_d_row_043 => (r#"probe d 043"#, r###"print -- -n"###);
+        probe_d_row_044 => (r#"probe d 044"#, r###"print - -n"###);
+        probe_d_row_045 => (r#"probe d 045"#, r###"echo -n no_newline; echo"###);
+        probe_d_row_046 => (r#"probe d 046"#, r###"echo -e 'a\tb'"###);
+        probe_d_row_047 => (r#"probe d 047"#, r###"echo -E 'a\tb'"###);
+        probe_d_row_048 => (r#"probe d 048"#, r###"printf '%5.2f\n' 3.14159"###);
+        probe_d_row_049 => (r#"probe d 049"#, r###"printf '%x %o %e\n' 255 8 12345.678"###);
+        probe_d_row_050 => (r#"probe d 050"#, r###"printf '%s\n' a b c | wc -l"###);
+        probe_d_row_051 => (r#"probe d 051"#, r###"printf -v pv 'x%dy' 7 2>/dev/null; print rc=$?"###);
+        probe_d_row_052 => (r#"probe d 052"#, r###"print -P '%B%b' | cat -v"###);
+        probe_d_row_053 => (r#"probe d 053"#, r###"print -D $HOME"###);
+        probe_d_row_054 => (r#"probe d 054"#, r###"print -N a b | tr '\0' ','; echo"###);
+        probe_d_row_055 => (r#"probe d 055"#, r###"print -o c a b"###);
+        probe_d_row_056 => (r#"probe d 056"#, r###"print -O c a b"###);
+        probe_d_row_057 => (r#"probe d 057"#, r###"print -i 2>/dev/null; print rc=$?"###);
+        probe_d_row_058 => (r#"probe d 058"#, r###"read -k1 ch <<< xy; print $ch"###);
+        probe_d_row_059 => (r#"probe d 059"#, r###"read -A ra <<< "p q r"; print ${ra[2]}"###);
+        probe_d_row_060 => (r#"probe d 060"#, r###"IFS=: read a b <<< "1:2"; print "$b-$a""###);
+        probe_d_row_061 => (r#"probe d 061"#, r###"read -t 0 x < /dev/null; print rc=$?"###);
+        probe_d_row_062 => (r#"probe d 062"#, r###"vared -c testvar 2>/dev/null < /dev/null; print rc=$?"###);
+        probe_d_row_063 => (r#"probe d 063"#, r###"let 'lv = 3 + 4'; print $lv"###);
+        probe_d_row_064 => (r#"probe d 064"#, r###"(( 1 )) && print arith-true"###);
+        probe_d_row_065 => (r#"probe d 065"#, r###"(( 0 )) || print arith-false"###);
+        probe_d_row_066 => (r#"probe d 066"#, r###"print $((##A))"###);
+        probe_d_row_067 => (r#"probe d 067"#, r###"print $((#))  2>/dev/null; print rc=$?"###);
+        probe_d_row_068 => (r#"probe d 068"#, r###"print $(( 'A' )) 2>/dev/null | head -1"###);
+        probe_d_row_069 => (r#"probe d 069"#, r###"times > /dev/null; print rc=$?"###);
+        probe_d_row_070 => (r#"probe d 070"#, r###"umask | grep -qE '^[0-7]+$'; print rc=$?"###);
+        probe_d_row_071 => (r#"probe d 071"#, r###"ulimit -n > /dev/null; print rc=$?"###);
+        probe_d_row_072 => (r#"probe d 072"#, r###"whence -v print | grep -oc builtin"###);
+        probe_d_row_073 => (r#"probe d 073"#, r###"command -v print"###);
+        probe_d_row_074 => (r#"probe d 074"#, r###"command -V print | grep -oc builtin"###);
+        probe_d_row_075 => (r#"probe d 075"#, r###"builtin print bi"###);
+        probe_d_row_076 => (r#"probe d 076"#, r###"unalias zznope 2>/dev/null; print rc=$?"###);
+        probe_d_row_077 => (r#"probe d 077"#, r###"alias zal='print aliased'; eval zal"###);
+        probe_d_row_078 => (r#"probe d 078"#, r###"alias -g GG='| wc -l' 2>/dev/null; print done"###);
+        probe_d_row_079 => (r#"probe d 079"#, r###"fc -l 2>/dev/null; print rc=$?"###);
+        probe_d_row_080 => (r#"probe d 080"#, r###"r 2>/dev/null; print rc=$?"###);
+        probe_d_row_081 => (r#"probe d 081"#, r###"bindkey -d 2>/dev/null; print rc=$?"###);
+        probe_d_row_082 => (r#"probe d 082"#, r###"zle -l 2>/dev/null | head -0; print rc=$?"###);
+        probe_d_row_083 => (r#"probe d 083"#, r###"setopt | wc -l > /dev/null; print rc=$?"###);
+        probe_d_row_084 => (r#"probe d 084"#, r###"unsetopt nomatch; print *zzznope* 2>/dev/null; setopt nomatch"###);
+        probe_d_row_085 => (r#"probe d 085"#, r###"setopt extendedglob; print ab(#s) 2>/dev/null; print rc=$?"###);
+        probe_d_row_086 => (r#"probe d 086"#, r###"setopt nullglob; print *zzznope*; print rc=$?"###);
+        probe_d_row_087 => (r#"probe d 087"#, r###"setopt cshnullglob; print *zzznope* x; print rc=$?"###);
+        probe_d_row_088 => (r#"probe d 088"#, r###"print ${(M)$(setopt):#*glob*} > /dev/null; print rc=$?"###);
+    }
+}
