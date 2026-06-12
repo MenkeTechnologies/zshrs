@@ -9895,11 +9895,20 @@ pub fn bin_dot(
                 });
                 *pp = saved;
             }
-            // c:6130
+            // c:6130-6137 — `if (isset(POSIXBUILTINS)) zerrnam(...)
+            // else zwarnnam(...)`. zerrnam sets ERRFLAG_ERROR ("hard
+            // error in POSIX (we'll exit later)" — the exec.c done:
+            // gate at c:4378 turns it into exit(1) for the PSPECIAL
+            // `.`); zwarnnam does NOT touch errflag, so without
+            // POSIX_BUILTINS the script continues.
             let msg = format!("{}: {}", "no such file or directory", arg0); // c:6135
-            zwarnnam(name, &msg); // c:6135
-                                  // c:6143 — `return ret == SOURCE_OK ? lastval : 128 - ret`.
-                                  // SOURCE_NOT_FOUND = 1 (Src/zsh.h:2214) → 128 - 1 = 127.
+            if isset(crate::ported::zsh_h::POSIXBUILTINS) {
+                crate::ported::utils::zerrnam(name, &msg); // c:6133
+            } else {
+                zwarnnam(name, &msg); // c:6135
+            }
+            // c:6143 — `return ret == SOURCE_OK ? lastval : 128 - ret`.
+            // SOURCE_NOT_FOUND = 1 (Src/zsh.h:2214) → 128 - 1 = 127.
             return 128 - 1;
         }
     };
@@ -10901,7 +10910,11 @@ pub fn bin_read(
                     buf_bytes.push(b);
                 }
                 Ok(None) => break,
-                Err(_) => return 2,
+                // c:Src/builtin.c:7162-7188 zread — a read(2) error
+                // (EBADF from `read foo <&-`, EIO, ...) returns EOF,
+                // not a distinct error status; bin_read then reports
+                // plain eof (exit 1), with no diagnostic.
+                Err(_) => break,
             }
         }
         buf = String::from_utf8_lossy(&buf_bytes).into_owned();
@@ -10945,7 +10958,8 @@ pub fn bin_read(
                                 buf_bytes.push(b'\\');
                                 break;
                             }
-                            Err(_) => return 2,
+                            // c:7162-7188 zread — read error == EOF.
+                            Err(_) => break,
                         }
                     }
                     if b == b'\n' {
@@ -10955,7 +10969,9 @@ pub fn bin_read(
                     buf_bytes.push(b);
                 }
                 Ok(None) => break,
-                Err(_) => return 2,
+                // c:7162-7188 zread — read error == EOF (exit 1, no
+                // message): `exec 3<&-; read foo <&-` exits 1 in zsh.
+                Err(_) => break,
             }
         }
         if !got_any {

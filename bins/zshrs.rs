@@ -2480,6 +2480,30 @@ fn run_non_interactive() {
     if argv.iter().any(|a| a == "-v" || a == "--verbose") {
         zsh::ported::options::opt_state_set("verbose", true);
     }
+    // Apply CLI `-o NAME` / `+o NAME` option settings — same
+    // normalization as apply_cli_flags. Without this, `zshrs -f -o
+    // CONTINUE_ON_ERROR <<< script` silently dropped the option
+    // (only the -c and script-file paths parsed -o).
+    {
+        let mut i = 0;
+        while i < argv.len() {
+            let a = &argv[i];
+            if (a == "-o" || a == "+o") && i + 1 < argv.len() {
+                let canonical = argv[i + 1].to_lowercase().replace(['_', '-'], "");
+                zsh::ported::options::opt_state_set(&canonical, a == "-o");
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    // c:Src/init.c:307-308 — `} else if (!*cmdptr) opts[SHINSTDIN] = 1;`
+    // No script-file argument and no -c command means the shell reads
+    // commands from stdin, and SHINSTDIN must be set. Diagnostics key
+    // off it: zwarning (Src/utils.c:114 + 301) prints `zsh: msg` with
+    // NO line number when SHINSTDIN is set at top level, vs
+    // `name:LINE: msg` for -c/script input.
+    zsh::ported::options::opt_state_set("shinstdin", true);
     // Read all of stdin at once so multi-line constructs (heredocs, functions,
     // loops, etc.) are parsed correctly — line-by-line breaks them.
     let mut script = String::new();

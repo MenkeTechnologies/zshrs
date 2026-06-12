@@ -509,6 +509,20 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         f
     });
     if redir_failed {
+        // c:Src/exec.c:4367-4386 — POSIX special-builtin escalation:
+        // a failed redirect on a PSPECIAL builtin (set, readonly,
+        // typeset, ...) under POSIX_BUILTINS is FATAL in a
+        // non-interactive shell (`exit(1)` at c:4383). The `command`
+        // prefix resets this (BINF_COMMAND, c:4369) — that path
+        // dispatches through bin_command, not here.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+            && builtin_is_pspecial(name)
+        {
+            use std::sync::atomic::Ordering;
+            crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+        }
         return 1;
     }
     // c:Src/glob.c:1876-1880 NOMATCH path — when expand_glob() failed
@@ -606,7 +620,37 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
     let mut synth = crate::ported::zsh_h::job::default();
     crate::ported::jobs::waitonejob(&mut synth);
+    // c:Src/exec.c:4367-4386 — done: tail. A PSPECIAL builtin that
+    // raised errflag under POSIX_BUILTINS exits the non-interactive
+    // shell with status 1 ("hard error in POSIX" — e.g. bin_dot's
+    // zerrnam at Src/builtin.c:6133). Arm the deferred-exit pair so
+    // the next ERREXIT_CHECK unwinds; EXIT_VAL=1 matches C's
+    // hardcoded exit(1), NOT the builtin's own status (dot returns
+    // 127 but POSIX exits 1).
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS)
+        && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+        && builtin_is_pspecial(name)
+        && (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0
+    {
+        use std::sync::atomic::Ordering;
+        crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+        crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+    }
     status
+}
+
+/// c:Src/zsh.h:1467 BINF_PSPECIAL — true when `name` is a POSIX
+/// special builtin per the canonical builtin table flags
+/// (Src/builtin.c:48-129: `.`, `:`, break, continue, declare, eval,
+/// exit, export, float, integer, local, readonly, return, set,
+/// shift, source, times, trap, typeset, unset).
+fn builtin_is_pspecial(name: &str) -> bool {
+    crate::ported::builtin::createbuiltintable()
+        .get(name)
+        .map(|b| (b.node.flags as u32 & crate::ported::zsh_h::BINF_PSPECIAL) != 0)
+        .unwrap_or(false)
 }
 
 /// Install the `crate::ported::exec_hooks` fn-pointer registry so
@@ -4256,9 +4300,195 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // "fresh fd >= 10" promise so subsequent commands don't collide on
     // stdin/out/err.
     vm.register_builtin(BUILTIN_OPEN_NAMED_FD, |vm, _argc| {
+        use std::sync::atomic::Ordering;
         let op_byte = vm.pop().to_int() as u8;
         let varid = vm.pop().to_str();
         let path = vm.pop().to_str();
+        // Param introspection used by both the open and close forms.
+        let param_flags = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(&varid).map(|p| p.node.flags));
+        let param_readonly = param_flags
+            .map(|f| (f & crate::ported::zsh_h::PM_READONLY as i32) != 0)
+            .unwrap_or(false);
+        // `{varid}>&-` / `{varid}<&-` — REDIR_CLOSE with varid.
+        // Direct port of Src/exec.c:3805-3850.
+        if matches!(
+            op_byte,
+            b if b == fusevm::op::redirect_op::DUP_WRITE
+                || b == fusevm::op::redirect_op::DUP_READ
+        ) {
+            let n = path.trim_start_matches('&');
+            if n == "-" {
+                let val = with_executor(|exec| exec.scalar(&varid)).unwrap_or_default();
+                let fd1 = val.parse::<i32>();
+                // c:3811-3816 — bad=1: parameter doesn't contain an fd.
+                let Ok(fd1) = fd1 else {
+                    crate::ported::utils::zwarn(&format!(
+                        "parameter {} does not contain a file descriptor",
+                        varid
+                    ));
+                    with_executor(|exec| exec.redirect_failed = true);
+                    return Value::Status(1);
+                };
+                // c:3813-3814 — bad=2: readonly parameter.
+                if param_readonly {
+                    crate::ported::utils::zwarn(&format!(
+                        "can't close file descriptor from readonly parameter {}",
+                        varid
+                    ));
+                    with_executor(|exec| exec.redirect_failed = true);
+                    return Value::Status(1);
+                }
+                // c:3830-3835 — bad=3: fd >= 10 marked FDT_INTERNAL.
+                if fd1 >= 10
+                    && fd1 <= crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed)
+                    && crate::ported::utils::fdtable_get(fd1)
+                        == crate::ported::zsh_h::FDT_INTERNAL
+                {
+                    crate::ported::utils::zwarn(&format!(
+                        "file descriptor {} used by shell, not closed",
+                        fd1
+                    ));
+                    with_executor(|exec| exec.redirect_failed = true);
+                    return Value::Status(1);
+                }
+                // c:3870-3873 — close; report failure (varid form
+                // always reports, unlike bare `N>&-`).
+                if crate::ported::utils::zclose(fd1) < 0 {
+                    crate::ported::utils::zwarn(&format!(
+                        "failed to close file descriptor {}: {}",
+                        fd1,
+                        std::io::Error::last_os_error()
+                    ));
+                    return Value::Status(1);
+                }
+                return Value::Status(0);
+            }
+            // `{varid}>&N` — dup N to a fresh fd >= 10, store in varid.
+            if let Ok(src) = n.parse::<i32>() {
+                if param_readonly {
+                    crate::ported::utils::zwarn(&format!(
+                        "can't allocate file descriptor to readonly parameter {}",
+                        varid
+                    ));
+                    with_executor(|exec| exec.redirect_failed = true);
+                    return Value::Status(1);
+                }
+                let dup = unsafe { libc::dup(src) };
+                if dup < 0 {
+                    crate::ported::utils::zwarn(&format!("{}: bad file descriptor", src));
+                    with_executor(|exec| exec.redirect_failed = true);
+                    return Value::Status(1);
+                }
+                // c:2404-2412 addfd varid arm — movefd + FDT_EXTERNAL.
+                let final_fd = crate::ported::utils::movefd(dup);
+                crate::ported::utils::fdtable_set(
+                    final_fd,
+                    crate::ported::zsh_h::FDT_EXTERNAL,
+                );
+                with_executor(|exec| {
+                    exec.set_scalar(varid, final_fd.to_string());
+                });
+                return Value::Status(0);
+            }
+            return Value::Status(1);
+        }
+        // `{varid}<<HERE` / `{varid}<<<str` — op byte 255 (zshrs-side
+        // contract with compile_redir; fusevm's redirect_op stops at
+        // 8). C path: gethere/getherestr write the body to a temp
+        // file (Src/exec.c:4660-4682), then addfd's varid arm moves
+        // the read fd >= 10, marks FDT_EXTERNAL and sets the param
+        // (c:2402-2412). `path` carries the BODY text here.
+        if op_byte == 255 {
+            if param_readonly {
+                crate::ported::utils::zwarn(&format!(
+                    "can't allocate file descriptor to readonly parameter {}",
+                    varid
+                ));
+                with_executor(|exec| exec.redirect_failed = true);
+                return Value::Status(1);
+            }
+            let body = format!("{}\n", path.trim_end_matches('\n'));
+            let mut tmpl: Vec<u8> = b"/tmp/zshrs_hd_XXXXXX\0".to_vec();
+            let write_fd =
+                unsafe { libc::mkstemp(tmpl.as_mut_ptr() as *mut libc::c_char) };
+            if write_fd < 0 {
+                crate::ported::utils::zwarn(&format!(
+                    "can't create temp file for here document: {}",
+                    std::io::Error::last_os_error()
+                ));
+                return Value::Status(1);
+            }
+            let bytes = body.as_bytes();
+            let mut off = 0;
+            while off < bytes.len() {
+                let n = unsafe {
+                    libc::write(
+                        write_fd,
+                        bytes[off..].as_ptr() as *const libc::c_void,
+                        bytes.len() - off,
+                    )
+                };
+                if n <= 0 {
+                    unsafe { libc::close(write_fd) };
+                    return Value::Status(1);
+                }
+                off += n as usize;
+            }
+            unsafe { libc::close(write_fd) };
+            let read_fd = unsafe {
+                libc::open(tmpl.as_ptr() as *const libc::c_char, libc::O_RDONLY)
+            };
+            unsafe { libc::unlink(tmpl.as_ptr() as *const libc::c_char) };
+            if read_fd < 0 {
+                return Value::Status(1);
+            }
+            let final_fd = crate::ported::utils::movefd(read_fd);
+            if final_fd < 0 {
+                return Value::Status(1);
+            }
+            crate::ported::utils::fdtable_set(final_fd, crate::ported::zsh_h::FDT_EXTERNAL);
+            with_executor(|exec| {
+                exec.set_scalar(varid, final_fd.to_string());
+            });
+            return Value::Status(0);
+        }
+        // Open form: `{varid}>file` etc.
+        // c:Src/exec.c:2177-2215 checkclobberparam — gate BEFORE open.
+        if param_readonly {
+            // c:2191-2197
+            crate::ported::utils::zwarn(&format!(
+                "can't allocate file descriptor to readonly parameter {}",
+                varid
+            ));
+            with_executor(|exec| exec.redirect_failed = true);
+            return Value::Status(1);
+        }
+        // c:2199-2213 — NO_CLOBBER refuses to overwrite a parameter
+        // already holding an OPEN fd (decimal value, fdtable says
+        // FDT_EXTERNAL).
+        if !isset(crate::ported::zsh_h::CLOBBER)
+            && op_byte != fusevm::op::redirect_op::CLOBBER
+        {
+            if let Some(val) = with_executor(|exec| exec.scalar(&varid)) {
+                if let Ok(fd) = val.parse::<i32>() {
+                    if fd >= 0
+                        && fd <= crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed)
+                        && crate::ported::utils::fdtable_get(fd)
+                            == crate::ported::zsh_h::FDT_EXTERNAL
+                    {
+                        crate::ported::utils::zwarn(&format!(
+                            "can't clobber parameter {} containing file descriptor {}",
+                            varid, fd
+                        ));
+                        with_executor(|exec| exec.redirect_failed = true);
+                        return Value::Status(1);
+                    }
+                }
+            }
+        }
         let path_c = match CString::new(path.clone()) {
             Ok(c) => c,
             Err(_) => return Value::Status(1),
@@ -4274,18 +4504,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             b if b == fusevm::op::redirect_op::READ_WRITE => libc::O_RDWR | libc::O_CREAT,
             _ => return Value::Status(1),
         };
-        let fd = unsafe { libc::open(path_c.as_ptr(), flags, 0o644) };
+        let fd = unsafe { libc::open(path_c.as_ptr(), flags, 0o666) };
         if fd < 0 {
             return Value::Status(1);
         }
-        // Re-dup to fd >= 10 so positional fds (0/1/2/etc.) stay free.
-        let new_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
-        let final_fd = if new_fd >= 10 {
-            unsafe { libc::close(fd) };
-            new_fd
-        } else {
-            fd
-        };
+        // c:2404-2412 addfd varid arm — `fd1 = movefd(fd2);
+        // fdtable[fd1] = FDT_EXTERNAL; setiparam(varid, fd1);`.
+        // FDT_EXTERNAL (not INTERNAL): the user owns this fd — the
+        // NO_CLOBBER gate above and `{fd}>&-` close both key off it.
+        let final_fd = crate::ported::utils::movefd(fd);
+        if final_fd < 0 {
+            crate::ported::utils::zerr(&format!(
+                "cannot move fd {}: {}",
+                fd,
+                std::io::Error::last_os_error()
+            ));
+            return Value::Status(1);
+        }
+        crate::ported::utils::fdtable_set(final_fd, crate::ported::zsh_h::FDT_EXTERNAL);
+        let _ = Ordering::Relaxed;
         with_executor(|exec| {
             exec.set_scalar(varid, final_fd.to_string());
         });
@@ -4366,6 +4603,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
         with_executor(|exec| {
             if let Some(frame) = exec.inline_env_stack.pop() {
+                for (name, prev_var, prev_env) in frame.into_iter().rev() {
+                    match prev_var {
+                        Some(v) => {
+                            exec.set_scalar(name.clone(), v);
+                        }
+                        None => {
+                            exec.unset_scalar(&name);
+                        }
+                    }
+                    match prev_env {
+                        Some(v) => env::set_var(&name, &v),
+                        None => env::remove_var(&name),
+                    }
+                }
+            }
+        });
+        Value::Status(0)
+    });
+    // c:Src/exec.c:3969-3976 — bare-exec assignment epilogue: see the
+    // const's doc block. POSIX_BUILTINS → assignments persist (pop the
+    // frame, discard the saved state); otherwise → restore_params
+    // (same walk as END_INLINE_ENV).
+    vm.register_builtin(BUILTIN_EXEC_INLINE_ENV_DONE, |_vm, _argc| {
+        let persist = isset(crate::ported::zsh_h::POSIXBUILTINS);
+        with_executor(|exec| {
+            if let Some(frame) = exec.inline_env_stack.pop() {
+                if persist {
+                    return; // c:3971 — no save/restore under POSIX_BUILTINS
+                }
                 for (name, prev_var, prev_env) in frame.into_iter().rev() {
                     match prev_var {
                         Some(v) => {
@@ -4468,6 +4734,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // Mirror to the file-static `lineno` (utils.c:121) that
         // zerrmsg reads at utils.c:301 for the `:N: msg` prefix.
         crate::ported::utils::set_lineno(n as i32);
+        // Also drive lex::LEX_LINENO — zerrmsg (utils.rs:376) reads
+        // THAT counter for the `name:N:` prefix. C zsh interleaves
+        // parse and execute per top-level list, so its single
+        // `lineno` global serves both; zshrs compiles the whole
+        // script before running, leaving LEX_LINENO parked at EOF.
+        // Without this write, every runtime zwarn/zerr reported the
+        // script's LAST line instead of the failing statement's.
+        crate::ported::lex::set_lineno(n as u64);
         // DAP hook — checks breakpoints / step mode / pause-request
         // for the line we just landed on. O(1) no-op when DAP is off
         // (single atomic load on a OnceLock). Inside `--dap` mode
@@ -5682,7 +5956,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         std::io::ErrorKind::IsADirectory => "is a directory",
                         _ => "redirect failed",
                     };
-                    eprintln!("{}:1: {}: {}", shname(), msg, target);
+                    // c:Src/exec.c:3741 — `zwarn("%e: %s", errno, fname)`:
+                    // zwarning supplies the `name:LINE:` prefix with the
+                    // REAL current lineno (the old eprintln hardcoded `:1:`).
+                    crate::ported::utils::zwarn(&format!("{}: {}", msg, target));
                     // Close already-opened fds to avoid leaks.
                     for prev in &target_fds {
                         unsafe {
@@ -5894,7 +6171,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         std::io::ErrorKind::NotFound => "no such file or directory",
                         _ => "open failed",
                     };
-                    eprintln!("{}:1: {}: {}", shname(), msg, source);
+                    // c:Src/exec.c:3741 — zwarn with real lineno prefix.
+                    crate::ported::utils::zwarn(&format!("{}: {}", msg, source));
                     for prev in &source_fds {
                         unsafe {
                             libc::close(*prev);
@@ -5984,6 +6262,33 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let on = vm.pop().to_int() != 0;
         with_executor(|exec| exec.exec_redirs_permanent = on);
         Value::Status(0)
+    });
+    // Bare-exec redirect epilogue — see the const's doc block.
+    // c:Src/exec.c:252-259 (execerr) + c:4367-4386 (done: POSIX gate).
+    vm.register_builtin(BUILTIN_EXEC_REDIR_DONE, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let failed = with_executor(|exec| {
+            let f = exec.redirect_failed;
+            exec.redirect_failed = false;
+            f
+        });
+        if !failed {
+            return Value::Status(0);
+        }
+        // c:255 — `redir_err = lastval = 1`.
+        vm.last_status = 1;
+        if isset(crate::ported::zsh_h::POSIXBUILTINS)
+            && !isset(crate::ported::zsh_h::INTERACTIVE)
+        {
+            // c:4379-4383 — non-interactive POSIX fatal: exit(1).
+            // In-process equivalent: arm EXIT_PENDING/EXIT_VAL so the
+            // next BUILTIN_ERREXIT_CHECK (trigger 2) unwinds the
+            // script with status 1 — same deferred-exit shape the
+            // `exit` builtin uses inside subshell contexts.
+            crate::ported::builtin::EXIT_VAL.store(1, Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
+        }
+        Value::Status(1)
     });
     // c:Src/exec.c:3722-3724 — see the const's doc block. No args.
     vm.register_builtin(BUILTIN_PIPE_OUTPUT_MARK, |_vm, _argc| {
@@ -6329,11 +6634,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let retflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
         let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
         if retflag != 0 || exit_pending != 0 {
+            if exit_pending != 0 {
+                // c:Src/builtin.c zexit — the deferred exit carries its
+                // status in EXIT_VAL; sync it into the VM counter so
+                // the top-level unwind reports it as the script's exit
+                // (run_chunk returns vm.last_status). Without this, a
+                // POSIX-fatal `.` failure exited 127 (bin_dot's return)
+                // instead of C's exit(1) at Src/exec.c:4383.
+                vm.last_status =
+                    crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed) & 0xFF;
+            }
             return Value::Int(1);
         }
         let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
             & crate::ported::zsh_h::ERRFLAG_ERROR)
             != 0;
+        // c:Src/init.c:1931 — `if (errflag && !interact &&
+        // !isset(CONTINUEONERROR)) { errexit = 1; break; }` — with
+        // CONTINUE_ON_ERROR set, the top-level do-while re-enters
+        // loop() and the NEXT list runs instead of the shell exiting.
+        // Clear the flag so the next statement starts clean (the
+        // failed statement's lastval is already in place).
+        if errflag_set
+            && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE)
+            && crate::ported::zsh_h::isset(crate::ported::zsh_h::CONTINUEONERROR)
+        {
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            return Value::Int(0);
+        }
         if errflag_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
             // Clear errflag so the abort doesn't keep re-triggering.
             // c:Src/init.c:234 — loop() BREAKS on errflag and
@@ -7771,6 +8100,24 @@ pub const BUILTIN_COND_STRMATCH: u16 = 624;
 /// false→1, but 2 when COND_BAD_PATTERN was armed during this cond
 /// (covers `!=` where LogNot flips the Bool before status time).
 pub const BUILTIN_COND_STATUS_FROM_BOOL: u16 = 625;
+/// Bare-`exec` redirect epilogue. Consumes `exec.redirect_failed` and
+/// applies the C `done:` tail of execcmd_exec:
+///   - c:Src/exec.c:252-259 execerr — `redir_err = lastval = 1` (the
+///     failed redirect makes the exec statement exit 1, NOT fatal by
+///     itself);
+///   - c:Src/exec.c:4367-4386 — `if (isset(POSIXBUILTINS) && (cflags
+///     & (BINF_PSPECIAL|BINF_EXEC)) ...) { if (redir_err || errflag)
+///     { if (!isset(INTERACTIVE)) exit(1); } }` — POSIX_BUILTINS makes
+///     a failed exec redirect fatal in a non-interactive shell.
+/// Returns Value::Status(0|1) for the trailing SetStatus.
+pub const BUILTIN_EXEC_REDIR_DONE: u16 = 626;
+/// Assignment-prefix epilogue for bare `exec` redirects
+/// (`x=$(cmd) exec >file`). c:Src/exec.c:3969-3976 — nullexec==1
+/// runs addvars THEN, without POSIX_BUILTINS, restores the params
+/// (`save_params` / `restore_params`): the RHS side effects fire but
+/// the values don't persist. With POSIX_BUILTINS the assignments
+/// stick. Pops the BEGIN_INLINE_ENV frame either way.
+pub const BUILTIN_EXEC_INLINE_ENV_DONE: u16 = 627;
 
 /// `< file` / `> file` with no command word (NULLCMD path).
 /// Resolves NULLCMD (default "cat") / READNULLCMD (default "more")
@@ -7898,7 +8245,10 @@ pub const BUILTIN_GLOB_EXPAND: u16 = 343;
 /// (c:Src/glob.c:2161-2167 xpandredir: "Globbing is only done for
 /// multios."). Same stack shape as BUILTIN_GLOB_EXPAND; additionally
 /// passes the word through literally when `unsetopt multios`.
-pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 624;
+// 624 is BUILTIN_COND_STRMATCH — the VM's builtin table is
+// last-registration-wins, so a duplicate id silently shadows the
+// earlier handler.
+pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 628;
 
 /// Shared body of BUILTIN_GLOB_EXPAND / BUILTIN_REDIR_GLOB_EXPAND.
 /// c:Src/glob.c:1872 — `zglob` runs per-word in the argv pipeline.
@@ -8696,6 +9046,16 @@ impl fusevm::ShellHost for ZshrsHost {
                     .get_or_init(|| std::sync::Mutex::new(-1))
                     .lock()
                     .unwrap(),
+                // c:Src/exec.c entersubsh — fork copies the fd table;
+                // the child's `exec >file` / `exec N<&-` mutations die
+                // with it. Dup each user-range fd to >= 10 so
+                // subshell_end can restore the parent's exact table.
+                saved_fds: (0..10)
+                    .map(|fd| {
+                        let dup = unsafe { libc::fcntl(fd, libc::F_DUPFD, 10) };
+                        (fd, dup)
+                    })
+                    .collect(),
             });
             // C forks for `(...)` — count the fork-equivalent so
             // `time (builtin)` reports like zsh (see FORK_EVENTS).
@@ -8929,6 +9289,29 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Same for KEYMAPNAMTAB. Bug #454.
                 if let Ok(mut t) = crate::ported::zle::zle_keymap::keymapnamtab().lock() {
                     *t = snap.keymapnamtab;
+                }
+                // c:Src/exec.c entersubsh fork semantics — restore the
+                // parent's user-range fd table. A bare `exec >file` /
+                // `exec N>&-` inside `(...)` died with the C child;
+                // the in-process subshell must undo it here. Flush
+                // Rust's stdout buffer FIRST so bytes the subshell
+                // printed drain to the SUBSHELL's fd 1, not the
+                // restored parent fd.
+                {
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                }
+                for (fd, saved) in snap.saved_fds {
+                    unsafe {
+                        if saved >= 0 {
+                            libc::dup2(saved, fd);
+                            libc::close(saved);
+                        } else {
+                            // fd was closed at entry; close whatever
+                            // the subshell opened on that slot.
+                            libc::close(fd);
+                        }
+                    }
                 }
             }
         });
@@ -9501,17 +9884,29 @@ impl ShellExecutor {
                     std::io::ErrorKind::IsADirectory => "is a directory",
                     _ => "redirect failed",
                 };
-                eprintln!("{}:1: {}: {}", shname(), msg, target);
+                // c:Src/exec.c:3741 — zwarn with real lineno prefix.
+                crate::ported::utils::zwarn(&format!("{}: {}", msg, target));
                 *redirect_failed = true;
-                if let Ok(devnull) = fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open("/dev/null")
-                {
-                    let new_fd = devnull.into_raw_fd();
-                    unsafe {
-                        libc::dup2(new_fd, fd);
-                        libc::close(new_fd);
+                // The /dev/null sink keeps a failed scoped redirect
+                // from leaking the aborted command's output to the
+                // wrong fd until scope-end restores it. For a bare
+                // `exec` redirect (permanent, no scope restore) C
+                // leaves the fd UNTOUCHED — execerr() aborts the
+                // statement and the original fd 1 keeps flowing
+                // (A04redirect: `exec >./nonexistent/x` then `echo
+                // output` still prints). c:Src/exec.c:3735-3742.
+                let permanent = with_executor(|exec| exec.exec_redirs_permanent);
+                if !permanent {
+                    if let Ok(devnull) = fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open("/dev/null")
+                    {
+                        let new_fd = devnull.into_raw_fd();
+                        unsafe {
+                            libc::dup2(new_fd, fd);
+                            libc::close(new_fd);
+                        }
                     }
                 }
                 false
@@ -9539,7 +9934,8 @@ impl ShellExecutor {
             if n_check != "-" {
                 if let Ok(src_fd) = n_check.parse::<i32>() {
                     if unsafe { libc::fcntl(src_fd, libc::F_GETFD) } == -1 {
-                        eprintln!("{}:1: {}: bad file descriptor", shname(), src_fd);
+                        // c:Src/exec.c — zwarn with real lineno prefix.
+                        crate::ported::utils::zwarn(&format!("{}: bad file descriptor", src_fd));
                         self.set_last_status(1);
                         self.redirect_failed = true;
                         return;
@@ -9872,8 +10268,27 @@ impl ShellExecutor {
                     }
                 } else if let Ok(src_fd) = n.parse::<i32>() {
                     unsafe { libc::dup2(src_fd, fd) };
+                } else if op_byte == r::DUP_WRITE {
+                    // c:Src/glob.c:2184-2187 xpandredir — a MERGEOUT
+                    // word that expands to a non-number becomes
+                    // REDIR_ERRWRITE: `cmd >& word` opens `word` and
+                    // routes BOTH fd 1 and fd 2 there. Reached only
+                    // for dynamic words (`>&$var`); static filenames
+                    // were converted at compile time.
+                    if let Ok(file) = fs::File::create(target) {
+                        let new_fd = file.into_raw_fd();
+                        unsafe {
+                            libc::dup2(new_fd, 1);
+                            libc::dup2(new_fd, 2);
+                            libc::close(new_fd);
+                        }
+                    }
                 } else {
-                    tracing::warn!(target = %target, "DUP redir: target not parseable as fd");
+                    // c:Src/glob.c:2185 — MERGEIN non-number:
+                    // `zerr("file number expected")`.
+                    crate::ported::utils::zerr("file number expected");
+                    self.set_last_status(1);
+                    self.redirect_failed = true;
                 }
             }
             r::WRITE_BOTH => {

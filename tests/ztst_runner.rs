@@ -159,9 +159,23 @@ fn parse_ztst(path: &Path) -> ZtstFile {
 
 /// Read an indented code chunk (lines starting with whitespace).
 /// Returns None if current line isn't indented.
+///
+/// Format contract verified against zsh's own harness:
+///   - ztst.zsh:208-214 `ZTST_getline` drops any line starting with
+///     `#` at column 0 — comments may appear ANYWHERE, including
+///     between the lines of a code chunk (A04redirect.ztst:46 has
+///     one inside a here-document chunk).
+///   - ztst.zsh:249-251 `ZTST_getchunk` accepts lines matching
+///     `[[:blank:]]##[^[:blank:]]*` and stores `$ZTST_curline`
+///     VERBATIM — the indentation is NOT stripped before eval.
+///     Stripping it corrupts here-document bodies/terminators
+///     (`cat <<'  HERE'` expects body lines starting with two
+///     spaces; `<<-HERE` tests need their literal tabs).
 fn read_code_chunk(lines: &[&str], idx: &mut usize) -> Option<String> {
-    // Skip blank lines
-    while *idx < lines.len() && lines[*idx].trim().is_empty() {
+    // Skip blank lines and column-0 comment lines (ztst.zsh:208-214)
+    while *idx < lines.len()
+        && (lines[*idx].trim().is_empty() || lines[*idx].starts_with('#'))
+    {
         *idx += 1;
     }
     if *idx >= lines.len() {
@@ -176,40 +190,20 @@ fn read_code_chunk(lines: &[&str], idx: &mut usize) -> Option<String> {
     let mut chunk = String::new();
     while *idx < lines.len() {
         let line = lines[*idx];
-        if line.starts_with(' ') || line.starts_with('\t') {
+        if line.starts_with('#') {
+            // ztst.zsh:208-214 — comment lines are invisible to the
+            // chunk reader; they do NOT terminate the chunk.
+            *idx += 1;
+        } else if line.starts_with(' ') || line.starts_with('\t') {
             if !chunk.is_empty() {
                 chunk.push('\n');
             }
-            // Strip exactly 2 leading spaces to match ztst convention.
-            // The two-space prefix is the canonical ztst body marker;
-            // tab is accepted as a one-char fallback used by older
-            // tests. Manual slicing instead of strip_prefix because the
-            // else-arm trims any leading whitespace.
-            let stripped = if let Some(s) = line.strip_prefix("  ") {
-                s
-            } else if let Some(s) = line.strip_prefix('\t') {
-                s
-            } else {
-                line.trim_start()
-            };
-            chunk.push_str(stripped);
+            // Verbatim — ztst.zsh:249-251 keeps the line as-is.
+            chunk.push_str(line);
             *idx += 1;
-        } else if line.trim().is_empty() {
-            // Blank line might separate chunks or be inside a chunk
-            // Peek ahead to see if more indented code follows
-            let mut peek = *idx + 1;
-            while peek < lines.len() && lines[peek].trim().is_empty() {
-                peek += 1;
-            }
-            if peek < lines.len() && (lines[peek].starts_with(' ') || lines[peek].starts_with('\t'))
-            {
-                // Blank line inside a code chunk — keep going but don't add to chunk yet
-                // Actually in ztst format, blank line ends the chunk
-                break;
-            } else {
-                break;
-            }
         } else {
+            // Blank line or unindented content — chunk ends
+            // (ztst.zsh:249 loop condition fails on both).
             break;
         }
     }
@@ -471,6 +465,16 @@ fn glob_match_inner(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
     if pi == pat.len() {
         return false;
     }
+    // Backslash escapes the next pattern char (zsh pattern semantics —
+    // ztst expectation lines write `\(eval\):*` to match a literal
+    // `(eval):` prefix). Without this, the matcher demanded a literal
+    // backslash in the OUTPUT and every `(eval)`-prefixed stderr
+    // pattern failed.
+    if pat[pi] == '\\' && pi + 1 < pat.len() {
+        return ti < txt.len()
+            && pat[pi + 1] == txt[ti]
+            && glob_match_inner(pat, pi + 2, txt, ti + 1);
+    }
     if pat[pi] == '*' {
         // Skip consecutive *
         let mut npi = pi;
@@ -489,6 +493,33 @@ fn glob_match_inner(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
     } else {
         false
     }
+}
+
+/// Build the `$ZTST_testdir` layout zsh's own harness guarantees.
+///
+/// ztst.zsh:70 sets `ZTST_testdir=$PWD` (the Test/ directory of a zsh
+/// build tree) and test chunks invoke the shell-under-test as
+/// `$ZTST_testdir/../Src/zsh` (e.g. A04redirect.ztst:465-525,
+/// A01grammar, E03posix). Our runner executes chunks standalone, so
+/// that variable was simply missing — every chunk using it failed
+/// with exit 127. Mirror the contract: create `<shim>/Test` and
+/// `<shim>/Src/zsh` (symlink to the zshrs binary) once per process
+/// and export ZTST_testdir=<shim>/Test to every chunk.
+fn ztst_testdir_shim(zshrs: &Path) -> &'static str {
+    use std::sync::OnceLock;
+    static SHIM: OnceLock<String> = OnceLock::new();
+    SHIM.get_or_init(|| {
+        let root = env::temp_dir().join(format!("zshrs_ztst_shim_{}", std::process::id()));
+        let testdir = root.join("Test");
+        let srcdir = root.join("Src");
+        let _ = fs::create_dir_all(&testdir);
+        let _ = fs::create_dir_all(&srcdir);
+        let link = srcdir.join("zsh");
+        if !link.exists() {
+            let _ = std::os::unix::fs::symlink(zshrs, &link);
+        }
+        testdir.to_string_lossy().into_owned()
+    })
 }
 
 fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32, String, String) {
@@ -530,6 +561,7 @@ fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32,
         .env("HOME", &sandbox_str)
         .env("TMPDIR", &sandbox_str)
         .env("ZTST_tmp", &sandbox_str)
+        .env("ZTST_testdir", ztst_testdir_shim(zshrs))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -621,11 +653,75 @@ fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
     let mut failed = 0usize;
     let mut skipped = 0usize;
 
+    // Single-quote a literal for embedding in shell source.
+    let sq = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+
     for (i, test) in ztst.tests.iter().enumerate() {
-        let code = format!("{}{}", prep_wrapped, test.code);
+        // ztst.zsh:295-300 ZTST_execchunk — the harness runs each
+        // chunk via `eval "$ZTST_code"`, so diagnostics carry the
+        // `(eval):N:` prefix with CHUNK-relative line numbers. The
+        // old direct-inline form (prep + chunk in one -c string)
+        // shifted every lineno by the prep length and stamped the
+        // binary name instead of `(eval)` — failing every test whose
+        // expected stderr contains `(eval):N:`.
+        let mut code = format!(
+            "{}ZTST_code={}\neval \"$ZTST_code\"",
+            prep_wrapped,
+            sq(&test.code)
+        );
+
+        // ztst.zsh:524-543 — `q` flag: the expected stdout/stderr
+        // lines get `${(e)...}` expansion AFTER the chunk ran, in the
+        // SAME shell (so variables set by %prep and the chunk itself
+        // are visible). Mirror by appending an epilogue that writes
+        // the expanded expectations to temp files, preserving the
+        // eval's exit status.
+        let mut qfiles: Option<(PathBuf, PathBuf)> = None;
+        if test.flags.contains('q')
+            && (!test.expected_stdout.is_empty() || !test.expected_stderr.is_empty())
+        {
+            let base = env::temp_dir().join(format!(
+                "zshrs_ztst_q_{}_{}",
+                std::process::id(),
+                i
+            ));
+            let outp = base.with_extension("qout");
+            let errp = base.with_extension("qerr");
+            code.push_str(&format!(
+                "\nZTST_qstatus=$?\nZTST_expect_out={}\nZTST_expect_err={}\n\
+                 print -r -- \"${{(e)ZTST_expect_out}}\" >{} 2>/dev/null\n\
+                 print -r -- \"${{(e)ZTST_expect_err}}\" >{} 2>/dev/null\n\
+                 exit $ZTST_qstatus",
+                sq(&test.expected_stdout),
+                sq(&test.expected_stderr),
+                outp.display(),
+                errp.display()
+            ));
+            qfiles = Some((outp, errp));
+        }
 
         let (status, stdout, stderr) = run_code(zshrs, &code, &test.stdin_data, Path::new("/tmp"));
-        let result = compare_test(test, status, &stdout, &stderr);
+
+        // Harvest the (e)-expanded expectations for q-flag tests.
+        let test_eff: TestBlock = if let Some((outp, errp)) = qfiles {
+            let mut t = test.clone();
+            if let Ok(s) = fs::read_to_string(&outp) {
+                if !test.expected_stdout.is_empty() {
+                    t.expected_stdout = s.trim_end_matches('\n').to_string();
+                }
+            }
+            if let Ok(s) = fs::read_to_string(&errp) {
+                if !test.expected_stderr.is_empty() {
+                    t.expected_stderr = s.trim_end_matches('\n').to_string();
+                }
+            }
+            let _ = fs::remove_file(&outp);
+            let _ = fs::remove_file(&errp);
+            t
+        } else {
+            test.clone()
+        };
+        let result = compare_test(&test_eff, status, &stdout, &stderr);
 
         if result.skipped {
             skipped += 1;

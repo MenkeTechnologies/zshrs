@@ -1427,10 +1427,40 @@ impl ZshCompiler {
                 // enclosing group scope is active.
                 self.compile_redir(redir, true);
             }
-            // No CallBuiltin / CallFunction / Exec — just the redirects.
-            // Status is 0 (zsh: `exec` with only redirs returns 0).
-            self.builder.emit(Op::LoadInt(0), 0);
+            // Epilogue: c:Src/exec.c:252-259 execerr (failed redirect →
+            // lastval=1) + c:4367-4386 done: gate (POSIX_BUILTINS makes
+            // it fatal for BINF_EXEC). Success path returns status 0.
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_REDIR_DONE, 0),
+                0,
+            );
             self.builder.emit(Op::SetStatus, 0);
+            // c:Src/exec.c:3969-3976 — assignment prefix on bare exec
+            // (`x=$(cmd) exec >file`): addvars runs AFTER the
+            // redirects (RHS side effects fire against the new fds),
+            // but a FAILED redirect jumps to done: before varspc is
+            // touched (execerr at c:3741), so gate the assigns on the
+            // redirect status. EXEC_INLINE_ENV_DONE then restores the
+            // values (no POSIX_BUILTINS) or persists them (POSIX).
+            if !simple.assigns.is_empty() {
+                self.builder.emit(Op::GetStatus, 0);
+                let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+                for assign in &simple.assigns {
+                    self.compile_assign(assign);
+                }
+                let land = self.builder.current_pos();
+                self.builder.patch_jump(skip, land);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_INLINE_ENV_DONE, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
+            }
+            // The EXIT_PENDING armed by the POSIX-fatal arm of
+            // EXEC_REDIR_DONE unwinds at this check (trigger 2) —
+            // without it, statements after a fatal failed `exec`
+            // redirect kept running.
+            self.emit_errexit_check();
             return;
         }
 
@@ -2333,6 +2363,38 @@ impl ZshCompiler {
         if matches!(redir.rtype, REDIR_HEREDOC | REDIR_HEREDOCDASH) {
             if let Some(hd) = &redir.heredoc {
                 let content_clean = crate::lex::untokenize(&hd.content);
+                // `{varid}<<HERE` — named-fd heredoc (A04 "here
+                // document with fd declarator"). The body goes to a
+                // temp file whose read fd (>= 10) lands in $varid —
+                // c:Src/exec.c:4660-4682 gethere + c:2402-2412 addfd
+                // varid arm. Push [body, varid, 255] for the
+                // BUILTIN_OPEN_NAMED_FD heredoc arm.
+                if let Some(ref vid) = redir.varid {
+                    if hd.quoted {
+                        let idx = self
+                            .builder
+                            .add_constant(Value::str(content_clean.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    } else {
+                        let trimmed = hd.content.trim_end_matches('\n').to_string();
+                        let text_const = self.builder.add_constant(Value::str(trimmed));
+                        self.builder.emit(Op::LoadConst(text_const), 0);
+                        self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
+                            0,
+                        );
+                    }
+                    let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
+                    self.builder.emit(Op::LoadConst(vid_const), 0);
+                    self.builder.emit(Op::LoadInt(255), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_OPEN_NAMED_FD, 3),
+                        0,
+                    );
+                    self.builder.emit(Op::SetStatus, 0);
+                    return;
+                }
                 // Empty heredoc body — route through HereDoc op (no
                 // trailing-newline append) regardless of quoting, so
                 // the consumer sees zero bytes (matches zsh).
@@ -2424,8 +2486,16 @@ impl ZshCompiler {
         let name_is_fd_like = name_clean == "-"
             || name_clean == "p"
             || (!name_clean.is_empty() && name_clean.chars().all(|c| c.is_ascii_digit()));
+        // c:Src/glob.c:2160-2188 xpandredir — the fd-vs-filename
+        // decision happens AFTER word expansion. A dynamic word
+        // (`>&$myfd`, `>&$(cmd)`) must stay REDIR_MERGEOUT so the
+        // RUNTIME dup arm can test the EXPANDED text for digits/-/p
+        // (host_apply_redirect's DUP arm carries the same fallback).
+        // Converting `>&$myfd` here treated the expansion "10" as a
+        // filename and wrote a file literally named `10`.
+        let name_is_dynamic = name_clean.contains('$') || name_clean.contains('`');
         let mut effective_rtype = redir.rtype;
-        if redir.rtype == REDIR_MERGEOUT && !name_is_fd_like {
+        if redir.rtype == REDIR_MERGEOUT && !name_is_fd_like && !name_is_dynamic {
             // `>& FILE` → `> FILE 2>&1`. Default fd1 was 1 (set above)
             // which matches WRITE_BOTH semantics.
             effective_rtype = REDIR_ERRWRITE;
