@@ -1028,10 +1028,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // for in-eval errors. Bug #420.
         let oscriptname = crate::ported::utils::scriptname_get();
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
-        let status = with_executor(|exec| {
+        let mut status = with_executor(|exec| {
             // c:6175 execode
             exec.execute_script(&src).unwrap_or(1)
         });
+        // c:Src/builtin.c:6211-6212 — `if (errflag && !lastval)
+        //   lastval = errflag;`
+        // c:Src/builtin.c:6221 — `errflag &= ~ERRFLAG_ERROR;`
+        // eval is a CONTAINMENT boundary: an error inside the eval
+        // body (readonly reassign, bad assoc set, ${unset?msg}, …)
+        // breaks the eval body's lists via errflag, then eval clears
+        // the flag and returns lastval, and the CALLER's next list
+        // runs. zsh 5.9: `eval 'assoc=(odd)'; echo "after $?"`
+        // prints `after 1` in -c, script, and stdin contexts.
+        {
+            use std::sync::atomic::Ordering;
+            let ef = crate::ported::utils::errflag.load(Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR;
+            if ef != 0 && status == 0 {
+                status = ef; // c:6212 lastval = errflag
+            }
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+        }
         crate::ported::utils::set_scriptname(oscriptname);
         Value::Status(status)
     });
@@ -6664,37 +6683,36 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Int(0);
         }
         if errflag_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
-            // Clear errflag so the abort doesn't keep re-triggering.
+            // c:Src/exec.c execlist — every enclosing list loop runs
+            // `while (... && !errflag)`, so a set errflag breaks the
+            // CURRENT scope and the check in the enclosing scope
+            // breaks THAT one, all the way out. Leave errflag SET —
+            // do NOT convert it to EXIT_PENDING: a process-exit
+            // signal tunnels through the containment boundaries C
+            // has, namely eval (Src/builtin.c:6221 `errflag &=
+            // ~ERRFLAG_ERROR`), source (Src/init.c:1663 same), fork
+            // boundaries (subshell/cmdsubst — child's errflag dies
+            // with the child), and the interactive toplevel
+            // (Src/init.c:139). Those boundaries clear errflag
+            // themselves and execution continues past them; with
+            // EXIT_PENDING armed here, `eval 'assoc=(odd)'; echo
+            // after` aborted the whole script where zsh 5.9 prints
+            // `after` (eval status 1). Bug #74's function case
+            // (`f() { local -r x=5; x=10; }; f; echo after`) still
+            // aborts: the function scope unwinds on THIS check, and
+            // the caller's next ERREXIT_CHECK sees the still-set
+            // errflag and unwinds too — exactly C's propagation.
+            //
             // c:Src/init.c:234 — loop() BREAKS on errflag and
             // zsh_main exits with the UNTOUCHED lastval, NOT a
             // forced 1: `typeset -i x=3#8` (math error during the
             // assignment, before typeset sets a status) exits 0 in
-            // zsh; a failed command that set lastval=1 itself (glob
-            // NOMATCH path) still exits 1. Sync the VM counter from
-            // the executor's live lastval instead of overwriting.
-            crate::ported::utils::errflag
-                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            // zsh; a cond syntax error set lastval=2 (exec.c:5216-
+            // 5221) and zsh exits 2; the readonly-reassign case
+            // exits 1 because ITS lastval is 1. Sync the VM counter
+            // from the executor's live lastval instead of
+            // overwriting.
             vm.last_status = with_executor(|exec| exec.last_status());
-            // c:Src/init.c loop() — a non-interactive errflag-fired
-            // abort propagates to the SHELL, not just the current
-            // function/sourced file. Inside a function, the local
-            // BUILTIN_ERREXIT_CHECK unwinds the function scope; but
-            // the caller's next ERREXIT_CHECK only sees errflag if we
-            // didn't clear it — and we did (above). Set EXIT_PENDING
-            // so the outer ERREXIT_CHECK at script-level takes the
-            // EXIT_PENDING arm and aborts. Bug #74 in docs/BUGS.md:
-            // `f() { local -r x=5; x=10; }; f; echo after` printed
-            // `after` because errflag-clear above let the script-level
-            // check see a clean state.
-            //
-            // c:Src/init.c:234 loop() — the errflag abort exits with
-            // the UNTOUCHED lastval, never a hardcoded 1: a cond
-            // syntax error set lastval=2 (exec.c:5216-5221) and zsh
-            // exits 2; the readonly-reassign case exits 1 because
-            // ITS lastval is 1. vm.last_status was synced from the
-            // executor above — propagate it instead of pinning 1.
-            crate::ported::builtin::EXIT_VAL.store(vm.last_status, Ordering::Relaxed);
-            crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
             return Value::Int(1);
         }
         let last = vm.last_status;
@@ -9330,6 +9348,19 @@ impl fusevm::ShellHost for ZshrsHost {
         // here against OUTER's trap, matching C zsh's
         // signal-delivery-to-parent semantics. Bug #450.
         crate::ported::signals_h::unqueue_signals();
+        // c:Src/exec.c — a `( … )` subshell is a FORK in C: an errflag
+        // abort inside the child ends the child with its lastval as
+        // the exit status, and the flag dies with the child process.
+        // The parent's $? picks up the status and the parent's lists
+        // keep running. zsh 5.9: `(readonly r=1; r=2); echo "after
+        // $?"` prints `after 1`. zshrs runs the subshell in-process,
+        // so mirror the fork isolation by clearing ERRFLAG_ERROR at
+        // the subshell boundary — exec.last_status() already carries
+        // the child's lastval (synced by ERREXIT_CHECK trigger 4).
+        crate::ported::utils::errflag.fetch_and(
+            !crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let exit_pending =
             crate::ported::builtin::EXIT_PENDING.load(std::sync::atomic::Ordering::Relaxed);
         if exit_pending != 0 {
