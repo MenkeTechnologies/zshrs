@@ -3273,113 +3273,10 @@ use crate::ported::subst::*;
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
 use ::regex::{Error as RegexError, Regex, RegexBuilder};
 
-/// Bridge helper: translate POSIX-ERE bracket-expression semantics to
-/// the Rust `regex` crate's class syntax before compiling an `=~`
-/// pattern. zsh's `zsh/regex` module hands the pattern verbatim to
-/// `regcomp(3)` with `REG_EXTENDED` (c:Src/Modules/regex.c:78); per
-/// POSIX, INSIDE a bracket expression `[...]` a backslash is an
-/// ORDINARY character (a literal class member — `[a-z\n]` is the set
-/// {a..z, '\', 'n'}, NOT "a-z plus newline"). The Rust regex crate
-/// instead processes escapes inside classes (`\n` → newline) and
-/// reserves `[` (nested class), `&&` / `~~` / `--` (set operations),
-/// all of which are ordinary characters in POSIX. BUGS.md #558.
-///
-/// NUL-safe process-env mirror — the single chokepoint for exporting
-/// shell-controlled values into the OS environment. C's `setenv`
-/// (c:Src/params.c:5354 via zputenv / addenv) treats the value as a
-/// NUL-terminated C string: an embedded NUL byte silently truncates
-/// the value there, and a name containing NUL is malformed (libc
-/// rejects). Rust's `std::env::set_var` PANICS on embedded NUL —
-/// `export foo; foo=$'\x7f\x00'` (D04parameter chunk 45) killed the
-/// whole shell. Mirror C: truncate the value at the first NUL, drop
-/// the env write for NUL-bearing names. The full raw value lives in
-/// the canonical param table; this is only the libc-env mirror.
-/// Bridge-file helper (no C-named counterpart) — every export-mirror
-/// `env::set_var` of a shell-controlled value routes through here.
-pub fn setenv_truncate_nul(name: &str, value: &str) {
-    if name.as_bytes().contains(&b'\0') {
-        return;
-    }
-    let safe_value: &str = match value.find('\0') {
-        Some(n) => &value[..n],
-        None => value,
-    };
-    env::set_var(name, safe_value);
-}
 
-/// Translation rules, applied only INSIDE bracket expressions:
-///   - `\`, `[`, `&`, `~` are emitted backslash-escaped (literal).
-///   - a leading `]` (after optional `^`) is emitted as `\]`
-///     (POSIX: literal when first).
-///   - `[: :]` / `[= =]` / `[. .]` POSIX named classes / equivalence
-///     classes / collating elements are copied verbatim.
-/// Outside bracket expressions the pattern is copied unchanged
-/// (existing `\X` escape pairs pass through untouched).
-pub fn posix_ere_bracket_escape(pat: &str) -> String {
-    let chars: Vec<char> = pat.chars().collect();
-    let mut out = String::with_capacity(pat.len() + 8);
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\\' {
-            // Outside a class: copy the escape pair verbatim.
-            out.push(c);
-            i += 1;
-            if i < chars.len() {
-                out.push(chars[i]);
-                i += 1;
-            }
-            continue;
-        }
-        if c != '[' {
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        // Bracket expression. POSIX: ends at the first `]` that is
-        // not in leading position (after optional `^`).
-        out.push('[');
-        i += 1;
-        if i < chars.len() && chars[i] == '^' {
-            out.push('^');
-            i += 1;
-        }
-        if i < chars.len() && chars[i] == ']' {
-            out.push('\\');
-            out.push(']');
-            i += 1;
-        }
-        while i < chars.len() && chars[i] != ']' {
-            // `[:alpha:]` / `[=a=]` / `[.x.]` — copy verbatim.
-            if chars[i] == '[' && i + 1 < chars.len() && matches!(chars[i + 1], ':' | '=' | '.') {
-                let close = chars[i + 1];
-                out.push('[');
-                out.push(close);
-                i += 2;
-                while i < chars.len() && !(chars[i] == close && chars.get(i + 1) == Some(&']')) {
-                    out.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    out.push(close);
-                    out.push(']');
-                    i += 2;
-                }
-                continue;
-            }
-            if matches!(chars[i], '\\' | '[' | '&' | '~') {
-                out.push('\\');
-            }
-            out.push(chars[i]);
-            i += 1;
-        }
-        if i < chars.len() {
-            out.push(']'); // class terminator
-            i += 1;
-        }
-    }
-    out
-}
+
+pub use crate::ported::modules::regex::posix_ere_bracket_escape;
+
 
 impl ShellExecutor {
     /// Every option name in `ZSH_OPTIONS_SET` (port of `optns[]` at
@@ -4267,136 +4164,16 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     matched
 }
 
-/// Bridge helper — EXACT semantics of C `untokenize(char *s)` from
-/// `Src/exec.c:2077`: maps EVERY itok char to its ASCII original via
-/// the ztokens table (`Src/lex.c:38`), dropping only Nularg (c:2089
-/// `if (c != Nularg)`). No `$'...'` inline decode, no quote-marker
-/// stripping.
-///
-/// Distinct from the two ported variants in `src/ported/lex.rs`:
-///   - `untokenize` — substitution-stream variant: strips Snull/Dnull
-///     and inline-decodes `$'...'` regions (see its doc block).
-///   - `untokenize_preserve_quotes` — ztokens mapping EXCEPT Qstring
-///     stays a raw marker (its callers need stringsubst's qt
-///     detection) and Nularg is retained.
-///
-/// Callers porting C sites that literally call C `untokenize` on text
-/// that is then RE-LEXED or RE-PARSED need this exact variant:
-///   - `parsestrnoerr` (c:Src/lex.c:1716) — the dquote_parse re-lex
-///     must see ASCII `$`/`'`/`"` so nested `${k}` re-tokenizes and
-///     assoc-subscript quote chars survive to getarg's key lookup.
-///   - `untok_and_escape` (c:Src/subst.c:1543) — paramsubst flag args
-///     like `(j.$'\n'.)` must render as the literal text `$'\n'`
-///     (zsh 5.9 `print -r ${(j.$'\n'.)a}` → `x$'\n'y`), not decode
-///     to a bare newline. Bug #626 in docs/BUGS.md.
-pub fn untokenize_ztokens(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        let cu = c as u32;
-        // c:Src/ztype.h:52 ITOK — Pound (0x84) ..= Nularg (0xa1).
-        if (0x84..=0xa1).contains(&cu) {
-            // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
-            if c != crate::ported::zsh_h::Nularg {
-                let idx = (cu - 0x84) as usize;
-                result.push(
-                    crate::ported::lex::ztokens
-                        .chars()
-                        .nth(idx)
-                        .unwrap_or(c),
-                );
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
+pub use crate::ported::lex::untokenize_ztokens;
 
-/// Encode one RAW byte into zshrs's char-level metafied String form.
-/// c:Src/utils.c:7289-7294 — getkeystring's GETKEY_DOLLAR_QUOTE tail:
-/// `if (imeta(*t2)) { *tdest++ = Meta; *tdest++ = *t2 ^ 32; }`.
-/// C metafies only imeta bytes because its `char *` strings hold raw
-/// high bytes natively; Rust Strings must stay valid UTF-8, so EVERY
-/// byte >= 0x80 (covering C's imeta range 0x83..=0xa2 plus plain high
-/// bytes like 0xff from `$'\xff'`) takes the Meta + `^32` pair, with
-/// both halves stored as Unicode scalars (U+0083, U+00A0..=U+00FF).
-/// ASCII passes through unchanged (byte == UTF-8 unit). The payload
-/// `b ^ 32` for b in 0x80..=0xff always lands in 0x80..=0xff, so the
-/// pair is unambiguous for `unmetafy_str` below. Bug #127.
-pub fn meta_encode_byte(out: &mut String, b: u8) {
-    if b < 0x80 {
-        out.push(b as char);
-    } else {
-        out.push('\u{83}');
-        out.push(char::from(b ^ 32));
-    }
-}
 
-/// Decode a char-level metafied String back to RAW bytes for a write
-/// or exec boundary. c:Src/utils.c:4954 unmetafy — `if (*t++ == Meta
-/// && *p) t[-1] = *p++ ^ 32;` — transposed onto the char-level
-/// encoding `meta_encode_byte` produces: U+0083 followed by a scalar
-/// in U+0080..=U+00FF yields the single raw byte `payload ^ 32`;
-/// everything else emits its UTF-8 bytes verbatim. A U+0083 followed
-/// by anything outside that range is not our encoding and passes
-/// through untouched. Bug #127.
-pub fn unmetafy_str(s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    let mut it = s.chars().peekable();
-    let mut buf = [0u8; 4];
-    while let Some(c) = it.next() {
-        if c == '\u{83}' {
-            if let Some(&n) = it.peek() {
-                let nu = n as u32;
-                if (0x80..=0xff).contains(&nu) {
-                    out.push((nu as u8) ^ 32);
-                    it.next();
-                    continue;
-                }
-            }
-        }
-        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-    }
-    out
-}
 
-/// Render an errno the way zsh's `%e` warning format does —
-/// `zerrmsg` case `'e'` at `Src/utils.c:352-368`:
-///
-/// - `EINTR` → the literal string `interrupt` (C also sets
-///   `errflag |= ERRFLAG_ERROR` and truncates the rest of the
-///   format; every zshrs call site uses `%e` as the final
-///   conversion so the truncation is a no-op here).
-/// - `EIO` → `strerror(EIO)` verbatim ("I/O" reads wrong
-///   lowercased, per the c:361-364 comment).
-/// - everything else → `strerror(num)` with the first letter
-///   lowercased (`tulower(errmsg[0])`, c:366).
-///
-/// `std::io::Error::from_raw_os_error(n)` Display is NOT this
-/// format — it appends " (os error N)" and keeps the capital.
-/// That mismatch was the residual byte-diff in zsh/system's
-/// `sysopen`/`zsystem flock` warnings (docs/BUGS.md #316).
-pub fn zsh_errno_msg(num: i32) -> String {
-    if num == libc::EINTR {
-        return "interrupt".to_string(); // c:355-358
-    }
-    let msg = unsafe {
-        let p = libc::strerror(num); // c:360
-        if p.is_null() {
-            return String::new();
-        }
-        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
-    };
-    if num == libc::EIO {
-        return msg; // c:363-364
-    }
-    // c:366 — `fputc(tulower(errmsg[0]), file);`
-    let mut chars = msg.chars();
-    match chars.next() {
-        Some(c) => c.to_lowercase().collect::<String>() + chars.as_str(),
-        None => msg,
-    }
-}
+
+pub use crate::ported::utils::unmetafy_str;
+
+
+pub use crate::ported::utils::zsh_errno_msg;
+
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PM_NAMEREF bridge helpers (typeset -n / named references).

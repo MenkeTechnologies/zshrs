@@ -7760,7 +7760,17 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     // c:Src/utils.c — `\xNN` is one raw BYTE; metafied
                     // per c:7289-7294 (vm_helper::meta_encode_byte) so
                     // the String stays valid UTF-8. Bug #127.
-                    crate::vm_helper::meta_encode_byte(&mut result, val);
+                    {
+                        // c:Src/utils.c metafy byte-encode step:
+                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                        let b_ = val;
+                        if b_ < 0x80 {
+                            result.push(b_ as char);
+                        } else {
+                            result.push('\u{83}');
+                            result.push(char::from(b_ ^ 32));
+                        }
+                    }
                 }
             }
             Some('u') => {
@@ -7818,7 +7828,17 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                 if let Ok(val) = u8::from_str_radix(&oct, 8) {
                     // c:Src/utils.c — octal escape is one raw BYTE;
                     // metafied per c:7289-7294. Bug #127.
-                    crate::vm_helper::meta_encode_byte(&mut result, val);
+                    {
+                        // c:Src/utils.c metafy byte-encode step:
+                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                        let b_ = val;
+                        if b_ < 0x80 {
+                            result.push(b_ as char);
+                        } else {
+                            result.push('\u{83}');
+                            result.push(char::from(b_ ^ 32));
+                        }
+                    }
                 }
             }
             Some('c') => {
@@ -7948,7 +7968,17 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     // c:7289-7294. Multibyte base chars (> 0xff)
                     // keep the codepoint form. Bug #127.
                     if byte <= 0xff {
-                        crate::vm_helper::meta_encode_byte(&mut result, byte as u8);
+                        {
+                        // c:Src/utils.c metafy byte-encode step:
+                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                        let b_ = byte as u8;
+                        if b_ < 0x80 {
+                            result.push(b_ as char);
+                        } else {
+                            result.push('\u{83}');
+                            result.push(char::from(b_ ^ 32));
+                        }
+                    }
                     } else if let Some(c) = char::from_u32(byte) {
                         result.push(c);
                     }
@@ -13627,4 +13657,83 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _: String = get_username();
     }
+}
+
+// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART AS A
+// FREE FUNCTION !!! Adapts the cited C pattern to the Rust
+// pipeline. Extracted body of zerrmsg's `%e` arm (Src/utils.c:355-366):
+// EINTR → "interrupt", EIO verbatim, else lowercased strerror.
+// zerrmsg's errno branch routes through this so the prefix
+// formatting matches C; module callers (zsh/system) embed the
+// string in their own zwarnnam messages where C uses `%e`.
+/// Render an errno the way zsh's `%e` warning format does —
+/// `zerrmsg` case `'e'` at `Src/utils.c:352-368`:
+///
+/// - `EINTR` → the literal string `interrupt` (C also sets
+///   `errflag |= ERRFLAG_ERROR` and truncates the rest of the
+///   format; every zshrs call site uses `%e` as the final
+///   conversion so the truncation is a no-op here).
+/// - `EIO` → `strerror(EIO)` verbatim ("I/O" reads wrong
+///   lowercased, per the c:361-364 comment).
+/// - everything else → `strerror(num)` with the first letter
+///   lowercased (`tulower(errmsg[0])`, c:366).
+///
+/// `std::io::Error::from_raw_os_error(n)` Display is NOT this
+/// format — it appends " (os error N)" and keeps the capital.
+/// That mismatch was the residual byte-diff in zsh/system's
+/// `sysopen`/`zsystem flock` warnings (docs/BUGS.md #316).
+pub fn zsh_errno_msg(num: i32) -> String {
+    if num == libc::EINTR {
+        return "interrupt".to_string(); // c:355-358
+    }
+    let msg = unsafe {
+        let p = libc::strerror(num); // c:360
+        if p.is_null() {
+            return String::new();
+        }
+        std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+    };
+    if num == libc::EIO {
+        return msg; // c:363-364
+    }
+    // c:366 — `fputc(tulower(errmsg[0]), file);`
+    let mut chars = msg.chars();
+    match chars.next() {
+        Some(c) => c.to_lowercase().collect::<String>() + chars.as_str(),
+        None => msg,
+    }
+}
+
+// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART AS A
+// FREE FUNCTION !!! Adapts the cited C pattern to the Rust
+// pipeline. Byte-exact inverse of metafy (Src/utils.c:5022 unmetafy):
+// decodes Meta (\u{83}) + c^32 pairs back to raw bytes. C
+// unmetafy works in place on char*; Rust strings are UTF-8 so
+// the decode returns Vec<u8> for byte-exact writes.
+/// Decode a char-level metafied String back to RAW bytes for a write
+/// or exec boundary. c:Src/utils.c:4954 unmetafy — `if (*t++ == Meta
+/// && *p) t[-1] = *p++ ^ 32;` — transposed onto the char-level
+/// encoding `meta_encode_byte` produces: U+0083 followed by a scalar
+/// in U+0080..=U+00FF yields the single raw byte `payload ^ 32`;
+/// everything else emits its UTF-8 bytes verbatim. A U+0083 followed
+/// by anything outside that range is not our encoding and passes
+/// through untouched. Bug #127.
+pub fn unmetafy_str(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    let mut buf = [0u8; 4];
+    while let Some(c) = it.next() {
+        if c == '\u{83}' {
+            if let Some(&n) = it.peek() {
+                let nu = n as u32;
+                if (0x80..=0xff).contains(&nu) {
+                    out.push((nu as u8) ^ 32);
+                    it.next();
+                    continue;
+                }
+            }
+        }
+        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+    out
 }

@@ -8700,7 +8700,8 @@ pub fn setlang(x: Option<&str>) {
     }
     // Mirror to env so subsequent `getsparam("LANG")` reads agree.
     if let Some(s) = x {
-        setenv_truncate_nul("LANG", s);
+        // c:Src/params.c:5354 — setenv via the C-named zputenv
+        let _ = zputenv(&format!("{}={}", "LANG", s));
     }
     clear_mbstate(); // c:4861
                      // c:4863-4867 — `for (ln = lc_names; ln->name; ln++) if ((x =
@@ -8773,7 +8774,8 @@ pub fn lc_allsetfn(x: Option<String>) {
             unsafe {
                 libc::setlocale(libc::LC_ALL, cstr.as_ptr()); // c:4890
             }
-            setenv_truncate_nul("LC_ALL", &s);
+            // c:Src/params.c:5354 — setenv via the C-named zputenv
+        let _ = zputenv(&format!("{}={}", "LC_ALL", &s));
             clear_mbstate(); // c:4891
                              // c:4892 — `inittyptab();` rebuild typtab for new LC_CTYPE.
             inittyptab(); // c:4892
@@ -8850,7 +8852,8 @@ pub fn lcsetfn(pm: &str, x: Option<String>) {
                                                                   // numeric-formatting category.
     if let Some(v) = val {
         let unmeta = unmeta(&v); // c:4928 unmeta(x)
-        setenv_truncate_nul(pm, &unmeta);
+        // c:Src/params.c:5354 — setenv via the C-named zputenv
+        let _ = zputenv(&format!("{}={}", pm, &unmeta));
         for (name, category) in LC_NAMES {
             // c:4925
             if *name == pm {
@@ -9413,7 +9416,8 @@ pub static RPROMPT_INDENT: Mutex<i32> = Mutex::new(1);
 /// `zsfree(zsh_terminfo); zsh_terminfo = x; addenv if exported; term_reinit_from_pm();`
 pub fn terminfosetfn(_pm: &mut param, x: String) {
     *zsh_terminfo_lock().lock().expect("zsh_terminfo poisoned") = x.clone();
-    setenv_truncate_nul("TERMINFO", &x);
+    // c:Src/params.c:5354 — setenv via the C-named zputenv
+        let _ = zputenv(&format!("{}={}", "TERMINFO", &x));
     term_reinit_from_pm();
 }
 
@@ -9432,7 +9436,8 @@ pub fn terminfodirssetfn(_pm: &mut param, x: String) {
     *zsh_terminfodirs_lock()
         .lock()
         .expect("zsh_terminfodirs poisoned") = x.clone();
-    setenv_truncate_nul("TERMINFO_DIRS", &x);
+    // c:Src/params.c:5354 — setenv via the C-named zputenv
+        let _ = zputenv(&format!("{}={}", "TERMINFO_DIRS", &x));
     term_reinit_from_pm();
 }
 
@@ -9502,7 +9507,8 @@ pub fn arrfixenv(s: &str, t: Option<&[String]>) {
         None => {
             // No param yet — just sync via env::set_var as fallback.
             let val = t.map(|v| v.join(":")).unwrap_or_default();
-            setenv_truncate_nul(s, &val);
+            // c:Src/params.c:5354 — setenv via the C-named zputenv
+        let _ = zputenv(&format!("{}={}", s, &val));
             return;
         }
     };
@@ -9629,9 +9635,9 @@ pub fn zputenv(str: &str) -> i32 {
 }
 
 // NUL-safe env-mirror helper lives in src/vm_helper.rs
-// (`setenv_truncate_nul`) — bridge-file helper, not a C port; the
+// (zputenv, Src/params.c:5325) — the C-named env writer; the
 // src/ported/ build gate forbids non-C-named fns here.
-use crate::vm_helper::setenv_truncate_nul;
+
 
 /// Direct port of `int findenv(char *name, int *pos)` from
 /// `Src/params.c:5391`. Walks `environ` looking for an

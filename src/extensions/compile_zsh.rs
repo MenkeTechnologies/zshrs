@@ -8017,6 +8017,20 @@ impl ZshCompiler {
 /// `$ZSH_DEBUG_CMD`. Only Simple commands get faithful reconstruction
 /// (word-joining with spaces, untokenized); compound commands get a
 /// short keyword tag. Bug #263 in docs/BUGS.md.
+
+/// Meta-encode one raw byte into the pipeline's string form —
+/// c:Src/utils.c metafy step: `if (imeta(c)) { *p++ = Meta; *p++ =
+/// c ^ 32; }`. Local copy for the three $'…' decoders below (the
+/// former vm_helper::meta_encode_byte was deleted in the fake-fn
+/// minimization pass; ported callers inline it).
+fn meta_encode_byte(out: &mut String, b: u8) {
+    if b < 0x80 {
+        out.push(b as char);
+    } else {
+        out.push('\u{83}');
+        out.push(char::from(b ^ 32));
+    }
+}
 fn render_list_for_debug(list: &crate::parse::ZshList) -> String {
     render_sublist_for_debug(&list.sublist)
 }
@@ -11133,7 +11147,7 @@ fn decode_ansi_c(body: &str) -> String {
                 // value is truncated to ONE raw byte (`$'\377'` is
                 // byte 0xff, same as `$'\xff'`), not a Unicode
                 // codepoint. Metafied like the \x arm. Bug #127.
-                crate::vm_helper::meta_encode_byte(&mut out, (val & 0xff) as u8);
+                meta_encode_byte(&mut out, (val & 0xff) as u8);
             }
             Some('x') => {
                 let mut hex = String::new();
@@ -11162,7 +11176,7 @@ fn decode_ansi_c(body: &str) -> String {
                     // walk (Bug #127). Store the metafied pair per
                     // c:Src/utils.c:7289-7294 instead; write/exec
                     // boundaries unmetafy back to the raw byte.
-                    crate::vm_helper::meta_encode_byte(&mut out, b);
+                    meta_encode_byte(&mut out, b);
                 }
             }
             Some(uu @ ('u' | 'U')) => {
@@ -11268,7 +11282,7 @@ fn decode_ansi_c(body: &str) -> String {
                     // after masking) can't be byte-masked faithfully;
                     // keep the codepoint form for that edge. Bug #127.
                     if byte <= 0xff {
-                        crate::vm_helper::meta_encode_byte(&mut out, byte as u8);
+                        meta_encode_byte(&mut out, byte as u8);
                     } else if let Some(c) = char::from_u32(byte) {
                         out.push(c);
                     }

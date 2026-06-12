@@ -117,7 +117,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // {a..z, '\', 'n'}, not "plus newline"), and `[`/`&&`/`~~`/`--`
     // are ordinary characters. The Rust regex crate diverges on all
     // of these; translate at the boundary. BUGS.md #558.
-    let pat_for_compile = crate::vm_helper::posix_ere_bracket_escape(&pat_for_compile);
+    let pat_for_compile = crate::ported::modules::regex::posix_ere_bracket_escape(&pat_for_compile);
     let re = match regex::RegexBuilder::new(&pat_for_compile)
         .dot_matches_new_line(true)
         .build()
@@ -1124,4 +1124,83 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = crate::regex_module::zcond_regex_match(&["pattern"], 0);
     }
+}
+
+// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART AS A
+// FREE FUNCTION !!! Adapts the cited C pattern to the Rust
+// pipeline. zsh ERE → Rust `regex` crate bracket-class fixups. C links
+// libc regcomp (Src/Modules/regex.c) which needs no such
+// translation; the Rust engine does.
+/// Translation rules, applied only INSIDE bracket expressions:
+///   - `\`, `[`, `&`, `~` are emitted backslash-escaped (literal).
+///   - a leading `]` (after optional `^`) is emitted as `\]`
+///     (POSIX: literal when first).
+///   - `[: :]` / `[= =]` / `[. .]` POSIX named classes / equivalence
+///     classes / collating elements are copied verbatim.
+/// Outside bracket expressions the pattern is copied unchanged
+/// (existing `\X` escape pairs pass through untouched).
+pub fn posix_ere_bracket_escape(pat: &str) -> String {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut out = String::with_capacity(pat.len() + 8);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            // Outside a class: copy the escape pair verbatim.
+            out.push(c);
+            i += 1;
+            if i < chars.len() {
+                out.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if c != '[' {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        // Bracket expression. POSIX: ends at the first `]` that is
+        // not in leading position (after optional `^`).
+        out.push('[');
+        i += 1;
+        if i < chars.len() && chars[i] == '^' {
+            out.push('^');
+            i += 1;
+        }
+        if i < chars.len() && chars[i] == ']' {
+            out.push('\\');
+            out.push(']');
+            i += 1;
+        }
+        while i < chars.len() && chars[i] != ']' {
+            // `[:alpha:]` / `[=a=]` / `[.x.]` — copy verbatim.
+            if chars[i] == '[' && i + 1 < chars.len() && matches!(chars[i + 1], ':' | '=' | '.') {
+                let close = chars[i + 1];
+                out.push('[');
+                out.push(close);
+                i += 2;
+                while i < chars.len() && !(chars[i] == close && chars.get(i + 1) == Some(&']')) {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    out.push(close);
+                    out.push(']');
+                    i += 2;
+                }
+                continue;
+            }
+            if matches!(chars[i], '\\' | '[' | '&' | '~') {
+                out.push('\\');
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+        if i < chars.len() {
+            out.push(']'); // class terminator
+            i += 1;
+        }
+    }
+    out
 }
