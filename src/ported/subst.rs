@@ -14343,7 +14343,10 @@ fn vars_contains(name: &str) -> bool {
 fn arrays_get(name: &str) -> Option<Vec<String>> {
     // c:Src/params.c:570-575 — nameref deref before the read.
     if crate::ported::params::is_nameref(name) {
-        let t = crate::ported::params::nameref_final_name(name);
+        let t = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
         if t != name {
             return arrays_get(&t);
         }
@@ -14445,7 +14448,10 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
 fn arrays_contains(name: &str) -> bool {
     // c:Src/params.c:570-575 — nameref deref before the read.
     if crate::ported::params::is_nameref(name) {
-        let t = crate::ported::params::nameref_final_name(name);
+        let t = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
         if t != name {
             return arrays_contains(&t);
         }
@@ -14568,7 +14574,10 @@ fn arrays_insert(name: String, value: Vec<String>) {
 /// `paramtab_hashed_storage` (PM_HASHED values).
 fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
     // c:Src/params.c:570-575 — nameref deref before the read.
-    let resolved = crate::ported::params::nameref_final_name(name);
+    let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
     paramtab_hashed_storage()
         .lock()
         .ok()
@@ -14578,7 +14587,10 @@ fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.
 fn assoc_contains(name: &str) -> bool {
     // c:Src/params.c:570-575 — nameref deref before the read.
-    let resolved = crate::ported::params::nameref_final_name(name);
+    let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
     paramtab_hashed_storage()
         .lock()
         .map_or(false, |s| s.contains_key(resolved.as_str()))

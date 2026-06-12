@@ -659,7 +659,10 @@ impl ShellExecutor {
     /// `Src/params.c:3115` — returns the typed `IndexMap`.
     pub fn assoc(&self, name: &str) -> Option<IndexMap<String, String>> {
         // c:Src/params.c:570-575 — nameref deref before the read.
-        let resolved = crate::vm_helper::nameref_final_name(name);
+        let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
         paramtab_hashed_storage()
             .lock()
             .ok()
@@ -684,7 +687,10 @@ impl ShellExecutor {
     /// PM_HASHED slot).
     pub fn has_assoc(&self, name: &str) -> bool {
         // c:Src/params.c:570-575 — nameref deref before the read.
-        let resolved = crate::vm_helper::nameref_final_name(name);
+        let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
         paramtab_hashed_storage()
             .lock()
             .ok()

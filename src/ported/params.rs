@@ -4444,7 +4444,51 @@ pub fn getsparam(name: &str) -> Option<String> {
     // 1b. c:Src/params.c:570-575 — getparamnode resolves PM_NAMEREF
     //     chains before the value read (`pm = resolve_nameref(pm)`).
     //     Redirect the lookup to the resolved target.
-    if let Some(res) = crate::ported::params::nameref_read_redirect(name) {
+    // c:570-575 getparamnode → resolve_nameref: scalar-read
+    // redirection through a nameref chain, INLINE (former
+    // nameref_read_redirect, single-caller fold 2026-06-12).
+    if let Some(res) = (|name: &str| -> Option<Option<String>> {
+if !is_nameref(name) {
+    return None;
+}
+match resolve_nameref_name(name, None) {
+    nameref_resolution::NotRef => None,
+    nameref_resolution::Placeholder(_)
+    | nameref_resolution::SelfRef
+    | nameref_resolution::OutOfScope => Some(None),
+    nameref_resolution::Target {
+        name: t,
+        subscript,
+        pm,
+        level,
+    } => {
+        let pm = match pm {
+            Some(p) => p,
+            None => return Some(None), // dangling target
+        };
+        if (pm.node.flags as u32 & PM_UNSET) != 0 {
+            return Some(None);
+        }
+        match subscript {
+            None => {
+                // Visible binding → recurse through the normal
+                // read path (padding, gsu, specials all apply).
+                let visible_level = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|tab| tab.get(&t).map(|p| p.level));
+                if visible_level == Some(level) {
+                    Some(getsparam(&t))
+                } else {
+                    // Hidden (old-chain) binding — read the clone.
+                    Some(param_scalar_value(&pm))
+                }
+            }
+            Some(k) => Some(nameref_element_read(&pm, &t, &k)),
+        }
+    }
+}
+})(name) {
         return res;
     }
     // 2. Paramtab read — `(Value)gethashnode2(paramtab, name)`.
@@ -4655,7 +4699,50 @@ pub fn getaparam(name: &str) -> Option<Vec<String>> {
     }
     // c:Src/params.c:570-575 — getvalue→fetchvalue→getparamnode
     // resolves PM_NAMEREF before the type check.
-    if let Some(res) = crate::ported::params::nameref_aread_redirect(name) {
+    // c:570-575 getparamnode → resolve_nameref: array-read
+    // redirection through a nameref chain, INLINE (former
+    // nameref_aread_redirect, single-caller fold 2026-06-12).
+    if let Some(res) = (|name: &str| -> Option<Option<Vec<String>>> {
+if !is_nameref(name) {
+    return None;
+}
+match resolve_nameref_name(name, None) {
+    nameref_resolution::NotRef => None,
+    nameref_resolution::Placeholder(_)
+    | nameref_resolution::SelfRef
+    | nameref_resolution::OutOfScope => Some(None),
+    nameref_resolution::Target {
+        name: t,
+        subscript,
+        pm,
+        level,
+    } => {
+        let pm = match pm {
+            Some(p) => p,
+            None => return Some(None),
+        };
+        if (pm.node.flags as u32 & PM_UNSET) != 0 {
+            return Some(None);
+        }
+        if let Some(k) = subscript {
+            // single element reads back as a 1-element array view
+            return Some(nameref_element_read(&pm, &t, &k).map(|v| vec![v]));
+        }
+        if PM_TYPE(pm.node.flags as u32) != PM_ARRAY {
+            return Some(None);
+        }
+        let visible_level = paramtab()
+            .read()
+            .ok()
+            .and_then(|tab| tab.get(&t).map(|p| p.level));
+        if visible_level == Some(level) {
+            Some(getaparam(&t))
+        } else {
+            Some(pm.u_arr.clone())
+        }
+    }
+}
+})(name) {
         return res;
     }
     // c:3107-3109 — `getvalue(&vbuf, &s, 0)` resolves the name to a
@@ -4718,7 +4805,10 @@ pub fn gethparam(name: &str) -> Option<Vec<String>> {
         return None;
     }
     // c:Src/params.c:570-575 — nameref deref before the type check.
-    let resolved = crate::ported::params::nameref_final_name(name);
+    let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
     let name: &str = &resolved;
     if let Ok(tab) = paramtab().read() {
         if let Some(pm) = tab.get(name) {
@@ -5042,9 +5132,34 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                             .ok()
                             .and_then(|tb| tb.get(&t).map(|p| p.level));
                         if visible_level != Some(level) {
-                            return crate::ported::params::nameref_hidden_scalar_assign(
-                                &t, level, val,
-                            );
+                            // upscope write (c:6455 landed on a pm->old
+                            // node), INLINE (former nameref_hidden_scalar_assign).
+                            return (|name: &str, level: i32, val: &str| -> Option<Param> {
+let mut tab = paramtab().write().ok()?;
+let mut node: &mut param = tab.get_mut(name)?.as_mut();
+while node.level != level {
+    node = node.old.as_mut()?.as_mut();
+}
+if (node.node.flags as u32 & PM_READONLY) != 0 {
+    zerr(&format!("read-only variable: {}", name)); // c:2696
+    return None;
+}
+let t = PM_TYPE(node.node.flags as u32);
+if t == PM_INTEGER {
+    // c:Src/params.c:4007 intsetfn via mathevali.
+    node.u_val = crate::ported::math::mathevali(val).unwrap_or(0);
+} else if t == PM_EFLOAT || t == PM_FFLOAT {
+    node.u_dval = val.trim().parse().unwrap_or(0.0);
+} else {
+    // c:3236-3250 — array/hash → scalar type flip through ref.
+    let type_mask = PM_TYPE(u32::MAX) as i32;
+    node.node.flags = (node.node.flags & !type_mask) | PM_SCALAR as i32;
+    node.u_arr = None;
+    node.u_str = Some(val.to_string());
+}
+node.node.flags &= !((PM_UNSET | PM_DECLARED) as i32); // c:2712 + c:3269
+Some(Box::new(node.clone()))
+})(&t, level, val);
                         }
                     }
                     let mut new_s = t.clone();
@@ -6154,9 +6269,25 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                             .ok()
                             .and_then(|tb| tb.get(&t).map(|p| p.level));
                         if visible_level != Some(level) {
-                            return crate::ported::params::nameref_hidden_array_assign(
-                                &t, level, val,
-                            );
+                            // upscope write, INLINE (former
+                            // nameref_hidden_array_assign).
+                            return (|name: &str, level: i32, val: Vec<String>| -> Option<Param> {
+let mut tab = paramtab().write().ok()?;
+let mut node: &mut param = tab.get_mut(name)?.as_mut();
+while node.level != level {
+    node = node.old.as_mut()?.as_mut();
+}
+if (node.node.flags as u32 & PM_READONLY) != 0 {
+    zerr(&format!("read-only variable: {}", name)); // c:3370-3381
+    return None;
+}
+let type_mask = PM_TYPE(u32::MAX) as i32;
+node.node.flags = (node.node.flags & !type_mask) | PM_ARRAY as i32;
+node.u_str = None;
+node.u_arr = Some(val);
+node.node.flags &= !((PM_UNSET | PM_DECLARED) as i32);
+Some(Box::new(node.clone()))
+})(&t, level, val);
                         }
                     }
                     let mut new_s = t.clone();
@@ -15849,22 +15980,26 @@ SelfRef,
 OutOfScope,
 }
 
-/// Apply C's `upscope(Param pm, const Param ref)` (Src/params.c:6455)
-/// to the old-chain of the table's visible binding, returning a clone
-/// of the binding the ref resolves to plus its level.
-/// ```c
-/// if (ref->node.flags & PM_UPPER)
-///     while (pm->level > ref->level - 1 && (pm = pm->old));
-/// else
-///     for (; pm->old && pm->old->level >= ref->base; pm = pm->old);
-/// return pm;
-/// ```
-fn upscope_clone(
-visible: &param,
-ref_flags: u32,
-ref_level: i32,
-ref_base: i32,
-) -> Option<Param> {
+
+/// Walk the nameref chain starting at `name` against the live
+/// paramtab. Faithful adaptation of `resolve_nameref_rec`
+/// (Src/params.c:6332-6357): per-hop `upscope` via the old-chain,
+/// `pm->width` subscript chain-end (c:6338-6339), PM_TAGGED-style
+/// loop detection (visited set of (name, level) stands in for the
+/// C pointer tag — same revisit condition, borrow-safe), and the
+/// `keep_lastref` placeholder shape. `stop_at` mirrors the C `stop`
+/// param (compared by (name, level) identity).
+pub fn resolve_nameref_name(name: &str, stop_at: Option<(&str, i32)>) -> nameref_resolution {
+// `${(!)…}` SCANPM_NONAMEREF scope (c:2247 `!(scanflags &
+// SCANPM_NONAMEREF)`) — treat nothing as a ref. Centralized here so
+// every caller inherits the gate (previously each caller guarded
+// via is_nameref first).
+if NAMEREF_SUPPRESS.with(|c| c.get()) > 0 {
+    return nameref_resolution::NotRef;
+}
+// upscope (Src/params.c:6440-6463) over CLONED chain nodes —
+// nested in the engine (sole consumer) instead of a free fn.
+let upscope_clone = |visible: &param, ref_flags: u32, ref_level: i32, ref_base: i32| -> Option<Param> {
 let mut cur: &param = visible;
 if (ref_flags & PM_UPPER) != 0 {
     // c:6457-6458 — `while (pm->level > ref->level - 1 &&
@@ -15888,17 +16023,7 @@ if (ref_flags & PM_UPPER) != 0 {
     }
 }
 Some(Box::new(cur.clone()))
-}
-
-/// Walk the nameref chain starting at `name` against the live
-/// paramtab. Faithful adaptation of `resolve_nameref_rec`
-/// (Src/params.c:6332-6357): per-hop `upscope` via the old-chain,
-/// `pm->width` subscript chain-end (c:6338-6339), PM_TAGGED-style
-/// loop detection (visited set of (name, level) stands in for the
-/// C pointer tag — same revisit condition, borrow-safe), and the
-/// `keep_lastref` placeholder shape. `stop_at` mirrors the C `stop`
-/// param (compared by (name, level) identity).
-pub fn resolve_nameref_name(name: &str, stop_at: Option<(&str, i32)>) -> nameref_resolution {
+};
 let tab = match paramtab().read() {
     Ok(t) => t,
     Err(_) => return nameref_resolution::NotRef,
@@ -16039,58 +16164,9 @@ loop {
 }
 
 
-/// Write a scalar through a nameref that resolved to a HIDDEN
-/// (old-chain) binding — the upscope write path of C's
-/// `assignstrvalue` when fetchvalue's `upscope()` (Src/params.c:6455)
-/// landed on a `pm->old` node instead of the visible one. Mutates
-/// the chain node at `level` in place.
-pub fn nameref_hidden_scalar_assign(name: &str, level: i32, val: &str) -> Option<Param> {
-let mut tab = paramtab().write().ok()?;
-let mut node: &mut param = tab.get_mut(name)?.as_mut();
-while node.level != level {
-    node = node.old.as_mut()?.as_mut();
-}
-if (node.node.flags as u32 & PM_READONLY) != 0 {
-    zerr(&format!("read-only variable: {}", name)); // c:2696
-    return None;
-}
-let t = PM_TYPE(node.node.flags as u32);
-if t == PM_INTEGER {
-    // c:Src/params.c:4007 intsetfn via mathevali.
-    node.u_val = crate::ported::math::mathevali(val).unwrap_or(0);
-} else if t == PM_EFLOAT || t == PM_FFLOAT {
-    node.u_dval = val.trim().parse().unwrap_or(0.0);
-} else {
-    // c:3236-3250 — array/hash → scalar type flip through ref.
-    let type_mask = PM_TYPE(u32::MAX) as i32;
-    node.node.flags = (node.node.flags & !type_mask) | PM_SCALAR as i32;
-    node.u_arr = None;
-    node.u_str = Some(val.to_string());
-}
-node.node.flags &= !((PM_UNSET | PM_DECLARED) as i32); // c:2712 + c:3269
-Some(Box::new(node.clone()))
-}
 
-/// Array companion of `nameref_hidden_scalar_assign` — the upscope
-/// write path of `setarrvalue` (assignaparam c:3434) for a resolved
-/// hidden binding.
-pub fn nameref_hidden_array_assign(name: &str, level: i32, val: Vec<String>) -> Option<Param> {
-let mut tab = paramtab().write().ok()?;
-let mut node: &mut param = tab.get_mut(name)?.as_mut();
-while node.level != level {
-    node = node.old.as_mut()?.as_mut();
-}
-if (node.node.flags as u32 & PM_READONLY) != 0 {
-    zerr(&format!("read-only variable: {}", name)); // c:3370-3381
-    return None;
-}
-let type_mask = PM_TYPE(u32::MAX) as i32;
-node.node.flags = (node.node.flags & !type_mask) | PM_ARRAY as i32;
-node.u_str = None;
-node.u_arr = Some(val);
-node.node.flags &= !((PM_UNSET | PM_DECLARED) as i32);
-Some(Box::new(node.clone()))
-}
+
+
 
 thread_local! {
 /// `${(!)name}` — SCANPM_NONAMEREF depth (Src/params.c:2232-2235:
@@ -16136,54 +16212,7 @@ paramtab()
     .unwrap_or(false)
 }
 
-/// Scalar-read redirection through a nameref chain. Returns:
-/// - `None` — `name` is not a nameref; caller falls through to the
-///   normal read.
-/// - `Some(opt)` — `name` IS a nameref; `opt` is the resolved value
-///   (None = unresolvable / dangling / unset target → reads as unset,
-///   matching C fetchvalue's NULL return at c:2244-2246/2260-2263).
-pub fn nameref_read_redirect(name: &str) -> Option<Option<String>> {
-if !is_nameref(name) {
-    return None;
-}
-match resolve_nameref_name(name, None) {
-    nameref_resolution::NotRef => None,
-    nameref_resolution::Placeholder(_)
-    | nameref_resolution::SelfRef
-    | nameref_resolution::OutOfScope => Some(None),
-    nameref_resolution::Target {
-        name: t,
-        subscript,
-        pm,
-        level,
-    } => {
-        let pm = match pm {
-            Some(p) => p,
-            None => return Some(None), // dangling target
-        };
-        if (pm.node.flags as u32 & PM_UNSET) != 0 {
-            return Some(None);
-        }
-        match subscript {
-            None => {
-                // Visible binding → recurse through the normal
-                // read path (padding, gsu, specials all apply).
-                let visible_level = paramtab()
-                    .read()
-                    .ok()
-                    .and_then(|tab| tab.get(&t).map(|p| p.level));
-                if visible_level == Some(level) {
-                    Some(getsparam(&t))
-                } else {
-                    // Hidden (old-chain) binding — read the clone.
-                    Some(param_scalar_value(&pm))
-                }
-            }
-            Some(k) => Some(nameref_element_read(&pm, &t, &k)),
-        }
-    }
-}
-}
+
 
 /// Raw scalar value of a (possibly hidden) param clone — the
 /// type-dispatch heart of `getstrvalue` (Src/params.c:2350-2382)
@@ -16269,63 +16298,7 @@ if pos >= 1 && pos <= len {
 Some(String::new())
 }
 
-/// Array-read redirection through a nameref chain (companion to
-/// `nameref_read_redirect` for `getaparam`).
-pub fn nameref_aread_redirect(name: &str) -> Option<Option<Vec<String>>> {
-if !is_nameref(name) {
-    return None;
-}
-match resolve_nameref_name(name, None) {
-    nameref_resolution::NotRef => None,
-    nameref_resolution::Placeholder(_)
-    | nameref_resolution::SelfRef
-    | nameref_resolution::OutOfScope => Some(None),
-    nameref_resolution::Target {
-        name: t,
-        subscript,
-        pm,
-        level,
-    } => {
-        let pm = match pm {
-            Some(p) => p,
-            None => return Some(None),
-        };
-        if (pm.node.flags as u32 & PM_UNSET) != 0 {
-            return Some(None);
-        }
-        if let Some(k) = subscript {
-            // single element reads back as a 1-element array view
-            return Some(nameref_element_read(&pm, &t, &k).map(|v| vec![v]));
-        }
-        if PM_TYPE(pm.node.flags as u32) != PM_ARRAY {
-            return Some(None);
-        }
-        let visible_level = paramtab()
-            .read()
-            .ok()
-            .and_then(|tab| tab.get(&t).map(|p| p.level));
-        if visible_level == Some(level) {
-            Some(getaparam(&t))
-        } else {
-            Some(pm.u_arr.clone())
-        }
-    }
-}
-}
 
-/// Resolve a name through any nameref chain for table-keyed access
-/// (assoc storage, `${(t)}`, typeset-through-ref). Returns the final
-/// target name when `name` is an active nameref that resolves, the
-/// ref's own name otherwise.
-pub fn nameref_final_name(name: &str) -> String {
-if !is_nameref(name) {
-    return name.to_string();
-}
-match resolve_nameref_name(name, None) {
-    nameref_resolution::Target { name: t, .. } => t,
-    _ => name.to_string(),
-}
-}
 
 
 /// Full-table variant of `setscope(Param pm)` (Src/params.c:6382).
