@@ -7766,7 +7766,10 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     }
                 }
                 if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                    result.push(val as char);
+                    // c:Src/utils.c — `\xNN` is one raw BYTE; metafied
+                    // per c:7289-7294 (vm_helper::meta_encode_byte) so
+                    // the String stays valid UTF-8. Bug #127.
+                    crate::vm_helper::meta_encode_byte(&mut result, val);
                 }
             }
             Some('u') => {
@@ -7822,7 +7825,9 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     }
                 }
                 if let Ok(val) = u8::from_str_radix(&oct, 8) {
-                    result.push(val as char);
+                    // c:Src/utils.c — octal escape is one raw BYTE;
+                    // metafied per c:7289-7294. Bug #127.
+                    crate::vm_helper::meta_encode_byte(&mut result, val);
                 }
             }
             Some('c') => {
@@ -7947,7 +7952,13 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     if meta {
                         byte |= 0x80;
                     }
-                    if let Some(c) = char::from_u32(byte) {
+                    // c:Src/utils.c:7265-7275 — masked result is one
+                    // raw BYTE (`$'\M-i'` = 0xe9), metafied per
+                    // c:7289-7294. Multibyte base chars (> 0xff)
+                    // keep the codepoint form. Bug #127.
+                    if byte <= 0xff {
+                        crate::vm_helper::meta_encode_byte(&mut result, byte as u8);
+                    } else if let Some(c) = char::from_u32(byte) {
                         result.push(c);
                     }
                 }

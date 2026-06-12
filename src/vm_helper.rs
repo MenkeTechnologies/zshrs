@@ -1251,12 +1251,18 @@ impl ShellExecutor {
         // Direct port of the implicit ties that zsh wires up at
         // startup for PATH/path, FPATH/fpath, etc. Source-of-truth
         // for the pairs is Src/init.c's `setupvals()` PM_TIED entries.
+        // c:Src/params.c:395-422 IPDEF8 — full PM_TIED colonarr list:
+        // CDPATH, FIGNORE, FPATH, MAILPATH, PATH, PSVAR, MODULE_PATH,
+        // MANPATH (ZSH_EVAL_CONTEXT is readonly-special, excluded).
         for (scalar, arr) in [
             ("PATH", "path"),
             ("FPATH", "fpath"),
             ("MANPATH", "manpath"),
             ("CDPATH", "cdpath"),
             ("MODULE_PATH", "module_path"),
+            ("PSVAR", "psvar"),
+            ("FIGNORE", "fignore"),
+            ("MAILPATH", "mailpath"),
         ] {
             exec.tied_array_to_scalar
                 .insert(arr.to_string(), (scalar.to_string(), ":".to_string()));
@@ -2416,7 +2422,20 @@ impl ShellExecutor {
             }
         }
         let mut command = Command::new(cmd);
-        command.args(args);
+        // c:Src/exec.c execute — C unmetafies every arg before the
+        // execve (the child must see raw bytes, not the shell's
+        // internal Meta encoding). Args carrying Meta-char pairs
+        // (from `$'\xff'` etc., vm_helper::meta_encode_byte) are
+        // decoded to raw bytes via OsStr; plain args pass through
+        // unchanged. Bug #127.
+        for a in args {
+            if a.contains('\u{83}') {
+                use std::os::unix::ffi::OsStrExt as _;
+                command.arg(std::ffi::OsStr::from_bytes(&unmetafy_str(a)));
+            } else {
+                command.arg(a);
+            }
+        }
 
         // Redirect handling lives in fusevm's WithRedirectsBegin/End
         // ops at compile time; `_redirects` arrives empty here.
@@ -4010,4 +4029,52 @@ pub fn untokenize_ztokens(s: &str) -> String {
         }
     }
     result
+}
+
+/// Encode one RAW byte into zshrs's char-level metafied String form.
+/// c:Src/utils.c:7289-7294 — getkeystring's GETKEY_DOLLAR_QUOTE tail:
+/// `if (imeta(*t2)) { *tdest++ = Meta; *tdest++ = *t2 ^ 32; }`.
+/// C metafies only imeta bytes because its `char *` strings hold raw
+/// high bytes natively; Rust Strings must stay valid UTF-8, so EVERY
+/// byte >= 0x80 (covering C's imeta range 0x83..=0xa2 plus plain high
+/// bytes like 0xff from `$'\xff'`) takes the Meta + `^32` pair, with
+/// both halves stored as Unicode scalars (U+0083, U+00A0..=U+00FF).
+/// ASCII passes through unchanged (byte == UTF-8 unit). The payload
+/// `b ^ 32` for b in 0x80..=0xff always lands in 0x80..=0xff, so the
+/// pair is unambiguous for `unmetafy_str` below. Bug #127.
+pub fn meta_encode_byte(out: &mut String, b: u8) {
+    if b < 0x80 {
+        out.push(b as char);
+    } else {
+        out.push('\u{83}');
+        out.push(char::from(b ^ 32));
+    }
+}
+
+/// Decode a char-level metafied String back to RAW bytes for a write
+/// or exec boundary. c:Src/utils.c:4954 unmetafy — `if (*t++ == Meta
+/// && *p) t[-1] = *p++ ^ 32;` — transposed onto the char-level
+/// encoding `meta_encode_byte` produces: U+0083 followed by a scalar
+/// in U+0080..=U+00FF yields the single raw byte `payload ^ 32`;
+/// everything else emits its UTF-8 bytes verbatim. A U+0083 followed
+/// by anything outside that range is not our encoding and passes
+/// through untouched. Bug #127.
+pub fn unmetafy_str(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    let mut buf = [0u8; 4];
+    while let Some(c) = it.next() {
+        if c == '\u{83}' {
+            if let Some(&n) = it.peek() {
+                let nu = n as u32;
+                if (0x80..=0xff).contains(&nu) {
+                    out.push((nu as u8) ^ 32);
+                    it.next();
+                    continue;
+                }
+            }
+        }
+        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+    out
 }

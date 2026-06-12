@@ -3392,7 +3392,7 @@ impl ZshCompiler {
         }
 
         if !trigger_dollar && !trigger_glob && !trigger_tilde && !trigger_brace && !has_bnull {
-            // Pure literal — strip any \0 bslashquote-sentinels.
+            // Pure literal.
             //
             // Bnull (`\u{9f}`) words have `\X` backslash escapes that
             // untokenize materializes back to literal `\` — emitting
@@ -3403,8 +3403,16 @@ impl ZshCompiler {
             // declines to expand. Route Bnull words through the bridge
             // so the runtime expand path performs the same unescape;
             // otherwise `echo \\$X` printed `\$X` instead of `$X`.
-            let cleaned = strip_quote_markers(&untoked);
-            let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
+            //
+            // NOTE: an earlier `strip_quote_markers` pass here removed
+            // every `\x00` as a "bslashquote sentinel" — but the
+            // current lexer marks quoted chars with Bnull `\u{9f}`
+            // (lex.rs:1723/2124/2256), never `\x00`, so the only NULs
+            // reaching this point are REAL data bytes decoded from
+            // `$'\0'` (c:Src/utils.c getkeystring → raw NUL, written
+            // by fwrite at c:Src/builtin.c bin_print). Stripping them
+            // dropped the NUL from `"a"$'\0'"b"`. Bug #560.
+            let idx = self.builder.add_constant(Value::str(untoked.as_str()));
             self.builder.emit(Op::LoadConst(idx), 0);
             return;
         }
@@ -5071,8 +5079,11 @@ impl ZshCompiler {
                             } else {
                                 crate::lex::untokenize(lit)
                             };
-                            let stripped = strip_quote_markers(&cleaned);
-                            let idx = self.builder.add_constant(Value::str(stripped.as_str()));
+                            // No `\x00`-sentinel strip here: NULs in a
+                            // literal segment are real `$'\0'` data
+                            // bytes (see compile_word_str pure-literal
+                            // arm). Bug #560.
+                            let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
                             self.builder.emit(Op::LoadConst(idx), 0);
                         }
                         WordSegment::Expansion(exp) => {
@@ -8763,7 +8774,39 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                 subst.push(c);
                 i += 1;
                 if let Some(&nxt) = chars.get(i) {
-                    if nxt == '{' || nxt == '\u{8f}' {
+                    if nxt == '\u{9d}' {
+                        // `$'…'` ANSI-C span — Stringg/Qstring + Snull
+                        // body Snull (parse/lex token form). Keep the
+                        // WHOLE span in one Subst segment so
+                        // compile_word_str's ANSI fast path decodes
+                        // it (c:Src/subst.c:301 stringsubstquote).
+                        // The bare-$NAME arm below consumed nothing
+                        // (Snull isn't an identifier char), splitting
+                        // the span into Subst("$") + Literal(body) —
+                        // the body's escapes then leaked as raw text
+                        // into the cond pattern: `[[ $'\xff' ==
+                        // $'\xff' ]]` compiled the RHS to `$\xff`
+                        // and never matched. Bug #127.
+                        subst.push(nxt);
+                        i += 1;
+                        while i < chars.len() {
+                            let cc = chars[i];
+                            subst.push(cc);
+                            i += 1;
+                            if cc == '\u{9f}' || cc == '\\' {
+                                // Bnull / raw-backslash escape — keep
+                                // the escaped char inside the span.
+                                if i < chars.len() {
+                                    subst.push(chars[i]);
+                                    i += 1;
+                                }
+                                continue;
+                            }
+                            if cc == '\u{9d}' {
+                                break; // close Snull
+                            }
+                        }
+                    } else if nxt == '{' || nxt == '\u{8f}' {
                         // `${…}` — depth-balance braces.
                         let open = nxt;
                         let close = if nxt == '{' { '}' } else { '\u{90}' };
@@ -10308,14 +10351,6 @@ fn has_numeric_range_glob(s: &str) -> bool {
     false
 }
 
-/// Strip the lexer's `\0X` bslashquote sentinels (single-quoted special chars).
-fn strip_quote_markers(s: &str) -> String {
-    if !s.contains('\x00') {
-        return s.to_string();
-    }
-    s.chars().filter(|c| *c != '\x00').collect()
-}
-
 /// Untokenize like `lex::untokenize`, but preserve the three brace TOKEN
 /// bytes (Inbrace \u{8f}, Outbrace \u{90}, Comma \u{9a}) so a subsequent
 /// `xpandbraces` call still sees the brace structure. Used by the
@@ -10425,9 +10460,11 @@ fn decode_ansi_c(body: &str) -> String {
                         break;
                     }
                 }
-                if let Some(c) = char::from_u32(val) {
-                    out.push(c);
-                }
+                // c:Src/utils.c — `*t++ = zstrtol(...)`: the octal
+                // value is truncated to ONE raw byte (`$'\377'` is
+                // byte 0xff, same as `$'\xff'`), not a Unicode
+                // codepoint. Metafied like the \x arm. Bug #127.
+                crate::vm_helper::meta_encode_byte(&mut out, (val & 0xff) as u8);
             }
             Some('x') => {
                 let mut hex = String::new();
@@ -10449,15 +10486,14 @@ fn decode_ansi_c(body: &str) -> String {
                     // previous `out.push(b as char)` cast b to a
                     // Unicode codepoint U+00XX, which then UTF-8-
                     // encoded as `c3 ad` for `\xe2`, producing
-                    // mangled multi-byte output. Bug #325 in
-                    // docs/BUGS.md. Push the raw byte directly via
-                    // the String's underlying Vec<u8>. The final
-                    // String may temporarily contain invalid UTF-8
-                    // mid-stream, but well-formed user input
-                    // (matching the C semantics) leaves it valid.
-                    unsafe {
-                        out.as_mut_vec().push(b);
-                    }
+                    // mangled multi-byte output (Bug #325); the
+                    // unsafe raw-byte push that replaced it left the
+                    // String invalid UTF-8 — undefined behavior that
+                    // aborted debug builds inside any later .chars()
+                    // walk (Bug #127). Store the metafied pair per
+                    // c:Src/utils.c:7289-7294 instead; write/exec
+                    // boundaries unmetafy back to the raw byte.
+                    crate::vm_helper::meta_encode_byte(&mut out, b);
                 }
             }
             Some(uu @ ('u' | 'U')) => {
@@ -10557,7 +10593,14 @@ fn decode_ansi_c(body: &str) -> String {
                     if meta {
                         byte |= 0x80;
                     }
-                    if let Some(c) = char::from_u32(byte) {
+                    // c:Src/utils.c:7265-7275 — the masked result is
+                    // a single raw BYTE (`$'\M-i'` = 0xe9), metafied
+                    // like the \x arm. A multibyte base char (> 0xff
+                    // after masking) can't be byte-masked faithfully;
+                    // keep the codepoint form for that edge. Bug #127.
+                    if byte <= 0xff {
+                        crate::vm_helper::meta_encode_byte(&mut out, byte as u8);
+                    } else if let Some(c) = char::from_u32(byte) {
                         out.push(c);
                     }
                 }
