@@ -1770,3 +1770,24 @@ is_nameref
 nameref_element_read
 param_scalar_value
 setscope_by_name
+
+# Relocated from vm_helper.rs (2026-06-12, fake-fn minimization pass;
+# meta_encode_byte and setenv_truncate_nul DELETED outright — six
+# ported callsites each now inline the metafy byte-encode step /
+# call the C-named zputenv). The four below are genuine Rust-only
+# adapters, each with the WARNING block + C-pattern citation at the
+# definition:
+# - zsh_errno_msg (utils.rs): extracted body of zerrmsg's %e arm
+#   (Src/utils.c:355-366); zsh/system callers embed it where C
+#   formats %e inline.
+# - unmetafy_str (utils.rs): byte-exact unmetafy (Src/utils.c:5022)
+#   returning Vec<u8> — Rust strings are UTF-8, C works in-place.
+# - untokenize_ztokens (lex.rs): EXACT C untokenize
+#   (Src/utils.c:4205 + ztokens) without the pipeline untokenize()'s
+#   $'-decode deviation.
+# - posix_ere_bracket_escape (modules/regex.rs): zsh ERE → Rust
+#   regex-crate bracket fixups (C links libc regcomp, needs none).
+zsh_errno_msg
+unmetafy_str
+untokenize_ztokens
+posix_ere_bracket_escape
