@@ -1928,6 +1928,17 @@ impl ZshCompiler {
                     for chunk in elems.chunks(200) {
                         for e in chunk {
                             self.compile_word_str(e);
+                            // Array-literal elements field-split
+                            // unquoted expansion results — same emit
+                            // as compile_assign's array branch:
+                            // `typeset b=( $(print q w) e )` → 3
+                            // elements in zsh.
+                            if has_unquoted_expansion(e) {
+                                self.builder.emit(
+                                    Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0),
+                                    0,
+                                );
+                            }
                         }
                         self.builder.emit(
                             Op::CallBuiltin(
@@ -10725,6 +10736,14 @@ fn has_unquoted_expansion(s: &str) -> bool {
             if c == '$' && i + 1 < chars.len() && chars[i + 1] == '\u{88}' {
                 return true;
             }
+            // Fully-raw `$(` — intypeset-context words (typeset-family
+            // paren-init elements) keep the cmdsub as plain ASCII; the
+            // token-only checks above missed it so `typeset b=(
+            // $(print q w) e )` skipped the field-split (2 elements
+            // instead of zsh's 3).
+            if c == '$' && i + 1 < chars.len() && chars[i + 1] == '(' {
+                return true;
+            }
             // Backtick command sub — literal `` ` ``, Tick TOKEN
             // (`\u{93}`), or Qtick TOKEN (`\u{99}` — DQ-context backtick
             // marker). The previous version checked `\u{96}` (Bang) and
@@ -10814,17 +10833,29 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
         return None;
     }
     i += 1;
-    // Body runs to the LAST `)` / Outpar (\u{89}) — must be the final
-    // char of the word.
-    if !matches!(chars.last(), Some(')') | Some('\u{89}')) {
+    // Body runs to the LAST `)` / Outpar (\u{8a}, zsh.h:165) — must
+    // be the final char of the word.
+    if !matches!(chars.last(), Some(')') | Some('\u{8a}')) {
         return None;
     }
     let body = &chars[i..chars.len() - 1];
-    // Split on unquoted whitespace, tracking quote-marker spans.
+    // Element boundaries come in two encodings:
+    //   * \u{1f} (ASCII US) — the parser's intypeset ENVARRAY rejoin
+    //     (par_simple) emits word-granular elements pre-split;
+    //   * raw unquoted whitespace at NESTING DEPTH 0 — words that
+    //     reach the compiler without the rejoin (function bodies
+    //     recompiled at call time: zsh-hist's `typeset -gU FPATH
+    //     fpath=( $dir $fpath )` arrived space-separated and the
+    //     US-only split made it ONE element, collapsing fpath to a
+    //     single joined entry and breaking every later autoload).
+    // Whitespace inside $( … ) / ${ … } / ( … ) nesting or quote
+    // spans is word-internal (`$(print q w)` stays one element).
     let mut elems: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut in_sq = false;
     let mut in_dq = false;
+    let mut in_tick = false;
+    let mut depth: i32 = 0;
     for &c in body {
         match c {
             '\u{9d}' => {
@@ -10835,14 +10866,35 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
                 in_dq = !in_dq;
                 cur.push(c);
             }
-            // The parser's intypeset path (par_simple ENVARRAY) has
-            // already split the elements at WORD granularity and
-            // rejoined them with \u{1f} (ASCII US) — the same
-            // separator bin_typeset's paren-init splitter consumes.
-            // Split ONLY on it: raw whitespace inside an element is
-            // word-internal (`$(print q w)` is one cmdsub word; its
-            // spaces must not split it).
+            '\u{93}' | '\u{99}' | '`' if !in_sq && !in_dq => {
+                in_tick = !in_tick;
+                cur.push(c);
+            }
+            // Inpar \u{88} / Inparmath \u{89} open; Outpar \u{8a} /
+            // Outparmath \u{8b} close (zsh.h:163-166 — Outpar is
+            // \u{8a}, NOT \u{89}; the first cut used \u{89} so a
+            // `$(…)` element never re-balanced and the splitter
+            // bailed as unbalanced, skipping the pack rewrite).
+            '(' | '\u{88}' | '\u{89}' | '{' | '\u{8f}' | '[' | '\u{91}'
+                if !in_sq && !in_dq =>
+            {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | '\u{8a}' | '\u{8b}' | '}' | '\u{90}' | ']' | '\u{92}'
+                if !in_sq && !in_dq =>
+            {
+                depth -= 1;
+                cur.push(c);
+            }
             '\u{1f}' => {
+                if !cur.is_empty() {
+                    elems.push(std::mem::take(&mut cur));
+                }
+            }
+            ' ' | '\t' | '\n'
+                if !in_sq && !in_dq && !in_tick && depth == 0 =>
+            {
                 if !cur.is_empty() {
                     elems.push(std::mem::take(&mut cur));
                 }
@@ -10850,8 +10902,8 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
             _ => cur.push(c),
         }
     }
-    if in_sq || in_dq {
-        return None; // unbalanced markers — don't rewrite
+    if in_sq || in_dq || in_tick || depth != 0 {
+        return None; // unbalanced — don't rewrite
     }
     if !cur.is_empty() {
         elems.push(cur);

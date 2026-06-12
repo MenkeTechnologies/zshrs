@@ -7445,8 +7445,15 @@ pub fn paramsubst(
                 // filtering. Bug #236 surfaced via `${(@)a:#}` (empty
                 // pattern) ignoring the (@)-flag and never filtering
                 // empties out.
+                // c:Src/subst.c:1885 + 3193 — positional `@` NEVER
+                // joins in DQ ("$@" splice semantics carry through
+                // the filter: `[[ -n ${(M)@:#+X} ]]` in zinit's
+                // tmp-subst-autoload runs in cond/DQ compile context
+                // and must still filter per-element; the joined-
+                // scalar arm made the test always-true and routed
+                // every plugin autoload into the +X arm).
                 let per_element_array = !has_subscript
-                    && (!qt || is_array_subscript || nojoin == 2);
+                    && (!qt || is_array_subscript || nojoin == 2 || var_name == "@");
                 // c:Src/subst.c:3417 + Src/glob.c:2727 — empty
                 // pattern. C's `patcompile("")` returns a Patprog
                 // whose body matches only the empty string (no
@@ -14297,7 +14304,21 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
         }
     }
     if name == "@" || name == "*" || name == "argv" {
-        // c:Src/params.c:3262 IPDEF9 — pparams via getaparam alias.
+        // c:Src/params.c:3262 IPDEF9 — pparams. Read the LIVE
+        // executor positionals via the exec_hooks bridge: inside a
+        // function `$@` is the FUNCTION's args (doshfunc swaps
+        // pparams per frame, c:Src/exec.c:6021), while the static
+        // PPARAMS mirror holds the toplevel set — reading it made
+        // every `${(M)@:#pat}` filter inside functions operate on
+        // the WRONG (usually empty) array, so the filter no-op'd:
+        // zinit's `[[ -n ${(M)@:#+X} ]]` (tmp-subst-autoload) took
+        // the +X arm for every plugin autoload and broke
+        // add-zsh-hook / regexp-replace / add-zle-hook-widget
+        // resolution in the interactive session.
+        let live = crate::ported::exec_hooks::pparams();
+        if !live.is_empty() {
+            return Some(live);
+        }
         let pp = crate::ported::builtin::PPARAMS.lock().ok()?;
         return Some(pp.clone());
     }

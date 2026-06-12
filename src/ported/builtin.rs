@@ -6608,7 +6608,32 @@ pub fn bin_functions(
                     on |= PM_LOADDIR; // c:3294 — `shf->node.flags |= PM_LOADDIR;`
                 }
             }
-            // c:3653 — `shf->node.flags = on;`
+            // c:3653 — `shf->node.flags = on;` — `on` carries
+            // PM_UNDEFINED (set for -X at c:3352 / builtin.rs:6142).
+            // This write was MISSING: eval_autoload's first gate is
+            // `if (!(shf->node.flags & PM_UNDEFINED)) return 1;`
+            // (c:3168), so zinit's NEW_AUTOLOAD=1 stubs —
+            //   functions[add-zsh-hook]="local -a fpath; fpath=(…);
+            //                            builtin autoload -X -U -z"
+            // — silently returned 1 and every wrapped plugin autoload
+            // (add-zsh-hook, regexp-replace, add-zle-hook-widget)
+            // reported `function definition file not found` at first
+            // call in the interactive session.
+            if !shf_ptr.is_null() {
+                unsafe {
+                    (*shf_ptr).node.flags = on as i32; // c:3653
+                }
+            }
+            // RUST-ONLY: drop the executor's compiled chunk for the
+            // CURRENT (stub) definition. C's eval_autoload -X arm
+            // replaces shf->funcdef with mkautofn (c:3180) so the
+            // bin_eval re-call loads the real file; zshrs's dispatch
+            // keeps a parallel functions_compiled chunk whose
+            // presence skips the autoload prelude — re-dispatch ran
+            // the STALE stub (zinit NEW_AUTOLOAD=1: `builtin
+            // autoload -X` inside the stub) in an infinite mutual
+            // recursion → stack overflow in the interactive session.
+            let _ = crate::ported::exec_hooks::unregister_function(&fname);
             // c:3654 — `ret = eval_autoload(shf, funcname, ops, func);`
             ret = eval_autoload(shf_ptr, &fname, ops, _func); // c:3654
         }

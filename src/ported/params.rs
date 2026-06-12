@@ -2161,11 +2161,24 @@ pub fn createparam(
                 // failed (zinit's :zinit-tmp-subst-autoload does
                 // exactly this dance). Fall back to the name-routed
                 // getsparam when the pm carries no scalar gsu.
-                let getfn_ptr = op.gsu_s.as_ref().map(|g| g.getfn);
-                if let Some(getfn) = getfn_ptr {
-                    op.u_str = Some(getfn(&op));
-                } else if let Some(v) = getsparam(&op.node.nam) {
-                    op.u_str = Some(v);
+                if (PM_TYPE(op.node.flags as u32) & PM_ARRAY) != 0 {
+                    // ARRAY side of a tied pair (fpath/path/cdpath):
+                    // snapshot the ELEMENT VECTOR. Forcing the scalar
+                    // getsparam fallback here stored Some("") and the
+                    // endparamscope refire then assigned that empty
+                    // scalar — zinit's autoload stubs (`local -a
+                    // fpath; fpath=( … )`) collapsed the GLOBAL fpath
+                    // to one empty element on every stub exit.
+                    if let Some(arr) = getaparam(&op.node.nam) {
+                        op.u_arr = Some(arr);
+                    }
+                } else {
+                    let getfn_ptr = op.gsu_s.as_ref().map(|g| g.getfn);
+                    if let Some(getfn) = getfn_ptr {
+                        op.u_str = Some(getfn(&op));
+                    } else if let Some(v) = getsparam(&op.node.nam) {
+                        op.u_str = Some(v);
+                    }
                 }
             }
             if (op.node.flags as u32 & PM_HASHED) != 0
@@ -9886,6 +9899,9 @@ pub fn endparamscope() {
     // array's global storage).
     type DeferredSetfn = (String, Option<fn(&mut param, String)>, String);
     let mut deferred: Vec<DeferredSetfn> = Vec::new();
+    // Array-shaped specials/tieds restore through the name-routed
+    // array setter after the lock drops (same deadlock rationale).
+    let mut deferred_arrays: Vec<(String, Vec<String>)> = Vec::new();
     if let Ok(mut tab) = paramtab().write() {
         let stale: Vec<(String, bool)> = tab
             .iter()
@@ -9917,12 +9933,23 @@ pub fn endparamscope() {
                     // so fpath/path/cdpath roll back with the scalar.
                     let restored_is_special =
                         (prev.node.flags as u32 & (PM_SPECIAL | PM_TIED)) != 0;
+                    let restored_is_array =
+                        (PM_TYPE(prev.node.flags as u32) & PM_ARRAY) != 0;
                     let restored_val = prev.u_str.clone();
+                    let restored_arr = prev.u_arr.clone();
                     let restored_setfn =
                         prev.gsu_s.as_ref().map(|g| g.setfn);
                     tab.insert(n.clone(), prev); // restore outer binding (Box<param>)
                     if restored_is_special {
-                        if let Some(val) = restored_val {
+                        if restored_is_array {
+                            // ARRAY side of a tied pair — re-fire the
+                            // saved element vector through the
+                            // name-routed array setter so the tied
+                            // scalar + global storage roll back too.
+                            if let Some(arr) = restored_arr {
+                                deferred_arrays.push((n.clone(), arr));
+                            }
+                        } else if let Some(val) = restored_val {
                             deferred.push((n.clone(), restored_setfn, val));
                         }
                     }
@@ -9992,6 +10019,9 @@ pub fn endparamscope() {
                 setsparam(&n, &val);
             }
         }
+    }
+    for (n, arr) in deferred_arrays {
+        let _ = assignaparam(&n, arr, 0);
     }
 
     // c:5890-5894 — `for (Param pm; refs && (pm = getlinknode(refs));) {
