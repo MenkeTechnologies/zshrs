@@ -10001,7 +10001,11 @@ pub fn bin_dot(
     // `.zwc` autoload path in exec.rs::loadautofn).
     let zwc_src = crate::ported::parse::try_source_file(&path)
         .map(|prog| crate::ported::text::getpermtext(Box::new(prog), None, 0));
-    let result = match zwc_src {
+    // c:Src/init.c:1620 — `errflag &= ~ERRFLAG_ERROR;` before
+    // executing the sourced body, so a stale flag from the caller's
+    // context can't abort the file's first list.
+    crate::ported::utils::errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
+    let mut result = match zwc_src {
         Some(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1), // c:1566 prog path
         None => match fs::read_to_string(&path) {
             // c:6140
@@ -10010,6 +10014,19 @@ pub fn bin_dot(
             Err(_) => 128 - 2,
         },
     };
+    // c:Src/init.c:1623-1624 — `if (errflag) ret = SOURCE_ERROR;`
+    // c:Src/init.c:1663 — `errflag &= ~ERRFLAG_ERROR;` on the restore
+    // path. source is a CONTAINMENT boundary: an errflag abort inside
+    // the sourced file breaks ITS lists, then source() clears the
+    // flag, bin_dot returns 128 - SOURCE_ERROR = 126 (c:Src/builtin.c
+    // :6143), and the CALLER continues. zsh 5.9: parent script
+    // sourcing a file that hits `readonly` reassign prints its next
+    // line with $? = 126.
+    if (crate::ported::utils::errflag.load(Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0 {
+        crate::ported::utils::errflag
+            .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
+        result = 128 - 2; // c:6143 — 128 - SOURCE_ERROR
+    }
     if pushed_frame {
         // c:1643 — `funcstack = funcstack->prev;`
         let mut stack = crate::ported::modules::parameter::FUNCSTACK

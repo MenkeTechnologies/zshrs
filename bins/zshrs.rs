@@ -1151,6 +1151,15 @@ pub fn zshrs_main() {
                 // through builtin_exit's process::exit). If we reach this
                 // line the script ran to completion without calling exit;
                 // continue to the next file.
+                //
+                // c:Src/init.c:1663 — each bundled file is source-like:
+                // an errflag abort in file N must not poison file N+1's
+                // first list. Clear the flag at the file boundary, keep
+                // last_status (the aborted file's lastval).
+                zsh::ported::utils::errflag.fetch_and(
+                    !zsh::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
             }
             std::process::exit(last_status);
         }
@@ -1986,13 +1995,22 @@ pub fn zshrs_main() {
         // ZSH_ARGZERO directly. Without this, ZSH_ARGZERO carried
         // argv[0] (the zshrs binary path) instead of the script path.
         zsh::ported::params::setsparam("ZSH_ARGZERO", &args[1]);
-        if let Err(e) = executor.execute_script_file(&args[1]) {
-            if e != "__SILENCED__" {
-                eprintln!("zshrs: {}: {}", args[1], e);
+        match executor.execute_script_file(&args[1]) {
+            Err(e) => {
+                if e != "__SILENCED__" {
+                    eprintln!("zshrs: {}: {}", args[1], e);
+                }
+                std::process::exit(1);
             }
-            std::process::exit(1);
+            // c:Src/init.c:234 — loop() breaks on errflag in a
+            // non-interactive shell and zsh_main exits with the
+            // UNTOUCHED lastval; a clean run also exits with the
+            // last command's status. The previous bare `return;`
+            // here exited 0 even when the script aborted on a
+            // readonly reassign (zsh 5.9 exits 1) — same driver bug
+            // for any script whose final command fails.
+            Ok(status) => std::process::exit(status),
         }
-        return;
     }
 
     tracing::info!(
@@ -2827,6 +2845,15 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     executor.scriptname = saved_scriptname_field;
     zsh::ported::utils::set_scriptname(saved_scriptname);
     zsh::ported::utils::set_scriptfilename(saved_scriptfilename);
+    // c:Src/init.c:1663 — `errflag &= ~ERRFLAG_ERROR;` on source()'s
+    // restore path. Sourcing is a containment boundary: an errflag
+    // abort inside one startup file must not poison the next file
+    // (or the interactive session) — zsh clears the flag when the
+    // sourced file unwinds.
+    zsh::ported::utils::errflag.fetch_and(
+        !zsh::ported::zsh_h::ERRFLAG_ERROR,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// Source a file

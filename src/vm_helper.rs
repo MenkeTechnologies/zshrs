@@ -2865,6 +2865,15 @@ impl ShellExecutor {
                 };
                 cmd_status = Some(inner_status);
                 SUBSHELL_DEPTH.fetch_sub(1, Relaxed);
+                // c:Src/exec.c — `$(…)` is a FORK in C: an errflag
+                // abort inside the child ends the child (its lastval
+                // becomes the cmd-subst status) and the flag dies
+                // with the child process — the parent's lists keep
+                // running. zsh 5.9: `v=$(typeset -A q; q=(odd));
+                // echo "after $?"` prints `after 1`. Mirror the fork
+                // isolation by clearing ERRFLAG_ERROR at the
+                // cmd-subst boundary.
+                errflag.fetch_and(!ERRFLAG_ERROR, Relaxed);
                 // c:Src/exec.c:4783 execcmdoutsubst — `$(...)` is a
                 // subshell, and zsh fires the EXIT trap when the
                 // subshell ends BUT only if the trap was installed
