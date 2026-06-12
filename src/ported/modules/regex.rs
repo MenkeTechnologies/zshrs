@@ -112,6 +112,12 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // `.` to NOT match newline; enable
     // `dot_matches_new_line(true)` so multi-line `=~` behaves
     // like zsh. Bug #557.
+    // c:78 — regcomp(3) POSIX-ERE bracket semantics: inside `[...]`
+    // a backslash is an ordinary class member (`[a-z\n]` = the set
+    // {a..z, '\', 'n'}, not "plus newline"), and `[`/`&&`/`~~`/`--`
+    // are ordinary characters. The Rust regex crate diverges on all
+    // of these; translate at the boundary. BUGS.md #558.
+    let pat_for_compile = crate::vm_helper::posix_ere_bracket_escape(&pat_for_compile);
     let re = match regex::RegexBuilder::new(&pat_for_compile)
         .dot_matches_new_line(true)
         .build()

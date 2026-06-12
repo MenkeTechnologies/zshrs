@@ -346,6 +346,38 @@ mod regex_match {
     fn regex_anchored_end() {
         assert_parity(r#"[[ "abc123" =~ "123$" ]]; echo $?"#);
     }
+
+    /// BUGS.md #558 — POSIX-ERE bracket semantics: inside `[...]` a
+    /// backslash is an ORDINARY class member (regcomp(3); zsh/regex
+    /// hands the pattern verbatim to regcomp, Src/Modules/regex.c:78).
+    /// `[a-z\n]` is the set {a..z, '\', 'n'} — NOT "a-z plus newline" —
+    /// so the match stops at the line break.
+    #[test]
+    fn regex_bracket_backslash_n_stops_at_newline() {
+        assert_parity(r#"a=$'a\nb'; [[ "$a" =~ "[a-z\n]+" ]] && print -r "[${MATCH}]""#);
+    }
+
+    /// BUGS.md #558 — the bracket members are literal '\' and 'n':
+    /// "n" matches, a real newline does not, a literal backslash does.
+    #[test]
+    fn regex_bracket_backslash_is_literal_member() {
+        assert_parity(r#"[[ "n" =~ "[\n]" ]] && echo yes || echo no"#);
+        assert_parity(r#"nl=$'\n'; [[ $nl =~ "[\n]" ]] && echo yes || echo no"#);
+        assert_parity(r#"a=$'a\\b'; [[ $a =~ "[a-z\n]+" ]] && print -r "[$MATCH]""#);
+    }
+
+    /// BUGS.md #558 sweep — POSIX named classes pass through, leading
+    /// `]` is literal, `&` is an ordinary member (the Rust regex
+    /// crate's `&&` set-intersection must not fire), negated class
+    /// with backslash-n member, trailing `-` literal in a range class.
+    #[test]
+    fn regex_bracket_posix_class_and_metachars() {
+        assert_parity(r#"[[ "abc" =~ "[[:alpha:]]+" ]] && print -r "[$MATCH]""#);
+        assert_parity(r#"[[ "]" =~ "[]]" ]] && echo yes || echo no"#);
+        assert_parity(r#"[[ "a&b" =~ "[a&b]+" ]] && print -r "[$MATCH]""#);
+        assert_parity(r#"a=$'a\nb'; [[ $a =~ "[^\n]+" ]] && print -r "[$MATCH]""#);
+        assert_parity(r#"[[ "x-z" =~ "[a-z-]+" ]] && print -r "[$MATCH]""#);
+    }
 }
 
 mod var_existence {
