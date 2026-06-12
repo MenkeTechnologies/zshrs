@@ -8473,6 +8473,39 @@ pub fn bin_print(
         } else {
             &args[1..]
         };
+        // c:4712-4741 — the -m filter runs BEFORE format rendering:
+        // first remaining arg is the pattern, later args are kept iff
+        // pattry matches, and `if (fmt && !*args) return 0;` short-
+        // circuits an empty post-filter list. The fmt fast-branch
+        // here previously skipped the filter entirely, so
+        // `print -m -f '%s|' 'a*' apple banana` rendered every arg.
+        let m_filtered: Vec<String>;
+        let rest: &[String] = if OPT_ISSET(ops, b'm') {
+            if rest.is_empty() {
+                zwarnnam(name, "no pattern specified"); // c:4723
+                return 1;
+            }
+            let pat = &rest[0];
+            let mut pat_tok = pat.to_string();
+            crate::ported::glob::tokenize(&mut pat_tok); // c:4727
+            let Some(pprog) =
+                crate::ported::pattern::patcompile(&pat_tok, PAT_STATIC, None)
+            else {
+                zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
+                return 1;
+            };
+            m_filtered = rest[1..]
+                .iter()
+                .filter(|a| crate::ported::pattern::pattry(&pprog, a)) // c:4735-4737
+                .cloned()
+                .collect();
+            if m_filtered.is_empty() {
+                return 0; // c:4741 `if (fmt && !*args) return 0;`
+            }
+            &m_filtered
+        } else {
+            rest
+        };
         // c:builtin.c:5430-5443 — printf returns 1 on unknown
         // directive after `zwarnnam(name, "%s: invalid directive",
         // start)`. The partial output produced before the bad
