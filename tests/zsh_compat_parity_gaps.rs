@@ -47803,3 +47803,126 @@ mod probe_sweep_2026_06_12_d {
         probe_d_row_088 => (r#"probe d 088"#, r###"print ${(M)$(setopt):#*glob*} > /dev/null; print rc=$?"###);
     }
 }
+
+/// Probe sweep 2026-06-12, round E — 95 zsh-probed `-fc` pins:
+/// expansion-flag matrix ((j)(o)(O)(n)(On)(U)(C)(L)(l:n:)(r:n:)(V)
+/// (q/qq/q-/qqq)(e)(P)(z)(Q)(s)(F)(k)(kv)(M)(t)), array element ops
+/// (append, unset-element, slices, splice-assign), history modifiers
+/// (:h :t :e :r chains, :s//), ${//} replacement anchors (#,%),
+/// arithmetic output bases ([#16] [##16] [#8] [#2]), inc/dec ops,
+/// ternary, C-style for, foreach short form, anonymous functions,
+/// always blocks, [[ ]] operator matrix, kshglob @(...), extendedglob
+/// ((#i), char classes, (M):#), glob qualifiers ((N)(/)([1])(om)),
+/// heredoc forms (quoted/unquoted/dash), $'' escapes, multios-free
+/// pipe-read scoping, eval layers, ${(t)} type words.
+///
+/// Round-E fix pinned here: `${(Q)a[N]}` — the quotemod<0 arm
+/// re-fetched the whole array by name, discarding the subscript
+/// selection (subst.rs paramsubst); now gated on subscript.is_none().
+mod probe_sweep_2026_06_12_e {
+    use super::*;
+
+    parity_gap_tests! {
+        probe_e_row_001 => (r#"probe e 001"#, r###"a=(1 2 3 4 5); print ${(j:-:)a}"###);
+        probe_e_row_002 => (r#"probe e 002"#, r###"a=(c a b); print ${(o)a}"###);
+        probe_e_row_003 => (r#"probe e 003"#, r###"a=(c a b); print ${(O)a}"###);
+        probe_e_row_004 => (r#"probe e 004"#, r###"a=(10 9 2); print ${(n)a}"###);
+        probe_e_row_005 => (r#"probe e 005"#, r###"a=(10 9 2); print ${(On)a}"###);
+        probe_e_row_006 => (r#"probe e 006"#, r###"a=(x y); a+=(z); print ${#a} ${a[-1]}"###);
+        probe_e_row_007 => (r#"probe e 007"#, r###"a=(1 2 3); a[2]=(); print ${#a} ${a}"###);
+        probe_e_row_008 => (r#"probe e 008"#, r###"a=(1 2 3); print ${a[2,3]}"###);
+        probe_e_row_009 => (r#"probe e 009"#, r###"a=(1 2 3); print ${a[-2,-1]}"###);
+        probe_e_row_010 => (r#"probe e 010"#, r###"a=(1 2 3 4); a[2,3]=(x); print $a"###);
+        probe_e_row_011 => (r#"probe e 011"#, r###"s=hello; print ${(U)s} ${(C)s}"###);
+        probe_e_row_012 => (r#"probe e 012"#, r###"s=HeLLo; print ${(L)s}"###);
+        probe_e_row_013 => (r#"probe e 013"#, r###"s=abc; print ${(l:6::*:)s}"###);
+        probe_e_row_014 => (r#"probe e 014"#, r###"s=abc; print ${(r:6::-:)s}"###);
+        probe_e_row_015 => (r#"probe e 015"#, r###"s=abc; print ${(l:2:)s}"###);
+        probe_e_row_016 => (r#"probe e 016"#, r###"print ${(V)${:-a$'\t'b}}"###);
+        probe_e_row_017 => (r#"probe e 017"#, r###"s='a b'; print ${(q)s} ${(qq)s} ${(q-)s}"###);
+        probe_e_row_018 => (r#"probe e 018"#, r###"s="it's"; print ${(qqq)s}"###);
+        probe_e_row_019 => (r#"probe e 019"#, r###"v='${HOME}'; print ${(e)v} | grep -qc /; print rc=$?"###);
+        probe_e_row_020 => (r#"probe e 020"#, r###"p=PATH; print ${(P)p} | grep -qc :; print rc=$?"###);
+        probe_e_row_021 => (r#"probe e 021"#, r###"s='one two  three'; a=(${(z)s}); print ${#a}"###);
+        probe_e_row_022 => (r#"probe e 022"#, r###"s='"a b" c'; a=(${(z)s}); print ${#a} ${(Q)a[1]}"###);
+        probe_e_row_023 => (r#"probe e 023"#, r###"print ${(s:,:)${:-a,b,,c}} | wc -w"###);
+        probe_e_row_024 => (r#"probe e 024"#, r###"a=(a b c); print ${(F)a} | wc -l"###);
+        probe_e_row_025 => (r#"probe e 025"#, r###"typeset -A h; h=(k1 v1 k2 v2); print ${(k)h} | wc -w"###);
+        probe_e_row_026 => (r#"probe e 026"#, r###"typeset -A h; h=(k1 v1 k2 v2); print ${(kv)h} | wc -w"###);
+        probe_e_row_027 => (r#"probe e 027"#, r###"typeset -A h; h=(a 1); print ${h[a]} ${h[zz]:-none}"###);
+        probe_e_row_028 => (r#"probe e 028"#, r###"typeset -A h; h[x]=1; h[y]=2; unset "h[x]"; print ${(k)h}"###);
+        probe_e_row_029 => (r#"probe e 029"#, r###"f=/usr/local/bin/prog.tar.gz; print ${f:h} ${f:t} ${f:e} ${f:r:t}"###);
+        probe_e_row_030 => (r#"probe e 030"#, r###"f=abc.def.ghi; print ${f:e} ${f:r}"###);
+        probe_e_row_031 => (r#"probe e 031"#, r###"s=hello; print ${s:s/l/L/} 2>/dev/null; print rc=$?"###);
+        probe_e_row_032 => (r#"probe e 032"#, r###"print ${${:-hello}/l/L}"###);
+        probe_e_row_033 => (r#"probe e 033"#, r###"print ${${:-hello}//l/L}"###);
+        probe_e_row_034 => (r#"probe e 034"#, r###"print ${${:-hello}/#h/H}"###);
+        probe_e_row_035 => (r#"probe e 035"#, r###"print ${${:-hello}/%o/O}"###);
+        probe_e_row_036 => (r#"probe e 036"#, r###"print ${${:-aXbXc}//X/ } | wc -w"###);
+        probe_e_row_037 => (r#"probe e 037"#, r###"print $(( [#16] 255 ))"###);
+        probe_e_row_038 => (r#"probe e 038"#, r###"print $(( [##16] 255 ))"###);
+        probe_e_row_039 => (r#"probe e 039"#, r###"print $(( [#8] 64 ))"###);
+        probe_e_row_040 => (r#"probe e 040"#, r###"print $(( [#2] 5 ))"###);
+        probe_e_row_041 => (r#"probe e 041"#, r###"i=10; print $(( i++ )) $i $(( ++i )) $i"###);
+        probe_e_row_042 => (r#"probe e 042"#, r###"print $(( 2 ** 10 )) $(( 7 % 3 )) $(( 7.0 / 2 ))"###);
+        probe_e_row_043 => (r#"probe e 043"#, r###"print $(( 1 << 4 | 3 & 2 ^ 1 ))"###);
+        probe_e_row_044 => (r#"probe e 044"#, r###"print $(( 5 > 3 ? "yes" : "no" )) 2>/dev/null; print rc=$?"###);
+        probe_e_row_045 => (r#"probe e 045"#, r###"print $(( 5 > 3 ? 1 : 0 ))"###);
+        probe_e_row_046 => (r#"probe e 046"#, r###"x=3; (( x > 2 && x < 5 )) && print in-range"###);
+        probe_e_row_047 => (r#"probe e 047"#, r###"for (( i=0; i<3; i++ )); do print -n $i; done; print"###);
+        probe_e_row_048 => (r#"probe e 048"#, r###"for i ({1..3}) print -n $i; print"###);
+        probe_e_row_049 => (r#"probe e 049"#, r###"foreach i (a b) print -n $i; end; print"###);
+        probe_e_row_050 => (r#"probe e 050"#, r###"() { print anon $1 } arg1"###);
+        probe_e_row_051 => (r#"probe e 051"#, r###"function { print anon2 }"###);
+        probe_e_row_052 => (r#"probe e 052"#, r###"{ print try } always { print always-ran }"###);
+        probe_e_row_053 => (r#"probe e 053"#, r###"{ false } always { print "st=$?" }"###);
+        probe_e_row_054 => (r#"probe e 054"#, r###"[[ abc == a*c ]] && print glob-match"###);
+        probe_e_row_055 => (r#"probe e 055"#, r###"[[ abc = abc ]] && print eq"###);
+        probe_e_row_056 => (r#"probe e 056"#, r###"[[ abc < abd ]] && print lt"###);
+        probe_e_row_057 => (r#"probe e 057"#, r###"[[ 10 -gt 9 ]] && print gt"###);
+        probe_e_row_058 => (r#"probe e 058"#, r###"[[ -n $ZSH_VERSION || -n $ZSHRS_VERSION ]] && print have-version"###);
+        probe_e_row_059 => (r#"probe e 059"#, r###"[[ ! -e /nonexistent_zz ]] && print not-e"###);
+        probe_e_row_060 => (r#"probe e 060"#, r###"[[ abc =~ ^a.c$ ]] && print re-match"###);
+        probe_e_row_061 => (r#"probe e 061"#, r###"setopt kshglob; [[ abc == @(abc|def) ]] && print ksh-alt"###);
+        probe_e_row_062 => (r#"probe e 062"#, r###"setopt extendedglob; [[ abc == (#i)ABC ]] && print ci-match"###);
+        probe_e_row_063 => (r#"probe e 063"#, r###"setopt extendedglob; [[ foo123 == [[:alpha:]]##[[:digit:]]## ]] && print classes"###);
+        probe_e_row_064 => (r#"probe e 064"#, r###"setopt extendedglob; print ${(M)${:-hello}:#h*}"###);
+        probe_e_row_065 => (r#"probe e 065"#, r###"setopt extendedglob; a=(foo bar baz); print ${(M)a:#b*}"###);
+        probe_e_row_066 => (r#"probe e 066"#, r###"a=(foo bar baz); print ${a:#b*}"###);
+        probe_e_row_067 => (r#"probe e 067"#, r###"print /tmp/<1-100>zznope(N) | wc -w"###);
+        probe_e_row_068 => (r#"probe e 068"#, r###"print /usr(/) 2>/dev/null"###);
+        probe_e_row_069 => (r#"probe e 069"#, r###"print /usr/bin(N[1]) | grep -qc bin; print rc=$?"###);
+        probe_e_row_070 => (r#"probe e 070"#, r###"ls /tmp/*(N.) > /dev/null 2>&1; print rc=$?"###);
+        probe_e_row_071 => (r#"probe e 071"#, r###"print *(Nom[1]) > /dev/null 2>&1; print rc=$?"###);
+        probe_e_row_072 => (r#"probe e 072"#, r###"cat << 'EOF2'
+literal $HOME
+EOF2"###);
+        probe_e_row_073 => (r#"probe e 073"#, r###"cat << EOF2
+expanded ${HOME:+set}
+EOF2"###);
+        probe_e_row_074 => (r#"probe e 074"#, r###"cat <<- EOF2
+	tab-stripped
+EOF2"###);
+        probe_e_row_075 => (r#"probe e 075"#, r###"wc -l <<< $'a\nb'"###);
+        probe_e_row_076 => (r#"probe e 076"#, r###"print $'\x41\102C'"###);
+        probe_e_row_077 => (r#"probe e 077"#, r###"print $'tab\there'"###);
+        probe_e_row_078 => (r#"probe e 078"#, r###"print "interp ${:-ok}" 'literal ${:-no}'"###);
+        probe_e_row_079 => (r#"probe e 079"#, r###"echo a b | read x y 2>/dev/null; print "x=${x:-unset}""###);
+        probe_e_row_080 => (r#"probe e 080"#, r###"print -l 1 2 3 | while read n; do print -n "[$n]"; done; print"###);
+        probe_e_row_081 => (r#"probe e 081"#, r###"command echo ce"###);
+        probe_e_row_082 => (r#"probe e 082"#, r###"noglob print *zzznope*"###);
+        probe_e_row_083 => (r#"probe e 083"#, r###"exec 2>&1; print -u2 to-stdout-now"###);
+        probe_e_row_084 => (r#"probe e 084"#, r###"eval 'print ev"al"'"###);
+        probe_e_row_085 => (r#"probe e 085"#, r###"eval print '$(( 1+1 ))'"###);
+        probe_e_row_086 => (r#"probe e 086"#, r###"x=5; eval "y=\$x"; print $y"###);
+        probe_e_row_087 => (r#"probe e 087"#, r###"emulate sh -c 'echo $0' | head -1 > /dev/null; print rc=$?"###);
+        probe_e_row_088 => (r#"probe e 088"#, r###"print ${ZSH_EVAL_CONTEXT:-none}"###);
+        probe_e_row_089 => (r#"probe e 089"#, r###"print $LINENO"###);
+        probe_e_row_090 => (r#"probe e 090"#, r###"true; print $? $status"###);
+        probe_e_row_091 => (r#"probe e 091"#, r###":; print rc=$?"###);
+        probe_e_row_092 => (r#"probe e 092"#, r###"print ${(t)PATH} ${(t)path}"###);
+        probe_e_row_093 => (r#"probe e 093"#, r###"typeset -A hh; print ${(t)hh}"###);
+        probe_e_row_094 => (r#"probe e 094"#, r###"a=(1 2); print ${(t)a}"###);
+        probe_e_row_095 => (r#"probe e 095"#, r###"integer ii; print ${(t)ii}"###);
+    }
+}
