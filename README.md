@@ -565,7 +565,11 @@ zshrs --fmt [-w] [-t] [-i N] [FILE…]
                              # reindent + idiomatic spacing (dedupe
                              # runs; a;b → a; b, a&&b → a && b,
                              # a|b → a | b, cmd& → cmd &, x;; → x ;;,
-                             # f () → f()), heredoc-safe, idempotent.
+                             # f () → f(), bare then/do join onto
+                             # the opener as '; then'/'; do' per the
+                             # zsh + OMZ style guides), heredoc-safe,
+                             # idempotent. Indent default 4 (-i 2 for
+                             # upstream-zsh 2-space style).
                              # stdin→stdout with no files; -w rewrites
                              # in place; -i sets indent width (default
                              # 4); -t indents with tabs
