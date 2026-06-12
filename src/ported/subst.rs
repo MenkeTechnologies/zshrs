@@ -8094,6 +8094,28 @@ pub fn paramsubst(
                 // subst.c's getmatcharr path that calls getmatch on
                 // each element separately. Single-shot helper to
                 // avoid duplicating the sliding-window logic.
+                let gms = |s_: &str, p_: &str| -> bool {
+                    // c:Src/glob.c:2514 matchpat shape — tokenize +
+                    // patcompile + pattry. Captures, (#b) $match
+                    // arrays and (#m) $MATCH now publish INSIDE
+                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
+                    // ports), so plain pattry carries them; the
+                    // former vm_helper::glob_match_static wrapper is
+                    // gone. Silent false on bad pattern (caller arms
+                    // pre-validate where C zerrs).
+                    match crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p_.to_string();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP,
+                        None,
+                    ) {
+                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        None => false,
+                    }
+                };
                 let replace_global = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
@@ -8103,24 +8125,17 @@ pub fn paramsubst(
                     // tail). Without an anchor, the global sliding
                     // window runs across every position.
                     //
-                    // c:Src/pattern.c GF_BACKREF — `(#b)pat` populates
-                    // the `match`/`mbegin`/`mend` arrays alongside the
-                    // scalar MATCH/MBEGIN/MEND. The match-loop here
-                    // uses `pattry`, which only returns the success
-                    // bit — `match[N]` stays untouched. Route through
-                    // `glob_match_static` which already sets the
-                    // backref arrays via `pattryrefs` when the pattern
-                    // carries GF_BACKREF (vm_helper.rs:2810). Bug
-                    // #266 in docs/BUGS.md. Calling
-                    // glob_match_static unconditionally is safe — it
-                    // falls back to plain pattry when (#b) isn't on.
+                    // c:Src/pattern.c:2570-2621 — `(#b)pat` $match /
+                    // $mbegin / $mend publication now lives INSIDE
+                    // pattryrefs (no-caller-arrays arm), so plain
+                    // pattry via `gms` carries it. Bug #266 history.
                     if pat_anchor == 'B' {
                         // c:Src/subst.c — both-anchored `#%`/`%#`: the
                         // pattern must match the ENTIRE string. Test
                         // the whole val and replace iff successful.
                         // Bug #355 in docs/BUGS.md.
                         let whole: String = cv.iter().collect();
-                        if crate::vm_helper::glob_match_static(&whole, &pat) {
+                        if gms(&whole, &pat) {
                             o.push_str(&eval_repl_for_match(&whole, 0));
                         } else {
                             o.push_str(val);
@@ -8136,7 +8151,7 @@ pub fn paramsubst(
                         // empty prefix: "Xab". Include end == 0.
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if crate::vm_helper::glob_match_static(&cand, &pat) {
+                            if gms(&cand, &pat) {
                                 matched = Some(end);
                                 break;
                             }
@@ -8154,7 +8169,7 @@ pub fn paramsubst(
                         let mut matched: Option<usize> = None;
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if crate::vm_helper::glob_match_static(&cand, &pat) {
+                            if gms(&cand, &pat) {
                                 matched = Some(start);
                                 break;
                             }
@@ -8200,7 +8215,7 @@ pub fn paramsubst(
                     // still records [0,0): `${v//a#/X}` with v=""
                     // yields "X".
                     if nn == 0 {
-                        if crate::vm_helper::glob_match_static("", &pat) {
+                        if gms("", &pat) {
                             o.push_str(&eval_repl_for_match("", 0));
                         }
                         return o;
@@ -8238,7 +8253,7 @@ pub fn paramsubst(
                                     continue;
                                 }
                                 let c: String = cv[q..e].iter().collect();
-                                if crate::vm_helper::glob_match_static(&c, &pat) {
+                                if gms(&c, &pat) {
                                     m = Some(e);
                                     break;
                                 }
@@ -8251,7 +8266,7 @@ pub fn paramsubst(
                                     continue;
                                 }
                                 let c: String = cv[q..e].iter().collect();
-                                if crate::vm_helper::glob_match_static(&c, &pat) {
+                                if gms(&c, &pat) {
                                     m = Some(e);
                                     break;
                                 }
@@ -8599,19 +8614,34 @@ pub fn paramsubst(
                 // (`#%`/`%#`), anchor-prefix (pat starts with `#`),
                 // anchor-suffix (`%`), or unanchored. Returns the
                 // post-replacement string.
-                // c:Src/pattern.c GF_BACKREF — `(#b)pat` populates
-                // `$match`/`$mbegin`/`$mend` alongside the scalar
-                // MATCH/MBEGIN/MEND. The match-loop here previously
-                // used `patcompile + pattry` which only returns the
-                // success bit — `$match[N]` stayed untouched.
-                // `glob_match_static` (vm_helper.rs:2810) wraps
-                // `pattryrefs` which sets the backref arrays when the
-                // pattern carries GF_BACKREF. Mirror the // path
-                // (line 6529) which already routes through
-                // glob_match_static. Bug #590 in docs/BUGS.md.
+                // c:Src/pattern.c:2570-2621 — `(#b)` array
+                // publication lives inside pattryrefs now; plain
+                // pattry via `gms` carries it. Bug #590 history.
+                let gms = |s_: &str, p_: &str| -> bool {
+                    // c:Src/glob.c:2514 matchpat shape — tokenize +
+                    // patcompile + pattry. Captures, (#b) $match
+                    // arrays and (#m) $MATCH now publish INSIDE
+                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
+                    // ports), so plain pattry carries them; the
+                    // former vm_helper::glob_match_static wrapper is
+                    // gone. Silent false on bad pattern (caller arms
+                    // pre-validate where C zerrs).
+                    match crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p_.to_string();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP,
+                        None,
+                    ) {
+                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        None => false,
+                    }
+                };
                 let replace_one = |val: &str| -> String {
                     if let Some(whole_pat) = both_anchor_pat {
-                        if crate::vm_helper::glob_match_static(val, whole_pat) {
+                        if gms(val, whole_pat) {
                             let dyn_repl = resolve_repl(val, 0);
                             return dyn_repl;
                         }
@@ -8622,7 +8652,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
-                            if crate::vm_helper::glob_match_static(&cand, anchor_pat) {
+                            if gms(&cand, anchor_pat) {
                                 let dyn_repl = resolve_repl(&cand, 0);
                                 return format!(
                                     "{}{}",
@@ -8637,7 +8667,7 @@ pub fn paramsubst(
                         let nn = cv.len();
                         for start in 0..=nn {
                             let cand: String = cv[start..].iter().collect();
-                            if crate::vm_helper::glob_match_static(&cand, anchor_pat) {
+                            if gms(&cand, anchor_pat) {
                                 let span_byte: usize =
                                     cv[..start].iter().map(|c| c.len_utf8()).sum();
                                 let dyn_repl = resolve_repl(&cand, span_byte);
@@ -8696,7 +8726,7 @@ pub fn paramsubst(
                         // non-empty input — gate it the same way.
                         if substr_short
                             && (!has_start_anchor || nn == 0)
-                            && crate::vm_helper::glob_match_static("", &pat)
+                            && gms("", &pat)
                         {
                             let dyn_repl = resolve_repl("", 0);
                             return format!("{}{}", dyn_repl, val);
@@ -8730,7 +8760,7 @@ pub fn paramsubst(
                             };
                             for end in end_iter {
                                 let cand: String = cv[start..end].iter().collect();
-                                if crate::vm_helper::glob_match_static(&cand, &pat) {
+                                if gms(&cand, &pat) {
                                     let span_byte: usize =
                                         cv[..start].iter().map(|c| c.len_utf8()).sum();
                                     let dyn_repl = resolve_repl(&cand, span_byte);
@@ -8857,6 +8887,28 @@ pub fn paramsubst(
                 // relevant here when B/E/N suppress the implied
                 // SUB_REST, c:Src/subst.c:3176-3177).
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let gms = |s_: &str, p_: &str| -> bool {
+                    // c:Src/glob.c:2514 matchpat shape — tokenize +
+                    // patcompile + pattry. Captures, (#b) $match
+                    // arrays and (#m) $MATCH now publish INSIDE
+                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
+                    // ports), so plain pattry carries them; the
+                    // former vm_helper::glob_match_static wrapper is
+                    // gone. Silent false on bad pattern (caller arms
+                    // pre-validate where C zerrs).
+                    match crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p_.to_string();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP,
+                        None,
+                    ) {
+                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        None => false,
+                    }
+                };
                 let strip_one = |val: &str, op: u8| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let nn = cv.len();
@@ -8870,7 +8922,7 @@ pub fn paramsubst(
                                     for k in (0..=(nn - start)).rev() {
                                         let candidate: String =
                                             cv[start..start + k].iter().collect();
-                                        if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                        if gms(&candidate, &p) {
                                             found = Some((start, start + k));
                                             break 'outer;
                                         }
@@ -8889,7 +8941,7 @@ pub fn paramsubst(
                                     // the captures from the matched prefix. No-op
                                     // for patterns without (#b) (GF_BACKREF gate
                                     // inside the helper).
-                                    if crate::vm_helper::glob_match_static(&prefix, &p) {
+                                    if gms(&prefix, &p) {
                                         found = Some((0, k));
                                         break;
                                     }
@@ -9014,6 +9066,28 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let gms = |s_: &str, p_: &str| -> bool {
+                    // c:Src/glob.c:2514 matchpat shape — tokenize +
+                    // patcompile + pattry. Captures, (#b) $match
+                    // arrays and (#m) $MATCH now publish INSIDE
+                    // pattryrefs (pattern.c:2526-2542 / 2570-2621
+                    // ports), so plain pattry carries them; the
+                    // former vm_helper::glob_match_static wrapper is
+                    // gone. Silent false on bad pattern (caller arms
+                    // pre-validate where C zerrs).
+                    match crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p_.to_string();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP,
+                        None,
+                    ) {
+                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        None => false,
+                    }
+                };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -9025,7 +9099,7 @@ pub fn paramsubst(
                                 for k in 0..=(total - start) {
                                     let candidate: String =
                                         cv[start..start + k].iter().collect();
-                                    if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                    if gms(&candidate, &p) {
                                         return Some((start, start + k));
                                     }
                                 }
@@ -9035,7 +9109,7 @@ pub fn paramsubst(
                         for k in 0..=total {
                             let prefix: String = cv[..k].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if crate::vm_helper::glob_match_static(&prefix, &p) {
+                            if gms(&prefix, &p) {
                                 return Some((0, k));
                             }
                         }
@@ -9153,6 +9227,23 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let gms = |s_: &str, p_: &str| -> bool {
+                    // c:Src/glob.c:2514 matchpat shape — see the
+                    // sibling closure above (captures/(#b)/(#m) now
+                    // publish inside pattryrefs).
+                    match crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p_.to_string();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP,
+                        None,
+                    ) {
+                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        None => false,
+                    }
+                };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -9165,7 +9256,7 @@ pub fn paramsubst(
                             for k in (0..=(total - start)).rev() {
                                 let candidate: String =
                                     cv[start..start + k].iter().collect();
-                                if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                if gms(&candidate, &p) {
                                     best = Some((start, start + k));
                                     break;
                                 }
@@ -9178,7 +9269,7 @@ pub fn paramsubst(
                         let suffix_start_char = total - k;
                         let suffix: String = cv[suffix_start_char..].iter().collect();
                         // (#b) capture wiring via glob_match_static.
-                        if crate::vm_helper::glob_match_static(&suffix, &p) {
+                        if gms(&suffix, &p) {
                             // c:Src/pattern.c:2425 `setiparam("MBEGIN",
                             // patoffset + !isset(KSHARRAYS))` — captures
                             // come back relative to the matched substring;
@@ -9322,6 +9413,23 @@ pub fn paramsubst(
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
                 let rest_flag = (sub_flags_get() & SUB_REST) != 0;
+                let gms = |s_: &str, p_: &str| -> bool {
+                    // c:Src/glob.c:2514 matchpat shape — see the
+                    // sibling closure above (captures/(#b)/(#m) now
+                    // publish inside pattryrefs).
+                    match crate::ported::pattern::patcompile(
+                        &{
+                            let mut t_ = p_.to_string();
+                            crate::ported::glob::tokenize(&mut t_);
+                            t_
+                        },
+                        crate::ported::zsh_h::PAT_HEAPDUP,
+                        None,
+                    ) {
+                        Some(pr_) => crate::ported::pattern::pattry(&pr_, s_),
+                        None => false,
+                    }
+                };
                 let strip_one = |val: &str| -> String {
                     let cv: Vec<char> = val.chars().collect();
                     let total = cv.len();
@@ -9334,7 +9442,7 @@ pub fn paramsubst(
                                 for k in 0..=(total - start) {
                                     let candidate: String =
                                         cv[start..start + k].iter().collect();
-                                    if crate::vm_helper::glob_match_static(&candidate, &p) {
+                                    if gms(&candidate, &p) {
                                         best = Some((start, start + k));
                                         break;
                                     }
@@ -9345,7 +9453,7 @@ pub fn paramsubst(
                         for k in 0..=total {
                             let suffix: String = cv[total - k..].iter().collect();
                             // (#b) capture wiring via glob_match_static.
-                            if crate::vm_helper::glob_match_static(&suffix, &p) {
+                            if gms(&suffix, &p) {
                                 return Some((total - k, total));
                             }
                         }
