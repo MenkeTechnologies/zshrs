@@ -1740,3 +1740,15 @@ last_errstr
 # specific instruction "put that in init.rs, call from shell
 # executor".
 module_path_init
+
+# tilde_carrier_note (subst.rs) — Rust-only setter for the
+# TILDE_GLOBSUBST_CARRIER thread-local. C's ${~spec} uses a
+# paramsubst-LOCAL `globsubst` int (Src/subst.c:2596) + shtokenize
+# marking; zshrs carries the flag through the global option table
+# (documented deviation, subst.rs:2172) and this cell lets the
+# command-dispatch boundary (fusevm_bridge::
+# consume_tilde_globsubst_carrier) restore the user's real setting
+# after the word pipeline. Carries the mandatory RUST-ONLY WARNING
+# block at the definition. Fixes the session-wide GLOB_SUBST leak
+# from zinit.zsh:150 `${~ZINIT[PLUGINS_DIR]}`.
+tilde_carrier_note
