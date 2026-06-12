@@ -8050,7 +8050,12 @@ pub fn paramsubst(
                     }
                     if pat_anchor == '#' {
                         let mut matched: Option<usize> = None;
-                        for end in (1..=nn).rev() {
+                        // c:Src/glob.c:2920-2941 igetmatch `case 0/
+                        // SUB_LONG` — `pattrylen` at the head can
+                        // return a ZERO-length match (`patmatchlen()
+                        // == 0`), e.g. `c#` on "ab" → replace the
+                        // empty prefix: "Xab". Include end == 0.
+                        for end in (0..=nn).rev() {
                             let cand: String = cv[..end].iter().collect();
                             if crate::vm_helper::glob_match_static(&cand, &pat) {
                                 matched = Some(end);
@@ -8110,6 +8115,17 @@ pub fn paramsubst(
                     // (zinit_anchored_strip_both_ends megamonster).
                     let has_start_anchor_global = pat.contains("(#s)");
                     let has_end_anchor_global = pat.contains("(#e)");
+                    // c:Src/glob.c:3028-3046 — the inner for-loop runs
+                    // `for (; t <= send; ...)`, so on an EMPTY input
+                    // (t == send from the start) a zero-length match
+                    // still records [0,0): `${v//a#/X}` with v=""
+                    // yields "X".
+                    if nn == 0 {
+                        if crate::vm_helper::glob_match_static("", &pat) {
+                            o.push_str(&eval_repl_for_match("", 0));
+                        }
+                        return o;
+                    }
                     let mut q = 0_usize;
                     while q < nn {
                         let mut m: Option<usize> = None;
@@ -8130,9 +8146,15 @@ pub fn paramsubst(
                                 true
                             }
                         };
+                        // c:Src/glob.c:3035-3061 — `pattrylen` at each
+                        // position can succeed with a ZERO-length match
+                        // (`patmatchlen() == 0`, e.g. `a#` between two
+                        // b's). Include the e == q window: greedy tries
+                        // it LAST (longest first), shortest tries it
+                        // FIRST (umlen2 starts at 0, c:3041-3053).
                         if substr_short {
-                            // Shortest: e walks q+1..=nn ascending.
-                            for e in q + 1..=nn {
+                            // Shortest: e walks q..=nn ascending.
+                            for e in q..=nn {
                                 if !anchor_ok(q, e) {
                                     continue;
                                 }
@@ -8143,9 +8165,9 @@ pub fn paramsubst(
                                 }
                             }
                         } else {
-                            // Greedy (default): e walks q+1..=nn
+                            // Greedy (default): e walks q..=nn
                             // descending.
-                            for e in (q + 1..=nn).rev() {
+                            for e in (q..=nn).rev() {
                                 if !anchor_ok(q, e) {
                                     continue;
                                 }
@@ -8160,7 +8182,18 @@ pub fn paramsubst(
                             let span_text: String = cv[q..e].iter().collect();
                             let span_byte = cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
                             o.push_str(&eval_repl_for_match(&span_text, span_byte));
-                            q = if e == q { q + 1 } else { e };
+                            if e == q {
+                                // c:Src/glob.c:3060-3061 — `if (mpos ==
+                                // t) mpos += mb_charlenconv(...)`: the
+                                // bump char is SKIPPED by the global
+                                // loop, not marked for replacement, so
+                                // get_match_ret keeps it: "bbb" //a# →
+                                // "XbXbXb" (X then b at each position).
+                                o.push(cv[q]);
+                                q += 1;
+                            } else {
+                                q = e;
+                            }
                         } else {
                             o.push(cv[q]);
                             q += 1;
@@ -8571,10 +8604,34 @@ pub fn paramsubst(
                         let substr_short = (sub_flags_get() & SUB_SUBSTR) != 0;
                         let cv: Vec<char> = val.chars().collect();
                         let nn = cv.len();
+                        // c:Src/glob.c:3008-3015 — `case SUB_SUBSTR:`
+                        // (shortest, non-global) head pre-check:
+                        // `set_pat_start(p, l); if (!(fl & SUB_GLOBAL)
+                        // && pattrylen(p, send, 0, 0, &patstralloc, 0)
+                        // && !--n) { *sp = get_match_ret(&imd, 0, 0);
+                        // return 1; }` — a zero-length match is tried
+                        // FIRST and replaces the empty span at offset
+                        // 0: `${(S)v/a#/X}` on "abc" → "Xabc" (NOT
+                        // "Xbc"). set_pat_start sets PAT_NOTSTART when
+                        // l != 0, so (#s) fails the pre-check on
+                        // non-empty input — gate it the same way.
+                        if substr_short
+                            && (!has_start_anchor || nn == 0)
+                            && crate::vm_helper::glob_match_static("", &pat)
+                        {
+                            let dyn_repl = resolve_repl("", 0);
+                            return format!("{}{}", dyn_repl, val);
+                        }
                         let start_range: Vec<usize> = if has_start_anchor {
                             vec![0]
                         } else {
-                            (0..nn).collect()
+                            // c:Src/glob.c:3029 — `for (; t <= send;
+                            // ioff++)`: the scan includes t == send,
+                            // and the longest-match `pattrylen` at any
+                            // t can succeed with patmatchlen() == 0
+                            // (`${v/b#/X}` on "abc" → "Xabc";
+                            // `${v/a#/X}` on "" → "X").
+                            (0..=nn).collect()
                         };
                         for start in start_range {
                             let end_iter: Vec<usize> = if has_end_anchor {
@@ -8584,11 +8641,13 @@ pub fn paramsubst(
                                     vec![]
                                 }
                             } else if substr_short {
-                                // c:Src/glob.c — shortest first.
-                                (start + 1..=nn).collect()
+                                // c:Src/glob.c:3041-3053 — shortest
+                                // first, starting at length 0.
+                                (start..=nn).collect()
                             } else {
-                                // c:Src/glob.c — longest first.
-                                (start + 1..=nn).rev().collect()
+                                // c:Src/glob.c:3035 — longest first,
+                                // down to the zero-length window.
+                                (start..=nn).rev().collect()
                             };
                             for end in end_iter {
                                 let cand: String = cv[start..end].iter().collect();

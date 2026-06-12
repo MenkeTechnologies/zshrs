@@ -365,3 +365,87 @@ mod R_subscript_on_scalar {
         assert_parity(r#"arr=(a b c b d); echo "${arr[(R)b]}""#);
     }
 }
+
+mod zero_length_quantifier_replace {
+    //! c:Src/glob.c:3008-3061 igetmatch SUB_SUBSTR arms — `pattrylen`
+    //! can succeed with `patmatchlen() == 0` (extendedglob `pat#`
+    //! matches the empty string). The global loop records the empty
+    //! span and bumps one char (`if (mpos == t) mpos += ...`,
+    //! c:3060-3061); the non-global shortest arm has a head pre-check
+    //! that replaces the empty span at offset 0 (c:3008-3015).
+    use super::*;
+
+    /// Zero-length match at every position; bump char kept.
+    #[test]
+    fn global_zero_length_between_chars() {
+        assert_parity(r#"setopt extendedglob; v=bbb; echo "[${v//a#/X}]""#);
+    }
+
+    /// Mix of real and zero-length matches.
+    #[test]
+    fn global_zero_length_mixed_with_real_match() {
+        assert_parity(r#"setopt extendedglob; v=baaab; echo "[${v//a#/X}]""#);
+    }
+
+    /// Empty input: c:3029 `t <= send` tries the empty span once.
+    #[test]
+    fn global_zero_length_on_empty_string() {
+        assert_parity(r#"setopt extendedglob; v=""; echo "[${v//a#/X}]""#);
+    }
+
+    /// Greedy longest still wins before the zero-length fallback.
+    #[test]
+    fn global_longest_first_then_zero_length() {
+        assert_parity(r#"setopt extendedglob; v=aaabbb; echo "[${v//a#/X}]""#);
+    }
+
+    /// Single replace: longest at position 0 is the empty span.
+    #[test]
+    fn single_zero_length_head_match() {
+        assert_parity(r#"setopt extendedglob; v=abc; echo "[${v/b#/X}]""#);
+    }
+
+    /// (S) shortest pre-check replaces empty span at offset 0 even
+    /// when a one-char match exists right there (c:3008-3015).
+    #[test]
+    fn single_shortest_precheck_beats_real_match() {
+        assert_parity(r#"setopt extendedglob; v=abc; echo "[${(S)v/a#/X}]""#);
+    }
+
+    /// (S) global: zero-length first at every position.
+    #[test]
+    fn global_shortest_zero_length_every_position() {
+        assert_parity(r#"setopt extendedglob; v=abc; echo "[${(S)v//a#/X}]""#);
+    }
+
+    /// Start-anchored global with zero-length-only match.
+    #[test]
+    fn global_start_anchor_zero_length() {
+        assert_parity(r#"setopt extendedglob; v=ab; echo "[${v//#c#/X}]""#);
+    }
+
+    /// Group quantifier `(ab)#` zero-length on non-matching input.
+    #[test]
+    fn global_group_quantifier_zero_length() {
+        assert_parity(r#"setopt extendedglob; v=xy; echo "[${v//(ab)#/X}]""#);
+    }
+
+    /// Empty pattern behaves as a zero-length matcher.
+    #[test]
+    fn global_empty_pattern() {
+        assert_parity(r#"setopt extendedglob; v=ab; echo "[${v///X}]""#);
+    }
+
+    /// Per-element array replace with an empty element.
+    #[test]
+    fn array_element_empty_string() {
+        assert_parity(r#"setopt extendedglob; a=(aa b ""); echo "[${(@)a//a#/X}]""#);
+    }
+
+    /// `*` matches whole string in one bite — zero-length fallback
+    /// must not fragment it.
+    #[test]
+    fn global_star_single_replacement() {
+        assert_parity(r#"setopt extendedglob; v=abc; echo "[${v//*/X}]""#);
+    }
+}
