@@ -23,7 +23,7 @@ use crate::ported::zsh_h::{
     builtin, conddef, funcwrap, hookdef, linklist, linknode, mathfunc, options, paramdef, Hookfn,
     Param, BINF_AUTOALL, CASMOD_LOWER, CASMOD_UPPER, CONDF_AUTOALL, HOOKF_ALL, MFF_USERFUNC,
     linkedmod, MOD_ALIAS, MOD_BUSY, MOD_INIT_B, MOD_INIT_S, MOD_LINKED, MOD_SETUP, MOD_UNLOAD,
-    OPT_ISSET,
+    OPT_ARG_SAFE, OPT_ISSET,
     PM_ARRAY, PM_AUTOALL, PM_AUTOLOAD, PM_EFLOAT, PM_FFLOAT, PM_HASHED, PM_INTEGER, PM_NAMEREF,
     PM_READONLY, PM_REMOVABLE, PM_SCALAR, PM_TIED, PM_TYPE, PRINT_LIST,
 };
@@ -2193,35 +2193,57 @@ impl modulestab {
         // the canonical-table probe so the present/absent contract
         // matches C exactly. Prior port did the probe inline.
 
-        // c:466 — `builtintab->getnode2(builtintab, bnam)`.
-        // Use the free deletebuiltin's probe path — it returns 0 if
-        // the name exists in createbuiltintable(), -1 if absent.
-        // (The static-link path skips the removenode side effect; the
-        // present/absent return is what we need.)
-        let canonical_present = deletebuiltin(name) == 0;
-        if !canonical_present {
-            // c:467 — `if (!bn)`.
-            // c:468-469 — `if(!(flags & FEAT_IGNORE)) return 2;`.
-            // Also check autoload_builtins: a name only in the
-            // autoload ledger (no live builtintab entry) IS the
-            // c:475 deletebuiltin path.
-            if !self.autoload_builtins.contains_key(name) {
-                if (flags & FEAT_IGNORE as i32) == 0 {
-                    return 2; // c:469
+        // c:466 — `builtintab->getnode2(builtintab, bnam)`. zshrs's
+        // builtintab is split: the immutable createbuiltintable()
+        // carries the static flags, the autoload_builtins ledger holds
+        // runtime stubs from add_autobin, and added_builtins is the
+        // runtime BINF_ADDED bit a module load flips (setbuiltins
+        // c:508 probes the same ledger).
+        let static_flags: Option<i32> = createbuiltintable().get(name).map(|b| b.node.flags);
+        let in_ledger = self.autoload_builtins.contains_key(name);
+        // BINF_ADDED equivalent: C sets the bit at addbuiltins time —
+        // startup for core builtins, the module's boot_ for module
+        // builtins. zshrs's static table folds BOTH in unflagged, so a
+        // static hit counts as ADDED only when the name is core (no
+        // owning module advertises `b:NAME`) or its owning module is
+        // loaded. Runtime loads also land in the added_builtins ledger
+        // (setbuiltins c:508 probes the same).
+        let added = self.added_builtins.contains_key(name)
+            || static_flags
+                .map(|f| (f & BINF_ADDED as i32) != 0)
+                .unwrap_or(false)
+            || (static_flags.is_some() && {
+                let mod_names: Vec<String> = self.modules.keys().cloned().collect();
+                let mut owner_loaded: Option<bool> = None; // None = core builtin
+                'outer: for mn in &mod_names {
+                    let mut feats: Vec<String> = Vec::new();
+                    if features_module(self, mn, &mut feats) != 0 {
+                        continue;
+                    }
+                    for f in &feats {
+                        if f.strip_prefix("b:") == Some(name) {
+                            owner_loaded = Some(self.is_loaded(mn));
+                            break 'outer;
+                        }
+                    }
                 }
-                return 0;
+                owner_loaded != Some(false)
+            });
+        if static_flags.is_none() && !in_ledger {
+            // c:467-469 — `if (!bn) { if(!(flags & FEAT_IGNORE)) return 2; }`
+            if (flags & FEAT_IGNORE as i32) == 0 {
+                return 2; // c:469
             }
-            // c:475 — `deletebuiltin(bnam);` — drop the autoload
-            // ledger entry. The static-link path can't removenode
-            // from the canonical immutable table, but the autoload
-            // ledger is what holds the stub.
+        } else if added {
+            // c:470-473 — `else if (bn->node.flags & BINF_ADDED)` —
+            // a real, live builtin can't be un-autoloaded.
+            if (flags & FEAT_IGNORE as i32) == 0 {
+                return 3; // c:472
+            }
+        } else {
+            // c:474-475 — `else deletebuiltin(bnam);` — drop the
+            // autoload stub from the ledger.
             self.autoload_builtins.remove(name);
-            return 0; // c:477
-        }
-        // c:470-473 — `if (bn->node.flags & BINF_ADDED)`. zshrs's
-        // canonical entries are always BINF_ADDED.
-        if (flags & FEAT_IGNORE as i32) == 0 {
-            return 3; // c:472
         }
         0 // c:477
     }
@@ -5003,23 +5025,41 @@ pub fn bin_zmodload_auto(
         }
     }
 
-    // Register-mode: args[0] = module, args[1..] = names to autoload
-    if args.len() < 2 {
-        return 1;
-    }
-    let modnam = &args[0]; // c:2729 modnam = *args
-    for nm in &args[1..] {
-        if OPT_ISSET(ops, b'p') {
-            table.autoload_params.insert(nm.clone(), modnam.clone());
-        } else if OPT_ISSET(ops, b'f') {
-            table.autoload_mathfuncs.insert(nm.clone(), modnam.clone());
-        } else if OPT_ISSET(ops, b'c') {
-            table.autoload_conditions.insert(nm.clone(), modnam.clone());
+    // c:2791-2805 — register/unregister via autofeatures with
+    // FEAT_AUTOALL. (Earlier zshrs revision inserted into the
+    // autoload_* maps directly, bypassing autofeatures — so
+    // `m->autoloads` bookkeeping and the add_autobin/add_autoparam/…
+    // canonical-table dispatch never ran.)
+    let fchar: u8 = if OPT_ISSET(ops, b'c') {
+        if OPT_ISSET(ops, b'I') {
+            b'C' // c:2754 fchar = OPT_ISSET(ops,'I') ? 'C' : 'c'
         } else {
-            table.autoload_builtins.insert(nm.clone(), modnam.clone());
+            b'c'
         }
+    } else if OPT_ISSET(ops, b'p') {
+        b'p' // c:2762
+    } else if OPT_ISSET(ops, b'f') {
+        b'f' // c:2779
+    } else {
+        b'b' // c:2789
+    };
+    let mut flags = FEAT_AUTOALL; // c:2791
+    if OPT_ISSET(ops, b'i') {
+        flags |= FEAT_IGNORE; // c:2792-2793
     }
-    0 // c:2805
+    if OPT_ISSET(ops, b'u') {
+        /* remove autoload */ // c:2795
+        flags |= FEAT_REMOVE; // c:2796
+        // c:2797 — `modnam = NULL;` — every arg is a feature name.
+        return autofeatures(table, _nam, None, args, fchar, flags); // c:2805
+    }
+    /* add autoload */ // c:2799
+    let modnam = &args[0]; // c:2800
+    // c:2802-2803 — `if (args[1]) args++;` — with a single arg the
+    // module name doubles as the feature arg (C quirk; autofeatures
+    // then rejects the `/` in it).
+    let feat_args: &[String] = if args.len() > 1 { &args[1..] } else { args };
+    autofeatures(table, _nam, Some(modnam), feat_args, fchar, flags) // c:2805
 }
 
 /// Port of `unload_named_module(char *modname, char *nam, int silent)`
@@ -5338,19 +5378,64 @@ pub fn bin_zmodload_features(
             // c:3022-3023 — `scanhashtable(modulestab, 1, 0, MOD_ALIAS,
             //                              printnode, printflags);`
             // sorted=1, INCLUDE=0 (all), EXCLUDE=MOD_ALIAS (skip aliases).
-            let mut names: Vec<&String> = table
+            let mut names: Vec<String> = table
                 .modules
                 .iter()
                 .filter(|(_, m)| (m.node.flags & MOD_ALIAS) == 0) // c:3022 EXCLUDE
-                .map(|(n, _)| n)
+                .map(|(n, _)| n.clone())
                 .collect();
             names.sort(); // c:3022 sorted=1
-            for name in names {
-                let m = &table.modules[name];
-                let line = printmodulenode(name, m, printflags);
-                if !line.is_empty() {
-                    println!("{}", line);
+            for name in &names {
+                if printflags & PRINTMOD_AUTO != 0 {
+                    // c:229-231 / c:238-251 — autoload form; printmodulenode
+                    // covers this branch fully.
+                    let m = &table.modules[name];
+                    let line = printmodulenode(name, m, printflags);
+                    if !line.is_empty() {
+                        println!("{}", line);
+                    }
+                    continue;
                 }
+                // c:218 / c:232-235 — loaded-module + features gate:
+                // `if (features_module(m, &features) ||
+                //      enables_module(m, &enables) || !*features) return;`
+                // printmodulenode has no &table handle, so the FEATURES
+                // dispatch happens here (see its c:252-263 comment).
+                let loaded = {
+                    let m = &table.modules[name];
+                    (m.node.flags & MOD_INIT_B) != 0 && (m.node.flags & MOD_UNLOAD) == 0
+                };
+                if !loaded {
+                    continue;
+                }
+                let mut features: Vec<String> = Vec::new();
+                if features_module(table, name, &mut features) != 0 || features.is_empty() {
+                    continue; // c:233-235
+                }
+                let mut enables_opt: Option<Vec<i32>> = None;
+                if enables_module(table, name, &mut enables_opt) != 0 {
+                    continue; // c:233-235
+                }
+                let enables = enables_opt.unwrap_or_else(|| vec![0; features.len()]);
+                // c:237-245 — `printf("zmodload "); fputs("-F ", stdout);`
+                let mut line = String::from("zmodload -F ");
+                if name.starts_with('-') {
+                    line.push_str("-- "); // c:244-245
+                }
+                line.push_str(&crate::ported::utils::quotedzputs(name)); // c:246
+                // c:252-262 — per-feature tail: LISTALL emits ` +f`/` -f`,
+                // plain -L skips disabled and emits ` f`.
+                for (f, on) in features.iter().zip(enables.iter()) {
+                    if printflags & PRINTMOD_LISTALL != 0 {
+                        line.push_str(if *on != 0 { " +" } else { " -" }); // c:256
+                    } else if *on == 0 {
+                        continue; // c:258
+                    } else {
+                        line.push(' '); // c:260
+                    }
+                    line.push_str(&crate::ported::utils::quotedzputs(f)); // c:261
+                }
+                println!("{}", line);
             }
             return 0; // c:3024
         }
@@ -5375,9 +5460,228 @@ pub fn bin_zmodload_features(
     // patprogs array stays NULL — patcompile callers (autofeatures,
     // do_module_features) fall back to exact-name matching.
 
-    // c:3049-3226 — `-l/-L/-e` arm (the big listing path) deferred:
-    // requires the full Feature_enables array shape + features_module
-    // dispatch with patprog comparison. Left as a follow-up.
+    // c:3049-3226 — `-l/-L/-e` arm: list features one per line with
+    // +/- (-l), as a `zmodload -F` statement (-L), or test existence
+    // (-e). `-m` patprogs stay deferred (exact-name matching), same
+    // as the c:3032-3047 note above.
+    if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'e') {
+        let param: Option<String> = OPT_ARG_SAFE(ops, b'P').map(|s| s.to_string()); // c:3060
+        // c:3062 — `m = find_module(modname, FINDMOD_ALIASP, NULL);`
+        let resolved = find_module(table, modname, FINDMOD_ALIASP);
+
+        // c:3063-3107 — `-a` sub-arm: autoload listing/testing.
+        if OPT_ISSET(ops, b'a') {
+            // c:3067-3068 — `if (!m || !m->autoloads) return 1;`
+            let autoloads: Vec<String> = match resolved
+                .as_ref()
+                .and_then(|r| table.modules.get(r))
+                .and_then(|m| m.autoloads.as_ref())
+            {
+                Some(al) => al.iter().cloned().collect(),
+                None => return 1,
+            };
+            if OPT_ISSET(ops, b'e') {
+                // c:3070-3085 — each arg must (mis)match per its +/- sense.
+                for fstr in rest_args {
+                    let (sense, name) = match fstr.strip_prefix('+') {
+                        Some(rest) => (true, rest), // c:3074
+                        None => match fstr.strip_prefix('-') {
+                            Some(rest) => (false, rest), // c:3076-3078
+                            None => (true, fstr.as_str()),
+                        },
+                    };
+                    // c:3080-3082 — `(linknodebystring(...) != NULL) != sense`
+                    if autoloads.iter().any(|a| a == name) != sense {
+                        return 1; // c:3082
+                    }
+                }
+                return 0; // c:3084
+            }
+            if let Some(p) = param {
+                // c:3086-3088 / c:3098-3100 — collect into the array,
+                // then `setaparam(param, arrset)`.
+                // c:3103-3106
+                if crate::ported::params::setaparam(&p, autoloads).is_none() {
+                    return 1; // c:3105
+                }
+                return 0; // c:3106
+            }
+            if OPT_ISSET(ops, b'L') {
+                // c:3089-3091 — `printf("zmodload -aF %s%c", ...)`
+                let rname = resolved.as_deref().unwrap_or(modname);
+                print!(
+                    "zmodload -aF {}{}",
+                    crate::ported::utils::quotedzputs(rname),
+                    if autoloads.is_empty() { '\n' } else { ' ' }
+                );
+                // c:3092-3098 — space-separated, final '\n'.
+                for (i, al) in autoloads.iter().enumerate() {
+                    print!(
+                        "{}{}",
+                        al,
+                        if i + 1 < autoloads.len() { ' ' } else { '\n' }
+                    );
+                }
+            } else {
+                // c:3093-3097 — one per line.
+                for al in &autoloads {
+                    println!("{}", al);
+                }
+            }
+            return 0; // c:3107
+        }
+
+        // c:3108-3112 — `if (!m || !m->u.handle || (m->node.flags &
+        // MOD_UNLOAD))`. zshrs maps "u.handle installed" to MOD_INIT_B
+        // (see the printmodulenode comment at c:218-241 above).
+        let loaded = resolved
+            .as_ref()
+            .and_then(|r| table.modules.get(r))
+            .map(|m| (m.node.flags & MOD_INIT_B) != 0 && (m.node.flags & MOD_UNLOAD) == 0)
+            .unwrap_or(false);
+        if !loaded {
+            if !OPT_ISSET(ops, b'e') {
+                zwarnnam(nam, &format!("module `{}' is not yet loaded", modname)); // c:3110
+            }
+            return 1; // c:3111
+        }
+        let rname = resolved.unwrap();
+
+        // c:3113-3118 — `features_module(m, &features)`.
+        let mut features: Vec<String> = Vec::new();
+        if features_module(table, &rname, &mut features) != 0 {
+            if !OPT_ISSET(ops, b'e') {
+                zwarnnam(
+                    nam,
+                    &format!("module `{}' does not support features", rname), // c:3115
+                );
+            }
+            return 1; // c:3117
+        }
+        // c:3119-3124 — `enables_module(m, &enables)`.
+        let mut enables_opt: Option<Vec<i32>> = None;
+        if enables_module(table, &rname, &mut enables_opt) != 0 {
+            /* this shouldn't ever happen, so don't silence this error */ // c:3120
+            zwarnnam(
+                nam,
+                &format!("error getting enabled features for module `{}'", rname), // c:3121
+            );
+            return 1; // c:3123
+        }
+        let enables: Vec<i32> = enables_opt.unwrap_or_else(|| vec![0; features.len()]);
+
+        // c:3125-3155 — validate every feature argument.
+        for raw in rest_args {
+            // c:3127-3135 — strip +/- into `on`.
+            let (on, arg): (i32, &str) = match raw.strip_prefix('-') {
+                Some(rest) => (0, rest),
+                None => match raw.strip_prefix('+') {
+                    Some(rest) => (1, rest),
+                    None => (-1, raw.as_str()),
+                },
+            };
+            let mut found = 0;
+            for (fp, ep) in features.iter().zip(enables.iter()) {
+                // c:3137-3138 — patprogs deferred: exact `strcmp`.
+                if arg == fp {
+                    // c:3140-3142 — for -e, check given state, if any.
+                    if OPT_ISSET(ops, b'e') && on != -1 && on != (ep & 1) {
+                        return 1; // c:3142
+                    }
+                    found += 1;
+                    break; // c:3144-3145
+                }
+            }
+            if found == 0 {
+                // c:3148-3154
+                if !OPT_ISSET(ops, b'e') {
+                    zwarnnam(
+                        nam,
+                        &format!("module `{}' has no such feature: `{}'", modname, raw),
+                    );
+                }
+                return 1; // c:3153
+            }
+        }
+        if OPT_ISSET(ops, b'e') {
+            /* yep, everything we want exists */ // c:3156
+            return 0; // c:3157
+        }
+
+        let opt_big_l = OPT_ISSET(ops, b'L');
+        let opt_small_l = OPT_ISSET(ops, b'l');
+        // c:3186-3194 / c:3164-3172 — arg filter helpers. The C print
+        // loop compares the UNSTRIPPED arg (`!strcmp(*fp, *argp)`,
+        // c:3193) while the param-count loop compares stripped
+        // (`!strcmp(*fp, arg)`, c:3170). Ported as written.
+        let matches_stripped = |f: &str| -> bool {
+            rest_args.is_empty()
+                || rest_args.iter().any(|raw| {
+                    let arg = raw
+                        .strip_prefix('+')
+                        .or_else(|| raw.strip_prefix('-'))
+                        .unwrap_or(raw);
+                    f == arg
+                })
+        };
+        let matches_unstripped =
+            |f: &str| -> bool { rest_args.is_empty() || rest_args.iter().any(|raw| f == raw) };
+
+        let mut arrset: Option<Vec<String>> = None;
+        if param.is_some() {
+            // c:3158-3183 — size pass folded away (Vec grows); keep the
+            // same membership filter.
+            arrset = Some(Vec::new());
+        } else if opt_big_l {
+            // c:3184-3185 — `printf("zmodload -F %s ", m->node.nam);`
+            print!("zmodload -F {} ", crate::ported::utils::quotedzputs(&rname));
+        }
+        // c:3186-3219 — main feature emit loop.
+        for (i, (f, ep)) in features.iter().zip(enables.iter()).enumerate() {
+            if param.is_some() {
+                if !matches_stripped(f) {
+                    continue; // c:3170-3173 stripped compare
+                }
+            } else if !matches_unstripped(f) {
+                continue; // c:3193-3196 unstripped compare
+            }
+            let onoff: &str = if opt_big_l && !opt_small_l {
+                // c:3198-3200
+                if *ep == 0 {
+                    continue; // c:3199
+                }
+                ""
+            } else if *ep != 0 {
+                "+" // c:3203
+            } else {
+                "-" // c:3205
+            };
+            if let Some(ref mut arr) = arrset {
+                arr.push(format!("{}{}", onoff, f)); // c:3208 bicat
+            } else {
+                // c:3210-3216 — term ' ' while a next feature EXISTS in
+                // the full array (fp[1]), even if it won't be printed.
+                let term = if opt_big_l && i + 1 < features.len() {
+                    ' '
+                } else {
+                    '\n'
+                };
+                print!(
+                    "{}{}{}",
+                    onoff,
+                    crate::ported::utils::quotedzputs(f),
+                    term
+                );
+            }
+        }
+        if let (Some(p), Some(arr)) = (param, arrset) {
+            // c:3220-3224 — `setaparam(param, arrset)`.
+            if crate::ported::params::setaparam(&p, arr).is_none() {
+                return 1; // c:3223
+            }
+        }
+        return 0; // c:3225
+    }
 
     // c:3227-3229 — `-P` is illegal without -l/-L/-e.
     if OPT_ISSET(ops, b'P') && !(OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'e')) {
@@ -5491,15 +5795,52 @@ pub fn autofeatures(
     // c:3437
     let mut ret: i32 = 0;
 
+    // c:3445-3453 — resolve `defm` up front (FINDMOD_ALIASP|
+    // FINDMOD_CREATE); if its union slot is populated (loaded —
+    // MOD_INIT_B in zshrs, see the printmodulenode c:218-241 note)
+    // fetch the feature + enable tables for the c:3558-3577 checks.
+    let mut modfeatures: Option<Vec<String>> = None;
+    let mut modenables: Vec<i32> = Vec::new();
+    let defm_name: Option<String> = match module {
+        Some(modn) => {
+            let resolved = find_module(table, modn, FINDMOD_ALIASP | FINDMOD_CREATE);
+            if let Some(ref r) = resolved {
+                let booted = table
+                    .modules
+                    .get(r)
+                    .map(|m| (m.node.flags & MOD_INIT_B) != 0)
+                    .unwrap_or(false);
+                if booted {
+                    // c:3449-3451
+                    let mut f: Vec<String> = Vec::new();
+                    if features_module(table, r, &mut f) == 0 {
+                        let mut e: Option<Vec<i32>> = None;
+                        let _ = enables_module(table, r, &mut e);
+                        modenables = e.unwrap_or_else(|| vec![0; f.len()]);
+                        modfeatures = Some(f);
+                    }
+                }
+            }
+            resolved
+        }
+        None => None, // c:3454-3455 `defm = NULL`
+    };
+
     for feature in features {
         let s = feature.as_str();
         let mut add: bool = true; // c:3466 / c:3477 default `add = 1`
         let mut flags = defflags; // c:3458 `flags = defflags`
 
-        let (fchar, fnam): (u8, &str) = if prefchar != 0 {
+        // `feature_full` is the string C keeps in `m->autoloads`
+        // (c:3584/3597 `ztrdup(feature)`): the arg after the +/-
+        // strip, type prefix included — prefchar mode synthesizes it
+        // via `sprintf(feature, "%c:%s", fchar, fnam)` (c:3468-3469).
+        let prefixed: String;
+        let (fchar, fnam, feature_full): (u8, &str, &str) = if prefchar != 0 {
             // c:3461-3470 — `prefchar` mode: feature is bare name with
             // no `+`/`-` / `b:` prefix; fchar comes from the arg.
-            (prefchar, s) // c:3467-3468
+            prefixed = format!("{}:{}", prefchar as char, s); // c:3468-3469
+            (prefchar, s, prefixed.as_str()) // c:3467-3468
         } else {
             // c:3471-3490 — parse `+`/`-` then the `b:`/`c:`/`C:`/`p:`/`f:`
             // type prefix.
@@ -5524,7 +5865,7 @@ pub fn autofeatures(
                 continue; // c:3486
             }
             // c:3488-3489 — `fnam = feature + 2; fchar = feature[0];`
-            (bytes[0], &t[2..])
+            (bytes[0], &t[2..], t)
         };
 
         // c:3491-3492 — `if (flags & FEAT_REMOVE) add = 0;`
@@ -5605,9 +5946,94 @@ pub fn autofeatures(
         };
         let modname = modname_owned.as_str();
 
+        // c:3554 `subret = 0;` — the m->autoloads maintenance below can
+        // set it to ±2 on the remove-missing path (c:3614).
+        let mut autoload_subret: i32 = 0;
+        // Owning module node: the alias-resolved defm when a module arg
+        // was given (C `m = defm`, c:3553), else the searched-up name.
+        let owner: &str = match (module.is_some(), defm_name.as_deref()) {
+            (true, Some(r)) => r,
+            _ => modname,
+        };
+        if add {
+            // c:3558-3577 — if the module is already loaded, the feature
+            // must exist in its table; if it's already enabled there is
+            // nothing to mark.
+            if module.is_some() {
+                if let Some(ref mf) = modfeatures {
+                    match mf.iter().position(|f| f == feature_full) {
+                        None => {
+                            // c:3566-3570
+                            crate::ported::utils::zwarnnam(
+                                cmdnam,
+                                &format!(
+                                    "module `{}' has no such feature: `{}'",
+                                    owner, feature_full
+                                ),
+                            );
+                            ret = 1;
+                            continue;
+                        }
+                        Some(idx) => {
+                            if modenables.get(idx).copied().unwrap_or(0) != 0 {
+                                continue; // c:3572-3577 already provided
+                            }
+                        }
+                    }
+                }
+            }
+            // c:3583-3603 — insert into m->autoloads in lexical order
+            // (dup is "never an error", c:3590-3593).
+            if let Some(m) = table.modules.get_mut(owner) {
+                let list = m
+                    .autoloads
+                    .get_or_insert_with(crate::ported::linklist::znewlinklist);
+                let mut insert_at: Option<usize> = Some(list.len()); // c:3602 append default
+                for (i, existing) in list.iter().enumerate() {
+                    match feature_full.cmp(existing.as_str()) {
+                        std::cmp::Ordering::Equal => {
+                            insert_at = None; // c:3591-3593 already there
+                            break;
+                        }
+                        std::cmp::Ordering::Less => {
+                            insert_at = Some(i); // c:3595-3598
+                            break;
+                        }
+                        std::cmp::Ordering::Greater => {}
+                    }
+                }
+                if let Some(i) = insert_at {
+                    list.insert_at(i, feature_full.to_string());
+                }
+            }
+        } else {
+            // c:3605-3615 — `else if (m->autoloads) { remnode or
+            // subret = FEAT_IGNORE ? -2 : 2; }`
+            let removed = table
+                .modules
+                .get_mut(owner)
+                .and_then(|m| m.autoloads.as_mut())
+                .map(|list| {
+                    match list
+                        .iter()
+                        .position(|existing| existing.as_str() == feature_full)
+                    {
+                        Some(i) => {
+                            list.delete_node(i);
+                            true
+                        }
+                        None => false,
+                    }
+                })
+                .unwrap_or(false);
+            if !removed {
+                autoload_subret = if (flags & FEAT_IGNORE) != 0 { -2 } else { 2 }; // c:3614
+            }
+        }
+
         // c:3556-3616 — m->autoloads insert/remove in lexical order;
-        // the linked-list shape is replaced by the autoload_* maps,
-        // so a HashMap insert/remove is the structural equivalent.
+        // the autoload_* maps mirror the list for the feature→module
+        // reverse lookups the static-link dispatch needs.
         if add {
             match fchar {
                 b'b' => {
@@ -5633,32 +6059,37 @@ pub fn autofeatures(
                 _ => unreachable!(),
             }
         } else {
-            // c:3605-3615 — `else if (m->autoloads) { ... remnode ... }`.
-            // FEAT_IGNORE masks the "not present" case (c:3614).
-            let present = match fchar {
-                b'b' => table.autoload_builtins.remove(fnam).is_some(),
-                b'c' | b'C' => table.autoload_conditions.remove(fnam).is_some(),
-                b'p' => table.autoload_params.remove(fnam).is_some(),
-                b'f' => table.autoload_mathfuncs.remove(fnam).is_some(),
+            // c:3605-3615 — handled above by the m->autoloads remove
+            // (autoload_subret carries the c:3614 ±2). Keep the
+            // feature→module reverse maps in sync silently — the
+            // not-present diagnostic flows through subret below,
+            // exactly like C's c:3631 arm.
+            match fchar {
+                b'b' => {
+                    table.autoload_builtins.remove(fnam);
+                }
+                b'c' | b'C' => {
+                    table.autoload_conditions.remove(fnam);
+                }
+                b'p' => {
+                    table.autoload_params.remove(fnam);
+                }
+                b'f' => {
+                    table.autoload_mathfuncs.remove(fnam);
+                }
                 _ => unreachable!(),
-            };
-            if !present && (flags & FEAT_IGNORE) == 0 {
-                // c:3614 — `subret = (flags & FEAT_IGNORE) ? -2 : 2;`
-                // → diagnostic at c:3631 "NAME: no such TYPNAM".
-                ret = 1;
-                crate::ported::utils::zwarnnam(
-                    cmdnam,
-                    &format!("{}: no such {}", fnam, typnam),
-                );
             }
         }
 
         // c:3618-3619 — `if (subret == 0) subret = fn(module, fnam, flags);`
-        // Dispatch through the per-type add/del fn so the canonical
-        // tables (paramtab for `p:`, condtab for `c:`, etc.) carry the
-        // PM_AUTOLOAD / CONDF flag bits expected by downstream code
-        // (e.g. paramtypestr's `undefined NAME` listing).
-        let subret = if add {
+        // The fn does NOT run when the m->autoloads remove already
+        // produced ±2. Dispatch through the per-type add/del fn so the
+        // canonical tables (paramtab for `p:`, condtab for `c:`, etc.)
+        // carry the PM_AUTOLOAD / CONDF flag bits expected by
+        // downstream code (e.g. paramtypestr's `undefined NAME`).
+        let subret = if autoload_subret != 0 {
+            autoload_subret // c:3618 subret already set
+        } else if add {
             match fchar {
                 b'p' => add_autoparam(modname, fnam, flags),
                 b'f' => add_automathfunc(table, modname, fnam, flags),

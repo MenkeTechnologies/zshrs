@@ -19,6 +19,40 @@ CI green pending the underlying fix.
 
 ---
 
+## #628 — `[[ $$ == $$ ]]` is false — `$$` on the `==`/`=` RHS never matches in `[[ ]]`
+
+**Status:** `port-bug` — surfaced 2026-06-11 while probing #316
+(`[[ $sysparams[pid] == $$ ]]` returned 1 with identical values on
+both sides).
+
+**Reproducer:**
+```sh
+$ /opt/homebrew/bin/zsh -fc '[[ $$ == $$ ]] && echo A'
+A
+$ ./target/debug/zshrs --zsh -fc '[[ $$ == $$ ]] && echo A'
+(nothing, rc=1)
+```
+
+Narrowing:
+```sh
+$ ./target/debug/zshrs --zsh -fc 'p=$$; [[ $$ == $p ]] && echo VP'   # LHS $$ fine
+VP
+$ ./target/debug/zshrs --zsh -fc '[[ "$$" == $$ ]] && echo LQ'       # RHS $$ broken
+(nothing, rc=1)
+$ ./target/debug/zshrs --zsh -fc 'x=$$; [[ $x == $$ ]] && echo B'    # any LHS, RHS $$ broken
+(nothing, rc=1)
+$ ./target/debug/zshrs --zsh -fc '[[ 5 == $$ ]] || echo NC'          # non-match agrees by accident
+NC
+```
+
+`$$` expands correctly everywhere else (`echo $$`, assignment,
+LHS of `==`). Only the pattern-position (RHS) expansion inside
+`[[ ]]` loses/mangles the value. Not module-related — pure cond
+codepath. C reference: `evalcond`/`singsub` route the RHS through
+prefork+pattern compile (`Src/cond.c:303-320` `matchpat`).
+
+---
+
 ## #627 — `${${X}:-↔}` fires "no matches found: ↔" — UTF-8 continuation bytes collide with token byte values in glob detection
 
 **Status:** `fixed` 2026-06-11
@@ -26710,7 +26744,55 @@ c
 
 ## #316 — `zsh/system` module builtins missing — `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` all "command not found"
 
-**Status:** `fixed` 2026-06-04 — all five `zsh/system`
+**Status:** `fixed` 2026-06-12 — re-verified at HEAD with the full
+probe matrix (roundtrip, partial `sysread -s`, `-c` countvar, EOF
+rc=5, `sysseek` whence forms, `syserror` name/number/`-e`/`-p`,
+`zsystem flock` acquire/release/`-u`-error/`-t 0` contention,
+`zsystem supports`, `$sysparams` keys, `${#errnos}` + md5 of the
+full list). Two residual gaps found and closed:
+
+1. **`%e` warning format** — `sysopen` (c:389) and `zsystem flock`
+   (c:689/736/759) warnings printed `std::io::Error` Display
+   (`No such file or directory (os error 2)`) instead of zsh's
+   `%e` rendering (`no such file or directory` — lowercased
+   strerror, Src/utils.c:352-368). Fixed via
+   `vm_helper::zsh_errno_msg`; the two flock retry-loop sites also
+   formatted from a fresh `last_os_error()` AFTER `zclose`
+   (errno-clobber) — now format from the pre-close captured errno.
+2. **`zmodload -F` feature listing** — the with-modname `-l/-L/-e`
+   arm of `bin_zmodload_features` (Src/module.c:3049-3226) was a
+   deferral stub and the no-modname `-FL` loop never emitted the
+   per-feature tail (Src/module.c:252-263). Both ported;
+   `zmodload -FL zsh/system` now emits
+   `zmodload -F zsh/system b:syserror … p:sysparams` byte-equal to
+   zsh, plus `-FLl`, `-Fl`, `-FL mod feat` (with the c:3210-3216
+   space-terminator quirk), `-F -P param -l`, and `-Fe` existence
+   checks.
+3. **Autoload-mark bookkeeping** (`-Fa` / `-ab` / `-ub`) —
+   `autofeatures` never maintained C's per-module `m->autoloads`
+   list (Src/module.c:3556-3616) so `zmodload -FLa MOD` listed
+   nothing; `bin_zmodload_auto`'s register tail did raw map inserts
+   instead of C's `autofeatures(nam, modnam, args, fchar,
+   FEAT_AUTOALL)` (c:2791-2805); and `del_autobin` treated every
+   static-table hit as BINF_ADDED, so `-ub` of an unloaded module's
+   stub warned "builtin is already defined" (C: silent removal —
+   BINF_ADDED is set at addbuiltins time, i.e. module boot_). All
+   three ported; `-Fa`/`-ab` mark + `-FLa` list + `-ub` on
+   stub/loaded/core/missing names now byte-match zsh, including the
+   single-arg `zmodload -ab zsh/foo` "`/' is illegal in a builtin"
+   quirk (c:2800-2803).
+
+Known intentional divergence: `sysopen`/open-failure exit status is
+**2** per the C spec at HEAD (Src/Modules/system.c:390, workers/50355
+"return status consistency", post-5.9); homebrew zsh 5.9.1 predates
+that commit and returns 1. zshrs follows the spec.
+
+Also surfaced (separate, NOT a module bug): `[[ $$ == $$ ]]` is
+false in zshrs — filed as #628.
+
+Pinned by `system_bug316` (21 cases) in tests/modules_parity.rs.
+
+**Earlier status:** `fixed` 2026-06-04 — all five `zsh/system`
 builtins are now registered AND `syserror`'s output format
 matches zsh's `strerror()` byte-for-byte.
 
@@ -49609,7 +49691,7 @@ no longer reports the internal trap-machinery scalar.
 | 313 | `${(s.X.)str}` scalar-context split returns multiple echo args instead of joined string | **fixed** 2026-06-02 | n/a |
 | 314 | `${(os.X.)str}` sort flag not applied after split — flag-composition gap | **fixed** 2026-06-02 | n/a |
 | 315 | `${(us.X.)str}` unique flag not applied after split — PATH-dedup idiom broken | **fixed** 2026-06-02 | n/a |
-| 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **fixed** 2026-06-04 | builtins registered + syserror uses libc::strerror for byte-exact format |
+| 316 | `zsh/system` module builtins `syserror`/`sysopen`/`sysread`/`syswrite`/`sysseek` missing | **fixed** 2026-06-12 | builtins registered + `%e` warning format via zsh_errno_msg + `zmodload -F` listing arm ported (module.c:3049-3226) |
 | 317 | `epochtime` array autovar from `zsh/datetime` not registered (zsh: 2-elem secs/nanosecs) | **fixed** 2026-06-02 | use `$EPOCHREALTIME` float instead |
 | 318 | PS4 prompt-escapes (`%x`/`%N`/`%I`/`%_`) not expanded in xtrace output — trace shows literal text | **fixed** 2026-06-02 | n/a |
 | 319 | `eval --` end-of-options separator not recognized (extends #251/#252/#284 `--` family) | **fixed** 2026-06-02 | drop the `--` |
