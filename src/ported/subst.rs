@@ -11520,10 +11520,20 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| unquote_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            } else if subscript.is_none() {
+                // Whole-array `${(Q)arr}` — per-element dequote
+                // (subst.c:2261 quotemod-- iterates aval). MUST be
+                // gated on no-subscript: `${(Q)a[1]}` already
+                // resolved the element into `value` above; the
+                // arrays_get re-fetch by NAME here discarded that
+                // selection and dequoted+joined the WHOLE array.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| unquote_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = unquote_one(&value);
+                }
             } else {
                 value = unquote_one(&value);
             }
