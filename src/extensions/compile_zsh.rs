@@ -524,10 +524,14 @@ impl ZshCompiler {
     }
 
     fn compile_coproc_pipe(&mut self, pipe: &ZshPipe) {
-        // Compile the pipe's command as a body sub-chunk, then push
-        // [name="", sub_idx] and call BUILTIN_RUN_COPROC.
+        // Compile the pipeline as a body sub-chunk, then push
+        // [name="", job_text, sub_idx] and call BUILTIN_RUN_COPROC.
+        // c:Src/parse.c:864-876 par_sublist2 — `COPROC pline`: the
+        // coproc flag covers the ENTIRE pipeline, so `coproc a | b`
+        // wires the whole pipe (compile_pipe), not just the first
+        // command.
         let mut sub = ZshCompiler::new();
-        sub.compile_command(&pipe.cmd);
+        sub.compile_pipe(pipe);
         let sub_end = sub.builder.current_pos();
         for patch in std::mem::take(&mut sub.return_patches) {
             sub.builder.patch_jump(patch, sub_end);
@@ -537,9 +541,17 @@ impl ZshCompiler {
 
         let name_const = self.builder.add_constant(Value::str(""));
         self.builder.emit(Op::LoadConst(name_const), 0);
+        // c:Src/exec.c::execpline — the coproc takes the same Z_ASYNC
+        // job-table path as `cmd &` (how = Z_ASYNC at c:1709, spawnjob
+        // at c:1758), so its proc entry carries getjobtext display text
+        // (Src/text.c:235) exactly like a background job. Reconstruct
+        // the pipe text at compile time, mirroring the RUN_BG site.
+        let job_text = render_pipe_for_debug(pipe);
+        let text_const = self.builder.add_constant(Value::str(&job_text));
+        self.builder.emit(Op::LoadConst(text_const), 0);
         self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
         self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_COPROC, 0), 0);
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_COPROC, 3), 0);
         self.builder.emit(Op::SetStatus, 0);
     }
 

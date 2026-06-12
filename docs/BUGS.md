@@ -16865,7 +16865,10 @@ escape in PS1.
 
 **Status:** `fixed` 2026-06-03 — new `BUILTIN_EXEC_HERESTR_FD`
 (id 615) wires `exec N<<<"str"` to a real fd via the C
-`getherestr` path.
+`getherestr` path. Re-verified at 2026-06-12 HEAD, no code
+change needed: `exec 3<file; read -u 3` (single + sequential
+advancing reads), unopened `read -u 9`, and the symmetric
+`print -u 9` ("bad file number: 9", rc=1) all byte-match zsh.
 
 **Root cause** — diagnosis was inverted: `read -u N` works
 correctly when fd N is genuinely open. The break is in `exec`'s
@@ -32683,9 +32686,34 @@ typeset -p HOME | grep -q "^typeset -[^ ]*r" && echo "locked"
 
 ## #387 — `read -p "prompt"` parsing — flag arg consumed as identifier instead of coprocess flag
 
-**Status:** `fixed` 2026-06-03 — added the canonical
-"-p: no coprocess" gate at the top of `bin_read`, mirroring
-`Src/builtin.c:6510-6515`.
+**Status:** `fixed` 2026-06-12 — the `-p` gate landed 2026-06-03;
+the related `read var?prompt` form landed 2026-06-12 (update
+below).
+
+**Update — `read var?prompt` split** (2026-06-12) — re-probing at
+HEAD: the `-p` arms matched zsh but the zsh-native prompt syntax
+`read "v?myprompt: "` errored `not an identifier: v?myprompt: `
+instead of reading into `v`. Per `c:Src/builtin.c:6445`
+firstarg ALIASES args[0] when it doesn't start with `?`, and the
+prompt block at `c:6534-6543` scans it for an embedded `?`,
+prints the tail as the prompt (interactive only), and truncates
+the name in place (`readpmpt[-1] = '\0'`). zshrs's `bin_read`
+only handled the leading-`?` form. Fixed in
+`src/ported/builtin.rs::bin_read` (split the first positional at
+its first `?` when no leading-`?` arg was consumed). Verified
+byte-vs-zsh:
+
+```sh
+$ both -fc 'echo hi | read "v?myprompt: "; print -r $v'
+hi                                       # rc=0 both
+$ both -fc 'echo "a b" | read "x?p: " y; print -r "$x|$y"'
+a|b                                      # rc=0 both
+$ both -fc 'echo hi | read "?just prompt"; print -r $REPLY'
+hi                                       # rc=0 both
+```
+
+Pinned in `tests/read_advanced_parity.rs::prompt_with_dash_p`
+(3 new tests; suite 23 → 26).
 
 **Root cause** — zshrs's `bin_read` did parse `-p` as a
 no-arg flag (the BUILTIN spec `"cd:ek:%lnpqrst:%zu:AE"`
@@ -32798,11 +32826,68 @@ above. Need to verify whether `coproc` itself works at all.
 
 ## #388 — `coproc` builtin doesn't open a coprocess — entire feature missing
 
-**Status:** `fixed` 2026-06-05 — all three consumer forms wired:
-`print -p` / `read -p`, and the `<&p` / `>&p` DUP redirect
-forms. Shell-exit-with-running-coproc behaviour (script blocks
-on coproc reap after main body finishes) is a separate
-follow-up tracked inline below.
+**Status:** `fixed` 2026-06-12 — jobtab registration + replacement
+lifecycle landed (see update below). Consumer forms (`print -p` /
+`read -p`, `<&p` / `>&p`) were wired 2026-06-05. Remaining
+follow-up: shell-exit-with-running-`cat <&p` (see inline note).
+
+**Update — jobtab + replacement lifecycle** (2026-06-12) — at
+2026-06-11 HEAD the data path worked but the coproc was invisible
+to job control: `coproc cat; jobs` printed nothing and `kill %1`
+errored "no such job". Per `c:Src/exec.c:1700-1758` the coproc
+rides the SAME Z_ASYNC path as `cmd &` — initjob → addproc →
+`STAT_NOSTTY` → clearoldjobtab → spawnjob. Fixed in
+`src/fusevm_bridge.rs::BUILTIN_RUN_COPROC` parent arm by mirroring
+the `BUILTIN_RUN_BG` registration block (from the 2026-06-11 jobtab
+port, commit f387ab626c); `compile_zsh.rs::compile_coproc_pipe` now
+passes the getjobtext-style display text (Src/text.c:235 analog)
+as a third operand. Three more C-fidelity gaps closed in the same
+pass:
+
+- `c:Src/exec.c:1710-1712` — starting a new coproc closes the OLD
+  coproc's `coprocin`/`coprocout` first (no deletejob; the old
+  child EOFs and exits on its own). This is what makes the
+  canonical EOF idiom work:
+  `coproc sort; print -p …; exec 4<&p; coproc exit; read -u4 l`.
+- `c:Src/exec.c:5160` mpipe — both pipes' fds are moved ≥ 10 via
+  movefd, then the two kept ends drop to `FDT_UNUSED`
+  (`c:Src/exec.c:1725`) so they never collide with user fds.
+- `c:Src/parse.c:864-876` par_sublist2 — COPROC covers the whole
+  pipeline; compile_coproc_pipe now compiles the full pipe
+  (`compile_pipe`), not just the first command.
+
+Verified byte-vs-zsh (stdout+stderr+rc, pids normalized):
+
+```sh
+$ both 'coproc cat; print -p hello; read -p line; print -r $line; kill %1'
+hello                                    # rc=0 both
+$ both 'coproc cat; jobs; kill %1'
+[1]  + running    cat                    # rc=0 both
+$ both 'coproc sleep 5; jobs -l; kill %1'
+[1]  + PID running    sleep 5            # rc=0 both
+$ both 'coproc cat; print -p one; read -p a; coproc cat; print -p two; read -p b; print $a$b; kill %1 2>/dev/null; kill %2 2>/dev/null; jobs'
+onetwo
+[2]  + running    cat                    # rc=0 both
+$ both 'coproc sort; print -p c; print -p a; exec 4<&p; coproc exit; while read -u4 l; do print -r $l; done'
+a
+c                                        # rc=0 both
+```
+
+zsh-truth note: the `exec 3>&p; exec 3>&-` "EOF" form hangs in
+REAL zsh too (the shell still holds `coprocout`) — verified
+rc=124 under timeout in both shells; parity on the hang. Pinned
+in `tests/coproc_parity.rs` (10 tests).
+
+**Sub-issue (still open, follow-up)** — `coproc cat; print -p x;
+cat <&p` as the LAST command of `-c`: zsh prints `x` and exits 0
+because execcmd's last1 path EXECS the final external (the shell
+process becomes `cat`, dropping its `coprocout` after the
+`c:Src/exec.c:4297-4305` pre-exec closure), so the coproc EOFs and
+the chain unwinds. zshrs forks the external and the parent shell
+keeps `coprocout` open → deadlock (rc=124). Needs (a) the
+`c:4297-4305` close-coproc-fds-in-external-child port and (b) the
+last1 exec-not-fork optimization. Neither affects the `print -p` /
+`read -p` / `<&p` / `>&p` / jobtab mechanisms above.
 
 **Root cause** — the `coproc CMD` launch path
 (`BUILTIN_RUN_COPROC` at `src/fusevm_bridge.rs::register_builtins`)
