@@ -5789,7 +5789,17 @@ pub fn doshfunc(
     //   funcstack                  = &funcsave->fstack;
     //   funcsave->fstack.flineno   = shfunc->lineno;
     //   funcsave->fstack.filename  = getshfuncfile(shfunc);
-    let lineno_now = crate::ported::input::lineno.with(|c| c.get()) as i64;
+    // c:6013 — `funcsave->fstack.lineno = lineno;` C has ONE lineno
+    // global (params.c:123); zshrs mirrors it in both input::lineno
+    // and lex::LEX_LINENO. The lex mirror is the one driven by
+    // BUILTIN_SET_LINENO per statement AND zeroed for the duration
+    // of a function body (see set_lineno(0) below), so it is the
+    // one that matches C's value at call time: a call made INSIDE a
+    // caller's body records the caller-relative line (0 for a
+    // single-line fn), giving `$functrace` entries like `g:0`.
+    // input::lineno stayed parked at the script-wide line and
+    // produced `g:1`.
+    let lineno_now = crate::ported::lex::lineno() as i64;
     let (caller, prev_tp): (Option<String>, Option<i32>) = {
         let stk = FUNCSTACK.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(p) = stk.last() {

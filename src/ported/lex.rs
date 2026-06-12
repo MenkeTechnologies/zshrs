@@ -2399,6 +2399,44 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     if in_brace_param > 0 {
         zerr("closing brace expected");
     }
+    // c:1453-1469 — `} else if (unset(IGNOREBRACES) && !sub &&
+    //   lexbuf.len > 1 && peek == STRING && lexbuf.ptr[-1] == '}' &&
+    //   lexbuf.ptr[-2] != Bnull) {`
+    // c:1457 — /* hack to get {foo} command syntax work */
+    // A word ENDING in an unmatched literal `}` (bct==0 left it in
+    // the buffer un-rewritten — lextok2['}'] is identity, c:419)
+    // sheds the `}` and pushes it back so the next gettok lexes it
+    // as the standalone `}` word → reswdtab OUTBRACE. This is what
+    // makes `{print hi}` / `f(){print x}` close their blocks and
+    // `echo hi}` a parse error, while mid-word `a}b` stays literal.
+    else if unset(IGNOREBRACES)
+        && !sub
+        && LEX_LEXBUF.with_borrow(|b| b.buf_len()) > 1
+        && peek == STRING_LEX
+        && LEX_LEXBUF.with_borrow(|b| {
+            let mut it = b.as_str().chars().rev();
+            it.next() == Some('}') && it.next() != Some(Bnull)
+        })
+    {
+        // c:1463-1464 — `int lar = lex_add_raw; lex_add_raw =
+        // lexbuf_raw.len > 0 && lexbuf_raw.ptr[-1] == '}';` — only
+        // strip the raw-mirror `}` if the raw buffer also ends in
+        // one (alias expansion can desynchronize them, per the C
+        // comment "Just go with it, OK?").
+        let lar = LEX_LEX_ADD_RAW.get();
+        LEX_LEX_ADD_RAW.set(LEX_LEXBUF_RAW.with_borrow(|b| {
+            (b.len > 0 && b.ptr.as_deref().unwrap_or("").ends_with('}')) as i32
+        }));
+        // c:1465-1466 — `lexbuf.ptr--; lexbuf.len--;`
+        LEX_LEXBUF.with_borrow_mut(|b| {
+            b.pop();
+        });
+        // c:1467-1468 — `lexstop = 0; hungetc('}');`
+        LEX_LEXSTOP.set(false);
+        hungetc('}');
+        // c:1469 — `lex_add_raw = lar;`
+        LEX_LEX_ADD_RAW.set(lar);
+    }
 
     set_tokstr(Some(LEX_LEXBUF.with_borrow(|b| b.as_str().to_string())));
     peek

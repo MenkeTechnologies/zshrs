@@ -943,32 +943,47 @@ pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: 
 /// AST in Rust. The compile_zsh module then traverses the AST to
 /// emit fusevm bytecode, which serves the same role as zsh's
 /// wordcode but with a different opcode set and execution model.
-fn par_list() -> Option<ZshList> {
+fn par_list() -> Option<(ZshList, bool)> {
     let sublist = par_sublist()?;
 
-    let flags = match tok() {
+    // c:769-803 — `list : { SEPER } [ sublist [ { SEPER | AMPER |
+    // AMPERBANG } list ] ]`. The second tuple element reports
+    // whether the list ended with an EXPLICIT terminator. C's list
+    // grammar only chains sublists across SEPER/AMPER/AMPERBANG; a
+    // sublist followed directly by another command (`{a} {b}`) ends
+    // the list and the dangling token is the CALLER's problem
+    // (par_while takes a dangling INBRACE as the loop body, par_event
+    // yyerrors at c:671-680). parse_program_until needs this bit to
+    // reproduce that split.
+    let (flags, terminated) = match tok() {
         AMPER => {
             zshlex();
-            ListFlags {
-                async_: true,
-                disown: false,
-            }
+            (
+                ListFlags {
+                    async_: true,
+                    disown: false,
+                },
+                true,
+            )
         }
         AMPERBANG => {
             zshlex();
-            ListFlags {
-                async_: true,
-                disown: true,
-            }
+            (
+                ListFlags {
+                    async_: true,
+                    disown: true,
+                },
+                true,
+            )
         }
         SEPER | SEMI | NEWLIN => {
             zshlex();
-            ListFlags::default()
+            (ListFlags::default(), true)
         }
-        _ => ListFlags::default(),
+        _ => (ListFlags::default(), false),
     };
 
-    Some(ZshList { sublist, flags })
+    Some((ZshList { sublist, flags }, terminated))
 }
 
 /// Parse one list — non-recursing variant. Direct port of
@@ -2088,7 +2103,15 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     // consumes the brace-form body as additional condition lists,
     // leaving parse_loop_body with nothing — `while (( i++ < 3 )) {
     // echo $i }` silently parsed but executed nothing.
-    let cond = Box::new(parse_program_until(Some(&[DOLOOP, INBRACE_TOK])));
+    // c:1528 — `par_save_list(cmplx);` — the cond is an ORDINARY
+    // list: a leading `{...}` block is the cond's first command
+    // (`while {false} {body}`), and the body INBRACE is reachable
+    // because a list followed by `{` without a separator ends (the
+    // chaining rule in parse_program_until). DOLOOP stays in the
+    // stop set because `do` at command position can't start a
+    // command. INBRACE_TOK was previously (wrongly) in the set too,
+    // which made a brace-form COND parse as an empty cond + body.
+    let cond = Box::new(parse_program_until(Some(&[DOLOOP])));
 
     skip_separators();
     let body = parse_loop_body(false, false)?;
@@ -2383,7 +2406,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         }))
     } else {
         // Short form
-        par_list().map(|list| {
+        par_list().map(|(list, _terminated)| {
             ZshCommand::FuncDef(ZshFuncDef {
                 names,
                 body: Box::new(ZshProgram { lists: vec![list] }),
@@ -8068,8 +8091,9 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
         }
 
         match par_list() {
-            Some(list) => {
+            Some((list, terminated)) => {
                 let detected = simple_name_with_inoutpar(&list);
+                let was_detected = detected.is_some();
                 lists.push(list);
                 // Synthesize a FuncDef for the `name() { body }` shape
                 // at parse time so body_source is captured while the
@@ -8230,6 +8254,63 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                                 flags: ListFlags::default(),
                             };
                             lists.push(synthetic);
+                        }
+                    }
+                }
+                // c:769-803 + c:644-682 — lists only chain across
+                // explicit SEPER/AMPER/AMPERBANG. When par_list ended
+                // WITHOUT a terminator, C's grammar says the list is
+                // over: nested contexts (while-cond, brace bodies)
+                // return to the caller with the dangling token (so
+                // `while {false} {print no}` hands the second `{` to
+                // par_while as the loop body), and the TOP level
+                // (par_event, c:671-680) yyerrors — `{false} {print
+                // no}` is `parse error near \`{'` in zsh. The funcdef
+                // synthesis branch above manages its own following
+                // tokens (`f() { body }` legitimately has INBRACE
+                // right after the Simple), so it is exempt.
+                if !was_detected && !terminated {
+                    match tok() {
+                        // End-of-input / lex error: loop top handles.
+                        ENDINPUT | LEXERR => {}
+                        // Construct closers and orphan terminators:
+                        // the loop-top match already errors/breaks
+                        // for these with the right diagnostics.
+                        OUTBRACE_TOK | DSEMI | SEMIAMP | SEMIBAR | DONE | FI | ESAC | ZEND
+                        | DOLOOP | ELSE | ELIF | THEN => {}
+                        t if end_tokens.map_or(false, |e| e.contains(&t)) => {}
+                        _ if end_tokens.is_some() => {
+                            // Nested list context: C par_list just
+                            // ends; the construct parser (par_while
+                            // body dispatch, par_subsh closer check)
+                            // deals with the token.
+                            break;
+                        }
+                        offending => {
+                            // Top level: C par_event yyerror(1) +
+                            // errflag, c:671-682. Same tokstr
+                            // injection as the None arm below so the
+                            // "near `X'" tail survives punctuation
+                            // tokens with no tokstr.
+                            if crate::ported::lex::tokstr().is_none() {
+                                let i = offending as usize;
+                                if i < crate::ported::lex::tokstrings.len() {
+                                    if let Some(s) = crate::ported::lex::tokstrings[i] {
+                                        crate::ported::lex::set_tokstr(Some(s.to_string()));
+                                    }
+                                }
+                            }
+                            set_tok(LEXERR); // c:672
+                            yyerror(1);
+                            let noerrs_v =
+                                *crate::ported::utils::noerrs_lock().lock().unwrap();
+                            if noerrs_v != 2 {
+                                errflag.fetch_or(
+                                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                                    Ordering::SeqCst,
+                                );
+                            }
+                            break;
                         }
                     }
                 }
