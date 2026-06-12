@@ -1795,6 +1795,40 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_COMPADD, "compadd");
     reg_passthru!(vm, BUILTIN_COMPSET, "compset");
 
+    // See the const's doc comment for the contract. Stack (bottom→top):
+    // base, e1, …, eN — argc = N + 1.
+    vm.register_builtin(BUILTIN_TYPESET_PAREN_PACK, |vm, argc| {
+        let mut vals: Vec<Value> = Vec::with_capacity(argc as usize);
+        for _ in 0..argc {
+            vals.push(vm.pop());
+        }
+        vals.reverse();
+        let mut it = vals.into_iter();
+        let mut out = it.next().map(|v| v.to_str()).unwrap_or_default();
+        for v in it {
+            match v {
+                // Array → splice items as separate elements (splat);
+                // empty array contributes nothing (empty elision).
+                Value::Array(items) => {
+                    for item in items {
+                        out.push('\u{1f}');
+                        out.push_str(&item.to_str());
+                    }
+                }
+                other => {
+                    out.push('\u{1f}');
+                    out.push_str(&other.to_str());
+                }
+            }
+        }
+        Value::str(out)
+    });
+
+    vm.register_builtin(BUILTIN_TYPESET_PAREN_CLOSE, |vm, _argc| {
+        let base = vm.pop().to_str();
+        Value::str(format!("{}\u{1f})", base))
+    });
+
     vm.register_builtin(BUILTIN_COMPDEF, |vm, argc| {
         let args = pop_args(vm, argc);
         // A compsys-defined `compdef` FUNCTION (autoload compinit →
@@ -8632,6 +8666,29 @@ pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 628;
 /// (read-only reference / invalid self reference) so the loop
 /// driver aborts, mirroring C execfor's errflag check.
 pub const BUILTIN_SET_LOOP_VAR: u16 = 629;
+
+/// EXTEND step of typeset paren-init packing. Pops `argc` values:
+/// [base, e1, …, eN] — base is either the opener (`name=(` /
+/// `name+=(`) or a previous EXTEND result. Pushes base with
+/// `\u{1f}` + element appended per element. Array values SPLICE
+/// their items as separate elements (`typeset b=( x $arr )` splat);
+/// an empty Array contributes nothing (unquoted-empty elision).
+/// CallBuiltin's argc is u8, so the compiler emits one EXTEND per
+/// ≤200-element chunk — p10k's 408-element `__p9k_colors=( … )`
+/// overflowed a single-shot pack (argc wrapped mod 256 and the
+/// stack spilled into the arg list: "not an identifier: 173…").
+/// BUILTIN_TYPESET_PAREN_CLOSE appends the final `\u{1f})`,
+/// yielding the exact REJOIN_SEP-delimited one-arg form
+/// bin_typeset's single-arg splitter consumes (builtin.rs ~4891,
+/// empties preserved, leading/trailing sentinel-empties trimmed
+/// once). One arg in → one arg out: bin_typeset's multi-arg rejoin
+/// (paren-depth scan, unsafe on EXPANDED paren-literal elements
+/// like p10k's `')' ''`) never runs.
+pub const BUILTIN_TYPESET_PAREN_PACK: u16 = 630;
+
+/// CLOSE step — pops the EXTEND chain's result, pushes it with
+/// `\u{1f})` appended. See BUILTIN_TYPESET_PAREN_PACK.
+pub const BUILTIN_TYPESET_PAREN_CLOSE: u16 = 631;
 
 /// Shared body of BUILTIN_GLOB_EXPAND / BUILTIN_REDIR_GLOB_EXPAND.
 /// c:Src/glob.c:1872 — `zglob` runs per-word in the argv pipeline.
