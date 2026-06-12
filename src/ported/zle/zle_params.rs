@@ -708,6 +708,7 @@ pub fn scan_registers(_ht: i32, func: Option<ScanFunc>, flags: i32) {
                 flags: (PM_SCALAR | PM_READONLY) as i32, // c:795
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some(val), // c:801 pm.u.str
             u_val: 0,

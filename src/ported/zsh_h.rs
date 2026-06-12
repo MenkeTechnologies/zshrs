@@ -1169,6 +1169,10 @@ pub struct param {
     pub node: hashnode, // c:1830
     // u union (c:1833-1842):
     pub u_data: usize,              // c:1834 void *data
+    // c:1834 — typed view of `u.data` for PM_TIED scalars, where C
+    // stores a `struct tieddata *` (Src/zsh.h:1870-1873) carrying the
+    // partner-array pointer and the joinchar from `typeset -T s a SEP`.
+    pub u_tied: Option<Box<tieddata>>,
     pub u_arr: Option<Vec<String>>, // c:1835 char **arr
     pub u_str: Option<String>,      // c:1836 char *str
     pub u_val: i64,                 // c:1837 zlong val
@@ -1190,6 +1194,7 @@ pub struct param {
 
 /// Port of `struct tieddata` from `Src/zsh.h:1870-1873`.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct tieddata {
     // c:1870
     pub arrptr: Option<Vec<String>>, // c:1871 char ***arrptr

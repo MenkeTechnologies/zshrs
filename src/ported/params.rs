@@ -47,7 +47,7 @@ use crate::ported::zsh_h::PAT_HEAPDUP;
 use crate::ported::zsh_h::{
     gsu_array, gsu_float, gsu_hash, gsu_integer, gsu_scalar, hashnode, hashtable, isset, mnumber,
     param, paramdef, unset, value, HashTable, Marker, Param, ALLEXPORT, ASSPM_AUGMENT,
-    ASSPM_ENV_IMPORT, ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION,
+    ASSPM_ENV_IMPORT, ASSPM_KEY_VALUE, ASSPM_WARN, AUTONAMEDIRS, EMULATE_KSH, EMULATE_SH, EMULATE_ZSH, EMULATION,
     ERRFLAG_ERROR, EXECOPT, FS_FUNC, KSHARRAYS, PM_ARRAY, PM_AUTOLOAD, PM_DECLARED, PM_DEFAULTED,
     PM_DONTIMPORT, PM_DONTIMPORT_SUID, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HASHELEM,
     PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOCAL, PM_NAMEDDIR, PM_NAMEREF, PM_NORESTORE,
@@ -1589,6 +1589,7 @@ pub fn createparamtable() {
                 flags: (ip.pm_type | ip.pm_flags | PM_SPECIAL) as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -1951,6 +1952,7 @@ pub fn createparamtable() {
                 flags: (PM_ARRAY | PM_SPECIAL) as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: Some(signals_arr),
             u_str: None,
             u_val: 0,
@@ -2193,6 +2195,7 @@ pub fn createparam(
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -5121,6 +5124,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -5152,6 +5156,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -5189,6 +5194,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(val.to_string()),
                     u_val: 0,
@@ -5225,6 +5231,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(val.to_string()),
                     u_val: 0,
@@ -5261,6 +5268,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(val.to_string()),
                     u_val: 0,
@@ -5295,6 +5303,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -5339,6 +5348,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: 0,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -5408,6 +5418,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: PM_ARRAY as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -5499,6 +5510,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     flags: PM_ARRAY as i32,
                 },
                 u_data: 0,
+                u_tied: None,
                 u_arr: Some(Vec::new()),
                 u_str: None,
                 u_val: 0,
@@ -5710,6 +5722,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 flags: pm_flags,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some(String::new()),
             u_val: 0,
@@ -5878,6 +5891,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: (PM_ARRAY | PM_SPECIAL) as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: Some(Vec::new()),
                     u_str: None,
                     u_val: 0,
@@ -5931,6 +5945,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                         flags: PM_SCALAR as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(String::new()),
                     u_val: 0,
@@ -6231,6 +6246,7 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
                         flags: prior_flags,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -6741,6 +6757,7 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 flags: new_type as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             // c:3690 — `setnumvalue(...)` stores the value. For
@@ -7756,10 +7773,29 @@ pub fn tiedarrsetfn(pm: &mut param, x: Option<String>) {
     // `u_arr` via paramtab (bug #24). When `pm.ename` is None (older
     // call sites or non-tied use), keep the scalar's own `u_arr`
     // up-to-date for legacy callers.
+    // c:4370-4380 — single-byte separator built from `dptr->joinchar`
+    // on the tieddata riding `pm->u.data` (Rust: typed `u_tied` view);
+    // joinchar==0 → empty sepbuf; no tieddata → `:` default (the
+    // PM_SPECIAL colon-tied params, c:5314-5315).
+    let sepbuf: String = match pm.u_tied.as_deref() {
+        Some(td) if td.joinchar == 0 => String::new(), // c:4376-4377
+        Some(td) => ((td.joinchar as u8) as char).to_string(), // c:4378-4379
+        None => ":".to_string(), // c:5314-5315
+    };
     let arr_opt: Option<Vec<String>> = if let Some(s) = x {
         // c:4369
-        // c:4370-4380 — single-byte separator.
-        let split: Vec<String> = s.split(':').map(|t| t.to_string()).collect();
+        // c:4381 — `sepsplit(x, sepbuf, 0, 0)`.
+        // joinchar==0 (typeset -T s a ''): the zsh 5.9.1 release
+        // binary keeps the whole string as ONE element on assignment
+        // (measured: `typeset -T S s ""; S=abc; typeset -p s` →
+        // `s=( abc )`), diverging from a literal char-split reading
+        // of sepsplit("") in the C source; match the release binary
+        // (parity floor).
+        let split: Vec<String> = if sepbuf.is_empty() {
+            vec![s.clone()]
+        } else {
+            crate::ported::utils::sepsplit(&s, Some(&sepbuf), true)
+        };
         // c:4382-4383 — uniqarray if PM_UNIQUE.
         let split = if pm.node.flags & PM_UNIQUE as i32 != 0 {
             // c:4382
@@ -7777,7 +7813,11 @@ pub fn tiedarrsetfn(pm: &mut param, x: Option<String>) {
                 apm.u_arr = arr_opt.clone(); // c:4381
             }
         }
-        pm.u_str = arr_opt.as_ref().map(|a| a.join(":"));
+        // c:4352 — zjoin writes the raw joinchar byte; joinchar==0
+        // joins with NUL (measured on 5.9.1: `s=(x y); print -rn
+        // "$S"` → `x\0y`), not with the empty split-sepbuf.
+        let joinsep = if sepbuf.is_empty() { "\0" } else { sepbuf.as_str() };
+        pm.u_str = arr_opt.as_ref().map(|a| a.join(joinsep));
     } else {
         pm.u_arr = arr_opt;
     }
@@ -11953,6 +11993,7 @@ mod gsu_tests {
                 flags: PM_SCALAR as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some(String::new()),
             u_val: 0,
@@ -12242,6 +12283,7 @@ mod tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -12307,6 +12349,7 @@ mod tests {
                 flags: (PM_NAMEREF | PM_SCALAR) as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some("target".to_string()),
             u_val: 0,
@@ -12492,6 +12535,7 @@ mod tests {
                 flags: PM_INTEGER as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 255,
@@ -12543,6 +12587,7 @@ mod tests {
                 flags: (PM_NAMEREF | PM_SCALAR) as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some(String::new()),
             u_val: 0,
@@ -12608,6 +12653,7 @@ mod tests {
                 flags: (PM_NAMEREF | PM_SCALAR | PM_UPPER) as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some(String::new()),
             u_val: 0,
@@ -12670,6 +12716,7 @@ mod tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -12712,6 +12759,7 @@ mod tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,
@@ -12854,6 +12902,7 @@ mod tests {
                 flags: PM_ARRAY as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: Some(vec!["a".into(), "b".into(), "c".into(), "d".into()]),
             u_str: None,
             u_val: 0,
@@ -13824,6 +13873,7 @@ mod tests {
                 flags: PM_ARRAY as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: Some(vec!["initial".to_string()]),
             u_str: None,
             u_val: 0,
@@ -13890,6 +13940,7 @@ mod tests {
                 flags: PM_INTEGER as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 999,
@@ -14018,6 +14069,7 @@ mod tests {
                 flags: PM_INTEGER as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 255,
@@ -14105,6 +14157,7 @@ mod tests {
                         flags: (PM_SCALAR | flags) as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(value.to_string()),
                     u_val: 0,
@@ -14398,6 +14451,7 @@ mod tests {
                         flags: PM_SCALAR as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some("scalar value".to_string()),
                     u_val: 0,
@@ -14441,6 +14495,7 @@ mod tests {
                         flags: PM_HASHED as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: None,
                     u_val: 0,
@@ -14538,6 +14593,7 @@ mod tests {
                         flags: PM_ARRAY as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: Some(arr),
                     u_str: None,
                     u_val: 0,
@@ -14568,6 +14624,7 @@ mod tests {
                         flags: PM_SCALAR as i32,
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some(s.to_string()),
                     u_val: 0,

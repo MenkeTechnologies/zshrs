@@ -837,6 +837,7 @@ mod tests {
                 flags: 0,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: None,
             u_val: 0,

@@ -430,6 +430,7 @@ pub fn getpmmapfile(
             flags,
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(str_val),
         u_val: 0,
@@ -486,6 +487,7 @@ pub fn scanpmmapfile(
                     flags: PM_SCALAR as i32,
                 },
                 u_data: 0,
+                u_tied: None,
                 u_arr: None,
                 u_str: Some(String::new()), // c:263 `pm.u.str = "";`
                 u_val: 0,

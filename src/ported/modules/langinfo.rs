@@ -152,6 +152,7 @@ pub fn getlanginfo(_ht: *mut HashTable, name: &str) -> Option<Param> {
             flags: PM_SCALAR as i32 | PM_READONLY as i32, // c:408
         },
         u_data: 0,
+        u_tied: None,
         u_arr: None,
         u_str: Some(listr), // c:417 pm->u.str
         u_val: 0,

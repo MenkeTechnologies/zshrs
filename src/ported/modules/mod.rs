@@ -98,6 +98,7 @@ mod tests {
                 flags: PM_SCALAR as i32,
             },
             u_data: 0,
+            u_tied: None,
             u_arr: None,
             u_str: Some("v".to_string()),
             u_val: 0,

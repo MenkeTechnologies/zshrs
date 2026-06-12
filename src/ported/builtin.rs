@@ -3874,6 +3874,7 @@ pub fn bin_typeset(
                         flags: (PM_SCALAR | PM_AUTOLOAD) as i32, // c:1219
                     },
                     u_data: 0,
+                    u_tied: None,
                     u_arr: None,
                     u_str: Some((*module).to_string()), // c:1218 setsparam(pnam, module)
                     u_val: 0,
@@ -4112,20 +4113,31 @@ pub fn bin_typeset(
             );
             return 1;
         }
-        // c:2876-2895 — joinchar parse. Third arg is the separator. The
-        // Rust impl accepts `:` (canonical) and silently rejects other
-        // chars (full joinchar support is a deferred port — see WARNING
-        // on tied_scalar_get_via_ename in params.rs). When omitted, the
-        // default per c:2895 is `:`.
-        let _joinchar: char = if argv.len() == 3 {
-            let s = argv[2].as_str();
-            if s.is_empty() {
-                ':'
+        // c:2876-2898 — joinchar parse. Third argument, if given, is
+        // character used to join the elements of the array in the
+        // scalar.
+        let joinchar: i32 = if argv.len() == 3 {
+            let joinstr = argv[2].as_bytes(); // c:2880
+            if joinstr.is_empty() {
+                0 // c:2893-2894 `else if (!*joinstr) joinchar = 0;`
+            } else if joinstr[0] == 0x83 {
+                // c:2895-2896 `else if (*joinstr == Meta) joinchar = joinstr[1] ^ 32;`
+                (joinstr.get(1).copied().unwrap_or(0) ^ 32) as i32
             } else {
-                s.chars().next().unwrap()
+                joinstr[0] as i32 // c:2897-2898
             }
         } else {
-            ':'
+            ':' as i32 // c:2891-2892 `if (!joinstr) joinchar = ':';`
+        };
+        // Split/join separators from joinchar. joinchar==0 measured on
+        // the 5.9.1 release binary: assignment keeps the whole string
+        // as one element (no split) and reads join with a NUL byte
+        // (`zjoin(arr, 0, 1)` writing the raw byte, c:Src/params.c:4352).
+        let split_one = joinchar == 0;
+        let joinsep: String = if joinchar == 0 {
+            "\0".to_string()
+        } else {
+            ((joinchar as u8) as char).to_string()
         };
 
         // c:Src/builtin.c:2940-2944 — when the scalar already exists
@@ -4143,20 +4155,26 @@ pub fn bin_typeset(
         };
 
         // Build the initial array value: prefer the array RHS, then
-        // the scalar RHS (split on `:`), then the existing scalar's
-        // env value (split on `:`). Mirrors C's sequence at
-        // c:2960-3030 where typeset_single is called on both names;
+        // the scalar RHS (split on joinchar), then the existing
+        // scalar's env value (split on joinchar). Mirrors C's sequence
+        // at c:2960-3030 where typeset_single is called on both names;
         // if the scalar had a value it gets passed to tiedarrsetfn
-        // which colon-splits.
+        // which splits on the tieddata joinchar (c:4370-4381 sepsplit).
         let init_arr: Vec<String> = if let Some(arr) = aval_opt {
             arr
         } else if let Some(sval) = sval_opt.as_deref() {
-            sval.split(':').map(|s| s.to_string()).collect()
+            if split_one {
+                vec![sval.to_string()]
+            } else {
+                crate::ported::utils::sepsplit(sval, Some(&joinsep), true)
+            }
         } else if let Some(old) = existing_scalar.as_deref() {
             if old.is_empty() {
                 Vec::new()
+            } else if split_one {
+                vec![old.to_string()]
             } else {
-                old.split(':').map(|s| s.to_string()).collect()
+                crate::ported::utils::sepsplit(old, Some(&joinsep), true)
             }
         } else {
             Vec::new()
@@ -4171,6 +4189,13 @@ pub fn bin_typeset(
         apm.u_arr = Some(init_arr.clone());
         apm.ename = Some(sname.to_string());
         apm.level = locallevel.load(Relaxed) as i32;
+        // c:2982-2989 — `tdp = (Tieddata) zalloc(sizeof *tdp);
+        // tdp->joinchar = joinchar;` — the tieddata rides on the
+        // SCALAR side's pm->u.data (c:2566 `tdp->joinchar = joinchar`).
+        let tdp = crate::ported::zsh_h::tieddata {
+            arrptr: None,
+            joinchar,
+        };
 
         // Install the scalar side with PM_TIED + gsu_s wired to the
         // tied-via-ename getters/setters so reads/writes propagate
@@ -4179,7 +4204,8 @@ pub fn bin_typeset(
         spm.node.nam = sname.to_string();
         spm.node.flags = (PM_SCALAR | PM_TIED) as i32;
         spm.ename = Some(aname.to_string());
-        spm.u_str = Some(init_arr.join(":"));
+        spm.u_str = Some(init_arr.join(&joinsep));
+        spm.u_tied = Some(Box::new(tdp));
         spm.level = locallevel.load(Relaxed) as i32;
         // c:Src/builtin.c:1956 — `static const struct gsu_scalar
         // tiedarr_gsu = { tiedarrgetfn, tiedarrsetfn, tiedarrunsetfn };`
@@ -4192,7 +4218,17 @@ pub fn bin_typeset(
         // scalar); the Rust signature returns `Vec<String>` because
         // the existing typing — adapt with a closure that joins.
         fn tied_scalar_getfn_shim(pm: &param) -> String {
-            crate::ported::params::tiedarrgetfn(pm).join(":")
+            // c:4352 — `zjoin(*dptr->arrptr, (unsigned char)
+            // dptr->joinchar, 1)`; joinchar lives on the tieddata
+            // riding pm->u.data (Rust: typed u_tied view).
+            let sep = match pm.u_tied.as_deref() {
+                // joinchar==0 joins with the raw NUL byte (zjoin with
+                // delim 0, c:Src/params.c:4352; measured on 5.9.1).
+                Some(td) if td.joinchar == 0 => "\0".to_string(),
+                Some(td) => ((td.joinchar as u8) as char).to_string(),
+                None => ":".to_string(),
+            };
+            crate::ported::params::tiedarrgetfn(pm).join(&sep)
         }
         fn tied_scalar_setfn_shim(pm: &mut param, val: String) {
             crate::ported::params::tiedarrsetfn(pm, Some(val))
