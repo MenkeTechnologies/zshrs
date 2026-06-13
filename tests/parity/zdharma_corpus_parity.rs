@@ -985,7 +985,6 @@ moderate "db-name.tbl""###);
 
     /// zflai — inverse decode _<ord>_ → char via ${(#)n}.
     #[test]
-    #[ignore = "zshrs gap: ${(#)match[3]} char-from-numeric-code on a backref in a (#b) loop yields wrong chars (spaces) — 'db-name.tbl' becomes 'db    -  name...'"]
     fn decode_ord_char() {
         assert_parity(r###"setopt extendedglob
 decode() { local in="$1" out=""

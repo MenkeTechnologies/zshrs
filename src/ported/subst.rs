@@ -11298,18 +11298,41 @@ pub fn paramsubst(
         // subst.c:1673 evalchar arm + substevalchar.
         if evalchar {
             // c:1673
+            // c:3800-3833 — `int one = noerrs, oef = errflag; if
+            // (!quoteerr) noerrs = 1; … noerrs = one; errflag = oef |
+            // (errflag & ERRFLAG_INT);`. A math error inside `(#)`
+            // (e.g. `${(#)a}` where a joins to the non-numeric scalar
+            // "1 2 65") must yield empty WITHOUT printing or aborting
+            // the command. Suppress via noerrs and restore the error
+            // flags after, keeping only a pending interrupt.
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap();
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
             let eval_one = |s: &str| -> String { substevalchar(s.trim()).unwrap_or_default() };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            } else if isarr != 0 {
+                // Whole-array reference: eval each element. A single-slot
+                // subscript (`a[3]`) clears isarr and already selected the
+                // element into `value`, so DON'T re-fetch the whole array
+                // — `${(#)a[3]}` must eval just element 3. C operates on
+                // the already-subscripted aval/val, never re-fetches.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = eval_one(&value);
+                }
             } else {
                 value = eval_one(&value);
             }
+            // c:3833 — restore noerrs + errflag (keep only INT).
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
+            let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
+            errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
 
         // (e) eval — re-substitute the result. Per-element on arrays.
