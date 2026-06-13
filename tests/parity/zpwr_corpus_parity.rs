@@ -514,7 +514,6 @@ print "${(P)name:0:5}""###);
 
     /// _parameters — `zparseopts -D -K -E -A` value-taking capture into assoc.
     #[test]
-    #[ignore = "zshrs gap: `zparseopts -A opts` does not record valueless flags — ${+opts[-q]} is 0 (zsh: 1)"]
     fn zparseopts_assoc_capture() {
         assert_parity(r###"local -A opts
 set -- -g "*.txt" -q
