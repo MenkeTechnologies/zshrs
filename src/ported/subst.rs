@@ -5587,10 +5587,18 @@ pub fn paramsubst(
                                 .map_or(false, |__p| pattry(&__p, hay))
                         };
                         if matched {
-                            // c:scanparamvals — push KEY when WANTKEYS &
-                            // !WANTVALS bits are live on the outer flag
-                            // block; otherwise push VALUE.
-                            if return_key {
+                            // c:Src/params.c:665-681 scanparamvals — when
+                            // BOTH WANTKEYS and WANTVALS are set (the
+                            // `(kv)` outer flag), each match emits the KEY
+                            // followed by its VALUE: `${(kv)h[(I)*]}` →
+                            // `a 1 b 2 c 3`. Otherwise push KEY xor VALUE
+                            // per return_key.
+                            let want_both = (hkeys & SCANPM_WANTKEYS) != 0
+                                && (hvals & SCANPM_WANTVALS) != 0;
+                            if want_both {
+                                out.push(k.clone());
+                                out.push(v.clone());
+                            } else if return_key {
                                 out.push(k.clone());
                             } else {
                                 out.push(v.clone());
