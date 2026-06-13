@@ -6299,6 +6299,30 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
         return None;
     }
+    // c:Src/params.c:2922-2923 — `pm->gsu.a->setfn(pm, val)`: a special
+    // PM_ARRAY param (e.g. `dirstack`) routes a whole-array assignment
+    // through its GSU setter instead of plain paramtab storage. zshrs
+    // keeps these magic arrays in PARTAB_ARRAY (not paramtab), so a
+    // bare `dirstack=(...)` would otherwise land in the executor's
+    // generic array store and never reach `dirssetfn` (so the dir stack
+    // stayed empty). Dispatch writable PARTAB_ARRAY specials here. Only
+    // whole-name (non-subscripted) assignment; `dirstack[1]=x` keeps the
+    // existing subscript path.
+    if !name.contains('[') {
+        if let Some(entry) = crate::ported::modules::parameter::PARTAB_ARRAY
+            .iter()
+            .find(|e| e.name == name)
+        {
+            if let Some(setfn) = entry.setfn {
+                setfn(std::ptr::null_mut(), val.clone()); // c:2922 gsu.a->setfn
+                let mut pm = param::default();
+                pm.node.nam = name.to_string();
+                pm.node.flags = (PM_ARRAY | PM_SPECIAL) as i32;
+                pm.u_arr = Some(val);
+                return Some(Box::new(pm));
+            }
+        }
+    }
     // c:3392 — `fetchvalue(&vbuf, &s, 1, SCANPM_ASSIGNING)` resolves
     // PM_NAMEREF chains; c:3395-3398 rejects an unresolvable ref.
     {
