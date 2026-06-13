@@ -1010,7 +1010,6 @@ mod zmod_pcre_regex {
 
     /// pcre_compile -s dotall / -m multiline.
     #[test]
-    #[ignore = "zshrs gap: pcre_compile -s (DOTALL) does not make . match newline (-m multiline works)"]
     fn pcre_s_m() {
         assert_parity(r###"zmodload zsh/pcre; pcre_compile -s "a.b"; pcre_match $'a\nb'; print "rc=$?"; pcre_compile -m "^bar$"; pcre_match $'foo\nbar\nbaz'; print "rc=$? [$MATCH]""###);
     }
