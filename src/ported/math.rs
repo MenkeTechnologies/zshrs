@@ -530,6 +530,84 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
 /// floating-point literal. Sets `m_yyval()` and returns
 /// `NUM`. Recognises `0x`/`0b` prefixes, base-prefix
 /// (`16#FF`), trailing-dot float, scientific notation, and zsh's
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+/// C math.c:856 calls `getkeystring(ptr, NULL, GETKEYS_MATH, &v)` — the
+/// shared 200-line key-string decoder run in GETKEY_SINGLE_CHAR mode
+/// (decode exactly ONE char, report bytes consumed). zshrs's
+/// `getkeystring_with` loops the whole string and has no single-char
+/// mode, and the math lexer advances a char cursor (not a byte ptr), so
+/// this small adapter decodes just the one escaped char at the cursor
+/// and returns (code, chars-consumed). It mirrors the GETKEYS_MATH flag
+/// set (OCTAL_ESC | EMACS | CTRL). Allowlisted in fake_fn_allowlist.txt.
+fn decode_math_keychar(s: &str) -> Option<(i64, usize)> {
+    let cs: Vec<char> = s.chars().collect();
+    if cs.is_empty() {
+        return None;
+    }
+    if cs[0] != '\\' {
+        return Some((cs[0] as i64, 1));
+    }
+    // `\X` escape — `\` plus at least one more char.
+    let e = match cs.get(1) {
+        Some(c) => *c,
+        None => return Some(('\\' as i64, 1)),
+    };
+    let simple = |code: i64| Some((code, 2));
+    match e {
+        'n' => simple(10),
+        't' => simple(9),
+        'r' => simple(13),
+        'e' | 'E' => simple(27),
+        'a' => simple(7),
+        'b' => simple(8),
+        'f' => simple(12),
+        'v' => simple(11),
+        '\\' => simple(92),
+        '0'..='7' => {
+            // \NNN octal (GETKEY_OCTAL_ESC), up to 3 digits.
+            let mut val: i64 = 0;
+            let mut n = 0;
+            while n < 3 {
+                match cs.get(1 + n) {
+                    Some(c @ '0'..='7') => {
+                        val = val * 8 + (*c as i64 - '0' as i64);
+                        n += 1;
+                    }
+                    _ => break,
+                }
+            }
+            Some((val, 1 + n))
+        }
+        'x' => {
+            // \xNN hex, up to 2 digits.
+            let mut val: i64 = 0;
+            let mut n = 0;
+            while n < 2 {
+                match cs.get(2 + n).and_then(|c| c.to_digit(16)) {
+                    Some(d) => {
+                        val = val * 16 + d as i64;
+                        n += 1;
+                    }
+                    None => break,
+                }
+            }
+            if n == 0 {
+                Some(('x' as i64, 2))
+            } else {
+                Some((val, 2 + n))
+            }
+        }
+        'c' => {
+            // \cX control char (GETKEY_CTRL): code = X & 0x1f.
+            match cs.get(2) {
+                Some(c) => Some(((*c as i64) & 0x1f, 3)),
+                None => Some(('c' as i64, 2)),
+            }
+        }
+        other => simple(other as i64),
+    }
+}
+
 /// underscore digit-grouping. Mirrors C's `zstrtol_underscore()`
 /// for greedy base parsing (consume valid digits only, leave the
 /// rest as the next token).
@@ -1865,7 +1943,25 @@ pub(crate) fn zzlex() -> i32 {
             '#' => {
                 // Character code: #\x or ##string
                 if peek() == Some('\\') || peek() == Some('#') {
-                    advance();
+                    advance(); // consume the `\` / 2nd `#` marker
+                    // c:Src/math.c:856 — `getkeystring(ptr, NULL,
+                    // GETKEYS_MATH, &v)` decodes the char AFTER the
+                    // marker, honoring backslash escapes: `##\n` → 10,
+                    // `##\e` → 27, `##A` → 65. The previous port read a
+                    // single literal char, so `##\n` yielded 92 (`\`)
+                    // and left `n` dangling ("operator expected").
+                    let rest: String = m_input_clone()[m_pos()..].to_string();
+                    if let Some((code, consumed)) = decode_math_keychar(&rest) {
+                        for _ in 0..consumed {
+                            advance();
+                        }
+                        m_yyval_set(mnumber {
+                            l: code,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        });
+                        return NUM;
+                    }
                     if let Some(ch) = advance() {
                         m_yyval_set(mnumber {
                             l: ch as i64,

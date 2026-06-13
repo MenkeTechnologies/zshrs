@@ -1525,7 +1525,6 @@ print -r -- "abs=${${(M)rel:#/*}:-/plugdir/$rel}""##,
 
     /// autoload/basicSedSub:19 — `(#key)` / `(##\x)` char-code arithmetic.
     #[test]
-    #[ignore = "zshrs gap: (##\\n)/(##\\r)/(##\\e) char-code-of-escape in math context unsupported (exit 1 after first line)"]
     fn char_code_arithmetic() {
         assert_parity(
             r##"emulate -LR zsh
