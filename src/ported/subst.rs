@@ -13856,10 +13856,11 @@ pub fn apply_bare_modifier_chain(
         mod_buf.push(':');
         mod_buf.push(after.unwrap());
         probe += 2;
-        while probe < chars.len() && chars[probe].is_ascii_digit() {
-            mod_buf.push(chars[probe]);
-            probe += 1;
-        }
+        // c:Src/subst.c:4571 — `if (inbrace && idigit((*ptr)[1]))`: the
+        // `:hN`/`:tN` digit-count is ONLY honored inside braces. In the
+        // bare `$var:h2` form inbrace==0, so the digit is NOT consumed —
+        // it stays as trailing literal text (`$var:h2` ⇒ `${var:h}2`).
+        // No digit loop here; probe halts after the modifier letter.
     }
     if mod_buf.is_empty() {
         (value.to_string(), start)
