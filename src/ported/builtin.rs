@@ -13889,7 +13889,10 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("acdflLtv"),
+            // c:Src/Modules/tcp.c — `"acd:flLtv"`. `-d` (target fd) takes
+            // an argument; zshrs had "acdflLtv" (d a flag), so `ztcp -d 9`
+            // treated 9 as a positional and OPT_ARG(d) was empty.
+            Some("acd:flLtv"),
             None,
         ),
         BUILTIN(
