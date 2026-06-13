@@ -70,7 +70,7 @@ fn run_zsh(script: &str) -> ShellResult {
 
 fn run_zshrs(script: &str) -> ShellResult {
     let out = Command::new(zshrs_bin())
-        .args(["--zsh", "-c", script])
+        .args(["--zsh", "-fc", script])
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("invoke zshrs");
@@ -1274,7 +1274,6 @@ print -r -- "partition: ${mywordsleft[$firstIndex,$#mywordsleft]}""##,
 
     /// zpwrExpandApi.zsh:94-106 — slice stays array with `(@)`, joins without.
     #[test]
-    #[ignore = "zshrs gap: ${(@)arr[1,-2]} slice / ${arr[-1]:-''} default errors (exit 1)"]
     fn slice_array_vs_join_and_default() {
         assert_parity(
             r##"typeset -a lpartAry=( sudo VAR=1 make --flag=2 target )
@@ -1384,7 +1383,6 @@ print -r -- "[$tabs]""##,
 
     /// zpwrExpandParser.zsh:72-80 — `${+hash[k]}` lookup-table + assignment strip.
     #[test]
-    #[ignore = "zshrs gap: multi-space-aligned hash literal init / ${(@)words:#pat} assignment-strip errors (exit 1)"]
     fn lookup_table_assignment_strip() {
         assert_parity(
             r##"typeset -gA _ZPWR_PHASE1_CMDS=(
@@ -2665,7 +2663,6 @@ print -r -- "${(j: :)vals[1,3]}""##,
 
     /// zbrowse:494 — `(s:|:@)` split first element, `(@)arr[2,-1]` drop head.
     #[test]
-    #[ignore = "zshrs gap: ${(@)arr[2,-1]} slice does not drop head element (all elements retained)"]
     fn split_head_drop_tail() {
         assert_parity(
             r##"local -a logs
