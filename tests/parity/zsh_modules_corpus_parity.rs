@@ -647,7 +647,6 @@ mod zmod_datetime {
 
     /// strftime nanoseconds + %N.
     #[test]
-    #[ignore = "zshrs gap: strftime %N renders the literal 'N' instead of the nanoseconds argument"]
     fn strftime_nanoseconds() {
         assert_parity(r###"export TZ=UTC; zmodload zsh/datetime; strftime "%s.%N" 1700000000 123456789"###);
     }

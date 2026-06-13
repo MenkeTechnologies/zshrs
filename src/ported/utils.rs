@@ -4314,6 +4314,13 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String
                         i += 2;
                         continue;
                     }
+                    b'N' => {
+                        // c:3491-3495 — `%N`: nanoseconds, always 9 digits
+                        // (`sprintf(buf, "%09ld", nsec)`).
+                        preprocessed.push_str(&format!("{:09}", nsec));
+                        i += 2;
+                        continue;
+                    }
                     _ => {}
                 }
             }
