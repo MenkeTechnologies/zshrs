@@ -11026,8 +11026,26 @@ pub fn paramsubst(
             //   nojoin==2 ((@) flag): joins on spsep itself
             //   (c:3913-3916 `sepjoin(aval, spsep, 1)`) — re-splitting
             //   on the same spsep ≡ per-element split.
+            //
+            // c:Src/subst.c:2916+ — a SINGLE-element subscript
+            // (`a[1]`, not `@`/`*`/slice) already resolved the array
+            // to ONE element in `value`; the split source must be
+            // that scalar, NOT the whole array. Without this gate
+            // `${(s:|:)a[1]}` split every element of `a` instead of
+            // just element 1 (zsh: `x y z`; zshrs: `x y z b c`).
+            // Mirrors the has_scalar_subscript gate used by the
+            // strip/replace arms (subst.rs:8448).
+            let split_has_scalar_sub = subscript
+                .as_deref()
+                .map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                })
+                .unwrap_or(false);
             let src_elems: Option<Vec<String>> = if let Some(prev) = split_parts.clone() {
                 Some(prev)
+            } else if split_has_scalar_sub {
+                None // scalar `value` holds the resolved element
             } else {
                 arrays_get(&var_name)
             };

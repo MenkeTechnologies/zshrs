@@ -8432,6 +8432,15 @@ fn parse_assign() -> Option<ZshAssign> {
         // STRING and lets the reswd_lookup promote it to INBRACE_TOK.
         let oldcmdpos = crate::ported::lex::incmdpos();
         crate::ported::lex::set_incmdpos(false);
+        // c:Src/parse.c:2041-2046 — `intypeset = 0;` BEFORE reading
+        // the array body, restored to the saved value after. Without
+        // this, an element containing `=` (`typeset -a w=( VAR=1
+        // sudo )`) re-triggers the lexer's intypeset assignment
+        // detection and lexes `VAR=1` as ENVSTRING instead of a plain
+        // STRING element — the body loop ends early on the non-STRING
+        // token and the parser errors "near `)'".
+        let old_intypeset = crate::ported::lex::intypeset();
+        crate::ported::lex::set_intypeset(false);
         let mut elements = Vec::new();
         zshlex(); // skip past token
 
@@ -8453,6 +8462,9 @@ fn parse_assign() -> Option<ZshAssign> {
         }
         // c:Src/parse.c — `incmdpos = oldcmdpos;` (restore at end of arm)
         crate::ported::lex::set_incmdpos(oldcmdpos);
+        // c:Src/parse.c:2046 — `intypeset = 1;` (restore for any
+        // follow-on `b=( … )` in `typeset a=(…) b=(…)`).
+        crate::ported::lex::set_intypeset(old_intypeset);
 
         // The closing Outpar is consumed here. The outer par_simple
         // loop will then `zshlex()` past whatever follows (typically
