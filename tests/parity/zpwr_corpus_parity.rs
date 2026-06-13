@@ -701,7 +701,6 @@ for n in $sorted; do print -r -- "${key_by_name[$n]}"; done"###);
 
     /// zshRegenSearchableEnv.zsh — sort flags `(on)` `(oin)` `(On)`.
     #[test]
-    #[ignore = "zshrs gap: `(on)`/`(oin)` sort orders ASCII case-sensitive (uppercase first) instead of zsh's case-folded order (zsh: apple banana Mango zebra; zshrs: Mango apple banana zebra)"]
     fn sort_flag_variants() {
         assert_parity(r###"arr=(zebra apple Mango banana)
 print -r -- ${(on)arr}

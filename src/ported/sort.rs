@@ -140,14 +140,39 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
     // through strmetasort. Companion test
     // `test_zstrcmp_ignores_case_flag_per_c` pins this behavior.
 
+    // c:134 — `cmp = strcoll(as, bs)`. zsh ALWAYS computes the locale
+    // collation first; numeric mode only OVERRIDES it when a digit run
+    // is involved at the divergence point (sort.c:137-172 leaves `cmp`
+    // untouched otherwise, since the byte-diff recompute is
+    // `#ifndef HAVE_STRCOLL`). strcoll gives the case-insensitive
+    // primary ordering, so non-numeric portions of a `(n)`-sorted array
+    // must use it too — `${(n)a}` of `banana Mango apple zebra` sorts
+    // case-insensitively just like `${(o)a}`.
+    let strcoll_cmp = |a: &str, b: &str| -> Ordering {
+        #[cfg(unix)]
+        {
+            let cstr_head = |s: &str| -> CString {
+                let bs = s.as_bytes();
+                let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());
+                CString::new(&bs[..n]).unwrap_or_else(|_| CString::new(vec![0u8]).expect("nul"))
+            };
+            let c = unsafe { libc::strcoll(cstr_head(a).as_ptr(), cstr_head(b).as_ptr()) };
+            c.cmp(&0)
+        }
+        #[cfg(not(unix))]
+        {
+            a.cmp(b)
+        }
+    };
+
     // Numeric comparison — direct port of the `if (sortnumeric)`
     // block at Src/sort.c:137-172. Walks both strings to first
     // divergence, then either short-circuits on signed-mode
     // `-DIGIT` vs `DIGIT`, or rewinds to the start of the digit
     // run, skips leading zeros, compares run lengths (longer =
-    // bigger; flipped for negatives via `mul`). Falls back to byte
-    // compare from the divergence point when neither side is a
-    // digit.
+    // bigger; flipped for negatives via `mul`). When NO digit run is
+    // involved (or the runs compare equal) `cmp` keeps the strcoll base
+    // (c:134), matching zsh's HAVE_STRCOLL path.
     let cmp_numeric = |a: &str, bs: &str, signed_mode: bool| -> Ordering {
         let ab = a.as_bytes();
         let bb = bs.as_bytes();
@@ -228,46 +253,16 @@ pub fn zstrcmp(a: &str, bs: &str, sortflags: u32) -> Ordering {
             }
         }
         let _ = mul;
-        if cmp == 0 {
-            ab[i..].cmp(&bb[i..])
-        } else if cmp < 0 {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
+        let _ = cmp;
+        // c:134 — no digit-run override fired (non-digit divergence, or
+        // digit runs compared equal). Keep the strcoll base.
+        strcoll_cmp(a, bs)
     };
 
     if numeric {
         cmp_numeric(&a_str, &b_str, numeric_signed)
     } else {
-        let c = {
-            #[cfg(unix)]
-            {
-                let cstr_head = |s: &str| -> CString {
-                    let bs = s.as_bytes();
-                    let n = bs.iter().position(|&x| x == 0).unwrap_or(bs.len());
-                    CString::new(&bs[..n]).unwrap_or_else(|_| CString::new(vec![0u8]).expect("nul"))
-                };
-                let ca = cstr_head(&a_str);
-                let cb = cstr_head(&b_str);
-                unsafe { libc::strcoll(ca.as_ptr(), cb.as_ptr()) }
-            }
-            #[cfg(not(unix))]
-            {
-                match a_str.cmp(&b_str) {
-                    Ordering::Less => -1i32,
-                    Ordering::Equal => 0,
-                    Ordering::Greater => 1,
-                }
-            }
-        };
-        if c < 0 {
-            Ordering::Less
-        } else if c > 0 {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
+        strcoll_cmp(&a_str, &b_str)
     }
 }
 
