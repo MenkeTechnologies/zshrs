@@ -373,12 +373,24 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
 pub fn promptexpand(
     // c:182
     s: &str,
-    _ns: i32,
+    ns: i32,
     _marker: Option<&str>,
 ) -> (String, Option<usize>, Option<usize>) {
     // c:189-190 init_term lazy-load — lives in expand_prompt (the
     // shared Rust entry; bin_print -P / PS1 / PS4 call it directly).
-    let expanded = expand_prompt(s);
+    let mut expanded = expand_prompt(s);
+    // c:236-247 — `if (!ns) { ... chuck(Inpar/Outpar/Nularg); }`. When
+    // ns==0 the marker bytes that toggle non-spacing (width-ignored)
+    // spans must be removed entirely; only the ZLE-render path (ns!=0)
+    // keeps them for cursor-width accounting. The Rust expander emits
+    // readline RL_PROMPT_*_IGNORE bytes (\x01/\x02) in place of
+    // canonical Inpar/Outpar, plus Nularg for the %G glitch — strip all
+    // three. Without this, `${(%)var}` of a `%{...%}`-wrapped string
+    // leaks ^A/^B into the result (breaks every OMZ theme using
+    // %{$fg[...]%}). `print -P` does the same strip at its own site.
+    if ns == 0 {
+        expanded.retain(|c| c != '\x01' && c != '\x02' && c != Nularg);
+    }
     // C: `*rs = bv.bp - bv.buf` at `%E` / `%>` markers. Rust
     // expander loses that metadata, so a second pass on `s` is the
     // closest approximation. Source-offset → expanded-offset is
