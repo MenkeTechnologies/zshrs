@@ -7368,21 +7368,20 @@ impl ZshCompiler {
                         // glob meta). Bug #449. `escape_quoted_glob_metas`
                         // still runs first to backslash-escape glob
                         // metas inside Snull/Dnull-quoted spans.
+                        // escape_quoted_glob_metas backslash-escapes glob
+                        // metas (`* ? [ ( ) | ~ # ^`) that sit INSIDE a
+                        // Snull/Dnull-quoted span so patcompile treats
+                        // them as literal. Critically this neutralizes a
+                        // quoted `(#...)` flag form: `[[ ab = "(#b)"* ]]`
+                        // must match the literal text `(#b)`, not enable
+                        // the backref flag, and `"(#c"*` must not parse
+                        // as an unterminated count flag ("bad pattern").
+                        // Drive the marker-strip / Bnull pass off `escaped`
+                        // (the raw `right` was used before, discarding the
+                        // escaping entirely).
                         let escaped = escape_quoted_glob_metas(right);
-                        let right_clean = crate::lex::untokenize_preserve_quotes(&escaped);
-                        // Strip Snull/Dnull markers — the preserve_quotes
-                        // mapping emits ASCII `'`/`"` for these, which
-                        // would become part of the pattern bytes and
-                        // mismatch the LHS. The bracketing was a parser
-                        // marker, not a literal character. Bnull stays
-                        // as `\` so escape semantics survive.
-                        let right_clean: String = right_clean
-                            .chars()
-                            .filter(|&c| c != '\'' || !escaped.contains('\u{9d}'))
-                            .collect();
-                        let _ = right_clean;
-                        let mut filtered = String::with_capacity(right.len());
-                        let mut iter = right.chars().peekable();
+                        let mut filtered = String::with_capacity(escaped.len());
+                        let mut iter = escaped.chars().peekable();
                         while let Some(c) = iter.next() {
                             match c {
                                 '\u{9d}' | '\u{9e}' => {} // strip Snull/Dnull
