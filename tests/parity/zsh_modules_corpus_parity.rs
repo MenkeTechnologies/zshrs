@@ -992,7 +992,6 @@ mod zmod_pcre_regex {
 
     /// pcre_match -a / -v custom dests.
     #[test]
-    #[ignore = "zshrs gap: pcre_match -a custom array is not populated with captures (-v var works)"]
     fn pcre_a_v() {
         assert_parity(r###"zmodload zsh/pcre; pcre_compile "(a)(b)"; pcre_match -a arr "ab"; print "$arr[1]$arr[2]"; pcre_compile "x+"; pcre_match -v mv "axxxb"; print "[$mv]""###);
     }
