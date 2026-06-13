@@ -507,14 +507,12 @@ mod zmod_math {
 
     /// ldexp/scalb/logb.
     #[test]
-    #[ignore = "zshrs gap: mathfunc ldexp/scalb/logb not implemented (errors, exit 1)"]
     fn ldexp_scalb_logb() {
         assert_parity(r###"zmodload zsh/mathfunc; echo $(( ldexp(1,4) )) $(( scalb(1,4) )) $(( logb(8) ))"###);
     }
 
     /// ilogb returns integer.
     #[test]
-    #[ignore = "zshrs gap: mathfunc ilogb returns a float (3.) but is documented to return an integer (3)"]
     fn ilogb_int() {
         assert_parity(r###"zmodload zsh/mathfunc; echo $(( ilogb(8) ))"###);
     }

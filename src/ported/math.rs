@@ -2208,6 +2208,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "int"
             | "j0"
             | "j1"
+            | "ldexp"
             | "lgamma"
             | "log"
             | "log10"
@@ -2220,6 +2221,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "pow"
             | "rand"
             | "round"
+            | "scalb"
             | "sin"
             | "sinh"
             | "sqrt"
@@ -2454,6 +2456,8 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         fn copysign(x: f64, y: f64) -> f64;
         fn nextafter(x: f64, y: f64) -> f64;
         fn fmod(x: f64, y: f64) -> f64;
+        fn ldexp(x: f64, exp: i32) -> f64;
+        fn scalbn(x: f64, exp: i32) -> f64;
     }
     // Built-in math functions — mirrors `math_func()` dispatch table
     // at Src/Modules/mathfunc.c:198-432.
@@ -2500,6 +2504,19 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
         "j0" => unsafe { j0(args.first().copied().unwrap_or(0.0)) }, // c:325
         "j1" => unsafe { j1(args.first().copied().unwrap_or(0.0)) }, // c:331
+        "ldexp" => {
+            // c:Src/Modules/mathfunc.c:337 MF_LDEXP — `ldexp(argd, argi)`,
+            // 2nd arg coerced to int (TF_INT2). Returns x * 2^n.
+            let x = args.first().copied().unwrap_or(0.0);
+            let n = args.get(1).copied().unwrap_or(0.0) as i32;
+            unsafe { ldexp(x, n) }
+        }
+        "scalb" => {
+            // c:Src/Modules/mathfunc.c:378 MF_SCALB — `scalbn(argd, argi)`.
+            let x = args.first().copied().unwrap_or(0.0);
+            let n = args.get(1).copied().unwrap_or(0.0) as i32;
+            unsafe { scalbn(x, n) }
+        }
         "lgamma" => unsafe { lgamma(args.first().copied().unwrap_or(0.0)) }, // c:341
         "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
         "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
@@ -2539,6 +2556,16 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         }
     };
 
+    // c:Src/Modules/mathfunc.c — MF_ILOGB / MF_INT / MF_ISINF / MF_ISNAN
+    // set `ret.type = MN_INTEGER` (e.g. `ilogb(8)` → 3, not 3.). Tag the
+    // integer-returning functions so the result prints as an int.
+    if matches!(name, "ilogb" | "int") {
+        return mnumber {
+            l: result as i64,
+            d: 0.0,
+            type_: MN_INTEGER,
+        };
+    }
     mnumber {
         l: 0,
         d: result,
