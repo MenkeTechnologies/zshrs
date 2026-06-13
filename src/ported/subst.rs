@@ -8130,15 +8130,58 @@ pub fn paramsubst(
                 // (GLOBSUBST-gated, c:1669). Same contract as the
                 // `//`/`/` arms below.
                 let pat = literalize_spliced_metas(&singsub(&pretokenize_src_pat(parts[0])));
-                let repl = parts.get(1).map(|s| singsub(s)).unwrap_or_default();
+                // c:Src/glob.c:2680 — the replacement must be evaluated
+                // AFTER the pattern match when it references match state
+                // (`(#m)$MATCH` / `(#b)$match`); `pattry` publishes
+                // $MATCH/$match/$mbegin/$mend on each call. The previous
+                // port singsub'd the replacement ONCE before any match,
+                // so `${(@)arr:/(#m)*/$MATCH}` saw an empty $MATCH (it
+                // produced `${''-…}` in p10k's _p9k_must_init → "bad
+                // substitution"). Mirror the `//` arm: keep raw_repl,
+                // compile once, re-singsub per match when needed.
+                let raw_repl = parts.get(1).copied().unwrap_or("").to_string();
+                let prog_opt = if pat.is_empty() {
+                    None
+                } else {
+                    patcompile(&{ let mut __t = pat.to_string(); crate::ported::glob::tokenize(&mut __t); __t }, PAT_HEAPDUP as i32, None)
+                };
+                // c:Src/glob.c:2680 SUB_DOSUBST gate — capture groups
+                // (patnpar) or a match-ref (GF_MATCHREF) force per-match
+                // re-evaluation of the replacement.
+                let pat_needs_per_match = prog_opt
+                    .as_ref()
+                    .map(|p| {
+                        p.0.patnpar > 0
+                            || (p.0.globend & crate::ported::zsh_h::GF_MATCHREF as i32) != 0
+                    })
+                    .unwrap_or(false);
+                let repl_static = if pat_needs_per_match {
+                    String::new()
+                } else {
+                    let saved = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s = untokenize(&singsub(&raw_repl));
+                    SKIP_FILESUB.with(|c| c.set(saved));
+                    s
+                };
+                // `elem` must already have been pattry'd (which set the
+                // match params) immediately before this call.
+                let eval_repl = |needs: bool| -> String {
+                    if !needs {
+                        return repl_static.clone();
+                    }
+                    let saved = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s = untokenize(&singsub(&raw_repl));
+                    SKIP_FILESUB.with(|c| c.set(saved));
+                    s
+                };
                 if let Some(arr) = arrays_get(&var_name) {
                     let new_arr: Vec<String> = arr
                         .into_iter()
                         .map(|elem| {
-                            if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, &elem))
-                            {
-                                repl.clone()
+                            if prog_opt.as_ref().map_or(false, |__p| pattry(__p, &elem)) {
+                                eval_repl(pat_needs_per_match)
                             } else {
                                 elem
                             }
@@ -8146,10 +8189,11 @@ pub fn paramsubst(
                         .collect();
                     value = new_arr.join(" "); // c:3870
                     split_parts = Some(new_arr); // c:3870
-                } else if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                    .map_or(false, |__p| pattry(&__p, &raw_value))
+                } else if prog_opt
+                    .as_ref()
+                    .map_or(false, |__p| pattry(__p, &raw_value))
                 {
-                    value = repl; // c:3870
+                    value = eval_repl(pat_needs_per_match); // c:3870
                 } else {
                     value = raw_value.clone(); // c:3870
                 }

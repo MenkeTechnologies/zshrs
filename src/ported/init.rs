@@ -1056,6 +1056,43 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     crate::ported::hashnameddir::createnameddirtable(); // c:1269
     crate::ported::params::createparamtable(); // c:1270
 
+    // c:Src/init.c:1180-1194 — default prompts. C sets the `prompt`/
+    // `prompt2`/`prompt3`/`prompt4`/`sprompt` globals (which IPDEF7 binds
+    // to PS1/PS2/PS3/PS4/SPROMPT) BEFORE createparamtable; zshrs creates
+    // those special scalars empty, so set the defaults here, right after.
+    //   - prompt/prompt2 are gated on INTERACTIVE (c:1181): a
+    //     non-interactive shell keeps empty PS1/PS2. zshrs's INTERACTIVE
+    //     is isatty-based and is NOT downgraded for `-c`/script, so also
+    //     require reading from stdin (no `-c`, no runscript) — the
+    //     SHINSTDIN condition — to match zsh's "interactive" gate.
+    //   - prompt3/prompt4/sprompt are set unconditionally (c:1191-1194).
+    // Each default only applies when the param is still empty, so an
+    // env-imported value (e.g. `PS4` exported) wins, mirroring C where
+    // importenv overrides the compiled defaults.
+    {
+        let ksh_sh = crate::ported::zsh_h::EMULATION(EMULATE_KSH | EMULATE_SH);
+        let set_default = |name: &str, val: &str| {
+            if getsparam(name).map_or(true, |v| v.is_empty()) {
+                crate::ported::params::setsparam(name, val);
+            }
+        };
+        // c:1181 — interactive shell reading from stdin gets the
+        // hostname prompt; ksh/sh emulation gets the bare `$`/`#`.
+        let _ = std::fs::write("/tmp/zshrs_dbg.txt", format!("INTERACTIVE={} isatty0={} cmd={:?} runscript={:?}\n", isset(INTERACTIVE), unsafe { libc::isatty(0) }, cmd, runscript));
+        if isset(INTERACTIVE) && cmd.is_none() && runscript.is_none() {
+            if ksh_sh {
+                set_default("PS1", if crate::ported::utils::privasserted() { "# " } else { "$ " }); // c:1185
+                set_default("PS2", "> "); // c:1186
+            } else {
+                set_default("PS1", "%m%# "); // c:1188
+                set_default("PS2", "%_> "); // c:1189
+            }
+        }
+        set_default("PS3", "?# "); // c:1191
+        set_default("PS4", if ksh_sh { "+ " } else { "+%N:%i> " }); // c:1192-1193
+        set_default("SPROMPT", "zsh: correct '%R' to '%r' [nyae]? "); // c:1194
+    }
+
     // condtab = NULL; wrappers = NULL;                                      // c:1272-1273
 
     let (_cols, _lines) = crate::ported::utils::adjustwinsize(0); // c:1276

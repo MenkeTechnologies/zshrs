@@ -553,9 +553,25 @@ f "a b/c?d=e""##,
         );
     }
 
+    /// internal/p10k.zsh:_p9k_must_init — `${(@)…:/(#m)*/${(q)MATCH}-…}`
+    /// builds a `${name-…}` probe per POWERLEVEL9K_* param using the
+    /// `(#m)` match-ref. The whole-element `:/` replace must publish
+    /// `$MATCH` per element; a stale (empty) `$MATCH` produced `${''-…}`
+    /// → "bad substitution" at the subsequent `${(e)…}` eval.
+    #[test]
+    fn must_init_match_ref_probe() {
+        assert_parity(
+            r##"emulate -L zsh -o extended_glob
+typeset -g POWERLEVEL9K_MODE=nerdfont POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(dir vcs)
+local IFS MATCH pat
+IFS=$'\1' pat="${(@)${(@o)parameters[(I)POWERLEVEL9K_*]}:/(#m)*/\${${(q)MATCH}-$IFS\}}"
+IFS=$'\2' local sig="${(e)pat}"
+print -r -- "ok len=${#sig}""##,
+        );
+    }
+
     /// internal/p10k.zsh:3312 — whole-element subst `:/(#b)(*)/...` exitcode map.
     #[test]
-    #[ignore = "zshrs gap: ${(@)arr:/(#b)(*)/...} backref in whole-element substitution not applied (all map to first index)"]
     fn array_subst_exitcode_map() {
         assert_parity(
             r##"f() {
@@ -1105,7 +1121,7 @@ print "di=$modecolors[di] ln=$modecolors[ln]""##,
 
     /// fzf-tab.zsh:363-364 — NUL-field swap-sort-swap with (#b) backrefs.
     #[test]
-    #[ignore = "zshrs gap: ${(@)arr:/(#b)(...)$'\\0'(...)/...} NUL-field backref swap yields empty elements"]
+    #[ignore = "zshrs gap: unquoted per-element array `${arr//$'\\0'/|}` does not replace embedded NUL (joined/quoted form works) — Meta-encoding mismatch in the per-element // replace path; the `:/(#b)` backref half is now fixed"]
     fn nul_field_swap_sort() {
         assert_parity(
             r##"setopt extendedglob
