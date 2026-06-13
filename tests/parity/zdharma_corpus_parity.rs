@@ -671,7 +671,6 @@ suffix "10" "110" && print "yes" || print "no short>long""###);
 
     /// drop trailing N with negative-arithmetic slice ${(@)bits[1,-1*REPLY-1]}.
     #[test]
-    #[ignore = "zshrs gap: ${(@)bits[1,-1*REPLY-1]} negative-arithmetic slice bound yields empty (kept= instead of 10110)"]
     fn neg_arith_slice() {
         assert_parity(r###"setopt extendedglob
 local -a bits=( 1 0 1 1 0 0 1 0 )
@@ -787,7 +786,6 @@ print "start=$start end=$end""###);
 
     /// zui — in-place array splice replace.
     #[test]
-    #[ignore = "zshrs gap: set -- \"${(@)@[1,n-1]}\" new \"${(@)@[n+c,-1]}\" positional-slice splice prepends instead of replacing (X Y Z a b c d e f vs a b X Y Z e f)"]
     fn array_splice_replace() {
         assert_parity(r###"set -- a b c d e f
 update=(X Y Z)

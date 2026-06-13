@@ -199,7 +199,6 @@ _ap_count "(" ")""##,
     /// autopair.zsh:76-81 — `=~` with `${match[1]}` reused in a second
     /// `=~`, `local match=` to silence WARN_CREATE_GLOBAL.
     #[test]
-    #[ignore = "zshrs gap: $match[1] from first =~ not visible to second =~ within same [[ ]] (zsh: balanced; zshrs: unbalanced)"]
     fn regex_capture_reused_in_second_match() {
         assert_parity(
             r##"ap() {

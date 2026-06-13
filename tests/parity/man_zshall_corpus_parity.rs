@@ -469,7 +469,6 @@ mod man_glob {
 
     /// exclusion x~y and chained x~a~b.
     #[test]
-    #[ignore = "zshrs gap: chained glob exclusion *~a~c only honors the first ~ (c not excluded)"]
     fn exclusion_tilde() {
         assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch a b c d; print -rl -- ${(o)$(print -l -- *~a~c(:t))}; cd /; rm -rf $t"###);
     }

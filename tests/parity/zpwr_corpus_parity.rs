@@ -267,7 +267,6 @@ print $(( ${#on} > 0 ))"###);
 
     /// zpwrFuncRank — `^_*` negation glob with `(N.:t)` qualifier.
     #[test]
-    #[ignore = "zshrs gap: `^_*(N.:t)` negation glob — :t modifier not applied (returns full paths) and ^_* fails to exclude _hidden"]
     fn negation_glob_basename() {
         assert_parity(r###"setopt extendedglob
 local d=$(mktemp -d)

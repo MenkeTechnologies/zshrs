@@ -243,7 +243,6 @@ print -r -- "body_has_stub=$([[ ${functions[git_prompt_info]} == *stub* ]] && ec
 
     /// git.zsh — porcelain XY char-index classification ${code[1]}/${code[2]}.
     #[test]
-    #[ignore = "zshrs gap: ${code[1]} char-subscript + [[ != ]] staged classification inside $() yields 0 (zsh: 1); confirmed in isolation"]
     fn porcelain_xy_index() {
         assert_parity(r###"local code
 for code in 'M ' ' M' 'MM' '??' 'A ' 'UU'; do
