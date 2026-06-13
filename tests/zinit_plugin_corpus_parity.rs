@@ -351,7 +351,6 @@ gitstatus_query_demo"##,
 
     /// gitstatus.plugin.zsh:162 — float validation with nested empty groups.
     #[test]
-    #[ignore = "zshrs gap: nested empty-alternative numeric glob (|.<->)(|[eE]...) mismatches valid floats (5.25/-3.5/2e-3 flagged invalid)"]
     fn float_validation_glob() {
         assert_parity(
             r##"f() {
@@ -2392,7 +2391,6 @@ build "solo""##,
 
     /// zinit-autoload.zsh:1255 — `${${${(M)flag:#(y|yes)}:+$a}:-$b}` selector.
     #[test]
-    #[ignore = "zshrs gap: ${(M)scalar:#(y|yes)} keep-match on scalar returns empty for 'yes' (selector falls through to default)"]
     fn yes_set_selector() {
         assert_parity(
             r##"org=ohmyzsh; user=robbyrussell
