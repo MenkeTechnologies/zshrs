@@ -68,6 +68,14 @@ required-features = ["zd"]
 name = "bench-autoload"
 path = "bins/bench-autoload.rs"
 
+# Aggregated parity suite — every tests/parity/*_parity.rs is a module of
+# tests/parity/main.rs, so the whole suite builds/runs as one binary:
+#   cargo test --test parity            (run all)
+#   cargo test --test parity zpwr       (filter by module)
+[[test]]
+name = "parity"
+path = "tests/parity/main.rs"
+
 [dependencies]
 ctrlc = "3"
 atty = "0.2"
