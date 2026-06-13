@@ -13851,7 +13851,10 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             1,
             1,
             0,
-            Some("aimx"),
+            // c:Src/Modules/pcre.c:521 — `"aimxs"`. The `s` (PCRE2_DOTALL,
+            // handled at pcre.rs:109) was missing, so `pcre_compile -s`
+            // errored "bad option: -s".
+            Some("aimxs"),
             None,
         ),
         BUILTIN(
