@@ -948,7 +948,6 @@ done"##,
 
     /// zsh-z.plugin.zsh:517-590 — `zparseopts -E -D -A` + leftover-option detect.
     #[test]
-    #[ignore = "zshrs gap: $+opts[-e] key-existence after `zparseopts -A opts` missing (echo-mode branch not taken)"]
     fn zparseopts_with_leftover_detect() {
         assert_parity(
             r##"fn() {

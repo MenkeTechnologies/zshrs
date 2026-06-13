@@ -6885,18 +6885,16 @@ pub fn paramsubst(
         // set, not the array as a whole; raw_value (already
         // subscript-resolved) being non-empty is the proxy.
         if chkset {
-            // c:3600
-            let set_str = if subscript.is_some() {
-                if !raw_value.is_empty() {
-                    "1"
-                } else {
-                    "0"
-                }
-            } else if is_set {
-                "1"
-            } else {
-                "0"
-            };
+            // c:3600 — `${+name}` / `${+name[key]}` reports whether the
+            // (subscripted) slot EXISTS, mirroring C's `vunset` which
+            // getindex sets from the slot lookup, NOT from whether the
+            // value is non-empty. The subscript branch previously tested
+            // `!raw_value.is_empty()`, so an existing key with an EMPTY
+            // value (`h[k]=""` → `${+h[k]}`) wrongly returned 0. `is_set`
+            // already does the correct slot-existence check for assoc
+            // (contains_key), arrays (slot in range), @/*, slices, flag
+            // subscripts, and magic-assocs — use it for both forms.
+            let set_str = if is_set { "1" } else { "0" };
             // Splice the result back into the surrounding string
             // (prefix + value + suffix) per the convention used by
             // `${...}` arms below — the caller (stringsubst) reads
