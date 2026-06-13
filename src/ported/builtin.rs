@@ -9238,23 +9238,16 @@ pub fn bin_print(
     } else {
         " "
     };
-    // c:Src/builtin.c — `-D` rewrites each arg through dirify():
-    // longest-prefix-match against the named-dir table, replacing
-    // the prefix with `~name`. The full table includes user
-    // home dirs (~user) and any explicit `hash -d` entries; for
-    // the most common case (`$HOME`-prefix → `~`), apply that
-    // substitution. Richer named-dir lookup belongs in a deeper
-    // dirify port if more callers need it.
+    // c:Src/builtin.c:4783-4795 — `-D`: interpret each arg as a
+    // directory and abbreviate via `finddir(args[n])` — longest-prefix
+    // match against the full named-dir table ($HOME → `~`, `hash -d`
+    // entries → `~name`, plus the `zsh_directory_name` hook). C rewrites
+    // the matched prefix to `~name` and keeps the trailing path. The
+    // canonical `finddir` port already returns the `~name/rest` form.
     if dirify_d {
-        if let Ok(home) = env::var("HOME") {
-            if !home.is_empty() {
-                for a in processed_args.iter_mut() {
-                    if a.as_str() == home {
-                        *a = "~".to_string();
-                    } else if let Some(rest) = a.strip_prefix(&format!("{}/", home)) {
-                        *a = format!("~/{}", rest);
-                    }
-                }
+        for a in processed_args.iter_mut() {
+            if let Some(abbrev) = crate::ported::utils::finddir(a) {
+                *a = abbrev; // c:4791 — `~%s%s`
             }
         }
     }

@@ -1039,7 +1039,6 @@ mod man_builtins {
 
     /// print -D named-dir abbrev.
     #[test]
-    #[ignore = "zshrs gap: print -D does not abbreviate paths to ~named-dir form (prints the raw path)"]
     fn print_D_nameddir() {
         assert_parity(r###"hash -d myd=/usr/local; print -D /usr/local/bin"###);
     }
