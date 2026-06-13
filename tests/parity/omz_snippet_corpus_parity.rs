@@ -311,7 +311,6 @@ env_default FRESH val; echo "ret=$? FRESH=$FRESH""###,
 
     /// OMZL::functions.zsh:221-234 — omz_urlencode core loop: per-char index, space→+, else %+hex.
     #[test]
-    #[ignore = "zshrs gap: [[ $byte =~ \"[A-Za-z0-9]\" ]] single-char ERE match misfires so alnum bytes get percent-encoded (zsh: a+b%26c; zshrs: %61+%62...)"]
     fn urlencode_core_loop() {
         assert_parity(
             r###"emulate -L zsh
@@ -854,7 +853,6 @@ print "base=${PYTHONUSERBASE:-"${BASEHOME}/.local"}""###,
 
     /// OMZP::python:38 — `[[ x =~ "(^|:)""$s""(:|$)" ]]` colon-path membership regex.
     #[test]
-    #[ignore = "zshrs gap: =~ with adjacent-string-concatenation pattern \"(^|:)\"\"$s\"\"(:|$)\" fails to match (zsh: found; zshrs: no)"]
     fn colon_path_membership_regex() {
         assert_parity(
             r###"p="/a/b:/c/d:/e"
