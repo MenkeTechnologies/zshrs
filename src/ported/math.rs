@@ -2411,8 +2411,12 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         });
     if let Some(impl_name) = userfunc_impl {
     if let Some(mut shfunc) = crate::ported::utils::getshfunc(&impl_name) {
-        // Build largs = [name, arg-strings].
-        let mut largs: Vec<String> = vec![impl_name.clone()];
+        // c:1059-1062 — `addlinknode(l, n)`: the FIRST positional ($0)
+        // is the MATH function NAME (`max`/`min`), NOT the implementing
+        // shfunc name. A shared impl (zmathfunc registers max/min/sum to
+        // one function) switches on $0, so it must see the math name.
+        // The body to RUN is still the impl shfunc.
+        let mut largs: Vec<String> = vec![name.to_string()];
         let argv_str: Vec<String> = call[paren..]
             .trim_start_matches('(')
             .trim_end_matches(')')
