@@ -261,7 +261,6 @@ mod omz_themes {
 
     /// agnoster — prompt_segment with %K{}+%F{} both wrapped in %{...%}, (%) on $(fn).
     #[test]
-    #[ignore = "zshrs gap: ${(%)} on %{...%}-wrapped escapes leaks the ^A/^B editor markers instead of stripping them (pervasive across themes)"]
     fn prompt_segment_expand() {
         assert_parity(r###"prompt_segment() { print -n "%{%K{$1}%}%{%F{$2}%} $3 "; }
 s="${(%)$(prompt_segment blue black DIR)}${(%)$(prompt_segment green white GIT)}"
@@ -271,7 +270,6 @@ echo"###);
 
     /// robbyrussell — %(?:t:t) colon-form ternary + %1{x%} width hint + $fg_bold.
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (same root as prompt_segment_expand)"]
     fn robby_colon_ternary() {
         assert_parity(r###"autoload -U colors; colors
 false
@@ -291,7 +289,6 @@ echo"###);
 
     /// bira — multi-line PROMPT with embedded newline + %B%(!.#.>)%b.
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (same root as prompt_segment_expand)"]
     fn multiline_prompt() {
         assert_parity(r###"autoload -U colors; colors
 d="$(mktemp -d)"; mkdir -p "$d/proj"; cd "$d/proj"
@@ -316,7 +313,6 @@ collapse "home/user/.config/projects/zshrs""###);
 
     /// ys — %{$terminfo[bold]%} terminfo-driven bold + $fg.
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (with $terminfo[bold]; same root)"]
     fn terminfo_bold() {
         assert_parity(r###"autoload -U colors; colors
 P="%{$terminfo[bold]%}%{$fg[yellow]%}DIR%{$reset_color%}"
@@ -326,7 +322,6 @@ echo"###);
 
     /// fishy — dynamic color-array key $fg[$var].
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (with $fg[$var]; same root)"]
     fn dynamic_color_key() {
         assert_parity(r###"autoload -U colors; colors
 user_color=green; host_color=yellow
@@ -359,7 +354,6 @@ echo"###);
 
     /// ys — $fg_no_bold explicit non-bold color-array variant.
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (with $fg_no_bold; same root)"]
     fn fg_no_bold() {
         assert_parity(r###"autoload -U colors; colors
 P="%{$fg_no_bold[blue]%}plain%{$reset_color%}"
@@ -378,7 +372,6 @@ echo; cd /; rm -rf "$d""###);
 
     /// agnoster — segment transition: current bg + next bg around a separator.
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (agnoster segment transition; same root)"]
     fn segment_transition() {
         assert_parity(r###"seg(){ print -n "%K{$1}%F{$2} $3 %k"; }
 s="${(%)$(seg blue white A)}%F{blue}%K{green}>%f${(%)$(seg green black B)}"
@@ -396,7 +389,6 @@ echo"###);
 
     /// gallois — vcs_info_msg_0_-style format placeholder substitution then prompt-expand.
     #[test]
-    #[ignore = "zshrs gap: ${(%)} leaks ^A/^B markers around %{%}-wrapped escapes (vcs_info-style format; same root)"]
     fn vcs_format_subst() {
         assert_parity(r###"autoload -U colors; colors
 fmt="%{$fg[yellow]%}(git)-[BRANCH]%{$reset_color%}"
@@ -507,7 +499,6 @@ print "popped=$top remain=${(j:,:)past}""###);
 
     /// copypath — absolute-path build + prompt-escape via ${(%):-"%B...%b"}.
     #[test]
-    #[ignore = "zshrs gap: ${(%):-\"%B...%b\"} leaks ^A/^B markers around %{%}-equivalent escapes (same root as theme prompt expansion)"]
     fn copypath_abs() {
         assert_parity(r###"cp_logic() {
   local file="${1:-.}"

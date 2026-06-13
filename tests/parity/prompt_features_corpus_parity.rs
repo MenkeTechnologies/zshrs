@@ -304,7 +304,6 @@ mod prompt {
 
     /// ${(%)var} parameter prompt expansion.
     #[test]
-    #[ignore = "zshrs gap: ${(%)var} leaks the %{%} editor markers (^A/^B) around escapes instead of emitting bare escape sequences"]
     fn param_prompt_expand() {
         assert_parity(r###"v="%F{red}X%f"; print -r -- "${(%)v}" | cat -v"###);
     }
