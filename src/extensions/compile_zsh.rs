@@ -8427,7 +8427,11 @@ fn is_distribute_expansion(s: &str) -> bool {
     let pq = normalized;
     if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
         if inner.starts_with('^') {
-            return true;
+            // c:Src/subst.c:2551-2557 — a single `^` turns RC_EXPAND ON
+            // (cross-product distribute); a doubled `^^` turns it OFF.
+            // `${^^a}` must NOT distribute (the array joins): with
+            // `setopt rcexpandparam`, `foo${^^a}bar` → "foo1 2 3bar".
+            return !inner.starts_with("^^");
         }
         if let Some(rest) = inner.strip_prefix('(') {
             if let Some(close) = rest.find(')') {

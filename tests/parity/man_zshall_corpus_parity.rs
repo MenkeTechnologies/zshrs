@@ -265,7 +265,6 @@ mod man_expn {
 
     /// ${^arr} rc-expand distribution.
     #[test]
-    #[ignore = "zshrs gap: ${^^a} (disable rc_expand locally) still distributes when RC_EXPAND_PARAM is set"]
     fn caret_rc_expand() {
         assert_parity(r###"a=(1 2 3); print -- foo${^a}bar; setopt rcexpandparam; print -- foo${^^a}bar"###);
     }
