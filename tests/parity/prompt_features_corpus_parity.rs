@@ -408,7 +408,6 @@ print $(( mymax(3,7) ))"###);
 
     /// print -x / -X tab expansion.
     #[test]
-    #[ignore = "zshrs gap: print -X does not expand embedded tabs to spaces at the tab width"]
     fn print_x_X() {
         assert_parity(r###"print -x 8 "ab\tcd"; print -X 8 "ab\tcd""###);
     }
