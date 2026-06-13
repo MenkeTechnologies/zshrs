@@ -4531,6 +4531,10 @@ pub static PARTAB: &[PartabHashEntry] = &[
 /// whole-array getfn returning `Vec<String>` (no per-key dispatch).
 /// Mirrors C's `gsu_array.getfn(pm) -> char**`.
 pub type ArrayGetFn = fn(pm: *mut param) -> Vec<String>;
+/// Whole-array setter. Mirrors C's `gsu_array.setfn(pm, x)`. Only the
+/// writable special arrays (`dirstack`) have one; read-only specials
+/// leave it `None`.
+pub type ArraySetFn = fn(pm: *mut param, x: Vec<String>);
 
 /// Strongly-typed entry for PM_ARRAY-shape magic-assocs.
 #[allow(non_camel_case_types)]
@@ -4542,6 +4546,9 @@ pub struct PartabArrayEntry {
     pub flags: i32,
     /// Whole-array getter. Mirrors C's `gsu_array.getfn(pm)`.
     pub getfn: ArrayGetFn,
+    /// Whole-array setter. Mirrors C's `gsu_array.setfn(pm, x)`. `None`
+    /// for read-only specials; `Some` for writable ones (`dirstack`).
+    pub setfn: Option<ArraySetFn>,
     /// Owning module when bound by explicit zmodload; None =
     /// zsh/parameter.
     pub module: Option<&'static str>,
@@ -4557,6 +4564,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "historywords",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273 PM_READONLY_SPECIAL
         getfn: histwgetfn,
+        setfn: None,
         module: None,
     },
     // c:2239 — `dirstack`: $DIRSTACK pushd/popd state.
@@ -4564,6 +4572,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "dirstack",
         flags: PM_ARRAY as i32, // c:2239
         getfn: dirsgetfn,
+        setfn: Some(dirssetfn), // c:2229 dirs_gsu.setfn = dirssetfn
         module: None,
     },
     // c:2251 — `dis_patchars`: pattern metacharacters when extendedglob off.
@@ -4571,6 +4580,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "dis_patchars",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2251 PM_READONLY_SPECIAL
         getfn: dispatcharsgetfn,
+        setfn: None,
         module: None,
     },
     // c:2253 — `dis_reswords`: reserved words when disabled.
@@ -4578,6 +4588,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "dis_reswords",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2253 PM_READONLY_SPECIAL
         getfn: disreswordsgetfn,
+        setfn: None,
         module: None,
     },
     // c:2257 — `funcfiletrace`: per-frame caller file+lineno.
@@ -4585,6 +4596,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "funcfiletrace",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2257
         getfn: funcfiletracegetfn,
+        setfn: None,
         module: None,
     },
     // c:2259 — `funcsourcetrace`: per-frame def-site file+lineno.
@@ -4592,6 +4604,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "funcsourcetrace",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2259
         getfn: funcsourcetracegetfn,
+        setfn: None,
         module: None,
     },
     // c:2261 — `funcstack`: function-call stack names.
@@ -4599,6 +4612,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "funcstack",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2261
         getfn: funcstackgetfn,
+        setfn: None,
         module: None,
     },
     // c:2267 — `functrace`: per-frame call file+lineno.
@@ -4606,6 +4620,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "functrace",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2267
         getfn: functracegetfn,
+        setfn: None,
         module: None,
     },
     // c:2289 — `patchars`: pattern metacharacters when extendedglob on.
@@ -4613,6 +4628,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "patchars",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2289
         getfn: patcharsgetfn,
+        setfn: None,
         module: None,
     },
     // c:2291 — `reswords`: shell reserved words.
@@ -4620,6 +4636,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "reswords",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2291
         getfn: reswordsgetfn,
+        setfn: None,
         module: None,
     },
     // c:2273 — `historywords`: histwgetfn (parameter.c:1217-1252).
@@ -4627,6 +4644,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "historywords",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // c:2273
         getfn: histwgetfn,
+        setfn: None,
         module: None,
     },
     // Src/Modules/system.c:902 SPECIALPMDEF("errnos", PM_ARRAY|PM_READONLY, ...).
@@ -4634,6 +4652,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "errnos",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // system.c:902
         getfn: crate::ported::modules::system::errnosgetfn,
+        setfn: None,
         module: Some("zsh/system"),
     },
     // Src/Zle/zleparameter.c:132 SPECIALPMDEF("keymaps", PM_ARRAY|PM_READONLY, ...).
@@ -4641,6 +4660,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "keymaps",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // zleparameter.c:132
         getfn: crate::ported::zle::zleparameter::keymapsgetfn,
+        setfn: None,
         module: None,
     },
     // Src/Builtins/sched.c:382 SPECIALPMDEF("zsh_scheduled_events",
@@ -4654,6 +4674,7 @@ pub static PARTAB_ARRAY: &[PartabArrayEntry] = &[
         name: "zsh_scheduled_events",
         flags: PM_ARRAY as i32 | PM_READONLY as i32, // sched.c:382
         getfn: crate::ported::builtins::sched::schedgetfn,
+        setfn: None,
         module: None,
     },
 ];

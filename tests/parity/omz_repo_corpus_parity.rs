@@ -521,7 +521,6 @@ me "" start yes; me "" start no; me "ls" start no; me "" vared no"###);
 
     /// dirpersist — load file into array (f)"$(<file)", prepend, dedup (u).
     #[test]
-    #[ignore = "zshrs gap: assigning to the special `dirstack` array yields empty (dirstack=(/x /y /z) → empty); confirmed in isolation"]
     fn dirpersist_load() {
         assert_parity(r###"d=$(mktemp -d)
 printf "%s\n" /x /y /z /x > "$d/zdirs"
