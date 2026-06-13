@@ -9407,6 +9407,33 @@ pub fn bin_print(
             out.pop();
         }
         out
+    } else if OPT_HASARG(ops, b'x') || OPT_HASARG(ops, b'X') {
+        // c:Src/builtin.c:5095-5125 — `print -x N` / `-X N` expand tabs
+        // to spaces at tab stops of width N (`-x` only leading tabs,
+        // `-X` all tabs), threading the column position across args and
+        // resetting it on the `-l` newline. zexpandtabs (utils.c:5975)
+        // was ported but never wired into print output.
+        let all = OPT_HASARG(ops, b'X');
+        let which = if all { b'X' } else { b'x' };
+        let width: i32 = OPT_ARG(ops, which).and_then(|a| a.parse().ok()).unwrap_or(8);
+        let n = processed_args.len();
+        let mut out = String::new();
+        let mut startpos = 0i32;
+        for (i, arg) in processed_args.iter().enumerate() {
+            startpos = crate::ported::utils::zexpandtabs(arg, width, startpos, all, &mut out);
+            if i + 1 < n {
+                if OPT_ISSET(ops, b'l') {
+                    out.push('\n');
+                    startpos = 0;
+                } else if OPT_ISSET(ops, b'N') {
+                    out.push('\0');
+                } else {
+                    out.push(' ');
+                    startpos += 1;
+                }
+            }
+        }
+        out
     } else {
         processed_args.join(sep)
     };
