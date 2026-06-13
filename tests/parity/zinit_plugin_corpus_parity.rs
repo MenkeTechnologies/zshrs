@@ -2002,7 +2002,6 @@ print "count=${#testfiles}""##,
 
     /// src/zunit.zsh:3 — `typesetsilent` suppresses bare-typeset echo.
     #[test]
-    #[ignore = "zshrs gap: bare `typeset x` re-declaration does not echo `x=1` when typeset_silent is off"]
     fn typesetsilent_suppression() {
         assert_parity(
             r##"f() { typeset x=1; typeset x; print "end f"; }
