@@ -817,6 +817,7 @@ pub(crate) fn install_exec_hooks() {
             a || b
         })
     });
+    h::install_cmdsubst_outer_stdout(cmdsubst_outer_stdout);
 }
 
 /// Register all zsh builtins with the VM.

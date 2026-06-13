@@ -541,7 +541,7 @@ pub fn bin_sysopen(
             &format!(
                 "can't open file {}: {}",
                 path,
-                crate::vm_helper::zsh_errno_msg(eno)
+                crate::ported::utils::zsh_errno_msg(eno)
             ),
         ); // c:389
         return 2; // c:390
@@ -1005,7 +1005,7 @@ pub fn bin_zsystem_flock(
             &format!(
                 "failed to open {} for writing: {}",
                 path,
-                crate::vm_helper::zsh_errno_msg(eno)
+                crate::ported::utils::zsh_errno_msg(eno)
             ),
         );
         return 1;
@@ -1082,7 +1082,7 @@ pub fn bin_zsystem_flock(
                     &format!(
                         "failed to lock file {}: {}",
                         path,
-                        crate::vm_helper::zsh_errno_msg(eno)
+                        crate::ported::utils::zsh_errno_msg(eno)
                     ),
                 );
                 return 1;
@@ -1135,7 +1135,7 @@ pub fn bin_zsystem_flock(
                 &format!(
                     "failed to lock file {}: {}",
                     path,
-                    crate::vm_helper::zsh_errno_msg(eno)
+                    crate::ported::utils::zsh_errno_msg(eno)
                 ),
             );
             return 1;
