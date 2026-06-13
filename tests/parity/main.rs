@@ -103,4 +103,5 @@ mod zinit_plugin_corpus_parity;
 mod zpwr_corpus_parity;
 mod zsh_arrays_parity;
 mod zsh_compat_parity_gaps;
+mod zsh_modules_corpus_parity;
 mod zsh_idioms_parity;
