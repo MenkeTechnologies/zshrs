@@ -1679,10 +1679,24 @@ fn par_case() -> Option<ZshCommand> {
                         i += 1;
                     }
                     if let Some(idx) = end_idx {
-                        chars.remove(idx);
-                        chars.remove(0);
-                        str_val = chars.into_iter().collect();
-                        absorbed_outpar = true;
+                        // c:1346-1352 — the surrounding-paren strip is only
+                        // valid when the WHOLE string is `(...)` (close-paren
+                        // is the last char). C asserts this with
+                        // `DPUTS(*str != Inpar || str[sl-1] != Outpar)` and
+                        // `YYERRORV` on `if (*s || pct ...)` when anything
+                        // follows the matched close-paren. When trailing
+                        // content exists (`(a|b)*`, `(a|b)c`), the `(...)` is
+                        // a glob GROUP, not the optional case-opener — keep
+                        // the whole string verbatim as one pattern and let
+                        // the separate arm-closing `)` (OUTPAR_TOK) be
+                        // consumed below. Stripping here turned `(a|b)*` into
+                        // `a|b*` ("a" or "b*"), breaking OS-dispatch case arms.
+                        if idx == chars.len() - 1 {
+                            chars.remove(idx);
+                            chars.remove(0);
+                            str_val = chars.into_iter().collect();
+                            absorbed_outpar = true;
+                        }
                     }
                 }
                 patterns.push(str_val);
