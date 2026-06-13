@@ -6933,13 +6933,27 @@ pub fn paramsubst(
             let single_slot_subscript = subscript
                 .as_deref()
                 .map_or(false, |s| s != "@" && s != "*" && !s.contains(','));
-            let is_array_source =
-                (arrays_contains(&var_name) || assoc_contains(&var_name) || magic_keys.is_some())
-                    && !single_slot_subscript;
+            // c:Src/params.c:2915 — a flagged subscript `[(I)pat]` /
+            // `[(R)pat]` / `[(K)pat]` that matched MULTIPLE entries set
+            // SCANPM_MATCHMANY → array shape (isarr != 0), even though
+            // it's not `@`/`*`/range. The (I)-match arm above already
+            // populated split_parts + isarr; honor that here so
+            // `${#h[(I)pat]}` counts MATCHED elements, not the chars of
+            // the joined scalar (was 7 for "baz bar" instead of 2).
+            let flagged_array_subscript = isarr != 0 && split_parts.is_some();
+            let is_array_source = ((arrays_contains(&var_name)
+                || assoc_contains(&var_name)
+                || magic_keys.is_some())
+                && !single_slot_subscript)
+                || flagged_array_subscript;
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
-                    // c:3853 element count
+                    // c:3853 element count — a flagged-subscript array
+                    // (split_parts set) counts its matched elements.
+                    if flagged_array_subscript {
+                        split_parts.as_ref().map_or(0, |p| p.len())
+                    } else
                     // For array SLICE `${#arr[lo,hi]}`, return the
                     // slice length, not the full array length. Bug
                     // #43 in docs/BUGS.md: the C source's getlen

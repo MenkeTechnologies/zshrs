@@ -203,7 +203,6 @@ mod zpwr_common {
 
     /// ge — `${#h[(I)pat]}` count of assoc keys matching a glob.
     #[test]
-    #[ignore = "zshrs gap: ${#h[(I)pat]} on assoc returns total key count (13) not glob-matching-key count (2) — [(I)] subscript not filtering"]
     fn count_assoc_keys_glob() {
         assert_parity(r###"typeset -A h=(apple 1 apricot 2 banana 3); print -r -- "count=${#h[(I)a*]}""###);
     }
@@ -252,7 +251,6 @@ mod zpwr_common {
 
     /// zpwrTop — count functions matching case-insensitive glob `[(I)(#i)*pat*]`.
     #[test]
-    #[ignore = "zshrs gap: ${#functions[(I)(#i)*pat*]} returns total function count (15) not CI-glob match count (2) — [(I)] subscript on functions hash not filtering"]
     fn count_functions_ci_glob() {
         assert_parity(r###"setopt extendedglob
 foo(){ :; }; zpwrBar(){ :; }; ZPWRbaz(){ :; }; qux(){ :; }
