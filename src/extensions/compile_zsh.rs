@@ -9431,6 +9431,35 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                                 break;
                             }
                         }
+                        // A trailing `[sub]` is the ARRAY SUBSCRIPT of
+                        // `$NAME`, NOT a source-level glob bracket. zsh's
+                        // paramsubst parses `$name[exp]` as one
+                        // substitution (Src/subst.c getindex). Without
+                        // consuming it here the subscript split off into a
+                        // Literal segment and became a `[...]` char-class,
+                        // so `[[ yy == $a[2] ]]` expanded `$a` (joined
+                        // array) + matched a literal `2` char-class and
+                        // never matched. Depth-balance `[`/Inbrack ↔
+                        // `]`/Outbrack so nested subscripts (`$a[$b[1]]`)
+                        // stay intact.
+                        if matches!(chars.get(i), Some('[') | Some('\u{91}')) {
+                            let mut depth = 0i32;
+                            while i < chars.len() {
+                                let cc = chars[i];
+                                subst.push(cc);
+                                i += 1;
+                                match cc {
+                                    '[' | '\u{91}' => depth += 1,
+                                    ']' | '\u{92}' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                     }
                 }
                 out.push(PatSeg::Subst(subst));
