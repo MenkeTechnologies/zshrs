@@ -476,7 +476,6 @@ mod man_glob {
 
     /// exclusion of alternation ^(foo|bar).
     #[test]
-    #[ignore = "zshrs gap: ^(foo|bar) negated-alternation glob excludes nothing (all files matched)"]
     fn exclude_alternation() {
         assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch foo bar baz qux; print -rl -- ${(o)$(print -l -- ^(foo|bar)(:t))}; cd /; rm -rf $t"###);
     }
