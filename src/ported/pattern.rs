@@ -1668,6 +1668,26 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                                     chars.push(c);
                                 }
                             }
+                            // c:Src/pattern.c:3693-3700 + Src/ztype.h
+                            // IIDENT — `[[:IDENT:]]` is zsh's
+                            // identifier-character class (alnum + `_`,
+                            // the chars valid in a parameter name).
+                            // Static for the ASCII range; the
+                            // multibyte wcsitype(IIDENT) path isn't
+                            // expanded here. p10k/zsh-z validate names
+                            // with `[[:IDENT:]]##`.
+                            "IDENT" => {
+                                for c in b'0'..=b'9' {
+                                    chars.push(c);
+                                }
+                                for c in b'A'..=b'Z' {
+                                    chars.push(c);
+                                }
+                                for c in b'a'..=b'z' {
+                                    chars.push(c);
+                                }
+                                chars.push(b'_');
+                            }
                             _ => {}
                         }
                         i_b = j_b + 2;
