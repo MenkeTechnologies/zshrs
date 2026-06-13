@@ -314,7 +314,6 @@ mod man_expn {
 
     /// short-form digit ambiguity ($var:h2 == ${var:h}2); :a logical abspath.
     #[test]
-    #[ignore = "zshrs gap: short-form $var:h2 must parse as ${var:h}2 (zsh: /a/b/c2); zshrs treats it as ${var:h2}"]
     fn shortform_ambiguity_a() {
         assert_parity(r###"var=/a/b/c/d; print -- $var:h2; print -- ${var:h2}; v=/before/here/../after; print -- ${v:a}"###);
     }
