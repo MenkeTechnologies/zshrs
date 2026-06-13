@@ -64,6 +64,7 @@ mod math_parity;
 mod man_zshall_corpus_parity;
 mod modules_parity;
 mod noclobber_parity;
+mod omz_repo_corpus_parity;
 mod omz_snippet_corpus_parity;
 mod options_parity;
 mod parity_harness;

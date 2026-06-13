@@ -140,7 +140,6 @@ mod prompt {
 
     /// %F{#rrggbb} truecolor.
     #[test]
-    #[ignore = "zshrs gap: prompt %F{#rrggbb} truecolor emits 8-color code (^[[30m) instead of 24-bit ^[[38;2;r;g;b m"]
     fn fg_hex() {
         assert_parity(r###"print -P '%F{#ff0000}R%f' | cat -v; print -P '%F{#00ff00}g%f' | cat -v"###);
     }
@@ -153,7 +152,6 @@ mod prompt {
 
     /// %F{default} named default.
     #[test]
-    #[ignore = "zshrs gap: prompt %F{default} emits ^[[90m instead of the default-fg reset ^[[39m"]
     fn fg_default() {
         assert_parity(r###"print -P '%F{default}d%f' | cat -v"###);
     }
