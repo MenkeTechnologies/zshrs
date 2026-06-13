@@ -224,42 +224,67 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         // miss). Bug #341. The other flag arms (`r`/`R` returning
         // strings, `n`/`b`/`e`/`w`/`s` etc.) don't yield arith
         // values, so we only handle `i`/`I` here.
-        if idx_str.starts_with("(i)") || idx_str.starts_with("(I)") {
-            let reverse = idx_str.starts_with("(I)");
-            let pat = &idx_str[3..];
-            if let Ok(tab) = crate::ported::params::paramtab().read() {
-                if let Some(pm) = tab.get(arr_name) {
-                    if let Some(arr) = &pm.u_arr {
-                        let len = arr.len() as i64;
-                        let mut found: i64 = if reverse { 0 } else { len + 1 };
-                        if reverse {
-                            for (i, e) in arr.iter().enumerate().rev() {
-                                if e == pat {
-                                    found = (i + 1) as i64;
-                                    break;
-                                }
-                            }
+        // Flag block `(flags)pat`: `i`/`I` make it an index search
+        // (forward / reverse), an optional `e` modifier forces EXACT
+        // (literal) compare instead of glob match. Accepts `(i)`,`(I)`,
+        // `(ie)`,`(Ie)`,`(ei)`,… so membership tests like
+        // `(( arr[(Ie)$x] ))` resolve. Other flag letters (r/R/n/b/w/s)
+        // don't yield an arith value and fall through.
+        if idx_str.starts_with('(') {
+            if let Some(close) = idx_str.find(')') {
+                let flags = &idx_str[1..close];
+                let pat = &idx_str[close + 1..];
+                let is_index = flags.contains('i') || flags.contains('I');
+                if is_index && flags.chars().all(|c| matches!(c, 'i' | 'I' | 'e' | 'n')) {
+                    let reverse = flags.contains('I');
+                    let exact = flags.contains('e');
+                    let matches_elem = |e: &str| -> bool {
+                        if exact {
+                            e == pat
                         } else {
-                            for (i, e) in arr.iter().enumerate() {
-                                if e == pat {
-                                    found = (i + 1) as i64;
-                                    break;
+                            crate::ported::pattern::patcompile(
+                                &{
+                                    let mut t = pat.to_string();
+                                    crate::ported::glob::tokenize(&mut t);
+                                    t
+                                },
+                                crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                                None,
+                            )
+                            .map_or(e == pat, |p| crate::ported::pattern::pattry(&p, e))
+                        }
+                    };
+                    if let Ok(tab) = crate::ported::params::paramtab().read() {
+                        if let Some(pm) = tab.get(arr_name) {
+                            if let Some(arr) = &pm.u_arr {
+                                let len = arr.len() as i64;
+                                let mut found: i64 = if reverse { 0 } else { len + 1 };
+                                let it: Vec<(usize, &String)> = if reverse {
+                                    arr.iter().enumerate().rev().collect()
+                                } else {
+                                    arr.iter().enumerate().collect()
+                                };
+                                for (i, e) in it {
+                                    if matches_elem(e) {
+                                        found = (i + 1) as i64;
+                                        break;
+                                    }
                                 }
+                                return mnumber {
+                                    l: found,
+                                    d: 0.0,
+                                    type_: MN_INTEGER,
+                                };
                             }
                         }
-                        return mnumber {
-                            l: found,
-                            d: 0.0,
-                            type_: MN_INTEGER,
-                        };
                     }
+                    return mnumber {
+                        l: 0,
+                        d: 0.0,
+                        type_: MN_INTEGER,
+                    };
                 }
             }
-            return mnumber {
-                l: 0,
-                d: 0.0,
-                type_: MN_INTEGER,
-            };
         }
 
         // Recursively eval the index (so a[i+1], h[$k], etc work).
