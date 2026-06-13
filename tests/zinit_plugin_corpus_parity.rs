@@ -370,7 +370,6 @@ f"##,
 
     /// gitstatus.plugin.zsh:180 — `[[:IDENT:]]##` identifier validation.
     #[test]
-    #[ignore = "zshrs gap: [[:IDENT:]] POSIX class unsupported in glob (valid identifiers reported invalid)"]
     fn ident_class_validation() {
         assert_parity(
             r##"f() {
