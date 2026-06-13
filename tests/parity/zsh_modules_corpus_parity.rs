@@ -575,7 +575,6 @@ mod zmod_math {
 
     /// rand48 seeded determinism.
     #[test]
-    #[ignore = "zshrs gap: mathfunc rand48() not implemented (errors, exit 1)"]
     fn rand48_seeded() {
         assert_parity(r###"zmodload zsh/mathfunc; seed=0123456789abcdef; print $(( rand48(seed) )); print $seed"###);
     }
