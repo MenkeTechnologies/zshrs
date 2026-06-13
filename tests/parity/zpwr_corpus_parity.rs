@@ -632,7 +632,6 @@ mod zpwr_lib {
 
     /// lib.sh — index-exact array membership `arr[(Ie)$x]`.
     #[test]
-    #[ignore = "zshrs gap: array `${arr[(Ie)$x]}` index-exact subscript returns 0 for a present element (found-branch skipped)"]
     fn index_exact_membership() {
         assert_parity(r###"typeset -a bl=(idna six certifi); pkg=six; if (( bl[(Ie)$pkg] )); then print "found at ${bl[(Ie)$pkg]}"; fi; pkg=nope; print "missing=${bl[(Ie)$pkg]}""###);
     }
@@ -745,7 +744,6 @@ print -r -- ${p:e}"###);
 
     /// zshcompgen.zsh — exact-index membership `(( arr[(Ie)x] ))` blacklist.
     #[test]
-    #[ignore = "zshrs gap: `(( arr[(Ie)$c] ))` index-exact membership returns 0 for present element 'halt' (blacklist check fails) — same [(Ie)] subscript bug"]
     fn ie_blacklist_membership() {
         assert_parity(r###"BLACKLIST=(shutdown halt reboot)
 for c in halt running poweroff; do
