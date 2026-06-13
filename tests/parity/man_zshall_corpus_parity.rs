@@ -513,7 +513,6 @@ mod man_glob {
 
     /// flag scope ends at enclosing group.
     #[test]
-    #[ignore = "zshrs gap: glob flag scope — (#i) inside ((#i)FOOX)X leaks past the enclosing group (final X wrongly case-folded)"]
     fn flag_scope_group() {
         assert_parity(r###"setopt extendedglob; [[ fooxx = ((#i)FOOX)X ]] && echo yes || echo no; [[ fooxX = ((#i)FOOX)X ]] && echo yes || echo no"###);
     }
