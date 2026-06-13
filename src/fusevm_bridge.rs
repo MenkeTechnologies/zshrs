@@ -5368,12 +5368,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let ksh_shift = |raw: i64| -> i64 {
                 if ksh_arrays && raw >= 0 { raw + 1 } else { raw }
             };
+            // c:Src/params.c getindex — subscript bounds are MATH
+            // expressions, not bare integers: `a[(( ${#a}+1 ))]=(x)`,
+            // `a[n+1]=(x)`. Plain `parse::<i64>()` returned 0 on any
+            // arithmetic subscript, which the `i == 0` guard turned into
+            // a silent no-op (computed-index append never landed). Parse
+            // the literal fast-path first, then fall back to mathevali
+            // (which handles `(( ))` grouping, var refs, and operators).
+            let eval_bound = |s: &str| -> i64 {
+                let t = s.trim();
+                t.parse::<i64>()
+                    .ok()
+                    .or_else(|| crate::ported::math::mathevali(t).ok())
+                    .unwrap_or(0)
+            };
             let (start, end) = if let Some((s_str, e_str)) = key.split_once(',') {
-                let s = ksh_shift(s_str.trim().parse::<i64>().unwrap_or(0));
-                let e = ksh_shift(e_str.trim().parse::<i64>().unwrap_or(0));
+                let s = ksh_shift(eval_bound(s_str));
+                let e = ksh_shift(eval_bound(e_str));
                 (start_translate(s), end_translate(e))
             } else {
-                let i = ksh_shift(key.trim().parse::<i64>().unwrap_or(0));
+                let i = ksh_shift(eval_bound(&key));
                 if i == 0 {
                     return;
                 }

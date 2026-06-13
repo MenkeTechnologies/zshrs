@@ -1984,7 +1984,6 @@ print "test body""##,
 
     /// src/commands/run.zsh:414 — splice to computed index with `${var+alt}`.
     #[test]
-    #[ignore = "zshrs gap: arr[(( ${#arr}+1 ))]=(...) computed-index array assignment no-ops (count stays 0)"]
     fn splice_computed_index_plus_test() {
         assert_parity(
             r##"typeset -a testfiles
