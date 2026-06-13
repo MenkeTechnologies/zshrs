@@ -1063,14 +1063,12 @@ line2" >$t/f; print "${mapfile[$t/f]}"; rm -rf $t"###);
 
     /// mapfile assignment writes file.
     #[test]
-    #[ignore = "zshrs gap: assigning $mapfile[file] does not write the file (read works)"]
     fn mapfile_write() {
         assert_parity(r###"zmodload zsh/mapfile; t=$(mktemp -d); mapfile[$t/g]="written via mapfile"; print "$(<$t/g)"; rm -rf $t"###);
     }
 
     /// mapfile unset deletes file.
     #[test]
-    #[ignore = "zshrs gap: unset $mapfile[file] does not delete the file"]
     fn mapfile_unset() {
         assert_parity(r###"zmodload zsh/mapfile; t=$(mktemp -d); print x >$t/h; unset "mapfile[$t/h]"; [[ -e $t/h ]] && print exists || print gone; rm -rf $t"###);
     }
