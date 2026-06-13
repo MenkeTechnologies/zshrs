@@ -5145,18 +5145,18 @@ pub fn bin_typeset(
                 // the inner is plain-whitespace separated.
                 // Bug #93 in docs/BUGS.md.
                 let split_elems: Vec<String> = if inner.contains('\u{1f}') {
-                    inner
-                        .split('\u{1f}')
-                        .filter(|s| !s.chars().all(|c| c.is_ascii_whitespace()) || s.is_empty())
-                        .map(|s| s.trim_matches(|c: char| c == ' ' || c == '\t' || c == '\n').to_string())
-                        .filter(|s| !s.is_empty() || true) // keep empties
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        // Drop leading/trailing empties created when the
-                        // open/close `=(`/`)` argv segments contribute
-                        // an empty fragment before the first sentinel
-                        // / after the last sentinel.
-                        .collect::<Vec<_>>()
+                    // c:Src/builtin.c:2952 globlist — each REJOIN_SEP
+                    // segment is ONE already-parsed array element (the
+                    // parser split argv and quote-removed each element),
+                    // so split EXACTLY on the sentinel. Do NOT trim or
+                    // drop all-whitespace segments — that would corrupt
+                    // quoted leading/trailing whitespace, e.g.
+                    // `local a=( "  name: x" )` (the `  name:` prefix is
+                    // significant and must survive for `${a[(i)  name: …]}`
+                    // to match). Boundary empties from the `=(` / `)` argv
+                    // fragments are removed by the first/last-empty trim
+                    // immediately below.
+                    inner.split('\u{1f}').map(String::from).collect::<Vec<_>>()
                 } else {
                     inner.split_whitespace().map(String::from).collect()
                 };

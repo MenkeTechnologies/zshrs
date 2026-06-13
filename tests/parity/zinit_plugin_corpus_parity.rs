@@ -571,7 +571,6 @@ f"##,
 
     /// internal/p10k.zsh:4549 — `(i)` forward pattern subscript with (b)-escaped needle.
     #[test]
-    #[ignore = "zshrs gap: array [(i)pat] forward subscript with multi-word pattern returns size+1 (no match) when zsh finds it"]
     fn forward_subscript_with_escaped_needle() {
         assert_parity(
             r##"f() {
