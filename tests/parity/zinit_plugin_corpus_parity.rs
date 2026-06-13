@@ -265,7 +265,6 @@ print -r -- ${(t)_HIST__ARGS}"##,
 
     /// functions/hist:113 — `(#a1)` approximate match with error count.
     #[test]
-    #[ignore = "zshrs gap: (#a1) approximate match misses equal-length differing-word case (zsh: approx-match; zshrs: no-match)"]
     fn approx_match_error_count() {
         assert_parity(
             r##"f() {
