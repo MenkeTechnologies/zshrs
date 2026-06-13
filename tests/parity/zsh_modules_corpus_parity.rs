@@ -775,7 +775,6 @@ mod zmod_stat {
 
     /// nonexistent file error.
     #[test]
-    #[ignore = "zshrs gap: zstat errno message case differs ('No such file' vs zsh's 'no such file') — strerror capitalization"]
     fn nonexistent_error() {
         assert_parity(r###"zmodload zsh/stat; zstat +size /no/such/zzz 2>&1; echo "exit=$?""###);
     }
