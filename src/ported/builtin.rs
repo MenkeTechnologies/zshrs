@@ -9094,7 +9094,7 @@ pub fn bin_print(
         // start)`. The partial output produced before the bad
         // directive is still printed (C emits via fwrite/fprintf
         // throughout the format walk).
-        let out = match printf_format(&fmt, rest) {
+        let (out, bounds) = match printf_format(&fmt, rest) {
             Ok(s) => s,
             Err((partial, bad)) => {
                 print!("{}", partial); // c: partial output already in fout
@@ -9124,7 +9124,39 @@ pub fn bin_print(
             return 0;
         }
         if let Some(ref v) = dest_var {
-            setsparam(v, &out);
+            // c:builtin.c:5162 — `visarr = v && PM_TYPE(...) == PM_ARRAY`.
+            // When the -v target is an existing array, the output is
+            // split into one element per format-reuse cycle (c:5552-5560
+            // `if (visarr && splits) { ... setaparam(...) }`); otherwise
+            // the whole output is one scalar (c:5567 `setsparam(...)`).
+            let visarr = {
+                use crate::ported::zsh_h::{PM_ARRAY, PM_TYPE};
+                paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|tab| {
+                        tab.get(v).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_ARRAY)
+                    })
+                    .unwrap_or(false)
+            };
+            // c:5169-5171 — `splits` is only allocated on the SECOND and
+            // later cycles (`argp > args`); a single-cycle format leaves
+            // `splits` NULL, so `if (visarr && splits)` (c:5552) is false
+            // and the whole output becomes one scalar. `bounds.len() > 1`
+            // mirrors `splits != NULL`.
+            if visarr && bounds.len() > 1 {
+                // c:5553-5559 — slice `out` at each cycle boundary; one
+                // array element per format application. `bounds` holds the
+                // byte offset where each cycle began (the first is 0).
+                let mut arrayval: Vec<String> = Vec::with_capacity(bounds.len());
+                for (i, &start) in bounds.iter().enumerate() {
+                    let end = bounds.get(i + 1).copied().unwrap_or(out.len());
+                    arrayval.push(out[start..end].to_string());
+                }
+                setaparam(v, arrayval);
+            } else {
+                setsparam(v, &out);
+            }
         } else {
             // c:Src/builtin.c — C printf goes through libc fwrite to
             // stdout, unbuffered when fd 1 is the redirect target.
@@ -14768,7 +14800,11 @@ fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
 /// then `return 1` — partial output already written stays written. The
 /// Rust caller (bin_print, c:4854+) mirrors that: print the partial
 /// output, emit `zwarnnam`, return 1.
-fn printf_format(fmt: &str, args: &[String]) -> Result<String, (String, char)> {
+/// Returns the formatted output plus the byte offset at which each
+/// format-reuse CYCLE began (c:Src/builtin.c `splits`). `printf -v` to
+/// an array assigns one element per cycle, so the caller slices `out`
+/// at these boundaries.
+fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (String, char)> {
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
@@ -14784,11 +14820,15 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<String, (String, char)> {
         getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
     let mut out = String::new();
     let mut arg_i: usize = 0;
+    // c:Src/builtin.c — `splits`: byte offset where each format-reuse
+    // cycle starts (the first is 0). Used by `printf -v ARRAY`.
+    let mut bounds: Vec<usize> = Vec::new();
     // c:Src/builtin.c:4914-4923 — printf reapplies the format string
     // until ALL args are consumed. `printf '%s,' a b c` → `a,b,c,`,
     // not `a,`. The outer loop reapplies; the inner do-while body
     // mirrors C's per-arg conversion loop directly.
     loop {
+        bounds.push(out.len());
         let prev = arg_i;
         let mut iter = fmt.chars().peekable();
         while let Some(c) = iter.next() {
@@ -14978,7 +15018,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<String, (String, char)> {
             break;
         }
     }
-    Ok(out)
+    Ok((out, bounds))
 }
 
 /// Apply a printf-style `%[-flag][width][.prec]s` spec to a string.

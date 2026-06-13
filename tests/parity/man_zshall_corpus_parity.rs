@@ -1083,7 +1083,6 @@ mod man_builtins {
 
     /// printf -v array, one element per reuse.
     #[test]
-    #[ignore = "zshrs gap: printf -v into an array with format reuse stores one scalar instead of one element per reuse"]
     fn printf_v_array() {
         assert_parity(r###"typeset -a arr; printf -v arr "%s+%s\n" a b c d; print -r -- "${#arr}|${arr[1]}""###);
     }
