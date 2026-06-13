@@ -13871,7 +13871,12 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             1,
             -1,
             0,
-            Some("ab:nv:"),
+            // c:Src/Modules/pcre.c:522 — `"A:a:v:n:bd"`. `A`(named assoc),
+            // `a`(capture array), `v`(match var), `n`(start offset) take
+            // args; `b`(offset pair) and `d`(dfa) are flags. The prior
+            // "ab:nv:" made `-a` a flag (so `-a arr` ate the subject),
+            // `-b` arg-taking, and dropped `-A`/`-n:`/`-d` entirely.
+            Some("A:a:v:n:bd"),
             None,
         ),
         BUILTIN(
