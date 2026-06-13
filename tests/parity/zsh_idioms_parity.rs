@@ -597,14 +597,22 @@ mod coproc {
     #[test]
     fn coproc_smoke() {
         let z = run_zsh(
-            r#"coproc cat
+            // `exec >&p-` is the `>&FILE` form — it CREATES a file
+            // named `p-`. Run in a throwaway tempdir (cleaned on exit)
+            // so the artifact never lands in the repo root.
+            r#"d=$(mktemp -d); trap 'command rm -rf "$d"' EXIT; cd "$d" || exit 1
+coproc cat
 echo hello >&p
 read -p line
 echo "got:$line"
 exec >&p-"#,
         );
         let r = run_zshrs(
-            r#"coproc cat
+            // `exec >&p-` is the `>&FILE` form — it CREATES a file
+            // named `p-`. Run in a throwaway tempdir (cleaned on exit)
+            // so the artifact never lands in the repo root.
+            r#"d=$(mktemp -d); trap 'command rm -rf "$d"' EXIT; cd "$d" || exit 1
+coproc cat
 echo hello >&p
 read -p line
 echo "got:$line"
