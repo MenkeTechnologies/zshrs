@@ -1067,6 +1067,11 @@ pub(crate) fn notzero(a: mnumber) -> bool {
 // ============================================================
 
 thread_local! {
+    /// `mnumber lastmathval` (math.c:53) — result of the most recent
+    /// top-level `matheval`. Read by callmathfunc's MFF_USERFUNC branch
+    /// (math.c:1115 `return lastmathval`): a `functions -M` math function
+    /// communicates its result via the last `(( ))` in its body.
+    static M_LASTMATHVAL: Cell<mnumber> = const { Cell::new(mnumber { l: 0, d: 0.0, type_: MN_INTEGER }) };
     /// `static char *ptr` — current input cursor. Owned String in Rust
     /// (vs C's caller-owned char*) so the thread_local isn't a borrow.
     static M_INPUT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -2391,19 +2396,23 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // Gate the dispatch on a present MFF_USERFUNC entry whose
     // shfunc handler resolves to `name` (per C math.c:1108's
     // `if (f->flags & MFF_USERFUNC)` check).
-    let is_registered_userfunc = crate::ported::module::MATHFUNCS
+    // c:1109 — `shfnam = f->module ? f->module : n`. A `functions -M`
+    // entry can map the math name to a DIFFERENT implementing shell
+    // function (the optional 4th arg): `functions -M addtwo 2 2 _addtwo`
+    // dispatches to `_addtwo`. Resolve the impl name from the entry's
+    // `module` field, falling back to the math name.
+    let userfunc_impl: Option<String> = crate::ported::module::MATHFUNCS
         .lock()
         .ok()
-        .map(|tab| {
-            tab.iter().any(|p| {
-                p.name == name && (p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0
-            })
-        })
-        .unwrap_or(false);
-    if is_registered_userfunc {
-    if let Some(mut shfunc) = crate::ported::utils::getshfunc(name) {
+        .and_then(|tab| {
+            tab.iter()
+                .find(|p| p.name == name && (p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0)
+                .map(|p| p.module.clone().unwrap_or_else(|| p.name.clone()))
+        });
+    if let Some(impl_name) = userfunc_impl {
+    if let Some(mut shfunc) = crate::ported::utils::getshfunc(&impl_name) {
         // Build largs = [name, arg-strings].
-        let mut largs: Vec<String> = vec![name.to_string()];
+        let mut largs: Vec<String> = vec![impl_name.clone()];
         let argv_str: Vec<String> = call[paren..]
             .trim_start_matches('(')
             .trim_end_matches(')')
@@ -2412,22 +2421,24 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             .filter(|s| !s.is_empty())
             .collect();
         largs.extend(argv_str.iter().cloned());
-        let name_for_body = name.to_string();
+        let name_for_body = impl_name.clone();
         let body_args = argv_str.clone();
         let body_runner = move || -> i32 {
             crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args).unwrap_or(0)
         };
-        // c:1114 — `doshfunc(shfunc, l, 1);`. Body's last math
-        // assignment lands in `lastmathval`.
+        // c:1114 — `doshfunc(shfunc, l, 1)`. The body runs a nested
+        // `(( ))` which RE-ENTERS this evaluator and clobbers the outer
+        // parser's input/pos/stack thread-locals; save + restore them
+        // around the call so the OUTER `$(( fn(x) ))` keeps parsing
+        // (without this it errored "operand expected at end of string").
+        // M_LASTMATHVAL is NOT part of save_state, so the body's last
+        // `(( ))` result survives the restore.
+        let saved = save_state();
         let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
-        // c:Src/math.c:53 — `mnumber lastmathval` global. Rust port
-        // doesn't yet have it as a free static; return the body's
-        // last-status as int for now.
-        return mnumber {
-            l: crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed) as i64,
-            d: 0.0,
-            type_: MN_INTEGER,
-        };
+        restore_state(saved);
+        // c:1115 — `return lastmathval`. The body's last arithmetic
+        // evaluation (e.g. `(( REPLY = $1 + 2 ))`) is the function's value.
+        return M_LASTMATHVAL.with(|c| c.get());
     }
     } // close `if mathfunc_entry.is_some()`
 
@@ -3444,6 +3455,11 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     let result = mathevall();
     // c:1496 — `mtok = xmtok;` restore. Done even on error path.
     M_MTOK.with(|c| c.set(xmtok)); // c:1496
+    // c:Src/math.c:1500 — `lastmathval = z;` records the result of this
+    // top-level eval so callmathfunc's MFF_USERFUNC branch can return it.
+    if let Ok(ref n) = result {
+        M_LASTMATHVAL.with(|c| c.set(*n));
+    }
     result
 }
 
