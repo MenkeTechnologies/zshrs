@@ -4472,6 +4472,17 @@ pub fn bin_typeset(
                     .is_some_and(|pm| (pm.node.flags as u32 & PM_UNSET) == 0)
             })
             .unwrap_or(false);
+        // c:Src/builtin.c:2078 — snapshot the EXISTING param's local
+        // level BEFORE this arg's createparam/assign runs. The bare-name
+        // print decision (c:2244, inlined at ~5962) needs the pre-state
+        // level to tell "re-declare same-level local" (usepm kept →
+        // print) from "localize a higher-level/global var" (usepm=0 →
+        // no print). Sentinel -1 when the param doesn't pre-exist.
+        let pm_level_existing: i32 = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(arg_name).map(|pm| pm.level))
+            .unwrap_or(-1);
         let first_is_digit = arg_name
             .as_bytes()
             .first()
@@ -5946,11 +5957,19 @@ pub fn bin_typeset(
             // PM_LOCAL is added implicitly when not -g / -x / -m so
             // mask it out when checking "are any user flags set".
             //
-            // Only fire at top scope: inside a function (`local x` /
-            // `typeset x`), the bare form localizes the variable
-            // rather than printing it.
+            // c:Src/builtin.c:2078-2090 — the bare form prints UNLESS it
+            // is localizing a variable from an outer scope. zsh clears
+            // `usepm` (→ no print) only when `locallevel != pm->level &&
+            // (on & PM_LOCAL)` — i.e. the existing param lives at a
+            // different (outer/global) level and we're making a local.
+            // Re-declaring a param that ALREADY exists at the current
+            // level (`f(){ typeset x=1; typeset x }`) keeps usepm and
+            // DOES print `x=1`. The previous `at_top_scope` gate wrongly
+            // suppressed that in-function re-declaration case.
             let user_on = (on as u32) & !PM_LOCAL;
-            let at_top_scope = locallevel.load(Relaxed) == 0;
+            let cur_ll = locallevel.load(Relaxed);
+            let not_localizing =
+                pm_level_existing == cur_ll || (on as u32 & PM_LOCAL) == 0;
             // c:Src/builtin.c:2244 — `else if (!OPT_ISSET(ops,'g') &&
             // (unset(TYPESETSILENT) || OPT_ISSET(ops,'m')))`. The `-g`
             // (global-scope) flag SUPPRESSES the bare-name print so
@@ -5961,7 +5980,7 @@ pub fn bin_typeset(
             // startup.
             if user_on == 0
                 && off == 0
-                && at_top_scope
+                && not_localizing
                 && !OPT_ISSET(&ops, b'p')
                 && !OPT_ISSET(&ops, b'g')
                 && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm'))
