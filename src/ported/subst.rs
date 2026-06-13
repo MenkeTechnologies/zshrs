@@ -7046,6 +7046,49 @@ pub fn paramsubst(
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
+                    // c:Src/subst.c:3540 + 3845 — a `:#pat` filter is a
+                    // modifier; zsh runs modifiers BEFORE getlen, so the
+                    // length counts the FILTERED array. The Rust port
+                    // computes length early (the `:#` arm at ~7663 never
+                    // runs for the `#` form), so apply the element-wise
+                    // filter here. `(M)`/SUB_MATCH inverts the disposition
+                    // (keep matching instead of dropping it). Mirrors the
+                    // match_fn + invert logic of the main `:#` arm.
+                    if let Some(pat) = rest.as_str().strip_prefix(":#") {
+                        let arr_src: Vec<String> = arrays_get(&var_name)
+                            .or_else(|| {
+                                assoc_get(&var_name).map(|m| m.values().cloned().collect())
+                            })
+                            .or_else(|| split_parts.clone())
+                            .unwrap_or_default();
+                        let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat))); // c:3540
+                        let invert = (sub_flags_bits & SUB_MATCH) != 0; // c:2171 SUB_MATCH
+                        arr_src
+                            .iter()
+                            .filter(|elem| {
+                                // c:3540 getmatch — empty pattern ⇔ empty subject.
+                                let m = if p.is_empty() {
+                                    elem.is_empty()
+                                } else {
+                                    patcompile(
+                                        &{
+                                            let mut __t = p.to_string();
+                                            crate::ported::glob::tokenize(&mut __t);
+                                            __t
+                                        },
+                                        PAT_HEAPDUP as i32,
+                                        None,
+                                    )
+                                    .map_or(false, |__p| pattry(&__p, elem))
+                                };
+                                if invert {
+                                    m
+                                } else {
+                                    !m
+                                } // c:3540
+                            })
+                            .count()
+                    } else
                     // c:3853 element count — a flagged-subscript array
                     // (split_parts set) counts its matched elements.
                     if flagged_array_subscript {
