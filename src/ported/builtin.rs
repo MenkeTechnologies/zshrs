@@ -7276,6 +7276,14 @@ pub fn bin_unset(
         match subscript {
             // c:3886
             Some(key) => {
+                // c:Src/Modules/mapfile.c:126 unsetpmmapfile — unsetting
+                // an element of the special $mapfile assoc UNLINKS the
+                // file named by the key. It is not a regular assoc, so
+                // route here before the generic assoc/array delete.
+                if nm == "mapfile" {
+                    crate::ported::modules::mapfile::unsetpmmapfile(key, false);
+                    continue;
+                }
                 // c:3893 assoc subscript: `m[key]` delete.
                 if let Some(mut map) = crate::ported::exec_hooks::assoc(nm) {
                     map.shift_remove(key); // c:3893

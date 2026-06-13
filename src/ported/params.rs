@@ -5575,6 +5575,43 @@ Some(Box::new(node.clone()))
                 unqueue_signals();
                 return Some(pm);
             }
+            "mapfile" => {
+                // c:Src/Modules/mapfile.c:68 setpmmapfile —
+                // `mapfile[fname]=value` WRITES `value` to the file
+                // named by the key (creating it if needed). The setfn
+                // is ported; route the element-assign to it (the
+                // PartabHashEntry dispatch carries only get/scan).
+                use crate::ported::zsh_h::hashnode;
+                use crate::ported::zsh_h::param as ParamStruct;
+                crate::ported::modules::mapfile::setpmmapfile(key, val, false);
+                let pm: Box<ParamStruct> = Box::new(ParamStruct {
+                    node: hashnode {
+                        next: None,
+                        nam: key.to_string(),
+                        flags: 0,
+                    },
+                    u_data: 0,
+                    u_tied: None,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                });
+                unqueue_signals();
+                return Some(pm);
+            }
             _ => {}
         }
     }
