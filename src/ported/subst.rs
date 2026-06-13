@@ -2706,8 +2706,13 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
 
     // C: `if (escapes && (*s == Stringg || *s == Qstring) && s[1])`
     let chars: Vec<char> = s.chars().collect(); // c:1533
+    // c:1533 checks the tokenized `$` (Stringg/Qstring). When the flag
+    // arg reaches here untokenized (the bare-`$NAME` separator path,
+    // e.g. `${(ps.$sep.)v}`), the `$` is a literal 0x24; accept it too
+    // so the variable's value is substituted instead of being escape-
+    // decoded into a literal `$sep`.
     if escapes && chars.len() >= 2                          // c:1533
-        && (chars[0] == STRING || chars[0] == Qstring)
+        && (chars[0] == STRING || chars[0] == Qstring || chars[0] == '$')
     {
         // Walk identifier chars after the leading $/Qstring.
         let mut pend = 1_usize; // c:1534

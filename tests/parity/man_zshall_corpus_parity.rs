@@ -328,7 +328,6 @@ mod man_expn {
 
     /// (p) $var as flag argument separator.
     #[test]
-    #[ignore = "zshrs gap: (ps.$sep.) — (p) flag does not expand $sep as the split separator (no split occurs)"]
     fn p_var_separator() {
         assert_parity(r###"sep=:; val=a:b:c; print -l ${(ps.$sep.)val}"###);
     }
