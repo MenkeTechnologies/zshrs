@@ -5845,15 +5845,44 @@ pub fn doshfunc(
     // Push BOTH the static `zsh_eval_context` (matches C's variable)
     // AND the paramtab array entry (what `${zsh_eval_context[*]}`
     // reads). Pop on every return path via the guard struct so
-    // panics / early returns don't leak the entry.
-    crate::vm_helper::push_zsh_eval_context("shfunc");
-    struct EvalContextGuard;
-    impl Drop for EvalContextGuard {
+    // panics / early returns don't leak the entry. Inlined here
+    // (sole caller) — `zsh_eval_context` is this module's own static.
+    //
+    // c:Src/exec.c:1251-1266 — `zsh_eval_context[*]` shell-visible
+    // mirror: the array entry holds the stack; the scalar
+    // `ZSH_EVAL_CONTEXT` holds the `:`-joined form. Both written via
+    // the PM_READONLY bypass (`u_arr`/`u_str` direct), the same shape
+    // the binary's `-c` ZSH_EVAL_CONTEXT init uses (bins/zshrs.rs).
+    // A reusable `sync` closure is captured by the guard's Drop so
+    // the same write happens after the push (here) and the pop (on
+    // every return path / panic).
+    let sync_eval_ctx = |stack: &[String]| {
+        let joined = stack.join(":");
+        if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+            if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                pm.u_arr = Some(stack.to_vec());
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+            if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                pm.u_str = Some(joined);
+                pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+            }
+        }
+    };
+    if let Ok(mut ctx) = zsh_eval_context.lock() {
+        ctx.push("shfunc".to_string());
+        sync_eval_ctx(&ctx);
+    }
+    struct EvalContextGuard<F: Fn(&[String])>(F);
+    impl<F: Fn(&[String])> Drop for EvalContextGuard<F> {
         fn drop(&mut self) {
-            crate::vm_helper::pop_zsh_eval_context();
+            if let Ok(mut ctx) = zsh_eval_context.lock() {
+                ctx.pop();
+                (self.0)(&ctx);
+            }
         }
     }
-    let _eval_ctx_guard = EvalContextGuard;
+    let _eval_ctx_guard = EvalContextGuard(sync_eval_ctx);
     // c:Src/exec.c — function bodies execute with `lineno` reset to
     // the relative line within the body (incremented per WC_PIPE
     // from the wordcode-encoded lineno). zsh's zerrmsg

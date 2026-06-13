@@ -1605,7 +1605,7 @@ pub fn dotrap(sig: i32) -> i32 {
         // outer stdout around the body, then revert to the
         // cmdsub-bound fd. Same idea as bash's command-subst trap
         // routing (Functions/Misc/runtraps).
-        let outer = crate::fusevm_bridge::cmdsubst_outer_stdout();
+        let outer = crate::ported::exec_hooks::cmdsubst_outer_stdout();
         let saved_inner = if outer.is_some() {
             unsafe { libc::dup(libc::STDOUT_FILENO) }
         } else {

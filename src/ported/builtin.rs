@@ -9114,7 +9114,7 @@ pub fn bin_print(
             // c:Src/builtin.c:5408 — `print_val(unmetafy(stringval,
             // &curlen))`: printf's values are unmetafied before the
             // write. Decode Meta-char pairs to raw bytes. Bug #127.
-            let _ = lk.write_all(&crate::vm_helper::unmetafy_str(&out));
+            let _ = lk.write_all(&crate::ported::utils::unmetafy_str(&out));
             let _ = lk.flush();
         }
         return 0;
@@ -9473,7 +9473,7 @@ pub fn bin_print(
         // metafied (Meta-char pairs, vm_helper::meta_encode_byte)
         // until the byte boundary, so decode here — `print $'\xff'`
         // writes the single raw byte 0xff. Bug #127.
-        let body_bytes = crate::vm_helper::unmetafy_str(&body);
+        let body_bytes = crate::ported::utils::unmetafy_str(&body);
         if let Some(mut f) = dest_fd_active {
             // c:4847 — write to dup'd file descriptor.
             use std::io::Write as _;

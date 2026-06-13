@@ -51,6 +51,12 @@ pub type RunCommandSubstitutionFn = fn(&str) -> String;
 pub type PparamsGetFn = fn() -> Vec<String>;
 /// `PparamsSetFn` type alias.
 pub type PparamsSetFn = fn(Vec<String>);
+/// Read the saved outer stdout fd for an in-progress `$(...)`
+/// capture (the top of the bridge's CMDSUBST_OUTER_FDS stack), or
+/// None when not inside a cmdsub. Used by the trap dispatcher to
+/// route a trap body's stdout to the parent's real terminal instead
+/// of the cmdsub-bound pipe (Bug #56).
+pub type CmdsubstOuterStdoutFn = fn() -> Option<i32>;
 /// Drop a function from both the compiled-chunk and source maps.
 /// Returns true if either entry existed.
 pub type UnregisterFunctionFn = fn(&str) -> bool;
@@ -70,6 +76,7 @@ static RUN_COMMAND_SUBSTITUTION: OnceLock<RunCommandSubstitutionFn> = OnceLock::
 static PPARAMS_GET: OnceLock<PparamsGetFn> = OnceLock::new();
 static PPARAMS_SET: OnceLock<PparamsSetFn> = OnceLock::new();
 static UNREGISTER_FUNCTION: OnceLock<UnregisterFunctionFn> = OnceLock::new();
+static CMDSUBST_OUTER_STDOUT: OnceLock<CmdsubstOuterStdoutFn> = OnceLock::new();
 /// `install_array_get` — see implementation.
 pub fn install_array_get(f: ArrayGetFn) {
     let _ = ARRAY_GET.set(f);
@@ -129,6 +136,15 @@ pub fn install_pparams_set(f: PparamsSetFn) {
 /// `install_unregister_function` — see implementation.
 pub fn install_unregister_function(f: UnregisterFunctionFn) {
     let _ = UNREGISTER_FUNCTION.set(f);
+}
+/// `install_cmdsubst_outer_stdout` — see [`CmdsubstOuterStdoutFn`].
+pub fn install_cmdsubst_outer_stdout(f: CmdsubstOuterStdoutFn) {
+    let _ = CMDSUBST_OUTER_STDOUT.set(f);
+}
+/// Saved outer stdout fd for an in-progress `$(...)` capture, or
+/// None when not inside a cmdsub. See [`CmdsubstOuterStdoutFn`].
+pub fn cmdsubst_outer_stdout() -> Option<i32> {
+    CMDSUBST_OUTER_STDOUT.get().and_then(|f| f())
 }
 /// `array` — see implementation.
 pub fn array(name: &str) -> Option<Vec<String>> {

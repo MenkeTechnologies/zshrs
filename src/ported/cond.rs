@@ -475,7 +475,7 @@ pub fn evalcond(
                             // same bridge helper zcond_regex_match
                             // uses. BUGS.md #558.
                             let right_ere =
-                                crate::vm_helper::posix_ere_bracket_escape(&right);
+                                crate::ported::modules::regex::posix_ere_bracket_escape(&right);
                             match regex::RegexBuilder::new(&right_ere)
                                 .dot_matches_new_line(true)
                                 .build()

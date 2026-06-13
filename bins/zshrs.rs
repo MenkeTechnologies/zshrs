@@ -1764,12 +1764,27 @@ pub fn zshrs_main() {
         // vtable so internal writes bypass via direct paramtab
         // mutation.
         //
-        // Route through `push_zsh_eval_context` so the tied array
-        // `zsh_eval_context[*]` is populated too — `${zsh_eval_context[*]}`
-        // expansion reads the array, not the scalar. Bug #262 in
-        // docs/BUGS.md. The push owns both the static C-port stack
-        // AND the paramtab mirror.
-        zsh::vm_helper::push_zsh_eval_context("cmdarg");
+        // Push "cmdarg" onto the static `zsh_eval_context` stack AND
+        // mirror into the tied `zsh_eval_context` array + the
+        // `ZSH_EVAL_CONTEXT` scalar so `${zsh_eval_context[*]}`
+        // expansion reads it. Bug #262 in docs/BUGS.md. Inlined here
+        // (formerly a shared vm_helper fn; relocated into doshfunc +
+        // this bin-entry callsite). No nested process below pops it —
+        // the `-c` invocation owns the stack for the whole run.
+        if let Ok(mut ctx) = zsh::ported::exec::zsh_eval_context.lock() {
+            ctx.push("cmdarg".to_string());
+            let joined = ctx.join(":");
+            if let Ok(mut tab) = zsh::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("zsh_eval_context") {
+                    pm.u_arr = Some(ctx.clone());
+                    pm.node.flags &= !(zsh::ported::zsh_h::PM_UNSET as i32);
+                }
+                if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
+                    pm.u_str = Some(joined);
+                    pm.node.flags &= !(zsh::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+        }
         // POSIX `sh -c script [name [args...]]` semantics
         // (Src/init.c:271 + 479): the next non-option arg AFTER the
         // command string becomes $0; remaining args become $1, $2, …

@@ -3376,44 +3376,10 @@ fn autoload_register_source(name: &str, body: &str) -> String {
     }
 }
 
-// Push a label onto the static `zsh_eval_context` (port of C's
-// `Src/exec.c:1251-1266`) AND mirror to the paramtab `zsh_eval_context`
-// array entry + tied `ZSH_EVAL_CONTEXT` scalar so the shell-visible
-// expansions reflect the call-chain context. Bug #262 in docs/BUGS.md.
-// Lives in vm_helper (not src/ported/) because src/ported/ is reserved
-// for direct C-source ports.
-pub fn push_zsh_eval_context(label: &str) {
-    if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
-        ctx.push(label.to_string());
-        sync_zsh_eval_context_to_param(&ctx);
-    }
-}
-
-/// Pop the most recently pushed label from the static and the
-/// paramtab/scalar mirror. Pairs with `push_zsh_eval_context`.
-pub fn pop_zsh_eval_context() {
-    if let Ok(mut ctx) = crate::ported::exec::zsh_eval_context.lock() {
-        ctx.pop();
-        sync_zsh_eval_context_to_param(&ctx);
-    }
-}
-
-/// Replace the shell-visible mirror with the current stack contents.
-/// Writes the array entry directly (PM_READONLY bypass — same pattern
-/// the binary's `-c` ZSH_EVAL_CONTEXT init uses at bins/zshrs.rs).
-fn sync_zsh_eval_context_to_param(stack: &[String]) {
-    let joined = stack.join(":");
-    if let Ok(mut tab) = crate::ported::params::paramtab().write() {
-        if let Some(pm) = tab.get_mut("zsh_eval_context") {
-            pm.u_arr = Some(stack.to_vec());
-            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-        }
-        if let Some(pm) = tab.get_mut("ZSH_EVAL_CONTEXT") {
-            pm.u_str = Some(joined);
-            pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
-        }
-    }
-}
+// zsh_eval_context push/pop/sync relocated 2026-06-12 INTO doshfunc
+// (src/ported/exec.rs) — its sole caller, and `zsh_eval_context` is
+// that module's own static. The shell-visible mirror writes inline
+// at the push site + the guard's Drop. No bridge indirection.
 
 impl ShellExecutor {
     /// Execute the trap body for a signal name from the REPL signal
