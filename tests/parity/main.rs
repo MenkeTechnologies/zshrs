@@ -61,6 +61,7 @@ mod let_arith_command_parity;
 mod lexer_parity;
 mod loops_parity;
 mod math_parity;
+mod man_zshall_corpus_parity;
 mod modules_parity;
 mod noclobber_parity;
 mod omz_snippet_corpus_parity;
