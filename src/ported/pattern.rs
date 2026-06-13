@@ -1765,6 +1765,10 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             };
             let opcode = P_OPEN + n as u8;
             let open_off = patnode(opcode);
+            // c:770 — `savglobflags = patglobflags`. Snapshot the glob
+            // flags entering the group so a flag set INSIDE it (e.g.
+            // `((#i)foo)`) can be restored on the way out.
+            let savglobflags = patglobflags.load(Ordering::Relaxed);
             let mut inner_flags: i32 = 0;
             let inner = patcompswitch(1, &mut inner_flags);
             if inner < 0 {
@@ -1791,6 +1795,27 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             // Each branch's operand chain ends at P_CLOSE_N.
             chain_branches_to(inner as usize, close_off);
             *flagp &= !P_PURESTR;
+            // c:920-929 — `if (paren && gfchanged) { pattail(ender,
+            // patnode(P_GFLAGS)); patglobflags = savglobflags; }`. When
+            // a glob flag that the matcher honors mid-pattern
+            // (IGNCASE / LCMATCHUC / MULTIBYTE) changed inside the
+            // group, append a P_GFLAGS node after P_CLOSE that restores
+            // the entering value. Without it `[[ FOOXx = ((#i)foox)X ]]`
+            // wrongly matched: the `(#i)` set GF_IGNCASE for the rest of
+            // the match, so the trailing case-sensitive `X` folded too.
+            let after_gf = patglobflags.load(Ordering::Relaxed);
+            let relevant = GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE;
+            if (after_gf ^ savglobflags) & relevant != 0 {
+                let gf_off = patnode(P_GFLAGS);
+                {
+                    let mut buf = patout.lock().unwrap();
+                    buf.extend_from_slice(&(savglobflags & relevant).to_le_bytes());
+                }
+                set_next(close_off, gf_off);
+                patglobflags.store(savglobflags, Ordering::Relaxed); // c:927
+                *tail_out = gf_off;
+                return open_off as i64;
+            }
             *tail_out = close_off;
             open_off as i64
         }
