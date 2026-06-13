@@ -362,7 +362,6 @@ mod features {
 
     /// functions -M user math function.
     #[test]
-    #[ignore = "zshrs gap: functions -M user-defined math functions not implemented (addtwo() in (( )) produces no result)"]
     fn functions_M() {
         assert_parity(r###"_addtwo(){ REPLY=$(( $1 + $2 )) }
 functions -M addtwo 2 2 _addtwo
@@ -371,7 +370,6 @@ print $(( addtwo(10,20) ))"###);
 
     /// functions -M with branching logic.
     #[test]
-    #[ignore = "zshrs gap: functions -M math function with branching body not implemented (mymax() yields nothing)"]
     fn functions_M_branch() {
         assert_parity(r###"_mymax(){ REPLY=$(( $1 > $2 ? $1 : $2 )) }
 functions -M mymax 2 2 _mymax
