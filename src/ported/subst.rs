@@ -3379,6 +3379,12 @@ pub fn paramsubst(
 
         // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
         let mut plan9 = isset(RCEXPANDPARAM); // c:1663
+        // Set when an explicit `${^^...}` turned RC_EXPAND OFF (c:2554).
+        // Distinct from "plan9 happens to be false": under `setopt
+        // rcexpandparam` plan9 starts true and `^^` forces it false, in
+        // which case the array result must JOIN (scalar) so it does NOT
+        // cross-product-distribute. Drives the join below.
+        let mut rc_force_off = false;
 
         // c:1669 — `int globsubst = isset(GLOBSUBST);` (handled inline
         // at use sites via opt_state_set rather than tracked here).
@@ -4321,6 +4327,7 @@ pub fn paramsubst(
                 let nxt = body_chars.get(idx + 1).copied();
                 if matches!(nxt, Some('^') | Some(Hat)) {
                     plan9 = false;
+                    rc_force_off = true; // c:2554 `${^^}` explicit RC-off
                     idx += 2;
                 } else {
                     plan9 = true;
@@ -12349,6 +12356,19 @@ pub fn paramsubst(
         // splat from the underlying array storage. Gate auto_splat
         // off when wantt fired, mirroring C's `if (isarr)` at
         // c:4245 not firing when wantt cleared isarr to 0.
+        // c:2554 — explicit `${^^arr}` forces RC_EXPAND off: the array
+        // must collapse to a JOINED scalar so it neither cross-product-
+        // distributes (under rcexpandparam) nor word-splits. Join now,
+        // before the auto-splat decision, so isarr=0 keeps it scalar.
+        if rc_force_off && isarr != 0 {
+            let src = split_parts
+                .clone()
+                .or_else(|| arrays_get(&var_name))
+                .unwrap_or_else(|| vec![value.clone()]);
+            value = crate::ported::utils::sepjoin(&src, None);
+            split_parts = Some(vec![value.clone()]);
+            isarr = 0;
+        }
         let auto_splat = !wantt
             && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
