@@ -1412,10 +1412,27 @@ pub fn bin_set(
                 new_arr.extend(existing.into_iter().skip(new_arr.len())); // c:703
             }
         }
-        // c:709 — `setaparam(arrayname, x);`. Use setaparam (array
-        //          setter) so the value lands as a proper PM_ARRAY,
-        //          not a colon-joined scalar.
-        setaparam(&aname, new_arr);
+        // c:709 — `setaparam(arrayname, x)`. In C, setaparam →
+        // assignaparam → setarrvalue dispatches a PM_HASHED target to
+        // arrhashsetfn, which converts the flat list to key/value pairs.
+        // When the target is an associative array (`typeset -A h; set -A
+        // h k v`), route through sethparam (the flat-kv-list assoc
+        // setter) so the values land as pairs instead of being stored as
+        // a plain array (which left the assoc empty). Plain arrays keep
+        // setaparam.
+        let target_is_hashed = {
+            use PM_HASHED;
+            paramtab()
+                .read()
+                .ok()
+                .and_then(|tab| tab.get(&aname).map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0))
+                .unwrap_or(false)
+        };
+        if target_is_hashed {
+            crate::ported::params::sethparam(&aname, new_arr);
+        } else {
+            setaparam(&aname, new_arr);
+        }
     } else {
         // c:711-712 — `freearray(pparams); pparams = zarrdup(args);`
         // PPARAMS is the single source of truth; fusevm reads via
