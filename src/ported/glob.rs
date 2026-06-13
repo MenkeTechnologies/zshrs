@@ -5417,6 +5417,38 @@ pub(crate) fn expand_glob_alternation(pat: &str) -> Option<Vec<String>> {
                             }
                         }
                         if found_bar {
+                            // Alternation distribution is only valid for
+                            // POSITIVE groups. Under `^` negation or `~`
+                            // exclusion the group must stay intact for the
+                            // pattern matcher (P_EXCLUDE/P_BRANCH):
+                            // distributing `^(a|b)` into `^a`,`^b` computes
+                            // (¬a)∪(¬b)=everything, and `*~(a|b)` into
+                            // `*~a`,`*~b` likewise. Defer the whole segment
+                            // to globdata_glob's patcompile path.
+                            let seg_start = pat[..start].rfind('/').map(|j| j + 1).unwrap_or(0);
+                            let seg = &pat[seg_start..];
+                            let negated_segment = seg.starts_with('^') || {
+                                let mut bd = 0i32;
+                                let mut pd = 0i32;
+                                let mut excl = false;
+                                for (k, c) in seg.bytes().enumerate() {
+                                    match c {
+                                        b'[' => bd += 1,
+                                        b']' if bd > 0 => bd -= 1,
+                                        b'(' if bd == 0 => pd += 1,
+                                        b')' if bd == 0 && pd > 0 => pd -= 1,
+                                        b'~' if bd == 0 && pd == 0 && k > 0 => {
+                                            excl = true;
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                excl
+                            };
+                            if negated_segment {
+                                return None;
+                            }
                             // Split on top-level `|`.
                             let prefix = &pat[..start];
                             let suffix = &pat[i + 1..];
@@ -5538,7 +5570,18 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
 
     // c:155 (P_EXCLUDE) — extendedglob `^pat` negation + `pat1~pat2`
     // exclusion. Only applies when extendedglob option is on.
-    if extended_glob {
+    //
+    // When the pattern carries a trailing glob qualifier (`^foo(.)`,
+    // `^(a|b)(:t)`, `*~bar(.)`), the ad-hoc fs::read_dir + matchpat
+    // branches below would fold the qualifier `(...)` INTO the negation
+    // pattern (`matchpat("foo(.)", name)` matches the literal "foo." —
+    // so `!matchpat` admits every file and the negation is lost). The
+    // canonical driver (globdata_glob → parse_qualifiers → scanner →
+    // patcompile) handles `^`/`~`/`|` negation via P_EXCLUDE AND the
+    // qualifier in one pass, so delegate to it whenever a qualifier is
+    // present rather than reimplementing qualifier eval here.
+    let has_trailing_qual = parse_qualifiers(pattern).1.is_some();
+    if extended_glob && !has_trailing_qual {
         let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
         let last_seg = &pattern[last_seg_start..];
         if last_seg.starts_with('^') && last_seg.len() > 1 {
