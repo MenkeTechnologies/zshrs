@@ -71,6 +71,7 @@ mod parity_survey_fc;
 mod pipeline_parity;
 mod precmd_keyword_parity;
 mod print_flag_interaction_parity;
+mod prompt_features_corpus_parity;
 mod printf_format_parity;
 mod printf_percent_q_parity;
 mod prompt_escapes_parity;
