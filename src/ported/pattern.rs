@@ -4095,7 +4095,27 @@ fn patmatch(
         let next = u32::from_le_bytes(next_bytes) as usize;
 
         match op {
-            P_END => return Some(s_off), // c:end-of-prog
+            P_END => {
+                // c:Src/pattern.c:3451-3454 — `case P_END: if (!(fail =
+                // (patinput < patinend && !(patflags & PAT_NOANCH))))
+                // return 1; break;`. When the WHOLE pattern is consumed
+                // but the string ISN'T (anchored full match), this
+                // branch FAILS so an enclosing alternation backtracks
+                // to the next alternative — `[[ yes == (y|yes) ]]`
+                // tries `y` (consumes 1 char, reaches P_END at offset
+                // 1 ≠ 3), fails here, then tries `yes`. The previous
+                // unconditional `Some(s_off)` committed to the first
+                // (prefix) alternative and the external anchor check
+                // rejected it without ever trying `yes`. PAT_NOANCH /
+                // PAT_NOTEND callers (prefix/suffix strip, `(#e)`
+                // interior matches) keep the partial-success return.
+                let pf = patflags.load(Ordering::Relaxed);
+                let anchored = (pf & (PAT_NOANCH | PAT_NOTEND) as i32) == 0;
+                if s_off < string.len() && anchored {
+                    return None; // c:3452 fail → caller tries next alt
+                }
+                return Some(s_off); // c:3453
+            }
             P_NOTHING => { /* empty match, just continue */ }
             P_BACK => { /* zero-width, walk back via next */ }
             P_EXACTLY => {
