@@ -102,15 +102,13 @@ mod prompt {
 
     /// %(?.t.f) after false.
     #[test]
-    #[ignore = "zshrs gap: prompt %(?.t.f) takes the TRUE branch after a failed command — exit-status condition not read"]
-    fn ternary_status_false() {
+        fn ternary_status_false() {
         assert_parity(r###"false; print -P '%(?.OK.NO)' | cat -v"###);
     }
 
     /// %(N?.t.f) explicit exit-status match.
     #[test]
-    #[ignore = "zshrs gap: prompt %(N?.t.f) explicit exit-status match not honored (exit 42 vs %(42?..) takes false branch)"]
-    fn ternary_status_explicit() {
+        fn ternary_status_explicit() {
         assert_parity(r###"(exit 42); print -P '%(42?.MATCH.NO)' | cat -v; (exit 5); print -P '%(42?.MATCH.NO)' | cat -v"###);
     }
 
@@ -194,8 +192,7 @@ mod prompt {
 
     /// nested ternary in false branch.
     #[test]
-    #[ignore = "zshrs gap: nested prompt ternary in the false branch %(?..%(!.R.U)) yields empty (depends on broken %(?..))"]
-    fn nested_ternary_false() {
+        fn nested_ternary_false() {
         assert_parity(r###"false; print -P '%(?..%(!.R.U))' | cat -v"###);
     }
 
@@ -322,8 +319,7 @@ mod prompt {
 
     /// literal %) and %% inside ternary text.
     #[test]
-    #[ignore = "zshrs gap: literal %) inside a prompt ternary false-text mishandled (wrong branch / text); depends on %(?..)"]
-    fn ternary_literals_inside() {
+        fn ternary_literals_inside() {
         assert_parity(r###"false; print -P '%(?.t.f%)x)' | cat -v; print -P '%(?.100%%.fail)' | cat -v"###);
     }
 
