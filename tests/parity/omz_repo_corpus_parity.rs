@@ -187,7 +187,6 @@ done"###);
 
     /// theme-and-appearance.zsh — case "$OSTYPE" alternation selecting ls flag.
     #[test]
-    #[ignore = "zshrs gap: case pattern (darwin|freebsd)* — glob alternation followed by * fails to match (darwin23.0 falls to default); confirmed in isolation"]
     fn theme_ostype_ls() {
         assert_parity(r###"choose() {
   local os="$1" lsalias
