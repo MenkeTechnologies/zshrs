@@ -5906,10 +5906,17 @@ pub fn paramsubst(
                             match crate::ported::math::mathevali(&untoked) {
                                 Ok(n) => Some(n),
                                 Err(e) => {
-                                    crate::ported::utils::zerr(&format!(
-                                        "bad math expression: {}",
-                                        e
-                                    ));
+                                    // mathevali errors already carry the
+                                    // "bad math expression:" prefix; don't
+                                    // double it (zsh emits it once).
+                                    if e.starts_with("bad math expression") {
+                                        crate::ported::utils::zerr(&e);
+                                    } else {
+                                        crate::ported::utils::zerr(&format!(
+                                            "bad math expression: {}",
+                                            e
+                                        ));
+                                    }
                                     None
                                 }
                             }
@@ -6468,10 +6475,18 @@ pub fn paramsubst(
                             match crate::ported::math::mathevali(sub) {
                                 Ok(n) => Some(n),
                                 Err(e) => {
-                                    crate::ported::utils::zerr(&format!(
-                                        "bad math expression: {}",
-                                        e
-                                    ));
+                                    // mathevali errors already carry the
+                                    // "bad math expression:" prefix (via
+                                    // m_error_set); don't double it (zsh
+                                    // emits it once).
+                                    if e.starts_with("bad math expression") {
+                                        crate::ported::utils::zerr(&e);
+                                    } else {
+                                        crate::ported::utils::zerr(&format!(
+                                            "bad math expression: {}",
+                                            e
+                                        ));
+                                    }
                                     None
                                 }
                             }
