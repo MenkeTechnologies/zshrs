@@ -1927,7 +1927,17 @@ impl ZshCompiler {
                     // into the arg list.
                     for chunk in elems.chunks(200) {
                         for e in chunk {
+                            // c:Src/subst.c:111 keyvalpairelement —
+                            // PREFORK_ASSIGN context. Bump
+                            // assign_context_depth so compile_word_str's
+                            // looks_like_kv_pair gate suppresses globbing
+                            // for `[key]=value` assoc-init elements
+                            // (`typeset -gA m=([alpha]=1)` — the `[alpha]`
+                            // is a key, NOT a glob char-class). Without
+                            // it the `[` triggered NOMATCH.
+                            self.assign_context_depth += 1;
                             self.compile_word_str(e);
+                            self.assign_context_depth -= 1;
                             // Array-literal elements field-split
                             // unquoted expansion results — same emit
                             // as compile_assign's array branch:
@@ -7427,9 +7437,25 @@ impl ZshCompiler {
             }
             ZshCond::Regex(left, regex) => {
                 self.compile_word_str(left);
-                let regex_clean = crate::lex::untokenize(regex);
-                let pat_const = self.builder.add_constant(Value::str(regex_clean.as_str()));
-                self.builder.emit(Op::LoadConst(pat_const), 0);
+                // c:Src/cond.c:493 — the `=~` RHS is a regex that
+                // undergoes parameter / cmd-subst expansion:
+                // `PAT="^x"; [[ x =~ $PAT ]]` must match against
+                // $PAT's VALUE. The previous emit untokenized the
+                // RHS and loaded it as a raw CONSTANT, so `$PAT`
+                // reached the matcher literally and never matched.
+                // Expand via compile_word_str like the `==`/`=`
+                // pattern path: DQ-wrap to suppress brace/filesystem
+                // globbing during expansion (the runtime treats the
+                // result as an ERE, not a path) — unless the RHS is
+                // already single-quoted (`[[ x =~ '(p)' ]]` is a
+                // literal regex) or already DQ-wrapped.
+                let already_sq = regex.starts_with('\u{9d}') && regex.ends_with('\u{9d}');
+                let dq_wrapped = if regex.starts_with('\u{9e}') || already_sq {
+                    regex.clone()
+                } else {
+                    format!("\u{9e}{}\u{9e}", regex)
+                };
+                self.compile_word_str(&dq_wrapped);
                 self.builder.emit(Op::RegexMatch, 0);
             }
         }
