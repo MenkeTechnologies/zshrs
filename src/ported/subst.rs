@@ -5678,6 +5678,13 @@ pub fn paramsubst(
                     let close = rest.find(')')?;
                     let body = &rest[..close];
                     let pat = rest[close + 1..].to_string();
+                    // A top-level comma after the flag means this is a
+                    // SLICE with per-bound flags (`(r)3,(r)5` / `(r)3,5`),
+                    // not a single `(r)pat` search. Defer to the slice
+                    // arm below so each bound resolves its own flag.
+                    if pat.contains(',') {
+                        return None;
+                    }
                     // c:Src/params.c:1431-1454 — `(n.N.)` and `(b.N.)`
                     // sub-flags each take an integer arg delimited by
                     // the next char after the letter. Parse them out
@@ -5959,28 +5966,38 @@ pub fn paramsubst(
                         String::new()
                     }
                 } else if let Some((start_s, end_s)) = {
-                    // c:Src/params.c:1437 — `(s.X.)` subscript flag
-                    // specifies the join-separator for word-mode subscript
-                    // (only meaningful with `(w)`/`(W)`). For a plain
-                    // `[N,M]` range on an indexed array the flag is a
-                    // no-op (zsh's `Src/params.c:1396-1431` parser strips
-                    // it and falls through to the integer slice path),
-                    // but zshrs's `sub.split_once(',')` was finding the
-                    // comma INSIDE the flag (`(s.,.)`) instead of the
-                    // range separator. Bug #83 in docs/BUGS.md.
-                    //
-                    // Strip a leading flag block `(...)` before
-                    // split_once so the range parser sees `N,M`.
-                    let stripped = if let Some(rest) = sub.strip_prefix('(') {
-                        if let Some(close) = rest.find(')') {
-                            &rest[close + 1..]
-                        } else {
-                            sub
+                    // Split the slice on its TOP-LEVEL comma (depth 0,
+                    // outside any `(...)` flag block). This keeps a
+                    // PER-BOUND search-flag subscript with its bound
+                    // (`(r)3,(r)5` → "(r)3","(r)5") while still finding
+                    // the range comma when a whole-subscript separator
+                    // flag carries a comma inside its delimiters
+                    // (`(s.,.)1,3` → "(s.,.)1","3"). Bug #83 (separator)
+                    // + per-bound (r)/(i) slice bounds. eval_idx below
+                    // strips/handles each bound's leading flag.
+                    let bs: Vec<char> = sub.chars().collect();
+                    let mut depth = 0i32;
+                    let mut at: Option<usize> = None;
+                    for (k, &c) in bs.iter().enumerate() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => {
+                                if depth > 0 {
+                                    depth -= 1;
+                                }
+                            }
+                            ',' if depth == 0 => {
+                                at = Some(k);
+                                break;
+                            }
+                            _ => {}
                         }
-                    } else {
-                        sub
-                    };
-                    stripped.split_once(',')
+                    }
+                    at.map(|k| {
+                        let b0 = bs[..k].iter().collect::<String>();
+                        let b1 = bs[k + 1..].iter().collect::<String>();
+                        (b0, b1)
+                    })
                 } {
                     // c:2944 (slice) — Src/params.c:2548 getarrvalue.
                     // Clone arr first to release the borrow, since
@@ -5998,7 +6015,52 @@ pub fn paramsubst(
                     // the full array. Bug #298. Same shape as the
                     // scalar slice arm above (subst.rs:4826-4840).
                     let eval_idx = |expr: &str, default: i64| -> i64 {
-                        let expanded = singsub(expr);
+                        // c:Src/params.c getindex — a slice bound with a
+                        // search-flag subscript (`(r)pat`/`(i)pat`) yields
+                        // the INDEX of the match (the *inv/*w path), not
+                        // the value: `${a[(r)3,(r)5]}` slices between the
+                        // matched positions. getarg returns the value for
+                        // r/R but the index for i/I, and r/R are reverse
+                        // (last-match) searches, so map r→I / R→I to get
+                        // the matching index in index mode.
+                        let t = expr.trim();
+                        // Effective bound text after a leading `(...)` flag.
+                        let mut effective = t;
+                        if let Some(close) = t.find(')') {
+                            if t.starts_with('(') {
+                                let flags = &t[1..close];
+                                if flags
+                                    .chars()
+                                    .any(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K'))
+                                {
+                                    // Search flag → matched INDEX via getarg
+                                    // (r/R are reverse → map to I for index).
+                                    let mapped: String = flags
+                                        .chars()
+                                        .map(|c| if c == 'r' || c == 'R' { 'I' } else { c })
+                                        .collect();
+                                    let new_sub = format!("({}){}", mapped, &t[close + 1..]);
+                                    if let Some(crate::ported::params::getarg_out::Value(v)) =
+                                        crate::ported::params::getarg(
+                                            &new_sub,
+                                            Some(&arr_clone),
+                                            None,
+                                            None,
+                                        )
+                                    {
+                                        if let Ok(n) = v.to_str().trim().parse::<i64>() {
+                                            return n;
+                                        }
+                                    }
+                                } else {
+                                    // Separator/word flag (`(s.X.)` etc.) is a
+                                    // no-op for an integer slice bound (c:#83);
+                                    // strip it and parse the remainder.
+                                    effective = &t[close + 1..];
+                                }
+                            }
+                        }
+                        let expanded = singsub(effective);
                         if let Ok(n) = expanded.trim().parse::<i64>() {
                             return n;
                         }
