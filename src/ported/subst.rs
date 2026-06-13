@@ -12298,8 +12298,22 @@ pub fn paramsubst(
             } else if let Some(sub) = subscript.as_deref() {
                 // Range subscript: splat the slice elements.
                 if let Some((lo, hi)) = sub.split_once(',') {
-                    let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
-                    let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
+                    // c:Src/params.c::getarg — bounds route through
+                    // singsub then mathevali, so variable / arithmetic
+                    // bounds resolve (`${(@)b[1,R]}`, `${(@)b[1,-1*R-1]}`).
+                    // The plain `parse()` used before failed on anything
+                    // non-literal: `hi="R"` → unwrap_or(0) → getarrvalue(1,0)
+                    // = empty. Mirror the scalar slice arm (subst.rs:5988).
+                    let arr_len = arrays_get(&var_name).map_or(0, |a| a.len()) as i64;
+                    let eval_bound = |expr: &str, default: i64| -> i64 {
+                        let e = singsub(expr.trim());
+                        if let Ok(n) = e.trim().parse::<i64>() {
+                            return n;
+                        }
+                        crate::ported::math::mathevali(e.trim()).unwrap_or(default)
+                    };
+                    let lo: i64 = eval_bound(lo, 1); // c:3950
+                    let hi: i64 = eval_bound(hi, arr_len); // c:3950
                     // c:Src/params.c — KSH_ARRAYS shifts positive
                     // 0-based slice bounds to 1-based for getarrvalue.
                     // Sibling of #610-#613 in the splat path. Bug #614.
