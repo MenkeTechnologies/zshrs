@@ -597,7 +597,22 @@ pub fn bin_stat(
                 // Bug #112 — strip Rust's " (os error N)" suffix by
                 // routing the errno through the canonical strerror
                 // port (Src/compat.c:194).
-                let msg = crate::ported::compat::strerror(e.raw_os_error().unwrap_or(0));
+                let errno = e.raw_os_error().unwrap_or(0);
+                let raw = crate::ported::compat::strerror(errno);
+                // c:Src/stat.c:564 — `zwarnnam(name, "%s: %e", ...)`.
+                // The `%e` directive (utils.c:360-367) uncapitalizes the
+                // first letter of strerror unless errno==EIO, so zsh
+                // prints "no such file or directory", not "No such…".
+                const EIO: i32 = 5;
+                let msg = if errno == EIO {
+                    raw
+                } else {
+                    let mut cs = raw.chars();
+                    match cs.next() {
+                        Some(f) => f.to_lowercase().collect::<String>() + cs.as_str(),
+                        None => raw,
+                    }
+                };
                 zwarnnam(nam, &format!("{}: {}", path, msg));
                 rc = 1;
                 continue;
