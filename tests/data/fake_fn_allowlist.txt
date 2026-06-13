@@ -1647,6 +1647,7 @@ install_run_command_substitution
 install_pparams_get
 install_pparams_set
 install_unregister_function
+install_cmdsubst_outer_stdout
 array
 assoc
 set_array
@@ -1662,6 +1663,7 @@ run_command_substitution
 pparams
 set_pparams
 unregister_function
+cmdsubst_outer_stdout
 
 # Approximate-match `(#aN)` inner walker for P_EXACTLY arms (pattern.c
 # inlines the edit-operation backtracking into the P_EXACTLY case at
