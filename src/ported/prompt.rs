@@ -1243,7 +1243,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let is_fg = xc == b'F';
                     // c:589-595 — `if (bv->fm[1] == '{') { ... }`. Parse
                     // optional `{NAME}` arg.
-                    let mut color: Option<Color> = None;
+                    // Color spec: Default = COL_DEFAULT sentinel
+                    // (`%F{default}` → SGR 39/49 reset, NOT palette 8);
+                    // Rgb = `%F{#rrggbb}` 24-bit (must NOT truncate to a
+                    // palette index); Palette = 0-255 index.
+                    enum ColSpec {
+                        Default,
+                        Rgb(u8, u8, u8),
+                        Palette(u8),
+                    }
+                    let mut spec: Option<ColSpec> = None;
                     if bv.fm.as_bytes().get(bv.fm_pos + 1).copied() == Some(b'{') {
                         let start = bv.fm_pos + 2;
                         let mut end = start;
@@ -1252,21 +1261,50 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         }
                         if end < bv.fm.len() {
                             let name = &bv.fm[start..end];
-                            color = color_from_name(name);
+                            // c:Src/prompt.c:1909 / match_colour — "default"
+                            // is the COL_DEFAULT sentinel (clears to the
+                            // terminal default, SGR 39/49), distinct from
+                            // numeric 8; `#rrggbb` is the 24-bit branch.
+                            if name == "default" {
+                                spec = Some(ColSpec::Default);
+                            } else if let Some(rest) = name.strip_prefix('#') {
+                                if rest.len() == 6 {
+                                    if let (Ok(r), Ok(g), Ok(b)) = (
+                                        u8::from_str_radix(&rest[0..2], 16),
+                                        u8::from_str_radix(&rest[2..4], 16),
+                                        u8::from_str_radix(&rest[4..6], 16),
+                                    ) {
+                                        spec = Some(ColSpec::Rgb(r, g, b));
+                                    }
+                                }
+                                if spec.is_none() {
+                                    spec = match_named_colour(name).map(ColSpec::Palette);
+                                }
+                            } else {
+                                spec = match_named_colour(name).map(ColSpec::Palette);
+                            }
                             bv.fm_pos = end; // leave on `}`; outer +=1 advances past
                         }
                     } else if arg >= 0 {
                         // c:Src/prompt.c:349 — `match_colour(NULL, is_fg,
                         // arg)` returns `on | (arg << shft)`; bare `%F`
                         // has arg=0 → color 0 (black) → SGR 30.
-                        color = Some(arg as Color);
+                        spec = Some(ColSpec::Palette(arg as u8));
                     }
+                    // `default` → unset path below (SGR 39/49), same as
+                    // an invalid name.
+                    let color = match spec {
+                        Some(ColSpec::Default) | None => None,
+                        Some(s) => Some(s),
+                    };
                     if let Some(c) = color {
                         // c:596-599 — `tsetattrs(atr); applytextattributes(TSC_PROMPT);`
-                        let attr = if is_fg {
-                            zattr_set_fg_palette(0, c as u8)
-                        } else {
-                            zattr_set_bg_palette(0, c as u8)
+                        let attr = match (is_fg, c) {
+                            (true, ColSpec::Rgb(r, g, b)) => zattr_set_fg_rgb(0, r, g, b),
+                            (false, ColSpec::Rgb(r, g, b)) => zattr_set_bg_rgb(0, r, g, b),
+                            (true, ColSpec::Palette(i)) => zattr_set_fg_palette(0, i),
+                            (false, ColSpec::Palette(i)) => zattr_set_bg_palette(0, i),
+                            (_, ColSpec::Default) => unreachable!(),
                         };
                         let _ = tsetattrs(attr);
                         let sgr = applytextattributes(TSC_PROMPT);

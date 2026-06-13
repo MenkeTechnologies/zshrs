@@ -2086,6 +2086,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(0);
         }
 
+        // c:Src/exec.c — every pipeline stage forks from the current
+        // shell state, so each stage observes the pre-pipeline $? until
+        // it runs its own command. Stage sub-VMs start fresh with
+        // last_status=0, so seed them with the parent's lastval; without
+        // this `false; echo $? | cat` prints 0 instead of zsh's 1.
+        let parent_status = vm.last_status;
+
         // Pop N sub-chunk indices (LIFO → reverse to stage order)
         let mut indices: Vec<u16> = Vec::with_capacity(n);
         for _ in 0..n {
@@ -2107,6 +2114,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let stage = stages.into_iter().next().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:single", &stage);
             let mut stage_vm = fusevm::VM::new(stage);
+            stage_vm.last_status = parent_status;
             register_builtins(&mut stage_vm);
             let _ = stage_vm.run();
             return Value::Status(stage_vm.last_status);
@@ -2220,6 +2228,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         chunk,
                     );
                     let mut stage_vm = fusevm::VM::new(chunk.clone());
+                    stage_vm.last_status = parent_status;
                     register_builtins(&mut stage_vm);
                     let _ = stage_vm.run();
                     // Flush any buffered output before exiting
@@ -2261,6 +2270,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let last_chunk = stages_vec.into_iter().last().unwrap();
             crate::fusevm_disasm::maybe_print_stdout("pipeline:last", &last_chunk);
             let mut stage_vm = fusevm::VM::new(last_chunk);
+            stage_vm.last_status = parent_status;
             register_builtins(&mut stage_vm);
             stage_vm.set_shell_host(Box::new(ZshrsHost));
             let _ = stage_vm.run();
