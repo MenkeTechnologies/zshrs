@@ -871,7 +871,6 @@ print -r -- ${(on)${(k)info}}"###);
 
     /// zshcompgen.zsh — pattern-match count `${(M)#arr:#pat}` vs `${#a[(I)p]}`.
     #[test]
-    #[ignore = "zshrs gap: `${(M)#arr:#pat}` match-count returns total element count (4) not matching count (3)"]
     fn match_count_two_forms() {
         assert_parity(r###"a=(apple apricot banana avocado)
 print -r -- "${#a[(I)a*]}"
