@@ -4875,7 +4875,34 @@ pub fn gethkparam(name: &str) -> Option<Vec<String>> {
                 // partab_scan_keys port (vm_helper.rs:3486) is that
                 // scan. Without this, `${(k)parameters[PATH]}` saw an
                 // empty key set and returned "" where zsh prints PATH.
-                if let Some(keys) = crate::vm_helper::partab_scan_keys(name) {
+                if let Some(keys) = (|| -> Option<Vec<String>> {
+                    // c:Src/Modules/parameter.c — special-hash scantab
+                    // key enumeration via the partab[] row's scanfn
+                    // (former bridge partab_scan_keys, inlined; the
+                    // captureless callback is the C ScanFunc ABI).
+                    let e_ = crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == name)?;
+                    if let Some(m_) = e_.module {
+                        if !crate::ported::module::MODULESTAB
+                            .lock()
+                            .map(|t| t.is_loaded(m_))
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+                    }
+                    thread_local! {
+                        static KEYS_: std::cell::RefCell<Vec<String>> =
+                            const { std::cell::RefCell::new(Vec::new()) };
+                    }
+                    fn cb_(node: &crate::ported::zsh_h::HashNode, _f: i32) {
+                        KEYS_.with(|k| k.borrow_mut().push(node.nam.clone()));
+                    }
+                    KEYS_.with(|k| k.borrow_mut().clear());
+                    (e_.scanfn)(std::ptr::null_mut(), Some(cb_), 0);
+                    Some(KEYS_.with(|k| k.borrow().clone()))
+                })() {
                     return Some(keys); // c:3138
                 }
                 return Some(Vec::new()); // c:3138

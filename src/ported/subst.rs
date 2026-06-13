@@ -2741,7 +2741,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
             // flag arg like `(j.$'\n'.)` to a bare newline; zsh 5.9
             // keeps the wrapper literal: `print -r ${(j.$'\n'.)a}`
             // → `x$'\n'y`. Bug #626 in docs/BUGS.md.
-            let untoked = crate::vm_helper::untokenize_ztokens(s); // c:1543
+            let untoked = crate::ported::lex::untokenize_ztokens(s); // c:1543
             if escapes {
                 // c:1544
                 // C: `dst = getkeystring(dst, &klen,
@@ -5364,7 +5364,48 @@ pub fn paramsubst(
             }
         } else if let Some(sub) = subscript.as_deref() {
             // Subscripted lookup: assoc-key, array-index, or slice.
-            if let Some(map) = assoc_get(&var_name) {
+            // c:Src/Modules/parameter.c — PLAIN-key reads on a magic
+            // assoc dispatch through the special hash's getnode
+            // (`ht->getnode(ht, key)` = getpm*), which resolves names
+            // a key ENUMERATION never lists: `options[nounset]` hits
+            // getpmoption's optlookup alias handling while the scan
+            // emits only canonical names. The materialized-map arm
+            // below would miss those, so plain keys go getfn-first;
+            // flagged subscripts ((k)/(I)/…) and @/* fall through to
+            // the map machinery which needs full enumeration.
+            let partab_plain_key: Option<String> =
+                if !sub.starts_with('(')
+                    && sub != "@"
+                    && sub != "*"
+                    // `(k)`/`(v)` PARAM flags pivot the result to the
+                    // key / enumerated value — `${(k)parameters[PATH]}`
+                    // returns "PATH", not the getfn value. Those need
+                    // the map machinery below; only a flagless plain
+                    // key takes the getnode fast path.
+                    && (hkeys & SCANPM_WANTKEYS) == 0
+                    && (hvals & SCANPM_WANTVALS) == 0
+                {
+                    crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())
+                        .filter(|e_| match e_.module {
+                            Some(m_) => crate::ported::module::MODULESTAB
+                                .lock()
+                                .map(|t| t.is_loaded(m_))
+                                .unwrap_or(false),
+                            None => true,
+                        })
+                        .map(|e_| {
+                            (e_.getfn)(std::ptr::null_mut(), sub)
+                                .and_then(|p_| p_.u_str)
+                                .unwrap_or_default()
+                        })
+                } else {
+                    None
+                };
+            if let Some(v) = partab_plain_key {
+                v
+            } else if let Some(map) = assoc_get(&var_name) {
                 // c:2926 (assoc lookup)
                 // c:Src/params.c — `${assoc[@]}` and `${assoc[*]}`
                 // enumerate VALUES (matching the unquoted-bare
@@ -6006,12 +6047,12 @@ pub fn paramsubst(
                 // ports at parameter.rs::PARTAB / PARTAB_ARRAY).
                 let is_splice = sub == "@" || sub == "*";
                 if is_splice {
-                    if let Some(values) = crate::vm_helper::partab_array_get(&var_name) {
+                    if let Some(values) = arrays_get(&var_name) {
                         Some(values.join(" "))
-                    } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
+                    } else if let Some(keys) = assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()) {
                         let vals: Vec<String> = keys
                             .iter()
-                            .map(|k| crate::vm_helper::partab_get(&var_name, k).unwrap_or_default())
+                            .map(|k| assoc_get(&var_name).and_then(|m_| m_.get(k.as_str()).cloned()).unwrap_or_default())
                             .collect();
                         Some(vals.join(" "))
                     } else {
@@ -6042,7 +6083,7 @@ pub fn paramsubst(
                 })(sub)
                 {
                     // Route through the magic-assoc scan + per-key get.
-                    if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
+                    if let Some(keys) = assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()) {
                         let by_key = flags.contains('I') || flags.contains('i');
                         let return_all = flags.contains('I') || flags.contains('R');
                         let exact = flags.contains('e'); // c:1419 e flag — literal compare
@@ -6051,7 +6092,7 @@ pub fn paramsubst(
                             let hay = if by_key {
                                 k.clone()
                             } else {
-                                crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
+                                assoc_get(&var_name).and_then(|m_| m_.get(k.as_str()).cloned()).unwrap_or_default()
                             };
                             let matched = if exact {
                                 hay == pat
@@ -6063,7 +6104,7 @@ pub fn paramsubst(
                                 out.push(if by_key {
                                     k.clone()
                                 } else {
-                                    crate::vm_helper::partab_get(&var_name, k).unwrap_or_default()
+                                    assoc_get(&var_name).and_then(|m_| m_.get(k.as_str()).cloned()).unwrap_or_default()
                                 });
                                 if !return_all {
                                     break;
@@ -6074,7 +6115,34 @@ pub fn paramsubst(
                     } else {
                         None
                     }
-                } else if let Some(elem) = crate::vm_helper::partab_array_index(&var_name, sub) {
+                } else if let Some(elem) = (|| -> Option<String> {
+                    // c:Src/params.c:2110-2150 getarg index semantics on a
+                    // PM_ARRAY magic param (1-based, negative from end, [0]
+                    // per KSHZEROSUBSCRIPT, KSH_ARRAYS 0-based) over the
+                    // PARTAB_ARRAY row's gsu getfn value (former bridge
+                    // partab_array_index, inlined).
+                    let arr = arrays_get(&var_name)?;
+                    crate::ported::modules::parameter::PARTAB_ARRAY
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())?;
+                    let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
+                    let len = arr.len() as i64;
+                    let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+                    let i = if ksh_arrays {
+                        if idx_n < 0 { len + idx_n } else { idx_n }
+                    } else if idx_n == 0 {
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) { 0 } else { -1 }
+                    } else if idx_n < 0 {
+                        len + idx_n
+                    } else {
+                        idx_n - 1
+                    };
+                    Some(if i >= 0 && (i as usize) < arr.len() {
+                        arr[i as usize].clone()
+                    } else {
+                        String::new()
+                    })
+                })() {
                     // c:Src/Modules/system.c:880 errnosgetfn — PM_ARRAY
                     // magic params subscript like ordinary arrays
                     // (getindex → getarg, Src/params.c:2110-2150).
@@ -6094,9 +6162,49 @@ pub fn paramsubst(
                     // `${(ok)parameters[PATH]}` → "PATH". Missing key
                     // → None falls to the scalar arm (empty), matching
                     // C's PM_UNSET createparam result.
-                    crate::vm_helper::partab_get(&var_name, sub).map(|_| sub.to_string())
+                    (|| -> Option<String> {
+                    // c:Src/Modules/parameter.c — special-hash getnode
+                    // dispatch (`ht->getnode(ht, key)` = getpm*) for one
+                    // key; module-gated rows resolve only after their
+                    // zmodload (former bridge partab_get, inlined —
+                    // single-key reads must NOT materialize the table:
+                    // ${commands[git]} would enumerate $PATH).
+                    let e_ = crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())?;
+                    if let Some(m_) = e_.module {
+                        if !crate::ported::module::MODULESTAB
+                            .lock()
+                            .map(|t| t.is_loaded(m_))
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+                    }
+                    (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
+                })().map(|_| sub.to_string())
                 } else {
-                    crate::vm_helper::partab_get(&var_name, sub)
+                    (|| -> Option<String> {
+                    // c:Src/Modules/parameter.c — special-hash getnode
+                    // dispatch (`ht->getnode(ht, key)` = getpm*) for one
+                    // key; module-gated rows resolve only after their
+                    // zmodload (former bridge partab_get, inlined —
+                    // single-key reads must NOT materialize the table:
+                    // ${commands[git]} would enumerate $PATH).
+                    let e_ = crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())?;
+                    if let Some(m_) = e_.module {
+                        if !crate::ported::module::MODULESTAB
+                            .lock()
+                            .map(|t| t.is_loaded(m_))
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+                    }
+                    (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
+                })()
                 }
             } {
                 magic_val
@@ -6631,7 +6739,27 @@ pub fn paramsubst(
                 // dispatch through PARTAB. Without this fallback,
                 // `${builtins[echo]:-X}` fired the `:-X` default because
                 // is_set was false even though the value is set.
-                || crate::vm_helper::partab_get(&var_name, sub).is_some_and(|v| !v.is_empty())
+                || (|| -> Option<String> {
+                    // c:Src/Modules/parameter.c — special-hash getnode
+                    // dispatch (`ht->getnode(ht, key)` = getpm*) for one
+                    // key; module-gated rows resolve only after their
+                    // zmodload (former bridge partab_get, inlined —
+                    // single-key reads must NOT materialize the table:
+                    // ${commands[git]} would enumerate $PATH).
+                    let e_ = crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())?;
+                    if let Some(m_) = e_.module {
+                        if !crate::ported::module::MODULESTAB
+                            .lock()
+                            .map(|t| t.is_loaded(m_))
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+                    }
+                    (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
+                })().is_some_and(|v| !v.is_empty())
         } else {
             // c:Src/params.c::getindex — positional parameters ($1,
             // $2, …) live in `arrays["@"]`, not in the named-vars
@@ -6791,8 +6919,8 @@ pub fn paramsubst(
                     // widgets / etc.) first; fall through to
                     // PARTAB_ARRAY for array magic-assocs
                     // (patchars / pipestatus / dirstack / ...).
-                    crate::vm_helper::partab_scan_keys(&var_name)
-                        .or_else(|| crate::vm_helper::partab_array_get(&var_name))
+                    assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>())
+                        .or_else(|| arrays_get(&var_name))
                 } else {
                     None
                 };
@@ -7014,12 +7142,12 @@ pub fn paramsubst(
                         entries.sort_by(|a, b| a.0.cmp(&b.0));
                         entries.into_iter().flat_map(|(k, v)| [k, v]).collect()
                     }),
-                    _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                    _ => assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()).map(|mut keys| {
                         keys.sort();
                         keys.into_iter()
                             .flat_map(|k| {
                                 let v =
-                                    crate::vm_helper::partab_get(&var_name, &k).unwrap_or_default();
+                                    assoc_get(&var_name).and_then(|m_| m_.get(k.as_str()).cloned()).unwrap_or_default();
                                 [k, v]
                             })
                             .collect()
@@ -7062,7 +7190,7 @@ pub fn paramsubst(
                         names.sort();
                         names
                     }),
-                    _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                    _ => assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()).map(|mut keys| {
                         keys.sort();
                         keys
                     }),
@@ -7120,7 +7248,7 @@ pub fn paramsubst(
                         // differs from zsh's specific hash. Most
                         // consumers (`zinit ls $functions`, plugin
                         // sanity checks) don't care about hash order.
-                        _ => crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                        _ => assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()).map(|mut keys| {
                             keys.sort();
                             keys.join(" ")
                         }),
@@ -7139,12 +7267,12 @@ pub fn paramsubst(
                     // canonical scanfn dispatch returns ordered values).
                     // For non-array magic-assoc names, scan keys + look
                     // up each via partab_get to build the value list.
-                    crate::vm_helper::partab_array_get(&var_name).or_else(|| {
-                        crate::vm_helper::partab_scan_keys(&var_name).map(|mut keys| {
+                    arrays_get(&var_name).or_else(|| {
+                        assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()).map(|mut keys| {
                             keys.sort();
                             keys.into_iter()
                                 .map(|k| {
-                                    crate::vm_helper::partab_get(&var_name, &k).unwrap_or_default()
+                                    assoc_get(&var_name).and_then(|m_| m_.get(k.as_str()).cloned()).unwrap_or_default()
                                 })
                                 .collect()
                         })
@@ -10208,7 +10336,7 @@ pub fn paramsubst(
                 .is_some()
                 || arrays_contains(&var_name)
                 || assoc_contains(&var_name)
-                || crate::vm_helper::partab_array_flags(&var_name).is_some()
+                || crate::ported::modules::parameter::PARTAB_ARRAY.iter().find(|e_| e_.name == var_name.as_str()).map(|e_| e_.flags as u32 | crate::ported::zsh_h::PM_SPECIAL | crate::ported::zsh_h::PM_HIDE | crate::ported::zsh_h::PM_HIDEVAL).is_some()
                 || (var_name.chars().all(|c| c.is_ascii_digit()) && !var_name.is_empty())
                 || std::env::var(&var_name).is_ok();
             is_set || declared
@@ -10250,7 +10378,7 @@ pub fn paramsubst(
             } else {
                 var_name.clone()
             };
-            let partab_array_tag = crate::vm_helper::partab_array_flags(&var_name).map(|f| {
+            let partab_array_tag = crate::ported::modules::parameter::PARTAB_ARRAY.iter().find(|e_| e_.name == var_name.as_str()).map(|e_| e_.flags as u32 | crate::ported::zsh_h::PM_SPECIAL | crate::ported::zsh_h::PM_HIDE | crate::ported::zsh_h::PM_HIDEVAL).map(|f| {
                 let mut tag = if f & PM_HASHED != 0 {
                     "association".to_string()
                 } else if f & PM_ARRAY != 0 {
@@ -10500,7 +10628,7 @@ pub fn paramsubst(
                         // here so `(t)historywords` reads
                         // `array-readonly-hide-hideval-special` matching
                         // zsh.
-                        if let Some(f) = crate::vm_helper::partab_array_flags(&var_name) {
+                        if let Some(f) = crate::ported::modules::parameter::PARTAB_ARRAY.iter().find(|e_| e_.name == var_name.as_str()).map(|e_| e_.flags as u32 | crate::ported::zsh_h::PM_SPECIAL | crate::ported::zsh_h::PM_HIDE | crate::ported::zsh_h::PM_HIDEVAL) {
                             let mut tag = if f & PM_HASHED != 0 {
                                 "association".to_string()
                             } else if f & PM_ARRAY != 0 {
@@ -12584,25 +12712,72 @@ pub fn paramsubst(
                 // companion braced-form dispatch above.
                 let is_splice = sub == "@" || sub == "*";
                 if is_splice {
-                    if let Some(values) = crate::vm_helper::partab_array_get(&var_name) {
+                    if let Some(values) = arrays_get(&var_name) {
                         Some(values.join(" "))
-                    } else if let Some(keys) = crate::vm_helper::partab_scan_keys(&var_name) {
+                    } else if let Some(keys) = assoc_get(&var_name).map(|m_| m_.keys().cloned().collect::<Vec<String>>()) {
                         let vals: Vec<String> = keys
                             .iter()
-                            .map(|k| crate::vm_helper::partab_get(&var_name, k).unwrap_or_default())
+                            .map(|k| assoc_get(&var_name).and_then(|m_| m_.get(k.as_str()).cloned()).unwrap_or_default())
                             .collect();
                         Some(vals.join(" "))
                     } else {
                         None
                     }
-                } else if let Some(elem) = crate::vm_helper::partab_array_index(&var_name, sub) {
+                } else if let Some(elem) = (|| -> Option<String> {
+                    // c:Src/params.c:2110-2150 getarg index semantics on a
+                    // PM_ARRAY magic param (1-based, negative from end, [0]
+                    // per KSHZEROSUBSCRIPT, KSH_ARRAYS 0-based) over the
+                    // PARTAB_ARRAY row's gsu getfn value (former bridge
+                    // partab_array_index, inlined).
+                    let arr = arrays_get(&var_name)?;
+                    crate::ported::modules::parameter::PARTAB_ARRAY
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())?;
+                    let idx_n: i64 = crate::ported::math::mathevali(sub.trim()).unwrap_or(0);
+                    let len = arr.len() as i64;
+                    let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+                    let i = if ksh_arrays {
+                        if idx_n < 0 { len + idx_n } else { idx_n }
+                    } else if idx_n == 0 {
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) { 0 } else { -1 }
+                    } else if idx_n < 0 {
+                        len + idx_n
+                    } else {
+                        idx_n - 1
+                    };
+                    Some(if i >= 0 && (i as usize) < arr.len() {
+                        arr[i as usize].clone()
+                    } else {
+                        String::new()
+                    })
+                })() {
                     // c:Src/Modules/system.c:880 errnosgetfn — PM_ARRAY
                     // magic params subscript like ordinary arrays
                     // (getindex → getarg, Src/params.c:2110-2150).
                     // Mirrors the braced-form dispatch above.
                     Some(elem)
                 } else {
-                    crate::vm_helper::partab_get(&var_name, sub)
+                    (|| -> Option<String> {
+                    // c:Src/Modules/parameter.c — special-hash getnode
+                    // dispatch (`ht->getnode(ht, key)` = getpm*) for one
+                    // key; module-gated rows resolve only after their
+                    // zmodload (former bridge partab_get, inlined —
+                    // single-key reads must NOT materialize the table:
+                    // ${commands[git]} would enumerate $PATH).
+                    let e_ = crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .find(|e_| e_.name == var_name.as_str())?;
+                    if let Some(m_) = e_.module {
+                        if !crate::ported::module::MODULESTAB
+                            .lock()
+                            .map(|t| t.is_loaded(m_))
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+                    }
+                    (e_.getfn)(std::ptr::null_mut(), sub).and_then(|p_| p_.u_str)
+                })()
                 }
             } {
                 magic_val
@@ -14523,8 +14698,27 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     // here, `${keymaps[N]}` and `${keymaps[@]}` returned empty
     // because the stub paramtab entry has no u_arr. Route through
     // the PARTAB_ARRAY getfn so subscripted reads work. Bug #383.
-    if name == "keymaps" {
-        return crate::vm_helper::partab_array_get(name);
+    // c:Src/Modules/parameter.c:2239-2291 — PM_ARRAY magic params
+    // (dirstack/historywords/keymaps/errnos/…) dispatch through the
+    // partab[] paramdef rows' gsu getfns. Walk the ported PARTAB_ARRAY
+    // table directly (module-gated rows resolve only after their
+    // zmodload, e.g. errnos → zsh/system). This replaces both the
+    // keymaps special case (Bug #383) and the bridge-side
+    // partab_array_get indirection.
+    if let Some(entry) = crate::ported::modules::parameter::PARTAB_ARRAY
+        .iter()
+        .find(|e| e.name == name)
+    {
+        if let Some(modname) = entry.module {
+            if !crate::ported::module::MODULESTAB
+                .lock()
+                .map(|t| t.is_loaded(modname))
+                .unwrap_or(false)
+            {
+                return None;
+            }
+        }
+        return Some((entry.getfn)(std::ptr::null_mut()));
     }
     if name == "funcfiletrace" || name == "funcsourcetrace" || name == "functrace" {
         // Route through the canonical ported getfns
@@ -14686,10 +14880,55 @@ fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
         _ => name.to_string(),
     };
-    paramtab_hashed_storage()
+    if let Some(m) = paramtab_hashed_storage()
         .lock()
         .ok()
         .and_then(|s| s.get(resolved.as_str()).cloned())
+    {
+        return Some(m);
+    }
+    // c:Src/Modules/parameter.c:2235+ — PM_HASHED magic assocs
+    // (functions/aliases/commands/builtins/…): materialize via the
+    // partab[] row's scanfn (key enumeration) + getfn (per-key
+    // value), mirroring C's full-table scan through the special
+    // hash's scantab. Module-gated rows (sysparams/errnos/mapfile/
+    // langinfo) resolve only after their zmodload. NOTE: whole-map
+    // consumers only — single-key reads use the getfn directly at
+    // their sites to avoid enumerating e.g. $commands for one key.
+    let entry = crate::ported::modules::parameter::PARTAB
+        .iter()
+        .find(|e| e.name == resolved.as_str())?;
+    if let Some(modname) = entry.module {
+        if !crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded(modname))
+            .unwrap_or(false)
+        {
+            return None;
+        }
+    }
+    // C ScanFunc callback ABI (Src/zsh.h scantab): the scanfn walks
+    // the special hash invoking a plain fn pointer per node — the
+    // captureless callback collects into a thread-local, exactly the
+    // shape C's scanpm* helpers use with their static linked lists.
+    thread_local! {
+        static PARTAB_SCAN_KEYS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    fn partab_scan_cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+        PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().push(node.nam.clone()));
+    }
+    PARTAB_SCAN_KEYS.with(|k| k.borrow_mut().clear());
+    (entry.scanfn)(std::ptr::null_mut(), Some(partab_scan_cb), 0);
+    let keys = PARTAB_SCAN_KEYS.with(|k| k.borrow().clone());
+    let mut out = indexmap::IndexMap::new();
+    for k in keys {
+        let v = (entry.getfn)(std::ptr::null_mut(), &k)
+            .and_then(|p| p.u_str)
+            .unwrap_or_default();
+        out.insert(k, v);
+    }
+    Some(out)
 }
 
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.
