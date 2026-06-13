@@ -1793,3 +1793,10 @@ zsh_errno_msg
 unmetafy_str
 untokenize_ztokens
 posix_ere_bracket_escape
+
+# Rust-only adapter: decodes the single escaped char of the math `##\X`
+# char-code syntax. C math.c:856 calls getkeystring(GETKEYS_MATH) — the
+# shared decoder in SINGLE_CHAR mode; zshrs's getkeystring_with has no
+# single-char mode and the math lexer uses a char cursor, so this small
+# helper decodes one escape and reports chars consumed.
+decode_math_keychar
