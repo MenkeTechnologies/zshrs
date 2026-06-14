@@ -19,11 +19,10 @@ use crate::ported::signals_h::dont_queue_signals;
 use crate::ported::text::getpermtext;
 use crate::ported::utils::{callhookfunc, errflag, movefd, unmeta, ERRFLAG_ERROR};
 use crate::ported::zsh_h::{
-    eprog, hookdef, interact, islogin, isset, jobbing, Eprog, EMULATE_KSH, EMULATE_SH, GLOBALRCS,
-    HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOKF_ALL, HOOK_SUFFIX, HUP, INTERACTIVE,
-    LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND, TERM_BAD, TERM_NOUP, TERM_UNKNOWN,
-    ZEXIT_NORMAL,
-    ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
+    eprog, hookdef, interact, islogin, isset, jobbing, Eprog, CONTINUEONERROR, EMULATE_KSH,
+    EMULATE_SH, GLOBALRCS, HISTBEEP, HISTIGNOREDUPS, HIST_DUP, HIST_TMPSTORE, HOOKF_ALL,
+    HOOK_SUFFIX, HUP, IGNOREEOF, INTERACTIVE, LEXERR, PRIVILEGED, RCS, SHINSTDIN, SINGLECOMMAND,
+    TERM_BAD, TERM_NOUP, TERM_UNKNOWN, ZEXIT_NORMAL, ZLE_CMD_POSTEXEC, ZLE_CMD_PREEXEC,
 };
 // =========================================================================
 // File-scope globals from init.c
@@ -370,7 +369,58 @@ pub fn parseopts(
             *idx += 1;
             continue;
         }
-        // Other option parsing handled by clap in main.rs
+        // c:Src/init.c:478-490 — `-o NAME` / `+o NAME`: a long-name
+        // option whose name follows (`-o nullglob`). `optlookup` resolves
+        // the name; `dosetopt` applies it with the sign as the on/off
+        // action (`-` sets, `+` unsets).
+        if arg == "-o" || arg == "+o" {
+            if emulate_required {
+                parseopts_setemulate(_nam, flags); // c:481-483
+                emulate_required = false;
+            }
+            let action = arg.starts_with('-'); // c:420
+            *idx += 1;
+            if let Some(name) = argv.get(*idx).cloned() {
+                let optno = crate::ported::options::optlookup(&name); // c:493
+                if optno != crate::ported::zsh_h::OPT_INVALID {
+                    // c:501 — dosetopt(optno, action, toplevel, new_opts)
+                    crate::ported::options::dosetopt(optno, action as i32, toplevel as i32);
+                }
+            }
+            *idx += 1;
+            continue;
+        }
+        // zshrs-specific long flags (`--zsh`, `--bash`, `--dap`, …) are
+        // NOT zsh options and the faithful c:511 `optlookup` would reject
+        // them with "no such option". They are consumed by the bin's
+        // front-end before zsh_main, so any remaining `--long` here is
+        // skipped rather than ported through optlookup. (This is the one
+        // deliberate divergence — it's why the prior port stubbed the
+        // whole loop; the single-letter / `-o` forms below are safe to
+        // apply faithfully.)
+        if arg.starts_with("--") {
+            *idx += 1;
+            continue;
+        }
+        // c:Src/init.c:516-534 — a cluster of single option letters
+        // (`-x`, `-v`, `-xv`, `+x`). Each char maps via `optlookupc` to a
+        // (possibly negated, for inverted-sense letters like `f`) option
+        // number; `dosetopt` applies it with the sign as the action.
+        // OPT_INVALID letters are skipped (deferred to the front-end)
+        // rather than erroring as C does at c:517 — zshrs accepts some
+        // non-zsh single-dash flags the C table doesn't know.
+        if emulate_required {
+            parseopts_setemulate(_nam, flags); // c:516-519
+            emulate_required = false;
+        }
+        let action = arg.starts_with('-'); // c:420
+        for c in arg[1..].chars() {
+            let optno = crate::ported::options::optlookupc(c); // c:520
+            if optno != crate::ported::zsh_h::OPT_INVALID {
+                // c:526 — dosetopt(optno, action, toplevel, new_opts)
+                crate::ported::options::dosetopt(optno, action as i32, toplevel as i32);
+            }
+        }
         *idx += 1;
     }
     if emulate_required {
@@ -533,9 +583,36 @@ pub fn init_io(_cmd: Option<&str>) {
     // if (interact) { init_shout(); ... }                                   // c:689-694
     init_shout(); // c:690
 
-    // mypid = (zlong)getpid();                                              // c:712
-    // if (opts[MONITOR]) { ... acquire_pgrp() ... }                         // c:712-707
-    let _ = crate::ported::jobs::acquire_pgrp();
+    // c:699 — `mypid = (zlong)getpid();` — no zshrs global; getpid() is
+    // called where needed (acquire_pgrp computes it locally).
+    // c:700-707 — if interactive, make sure the shell is in the foreground
+    // and is the process-group leader. Gating on MONITOR + the one-shot
+    // `!origpgrp` guard matches C exactly; the prior port called
+    // acquire_pgrp unconditionally and never recorded origpgrp, so
+    // release_pgrp at exit had no group to hand the tty back to.
+    if isset(crate::ported::zsh_h::MONITOR) {
+        // c:700
+        if SHTTY.load(Ordering::SeqCst) == -1 {
+            // c:701
+            crate::ported::options::opt_state_set("monitor", false); // c:702
+        } else {
+            // c:703 — `else if (!origpgrp)`: only acquire the first time.
+            let origpgrp_recorded = *crate::ported::jobs::ORIGPGRP
+                .get_or_init(|| std::sync::Mutex::new(0))
+                .lock()
+                .unwrap()
+                != 0;
+            if !origpgrp_recorded {
+                // c:704 — `origpgrp = GETPGRP();`
+                *crate::ported::jobs::ORIGPGRP
+                    .get_or_init(|| std::sync::Mutex::new(0))
+                    .lock()
+                    .unwrap() = unsafe { libc::getpgrp() };
+                // c:705 — `acquire_pgrp();` (might also clear opts[MONITOR]).
+                let _ = crate::ported::jobs::acquire_pgrp();
+            }
+        }
+    }
 }
 
 /// Port of `mod_export void init_shout(void)` from Src/init.c:712.
@@ -1637,22 +1714,56 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
         // c:1918
         let mut errexit = 0; // c:1924
                              // maybeshrinkjobtab();                                              // c:1925
+        // c:1927-1935 — `do { retflag = 0; loop(1,0); if (errflag &&
+        // !interact && !isset(CONTINUEONERROR)) { errexit = 1; break; } }
+        // while (tok != ENDINPUT && (tok != LEXERR || isset(SHINSTDIN)));`
         loop {
-            // c:1927
-            // retflag = 0;                                                  // c:1929
+            // c:1927 do
+            RETFLAG.store(0, Ordering::SeqCst); // c:1929 retflag = 0
             let _ = r#loop(1, 0); // c:1930
-                                  // if (errflag && !interact && !isset(CONTINUEONERROR)) { ... }  // c:1931-1934
-            errexit = 1;
-            break;
+            if errflag.load(Ordering::SeqCst) != 0 && !interact() && !isset(CONTINUEONERROR) {
+                // c:1931
+                errexit = 1; // c:1932
+                break; // c:1933
+            }
+            let tok_v = tok(); // c:1935
+            if !(tok_v != ENDINPUT && (tok_v != LEXERR || isset(SHINSTDIN))) {
+                break; // c:1935 while-cond false → exit do-while
+            }
         }
-        if errexit != 0 {
+        if tok() == LEXERR || errexit != 0 {
             // c:1936
-            // if (!lastval) lastval = 1;                                    // c:1938-1939
-            // stopmsg = 1; zexit(lastval, ZEXIT_NORMAL);                    // c:1940-1941
-            std::process::exit(0);
+            // c:1938-1939 — `if (!lastval) lastval = 1;` (fatal error → nonzero)
+            if LASTVAL.load(Ordering::SeqCst) == 0 {
+                LASTVAL.store(1, Ordering::SeqCst);
+            }
+            STOPMSG.store(1, Ordering::SeqCst); // c:1940 stopmsg = 1
+            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL); // c:1941
         }
-        // if (!(isset(IGNOREEOF) && interact)) zexit(...);                  // c:1943-1949
-        std::process::exit(0);
+        if !(isset(IGNOREEOF) && interact()) {
+            // c:1943
+            // c:1944-1947 — interactive "logout\n"/"exit\n" echo is `#if 0`'d
+            // out in the C source, so nothing to port there.
+            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL); // c:1948
+            continue; // c:1949 — only reached if zexit DEFERRED (running jobs)
+        }
+        noexitct.fetch_add(1, Ordering::SeqCst); // c:1951 noexitct++
+        if noexitct.load(Ordering::SeqCst) >= 10 {
+            // c:1952
+            STOPMSG.store(1, Ordering::SeqCst); // c:1953 stopmsg = 1
+            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL); // c:1954
+        }
+        // c:1961-1963 — IGNOREEOF interactive nudge.
+        if use_exit_printed.load(Ordering::SeqCst) == 0 {
+            crate::ported::utils::zerrnam(
+                "zsh",
+                if !islogin() {
+                    "use 'exit' to exit."
+                } else {
+                    "use 'logout' to logout."
+                },
+            );
+        }
     }
 }
 
@@ -1877,7 +1988,41 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
             }
             // c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
             let exec_label = if toplevel != 0 { "toplevel" } else { "file" };
+            // Save the lexer's line counter across execution. Each
+            // statement's `SET_LINENO` (c:Src/exec.c execpline WC_PIPE_LINENO)
+            // overwrites `lineno` to that statement's line while running;
+            // C's execlist brackets this with `oldlineno = lineno` /
+            // `lineno = oldlineno` (exec.c:28/292) so the value is restored
+            // on exit. Without it, the faithful single-event loop (which
+            // interleaves parse + execode) had the NEXT event parse from the
+            // just-executed statement's line — `$LINENO` froze at 1 across a
+            // piped/interactive script instead of advancing 1,2,3.
+            let saved_lex_lineno = crate::ported::lex::LEX_LINENO.with(|c| c.get());
             crate::ported::exec::execode(&prog_inner, 0, 0, exec_label); // c:220
+            crate::ported::lex::LEX_LINENO.with(|c| c.set(saved_lex_lineno));
+            // c:Src/exec.c:1611-1618 — errexit (`set -e`) fires a shell
+            // exit FROM execlist (`if (errexit) { errflag = 0; if
+            // (sigtrapped[SIGEXIT]) dotrap(SIGEXIT); realexit(); }`).
+            // zshrs's fusevm can't realexit mid-VM, so BUILTIN_ERREXIT_CHECK
+            // defers it via EXIT_PENDING + a jump to chunk-end. Whole-program
+            // mode then skips the rest of the single chunk via that jump, but
+            // the faithful single-event loop runs each event as its OWN chunk
+            // — the jump only ends the failed event, and without honoring the
+            // pending exit here the NEXT event would still run. Mirror C's
+            // execlist realexit at the execode boundary: zexit fires the EXIT
+            // trap (its trap-body dispatch reaches the session executor) and
+            // realexits with EXIT_VAL. Guarded to top level + no subshell so
+            // a deferred subshell/cmdsub exit still propagates via its own
+            // unwind (fusevm_bridge) instead of killing the parent here.
+            if toplevel != 0
+                && crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::SeqCst) == 0
+                && crate::ported::builtin::EXIT_PENDING.load(Ordering::SeqCst) != 0
+            {
+                crate::ported::builtin::zexit(
+                    crate::ported::builtin::EXIT_VAL.load(Ordering::SeqCst),
+                    ZEXIT_NORMAL,
+                );
+            }
             // c:221 — `tok = toksav;` restore
             set_tok(_toksav);
             if toplevel != 0 {

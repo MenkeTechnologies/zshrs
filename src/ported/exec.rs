@@ -7523,8 +7523,22 @@ pub fn unset_assoc(name: &str) {
 /// (full doshfunc scope wrap). `None` when no executor / not a
 /// function.
 pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
-    crate::fusevm_bridge::try_with_executor(|exec| exec.dispatch_function_call(name, args))
-        .flatten()
+    if let Some(r) =
+        crate::fusevm_bridge::try_with_executor(|exec| exec.dispatch_function_call(name, args))
+    {
+        return r;
+    }
+    // No active VM context: this is the loop()/zsh_main exit path where
+    // `zexit` fires a `TRAPEXIT() { ... }` (via dotrap, Src/builtin.c:6043)
+    // or the `zshexit` hook after `loop()` returned. Enter the installed
+    // session executor so the handler runs in the shell. SAFETY per execode.
+    SESSION_EXECUTOR.with(|c| match c.get() {
+        Some(ptr) => {
+            let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).dispatch_function_call(name, args) }
+        }
+        None => None,
+    })
 }
 
 /// Body-only function dispatch (no doshfunc scope wrap) — call as the
@@ -7532,14 +7546,39 @@ pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
 /// double-wrap of going back through [`dispatch_function_call`]. `None`
 /// when no executor.
 pub fn run_function_body(name: &str, args: &[String]) -> Option<i32> {
-    crate::fusevm_bridge::try_with_executor(|exec| exec.run_function_body_only(name, args))
-        .flatten()
+    if let Some(r) =
+        crate::fusevm_bridge::try_with_executor(|exec| exec.run_function_body_only(name, args))
+    {
+        return r;
+    }
+    // Session-executor fallback for the no-VM-context exit path (e.g. the
+    // `zshexit` hook fired by `zexit` from zsh_main). SAFETY per execode.
+    SESSION_EXECUTOR.with(|c| match c.get() {
+        Some(ptr) => {
+            let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).run_function_body_only(name, args) }
+        }
+        None => None,
+    })
 }
 
 /// Run a script source string on the live executor. `Ok(0)` when no
 /// executor is in scope.
 pub fn execute_script(src: &str) -> Result<i32, String> {
-    crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(src)).unwrap_or(Ok(0))
+    if let Some(r) = crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(src)) {
+        return r;
+    }
+    // No active VM context: the loop()/zsh_main exit path where `zexit`
+    // runs a `trap '...' EXIT` raw body (Src/builtin.c:6043) after `loop()`
+    // returned. Enter the installed session executor so the trap body runs
+    // in the shell instead of silently no-op'ing. SAFETY per execode.
+    SESSION_EXECUTOR.with(|c| match c.get() {
+        Some(ptr) => {
+            let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).execute_script(src) }
+        }
+        None => Ok(0),
+    })
 }
 
 /// Run a script source string through the live executor's zsh pipeline.

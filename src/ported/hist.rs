@@ -182,12 +182,14 @@ pub fn ihwaddc(c: i32) {
     if (inbufflags & (INP_ALIAS | INP_HIST)) == INP_ALIAS {
         return;
     }
-    let chline_empty = chline.lock().unwrap().is_empty();
-    if chline_empty {
-        // C requires `chline != NULL` — the equivalent here is "an
-        // hbegin() has populated the buffer". On startup it's
-        // empty, so behave like the inactive-history C path.
-        return;
+    // C guard: `if (chline && ...)` — chline must be ALLOCATED (non-NULL),
+    // which is the active state hbegin() sets (`hlinesz = 64`), NOT "the
+    // buffer has bytes yet". The prior `chline.is_empty()` proxy was a
+    // chicken-and-egg: an active-but-empty chline (right after hbegin)
+    // rejected the FIRST char, so the line never started building and
+    // interactive history recorded nothing. Use the real allocated flag.
+    if hlinesz.load(SeqCst) == 0 {
+        return; // c:360 — inactive history (chline == NULL)
     }
     // c:362-368 — `*hptr++ = c;`. C writes the byte at the hptr
     // cursor then advances; the qbang escape arm also writes via
@@ -1293,6 +1295,15 @@ pub fn digitcount() -> i32 {
 pub fn strinbeg(dohist: i32) {
     // c:1033
     strin.fetch_add(1, SeqCst); // c:1035
+    // C has ONE `strin`; zshrs splits it into hist.rs `strin` (history
+    // logic above/below) and input.rs `strin` (the copy `ingetc` checks
+    // at input.rs:390 to decide "string input drained → EOF" vs "read
+    // more SHIN"). The single C `strin++` must bump BOTH — same
+    // paired-global rule as `lexstop`. Without the input-side bump, a
+    // nested string parse (cmd-subst body via parse_isolated) that
+    // drained its LEX_INPUT fell through to `inputline()` and STOLE the
+    // outer reader's next SHIN line.
+    crate::ported::input::strin.with(|s| s.set(s.get() + 1));
     hbegin(dohist); // c:1036
     lexinit(); // c:1037
     init_parse_status(); // c:1042
@@ -1320,6 +1331,8 @@ pub fn strinend() {
         "BUG: strinend() called without strinbeg()"  // c:1052
     );
     strin.fetch_sub(1, SeqCst); // c:1053
+    // Mirror the input-side `strin` decrement (see strinbeg note).
+    crate::ported::input::strin.with(|s| s.set(s.get() - 1));
     LEX_ISFIRSTCH.with(|f| f.set(true)); // c:1054 isfirstch = 1
     histdone.store(0, SeqCst); // c:1055 histdone = 0
 }
@@ -1423,8 +1436,14 @@ pub fn unlinkcurline() {
 /// Port of `void hbegin(int dohist)` from Src/hist.c:1110.
 pub fn hbegin(dohist: i32) {
     // c:1110
-    // isfirstln/isfirstch live in the lex.rs LEX_* thread_locals, not as
-    // globals — caller resets them via lexer instance API.            // c:1114
+    // c:1114 — `isfirstln = isfirstch = 1;`. These live in lex.rs LEX_*
+    // thread_locals. hbegin runs at the top of every loop() iteration, so
+    // resetting them here makes the NEXT command start on its first line —
+    // the PS1 prompt, not the PS2 continuation prompt. The prior port left
+    // this to "the caller", but no caller did it, so every interactive
+    // prompt after the first rendered as `>` (PS2).
+    crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.set(true));
+    crate::ported::lex::LEX_ISFIRSTCH.with(|c| c.set(true));
 
     errflag.fetch_and(
         // c:1115
@@ -1948,12 +1967,19 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             .load(Ordering::Relaxed);
         errflag.store(0, Ordering::Relaxed); // c:1518
         let args = vec!["zshaddhistory".to_string(), chline_text.clone()]; // c:1520-1521
-        hookret = crate::ported::utils::callhookfunc(
-            // c:1522
+        // c:1522 — `callhookfunc("zshaddhistory", hookargs, 1, &hookret);`.
+        // `hookret` is the HOOK's return value (the 4th out-param `*retval =
+        // ret`, 0 when no hook ran), NOT callhookfunc's return (`stat`,
+        // which is 1 whenever no hook exists). The prior port used the
+        // `stat` return and passed NULL for retval, so with no zshaddhistory
+        // hook (e.g. `zsh -f`) hookret was 1 → hend's `else if (hookret)`
+        // set save=-1 (HIST_TMPSTORE) → every line was dropped by the next
+        // command's tmpstore-purge. Pass &hookret and read the out-param.
+        crate::ported::utils::callhookfunc(
             "zshaddhistory",
             Some(&args),
             1,
-            std::ptr::null_mut(),
+            &mut hookret as *mut i32,
         );
         let new_errflag = (errflag // c:1524-1525
             .load(Ordering::Relaxed)

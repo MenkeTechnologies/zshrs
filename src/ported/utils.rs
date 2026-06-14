@@ -1673,10 +1673,76 @@ pub fn preprompt() {
     crate::ported::signals_h::winch_unblock();
     crate::ported::signals_h::winch_block();
 
-    // c:1545-1567 — PROMPT_SP heuristic (move prompt to new line on
-    // dangling output). Deferred: needs zterm_columns + hasxn + raw
-    // shout writes + countprompt — the live-terminal substrate that
-    // zshrs's non-interactive `-c` path doesn't use.
+    // c:1545-1567 — PROMPT_SP heuristic: if the previous command left
+    // dangling output (cursor not at column 0), print PROMPT_EOL_MARK then
+    // pad to the terminal width so an automatic-margin terminal wraps to a
+    // fresh line, `\r` back, erase the mark, `\r` — so the next prompt
+    // starts on a clean line. Without it, `echo -n x` glued the prompt to
+    // the output (`xcodelabs-arm%`).
+    if crate::ported::zsh_h::isset(crate::ported::zsh_h::PROMPTSP) // c:1545
+        && crate::ported::zsh_h::isset(crate::ported::zsh_h::PROMPTCR)
+        && crate::ported::init::use_exit_printed.load(Ordering::SeqCst) == 0
+        && crate::ported::init::SHTTY.load(Ordering::SeqCst) != -1
+    {
+        // c:1552-1556 — eolmark = $PROMPT_EOL_MARK or the default mark.
+        let eolmark = crate::ported::params::getsparam("PROMPT_EOL_MARK")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "%B%S%#%s%b".to_string());
+        // c:1554/1557/1561 — force PROMPTPERCENT on for the mark, restore after.
+        let percents = crate::ported::options::opt_state_get("promptpercent").unwrap_or(true);
+        crate::ported::options::opt_state_set("promptpercent", true); // c:1557
+        // c:1559 — `promptexpand(eolmark, 1, ...)`. zshrs's expander emits
+        // RAW terminal escapes for `%B`/`%S`/… (NOT wrapped in the Inpar/
+        // Outpar markers `countprompt` keys on), so countprompt would count
+        // the escape bytes as visible. Expand once (ns=0) and measure the
+        // visible width here by skipping CSI escape sequences + \x01/\x02
+        // readline markers — the default mark `%B%S%#%s%b` is width 1.
+        let (markstr, _, _) = crate::ported::prompt::promptexpand(&eolmark, 0, None);
+        crate::ported::options::opt_state_set("promptpercent", percents); // c:1561
+        // c:1560 — `countprompt(str, &w, 0, -1)` visible-width equivalent.
+        let mut w: i32 = 0;
+        {
+            let b = markstr.as_bytes();
+            let mut i = 0;
+            while i < b.len() {
+                match b[i] {
+                    0x1b => {
+                        // ESC — skip a CSI `\e[ … <final 0x40-0x7e>` sequence.
+                        i += 1;
+                        if i < b.len() && b[i] == b'[' {
+                            i += 1;
+                            while i < b.len() && !(0x40..=0x7e).contains(&b[i]) {
+                                i += 1;
+                            }
+                            if i < b.len() {
+                                i += 1;
+                            }
+                        }
+                    }
+                    0x01 | 0x02 => i += 1, // readline non-print markers
+                    _ => {
+                        w += 1; // ASCII-width approximation (marks are ASCII)
+                        i += 1;
+                    }
+                }
+            }
+        }
+        // c:1562-1565 — `zputs(str, shout); fprintf(shout, "%*s\r%*s\r",
+        //   zterm_columns - w - !hasxn, "", w, "");`
+        let cols = adjustcolumns() as i32; // zterm_columns
+        let not_hasxn = if crate::ported::init::hasxn.load(Ordering::SeqCst) == 0 {
+            1
+        } else {
+            0
+        };
+        let pad1 = (cols - w - not_hasxn).max(0) as usize; // c:1563
+        let mut out = unmetafy_str(&markstr); // c:1562 zputs(str)
+        out.extend(std::iter::repeat(b' ').take(pad1)); // c:1563 %*s
+        out.push(b'\r'); // c:1563 \r
+        out.extend(std::iter::repeat(b' ').take(w.max(0) as usize)); // c:1564 %*s
+        out.push(b'\r'); // c:1564 \r
+        let _ = write_loop(2, &out); // shout → the tty (zshrs uses fd 2)
+    }
 
     // c:1569-1572 — `if (unset(NOTIFY)) scanjobs();` — sync job-status
     // print before prompt, via the canonical scanjobs port

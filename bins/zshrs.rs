@@ -2001,25 +2001,23 @@ pub fn zshrs_main() {
     );
 
     // Check if stdin is a TTY
-    if atty::is(atty::Stream::Stdin) {
-        // Faithful init.c path (Src/init.c:1855 zsh_main): parseargs →
-        // init_io → setupvals → init_signals → init_bltinmods →
-        // init_builtins → run_init_scripts → setupshin → init_misc →
-        // loop(1,0). The ported loop() is the reader, exactly as zsh's
-        // main() drives the interactive shell.
-        //
-        // Create the long-lived session executor and register it so
-        // loop()'s `execode` slot (via the execute_program exec hook)
-        // runs each parsed command line through the fusevm VM. The
-        // executor must outlive zsh_main; it never drops because
-        // zsh_main exits the process from inside loop().
-        let executor = Box::leak(Box::new(ShellExecutor::new()));
-        zsh::ported::exec::install_session_executor(executor);
-        let argv: Vec<String> = std::env::args().collect();
-        std::process::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
-    } else {
-        run_non_interactive();
-    }
+    // Faithful entry: zsh's `main()` (Src/main.c:114) is just
+    // `return zsh_main(argc, argv)` — there is NO tty/non-tty branch and
+    // NO separate non-interactive driver. `zsh_main` (Src/init.c:1855)
+    // decides interactivity internally via `parseargs` (isatty → the
+    // `interactive`/`SHINSTDIN` options), and `loop()` reads SHIN
+    // identically whether stdin is a terminal, a pipe, or a redirected
+    // file. So a single call covers both `zshrs` at a terminal and
+    // `cmd | zshrs` / `zshrs < file`.
+    //
+    // Create the long-lived session executor and register it so loop()'s
+    // `execode` (init.c:220) runs each parsed program through the fusevm
+    // VM. The executor must outlive zsh_main; it never drops because
+    // zsh_main exits the process from inside loop().
+    let executor = Box::leak(Box::new(ShellExecutor::new()));
+    zsh::ported::exec::install_session_executor(executor);
+    let argv: Vec<String> = std::env::args().collect();
+    std::process::exit(zsh::ported::init::zsh_main(argv.len() as i32, &argv));
 }
 
 /// zshrs --doctor: full diagnostic report of shell health, caches, and performance.
@@ -2470,66 +2468,6 @@ fn is_script_cached(plugin_db_path: &std::path::Path, script_path: &str) -> bool
         cache.check(script_path, mt_s, mt_ns).is_some()
     } else {
         false
-    }
-}
-
-fn run_non_interactive() {
-    let mut executor = ShellExecutor::new();
-    executor.zsh_compat = is_zsh_mode();
-    executor.bash_compat = is_bash_mode();
-    if is_posix_mode() {
-        executor.enter_posix_mode();
-    }
-    if is_ksh_mode() {
-        executor.enter_ksh_mode();
-    }
-    // Apply -x / -v from argv. Same wiring as the `-c` and
-    // script-file paths — without this, `cmd | zshrs -x` (stdin
-    // pipe, no -c, no script) silently runs without xtrace because
-    // stdin-not-tty bypasses run_interactive.
-    let argv: Vec<String> = std::env::args().collect();
-    if argv.iter().any(|a| a == "-x" || a == "--xtrace") {
-        zsh::ported::options::opt_state_set("xtrace", true);
-    }
-    if argv.iter().any(|a| a == "-v" || a == "--verbose") {
-        zsh::ported::options::opt_state_set("verbose", true);
-    }
-    // Apply CLI `-o NAME` / `+o NAME` option settings — same
-    // normalization as apply_cli_flags. Without this, `zshrs -f -o
-    // CONTINUE_ON_ERROR <<< script` silently dropped the option
-    // (only the -c and script-file paths parsed -o).
-    {
-        let mut i = 0;
-        while i < argv.len() {
-            let a = &argv[i];
-            if (a == "-o" || a == "+o") && i + 1 < argv.len() {
-                let canonical = argv[i + 1].to_lowercase().replace(['_', '-'], "");
-                zsh::ported::options::opt_state_set(&canonical, a == "-o");
-                i += 2;
-            } else {
-                i += 1;
-            }
-        }
-    }
-    // c:Src/init.c:307-308 — `} else if (!*cmdptr) opts[SHINSTDIN] = 1;`
-    // No script-file argument and no -c command means the shell reads
-    // commands from stdin, and SHINSTDIN must be set. Diagnostics key
-    // off it: zwarning (Src/utils.c:114 + 301) prints `zsh: msg` with
-    // NO line number when SHINSTDIN is set at top level, vs
-    // `name:LINE: msg` for -c/script input.
-    zsh::ported::options::opt_state_set("shinstdin", true);
-    // Read all of stdin at once so multi-line constructs (heredocs, functions,
-    // loops, etc.) are parsed correctly — line-by-line breaks them.
-    let mut script = String::new();
-    io::stdin().lock().read_to_string(&mut script).unwrap_or(0);
-    if !script.is_empty() {
-        if let Err(e) = executor.execute_script(&script) {
-            if e != "__SILENCED__" {
-                eprintln!("zshrs: {}", e);
-            }
-            std::process::exit(1);
-        }
-        std::process::exit(executor.last_status());
     }
 }
 
