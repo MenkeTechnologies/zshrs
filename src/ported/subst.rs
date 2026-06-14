@@ -11565,7 +11565,14 @@ pub fn paramsubst(
             // c:2405
             // Canonical prompt expansion (Src/prompt.c:182 promptexpand).
             let prompt_one = |s: &str| -> String {
-                let (expanded, _, _) = promptexpand(s, 0, None);
+                // c:4003/4013 — `untokenize(val); ... promptexpand(val,...)`.
+                // The (%) value still carries lexer tokens (e.g. Inbrace/
+                // Outbrace for `{`/`}` from `${(%):-%D{%Y}}`). promptexpand's
+                // `%D{...}` / `%F{...}` / `%{...%}` parsers match literal
+                // ASCII braces, so untokenize first — otherwise `%D{%Y}`
+                // falls back to the bare `%D` (yy-mm-dd) form.
+                let untok = crate::ported::lex::untokenize(s);
+                let (expanded, _, _) = promptexpand(&untok, 0, None);
                 expanded
             };
             if let Some(parts) = split_parts.clone() {
