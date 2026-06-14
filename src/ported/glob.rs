@@ -1696,8 +1696,81 @@ pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
             '\u{90}' if depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
-                    if has_comma || has_dotdot {
+                    // c:2050-2061 — a comma group always expands.
+                    if has_comma {
                         return true;
+                    }
+                    if has_dotdot {
+                        // c:2071-2096 — a `..` group expands ONLY when it
+                        // is a valid char range (bracechardots, c:2071) OR
+                        // a numeric range whose endpoints are immediately
+                        // bounded by the closing brace: C walks `[-]digits
+                        // .. [-]digits` and requires the next char to be
+                        // Outbrace (c:2084) or `..incr..` + Outbrace
+                        // (c:2087-2095). Trailing garbage (`{0..5%2}`,
+                        // `{1..3x}`, `{1.2..3}`, `{1..5.}`) fails this, so
+                        // the group stays LITERAL with braces. Nested
+                        // groups stay permissive — recursive xpandbraces
+                        // handles the inner range.
+                        let content: String =
+                            chars[brace_open.unwrap_or(0) + 1..i].iter().collect();
+                        let nested = content.contains('\u{8f}');
+                        // c:2074-2096 — structural walk: optional `-`,
+                        // digits (0+), `..`, optional `-`, digits (0+),
+                        // then MUST end at the brace (Outbrace), or take a
+                        // `..incr` step then end. C allows EMPTY endpoints
+                        // (`{1..}`, `{..5}` pass hasbraces, then fail the
+                        // range parse and get brace-stripped) — what it
+                        // forbids is trailing non-range chars (`{0..5%2}`,
+                        // `{1.2..3}`). Closes with c:2085 `idigit(lbr[1])
+                        // || idigit(str[-1])` — a digit adjacent to `..`.
+                        // Dash TOKEN (\u{9b}) reads as ASCII `-`.
+                        let numeric_ok = {
+                            let norm: String = content
+                                .chars()
+                                .map(|c| if c == '\u{9b}' { '-' } else { c })
+                                .collect();
+                            let b = norm.as_bytes();
+                            let n = b.len();
+                            let mut j = 0;
+                            let mut shape_ok = false;
+                            if j < n && b[j] == b'-' {
+                                j += 1; // c:2074 leading `-`
+                            }
+                            while j < n && b[j].is_ascii_digit() {
+                                j += 1; // c:2076 first number
+                            }
+                            if j + 1 < n && b[j] == b'.' && b[j + 1] == b'.' {
+                                j += 2; // c:2078 `..`
+                                if j < n && b[j] == b'-' {
+                                    j += 1; // c:2080
+                                }
+                                while j < n && b[j].is_ascii_digit() {
+                                    j += 1; // c:2082 second number
+                                }
+                                if j == n {
+                                    shape_ok = true; // c:2084 Outbrace
+                                } else if j + 1 < n && b[j] == b'.' && b[j + 1] == b'.' {
+                                    j += 2; // c:2087 `..incr`
+                                    if j < n && b[j] == b'-' {
+                                        j += 1;
+                                    }
+                                    while j < n && b[j].is_ascii_digit() {
+                                        j += 1; // c:2091
+                                    }
+                                    if j == n {
+                                        shape_ok = true; // c:2093
+                                    }
+                                }
+                            }
+                            // c:2085/2094 — digit adjacent to `..`.
+                            shape_ok
+                                && (b.first().is_some_and(|c| c.is_ascii_digit())
+                                    || b.last().is_some_and(|c| c.is_ascii_digit()))
+                        };
+                        if nested || bracechardots(&content).is_some() || numeric_ok {
+                            return true;
+                        }
                     }
                     if brace_ccl {
                         if let Some(open) = brace_open {
