@@ -2538,12 +2538,11 @@ impl ShellExecutor {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<i32, String> {
-        // c:Src/jobs.c — `time` reports only on JOBS (forked work).
-        // Count every fork-equivalent event so BUILTIN_TIME_SUBLIST
-        // can match zsh: `time true` (builtin, no fork) is silent,
-        // `time /usr/bin/true` reports. The in-process subshell entry
-        // increments too (C forks for `(...)`).
-        FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // FORK_EVENTS is bumped at the real spawn site inside
+        // execute_external_bg — this entry is only ONE of several
+        // callers of that spawn (the common static-head command path
+        // calls execute_external_bg directly), so counting here would
+        // miss `time sleep 0` while double-counting this path.
         self.execute_external_bg(cmd, args, redirects, false)
     }
 
@@ -2616,6 +2615,16 @@ impl ShellExecutor {
 
         // Redirect handling lives in fusevm's WithRedirectsBegin/End
         // ops at compile time; `_redirects` arrives empty here.
+
+        // c:Src/jobs.c — `time` reports only on JOBS (forked work). This
+        // is the single chokepoint where an external process is actually
+        // spawned (both fg and bg, all callers), AFTER the
+        // command-not-found and resolvebuiltin early-returns above — so
+        // counting here makes BUILTIN_TIME_SUBLIST report `time sleep 0`
+        // / `time /usr/bin/true` (external → fork) while staying silent
+        // for `time true` (builtin, never reaches this point). The
+        // subshell entry counts separately (fusevm_bridge.rs:9573).
+        FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if background {
             match command.spawn() {

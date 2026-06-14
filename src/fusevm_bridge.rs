@@ -8273,6 +8273,13 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// status (or 127 if PATH lookup fails — the standard "command not
 /// found" code).
 fn exec_system_command(name: &str, args: &[String]) -> i32 {
+    // c:Src/jobs.c — count the fork so `time` reports for an
+    // overridable coreutils shadow run as an external (`time sleep 0`,
+    // `time cat …`). This is a distinct spawn path from
+    // execute_external_bg; without the bump BUILTIN_TIME_SUBLIST saw no
+    // job and stayed silent. (Builtins that don't reach a spawn never
+    // hit this fn.)
+    crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let status = std::process::Command::new(name)
         .args(args)
         .stdin(std::process::Stdio::inherit())
