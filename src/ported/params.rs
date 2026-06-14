@@ -10766,12 +10766,19 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
         if (f & PM_AUTOLOAD) != 0 && needs_prefix {
             return;
         }
-        // c:6157-6163 — PM_RO_BY_DESIGN with level check: only show
-        // the entry when its level matches the current scope.
+        // c:6157-6162 — `if (p->node.flags & PM_RO_BY_DESIGN) {
+        //   if (p->level != locallevel || p->level == 0) return; }`.
+        // RO_BY_DESIGN specials can't be restored out of context, so
+        // they're shown only when printed in the scope of their own
+        // declaration (level matches AND is non-zero). At top level
+        // (`p->level == 0`) they're always skipped — this is what keeps
+        // the positional/special params (`*` `@` `#` `?` `-` `!` `$`,
+        // ARGC, status, HISTCMD, LINENO, PPID, TTYIDLE, ZSH_SUBSHELL)
+        // out of `typeset -p`. The `|| p->level == 0` clause was missing.
         if (f & PM_RO_BY_DESIGN) != 0 && needs_prefix {
             let cur_ll = locallevel.load(Ordering::Relaxed) as i32;
-            if hn.level != cur_ll {
-                // c:6157
+            if hn.level != cur_ll || hn.level == 0 {
+                // c:6157-6158
                 return;
             }
         }
