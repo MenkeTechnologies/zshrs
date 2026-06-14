@@ -388,9 +388,15 @@ pub fn safeinungetc(c: i32) {
 /// ```
 pub fn ihgetc() -> i32 {
     // c:418
+    // c:420 — `int c = ingetc();`. C's ingetc returns the byte 32 (' ')
+    // WITH lexstop set at EOF (input.c:322). zshrs's ingetc signals EOF as
+    // `None`, so map None → ' ' (NOT -1): a negative `c` is reserved for
+    // the histsubchar bad-`!`-expansion path at c:432 (which sets errflag),
+    // and conflating EOF with it spuriously flags an error on a clean
+    // Ctrl-D / end-of-input.
     let mut c: i32 = ingetc() // c:420 int c = ingetc();
         .map(|ch| ch as i32)
-        .unwrap_or(-1);
+        .unwrap_or(b' ' as i32);
     if exit_pending.load(SeqCst) {
         // c:422
         lexstop.store(true, SeqCst); // c:424

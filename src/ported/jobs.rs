@@ -4077,15 +4077,14 @@ pub fn acquire_pgrp() -> bool {
             break;
         }
         mypgrp = unsafe { libc::getpgrp() }; // c:3236
+        sync_mypgrp(mypgrp); // c:3236 (global)
         if mypgrp == mypid {
             // c:3237
             if !interact {
                 break;
             } // c:3239 attachtty no-op
             signal_setmask(&oldset); // c:3240
-            unsafe {
-                libc::tcsetpgrp(0, mypgrp);
-            } // c:3241 attachtty(mypgrp)
+            crate::ported::utils::attachtty(mypgrp); // c:3241 attachtty(mypgrp)
             signal_block(&blockset); // c:3242
         }
         if mypgrp == unsafe { libc::tcgetpgrp(0) } {
@@ -4097,6 +4096,7 @@ pub fn acquire_pgrp() -> bool {
         let _ = unsafe { libc::read(0, buf.as_mut_ptr() as *mut _, 0) }; // c:3247
         signal_block(&blockset); // c:3248
         mypgrp = unsafe { libc::getpgrp() }; // c:3249
+        sync_mypgrp(mypgrp); // c:3249 (global)
         if mypgrp == lastpgrp {
             // c:3250
             if !interact {
@@ -4117,9 +4117,7 @@ pub fn acquire_pgrp() -> bool {
             // c:3268 setpgrp
             mypgrp = mypid; // c:3269
             sync_mypgrp(mypgrp); // c:3269 (global)
-            unsafe {
-                libc::tcsetpgrp(0, mypgrp);
-            } // c:3270 attachtty
+            crate::ported::utils::attachtty(mypgrp); // c:3270 attachtty(mypgrp)
             acquired = true;
         } else {
             opt_state_set("monitor", false); // c:3272 opts[MONITOR]=0

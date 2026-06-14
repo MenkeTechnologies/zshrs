@@ -273,6 +273,14 @@ pub fn emulate(mode: &str, fully: bool) {
         _ => EMULATE_ZSH,
     };
     EMULATION.store(new_emu, std::sync::atomic::Ordering::Relaxed);
+    // c:542-548 — `*new_emulation = EMULATE_xSH`. The canonical global the
+    // C source passes by pointer (`emulate(nam, 1, &emulation, opts)`,
+    // init.c:350) and the `EMULATION(X)` macro (zsh.h:2347) reads is the
+    // lowercase `emulation`. The port keeps two cells (see bin_emulate
+    // "port keeps 2 cells", builtin.rs:11021); both must stay in sync or
+    // startup `EMULATION(EMULATE_ZSH)` checks (e.g. init_builtins disabling
+    // the `repeat` reswd, builtin.c:214) read a stale 0.
+    emulation.store(new_emu, std::sync::atomic::Ordering::Relaxed);
     FULLY_EMULATING.store(fully, std::sync::atomic::Ordering::Relaxed);
 
     // c:551-572 — body of `installemulation()` + exec.c:5933-5938

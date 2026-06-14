@@ -248,7 +248,12 @@ fn parseargs(
     if isset(SHINSTDIN) {
         let usezle =
             isset(crate::ported::zsh_h::USEZLE) && unsafe { libc::isatty(0) != 0 };
-        crate::ported::options::opt_state_set("usezle", usezle);
+        // USEZLE's canonical option name is `zle` (zsh_h.rs:4145
+        // `opt_name(USEZLE) == "zle"`); `isset(USEZLE)` reads the `zle`
+        // key, so the write MUST use `zle` too. The prior `"usezle"` key
+        // was never read → this `opts[USEZLE] = opts[USEZLE] && isatty(0)`
+        // downgrade silently did nothing.
+        crate::ported::options::opt_state_set("zle", usezle); // c:292
     }
 
     // c:294 — `paramlist = znewlinklist();`
@@ -580,8 +585,23 @@ pub fn init_io(_cmd: Option<&str>) {
         }
     }
 
-    // if (interact) { init_shout(); ... }                                   // c:689-694
-    init_shout(); // c:690
+    // c:689-694 — set up terminal output only for an interactive shell;
+    // disable the line editor (USEZLE → the special `zle` option) when the
+    // shell isn't interactive, or is interactive without a real tty.
+    if interact() {
+        // c:689
+        init_shout(); // c:690
+        // c:691-692 — `if (!SHTTY || !shout) opts[USEZLE] = 0;`. zshrs has
+        // no `shout` FILE* (it writes the tty via SHTTY / fd 2), so the C
+        // `!shout` arm collapses into the SHTTY check. The option's
+        // canonical name is `zle` (options.rs:92), NOT `usezle`.
+        if SHTTY.load(Ordering::SeqCst) == -1 {
+            crate::ported::options::opt_state_set("zle", false); // c:692 opts[USEZLE]=0
+        }
+    } else {
+        // c:693-694 — `} else opts[USEZLE] = 0;`
+        crate::ported::options::opt_state_set("zle", false); // c:694
+    }
 
     // c:699 — `mypid = (zlong)getpid();` — no zshrs global; getpid() is
     // called where needed (acquire_pgrp computes it locally).
@@ -2121,7 +2141,10 @@ fn parseopts_setemulate(nam: &str, flags: i32) {
     // c:366-368 — `opts[MONITOR] = 2; opts[HASHDIRS] = 2; opts[USEZLE] = 1;`
     crate::ported::options::opt_state_set("monitor", true);
     crate::ported::options::opt_state_set("hashdirs", true);
-    crate::ported::options::opt_state_set("usezle", true);
+    // USEZLE's canonical name is `zle` (zsh_h.rs:4145); the prior
+    // `"usezle"` key was never read by `isset(USEZLE)` → this default was a
+    // silent no-op. init_io (c:691-694) downgrades it for non-tty shells.
+    crate::ported::options::opt_state_set("zle", true); // c:368 opts[USEZLE]=1
     // c:369-370 — `opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;`
     crate::ported::options::opt_state_set("shinstdin", false);
     crate::ported::options::opt_state_set("singlecommand", false);
