@@ -4164,20 +4164,51 @@ pub(crate) fn hgetc() -> Option<char> {
     let flags = crate::ported::input::inbufflags.with(|f| f.get());
     let inp_cont_pending = (flags & crate::ported::zsh_h::INP_CONT) != 0;
     let try_inbuf = inbufct > 0 || inp_cont_pending;
-    let from_inbuf = if try_inbuf {
-        crate::ported::input::ingetc()
-    } else {
-        None
+
+    // c:Src/lex.c — the lexer reads characters via `hgetc`, which C points
+    // at `ihgetc` (hist.c:418) when history is on. For the inbuf/ingetc
+    // stack source (interactive input) we DELEGATE to the ported `ihgetc`
+    // (ingetc → histsubchar → hwaddc → addtoline) so `!`-expansion and the
+    // history-line build are CALLED, not re-inlined here — but only when
+    // history is active (stophist==0 && !INP_ALIAS). The Rust-only
+    // LEX_INPUT window (`-c` / cmd-subst / eval, where history is off) is
+    // read directly. `ihgetc` returns C's `int`; it signals EOF / a bad
+    // `!`-reference by setting `lexstop`, which we map back to the Option
+    // API's `None`.
+    let hist_active = crate::ported::hist::stophist.load(Ordering::SeqCst) == 0
+        && (flags & crate::ported::zsh_h::INP_ALIAS) == 0;
+    let read_stack = || -> Option<char> {
+        if hist_active {
+            let nc = crate::ported::hist::ihgetc(); // c:418
+            if crate::ported::input::lexstop.with(|s| s.get()) {
+                None
+            } else {
+                char::from_u32(nc as u32)
+            }
+        } else {
+            crate::ported::input::ingetc()
+        }
     };
+
+    let from_inbuf = if try_inbuf { read_stack() } else { None };
     let c = if let Some(c) = from_inbuf {
         c
     } else if let Some(c) = LEX_INPUT.with_borrow(|s| s.get(pos..).and_then(|t| t.chars().next())) {
         LEX_POS.set(pos + c.len_utf8());
         c
     } else {
-        // Last resort: even with inbufct == 0 and no INP_CONT, try
-        // ingetc — covers any buffered-but-not-yet-counted content.
-        crate::ported::input::ingetc()?
+        // inbuf + LEX_INPUT both empty. If a prior read already set lexstop
+        // (real EOF, or a bad `!`-expansion), stop now WITHOUT re-reading —
+        // re-entering ihgetc here would `hwaddc` a stray char into chline.
+        // (An inbuf drain while `strin` is set — e.g. an alias body ending
+        // mid-`eval` — ALSO sets lexstop, but never reaches here: the
+        // LEX_INPUT branch above still holds the post-alias text.) No
+        // lexstop → genuine refill: read the next line via the same
+        // history-aware path (triggers inputline). `?` is None at EOF.
+        if crate::ported::input::lexstop.with(|s| s.get()) {
+            return None;
+        }
+        read_stack()?
     };
 
     if c == '\n' {
@@ -4187,21 +4218,10 @@ pub(crate) fn hgetc() -> Option<char> {
     // c:input.c:360-361 — `if (!lexstop) zshlex_raw_add(lastc);`
     // Every char read from input also feeds the raw buffer when
     // lex_add_raw is on (used by skipcomm to capture verbatim
-    // `$(...)` body text into the parent token).
+    // `$(...)` body text into the parent token). (The history-line build —
+    // C `hwaddc`/`addtoline` at ihgetc c:459-460 — is done INSIDE the
+    // `ihgetc` call above, not duplicated here.)
     zshlex_raw_add(c);
-
-    // c:Src/hist.c:459 ihgetc — `hwaddc(c);` builds the history line
-    // (`chline`) char-by-char as the lexer reads. zshrs's lexer hgetc IS
-    // the ihgetc equivalent, but the prior port dropped this call, so
-    // `chline` stayed empty and `hend` recorded nothing → interactive
-    // history was always blank. ihwaddc no-ops when history is inactive
-    // (hlinesz==0, e.g. `-c` / cmd-subst / eval via strinbeg's hbegin(0)),
-    // so only the live interactive loop()'s hbegin(1) accumulates. Built
-    // only on the fresh-read path (not the unget re-read above): zshrs's
-    // unget is a char buffer that does NOT rewind `hptr`, so re-adding on
-    // re-read would double-count. (C's `addtoline(c)` at c:460 is skipped
-    // — it's a no-op outside ZLE history expansion.)
-    crate::ported::hist::ihwaddc(c as i32);
 
     Some(c)
 }
