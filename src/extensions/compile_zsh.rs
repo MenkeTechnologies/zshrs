@@ -3749,8 +3749,13 @@ impl ZshCompiler {
             // process-sub inner parse.
             let saved_errflag = errflag.load(Ordering::Relaxed);
             errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-            crate::ported::parse::parse_init(inner);
-            let prog = crate::ported::parse::parse();
+            // Context-isolated parse (c:Src/exec.c:283 parse_string). This
+            // compile-time re-parse of the `<(…)` / `>(…)` body runs while
+            // the outer single-event loop()/parse_event reader is mid-stream
+            // (compile happens per-event, before execode), so a bare
+            // parse_init/lex_init would STEAL the next SHIN line into this
+            // inner program. parse_isolated sets `strin` so the drain EOFs.
+            let prog = crate::vm_helper::parse_isolated(inner);
             let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
             errflag.store(saved_errflag, Ordering::Relaxed);
             if !parse_failed {

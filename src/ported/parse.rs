@@ -746,7 +746,27 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     if tok() == ENDINPUT {
         return None; // EOF — loop() terminates.
     }
-    let mut program = parse_program_until(None);
+    // single_event = TRUE: one logical command line per parse_event, the
+    // faithful port of C par_event's endtok==ENDINPUT top-level mode
+    // (parse.c:635). loop() reads+executes ONE event at a time so `-v`/`-x`
+    // echo and runtime `setopt verbose`/`xtrace` interleave with execution
+    // exactly as zsh does — whole-program parsing can't (it finishes
+    // parsing before any execution).
+    //
+    // Enabling this required isolating the runtime nested-parse machinery
+    // from the now-mid-stream outer reader (the parse/execute interleave
+    // exposed three split-global hazards that whole-program mode hid):
+    //   * cmd-subst / proc-sub / eval / source bodies re-parse via
+    //     vm_helper::parse_isolated (the AST-path bridge for C's
+    //     parse_string, exec.c:283) — it sets `strin` so a drained nested
+    //     buffer EOFs instead of STEALING the outer reader's next SHIN line.
+    //   * strinbeg/strinend now bump BOTH `strin` copies (hist.rs + the
+    //     input.rs one ingetc checks); lexinit zeroes BOTH `lexstop` copies
+    //     — C has a single global for each, zshrs split them.
+    //   * loop() saves/restores LEX_LINENO across execode (init.rs), the
+    //     execlist `oldlineno` discipline (exec.c:28/292), so per-statement
+    //     SET_LINENO doesn't freeze `$LINENO` for the next event.
+    let mut program = parse_program_until(None, true);
     if program.lists.is_empty() {
         clear_hdocs();
         return None;
@@ -968,7 +988,7 @@ pub fn set_sublist_code(p: usize, type_code: i32, flags: i32, skip: i32, cmplx: 
 /// AST in Rust. The compile_zsh module then traverses the AST to
 /// emit fusevm bytecode, which serves the same role as zsh's
 /// wordcode but with a different opcode set and execution model.
-fn par_list() -> Option<(ZshList, bool)> {
+fn par_list(single_event: bool) -> Option<(ZshList, bool)> {
     let sublist = par_sublist()?;
 
     // c:769-803 — `list : { SEPER } [ sublist [ { SEPER | AMPER |
@@ -1001,7 +1021,29 @@ fn par_list() -> Option<(ZshList, bool)> {
                 true,
             )
         }
-        SEPER | SEMI | NEWLIN => {
+        SEPER => {
+            // c:Src/parse.c par_event SEPER branch — `if (isnewlin <= 0
+            // || endtok != ENDINPUT) zshlex();`. The lexer folds both
+            // `;` and `\n` into SEPER (lex.rs:265), distinguishing them
+            // via LEX_ISNEWLIN (C `isnewlin`). At a TOP-LEVEL event
+            // boundary (single_event ≈ endtok == ENDINPUT) a SEPER that
+            // was a NEWLINE terminates the event and is NOT consumed —
+            // it's left for the next parse_event, whose leading skip
+            // reads the following line only THEN. That's what lets
+            // loop() read+execute one event at a time so `-v`/`-x` echo
+            // and runtime `setopt verbose` interleave with execution
+            // like zsh. A `;` SEPER (isnewlin <= 0), or any SEPER inside
+            // a body / whole-program parse (single_event = false), is
+            // consumed to chain the next sublist.
+            let is_newline = crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) > 0;
+            if !(single_event && is_newline) {
+                zshlex();
+            }
+            (ListFlags::default(), true)
+        }
+        SEMI | NEWLIN => {
+            // Unfolded `;` / preserved newline (LEXFLAGS_NEWLINE) — not a
+            // top-level event terminator; consume and continue.
             zshlex();
             (ListFlags::default(), true)
         }
@@ -1173,19 +1215,85 @@ fn par_cmd() -> Option<ZshCommand> {
         }
     }
 
+    // c:Src/parse.c:970-1030 par_cmd — push the open construct onto the
+    // cmdstack for the duration of its sub-parse, then pop. The cmdstack
+    // drives `%_` prompt expansion, so this is what makes a multi-line
+    // construct's PS2 render `for> ` / `while> ` / `case> ` across
+    // continuation lines instead of a bare `> `. (The cmdstack does NOT
+    // drive tokenization in zshrs — the lexer's only reads are the
+    // debug-only DPUTS "cmdstack not empty" asserts — so wrapping the AST
+    // dispatch is behaviorally inert outside the prompt.) IF is excluded
+    // to match C, where par_if manages its own cmdstack (CS_IF/CS_IFTHEN);
+    // DINPAR/TIME/INOUTPAR are not cmdstack constructs in C either.
     let cmd = match tok() {
-        FOR | FOREACH => par_for(),
-        SELECT => parse_select(),
-        CASE => par_case(),
-        IF => par_if(),
-        WHILE => par_while(false),
-        UNTIL => par_while(true),
-        REPEAT => par_repeat(),
-        INPAR_TOK => par_subsh(),
+        FOR => {
+            cmdpush(CS_FOR as u8); // c:972
+            let c = par_for();
+            cmdpop(); // c:974
+            c
+        }
+        FOREACH => {
+            cmdpush(CS_FOREACH as u8); // c:977
+            let c = par_for();
+            cmdpop(); // c:979
+            c
+        }
+        SELECT => {
+            cmdpush(CS_SELECT as u8); // c:983
+            let c = parse_select();
+            cmdpop(); // c:985
+            c
+        }
+        CASE => {
+            cmdpush(CS_CASE as u8); // c:988
+            let c = par_case();
+            cmdpop(); // c:990
+            c
+        }
+        IF => par_if(), // c:992-994 — par_if manages its own cmdstack
+        WHILE => {
+            cmdpush(CS_WHILE as u8); // c:996
+            let c = par_while(false);
+            cmdpop(); // c:998
+            c
+        }
+        UNTIL => {
+            cmdpush(CS_UNTIL as u8); // c:1001
+            let c = par_while(true);
+            cmdpop(); // c:1003
+            c
+        }
+        REPEAT => {
+            cmdpush(CS_REPEAT as u8); // c:1006
+            let c = par_repeat();
+            cmdpop(); // c:1008
+            c
+        }
+        INPAR_TOK => {
+            cmdpush(CS_SUBSH as u8); // c:1012
+            let c = par_subsh();
+            cmdpop(); // c:1014
+            c
+        }
         INOUTPAR => parse_anon_funcdef(),
-        INBRACE_TOK => parse_cursh(),
-        FUNC => par_funcdef(),
-        DINBRACK => par_cond(),
+        INBRACE_TOK => {
+            cmdpush(CS_CURSH as u8); // c:1017
+            let c = parse_cursh();
+            cmdpop(); // c:1019
+            c
+        }
+        FUNC => {
+            cmdpush(CS_FUNCDEF as u8); // c:1022
+            let c = par_funcdef();
+            cmdpop(); // c:1024
+            c
+        }
+        DINBRACK => {
+            cmdpush(CS_COND as u8); // c:1027
+            let c = par_cond();
+            cmdpop(); // c:1029
+            c
+        }
         DINPAR => parse_arith(),
         TIME => par_time(),
         _ => par_simple(redirs),
@@ -1820,7 +1928,7 @@ fn par_case() -> Option<ZshCommand> {
         // up the case-arm reader to recognize the same terminator
         // set; the Rust port was passing the implicit-None and
         // hitting the top-level orphan check.
-        let body = parse_program_until(Some(&[DSEMI, SEMIAMP, SEMIBAR, ESAC]));
+        let body = parse_program_until(Some(&[DSEMI, SEMIAMP, SEMIBAR, ESAC]), false);
 
         // Get terminator. Set incasepat=1 BEFORE the zshlex
         // advance so the next token (the next arm's pattern, like
@@ -1892,7 +2000,7 @@ fn par_if() -> Option<ZshCommand> {
     // (`then` at command position can't start a command).
     // fast-syntax-highlighting.plugin.zsh:365-375 is the canonical
     // real-world load: `if [[ … ]] { … } elif { type curl … } { … }`.
-    let cond = Box::new(parse_program_until(Some(&[THEN])));
+    let cond = Box::new(parse_program_until(Some(&[THEN]), false));
 
     skip_separators();
 
@@ -1906,7 +2014,7 @@ fn par_if() -> Option<ZshCommand> {
 
     // Parse then-body - stops at else/elif/fi, or } if using brace syntax
     let then = if use_brace {
-        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
         if tok() == OUTBRACE_TOK {
             zshlex();
             // c:Src/parse.c:1469-1470 — `zshlex(); incmdpos = 1;`. C
@@ -1918,7 +2026,7 @@ fn par_if() -> Option<ZshCommand> {
         }
         Box::new(body)
     } else {
-        Box::new(parse_program_until(Some(&[ELSE, ELIF, FI])))
+        Box::new(parse_program_until(Some(&[ELSE, ELIF, FI]), false))
     };
 
     // c:Src/parse.c:1471-1472 — `if (tok == SEPER) break;`. For
@@ -1985,7 +2093,7 @@ fn par_if() -> Option<ZshCommand> {
                     // no-separator chaining rule. INBRACE_TOK in the
                     // stop set made the cond parse EMPTY and the cond
                     // block masquerade as the body (fsh:370).
-                    let econd = parse_program_until(Some(&[THEN]));
+                    let econd = parse_program_until(Some(&[THEN]), false);
                     skip_separators();
 
                     let elif_use_brace = tok() == INBRACE_TOK;
@@ -1997,14 +2105,14 @@ fn par_if() -> Option<ZshCommand> {
 
                     // elif body stops at else/elif/fi or } if using braces
                     let ebody = if elif_use_brace {
-                        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+                        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
                         if tok() == OUTBRACE_TOK {
                             zshlex();
                             saw_terminator = true; // brace close on elif
                         }
                         body
                     } else {
-                        parse_program_until(Some(&[ELSE, ELIF, FI]))
+                        parse_program_until(Some(&[ELSE, ELIF, FI]), false)
                     };
 
                     elif.push((econd, ebody));
@@ -2033,14 +2141,14 @@ fn par_if() -> Option<ZshCommand> {
 
                     // else body stops at 'fi' or '}'
                     else_ = Some(Box::new(if else_use_brace {
-                        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+                        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
                         if tok() == OUTBRACE_TOK {
                             zshlex();
                             saw_terminator = true;
                         }
                         body
                     } else {
-                        parse_program_until(Some(&[FI]))
+                        parse_program_until(Some(&[FI]), false)
                     }));
 
                     // Consume the 'fi' if present (not for brace syntax)
@@ -2105,7 +2213,7 @@ fn par_while(until: bool) -> Option<ZshCommand> {
     // stop set because `do` at command position can't start a
     // command. INBRACE_TOK was previously (wrongly) in the set too,
     // which made a brace-form COND parse as an empty cond + body.
-    let cond = Box::new(parse_program_until(Some(&[DOLOOP])));
+    let cond = Box::new(parse_program_until(Some(&[DOLOOP]), false));
 
     skip_separators();
     let body = parse_loop_body(false, false)?;
@@ -2169,7 +2277,7 @@ fn par_subsh() -> Option<ZshCommand> {
     zshlex(); // skip (
     // c:Src/parse.c:par_subsh — `parse_event(OUTPAR)` parses until
     // the matching `)`. zshrs's previous port called bare
-    // `parse_program()` (parse_program_until(None)) which has no
+    // `parse_program()` (parse_program_until(None, false)) which has no
     // way to know it should stop at OUTPAR_TOK — at top-level
     // that's fine (the outer loop just sees an extra OUTPAR after
     // the inner body), but the parse_event-equivalent's new
@@ -2177,7 +2285,7 @@ fn par_subsh() -> Option<ZshCommand> {
     // None arm now reports a spurious "parse error near `)'" when
     // the construct ends. Pass OUTPAR_TOK so parse_program_until
     // stops cleanly at the closing paren.
-    let prog = parse_program_until(Some(&[OUTPAR_TOK]));
+    let prog = parse_program_until(Some(&[OUTPAR_TOK]), false);
     if tok() == OUTPAR_TOK {
         zshlex();
     }
@@ -2335,7 +2443,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         // c:Src/parse.c — func body terminates at OUTBRACE_TOK.
         // Explicit end-token keeps the inner parse from hitting the
         // top-level stray-`}` arm (#168). Bug #167 family.
-        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
         // c:Src/parse.c:1733-1737 — `if (tok != OUTBRACE) { cmdpop();
         // ... YYERRORV(oecused); }`. Hard-error on missing close brace
         // so `function f { echo hi` doesn't silently register a half-
@@ -2400,7 +2508,7 @@ fn par_funcdef() -> Option<ZshCommand> {
         }))
     } else {
         // Short form
-        par_list().map(|(list, _terminated)| {
+        par_list(false).map(|(list, _terminated)| {
             ZshCommand::FuncDef(ZshFuncDef {
                 names,
                 body: Box::new(ZshProgram { lists: vec![list] }),
@@ -5211,7 +5319,7 @@ pub fn ecgetstr_wordcode(buf: &[u32], pc: usize) -> (String, usize) {
 pub fn parse() -> ZshProgram {
     zshlex();
 
-    let mut program = parse_program_until(None);
+    let mut program = parse_program_until(None, false);
 
     // Post-pass: wire heredoc bodies (collected by the inline NEWLIN
     // walk in zshlex into LEX_HEREDOCS) back into ZshRedir.heredoc
@@ -7982,14 +8090,22 @@ fn is_readfd(t: i32) -> bool {
 /// for here-string) from full event parse; zshrs's parse_program
 /// is the full-event entry.
 fn parse_program() -> ZshProgram {
-    parse_program_until(None)
+    parse_program_until(None, false)
 }
 
 /// Parse a program until we hit an end token
 /// Parse a program until one of `end_tokens` is seen (or EOF).
 /// Drives par_list in a loop. C equivalent: the body of par_event
 /// (parse.c:635-695) iterating par_list against the lexer.
-fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
+///
+/// `single_event` mirrors C par_event's `endtok == ENDINPUT` top-level
+/// mode: when true, parse ONE event (the sublists `;`/`&`-chained on one
+/// logical line, including any multi-line compound) and STOP at the
+/// terminating top-level newline WITHOUT reading the next line — so
+/// loop() executes the event then re-reads for the next, interleaving
+/// input with execution exactly as zsh does. Whole-program and
+/// nested-body parses pass false (multi-list to EOF / end token).
+fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> ZshProgram {
     let mut lists = Vec::new();
 
     loop {
@@ -8084,7 +8200,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
             _ => {}
         }
 
-        match par_list() {
+        match par_list(single_event) {
             Some((list, terminated)) => {
                 let detected = simple_name_with_inoutpar(&list);
                 let was_detected = detected.is_some();
@@ -8171,7 +8287,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                         // c:Src/parse.c — synth funcdef body terminates
                         // at OUTBRACE_TOK. Explicit end-token avoids
                         // the top-level stray-`}` arm. Bug #167/#168.
-                        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+                        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
                         let body_end = if tok() == OUTBRACE_TOK {
                             pos().saturating_sub(1)
                         } else {
@@ -8369,6 +8485,23 @@ fn parse_program_until(end_tokens: Option<&[lextok]>) -> ZshProgram {
                 }
                 break;
             }
+        }
+
+        // c:Src/parse.c par_event — single-event (top-level, endtok ==
+        // ENDINPUT) mode stops at the terminating top-level newline. The
+        // SEPER par_list arm above left `tok` AT the newline-SEPER (not
+        // consumed, LEX_ISNEWLIN > 0), so break before the loop-top
+        // separator skip would `zshlex()` past it and read the next
+        // line. A `;`-SEPER (LEX_ISNEWLIN <= 0) or `&` was consumed by
+        // par_list and leaves a different token here, so chaining keeps
+        // looping (same logical line). Multi-line compounds were already
+        // fully consumed inside par_list, so their internal newlines
+        // never reach this check.
+        if single_event
+            && tok() == SEPER
+            && crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) > 0
+        {
+            break;
         }
     }
 
@@ -8793,7 +8926,7 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         // Body parse must declare DONE as an end-token so the
         // parse_program_until top-level orphan-DONE guard doesn't
         // mis-fire on the legitimate loop terminator.
-        let body = parse_program_until(Some(&[DONE]));
+        let body = parse_program_until(Some(&[DONE]), false);
         // c:Src/parse.c:1182-1183 / :1535-1536 / :1597-1598 —
         // `if (tok != DONE) YYERRORV(oecused);`. zshrs previously
         // silently accepted EOF as a substitute for `done`, so
@@ -8808,7 +8941,7 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         Some(body)
     } else if tok() == INBRACE_TOK {
         zshlex();
-        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
         // c:Src/parse.c:1186 / :1539 — `if (tok != OUTBRACE) YYERRORV`.
         if tok() != OUTBRACE_TOK {
             zerr("parse error: expected `}'");
@@ -8818,7 +8951,7 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
         Some(body)
     } else if foreach_style || isset(CSHJUNKIELOOPS) {
         // c:1184 / 1546 / 1595 — `else if (csh || isset(CSHJUNKIELOOPS))`.
-        let body = parse_program_until(Some(&[ZEND]));
+        let body = parse_program_until(Some(&[ZEND]), false);
         // c:1190 / 1548 — `if (tok != ZEND) YYERRORV`.
         if tok() != ZEND {
             zerr("parse error: expected `end'");
@@ -8884,7 +9017,7 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     // OUTBRACE_TOK. Pass it as the explicit end-token so the inner
     // parse stops cleanly at `}` rather than hitting the top-level
     // stray-`}` arm (#168). Bug #167 family.
-    let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+    let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
     // c:Src/parse.c:1733-1737 — same `if (tok != OUTBRACE) YYERRORV`
     // gate as the named-funcdef path. Bug #405 sibling.
     if tok() != OUTBRACE_TOK {
@@ -8929,7 +9062,7 @@ fn parse_cursh() -> Option<ZshCommand> {
     // than falling through the top-level `OUTBRACE_TOK if
     // end_tokens.is_none()` arm (which errors on stray `}` per bug
     // #168). Bug #167 in docs/BUGS.md.
-    let prog = parse_program_until(Some(&[OUTBRACE_TOK]));
+    let prog = parse_program_until(Some(&[OUTBRACE_TOK]), false);
 
     // c:Src/parse.c:par_subsh — `{ … }` requires a matching `}`.
     // C errors via YYERRORV when the body parse returns without
@@ -8971,7 +9104,7 @@ fn parse_cursh() -> Option<ZshCommand> {
                     zshlex();
                     // c:Src/parse.c — always-clause body terminates at
                     // OUTBRACE_TOK. Bug #167/#168 family.
-                    let always = parse_program_until(Some(&[OUTBRACE_TOK]));
+                    let always = parse_program_until(Some(&[OUTBRACE_TOK]), false);
                     if tok() == OUTBRACE_TOK {
                         zshlex();
                     }
@@ -9018,7 +9151,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
         // c:Src/parse.c — inline funcdef body terminates at OUTBRACE_TOK.
         // Explicit end-token keeps the inner parse from hitting the
         // top-level stray-`}` arm (#168). Bug #167 family.
-        let body = parse_program_until(Some(&[OUTBRACE_TOK]));
+        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
         // c:Src/parse.c:1733-1737 — `if (tok != OUTBRACE) { cmdpop();
         // lineno += oldlineno; ecnpats = onp; ecssub = oecssub;
         // YYERRORV(oecused); }`. Without this gate, `f() { echo hi`

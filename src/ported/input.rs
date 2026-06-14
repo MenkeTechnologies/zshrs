@@ -22,7 +22,7 @@ use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{unmetafy, zerr};
 use crate::ported::zsh_h::{
     isset, Meta, INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO,
-    INP_RAW_KEEP, SHINSTDIN,
+    INP_RAW_KEEP, SHINSTDIN, VERBOSE,
 };
 use crate::ported::ztype_h::itok;
 use std::cell::RefCell;
@@ -439,15 +439,59 @@ pub fn ingetc() -> Option<char> {
 /// …; inbufflags = 0`) and returns 0 — exactly what `ingetc`'s
 /// "as a last resort, get some more input" arm (c:355) expects.
 pub fn inputline() -> i32 {
+    // c:371-384 — if reading code interactively, work out the prompt: PS1
+    // on the first line of a command, PS2 (continuation) otherwise.
+    // `ingetcpmptl` is the SOURCE prompt string fed to promptexpand.
+    let mut ingetcpmptl: Option<String> = None;
+    if crate::ported::zsh_h::interact() && isset(SHINSTDIN) {
+        // c:372
+        if !crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get()) {
+            // c:373-377 — continuation line → PS2 (rprompt2 unsupported here).
+            ingetcpmptl = crate::ported::params::getsparam("PS2");
+        } else {
+            // c:379-382 — first line → PS1 (rprompt unsupported here).
+            ingetcpmptl = crate::ported::params::getsparam("PS1");
+        }
+    }
+    // c:385-405 — non-ZLE input path. C only prints the prompt here when
+    // NOT using the ZLE line editor (`!(… && USEZLE)`); zshrs has no
+    // ZLE_CMD_READ line-reader yet, so this path is ALWAYS taken — print
+    // the expanded prompt to fd 2 before reading, exactly as C does for a
+    // non-ZLE interactive session (`promptexpand` → `unmetafy` →
+    // `write_loop(2, …)`). Gated on `interact && SHINSTDIN` so piped /
+    // non-interactive input prints no prompt.
+    if crate::ported::zsh_h::interact() && isset(SHINSTDIN) {
+        // c:392
+        // c:401-403 — `promptexpand(*ingetcpmptl)` → `write_loop(2, …)`.
+        let (expanded, _, _) = crate::ported::prompt::promptexpand(
+            ingetcpmptl.as_deref().unwrap_or(""), // c:401
+            0,
+            None,
+        );
+        let pptbuf = crate::ported::utils::unmetafy_str(&expanded); // c:401 unmetafy
+        let _ = crate::ported::utils::write_loop(2, &pptbuf); // c:403
+    }
     // c:366 — read a line from SHIN.
-    let line = shingetline(); // c:476 ingetcline = shingetline()
-    // c:481-485 — `if (!ingetcline) { ... return lexstop = 1; }`.
+    let line = shingetline(); // c:406 ingetcline = shingetline()
+    // c:425-427 — `if (!ingetcline) { ... return lexstop = 1; }`.
     // shingetline returns "" only at real EOF (a blank line is "\n").
     if line.is_empty() {
-        lexstop.with(|c| c.set(true)); // c:484 lexstop = 1
+        lexstop.with(|c| c.set(true)); // c:426 lexstop = 1
         return 1;
     }
-    // c:498-507 — install the line as the live input buffer.
+    // c:433-437 — `if (isset(VERBOSE)) { zputs(ingetcline, stderr);
+    //   fflush(stderr); }`. The `-v` / VERBOSE option echoes each input
+    // line to stderr as it is read. zputs writes the UNmetafied bytes;
+    // the line already carries its trailing newline so no extra one is
+    // added.
+    if isset(VERBOSE) {
+        use std::io::Write;
+        // c:435 — `zputs(ingetcline, stderr)` writes the unmetafied raw
+        // bytes (not a re-encoded String), so write the byte buffer.
+        let _ = io::stderr().write_all(&crate::ported::utils::unmetafy_str(&line));
+        let _ = io::stderr().flush(); // c:436 fflush(stderr)
+    }
+    // c:498-500 — install the line as the live input buffer.
     let len = line.len() as i32; // c:500 inbufleft = strlen(ingetcline)
     inbuf.with(|b| *b.borrow_mut() = line);
     inbufpos.with(|p| p.set(0)); // c:499 inbufptr = inbuf

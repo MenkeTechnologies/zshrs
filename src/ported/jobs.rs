@@ -4040,7 +4040,20 @@ pub(crate) fn findjobnam(s: &str, jobtab: &[job], maxjob: i32, thisjob: i32) -> 
 pub fn acquire_pgrp() -> bool {
     // c:3222
     let mypid = unsafe { libc::getpid() };
+    // C `mypgrp` is a SINGLE global written all through acquire_pgrp and
+    // read by attachtty / getquery / the history tty-reclaim. zshrs split
+    // it into TWO globals — clone::mypgrp (AtomicI32) and jobs::MYPGRP
+    // (OnceLock) — so the single C `mypgrp = …` must update BOTH (same
+    // paired-global rule as lexstop / strin). Without this, acquire_pgrp
+    // left both at 0 and the first `attachtty(mypgrp)` ran
+    // `tcsetpgrp(tty, 0)` → EPERM ("can't set tty pgrp") on an interactive
+    // shell. Closure (not a `fn` item) so the src/ported port-gate is fine.
+    let sync_mypgrp = |v: i32| {
+        crate::ported::modules::clone::mypgrp.store(v, Ordering::Relaxed);
+        *MYPGRP.get_or_init(|| Mutex::new(0)).lock().unwrap() = v;
+    };
     let mut mypgrp = unsafe { libc::getpgrp() }; // c:3227 GETPGRP()
+    sync_mypgrp(mypgrp); // c:3227 — `mypgrp = GETPGRP()` (global)
     if mypgrp < 0 {
         opt_state_set("monitor", false); // c:3275 opts[MONITOR]=0
         return false;
@@ -4103,6 +4116,7 @@ pub fn acquire_pgrp() -> bool {
         if unsafe { libc::setpgid(0, 0) } == 0 {
             // c:3268 setpgrp
             mypgrp = mypid; // c:3269
+            sync_mypgrp(mypgrp); // c:3269 (global)
             unsafe {
                 libc::tcsetpgrp(0, mypgrp);
             } // c:3270 attachtty
@@ -4111,6 +4125,7 @@ pub fn acquire_pgrp() -> bool {
             opt_state_set("monitor", false); // c:3272 opts[MONITOR]=0
         }
     }
+    sync_mypgrp(mypgrp); // resolved value visible to later attachtty readers
     signal_setmask(&oldset); // c:3274
     acquired // c:3278
 }

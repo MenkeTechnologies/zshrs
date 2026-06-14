@@ -561,6 +561,81 @@ pub struct ShellExecutor {
     pub ztest_suppress_stdout: bool,
 }
 
+/// Context-isolated nested parse — the AST-path bridge for C's
+/// `parse_string` (`Src/exec.c:283`). zshrs executes via the ZshProgram
+/// AST + `compile_zsh`, not wordcode, so this can't live in `src/ported/`
+/// (C's `parse_string` returns `Eprog`, and the build.rs port-gate rejects
+/// any non-C-named fn there). It's the bridge that wraps the AST
+/// `parse_init`+`parse` in the SAME isolation `parse_string` provides.
+///
+/// Why this exists: a runtime parse — command-substitution body,
+/// process-substitution argv — must not clobber the outer
+/// `loop()`/`parse_event` reader's live input when it interleaves parsing
+/// with execution (faithful single-event mode).
+///
+/// The load-bearing piece is `strinbeg(0)`/`strinend()` (c:290/298). It
+/// sets the `strin` flag so that when the nested lexer drains `cmd_str`,
+/// `ingetc` returns EOF (input.rs:391) instead of falling through to
+/// `inputline()`, which would STEAL the outer reader's next SHIN line —
+/// e.g. `echo A` / `v=$(echo hi)` / `echo B` had the cmd-subst swallow
+/// `echo B` off stdin, and the outer loop then hit EOF after one command.
+/// `strinbeg` also runs `hbegin`/`lexinit`, so it must execute on isolated
+/// history+lexer state — hence the surrounding `zcontext_save`/`restore`
+/// (c:288/300), which saves+restores `tok`/`tokstr`/`lexbuf`/`isnewlin`/
+/// `incmdpos`/heredocs/`lexstop`/`toklineno`/history.
+///
+/// Two zshrs-specific globals `zcontext` doesn't cover are saved here too:
+/// the lexer-input window (`LEX_INPUT`/`LEX_POS`/`LEX_UNGET_BUF`) that
+/// `lex_init` overwrites with `cmd_str`, and the line counter `LEX_LINENO`
+/// (C saves `oldlineno` explicitly at parse_string c:291/295).
+///
+/// NOTE: using `inpush` (the literal C input stack) instead does NOT work
+/// in zshrs's hybrid input model — the outer piped reader pulls from SHIN
+/// via `inputline`, and pushing/popping the `inbuf` stack severs that
+/// continuation. The `LEX_INPUT` window + `strin` flag is the working
+/// equivalent.
+pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
+    use crate::ported::lex::{tok, LEXERR, LEX_INPUT, LEX_LINENO, LEX_POS, LEX_UNGET_BUF};
+
+    crate::ported::context::zcontext_save(); // c:288
+    // Save the zshrs-specific lexer window + line counter that lex_init
+    // overwrites but zcontext doesn't cover.
+    let saved_input = LEX_INPUT.with_borrow(|s| s.clone());
+    let saved_pos = LEX_POS.get();
+    let saved_unget = LEX_UNGET_BUF.with_borrow(|b| b.clone());
+    let saved_lineno = LEX_LINENO.get(); // c:291 oldlineno
+    // input.rs `lexstop` is the input-side half of C's single `lexstop`;
+    // draining the nested LEX_INPUT sets it true and zcontext only covers
+    // the lex.rs half (LEX_LEXSTOP). Restore it so the outer reader isn't
+    // left at EOF.
+    let saved_in_lexstop = crate::ported::input::lexstop.with(|c| c.get());
+
+    crate::ported::hist::strinbeg(0); // c:290 — strin++ → drained nested input EOFs (no SHIN steal)
+    crate::ported::parse::parse_init(input); // install cmd_str as LEX_INPUT (lex_init), LEX_LINENO=1
+    let program = crate::ported::parse::parse(); // c:294 (AST analog of par_list)
+
+    // Capture parse failure BEFORE the restores wipe the signals.
+    let parse_err = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0 || tok() == LEXERR;
+    if tok() == LEXERR && crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) == 0 {
+        crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed); // c:296-297
+    }
+
+    crate::ported::hist::strinend(); // c:298 — strin--
+    // Restore the zshrs window, then the token/parse/history state.
+    LEX_INPUT.with_borrow_mut(|s| *s = saved_input);
+    LEX_POS.set(saved_pos);
+    LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
+    LEX_LINENO.set(saved_lineno); // c:295
+    crate::ported::input::lexstop.with(|c| c.set(saved_in_lexstop));
+    crate::ported::context::zcontext_restore(); // c:300
+    // zcontext_restore → parse_context_restore clears ERRFLAG_ERROR
+    // (parse.c:354); re-raise so callers gating on the bit still see it.
+    if parse_err {
+        errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+    }
+    program
+}
+
 impl ShellExecutor {
     /// Set a scalar parameter via the canonical `paramtab`
     /// (`Src/params.c:3350 setsparam`). The single store.
@@ -1904,8 +1979,10 @@ impl ShellExecutor {
         // compile per CACHE MISS, paid back on every subsequent run.
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(&content);
-        let program = crate::ported::parse::parse();
+        // Context-isolated parse (c:Src/exec.c:283 parse_string) — this
+        // post-exec re-parse for the bytecode cache also runs mid-stream
+        // under the single-event reader; isolate it from the outer SHIN.
+        let program = parse_isolated(&content);
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if !parse_failed {
@@ -1968,8 +2045,14 @@ impl ShellExecutor {
         // Src/init.c loop()'s pre-parse `errflag &= ~ERRFLAG_ERROR;`.
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(script);
-        let program = crate::ported::parse::parse();
+        // Context-isolated parse (c:Src/exec.c:283 parse_string). eval /
+        // source / autoload-register / trap bodies all reach here and run
+        // DURING execution; on the faithful single-event loop()/parse_event
+        // reader, a bare parse_init/lex_init would steal the outer's next
+        // SHIN line into this nested program (e.g. `eval "x=5"` swallowed the
+        // following `echo $x` off stdin). parse_isolated sets `strin` so the
+        // string drains to EOF; execution below stays in the current shell.
+        let program = parse_isolated(script);
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -2631,8 +2714,11 @@ impl ShellExecutor {
         // be parsed).
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(cmd_str);
-        let prog = crate::ported::parse::parse();
+        // Context-isolated nested parse (c:Src/exec.c:283 parse_string) —
+        // same rationale as run_command_substitution: process-sub argv
+        // extraction runs during execution and must not clobber the outer
+        // single-event reader's lexer/input position.
+        let prog = parse_isolated(cmd_str);
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         if parse_failed {
@@ -2811,8 +2897,12 @@ impl ShellExecutor {
         // the outer execution.
         let saved_errflag = errflag.load(Ordering::Relaxed);
         errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-        crate::ported::parse::parse_init(cmd_str);
-        let parsed = crate::ported::parse::parse();
+        // Context-isolated nested parse (c:Src/exec.c:283 parse_string).
+        // The outer loop()/parse_event reader may be mid-stream when this
+        // cmd-subst executes (single-event mode), so a destructive
+        // parse_init/lex_init would clobber its next read. parse_isolated
+        // brackets the parse with zcontext_save/restore + inpush/inpop.
+        let parsed = parse_isolated(cmd_str);
         let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
         errflag.store(saved_errflag, Ordering::Relaxed);
         let prog = if parse_failed { None } else { Some(parsed) };
@@ -2988,9 +3078,26 @@ impl ShellExecutor {
                 self.function_source = function_source_snap;
             }
         }
-        // Restore LINENO so outer xtrace sees the outer line.
+        // Restore LINENO so outer xtrace sees the outer line. LINENO
+        // carries PM_READONLY (matching zsh's `integer-readonly-special`
+        // GSU), so the restore must bypass the generic readonly guard
+        // exactly like BUILTIN_SET_LINENO (fusevm_bridge.rs:5156) — write
+        // the param's `u_val` directly and mirror the file-static /
+        // lexer line counters. The previous `set_scalar` went through the
+        // readonly-checked path: harmless on the `-c` route (LINENO not
+        // yet flagged readonly there) but fatal on the faithful
+        // loop()/zsh_main route, where every `$(...)` in piped/redirected
+        // input died with `read-only variable: LINENO`.
         if let Some(ln) = saved_lineno {
-            self.set_scalar("LINENO".to_string(), ln);
+            let n: crate::ported::zsh_h::zlong = ln.parse().unwrap_or(0);
+            if let Ok(mut tab) = crate::ported::params::paramtab().write() {
+                if let Some(pm) = tab.get_mut("LINENO") {
+                    pm.u_val = n;
+                    pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
+                }
+            }
+            crate::ported::utils::set_lineno(n as i32);
+            crate::ported::lex::set_lineno(n as u64);
         }
         cmdpop();
         // Propagate the inner cmd's status to the parent shell. zsh:

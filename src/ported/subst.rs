@@ -5672,6 +5672,30 @@ pub fn paramsubst(
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
                 // c:2926 (array)
+                // c:Src/params.c:1428 — the `(e)` subscript flag only sets
+                // `quote_arg` (take any pattern literally); it does NOT
+                // set `rev`, so on its own it never triggers the
+                // reverse-search arm and the remaining subscript is a
+                // plain numeric index. getindex (c:1388-1490) always
+                // CONSUMES the `(...)` flag group; zshrs's search-flag
+                // parser below declines a non-search group and the
+                // numeric arm would then choke on the un-stripped
+                // `(e)2`. Strip a leading all-`e` flag group here so the
+                // numeric/slice arms see the bare subscript. Search
+                // combos (`(re)`, `(ie)`) keep their group — they're
+                // handled by the search closure (which also accepts
+                // `e` as the exact-match modifier).
+                let sub: &str = {
+                    let t = sub.strip_prefix('(').and_then(|r| {
+                        r.find(')').map(|c| (&r[..c], &r[c + 1..]))
+                    });
+                    match t {
+                        Some((grp, rest)) if !grp.is_empty() && grp.chars().all(|c| c == 'e') => {
+                            rest
+                        }
+                        _ => sub,
+                    }
+                };
                 if sub == "*" || sub == "@" {
                     // c:2916 (full array)
                     arr.join(" ")

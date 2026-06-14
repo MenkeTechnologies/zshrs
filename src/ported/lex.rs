@@ -476,6 +476,16 @@ pub fn lexinit() {
     LEX_NOCORRECT.set(0);
     LEX_DBPARENS.set(false);
     LEX_LEXSTOP.set(false);
+    // C has ONE `lexstop`; zshrs splits it into LEX_LEXSTOP (gates
+    // gettok) and input.rs `lexstop` (gates ingetc). The single C
+    // `lexstop = 0` here must zero BOTH halves — same paired-reset rule
+    // as inpush (input.rs:654-655). Without the input-side reset, a
+    // nested string parse (cmd-subst / eval via parse_isolated) that
+    // drained its input left `input::lexstop = true`; on the faithful
+    // single-event loop()/parse_event reader, the next iteration's
+    // ingetc then short-circuited to EOF and the shell exited after the
+    // first command containing a `$(…)`.
+    crate::ported::input::lexstop.with(|c| c.set(false));
     // lex.c:444 — `tok = ENDINPUT;`
     set_tok(ENDINPUT);
 }
@@ -3184,8 +3194,15 @@ fn checkalias(lextext: &str) -> bool {
 /// parameters — reads global `aliastab`/`sufaliastab`/`reswdtab`
 /// directly, mirroring C.
 pub fn exalias() -> bool {
-    // lex.c:1957 — `hwend()` ends the history-word region. zshrs's
-    // history layer doesn't track per-word boundaries here; no-op.
+    // lex.c:1957 — `hwend()` closes the history WORD for the token gettok
+    // just produced (zshlex loops `gettok(); while (... exalias())`, so
+    // this fires once per token). Paired with the `ihwbegin` at the top of
+    // gettok, it records word boundaries into `chwords`; `hend` then keys
+    // off `chwordpos` (> 2 means ≥ 1 real word) to decide whether to save
+    // the line. The prior port stubbed it, leaving chwordpos stuck at 1, so
+    // every interactive line was rejected by hend's `chwordpos <= 2` gate
+    // and history recorded nothing.
+    crate::ported::hist::ihwend(); // c:1957
 
     // c:1958-1962 — full faithful gate:
     //   if (interact && isset(SHINSTDIN) && !strin && incasepat <= 0
@@ -4172,6 +4189,19 @@ pub(crate) fn hgetc() -> Option<char> {
     // lex_add_raw is on (used by skipcomm to capture verbatim
     // `$(...)` body text into the parent token).
     zshlex_raw_add(c);
+
+    // c:Src/hist.c:459 ihgetc — `hwaddc(c);` builds the history line
+    // (`chline`) char-by-char as the lexer reads. zshrs's lexer hgetc IS
+    // the ihgetc equivalent, but the prior port dropped this call, so
+    // `chline` stayed empty and `hend` recorded nothing → interactive
+    // history was always blank. ihwaddc no-ops when history is inactive
+    // (hlinesz==0, e.g. `-c` / cmd-subst / eval via strinbeg's hbegin(0)),
+    // so only the live interactive loop()'s hbegin(1) accumulates. Built
+    // only on the fresh-read path (not the unget re-read above): zshrs's
+    // unget is a char buffer that does NOT rewind `hptr`, so re-adding on
+    // re-read would double-count. (C's `addtoline(c)` at c:460 is skipped
+    // — it's a no-op outside ZLE history expansion.)
+    crate::ported::hist::ihwaddc(c as i32);
 
     Some(c)
 }
