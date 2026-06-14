@@ -11782,8 +11782,16 @@ pub fn bin_read(
         // <<< "a:b:c"`. Mirror the multi-var path's IFS handling.
         let ifs = getsparam("IFS").unwrap_or_else(|| " \t\n".to_string());
         let is_ifs = |c: char| ifs.contains(c);
+        // c:6863-6869 — the FIRST word's char loop skips leading
+        // whitespace-IFS (bptr==buf && iwsep → continue), so leading
+        // whitespace produces no empty element. Mirror with trim_start.
         let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
-        let trimmed = trimmed.trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        // NB: do NOT trim trailing whitespace-IFS. C reads word-by-word
+        // and, after the last real word terminates on a whitespace
+        // separator, attempts one more word: it consumes the remaining
+        // trailing whitespace and hits the delimiter with an empty buf
+        // and gotnl=1, so c:6929 `(*buf || first || gotnl)` adds a
+        // trailing empty element. `read -A arr <<< "a b "` → (a b "").
         let mut parts: Vec<String> = Vec::new();
         let mut field = String::new();
         let mut chars = trimmed.chars().peekable();
