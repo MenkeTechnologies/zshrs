@@ -11563,6 +11563,22 @@ pub fn paramsubst(
         // 3977 presc handling.
         if presc > 0 {
             // c:2405
+            // c:3978-3986 — save the prompt-option states; for a single
+            // `(%)` (presc < 2) force PROMPT_PERCENT on and PROMPT_SUBST /
+            // PROMPT_BANG off, so `${(%)...}` performs ONLY %-escapes —
+            // `$(...)` / backtick / `!` stay literal regardless of the
+            // global settings. A double `(%%)` (presc == 2) leaves the
+            // live options untouched (respects `setopt promptsubst`).
+            use crate::ported::options::opt_state_set;
+            use crate::ported::zsh_h::{isset, opt_name, PROMPTBANG, PROMPTPERCENT, PROMPTSUBST};
+            let save_subst = isset(PROMPTSUBST);
+            let save_bang = isset(PROMPTBANG);
+            let save_percent = isset(PROMPTPERCENT);
+            if presc < 2 {
+                opt_state_set(opt_name(PROMPTPERCENT), true); // c:3984
+                opt_state_set(opt_name(PROMPTSUBST), false); // c:3985
+                opt_state_set(opt_name(PROMPTBANG), false); // c:3985
+            }
             // Canonical prompt expansion (Src/prompt.c:182 promptexpand).
             let prompt_one = |s: &str| -> String {
                 // c:4003/4013 — `untokenize(val); ... promptexpand(val,...)`.
@@ -11586,6 +11602,10 @@ pub fn paramsubst(
             } else {
                 value = prompt_one(&value); // c:3977
             }
+            // c:4022-4024 — restore the saved prompt-option states.
+            opt_state_set(opt_name(PROMPTSUBST), save_subst);
+            opt_state_set(opt_name(PROMPTBANG), save_bang);
+            opt_state_set(opt_name(PROMPTPERCENT), save_percent);
         } // c:2405
 
         // (z)/(Z:cCn:) — shell-tokenize the value into a list of
