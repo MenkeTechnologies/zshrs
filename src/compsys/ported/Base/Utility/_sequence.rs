@@ -17,7 +17,7 @@
 //! passed through. Default separator is `,`; `-s <sep>` overrides;
 //! `-n <max>` limits count; `-d` allows dupes.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::compcore::set_compstate_str;

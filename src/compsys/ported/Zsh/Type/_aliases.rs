@@ -28,7 +28,7 @@
 //! (e.g. `("-s", "rgs")`); we read `sel[1]` (the value after the
 //! flag).
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zparseopts;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zsh_h::{options, MAX_OPS};

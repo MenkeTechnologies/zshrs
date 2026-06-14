@@ -23,7 +23,7 @@
 //! `$compstate[restore]`. Returns 0 if the fn was called, 1
 //! otherwise.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::setsparam;
 use crate::ported::utils::getshfunc;
 use crate::ported::zle::compcore::set_compstate_str;

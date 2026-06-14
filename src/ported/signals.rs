@@ -1332,7 +1332,7 @@ pub fn endtrapscope() {
         let trap_fn = format!("TRAP{}", signame);
         if crate::ported::utils::getshfunc(&trap_fn).is_some() {
             let args = vec![SIGEXIT.to_string()];
-            let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
+            let _ = crate::ported::exec::dispatch_function_call(&trap_fn, &args);
         }
     } else if exittr != 0 {
         // c:961 else branch — non-FUNC eprog. The Rust port stores
@@ -1356,7 +1356,7 @@ pub fn endtrapscope() {
                 .lock()
                 .ok()
                 .and_then(|mut t| t.remove("EXIT"));
-            let _ = crate::ported::exec_hooks::execute_script(&body); // c:961 eprog body
+            let _ = crate::ported::exec::execute_script(&body); // c:961 eprog body
             if let Some(b) = stash {
                 if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                     t.insert("EXIT".to_string(), b);
@@ -1491,7 +1491,7 @@ pub fn dotrap(sig: i32) -> i32 {
     // calls settrap, so `sigtrapped[sig]` may be 0 here even when
     // there IS a live trap. Treat presence in traps_table as
     // equivalent to ZSIG_TRAPPED for the dispatch decision and
-    // dispatch via the exec_hooks::execute_script fn-ptr installed
+    // dispatch via the crate::ported::exec::execute_script fn-ptr installed
     // by fusevm_bridge.
     let signame_for_lookup = getsigname(sig);
     let table_body: Option<String> = {
@@ -1563,7 +1563,7 @@ pub fn dotrap(sig: i32) -> i32 {
             //              canonical `crate::exec::doshfunc` entry which
             //              handles the arg+env+local-scope wrap.
             let args = vec![sig.to_string()];
-            let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
+            let _ = crate::ported::exec::dispatch_function_call(&trap_fn, &args);
             fn_dispatched = true;
         }
     }
@@ -1579,14 +1579,14 @@ pub fn dotrap(sig: i32) -> i32 {
         let trap_fn = format!("TRAP{}", signame);
         if getshfunc(&trap_fn).is_some() {
             let args = vec![sig.to_string()];
-            let _ = crate::ported::exec_hooks::dispatch_function_call(&trap_fn, &args);
+            let _ = crate::ported::exec::dispatch_function_call(&trap_fn, &args);
             fn_dispatched = true;
         }
     }
     // c:1268 — non-FUNC `siglists[sig]` eprog branch. The canonical
     // settrap→siglists path isn't fully wired (bin_trap stores raw
     // body text into `traps_table` rather than parsing to Eprog and
-    // calling settrap). Dispatch via the exec_hooks::execute_script
+    // calling settrap). Dispatch via the crate::ported::exec::execute_script
     // fn-ptr installed by fusevm_bridge — no direct ShellExecutor
     // reach-in from src/ported/ (see memory
     // feedback_no_exec_script_from_ported).
@@ -1605,7 +1605,7 @@ pub fn dotrap(sig: i32) -> i32 {
         // outer stdout around the body, then revert to the
         // cmdsub-bound fd. Same idea as bash's command-subst trap
         // routing (Functions/Misc/runtraps).
-        let outer = crate::ported::exec_hooks::cmdsubst_outer_stdout();
+        let outer = crate::ported::exec::cmdsubst_outer_stdout();
         let saved_inner = if outer.is_some() {
             unsafe { libc::dup(libc::STDOUT_FILENO) }
         } else {
@@ -1616,7 +1616,7 @@ pub fn dotrap(sig: i32) -> i32 {
                 libc::dup2(out_fd, libc::STDOUT_FILENO);
             }
         }
-        let _ = crate::ported::exec_hooks::execute_script(&body);
+        let _ = crate::ported::exec::execute_script(&body);
         if let Some(_) = outer {
             if saved_inner >= 0 {
                 unsafe {
@@ -1803,7 +1803,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             let body_args = args.clone();
             let name_for_body = fn_name.clone();
             let body_runner = move || -> i32 {
-                crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args[1..])
+                crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
                     .unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(&mut shf, args.clone(), true, body_runner);
@@ -1829,7 +1829,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
         // C's `void *sigfns[sig]` cast at c:1170), swap in
         // `crate::ported::exec::execode(eprog, 1, 0, "trap")` directly.
         if let Some(src) = sigfn {
-            let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(src);
+            let _ = crate::ported::exec::execute_script_zsh_pipeline(src);
         }
     }
 

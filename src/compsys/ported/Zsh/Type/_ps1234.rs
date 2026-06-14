@@ -14,7 +14,7 @@
 //! the complex escape-strip walk (sh:10-29) and color subcommands.
 //! Emits the common `%X` format-spec catalog as a fallback.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::setaparam;
 
 const PROMPT_SPECS: &[&str] = &[

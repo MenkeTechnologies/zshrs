@@ -14,7 +14,7 @@
 //! `R`, `W`, etc.). Port emits the qualifier catalog via
 //! `_describe` for the common path.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::setaparam;
 
 const QUALS: &[&str] = &[

@@ -20,7 +20,7 @@
 //! Returns 0 when the cache needs rebuilding (per the user-supplied
 //! `cache-policy` hook); 1 otherwise (cache disabled or no policy).
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::getsparam;
 

@@ -29,7 +29,7 @@ use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_file_descriptors::_file_descriptors;
 use crate::compsys::ported::_options::_options;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getaparam, getiparam, getsparam};
 

@@ -19,7 +19,7 @@
 
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getaparam, getsparam};
 

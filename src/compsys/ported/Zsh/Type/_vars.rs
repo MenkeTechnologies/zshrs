@@ -24,7 +24,7 @@
 //! sh:25  fi
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compset;

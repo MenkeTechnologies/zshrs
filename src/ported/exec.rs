@@ -35,7 +35,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 
 // `with_executor` import removed — all ShellExecutor reach-in calls
-// routed through `crate::ported::exec_hooks::*` fn-ptrs installed by
+// routed through `crate::ported::exec::*` fn-ptrs installed by
 // fusevm_bridge at startup. See memory feedback_no_exec_script_from_ported.
 use crate::ported::builtin::{cd_able_vars, fixdir, BUILTINS, DOPRINTDIR, EXIT_VAL, LASTVAL};
 use crate::ported::builtins::rlimits::setlimits;
@@ -564,7 +564,7 @@ pub fn getoutput(cmd: &str, qt: i32) -> Vec<String> {
     //   c:4768-4776 parent — equivalent to executor return
     //   c:4778-4789 child  — entersubsh+execode+_realexit collapse
     cmdoutval.store(0, Ordering::Relaxed); // c:4759
-    let buf = crate::ported::exec_hooks::run_command_substitution(cmd);
+    let buf = crate::ported::exec::run_command_substitution(cmd);
     LASTVAL.store(cmdoutval.load(Ordering::Relaxed), Ordering::Relaxed); // c:4775
 
     // c:4772 retval = readoutput — post-walk (c:4855-4871 tail) inlined.
@@ -1821,7 +1821,7 @@ pub fn execstring(s: &str, _dont_change_job: i32, _exiting: i32, _context: &str)
     // installed by fusevm_bridge at startup. Direct
     // `with_executor` / ShellExecutor reach-in from src/ported/ is
     // forbidden — see memory feedback_no_exec_script_from_ported.
-    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(s);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(s);
     popheap(); // c:1240
 }
 
@@ -1950,10 +1950,10 @@ pub fn runshfunc(prog: &eprog, mut wrap: Option<&funcwrap>, name: &str) {
     // populated), route through the fusevm pipeline for cache
     // coherence with execstring.
     if let Some(ref src) = prog.strs {
-        let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(src);
+        let _ = crate::ported::exec::execute_script_zsh_pipeline(src);
     } else {
         // Pure wordcode body — drive via the canonical execode.
-        execode(Box::new(prog.clone()), 1, 0, "shfunc");
+        execode_wordcode(Box::new(prog.clone()), 1, 0, "shfunc");
         let _ = name;
     }
     if let Some(ou_str) = ou {
@@ -3232,7 +3232,7 @@ pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
     if let Some(mut shf) = shf_clone {
         let body_args = args.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(
+            crate::ported::exec::run_function_body(
                 "command_not_found_handler",
                 &body_args[1..],
             )
@@ -4060,7 +4060,7 @@ pub fn getoutputfile(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     } else {
         ""
     };
-    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(body);
     cmdpop(); // c:4989
     unsafe {
         libc::close(1);
@@ -4187,7 +4187,7 @@ pub fn getproc(cmd: &str, eptr: Option<&mut usize>) -> Option<String> {
     } else {
         ""
     };
-    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(body);
     cmdpop(); // c:5102
     let _ = zclose(out); // c:5103
     std::process::exit(LASTVAL.load(Ordering::Relaxed)); // c:5104
@@ -4605,7 +4605,7 @@ pub fn getpipe(cmd: &str, nullexec: i32) -> i32 {
     } else {
         ""
     };
-    let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(body);
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(body);
     cmdpop(); // c:5151
               // c:5152 — _realexit() — WARNING (d).
     std::process::exit(LASTVAL.load(Ordering::Relaxed));
@@ -5578,7 +5578,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
             Vec::new()
         };
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args_owned)
+            crate::ported::exec::run_function_body(&name_for_body, &body_args_owned)
                 .unwrap_or(0)
         };
         let _ = doshfunc(shf, args.clone(), false, body_runner);
@@ -7377,7 +7377,15 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
 /// around the given Eprog and run `execlist`. Maintains the
 /// `zsh_eval_context` stack so `$ZSH_EVAL_CONTEXT` reflects the
 /// call chain.
-pub fn execode(p: crate::ported::zsh_h::Eprog, dont_change_job: i32, exiting: i32, context: &str) {
+///
+/// NOTE: this is the WORDCODE form (drives the ported `execlist`
+/// interpreter). zshrs's live execution pipeline is fusevm
+/// (`compile_zsh` → VM), so the top-level REPL `loop()` and most call
+/// sites run through [`execode`] (the ZshProgram/fusevm form below)
+/// instead. This wordcode entry is retained for the internal
+/// function-body callers (`doshfunc` / autoload) that already hold an
+/// `Eprog`.
+pub fn execode_wordcode(p: crate::ported::zsh_h::Eprog, dont_change_job: i32, exiting: i32, context: &str) {
     // c:1245
     let prog_ref = *p;
     // c:1247 — `struct estate s;`
@@ -7410,6 +7418,174 @@ pub fn execode(p: crate::ported::zsh_h::Eprog, dont_change_job: i32, exiting: i3
             ctx.pop();
         }
     }
+}
+
+thread_local! {
+    /// The long-lived interactive executor for the top-level `loop()`
+    /// REPL (the `zsh_main` path). Set once by the bin before
+    /// `zsh_main`; [`execode`] runs each parsed program through it.
+    /// Persists for the whole session so variables/functions survive
+    /// across prompts.
+    static SESSION_EXECUTOR: std::cell::Cell<Option<*mut crate::vm_helper::ShellExecutor>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Register the persistent session executor used by [`execode`] for the
+/// interactive `loop()` REPL. The pointer must outlive the session (the
+/// bin keeps the executor alive until `zsh_main` exits the process).
+pub fn install_session_executor(exec: &mut crate::vm_helper::ShellExecutor) {
+    SESSION_EXECUTOR.with(|c| c.set(Some(exec as *mut crate::vm_helper::ShellExecutor)));
+}
+
+/// zshrs `execode` — run an already-parsed `ZshProgram` (Src/exec.c:220
+/// `execode(prog, ...)`, called from `loop()`). This is the **exec.rs
+/// exception** to the line-by-line port: rather than walk wordcode via
+/// `execlist`, it drives zshrs's live engine — compile the program with
+/// `compile_zsh` and run it on the session executor's fusevm VM. The
+/// faithful `loop()` in init.rs calls this exactly as C calls execode.
+/// Returns `$?` (0 when no session executor is installed).
+pub fn execode(
+    program: &crate::parse::ZshProgram,
+    _dont_change_job: i32,
+    _exiting: i32,
+    _context: &str,
+) -> i32 {
+    SESSION_EXECUTOR.with(|c| match c.get() {
+        // SAFETY: set by install_session_executor to an executor that
+        // lives for the whole single-threaded interactive session;
+        // loop() runs only after the bin installs it.
+        Some(ptr) => unsafe { (*ptr).execute_program(program) },
+        None => 0,
+    })
+}
+
+// =========================================================================
+// Live-executor accessors (former `exec_hooks` OnceLock layer).
+//
+// These are the **exec.rs exception**: src/ported/ code reaches the
+// live fusevm `ShellExecutor` (param store, function dispatch, nested
+// script/cmdsubst execution) through these thin wrappers instead of the
+// deleted `exec_hooks` fn-pointer registry. Each delegates to
+// `fusevm_bridge::try_with_executor` — `Some` when a VM execution
+// context is in scope, `None` in unit-test / compsys contexts with no
+// bridge running — and reproduces the exact per-call fallback the old
+// `exec_hooks` wrappers used when no hook was installed. Behavior is
+// byte-for-byte identical to the OnceLock path; only the indirection is
+// gone. See `feedback_no_shellexecutor_in_ported` /
+// `feedback_no_exec_script_from_ported`: the bridge belongs in exec.rs
+// (the sanctioned exception), not scattered through src/ported.
+// =========================================================================
+
+/// Array param value via the live executor; falls back to the direct
+/// param table (`params::getaparam`) when no executor is in scope, so
+/// compsys / unit-test environments still observe shell-side arrays.
+pub fn array(name: &str) -> Option<Vec<String>> {
+    if let Some(Some(v)) = crate::fusevm_bridge::try_with_executor(|exec| exec.array(name)) {
+        return Some(v);
+    }
+    crate::ported::params::getaparam(name)
+}
+
+/// Associative-array param value via the live executor (`None` when no
+/// executor / not set).
+pub fn assoc(name: &str) -> Option<indexmap::IndexMap<String, String>> {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.assoc(name)).flatten()
+}
+
+/// Store an array param into the live executor (no-op without one).
+pub fn set_array(name: &str, val: Vec<String>) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.set_array(name.to_string(), val));
+}
+
+/// Store an associative-array param into the live executor (no-op
+/// without one).
+pub fn set_assoc(name: &str, val: indexmap::IndexMap<String, String>) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.set_assoc(name.to_string(), val));
+}
+
+/// Unset a scalar param in the live executor (no-op without one).
+pub fn unset_scalar(name: &str) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.unset_scalar(name));
+}
+
+/// Unset an array param in the live executor (no-op without one).
+pub fn unset_array(name: &str) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.unset_array(name));
+}
+
+/// Unset an associative-array param in the live executor (no-op
+/// without one).
+pub fn unset_assoc(name: &str) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.unset_assoc(name));
+}
+
+/// Dispatch a shell-function call by name through the live executor
+/// (full doshfunc scope wrap). `None` when no executor / not a
+/// function.
+pub fn dispatch_function_call(name: &str, args: &[String]) -> Option<i32> {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.dispatch_function_call(name, args))
+        .flatten()
+}
+
+/// Body-only function dispatch (no doshfunc scope wrap) — call as the
+/// `body_runner` of a direct `doshfunc(...)` invocation to avoid the
+/// double-wrap of going back through [`dispatch_function_call`]. `None`
+/// when no executor.
+pub fn run_function_body(name: &str, args: &[String]) -> Option<i32> {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.run_function_body_only(name, args))
+        .flatten()
+}
+
+/// Run a script source string on the live executor. `Ok(0)` when no
+/// executor is in scope.
+pub fn execute_script(src: &str) -> Result<i32, String> {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script(src)).unwrap_or(Ok(0))
+}
+
+/// Run a script source string through the live executor's zsh pipeline.
+/// `Ok(0)` when no executor is in scope.
+pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.execute_script_zsh_pipeline(src))
+        .unwrap_or(Ok(0))
+}
+
+/// Run a `$(...)` command substitution on the live executor, returning
+/// captured stdout. Empty string when no executor is in scope.
+pub fn run_command_substitution(cmd: &str) -> String {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.run_command_substitution(cmd))
+        .unwrap_or_default()
+}
+
+/// Positional parameters ($1..$N) from the live executor; empty without
+/// one.
+pub fn pparams() -> Vec<String> {
+    crate::fusevm_bridge::try_with_executor(|exec| exec.pparams()).unwrap_or_default()
+}
+
+/// Replace the positional parameters in the live executor (no-op
+/// without one).
+pub fn set_pparams(v: Vec<String>) {
+    let _ = crate::fusevm_bridge::try_with_executor(|exec| exec.set_pparams(v));
+}
+
+/// Drop a function from both the compiled-chunk and source maps in the
+/// live executor. Returns true if either entry existed; false when no
+/// executor.
+pub fn unregister_function(name: &str) -> bool {
+    crate::fusevm_bridge::try_with_executor(|exec| {
+        let a = exec.functions_compiled.remove(name).is_some();
+        let b = exec.function_source.remove(name).is_some();
+        a || b
+    })
+    .unwrap_or(false)
+}
+
+/// Saved outer stdout fd for an in-progress `$(...)` capture (top of
+/// the bridge's CMDSUBST_OUTER_FDS stack), or `None` when not inside a
+/// cmdsub. Used by the trap dispatcher to route a trap body's stdout to
+/// the parent terminal instead of the cmdsub-bound pipe (Bug #56).
+pub fn cmdsubst_outer_stdout() -> Option<i32> {
+    crate::fusevm_bridge::cmdsubst_outer_stdout()
 }
 
 /// Port of `execautofn_basic(Estate state, UNUSED(int do_exec))` from
@@ -7448,7 +7624,7 @@ pub fn execautofn_basic(state: &mut estate, _do_exec: i32) -> i32 {
     ));
     // c:5626 — `execode(shf->funcdef, 1, 0, "loadautofunc");`
     if let Some(funcdef) = shf.funcdef.clone() {
-        execode(funcdef, 1, 0, "loadautofunc");
+        execode_wordcode(funcdef, 1, 0, "loadautofunc");
     }
     // c:5627-5628 — restore.
     crate::ported::utils::set_scriptname(oldscriptname);
@@ -11578,5 +11754,618 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut args = Vec::new();
         let _: i32 = commandnotfound("", &mut args);
+    }
+}
+
+#[cfg(test)]
+// Relocated from the deleted src/ported/exec_hooks.rs. These pin the
+// no-executor fallback behavior + return types of the live-executor
+// accessor wrappers (array/assoc/dispatch_function_call/...), which
+// now live in this module (exec.rs) instead of the exec_hooks OnceLock
+// layer. Behavior is identical; only the indirection was removed.
+mod exec_accessor_tests {
+    use super::*;
+    use indexmap::IndexMap;
+
+    // ─── zsh-corpus pins: default (no-hook) fallback behavior ─────
+
+    /// `dispatch_function_call` returns None when no hook installed.
+    /// Tests may run in a fresh process where no fusevm bridge wired
+    /// the dispatch yet; pin: no-panic, None-return.
+    #[test]
+    fn exec_hooks_corpus_dispatch_returns_none_when_not_installed() {
+        let _g = crate::test_util::global_state_lock();
+        // We can't unset OnceLock once set, but if test runs first
+        // in this process it should be None. The defensive pin is:
+        // either None or Some — never panic.
+        let _ = dispatch_function_call("__never_a_real_function_zshrs__", &["a".into()]);
+        // No panic = pass.
+    }
+
+    /// `execute_script` returns `Ok(0)` when no hook installed.
+    #[test]
+    fn exec_hooks_corpus_execute_script_returns_ok_zero_when_not_installed() {
+        let _g = crate::test_util::global_state_lock();
+        let r = execute_script("nothing real");
+        match r {
+            Ok(_) | Err(_) => {} // either is acceptable post-install
+        }
+    }
+
+    /// `run_command_substitution` returns "" by default.
+    #[test]
+    fn exec_hooks_corpus_run_command_substitution_default_empty_or_real() {
+        let _g = crate::test_util::global_state_lock();
+        // Returns "" if no hook, or real output if hook installed.
+        let _ = run_command_substitution("echo zshrs_hook_test");
+        // No panic = pass; we can't pin exact result because hook
+        // state depends on previous tests in same process.
+    }
+
+    /// `array` falls back to params::getaparam when no hook.
+    /// Set a real array via params, then look up through hook entry.
+    #[test]
+    fn exec_hooks_corpus_array_falls_back_to_getaparam() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("EH_FB");
+        crate::ported::params::setaparam("EH_FB", vec!["x".into(), "y".into(), "z".into()]);
+        let got = array("EH_FB");
+        assert_eq!(
+            got.as_deref(),
+            Some(&["x".to_string(), "y".to_string(), "z".to_string()][..]),
+            "array() hook falls back to params::getaparam",
+        );
+        crate::ported::params::unsetparam("EH_FB");
+    }
+
+    /// `pparams()` returns empty Vec when no hook installed.
+    #[test]
+    fn exec_hooks_corpus_pparams_returns_empty_when_not_installed() {
+        let _g = crate::test_util::global_state_lock();
+        let p = pparams();
+        // Either empty (no hook) or whatever the installed hook returns.
+        let _ = p; // no panic = pass
+    }
+
+    /// `unregister_function` returns false by default.
+    #[test]
+    fn exec_hooks_corpus_unregister_function_default_false() {
+        let _g = crate::test_util::global_state_lock();
+        let r = unregister_function("__never_registered_xyz__");
+        // If hook installed, hook decides; if not, returns false.
+        // Pin: doesn't panic and returns a bool.
+        let _ = r;
+    }
+
+    /// `set_pparams` doesn't panic when called.
+    #[test]
+    fn exec_hooks_corpus_set_pparams_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_pparams(vec!["a".into(), "b".into()]);
+        // No panic = pass.
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional default-path (no-hook-installed) parity tests.
+    // exec_hooks fallback semantics must remain stable: every accessor
+    // returns a safe default when no fusevm executor has wired its hook.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `assoc()` returns None when no hook installed (no params
+    /// fallback — assoc has no equivalent of getaparam fallback).
+    #[test]
+    fn exec_hooks_assoc_returns_none_when_no_hook() {
+        let _g = crate::test_util::global_state_lock();
+        // If a prior test installed a hook, the result is hook-defined;
+        // we only pin no-panic + valid Option<...>.
+        let _ = assoc("__never_real_assoc_zshrs__");
+    }
+
+    /// `set_array` is a no-op when no hook installed (silently
+    /// drops the write rather than panicking — fusevm-less env safe).
+    #[test]
+    fn exec_hooks_set_array_no_hook_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_array("__never_real_array_zshrs__", vec!["x".into(), "y".into()]);
+    }
+
+    /// `set_assoc` is a no-op when no hook installed.
+    #[test]
+    fn exec_hooks_set_assoc_no_hook_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = IndexMap::new();
+        m.insert("k".to_string(), "v".to_string());
+        set_assoc("__never_real_assoc_zshrs__", m);
+    }
+
+    /// `unset_scalar`, `unset_array`, `unset_assoc` are all no-ops
+    /// when no hook installed.
+    #[test]
+    fn exec_hooks_unset_variants_no_hook_dont_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unset_scalar("__never_real_scalar_zshrs__");
+        unset_array("__never_real_array_zshrs__");
+        unset_assoc("__never_real_assoc_zshrs__");
+    }
+
+    /// `run_function_body` returns None when no hook installed.
+    #[test]
+    fn exec_hooks_run_function_body_returns_none_when_no_hook() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = run_function_body("__never_a_real_fn_zshrs__", &["a".into()]);
+        // No panic = pass; result is Option-typed.
+    }
+
+    /// `execute_script_zsh_pipeline` returns Ok(0) when no hook installed.
+    #[test]
+    fn exec_hooks_execute_script_zsh_pipeline_default_ok_zero() {
+        let _g = crate::test_util::global_state_lock();
+        let r = execute_script_zsh_pipeline("no hook");
+        // If hook installed, result is hook-defined; if not, Ok(0).
+        let _ = r;
+    }
+
+    /// `array()` returns None when name doesn't exist in params either
+    /// (no fallback hits).
+    #[test]
+    fn exec_hooks_array_returns_none_for_missing_name() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("__no_such_array_zshrs__");
+        let got = array("__no_such_array_zshrs__");
+        // Either None (no hook + no param) or hook-returned value.
+        let _ = got;
+    }
+
+    /// `array()` empty name doesn't panic (some callers pass "" for
+    /// special parameter probes).
+    #[test]
+    fn exec_hooks_array_empty_name_does_not_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = array("");
+    }
+
+    /// Idempotent: calling array() twice with same name yields same
+    /// result (no observable side effect on the fallback path).
+    #[test]
+    fn exec_hooks_array_is_idempotent() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("EH_IDEMPOTENT");
+        crate::ported::params::setaparam("EH_IDEMPOTENT", vec!["a".into(), "b".into()]);
+        let first = array("EH_IDEMPOTENT");
+        let second = array("EH_IDEMPOTENT");
+        assert_eq!(first, second);
+        crate::ported::params::unsetparam("EH_IDEMPOTENT");
+    }
+
+    /// `pparams()` returns an empty vec (not None) when no hook —
+    /// callers can iterate without an Option-check.
+    #[test]
+    fn exec_hooks_pparams_returns_vec_not_none() {
+        let _g = crate::test_util::global_state_lock();
+        // Type assertion: result is Vec<String>, not Option<Vec<String>>.
+        let p: Vec<String> = pparams();
+        let _ = p; // either [] or hook-installed value
+    }
+
+    /// Round-trip via params fallback: set then read returns same value.
+    #[test]
+    fn exec_hooks_array_set_get_roundtrip_via_params() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("EH_RT");
+        let vals = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        crate::ported::params::setaparam("EH_RT", vals.clone());
+        let got = array("EH_RT").expect("set then get should hit params fallback");
+        assert_eq!(got, vals);
+        crate::ported::params::unsetparam("EH_RT");
+    }
+
+    /// `unregister_function` is consistently a bool — pin the return
+    /// type so accidental refactor to () would fail the type check.
+    #[test]
+    fn exec_hooks_unregister_function_returns_bool() {
+        let _g = crate::test_util::global_state_lock();
+        let r: bool = unregister_function("__never_xyz_zshrs__");
+        let _ = r;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract-pin tests for exec_hooks default behavior.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `run_command_substitution` returns String (never None / never Option).
+    #[test]
+    fn exec_hooks_run_command_substitution_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("anything");
+    }
+
+    /// `execute_script` returns Result<i32, String>. Pin signature.
+    #[test]
+    fn exec_hooks_execute_script_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script("anything");
+    }
+
+    /// `execute_script_zsh_pipeline` returns Result<i32, String>.
+    #[test]
+    fn exec_hooks_execute_script_zsh_pipeline_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script_zsh_pipeline("anything");
+    }
+
+    /// `dispatch_function_call` returns Option<i32>.
+    #[test]
+    fn exec_hooks_dispatch_function_call_returns_option_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = dispatch_function_call("__never_real__", &[]);
+    }
+
+    /// `run_function_body` returns Option<i32>.
+    #[test]
+    fn exec_hooks_run_function_body_returns_option_i32() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = run_function_body("__never_real__", &[]);
+    }
+
+    /// `array` returns Option<Vec<String>>.
+    #[test]
+    fn exec_hooks_array_returns_option_vec_string() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Vec<String>> = array("anything");
+    }
+
+    /// `assoc` returns Option<IndexMap<String, String>>.
+    #[test]
+    fn exec_hooks_assoc_returns_option_indexmap() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<IndexMap<String, String>> = assoc("anything");
+    }
+
+    /// Empty-string args to `dispatch_function_call` doesn't panic.
+    #[test]
+    fn exec_hooks_dispatch_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = dispatch_function_call("", &[]);
+        let _ = dispatch_function_call("name", &[]);
+    }
+
+    /// Empty-string args to `run_function_body` doesn't panic.
+    #[test]
+    fn exec_hooks_run_function_body_empty_args_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = run_function_body("", &[]);
+        let _ = run_function_body("name", &[]);
+    }
+
+    /// Empty-string name to `execute_script` doesn't panic and returns
+    /// Result.
+    #[test]
+    fn exec_hooks_execute_script_empty_src_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = execute_script("");
+        let _ = execute_script_zsh_pipeline("");
+    }
+
+    /// Empty-string cmd to `run_command_substitution` doesn't panic.
+    #[test]
+    fn exec_hooks_run_command_substitution_empty_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("");
+    }
+
+    /// `unregister_function("")` doesn't panic.
+    #[test]
+    fn exec_hooks_unregister_function_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = unregister_function("");
+    }
+
+    /// `unset_*` with empty name does not panic.
+    #[test]
+    fn exec_hooks_unset_with_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unset_scalar("");
+        unset_array("");
+        unset_assoc("");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract-pin tests for exec_hooks fallback semantics
+    // c:213 pparams / c:217 set_pparams / c:223 unregister_function
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `pparams()` is deterministic for repeated calls without state changes.
+    #[test]
+    fn pparams_deterministic_without_changes() {
+        let _g = crate::test_util::global_state_lock();
+        let first = pparams();
+        for _ in 0..3 {
+            assert_eq!(
+                pparams(),
+                first,
+                "pparams() must be deterministic across reads"
+            );
+        }
+    }
+
+    /// `pparams()` returns Vec<String> (not Option) — pin type contract.
+    #[test]
+    fn pparams_returns_vec_string_no_option() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = pparams();
+    }
+
+    /// `array(name)` with name containing null-byte doesn't panic.
+    #[test]
+    fn array_with_special_chars_in_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = array("name with spaces");
+        let _ = array("name/with/slashes");
+        let _ = array("$dollarsigns");
+    }
+
+    /// `assoc(name)` empty name no panic.
+    #[test]
+    fn assoc_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = assoc("");
+    }
+
+    /// `set_array(empty, ...)` empty name no panic.
+    #[test]
+    fn set_array_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_array("", vec![]);
+    }
+
+    /// `set_assoc(empty, ...)` empty name no panic.
+    #[test]
+    fn set_assoc_empty_name_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let m = indexmap::IndexMap::new();
+        set_assoc("", m);
+    }
+
+    /// `set_pparams(empty)` is safe.
+    #[test]
+    fn set_pparams_empty_vec_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        set_pparams(vec![]);
+    }
+
+    /// Repeated `pparams()` doesn't allocate growing state.
+    #[test]
+    fn pparams_repeated_doesnt_grow_state() {
+        let _g = crate::test_util::global_state_lock();
+        let first_len = pparams().len();
+        for _ in 0..10 {
+            let n = pparams().len();
+            assert_eq!(n, first_len, "len must not grow across reads");
+        }
+    }
+
+    /// `unregister_function` is deterministic for nonexistent name.
+    #[test]
+    fn unregister_function_unknown_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = unregister_function("__never_real_xyz__");
+        for _ in 0..3 {
+            assert_eq!(unregister_function("__never_real_xyz__"), first);
+        }
+    }
+
+    /// `array(name)` repeated reads of nonexistent name are deterministic.
+    #[test]
+    fn array_unknown_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = array("__never_real_array_xyz__").is_none();
+        for _ in 0..3 {
+            assert_eq!(array("__never_real_array_xyz__").is_none(), first);
+        }
+    }
+
+    /// `assoc(name)` repeated reads of nonexistent name are deterministic.
+    #[test]
+    fn assoc_unknown_is_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let first = assoc("__never_real_assoc_xyz__").is_none();
+        for _ in 0..3 {
+            assert_eq!(assoc("__never_real_assoc_xyz__").is_none(), first);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional C-parity tests for src/ported/exec_hooks.rs
+    // c:134 array / c:147 assoc / c:181 dispatch_function_call /
+    // c:188 run_function_body / c:192 execute_script /
+    // c:206 run_command_substitution / c:213 pparams / c:223 unregister_function
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `array(name)` returns Option<Vec<String>> (compile-time pin).
+    #[test]
+    fn array_returns_option_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<Vec<String>> = array("any");
+    }
+
+    /// `assoc(name)` returns Option<IndexMap<String,String>> (compile-time pin).
+    #[test]
+    fn assoc_returns_option_indexmap_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<indexmap::IndexMap<String, String>> = assoc("any");
+    }
+
+    /// `dispatch_function_call` returns Option<i32> (compile-time pin).
+    #[test]
+    fn dispatch_function_call_returns_option_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = dispatch_function_call("__never__", &[]);
+    }
+
+    /// `run_function_body` returns Option<i32> (compile-time pin).
+    #[test]
+    fn run_function_body_returns_option_i32_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = run_function_body("__never__", &[]);
+    }
+
+    /// `execute_script` returns Result<i32, String> (compile-time pin).
+    #[test]
+    fn execute_script_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script("");
+    }
+
+    /// `execute_script_zsh_pipeline` returns Result<i32, String> (compile-time pin).
+    #[test]
+    fn execute_script_zsh_pipeline_returns_result_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script_zsh_pipeline("");
+    }
+
+    /// `run_command_substitution` returns String (compile-time pin).
+    #[test]
+    fn run_command_substitution_returns_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("");
+    }
+
+    /// `pparams` returns Vec<String> (compile-time pin).
+    #[test]
+    fn pparams_returns_vec_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = pparams();
+    }
+
+    /// `unregister_function` returns bool (compile-time pin).
+    #[test]
+    fn unregister_function_returns_bool_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = unregister_function("__never__");
+    }
+
+    /// `unset_scalar`/`unset_array`/`unset_assoc` for nonexistent name safe.
+    #[test]
+    fn unset_variants_nonexistent_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        unset_scalar("__never_unset_scalar__");
+        unset_array("__never_unset_array__");
+        unset_assoc("__never_unset_assoc__");
+    }
+
+    /// `set_pparams` with no hook installed is a silent no-op
+    /// (c:217-220 — `if let Some(f) = PPARAMS_SET.get() { f(v); }`).
+    /// Pin the no-hook contract so a refactor that panics on missing
+    /// hook gets caught.
+    #[test]
+    fn set_pparams_without_hook_is_silent_noop() {
+        let _g = crate::test_util::global_state_lock();
+        // No hook installed in test context — must not panic.
+        set_pparams(vec!["a".into(), "b".into(), "c".into()]);
+        set_pparams(vec![]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Additional contract pins for exec_hooks.rs
+    // No-hook-installed contract: every accessor must be safe + deterministic
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// `array("")` empty name returns deterministic value (no panic).
+    #[test]
+    fn array_empty_name_no_panic_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = array("");
+        let b = array("");
+        assert_eq!(a, b, "array(\"\") must be deterministic");
+    }
+
+    /// `set_array` then `array` without hook should not panic.
+    #[test]
+    fn set_array_then_get_no_hook_safe() {
+        let _g = crate::test_util::global_state_lock();
+        set_array("__test_hook_arr__", vec!["a".into(), "b".into()]);
+        let _ = array("__test_hook_arr__");
+    }
+
+    /// `set_assoc` then `assoc` without hook should not panic.
+    #[test]
+    fn set_assoc_then_get_no_hook_safe() {
+        let _g = crate::test_util::global_state_lock();
+        let mut m = IndexMap::new();
+        m.insert("k".to_string(), "v".to_string());
+        set_assoc("__test_hook_assoc__", m);
+        let _ = assoc("__test_hook_assoc__");
+    }
+
+    /// `run_function_body` with no hook returns `Option<i32>` (type pin, alt).
+    #[test]
+    fn run_function_body_returns_option_i32_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Option<i32> = run_function_body("foo", &[]);
+    }
+
+    /// `run_function_body` is deterministic for the same input when no hook.
+    #[test]
+    fn run_function_body_no_hook_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = run_function_body("__never__", &[]);
+        let b = run_function_body("__never__", &[]);
+        assert_eq!(a, b);
+    }
+
+    /// `dispatch_function_call` is deterministic across calls.
+    #[test]
+    fn dispatch_function_call_no_hook_deterministic() {
+        let _g = crate::test_util::global_state_lock();
+        let a = dispatch_function_call("__never__", &[]);
+        let b = dispatch_function_call("__never__", &[]);
+        assert_eq!(a, b);
+    }
+
+    /// `pparams` returns `Vec<String>` (compile-time pin, alt).
+    #[test]
+    fn pparams_returns_vec_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Vec<String> = pparams();
+    }
+
+    /// `pparams` is deterministic across repeated reads when no hook installed
+    /// (this is observably true only if no other test has installed it; pin
+    /// the no-mutation invariant).
+    #[test]
+    fn pparams_repeated_reads_are_observable_type() {
+        let _g = crate::test_util::global_state_lock();
+        // Just type pin — value depends on whether another test installed a
+        // hook between these calls (PPARAMS_GET is OnceLock).
+        let _a = pparams();
+        let _b = pparams();
+    }
+
+    /// `run_command_substitution` returns `String` type pin (alt).
+    #[test]
+    fn run_command_substitution_returns_string_type_alt() {
+        let _g = crate::test_util::global_state_lock();
+        let _: String = run_command_substitution("echo x");
+    }
+
+    /// `run_command_substitution` empty command doesn't panic.
+    #[test]
+    fn run_command_substitution_empty_cmd_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = run_command_substitution("");
+    }
+
+    /// `execute_script` returns `Result<i32, String>` type pin.
+    #[test]
+    fn execute_script_returns_result_i32_string_type() {
+        let _g = crate::test_util::global_state_lock();
+        let _: Result<i32, String> = execute_script("foo");
+    }
+
+    /// `unregister_function("")` empty name returns bool safely.
+    #[test]
+    fn unregister_function_empty_name_returns_bool() {
+        let _g = crate::test_util::global_state_lock();
+        let _: bool = unregister_function("");
     }
 }

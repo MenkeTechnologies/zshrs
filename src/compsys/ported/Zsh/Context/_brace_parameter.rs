@@ -16,7 +16,7 @@
 //! `_parameter` for the trivial case; flag-letter catalog for
 //! `${(F)…}` etc.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::setaparam;
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};

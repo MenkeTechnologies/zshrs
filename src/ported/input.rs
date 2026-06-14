@@ -21,8 +21,8 @@ use crate::ported::lex::{zshlex_raw_back, LEX_LEXSTOP};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{unmetafy, zerr};
 use crate::ported::zsh_h::{
-    Meta, INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO,
-    INP_RAW_KEEP,
+    isset, Meta, INP_ALCONT, INP_ALIAS, INP_CONT, INP_FREE, INP_HIST, INP_HISTCONT, INP_LINENO,
+    INP_RAW_KEEP, SHINSTDIN,
 };
 use crate::ported::ztype_h::itok;
 use std::cell::RefCell;
@@ -179,31 +179,117 @@ pub fn shinbufrestore() {
 /// from `shinbuffer` first then falls through to `read(2)` on the
 /// SHIN fd; Rust mirrors by reading from `std::io::stdin`.
 pub fn shingetchar() -> i32 {
-    // c:218
-    // c:218-228 — `if (shinbufptr < shinbufendptr) return *shinbufptr++;`
+    // c:222-225 — `if (shinbufptr < shinbufendptr) return
+    //   (unsigned char) *shinbufptr++;`. C is byte-oriented; serve the
+    //   buffer one BYTE at a time (shinbufpos is a byte index).
     let bufd = shinbuffer.with(|b| b.borrow().clone());
     let pos = shinbufpos.with(|p| p.get());
     if pos < bufd.len() {
-        if let Some(ch) = bufd.chars().nth(pos) {
+        if let Some(b) = bufd.as_bytes().get(pos) {
             shinbufpos.with(|p| p.set(pos + 1));
-            return ch as i32;
+            return *b as i32;
         }
     }
-    // c:230-258 — refill via `read(SHIN, ...)`.
+
+    // c:227 — `shinbufreset();`
     shinbufreset();
-    let stdin = std::io::stdin();
-    let mut reader = BufReader::new(stdin.lock());
-    let mut line = String::new();
-    match reader.read_line(&mut line) {
-        Ok(0) => -1,
-        Ok(_) => {
-            let first = line.chars().next().map(|c| c as i32).unwrap_or(-1);
-            shinbuffer.with(|b| *b.borrow_mut() = line);
-            shinbufpos.with(|p| p.set(1));
-            first
+    let fd = SHIN.with(|s| s.get());
+    const SHINBUFSIZE: usize = 256; // c: SHINBUFSIZE
+
+    // c:228-251 — `#ifdef USE_LSEEK` fast path. Take it when SHIN is
+    // NOT the keyboard (`!isset(SHINSTDIN)`) or when SHIN is seekable
+    // (`lseek(SHIN, 0, SEEK_CUR) != -1` — a real file). A pipe /
+    // terminal returns -1 from lseek and is handled by the
+    // byte-at-a-time loop below. CRITICAL: the previous port skipped
+    // both C branches and slurped SHINBUFSIZE bytes unconditionally,
+    // so on a pipe (`cmd | zshrs -c 'read x'`) the lexer's first
+    // refill consumed every following line, leaving nothing for the
+    // `read` / `select` builtins to read off fd 0. Bug surfaced as
+    // 31 read/select parity regressions.
+    let seekable = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) != -1 };
+    if !isset(SHINSTDIN) || seekable {
+        let mut buf = [0u8; SHINBUFSIZE];
+        // c:231-234 — `do { errno=0; nread=read(...); } while (nread<0
+        //   && errno==EINTR);`
+        let nread = loop {
+            let n =
+                unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, SHINBUFSIZE) };
+            if n < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            break n;
+        };
+        if nread <= 0 {
+            return -1; // c:235-236
         }
-        Err(_) => -1,
+        let nread = nread as usize;
+        // c:237-246 — when reading the keyboard (`isset(SHINSTDIN)`) and
+        // the chunk holds a newline, keep only the first line and
+        // `lseek` the fd BACK over the surplus so a later `read` / next
+        // command sees the rest. Otherwise the whole chunk is the
+        // buffer (`shinbufendptr = shinbuffer + nread`).
+        let end = if isset(SHINSTDIN) {
+            match buf[..nread].iter().position(|&b| b == b'\n') {
+                // c:239-240 — `++shinbufendptr - shinbuffer` includes
+                //   the '\n'.
+                Some(nl) => {
+                    let rsize = nl + 1;
+                    if nread > rsize {
+                        let back = (nread - rsize) as libc::off_t;
+                        // c:241-244 — `lseek(SHIN, -(nread-rsize),
+                        //   SEEK_CUR)`; C zerr()s on failure (non-fatal).
+                        if unsafe { libc::lseek(fd, -back, libc::SEEK_CUR) } < 0 {
+                            crate::ported::utils::zerr(&format!(
+                                "lseek({}, {}): {}",
+                                fd,
+                                -back,
+                                io::Error::last_os_error()
+                            ));
+                        }
+                    }
+                    rsize
+                }
+                None => nread, // c:245-246
+            }
+        } else {
+            nread // c:245-246 — `shinbufendptr = shinbuffer + nread`
+        };
+        let s = String::from_utf8_lossy(&buf[..end]).into_owned();
+        shinbuffer.with(|b| *b.borrow_mut() = s);
+        shinbufpos.with(|p| p.set(1));
+        return buf[0] as i32; // c:247 — `return (unsigned char) *shinbufptr++;`
     }
+
+    // c:253-268 — non-seekable fallback (pipe / terminal): read ONE
+    // byte at a time, stopping at '\n' (`/* Use line buffering (POSIX
+    // requirement) */`) or when the buffer fills. This is what keeps
+    // the `read` builtin correct on pipes — the lexer never reads past
+    // the newline, so fd 0 still points at the next line.
+    let mut out: Vec<u8> = Vec::with_capacity(64);
+    loop {
+        let mut one = [0u8; 1];
+        // c:255-256 — `errno=0; nread=read(SHIN, shinbufendptr, 1);`
+        let n = unsafe { libc::read(fd, one.as_mut_ptr() as *mut libc::c_void, 1) };
+        if n > 0 {
+            out.push(one[0]); // c:259 — `*shinbufendptr++`
+            if one[0] == b'\n' {
+                break; // c:260 — newline terminates the line
+            }
+            if out.len() == SHINBUFSIZE {
+                break; // c:261-262 — buffer full
+            }
+        } else if n == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+            break; // c:263-264 — EOF or non-EINTR error
+        }
+    }
+    if out.is_empty() {
+        return -1; // c:265-266 — `if (shinbufendptr == shinbuffer) return -1;`
+    }
+    let s = String::from_utf8_lossy(&out).into_owned();
+    let first = out[0] as i32;
+    shinbuffer.with(|b| *b.borrow_mut() = s);
+    shinbufpos.with(|p| p.set(1));
+    first // c:267 — `return (unsigned char) *shinbufptr++;`
 }
 
 /// Read a full line from SHIN, with `\n` preserved.
@@ -312,24 +398,64 @@ pub fn ingetc() -> Option<char> {
             continue;
         }
 
-        lexstop.with(|c| c.set(true));
-        return None;
+        // c:340-345 — `if (!inbufct && (strin || errflag)) { lexstop=1;
+        // break; }`. In C, reading a `-c` string sets `strin`, so a
+        // drained buffer stops at EOF instead of falling through to
+        // inputline() (which reads fresh SHIN input). zshrs feeds `-c`
+        // via the lexer's own LEX_INPUT window with `strin` left 0, so
+        // the c:336 gate above misses it — the distinguishing signal
+        // here is SHINSTDIN: it is SET for the interactive / stdin-script
+        // loop (which legitimately reads SHIN via inputline) and UNSET
+        // for `-c`. Without this gate, after the `-c` string drained the
+        // "last resort" inputline() swallowed the PROCESS's stdin as
+        // extra command lines — e.g. `printf data | zshrs -c 'read x'`
+        // left `read` empty and ran the data as commands (31 read/select
+        // parity regressions).
+        if !isset(SHINSTDIN) {
+            lexstop.with(|c| c.set(true));
+            return None; // c:343-344 — string input drained → EOF
+        }
+
+        // c:354-356 — `/* As a last resort, get some more input */
+        // if (inputline()) break;`. Read the next line from SHIN into
+        // `inbuf` and loop to return its first char. inputline() returns
+        // nonzero (and sets lexstop) at EOF. The lexer accumulates each
+        // returned char into its token buffer via `add()`, so input
+        // arriving through this path produces correct token text.
+        if inputline() != 0 {
+            return None; // c:356 break → EOF
+        }
+        // loop: the refilled inbuf is read at the top of the loop.
     }
 }
 
 // Read a line from the current command stream and store it as input         // c:366
-/// Read one line into the input stack.
-/// Port of `inputline()` from Src/input.c:366. C source dispatches
-/// between zle / non-zle paths and `shingetline` /
-/// `zleentry(READ)`. Rust port reads via shingetline (no zle yet),
-/// returns "" on EOF and sets lexstop the same way.
-pub fn inputline() -> String {
-    // c:366
-    let line = shingetline();
+/// Read one line from the command stream and store it as the input
+/// buffer. Port of `static int inputline(void)` from Src/input.c:366.
+/// C dispatches between the zle and non-zle paths; zshrs reads via
+/// `shingetline` (no zle line editor yet). On EOF it sets `lexstop`
+/// and returns 1; on success it installs the line into the `inbuf`
+/// buffer (`inbuf = inbufptr = line; inbufleft = strlen; inbufct =
+/// …; inbufflags = 0`) and returns 0 — exactly what `ingetc`'s
+/// "as a last resort, get some more input" arm (c:355) expects.
+pub fn inputline() -> i32 {
+    // c:366 — read a line from SHIN.
+    let line = shingetline(); // c:476 ingetcline = shingetline()
+    // c:481-485 — `if (!ingetcline) { ... return lexstop = 1; }`.
+    // shingetline returns "" only at real EOF (a blank line is "\n").
     if line.is_empty() {
-        lexstop.with(|c| c.set(true));
+        lexstop.with(|c| c.set(true)); // c:484 lexstop = 1
+        return 1;
     }
-    line
+    // c:498-507 — install the line as the live input buffer.
+    let len = line.len() as i32; // c:500 inbufleft = strlen(ingetcline)
+    inbuf.with(|b| *b.borrow_mut() = line);
+    inbufpos.with(|p| p.set(0)); // c:499 inbufptr = inbuf
+    inbufct.with(|c| c.set(len)); // c:501 inbufct = inbufleft
+    inbufflags.with(|f| f.set(0)); // c:502 inbufflags = 0
+    // Fresh input arrived — clear any stale EOF latch so ingetc reads it.
+    lexstop.with(|c| c.set(false));
+    0 // c:508 return 0
 }
 
 /// Replace the current input line.
@@ -1432,12 +1558,12 @@ mod tests {
         let _: Option<char> = ingetc();
     }
 
-    /// c:326 — `inputline` returns String (compile-time type pin).
+    /// c:366 — `inputline` returns int (0=line installed, 1=EOF).
     #[test]
-    fn inputline_returns_string_type() {
+    fn inputline_returns_int_status() {
         let _g = crate::test_util::global_state_lock();
         reset_input();
-        let _: String = inputline();
+        let _: i32 = inputline();
     }
 
     /// c:603 — `ingetptr` returns String.
@@ -1670,14 +1796,14 @@ mod tests {
         let _: String = shingetline();
     }
 
-    /// c:326 — `inputline` returns String type (alt).
+    /// c:366 — `inputline` returns int type (alt).
     #[test]
-    fn inputline_returns_string_type_alt() {
+    fn inputline_returns_int_status_alt() {
         let _g = crate::test_util::global_state_lock();
-        let _: String = inputline();
+        let _: i32 = inputline();
     }
 
-    /// c:326 — `inputline` is deterministic on idle state.
+    /// c:366 — `inputline` is deterministic on idle state.
     #[test]
     fn inputline_deterministic_on_idle_state() {
         let _g = crate::test_util::global_state_lock();

@@ -12,7 +12,7 @@
 //! `_wanted ... _parameters` — _wanted's action is the literal
 //! command `_parameters "$@" -g '*array*'`. We dispatch the action
 //! chunk through `_all_labels`'s normal action-dispatch path, which
-//! routes shell-fn calls via `exec_hooks::dispatch_function_call`.
+//! routes shell-fn calls via `crate::ported::exec::dispatch_function_call`.
 
 use crate::compsys::ported::_wanted::_wanted;
 

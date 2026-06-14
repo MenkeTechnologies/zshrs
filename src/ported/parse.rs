@@ -720,27 +720,52 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     // alias-space carry-over from a prior parse so HISTIGNORESPACE
     // doesn't suppress the next entered command line.
     crate::ported::lex::LEX_ALIAS_SPACE_FLAG.with(|c| c.set(0));
-    zshlex();
-    // parse.c:620 — `init_parse();`
-    init_parse();
 
-    // parse.c:622-625 — drive par_event; on failure clear hdocs.
-    if !par_event(endtok) {
+    // parse.c:626-628 — a sub-parse for a substitution (endtok !=
+    // ENDINPUT, e.g. `par_subsh` with OUTPAR) doesn't need its own
+    // eprog; par_event drives it and the caller discards the program.
+    if endtok != ENDINPUT {
+        zshlex();
+        init_parse();
+        if !par_event(endtok) {
+            clear_hdocs();
+            return None;
+        }
+        return Some(ZshProgram { lists: Vec::new() });
+    }
+
+    // parse.c:616-630 — top-level event parse. The lexer pulls
+    // characters straight from SHIN via hgetc → ingetc → shingetchar
+    // (input.c) and accumulates each into its token buffer with add();
+    // no LEX_INPUT seeding. `zshlex()` (already primed by the shared
+    // entry below) reads the first token; parse_program_until drives the
+    // grammar over the event, refilling input one line at a time as
+    // ingetc's inputline() arm fires.
+    zshlex();
+    init_parse();
+    if tok() == ENDINPUT {
+        return None; // EOF — loop() terminates.
+    }
+    let mut program = parse_program_until(None);
+    if program.lists.is_empty() {
         clear_hdocs();
         return None;
     }
-    // parse.c:626-628 — if endtok != ENDINPUT, this is a sub-
-    // parse for a substitution that doesn't need its own eprog.
-    // zshrs returns an empty program in that case (caller
-    // discards).
-    if endtok != ENDINPUT {
-        return Some(ZshProgram { lists: Vec::new() });
+    // parse.c:630 bld_eprog post-pass — wire heredoc bodies collected
+    // by zshlex into the ZshRedir nodes (mirror of `parse()`).
+    let bodies: Vec<HereDocInfo> = LEX_HEREDOCS
+        .with_borrow(|v| v.clone())
+        .into_iter()
+        .map(|h| HereDocInfo {
+            content: h.content,
+            terminator: h.terminator,
+            quoted: h.quoted,
+        })
+        .collect();
+    if !bodies.is_empty() {
+        fill_heredoc_bodies(&mut program, &bodies);
     }
-    // parse.c:630 — `bld_eprog(1);` — build the final eprog.
-    // zshrs has already built the AST via parse_program_until,
-    // but parse_event uses par_event directly so we need to
-    // collect what par_event accumulated.
-    Some(parse_program_until(None))
+    Some(program)
 }
 
 /// Parse one event (sublist with optional separator). Direct

@@ -2839,7 +2839,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
             let name_for_body = func_name.clone();
             let body_args: Vec<String> = vec![s.to_string()];
             let body_runner = move || -> i32 {
-                crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args)
+                crate::ported::exec::run_function_body(&name_for_body, &body_args)
                     .unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
@@ -2884,7 +2884,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
                 // c:3901 — `doshfunc(shfunc, args, 1);`.
                 let name_for_body = ylist.clone();
                 let body_runner = move || -> i32 {
-                    crate::ported::exec_hooks::run_function_body(&name_for_body, &[]).unwrap_or(0)
+                    crate::ported::exec::run_function_body(&name_for_body, &[]).unwrap_or(0)
                 };
                 let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
                 crate::ported::builtin::SFCONTEXT.store(osc, std::sync::atomic::Ordering::Relaxed);

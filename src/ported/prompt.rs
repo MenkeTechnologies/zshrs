@@ -1839,7 +1839,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let arr: Vec<String> = if let Some(s) = psvar {
                         s.split(' ').map(String::from).collect()
                     } else {
-                        crate::ported::exec_hooks::array("psvar").unwrap_or_default()
+                        crate::ported::exec::array("psvar").unwrap_or_default()
                     };
                     let idx: i32 = if n < 0 {
                         arr.len() as i32 + n

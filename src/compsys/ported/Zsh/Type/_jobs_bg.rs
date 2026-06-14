@@ -8,9 +8,9 @@
 //! ```
 //!
 //! Pure delegation to `_jobs` (a shell function not in the engine
-//! cluster). Routes through `exec_hooks::dispatch_function_call`.
+//! cluster). Routes through `crate::ported::exec::dispatch_function_call`.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 /// `_jobs_bg` — `bg` command completion: stopped jobs only via
 /// `_jobs -s`. Exit code = `_jobs` exit (1 when uncallable).

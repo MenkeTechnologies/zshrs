@@ -2402,15 +2402,25 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // function (the optional 4th arg): `functions -M addtwo 2 2 _addtwo`
     // dispatches to `_addtwo`. Resolve the impl name from the entry's
     // `module` field, falling back to the math name.
-    let userfunc_impl: Option<String> = crate::ported::module::MATHFUNCS
+    // c:1108-1109 + c:1106-1107 — resolve the implementing shfunc name
+    // AND the registered [minargs, maxargs] bounds together, so the
+    // arg-count check below sees the same entry that doshfunc dispatches
+    // to.
+    let userfunc_impl: Option<(String, i32, i32)> = crate::ported::module::MATHFUNCS
         .lock()
         .ok()
         .and_then(|tab| {
             tab.iter()
                 .find(|p| p.name == name && (p.flags & crate::ported::zsh_h::MFF_USERFUNC) != 0)
-                .map(|p| p.module.clone().unwrap_or_else(|| p.name.clone()))
+                .map(|p| {
+                    (
+                        p.module.clone().unwrap_or_else(|| p.name.clone()),
+                        p.minargs,
+                        p.maxargs,
+                    )
+                })
         });
-    if let Some(impl_name) = userfunc_impl {
+    if let Some((impl_name, minargs, maxargs)) = userfunc_impl {
     if let Some(mut shfunc) = crate::ported::utils::getshfunc(&impl_name) {
         // c:1059-1062 — `addlinknode(l, n)`: the FIRST positional ($0)
         // is the MATH function NAME (`max`/`min`), NOT the implementing
@@ -2425,11 +2435,33 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        // c:Src/math.c:1106-1107 — `if (argc >= f->minargs &&
+        // (f->maxargs < 0 || argc <= f->maxargs))`. The actual arg count
+        // (NOT counting the math-fn name pushed as $0 at c:1061) must be
+        // within the registered bounds; `maxargs < 0` means unbounded.
+        // On mismatch C falls to c:1127 `zerr("wrong number of
+        // arguments: %s", o)` where `o` is the original `name(args)`
+        // call text, and aborts the math eval. Without this check zshrs
+        // dispatched the body anyway (e.g. a 0-arg `functions -M` fn
+        // called as `cube(3)` ran the body instead of erroring).
+        let argc = argv_str.len() as i32;
+        if argc < minargs || (maxargs >= 0 && argc > maxargs) {
+            crate::ported::utils::zerr(&format!("wrong number of arguments: {}", call)); // c:1127
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            return mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+        }
         largs.extend(argv_str.iter().cloned());
         let name_for_body = impl_name.clone();
         let body_args = argv_str.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args).unwrap_or(0)
+            crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
         };
         // c:1114 — `doshfunc(shfunc, l, 1)`. The body runs a nested
         // `(( ))` which RE-ENTERS this evaluator and clobbers the outer

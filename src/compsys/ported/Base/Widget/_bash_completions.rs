@@ -18,9 +18,9 @@
 //!
 //! Dispatches `_main_complete` with a key-specific completer chain
 //! based on the last char of `$KEYS`. `_main_complete` is a sibling
-//! shell fn — dispatched via `exec_hooks`.
+//! shell fn — dispatched via `exec accessors`.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getsparam;
 
 /// `_bash_completions` — Bash-style keybinding completion router.

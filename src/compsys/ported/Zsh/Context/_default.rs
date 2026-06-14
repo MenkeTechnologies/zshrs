@@ -25,9 +25,9 @@
 //!
 //! `compcall` is a compctl-bridge builtin; if unavailable / inactive
 //! the shell skips it. `_files` and `_value` are siblings dispatched
-//! via `exec_hooks`.
+//! via `exec accessors`.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use crate::ported::zle::compcore::set_compstate_str;

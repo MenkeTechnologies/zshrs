@@ -19,7 +19,7 @@
 //! the `sep`-joined fields, and emit the matching entries' final
 //! field via compadd. Falls back to `_$key` dispatch on miss.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::pattern::{patcompile, pattry};

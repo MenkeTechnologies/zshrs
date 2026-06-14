@@ -30,7 +30,7 @@
 //! sh:88  return ret
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 
 /// Helper: assoc lookup in flat key/value layout.

@@ -24,7 +24,7 @@
 //! Reads `$WIDGET` to decide direction.
 
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::testforstyle;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};

@@ -24,7 +24,7 @@
 //! with no candidates to add. Production zsh-side `_alternative`
 //! handles empty groups gracefully.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 const MODULES: &[&str] = &["example", "mathfunc", "system", "random"];
 

@@ -45,7 +45,7 @@ use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
@@ -180,7 +180,7 @@ pub fn _alternative(args: &[String]) -> i32 {
                     if _next_label(&nl) != 0 {
                         break;
                     }
-                    let _ = crate::ported::exec_hooks::execute_script(body);
+                    let _ = crate::ported::exec::execute_script(body);
                 }
             } else if action.starts_with(' ') {
                 // sh:57   bare-call form

@@ -24,9 +24,9 @@
 //!
 //! Reads `$ZSH_TRACE_GENERIC_WIDGET` (debugging hook) and `$WIDGET`
 //! (current ZLE widget name) from shell-side params; dispatches the
-//! trace widget OR `_main_complete` via `exec_hooks`.
+//! trace widget OR `_main_complete` via `exec accessors`.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam, unsetparam};
 
 /// `_generic` — generic completion-widget front-end that derives

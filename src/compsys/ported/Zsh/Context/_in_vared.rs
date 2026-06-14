@@ -32,7 +32,7 @@
 //! sh:36  _dispatch "$also" "$also"
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getsparam;
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 

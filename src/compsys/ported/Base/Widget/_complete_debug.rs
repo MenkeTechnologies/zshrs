@@ -32,7 +32,7 @@
 //! parent executor.
 
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getiparam, getsparam, setiparam};
 
 /// `_complete_debug` — run a completion with diagnostic context.

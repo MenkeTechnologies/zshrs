@@ -18,7 +18,7 @@
 //! array-element-as-array semantics — it splats). `CURRENT` shifts
 //! by `$# - 1` to track the new position.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 
 /// `_as_if` — re-dispatch completion AS IF the command line had

@@ -16,10 +16,10 @@
 //! ```
 //!
 //! `_have_glob_qual`, `_globquals`, `_path_commands` are sibling
-//! shell fns — dispatch via `exec_hooks`. `compset` calls go to the
+//! shell fns — dispatch via `exec accessors`. `compset` calls go to the
 //! real builtin.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};

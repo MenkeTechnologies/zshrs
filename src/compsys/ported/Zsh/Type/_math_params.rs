@@ -8,10 +8,10 @@
 //! ```
 //!
 //! `_parameters` is a sibling shell function (not engine cluster);
-//! dispatch via `exec_hooks`. The shell `|| _parameters` retry runs
+//! dispatch via `exec accessors`. The shell `|| _parameters` retry runs
 //! the unfiltered call when the filtered one finds nothing.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 /// `_math_params` — complete parameter names usable in math contexts
 /// (integer/float typed). Falls back to unfiltered `_parameters` if

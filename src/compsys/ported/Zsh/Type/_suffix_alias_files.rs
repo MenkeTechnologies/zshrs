@@ -23,7 +23,7 @@
 //! the suffixes (`.gz`, `.tar`, etc.). When AUTOCD is off, append
 //! the `(#q^/)` glob qualifier to exclude directories.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getaparam;
 use crate::ported::zsh_h::{isset, AUTOCD};
 

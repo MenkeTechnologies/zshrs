@@ -33,7 +33,7 @@
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::utils::getshfunc;
 

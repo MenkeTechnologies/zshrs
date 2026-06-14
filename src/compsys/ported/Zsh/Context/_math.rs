@@ -18,7 +18,7 @@
 //! sh:14      'module-math-functions:math function from zsh/mathfunc: _module_math_func'
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 
 fn is_ident_char(c: char) -> bool {

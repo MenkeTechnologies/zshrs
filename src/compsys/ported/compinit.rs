@@ -696,7 +696,7 @@ pub fn install_standard_complete_widgets() -> usize {
     let mut count = 0usize;
     for w in STANDARD_COMPLETE_WIDGETS {
         let dot_w = format!(".{}", w);
-        if crate::ported::exec_hooks::dispatch_function_call(
+        if crate::ported::exec::dispatch_function_call(
             "zle",
             &[
                 "-C".to_string(),
@@ -711,14 +711,14 @@ pub fn install_standard_complete_widgets() -> usize {
         }
     }
     // sh:560 — `zle -la menu-select && zle -C menu-select .menu-select _main_complete`
-    if crate::ported::exec_hooks::dispatch_function_call(
+    if crate::ported::exec::dispatch_function_call(
         "zle",
         &["-la".to_string(), "menu-select".to_string()],
     )
     .map(|rc| rc == 0)
     .unwrap_or(false)
     {
-        if crate::ported::exec_hooks::dispatch_function_call(
+        if crate::ported::exec::dispatch_function_call(
             "zle",
             &[
                 "-C".to_string(),
@@ -757,7 +757,7 @@ pub fn maybe_rebind_tab_for_expand() {
     //   the chain. The shell guards on `expand-or-complete` being
     //   the current binding; without capture we'd be over-eager,
     //   so dispatch via the hook (no-op when no executor wired).
-    let _ = crate::ported::exec_hooks::dispatch_function_call(
+    let _ = crate::ported::exec::dispatch_function_call(
         "bindkey",
         &["^i".to_string(), "complete-word".to_string()],
     );
@@ -1611,8 +1611,8 @@ pub fn compdef(args: &[String]) -> i32 {
 
     // sh:333  `-a` → autoload
     if flags.autol && func.starts_with('_') {
-        // dispatch `autoload -rUz <func>` via the exec_hooks bridge.
-        let _ = crate::ported::exec_hooks::dispatch_function_call(
+        // dispatch `autoload -rUz <func>` via the exec accessors bridge.
+        let _ = crate::ported::exec::dispatch_function_call(
             "autoload",
             &["-rUz".to_string(), func.clone()],
         );
@@ -1638,12 +1638,12 @@ pub fn compdef(args: &[String]) -> i32 {
                     comp_widget = format!(".{}", comp_widget);
                 }
                 // sh:346  zle -C <wname> <comp_widget> <func>
-                let _ = crate::ported::exec_hooks::dispatch_function_call(
+                let _ = crate::ported::exec::dispatch_function_call(
                     "zle",
                     &["-C".to_string(), wname.clone(), comp_widget, func.clone()],
                 );
                 // sh:347-352  bindkey
-                let _ = crate::ported::exec_hooks::dispatch_function_call("bindkey", &[key, wname]);
+                let _ = crate::ported::exec::dispatch_function_call("bindkey", &[key, wname]);
                 i += 3;
             }
         }
@@ -1659,12 +1659,12 @@ pub fn compdef(args: &[String]) -> i32 {
                 style = format!(".{}", style);
             }
             // sh:365  zle -C <func> <style> <func>
-            let _ = crate::ported::exec_hooks::dispatch_function_call(
+            let _ = crate::ported::exec::dispatch_function_call(
                 "zle",
                 &["-C".to_string(), func.clone(), style, func.clone()],
             );
             for key in &args[idx..] {
-                let _ = crate::ported::exec_hooks::dispatch_function_call(
+                let _ = crate::ported::exec::dispatch_function_call(
                     "bindkey",
                     &[key.clone(), func.clone()],
                 );

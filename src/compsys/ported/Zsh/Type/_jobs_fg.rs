@@ -7,7 +7,7 @@
 //! sh:3  _jobs "$@"
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 /// `_jobs_fg` — `fg` / `disown` completion: all jobs via plain
 /// `_jobs`. Exit code = `_jobs` exit (1 when uncallable).

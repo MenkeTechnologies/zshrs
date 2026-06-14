@@ -23,7 +23,7 @@
 
 use crate::compsys::ported::_cmdstring::_cmdstring;
 use crate::compsys::ported::_command_names::_command_names;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam};
 use crate::ported::zle::compcore::get_compstate_str;
 

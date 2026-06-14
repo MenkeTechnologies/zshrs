@@ -23,7 +23,7 @@
 //! sh:19  return ret
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// `_correct` — spelling-correction completer: wraps `_approximate`

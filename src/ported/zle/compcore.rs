@@ -693,12 +693,12 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     let body_runner = move || -> i32 {
         // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
         // body via either the Rust compsys port (direct fn call) or
-        // the fusevm Chunk dispatch (via exec_hooks).
+        // the fusevm Chunk dispatch (via exec accessors).
         if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(&fn_name_owned) {
             // C convention: largs[0] = fn name, [1..] = real argv.
             return rust_fn(&largs_for_body[1..]);
         }
-        crate::ported::exec_hooks::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
+        crate::ported::exec::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
             .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
     };
 
@@ -3900,11 +3900,11 @@ pub fn shfunc_call(name: &str) -> i32 {
         // c:exec.c:5800
         return 1; // missing fn → status 1
     }
-    // Route through the canonical exec_hooks dispatcher so the
+    // Route through the canonical exec accessors dispatcher so the
     // function actually executes. Hook returns Option<i32>; None
     // means no executor context is set up yet (fall back to
     // LASTVAL read).
-    crate::ported::exec_hooks::dispatch_function_call(name, &[])
+    crate::ported::exec::dispatch_function_call(name, &[])
         .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))
 }
 /// Real call into `setsparam(&format!("compstate[{key}]"), val)` — the

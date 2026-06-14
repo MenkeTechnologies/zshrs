@@ -39,7 +39,7 @@
 //! ```
 
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{isset, options, MAGICEQUALSUBST, MAX_OPS};
