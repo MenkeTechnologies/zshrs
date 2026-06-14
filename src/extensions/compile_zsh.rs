@@ -9637,6 +9637,36 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     if inner.is_empty() {
         return None;
     }
+    // The opening `${` must close at the FINAL `}` — this fast path only
+    // handles a word that is a SINGLE `${...}` expansion. When the
+    // matching `}` comes earlier, the word is a concatenation of two or
+    // more expansions (e.g. `${s:0:1}${s:1}`, `${x}y${z}`) whose trailing
+    // parts would be silently swallowed by `strip_suffix('}')` above and
+    // the modifier parse below. Bail so split_word_segments emits each
+    // piece. Brace depth handles nested operands (`${var:${#x}-1}`).
+    {
+        let b = s.as_bytes();
+        let mut depth = 0i32;
+        let mut close = None;
+        let mut i = 1; // start at the `{` of `${`
+        while i < b.len() {
+            match b[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if close != Some(b.len() - 1) {
+            return None;
+        }
+    }
     // `(@)NAME##pat` / `(@)NAME%pat` / etc. — `(@)` forces array shape
     // for the surrounding word. On an unquoted indexed array the
     // shape is already preserved by per-element iteration, so the
