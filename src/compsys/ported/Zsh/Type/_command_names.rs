@@ -41,12 +41,12 @@
 //! ```
 //!
 //! Calls real `testforstyle`/`lookupstyle`; dispatches `_description`
-//! + `_alternative` via `exec_hooks`. The cmdpath PATH-shadow dance
+//! + `_alternative` via `exec accessors`. The cmdpath PATH-shadow dance
 //! at sh:62-71 left as TODO (only fires under `_comp_priv_prefix`
 //! ≠ empty, rare).
 
 use crate::compsys::ported::_description::_description;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam};
 

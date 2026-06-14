@@ -16,7 +16,7 @@
 
 use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getiparam, setaparam};
 
 /// sh:5 — describe the catalogue of `:cmd` escapes.

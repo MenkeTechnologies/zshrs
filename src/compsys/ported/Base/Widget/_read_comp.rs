@@ -19,7 +19,7 @@
 //! short-circuit (sh:29-36) and degrades the read loop to a
 //! one-shot dispatch.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::getsparam;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};

@@ -26,7 +26,7 @@
 
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;
 

@@ -10,7 +10,7 @@
 //! sh:6  _arguments '*:arg: _default' --
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 /// `_gnu_generic` — fallback completer for GNU-style commands.
 /// Pure delegation to `_arguments` (not yet ported as an engine fn).

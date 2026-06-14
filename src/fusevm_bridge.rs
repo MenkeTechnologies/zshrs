@@ -306,6 +306,32 @@ where
     })
 }
 
+/// Non-panicking variant of [`with_executor`]: runs `f` against the
+/// current executor and returns `Some(result)`, or `None` when no
+/// executor is in scope (`CURRENT_EXECUTOR` unset — e.g. unit tests /
+/// compsys contexts with no fusevm bridge running).
+///
+/// This is the primitive the `crate::ported::exec` accessor wrappers
+/// (array/assoc/dispatch_function_call/execute_script/...) use to
+/// reach the live executor while preserving the exact "no executor →
+/// fall back to the direct param table / default value" semantics that
+/// the deleted `exec_hooks` OnceLock layer encoded via its
+/// "is-the-hook-installed?" check. `CURRENT_EXECUTOR` being set is the
+/// faithful equivalent of "the bridge installed the hooks".
+#[inline]
+pub(crate) fn try_with_executor<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut ShellExecutor) -> R,
+{
+    CURRENT_EXECUTOR.with(|cell| {
+        let ptr = (*cell.borrow())?;
+        // SAFETY: same contract as with_executor — the pointer is valid
+        // for the duration of VM execution and access is single-threaded.
+        let executor = unsafe { &mut *ptr };
+        Some(f(executor))
+    })
+}
+
 /// Look up a canonical builtin by name in `BUILTINS` and dispatch
 /// via `execbuiltin` (Src/builtin.c:250). NO shadow check — calls the
 /// builtin even if a user function with the same name exists. Used by
@@ -760,74 +786,25 @@ fn builtin_is_pspecial(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Install the `crate::ported::exec_hooks` fn-pointer registry so
-/// code under `src/ported/` can dispatch to operations owned by
-/// `ShellExecutor` (array/assoc storage, script eval, function
-/// dispatch, command substitution) WITHOUT a direct executor
-/// reference or `with_executor` call from inside src/ported/.
-///
-/// Idempotent — each hook uses `OnceLock::set`, so calling this
-/// multiple times (once per `ShellExecutor::new`) is safe; the second
-/// and later calls are no-ops.
-///
-/// **Extension** — no C analog. Bridges the Rust-only `src/ported/`
-/// → executor boundary that the user pinned as forbidden via memory
-/// `feedback_no_exec_script_from_ported` /
-/// `feedback_no_shellexecutor_in_ported`.
-pub(crate) fn install_exec_hooks() {
-    use crate::ported::exec_hooks as h;
-    h::install_array_get(|name| with_executor(|exec| exec.array(name)));
-    h::install_assoc_get(|name| with_executor(|exec| exec.assoc(name)));
-    h::install_array_set(|name, val| {
-        with_executor(|exec| exec.set_array(name.to_string(), val));
-    });
-    h::install_assoc_set(|name, val| {
-        with_executor(|exec| exec.set_assoc(name.to_string(), val));
-    });
-    h::install_scalar_unset(|name| {
-        with_executor(|exec| exec.unset_scalar(name));
-    });
-    h::install_array_unset(|name| {
-        with_executor(|exec| exec.unset_array(name));
-    });
-    h::install_assoc_unset(|name| {
-        with_executor(|exec| exec.unset_assoc(name));
-    });
-    h::install_dispatch_function_call(|name, args| {
-        with_executor(|exec| exec.dispatch_function_call(name, args))
-    });
-    h::install_run_function_body(|name, args| {
-        with_executor(|exec| exec.run_function_body_only(name, args))
-    });
-    h::install_execute_script(|src| with_executor(|exec| exec.execute_script(src)));
-    h::install_execute_script_zsh_pipeline(|src| {
-        with_executor(|exec| exec.execute_script_zsh_pipeline(src))
-    });
-    h::install_run_command_substitution(|cmd| {
-        with_executor(|exec| exec.run_command_substitution(cmd))
-    });
-    h::install_pparams_get(|| with_executor(|exec| exec.pparams()));
-    h::install_pparams_set(|v| {
-        with_executor(|exec| exec.set_pparams(v));
-    });
-    h::install_unregister_function(|name| {
-        with_executor(|exec| {
-            let a = exec.functions_compiled.remove(name).is_some();
-            let b = exec.function_source.remove(name).is_some();
-            a || b
-        })
-    });
-    h::install_cmdsubst_outer_stdout(cmdsubst_outer_stdout);
-}
+// The former `install_exec_hooks()` fn-pointer registry is gone. Code
+// under `src/ported/` now reaches `ShellExecutor` operations
+// (array/assoc storage, script eval, function dispatch, command
+// substitution) through the `crate::ported::exec::*` accessor wrappers,
+// which resolve the live executor via `try_with_executor`
+// (`CURRENT_EXECUTOR`). The bridge lives in exec.rs — the sanctioned
+// fusevm-access exception — per `feedback_no_exec_script_from_ported` /
+// `feedback_no_shellexecutor_in_ported`.
 
 /// Register all zsh builtins with the VM.
 pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
-    // exec_hooks fn-ptrs MUST be installed before any builtin can
-    // reach into src/ported/ code that consults them (e.g.
-    // `BUILTIN_ERREXIT_CHECK` → `dotrap` → `exec_hooks::dispatch_function_call`).
-    // OnceLock makes the call idempotent — repeated invocations from
-    // every `ShellExecutor::new` are no-ops.
-    install_exec_hooks();
+    // src/ported/ reaches the live executor (param store, function
+    // dispatch, nested script/cmdsubst exec) through the
+    // `crate::ported::exec::*` accessor wrappers, which read
+    // `CURRENT_EXECUTOR` via `try_with_executor`. No install step is
+    // needed: the executor is in scope for the duration of any VM run
+    // (set by `ExecutorContext::enter`), so the wrappers resolve it
+    // directly. (Replaces the former `exec_hooks` OnceLock fn-ptr
+    // registry, now deleted.)
     // Engage fusevm's tiered JIT (block + tracing) so hot, fully-eligible
     // numeric chunks run in native code and — with the `jit-disk-cache`
     // feature (on by default) — persist that native code to

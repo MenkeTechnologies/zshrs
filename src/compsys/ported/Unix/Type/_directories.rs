@@ -11,7 +11,7 @@
 //!
 //! `_files -/` — _files with the directory-only filter. _files is
 //! a sibling shell fn (not ported); dispatches via `_wanted`'s
-//! action-chunk path which routes through `exec_hooks`.
+//! action-chunk path which routes through `exec accessors`.
 
 use crate::compsys::ported::_wanted::_wanted;
 

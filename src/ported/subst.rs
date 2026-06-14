@@ -7312,7 +7312,7 @@ pub fn paramsubst(
                 // this fallback the (kv) arm produced empty for indexed
                 // arrays because `assoc_get` returned None and the
                 // magic-assoc tables didn't match.
-                .or_else(|| crate::ported::exec_hooks::array(&var_name));
+                .or_else(|| crate::ported::exec::array(&var_name));
             value = magic_assoc_array
                 .as_ref()
                 .map(|v| v.join(" "))
@@ -7352,13 +7352,13 @@ pub fn paramsubst(
                 // via `arr=(a b c); ${(k)arr}` → "a b c"). The assoc
                 // and magic-assoc lookups above already failed; fall
                 // back to the array's values via array_get.
-                .or_else(|| crate::ported::exec_hooks::array(&var_name));
+                .or_else(|| crate::ported::exec::array(&var_name));
             value = assoc_get(&var_name) // c:2247
                 .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
                 .or_else(|| {
                     // Indexed-array fallback for (k) — see comment on
                     // magic_assoc_array above. Return joined values.
-                    crate::ported::exec_hooks::array(&var_name).map(|a| a.join(" "))
+                    crate::ported::exec::array(&var_name).map(|a| a.join(" "))
                 })
                 .or_else(|| {
                     // c:2247
@@ -7432,7 +7432,7 @@ pub fn paramsubst(
                 })
                 // c:Src/subst.c — indexed array fallback for (v).
                 // `arr=(a b c); ${(v)arr}` → "a b c" (the values).
-                .or_else(|| crate::ported::exec_hooks::array(&var_name));
+                .or_else(|| crate::ported::exec::array(&var_name));
             value = magic_assoc_array
                 .as_ref()
                 .map(|v| v.join(" "))
@@ -14901,7 +14901,7 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
     }
     if name == "@" || name == "*" || name == "argv" {
         // c:Src/params.c:3262 IPDEF9 — pparams. Read the LIVE
-        // executor positionals via the exec_hooks bridge: inside a
+        // executor positionals via the exec accessors bridge: inside a
         // function `$@` is the FUNCTION's args (doshfunc swaps
         // pparams per frame, c:Src/exec.c:6021), while the static
         // PPARAMS mirror holds the toplevel set — reading it made
@@ -14911,7 +14911,7 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
         // the +X arm for every plugin autoload and broke
         // add-zsh-hook / regexp-replace / add-zle-hook-widget
         // resolution in the interactive session.
-        let live = crate::ported::exec_hooks::pparams();
+        let live = crate::ported::exec::pparams();
         if !live.is_empty() {
             return Some(live);
         }

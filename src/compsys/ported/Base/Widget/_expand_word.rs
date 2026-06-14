@@ -17,7 +17,7 @@
 //! sh:13  _main_complete _expand
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 
 /// `_expand_word` — front-end widget: set context to `expand-word`

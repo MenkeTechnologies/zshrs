@@ -23,7 +23,7 @@
 //! setup IS portable; the zle-read step degrades to a no-op when
 //! the dispatch hook isn't wired.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 
 /// `_complete_help_generic` — ZLE widget that arms the trace-widget

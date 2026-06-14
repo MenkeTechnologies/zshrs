@@ -23,7 +23,7 @@
 //! search, and special-dirs handling are TODOs (sh:200-700 of
 //! the original).
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::{getsparam, setaparam, setsparam};
 use crate::ported::pattern::{patcompile, pattry};

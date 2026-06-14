@@ -35,13 +35,13 @@
 //! sh:37  _absolute_command_paths "$@"
 //! ```
 //!
-//! Pure delegation to `_alternative` (dispatched via exec_hooks).
+//! Pure delegation to `_alternative` (dispatched via exec accessors).
 //! The two helper inner-shell-fns are exposed as separate Rust
 //! functions that the executor's `_alternative` can call back into
 //! when wired up. The leaf `_absolute_command_paths()` entry point
 //! is what compsys consumers invoke.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam};
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zsh_h::{options, MAX_OPS};

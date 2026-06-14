@@ -8,10 +8,10 @@
 //! ```
 //!
 //! Delegates to `_parameters` (sibling shell fn outside the engine
-//! cluster) via `exec_hooks::dispatch_function_call`. Returns 1
+//! cluster) via `crate::ported::exec::dispatch_function_call`. Returns 1
 //! when no executor is wired.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 /// `_assign` — `-assign-parameter-` context completion: list
 /// writable (non-readonly) parameters with no suffix.

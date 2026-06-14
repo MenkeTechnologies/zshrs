@@ -2991,9 +2991,9 @@ pub fn bin_zparseopts(
     // Phase 3: source params (c:1955-1959).
     let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string());
     let mut params: Vec<String> = if params_src == "argv" {
-        crate::ported::exec_hooks::pparams()
+        crate::ported::exec::pparams()
     } else {
-        crate::ported::exec_hooks::array(&params_src).unwrap_or_default()
+        crate::ported::exec::array(&params_src).unwrap_or_default()
     };
 
     // Phase 4: walk params (c:1961-2060).
@@ -3329,7 +3329,7 @@ pub fn bin_zparseopts(
             params.iter().skip(pi).cloned().collect()
         };
         if params_src == "argv" {
-            crate::ported::exec_hooks::set_pparams(write_back.clone());
+            crate::ported::exec::set_pparams(write_back.clone());
             if let Ok(mut pp_lock) = PPARAMS.lock() {
                 *pp_lock = write_back;
             }

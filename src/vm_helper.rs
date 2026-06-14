@@ -2097,6 +2097,20 @@ impl ShellExecutor {
         self.execute_script_zsh_pipeline(script)
     }
 
+    /// Run an ALREADY-PARSED program (the back half of
+    /// `execute_script_zsh_pipeline`): compile the `ZshProgram` to a
+    /// fusevm Chunk and run it. Used by the ported `loop()` REPL
+    /// (Src/init.c:220 `execode`), which parses via `parse_event` and
+    /// hands the program here through the `execute_program` exec hook.
+    /// Returns the resulting `$?` (1 on a compile/run error).
+    pub fn execute_program(&mut self, program: &crate::parse::ZshProgram) -> i32 {
+        let chunk = crate::compile_zsh::ZshCompiler::new().compile(program);
+        match self.run_chunk(chunk, "loop") {
+            Ok(status) => status,
+            Err(_) => 1,
+        }
+    }
+
     /// Whether `name` is a known function. Checks the compiled-functions
     /// table and the autoload-pending registry — `autoload foo` should
     /// make `whence foo`/`type foo`/`functions foo` recognize `foo` as
@@ -2931,7 +2945,7 @@ impl ShellExecutor {
                         if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                             t.remove("EXIT");
                         }
-                        let _ = crate::ported::exec_hooks::execute_script(&body);
+                        let _ = crate::ported::exec::execute_script(&body);
                     }
                 }
                 // c:Src/signals.c::dotrap(SIGEXIT) — also fire the

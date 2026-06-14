@@ -851,11 +851,17 @@ impl lexbufstate {
 
     /// Reset buffer — clears ptr contents, zeros len, leaves siz.
     /// Mirrors lex.c:235 `tokstr = zshlextext = lexbuf.ptr = NULL;
-    /// lexbuf.siz = 256;` partially (siz reset happens at the
-    /// call site).
+    /// lexbuf.siz = 256;` plus gettokstr's `lexbuf.ptr = hcalloc(...)`
+    /// (lex.c:632/953): the buffer is ALLOCATED here when absent so the
+    /// following `add()`s accumulate. Without the allocate-when-None
+    /// arm, `add()` (which only pushes when `ptr` is Some) silently
+    /// no-ops whenever the lexer is entered without a prior `lex_init`
+    /// — e.g. the interactive REPL reading off SHIN via ingetc — so
+    /// every token came out empty.
     pub(crate) fn clear(&mut self) {
-        if let Some(p) = self.ptr.as_mut() {
-            p.clear();
+        match self.ptr.as_mut() {
+            Some(p) => p.clear(),
+            None => self.ptr = Some(String::with_capacity(self.siz.max(256) as usize)),
         }
         self.len = 0;
     }

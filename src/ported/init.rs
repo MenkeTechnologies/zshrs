@@ -243,28 +243,66 @@ fn parseargs(
     // parseopts(zsh_name, &argv, opts, cmdptr, NULL, flags)                 // c:280
     let _ = parseopts(zsh_name, argv, &mut idx, cmdptr, flags);
 
-    // if (opts[SHINSTDIN]) opts[USEZLE] = (opts[USEZLE] && isatty(0));      // c:291-292
+    // c:291-292 — `if (opts[SHINSTDIN]) opts[USEZLE] = opts[USEZLE] &&
+    // isatty(0);`. SHINSTDIN starts unset here (set below), so this is
+    // normally a no-op; honor it for an explicitly-set SHINSTDIN.
+    if isset(SHINSTDIN) {
+        let usezle =
+            isset(crate::ported::zsh_h::USEZLE) && unsafe { libc::isatty(0) != 0 };
+        crate::ported::options::opt_state_set("usezle", usezle);
+    }
 
-    // paramlist = znewlinklist();                                           // c:294
+    // c:294 — `paramlist = znewlinklist();`
     let mut paramlist: Vec<String> = Vec::new();
     if idx < argv.len() {
-        // c:295
-        // if (unset(SHINSTDIN)) { ... }                                     // c:296-304
-        if cmdptr.is_none() {
-            // c:298-301
-            *runscript = Some(argv[idx].clone());
+        // c:295 — there's a non-option argument.
+        // c:296 — `if (unset(SHINSTDIN))` — a positional arg is the
+        // script to run (or $0 under -c) ONLY when not already forced to
+        // read stdin.
+        if !isset(SHINSTDIN) {
+            // c:297 — `posixzero = *argv;`
+            crate::ported::utils::set_posixzero(Some(argv[idx].clone()));
+            if cmdptr.is_some() {
+                // c:299 — `argzero = *argv;` ($0 under -c)
+                crate::ported::utils::set_argzero(Some(argv[idx].clone()));
+            } else {
+                // c:301 — `*runscript = *argv;`
+                *runscript = Some(argv[idx].clone());
+            }
+            // c:302 — `opts[INTERACTIVE] &= 1;`. A script source makes
+            // the shell non-interactive unless `-i` forced it on. zshrs
+            // collapsed INTERACTIVE to a bool (no 2-sentinel), so a
+            // non-tty default-on can't be distinguished from explicit
+            // -i; reading from a file is non-interactive, so clear it.
+            crate::ported::options::opt_state_set("interactive", false);
+            idx += 1;
         }
-        idx += 1;
+        // c:305-306 — remaining args become positional parameters.
         while idx < argv.len() {
-            // c:305-306
             paramlist.push(argv[idx].clone());
             idx += 1;
         }
-    } else if cmdptr.is_none() { // c:307
-         // opts[SHINSTDIN] = 1;                                              // c:328
+    } else if cmdptr.is_none() {
+        // c:307-308 — `else if (!*cmdptr) opts[SHINSTDIN] = 1;` — no
+        // script and no `-c`: read commands from stdin.
+        crate::ported::options::opt_state_set("shinstdin", true);
     }
-    // pparams = ...                                                         // c:328
-    let _ = paramlist;
+    // c:309-310 — `if (isset(SINGLECOMMAND)) opts[INTERACTIVE] &= 1;`
+    if isset(SINGLECOMMAND) {
+        crate::ported::options::opt_state_set("interactive", false);
+    }
+    // c:311 — `opts[INTERACTIVE] = !!opts[INTERACTIVE];` is a no-op for
+    // the bool port.
+    // c:312-315 — `MONITOR`/`HASHDIRS` default (2) → INTERACTIVE.
+    let interactive = isset(INTERACTIVE);
+    crate::ported::options::opt_state_set("monitor", interactive);
+    crate::ported::options::opt_state_set("hashdirs", interactive);
+    // c:316 — `pparams = paramlist;`
+    if !paramlist.is_empty() {
+        if let Ok(mut p) = crate::ported::builtin::PPARAMS.lock() {
+            *p = paramlist;
+        }
+    }
 }
 
 /// Port of `static void parseopts_insert(...)` from Src/init.c:328.
@@ -1078,7 +1116,6 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
         };
         // c:1181 — interactive shell reading from stdin gets the
         // hostname prompt; ksh/sh emulation gets the bare `$`/`#`.
-        let _ = std::fs::write("/tmp/zshrs_dbg.txt", format!("INTERACTIVE={} isatty0={} cmd={:?} runscript={:?}\n", isset(INTERACTIVE), unsafe { libc::isatty(0) }, cmd, runscript));
         if isset(INTERACTIVE) && cmd.is_none() && runscript.is_none() {
             if ksh_sh {
                 set_default("PS1", if crate::ported::utils::privasserted() { "# " } else { "$ " }); // c:1185
@@ -1412,7 +1449,7 @@ pub fn source(s: &str) -> i32 {
         None => std::fs::read_to_string(path),
     };
     if let Ok(body) = contents {
-        let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(&body);
+        let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
     }
 
     sourcelevel.fetch_sub(1, Ordering::SeqCst); // c:1644
@@ -1839,15 +1876,8 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 STOPMSG.fetch_sub(1, Ordering::SeqCst); // c:219
             }
             // c:220 — `execode(prog, 0, 0, toplevel ? "toplevel" : "file");`
-            // No fusevm bridge for parse-tree execution in src/ported yet;
-            // the exec dispatch happens at `src/vm_helper::run_program`. Mirror
-            // the call as a local stub keyed off the toplevel selector.
-            let _exec_label = if toplevel != 0 { "toplevel" } else { "file" };
-            // c:220 execode(prog, ...) — stubbed: actual eval is owned by
-            // the binary-level REPL (src/vm_helper) which calls into this
-            // same loop. Keep the structure faithful so the slot is
-            // visible in audits.
-            let _ = prog_inner;
+            let exec_label = if toplevel != 0 { "toplevel" } else { "file" };
+            crate::ported::exec::execode(&prog_inner, 0, 0, exec_label); // c:220
             // c:221 — `tok = toksav;` restore
             set_tok(_toksav);
             if toplevel != 0 {

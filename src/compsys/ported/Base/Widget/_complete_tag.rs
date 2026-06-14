@@ -23,7 +23,7 @@
 //! sh:62  fi
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam, setsparam};
 use std::fs;
 use std::path::Path;

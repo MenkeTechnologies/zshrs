@@ -138,7 +138,7 @@
 //! `(#b)` capture groups; our `pattern.rs::patcompile` doesn't
 //! expose them. Marked inline.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts, lookupstyle};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::get_compstate_str;

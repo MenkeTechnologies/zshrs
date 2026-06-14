@@ -19,7 +19,7 @@
 //! sh:15  _main_complete _correct
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setsparam};
 
 /// `_correct_word` — front-end widget for spell-correction

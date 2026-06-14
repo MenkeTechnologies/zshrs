@@ -1874,7 +1874,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
             SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:1475
                                                           // c:1477 — `doshfunc(shfunc, NULL, 1);`.
             let body_runner = || -> i32 {
-                crate::ported::exec_hooks::run_function_body("zftp_progress", &[]).unwrap_or(0)
+                crate::ported::exec::run_function_body("zftp_progress", &[]).unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(
                 &mut shfunc,
@@ -2102,7 +2102,7 @@ pub fn zfsenddata(name: &str, recv: i32, progress: i32, startat: libc::off_t) ->
                                                               // → argv = [fn-name only]; body_runner routes through
                                                               // the host body-only entry.
                 let body_runner = || -> i32 {
-                    crate::ported::exec_hooks::run_function_body("zftp_progress", &[]).unwrap_or(0)
+                    crate::ported::exec::run_function_body("zftp_progress", &[]).unwrap_or(0)
                 };
                 let _ = crate::ported::exec::doshfunc(
                     &mut shfunc,
@@ -3104,7 +3104,7 @@ pub fn zfgetcwd() -> i32 {
         SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed);
         // c:2393 — `doshfunc(shfunc, NULL, 1);`.
         let body_runner = || -> i32 {
-            crate::ported::exec_hooks::run_function_body("zftp_chpwd", &[]).unwrap_or(0)
+            crate::ported::exec::run_function_body("zftp_chpwd", &[]).unwrap_or(0)
         };
         let _ = crate::ported::exec::doshfunc(
             &mut shfunc,
@@ -3442,7 +3442,7 @@ pub fn zftp_getput(name: &str, args: &[&str], flags: i32) -> i32 {
                 SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:2613
                                                               // c:2614 — `doshfunc(shfunc, NULL, 1);`.
                 let body_runner = || -> i32 {
-                    crate::ported::exec_hooks::run_function_body("zftp_progress", &[]).unwrap_or(0)
+                    crate::ported::exec::run_function_body("zftp_progress", &[]).unwrap_or(0)
                 };
                 let _ = crate::ported::exec::doshfunc(
                     &mut shfunc,
@@ -3630,7 +3630,7 @@ pub fn zfclose(leaveparams: i32) {
             SFCONTEXT.store(SFC_HOOK, Ordering::Relaxed); // c:2770
                                                           // c:2771 — `doshfunc(shfunc, NULL, 1);`.
             let body_runner = || -> i32 {
-                crate::ported::exec_hooks::run_function_body("zftp_chpwd", &[]).unwrap_or(0)
+                crate::ported::exec::run_function_body("zftp_chpwd", &[]).unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(
                 &mut shfunc,

@@ -25,7 +25,7 @@
 
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_shadow::{_shadow, _unshadow};
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, setaparam};
 use crate::ported::zle::complete::set_compadd_trace;
 

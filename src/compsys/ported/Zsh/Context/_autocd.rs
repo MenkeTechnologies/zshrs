@@ -10,11 +10,11 @@
 //! ```
 //!
 //! `_command_names` is ported (in `compsys::ported::_command_names`).
-//! `_cd` is a sibling shell fn — dispatch via `exec_hooks`. The
+//! `_cd` is a sibling shell fn — dispatch via `exec accessors`. The
 //! `AUTOCD` option is read directly from `zsh_h::isset`.
 
 use crate::compsys::ported::_command_names::_command_names;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::zsh_h::{isset, AUTOCD};
 
 /// `_autocd` — `-command-` context completion: command names + `_cd`

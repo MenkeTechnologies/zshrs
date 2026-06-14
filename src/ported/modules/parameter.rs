@@ -912,10 +912,10 @@ pub fn setfunction(name: &str, mut val: String, dis: i32) {
     // shfunctab but the executor keeps dispatching to the cached
     // Eprog from the original definition (resulting in old-body
     // behavior). Bug #323 in docs/BUGS.md.
-    // Invalidate via the exec_hooks channel (drops the executor's
+    // Invalidate via the exec accessors channel (drops the executor's
     // compiled-chunk + source caches) instead of reaching into the
     // ShellExecutor directly from the ported tree.
-    let _ = crate::ported::exec_hooks::unregister_function(name);
+    let _ = crate::ported::exec::unregister_function(name);
     // c:315 — zsfree(val); — Rust drops on scope exit.
 }
 

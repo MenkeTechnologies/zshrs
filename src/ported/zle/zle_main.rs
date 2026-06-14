@@ -816,7 +816,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
     }
 
     // c:1490-1530 — else branch: user-defined shfunc widget. Route
-    // via the canonical exec_hooks::dispatch_function_call fn-ptr
+    // via the canonical crate::ported::exec::dispatch_function_call fn-ptr
     // installed by fusevm_bridge at startup; direct ShellExecutor
     // reach-in from src/ported/ is forbidden per
     // feedback_no_exec_script_from_ported.
@@ -833,7 +833,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         let name_for_body = call_name.to_string();
         let body_args: Vec<String> = args.to_vec();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args).unwrap_or(0)
+            crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
         };
         let rc = crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner);
         // c:1530 — capture LASTVAL after the call.

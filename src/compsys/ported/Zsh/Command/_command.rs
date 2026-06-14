@@ -11,7 +11,7 @@
 //! sh:7    '*:: : _normal -p $service'
 //! ```
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 
 /// `_command` — `command` builtin completion: pure `_arguments`
 /// dispatch (sibling shell fn). Returns 1 without an executor.

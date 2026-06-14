@@ -1600,7 +1600,7 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
         let name_for_body = name.to_string();
         let body_args = args.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args[1..])
+            crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
                 .unwrap_or(0)
         };
         ret = crate::ported::exec::doshfunc(&mut shf, args, true, body_runner);
@@ -1628,7 +1628,7 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
                 let name_for_body = fn_name.clone();
                 let body_args = args.clone();
                 let body_runner = move || -> i32 {
-                    crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args[1..])
+                    crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
                         .unwrap_or(0)
                 };
                 ret = crate::ported::exec::doshfunc(&mut shf, args, true, body_runner);
@@ -4792,7 +4792,7 @@ pub fn subst_string_by_func(
         let name_for_body = func_name.to_string();
         let body_args = args.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args[1..])
+            crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
                 .unwrap_or(0)
         };
         crate::ported::exec::doshfunc(&mut shf, args.clone(), true, body_runner)

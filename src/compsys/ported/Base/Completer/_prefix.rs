@@ -31,12 +31,12 @@
 //! ```
 //!
 //! The inner completer-list iteration (sh:26-51) dispatches each
-//! completer name via `exec_hooks::dispatch_function_call`. The
+//! completer name via `crate::ported::exec::dispatch_function_call`. The
 //! style-list / matcher-list walks are simplified — we honor the
 //! `completer` style if set, else use the prior-rounds slice of
 //! `$_completers` per sh:12-14.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};

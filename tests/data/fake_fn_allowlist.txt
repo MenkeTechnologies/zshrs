@@ -1800,3 +1800,15 @@ posix_ere_bracket_escape
 # single-char mode and the math lexer uses a char cursor, so this small
 # helper decodes one escape and reports chars consumed.
 decode_math_keychar
+
+# exec.rs is the designated fusevm-bridge exception to the line-by-line
+# C port. `execode` (the live entry called by loop(), Src/init.c:220)
+# runs a ZshProgram on the fusevm VM; the original wordcode/execlist
+# form keeps the C semantics for the internal Eprog callers (doshfunc /
+# autoload) under this non-C name.
+execode_wordcode
+# exec.rs session-executor bridge: registers the long-lived interactive
+# executor the top-level loop() runs each parsed program through. No C
+# counterpart — C's loop() reaches the executor via globals; zshrs runs
+# the fusevm executor as an object installed by the bin before zsh_main.
+install_session_executor

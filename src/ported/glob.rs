@@ -18,7 +18,7 @@ use crate::ported::sort::zstrcmp;
 use crate::ported::string::dyncat;
 use crate::ported::utils::{errflag, init_dirsav, lchdir, restoredir, zerr};
 // `vm_helper` import removed — ShellExecutor reach-in routed through
-// `crate::ported::exec_hooks` fn-ptrs (see memory
+// the `crate::ported::exec` accessor wrappers (see memory
 // feedback_no_exec_script_from_ported).
 use crate::ported::subst::LinkList;
 use crate::ported::zsh_h::{
@@ -2938,11 +2938,11 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {
                                                 // canonical paramtab so the evaluated expression sees `$REPLY`.
     crate::ported::params::setsparam("REPLY", filename); // c:3916
                                                          // c:3919 — `execode(prog, 1, 0, "globqual");`. Route through the
-                                                         // executor via the exec_hooks fn-ptr installed by
-                                                         // fusevm_bridge at startup. Direct ShellExecutor reach-in
-                                                         // from src/ported/ is forbidden — see memory
+                                                         // executor via the `crate::ported::exec` accessor wrappers
+                                                         // (resolve the live executor on demand). Direct ShellExecutor
+                                                         // reach-in from src/ported/ is forbidden — see memory
                                                          // feedback_no_exec_script_from_ported.
-    let rc = crate::ported::exec_hooks::execute_script(expr).unwrap_or(1); // c:3919
+    let rc = crate::ported::exec::execute_script(expr).unwrap_or(1); // c:3919
     let ret = LASTVAL.load(Ordering::Relaxed); // c:3921 ret = lastval
     let _ = rc;
     // c:3924 — `errflag = ef | (errflag & ERRFLAG_INT);`. Restore

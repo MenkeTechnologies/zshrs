@@ -41,7 +41,7 @@
 
 use crate::compsys::ported::_aliases::_aliases;
 use crate::compsys::ported::_wanted::_wanted;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setsparam};

@@ -30,7 +30,7 @@
 //! already correct).
 
 use crate::compsys::ported::_shadow::{_shadow, _unshadow};
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 

@@ -50,13 +50,13 @@
 //! Calls real `bin_comptags`/`bin_zformat`/`bin_zparseopts`; reads
 //! real `FUNCSTACK`. The action at `$4` (or `${(@)argv[4,__pre]}`)
 //! dispatches: when it's "compadd" we call `bin_compadd` directly;
-//! otherwise we delegate to `exec_hooks::dispatch_function_call`
+//! otherwise we delegate to `crate::ported::exec::dispatch_function_call`
 //! (returns None without an executor — in that case `__ret` stays 1
 //! for that iteration, matching shell behavior when the action fn
 //! returns non-zero).
 
 use super::_description::_description;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::parameter::FUNCSTACK;
 use crate::ported::modules::zutil::{bin_zformat, bin_zparseopts};
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};

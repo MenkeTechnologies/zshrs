@@ -36,8 +36,6 @@ pub mod builtins;
 pub mod config_h;
 /// `exec` submodule.
 pub mod exec;
-/// `exec_hooks` submodule.
-pub mod exec_hooks;
 /// `glob` submodule.
 pub mod glob;
 /// `hashnameddir` submodule.

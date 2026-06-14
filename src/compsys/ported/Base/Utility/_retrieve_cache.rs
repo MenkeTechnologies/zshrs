@@ -35,7 +35,7 @@
 
 use crate::compsys::ported::_cache_invalid::_cache_invalid;
 use crate::compsys::ported::_message::_message;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::getsparam;
 use std::path::Path;

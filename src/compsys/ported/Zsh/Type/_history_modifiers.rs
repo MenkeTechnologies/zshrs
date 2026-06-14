@@ -24,7 +24,7 @@
 //! context. Approximation: emit the top-level letter list +
 //! delegates to `_describe`.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam};
 use crate::ported::zle::complete::bin_compset;
 use crate::ported::zsh_h::{options, MAX_OPS};

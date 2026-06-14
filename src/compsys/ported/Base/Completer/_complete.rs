@@ -31,7 +31,7 @@
 
 use crate::compsys::ported::_message::_message;
 use crate::compsys::ported::_normal::_normal;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 

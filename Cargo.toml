@@ -79,8 +79,6 @@ path = "tests/parity/main.rs"
 [dependencies]
 ctrlc = "3"
 atty = "0.2"
-reedline = "0.47.0"
-nu-ansi-term = "0.50"
 zshrs-daemon = { workspace = true, optional = true }
 fusevm = { version = "0.14.0", features = ["jit-disk-cache"] }
 regex = "1.11"

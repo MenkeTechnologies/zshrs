@@ -19,7 +19,7 @@
 //! when the executor is available.
 
 use crate::compsys::ported::_description::_description;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
 use crate::ported::zle::compcore::get_compstate_str;

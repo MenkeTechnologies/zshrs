@@ -15,7 +15,7 @@
 //! `_normal -p $service` (treats remaining argv as a fresh command
 //! invocation).
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 
 /// `_precommand` — prefix-command completion: strip the prefix from

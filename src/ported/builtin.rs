@@ -5359,10 +5359,10 @@ pub fn bin_typeset(
                             map.insert(k, v); // c:2964 hashtab insert
                         }
                     }
-                    crate::ported::exec_hooks::set_assoc(n, map.clone());
+                    crate::ported::exec::set_assoc(n, map.clone());
                 } else {
                     // c:2980-2995 — plain array.
-                    crate::ported::exec_hooks::set_array(n, elems.clone());
+                    crate::ported::exec::set_array(n, elems.clone());
                 }
                 // c:2330-2337 (typeset_single) — `if (!(pm =
                 // assignaparam(pname, ..., flags))) return NULL;
@@ -5614,11 +5614,11 @@ pub fn bin_typeset(
             // c:3060-3070 — bare name + `-A`/`-a` declares an empty
             // assoc/array.
             if is_hashed {
-                if crate::ported::exec_hooks::assoc(arg).is_none() {
-                    crate::ported::exec_hooks::set_assoc(arg, IndexMap::new());
+                if crate::ported::exec::assoc(arg).is_none() {
+                    crate::ported::exec::set_assoc(arg, IndexMap::new());
                 }
-            } else if crate::ported::exec_hooks::array(arg).is_none() {
-                crate::ported::exec_hooks::set_array(arg, Vec::new());
+            } else if crate::ported::exec::array(arg).is_none() {
+                crate::ported::exec::set_array(arg, Vec::new());
             }
             // c:Src/params.c:4087 arrsetfn — when PM_UNIQUE is set on
             // an existing array, the canonical setfn applies
@@ -5627,7 +5627,7 @@ pub fn bin_typeset(
             // the flag stamp lands on pm.flags but the value stays
             // un-deduped until the next assignment.
             if is_array && (on as u32 & PM_UNIQUE) != 0 {
-                let current = crate::ported::exec_hooks::array(arg).unwrap_or_default();
+                let current = crate::ported::exec::array(arg).unwrap_or_default();
                 // simple_arrayuniq is the in-place dedupe used by
                 // params.rs arrsetfn (PM_UNIQUE path).
                 let deduped = {
@@ -5637,7 +5637,7 @@ pub fn bin_typeset(
                         .filter(|x| seen.insert(x.clone()))
                         .collect::<Vec<_>>()
                 };
-                crate::ported::exec_hooks::set_array(arg, deduped);
+                crate::ported::exec::set_array(arg, deduped);
             }
             // Stamp attribute bits on paramtab entry — same set as
             // the `name=value` post-assign mask.
@@ -5901,8 +5901,8 @@ pub fn bin_typeset(
                             .lock()
                             .ok()
                             .map_or(false, |s| s.contains_key(arg))
-                        || crate::ported::exec_hooks::array(arg).is_some()
-                        || crate::ported::exec_hooks::assoc(arg).is_some();
+                        || crate::ported::exec::array(arg).is_some()
+                        || crate::ported::exec::assoc(arg).is_some();
                     if !is_array_or_hashed {
                         if let Some(val) = saved_val.as_deref().or(Some("")) {
                             env::set_var(arg, val);
@@ -6002,7 +6002,7 @@ pub fn bin_typeset(
                 // (params.rs:8819+).
                 //
                 // Order matters: assoc lookup falls back to
-                // exec_hooks::assoc which reads the executor's
+                // crate::ported::exec::assoc which reads the executor's
                 // assoc_arrays storage. typeset -A populated via
                 // `typeset -A h=(a 1 b 2)` lives there, not in
                 // paramtab_hashed_storage. Bug #218 in docs/BUGS.md.
@@ -6010,7 +6010,7 @@ pub fn bin_typeset(
                     .lock()
                     .ok()
                     .and_then(|s| s.get(arg).cloned())
-                    .or_else(|| crate::ported::exec_hooks::assoc(arg));
+                    .or_else(|| crate::ported::exec::assoc(arg));
                 if let Some(map) = assoc {
                     let mut entries: Vec<(&String, &String)> = map.iter().collect();
                     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -6030,7 +6030,7 @@ pub fn bin_typeset(
                     s.push_str(" )");
                     println!("{}", s);
                 } else if let Some(arr) = crate::ported::params::getaparam(arg)
-                    .or_else(|| crate::ported::exec_hooks::array(arg))
+                    .or_else(|| crate::ported::exec::array(arg))
                     .or_else(|| {
                         // Fallback: paramtab entry's u_arr may be set
                         // even when PM_TYPE doesn't include PM_ARRAY
@@ -6898,7 +6898,7 @@ pub fn bin_functions(
             // the STALE stub (zinit NEW_AUTOLOAD=1: `builtin
             // autoload -X` inside the stub) in an infinite mutual
             // recursion → stack overflow in the interactive session.
-            let _ = crate::ported::exec_hooks::unregister_function(&fname);
+            let _ = crate::ported::exec::unregister_function(&fname);
             // c:3654 — `ret = eval_autoload(shf, funcname, ops, func);`
             ret = eval_autoload(shf_ptr, &fname, ops, _func); // c:3654
         }
@@ -7304,10 +7304,10 @@ pub fn bin_unset(
                     continue;
                 }
                 // c:3893 assoc subscript: `m[key]` delete.
-                if let Some(mut map) = crate::ported::exec_hooks::assoc(nm) {
+                if let Some(mut map) = crate::ported::exec::assoc(nm) {
                     map.shift_remove(key); // c:3893
-                    crate::ported::exec_hooks::set_assoc(nm, map);
-                } else if let Some(mut arr) = crate::ported::exec_hooks::array(nm) {
+                    crate::ported::exec::set_assoc(nm, map);
+                } else if let Some(mut arr) = crate::ported::exec::array(nm) {
                     // c:3895 — array subscript: `arr[N]` sets element
                     // N to empty; `arr[N,M]` clears the inclusive
                     // range. The previous Rust port only handled the
@@ -7340,7 +7340,7 @@ pub fn bin_unset(
                                     new_arr.extend(arr[..from].iter().cloned());
                                     new_arr.push(String::new());
                                     new_arr.extend(arr[cap_to + 1..].iter().cloned());
-                                    crate::ported::exec_hooks::set_array(nm, new_arr);
+                                    crate::ported::exec::set_array(nm, new_arr);
                                 }
                             }
                         }
@@ -7360,12 +7360,12 @@ pub fn bin_unset(
                             if !arr.is_empty() {
                                 let idx = arr.len() - 1;
                                 arr[idx] = String::new();
-                                crate::ported::exec_hooks::set_array(nm, arr);
+                                crate::ported::exec::set_array(nm, arr);
                             }
                         } else if i > 0 {
                             if let Some(idx) = resolve(i) {
                                 arr[idx] = String::new();
-                                crate::ported::exec_hooks::set_array(nm, arr);
+                                crate::ported::exec::set_array(nm, arr);
                             }
                         }
                         // Other negative values: no-op (zsh behavior).
@@ -7511,7 +7511,7 @@ pub fn bin_unset(
                 // ShellExecutor (paramtab_hashed_storage for assoc,
                 // and the per-executor arrays/assocs maps). These
                 // are NOT touched by params.rs::unsetparam so we
-                // wipe them directly here; using exec_hooks::unset_*
+                // wipe them directly here; using crate::ported::exec::unset_*
                 // would loop back into unsetparam.
                 // c:Src/builtin.c:3952-3953 — `if (unsetparam_pm(pm,
                 // 0, 1)) returnval = 1;` (readonly rejection). On
@@ -8536,10 +8536,10 @@ pub fn bin_unhash(
                 // source maps. Without this, `unset -f f` cleared
                 // shfunctab but dispatch_function_call still found the
                 // compiled chunk and ran the old body. Routed via the
-                // exec_hooks unregister_function fn-ptr installed by
+                // exec accessors unregister_function fn-ptr installed by
                 // fusevm_bridge at startup (no ShellExecutor reach-in
                 // from src/ported/).
-                let from_exec = crate::ported::exec_hooks::unregister_function(nm);
+                let from_exec = crate::ported::exec::unregister_function(nm);
                 from_tab || from_exec
             }
             // c:4405 — `if ((hn = ht->removenode(ht, *argv)))`.
@@ -9115,11 +9115,12 @@ pub fn bin_print(
         // throughout the format walk).
         let (out, bounds) = match printf_format(&fmt, rest) {
             Ok(s) => s,
-            Err((partial, bad)) => {
+            Err((partial, msg)) => {
                 print!("{}", partial); // c: partial output already in fout
                 use std::io::Write;
                 let _ = std::io::stdout().flush();
-                let msg = format!("%{}: invalid directive", bad); // c:5435
+                // c:5435 invalid directive / c:5204 argument specifier
+                // out of range — `msg` carries the full zwarnnam text.
                 crate::ported::utils::zwarnnam(name, &msg);
                 return 1; // c:5443
             }
@@ -10371,7 +10372,7 @@ pub fn zexit(val: i32, from_where: i32) {
         // Set LASTVAL to the requested exit value so `$?` inside
         // the trap body sees the right number (matches `(exit 7)`
         // → trap body reads $?=7).
-        let _ = crate::ported::exec_hooks::execute_script(&body);
+        let _ = crate::ported::exec::execute_script(&body);
     }
     // c:Src/signals.c::dotrap(SIGEXIT) — fire ZSIG_FUNC handler
     // installed by `TRAPEXIT() { ... }` (settrap with ZSIG_FUNC
@@ -10660,10 +10661,10 @@ pub fn bin_dot(
     // context can't abort the file's first list.
     crate::ported::utils::errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
     let mut result = match zwc_src {
-        Some(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1), // c:1566 prog path
+        Some(src) => crate::ported::exec::execute_script(&src).unwrap_or(1), // c:1566 prog path
         None => match fs::read_to_string(&path) {
             // c:6140
-            Ok(src) => crate::ported::exec_hooks::execute_script(&src).unwrap_or(1),
+            Ok(src) => crate::ported::exec::execute_script(&src).unwrap_or(1),
             // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
             Err(_) => 128 - 2,
         },
@@ -10817,7 +10818,7 @@ pub fn eval(argv: &[String]) -> i32 {
             // flowing to the caller (no capture) which is what eval
             // wants. Same routing the eval-via-execstring path uses
             // (vm_helper.rs:1518 EXIT-trap fire).
-            let _ = crate::ported::exec_hooks::execute_script_zsh_pipeline(&joined);
+            let _ = crate::ported::exec::execute_script_zsh_pipeline(&joined);
             // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
             let ef = errflag.load(Relaxed);
             let lv = LASTVAL.load(Relaxed);
@@ -14827,7 +14828,7 @@ fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
 /// format-reuse CYCLE began (c:Src/builtin.c `splits`). `printf -v` to
 /// an array assigns one element per cycle, so the caller slices `out`
 /// at these boundaries.
-fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (String, char)> {
+fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (String, String)> {
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
@@ -14843,6 +14844,12 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
         getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
     let mut out = String::new();
     let mut arg_i: usize = 0;
+    // c:Src/builtin.c:5166/5176 — `first` is the base of the current
+    // format-reuse cycle's argument window. `%n$` positional specs index
+    // `first + n - 1`; at the start of each new cycle `first += maxarg`
+    // (the highest positional used in the prior cycle). `first_off` is
+    // the Rust analog (absolute offset into `args`).
+    let mut first_off: usize = 0;
     // c:Src/builtin.c — `splits`: byte offset where each format-reuse
     // cycle starts (the first is 0). Used by `printf -v ARRAY`.
     let mut bounds: Vec<usize> = Vec::new();
@@ -14853,6 +14860,10 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
     loop {
         bounds.push(out.len());
         let prev = arg_i;
+        // c:Src/builtin.c:5175-5178 — `maxarg` is the highest positional
+        // (`%n$`) referenced in THIS cycle; reset per cycle and folded
+        // into `first_off` at cycle end.
+        let mut cycle_maxarg: usize = 0;
         let mut iter = fmt.chars().peekable();
         while let Some(c) = iter.next() {
             if c != '%' {
@@ -14863,6 +14874,49 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
             // between `%` and the conversion. Capture them so `printf
             // "%-10s" hi` and `printf "%.3f" 3.14159` render correctly.
             let mut spec = String::from("%");
+            // c:Src/builtin.c:5199-5219 — `%n$` positional argument
+            // specifier. A leading 1-9 digit run followed by `$` selects
+            // the n-th argument (1-based) for this conversion instead of
+            // the next sequential one. A leading digit run NOT followed
+            // by `$` is an ordinary field width (handled below), so peek
+            // the whole run before deciding. (`0` can't start a
+            // positional — it's a flag — so C tests `'1'..'9'`.)
+            let mut positional: Option<usize> = None;
+            if matches!(iter.peek(), Some(&d) if ('1'..='9').contains(&d)) {
+                let mut digits = String::new();
+                while let Some(&d) = iter.peek() {
+                    if d.is_ascii_digit() {
+                        digits.push(d);
+                        iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                if iter.peek() == Some(&'$') {
+                    iter.next(); // c:5202 — consume `$`
+                    let narg: usize = digits.parse().unwrap_or(0);
+                    // c:5203-5212 — out-of-range positional is a hard
+                    // error (`zwarnnam(...); return 1`). `argc` in C is
+                    // the per-cycle remaining count (total minus the
+                    // already-consumed `first_off`).
+                    if narg == 0 || first_off + narg > args.len() {
+                        return Err((
+                            out,
+                            format!("{}: argument specifier out of range", narg), // c:5204
+                        ));
+                    }
+                    // c:5214-5216 — `if (narg > maxarg) maxarg = narg;`
+                    //               `curarg = *(first + narg - 1);`
+                    if narg > cycle_maxarg {
+                        cycle_maxarg = narg;
+                    }
+                    positional = Some(first_off + narg - 1);
+                } else {
+                    // Not a positional: the digits are an ordinary field
+                    // width — emit them into the spec and fall through.
+                    spec.push_str(&digits);
+                }
+            }
             loop {
                 match iter.peek() {
                     Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0') => {
@@ -14911,6 +14965,17 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                         }
                     }
                 }
+            }
+            // c:Src/builtin.c:5215/5310 — a `%n$` positional spec sets
+            // `curarg` directly; the conversion arms below read from
+            // `arg_i`, so point it at the positional index for the
+            // duration of the conversion, then restore. Restoring means
+            // the positional reference does NOT advance the sequential
+            // cursor (C only advances `argp` for non-positional args).
+            let saved_argi = arg_i;
+            let is_positional = positional.is_some();
+            if let Some(p) = positional {
+                arg_i = p;
             }
             match iter.next() {
                 Some('%') => out.push('%'),
@@ -14988,10 +15053,16 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 // backslash form.
                 Some('q') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    out.push_str(&crate::ported::utils::quotestring(
+                    let quoted = crate::ported::utils::quotestring(
                         &a,
                         crate::ported::zsh_h::QT_BACKSLASH_SHOWNULL,
-                    ));
+                    );
+                    // c:Src/builtin.c:5405-5407 — `%q` sets `*d = 's'`
+                    // and runs the quoted value through the normal string
+                    // output (`print_val`), so width/precision/flags from
+                    // the spec apply (`printf "%-5q" a` → "a    ").
+                    spec.push('s');
+                    out.push_str(&format_spec_str(&spec, &quoted));
                     arg_i += 1;
                 }
                 // c:builtin.c:5332-5336 — `%b` uses GETKEYS_PRINTF_ARG
@@ -15032,9 +15103,29 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 // is preserved (matches C — the warning fires AFTER
                 // earlier output bytes have already been emitted).
                 Some(other) => {
-                    return Err((out, other)); // c:5430-5443
+                    // c:5430-5436 — the message echoes `start`: the spec
+                    // text from `%` through the bad conversion char
+                    // inclusive (C null-terminates at `c[1]`). `spec`
+                    // already holds `%`+flags+width+`.prec`; append the
+                    // bad char. e.g. `%0$s` → "%0$: invalid directive".
+                    return Err((out, format!("{}{}: invalid directive", spec, other))); // c:5435
                 }
                 None => out.push('%'),
+            }
+            // c:Src/builtin.c — restore the sequential cursor after a
+            // positional conversion (see the swap above).
+            if is_positional {
+                arg_i = saved_argi;
+            }
+        }
+        // c:Src/builtin.c:5175-5178 — at the end of a cycle that used
+        // positional specs, fold the highest positional into the base
+        // offset (`first += maxarg`) and advance the sequential cursor
+        // past it so the reapply check below sees forward progress.
+        if cycle_maxarg > 0 {
+            first_off += cycle_maxarg;
+            if first_off > arg_i {
+                arg_i = first_off;
             }
         }
         if arg_i == prev || arg_i >= args.len() {

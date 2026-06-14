@@ -36,7 +36,7 @@
 //!   * sh:384-396 ZLS_COLORS save/restore
 
 use crate::compsys::ported::_setup::_setup;
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::{bin_zformat, lookupstyle, testforstyle};
 use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};

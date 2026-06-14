@@ -74,9 +74,9 @@
 //! Calls the real `bin_comptags` / `bin_comptry` / `bin_compgroups` in
 //! `src/ported/zle/computil.rs` and the real `lookupstyle` in
 //! `src/ported/modules/zutil.rs`. `$_sort_tags` hook fires via
-//! `crate::ported::exec_hooks::dispatch_function_call` when set.
+//! `crate::ported::exec::dispatch_function_call` when set.
 
-use crate::ported::exec_hooks::dispatch_function_call;
+use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::lookupstyle;
 use crate::ported::params::getsparam;
 use crate::ported::zle::computil::{bin_compgroups, bin_comptags, bin_comptry};

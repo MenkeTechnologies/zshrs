@@ -1786,7 +1786,7 @@ pub fn tcout_via_func(cap: i32, arg: i32) -> i32 {
             let name_for_body = func_name.clone();
             let body_args = argv.clone();
             let body_runner = move || -> i32 {
-                crate::ported::exec_hooks::run_function_body(&name_for_body, &body_args[1..])
+                crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
                     .unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(&mut shf, argv.clone(), true, body_runner);

@@ -1639,6 +1639,18 @@ pub fn createparamtable() {
             }
         }
     }
+    // c:Src/params.c:113 — `zlong zsh_funcnest = MAX_FUNCTION_DEPTH;`.
+    // The IPDEF5("FUNCNEST", &zsh_funcnest, varinteger_gsu) special
+    // (c:359) reads this statically-initialized global, so $FUNCNEST
+    // reports MAX_FUNCTION_DEPTH from the first instant the table
+    // exists. zshrs models FUNCNEST as a stored integer special (no
+    // backing global / getfn wired in add_special), which defaults to
+    // u_val=0 — that 0 trips the funcnest guard on the very first
+    // function call. Seed it here to mirror the C global's static
+    // initializer. config.h MAX_FUNCTION_DEPTH=500 (Homebrew
+    // arm-darwin oracle reports `$FUNCNEST` == 500).
+    setiparam("FUNCNEST", 500); // c:params.c:113
+
     // c:848 — `argvparam = (Param) &argvparam_pm;` is the C handle a
     //         positional-param fetchvalue path follows to reach
     //         `pparams`. The Rust port resolves $1..$N directly from
