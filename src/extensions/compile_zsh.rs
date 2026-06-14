@@ -2523,6 +2523,39 @@ impl ZshCompiler {
                     self.builder.emit(Op::SetStatus, 0);
                     return;
                 }
+                // Numeric custom fd (`3<<E`, `exec 3<<E`): wire the body
+                // to fd N, not fd 0. The default Op::HereDoc/HereString
+                // path stages the body as pending STDIN, so `read -u3`
+                // / `cat <&3` saw nothing. Route through the same
+                // fd-aware helper as `exec 3<<<str` (writes a temp file,
+                // dup2's to fd N). Content handling mirrors the fd=0
+                // arms below (quoted → verbatim, unquoted → mode-4
+                // expand); the helper appends the single trailing
+                // newline that trim_end_matches removes, matching the
+                // fd=0 HereString behaviour. c:Src/exec.c:3766-3780.
+                if fd > 0 && !content_clean.is_empty() {
+                    if hd.quoted {
+                        let trimmed = content_clean.trim_end_matches('\n').to_string();
+                        let idx = self.builder.add_constant(Value::str(trimmed.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    } else {
+                        let trimmed = hd.content.trim_end_matches('\n').to_string();
+                        let text_const = self.builder.add_constant(Value::str(trimmed));
+                        self.builder.emit(Op::LoadConst(text_const), 0);
+                        self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
+                            0,
+                        );
+                    }
+                    self.builder.emit(Op::LoadInt(fd as i64), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXEC_HERESTR_FD, 2),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0); // discard Status
+                    return;
+                }
                 // Empty heredoc body — route through HereDoc op (no
                 // trailing-newline append) regardless of quoting, so
                 // the consumer sees zero bytes (matches zsh).
