@@ -15512,6 +15512,21 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
         }
         _ => format!("{}", n),
     };
+    // c:libc printf flags `+` and ` ` — a non-negative float value gets
+    // a forced leading `+` (with `+`) or a blank (with ` `); `+`
+    // overrides ` `. parse_flags_width_prec only extracts `-`/`0`, so
+    // these sign flags were dropped: `printf "%+.2f" 1.5` rendered
+    // "1.50" instead of "+1.50". Negatives keep their own `-`. The
+    // zero-pad arm below already expects an optional leading `+`.
+    let body = if body.starts_with('-') {
+        body
+    } else if spec.contains('+') {
+        format!("+{}", body)
+    } else if spec.contains(' ') {
+        format!(" {}", body)
+    } else {
+        body
+    };
     let pad = width.saturating_sub(body.chars().count());
     if pad == 0 {
         body
@@ -15528,6 +15543,10 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
             format!("-{}{}", "0".repeat(pad), rest)
         } else if let Some(rest) = body.strip_prefix('+') {
             format!("+{}{}", "0".repeat(pad), rest)
+        } else if let Some(rest) = body.strip_prefix(' ') {
+            // ` ` (space) flag + `0`: blank stays leftmost, zeros pad
+            // between it and the digits. `printf "% 08.2f" 1.5` → " 0001.50".
+            format!(" {}{}", "0".repeat(pad), rest)
         } else {
             format!("{}{}", "0".repeat(pad), body)
         }
