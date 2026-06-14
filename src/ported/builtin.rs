@@ -2016,15 +2016,19 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
             }
             return resolved;
         }
-        // c:910-911 — `-` alias for $OLDPWD; else literal arg.
-        //              C reads `oldpwd` global / `$OLDPWD` param;
-        //              route through paramtab via getsparam.
+        // c:908-909 — `zpushnode(dirstack, ztrdup(strcmp(argv[0],"-")
+        //   ? (doprintdir--, argv[0]) : oldpwd))`. `strcmp(argv[0],"-")`
+        //   is non-zero for a normal dir, so a normal `cd dir` does
+        //   `doprintdir--` (cancelling the c:891 `doprintdir++` → no
+        //   print), while `cd -` keeps doprintdir set → prints $OLDPWD.
+        //   C reads the `oldpwd` global; route through `$OLDPWD`.
         if arg == "-" {
-            // c:911
-            DOPRINTDIR.fetch_sub(1, Relaxed);
+            // c:909 — `: oldpwd` — no doprintdir--, so `cd -` prints.
             getsparam("OLDPWD")
         } else {
-            Some(arg.clone()) // c:911
+            // c:909 — `? (doprintdir--, argv[0])`.
+            DOPRINTDIR.fetch_sub(1, Relaxed);
+            Some(arg.clone())
         }
     } else {
         // c:914-924 — two-arg substitution: cd OLDPATTERN NEWPATTERN.
@@ -2116,17 +2120,20 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     if !nocdpath {
         for pp in cdpath.iter() {
             if let Some(ret) = cd_try_chdir(pp, dest, hard) {
-                // c:1037-1040 — print resolved path when from CDPATH
-                // (non-"."), gated on DOPRINTDIR > 0. zsh only prints
-                // the resolved path in interactive mode or when the
-                // shell explicitly set the flag (e.g. `cd -P`). Non-
-                // interactive `-fc` scripts skip the print.
-                if !pp.is_empty()
-                    && *pp != "."
-                    && DOPRINTDIR.load(Relaxed) > 0
-                    && isset(INTERACTIVE)
-                {
-                    println!("{}", ret);
+                // c:1037-1050 — flag that the resolved directory should
+                // be printed; the actual print happens later in
+                // cd_new_pwd (c:1248-1251) gated on doprintdir. C does
+                // NOT print here, it only bumps `doprintdir`.
+                if isset(POSIXCD) {
+                    // c:1037-1045 — POSIX prints any time CDPATH was
+                    // used, except for an empty segment treated as ".".
+                    if !pp.is_empty() {
+                        DOPRINTDIR.fetch_add(1, Relaxed); // c:1045
+                    }
+                } else if *pp != "." {
+                    // c:1046-1049 — non-POSIX: print only for a
+                    // non-"." segment.
+                    DOPRINTDIR.fetch_add(1, Relaxed); // c:1048
                 }
                 return Some(ret);
             }
@@ -2151,6 +2158,9 @@ pub fn cd_do_chdir(cnam: &str, dest: &str, hard: i32) -> Option<String> {
     // Bug #217 in docs/BUGS.md.
     if let Some(expanded) = cd_able_vars(dest) {
         if let Some(ret) = cd_try_chdir("", &expanded, hard) {
+            // c:1069 — `doprintdir++` so cd_new_pwd prints the
+            // CDABLEVARS-resolved directory.
+            DOPRINTDIR.fetch_add(1, Relaxed); // c:1069
             return Some(ret);
         }
     }
@@ -2275,9 +2285,26 @@ pub fn cd_new_pwd(func: i32, _dir: usize, quiet: i32) {
     // doesn't carry that path here, so the caller is the authoritative
     // PWD writer and this fn must NOT re-write either parameter.
 
-    // c:1245-1252 — print dirstack on PUSHD/POPD (unless silent/quiet).
-    if quiet == 0 && func != BIN_CD && isset(INTERACTIVE) && !isset(PUSHDSILENT) {
-        printdirstack();
+    // c:1244-1252 — print the new directory.
+    //   if (isset(INTERACTIVE) || isset(POSIXCD)) {
+    //       if (func != BIN_CD && isset(INTERACTIVE)) {
+    //           if (unset(PUSHDSILENT) && !quiet) printdirstack();
+    //       } else if (unset(CDSILENT) && doprintdir) {
+    //           fprintdir(pwd, stdout); putchar('\n');
+    //       }
+    //   }
+    if isset(INTERACTIVE) || isset(POSIXCD) {
+        if func != BIN_CD && isset(INTERACTIVE) {
+            // c:1245-1247 — pushd/popd echo the dir stack.
+            if !isset(PUSHDSILENT) && quiet == 0 {
+                printdirstack(); // c:1247
+            }
+        } else if !isset(crate::ported::zsh_h::CDSILENT) && DOPRINTDIR.load(Relaxed) != 0 {
+            // c:1248-1251 — cd echoes the resolved directory (set via
+            // doprintdir by `cd -`, CDPATH, autocd, CDABLEVARS).
+            let pwd = getsparam("PWD").unwrap_or_default(); // C global `pwd`
+            println!("{}", fprintdir(&pwd)); // c:1249-1250
+        }
     }
 
     // c:1264 — runhookdef(GETCOLORATTR/chpwd) — fire chpwd hooks.
