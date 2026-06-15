@@ -19,6 +19,50 @@ CI green pending the underlying fix.
 
 ---
 
+## #631 — nested single-element array `${${a}[n]}` / `${#${a}}` string-subscripts instead of element-subscripts
+
+**Status:** `port-bug` (cmdsubst half fixed 2026-06-14; nested-`${...}` half open)
+
+Wrapping an array expansion in an outer `${...}` and then subscripting
+or length-counting it loses array-ness when the inner produces exactly
+one element, so the outer falls back to scalar (character) semantics:
+
+```
+a=(hello)
+echo ${${a}[1]}     # zsh: hello   zshrs: h        (char 1, not element 1)
+echo ${${a}[2,4]}   # zsh: (empty) zshrs: ell      (out-of-range slice → string slice)
+echo ${#${a}}       # zsh: 1       zshrs: 5        (char count, not element count)
+echo ${${(M)$(echo hello):#hello}[1]}   # zsh: hello  zshrs: h
+```
+
+Multi-element works (`a=(foo bar); echo ${${a}[2,2]}` → `bar` both
+shells) because the splat produces >1 list nodes and `multsub`
+(src/ported/subst.rs:1612, `if l > 1 || LF_ARRAY`) takes the array
+path. The single-element case yields one node with `LF_ARRAY` unset, so
+`multsub` returns a scalar.
+
+**C reference:** `paramsubst` sets `l->list.flags |= LF_ARRAY` in the
+"YUK chunk" (Src/subst.c:3881-3884) whenever `isarr`, *before* the
+one-element-array→scalar collapse at c:3888 (`val = aval[0]; isarr =
+0;`). The comment there is explicit: "LF_ARRAY (above) propagates the
+true array type from nested expansions." `multsub` (c:632) then reads
+`foo.list.flags & LF_ARRAY` to keep array semantics for the single
+element. zshrs's `paramsubst` returns `(new_str, new_pos, new_nodes)`
+without an array-ness signal, so the splice in `stringsubst`
+(subst.rs:1064-1135) cannot set `LF_ARRAY` for a one-node array result.
+Fixing requires threading an array-ness bit through `ret_flags` (or the
+paramsubst return) across the splice path — invasive on a
+heavily-patched path; deferred.
+
+**Fixed half:** the direct command-substitution form
+(`${$(echo hello)[1]}`, `${#$(echo hello)}`) was corrected at
+subst.rs:4644 — single-word `$(cmd)` output now keeps the word-list
+array shape per `readoutput`→`spacesplit` (Src/exec.c:4865) instead of
+collapsing to a scalar. Only the nested `${${...}...}` wrapper around an
+array *parameter*/filter remains.
+
+---
+
 ## #630 — bare `zselect` (no fds, no timeout) prints invented "would block forever" error — C blocks in select(2)
 
 **Status:** `fixed` 2026-06-12 — removed the zshrs-only guard in
