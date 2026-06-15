@@ -793,6 +793,19 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
         if idx == USEZLE && value != 0 && !interact() {
             return -1;
         }
+        // !!! UNPORTED, SECURITY-CRITICAL GAP — c:756-850 !!!
+        // C's `else if (optno == PRIVILEGED && !value)` branch makes a
+        // setuid/setgid shell drop privileges when `unsetopt privileged`
+        // runs: it `setresgid`s to the real gid, drops the supplementary
+        // group list, `setresuid`s to the real uid, then VERIFIES the
+        // drop actually stuck (warning if euid/egid could be restored).
+        // That whole block is NOT ported here, so on zshrs `unsetopt
+        // privileged` currently flips the option flag WITHOUT dropping
+        // privileges. The `setres{u,g}id` substrate exists
+        // (openssh_bsd_setres_id.rs); porting this needs a dedicated,
+        // reviewed pass (a bug in privilege-dropping is a vulnerability),
+        // not an inline change. Tracked here so the gap is visible, not
+        // silently missing between the USEZLE and MONITOR cases.
         // c:851-861 — `setopt MONITOR` (force=0, value=1) must:
         //   - No-op if already on (`new_opts[optno] == value`).
         //   - Fail if SHTTY == -1 (can't enable job control without tty).
