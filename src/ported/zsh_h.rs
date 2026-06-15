@@ -1490,7 +1490,7 @@ pub struct job {
     pub pwd: Option<String>,      // c:1063
     pub procs: Vec<process>,      // c:1065 struct process *procs
     pub auxprocs: Vec<process>,   // c:1066 struct process *auxprocs
-    pub filelist: Vec<String>,    // c:1067 LinkList filelist
+    pub filelist: Vec<jobfile>,   // c:1067 LinkList filelist (elements are struct jobfile)
     pub stty_in_env: i32,         // c:1069
     pub ty: Option<Box<ttyinfo>>, // c:1070
     /// Rust extension: cached job-display text. C re-derives via
@@ -2716,15 +2716,21 @@ pub fn WRAPDEF(func: WrapFunc) -> funcwrap {
 // =============================================================================
 // 17. Job structures (zsh.h:1046-1166).
 // =============================================================================
-/// `jobfile` — see fields for layout.
+/// Port of `struct jobfile` from `Src/zsh.h:1046` — a record to be
+/// deleted or closed at job exit. C is a tagged union
+/// (`union { char *name; int fd; } u;` + `int is_fd`); the Rust port
+/// flattens both arms plus the `is_fd` discriminant (only the field
+/// selected by `is_fd` is valid). `is_fd == 0` → unlink `name`;
+/// `is_fd == 1` → close `fd`.
 #[allow(non_camel_case_types)]
+#[derive(Debug, Clone)]
 pub struct jobfile {
     // c:1046
-    /// `name` field.
+    /// `name` field (`u.name`, valid when `is_fd == 0`).
     pub name: Option<String>,
-    /// `fd` field.
+    /// `fd` field (`u.fd`, valid when `is_fd == 1`).
     pub fd: i32,
-    /// `is_fd` field.
+    /// `is_fd` discriminant.
     pub is_fd: i32,
 }
 /// `STAT_CHANGED` constant.
