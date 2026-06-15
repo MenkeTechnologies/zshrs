@@ -26,9 +26,11 @@ use crate::ported::signals::{
 };
 use crate::ported::signals_h::{signal_default, signal_ignore, sigs_name, sigs_number};
 use crate::ported::utils::zwarnnam;
+use crate::ported::utils::{fdtable_get, zclose};
 use crate::ported::zsh_h::{
-    isset, job, options, process, INTERACTIVE, LONGLISTJOBS, MONITOR, OPT_ISSET, POSIXBUILTINS,
-    POSIXJOBS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB, STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
+    isset, job, jobfile, options, process, FDT_PROC_SUBST, INTERACTIVE, LONGLISTJOBS, MONITOR,
+    OPT_ISSET, POSIXBUILTINS, POSIXJOBS, STAT_ATTACH, STAT_INUSE, STAT_SUBJOB,
+    STAT_SUBJOB_ORPHANED, STAT_SUPERJOB,
 };
 pub use crate::ported::zsh_h::{timeinfo, MAXJOBS_ALLOC, MAX_PIPESTATS, SP_RUNNING};
 use crate::DPUTS;
@@ -1334,85 +1336,67 @@ pub fn printjob(
 /// ```
 ///
 /// Stores either a temp-file name (to delete on job exit) or an
-/// open fd (to close on job exit). C uses a `Jobfile` struct with
-/// a tagged union; Rust port encodes the fd-only case as a
-/// `<fd:N>` sentinel string in the `Vec<String>` since the job
-/// struct stores `filelist: Vec<String>` for now.
-///
-/// `name == None` → store `<fd:N>`; `name == Some(s)` → store `s`.
-/// `deletefilelist` parses the `<fd:N>` prefix and calls `close(N)`
-/// instead of `unlink`. WARNING: the `Vec<String>`+sentinel encoding
-/// is a Rust port concession until `Jobfile` lands as a real type;
-/// once it does, this fn becomes a direct push of the enum variant.
-// Rust idiom replacement: `Vec::push` covers the C `LinkList`+
-// `zalloc(strlen+1)` add path; the `<fd:N>` sentinel string encodes
-// the same Jobfile.is_fd discriminant the C source uses inline.
-/// `addfilelist` — see implementation.
+/// open fd (to close on job exit) as a `jobfile` enum node, mirroring
+/// the C `struct jobfile` tagged union. C operates on
+/// `jobtab[thisjob].filelist`; the Rust port takes the `job` directly.
 pub fn addfilelist(job: &mut job, name: Option<&str>, fd: i32) {
-    match name {
-        Some(n) => job.filelist.push(n.to_string()),
-        None => job.filelist.push(format!("<fd:{}>", fd)),
-    }
+    // c:1373 — `Jobfile jf = zalloc(sizeof(struct jobfile));`
+    // c:1374 — `LinkList ll = jobtab[thisjob].filelist;` / c:1376 create-if-absent
+    //          folds into `Vec::push` (the Vec is the always-present list).
+    let jf = match name {
+        // c:1379 — `jf->u.name = ztrdup(name); jf->is_fd = 0;`
+        Some(n) => jobfile { name: Some(n.to_string()), fd: 0, is_fd: 0 },
+        // c:1383 — `jf->u.fd = fd; jf->is_fd = 1;`
+        None => jobfile { name: None, fd, is_fd: 1 },
+    };
+    job.filelist.push(jf); // c:1385 zaddlinknode(ll, jf)
 }
 
 /// Port of `pipecleanfilelist(LinkList filelist, int proc_subst_only)` from `Src/jobs.c:1397`.
 ///
-/// `<fd:N>` sentinels (added by `addfilelist(None, fd)`) are
-/// kept in both branches — they're the input/output fds for
-/// process substitution and need closing only at job exit.
+/// Closes only `is_fd` entries (named-file entries are left for
+/// `deletefilelist` at job exit). When `proc_subst_only`, only fds
+/// flagged `FDT_PROC_SUBST` in the fdtable are closed; the rest stay.
+/// Closed fd entries are removed from the list; named entries remain.
 pub fn pipecleanfilelist(filelist: &mut job, proc_subst_only: bool) {
-    // c:1397
-    if proc_subst_only {
-        // c:1397
-        filelist.filelist.retain(|f| {
-            !f.starts_with("/dev/fd/") && !f.starts_with("/proc/") && !f.starts_with("<fd:")
-        });
-    } else {
-        for entry in &filelist.filelist {
-            // Inline: unlink or close based on entry encoding               // c:1408-1411
-            if let Some(rest) = entry.strip_prefix("<fd:") {
-                if let Some(num_str) = rest.strip_suffix('>') {
-                    if let Ok(fd) = num_str.parse::<i32>() {
-                        #[cfg(unix)]
-                        unsafe {
-                            libc::close(fd);
-                        } // c:1411
-                    }
-                }
-            } else {
-                let _ = std::fs::remove_file(entry); // c:1409
-            }
+    // c:1404-1414 — walk the list; close+remove qualifying fd entries.
+    filelist.filelist.retain(|jf| {
+        // c:1405-1406 — `jf->is_fd && (!proc_subst_only ||
+        //                fdtable[jf->u.fd] == FDT_PROC_SUBST)`
+        if jf.is_fd != 0 && (!proc_subst_only || fdtable_get(jf.fd) == FDT_PROC_SUBST) {
+            zclose(jf.fd); // c:1408 zclose(jf->u.fd)
+            false // c:1409 remnode(filelist, node) — drop from list
+        } else {
+            // c:1414 — `else incnode(node)`: keep everything else.
+            true
         }
-        filelist.filelist.clear();
-    }
+    });
 }
 
 /// Port of `deletefilelist(LinkList file_list, int disowning)` from `Src/jobs.c:1422`.
 ///
-/// C body iterates the filelist linked list; for each Jobfile,
-/// dispatches `unlink(jf->u.name)` if `is_fd == 0` else
-/// `close(jf->u.fd)`. The `disowning` flag suppresses the
-/// `unlink`/`close` so files survive the disown.
+/// For each `Jobfile`: `is_fd` → close the fd (unless `disowning`);
+/// named → unlink the file (unless `disowning`). The `disowning`
+/// flag suppresses the `close`/`unlink` so files survive the disown.
 pub fn deletefilelist(file_list: &mut job, disowning: bool) {
-    // c:1422
-    if !disowning {
-        // c:1422
-        for entry in &file_list.filelist {
-            // Inline: unlink or close based on entry encoding               // c:1427-1435
-            if let Some(rest) = entry.strip_prefix("<fd:") {
-                if let Some(num_str) = rest.strip_suffix('>') {
-                    if let Ok(fd) = num_str.parse::<i32>() {
-                        #[cfg(unix)]
-                        unsafe {
-                            libc::close(fd);
-                        } // c:1434
-                    }
-                }
-            } else {
-                let _ = std::fs::remove_file(entry); // c:1432
+    // c:1427-1438 — `while ((jf = getlinknode(file_list)))` consumes the list.
+    for jf in &file_list.filelist {
+        if jf.is_fd != 0 {
+            // c:1430-1431 — `if (jf->is_fd) { if (!disowning) zclose(jf->u.fd); }`
+            if !disowning {
+                zclose(jf.fd); // c:1432 zclose(jf->u.fd)
             }
+        } else {
+            // c:1433-1436 — `else { if (!disowning) unlink(jf->u.name); zsfree(...); }`
+            if !disowning {
+                if let Some(ref name) = jf.name {
+                    let _ = std::fs::remove_file(name); // c:1435 unlink(jf->u.name)
+                }
+            }
+            // c:1436 zsfree(jf->u.name) — owned String dropped with the node.
         }
     }
+    // c:1438 — the loop drained the list; clear the Vec.
     file_list.filelist.clear();
 }
 
@@ -4988,14 +4972,14 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut tab = vec![job::new(), job::new(), job::new()];
         tab[1].stat = stat::INUSE;
-        tab[1].filelist = vec!["/tmp/foo".to_string()];
+        tab[1].filelist = vec![jobfile { name: Some("/tmp/foo".to_string()), fd: 0, is_fd: 0 }];
         assert!(havefiles(&tab));
         // job marked but no files → no.
         tab[1].filelist.clear();
         assert!(!havefiles(&tab));
         // Files but no stat (released slot) → C `jobtab[i].stat &&` requires both.
         tab[2].stat = 0;
-        tab[2].filelist = vec!["/tmp/bar".to_string()];
+        tab[2].filelist = vec![jobfile { name: Some("/tmp/bar".to_string()), fd: 0, is_fd: 0 }];
         assert!(!havefiles(&tab));
     }
 
@@ -5040,8 +5024,10 @@ mod tests {
         addfilelist(&mut job, Some("/tmp/zshrs-test.X"), -1);
         addfilelist(&mut job, None, 7);
         assert_eq!(job.filelist.len(), 2);
-        assert_eq!(job.filelist[0], "/tmp/zshrs-test.X");
-        assert_eq!(job.filelist[1], "<fd:7>");
+        assert_eq!(job.filelist[0].is_fd, 0);
+        assert_eq!(job.filelist[0].name.as_deref(), Some("/tmp/zshrs-test.X"));
+        assert_eq!(job.filelist[1].is_fd, 1);
+        assert_eq!(job.filelist[1].fd, 7);
     }
 
     #[test]

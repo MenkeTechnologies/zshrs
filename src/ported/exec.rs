@@ -76,7 +76,8 @@ use crate::ported::utils::{
     ERRFLAG_ERROR, MAX_ZSH_FD,
 };
 use crate::ported::zsh_h::{
-    builtin, cmdnam, emulation_options, eprog, execstack, funcwrap, hashnode, isset, multio, redir,
+    builtin, cmdnam, emulation_options, eprog, execstack, funcwrap, hashnode, isset, jobfile, multio,
+    redir,
     shfunc, unset, wc_code, Emulation_options, Inang, Inpar, Meta, Nularg, Outpar, Pound,
     BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS,
     CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL,
@@ -5512,7 +5513,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
                     //                jobtab[thisjob].filelist = NULL;` — preserve
                     //                the filelist so deletejob doesn't unlink temp
                     //                files. Rust take()s the Vec into a local.
-                    let _last_file_list: Vec<String> = if let Some(j) = guard.get_mut(tj as usize) {
+                    let _last_file_list: Vec<jobfile> = if let Some(j) = guard.get_mut(tj as usize) {
                         std::mem::take(&mut j.filelist)
                     } else {
                         Vec::new()
@@ -6870,7 +6871,7 @@ pub fn execcmd_fork(
     how: i32,
     typ: i32,
     varspc: Option<usize>,
-    filelistp: &mut Vec<String>,
+    filelistp: &mut Vec<jobfile>,
     text: &str,
     oautocont: i32,
     close_if_forked: i32,
@@ -8628,7 +8629,7 @@ pub fn execcmd_exec(
 
     // c:2904-2916 — locals.
     let mut hn: Option<*mut builtin> = None; // c:2904 HashNode hn = NULL
-    let mut filelist: Vec<String> = Vec::new(); // c:2905 LinkList filelist = NULL
+    let mut filelist: Vec<jobfile> = Vec::new(); // c:2905 LinkList filelist = NULL
                                                 // c:2906 LinkNode node; (loop locals)
                                                 // c:2907 Redir fn;       (loop locals)
     let mut mfds: [Option<Box<multio>>; 10] =                              // c:2908 struct multio *mfds[10]
