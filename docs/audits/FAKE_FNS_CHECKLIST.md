@@ -204,9 +204,24 @@ largely illusory: on close inspection most have hidden substrate gaps
 - HISTORY_IGNORE/atomic-rename/lock-retry: `savehistfile`, `lockhistfile`
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
-reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `execpline`.
-The line-ratio detector mismeasured these; the current Rust reads as
+reclassify out of PORT if confirmed)**: `zglob`, `execpline`. The
+line-ratio detector mismeasured these; the current Rust reads as
 substantially complete.
+
+- [VERIFIED NOT-FAKE — re-architected] `glob.rs::scanner` — C's
+  monolithic 162-line `scanner` (Complist linked-list + Patprog +
+  opendir/readdir) is re-architected in Rust as a component-based engine:
+  a faithful `complist` port keeps the `closure` field (c:255, set to
+  1/2 for `#`/`##` at glob.rs:590), and `scanner` (381) is a dispatcher
+  over a `PatternComponent` enum (Pattern / Recursive / `.`,`..` nav)
+  delegating to `scan_pattern`/`scan_recursive`, using `fs::read_dir`
+  instead of opendir and `lchdir` for the long-path descent. Major
+  features confirmed present (patterns, recursion/closure, dotdot
+  navigation) and the engine passes **99 `glob_` tests**. Not a
+  structural fake; the ratio flag is a detector artifact (monolithic C
+  fn vs split Rust engine). Caveat: verified feature-presence + test
+  pass, not an exhaustive per-qualifier line audit. Reclassified out of
+  the genuine-fake list.
 
 - [partial] `init.rs::source` — audited + highest-value gap closed. Was
   missing the `FS_SOURCE` funcstack push (c:1610-1618) — sourced files
@@ -304,11 +319,12 @@ substantially complete.
   - done: 6 full + 1 partial (`lchdir`, `findsep`, `vireplacechars`,
     `gdbmhashsetfn`, `setstypat`, `cd_new_pwd`; partial: `source` —
     FS_SOURCE funcstack push closed, smaller gaps tracked) — remaining 45
-  - reclassified NOT-FAKE on audit: 3 (`zgetdir` — live getcwd branch is
+  - reclassified NOT-FAKE on audit: 4 (`zgetdir` — live getcwd branch is
     faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
     AST parser architecture, `{...}`/always split to parse.rs:7025;
     `promptexpand` — core in putpromptchar 1375 lines + 45 tests, two
-    honest minor approximations)
+    honest minor approximations; `scanner` — re-architected glob engine,
+    closure/recursion/patterns present, 99 glob tests)
   - audited vestigial/duplicate (not the live path): 2
     (`load_dump_file` — callerless, zshrs uses owned-Vec dumps via
     load_dump_header; `prompt.rs::match_highlight` — test-only duplicate,
