@@ -711,6 +711,65 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         }
     }
 
+    // c:584-610 — PAT_PURES fast path. A literal with no glob tokens
+    // compiles to a "pure string" rather than bytecode. For FILE globs
+    // (PAT_FILE) the scan STOPS at '/', so each path component becomes a
+    // pure section and `parsecomplist` can split the path on '/' (it
+    // reads endexp = the '/' remainder). Gated on PAT_FILE so non-file
+    // callers (matchpat/[[ ]]/:#) keep normal compilation unchanged; the
+    // matcher consumes PURES sections via literal extraction (the
+    // scanner), never `pattry`, so no PAT_PURES match path is needed.
+    let pf_pre = patflags.load(Ordering::Relaxed);
+    if (pf_pre & PAT_FILE as i32) != 0
+        && (pf_pre & PAT_ANY as i32) == 0
+        && (hoisted_globflags & !GF_MULTIBYTE) == 0
+    {
+        let off = patparse_off.load(Ordering::Relaxed);
+        let p = patparse.lock().unwrap();
+        let s = &p[off..];
+        // c:606 — scan literal CHARS (glob tokens are U+0080.. chars, i.e.
+        // multi-byte in UTF-8, so a byte scan would miss them); stop at
+        // '/' (segment boundary) or any glob token. `cut` is the byte
+        // offset within `s` where we stop; `at_token` true => not pure.
+        let mut cut = s.len();
+        let mut at_token = false;
+        for (i, c) in s.char_indices() {
+            if c == '/' {
+                cut = i;
+                break;
+            }
+            if crate::ported::ztype_h::itok(c as u8) {
+                cut = i;
+                at_token = true;
+                break;
+            }
+        }
+        // c:610 — pure iff we stopped at end or '/', not at a glob token.
+        if !at_token {
+            let literal = s[..cut].as_bytes().to_vec();
+            let remainder = s[cut..].to_string();
+            drop(p);
+            let mlen = literal.len() as i64;
+            if let Some(end) = endexp.as_deref_mut() {
+                *end = remainder; // c:751 *endexp = patparse (at '/')
+            }
+            return Some(Box::new((
+                patprog {
+                    startoff: 0,
+                    size: mlen,
+                    mustoff: 0,
+                    patmlen: mlen, // c:623 — pure-string length
+                    globflags: hoisted_globflags,
+                    globend: patglobflags.load(Ordering::Relaxed),
+                    flags: pf_pre | PAT_PURES as i32, // c:625
+                    patnpar: 0,
+                    patstartch: 0,
+                },
+                literal,
+            )));
+        }
+    }
+
     let mut flagp: i32 = 0;
     let root = patcompswitch(0, &mut flagp);
     if root < 0 {

@@ -6902,6 +6902,50 @@ mod tests {
         assert!(matches!(first_qual(&qs), qualifier::IsRegular));
     }
 
+    /// `parsecomplist` splits a path into per-component `complist` nodes,
+    /// each literal section a PAT_PURES Patprog (relies on patcompile's
+    /// PAT_FILE PURES segment-stop at `/`, pattern.c:584-610).
+    #[test]
+    fn parsecomplist_splits_path_components() {
+        let _g = crate::test_util::global_state_lock();
+        fn pure(p: &crate::ported::pattern::Patprog) -> Option<String> {
+            if (p.0.flags & crate::ported::zsh_h::PAT_PURES as i32) != 0 {
+                let off = p.0.startoff as usize;
+                let l = p.0.patmlen as usize;
+                p.1.get(off..off + l)
+                    .map(|b| String::from_utf8_lossy(b).into_owned())
+            } else {
+                None
+            }
+        }
+        fn sections(mut q: &complist) -> Vec<String> {
+            let mut out = Vec::new();
+            loop {
+                out.push(pure(&q.pat).unwrap_or_else(|| "<pat>".into()));
+                match &q.next {
+                    Some(n) => q = n,
+                    None => break,
+                }
+            }
+            out
+        }
+        // Literal path → split into per-component PAT_PURES sections.
+        let mut t = "a/b/c.txt".to_string();
+        tokenize(&mut t);
+        let cl = parsecomplist(&t).expect("parsecomplist None");
+        assert_eq!(sections(&cl), vec!["a", "b", "c.txt"]);
+
+        // Literal prefix before a pattern still splits the literal dirs.
+        let mut t2 = "a/b/x.txt".to_string();
+        tokenize(&mut t2);
+        let cl2 = parsecomplist(&t2).expect("parsecomplist None");
+        assert_eq!(&sections(&cl2)[..2], &["a".to_string(), "b".to_string()]);
+        // NOTE: pattern sections (e.g. `*.txt`) are not yet correctly
+        // separated — blocked on itok() not recognizing glob tokens +
+        // an untokenize artifact in the pattern-section path. Tracked as
+        // the remaining work for the scanner→complist conversion.
+    }
+
     /// The `struct qual` arena is built from the parse alongside the enum:
     /// AND via `next`, alternatives via `or`, per-node `sense` from `^`.
     #[test]
@@ -7605,3 +7649,4 @@ mod tests {
         let _: Option<(String, i32)> = compgetmatch("");
     }
 }
+
