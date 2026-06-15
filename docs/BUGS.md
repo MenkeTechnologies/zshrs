@@ -19,38 +19,39 @@ CI green pending the underlying fix.
 
 ---
 
-## #635 — bare `"$a[*]"` splat doesn't IFS-join (braced `"${a[*]}"` does)
+## #635 — quoted range `"$a[1,2]"` / `"${a[1,2]}"` doesn't IFS-join (splat form fixed)
 
-**Status:** `port-bug` (only with custom IFS; deferred — deep bare-subscript path)
+**Status:** `port-bug` — splat (`[*]`) FIXED 2026-06-14; range (`[N,M]`) still open
 
-The quoted `[*]` splat joins array elements by `IFS[0]`. The braced form
-honors this; the brace-less `$a[*]` form hardcodes a space:
+The quoted `[*]` splat joins array elements by `IFS[0]`. The bare
+`"$a[*]"` form previously hardcoded a space; **fixed** by IFS[0]-joining
+in the bare-name array arm (subst.rs ~12979, `if sub == "*" && qt`),
+mirroring the braced form's qt-sepjoin (subst.rs:7640, c:subst.c:3032):
 
 ```
 a=(1 2 3); IFS=,
 echo "${a[*]}"   # zsh: 1,2,3   zshrs: 1,2,3   (braced — ok)
-echo "$a[*]"     # zsh: 1,2,3   zshrs: 1 2 3   (bare — space, not IFS[0])
+echo "$a[*]"     # zsh: 1,2,3   zshrs: 1,2,3   (bare — FIXED)
 echo "$a[@]"     # zsh: 1 2 3   zshrs: 1 2 3   (bare @ stays split — ok)
 ```
 
-With the default IFS both forms print `1 2 3`, so this only surfaces
-when IFS is customized. `[@]` (bare and braced) is unaffected — it keeps
-elements as separate words. The bare **range** form is affected too:
-`IFS=,; "$a[1,2]"` → zsh `a,b`, zshrs `a b`; and `print -r -- "$a[*]"`
-shows the same space-vs-IFS split.
+**Still open — quoted RANGE subscript** joins by space in BOTH the bare
+and braced forms (separate code path from the `[*]` splat):
 
-**Mechanism (partially traced):** both forms enter `paramsubst`
-(`$a[*]` arrives as `\u{8c}a[*]` with `inbrace=0`; `${a[*]}` as
-`\u{8c}\u{8f}a[*]\u{90}` with `inbrace=1`). The braced form reaches the
-`qt && isarr > 0` sepjoin transition (subst.rs:7640, c:Src/subst.c:3032)
-which re-joins with `IFS[0]` and prints `1,2,3`. The bare (`inbrace=0`)
-form returns BEFORE that block (it never reaches the isarr/sepjoin logic
-at ~line 6851 onward) AND does not go through the braced subscript
-resolver at subst.rs:5733 either (a targeted IFS-join there had no
-effect) — so the bare `$name[sub]` splat is resolved on a separate path
-that hardcodes a space join. Locating that path needs more tracing
-through the ~10k-line paramsubst than was budgeted here; a blind change
-risks the many bare-`$var` fast paths. Deferred.
+```
+a=(a b c); IFS=,
+echo "$a[1,2]"   # zsh: a,b   zshrs: a b
+echo "${a[1,2]}" # zsh: a,b   zshrs: a b
+```
+
+The bare range resolves through `getarrvalue(&arr,lo,hi).join(" ")`
+(subst.rs ~13031) but a targeted IFS-join there had no observable effect
+— the joined value appears to be re-processed/re-joined downstream, and
+the braced range diverges identically, so the range IFS-join is a
+broader gap (both `inbrace` paths) than the splat fix addressed.
+getarrvalue's range result needs to carry array shape into the
+qt-sepjoin rather than pre-joining with a space. Deferred — only
+surfaces with a customized IFS.
 
 ---
 
