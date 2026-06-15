@@ -19,38 +19,42 @@ CI green pending the underlying fix.
 
 ---
 
-## #636 — ported `spacesplit`/`findsep` ignore `$IFS` (only split on hardcoded whitespace)
+## #636 — `$IFS` word-splitting — spacesplit FIXED; Nularg empty-field survival open
 
-**Status:** `port-bug` (fakery finding) — ported helpers are unfaithful; deferred (dedicated port)
+**Status:** `port-bug` — spacesplit fakery FIXED 2026-06-14; non-ws-IFS
+empty-field *survival* still open
 
-`spacesplit` (utils.rs:4487) and `findsep` (utils.rs ~4716) split only on
-hardcoded `[' ','\t','\n']` and ignore the actual `$IFS`. The C originals
-(Src/utils.c:3711 / :3784) split on the `ISEP`/`IWSEP` char classes: IFS-
-whitespace runs collapse, but each IFS-non-whitespace char delimits a
-field and KEEPS empty fields. Observable:
+**Fixed:** `spacesplit` (utils.rs:4487) is now a faithful port of
+Src/utils.c:3711 — it splits on `$IFS` via the `ISEP`/`IWSEP` char
+classes (TYPTAB, IFS-synced by `inittyptab`) instead of the prior
+hardcoded `[' ','\t','\n']`. The `${=name}` force-split (subst.rs ~12466)
+now calls the ported `sepsplit` (c:subst.c:3921) instead of an inline
+`split(|c| ifs.contains(c)).filter(non-empty)`. IFS-respecting splitting
+now works for non-empty fields:
 
 ```
-x="a,,b"; IFS=,; set -- ${=x}; echo $#    # zsh: 3 (a / "" / b)   zshrs: 2 (collapsed)
-x="a,b,"; IFS=,; set -- ${=x}; echo $#    # zsh: 3                zshrs: 2 (trailing empty dropped)
-x=":a:b:"; IFS=:; set -- ${=x}; echo $#   # zsh: 4                zshrs: 2
+x="a:b c:d"; IFS=": "; set -- ${=x}; echo $#   # zsh 4   zshrs 4   (FIXED)
+x="key=val";  IFS="=";  set -- ${=x}            # split on = (FIXED)
 ```
 
-Default-IFS (whitespace) behavior is correct, so this only surfaces with
-a customized non-whitespace IFS under force-split (`${=name}` /
-SH_WORD_SPLIT) and `$(…)` output splitting (readoutput, exec.rs:579/3392).
+cmd-subst output split (exec.rs:579/3392, hot path) unchanged for
+whitespace IFS; 326 utils + 205 exec + 409 subst tests pass.
 
-The inline force-split at subst.rs ~12466 has the same fakery
-independently (`value.split(|c| ifs.contains(c)).filter(non-empty)` —
-also collapses non-ws-IFS empties).
+**Still open — non-whitespace-IFS EMPTY fields don't survive the splat:**
 
-**Substrate for a faithful port already exists:** `zistype(b, ISEP)` /
-`iwsep(b)` (ztype_h.rs, TYPTAB kept in sync with IFS by `inittyptab`,
-re-run on every IFS set at params.rs:8691, c:4795), `skipwsep`
-(utils.rs:4454), `itype_end(s, ISEP, true)` (utils.rs:5383). A faithful
-port of C spacesplit needs Meta-byte-aware walking + `nulstring` empty-
-field semantics and touches the cmd-subst hot path, so it's a dedicated
-task (deferred rather than rushed). Fixing `spacesplit`/`findsep` would
-also let subst.rs ~12466 call `sepsplit` instead of re-splitting inline.
+```
+x="a,,b"; IFS=,; set -- ${=x}; echo $#   # zsh: 3 (a "" b)   zshrs: 2
+x=",a,b,"; IFS=,; a=(${=x}); echo $#a    # zsh: 4            zshrs: 2
+```
+
+The faithful spacesplit DOES emit the empty as `nulstring` (`Nularg`,
+`\u{a1}`, c:subst.c:36), so split_parts carries `["a","\u{a1}","b"]` — but
+the split_parts → splat → positional/array-build path elides the Nularg
+element instead of keeping it as an empty field that prefork's empty-node-
+delete must preserve (then remnulargs strips `Nularg`→`""`). Note
+`a=(x "" y)` keeps 3 elements, so explicit empties survive; only the
+Nularg-from-split path drops them. This is a distinct nulstring-lifecycle
+issue in the splat path, not in spacesplit. Deferred.
 
 ---
 
