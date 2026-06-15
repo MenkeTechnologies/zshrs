@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-15T21:51:52.555239+00:00
+Generated: 2026-06-15T21:59:14.033862+00:00
 
 ## Method
 
@@ -176,9 +176,9 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 741 | `newzstyletable` | 1 | 15 | 6% |
-| 758 | `setstypat` | 6 | 58 | 10% |
+| 733 | `newzstyletable` | 1 | 15 | 6% |
 | 166 | `freestylenode` | 2 | 10 | 20% |
+| 750 | `setstypat` | 15 | 58 | 25% |
 
 ### `src/ported/parse.rs` — 3 stubs
 

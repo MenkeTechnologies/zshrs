@@ -166,7 +166,12 @@ largely illusory: on close inspection most have hidden substrate gaps
 - [BLOCKED] `hashtable.rs::addhistnode` — `ring_get` returns a clone; no
   `ring_get_mut`, so the C `he->node.flags |= HIST_DUP` ring mutation
   can't be expressed without a new mutable ring accessor
-- [ ] `modules/zutil.rs::setstypat` (parse_string eval-body gap — re-verify)
+- [x] `modules/zutil.rs::setstypat` — **done** (the `-e` eval path faked
+  the program with an empty `eprog::default()`; now `parse_string` →
+  `dupeprog` stores the real Eprog in `stypat.eval`; `bin_zstyle` routed
+  through `setstypat` to match C and avoid a re-lock; new test pins
+  `len > 0`. Residual ratio flag is a detector artifact — C inlines the
+  weight scoring in `setstypat`; the Rust factored it into `set`.)
 - [ ] `compcore.rs::callcompfunc`, `complete.rs::bin_compadd` (VERIFY — may
   already be adequate)
 - [ ] `modules/curses.rs::zccmd_input` (re-verify)
@@ -203,7 +208,8 @@ the current Rust reads as substantially complete.
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
-  - done: 4 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`) — remaining 48
+  - done: 5 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
+    `setstypat`) — remaining 47
   - newly-confirmed BLOCKED on close inspection: `spaceinline`, `bld_line`,
     `addhistnode` (the "READY" triage bucket was over-optimistic — most
     left items are substrate-blocked; building the engines is the real
