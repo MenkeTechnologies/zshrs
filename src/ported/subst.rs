@@ -12463,12 +12463,15 @@ pub fn paramsubst(
         // IFS chars from the executor; default IFS is " \t\n".
         let in_ssub = pf_flags & PREFORK_SINGLE != 0;
         if force_split && !in_ssub && split_parts.is_none() {
-            let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-            let parts: Vec<String> = value
-                .split(|c: char| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect();
+            // c:Src/subst.c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
+            // Call the ported sepsplit (→ spacesplit for the IFS case)
+            // rather than splitting inline: the prior inline did
+            // `value.split(|c| ifs.contains(c)).filter(non-empty)`, which
+            // collapsed empty fields for NON-whitespace IFS — `IFS=,;
+            // ${=}` on "a,,b" dropped the middle field. sepsplit keeps
+            // them as Nularg per zsh's word-splitting (Bug #636).
+            let parts: Vec<String> =
+                crate::ported::utils::sepsplit(&value, None, false); // c:3921
             if !parts.is_empty() {
                 value = parts.join(" ");
                 split_parts = Some(parts);

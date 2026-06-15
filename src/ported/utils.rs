@@ -4473,24 +4473,108 @@ pub fn skipwsep(s: &str) -> (&str, usize) {
     (&s[i..], count)
 }
 
-/// IFS-style word splitting - port from zsh/Src/utils.c spacesplit()
+/// Port of `spacesplit(char *s, int allownull, int heap, int quote)` from
+/// `Src/utils.c:3711`. Splits `s` on `$IFS` via the `ISEP`/`IWSEP` char
+/// classes (TYPTAB, kept in sync with `$IFS` by `inittyptab`, which
+/// re-runs on every IFS set — params.rs:8691, c:4795), NOT on hardcoded
+/// whitespace. zsh's word-splitting rules: runs of IFS-WHITESPACE
+/// collapse and the leading/trailing ones yield real `""` fields (which
+/// callers elide); each IFS-NON-WHITESPACE char delimits a field, and
+/// consecutive ones yield `nulstring` (`Nularg`, `Src/subst.c:36`
+/// `{Nularg,'\0'}`) empty fields, which survive and are later stripped to
+/// `""` by remnulargs.
 ///
-/// Splits on whitespace (space, tab, newline), treating consecutive
-/// whitespace as a single separator.
-/// Split on whitespace.
-/// Port of `spacesplit(char *s, int allownull, int heap, int quote)` from Src/utils.c.
-/// WARNING: param names don't match C — Rust=(s, allownull) vs C=(s, allownull, heap, quote)
-// Rust idiom replacement: `str::split` / `split_whitespace` collapse
-// the C tokenizer (Inull-skip + quote-aware advance + zalloc per
-// segment); the `heap` / `quote` C params drop with the C buffer.
-/// `spacesplit` — see implementation.
+/// WARNING: param names don't match C — Rust=(s, allownull) vs C=(s,
+/// allownull, heap, quote). The `quote` arm (backslash-escaped seps) and
+/// `heap` C-buffer param drop: all zshrs callers pass quote=0, and Rust
+/// owns its String storage. The previous port split only on hardcoded
+/// `[' ','\t','\n']`, ignoring `$IFS` entirely (Bug #636).
 pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     // c:3711
-    if allownull {
-        s.split([' ', '\t', '\n']).map(|p| p.to_string()).collect()
-    } else {
-        s.split_whitespace().map(|p| p.to_string()).collect()
+    use crate::ported::ztype_h::zistype;
+    let bytes = s.as_bytes();
+    // Meta-aware decode of the logical char value + its byte length at a
+    // byte position (mirrors skipwsep's `*x == Meta ? x[1] ^ 32 : *x`).
+    let char_at = |i: usize| -> (u8, usize) {
+        // c:Src/zsh.h Meta — `\u{83}` prefix; next byte XOR 0x20.
+        if bytes[i] == Meta && i + 1 < bytes.len() {
+            (bytes[i + 1] ^ 32, 2)
+        } else {
+            (bytes[i], 1)
+        }
+    };
+    // skipwsep(&s) — advance past a run of IWSEP (IFS-whitespace). c:3730
+    let skipwsep_at = |mut i: usize| -> usize {
+        while i < bytes.len() {
+            let (c, l) = char_at(i);
+            if !iwsep(c) {
+                break;
+            }
+            i += l;
+        }
+        i
+    };
+    // itype_end(s, ISEP, 1) — `once` advances past exactly ONE ISEP char
+    // if present, else leaves the index unchanged (c:4462 `if (once) break`).
+    let isep_one = |i: usize| -> usize {
+        if i < bytes.len() {
+            let (c, l) = char_at(i);
+            if zistype(c, ISEP as u32) {
+                return i + l;
+            }
+        }
+        i
+    };
+    // findsep(&s, NULL, 0) — advance to the next ISEP char. c:3784
+    let findsep_at = |mut i: usize| -> usize {
+        while i < bytes.len() {
+            let (c, l) = char_at(i);
+            if zistype(c, ISEP as u32) {
+                break;
+            }
+            i += l;
+        }
+        i
+    };
+    let nulstring = || Nularg.to_string(); // c:subst.c:36 nulstring = {Nularg,0}
+
+    let mut ret: Vec<String> = Vec::new();
+    let mut si = 0usize;
+    let mut t = si; // c:3729 — `t = s;`
+    si = skipwsep_at(si); // c:3730 — `skipwsep(&s);`
+    // c:3732-3735 — leading-field handling.
+    if si < bytes.len() && isep_one(si) != si {
+        // c:3733 — at an IFS-non-whitespace sep after skipping whitespace.
+        ret.push(if allownull { String::new() } else { nulstring() });
+    } else if !allownull && t != si {
+        // c:3734-3735 — leading IFS-whitespace was skipped → real "".
+        ret.push(String::new());
     }
+    // c:3736-3756 — main word loop.
+    while si < bytes.len() {
+        let iend = isep_one(si); // c:3737 itype_end(s, ISEP, 1)
+        if iend != si {
+            // c:3738-3741 — consume the single non-ws sep + following WS.
+            si = iend;
+            si = skipwsep_at(si);
+        }
+        t = si; // c:3746 — `t = s;`
+        si = findsep_at(si); // c:3747 — `findsep(&s, NULL, quote);`
+        if si > t || allownull {
+            // c:3748-3751 — emit the word `t..si`.
+            ret.push(s[t..si].to_string());
+        } else {
+            // c:3753 — empty field between non-ws seps → nulstring.
+            ret.push(nulstring());
+        }
+        t = si; // c:3754 — `t = s;`
+        si = skipwsep_at(si); // c:3755 — `skipwsep(&s);`
+    }
+    // c:3757 — trailing IFS-whitespace → real "".
+    if !allownull && t != si {
+        ret.push(String::new());
+    }
+    ret
 }
 
 /// Find a separator in string (from utils.c findsep)
