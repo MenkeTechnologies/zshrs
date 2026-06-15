@@ -174,7 +174,11 @@ largely illusory: on close inspection most have hidden substrate gaps
   weight scoring in `setstypat`; the Rust factored it into `set`.)
 - [ ] `compcore.rs::callcompfunc`, `complete.rs::bin_compadd` (VERIFY — may
   already be adequate)
-- [ ] `modules/curses.rs::zccmd_input` (re-verify)
+- [BLOCKED] `modules/curses.rs::zccmd_input` — non-mouse path already
+  faithful; the `KEY_MOUSE` event-decode branch (c:1162-1216) needs xterm
+  SGR-mouse sequence parsing in `read_key_sequence`. libncurses is NOT
+  linked (curses.rs:61), so ncurses `getmouse`/`MEVENT` are unavailable —
+  the decode must be reimplemented in the input layer. BLOCKED.
 - likely NOT-FAKE (idiom): `modules/db_gdbm.rs::unmetafy_zalloc` — the C
   `zalloc`+`memcpy`+`zsfree` exact-size-copy dance is exactly what an owned
   Rust `String` provides; current port returns `(String, len)` — faithful
@@ -202,14 +206,27 @@ largely illusory: on close inspection most have hidden substrate gaps
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
 reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
 `cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`, `par_subsh`,
-`load_dump_file`, `zgetdir`. The line-ratio detector mismeasured these;
-the current Rust reads as substantially complete.
+`load_dump_file`. The line-ratio detector mismeasured these; the current
+Rust reads as substantially complete.
+
+- [VERIFIED NOT-FAKE] `compat.rs::zgetdir` — audited against C: the Rust
+  faithfully implements the live getcwd branch (compat.c:360-377 —
+  `current_dir()` → return cwd, set `d->dirname` at c:374). The 146-line
+  C count is dominated by the opendir/readdir walk fallback (c:380-510),
+  which is dead code when `USE_GETCWD` is defined — and config_h.rs:1078
+  sets `USE_GETCWD = 1` on all our targets (macOS aarch64, Linux
+  x86_64/aarch64). Same platform-dead-branch situation as `lchdir`'s
+  no-fchdir arm. The residual ratio flag is a detector artifact.
+  **Reclassified out of PORT.**
 
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
   - done: 5 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
     `setstypat`) — remaining 47
+  - reclassified NOT-FAKE on audit: 1 (`zgetdir` — live getcwd branch is
+    faithful; walk fallback is platform-dead, `USE_GETCWD=1`)
+  - confirmed BLOCKED this round: `zccmd_input` (mouse decode / no ncurses)
   - newly-confirmed BLOCKED on close inspection: `spaceinline`, `bld_line`,
     `addhistnode` (the "READY" triage bucket was over-optimistic — most
     left items are substrate-blocked; building the engines is the real
