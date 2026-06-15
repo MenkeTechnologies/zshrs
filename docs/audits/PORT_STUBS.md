@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-15T21:30:35.039454+00:00
+Generated: 2026-06-15T21:44:53.973116+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 117 stubs across 44 files
+## Summary: 116 stubs across 44 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -45,7 +45,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/complist.rs` | 2 | `domenuselect` (125 / 940) |
 | `src/ported/zle/zle_hist.rs` | 2 | `doisearch` (19 / 462) |
 | `src/ported/zle/zle_params.rs` | 2 | `get_cursor` (1 / 11) |
-| `src/ported/zle/zle_vi.rs` | 2 | `getvirange` (4 / 83) |
 | `src/ported/builtin.rs` | 1 | `cd_new_pwd` (10 / 71) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/hashnameddir.rs` | 1 | `createnameddirtable` (2 / 15) |
@@ -64,6 +63,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/termquery.rs` | 1 | `probe_terminal` (46 / 208) |
 | `src/ported/zle/zle_move.rs` | 1 | `backwardmetafiedchar` (3 / 75) |
 | `src/ported/zle/zle_thingy.rs` | 1 | `createthingytab` (1 / 13) |
+| `src/ported/zle/zle_vi.rs` | 1 | `getvirange` (4 / 83) |
 
 ## Per-file detail
 
@@ -289,13 +289,6 @@ python3 scripts/gen_port_stubs.py
 | 144 | `get_cursor` | 1 | 11 | 9% |
 | 608 | `set_killring` | 6 | 27 | 22% |
 
-### `src/ported/zle/zle_vi.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 269 | `getvirange` | 4 | 83 | 4% |
-| 599 | `vireplacechars` | 14 | 62 | 22% |
-
 ### `src/ported/builtin.rs` — 1 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -403,4 +396,10 @@ python3 scripts/gen_port_stubs.py
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 48 | `createthingytab` | 1 | 13 | 7% |
+
+### `src/ported/zle/zle_vi.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 269 | `getvirange` | 4 | 83 | 4% |
 

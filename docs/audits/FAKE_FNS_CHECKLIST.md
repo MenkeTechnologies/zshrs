@@ -57,7 +57,7 @@ Three dispositions:
 - [ ] `zle/zle_utils.rs::showmsg` — C zle_utils.c:1310 (72) — multibyte width-aware message display
 - [ ] `zle/zle_utils.rs::spaceinline` — C zle_utils.c:784 (54) — buffer insertion w/ region-highlight adjustment
 - [ ] `zle/zle_move.rs::backwardmetafiedchar` — C zle_move.c:170 (75) — UTF-8/Meta backward scan w/ combining chars
-- [ ] `zle/zle_vi.rs::vireplacechars` — C zle_vi.c:594 (62) — newline-special + combining-char + shiftchars edge cases
+- [x] `zle/zle_vi.rs::vireplacechars` — C zle_vi.c:594 (62) — **PORTED** (was faking the key read with `LASTCHAR` and dropping the region/visual path; now reads via `vigetkey`, handles char/line region selection, the `<return>`→single-newline special case, and `shiftchars`/`spaceinline` width fixup; all deps verified present; 77 zle_vi tests green)
 - [ ] `zle/termquery.rs::probe_terminal` — C termquery.c:200 (208) — response-matching state machine / feature extraction; reads raw bytes only
 - [ ] `zle/zle_main.rs::describekeybriefly` — C zle_main.c:1892 (28) — delegates to helper + faked 0
 
@@ -141,9 +141,55 @@ Already-faithful ports the detector mismeasured (C span overcounted):
 
 ---
 
+## Substrate triage of the remaining PORT items (for "port all 50")
+
+Parallel read-only triage of every remaining PORT item against existing
+Rust substrate. "Port all 50" is gated on substrate — most fakes exist
+*because* their engine isn't built. Faking them anyway = the forbidden
+structural-shell capital offense. Buckets:
+
+**READY** — substrate exists, faithful port possible now (verify each;
+agent labels were wrong 4/4 on the earlier delete-candidates and on
+`addhistnode`, so confirm before porting):
+- [x] `zle_vi.rs::vireplacechars` — done
+- [ ] `zle_utils.rs::spaceinline`
+- [ ] `compmatch.rs::bld_line` (Cmatcher/Cpattern/CPAT_*/pattern_match1 present)
+- [ ] `compcore.rs::callcompfunc` (needs re-verify — agent optimistic)
+- [ ] `complete.rs::bin_compadd` (needs re-verify — may already be adequate)
+- [ ] `modules/zutil.rs::setstypat`
+- [ ] `modules/db_gdbm.rs::gdbmhashsetfn`, `unmetafy_zalloc`
+- [ ] `modules/curses.rs::zccmd_input` (needs re-verify)
+
+**BLOCKED on engine substrate** (port requires building the engine first
+— NOT faithfully portable now):
+- ZLE refresh/input engine (`nbuf`/`obuf`/`zputc`/`vcs`/`vln`/`watch_fds`/
+  `kungetbuf`/`zlecore`): `zrefresh`, `tc_rightcurs`, `moveto`, `getbyte`,
+  `raw_getbyte`, `zleread`, `doisearch`, `getvisrchstr`, `describekeybriefly`,
+  `showmsg`, `backwardmetafiedchar`, `termquery::probe_terminal`
+- Completion `Cline`/`minfo`/menu-state graph (`mselect`/`mlbeg`/`mcol`/
+  `lastprebr`/`lastpostbr`/`zlemetaline`): `do_single`, `cline_str`,
+  `instmatch`, `cut_cline`, `do_allmatches`, `hasbrpsfx`, `valid_match`,
+  `build_pos_string`, `domenuselect`, `clnicezputs`, `set_comp_sep`
+- compctl `CC_*` hashtable walkers: `makecomplistflags`, `makecomplistext`,
+  `makecomplistctl`, `addmatch`, `cfp_add_sdirs`
+- hist ring mutable accessor (no `ring_get_mut`; `ring_get` returns a clone):
+  `addhistnode`
+- job-table model (`findproc`/`update_job`/`jobtab`/`exstack`):
+  `wait_for_processes` (unless already adequate — see VERIFY)
+- linklist + param-subst + `shout`: `checkmailpath`
+- HISTORY_IGNORE/atomic-rename/lock-retry: `savehistfile`, `lockhistfile`
+
+**VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
+reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
+`cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`, `par_subsh`,
+`load_dump_file`, `zgetdir`. The line-ratio detector mismeasured these;
+the current Rust reads as substantially complete.
+
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
-  - done: 2 (`lchdir`, `findsep`) — remaining 50
+  - done: 3 (`lchdir`, `findsep`, `vireplacechars`) — remaining 49
+  - of the 49: ~7 READY (substrate exists), ~10 VERIFY (maybe not fakes),
+    ~32 BLOCKED on engine substrate (build engine first; cannot fake)
 - UNFAKE: 0  (all 4 candidates verified not-fake)
 - NOT FAKE (excluded): 67
