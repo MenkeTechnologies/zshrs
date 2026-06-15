@@ -3957,10 +3957,13 @@ pub fn right_prompt_padding(
     Some(" ".repeat(padding))
 }
 
-/// Transient prompt - return empty string to clear prompt on accept-line
-pub fn transient_prompt(_original: &str) -> String {
-    String::new()
-}
+// `transient_prompt(&str) -> String` deleted — dead Rust-only placeholder
+// (zero callers anywhere, no `/// Port of` C anchor, ignored its arg and
+// always returned ""). It was the wrong shape for zsh's TRANSIENT_RPROMPT
+// option, which is implemented in the redisplay path (zle_refresh.c
+// re-renders the line without the rprompt after accept-line), not as a
+// prompt-string transform. The real feature lands in zle_refresh when
+// that path is ported; this stub only masked its absence.
 
 fn color_name(c: Color) -> String {
     if let Some((r, g, b)) = color_get_rgb(c) {
