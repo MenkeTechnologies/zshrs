@@ -19,6 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
+## #635 — bare `"$a[*]"` splat doesn't IFS-join (braced `"${a[*]}"` does)
+
+**Status:** `port-bug` (only with custom IFS; deferred — deep bare-subscript path)
+
+The quoted `[*]` splat joins array elements by `IFS[0]`. The braced form
+honors this; the brace-less `$a[*]` form hardcodes a space:
+
+```
+a=(1 2 3); IFS=,
+echo "${a[*]}"   # zsh: 1,2,3   zshrs: 1,2,3   (braced — ok)
+echo "$a[*]"     # zsh: 1,2,3   zshrs: 1 2 3   (bare — space, not IFS[0])
+echo "$a[@]"     # zsh: 1 2 3   zshrs: 1 2 3   (bare @ stays split — ok)
+```
+
+With the default IFS both forms print `1 2 3`, so this only surfaces
+when IFS is customized. `[@]` (bare and braced) is unaffected — it keeps
+elements as separate words. The bare **range** form is affected too:
+`IFS=,; "$a[1,2]"` → zsh `a,b`, zshrs `a b`; and `print -r -- "$a[*]"`
+shows the same space-vs-IFS split.
+
+**Mechanism (partially traced):** both forms enter `paramsubst`
+(`$a[*]` arrives as `\u{8c}a[*]` with `inbrace=0`; `${a[*]}` as
+`\u{8c}\u{8f}a[*]\u{90}` with `inbrace=1`). The braced form reaches the
+`qt && isarr > 0` sepjoin transition (subst.rs:7640, c:Src/subst.c:3032)
+which re-joins with `IFS[0]` and prints `1,2,3`. The bare (`inbrace=0`)
+form returns BEFORE that block (it never reaches the isarr/sepjoin logic
+at ~line 6851 onward) AND does not go through the braced subscript
+resolver at subst.rs:5733 either (a targeted IFS-join there had no
+effect) — so the bare `$name[sub]` splat is resolved on a separate path
+that hardcodes a space join. Locating that path needs more tracing
+through the ~10k-line paramsubst than was budgeted here; a blind change
+risks the many bare-`$var` fast paths. Deferred.
+
+---
+
 ## #634 — `${(P)n[sub]}` applies the subscript to the indirect *target* instead of the *name*
 
 **Status:** `port-bug` (exotic; deferred — invasive on the aspar path)
