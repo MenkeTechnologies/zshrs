@@ -4641,9 +4641,19 @@ pub fn paramsubst(
                 {
                     // c:4865 spacesplit with default IFS — runs of
                     // whitespace collapse, leading/trailing stripped.
+                    // c:exec.c:4865 readoutput ALWAYS yields the word
+                    // list as an ARRAY (spacesplit), even for a single
+                    // word — `${#$(echo hi)}` is 1 (element count), not
+                    // 2 (char count), and `${$(echo hi)[1]}` is the
+                    // whole word, not its first char. Only the empty
+                    // output collapses to a scalar empty string. A
+                    // prior `words.len() <= 1` scalar-collapse diverged
+                    // from C: single-word cmdsubst was string-subscripted
+                    // (`${$(echo hello)[2,4]}` gave `ell` instead of the
+                    // out-of-range empty zsh produces).
                     let words: Vec<String> = joined.split_whitespace().map(String::from).collect();
-                    if words.len() <= 1 {
-                        (words.into_iter().next().unwrap_or_default(), Vec::new(), false)
+                    if words.is_empty() {
+                        (String::new(), Vec::new(), false)
                     } else {
                         (words.join(" "), words, true)
                     }
