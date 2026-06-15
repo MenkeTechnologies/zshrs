@@ -3126,7 +3126,6 @@ pub struct qualifier_set {
     // c:138
     pub qualifiers: Vec<qualifier>,
     pub alternatives: Vec<Vec<qualifier>>,
-    pub negated: bool,
     pub follow_links: bool,
     /// Packed sort-spec flags, one per `o`/`O` qualifier in the pattern.
     /// Each entry is the C `struct globsort.tp` field — `GS_NAME` /
@@ -4066,7 +4065,6 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
         qs.alternatives.push(std::mem::take(&mut qs.qualifiers));
     }
 
-    qs.negated = negated;
     qs.follow_links = follow;
 
     // Build the faithful glob.c `struct qual` arena from `alternatives`
