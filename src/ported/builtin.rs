@@ -2237,20 +2237,17 @@ pub fn cd_try_chdir(pfix: &str, dest: &str, hard: i32) -> Option<String> {
         buf = fixdir(&buf); // c:1164
     }
 
-    // c:1172-1183 — try lchdir(buf); on failure and (pfix || dest abs) was
-    //               not the input shape that allows fallback, give up.
-    let _ = hard;
-    if lchdir(&buf).is_ok() {
-        return Some(buf);
+    // c:1169-1177 — "We try the full path first.  If that fails, try the
+    // argument to cd relatively.  This is useful if the cwd or a parent
+    // directory is renamed in the interim."  The relative fallback is
+    // skipped when a prefix was applied or `dest` is already absolute.
+    // Either success returns `buf` (the logical full path) — c:1181.
+    if lchdir(&buf, None, hard) != 0
+        && (!pfix.is_empty() || dest.starts_with('/') || lchdir(dest, None, hard) != 0)
+    {
+        return None; // c:1175-1176
     }
-    // c:1173 — fallback: try `dest` alone when pfix was non-empty
-    //          and dest isn't already absolute.
-    if !pfix.is_empty() && !dest.starts_with('/') {
-        if lchdir(dest).is_ok() {
-            return Some(dest.to_string());
-        }
-    }
-    None // c:1185
+    Some(buf) // c:1181 — metafy(buf, ...)
 }
 
 /// Port of `cd_new_pwd(int func, LinkNode dir, int quiet)` from Src/builtin.c:1187.

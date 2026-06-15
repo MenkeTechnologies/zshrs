@@ -18,7 +18,7 @@ use std::time::UNIX_EPOCH;
 use crate::init::zleentry;
 use crate::params::getsparam_u;
 use crate::ported::builtin::{BUILTINS, SFCONTEXT, STOPMSG};
-use crate::ported::compat::u9_iswprint;
+use crate::ported::compat::{u9_iswprint, zchdir, zgetdir};
 use crate::ported::hashnameddir::{nameddirtab, removenameddirnode};
 use crate::ported::hashtable::shfunctab_lock;
 use crate::ported::hist::{bangchar, chrealpath};
@@ -36,7 +36,8 @@ use crate::ported::lex::{lineno, untokenize};
 use crate::ported::options::{dosetopt, opt_state_set};
 use crate::ported::params::{
     assignsparam, convbase as convbase_param, getaparam, getsparam, homesetfn, ifsgetfn, ifssetfn,
-    isident, locallevel as LOCALLEVEL, setaparam, setiparam, wordcharsgetfn, wordcharssetfn,
+    isident, locallevel as LOCALLEVEL, setaparam, setiparam, setsparam, wordcharsgetfn,
+    wordcharssetfn,
 };
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::string::dupstrpfx;
@@ -4577,19 +4578,104 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     ret
 }
 
-/// Find a separator in string (from utils.c findsep)
 /// Port of `findsep(char **s, char *sep, int quote)` from `Src/utils.c:3784`.
-/// Rust idiom replacement: `str::find` covers the literal/whitespace
-/// cases; the C `quote` arg drops since callers operate on already-
-/// unquoted strings in zshrs.
-/// WARNING: param names don't match C — Rust=(s, sep) vs C=(s, sep, quote)
-pub fn findsep(s: &str, sep: Option<&str>) -> Option<usize> {
+///
+/// c:3762 — "Find a separator.  Return 0 if already at separator, 1 if
+/// separator found later, else -1."  `pos` is C's walking `*s`: on
+/// return it points at the separator (or end-of-string) so the caller
+/// reads the word as `s[entry_pos..pos]`.
+///
+/// `sep` (c:3772):
+///   - `None`       → split on normal `$IFS` separators (ISEP chars).
+///   - `Some(b"")`  → no real separator: advance past one character.
+///   - `Some(seq)`  → look for the (possibly multi-byte) literal `seq`.
+///
+/// `quote` (c:3776) — a `\` before a separator suppresses it, and `\\`
+/// collapses to `\`.  This only applies when `sep` is `None` and it
+/// strips backslashes in place, so the buffer must be modifiable
+/// (C demands "something modifiable"; Rust takes `&mut String`).
+///
+/// The standalone form has no in-tree caller yet — the hot split paths
+/// (`splitstring`, `findword`, `wordcount`) inline this logic — but it
+/// is kept as a faithful, callable name-parity anchor.
+/// WARNING: param names match C semantics — `pos` is C's `*s`.
+pub fn findsep(s: &mut String, pos: &mut usize, sep: Option<&[u8]>, quote: bool) -> i32 {
+    // c:3784
+    use crate::ported::zsh_h::{MB_METACHARINIT, MB_METACHARLEN, MB_METACHARLENCONV};
+    use crate::ported::ztype_h::{isep, ISEP, WC_ZISTYPE};
+
+    MB_METACHARINIT(); // c:3792
+    let is_isep = |c: Option<char>| c.map(|c| WC_ZISTYPE(c, ISEP as u32)).unwrap_or(false);
+
     match sep {
-        Some(sep) if sep.len() == 1 => s.find(sep.chars().next().unwrap()),
-        Some(sep) => s.find(sep),
+        // c:3793-3824 — default separators (ISEP), with optional quoting.
         None => {
-            // Default: split on whitespace
-            s.find(|c: char| c.is_ascii_whitespace())
+            let start = *pos;
+            let mut t = *pos;
+            while t < s.len() {
+                let b = s.as_bytes()[t];
+                if quote && b == b'\\' {
+                    // c:3795 — `if (quote && *t == '\\')`
+                    if t + 1 < s.len() && s.as_bytes()[t + 1] == b'\\' {
+                        // c:3796-3799 — `\\` → `\`: drop one backslash,
+                        // advance past the one we keep (ilen = 1).
+                        chuck(s, t);
+                        t += 1;
+                        continue;
+                    }
+                    // c:3801 — measure the char *after* the backslash.
+                    let (ilen, c) = MB_METACHARLENCONV(&s.as_bytes()[t + 1..]);
+                    if is_isep(c) {
+                        // c:3802-3804 — escaped separator: strip the
+                        // backslash, then advance over the now-bare char.
+                        chuck(s, t);
+                        t += ilen.max(1);
+                        continue;
+                    }
+                    // c:3806-3810 — backslash is a normal byte.
+                    if isep(b) {
+                        break; // (never taken: '\\' is not an ISEP)
+                    }
+                    t += 1; // ilen = 1
+                } else {
+                    // c:3814-3818 — ordinary character.
+                    let (ilen, c) = MB_METACHARLENCONV(&s.as_bytes()[t..]);
+                    if is_isep(c) {
+                        break; // c:3817
+                    }
+                    t += ilen.max(1);
+                }
+            }
+            let i = if t > start { 1 } else { 0 }; // c:3821 `i = (t > *s)`
+            *pos = t; // c:3822
+            i // c:3823
+        }
+        // c:3825-3834 — empty separator: advance past the first char.
+        Some(seq) if seq.is_empty() => {
+            if *pos < s.len() {
+                *pos += MB_METACHARLEN(&s.as_bytes()[*pos..]); // c:3831
+                1 // c:3832
+            } else {
+                -1 // c:3833
+            }
+        }
+        // c:3835-3845 — explicit (possibly multi-byte) literal separator.
+        Some(seq) => {
+            let mut i = 0i32;
+            while *pos < s.len() {
+                // c:3840 — `for (t=sep, tt=*s; *t && *tt && *t==*tt; ...)`
+                let bytes = s.as_bytes();
+                let mut k = 0usize;
+                while k < seq.len() && *pos + k < bytes.len() && seq[k] == bytes[*pos + k] {
+                    k += 1;
+                }
+                if k == seq.len() {
+                    return if i > 0 { 1 } else { 0 }; // c:3841 `return (i > 0)`
+                }
+                *pos += MB_METACHARLEN(&bytes[*pos..]); // c:3842
+                i += 1;
+            }
+            -1 // c:3844
         }
     }
 }
@@ -8179,18 +8265,233 @@ pub fn init_dirsav() -> dirsav {
     }
 }
 
-/// Change directory with safeguards (from utils.c lchdir)
 /// Port of `lchdir(char const *path, struct dirsav *d, int hard)` from `Src/utils.c:7400`.
-/// WARNING: param names don't match C — Rust=(path) vs C=(path, d, hard)
-pub fn lchdir(path: &str) -> io::Result<()> {
-    let resolved = if path.starts_with('/') {
-        PathBuf::from(path)
+///
+/// c:7388 — "Change directory, without following symlinks."  With `hard`
+/// set, descends `path` one component at a time: `lstat`s each component
+/// (so a symlink is never followed), `chdir`s into it, then re-`lstat`s
+/// `.` and compares dev/ino against the component it just stat'd. A
+/// symlink swapped under us between the `lstat` and the `chdir` is caught
+/// by the mismatch and the saved directory is restored via `restoredir`.
+/// `d` (when non-NULL) is filled so the caller can later restore the cwd.
+///
+/// Returns 0 on success, -1 on a normal descent failure, -2 if the cwd
+/// could not even be restored afterwards.
+///
+/// zshrs targets macOS/Linux, so the live C arms are HAVE_LSTAT +
+/// HAVE_FCHDIR; the no-lstat / no-fchdir fallbacks (which never compile
+/// on our platforms) are elided. C restores `errno = err` before each
+/// non-zero return so the caller can read the break-reason; that errno
+/// propagation is elided here (no current caller inspects errno — the
+/// -1/-2/0 return is the contract).
+/// WARNING: param names match C — (path, d, hard).
+#[cfg(unix)]
+pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
+    // c:7400
+    use std::ffi::CString;
+
+    let mut ds = init_dirsav(); // c:7405 — local fallback `struct dirsav ds`
+    let used_local = d.is_none(); // tracks C's `d == &ds`
+    // c:7415-7418 — `if (!d) { init_dirsav(&ds); d = &ds; }`
+    let d: &mut dirsav = d.unwrap_or(&mut ds);
+
+    let bytes = path.as_bytes();
+    let mut level: i32;
+
+    // c:7419-7424 (HAVE_LSTAT arm) —
+    //   `if ((*path == '/' || !hard) && (d != &ds || hard))`
+    if (bytes.first() == Some(&b'/') || hard == 0) && (!used_local || hard != 0) {
+        level = -1; // c:7425
     } else {
-        let cwd = std::env::current_dir()?;
-        cwd.join(path)
-    };
-    std::env::set_current_dir(&resolved)?;
-    Ok(())
+        level = 0; // c:7431
+        // c:7432-7435 — record dev/ino of `.` if not already captured.
+        if d.dev == 0 && d.ino == 0 {
+            if let Ok(meta) = fs::metadata(".") {
+                d.dev = meta.dev(); // c:7433
+                d.ino = meta.ino(); // c:7434
+            }
+        }
+    }
+
+    // c:7439-7451 — soft (`!hard`) path: count components, set d->level,
+    // and delegate to zchdir.
+    if hard == 0 {
+        if !used_local {
+            // c:7443-7447 — count '/'-separated components into `level`.
+            let mut p = 0usize;
+            while p < bytes.len() {
+                while p < bytes.len() && bytes[p] != b'/' {
+                    p += 1;
+                }
+                while p < bytes.len() && bytes[p] == b'/' {
+                    p += 1;
+                }
+                level += 1;
+            }
+            d.level = level; // c:7448
+        }
+        return zchdir(path); // c:7450
+    }
+
+    // c:7453+ — hard path (HAVE_LSTAT + HAVE_FCHDIR).
+    let mut close_dir = false; // c:7412
+    // c:7455-7460 — save the starting dir via an fd if we don't have one.
+    if d.dirfd < 0 {
+        close_dir = true; // c:7456
+        let dot = CString::new(".").unwrap();
+        d.dirfd = unsafe { libc::open(dot.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:7457
+        if d.dirfd < 0
+            && zgetdir(Some(&mut *d)).is_some()
+            && d.dirname.as_deref().map(|s| !s.starts_with('/')).unwrap_or(false)
+        {
+            // c:7458-7459 — cwd is relative; fall back to opening "..".
+            let dotdot = CString::new("..").unwrap();
+            d.dirfd = unsafe { libc::open(dotdot.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) };
+        }
+    }
+
+    // c:7462-7464 — absolute path: start the descent from root.
+    if bytes.first() == Some(&b'/') {
+        let root = CString::new("/").unwrap();
+        if unsafe { libc::chdir(root.as_ptr()) } < 0 {
+            zwarn(&format!("failed to chdir(/): {}", io::Error::last_os_error())); // c:7464
+        }
+    }
+
+    let dot = CString::new(".").unwrap();
+    let mut pos = 0usize; // index into `path`, replaces C `path`/`pptr`
+    let mut err: i32 = 0; // c:7408
+    loop {
+        // c:7466-7467 — skip leading slashes.
+        while pos < bytes.len() && bytes[pos] == b'/' {
+            pos += 1;
+        }
+        // c:7468-7480 — end of path reached: success.
+        if pos >= bytes.len() {
+            if !used_local {
+                d.level = level; // c:7472
+            }
+            // c:7474-7477 — close the saved-dir fd if we opened it.
+            if d.dirfd >= 0 && close_dir {
+                unsafe { libc::close(d.dirfd) };
+                d.dirfd = -1;
+            }
+            return 0; // c:7479
+        }
+        // c:7481 — find the end of this path component.
+        let start = pos;
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end] != b'/' {
+            end += 1;
+        }
+        // c:7482-7485 — component too long.
+        if end - start > libc::PATH_MAX as usize {
+            err = libc::ENAMETOOLONG;
+            break;
+        }
+        // c:7486-7488 — copy the component into `buf`.
+        let comp = &bytes[start..end];
+        pos = end;
+        let cbuf = match CString::new(comp) {
+            Ok(c) => c,
+            Err(_) => {
+                err = libc::ENOENT; // embedded NUL — lstat would fail anyway.
+                break;
+            }
+        };
+        // c:7489-7492 — lstat the component (does NOT follow a symlink).
+        let mut st1: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::lstat(cbuf.as_ptr(), &mut st1) } != 0 {
+            err = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            break;
+        }
+        // c:7493-7496 — must be a real directory, not a symlink/other.
+        if st1.st_mode as u32 & libc::S_IFMT as u32 != libc::S_IFDIR as u32 {
+            err = libc::ENOTDIR;
+            break;
+        }
+        // c:7497-7500 — chdir into it.
+        if unsafe { libc::chdir(cbuf.as_ptr()) } != 0 {
+            err = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            break;
+        }
+        if level >= 0 {
+            level += 1; // c:7501-7502
+        }
+        // c:7503-7510 — re-lstat `.` and verify the dir we landed in is
+        // the same dev/ino we lstat'd, catching a symlink swap race.
+        let mut st2: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::lstat(dot.as_ptr(), &mut st2) } != 0 {
+            err = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            break;
+        }
+        if st1.st_dev != st2.st_dev || st1.st_ino != st2.st_ino {
+            err = libc::ENOTDIR; // c:7508
+            break;
+        }
+    }
+
+    // c:7512-7548 — descent failed; restore the saved directory.
+    if restoredir(&mut *d) != 0 {
+        let restoreerr = io::Error::last_os_error(); // c:7513
+        // c:7519-7532 — restore failed too; force cwd to $HOME then "/".
+        let mut reached = false;
+        for i in 0..2 {
+            // c:7521-7527 — destination: $HOME on pass 0, "/" on pass 1.
+            let cdest = if i != 0 {
+                "/".to_string()
+            } else {
+                match getsparam("HOME") {
+                    Some(h) => h,        // c:7526
+                    None => continue,    // c:7525 `if (!home) continue;`
+                }
+            };
+            setsparam("PWD", &cdest); // c:7528-7529 `zsfree(pwd); pwd = ztrdup(cdest);`
+            if let Ok(cd) = CString::new(cdest.as_bytes()) {
+                if unsafe { libc::chdir(cd.as_ptr()) } == 0 {
+                    // c:7530
+                    reached = true;
+                    break;
+                }
+            }
+        }
+        if !reached {
+            // c:7533-7534 — couldn't even reach "/".
+            zerr(&format!(
+                "lost current directory, failed to cd to /: {}",
+                io::Error::last_os_error()
+            ));
+        } else {
+            // c:7535-7537
+            let pwd = getsparam("PWD").unwrap_or_default();
+            zerr(&format!(
+                "lost current directory: {}: changed to `{}'",
+                restoreerr, pwd
+            ));
+        }
+        // c:7540-7545 — close the saved-dir fd if we opened it.
+        if d.dirfd >= 0 && close_dir {
+            unsafe { libc::close(d.dirfd) };
+            d.dirfd = -1;
+        }
+        let _ = err; // c:7546 `errno = err;` propagation elided (see doc).
+        return -2; // c:7547
+    }
+    // c:7549-7558 — descent failed but the saved directory was restored.
+    if d.dirfd >= 0 && close_dir {
+        unsafe { libc::close(d.dirfd) };
+        d.dirfd = -1;
+    }
+    let _ = err; // c:7557 `errno = err;` propagation elided (see doc).
+    -1 // c:7558
+}
+
+/// Non-unix stub: lchdir's symlink-safe descent is built on POSIX
+/// `lstat`/`fchdir`/`chdir`, which have no Windows equivalent here.
+#[cfg(not(unix))]
+pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
+    let _ = (path, d, hard);
+    -1
 }
 
 /// Port of `restoredir(struct dirsav *d)` from `Src/utils.c:7565`.
@@ -9597,6 +9898,76 @@ fn fdtable_lock() -> &'static Mutex<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// findsep port (utils.c:3784). Pure function — no global/cwd state.
+    #[test]
+    fn findsep_default_ifs_separators() {
+        inittyptab(); // ISEP bits are set by the type table (c:4155)
+        // c:3814-3817 — advance to the first ISEP char, return 1.
+        let mut s = "foo bar".to_string();
+        let mut pos = 0usize;
+        assert_eq!(findsep(&mut s, &mut pos, None, false), 1);
+        assert_eq!(pos, 3); // points at the space
+        assert_eq!(&s[..pos], "foo");
+
+        // c:3821 — already sitting on a separator: return 0, no advance.
+        let mut s = " foo".to_string();
+        let mut pos = 0usize;
+        assert_eq!(findsep(&mut s, &mut pos, None, false), 0);
+        assert_eq!(pos, 0);
+    }
+
+    #[test]
+    fn findsep_quote_strips_escaped_separator() {
+        inittyptab(); // ISEP bits are set by the type table (c:4155)
+        // c:3795-3804 — `\<sep>` is not a separator; the backslash is
+        // stripped in place and the bare char is consumed into the word.
+        let mut s = "foo\\ bar".to_string(); // foo<bslash><space>bar
+        let mut pos = 0usize;
+        let r = findsep(&mut s, &mut pos, None, true);
+        assert_eq!(r, 1);
+        assert_eq!(s, "foo bar"); // backslash removed
+        assert_eq!(pos, s.len()); // whole thing is one word, no real sep
+    }
+
+    #[test]
+    fn findsep_quote_collapses_double_backslash() {
+        // c:3796-3799 — `\\` collapses to a single literal backslash.
+        let mut s = "a\\\\b".to_string(); // a <bslash><bslash> b
+        let mut pos = 0usize;
+        let r = findsep(&mut s, &mut pos, None, true);
+        assert_eq!(r, 1);
+        assert_eq!(s, "a\\b"); // one backslash left
+        assert_eq!(pos, s.len()); // no separator present
+    }
+
+    #[test]
+    fn findsep_literal_multichar_separator() {
+        // c:3836-3841 — explicit multi-byte literal separator.
+        let mut s = "a::b".to_string();
+        let mut pos = 0usize;
+        assert_eq!(findsep(&mut s, &mut pos, Some(b"::"), false), 1);
+        assert_eq!(pos, 1); // points at the "::"
+        assert_eq!(&s[..pos], "a");
+
+        // c:3844 — separator absent → -1.
+        let mut s = "abc".to_string();
+        let mut pos = 0usize;
+        assert_eq!(findsep(&mut s, &mut pos, Some(b"x"), false), -1);
+    }
+
+    #[test]
+    fn findsep_empty_separator_advances_one_char() {
+        // c:3825-3834 — empty sep just steps past one character.
+        let mut s = "ab".to_string();
+        let mut pos = 0usize;
+        assert_eq!(findsep(&mut s, &mut pos, Some(b""), false), 1);
+        assert_eq!(pos, 1);
+
+        let mut s = String::new();
+        let mut pos = 0usize;
+        assert_eq!(findsep(&mut s, &mut pos, Some(b""), false), -1); // c:3833
+    }
 
     /// c:4033 — `subst_string_by_func` returns `getaparam("reply")`
     /// after the hook function finishes. The previous Rust port read

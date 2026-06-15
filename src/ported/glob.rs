@@ -4834,18 +4834,18 @@ fn scan_pattern(
                     && name.len() + state.pathpos - state.pathbufcwd as usize >= path_max
                 {
                     let cwd_anchor = state.pathbuf.get(state.pathbufcwd as usize..).unwrap_or("");
-                    match lchdir(cwd_anchor) {
-                        Ok(()) => {
-                            state.pathbufcwd = state.pathpos as i32; // c:612
-                        }
-                        Err(_) => {
-                            // c:608-610 — `zerr("current directory lost
-                            // during glob"); break;` — restoredir at the
-                            // end runs unconditionally so we abandon the
-                            // walk cleanly.
-                            zerr("current directory lost during glob");
-                            break;
-                        }
+                    // c:605 — `err = lchdir(unmeta(pathbuf+pathbufcwd), &ds, 0);`
+                    // d=&ds (soft mode) so ds.level accumulates for the
+                    // final restoredir; hard=0.
+                    if lchdir(cwd_anchor, Some(&mut ds), 0) == 0 {
+                        state.pathbufcwd = state.pathpos as i32; // c:612
+                    } else {
+                        // c:608-610 — `zerr("current directory lost
+                        // during glob"); break;` — restoredir at the
+                        // end runs unconditionally so we abandon the
+                        // walk cleanly.
+                        zerr("current directory lost during glob");
+                        break;
                     }
                 }
                 // c:614 — recurse into subdir.
