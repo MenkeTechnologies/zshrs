@@ -19,6 +19,51 @@ CI green pending the underlying fix.
 
 ---
 
+## #634 — `${(P)n[sub]}` applies the subscript to the indirect *target* instead of the *name*
+
+**Status:** `port-bug` (exotic; deferred — invasive on the aspar path)
+
+With `(P)`, a subscript binds to the **name** parameter first; the
+resulting string is then used as the indirect parameter name. zshrs
+indirects first, then subscripts the target:
+
+```
+a=(10 20 30); n=a
+echo ${(P)n[2]}              # zsh: (empty)  zshrs: 20
+                            # zsh: "a"[2] = "" (char 2 of scalar n) → (P)"" → unset
+X=found; aXb=irrelevant; n=aXb
+echo ${(P)n[2]}              # zsh: found    zshrs: r
+                            # zsh: "aXb"[2]="X" → (P)"X" → $X=found
+longname=hi; n=longname
+echo ${(P)n[3]}             # zsh: longname  zshrs: (empty)
+                            # zsh: "longname"[3]="n" → (P)"n" → $n=longname
+a=(10 20 30); n=a
+echo ${(P)n[1,2]}          # zsh: 10 20 30   zshrs: 1 2
+                            # zsh: "a"[1,2]="a" → (P)"a" → $a
+```
+
+Verified across 5 cases — the subscript always indexes `n`'s own value
+(string for a scalar `n`, element for an array `n`), and that result is
+the indirect name. To subscript the *target* you write
+`${${(P)n}[2]}`.
+
+**C reference:** `Src/subst.c:2740` — `v = fetchvalue(&vbuf, &s, 1, …)`
+is called with `&s` still pointing at the `[2]` subscript, so
+`fetchvalue` applies the subscript to the **name** parameter and
+`getstrvalue(v)` makes that string the new parameter name (the comment
+at c:2731-2739 notes this "makes `${(P)param}` work like
+`${(P)${param}}`"). zshrs's aspar arm (subst.rs:5230) resolves the name
+to its value, then the *downstream* subscript dispatch applies `[2]` to
+the indirect target. Reordering needs a fetchvalue-equivalent that runs
+the full subscript engine (string-char / array-element / range /
+negative) against the name's value before indirection — invasive on the
+aspar path and risks the working `${(P)ref}` where `$ref="arr[2]"` case
+(Bug #53) plus common `(P)` usage. Common forms — `${(P)n}` (scalar &
+array), `${(P)${nested}}`, `${#${(P)n}}`, splat — all already match
+zsh; only the direct-subscript-on-name form diverges.
+
+---
+
 ## #633 — `(s)`/`(f)` split flag on a default-word subexp `${(s:-:)${:-a-b-c}}` splits when zsh doesn't
 
 **Status:** `port-bug` (exotic; deferred — subtle subexp-type semantics)
