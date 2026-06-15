@@ -19,6 +19,66 @@ CI green pending the underlying fix.
 
 ---
 
+## #633 — `(s)`/`(f)` split flag on a default-word subexp `${(s:-:)${:-a-b-c}}` splits when zsh doesn't
+
+**Status:** `port-bug` (exotic; deferred — subtle subexp-type semantics)
+
+The `(s)` split flag splits a nested *parameter-reference* subexp but
+NOT a nested *default-word* (`${:-word}`) subexp:
+
+```
+v=a-b-c
+echo ${(s:-:)${v}}        # zsh: a b c   zshrs: a b c   (param ref → SPLIT, ok)
+echo ${(s:-:)${:-a-b-c}}  # zsh: a-b-c   zshrs: a b c   (default-word → NO split in zsh)
+echo ${#${(s:-:)${:-a-b-c}}}          # zsh: 5 (chars)  zshrs: 3
+a=(${(s:-:)${:-a-b-c}}); echo $#a     # zsh: 1          zshrs: 3
+echo "${(s:-:)${:-a-b-c}}"            # zsh: a b c (quoted DOES split — both ok)
+```
+
+zsh splits the param-ref form and the quoted form, but leaves the
+unquoted default-word form unsplit. The distinguishing factor is the
+*type* of the inner subexpression.
+
+**C reference:** `paramsubst` notes at Src/subst.c:3897 that
+`${name:-word}` / `${name:+word}` "will have already done any requested
+splitting of the word value with quoting preserved" — i.e. the split
+disposition for a default-word is settled during the word's own
+substitution, separately from the param-ref path. zshrs applies the
+outer `(s)` split uniformly to the subexp result regardless of whether
+the inner was a default-word or a param ref. Nailing the exact
+mechanism needs deep C tracing of the spbreak/spsep + subexp
+interaction; a naive fix risks regressing the working `${(s:-:)${v}}`
+case, so deferred.
+
+---
+
+## #632 — q-family flag + range subscript `${(qq)a[2,3]}` quotes joined scalar, not per-element
+
+**Status:** `port-bug` (exotic; partial — scalar subscript fixed, range deferred)
+
+```
+a=(x y z)
+echo ${(qq)a[2,3]}   # zsh: 'y' 'z'   zshrs: y z   (per-element quote expected)
+```
+
+The scalar-subscript form (`${(q-)a[2]}`) was fixed — the quote dispatch
+no longer re-fetches the whole array, it uses the subscript-selected
+`value`. But a *range* subscript (`a[2,3]`) joins the selected elements
+into a single scalar `value` ("y z") with `split_parts = None`, so the
+quote dispatch sees one scalar and can't per-element quote it. Other
+flags that read the range correctly (`${#a[2,3]}`→2, `${(j:-:)a[2,3]}`→
+`y-z`, `print -l ${a[2,3]}`) work because they tolerate the joined form;
+only the q-family needs the unjoined sub-array.
+
+**Fix needed:** range subscripts must populate `split_parts` with the
+selected sub-array (like `[@]`/`[*]` splat does) instead of joining into
+`value`. That's in the subscript-resolution path, which feeds many
+downstream ops — deferred to avoid broad regression risk. Pre-fix this
+form returned the whole array (`'x' 'y' 'z'`); it now returns the right
+elements unquoted, a net improvement.
+
+---
+
 ## #631 — nested single-element array `${${a}[n]}` / `${#${a}}` string-subscripts instead of element-subscripts
 
 **Status:** `port-bug` (cmdsubst half fixed 2026-06-14; nested-`${...}` half open)
