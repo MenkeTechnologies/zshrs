@@ -1511,13 +1511,24 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
         return; // c:1233
     }
 
-    // c:1235 — `save_globstate(saved);` happens inside glob_path via
-    // its `enter_glob_scope()` RAII guard, equivalent semantics.
+    // c:1235 — `save_globstate(saved);`. zshrs snapshots the
+    // glob-relevant options into TLS (`enter_glob_scope`, required for
+    // thread-safety) — the RAII guard restores them on return.
+    let _glob_scope = enter_glob_scope();
 
     // c:1237-1238 — `str = dupstring(ostr); uremnode(list, np);`
     list.remove(np); // c:1238
 
-    let matches = glob_path(&ostr); // c:1240-1995 body
+    // c:1240-1995 — the scanner walk + match collection. zshrs drives
+    // it through `globdata_glob`, the RUST-ONLY read_dir adaptation of
+    // C's `scanner()` (c:500; C's `lchdir` descent is process-global and
+    // unsafe under zshrs's threading). globdata_glob owns its own
+    // globdata; call it directly rather than via the glob_path Vec
+    // convenience.
+    let matches = {
+        let mut st = globdata::new();
+        globdata_glob(&mut st, &ostr)
+    };
 
     // c:1871-1875 — badcshglob accounting. Each zglob run updates
     // the per-command-line counter so globlist's terminal diagnostic
@@ -5577,165 +5588,29 @@ pub(crate) fn find_top_level_tilde(pat: &str) -> Option<usize> {
     None
 }
 
-/// Canonical entry point for filesystem glob expansion. Mirrors C's
-/// `zglob` driver at Src/glob.c:1214 with the alternation +
-/// extendedglob pre-passes inlined (zsh's `(a|b|c)` group-level
-/// alternation and `pat1~pat2` exclusion).
+/// !!! RUST-ONLY adapter — NO DIRECT C COUNTERPART !!!
 ///
-/// Reads `nullglob` / `nomatch` / `extendedglob` / `dotglob` /
-/// `globdots` / `caseglob` / `nocaseglob` / `globstarshort` /
-/// `bareglobqual` / `braceccl` / `markdirs` / `numericglobsort` /
-/// `globdots` from the canonical option store (`opt_state_get`) so
-/// behavior tracks `setopt …` toggles without needing an executor.
+/// Thin "pattern string in, match list out" entry over the glob engine
+/// for call sites holding a single pattern that want its matches as a
+/// `Vec<String>`, rather than going through C's in-place
+/// `zglob(LinkList, LinkNode, int)` list mutation. Snapshots the
+/// glob-relevant options into TLS (`enter_glob_scope` — required because
+/// zshrs runs glob on multiple threads; see that fn's doc) and drives
+/// `globdata_glob`, the RUST-ONLY read_dir-based adaptation of C's
+/// `scanner()` (Src/glob.c:500 — C descends with `lchdir`, which is
+/// process-global and unsafe under zshrs's threading, so the port walks
+/// absolute paths instead). ALL real glob semantics — brace expansion,
+/// `(a|b)` alternation, `^`/`~` exclusion, qualifiers, `**`, sorting —
+/// live in `globdata_glob`/`scanner`/`patcompile`, not here. (The 130
+/// lines of ad-hoc `^`/`~`/alternation read_dir+matchpat code that used
+/// to live here were verified redundant with `globdata_glob` and
+/// removed.) The faithful C entry is `zglob` (c:1214).
 pub fn glob_path(pattern: &str) -> Vec<String> {
-    // c:1214
-    // Race fix: same TLS-snapshot guard glob() uses, so glob_path
-    // callers see a coherent option set for the duration of this call.
     let _glob_scope = enter_glob_scope();
-    let opt = |n: &str, default: bool| opt_state_get(n).unwrap_or(default);
-    // Read option state directly — matches C's per-callsite
-    // `isset(NULLGLOB)` / `isset(EXTENDEDGLOB)` reads (Src/glob.c).
-    let null_glob = opt("nullglob", false);
-    let extended_glob = opt("extendedglob", false);
-    let no_glob_dots = !(opt("dotglob", false) || opt("globdots", false));
-    let case_glob = opt("caseglob", true) && !opt("nocaseglob", false);
-
-    // c:1230 — `(a|b|c)` top-level alternation pre-pass.
-    if let Some(alternatives) = expand_glob_alternation(pattern) {
-        let mut out: Vec<String> = Vec::new();
-        for alt in alternatives {
-            let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
-            if has_meta {
-                out.extend(glob_path(&alt));
-            } else if Path::new(&alt).exists() {
-                out.push(alt);
-            }
-        }
-        let mut seen = HashSet::new();
-        out.retain(|p| seen.insert(p.clone()));
-        out.sort();
-        if !out.is_empty() {
-            return out;
-        }
-        // c:1700 fall through to NOMATCH semantics below.
-    }
-
-    // c:155 (P_EXCLUDE) — extendedglob `^pat` negation + `pat1~pat2`
-    // exclusion. Only applies when extendedglob option is on.
-    //
-    // When the pattern carries a trailing glob qualifier (`^foo(.)`,
-    // `^(a|b)(:t)`, `*~bar(.)`), the ad-hoc fs::read_dir + matchpat
-    // branches below would fold the qualifier `(...)` INTO the negation
-    // pattern (`matchpat("foo(.)", name)` matches the literal "foo." —
-    // so `!matchpat` admits every file and the negation is lost). The
-    // canonical driver (globdata_glob → parse_qualifiers → scanner →
-    // patcompile) handles `^`/`~`/`|` negation via P_EXCLUDE AND the
-    // qualifier in one pass, so delegate to it whenever a qualifier is
-    // present rather than reimplementing qualifier eval here.
-    let has_trailing_qual = parse_qualifiers(pattern).1.is_some();
-    if extended_glob && !has_trailing_qual {
-        let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
-        let last_seg = &pattern[last_seg_start..];
-        if last_seg.starts_with('^') && last_seg.len() > 1 {
-            let prefix = &pattern[..last_seg_start];
-            let neg = &last_seg[1..];
-            let dir = if prefix.is_empty() {
-                ".".to_string()
-            } else {
-                prefix.trim_end_matches('/').to_string()
-            };
-            let mut out = Vec::new();
-            if let Ok(entries) = fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') && no_glob_dots {
-                        continue;
-                    }
-                    if !matchpat(neg, &name, true, case_glob) {
-                        let path = if prefix.is_empty() {
-                            name
-                        } else {
-                            format!("{}{}", prefix, name)
-                        };
-                        out.push(path);
-                    }
-                }
-            }
-            out.sort();
-            if !out.is_empty() {
-                return out;
-            }
-            // c:Src/glob.c:1872-1888 — when matches empty, defer the
-            // nomatch / nullglob / literal-fallback dispatch to zglob's
-            // handler. Returning `vec![pattern.to_string()]` here
-            // pre-empted that and produced a literal match even when
-            // `NOMATCH` was set (default). Bug #62 family.
-            return Vec::new();
-        }
-        // c:155 — top-level `~` exclusion.
-        let chars: Vec<char> = pattern.chars().collect();
-        let mut depth_b = 0i32;
-        let mut depth_p = 0i32;
-        let mut split_at: Option<usize> = None;
-        for (i, &c) in chars.iter().enumerate() {
-            match c {
-                '[' => depth_b += 1,
-                ']' => depth_b -= 1,
-                '(' => depth_p += 1,
-                ')' => depth_p -= 1,
-                '~' if depth_b == 0 && depth_p == 0 && i > 0 => {
-                    split_at = Some(i);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        if let Some(pos) = split_at {
-            let lhs: String = chars[..pos].iter().collect();
-            let rhs: String = chars[pos + 1..].iter().collect();
-            let lhs_matches = glob_path(&lhs);
-            let filtered: Vec<String> = lhs_matches
-                .into_iter()
-                .filter(|p| {
-                    let basename = p.rsplit('/').next().unwrap_or(p);
-                    !matchpat(&rhs, basename, true, case_glob)
-                        && !matchpat(&rhs, p, true, case_glob)
-                })
-                .collect();
-            if !filtered.is_empty() {
-                return filtered;
-            }
-            // c:Src/glob.c:1872-1888 — defer nomatch/nullglob/literal
-            // dispatch to zglob. Returning `vec![pattern.to_string()]`
-            // here suppressed `no matches found` errors for the
-            // `pat1~pat2` exclusion form. Bug #62 in docs/BUGS.md.
-            return Vec::new();
-        }
-    }
-
-    // Main walk via the canonical glob driver.
     let mut state = globdata::new();
-    let matches = globdata_glob(&mut state, pattern);
-    if matches.is_empty() {
-        // c:Src/glob.c:1872-1888 — `Deal with failures to match`.
-        // Returning empty Vec on no-match is the canonical
-        // contract; the caller (vm_helper.rs::expand_glob)
-        // decides NOMATCH vs nullglob vs literal-fallback. Per-
-        // qualifier (N) is parsed here for the legacy callers
-        // that still expect glob_path to honor it directly, but
-        // even without it we return Vec::new() so the NOMATCH
-        // path in expand_glob fires. Previously this returned
-        // `vec![pattern.to_string()]` (the literal pattern) on
-        // no-match, which made expand_glob's `if !expanded.
-        // is_empty()` shortcut bypass the NOMATCH check entirely
-        // — `echo /never/*` printed the literal pattern with
-        // exit 0 instead of raising "no matches found". Parity
-        // bug.
-        let _ = parse_qualifiers(pattern); // pre-parse for side-effects
-        return Vec::new();
-    }
-    matches
+    globdata_glob(&mut state, pattern)
 }
+
 
 // `g_range` from Src/glob.c — qualifier-comparison direction
 // (-1 = less than, 0 = equal, 1 = greater than).
