@@ -6935,15 +6935,15 @@ mod tests {
         let cl = parsecomplist(&t).expect("parsecomplist None");
         assert_eq!(sections(&cl), vec!["a", "b", "c.txt"]);
 
-        // Literal prefix before a pattern still splits the literal dirs.
-        let mut t2 = "a/b/x.txt".to_string();
+        // Literal prefix before a pattern still splits the literal dirs;
+        // the trailing glob section is a real pattern (not PAT_PURES).
+        let mut t2 = "a/b/*.txt".to_string();
         tokenize(&mut t2);
         let cl2 = parsecomplist(&t2).expect("parsecomplist None");
-        assert_eq!(&sections(&cl2)[..2], &["a".to_string(), "b".to_string()]);
-        // NOTE: pattern sections (e.g. `*.txt`) are not yet correctly
-        // separated — blocked on itok() not recognizing glob tokens +
-        // an untokenize artifact in the pattern-section path. Tracked as
-        // the remaining work for the scanner→complist conversion.
+        let s2 = sections(&cl2);
+        assert_eq!(s2.len(), 3, "a/b/*.txt → 3 sections, got {s2:?}");
+        assert_eq!(&s2[..2], &["a".to_string(), "b".to_string()]);
+        assert_eq!(s2[2], "<pat>", "trailing *.txt must be a pattern section");
     }
 
     /// The `struct qual` arena is built from the parse alongside the enum:
