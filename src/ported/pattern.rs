@@ -2707,7 +2707,7 @@ pub fn pattryrefs(
     // (PAT_STATIC etc.) stay on `prog.0.flags` for the outer
     // anchor/PURES checks at lines below.
     let match_result = patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.globflags);
-    let (ok, matched_end) = match match_result {
+    let (mut ok, matched_end) = match match_result {
         Some(end_pos) => {
             // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
             let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0;
@@ -2715,6 +2715,15 @@ pub fn pattryrefs(
         }
         None => (false, 0),
     };
+    // c:2399-2406 — for files (PAT_NOGLD), a successful match is rejected
+    // when the string starts with '.' (unless glob_dots is set, in which
+    // case parsecomplist omits PAT_NOGLD). Honoring this here lets the
+    // glob scanner rely on the matcher for the leading-dot skip, exactly
+    // as C does, instead of an explicit check in the walker. Inert for
+    // non-file patterns (matchpat / [[ ]] / :# never set PAT_NOGLD).
+    if ok && (prog.0.flags & PAT_NOGLD as i32) != 0 && trial.starts_with('.') {
+        ok = false;
+    }
     if ok {
         // c:2508 — `patinlen = patinput - patinstart;` — record the
         // byte-length of the successful match so `patmatchlen()` can
