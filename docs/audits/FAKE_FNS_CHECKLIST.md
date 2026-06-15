@@ -203,9 +203,20 @@ largely illusory: on close inspection most have hidden substrate gaps
 - linklist + param-subst + `shout`: `checkmailpath`
 - HISTORY_IGNORE/atomic-rename/lock-retry: `savehistfile`, `lockhistfile`
 
-**VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
-reclassify out of PORT if confirmed)**: `zglob`. The line-ratio detector
-mismeasured it; the current Rust reads as substantially complete.
+**VERIFY — drained.** All items audited and reclassified or partially
+ported.
+
+- [VERIFIED NOT-FAKE] `glob.rs::zglob` — audited: 143 lines (the detector
+  mismeasured at 60). Full glob entry logic — np guard, GLOBOPT/haswilds/
+  EXECOPT short-circuit (c:1230-1233), `enter_glob_scope` (save_globstate),
+  `uremnode`, `globdata_glob` (scanner walk + qualifier parse), badcshglob
+  accounting (c:1872), NULLGLOB/CSHNULLGLOB/NOMATCH (c:1843-1887), ordinary-
+  string fallback (c:1882-1887), `insert_glob_match` splice (c:1995-2007).
+  The first triage agent's "missing qualifier parsing (c:1240-2012)" was
+  STALE — the qualifier parse landed (per the `glob_qual_arena_port`
+  memory: struct-qual arena + QualArena + globdata.quals), confirmed by
+  **47 `qualifier` + 5 `glob_qual` + 99 `glob_` tests passing**. Not a
+  fake; ratio flag is a detector artifact. Reclassified out of PORT.
 
 - [VERIFIED NOT-FAKE — re-architected] `exec.rs::execpline` — the
   "pipe/fork primitives deferred (structural stub)" triage label was
@@ -337,7 +348,14 @@ mismeasured it; the current Rust reads as substantially complete.
     `promptexpand` — core in putpromptchar 1375 lines + 45 tests, two
     honest minor approximations; `scanner` — re-architected glob engine,
     closure/recursion/patterns present, 99 glob tests; `execpline` —
-    real WC_PIPE dispatch loop, fork/pipe split into execpline2 + fusevm)
+    real WC_PIPE dispatch loop, fork/pipe split into execpline2 + fusevm;
+    `zglob` — 143-line full glob entry, qualifier parse landed, 47+99 tests)
+  - **VERIFY bucket fully drained.** Every remaining genuine fake is in
+    the engine-blocked cluster (ZLE refresh/input, completion Cline/minfo
+    graph, hist ring mutator, job table) — faithful porting requires
+    building the engine first; the 1-min loop cannot. Recommend stopping
+    the loop here and greenlighting a focused engine build for further
+    porting throughput.
   - audited vestigial/duplicate (not the live path): 2
     (`load_dump_file` — callerless, zshrs uses owned-Vec dumps via
     load_dump_header; `prompt.rs::match_highlight` — test-only duplicate,
