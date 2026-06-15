@@ -12,7 +12,7 @@
 
 use crate::ported::builtin::LASTVAL;
 use crate::ported::options::opt_state_get;
-use crate::ported::pattern::haswilds;
+use crate::ported::pattern::{haswilds, Patprog};
 use crate::ported::signals::unqueue_signals;
 use crate::ported::sort::zstrcmp;
 use crate::ported::string::dyncat;
@@ -27,7 +27,7 @@ use crate::ported::zsh_h::{
     MARKDIRS, MULTIOS, NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE,
     REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EIND,
     SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR,
-    ZSHTOK_SHGLOB, ZSHTOK_SUBST, MB_METASTRLEN2END,
+    ZSHTOK_SHGLOB, ZSHTOK_SUBST, MB_METASTRLEN2END, PAT_NOTEND, PAT_NOTSTART,
 };
 use crate::ported::lex::untokenize;
 use crate::ported::mem::dupstring;
@@ -2201,22 +2201,39 @@ pub fn freematchlist(repllist: Option<&mut Vec<repldata>>) {
     }
 }
 
-/// Set pattern start offset (from glob.c set_pat_start)
 /// Port of `set_pat_start(Patprog p, int offs)` from `Src/glob.c:2780`.
-pub fn set_pat_start(p: &str, offs: usize) -> String {
-    if offs == 0 || offs >= p.len() {
-        return p.to_string();
+///
+/// When we advance up the test string from its start, tell the pattern
+/// matcher that a start-of-string assertion `(#s)` should fail: set
+/// `PAT_NOTSTART` when `offs` is nonzero (the real start is past the
+/// actual start), clear it when `offs == 0`. Mutates `p->flags`.
+/// Replaces the prior fake that sliced the pattern string and returned
+/// a substring — unrelated to the C behaviour (the matcher reads
+/// `PAT_NOTSTART` off `prog.flags`, see pattern.rs:4792).
+pub fn set_pat_start(p: &mut Patprog, offs: i32) {
+    // c:2780
+    if offs != 0 {
+        p.0.flags |= PAT_NOTSTART; // c:2790 p->flags |= PAT_NOTSTART
+    } else {
+        p.0.flags &= !PAT_NOTSTART; // c:2792 p->flags &= ~PAT_NOTSTART
     }
-    p[offs..].to_string()
 }
 
-/// Set pattern end (from glob.c set_pat_end)
-/// Port of `set_pat_end(Patprog p, char null_me)` from `Src/glob.c:2797`.
-pub fn set_pat_end(p: &str, null_me: usize) -> String {
-    if null_me >= p.len() {
-        return p.to_string();
+/// Port of `set_pat_end(Patprog p, char null_me)` from `Src/glob.c:2796`.
+///
+/// When we shorten the string at the tail, tell the pattern matcher
+/// that an end-of-string assertion `(#e)` should fail: set `PAT_NOTEND`
+/// when the char `null_me` about to be zapped is non-NUL, clear it when
+/// it is already NUL. Mutates `p->flags`. Replaces the prior fake that
+/// sliced the pattern string and returned a prefix (the matcher reads
+/// `PAT_NOTEND` off `prog.flags`, see pattern.rs:2803).
+pub fn set_pat_end(p: &mut Patprog, null_me: u8) {
+    // c:2796
+    if null_me != 0 {
+        p.0.flags |= PAT_NOTEND; // c:2806 p->flags |= PAT_NOTEND
+    } else {
+        p.0.flags &= !PAT_NOTEND; // c:2808 p->flags &= ~PAT_NOTEND
     }
-    p[..null_me].to_string()
 }
 
 /// Port of `igetmatch(char **sp, Patprog p, int fl, int n, char *replstr, LinkList *repllistp)` from Src/glob.c:2832.
@@ -6050,28 +6067,50 @@ mod tests {
         );
     }
 
-    /// c:2780 — `set_pat_start` returns the suffix from `offs` onward.
-    /// `offs=0` → unchanged. `offs >= len` → unchanged (defensive bound).
-    /// Regression that panics on out-of-range would crash the
-    /// substring-globbing code.
+    /// c:2780 — `set_pat_start(p, offs)` sets `PAT_NOTSTART` when offs is
+    /// nonzero (matched substring starts past the real start, so `(#s)`
+    /// must fail) and clears it when offs is 0. A regression here would
+    /// let `(#s)` anchors fire mid-string during substring globbing.
     #[test]
-    fn set_pat_start_handles_out_of_range_safely() {
+    fn set_pat_start_toggles_pat_notstart_flag() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(set_pat_start("hello", 0), "hello");
-        assert_eq!(set_pat_start("hello", 100), "hello");
-        assert_eq!(set_pat_start("hello", 2), "llo");
+        let mut p = mk_test_patprog();
+        set_pat_start(&mut p, 2);
+        assert!(p.0.flags & PAT_NOTSTART != 0, "offs!=0 must set PAT_NOTSTART");
+        set_pat_start(&mut p, 0);
+        assert!(p.0.flags & PAT_NOTSTART == 0, "offs==0 must clear PAT_NOTSTART");
     }
 
-    /// c:2797 — `set_pat_end` returns the prefix up to `null_me`.
-    /// Counterpart to set_pat_start. `null_me >= len` is no-op
-    /// (defensive). Regression panicking on out-of-range would crash
-    /// the substring-globbing code.
+    /// c:2796 — `set_pat_end(p, null_me)` sets `PAT_NOTEND` when the char
+    /// being zapped is non-NUL (string shortened at tail, so `(#e)` must
+    /// fail) and clears it when that char is already NUL. A regression
+    /// would let `(#e)` anchors fire before the real end.
     #[test]
-    fn set_pat_end_handles_out_of_range_safely() {
+    fn set_pat_end_toggles_pat_notend_flag() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(set_pat_end("hello", 100), "hello");
-        assert_eq!(set_pat_end("hello", 3), "hel");
-        assert_eq!(set_pat_end("hello", 0), "");
+        let mut p = mk_test_patprog();
+        set_pat_end(&mut p, b'x');
+        assert!(p.0.flags & PAT_NOTEND != 0, "non-NUL null_me must set PAT_NOTEND");
+        set_pat_end(&mut p, 0);
+        assert!(p.0.flags & PAT_NOTEND == 0, "NUL null_me must clear PAT_NOTEND");
+    }
+
+    /// Build a zeroed `Patprog` for flag-toggle tests.
+    fn mk_test_patprog() -> Patprog {
+        Box::new((
+            crate::ported::zsh_h::patprog {
+                startoff: 0,
+                size: 0,
+                mustoff: 0,
+                patmlen: 0,
+                globflags: 0,
+                globend: 0,
+                flags: 0,
+                patnpar: 0,
+                patstartch: 0,
+            },
+            Vec::new(),
+        ))
     }
 
     /// c:2773 — `freematchlist(None)` is a no-op (matches C's
