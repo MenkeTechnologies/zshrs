@@ -9512,13 +9512,23 @@ pub fn terminfogetfn(_pm: &param) -> String {
 /// `RPROMPT_INDENT` parameter is unset.
 pub static RPROMPT_INDENT: Mutex<i32> = Mutex::new(1);
 
-/// Port of `terminfosetfn(Param pm, char *x)` from `Src/params.c:5205`. C body:
-/// `zsfree(zsh_terminfo); zsh_terminfo = x; addenv if exported; term_reinit_from_pm();`
-pub fn terminfosetfn(_pm: &mut param, x: String) {
+/// Port of `void terminfosetfn(Param pm, char *x)` from `Src/params.c:5205`.
+///
+/// Frees the old `zsh_terminfo`, stores `x`, and — only when the
+/// parameter is exported — pushes `TERMINFO=x` into the environment
+/// (terminfo reads the value from the env before the terminal is
+/// reinitialised), then reinitialises the terminal.
+pub fn terminfosetfn(pm: &mut param, x: String) {
+    // c:5205
+    // c:5207-5208 — `zsfree(zsh_terminfo); zsh_terminfo = x;`
     *zsh_terminfo_lock().lock().expect("zsh_terminfo poisoned") = x.clone();
-    // c:Src/params.c:5354 — setenv via the C-named zputenv
-        let _ = zputenv(&format!("{}={}", "TERMINFO", &x));
-    term_reinit_from_pm();
+    // c:5214-5215 — `if ((pm->node.flags & PM_EXPORTED) && x) addenv(pm, x);`
+    // Only leak into the environment when $TERMINFO is actually
+    // exported; a bare `TERMINFO=x` (no export) must not reach children.
+    if pm.node.flags & PM_EXPORTED as i32 != 0 {
+        let _ = zputenv(&format!("TERMINFO={}", &x)); // c:5215 addenv(pm, x)
+    }
+    term_reinit_from_pm(); // c:5217
 }
 
 /// Port of `terminfodirsgetfn(UNUSED(Param pm))` from `Src/params.c:5224`. C body:
