@@ -12976,7 +12976,21 @@ pub fn paramsubst(
                 // c:1625
                 if sub == "*" || sub == "@" {
                     // c:1625
-                    arr.join(" ") // c:1625
+                    // c:Src/subst.c:3032 — quoted `"$a[*]"` joins by
+                    // IFS[0]. The braced `"${a[*]}"` form does this via
+                    // the qt-sepjoin at subst.rs:7640, but the bare-name
+                    // path has no such re-join, so a hardcoded space
+                    // leaked (Bug #635). `[@]` stays split, and UNQUOTED
+                    // `$a[*]` keeps the space-join the caller re-splits
+                    // into words. With the default IFS the join char is
+                    // already a space, so this is a no-op there.
+                    if sub == "*" && qt {
+                        let ifs = crate::ported::params::getsparam("IFS")
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        arr.join(&ifs.chars().next().map(String::from).unwrap_or_default())
+                    } else {
+                        arr.join(" ") // c:1625
+                    }
                 } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
                     // (I)/(i)/(R)/(r) on bare $arr[...]. Same as
                     // braced form. Direct port of params.c getarg
