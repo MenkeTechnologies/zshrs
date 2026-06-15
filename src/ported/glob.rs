@@ -2187,10 +2187,17 @@ pub fn freerepldata(ptr: *mut std::ffi::c_void) { // c:2766
 /// Port of `freematchlist(LinkList repllist)` from Src/glob.c:2773.
 /// C: `void freematchlist(LinkList repllist)` →
 ///   `freelinklist(repllist, freerepldata);`
-pub fn freematchlist(repllist: Option<&mut Vec<(usize, usize)>>) {
+///
+/// The C `repllist` is a `LinkList` of `struct repldata` (the same
+/// node `get_match_ret` records for SUB_GLOBAL/SUB_LIST). The Rust
+/// port operates on `Vec<repldata>` — matching the canonical
+/// `imatchdata.repllist` type — not the prior ad-hoc `Vec<(usize,usize)>`.
+/// Clearing the Vec drops each `repldata` (Rust's `freerepldata` +
+/// `freelinklist` equivalent).
+pub fn freematchlist(repllist: Option<&mut Vec<repldata>>) {
     // c:2773
     if let Some(l) = repllist {
-        l.clear(); // c:2776
+        l.clear(); // c:2776 freelinklist(repllist, freerepldata)
     }
 }
 
@@ -6083,7 +6090,10 @@ mod tests {
     #[test]
     fn freematchlist_clears_provided_vec() {
         let _g = crate::test_util::global_state_lock();
-        let mut v = vec![(0, 5), (10, 15)];
+        let mut v = vec![
+            repldata { b: 0, e: 5, replstr: None },
+            repldata { b: 10, e: 15, replstr: Some("x".to_string()) },
+        ];
         freematchlist(Some(&mut v));
         assert!(v.is_empty(), "freematchlist must clear the input vec");
     }
