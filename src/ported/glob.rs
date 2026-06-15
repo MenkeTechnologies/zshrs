@@ -244,6 +244,10 @@ pub struct globdata {
     pub matches: Vec<gmatch>,
     /// `qualifiers` field.
     pub qualifiers: Option<qualifier_set>,
+    /// c:206 — `quals` (`curglobdata.gd_quals`): the `struct qual` list
+    /// that `insert()` walks per candidate file. Arena-backed port of
+    /// the C pointer list; `None` when the glob has no qualifiers.
+    pub quals: Option<QualArena>,
     pub pathbuf: String,                    // c:170 gd_pathbuf
     pub pathpos: usize,                     // c:169 gd_pathpos
     pub matchct: i32,                       // c:173 gd_matchct
@@ -265,6 +269,7 @@ pub struct globdata {
 pub static CURGLOBDATA: std::sync::Mutex<globdata> = std::sync::Mutex::new(globdata {
     matches: Vec::new(),
     qualifiers: None,
+    quals: None,
     pathbuf: String::new(),
     pathpos: 0,
     matchct: 0,
@@ -287,6 +292,15 @@ pub static CURGLOBDATA: std::sync::Mutex<globdata> = std::sync::Mutex::new(globd
 /// succeeded). Used to make `*.nope *.ok` succeed without
 /// diagnostic, but `*.nope alone` error out under CSHNULLGLOB.
 pub static BADCSHGLOB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:103
+
+/// Port of `static char **inserts;` from `Src/glob.c:340`. Set by
+/// `qualsheval` (c:3927-3937) from the `$reply` array / `$REPLY` scalar
+/// after an `(e:…:)` / `(+…)` qualifier eval; `insert()` then emits one
+/// match per element instead of the original name (c:428). `None` ==
+/// C's `inserts == NULL` (emit the original name once). Reset to `None`
+/// before each per-file qualifier walk (C: `inserts = NULL` at insert()
+/// entry, c:353).
+pub static INSERTS: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
 
 /// Port of `struct complist` from `Src/glob.c:252`.
 /// C body:
@@ -347,284 +361,6 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
 // lexer + matcher; these free-fn entries satisfy ABI/name parity
 // for the drift gate.
 // ===========================================================
-
-/// Port of `static void insert(char *s, int checked)` from `Src/glob.c:346`.
-/// Records one matched path `s` into the glob result list, optionally
-/// re-stat'ing for type-marker output (`gf_listtypes`/`gf_markdirs`),
-/// applying qualifier predicates (`quals`), and capturing per-mode
-/// stat fields into the growing `matchbuf`.
-///
-/// ```c
-/// static void
-/// insert(char *s, int checked)
-/// {
-///     struct stat buf, buf2, *bp;
-///     char *news = s;
-///     int statted = 0;
-///     queue_signals();
-///     inserts = NULL;
-///     if (gf_listtypes || gf_markdirs) { /* type-marker stat */ ... }
-///     if (qualct || qualorct) { /* qualifier chain */ ... }
-///     else if (!checked) { if (statfullpath(s, NULL, 1)) { ... return; }
-///                          news = dyncat(pathbuf, news); }
-///     else news = dyncat(pathbuf, news);
-///     while (!inserts || (news = dupstring(*inserts++))) {
-///         /* :modifier, stat-cache, matchptr field-copy, grow matchbuf */
-///     }
-///     unqueue_signals();
-/// }
-/// ```
-#[allow(unused_variables)]
-pub fn insert(s: &str, checked: i32) {
-    crate::ported::signals::queue_signals(); // c:352
-
-    // c:353 — `inserts = NULL;`. Module-static; this is the loop
-    // sentinel that controls the `while (!inserts || (news =...))`
-    // tail loop. Set to None to mean "C's NULL → straight pass".
-    let mut inserts_local: Option<Vec<String>> = None; // c:353
-
-    let mut news: String = s.to_string(); // c:349
-    let mut statted: i32 = 0; // c:350
-
-    // c:355 — `if (gf_listtypes || gf_markdirs)`. The `gf_*` globals
-    // are file-static in glob.c (no Rust port yet); read them off the
-    // captured option snapshot when available.
-    let (gf_listtypes, gf_markdirs, gf_follow): (i32, i32, i32) = {
-        // c:355,366
-        // gf_listtypes / gf_markdirs are populated by the qualifier
-        // parser (c:2187-2188); without a wired flag-state, treat both
-        // as zero. Tests in this file don't exercise the type-marker
-        // path so the stub is correct for the current call sites.
-        (0, 0, 0)
-    };
-    let mut buf: Option<Metadata> = None; // c:348 struct stat buf
-    let mut buf2: Option<Metadata> = None; // c:348 struct stat buf2
-
-    let mut checked_v = checked; // c:346
-
-    if gf_listtypes != 0 || gf_markdirs != 0 {
-        // c:355
-        let st = statfullpath(s, "", true); // c:358
-        match st {
-            None => {
-                unqueue_signals(); // c:359
-                return; // c:360
-            }
-            Some(m) => {
-                buf = Some(m.clone()); // c:358 buf populated
-                checked_v = 1; // c:363
-                statted = 1; // c:363
-            }
-        }
-        use std::os::unix::fs::MetadataExt;
-        let mut mode = buf.as_ref().map(|b| b.mode()).unwrap_or(0); // c:365
-        if gf_follow != 0 {
-            // c:366
-            let is_lnk = buf
-                .as_ref()
-                .map(|b| (b.mode() & 0o170000) == 0o120000)
-                .unwrap_or(false);
-            if !is_lnk {
-                // c:367
-                buf2 = buf.clone(); // c:368 memcpy(buf2, buf)
-            } else {
-                buf2 = statfullpath(s, "", false); // c:367 statfullpath(.., 0)
-                if buf2.is_none() {
-                    buf2 = buf.clone();
-                } // c:368
-            }
-            statted |= 2; // c:369
-            mode = buf2.as_ref().map(|b| b.mode()).unwrap_or(mode); // c:370
-        }
-        let is_dir = (mode & 0o170000) == 0o040000;
-        if gf_listtypes != 0 || is_dir {
-            // c:372
-            let marker = file_type(mode); // c:377
-            news.push(marker); // c:377-378
-        }
-    }
-
-    // c:381 — `if (qualct || qualorct)`. Qualifier eval chain. The Rust
-    // port runs qualifiers through the qualifier_set carried inside
-    // `globdata`, not via the file-static `quals` linked list; the
-    // canonical caller (apply_glob_qualifiers) already dispatches the
-    // filter pass. Snapshot zero for both counts so the qual-eval
-    // branch is skipped here.
-    let qualct: i32 = 0; // c:381 qualct
-    let qualorct: i32 = 0; // c:381 qualorct
-    let pathbuf_local: String = String::new(); // c:170 gd_pathbuf — caller scope
-
-    if qualct != 0 || qualorct != 0 {
-        // c:381
-        // c:385-388 — stat if not already
-        if statted == 0 {
-            if statfullpath(s, "", true).is_none() {
-                // c:385
-                unqueue_signals(); // c:386
-                return; // c:387
-            }
-        }
-        news = dyncat(&pathbuf_local, &news); // c:389
-        statted = 1; // c:391
-                     // c:392-418 — for (qn = qo; qn && qn->func;) ...
-                     // The qualifier-fn pointer chain (`qn->func`) isn't exposed
-                     // as a free fn array yet; the apply_glob_qualifiers entry
-                     // upstream of this insert call already runs every qualifier
-                     // and only invokes `insert` for survivors. Skip the loop.
-    } else if checked_v == 0 {
-        // c:419
-        if statfullpath(s, "", true).is_none() {
-            // c:420
-            unqueue_signals(); // c:421
-            return; // c:422
-        }
-        news = dyncat(&pathbuf_local, &news); // c:424
-    } else {
-        // c:425
-        news = dyncat(&pathbuf_local, &news); // c:426
-    }
-
-    // c:428 — `while (!inserts || (news = dupstring(*inserts++)))`
-    let mut inserts_idx: usize = 0;
-    loop {
-        let cur_news: String = if let Some(list) = inserts_local.as_ref() {
-            // c:428
-            if inserts_idx >= list.len() {
-                break;
-            }
-            let s = crate::ported::mem::dupstring(&list[inserts_idx]);
-            inserts_idx += 1;
-            s
-        } else {
-            news.clone()
-        };
-        let mut cur_news = cur_news;
-
-        // c:429-433 — `if (colonmod) modify(&news, &mod, 1);`
-        // The colonmod static + modify() port aren't wired; skip the
-        // `(:r:s/.../.../)` colon-modifier branch.
-        let colonmod: Option<String> = None; // c:429
-        if let Some(_mod_str) = colonmod { // c:429
-             // modify(&cur_news, &mod_str, 1);                               // c:432
-        }
-
-        // c:434-437 — late stat for normal-sort if not already statted.
-        let gf_sorts: i32 = 0; // c:434 gf_sorts (file-static)
-        if statted == 0 && (gf_sorts & GS_NORMAL) != 0 {
-            // c:434
-            buf = statfullpath(s, "", true); // c:435
-            statted = 1; // c:436
-        }
-        // c:438-445 — link-target stat for linked-sort branch.
-        if (statted & 2) == 0 && (gf_sorts & GS_LINKED) != 0 {
-            // c:438
-            if statted != 0 {
-                // c:439
-                use std::os::unix::fs::MetadataExt;
-                let is_lnk = buf
-                    .as_ref()
-                    .map(|b| (b.mode() & 0o170000) == 0o120000)
-                    .unwrap_or(false);
-                if !is_lnk {
-                    // c:440
-                    buf2 = buf.clone(); // c:441
-                } else {
-                    buf2 = statfullpath(s, "", false); // c:440
-                    if buf2.is_none() {
-                        buf2 = buf.clone();
-                    } // c:441
-                }
-            } else {
-                // c:442
-                buf2 = statfullpath(s, "", false); // c:442
-                if buf2.is_none() {
-                    buf2 = statfullpath(s, "", true); // c:443
-                }
-            }
-            statted |= 2; // c:444
-        }
-
-        // c:446 — `matchptr->name = news;`
-        // matchptr/matchbuf are file-static in glob.c; the Rust port
-        // builds a `Vec<gmatch>` inside `globdata::matches` (the
-        // caller owns the destination). The actual append happens
-        // there. The structural body below mirrors the C copy.
-        let mut entry = gmatch {
-            // c:446
-            name: cur_news.clone(),
-            path: PathBuf::from(&cur_news),
-            size: 0,
-            atime: 0,
-            mtime: 0,
-            ctime: 0,
-            links: 0,
-            mode: 0,
-            uid: 0,
-            gid: 0,
-            dev: 0,
-            ino: 0,
-            target_size: 0,
-            target_atime: 0,
-            target_mtime: 0,
-            target_ctime: 0,
-            target_links: 0,
-            ansec: 0,
-            mnsec: 0,
-            cnsec: 0,
-            target_ansec: 0,
-            target_mnsec: 0,
-            target_cnsec: 0,
-            sort_strings: Vec::new(),
-        };
-        if (statted & 1) != 0 {
-            // c:447
-            use std::os::unix::fs::MetadataExt;
-            if let Some(b) = buf.as_ref() {
-                entry.size = b.size(); // c:448 buf.st_size
-                entry.atime = b.atime(); // c:449
-                entry.mtime = b.mtime(); // c:450
-                entry.ctime = b.ctime(); // c:451
-                entry.links = b.nlink(); // c:452
-                // c:454/457/460 — GET_ST_{ATIME,MTIME,CTIME}_NSEC(buf).
-                // MetadataExt provides *_nsec() for the sub-second
-                // components of each timestamp.
-                entry.ansec = b.atime_nsec(); // c:454
-                entry.mnsec = b.mtime_nsec(); // c:457
-                entry.cnsec = b.ctime_nsec(); // c:460
-            }
-        }
-        if (statted & 2) != 0 {
-            // c:463
-            use std::os::unix::fs::MetadataExt;
-            if let Some(b) = buf2.as_ref() {
-                entry.target_size = b.size(); // c:464
-                entry.target_atime = b.atime(); // c:465
-                entry.target_mtime = b.mtime(); // c:466
-                entry.target_ctime = b.ctime(); // c:467
-                entry.target_links = b.nlink(); // c:468
-                entry.target_ansec = b.atime_nsec(); // c:470
-                entry.target_mnsec = b.mtime_nsec(); // c:473
-                entry.target_cnsec = b.ctime_nsec(); // c:476
-            }
-        }
-        // c:479 — `matchptr++;`
-        // c:481-486 — grow matchbuf if matchct == matchsz.
-        // Caller (apply_glob_qualifiers in this file) is responsible
-        // for pushing `entry` onto `globdata.matches`; this `insert`
-        // entry hands the prepared `gmatch` back via a return-channel
-        // when the file-static result list lands. For now consume it.
-        let _ = entry; // c:479
-
-        if inserts_local.is_none() {
-            // c:487
-            break; // c:488
-        }
-        let _ = &mut cur_news;
-    }
-
-    let _ = (inserts_idx, buf, buf2); // suppress warnings
-    unqueue_signals(); // c:490
-}
 
 /// Top-level glob walker dispatching by pattern component.
 ///
@@ -995,6 +731,7 @@ impl globdata {
         globdata {
             matches: Vec::new(),
             qualifiers: None,
+            quals: None,
             pathbuf: String::with_capacity(4096),
             pathpos: 0,
             matchct: 0,
@@ -1210,18 +947,33 @@ pub fn gmatchcmp(
                 },
             )
         } else if key_unshifted == GS_DEPTH {
-            // c:949 — empirically zsh sorts DEEPEST first under
-            // `od`. The C code reads `r = slasha - slashb` where
-            // slasha=1 iff path has more `/` after the common
-            // prefix; in practice this resolves to deepest first
-            // (the C qsort-cmp interpretation matches zsh 5.9's
-            // output for our test files). Mirror by comparing
-            // b.depth.cmp(a.depth) so the deepest paths come
-            // first; `Od` reverses to shallowest-first.
-            b.path
-                .components()
-                .count()
-                .cmp(&a.path.components().count())
+            // c:949-972 — pairwise: skip the common prefix of the two
+            // full paths, then `slasha`/`slashb` = does the remainder of
+            // each (excluding its final char) still contain a `/`, i.e.
+            // is this path deeper past the divergence point. `r = slasha
+            // - slashb`; ascending puts the deeper path first.
+            let an = a.path.to_string_lossy();
+            let bn = b.path.to_string_lossy();
+            let ab = an.as_bytes();
+            let bb = bn.as_bytes();
+            // c:951 — `while (*aptr && *aptr == *bptr) aptr++,bptr++;`
+            let mut i = 0;
+            while i < ab.len() && i < bb.len() && ab[i] == bb[i] {
+                i += 1;
+            }
+            // c:953-954 — if at the end of one and the prev char is `/`,
+            // back up one so the trailing component is counted.
+            let (mut ai, mut bi) = (i, i);
+            if (ai >= ab.len() || bi >= bb.len()) && ai > 0 && ab[ai - 1] == b'/' {
+                ai -= 1;
+                bi -= 1;
+            }
+            // c:956-964 — slash present in the remainder, excluding last char.
+            let has_slash = |s: &[u8]| s.len() > 1 && s[..s.len() - 1].contains(&b'/');
+            let slasha = has_slash(&ab[ai.min(ab.len())..]) as i32;
+            let slashb = has_slash(&bb[bi.min(bb.len())..]) as i32;
+            // c:971 — `r = slasha - slashb`; deeper (slash=1) sorts first.
+            slashb.cmp(&slasha)
         } else if key_unshifted == GS_SIZE {
             // c:985
             if follow {
@@ -1276,10 +1028,13 @@ pub fn gmatchcmp(
                 b.cnsec.cmp(&a.cnsec) // c:1006
             }
         } else if key_unshifted == GS_LINKS {
+            // c:1010 — `r = b->links - a->links;` — SAME sign convention
+            // as GS_SIZE (c:985), so ascending `ol` is fewest-links-first.
+            // (Was reversed vs GS_SIZE, putting most-linked first.)
             if follow {
-                b.target_links.cmp(&a.target_links)
+                a.target_links.cmp(&b.target_links)
             } else {
-                b.links.cmp(&a.links)
+                a.links.cmp(&b.links)
             }
         } else if key_unshifted == GS_EXEC {
             // c:974
@@ -2894,11 +2649,10 @@ pub static g_amc: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 /// at glob.rs:3914 already inlines the equivalent (uses
 /// qualifier::Size struct fields) and is the live path.
 #[allow(non_snake_case)]
-pub fn qualsize(_name: &str, buf: &std::fs::Metadata, size: i64, _dummy: &str) -> bool {
-    use std::os::unix::fs::MetadataExt;
+pub fn qualsize(_name: &str, buf: &libc::stat, size: i64, _dummy: &str) -> i32 {
     use std::sync::atomic::Ordering;
     // c:3831 `zlong scaled = buf->st_size;`
-    let mut scaled: i64 = buf.size() as i64;
+    let mut scaled: i64 = buf.st_size as i64;
     // c:3837-3860 — switch (g_units) ceiling-divide by the unit.
     match g_units.load(Ordering::SeqCst) {
         x if x == TT_POSIX_BLOCKS => {
@@ -2920,13 +2674,13 @@ pub fn qualsize(_name: &str, buf: &std::fs::Metadata, size: i64, _dummy: &str) -
     }
     // c:3862-3864 — `g_range < 0 ? < : g_range > 0 ? > : ==`.
     let r = g_range.load(Ordering::SeqCst);
-    if r < 0 {
+    i32::from(if r < 0 {
         scaled < size
     } else if r > 0 {
         scaled > size
     } else {
         scaled == size
-    }
+    })
 }
 
 /// Direct port of `static int qualtime(UNUSED(char *name),
@@ -2940,8 +2694,7 @@ pub fn qualsize(_name: &str, buf: &std::fs::Metadata, size: i64, _dummy: &str) -
 /// glob.rs:3940 already inlines the equivalent (uses qualifier::
 /// Atime struct fields with the live atime/mtime/ctime read).
 #[allow(non_snake_case)]
-pub fn qualtime(_name: &str, buf: &std::fs::Metadata, days: i64, _dummy: &str) -> bool {
-    use std::os::unix::fs::MetadataExt;
+pub fn qualtime(_name: &str, buf: &libc::stat, days: i64, _dummy: &str) -> i32 {
     use std::sync::atomic::Ordering;
     // c:3876-3878 — `time(&now); diff = now - (g_amc == 0 ? st_atime
     //                  : g_amc == 1 ? st_mtime : st_ctime);`
@@ -2951,9 +2704,9 @@ pub fn qualtime(_name: &str, buf: &std::fs::Metadata, days: i64, _dummy: &str) -
         .unwrap_or(0);
     let amc = g_amc.load(Ordering::SeqCst);
     let stamp: i64 = match amc {
-        0 => buf.atime(), // c:3877
-        1 => buf.mtime(), // c:3877
-        _ => buf.ctime(), // c:3878
+        0 => buf.st_atime as i64, // c:3877
+        1 => buf.st_mtime as i64, // c:3877
+        _ => buf.st_ctime as i64, // c:3878
     };
     let mut diff: i64 = now - stamp;
     // c:3880-3896 — scale by g_units.
@@ -2967,13 +2720,13 @@ pub fn qualtime(_name: &str, buf: &std::fs::Metadata, days: i64, _dummy: &str) -
     }
     // c:3898-3900 — same range comparison as qualsize.
     let r = g_range.load(Ordering::SeqCst);
-    if r < 0 {
+    i32::from(if r < 0 {
         diff < days
     } else if r > 0 {
         diff > days
     } else {
         diff == days
-    }
+    })
 }
 
 /// Port of `static int qualsheval(char *name, UNUSED(struct stat *buf),
@@ -3011,7 +2764,7 @@ pub fn qualtime(_name: &str, buf: &std::fs::Metadata, days: i64, _dummy: &str) -
 /// `errflag`/`lastval` per c:3924-3925, mask any parse-time
 /// ERRFLAG_ERROR while preserving ERRFLAG_INT (user interrupt).
 /// WARNING: param names don't match C — Rust=(filename, expr) vs C=(name, buf, days, str)
-pub fn qualsheval(filename: &str, expr: &str) -> bool {
+pub fn qualsheval(filename: &str, _buf: &libc::stat, _data: i64, expr: &str) -> i32 {
     // c:3907
     // c:3912 — save errflag + lastval.
     let saved_errflag = errflag.load(Ordering::Relaxed); // c:3912
@@ -3038,8 +2791,23 @@ pub fn qualsheval(filename: &str, expr: &str) -> bool {
     ); // c:3924
        // c:3925 — `lastval = lv;`. Restore pre-call lastval.
     LASTVAL.store(saved_lastval, Ordering::Relaxed); // c:3925
-                                                     // c:3941 — `return !ret;` — qualifier passes iff lastval is 0.
-    ret == 0
+    // c:3927-3937 — `inserts = getaparam("reply") || gethparam("reply")`,
+    // else the `reply`/`REPLY` SCALAR as a one-element list. The eval can
+    // thus REPLACE the matched name with zero-or-more names (`reply=(…)`)
+    // or rename it (`REPLY=…`). REPLY was seeded to `filename` at c:3916,
+    // so this is always Some — at minimum the (possibly modified) REPLY.
+    let inserts: Vec<String> = match crate::ported::params::getaparam("reply") {
+        Some(arr) => arr, // c:3927
+        None => match crate::ported::params::getsparam("reply") // c:3931
+            .or_else(|| crate::ported::params::getsparam("REPLY"))
+        {
+            Some(scalar) => vec![scalar], // c:3934-3936
+            None => Vec::new(),
+        },
+    };
+    *INSERTS.lock().unwrap() = Some(inserts);
+    // c:3941 — `return !ret;` — qualifier passes iff lastval is 0.
+    i32::from(ret == 0)
 }
 
 /// Port of `qualnonemptydir(char *name, struct stat *buf, UNUSED(off_t days), UNUSED(char *str))` from Src/glob.c:3948.
@@ -3141,10 +2909,103 @@ pub struct GlobOptsGuard {
 //      (zsh's qgetnum at glob.c:827 returns the raw operator char
 //      and the qualifier handlers switch on it inline).
 
+/// Port of `TestMatchFunc` — the `int (*)(char *, struct stat *, off_t,
+/// char *)` function-pointer type held by `struct qual.func` (Src/glob.c).
+/// Every glob-qualifier test (qualuid, qualisreg, qualiscom, qualsize, …)
+/// has this signature so `insert()` can call them uniformly through the
+/// `func` slot. `name` is the metafied path, `buf` the stat, `data` the
+/// qualifier argument (uid, mode bits, day count, …), `sdata` the
+/// expression text (only `qualsheval` uses it; others ignore it).
+pub type TestMatchFunc = fn(name: &str, buf: &libc::stat, data: i64, sdata: &str) -> i32;
+
+/// Port of `struct qual` from `Src/glob.c:138`. A node in the linked list
+/// of glob qualifiers parsed from a `(…)` suffix. `insert()` (glob.c:346)
+/// walks this list per candidate file, calling `func` on each node and
+/// accepting/rejecting the file by `sense`. The terminating node carries
+/// `func == None` (C tests `qn && qn->func` to stop).
+///
+/// REPRESENTATION: C's `next`/`or` are `struct qual *` pointers into a
+/// graph that `parsepat` builds and relinks through aliased cursors (the
+/// OR-distribution at glob.c:1797-1820 aliases one node from several
+/// chains at once). Rust single-ownership `Box` cannot express that, so
+/// the port uses an arena ([`QualArena`]): nodes live in a `Vec<qual>`
+/// and `next`/`or` are `Option<usize>` indices. C pointer assignments map
+/// to index assignments, so the aliased-cursor algorithm translates
+/// almost verbatim.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Debug)]
+pub struct qual {
+    /// c:139 — `struct qual *next;` next qualifier in the AND-chain.
+    pub next: Option<usize>,
+    /// c:140 — `struct qual *or;` head of an alternative OR-chain.
+    pub or: Option<usize>,
+    /// c:141 — `TestMatchFunc func;` the test to call; `None` terminates.
+    pub func: Option<TestMatchFunc>,
+    /// c:142 — `off_t data;` argument passed to `func`.
+    pub data: i64,
+    /// c:143 — `int sense;` bit0: 0=assert / 1=negate; bit1: follow links.
+    pub sense: i32,
+    /// c:144 — `int amc;` which timestamp to test (0=a, 1=m, 2=c).
+    pub amc: i32,
+    /// c:145 — `int range;` test `<` / `>` / `=` (signum of comparison).
+    pub range: i32,
+    /// c:146 — `int units;` multiplier for time (TT_DAYS…) or size.
+    pub units: i32,
+    /// c:147 — `char *sdata;` expression to eval (currently qualsheval only).
+    pub sdata: Option<String>,
+}
+
+impl qual {
+    /// A fresh node with the C zero-initialised defaults (`hcalloc`).
+    pub fn new() -> qual {
+        qual {
+            next: None,
+            or: None,
+            func: None,
+            data: 0,
+            sense: 0,
+            amc: 0,
+            range: 0,
+            units: 0,
+            sdata: None,
+        }
+    }
+}
+
+impl Default for qual {
+    fn default() -> qual {
+        qual::new()
+    }
+}
+
+/// Arena backing the [`qual`] graph. C allocates each `struct qual` with
+/// `hcalloc` and links them by pointer; the Rust port allocates them in
+/// this `Vec` and links them by index. `alloc()` mirrors a single
+/// `hcalloc(sizeof *qn)` and returns the new node's index; `head` holds
+/// the index of `quals` (the list `insert()` walks), `None` when empty.
+#[derive(Clone, Default, Debug)]
+pub struct QualArena {
+    pub nodes: Vec<qual>,
+    pub head: Option<usize>,
+}
+
+impl QualArena {
+    pub fn new() -> QualArena {
+        QualArena {
+            nodes: Vec::new(),
+            head: None,
+        }
+    }
+
+    /// c:`qn = (struct qual *)hcalloc(sizeof *qn);` — allocate a fresh
+    /// zeroed node and return its arena index.
+    pub fn alloc(&mut self) -> usize {
+        self.nodes.push(qual::new());
+        self.nodes.len() - 1
+    }
+}
+
 /// A glob qualifier function
-// Next qualifier, must match                                              // c:139
-// Alternative set of qualifiers to match                                   // c:140
-// Function to call to test match                                           // c:141
 #[derive(Debug, Clone)]
 /// One glob qualifier — Rust-extension sum type. C uses a linked
 /// list of `struct qual` (`Src/zsh.h:140-152`) with function-pointer
@@ -3229,6 +3090,14 @@ pub enum qualifier {
 
     /// Shell evaluation
     Eval(String),
+
+    /// `^` — toggle the running match sense for SUBSEQUENT qualifiers in
+    /// this list. C uses a running `sense ^= 1` (Src/glob.c:1346) stored
+    /// per `struct qual.sense`; the enum can't carry per-node sense, so a
+    /// marker in the list reproduces it: `check_qualifier_list` flips a
+    /// running sense bit on each marker and XORs it into later tests.
+    /// Fixes `*(/^@)` (dir AND not-symlink), `*(.^x)`, etc.
+    ToggleSense,
 }
 
 // Misnamed `gmatchcmp(&str, &str)` deleted — was a Rust-only
@@ -3265,6 +3134,19 @@ pub struct qualifier_set {
     /// `GS_CTIME` / `GS_LINKS` (or their `<< GS_SHIFT` follow-link
     /// variants), OR'd with `GS_DESC` for reverse direction.
     pub sorts: Vec<i32>, // c:155 struct globsort.tp[]
+    /// c:74 `struct globsort.exec` — the eval code for each `GS_EXEC`
+    /// (`oe:…:` / `o+…`) sort spec, indexed by the `idx` packed into the
+    /// sort entry's high bits (`GS_EXEC | (idx << 16)`). Evaluated per
+    /// match with `$REPLY` = the match name; the resulting `$REPLY` is
+    /// the sort key (the original name is still emitted).
+    pub sort_exec: Vec<String>, // c:74 globsort.exec
+    /// The faithful glob.c `struct qual` representation of `alternatives`,
+    /// built at parse end (additive — the enum is kept for now). AND-chain
+    /// via `next`, alternatives via `or`, per-node `sense`/`range`/`amc`/
+    /// `units`/`sdata`. The convergence target: `check_qualifiers` walks
+    /// THIS via `insert()` semantics (glob.c:392-419), and the enum is
+    /// eventually deleted.
+    pub quals: QualArena, // c:206 curglobdata.gd_quals
     pub first: Option<i32>,
     pub last: Option<i32>,
     pub colon_mods: Option<String>,
@@ -3433,6 +3315,29 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         scanner(state, &complist, 0);
     }
 
+    // c:1680 — populate GS_EXEC sort keys before sorting. Evaluate each
+    // `oe:…:` / `o+…` code per match with $REPLY = the match name, and
+    // capture the resulting $REPLY as that match's sort string (gmatchcmp
+    // reads gmatch.sort_strings[idx]). Exec sort changes ORDER only — the
+    // original name is still what's emitted.
+    let sort_codes: Vec<String> = state
+        .qualifiers
+        .as_ref()
+        .map(|q| q.sort_exec.clone())
+        .unwrap_or_default();
+    if !sort_codes.is_empty() {
+        for m in state.matches.iter_mut() {
+            let name = glob_emit_path(&m.path);
+            for code in &sort_codes {
+                crate::ported::params::setsparam("REPLY", &name);
+                let _ = crate::ported::exec::execute_script(code);
+                let key =
+                    crate::ported::params::getsparam("REPLY").unwrap_or_else(|| name.clone());
+                m.sort_strings.push(key);
+            }
+        }
+    }
+
     // Sort results
     sort_matches(state);
 
@@ -3531,6 +3436,40 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         })
         .collect();
 
+    // c:421-426 — zsh applies the colon modifier in insert() (during
+    // collection) BEFORE the match sort, so the default (name) sort
+    // orders the MODIFIED names: `*(.:e)` on (apple.z,banana.a,cherry.m)
+    // sorts the extensions → (a,m,z), not name order (z,a,m). The Rust
+    // pipeline modifies at emit (after sort_matches), so re-sort the
+    // modified results here — but ONLY for the default name sort; an
+    // explicit `o`/`O` keeps its stat-keyed order with modified output.
+    let explicit_sort = state
+        .qualifiers
+        .as_ref()
+        .map(|q| !q.sorts.is_empty())
+        .unwrap_or(false);
+    if colon_mods.is_some() && !explicit_sort {
+        results.sort();
+    }
+
+    // c:1744-1756 / insert_glob_match c:1430 — `P:word:` (gf_pre_words)
+    // emits `word` as a separate element BEFORE each match; `^P:word:`
+    // (gf_post_words) emits it AFTER. Applied last, after sort/modifiers.
+    let (pre_words, post_words) = state
+        .qualifiers
+        .as_ref()
+        .map(|q| (q.pre_words.clone(), q.post_words.clone()))
+        .unwrap_or_default();
+    if !pre_words.is_empty() || !post_words.is_empty() {
+        let mut expanded = Vec::with_capacity(results.len() * (1 + pre_words.len() + post_words.len()));
+        for s in results {
+            expanded.extend(pre_words.iter().cloned());
+            expanded.push(s);
+            expanded.extend(post_words.iter().cloned());
+        }
+        results = expanded;
+    }
+
     // c:Src/glob.c:1872-1888 — no-match path. Return Vec::new() so
     // the caller (vm_helper.rs::expand_glob) drives the
     // NULLGLOB / NOMATCH / literal-fallback policy. Previously
@@ -3549,136 +3488,6 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 // in the tree). The sort path lives in `GlobMatch::compare` which
 // dispatches off the canonical `GS_*` tp bits exactly like C's
 // `gmatchcmp()` at glob.c:936.
-
-/// File qualifier test functions (from glob.c qual* functions)
-pub mod qualifiers {
-    use std::os::unix::fs::MetadataExt;
-    /// `is_regular` — see implementation.
-    pub fn is_regular(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    }
-    /// `is_directory` — see implementation.
-    pub fn is_directory(path: &str) -> bool {
-        std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
-    }
-    /// `is_symlink` — see implementation.
-    pub fn is_symlink(path: &str) -> bool {
-        std::fs::symlink_metadata(path)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    }
-    /// `is_fifo` — see implementation.
-    pub fn is_fifo(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFIFO as u32)
-            .unwrap_or(false)
-    }
-    /// `is_socket` — see implementation.
-    pub fn is_socket(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFSOCK as u32)
-            .unwrap_or(false)
-    }
-    /// `is_block_device` — see implementation.
-    pub fn is_block_device(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFBLK as u32)
-            .unwrap_or(false)
-    }
-    /// `is_char_device` — see implementation.
-    pub fn is_char_device(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_IFMT as u32) == libc::S_IFCHR as u32)
-            .unwrap_or(false)
-    }
-    /// `is_setuid` — see implementation.
-    pub fn is_setuid(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_ISUID as u32) != 0)
-            .unwrap_or(false)
-    }
-    /// `is_setgid` — see implementation.
-    pub fn is_setgid(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_ISGID as u32) != 0)
-            .unwrap_or(false)
-    }
-    /// `is_sticky` — see implementation.
-    pub fn is_sticky(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & libc::S_ISVTX as u32) != 0)
-            .unwrap_or(false)
-    }
-    /// `is_readable` — see implementation.
-    pub fn is_readable(path: &str) -> bool {
-        std::fs::metadata(path).is_ok() && std::fs::File::open(path).is_ok()
-    }
-    /// `is_writable` — see implementation.
-    pub fn is_writable(path: &str) -> bool {
-        std::fs::OpenOptions::new().write(true).open(path).is_ok()
-    }
-    /// `is_executable` — see implementation.
-    pub fn is_executable(path: &str) -> bool {
-        std::fs::metadata(path)
-            .map(|m| (m.mode() & 0o111) != 0)
-            .unwrap_or(false)
-    }
-    /// `size_matches` — see implementation.
-    pub fn size_matches(path: &str, size: u64, cmp: std::cmp::Ordering) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.len().cmp(&size) == cmp)
-            .unwrap_or(false)
-    }
-    /// `mtime_matches` — see implementation.
-    pub fn mtime_matches(path: &str, secs: i64, cmp: std::cmp::Ordering) -> bool {
-        std::fs::metadata(path)
-            .and_then(|m| m.modified())
-            .map(|t| {
-                let elapsed = t.elapsed().map(|d| d.as_secs() as i64).unwrap_or(0);
-                elapsed.cmp(&secs) == cmp
-            })
-            .unwrap_or(false)
-    }
-    /// `uid_matches` — see implementation.
-    pub fn uid_matches(path: &str, uid: u32) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.uid() == uid)
-            .unwrap_or(false)
-    }
-    /// `gid_matches` — see implementation.
-    pub fn gid_matches(path: &str, gid: u32) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.gid() == gid)
-            .unwrap_or(false)
-    }
-    /// `nlinks_matches` — see implementation.
-    pub fn nlinks_matches(path: &str, nlinks: u64, cmp: std::cmp::Ordering) -> bool {
-        std::fs::metadata(path)
-            .map(|m| m.nlink().cmp(&nlinks) == cmp)
-            .unwrap_or(false)
-    }
-
-    /// The `*` glob qualifier. Port of `qualiscom` from `Src/glob.c:3818`:
-    /// `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);` — a
-    /// regular file with any execute bit set. zsh does NOT consult $PATH
-    /// here; the execute bit is the whole test.
-    pub fn is_command(path: &str) -> bool {
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-
-        // c:3820 — S_ISREG(buf->st_mode)
-        if !meta.is_file() {
-            return false;
-        }
-
-        // c:3820 — (buf->st_mode & S_IXUGO), S_IXUGO == 0o111
-        meta.mode() & 0o111 != 0
-    }
-}
 
 // ============================================================================
 // Pattern matching with replacement (from glob.c getmatch family)
@@ -3819,7 +3628,13 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
 
     while let Some(c) = chars.next() {
         match c {
-            '^' => negated = !negated,
+            '^' => {
+                // c:1346 — `sense ^= 1`. Keep the running `negated` for
+                // the flag qualifiers (N/D/M/T) that read it, AND emit a
+                // marker so the per-qualifier sense reaches the list walk.
+                negated = !negated;
+                qs.qualifiers.push(qualifier::ToggleSense);
+            }
             '-' => follow = !follow,
             ',' => {
                 // Start new alternative
@@ -3891,32 +3706,40 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 // #105 in docs/BUGS.md.
                 let rest: String = chars.clone().collect();
                 let trimmed: &str = match rest.chars().next() {
-                    Some(d)
-                        if !d.is_alphanumeric()
-                            && !matches!(d, '+' | '-' | '=' | '?' | ',') =>
-                    {
-                        // consume delim and everything until matching
-                        // delim or end of qualifier
-                        for _ in 0..1 {
-                            chars.next();
-                        }
+                    // c:849-861 — bare spec ONLY when the first char is
+                    // `=`/`+`/`-`/`?` or an octal digit; ANY other char is
+                    // the OPENING DELIMITER (`<`→`>`, `[`→`]`, `{`→`}`, else
+                    // itself). Who-clauses (u/g/o/a) are valid only INSIDE a
+                    // delimited spec, so bare `fu+x` lands here with `u` as
+                    // the delimiter — and with no closing `u` it is an
+                    // unterminated (invalid) spec, exactly as in zsh.
+                    Some(d) if !matches!(d, '+' | '-' | '=' | '?' | '0'..='7') => {
+                        chars.next(); // consume opening delim
+                        let close = match d {
+                            '<' => '>',
+                            '[' => ']',
+                            '{' => '}',
+                            other => other,
+                        };
                         let mut body = String::new();
-                        while let Some(&pc) = chars.peek() {
-                            if pc == d {
-                                chars.next();
+                        let mut closed = false;
+                        while let Some(pc) = chars.next() {
+                            if pc == close {
+                                closed = true;
                                 break;
                             }
                             body.push(pc);
-                            chars.next();
                         }
-                        // body is the mode spec; we re-parse via
-                        // qgetmodespec which only needs the raw spec
-                        // string. Push into a stash on the qualifier
-                        // value so we don't re-borrow chars.
-                        let parsed = qgetmodespec(&body);
-                        if let Some((who, op, perm, _r)) = parsed {
-                            let _ = who; // qgetmodespec already
-                                         // collapsed who into perm
+                        if !closed {
+                            // c:884/930 — `zerr("invalid mode specification")`
+                            // on an unterminated spec; the glob then fails.
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::utils::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return qs;
+                        }
+                        if let Some((_who, op, perm, _r)) = qgetmodespec(&body) {
                             let (yes, no) = match op {
                                 '=' => (perm, 0o7777 & !perm),
                                 '+' => (perm, 0),
@@ -4039,7 +3862,47 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                             chars.next();
                             GS_NONE
                         }
-                        _ => GS_NAME,
+                        'e' | '+' => {
+                            // c:1672-1687 — GS_EXEC sort: `glob_exec_string`
+                            // parses the eval code (delimited `e:code:` or
+                            // identifier `+name`); store it indexed and pack
+                            // the index into the sort entry. The code is
+                            // consumed HERE (not left for the main loop), so
+                            // `oe:…:` is a SORT (eval = key, original name
+                            // emitted), not a separate eval qualifier.
+                            let is_plus = sc == '+';
+                            chars.next(); // consume 'e' / '+'
+                            let rest: String = chars.clone().collect();
+                            match glob_exec_string(&rest, is_plus) {
+                                Some((code, consumed)) => {
+                                    for _ in 0..consumed {
+                                        chars.next();
+                                    }
+                                    let idx = qs.sort_exec.len();
+                                    qs.sort_exec.push(code);
+                                    GS_EXEC | ((idx as i32) << 16)
+                                }
+                                None => {
+                                    // glob_exec_string already emitted the
+                                    // diagnostic + set errflag; bail.
+                                    return qs;
+                                }
+                            }
+                        }
+                        _ => {
+                            // c:1689 — `default: zerr("unknown sort
+                            // specifier"); restore_globstate(saved);
+                            // return;`. Was `_ => GS_NAME`, which silently
+                            // accepted invalid keys (and reparsed them as
+                            // separate qualifiers, e.g. `oD` → o + D-dotglob
+                            // instead of erroring like zsh).
+                            crate::ported::utils::zerr("unknown sort specifier");
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::utils::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return qs;
+                        }
                     };
                     let shifted = if follow && (key & GS_NORMAL) != 0 {
                         key << GS_SHIFT
@@ -4065,6 +3928,23 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             'M' => qs.mark_dirs = !negated,
             'T' => qs.list_types = !negated,
             'F' => qs.qualifiers.push(qualifier::NonEmptyDir),
+            // c:1744-1756 — `P:word:` adds `word` to gf_pre_words (or
+            // gf_post_words under `^`), emitted as a separate element
+            // before/after each match. `glob_exec_string` parses the
+            // delimited word.
+            'P' => {
+                let rest: String = chars.clone().collect();
+                if let Some((word, consumed)) = glob_exec_string(&rest, false) {
+                    for _ in 0..consumed {
+                        chars.next();
+                    }
+                    if negated {
+                        qs.post_words.push(word); // c:1750 gf_post_words
+                    } else {
+                        qs.pre_words.push(word); // c:1750 gf_pre_words
+                    }
+                }
+            }
             // Subscript
             '[' => {
                 let (first, last) = parse_subscript(&mut chars);
@@ -4188,6 +4068,128 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
 
     qs.negated = negated;
     qs.follow_links = follow;
+
+    // Build the faithful glob.c `struct qual` arena from `alternatives`
+    // (additive: matching still uses the enum). Each alternative is an
+    // AND-chain (`next` links); alternatives chain via `or`. ToggleSense
+    // markers toggle a running per-node `sense` (c:1346). Each variant
+    // maps to its leaf TestMatchFunc + data, mirroring check_single_
+    // qualifier's dispatch (Src/glob.c:1343-1620 case → func/data).
+    {
+        let op_range = |o: char| -> i32 {
+            match o {
+                '<' => -1,
+                '>' => 1,
+                _ => 0,
+            }
+        };
+        let mut arena = QualArena::new();
+        let mut prev_alt_head: Option<usize> = None;
+        for alt in &qs.alternatives {
+            let mut sense = 0i32;
+            let mut chain_tail: Option<usize> = None;
+            let mut chain_head: Option<usize> = None;
+            for q in alt {
+                // (func, data, range, amc, units, sdata) — None = no node.
+                let fields: Option<(TestMatchFunc, i64, i32, i32, i32, Option<String>)> = match q {
+                    qualifier::ToggleSense => {
+                        sense ^= 1; // c:1346
+                        None
+                    }
+                    qualifier::IsRegular => Some((qualisreg, 0, 0, 0, 0, None)),
+                    qualifier::IsDirectory => Some((qualisdir, 0, 0, 0, 0, None)),
+                    qualifier::IsSymlink => Some((qualislnk, 0, 0, 0, 0, None)),
+                    qualifier::IsSocket => Some((qualissock, 0, 0, 0, 0, None)),
+                    qualifier::IsFifo => Some((qualisfifo, 0, 0, 0, 0, None)),
+                    qualifier::IsBlockDev => Some((qualisblk, 0, 0, 0, 0, None)),
+                    qualifier::IsCharDev => Some((qualischr, 0, 0, 0, 0, None)),
+                    qualifier::IsDevice => Some((qualisdev, 0, 0, 0, 0, None)),
+                    qualifier::IsExecutable => Some((qualiscom, 0, 0, 0, 0, None)),
+                    qualifier::Readable => Some((qualflags, 0o400, 0, 0, 0, None)),
+                    qualifier::Writable => Some((qualflags, 0o200, 0, 0, 0, None)),
+                    qualifier::Executable => Some((qualflags, 0o100, 0, 0, 0, None)),
+                    qualifier::WorldReadable => Some((qualflags, 0o004, 0, 0, 0, None)),
+                    qualifier::WorldWritable => Some((qualflags, 0o002, 0, 0, 0, None)),
+                    qualifier::WorldExecutable => Some((qualflags, 0o001, 0, 0, 0, None)),
+                    qualifier::GroupReadable => Some((qualflags, 0o040, 0, 0, 0, None)),
+                    qualifier::GroupWritable => Some((qualflags, 0o020, 0, 0, 0, None)),
+                    qualifier::GroupExecutable => Some((qualflags, 0o010, 0, 0, 0, None)),
+                    qualifier::Setuid => Some((qualflags, 0o4000, 0, 0, 0, None)),
+                    qualifier::Setgid => Some((qualflags, 0o2000, 0, 0, 0, None)),
+                    qualifier::Sticky => Some((qualflags, 0o1000, 0, 0, 0, None)),
+                    qualifier::OwnedByEuid => {
+                        Some((qualuid, unsafe { libc::geteuid() } as i64, 0, 0, 0, None))
+                    }
+                    qualifier::OwnedByEgid => {
+                        Some((qualgid, unsafe { libc::getegid() } as i64, 0, 0, 0, None))
+                    }
+                    qualifier::OwnedByUid(u) => Some((qualuid, *u as i64, 0, 0, 0, None)),
+                    qualifier::OwnedByGid(g) => Some((qualgid, *g as i64, 0, 0, 0, None)),
+                    qualifier::Size { value, unit, op } => {
+                        Some((qualsize, *value as i64, op_range(*op), -1, *unit, None))
+                    }
+                    qualifier::Links { value, op } => {
+                        Some((qualnlink, *value as i64, op_range(*op), 0, 0, None))
+                    }
+                    qualifier::Atime { value, unit, op } => {
+                        Some((qualtime, *value, op_range(*op), 0, *unit, None))
+                    }
+                    qualifier::Mtime { value, unit, op } => {
+                        Some((qualtime, *value, op_range(*op), 1, *unit, None))
+                    }
+                    qualifier::Ctime { value, unit, op } => {
+                        Some((qualtime, *value, op_range(*op), 2, *unit, None))
+                    }
+                    qualifier::Mode { yes, no } => Some((
+                        qualmodeflags,
+                        (*yes as i64) | ((*no as i64) << 12),
+                        0,
+                        0,
+                        0,
+                        None,
+                    )),
+                    qualifier::Device(d) => Some((qualdev, *d as i64, 0, 0, 0, None)),
+                    qualifier::NonEmptyDir => Some((qualnonemptydir, 0, 0, 0, 0, None)),
+                    qualifier::Eval(code) => {
+                        Some((qualsheval, 0, 0, 0, 0, Some(code.clone())))
+                    }
+                };
+                let Some((func, data, range, amc, units, sdata)) = fields else {
+                    continue;
+                };
+                let idx = arena.alloc(); // c:1768 hcalloc
+                {
+                    let node = &mut arena.nodes[idx];
+                    node.func = Some(func); // c:1774
+                    node.data = data; // c:1776
+                    node.sense = sense; // c:1775
+                    node.range = range; // c:1778
+                    node.units = units; // c:1779
+                    node.amc = amc; // c:1780
+                    node.sdata = sdata; // c:1777
+                }
+                if let Some(t) = chain_tail {
+                    arena.nodes[t].next = Some(idx); // c:1770
+                }
+                chain_tail = Some(idx);
+                if chain_head.is_none() {
+                    chain_head = Some(idx);
+                }
+            }
+            // Link this alternative's head into the or-chain (c:1324).
+            if let Some(h) = chain_head {
+                if let Some(p) = prev_alt_head {
+                    arena.nodes[p].or = Some(h);
+                }
+                prev_alt_head = Some(h);
+                if arena.head.is_none() {
+                    arena.head = Some(h);
+                }
+            }
+        }
+        qs.quals = arena;
+    }
+
     qs
 }
 
@@ -4528,6 +4530,110 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
 ///   - the accumulated path would exceed PATH_MAX and `lchdir` fails (c:539-541)
 ///   - the discovered match path likewise exceeds PATH_MAX and `lchdir` fails (c:608-610)
 ///   - `restoredir` fails at the end of the walk (c:696-697)
+/// Port of `static void insert(char *s, int checked)` from `Src/glob.c:346`.
+/// Records one matched path into the glob result list: runs the qualifier
+/// walk (`check_qualifiers` = the c:381-419 `struct qual` walk over the
+/// arena) and, if accepted, builds the `gmatch` entry from the file's
+/// stat and appends it (c:421-490) — honoring any `$reply`/`$REPLY`
+/// replacement (INSERTS, c:428) set by an `(e:…:)` eval qualifier.
+/// Called by the scanner per matched name, mirroring glob.c:576/668.
+pub fn insert(state: &mut globdata, s: &Path, checked: i32) {
+    use std::os::unix::fs::MetadataExt;
+    let _ = checked; // c:347 already-stat'd hint; check_qualifiers re-stats.
+    // c:381-419 — qualifier walk; reject the file if it fails.
+    if !check_qualifiers(state, s) {
+        return;
+    }
+    // c:421-490 — build + append the match entry. Symlink targets get
+    // their own stat for the GS_LINKED (follow-link) sort variants.
+    let Ok(meta) = fs::symlink_metadata(s) else {
+        return;
+    };
+    let name = s
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let (tsize, tatime, tmtime, tctime, tlinks, tansec, tmnsec, tcnsec) =
+        if meta.file_type().is_symlink() {
+            if let Ok(tm) = fs::metadata(s) {
+                (
+                    tm.size(),
+                    tm.atime(),
+                    tm.mtime(),
+                    tm.ctime(),
+                    tm.nlink(),
+                    tm.atime_nsec(),
+                    tm.mtime_nsec(),
+                    tm.ctime_nsec(),
+                )
+            } else {
+                (
+                    meta.size(),
+                    meta.atime(),
+                    meta.mtime(),
+                    meta.ctime(),
+                    meta.nlink(),
+                    meta.atime_nsec(),
+                    meta.mtime_nsec(),
+                    meta.ctime_nsec(),
+                )
+            }
+        } else {
+            (
+                meta.size(),
+                meta.atime(),
+                meta.mtime(),
+                meta.ctime(),
+                meta.nlink(),
+                meta.atime_nsec(),
+                meta.mtime_nsec(),
+                meta.ctime_nsec(),
+            )
+        };
+    // c:428 — `while (!inserts || (news = *inserts++))`: an (e:…:) eval
+    // may have set $reply/$REPLY (INSERTS), replacing this match with
+    // zero-or-more names; otherwise emit the original name once. The
+    // synthetic path makes glob_emit_path yield the replacement string;
+    // the stat fields stay those of the matched file (C keeps
+    // matchptr->size etc. from buf).
+    let emit: Vec<(String, PathBuf)> = match INSERTS.lock().unwrap().take() {
+        Some(list) => list
+            .into_iter()
+            .map(|n| (n.clone(), PathBuf::from(&n)))
+            .collect(),
+        None => vec![(name.clone(), s.to_path_buf())],
+    };
+    for (nm, pth) in emit {
+        state.matches.push(gmatch {
+            name: nm,
+            path: pth,
+            size: meta.size(),
+            atime: meta.atime(),
+            mtime: meta.mtime(),
+            ctime: meta.ctime(),
+            links: meta.nlink(),
+            mode: meta.mode(),
+            uid: meta.uid(),
+            gid: meta.gid(),
+            dev: meta.dev(),
+            ino: meta.ino(),
+            target_size: tsize,
+            target_atime: tatime,
+            target_mtime: tmtime,
+            target_ctime: tctime,
+            target_links: tlinks,
+            ansec: meta.atime_nsec(),
+            mnsec: meta.mtime_nsec(),
+            cnsec: meta.ctime_nsec(),
+            target_ansec: tansec,
+            target_mnsec: tmnsec,
+            target_cnsec: tcnsec,
+            sort_strings: Vec::new(),
+        });
+        state.matchct += 1; // c:479 matchptr++
+    }
+}
+
 fn scan_pattern(
     state: &mut globdata,
     base: &str,
@@ -4569,82 +4675,10 @@ fn scan_pattern(
             let path = entry.path();
 
             if rest.is_empty() {
-                // c:666-672 — final filename component, insert via the
-                // qualifier-aware match-list push. Symlink targets get
-                // their own stat for the GS_LINKED (follow-link) sort
-                // variants.
-                if check_qualifiers(state, &path) {
-                    if let Ok(meta) = fs::symlink_metadata(&path) {
-                        let name = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        let (tsize, tatime, tmtime, tctime, tlinks, tansec, tmnsec, tcnsec) =
-                            if meta.file_type().is_symlink() {
-                                if let Ok(tm) = fs::metadata(&path) {
-                                    (
-                                        tm.size(),
-                                        tm.atime(),
-                                        tm.mtime(),
-                                        tm.ctime(),
-                                        tm.nlink(),
-                                        tm.atime_nsec(),
-                                        tm.mtime_nsec(),
-                                        tm.ctime_nsec(),
-                                    )
-                                } else {
-                                    (
-                                        meta.size(),
-                                        meta.atime(),
-                                        meta.mtime(),
-                                        meta.ctime(),
-                                        meta.nlink(),
-                                        meta.atime_nsec(),
-                                        meta.mtime_nsec(),
-                                        meta.ctime_nsec(),
-                                    )
-                                }
-                            } else {
-                                (
-                                    meta.size(),
-                                    meta.atime(),
-                                    meta.mtime(),
-                                    meta.ctime(),
-                                    meta.nlink(),
-                                    meta.atime_nsec(),
-                                    meta.mtime_nsec(),
-                                    meta.ctime_nsec(),
-                                )
-                            };
-                        state.matches.push(gmatch {
-                            name,
-                            path: path.to_path_buf(),
-                            size: meta.size(),
-                            atime: meta.atime(),
-                            mtime: meta.mtime(),
-                            ctime: meta.ctime(),
-                            links: meta.nlink(),
-                            mode: meta.mode(),
-                            uid: meta.uid(),
-                            gid: meta.gid(),
-                            dev: meta.dev(),
-                            ino: meta.ino(),
-                            target_size: tsize,
-                            target_atime: tatime,
-                            target_mtime: tmtime,
-                            target_ctime: tctime,
-                            target_links: tlinks,
-                            ansec: meta.atime_nsec(),
-                            mnsec: meta.mtime_nsec(),
-                            cnsec: meta.ctime_nsec(),
-                            target_ansec: tansec,
-                            target_mnsec: tmnsec,
-                            target_cnsec: tcnsec,
-                            sort_strings: Vec::new(),
-                        });
-                        state.matchct += 1; // c:gd_matchct++
-                    }
-                }
+                // c:666-668 — final filename component: hand the match to
+                // insert(), which runs the qualifier walk and appends the
+                // entry (replacing the former inline check+push).
+                insert(state, &path, 0);
             } else {
                 // c:599-613 — discovered name lengthens path; if the
                 // accumulated path > PATH_MAX, descend into the cwd
@@ -4757,210 +4791,92 @@ fn scan_recursive(
 /// Drive the OR-of-AND qualifier filter against `path`. **RUST-ONLY**
 /// — C glob.c does qualifier eval inline inside `insert()` (c:381+).
 fn check_qualifiers(state: &globdata, path: &Path) -> bool {
-    // RUST-ONLY
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::atomic::Ordering;
+    // c:353 — `inserts = NULL;` at insert() entry: clear any reply/REPLY
+    // replacement left by a previous file's (e:…:) eval before this walk.
+    *INSERTS.lock().unwrap() = None;
     let qs = match &state.qualifiers {
         Some(q) => q,
         None => return true,
     };
-
-    if qs.alternatives.is_empty() {
+    // No test qualifiers (only flags/sort/words) → no filtering.
+    let arena = &qs.quals;
+    if arena.head.is_none() {
         return true;
     }
 
     let meta = match if qs.follow_links {
-        fs::metadata(path)
+        // c:399-402 — `if (!S_ISLNK(buf.st_mode) || statfullpath(s,&buf2,0))
+        //                  memcpy(&buf2, &buf, sizeof(buf));`
+        // Follow the link, but fall back to the lstat buffer when the
+        // target stat fails (a broken symlink) so `*(-@)` / `*(-^/)`
+        // still see the dangling link rather than dropping it.
+        fs::metadata(path).or_else(|_| fs::symlink_metadata(path))
     } else {
         fs::symlink_metadata(path)
     } {
         Ok(m) => m,
         Err(_) => return false,
     };
+    // Bridge meta → libc::stat for the leaf test fns (no extra syscall).
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    st.st_mode = meta.mode() as _;
+    st.st_uid = meta.uid() as _;
+    st.st_gid = meta.gid() as _;
+    st.st_dev = meta.dev() as _;
+    st.st_nlink = meta.nlink() as _;
+    st.st_size = meta.size() as _;
+    st.st_atime = meta.atime() as _;
+    st.st_mtime = meta.mtime() as _;
+    st.st_ctime = meta.ctime() as _;
+    // qualsheval / qualnonemptydir need the name (REPLY / opendir).
+    let name = glob_emit_path(path);
 
-    // Check each alternative (OR)
-    for alt in &qs.alternatives {
-        if check_qualifier_list(alt, path, &meta) {
-            return !qs.negated;
-        }
-    }
-
-    qs.negated
-}
-
-/// AND-chain of qualifiers — all must match. **RUST-ONLY**.
-fn check_qualifier_list(quals: &[qualifier], path: &Path, meta: &Metadata) -> bool {
-    // RUST-ONLY
-    for q in quals {
-        if !check_single_qualifier(q, path, meta) {
-            return false;
-        }
-    }
-    true
-}
-
-/// One qualifier check against (path, meta). **RUST-ONLY** — mirrors
-/// the inline qualifier dispatch C does in `insert()` (glob.c:381+).
-fn check_single_qualifier(qual: &qualifier, path: &Path, meta: &Metadata) -> bool {
-    // RUST-ONLY
-    let mode = meta.mode();
-    let ft = meta.file_type();
-
-    match qual {
-        qualifier::IsRegular => ft.is_file(),
-        qualifier::IsDirectory => ft.is_dir(),
-        qualifier::IsSymlink => ft.is_symlink(),
-        qualifier::IsSocket => mode & libc::S_IFMT as u32 == libc::S_IFSOCK as u32,
-        qualifier::IsFifo => mode & libc::S_IFMT as u32 == libc::S_IFIFO as u32,
-        qualifier::IsBlockDev => mode & libc::S_IFMT as u32 == libc::S_IFBLK as u32,
-        qualifier::IsCharDev => mode & libc::S_IFMT as u32 == libc::S_IFCHR as u32,
-        qualifier::IsDevice => {
-            let fmt = mode & libc::S_IFMT as u32;
-            fmt == libc::S_IFBLK as u32 || fmt == libc::S_IFCHR as u32
-        }
-        qualifier::IsExecutable => ft.is_file() && (mode & 0o111 != 0),
-        qualifier::Readable => mode & 0o400 != 0,
-        qualifier::Writable => mode & 0o200 != 0,
-        qualifier::Executable => mode & 0o100 != 0,
-        qualifier::WorldReadable => mode & 0o004 != 0,
-        qualifier::WorldWritable => mode & 0o002 != 0,
-        qualifier::WorldExecutable => mode & 0o001 != 0,
-        qualifier::GroupReadable => mode & 0o040 != 0,
-        qualifier::GroupWritable => mode & 0o020 != 0,
-        qualifier::GroupExecutable => mode & 0o010 != 0,
-        qualifier::Setuid => mode & libc::S_ISUID as u32 != 0,
-        qualifier::Setgid => mode & libc::S_ISGID as u32 != 0,
-        qualifier::Sticky => mode & libc::S_ISVTX as u32 != 0,
-        qualifier::OwnedByEuid => meta.uid() == unsafe { libc::geteuid() },
-        qualifier::OwnedByEgid => meta.gid() == unsafe { libc::getegid() },
-        qualifier::OwnedByUid(uid) => meta.uid() == *uid,
-        qualifier::OwnedByGid(gid) => meta.gid() == *gid,
-        qualifier::Size { value, unit, op } => {
-            // Inline cmp + scale — mirrors glob.c qualsize at c:1054.
-            let cmp = |a: u64, b: u64| match *op {
-                '<' => a < b,
-                '>' => a > b,
-                _ => a == b,
-            };
-            let size = meta.size();
-            let scaled = match *unit {
-                u if u == TT_BYTES => size,
-                u if u == TT_POSIX_BLOCKS => size.div_ceil(512),
-                u if u == TT_KILOBYTES => size.div_ceil(1024),
-                u if u == TT_MEGABYTES => size.div_ceil(1048576),
-                u if u == TT_GIGABYTES => size.div_ceil(1073741824),
-                u if u == TT_TERABYTES => size.div_ceil(1099511627776),
-                _ => size,
-            };
-            cmp(scaled, *value)
-        }
-        qualifier::Links { value, op } => {
-            let cmp = |a: u64, b: u64| match *op {
-                '<' => a < b,
-                '>' => a > b,
-                _ => a == b,
-            };
-            cmp(meta.nlink(), *value)
-        }
-        qualifier::Atime { value, unit, op } => {
-            // Inline time-unit scaling — Src/glob.c:872 qualtime.
-            let cmp = |a: i64, b: i64| match *op {
-                '<' => a < b,
-                '>' => a > b,
-                _ => a == b,
-            };
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
-            let diff = now - meta.atime();
-            let scaled = match *unit {
-                u if u == TT_SECONDS => diff,
-                u if u == TT_MINS => diff / 60,
-                u if u == TT_HOURS => diff / 3600,
-                u if u == TT_DAYS => diff / 86400,
-                u if u == TT_WEEKS => diff / 604800,
-                u if u == TT_MONTHS => diff / 2592000,
-                _ => diff,
-            };
-            cmp(scaled, *value)
-        }
-        qualifier::Mtime { value, unit, op } => {
-            let cmp = |a: i64, b: i64| match *op {
-                '<' => a < b,
-                '>' => a > b,
-                _ => a == b,
-            };
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
-            let diff = now - meta.mtime();
-            let scaled = match *unit {
-                u if u == TT_SECONDS => diff,
-                u if u == TT_MINS => diff / 60,
-                u if u == TT_HOURS => diff / 3600,
-                u if u == TT_DAYS => diff / 86400,
-                u if u == TT_WEEKS => diff / 604800,
-                u if u == TT_MONTHS => diff / 2592000,
-                _ => diff,
-            };
-            cmp(scaled, *value)
-        }
-        qualifier::Ctime { value, unit, op } => {
-            let cmp = |a: i64, b: i64| match *op {
-                '<' => a < b,
-                '>' => a > b,
-                _ => a == b,
-            };
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
-            let diff = now - meta.ctime();
-            let scaled = match *unit {
-                u if u == TT_SECONDS => diff,
-                u if u == TT_MINS => diff / 60,
-                u if u == TT_HOURS => diff / 3600,
-                u if u == TT_DAYS => diff / 86400,
-                u if u == TT_WEEKS => diff / 604800,
-                u if u == TT_MONTHS => diff / 2592000,
-                _ => diff,
-            };
-            cmp(scaled, *value)
-        }
-        qualifier::Mode { yes, no } => {
-            let m = mode & 0o7777;
-            (m & yes) == *yes && (m & no) == 0
-        }
-        qualifier::Device(dev) => meta.dev() == *dev,
-        qualifier::NonEmptyDir => {
-            if !ft.is_dir() {
-                return false;
+    // c:387-419 — insert()'s qual-walk over the `struct qual` arena: AND
+    // via `next`, OR (alternatives) via `or`, per-node `sense`. `qo` is
+    // the current alternative head; a rejected node advances to `qo->or`
+    // (next alternative) or, if none, rejects the file. Falling off the
+    // `next` chain (or hitting a func-less terminator) accepts.
+    let mut qo = arena.head;
+    let mut qn = qo;
+    loop {
+        let Some(qn_i) = qn else { return true }; // c:419 — chain matched
+        let (func, data, sense, range, amc, units, sdata, next) = {
+            let n = &arena.nodes[qn_i];
+            (
+                n.func,
+                n.data,
+                n.sense,
+                n.range,
+                n.amc,
+                n.units,
+                n.sdata.clone(),
+                n.next,
+            )
+        };
+        let func = match func {
+            Some(f) => f,
+            None => return true, // c:392 — `qn && qn->func` terminator
+        };
+        // c:393-395 — set the scratch the range/time/size leaf fns read.
+        g_range.store(range, Ordering::SeqCst);
+        g_amc.store(amc, Ordering::SeqCst);
+        g_units.store(units, Ordering::SeqCst);
+        let r = func(&name, &st, data, sdata.as_deref().unwrap_or(""));
+        // c:407-409 — reject if `(!(func()) ^ sense) & 1`.
+        let reject = ((if r == 0 { 1 } else { 0 }) ^ (sense & 1)) & 1 == 1;
+        if reject {
+            // c:411-415 — try the next alternative, else reject the file.
+            match arena.nodes[qo.unwrap()].or {
+                Some(or_i) => {
+                    qo = Some(or_i);
+                    qn = Some(or_i);
+                }
+                None => return false,
             }
-            if let Ok(mut entries) = fs::read_dir(path) {
-                entries.any(|e| {
-                    e.ok()
-                        .map(|e| {
-                            let name = e.file_name();
-                            name != "." && name != ".."
-                        })
-                        .unwrap_or(false)
-                })
-            } else {
-                false
-            }
-        }
-        qualifier::Eval(code) => {
-            // c:Src/glob.c:1599-1620 — `(e:CODE:)` shell-eval
-            // qualifier; per-file evaluation is qualsheval
-            // (c:3907-3943): unsetparam("reply"), setsparam("REPLY",
-            // name), execode, errflag/lastval save+restore.
-            //
-            // The name C hands qualsheval is scanner()'s pathbuf —
-            // relative globs never carry a "./" prefix ($REPLY is
-            // `keep`, not `./keep`, for `*(e:'[[ $REPLY = keep ]]':)`).
-            // entry.path() here DOES prefix "./", so normalize through
-            // the same glob_emit_path used when the match is emitted.
-            qualsheval(&glob_emit_path(path), code)
+        } else {
+            qn = next; // c:417
         }
     }
 }
@@ -5385,14 +5301,6 @@ fn glob_emit_path(path: &Path) -> String {
     }
 }
 
-/// Check if path is a directory (from glob.c)
-/// Check whether a glob match is a directory.
-/// Port of the `S_ISDIR(stat.st_mode)` test scattered through
-/// Src/glob.c.
-pub fn is_directory(path: &str) -> bool {
-    fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
-}
-
 /// Check if path is a symlink
 /// Check whether a glob match is a symlink.
 /// Port of the `S_ISLNK(lstat.st_mode)` test in Src/glob.c.
@@ -5400,18 +5308,6 @@ pub fn is_symlink(path: &str) -> bool {
     fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
-}
-
-/// Apply mode spec to existing mode. Port of the
-/// `spec_op`/`spec_who`/`spec_perm` inline application at the end of
-/// C's `qgetmodespec` (`Src/glob.c:919-922`).
-pub fn apply_modespec(mode: u32, who: u32, op: char, perm: u32) -> u32 {
-    match op {
-        '+' => mode | perm,
-        '-' => mode & !perm,
-        '=' => (mode & !who) | perm,
-        _ => mode,
-    }
 }
 
 // ===========================================================
@@ -6248,7 +6144,8 @@ mod tests {
         LASTVAL.store(42, Ordering::Relaxed);
         // Even if the expr mutates these via the executor, c:3924-3925
         // restore them after.
-        let _ = qualsheval("/tmp/file", ":"); // no-op expr
+        let st0: libc::stat = unsafe { std::mem::zeroed() };
+        let _ = qualsheval("/tmp/file", &st0, 0, ":"); // no-op expr
                                               // c:3924 — errflag restored.
         assert_eq!(
             errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR,
@@ -7003,6 +6900,40 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let qs = parse_qualifier_string(".");
         assert!(matches!(first_qual(&qs), qualifier::IsRegular));
+    }
+
+    /// The `struct qual` arena is built from the parse alongside the enum:
+    /// AND via `next`, alternatives via `or`, per-node `sense` from `^`.
+    #[test]
+    fn parse_qualifier_string_builds_qual_arena() {
+        let _g = crate::test_util::global_state_lock();
+        // single qualifier → one node, sense 0, head set, func present.
+        let q = parse_qualifier_string(".");
+        assert_eq!(q.quals.nodes.len(), 1);
+        assert_eq!(q.quals.head, Some(0));
+        assert_eq!(q.quals.nodes[0].sense, 0);
+        assert!(q.quals.nodes[0].func.is_some());
+        assert_eq!(q.quals.nodes[0].next, None);
+
+        // leading `^` → per-node sense flipped (c:1346).
+        let q = parse_qualifier_string("^.");
+        assert_eq!(q.quals.nodes.len(), 1);
+        assert_eq!(q.quals.nodes[0].sense, 1);
+
+        // `/^@` → AND-chain of 2: dir(sense 0) -next-> symlink(sense 1).
+        let q = parse_qualifier_string("/^@");
+        assert_eq!(q.quals.nodes.len(), 2);
+        assert_eq!(q.quals.nodes[0].sense, 0);
+        assert_eq!(q.quals.nodes[0].next, Some(1));
+        assert_eq!(q.quals.nodes[1].sense, 1);
+        assert_eq!(q.quals.nodes[1].next, None);
+
+        // `.,/` → two alternatives: node0 -or-> node1, neither chained.
+        let q = parse_qualifier_string(".,/");
+        assert_eq!(q.quals.nodes.len(), 2);
+        assert_eq!(q.quals.nodes[0].or, Some(1));
+        assert_eq!(q.quals.nodes[0].next, None);
+        assert_eq!(q.quals.head, Some(0));
     }
 
     /// `@` → IsSymlink.
