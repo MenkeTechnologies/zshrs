@@ -5332,27 +5332,6 @@ fn glob_emit_path(path: &Path) -> String {
     }
 }
 
-/// Glob with default options
-// np points to a node in the list which will be expanded                  // c:1209
-// into a series of nodes.                                                  // c:1210
-/// Top-level glob entry point.
-/// Port of `zglob(LinkList list, LinkNode np, int nountok)` from Src/glob.c:1214. Reads all option flags
-/// (nullglob / extendedglob / dotglob / caseglob / globstarshort /
-/// bareglobqual / braceccl / markdirs / numericglobsort / …)
-/// directly from the canonical global option store via
-/// `opt_state_get` — same path C uses via
-/// `isset(NULL_GLOB)` etc. on the global `opts[]` array.
-pub fn glob(pattern: &str) -> Vec<String> {
-    // c:1214
-    // Race fix: snapshot every glob-relevant option into TLS for the
-    // duration of this call so concurrent setopt/unsetopt on other
-    // threads can't corrupt our qualifier parse / nullglob fallback /
-    // dotglob filter etc. mid-walk. See `enter_glob_scope` doc.
-    let _glob_scope = enter_glob_scope();
-    let mut state = globdata::new();
-    globdata_glob(&mut state, pattern)
-}
-
 /// Check if path is a directory (from glob.c)
 /// Check whether a glob match is a directory.
 /// Port of the `S_ISDIR(stat.st_mode)` test scattered through

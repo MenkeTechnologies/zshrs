@@ -2368,14 +2368,21 @@ fn par_funcdef() -> Option<ZshCommand> {
                     )
                 });
                 if has_glob_chars && crate::ported::zsh_h::isset(crate::ported::zsh_h::NOMATCH) {
-                    let untok = crate::ported::lex::untokenize(s);
-                    let glob_result = crate::ported::glob::glob(&untok);
-                    if glob_result.is_empty() {
-                        crate::ported::utils::zerr(&format!("no matches found: {}", untok));
-                        crate::ported::utils::errflag.fetch_or(
-                            crate::ported::utils::ERRFLAG_ERROR,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
+                    // Probe the funcname pattern through the canonical
+                    // glob entry — C `zglob(args, firstnode(args), 0)`
+                    // (c:3318). zglob runs the tokenized word and, under
+                    // NOMATCH with no match (nullglob off), emits
+                    // "no matches found: PAT" + errflag itself
+                    // (c:1876-1880). Tokenize first (the funcname word
+                    // still holds literal `*`/`?`; haswilds keys on the
+                    // Star/Quest tokens) and propagate the abort.
+                    let mut probe = vec![s.to_string()];
+                    crate::ported::glob::tokenize(&mut probe[0]);
+                    crate::ported::glob::zglob(&mut probe, 0, 0);
+                    if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                        & crate::ported::utils::ERRFLAG_ERROR
+                        != 0
+                    {
                         return None;
                     }
                 }
