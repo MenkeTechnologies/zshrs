@@ -4076,36 +4076,67 @@ pub fn histsplitwords(line: &str, uselex: bool) -> Vec<(usize, usize)> {
     words
 }
 
-/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)` from Src/hist.c:3845.
-pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) {
+/// Port of `int pushhiststack(char *hf, zlong hs, zlong shs, int level)`
+/// from Src/hist.c:3845.
+///
+/// Saves the current history state (ring, sizes, counters, HISTFILE,
+/// lasthist) onto the save stack, then switches to a fresh empty
+/// history optionally backed by the new HISTFILE `hf`. Mirrored by
+/// `pophiststack`, which restores the saved state. Returns the new
+/// stack depth (`histsave_stack_pos`).
+///
+/// Deferred, matching `pophiststack`'s convention in this layer: the
+/// ZLE `curline_in_ring` unlink/relink (c:3856/3892) and the
+/// `zleentry(ZLE_CMD_SET_HIST_LINE)` callback (c:3886); `inithist`'s C
+/// role (`createhisttable`, c:3890) is a no-op in the Vec-based ring
+/// model. The global `lasthist` is captured into the snapshot but not
+/// zeroed here — zeroing pairs with a `lasthist` restore on pop, which
+/// is a separate pending fix.
+pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     // c:3845
-    let snap = histsave {
-        // c:3870
-        lasthist: histfile_stats {
-            text: None,
-            stim: 0,
-            mtim: 0,
-            fpos: 0,
-            fsiz: 0,
-            interrupted: 0,
-            next_write_ev: 0,
-        },
-        histfile: hf.map(|s| s.to_string()), // c:3872 h->histfile = histfile
-        hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3874 h->hist_ring = hist_ring
-        curhist: curhist.load(SeqCst),                              // c:3875 h->curhist = curhist
-        histlinect: histlinect.load(SeqCst),                        // c:3876
-        histsiz: histsiz.load(SeqCst),                              // c:3877
-        savehistsiz: savehistsiz.load(SeqCst),                      // c:3878
-        locallevel: level,                                          // c:3879
+    // c:3862-3868 — save the OLD HISTFILE so pop can restore it. With
+    // `hf` set, record the current HISTFILE ("" when empty/unset); with
+    // `hf` None, record None (C `h->histfile = NULL`).
+    let old_histfile: Option<String> = if hf.is_some() {
+        match crate::ported::params::getsparam("HISTFILE") {
+            Some(v) if !v.is_empty() => Some(v), // c:3863 ztrdup(HISTFILE)
+            _ => Some(String::new()),            // c:3866 h->histfile = ""
+        }
+    } else {
+        None // c:3868 h->histfile = NULL
     };
-    histsave_stack.lock().unwrap().push(snap); // c:3901
+    let snap = histsave {
+        lasthist: lasthist.lock().unwrap().clone(), // c:3861 h->lasthist = lasthist
+        histfile: old_histfile,                     // c:3862-3868 OLD HISTFILE
+        hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3870 h->hist_ring = hist_ring
+        curhist: curhist.load(SeqCst),              // c:3871 h->curhist = curhist
+        histlinect: histlinect.load(SeqCst),        // c:3872
+        histsiz: histsiz.load(SeqCst),              // c:3873
+        savehistsiz: savehistsiz.load(SeqCst),      // c:3874
+        locallevel: level,                          // c:3875
+    };
+    histsave_stack.lock().unwrap().push(snap); // c:3859 histsave_stack[pos++] = *h
     histsave_stack_size.fetch_add(1, SeqCst);
     histsave_stack_pos.fetch_add(1, SeqCst);
-    histsiz.store(hs, SeqCst); // c:3901
-    savehistsiz.store(shs, SeqCst); // c:3901
-    curhist.store(0, SeqCst); // c:3901 curhist = histlinect = 0
+    // c:3878-3883 — switch HISTFILE to the new file (or unset it).
+    if let Some(h) = hf {
+        if !h.is_empty() {
+            crate::ported::params::setsparam("HISTFILE", h); // c:3880 setsparam(HISTFILE, hf)
+        } else {
+            // c:3882 unsetparam("HISTFILE")
+            let _ = crate::ported::params::paramtab()
+                .write()
+                .unwrap()
+                .remove("HISTFILE");
+        }
+    }
+    // c:3884 — `hist_ring = NULL`: already emptied by the `mem::take` above.
+    curhist.store(0, SeqCst); // c:3885 curhist = histlinect = 0
     histlinect.store(0, SeqCst);
-    let _ = hf;
+    histsiz.store(hs, SeqCst); // c:3888 histsiz = hs
+    savehistsiz.store(shs, SeqCst); // c:3889 savehistsiz = shs
+    // c:3895 — return histsave_stack_pos.
+    histsave_stack_pos.load(SeqCst)
 }
 
 /// Port of `int pophiststack(void)` from `Src/hist.c:3901`.
@@ -4338,6 +4369,7 @@ pub static exlast: AtomicI32 = AtomicI32::new(0); // c:70
 
 /// Port of `static struct histfile_stats lasthist` from Src/hist.c:220-226.
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub struct histfile_stats {
     // c:220
     pub text: Option<String>, // c:221
