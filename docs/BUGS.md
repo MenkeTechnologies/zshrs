@@ -19,6 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
+## #636 — ported `spacesplit`/`findsep` ignore `$IFS` (only split on hardcoded whitespace)
+
+**Status:** `port-bug` (fakery finding) — ported helpers are unfaithful; deferred (dedicated port)
+
+`spacesplit` (utils.rs:4487) and `findsep` (utils.rs ~4716) split only on
+hardcoded `[' ','\t','\n']` and ignore the actual `$IFS`. The C originals
+(Src/utils.c:3711 / :3784) split on the `ISEP`/`IWSEP` char classes: IFS-
+whitespace runs collapse, but each IFS-non-whitespace char delimits a
+field and KEEPS empty fields. Observable:
+
+```
+x="a,,b"; IFS=,; set -- ${=x}; echo $#    # zsh: 3 (a / "" / b)   zshrs: 2 (collapsed)
+x="a,b,"; IFS=,; set -- ${=x}; echo $#    # zsh: 3                zshrs: 2 (trailing empty dropped)
+x=":a:b:"; IFS=:; set -- ${=x}; echo $#   # zsh: 4                zshrs: 2
+```
+
+Default-IFS (whitespace) behavior is correct, so this only surfaces with
+a customized non-whitespace IFS under force-split (`${=name}` /
+SH_WORD_SPLIT) and `$(…)` output splitting (readoutput, exec.rs:579/3392).
+
+The inline force-split at subst.rs ~12466 has the same fakery
+independently (`value.split(|c| ifs.contains(c)).filter(non-empty)` —
+also collapses non-ws-IFS empties).
+
+**Substrate for a faithful port already exists:** `zistype(b, ISEP)` /
+`iwsep(b)` (ztype_h.rs, TYPTAB kept in sync with IFS by `inittyptab`,
+re-run on every IFS set at params.rs:8691, c:4795), `skipwsep`
+(utils.rs:4454), `itype_end(s, ISEP, true)` (utils.rs:5383). A faithful
+port of C spacesplit needs Meta-byte-aware walking + `nulstring` empty-
+field semantics and touches the cmd-subst hot path, so it's a dedicated
+task (deferred rather than rushed). Fixing `spacesplit`/`findsep` would
+also let subst.rs ~12466 call `sepsplit` instead of re-splitting inline.
+
+---
+
 ## #635 — quoted array splat/range IFS-join — splat + braced range FIXED, bare range open
 
 **Status:** `port-bug` — `[*]` splat + braced `[N,M]` range FIXED 2026-06-14
