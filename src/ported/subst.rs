@@ -2926,8 +2926,22 @@ pub fn paramsubst(
                 if ch == Inbrace {
                     depth += 1;
                 } else if ch == '{' {
-                    let dollar_preceded =
-                        prev == '$' && prev2 != '\\' && prev2 != Bnull;
+                    // A nested `${` opens depth. The `$` may be a literal
+                    // `$` OR the lexer's Stringg (\u{85}) / Qstring
+                    // (\u{8c}) token — the latter appears when the body
+                    // was lexed in a quoted-like context such as the
+                    // `$(( ${...${...}} ))` arithmetic form, where the
+                    // braces stay LITERAL `{`/`}` but the `$` is Qstring.
+                    // Matching only literal `$` here made the depth
+                    // tracker miss the inner `${`, so the outer matcher
+                    // closed on the FIRST `}` and truncated its body —
+                    // `$(( ${${:-5}} ))` reached matheval as `${:-5}`
+                    // (illegal char). Accept all three `$` forms.
+                    let dollar_preceded = (prev == '$'
+                        || prev == Stringg
+                        || prev == Qstring)
+                        && prev2 != '\\'
+                        && prev2 != Bnull;
                     if dollar_preceded {
                         depth += 1;
                     }
