@@ -6178,7 +6178,21 @@ pub fn paramsubst(
                         let s = s_raw.max(0) as usize;
                         let e = e_raw.max(0) as usize;
                         if s < arr_clone.len() && s < e {
-                            arr_clone[s..e.min(arr_clone.len())].join(" ")
+                            let slice = &arr_clone[s..e.min(arr_clone.len())];
+                            // c:Src/subst.c:3032 — `val = sepjoin(aval,
+                            // sep, 1)`. Quoted array range `"${a[1,2]}"`
+                            // joins by IFS[0]. The range arm yields
+                            // isarr=0 (scalar shape), so it never reaches
+                            // the qt-sepjoin at subst.rs:7640 (unlike
+                            // `[*]`); call the ported sepjoin here for the
+                            // quoted case (Bug #635 range residual).
+                            // Unquoted keeps the space-join the caller
+                            // re-splits into words.
+                            if qt {
+                                crate::ported::utils::sepjoin(slice, None) // c:3032
+                            } else {
+                                slice.join(" ")
+                            }
                         } else {
                             String::new()
                         }
@@ -7662,30 +7676,17 @@ pub fn paramsubst(
                 // returned all values regardless of which keys
                 // matched.
                 if let Some(sp) = split_parts.as_ref() {
-                    let join_sep: String = sep.clone().unwrap_or_else(|| {
-                        let ifs = crate::ported::params::getsparam("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        ifs.chars().next().map(String::from).unwrap_or_default()
-                    });
-                    value = sp.join(&join_sep);
+                    // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1)`.
+                    // Call the ported sepjoin (utils.rs::sepjoin, port of
+                    // utils.c:3928) rather than re-deriving IFS[0] inline
+                    // — sepjoin owns the default-sep rules (IFS[0], the
+                    // leading-space → " " fallback, and IFS="" → "").
+                    value = crate::ported::utils::sepjoin(sp, sep.as_deref()); // c:3032
                 } else if let Some(arr) = arrays_get(&var_name) {
-                    let join_sep: String = sep.clone().unwrap_or_else(|| {
-                        let ifs = crate::ported::params::getsparam("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        ifs.chars().next().map(String::from).unwrap_or_default()
-                    });
-                    value = arr.join(&join_sep);
+                    value = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
                 } else if let Some(m) = assoc_get(&var_name) {
-                    let join_sep: String = sep.clone().unwrap_or_else(|| {
-                        let ifs = crate::ported::params::getsparam("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        ifs.chars().next().map(String::from).unwrap_or_default()
-                    });
-                    value = m
-                        .values()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(&join_sep);
+                    let vals: Vec<String> = m.values().cloned().collect();
+                    value = crate::ported::utils::sepjoin(&vals, sep.as_deref()); // c:3032
                 }
                 isarr = 0; // c:3034
             }
@@ -12976,18 +12977,16 @@ pub fn paramsubst(
                 // c:1625
                 if sub == "*" || sub == "@" {
                     // c:1625
-                    // c:Src/subst.c:3032 — quoted `"$a[*]"` joins by
-                    // IFS[0]. The braced `"${a[*]}"` form does this via
-                    // the qt-sepjoin at subst.rs:7640, but the bare-name
-                    // path has no such re-join, so a hardcoded space
-                    // leaked (Bug #635). `[@]` stays split, and UNQUOTED
-                    // `$a[*]` keeps the space-join the caller re-splits
-                    // into words. With the default IFS the join char is
-                    // already a space, so this is a no-op there.
+                    // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1)`.
+                    // Quoted `"$a[*]"` joins by IFS[0]. The braced
+                    // `"${a[*]}"` form does this via the qt-sepjoin at
+                    // subst.rs:7640, but the bare-name path has no such
+                    // re-join, so a hardcoded space leaked (Bug #635).
+                    // Call the ported sepjoin. `[@]` stays split, and
+                    // UNQUOTED `$a[*]` keeps the space-join the caller
+                    // re-splits into words.
                     if sub == "*" && qt {
-                        let ifs = crate::ported::params::getsparam("IFS")
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        arr.join(&ifs.chars().next().map(String::from).unwrap_or_default())
+                        crate::ported::utils::sepjoin(&arr, None) // c:3032
                     } else {
                         arr.join(" ") // c:1625
                     }
