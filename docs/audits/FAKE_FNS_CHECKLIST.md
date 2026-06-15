@@ -205,9 +205,20 @@ largely illusory: on close inspection most have hidden substrate gaps
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
 reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
-`cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`. The
-line-ratio detector mismeasured these; the current Rust reads as
-substantially complete.
+`execpline`, `promptexpand`, `match_highlight`. The line-ratio detector
+mismeasured these; the current Rust reads as substantially complete.
+
+- [x] `builtin.rs::cd_new_pwd` — **audited + one real gap closed**. The
+  decoupling is faithful: dirstack rotation → `bin_cd`/`bin_pushd_popd`
+  (1718/1755/1808), PWD/OLDPWD shift → `bin_cd` (authoritative, logical
+  path), chpwd hook → fusevm_bridge.rs:891 `callhookfunc("chpwd")` →
+  utils.rs:1532 (shfunc + array), stat-validation subsumed by `lchdir`'s
+  dev/ino integrity check, printing in `cd_new_pwd` itself. The one
+  genuine gap: the `DIRSTACKSIZE` cap (c:1264-1271) was missing (and the
+  doc comment falsely claimed it) — now ported faithfully. cd/pushd/popd
+  regression green. (No dedicated unit test: `DIRSTACKSIZE` doesn't
+  round-trip via `setiparam`/`getiparam` in isolated test context —
+  `assignnparam` needs shell state; verified by translation + regression.)
 
 - [VERIFIED NOT-FAKE] `parse.rs::par_subsh` — audited against C: zshrs's
   parser is **AST-based** (`par_subsh` returns `ZshCommand::Subsh`, fed
@@ -247,8 +258,8 @@ substantially complete.
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
-  - done: 5 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
-    `setstypat`) — remaining 47
+  - done: 6 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
+    `setstypat`, `cd_new_pwd`) — remaining 46
   - reclassified NOT-FAKE on audit: 2 (`zgetdir` — live getcwd branch is
     faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
     AST parser architecture, `{...}`/always split to parse.rs:7025)
