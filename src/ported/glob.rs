@@ -3660,26 +3660,23 @@ pub mod qualifiers {
             .unwrap_or(false)
     }
 
-    /// Check if file is an executable command (from glob.c qualiscom)
+    /// The `*` glob qualifier. Port of `qualiscom` from `Src/glob.c:3818`:
+    /// `return S_ISREG(buf->st_mode) && (buf->st_mode & S_IXUGO);` — a
+    /// regular file with any execute bit set. zsh does NOT consult $PATH
+    /// here; the execute bit is the whole test.
     pub fn is_command(path: &str) -> bool {
         let meta = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(_) => return false,
         };
 
+        // c:3820 — S_ISREG(buf->st_mode)
         if !meta.is_file() {
             return false;
         }
 
-        // Check if executable
-        let mode = meta.mode();
-        if mode & 0o111 == 0 {
-            return false;
-        }
-
-        // Check if in PATH would make it a command
-        // For now just check executable bit
-        true
+        // c:3820 — (buf->st_mode & S_IXUGO), S_IXUGO == 0o111
+        meta.mode() & 0o111 != 0
     }
 }
 
@@ -3955,11 +3952,11 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             'U' => qs.qualifiers.push(qualifier::OwnedByEuid),
             'G' => qs.qualifiers.push(qualifier::OwnedByEgid),
             'u' => {
-                let uid = parse_uid_gid(&mut chars);
+                let uid = parse_uid_gid(&mut chars, false);
                 qs.qualifiers.push(qualifier::OwnedByUid(uid));
             }
             'g' => {
-                let gid = parse_uid_gid(&mut chars);
+                let gid = parse_uid_gid(&mut chars, true);
                 qs.qualifiers.push(qualifier::OwnedByGid(gid));
             }
             // Size
@@ -4194,11 +4191,15 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
     qs
 }
 
-/// Parse a numeric uid/gid from a qualifier char stream.
-/// **RUST-ONLY** — C parses these inline in parsepat.
-fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>) -> u32 {
-    // RUST-ONLY
-    // Check for numeric or delimited string
+/// Parse a numeric uid/gid or a delimited user/group name from a `u`/`g`
+/// qualifier char stream. Port of the name-resolution arms of the `u`/`g`
+/// qualifier cases at `Src/glob.c:1468-1535`:
+/// `if (idigit(*s)) data = qgetnum(&s);` else `get_strarg`-delimited name
+/// resolved through `getpwnam(3)` / `getgrnam(3)`. On an unknown name it
+/// emits the C diagnostic (`zerr` sets errflag) and returns 0, matching
+/// C's `data = 0;` arm. `is_group` selects getgrnam over getpwnam.
+fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>, is_group: bool) -> u32 {
+    // c:1468/1511 — `if (idigit(*s)) data = qgetnum(&s);`
     if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
         let mut num = String::new();
         while let Some(&c) = chars.peek() {
@@ -4209,11 +4210,52 @@ fn parse_uid_gid(chars: &mut std::iter::Peekable<std::str::Chars>) -> u32 {
                 break;
             }
         }
-        num.parse().unwrap_or(0)
-    } else {
-        // Delimited name - skip for now
-        0
+        return num.parse().unwrap_or(0);
     }
+    // c:1471-1505 — `tt = get_strarg(s, &arglen);` the char right after the
+    // qualifier is the delimiter; the name runs to the next delimiter.
+    let delim = match chars.next() {
+        Some(d) => d,
+        None => {
+            // c:1481/1524 — `zerr("missing delimiter for 'u'/'g' glob qualifier")`.
+            zerr(if is_group {
+                "missing delimiter for 'g' glob qualifier"
+            } else {
+                "missing delimiter for 'u' glob qualifier"
+            });
+            return 0;
+        }
+    };
+    let mut name = String::new();
+    for c in chars.by_ref() {
+        if c == delim {
+            break;
+        }
+        name.push(c);
+    }
+    // c:1488/1530 — resolve via getpwnam(3) / getgrnam(3).
+    let cstr = match std::ffi::CString::new(name.as_bytes()) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    unsafe {
+        if is_group {
+            let gr = libc::getgrnam(cstr.as_ptr()); // c:1530
+            if !gr.is_null() {
+                return (*gr).gr_gid; // c:1531
+            }
+            zerr("unknown group"); // c:1533
+        } else {
+            let pw = libc::getpwnam(cstr.as_ptr()); // c:1488
+            if !pw.is_null() {
+                return (*pw).pw_uid; // c:1489
+            }
+            // c:1491 — `zerr("unknown username '%s'", s + arglen);`
+            zerr(&format!("unknown username '{}'", name));
+        }
+    }
+    // c:1493/1535 — `data = 0;` after the unknown-name diagnostic.
+    0
 }
 
 /// Parse the unit/op/value tail of an `(L...)` size qualifier.
