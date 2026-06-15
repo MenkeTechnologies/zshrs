@@ -1531,6 +1531,39 @@ pub fn source(s: &str) -> i32 {
 
     sourcelevel.fetch_add(1, Ordering::SeqCst); // c:1606
 
+    // c:1610-1618 — push an FS_SOURCE funcstack frame so `$funcstack`,
+    // `$functrace` and `$funcfiletrace` include the sourced file (the
+    // readers at parameter.rs walk FUNCSTACK and special-case
+    // `tp == FS_SOURCE`). FUNCSTACK is a Vec stack: the last element is
+    // the top, so `prev` is left None (the index encodes the link, same
+    // convention as the FS_FUNC push in exec.rs::doshfunc:5821).
+    let oldlineno = crate::ported::lex::lineno() as i64; // c:1576 oldlineno = lineno
+    {
+        // c:1612-1613 — caller: the current funcstack top, else the
+        // previous script filename, else "zsh".
+        let caller = {
+            let stk = crate::ported::modules::parameter::FUNCSTACK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            stk.last().map(|f| f.name.clone())
+        }
+        .or_else(|| old_scriptfilename.clone())
+        .or_else(|| Some("zsh".to_string()));
+        let frame = crate::ported::zsh_h::funcstack {
+            prev: None,                 // c:1617 (Vec-stack index encodes link)
+            name: us.clone(),           // c:1611 fstack.name = scriptfilename
+            filename: Some(us.clone()), // c:1616
+            caller,                     // c:1612
+            flineno: 0,                 // c:1614
+            lineno: oldlineno,          // c:1615
+            tp: crate::ported::zsh_h::FS_SOURCE, // c:1618
+        };
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(frame); // c:1618 funcstack = &fstack
+    }
+
     // c:1618-1642 — parse-and-execute loop. Route through the
     // fusevm executor for the actual parse+exec; if no executor
     // context (out-of-band call), fall back to the partial
@@ -1550,6 +1583,12 @@ pub fn source(s: &str) -> i32 {
     }
 
     sourcelevel.fetch_sub(1, Ordering::SeqCst); // c:1644
+
+    // c:1664 — `funcstack = fstack.prev;` — pop our FS_SOURCE frame.
+    crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pop();
 
     // c:1646-1670 — restore shell state.
     crate::ported::utils::set_scriptname(old_scriptname);
@@ -2153,6 +2192,39 @@ fn parseopts_setemulate(nam: &str, flags: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// source() pushes an FS_SOURCE funcstack frame (init.c:1610-1618)
+    /// and pops it on exit (c:1664). Verify the push is balanced (no
+    /// leak) and that a readable file returns SOURCE_OK.
+    #[test]
+    fn source_funcstack_push_is_balanced() {
+        use crate::ported::modules::parameter::FUNCSTACK;
+        let depth_before = FUNCSTACK.lock().unwrap().len();
+
+        let mut path = std::env::temp_dir();
+        path.push(format!("zshrs_source_balance_{}.zsh", std::process::id()));
+        std::fs::write(&path, ": # no-op sourced file\n").unwrap();
+
+        let rc = source(path.to_str().unwrap());
+
+        let depth_after = FUNCSTACK.lock().unwrap().len();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(rc, 0, "source of a readable file returns SOURCE_OK");
+        assert_eq!(
+            depth_before, depth_after,
+            "FS_SOURCE push must be matched by a pop (no funcstack leak)"
+        );
+
+        // A non-existent file is SOURCE_NOT_FOUND and pushes nothing.
+        let missing = "/nonexistent/zshrs_source_xyz_should_not_exist";
+        assert_ne!(source(missing), 0, "missing file returns SOURCE_NOT_FOUND");
+        assert_eq!(
+            FUNCSTACK.lock().unwrap().len(),
+            depth_before,
+            "NOT_FOUND path must not touch the funcstack"
+        );
+    }
 
     /// `fallback_compctlread` is the dispatch target when the zle
     /// module isn't loaded — `compctl -K read` paths need SOMETHING
