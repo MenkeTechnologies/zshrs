@@ -3608,7 +3608,15 @@ pub fn paramsubst(
                             return (String::new(), new_pos, vec![]);
                         }
                         let next = body_chars.get(idx + 1).copied(); // c:2240 IS_DASH(s[1]) || s[1]=='+'
-                        if next == Some('-') || next == Some('+') {
+                        // c:Src/zsh.h:242 — `IS_DASH(x)` is `((x) ==
+                        // '-' || (x) == Dash)`. The lexer tokenizes the
+                        // `-` inside `(q-)` to the Dash token (\u{9b})
+                        // when an operator (`:-`, `::=`, …) follows, so
+                        // a literal-`'-'`-only test misses it and falls
+                        // to the plain-`q` arm → QT_BACKSLASH. Match
+                        // both forms exactly like C. (`${(q-)v:-x}` gave
+                        // `hello\ world` instead of `'hello world'`.)
+                        if next == Some('-') || next == Some(Dash) || next == Some('+') {
                             // c:2240
                             // c:2241-2242 — `if (quotemod) goto flagerr;`.
                             // q- / q+ are independent flag-block entries
