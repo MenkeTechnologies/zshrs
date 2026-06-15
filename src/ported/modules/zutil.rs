@@ -218,16 +218,18 @@ impl style_table {
     /// Mirrors Src/Modules/zutil.c:295 `setstypat` + c:403 `addstyle`
     /// — find or create the style's pats list, replace if pattern
     /// already present, else insert in weight-descending order.
-    pub fn set(&mut self, pattern: &str, style: &str, values: Vec<String>, eval: bool) {
+    pub fn set(
+        &mut self,
+        pattern: &str,
+        style: &str,
+        values: Vec<String>,
+        eval_prog: Option<Eprog>,
+    ) {
         let style_patterns = self.styles.entry(style.to_string()).or_default();
         // c:319-333 — Exists → replace.
         if let Some(existing) = style_patterns.iter_mut().find(|p| p.pat == pattern) {
             existing.vals = values; // c:328
-            existing.eval = if eval {
-                Some(Box::new(eprog::default()))
-            } else {
-                None
-            }; // c:329
+            existing.eval = eval_prog; // c:329 p->eval = eprog (the parsed program)
             return;
         }
         // c:344-385 — Calculate weight: high 32 bits = colon-component
@@ -284,23 +286,13 @@ impl style_table {
                        // pattern as &str and compiles at lookup-time via patmatch,
                        // so we record None here and rely on get() to match.
         let prog: Option<Patprog> = None;
-        // c:341 — p->eval = eprog; signals "this is an -e style".
-        // Eprog body parsing requires parse_string (unported), so we
-        // record Some(Box<eprog>::default()) as a non-NULL sentinel
-        // when eval=true to preserve the C "is eval?" check semantics,
-        // None otherwise.
-        let eval_eprog: Option<Eprog> = if eval {
-            Some(Box::new(eprog::default()))
-        } else {
-            None
-        };
         let sp = stypat {
-            next: None,               // c:342
-            pat: pattern.to_string(), // c:338
-            prog,                     // c:339
-            weight,                   // c:386
-            eval: eval_eprog,         // c:341
-            vals: values,             // c:340
+            next: None,                // c:342
+            pat: pattern.to_string(),  // c:338
+            prog,                      // c:339
+            weight,                    // c:386
+            eval: eval_prog,           // c:341 p->eval = eprog (the parsed program)
+            vals: values,              // c:340
         };
         // c:388-396 — insert q in weight-descending order (highest first).
         let pos = style_patterns
@@ -762,11 +754,23 @@ pub fn setstypat(
     vals: Vec<String>,
     eval: i32,
 ) -> i32 {
-    // c:307-318 — eval branch needs parse_string (unported); style_table
-    // records the eval=true flag via the Option<Eprog> sentinel and
-    // emits via the evalstyle hook at lookup time.
+    // c:304-318 — `-e` (eval) style: parse the joined values into an
+    // Eprog now, so lookup can execute it. C saves/restores errflag
+    // around the parse (keeping any user-interrupt bit); on parse
+    // failure it frees `prog` and returns 1. Here `_prog` drops on the
+    // early return, which is the Rust-idiom equivalent of freepatprog.
+    let eval_prog: Option<Eprog> = if eval != 0 {
+        let joined = crate::ported::utils::zjoin(&vals, ' '); // c:309 zjoin(vals, ' ', 1)
+        match crate::ported::exec::parse_string(&joined, 0) {
+            // c:309
+            None => return 1, // c:311-314 freepatprog(prog); return 1
+            Some(ep) => Some(Box::new(crate::ported::parse::dupeprog(&ep, false))), // c:317
+        }
+    } else {
+        None
+    };
     if let Ok(mut t) = zstyletab.lock() {
-        t.set(pat, style_name, vals, eval != 0); // c:319 set/replace
+        t.set(pat, style_name, vals, eval_prog); // c:319 set/replace
         0
     } else {
         1
@@ -1344,9 +1348,11 @@ pub fn bin_zstyle(
         }
     }
     let eval = OPT_ISSET(ops, b'e'); // c:505 eval = add = 1
-    if let Ok(mut t) = zstyletab.lock() {
-        t.set(ctxt, style, values.clone(), eval); // c:533 setstypat
-    }
+    // c:533 — `setstypat(s, pat, prog, args + 2, eval)`. Route through
+    // setstypat (which parses the `-e` value and locks zstyletab itself)
+    // rather than locking + `t.set` here, matching C and avoiding a
+    // re-entrant lock on the non-reentrant zstyletab mutex.
+    setstypat(style, ctxt, None, values.clone(), eval as i32); // c:533
     // PFA-SMR: one event per zstyle call. `rest` carries the style
     // name + values so replay can re-emit the full setter.
     #[cfg(feature = "recorder")]
@@ -3976,6 +3982,42 @@ mod rparse_tests {
 mod tests {
     use super::*;
 
+    /// setstypat `-e` (eval) path (zutil.c:304-318): the joined values
+    /// must be `parse_string`'d into a *real* Eprog and stored in
+    /// `stypat.eval`. The prior port faked this with an empty
+    /// `eprog::default()` (len == 0); this pins the real parse.
+    #[test]
+    fn setstypat_eval_stores_real_parsed_program() {
+        // eval=0 → no program stored (c:341 with NULL eprog).
+        setstypat("zt_noeval", ":zt:ctx:*", None, vec!["plain".to_string()], 0);
+        // eval=1 → value parsed into a real, non-empty Eprog.
+        setstypat(
+            "zt_eval",
+            ":zt:ctx:*",
+            None,
+            vec!["echo".to_string(), "hi".to_string()],
+            1,
+        );
+
+        let t = zstyletab.lock().unwrap();
+        let noeval = t.styles["zt_noeval"]
+            .iter()
+            .find(|p| p.pat == ":zt:ctx:*")
+            .expect("zt_noeval pattern stored");
+        assert!(noeval.eval.is_none(), "eval=0 must store no program");
+
+        let eval = t.styles["zt_eval"]
+            .iter()
+            .find(|p| p.pat == ":zt:ctx:*")
+            .expect("zt_eval pattern stored");
+        let prog = eval.eval.as_ref().expect("eval=1 must store a program");
+        assert!(
+            prog.len > 0,
+            "stored program must be the real parse, not an empty default (len was {})",
+            prog.len
+        );
+    }
+
     /// Verifies the weight formula matches C's setstypat (zutil.c:344-385):
     /// component count (high 32 bits) + per-component specificity sum
     /// (low 32 bits). More specific = higher weight. Drives weight via
@@ -3985,9 +4027,9 @@ mod tests {
     fn test_style_pattern_weight() {
         let _g = crate::test_util::global_state_lock();
         let mut t = style_table::new();
-        t.set("*", "s", vec!["broad".to_string()], false);
-        t.set(":completion:*", "s", vec!["mid".to_string()], false);
-        t.set(":completion:zsh:*", "s", vec!["narrow".to_string()], false);
+        t.set("*", "s", vec!["broad".to_string()], None);
+        t.set(":completion:*", "s", vec!["mid".to_string()], None);
+        t.set(":completion:zsh:*", "s", vec!["narrow".to_string()], None);
         // Most-specific match wins (sorted descending by weight at insertion).
         assert_eq!(t.get(":completion:zsh:complete", "s").unwrap()[0], "narrow");
         assert_eq!(t.get(":completion:bash:complete", "s").unwrap()[0], "mid");
@@ -4022,12 +4064,12 @@ mod tests {
     fn test_style_pattern_matches() {
         let _g = crate::test_util::global_state_lock();
         let mut t = style_table::new();
-        t.set(":completion:*", "s1", vec!["v".to_string()], false);
+        t.set(":completion:*", "s1", vec!["v".to_string()], None);
         assert!(t.get(":completion:zsh:complete", "s1").is_some());
         assert!(t.get(":other:zsh", "s1").is_none());
 
         let mut t2 = style_table::new();
-        t2.set("*", "s2", vec!["v".to_string()], false);
+        t2.set("*", "s2", vec!["v".to_string()], None);
         assert!(t2.get("anything", "s2").is_some());
     }
 
@@ -4035,7 +4077,7 @@ mod tests {
     fn test_style_table_set_get() {
         let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
-        table.set(":completion:*", "verbose", vec!["yes".to_string()], false);
+        table.set(":completion:*", "verbose", vec!["yes".to_string()], None);
 
         let result = table.get(":completion:zsh", "verbose");
         assert_eq!(result, Some(&["yes".to_string()][..]));
@@ -4048,8 +4090,8 @@ mod tests {
     fn test_style_table_priority() {
         let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
-        table.set("*", "menu", vec!["no".to_string()], false);
-        table.set(":completion:*", "menu", vec!["yes".to_string()], false);
+        table.set("*", "menu", vec!["no".to_string()], None);
+        table.set(":completion:*", "menu", vec!["yes".to_string()], None);
 
         let result = table.get(":completion:zsh", "menu");
         assert_eq!(result, Some(&["yes".to_string()][..]));
@@ -4059,8 +4101,8 @@ mod tests {
     fn test_style_table_delete() {
         let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
-        table.set("*", "style1", vec!["val".to_string()], false);
-        table.set("*", "style2", vec!["val".to_string()], false);
+        table.set("*", "style1", vec!["val".to_string()], None);
+        table.set("*", "style2", vec!["val".to_string()], None);
 
         table.delete(None, Some("style1"));
         assert!(table.get("test", "style1").is_none());
@@ -4071,13 +4113,13 @@ mod tests {
     fn test_style_test_bool() {
         let _g = crate::test_util::global_state_lock();
         let mut table = style_table::new();
-        table.set("*", "enabled", vec!["yes".to_string()], false);
-        table.set("*", "disabled", vec!["no".to_string()], false);
+        table.set("*", "enabled", vec!["yes".to_string()], None);
+        table.set("*", "disabled", vec!["no".to_string()], None);
         table.set(
             "*",
             "multiple",
             vec!["a".to_string(), "b".to_string()],
-            false,
+            None,
         );
 
         assert_eq!(table.test_bool("ctx", "enabled"), Some(true));
@@ -4097,7 +4139,7 @@ mod tests {
         let key_pat = "test_zutil_global_marker_*";
         {
             let mut t = zstyletab.lock().unwrap();
-            t.set(key_pat, key_style, vec!["yes".to_string()], false);
+            t.set(key_pat, key_style, vec!["yes".to_string()], None);
         }
         let found = lookupstyle("test_zutil_global_marker_x", key_style);
         assert_eq!(found, vec!["yes".to_string()]);
