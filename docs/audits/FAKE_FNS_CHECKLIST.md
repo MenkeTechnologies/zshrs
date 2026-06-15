@@ -205,9 +205,20 @@ largely illusory: on close inspection most have hidden substrate gaps
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
 reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
-`cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`, `par_subsh`.
-The line-ratio detector mismeasured these; the current Rust reads as
+`cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`. The
+line-ratio detector mismeasured these; the current Rust reads as
 substantially complete.
+
+- [VERIFIED NOT-FAKE] `parse.rs::par_subsh` — audited against C: zshrs's
+  parser is **AST-based** (`par_subsh` returns `ZshCommand::Subsh`, fed
+  to the fusevm compiler), not zsh's wordcode-emit (`ecadd`/`ecbuf` are a
+  separate `.zwc`-compat track). C's single par_subsh emits wordcode for
+  `(...)`, `{...}`, and the optional `always` block; zshrs splits these
+  across AST handlers — `par_subsh` (2276) parses `(...)` (called live at
+  1274), and the `{...} always {...}` construct is handled at parse.rs:7025
+  (`cmdpush(CS_ALWAYS)`, matching C parse.c:1637). Output consumed by the
+  compiler/heredoc/matchers (5136/10508). Faithful to the AST architecture;
+  residual ratio flag is a detector artifact. **Reclassified out of PORT.**
 
 - [AUDITED — vestigial] `parse.rs::load_dump_file` — **callerless**.
   zshrs replaced C's mmap-and-register design (parse.c:3675-3725: mmap
@@ -238,8 +249,9 @@ substantially complete.
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
   - done: 5 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
     `setstypat`) — remaining 47
-  - reclassified NOT-FAKE on audit: 1 (`zgetdir` — live getcwd branch is
-    faithful; walk fallback is platform-dead, `USE_GETCWD=1`)
+  - reclassified NOT-FAKE on audit: 2 (`zgetdir` — live getcwd branch is
+    faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
+    AST parser architecture, `{...}`/always split to parse.rs:7025)
   - audited vestigial (callerless, architectural divergence): 1
     (`load_dump_file` — zshrs uses owned-Vec dumps via load_dump_header)
   - confirmed BLOCKED: `zccmd_input` (mouse decode / no ncurses)
