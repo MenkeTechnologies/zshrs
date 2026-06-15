@@ -19,39 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
-## #635 — quoted range `"$a[1,2]"` / `"${a[1,2]}"` doesn't IFS-join (splat form fixed)
+## #635 — quoted array splat/range IFS-join — splat + braced range FIXED, bare range open
 
-**Status:** `port-bug` — splat (`[*]`) FIXED 2026-06-14; range (`[N,M]`) still open
+**Status:** `port-bug` — `[*]` splat + braced `[N,M]` range FIXED 2026-06-14
+(via ported `sepjoin`); bare `"$a[N,M]"` range still open
 
-The quoted `[*]` splat joins array elements by `IFS[0]`. The bare
-`"$a[*]"` form previously hardcoded a space; **fixed** by IFS[0]-joining
-in the bare-name array arm (subst.rs ~12979, `if sub == "*" && qt`),
-mirroring the braced form's qt-sepjoin (subst.rs:7640, c:subst.c:3032):
+The quoted `[*]` splat and `[N,M]` range join array elements by `IFS[0]`
+(C: `val = sepjoin(aval, sep, 1)`, Src/subst.c:3032).
+
+**Fixed** by calling the ported `sepjoin` (utils.rs::sepjoin, c:utils.c:3928):
+- bare `"$a[*]"` splat (subst.rs ~12979)
+- braced `"${a[N,M]}"` range (subst.rs ~6181) — the range arm yields
+  `isarr=0`, so it never reaches the qt-sepjoin at 7640; now joins via
+  sepjoin directly.
 
 ```
-a=(1 2 3); IFS=,
-echo "${a[*]}"   # zsh: 1,2,3   zshrs: 1,2,3   (braced — ok)
-echo "$a[*]"     # zsh: 1,2,3   zshrs: 1,2,3   (bare — FIXED)
-echo "$a[@]"     # zsh: 1 2 3   zshrs: 1 2 3   (bare @ stays split — ok)
+a=(a b c d); IFS=,
+echo "${a[*]}"   # zsh: a,b,c,d   zshrs: a,b,c,d   (ok)
+echo "$a[*]"     # zsh: a,b,c,d   zshrs: a,b,c,d   (FIXED)
+echo "${a[1,2]}" # zsh: a,b       zshrs: a,b       (FIXED)
+echo "$a[@]"     # zsh: a b c d   zshrs: a b c d   (@ stays split — ok)
 ```
 
-**Still open — quoted RANGE subscript** joins by space in BOTH the bare
-and braced forms (separate code path from the `[*]` splat):
+**Still open — bare RANGE `"$a[N,M]"`** joins by space:
 
 ```
 a=(a b c); IFS=,
 echo "$a[1,2]"   # zsh: a,b   zshrs: a b
-echo "${a[1,2]}" # zsh: a,b   zshrs: a b
 ```
 
-The bare range resolves through `getarrvalue(&arr,lo,hi).join(" ")`
-(subst.rs ~13031) but a targeted IFS-join there had no observable effect
-— the joined value appears to be re-processed/re-joined downstream, and
-the braced range diverges identically, so the range IFS-join is a
-broader gap (both `inbrace` paths) than the splat fix addressed.
-getarrvalue's range result needs to carry array shape into the
-qt-sepjoin rather than pre-joining with a space. Deferred — only
-surfaces with a customized IFS.
+The bare range does NOT flow through the `value = if` range arm at
+subst.rs ~13060 (a debug there never fired) nor the bare splat block at
+13317 (gated `!qt`); the quoted bare range resolves on a third, not-yet-
+located path in the ~10k-line paramsubst tail. The bare `[*]` splat
+(12979) and braced range (6181) cover the common forms; this last bare-
+range variant is deferred. Only surfaces with a customized IFS.
 
 ---
 
