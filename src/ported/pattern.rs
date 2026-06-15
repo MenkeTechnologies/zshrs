@@ -2617,8 +2617,10 @@ pub fn charref(s: &str, pos: usize) -> Option<char> {
     s[pos..].chars().next()
 }
 
-/// Port of `void charnext(char *x, char *y)` from `Src/pattern.c:1936`.
-/// Delegates to `metacharinc` — same advance-by-one-codepoint logic.
+/// Port of `char *charnext(char *x, char *y)` from `Src/pattern.c:1935`.
+/// C returns the pointer past the current character; the Rust port
+/// returns that position as a byte offset. Delegates to `metacharinc`
+/// — same advance-by-one-codepoint logic.
 pub fn charnext(x: &str, y: usize) -> usize {
     // c:1936
     metacharinc(x, y)
@@ -2642,22 +2644,29 @@ pub fn charrefinc(s: &str, pos: &mut usize) -> Option<char> {
     Some(c)
 }
 
-/// Port of `void charsub(char *x, char *y)` from `Src/pattern.c:1997`.
-/// Step back one char from `y` within `x`. UTF-32-native delegation:
-/// delegates to `chars().next_back()` since Rust's `&str` is already
-/// UTF-8 — the C body's Meta-byte + mbrtowc-rewind state machine
-/// collapses to a single iterator step.
+/// Port of `ptrdiff_t charsub(char *x, char *y)` from `Src/pattern.c:1997`.
+///
+/// Returns the number of characters between the start `x` and the
+/// position `y` — i.e. the character-distance of byte offset `y` from
+/// the string start. Non-multibyte: the byte distance `y` (each byte
+/// is one character). Multibyte: the codepoint count of `x[0..y]`.
+/// `patmatch` uses this (via the C `CHARSUB` macro) to report match
+/// lengths and backreference positions in characters.
+///
+/// Replaces the prior fake that stepped back one char and returned a
+/// byte offset — unrelated to the C character-count semantics.
 pub fn charsub(x: &str, y: usize) -> usize {
     // c:1997
-    if y == 0 {
-        return 0;
+    let y = y.min(x.len());
+    if !isset(MULTIBYTE) {
+        // c:2003-2004 — `if (!isset(MULTIBYTE)) return y - x;`
+        return y;
     }
-    let w = x[..y]
-        .chars()
-        .next_back()
-        .map(|c| c.len_utf8())
-        .unwrap_or(1);
-    y - w
+    // c:2006-2021 — count codepoints in `x[0..y]`. Rust `&str` is valid
+    // UTF-8, so `chars().count()` is the faithful equivalent of the C
+    // mbrtowc loop (the MB_INVALID byte-by-byte fallback can't arise —
+    // a `&str` never holds invalid sequences).
+    x[..y].chars().count()
 }
 
 // =====================================================================
@@ -7151,19 +7160,32 @@ mod tests {
         *zpc_disables.lock().unwrap() = [0u8; ZPC_COUNT as usize];
     }
 
-    /// `Src/pattern.c:1997` — `charsub(char *x, char *y)` steps `y`
-    /// back one char within `x`. Rust returns the new position.
+    /// `Src/pattern.c:1997` — `charsub(x, y)` returns the number of
+    /// characters between the start and byte offset `y`. Non-multibyte:
+    /// byte distance; multibyte: codepoint count of `x[0..y]`.
     #[test]
-    fn charsub_steps_back_one_char() {
+    fn charsub_counts_chars_to_offset() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(charsub("abc", 3), 2, "step back from end (ASCII)");
-        assert_eq!(charsub("abc", 1), 0, "step back to start");
-        assert_eq!(charsub("abc", 0), 0, "c:1997 — at start, stay at start");
-        // Multibyte: stepping back from end of "é" (2 bytes) lands at 0.
-        assert_eq!(charsub("é", 2), 0, "step back across 2-byte UTF-8");
-        // From "é日" (5 bytes total): stepping back from pos 5 lands at 2 (start of 日).
-        assert_eq!(charsub("é日", 5), 2, "step back past 3-byte UTF-8");
-        assert_eq!(charsub("é日", 2), 0, "another step back past 2-byte UTF-8");
+        let saved = crate::ported::options::opt_state_get("multibyte");
+
+        // c:2004 — non-multibyte: byte distance `y - x`.
+        crate::ported::options::opt_state_set("multibyte", false);
+        assert_eq!(charsub("abc", 3), 3, "non-MB: byte distance to end");
+        assert_eq!(charsub("abc", 1), 1, "non-MB: one byte in");
+        assert_eq!(charsub("abc", 0), 0, "c:1997 — at start, distance 0");
+        assert_eq!(charsub("é日", 5), 5, "non-MB: raw byte count (5 bytes)");
+
+        // c:2006-2021 — multibyte: codepoint count of `x[0..y]`.
+        crate::ported::options::opt_state_set("multibyte", true);
+        assert_eq!(charsub("abc", 3), 3, "MB: 3 ASCII chars");
+        assert_eq!(charsub("é", 2), 1, "MB: one 2-byte codepoint");
+        assert_eq!(charsub("é日", 5), 2, "MB: é + 日 = 2 codepoints");
+        assert_eq!(charsub("é日", 2), 1, "MB: just é = 1 codepoint");
+        assert_eq!(charsub("é日", 0), 0, "MB: distance 0 at start");
+
+        if let Some(v) = saved {
+            crate::ported::options::opt_state_set("multibyte", v);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
