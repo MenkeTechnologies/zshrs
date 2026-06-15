@@ -2304,9 +2304,37 @@ pub fn cd_new_pwd(func: i32, _dir: usize, quiet: i32) {
         }
     }
 
-    // c:1264 — runhookdef(GETCOLORATTR/chpwd) — fire chpwd hooks.
-    // Hook table integration not surfaced here; chpwd_functions array
-    // is populated via $hook_functions and read by the executor wrapper.
+    // c:1258 — `callhookfunc("chpwd", NULL, 1, NULL)` fires the chpwd
+    // hook. Not surfaced here: the executor wrapper (fusevm_bridge.rs
+    // cd builtin) calls `callhookfunc("chpwd", ...)` after a successful
+    // cd, which dispatches both the `chpwd` shfunc and the
+    // `chpwd_functions` array (utils.rs:1532).
+
+    // c:1264-1271 — trim the dir stack to $DIRSTACKSIZE.
+    //   `dirstacksize = getiparam("DIRSTACKSIZE");
+    //    if (dirstacksize > 0) {
+    //        int remove = countlinknodes(dirstack) -
+    //            (dirstacksize < 2 ? 2 : dirstacksize);
+    //        while (remove-- >= 0)
+    //            zsfree(remnode(dirstack, lastnode(dirstack)));
+    //    }`
+    let dirstacksize = getiparam("DIRSTACKSIZE"); // c:1264
+    if dirstacksize > 0 {
+        // c:1266
+        if let Ok(mut d) = DIRSTACK.lock() {
+            // c:1267-1268 — count minus the effective cap (min 2).
+            let cap = if dirstacksize < 2 { 2 } else { dirstacksize };
+            let mut remove = d.len() as i64 - cap;
+            // c:1269-1270 — `while (remove-- >= 0)` pops the last node;
+            // the post-decrement removes (remove+1) entries from the end.
+            while remove >= 0 {
+                remove -= 1;
+                if d.pop().is_none() {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Port of `printdirstack()` from Src/builtin.c:1277.
