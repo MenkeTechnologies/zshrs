@@ -960,8 +960,6 @@ apply_selection
 glob_path
 # apply_modespec — mode-spec apply helper (qgetmodespec returns a
 # ModeSpec at glob.c:844, this fn applies it). Rust-only because C
-# inlines the bit manipulation at every callsite.
-apply_modespec
 # mv_rename / mv_symlink / mv_link — `bin_ln`/`domove` MoveFunc adapters.
 # C uses raw `(MoveFunc) rename` / `(MoveFunc) symlink` / `(MoveFunc) link`
 # casts on libc fns (`Src/Modules/files.c:210, 219, 223`). Rust can't cast
@@ -1400,7 +1398,6 @@ glob_emit_path
 goto_compend
 inbackt_set
 instring_set
-is_directory
 is_readfd
 is_symlink
 lastpostbr_set
