@@ -9967,13 +9967,9 @@ pub fn paramsubst(
                 // documented in the `:^` arm below. Bug #597.
                 let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let zipped: Vec<String> = if qt && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
-                    let ifs0 = vars_get("IFS")
-                        .unwrap_or_else(|| " \t\n\0".to_string())
-                        .chars()
-                        .next()
-                        .map(String::from)
-                        .unwrap_or_default();
-                    let joined = arr.join(&ifs0);
+                    // c:Src/subst.c:3032 — `sepjoin(aval, sep, 1)` joins
+                    // the `:^` left operand by IFS[0] in DQ.
+                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
                     let n = other.len();
                     let mut z: Vec<String> = Vec::with_capacity(n * 2);
                     for i in 0..n {
@@ -10052,13 +10048,9 @@ pub fn paramsubst(
                     // a unset → return b verbatim.
                     other.clone()
                 } else if qt && !is_at_subscript_zip {
-                    let ifs0 = vars_get("IFS")
-                        .unwrap_or_else(|| " \t\n\0".to_string())
-                        .chars()
-                        .next()
-                        .map(String::from)
-                        .unwrap_or_default();
-                    let joined = arr.join(&ifs0);
+                    // c:Src/subst.c:3032 — `sepjoin(aval, sep, 1)` joins
+                    // the `:^` left operand by IFS[0] in DQ.
+                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
                     // outlen = min(1, blen). When blen=0 → 0 elements.
                     if other.is_empty() {
                         Vec::new()
@@ -12700,15 +12692,14 @@ pub fn paramsubst(
             // only the first array element because singsub's
             // result-zero-of-many fell through to the truncated form.
             if pf_flags & PREFORK_SINGLE != 0 && parts.len() > 1 {
-                // c:Src/params.c sepjoin default sep — IFS first char.
-                let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                let default_sep = ifs
-                    .chars()
-                    .next()
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| " ".to_string());
-                let sep_str: &str = sep.as_deref().unwrap_or(default_sep.as_str());
-                let joined = parts.join(sep_str);
+                // c:Src/subst.c multsub c:633-647 — `*s = sepjoin(r,
+                // sep, 1)`. Call the ported sepjoin rather than
+                // re-deriving the default sep inline: the prior inline
+                // used `unwrap_or_else(|| " ")` for an empty IFS, but
+                // sepjoin (c:utils.c:3941-3944) returns "" there, so
+                // `IFS=""; cat <<END\n${arr[@]}\nEND` now concatenates
+                // (`abc`) instead of space-joining (`a b c`).
+                let joined = crate::ported::utils::sepjoin(&parts, sep.as_deref()); // c:633
                 let full = format!("{}{}{}", prefix, joined, suffix);
                 let new_pos = prefix.chars().count() + joined.chars().count();
                 return (full.clone(), new_pos, vec![full]);
