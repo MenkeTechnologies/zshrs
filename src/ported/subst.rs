@@ -12296,7 +12296,19 @@ pub fn paramsubst(
                     value = quoted.clone();
                     split_parts = Some(vec![quoted]);
                 }
-            } else if let Some(arr) = arrays_get(&var_name) {
+            } else if let Some(arr) =
+                arrays_get(&var_name).filter(|_| subscript.is_none() || is_at_subscript_splat)
+            {
+                // c:Src/subst.c — re-fetch the WHOLE array by name only
+                // for the no-subscript and `[@]`/`[*]` splat forms. A
+                // plain numeric/scalar subscript (`a[2]`) has ALREADY
+                // resolved the selected element into `value` above, so
+                // re-fetching the array here discards that selection and
+                // quotes the whole array — `${(q-)a[2]}` returned the
+                // full `x y z` instead of `y`. Same gate the (Q) arm at
+                // line ~12096 already uses (subscript.is_none()), plus
+                // the splat exception so `${(qq)a[@]}` still per-element
+                // quotes the array.
                 if want_per_element {
                     let new_arr: Vec<String> = arr.iter().map(|s| quote_one(s)).collect();
                     value = new_arr.join(" ");
