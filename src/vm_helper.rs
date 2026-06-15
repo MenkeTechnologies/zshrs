@@ -82,8 +82,6 @@ use walkdir::WalkDir;
 #[allow(unused_imports)]
 pub(crate) use crate::func_body_fmt::FuncBodyFmt;
 #[allow(unused_imports)]
-pub(crate) use crate::ported::glob::expand_glob_alternation;
-#[allow(unused_imports)]
 pub(crate) use crate::ported::hist::bufferwords as bufferwords_z_tuple;
 #[allow(unused_imports)]
 pub(crate) use crate::ported::math::{parse_assign, parse_compound, parse_pre_inc};
