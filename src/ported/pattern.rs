@@ -727,31 +727,43 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         let off = patparse_off.load(Ordering::Relaxed);
         let p = patparse.lock().unwrap();
         let s = &p[off..];
-        // c:606 — scan literal CHARS (glob tokens are U+0080.. chars, i.e.
-        // multi-byte in UTF-8, so a byte scan would miss them); stop at
-        // '/' (segment boundary) or any glob token. `cut` is the byte
-        // offset within `s` where we stop; `at_token` true => not pure.
+        // c:606 — scan for a pure literal segment. By this point patparse
+        // has been NORMALIZED to raw metachars (Star -> '*') with literal
+        // metachars backslash-escaped (`\*`), so scan that form: stop at
+        // '/' (segment boundary) or any UNescaped glob metachar (=> not
+        // pure). `\X` is an escaped literal — skip both chars.
         let mut cut = s.len();
         let mut at_token = false;
-        for (i, c) in s.char_indices() {
+        let mut it = s.char_indices();
+        while let Some((i, c)) = it.next() {
             if c == '/' {
                 cut = i;
                 break;
             }
-            if crate::ported::ztype_h::itok(c as u8) {
+            if c == '\\' {
+                it.next(); // escaped literal — both chars stay literal
+                continue;
+            }
+            if matches!(c, '*' | '?' | '[' | '(' | '|' | '~' | '^' | '#' | '<') {
                 cut = i;
                 at_token = true;
                 break;
             }
         }
-        // c:610 — pure iff we stopped at end or '/', not at a glob token.
+        // c:610 — pure iff we stopped at end or '/', not at a glob meta.
         if !at_token {
             let literal = s[..cut].as_bytes().to_vec();
             let remainder = s[cut..].to_string();
             drop(p);
             let mlen = literal.len() as i64;
             if let Some(end) = endexp.as_deref_mut() {
-                *end = remainder; // c:751 *endexp = patparse (at '/')
+                // c:751 *endexp = patparse (at '/'). patparse is normalized
+                // (untokenized); re-tokenize so parsecomplist's recursion
+                // feeds the NEXT patcompile a tokenized segment (else raw
+                // '*' gets re-escaped to `\*`, losing the Star meaning).
+                let mut rem = remainder;
+                crate::ported::glob::tokenize(&mut rem);
+                *end = rem;
             }
             return Some(Box::new((
                 patprog {
@@ -783,7 +795,13 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     let consumed_off = patparse_off.load(Ordering::Relaxed);
     if let Some(end) = endexp.as_deref_mut() {
         let parse = patparse.lock().unwrap();
-        *end = parse[consumed_off..].to_string();
+        // c:751 *endexp = patparse. patparse is normalized (untokenized);
+        // re-tokenize so parsecomplist's recursion feeds the next
+        // patcompile a tokenized segment (raw '*' would re-escape to `\*`).
+        let mut rem = parse[consumed_off..].to_string();
+        drop(parse);
+        crate::ported::glob::tokenize(&mut rem);
+        *end = rem;
     }
 
     Some(Box::new((
