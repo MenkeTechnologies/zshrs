@@ -205,8 +205,23 @@ largely illusory: on close inspection most have hidden substrate gaps
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
 reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
-`execpline`, `promptexpand`, `match_highlight`. The line-ratio detector
-mismeasured these; the current Rust reads as substantially complete.
+`execpline`, `match_highlight`. The line-ratio detector mismeasured these;
+the current Rust reads as substantially complete.
+
+- [VERIFIED NOT-FAKE] `prompt.rs::promptexpand` — audited against C: the
+  heavy lifting is faithful. `promptexpand` delegates to `expand_prompt`,
+  which handles PROMPTSUBST (`parsestr`+`singsub`, c:192-212) and calls
+  `putpromptchar` (c:1305) — a **1375-line** port covering the full
+  `%`-escape set (`%c %~ %C %n %M %m %S %s %B %b %U %u %D %T %j %g %l %L
+  %v %V %i %I %h %E %G %_ %w %y` …) with ~45 unit tests. The wrapper does
+  the `ns==0` Inpar/Outpar/Nularg strip faithfully. Two **honestly
+  documented** minor approximations remain: the `marker` arg is ignored
+  (ZLE prompt-start positioning) and rs/Rs offsets are approximated via
+  source-string `find` rather than expanded-buffer offsets (lossy when
+  expansion changes length) — real limitations, disclosed in-code, not
+  faked. The ratio flag measures the thin wrapper, not the 1375-line
+  `putpromptchar` where the work lives. **Reclassified out of PORT**
+  (two minor approximations tracked as known limitations, not fakes).
 
 - [x] `builtin.rs::cd_new_pwd` — **audited + one real gap closed**. The
   decoupling is faithful: dirstack rotation → `bin_cd`/`bin_pushd_popd`
@@ -260,9 +275,11 @@ mismeasured these; the current Rust reads as substantially complete.
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
   - done: 6 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
     `setstypat`, `cd_new_pwd`) — remaining 46
-  - reclassified NOT-FAKE on audit: 2 (`zgetdir` — live getcwd branch is
+  - reclassified NOT-FAKE on audit: 3 (`zgetdir` — live getcwd branch is
     faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
-    AST parser architecture, `{...}`/always split to parse.rs:7025)
+    AST parser architecture, `{...}`/always split to parse.rs:7025;
+    `promptexpand` — core in putpromptchar 1375 lines + 45 tests, two
+    honest minor approximations)
   - audited vestigial (callerless, architectural divergence): 1
     (`load_dump_file` — zshrs uses owned-Vec dumps via load_dump_header)
   - confirmed BLOCKED: `zccmd_input` (mouse decode / no ncurses)
