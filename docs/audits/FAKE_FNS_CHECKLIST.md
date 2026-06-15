@@ -204,9 +204,21 @@ largely illusory: on close inspection most have hidden substrate gaps
 - HISTORY_IGNORE/atomic-rename/lock-retry: `savehistfile`, `lockhistfile`
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
-reclassify out of PORT if confirmed)**: `zglob`, `execpline`. The
-line-ratio detector mismeasured these; the current Rust reads as
-substantially complete.
+reclassify out of PORT if confirmed)**: `zglob`. The line-ratio detector
+mismeasured it; the current Rust reads as substantially complete.
+
+- [VERIFIED NOT-FAKE — re-architected] `exec.rs::execpline` — the
+  "pipe/fork primitives deferred (structural stub)" triage label was
+  WRONG. `execpline` (7860) is the real WC_PIPE dispatch loop: it handles
+  the WC_SUBLIST_NOT/Z_TIMED early return (c:1677-1680) and dispatches
+  every pipe stage by WC_* tag via the full `execfuncs[]` table
+  (WC_SIMPLE→execsimple, WC_SUBSH→execcursh, WC_FOR→execfor, … c:5499).
+  C's monolithic execpline inlines fork/pipe; the Rust splits the
+  multi-stage fork/pipe isolation into `execpline2` (exec.rs:7716, **131
+  lines**) + the fusevm `OpPipeCreate`/`OpFork` bytecode ops (no-fork
+  architecture). Not a structural fake; the ratio flag (68/237) is a
+  detector artifact (monolithic C fn vs split Rust). Reclassified out of
+  the genuine-fake list.
 
 - [VERIFIED NOT-FAKE — re-architected] `glob.rs::scanner` — C's
   monolithic 162-line `scanner` (Complist linked-list + Patprog +
@@ -324,7 +336,8 @@ substantially complete.
     AST parser architecture, `{...}`/always split to parse.rs:7025;
     `promptexpand` — core in putpromptchar 1375 lines + 45 tests, two
     honest minor approximations; `scanner` — re-architected glob engine,
-    closure/recursion/patterns present, 99 glob tests)
+    closure/recursion/patterns present, 99 glob tests; `execpline` —
+    real WC_PIPE dispatch loop, fork/pipe split into execpline2 + fusevm)
   - audited vestigial/duplicate (not the live path): 2
     (`load_dump_file` — callerless, zshrs uses owned-Vec dumps via
     load_dump_header; `prompt.rs::match_highlight` — test-only duplicate,
