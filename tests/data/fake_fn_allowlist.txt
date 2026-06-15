@@ -952,25 +952,20 @@ check_qualifier_list
 check_single_qualifier
 sort_matches
 apply_selection
-# glob_path — canonical entry for filesystem glob expansion (mirrors
-# zglob driver at glob.c:1214 with alternation + extendedglob
-# pre-passes inlined). subst.rs `stringsubst` glob site routes
-# through this. Will fold into a real `zglob` port when scanner()
-# rewrite completes.
+# glob_path — RUST-ONLY thin "pattern string in, Vec<String> out"
+# adapter over the engine (globdata_glob), for call sites that want
+# matches as a Vec rather than C's in-place zglob(LinkList,LinkNode,int)
+# mutation and do their own nomatch/nullglob dispatch (subst.rs,
+# builtin.rs, vm_helper.rs). The 130 lines of ad-hoc ^/~/alternation
+# read_dir+matchpat code that used to live here were verified redundant
+# with globdata_glob (scanner+patcompile P_EXCLUDE) and removed; the
+# false `c:1214` citation was removed too. The faithful C entry is zglob
+# (c:1214), which now drives globdata_glob directly.
 glob_path
-# find_top_level_tilde — extendedglob `pat1~pat2` exclusion helper
-# used by glob_path. C inlines the top-level-tilde scan in scanner()
-# (glob.c:580+) when extendedglob is on.
-find_top_level_tilde
 # apply_modespec — mode-spec apply helper (qgetmodespec returns a
 # ModeSpec at glob.c:844, this fn applies it). Rust-only because C
 # inlines the bit manipulation at every callsite.
 apply_modespec
-# expand_glob_alternation — top-level `(a|b|c)` brace-style alternation
-# pre-expansion that runs before the path-component scanner. C handles
-# this via BRANCH opcodes in pattern.c's compiled Patprog; Rust port
-# pre-expands at glob.rs level until the per-component Patprog port lands.
-expand_glob_alternation
 # mv_rename / mv_symlink / mv_link — `bin_ln`/`domove` MoveFunc adapters.
 # C uses raw `(MoveFunc) rename` / `(MoveFunc) symlink` / `(MoveFunc) link`
 # casts on libc fns (`Src/Modules/files.c:210, 219, 223`). Rust can't cast
