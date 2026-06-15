@@ -148,17 +148,32 @@ Rust substrate. "Port all 50" is gated on substrate — most fakes exist
 *because* their engine isn't built. Faking them anyway = the forbidden
 structural-shell capital offense. Buckets:
 
-**READY** — substrate exists, faithful port possible now (verify each;
-agent labels were wrong 4/4 on the earlier delete-candidates and on
-`addhistnode`, so confirm before porting):
-- [x] `zle_vi.rs::vireplacechars` — done
-- [ ] `zle_utils.rs::spaceinline`
-- [ ] `compmatch.rs::bld_line` (Cmatcher/Cpattern/CPAT_*/pattern_match1 present)
-- [ ] `compcore.rs::callcompfunc` (needs re-verify — agent optimistic)
-- [ ] `complete.rs::bin_compadd` (needs re-verify — may already be adequate)
-- [ ] `modules/zutil.rs::setstypat`
-- [ ] `modules/db_gdbm.rs::gdbmhashsetfn`, `unmetafy_zalloc`
-- [ ] `modules/curses.rs::zccmd_input` (needs re-verify)
+**READY** — verified one-by-one. The triage's "READY" bucket proved
+largely illusory: on close inspection most have hidden substrate gaps
+(agent labels were wrong 4/4 on the delete-candidates and on
+`addhistnode`/`spaceinline`/`bld_line`). Confirmed status:
+- [x] `zle_vi.rs::vireplacechars` — **done** (vigetkey/region path)
+- [x] `modules/db_gdbm.rs::gdbmhashsetfn` — **done** (closed the
+  `gdbm_reorganize` gap c:501; binding existed, added a `reorganize()`
+  wrapper + `if ht.is_empty()` call; 64 gdbm tests green)
+- [BLOCKED] `zle_utils.rs::spaceinline` — `RegionHighlight` struct lacks
+  `flags`/`start_meta`/`end_meta`, no `predisplaylen`; the
+  region_highlights position-adjustment can't be ported without
+  extending the struct (touches the highlight renderer)
+- [BLOCKED] `compmatch.rs::bld_line` — completion cross-class equivalence;
+  `pattern_match_equivalence` has a documented `PP_LOWER`/`PP_UPPER` `lmtp`
+  gap (line-side equivalence lookup missing)
+- [BLOCKED] `hashtable.rs::addhistnode` — `ring_get` returns a clone; no
+  `ring_get_mut`, so the C `he->node.flags |= HIST_DUP` ring mutation
+  can't be expressed without a new mutable ring accessor
+- [ ] `modules/zutil.rs::setstypat` (parse_string eval-body gap — re-verify)
+- [ ] `compcore.rs::callcompfunc`, `complete.rs::bin_compadd` (VERIFY — may
+  already be adequate)
+- [ ] `modules/curses.rs::zccmd_input` (re-verify)
+- likely NOT-FAKE (idiom): `modules/db_gdbm.rs::unmetafy_zalloc` — the C
+  `zalloc`+`memcpy`+`zsfree` exact-size-copy dance is exactly what an owned
+  Rust `String` provides; current port returns `(String, len)` — faithful
+  in idiom, pending an `unmeta` NUL-safety check
 
 **BLOCKED on engine substrate** (port requires building the engine first
 — NOT faithfully portable now):
@@ -188,8 +203,10 @@ the current Rust reads as substantially complete.
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
-  - done: 3 (`lchdir`, `findsep`, `vireplacechars`) — remaining 49
-  - of the 49: ~7 READY (substrate exists), ~10 VERIFY (maybe not fakes),
-    ~32 BLOCKED on engine substrate (build engine first; cannot fake)
+  - done: 4 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`) — remaining 48
+  - newly-confirmed BLOCKED on close inspection: `spaceinline`, `bld_line`,
+    `addhistnode` (the "READY" triage bucket was over-optimistic — most
+    left items are substrate-blocked; building the engines is the real
+    prerequisite, not a porting sprint)
 - UNFAKE: 0  (all 4 candidates verified not-fake)
 - NOT FAKE (excluded): 67
