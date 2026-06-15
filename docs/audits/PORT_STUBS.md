@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-15T21:59:14.033862+00:00
+Generated: 2026-06-15T22:15:33.793008+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 115 stubs across 44 files
+## Summary: 114 stubs across 43 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -44,7 +44,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/complist.rs` | 2 | `domenuselect` (125 / 940) |
 | `src/ported/zle/zle_hist.rs` | 2 | `doisearch` (19 / 462) |
 | `src/ported/zle/zle_params.rs` | 2 | `get_cursor` (1 / 11) |
-| `src/ported/builtin.rs` | 1 | `cd_new_pwd` (10 / 71) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/hashnameddir.rs` | 1 | `createnameddirtable` (2 / 15) |
 | `src/ported/modules/curses.rs` | 1 | `zccmd_input` (36 / 173) |
@@ -281,12 +280,6 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 144 | `get_cursor` | 1 | 11 | 9% |
 | 608 | `set_killring` | 6 | 27 | 22% |
-
-### `src/ported/builtin.rs` — 1 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 2265 | `cd_new_pwd` | 10 | 71 | 14% |
 
 ### `src/ported/builtins/rlimits.rs` — 1 stubs
 
