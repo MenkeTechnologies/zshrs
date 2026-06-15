@@ -680,10 +680,12 @@ pub fn gdbmhashsetfn(pm: &str, ht: &[(String, String)]) {
         let _ = param.delete(k); // c:492 gdbm_delete
     }
     // c:500-502 — `if (!ht || ht->hsize == 0) (void)gdbm_reorganize(dbf);`
-    // Skip: gdbm_reorganize compacts the on-disk file after large
-    // deletions; the Rust port doesn't yet expose reorganize via the
-    // gdbm_database wrapper. Pending — entries are correctly deleted
-    // even without reorganize.
+    // When the new hash is empty (e.g. `myhash=()`), C compacts the
+    // on-disk file after wiping every entry. `ht.is_empty()` covers
+    // both C's `!ht` (NULL) and `ht->hsize == 0` (empty) cases.
+    if ht.is_empty() {
+        let _ = param.db.reorganize(); // c:501
+    }
 
     // c:514-545 — `for (i = 0; i < ht->hsize; i++) for (hn = ht->nodes[i]; ...)
     //                  umkey = unmetafy_zalloc(v.pm->node.nam, &umlen);
@@ -996,6 +998,24 @@ impl gdbm_database {
     /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     #[cfg(not(feature = "gdbm"))]
     pub fn clear(&self) -> Result<(), String> {
+        Err("GDBM support not compiled in".to_string())
+    }
+
+    /// Thin wrapper over `gdbm_reorganize(dbf)` — compacts the on-disk
+    /// file after deletions. C calls this inline at db_gdbm.c:501
+    /// (`(void)gdbm_reorganize(dbf)`); Rust factors it onto the wrapper.
+    /// WARNING: NOT IN DB_GDBM.C — method on Rust-only `gdbm_database` wrapper.
+    #[cfg(feature = "gdbm")]
+    pub fn reorganize(&self) -> Result<(), String> {
+        if self.readonly {
+            return Err("Database is read-only".to_string());
+        }
+        unsafe { gdbm_reorganize(self.dbf) }; // c:501
+        Ok(())
+    }
+
+    #[cfg(not(feature = "gdbm"))]
+    pub fn reorganize(&self) -> Result<(), String> {
         Err("GDBM support not compiled in".to_string())
     }
 
