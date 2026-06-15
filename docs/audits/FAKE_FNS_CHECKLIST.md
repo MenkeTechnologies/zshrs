@@ -205,9 +205,23 @@ largely illusory: on close inspection most have hidden substrate gaps
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
 reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
-`cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`, `par_subsh`,
-`load_dump_file`. The line-ratio detector mismeasured these; the current
-Rust reads as substantially complete.
+`cd_new_pwd`, `execpline`, `promptexpand`, `match_highlight`, `par_subsh`.
+The line-ratio detector mismeasured these; the current Rust reads as
+substantially complete.
+
+- [AUDITED — vestigial] `parse.rs::load_dump_file` — **callerless**.
+  zshrs replaced C's mmap-and-register design (parse.c:3675-3725: mmap
+  the `.zwc`, push a `FuncDump` onto the global `dumps` list) with an
+  owned-`Vec<u32>` model: `funcdump.map` is a `Vec<u32>`, dumps are
+  loaded via `load_dump_header`, and `check_dump_file` walks `DUMPS` by
+  dev/ino (parse.rs:4733-4742) — all faithful. The standalone
+  `load_dump_file` just `read_to_end`s bytes and registers nothing;
+  nothing calls it. Not a structural-shell fake (real read work), not
+  faithful to C (no mmap/register). A faithful mmap-port is low-value
+  (no caller to verify the page-align/offset arithmetic against) and
+  the `map`/`addr` aliasing doesn't map cleanly to owned `Vec`s. Kept
+  as a vestigial name-anchor (no-delete-shims rule). Residual ratio
+  flag is a detector artifact.
 
 - [VERIFIED NOT-FAKE] `compat.rs::zgetdir` — audited against C: the Rust
   faithfully implements the live getcwd branch (compat.c:360-377 —
@@ -226,7 +240,12 @@ Rust reads as substantially complete.
     `setstypat`) — remaining 47
   - reclassified NOT-FAKE on audit: 1 (`zgetdir` — live getcwd branch is
     faithful; walk fallback is platform-dead, `USE_GETCWD=1`)
-  - confirmed BLOCKED this round: `zccmd_input` (mouse decode / no ncurses)
+  - audited vestigial (callerless, architectural divergence): 1
+    (`load_dump_file` — zshrs uses owned-Vec dumps via load_dump_header)
+  - confirmed BLOCKED: `zccmd_input` (mouse decode / no ncurses)
+  - NOTE: READY bucket exhausted. Remaining items are completion/ZLE-
+    engine-blocked or VERIFY-bucket audits. Continued *porting* throughput
+    now requires building an engine, not 1-min cherry-picking.
   - newly-confirmed BLOCKED on close inspection: `spaceinline`, `bld_line`,
     `addhistnode` (the "READY" triage bucket was over-optimistic — most
     left items are substrate-blocked; building the engines is the real
