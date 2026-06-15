@@ -205,8 +205,23 @@ largely illusory: on close inspection most have hidden substrate gaps
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
 reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
-`execpline`, `match_highlight`. The line-ratio detector mismeasured these;
-the current Rust reads as substantially complete.
+`execpline`. The line-ratio detector mismeasured these; the current Rust
+reads as substantially complete.
+
+- [AUDITED — duplicate, test-only] `prompt.rs::match_highlight` — there
+  are **two** Rust `match_highlight`s. The flagged one (prompt.rs:3281)
+  calls `parsehighlight` (bold/underline/standout/none/named-fg/named-bg)
+  and is used **only by its own tests**. The production callers
+  (zle_refresh.rs:388/3084, hlgroup.rs:60) use a separate, fuller
+  `match_highlight` at **zle_refresh.rs:2599** that also handles numeric
+  colors (`bg=42`) and negation (`nobold`) — see its tests 3536-3558.
+  So prompt.rs:3281 is a simplified test-only duplicate, not the live
+  parser and not a structural fake. ACTION ITEM (flagged, not done in a
+  loop tick): consolidate the two `match_highlight` impls per the
+  no-duplicate-implementations rule — needs the boss's sign-off since it
+  touches the zle_refresh/hlgroup call sites. Neither impl yet covers
+  C's `layer=`/`opacity=` clauses (tracked). Reclassified out of PORT
+  (the flagged fn isn't the live highlight parser).
 
 - [VERIFIED NOT-FAKE] `prompt.rs::promptexpand` — audited against C: the
   heavy lifting is faithful. `promptexpand` delegates to `expand_prompt`,
@@ -280,8 +295,12 @@ the current Rust reads as substantially complete.
     AST parser architecture, `{...}`/always split to parse.rs:7025;
     `promptexpand` — core in putpromptchar 1375 lines + 45 tests, two
     honest minor approximations)
-  - audited vestigial (callerless, architectural divergence): 1
-    (`load_dump_file` — zshrs uses owned-Vec dumps via load_dump_header)
+  - audited vestigial/duplicate (not the live path): 2
+    (`load_dump_file` — callerless, zshrs uses owned-Vec dumps via
+    load_dump_header; `prompt.rs::match_highlight` — test-only duplicate,
+    live parser is zle_refresh.rs::match_highlight)
+  - ACTION ITEM flagged: consolidate the two `match_highlight` impls
+    (no-duplicate-implementations rule; needs boss sign-off)
   - confirmed BLOCKED: `zccmd_input` (mouse decode / no ncurses)
   - NOTE: READY bucket exhausted. Remaining items are completion/ZLE-
     engine-blocked or VERIFY-bucket audits. Continued *porting* throughput
