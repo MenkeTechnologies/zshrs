@@ -14,7 +14,7 @@ use crate::ported::options::dosetopt;
 use crate::ported::parse::init_parse_status;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::subst::equalsubstr;
-use crate::ported::utils::{errflag, zerr, ERRFLAG_ERROR};
+use crate::ported::utils::{errflag, zerr, zmonotime, zsleep_random, ERRFLAG_ERROR};
 use crate::ported::zle::compcore::ZLEMETACS;
 use crate::ported::zsh_h::{
     hashnode, hist_stack, histent, isset, Pound, BANGHIST, CASMOD_CAPS, CASMOD_LOWER, CASMOD_NONE,
@@ -3736,19 +3736,52 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
 /// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.
 static lockhistct: AtomicI32 = AtomicI32::new(0);
 
-/// Port of `int checklocktime(char *fn, time_t mtim)` from Src/hist.c.
-pub fn checklocktime(path: &str, max_age_secs: u64) -> i32 {
-    let lockfile = format!("{}.lock", path);
-    if let Ok(meta) = std::fs::metadata(&lockfile) {
-        if let Ok(modified) = meta.modified() {
-            if let Ok(age) = modified.elapsed() {
-                if age.as_secs() < max_age_secs {
-                    return 1;
-                }
+/// Port of `int checklocktime(char *lockfile, long *sleep_usp, time_t then)`
+/// from `Src/hist.c:3147`.
+///
+/// Decides what to do when a history lock file already exists, given
+/// its mtime (`then`). Returns `-1` (give up) when the lock file's
+/// timestamp is implausibly far in the future; otherwise either sleeps
+/// a randomised, exponentially-increasing backoff (recent lock — owner
+/// likely still alive) or unlinks the stale lock file, returning `0`.
+/// `sleep_usp` is doubled on each backoff so repeated calls ramp up.
+///
+/// Replaces the prior ad-hoc `(path, max_age_secs) -> 1|0` orphan,
+/// which used a `.lock` suffix, an age threshold, and no backoff —
+/// none of which match the C contract.
+pub fn checklocktime(lockfile: &str, sleep_usp: &mut i64, then: i64) -> i32 {
+    // c:3147
+    let now = zmonotime(None); // c:3149
+
+    if now + 10 < then {
+        // c:3151 — File is more than 10 seconds in the future?
+        // c:3153 — `errno = EEXIST;` set for C caller-contract parity.
+        unsafe {
+            #[cfg(target_os = "linux")]
+            {
+                *libc::__errno_location() = libc::EEXIST;
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                *libc::__error() = libc::EEXIST;
             }
         }
+        return -1; // c:3154
     }
-    0
+
+    if now - then < 10 {
+        // c:3157-3168 — gradually increasing backoff: sleep based on
+        // the time spent so far, randomised to minimise clashes with
+        // shells exiting at the same time.
+        DPUTS!(now < then, "time flowing backwards through history"); // c:3162
+        zsleep_random(*sleep_usp, then + 10); // c:3167
+        *sleep_usp <<= 1; // c:3168 `*sleep_usp <<= 1;`
+    } else {
+        // c:3170 — `unlink(lockfile);` — the lock is stale, remove it.
+        let _ = std::fs::remove_file(lockfile);
+    }
+
+    0 // c:3172
 }
 
 /// Port of `int lockhistfile(char *fn, int keep_trying)` from Src/hist.c:3182.
