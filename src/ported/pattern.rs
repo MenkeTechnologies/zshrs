@@ -992,6 +992,19 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         if c == b'|' || c == b')' {
             break;
         }
+        // c:950 — '/' is ZPC_SLASH (slot 0, within ZPC_SEG_COUNT), so C
+        // breaks the segment here. zshrs gates this to FILE globs at top
+        // level: parsecomplist needs the path-component boundary, while
+        // matchpat/[[ ]]/:# (never PAT_FILE) and '/' inside parens (the
+        // `((#s)|/)` anchor pin) must keep '/' literal. C's unconditional
+        // break + c:914-917 file-accept termination is equivalent for the
+        // top-level file-glob case this serves.
+        if c == b'/'
+            && paren == 0
+            && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0
+        {
+            break;
+        }
         // c:950-952 — `~` is an additional terminator when active as
         // the exclusion operator. The C condition includes all five
         // segment-specials (SLASH, NULL, BAR, OUTPAR, TILDE), but

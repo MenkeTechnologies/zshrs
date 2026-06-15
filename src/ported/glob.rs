@@ -6944,6 +6944,15 @@ mod tests {
         assert_eq!(s2.len(), 3, "a/b/*.txt → 3 sections, got {s2:?}");
         assert_eq!(&s2[..2], &["a".to_string(), "b".to_string()]);
         assert_eq!(s2[2], "<pat>", "trailing *.txt must be a pattern section");
+
+        // Pattern-FIRST then literal dir: */foo → [<pat>, foo].
+        let mut t3 = "*/foo".to_string();
+        tokenize(&mut t3);
+        let cl3 = parsecomplist(&t3).expect("parsecomplist None for */foo");
+        let s3 = sections(&cl3);
+        assert_eq!(s3.len(), 2, "*/foo → 2 sections, got {s3:?}");
+        assert_eq!(s3[0], "<pat>", "leading * must be a pattern section");
+        assert_eq!(s3[1], "foo");
     }
 
     /// The `struct qual` arena is built from the parse alongside the enum:
