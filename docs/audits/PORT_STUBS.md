@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-15T21:44:53.973116+00:00
+Generated: 2026-06-15T21:51:52.555239+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 116 stubs across 44 files
+## Summary: 115 stubs across 44 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -39,7 +39,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/glob.rs` | 2 | `zglob` (60 / 614) |
 | `src/ported/hist.rs` | 2 | `lockhistfile` (25 / 124) |
 | `src/ported/init.rs` | 2 | `init_shout` (4 / 23) |
-| `src/ported/modules/db_gdbm.rs` | 2 | `unmetafy_zalloc` (3 / 11) |
 | `src/ported/prompt.rs` | 2 | `match_highlight` (10 / 75) |
 | `src/ported/zle/complete.rs` | 2 | `set_compstate` (3 / 26) |
 | `src/ported/zle/complist.rs` | 2 | `domenuselect` (125 / 940) |
@@ -49,6 +48,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/hashnameddir.rs` | 1 | `createnameddirtable` (2 / 15) |
 | `src/ported/modules/curses.rs` | 1 | `zccmd_input` (36 / 173) |
+| `src/ported/modules/db_gdbm.rs` | 1 | `unmetafy_zalloc` (3 / 11) |
 | `src/ported/modules/param_private.rs` | 1 | `setup_` (1 / 12) |
 | `src/ported/modules/parameter.rs` | 1 | `setfunctions` (4 / 15) |
 | `src/ported/modules/pcre.rs` | 1 | `pcre_callout` (1 / 15) |
@@ -247,13 +247,6 @@ python3 scripts/gen_port_stubs.py
 | 643 | `init_shout` | 4 | 23 | 17% |
 | 1511 | `source` | 22 | 97 | 22% |
 
-### `src/ported/modules/db_gdbm.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1231 | `unmetafy_zalloc` | 3 | 11 | 27% |
-| 653 | `gdbmhashsetfn` | 13 | 47 | 27% |
-
 ### `src/ported/prompt.rs` — 2 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -312,6 +305,12 @@ python3 scripts/gen_port_stubs.py
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 1314 | `zccmd_input` | 36 | 173 | 20% |
+
+### `src/ported/modules/db_gdbm.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1251 | `unmetafy_zalloc` | 3 | 11 | 27% |
 
 ### `src/ported/modules/param_private.rs` — 1 stubs
 
