@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-15T22:15:33.793008+00:00
+Generated: 2026-06-15T22:25:06.484922+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 114 stubs across 43 files
+## Summary: 113 stubs across 43 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -38,7 +38,6 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/exec.rs` | 2 | `namedpipe` (24 / 1085) |
 | `src/ported/glob.rs` | 2 | `zglob` (60 / 614) |
 | `src/ported/hist.rs` | 2 | `lockhistfile` (25 / 124) |
-| `src/ported/init.rs` | 2 | `init_shout` (4 / 23) |
 | `src/ported/prompt.rs` | 2 | `match_highlight` (10 / 75) |
 | `src/ported/zle/complete.rs` | 2 | `set_compstate` (3 / 26) |
 | `src/ported/zle/complist.rs` | 2 | `domenuselect` (125 / 940) |
@@ -46,6 +45,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/zle_params.rs` | 2 | `get_cursor` (1 / 11) |
 | `src/ported/builtins/rlimits.rs` | 1 | `printrlim` (1 / 13) |
 | `src/ported/hashnameddir.rs` | 1 | `createnameddirtable` (2 / 15) |
+| `src/ported/init.rs` | 1 | `init_shout` (4 / 23) |
 | `src/ported/modules/curses.rs` | 1 | `zccmd_input` (36 / 173) |
 | `src/ported/modules/db_gdbm.rs` | 1 | `unmetafy_zalloc` (3 / 11) |
 | `src/ported/modules/param_private.rs` | 1 | `setup_` (1 / 12) |
@@ -239,13 +239,6 @@ python3 scripts/gen_port_stubs.py
 | 3791 | `lockhistfile` | 25 | 124 | 20% |
 | 3652 | `savehistfile` | 48 | 199 | 24% |
 
-### `src/ported/init.rs` — 2 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 643 | `init_shout` | 4 | 23 | 17% |
-| 1511 | `source` | 22 | 97 | 22% |
-
 ### `src/ported/prompt.rs` — 2 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -292,6 +285,12 @@ python3 scripts/gen_port_stubs.py
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
 | 35 | `createnameddirtable` | 2 | 15 | 13% |
+
+### `src/ported/init.rs` — 1 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 643 | `init_shout` | 4 | 23 | 17% |
 
 ### `src/ported/modules/curses.rs` — 1 stubs
 

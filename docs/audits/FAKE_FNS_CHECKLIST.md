@@ -204,9 +204,22 @@ largely illusory: on close inspection most have hidden substrate gaps
 - HISTORY_IGNORE/atomic-rename/lock-retry: `savehistfile`, `lockhistfile`
 
 **VERIFY — ratio over-flagged; may already be faithful (per-fn diff,
-reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `source`,
-`execpline`. The line-ratio detector mismeasured these; the current Rust
-reads as substantially complete.
+reclassify out of PORT if confirmed)**: `zglob`, `scanner`, `execpline`.
+The line-ratio detector mismeasured these; the current Rust reads as
+substantially complete.
+
+- [partial] `init.rs::source` — audited + highest-value gap closed. Was
+  missing the `FS_SOURCE` funcstack push (c:1610-1618) — sourced files
+  didn't appear in `$funcstack`/`$functrace`/`$funcfiletrace`. **Ported**
+  faithfully (push after `sourcelevel++`, pop at c:1664, mirroring the
+  FS_FUNC push convention in exec.rs::doshfunc); new balance test +
+  source_/funcstack regression green. The core (find file, .zwc via
+  try_source_file, execute via fusevm pipeline, scriptname save/restore,
+  sourcelevel) was already faithful. STILL MISSING (smaller gaps, tracked):
+  `lineno` reset-to-1/restore (c:1593,1615 → `$LINENO` reflects outer
+  context inside sourced files), `trap_state = TRAP_STATE_INACTIVE`
+  (c:1633), the `SHINSTDIN` dosetopt toggle (c:1595), and SOURCETRACE
+  output (c:1597-1600).
 
 - [AUDITED — duplicate, test-only] `prompt.rs::match_highlight` — there
   are **two** Rust `match_highlight`s. The flagged one (prompt.rs:3281)
@@ -288,8 +301,9 @@ reads as substantially complete.
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
-  - done: 6 (`lchdir`, `findsep`, `vireplacechars`, `gdbmhashsetfn`,
-    `setstypat`, `cd_new_pwd`) — remaining 46
+  - done: 6 full + 1 partial (`lchdir`, `findsep`, `vireplacechars`,
+    `gdbmhashsetfn`, `setstypat`, `cd_new_pwd`; partial: `source` —
+    FS_SOURCE funcstack push closed, smaller gaps tracked) — remaining 45
   - reclassified NOT-FAKE on audit: 3 (`zgetdir` — live getcwd branch is
     faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
     AST parser architecture, `{...}`/always split to parse.rs:7025;
