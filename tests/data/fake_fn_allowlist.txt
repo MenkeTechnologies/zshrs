@@ -138,7 +138,6 @@ module_features
 # reverse direction has no C counterpart since it's implicit in the
 # order of OPT_* enum entries paired with the `optns[]` array. The
 # Rust port collapses both into one match-based lookup.
-index_to_name
 
 # printf_format helpers (builtin.rs) — `printf` spec formatter
 # fragments. C zsh inlines width/precision parsing in bin_print
@@ -318,7 +317,6 @@ imeta_byte
 
 # utils.rs realpath — Rust wrapper around libc realpath(3). Not in zsh
 # utils.c (zsh calls libc realpath directly). Kept for callsite shape.
-realpath
 
 # params.rs — Rust-only OnceLock<Mutex<…>> singleton accessors for the
 # C globals referenced by the special-param GSU callbacks (ifs, home,
@@ -355,10 +353,11 @@ zunderscore_lock
 
 # hashtable.rs — Rust-only OnceLock<Mutex<ShFuncTable>> singleton
 # accessor for the global C `shfunctab`. C zsh dereferences the global
-# directly; Rust port wraps it behind get-or-init. simple_glob_match /
-# glob_match_inner are inline helpers that C does via the full
-# patmatch engine — split out as Rust helpers to avoid pulling in
-# pattern.c for the simple `*` / `?` cases scanmatchshfunc needs.
+# directly; Rust port wraps it behind get-or-init. simple_glob_match is
+# a thin helper for the table-scan callers (scanmatchtable, c:412) that
+# hold a RAW pattern string rather than a precompiled Patprog: it
+# tokenizes + patcompile()s + pattry()s through the real pattern.c port
+# (no ad-hoc matcher). glob_match_inner was deleted (folded away).
 shfunctab_lock
 # hashtable.rs `shfunc_table` C-faithful pointer accessors. C declares
 # `addnode`/`getnode`/`getnode2` as fn-ptr fields on `struct hashtable`
@@ -372,7 +371,6 @@ getnode
 getnode2
 contains_key
 simple_glob_match
-glob_match_inner
 
 # hashtable.rs additional singleton accessors. C declares these as
 # `mod_export HashTable cmdnamtab/aliastab/sufaliastab/reswdtab/histtab`
@@ -464,7 +462,6 @@ bounded
 # table value impls this so the generic gethashnode/disablehashnode/etc.
 # can filter+mutate without per-table dispatch. C uses raw ptr+offset
 # into the embedded header.
-HashNodeFlags
 flags
 set_disabled
 is_disabled
@@ -478,7 +475,6 @@ is_disabled
 scriptname_lock
 argzero_lock
 noerrs_lock
-locallevel_lock
 
 # options.rs setemulate_opts_lock — Rust-only `get_or_init` helper for
 # the C `static char *setemulate_opts;` file-static (options.c:501)
@@ -637,7 +633,6 @@ MB_CHARLENCONV
 # C `HashTable shfunctab` global; HashMap::new() isn't const so
 # the static must be lazily initialized through this fn. Wraps the
 # Mutex used by add_autoload_function and other shfunctab call sites.
-shfunctab_table
 # traps_table (builtin.rs) — OnceLock accessor for the C `sigtrapped[]`
 # / `siglists[]` arrays exposed via a name → body Mutex<HashMap>.
 # HashMap::new() isn't const so the static is lazy-initialized.
@@ -906,7 +901,6 @@ errflag_set_error
 # no-shellexecutor-in-src/ported rule.
 vars_get
 vars_contains
-vars_insert
 arrays_get
 arrays_contains
 arrays_insert
@@ -1060,7 +1054,6 @@ apply_history_modifiers
 # that C inlines via `itok()` / `inblank()` / `iblank()` macros
 # (is_token / is_blank / is_inblank). Long-term these all collapse
 # into the canonical `gettok` body when that is fully ported.
-read_line
 is_valid_assignment_target
 
 # parse.rs Rust-only heredoc / inoutpar resolution — zsh's parser
@@ -1151,7 +1144,6 @@ par_arith_wordcode
 par_loop_body_wordcode
 par_case_wordcode
 par_cond_wordcode
-par_cursh_wordcode
 par_for_wordcode
 par_funcdef_wordcode
 par_redir_wordcode
@@ -1197,12 +1189,6 @@ extract_numeric_ranges
 numeric_ranges_to_star
 numeric_range_contains
 peek
-set_zsh_defaults
-setoption_canonical
-lookup_optletter
-setoption_by_letter
-install_emulation_defaults
-dash_string
 
 # Lazy-init accessors for ZLE-session statics whose initializer is not
 # const (arrays of Vec, History::new(2000), HighlightManager::new()).
@@ -1389,8 +1375,6 @@ test_parse_full_completion_file
 # without further drift.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-apply_colon_modifiers
-apply_modifier_subst
 apply_text_attributes
 autoq_set
 char_at
@@ -1422,17 +1406,6 @@ lastprebr_set
 lexrestore
 lexsave
 makearray_strings
-modifier_abs
-modifier_command
-modifier_ext
-modifier_head
-modifier_lower
-modifier_quote
-modifier_realpath
-modifier_root
-modifier_tail
-modifier_unquote
-modifier_upper
 nextfdhead_offset
 opt_isset
 output_truecolor
@@ -1627,22 +1600,6 @@ bindkey_by_name
 # because C does direct global access (`pparams`, `aliastab->...`)
 # while Rust ownership requires explicit dispatch through a known
 # thread-local or static. Architectural Rust-only.
-install_array_get
-install_assoc_get
-install_array_set
-install_assoc_set
-install_scalar_unset
-install_array_unset
-install_assoc_unset
-install_dispatch_function_call
-install_run_function_body
-install_execute_script
-install_execute_script_zsh_pipeline
-install_run_command_substitution
-install_pparams_get
-install_pparams_set
-install_unregister_function
-install_cmdsubst_outer_stdout
 array
 assoc
 set_array
