@@ -706,9 +706,11 @@ opt_state_set
 
 
 # default_on_options (options.rs) — Rust collapse of C's defset(on,
-# emulation) macro from Src/options.c:73. The C macro reads the
-# emulation flag bit off the per-option optns[] entry; placeholder
-# until the optns[] flag table is ported.
+# emulation) macro from Src/options.c:73. Reads the emulation flag bit
+# off the per-option optns[] table via optns_flags (the faithful port
+# of C's optns[] at Src/options.c:43+, c:80-…, line-by-line). Faithful;
+# verified vs zsh (emulate sh → shwordsplit on / functionargzero off,
+# emulate ksh → bgnice off).
 default_on_options
 
 # sigs_name / sigs_number (signals_h.rs) — accessor wrappers over
