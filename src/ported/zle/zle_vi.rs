@@ -596,26 +596,121 @@ pub fn vireplace() -> i32 {
 }
 
 /// Port of `vireplacechars(UNUSED(char **args))` from Src/Zle/zle_vi.c:594.
+///
+/// vi `r{char}` / `R`-style replace: read one key (`vigetkey`) and
+/// overwrite the next `zmult` characters with it, clamped to end-of-line.
+/// Honours an active visual region (replace the whole selection), and
+/// treats `<return>` specially — collapse the range to a single newline.
+/// The previous Rust port faked the key read with `LASTCHAR` and dropped
+/// the region path, the return-key case, and the `newchars`/`n` shift.
 pub fn vireplacechars() -> i32 {
     // c:594
-    // C body (c:596-675): read one char (vigetkey), replace next zmult
-    //                    chars with it (clamped to eol). Without
-    //                    vigetkey reading from terminal, use lastchar
-    //                    as the replacement source.
-    startvichange(1);
-    let n = ZMOD.lock().unwrap().mult.max(1) as usize;
-    let eol = findeol();
-    let avail = eol.saturating_sub(ZLECS.load(SeqCst));
-    if n > avail {
-        return 1; // not enough chars
-    }
-    if let Some(c) = char::from_u32(crate::ported::zle::compcore::LASTCHAR.load(SeqCst) as u32) {
-        for i in 0..n {
-            ZLELINE.lock().unwrap()[ZLECS.load(SeqCst) + i] = c;
+    let mut n; // c:596 `int n`
+    let mut newchars = 0i32; // c:596
+    let mut fail = false; // c:596
+
+    startvichange(1); // c:599
+    n = ZMOD.lock().unwrap().mult; // c:600 `n = zmult;`
+    if n > 0 {
+        // c:601
+        let ra = get_region_active(); // c:602 `if (region_active)`
+        if ra != 0 {
+            let a;
+            let mut b;
+            if ra == 1 {
+                // c:604-613 — character region: order mark/cursor.
+                let mark = zle_main::MARK.load(SeqCst);
+                let cs = ZLECS.load(SeqCst);
+                if mark > cs {
+                    a = cs; // c:607
+                    b = mark; // c:608
+                } else {
+                    a = mark; // c:610
+                    b = cs; // c:611
+                }
+                incpos(&mut b); // c:613 `INCPOS(b)`
+            } else {
+                // c:615 — line region: `regionlines(&a, &b)`.
+                let (ra2, rb2) = regionlines();
+                a = ra2;
+                b = rb2;
+            }
+            ZLECS.store(a, SeqCst); // c:617 `zlecs = a`
+            let zlell = ZLELL.load(SeqCst);
+            if b > zlell {
+                b = zlell; // c:618-619
+            }
+            n = (b - a) as i32; // c:620 `n = b - a`
+            // c:621-624 — count displayed chars in the range.
+            let mut aa = a;
+            while aa < b {
+                newchars += 1; // c:622
+                incpos(&mut aa); // c:623 `INCPOS(a)`
+            }
+            REGION_ACTIVE.store(0, SeqCst); // c:625 `region_active = 0`
+        } else {
+            // c:627-636 — count forward `n` chars, stopping at eol/newline.
+            let mut pos = ZLECS.load(SeqCst);
+            let zlell = ZLELL.load(SeqCst);
+            let line = ZLELINE.lock().unwrap();
+            while n > 0 {
+                // c:629
+                if pos == zlell || line[pos] == '\n' {
+                    fail = true; // c:631
+                    break; // c:632
+                }
+                newchars += 1; // c:634
+                incpos(&mut pos); // c:635 `INCPOS(pos)`
+                n -= 1;
+            }
+            drop(line);
+            n = (pos - ZLECS.load(SeqCst)) as i32; // c:637 `n = pos - zlecs`
         }
-        ZLE_RESET_NEEDED.store(1, SeqCst);
     }
-    0
+
+    // c:640-645 — argument range check.
+    if n < 1 || fail {
+        if VIINREPEAT.load(SeqCst) != 0 {
+            vigetkey(); // c:643
+        }
+        return 1; // c:644
+    }
+    // c:647-649 — read the replacement key.
+    let ch = vigetkey();
+    if ch == ZLEEOF {
+        return 1; // c:648
+    }
+    // c:651-674 — perform the change.
+    if ch == '\r' as i32 || ch == '\n' as i32 {
+        // c:652-656 — <return> handled specially: collapse to one newline.
+        ZLECS.fetch_add((n - 1) as usize, SeqCst); // c:653 `zlecs += n - 1`
+        backkill(n - 1, CUT_RAW); // c:654
+        let cs = ZLECS.load(SeqCst);
+        ZLELINE.lock().unwrap()[cs] = '\n'; // c:655 `zleline[zlecs++] = '\n'`
+        ZLECS.store(cs + 1, SeqCst);
+    } else {
+        // c:666-674 — overwrite `newchars` positions, fixing up width.
+        let cs = ZLECS.load(SeqCst);
+        if n > newchars {
+            shiftchars(cs as i32, n - newchars); // c:667
+        } else if n < newchars {
+            spaceinline(newchars - n); // c:669
+        }
+        let chr = char::from_u32(ch as u32).unwrap_or('\u{FFFD}');
+        let mut cs2 = cs;
+        let mut remaining = newchars;
+        {
+            let mut line = ZLELINE.lock().unwrap();
+            while remaining > 0 {
+                line[cs2] = chr; // c:671 `zleline[zlecs++] = ch`
+                cs2 += 1;
+                remaining -= 1;
+            }
+        }
+        ZLECS.store(cs2 - 1, SeqCst); // c:673 `zlecs--`
+    }
+    ZLE_RESET_NEEDED.store(1, SeqCst);
+    0 // c:675
 }
 
 /// Port of `vicmdmode(UNUSED(char **args))` from Src/Zle/zle_vi.c:677.
