@@ -25,9 +25,15 @@ use crate::ported::zsh_h::{
     isset, redir, Bnull, Bnullkeep, Dnull, Inang, Meta, Nularg, Outang, Pound, Snull, BAREGLOBQUAL,
     BRACECCL, CASEGLOB, ERRFLAG_INT, EXTENDEDGLOB, GLOBDOTS, GLOBSTARSHORT, IS_DASH, LISTTYPES,
     MARKDIRS, MULTIOS, NULLGLOB, NUMERICGLOBSORT, PP_UNKWN, PREFORK_SINGLE, REDIR_CLOSE,
-    REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_END, SUB_GLOBAL, SUB_LIST,
-    SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR, ZSHTOK_SHGLOB, ZSHTOK_SUBST,
+    REDIR_ERRWRITE, REDIR_MERGEIN, REDIR_MERGEOUT, SHGLOB, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EIND,
+    SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_START, SUB_SUBSTR,
+    ZSHTOK_SHGLOB, ZSHTOK_SUBST, MB_METASTRLEN2END,
 };
+use crate::ported::lex::untokenize;
+use crate::ported::mem::dupstring;
+use crate::ported::subst::singsub;
+use crate::ported::zsh_h::{imatchdata, repldata};
+use crate::ported::ztype_h::imeta;
 use crate::subst::prefork;
 use std::collections::HashSet;
 use std::fs::{self, Metadata};
@@ -1840,15 +1846,142 @@ pub fn matchpat(pattern_in: &str, text_in: &str, extended: bool, case_sensitive:
     ret // c:2529
 }
 
-/// Get match return value (from glob.c get_match_ret line 2550)
 /// Port of `get_match_ret(Imatchdata imd, int b, int e)` from `Src/glob.c:2550`.
-pub fn get_match_ret(imd: &imatchdata, b: usize, e: usize) -> String {
-    if b >= e || b >= imd.str.len() {
-        return String::new();
+///
+/// C returns `char *`: `NULL` when there is nothing to emit, `imd->mstr`
+/// when the match was recorded into `repllist` (SUB_GLOBAL / SUB_LIST),
+/// else a freshly built buffer. Rust returns `Option<String>` (`None` ==
+/// C `NULL`). `b`/`e` arrive as *unmetafied* byte offsets and are first
+/// re-based to metafied byte offsets, exactly as C does. Takes `&mut`
+/// because the SUB_GLOBAL/SUB_LIST branch pushes onto `imd->repllist`.
+pub fn get_match_ret(imd: &mut imatchdata, b: usize, e: usize) -> Option<String> {
+    let mut buf = String::new(); // c:2552 char buf[80]
+    let mut ll: i64 = 0; // c:2553 ll = 0
+    let mut bl: usize = 0; // c:2553 bl = 0
+    let mut t = false; // c:2553 t = 0
+    let mut add: usize = 0; // c:2553 add = 0
+    let fl = imd.flags; // c:2553 fl = imd->flags
+    let mut replstr: Option<String> = imd.replstr.clone(); // c:2552 *replstr = imd->replstr
+
+    let ustr_owned = imd.ustr.clone().unwrap_or_default();
+    let ustr = ustr_owned.as_bytes();
+    let mstr_owned = imd.mstr.clone().unwrap_or_default();
+    let mstr = mstr_owned.as_bytes();
+    let mlen = imd.mlen as usize; // c:2544 imd->mlen
+
+    // c:2555-2564 — account for b and e referring to unmetafied string.
+    let mut p = 0usize; // c:2556 p = imd->ustr
+    while p < b && p < ustr.len() {
+        // c:2556 for (; p < imd->ustr + b; p++)
+        if imeta(ustr[p]) {
+            add += 1; // c:2558 add++
+        }
+        p += 1;
+    }
+    let b = b + add; // c:2559 b += add
+    while p < e && p < ustr.len() {
+        // c:2560 for (; p < imd->ustr + e; p++)
+        if imeta(ustr[p]) {
+            add += 1; // c:2562 add++
+        }
+        p += 1;
+    }
+    let e = e + add; // c:2563 e += add
+
+    // c:2566 — Everything now refers to metafied lengths.
+    if replstr.is_some() || (fl & SUB_LIST) != 0 {
+        // c:2567
+        if (fl & SUB_DOSUBST) != 0 {
+            // c:2568
+            let mut rs = dupstring(replstr.as_deref().unwrap_or("")); // c:2569 dupstring(replstr)
+            rs = singsub(&rs); // c:2570 singsub(&replstr)
+            rs = untokenize(&rs); // c:2571 untokenize(replstr)
+            replstr = Some(rs);
+        }
+        if (fl & (SUB_GLOBAL | SUB_LIST)) != 0 && imd.repllist.is_some() {
+            // c:2573 — replacing the chunk, just add this to the list.
+            let rd = repldata {
+                b: b as i32,             // c:2578 rd->b = b
+                e: e as i32,             // c:2579 rd->e = e
+                replstr: replstr.clone(), // c:2580 rd->replstr = replstr
+            };
+            imd.repllist.as_mut().unwrap().push(rd); // c:2581-2584 z/addlinknode(repllist, rd)
+            return imd.mstr.clone(); // c:2585 return imd->mstr
+        }
+        if let Some(ref r) = replstr {
+            ll += r.len() as i64; // c:2588 ll += strlen(replstr)
+        }
+    }
+    if (fl & SUB_MATCH) != 0 {
+        // c:2590 matched portion
+        ll += 1 + (e as i64 - b as i64); // c:2591 ll += 1 + (e - b)
+    }
+    if (fl & SUB_REST) != 0 {
+        // c:2592 unmatched portion
+        ll += 1 + (mlen as i64 - (e as i64 - b as i64)); // c:2593 ll += 1 + (mlen - (e - b))
+    }
+    if (fl & SUB_BIND) != 0 {
+        // c:2594 position of start of matched portion
+        buf = format!("{} ", MB_METASTRLEN2END(mstr_owned.as_str(), false, b) + 1); // c:2596
+        bl = buf.len(); // c:2597 bl = strlen(buf)
+        ll += bl as i64; // c:2597 ll += bl
+    }
+    if (fl & SUB_EIND) != 0 {
+        // c:2599 position of end of matched portion
+        buf.push_str(&format!("{} ", MB_METASTRLEN2END(mstr_owned.as_str(), false, e) + 1)); // c:2601
+        bl = buf.len(); // c:2602 bl = strlen(buf)
+        ll += bl as i64; // c:2602 ll += bl
+    }
+    if (fl & SUB_LEN) != 0 {
+        // c:2603 length of matched portion — MB_METASTRLEN2END(mstr+b, 0, mstr+e)
+        let sub = if b <= mstr.len() { &mstr_owned[b..] } else { "" };
+        buf.push_str(&format!("{} ", MB_METASTRLEN2END(sub, false, e.saturating_sub(b)))); // c:2605
+        bl = buf.len(); // c:2606 bl = strlen(buf)
+        ll += bl as i64; // c:2606 ll += bl
+    }
+    if bl != 0 {
+        buf.pop(); // c:2609 buf[bl - 1] = '\0' — drop the trailing space
     }
 
-    let e = e.min(imd.str.len());
-    imd.str[b..e].to_string()
+    if ll == 0 {
+        return None; // c:2614 return NULL
+    }
+
+    // c:2617 — rr = r = hcalloc(ll); build the result buffer.
+    let mut r = String::new();
+
+    if (fl & SUB_MATCH) != 0 {
+        // c:2619-2623 — copy matched portion to new buffer.
+        let end = e.min(mstr.len());
+        let start = b.min(end);
+        r.push_str(&mstr_owned[start..end]); // c:2621
+        t = true; // c:2622
+    }
+    if (fl & SUB_REST) != 0 {
+        // c:2624 — copy unmatched portion. If both portions requested,
+        // put a space in between (why?).
+        if t {
+            r.push(' '); // c:2627
+        }
+        // c:2629-2630 — unmatched bits before the match.
+        let pre = b.min(mstr.len());
+        r.push_str(&mstr_owned[..pre]); // c:2630
+        if let Some(ref rs) = replstr {
+            r.push_str(rs); // c:2632-2633 copy replstr
+        }
+        // c:2634-2635 — unmatched bits after the match.
+        let post = e.min(mstr.len());
+        r.push_str(&mstr_owned[post..]); // c:2635
+        t = true; // c:2636
+    }
+    if bl != 0 {
+        // c:2639-2643 — append the numeric buffer; space first if needed.
+        if t {
+            r.push(' '); // c:2642
+        }
+        r.push_str(&buf); // c:2643 strcpy(rr, buf)
+    }
+    Some(r) // c:2645 return r
 }
 
 /// Compile pattern and get match info (from glob.c compgetmatch line 2650)
@@ -3496,19 +3629,11 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 // `int fl` with `SUB_*` bits from `Src/zsh.h:1981+` (mirrored at
 // `zsh_h.rs:2463+`). Callers now pass an `i32` and test bits.
 
-/// Internal match data — port of `struct imatchdata` from
-/// `Src/glob.c:1751` (the local helper used by `igetmatch` and
-/// friends). C fields: `imd->ustr/imd->upat/imd->mb_ind/...`. Rust
-/// keeps a trimmed shape (the parts call sites actually use).
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
-pub struct imatchdata {
-    pub str: String,
-    pub pattern: String,
-    pub match_start: usize,
-    pub match_end: usize,
-    pub replacement: Option<String>,
-}
+// Trimmed local `struct imatchdata` deleted — it was a fake 5-field
+// duplicate (str/pattern/match_start/match_end/replacement) of the
+// canonical `Src/zsh.h:1740` port that already lives in
+// `zsh_h.rs::imatchdata` (mstr/mlen/ustr/ulen/flags/replstr/repllist).
+// `get_match_ret` now uses the canonical struct; see its port above.
 
 /// Strip a trailing `(qual)` block from a glob pattern.
 /// **RUST-ONLY** — C glob.c handles qualifier parsing inline in

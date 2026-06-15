@@ -1090,7 +1090,12 @@ pub struct imatchdata {
     pub ulen: i32,                  // c:1748
     pub flags: i32,                 // c:1750 SUB_*
     pub replstr: Option<String>,    // c:1752
-    pub repllist: Option<LinkList>, // c:1759
+    // c:1759 — C `LinkList repllist` is a heterogeneous void* list of
+    // `struct repldata`. The Rust `LinkList`/`linklist` substrate stores
+    // a placeholder `dat: usize` and can't hold `repldata`, so the
+    // faithful representation of "a list of repldata nodes" is a typed
+    // Vec<repldata>. get_match_ret pushes onto it; the assembler reads it.
+    pub repllist: Option<Vec<repldata>>, // c:1759
 }
 
 // gsu_* function-pointer typedefs (zsh.h:1790-1794) + structs.
