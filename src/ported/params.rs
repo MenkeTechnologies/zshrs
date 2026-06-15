@@ -9542,13 +9542,19 @@ pub fn terminfodirsgetfn(_pm: &param) -> String {
 
 /// Port of `terminfodirssetfn(Param pm, char *x)` from `Src/params.c:5233`. C body
 /// mirrors `terminfosetfn` for the TERMINFO_DIRS env var.
-pub fn terminfodirssetfn(_pm: &mut param, x: String) {
+pub fn terminfodirssetfn(pm: &mut param, x: String) {
+    // c:5233
+    // c:5235-5236 — `zsfree(zsh_terminfodirs); zsh_terminfodirs = x;`
     *zsh_terminfodirs_lock()
         .lock()
         .expect("zsh_terminfodirs poisoned") = x.clone();
-    // c:Src/params.c:5354 — setenv via the C-named zputenv
-        let _ = zputenv(&format!("{}={}", "TERMINFO_DIRS", &x));
-    term_reinit_from_pm();
+    // c:5242-5243 — `if ((pm->node.flags & PM_EXPORTED) && x) addenv(pm, x);`
+    // Only export when $TERMINFO_DIRS is exported; a bare assignment
+    // must not reach child processes.
+    if pm.node.flags & PM_EXPORTED as i32 != 0 {
+        let _ = zputenv(&format!("TERMINFO_DIRS={}", &x)); // c:5243 addenv(pm, x)
+    }
+    term_reinit_from_pm(); // c:5245
 }
 
 // -----------------------------------------------------------
