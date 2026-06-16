@@ -1222,17 +1222,117 @@ pub fn zrefresh() {
     VCS.store(0, Ordering::SeqCst); // start from the home position
     VLN.store(0, Ordering::SeqCst);
     let saved_cleareol = CLEAREOL.load(Ordering::SeqCst);
+    // c:1174 — `clearf = clearflag`: snapshot the clear flag for the loop.
+    let clearf = CLEARFLAG.load(Ordering::SeqCst) != 0;
+    let winw = WINW.load(Ordering::SeqCst);
+    let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst) != 0;
+    enum LineOp {
+        None,
+        Del,
+        Ins,
+    }
     for iln in 0..nlnct {
+        // olnct mutates as we insert/delete lines below; read it fresh.
+        let olnct_now = OLNCT.load(Ordering::SeqCst);
         // c:1672-1674 — if we have more lines than last time, clear the
         // newly-used lines. cleareol is sticky: once set at iln==olnct it
         // stays 1 for the rest of the loop, so every new line is cleared.
-        if iln >= olnct {
+        if iln >= olnct_now {
             CLEAREOL.store(1, Ordering::SeqCst);
         }
+
+        // c:1677-1707 — if the old and new line differ, try to insert or
+        // delete a whole line (scrolling the terminal) instead of
+        // rewriting every following line. Only viable when the terminal
+        // has the insert/delete-line capability (tccan), so headless
+        // (tclen all zero) leaves the plain per-line path untouched.
+        if !clearf
+            && iln > 0
+            && iln < olnct_now - 1
+            && !(hasam_v && VCS.load(Ordering::SeqCst) == winw)
+        {
+            let tcan_del =
+                tclen.lock().unwrap()[crate::ported::zsh_h::TCDELLINE as usize] != 0;
+            let tcan_ins =
+                tclen.lock().unwrap()[crate::ported::zsh_h::TCINSLINE as usize] != 0;
+            let vmaxln = VMAXLN.load(Ordering::SeqCst);
+            let i = iln as usize;
+            // Decide the op under a brief lock on both video buffers.
+            let op = {
+                let nbuf = NBUF.lock().unwrap();
+                let obuf = OBUF.lock().unwrap();
+                let nb_i = nbuf.get(i);
+                let ob_i = obuf.get(i);
+                // c:1681-1682 — nbuf[iln] && obuf[iln] && they differ in 16.
+                let outer = match (nb_i, ob_i) {
+                    (Some(nb), Some(ob)) => ZR_strncmp(ob, nb, 16) != 0,
+                    _ => false,
+                };
+                if !outer {
+                    LineOp::None
+                } else if tcan_del
+                    // c:1683-1685 — obuf[iln+1] real, its first cell set,
+                    // and obuf[iln+1] == nbuf[iln] in 16 → deleting line iln
+                    // realigns the rest with one TCDELLINE.
+                    && obuf
+                        .get(i + 1)
+                        .and_then(|r| r.first())
+                        .map(|c| c.chr != '\0')
+                        .unwrap_or(false)
+                    && nb_i.is_some()
+                    && ZR_strncmp(obuf.get(i + 1).unwrap(), nb_i.unwrap(), 16) == 0
+                {
+                    LineOp::Del
+                } else if tcan_ins
+                    && olnct_now < vmaxln
+                    // c:1697-1698 — nbuf[iln+1] real, obuf[iln] real, and
+                    // obuf[iln] == nbuf[iln+1] in 16 → inserting a line at
+                    // iln realigns with one TCINSLINE.
+                    && nbuf.get(i + 1).is_some()
+                    && ob_i.is_some()
+                    && ZR_strncmp(ob_i.unwrap(), nbuf.get(i + 1).unwrap(), 16) == 0
+                {
+                    LineOp::Ins
+                } else {
+                    LineOp::None
+                }
+            };
+            match op {
+                LineOp::Del => {
+                    moveto(i, 0); // c:1686
+                    tcout(crate::ported::zsh_h::TCDELLINE); // c:1687
+                    // c:1688-1691 — free obuf[iln], shift the rest down,
+                    // olnct--. Vec::remove models the pointer shuffle.
+                    let mut obuf = OBUF.lock().unwrap();
+                    if i < obuf.len() {
+                        obuf.remove(i);
+                    }
+                    OLNCT.store(olnct_now - 1, Ordering::SeqCst);
+                }
+                LineOp::Ins => {
+                    moveto(i, 0); // c:1699
+                    tcout(crate::ported::zsh_h::TCINSLINE); // c:1700
+                    // c:1701-1705 — shift obuf up, NULL the new line at iln,
+                    // olnct++. Vec::insert of an empty row models the NULL.
+                    let mut obuf = OBUF.lock().unwrap();
+                    let at = i.min(obuf.len());
+                    obuf.insert(at, Vec::new());
+                    OLNCT.store(olnct_now + 1, Ordering::SeqCst);
+                }
+                LineOp::None => {}
+            }
+        }
+
         refreshline(iln); // c:1710 — update each line
     }
     CLEAREOL.store(saved_cleareol, Ordering::SeqCst);
+    // c:1751-1752 — `if (nlnct > vmaxln) vmaxln = nlnct`: remember the
+    // tallest frame we've drawn so the insert-line opt never scrolls past it.
+    if nlnct > VMAXLN.load(Ordering::SeqCst) {
+        VMAXLN.store(nlnct, Ordering::SeqCst);
+    }
     // c:1727-1732 — clear any extra lines the previous frame had.
+    let olnct = OLNCT.load(Ordering::SeqCst);
     if olnct > nlnct {
         CLEAREOL.store(1, Ordering::SeqCst);
         for iln in nlnct..olnct {
@@ -3308,6 +3408,7 @@ pub static RPROMPTH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 /// against this.
 pub static OLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:157
 
+
 /// Port of `mod_export int trashedzle` from `Src/Zle/zle_refresh.c:181`.
 /// Set when the on-screen line was wiped (by `trashzle`); next refresh
 /// must do a full redraw.
@@ -4044,6 +4145,74 @@ mod tests {
         assert!(
             s.contains("\x1b[J"),
             "grown line 1 should be cleared via the cleareol short-circuit; got {:?}",
+            s
+        );
+    }
+
+    /// c:1683-1691 — line-delete optimisation. Old buffer ["L0","XX","L2"],
+    /// new buffer ["L0","L2","YY"]: at iln=1 the old line differs from the
+    /// new but old line 2 ("L2") equals new line 1, so one TCDELLINE scrolls
+    /// the rest into place instead of rewriting both lines. With
+    /// tccan(TCDELLINE) wired, zrefresh must emit the delete-line escape.
+    #[test]
+    fn zrefresh_deletes_line_via_tcdelline() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let di = crate::ported::zsh_h::TCDELLINE as usize;
+        let saved_len = tclen.lock().unwrap()[di];
+        let saved_str = tcstr.lock().unwrap()[di].clone();
+        tclen.lock().unwrap()[di] = 3; // tccan(TCDELLINE)
+        tcstr.lock().unwrap()[di] = "\x1b[M".to_string(); // delete-line escape
+
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VMAXLN.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        CLEARFLAG.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        // Frame 1: ["L0","XX","L2"] → /dev/null (becomes OBUF).
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "L0\nXX\nL2".chars().collect();
+        ZLECS.store(8, Ordering::SeqCst);
+        ZLELL.store(8, Ordering::SeqCst);
+        zrefresh();
+        unsafe { libc::close(devnull) };
+
+        // Frame 2: ["L0","L2","YY"] → capture. old line 2 == new line 1.
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "L0\nL2\nYY".chars().collect();
+        ZLECS.store(8, Ordering::SeqCst);
+        ZLELL.store(8, Ordering::SeqCst);
+        zrefresh();
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[di] = saved_len;
+        tcstr.lock().unwrap()[di] = saved_str;
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("\x1b[M"),
+            "line-delete opt should emit the TCDELLINE escape; got {:?}",
             s
         );
     }
