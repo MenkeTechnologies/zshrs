@@ -51,8 +51,8 @@ Three dispositions:
 - [ ] `zle/zle_refresh.rs::moveto` — C zle_refresh.c:2163 (44) — cursor move w/ line-wrap + coord handling
 - [ ] `zle/zle_hist.rs::doisearch` — C zle_hist.c:1083 (462) — incremental-search engine; 26-line stub, no UI loop
 - [ ] `zle/zle_hist.rs::getvisrchstr` — C zle_hist.c:1815 (118) — minibuffer search-string read w/ keymap switch; snapshots buffer only
-- [ ] `zle/zle_main.rs::getbyte` — C zle_main.c:861 (76) — signal queue / timeout / EOF / device-reattach
-- [ ] `zle/zle_main.rs::raw_getbyte` — C zle_main.c:506 (242) — signal masks / watch-fd / timeout recalc (~80 of 242)
+- [~] `zle/zle_main.rs::getbyte` — C zle_main.c:861 (76) — core done (raw_getbyte + \n/\r swap + LASTCHAR); remaining: EINTR retry loop + EIO device-reattach edge cases. **[ZLE engine Phase 1]**
+- [x] `zle/zle_main.rs::raw_getbyte` — C zle_main.c:506 (242) — **PORTED [ZLE engine Phase 1]**: replaced the busy-wait sleep loop with a real `poll(2)` over SHTTY + the `zle -F` watched fds (c:532-589), dispatching watch handlers (widget → `zlecallhook`, function → `callhookfunc` with fd + err/hup/nval flags, c:715-772). Substrate (`WATCH_FDS`/`watch_fd`/`zlecallhook`/`callhookfunc`) already existed — wired it. 93 input tests green (raw_getbyte/getbyte/getfullchar/watch).
 - [ ] `zle/zle_main.rs::zleread` — C zle_main.c:1216 (127+) — skeleton; undo/history/hooks/prompt setup missing
 - [ ] `zle/zle_utils.rs::showmsg` — C zle_utils.c:1310 (72) — multibyte width-aware message display
 - [ ] `zle/zle_utils.rs::spaceinline` — C zle_utils.c:784 (54) — buffer insertion w/ region-highlight adjustment

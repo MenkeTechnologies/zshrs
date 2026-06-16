@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-16T03:34:22.661794+00:00
+Generated: 2026-06-16T03:55:20.436567+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 112 stubs across 43 files
+## Summary: 111 stubs across 43 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -25,7 +25,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/utils.rs` | 9 | `mb_metacharlenconv_r` (5 / 32) |
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 180) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (70 / 745) |
-| `src/ported/zle/zle_main.rs` | 5 | `describekeybriefly` (2 / 28) |
+| `src/ported/zle/zle_main.rs` | 4 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_refresh.rs` | 4 | `zrefresh` (87 / 658) |
 | `src/ported/module.rs` | 3 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 3 | `newzstyletable` (1 / 15) |
@@ -135,14 +135,13 @@ python3 scripts/gen_port_stubs.py
 | 2277 | `makecomplistext` | 43 | 150 | 28% |
 | 242 | `freecompcond` | 11 | 37 | 29% |
 
-### `src/ported/zle/zle_main.rs` — 5 stubs
+### `src/ported/zle/zle_main.rs` — 4 stubs
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1125 | `describekeybriefly` | 2 | 28 | 7% |
-| 406 | `getbyte` | 10 | 76 | 13% |
-| 317 | `raw_getbyte` | 46 | 242 | 19% |
-| 651 | `zleread` | 29 | 127 | 22% |
+| 1183 | `describekeybriefly` | 2 | 28 | 7% |
+| 464 | `getbyte` | 10 | 76 | 13% |
+| 709 | `zleread` | 29 | 127 | 22% |
 | 69 | `zsetterm` | 31 | 104 | 29% |
 
 ### `src/ported/zle/zle_refresh.rs` — 4 stubs
