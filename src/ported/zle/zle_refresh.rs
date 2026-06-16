@@ -3102,10 +3102,12 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     let mut t0: i32; // c:2401
     let mut vsiz: i32; // c:2402
     let mut nvcs: i32 = 0; // c:2403
-                           // !!! STUB: winpos / winprompt statics — Src/Zle/zle_refresh.c:683-684.
-                           // No `pub static WINPOS/WINPROMPT` ported yet; track locally.
-    let owinpos: i32 = -1; // c:2404 winpos snapshot
-    let _owinprompt: i32 = 0; // c:2405 winprompt snapshot
+    // c:2462-2463 — snapshot the persistent window-position statics (WINPOS /
+    // WINPROMPT, reset to -1/0 by resetvideo at c:735-736). These carry the
+    // SINGLELINEZLE horizontal-scroll state across keystrokes; the
+    // `winpos != owinpos` test below detects a scroll since the last frame.
+    let owinpos: i32 = WINPOS.load(Ordering::SeqCst); // c:2462
+    let owinprompt: i32 = WINPROMPT.load(Ordering::SeqCst); // c:2463
     let mut width: i32 = 0; // c:2407
 
     NLNCT.store(1, Ordering::SeqCst); // c:2410
@@ -3308,8 +3310,10 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     }
 
     // c:2569-2587 — window selection.
-    // !!! STUB: winpos static — Src/Zle/zle_refresh.c:683. Local.
-    let mut winpos: i32 = -1;
+    // c:2569 — winpos carries across frames (the persistent WINPOS static),
+    // so the single-line view only re-scrolls when the cursor leaves the
+    // visible window; == owinpos here, recomputed below if the cursor moved.
+    let mut winpos: i32 = WINPOS.load(Ordering::SeqCst);
     let winw = WINW.load(Ordering::SeqCst);
     let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst);
     if winpos == -1 {
@@ -3355,14 +3359,21 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     drop(vbuf); // c:2585
     nvcs -= winpos; // c:2586
 
-    // c:2588-2594 — winprompt update.
-    let _winprompt: i32 = if winpos < lpromptw {
+    // c:2569 — winpos is finalized here; persist it so the next keystroke's
+    // singlerefresh resumes from this scroll position (this is the producer
+    // for owinpos above).
+    WINPOS.store(winpos, Ordering::SeqCst);
+
+    // c:2588-2594 — winprompt = the part of lprompt still on screen; persist
+    // it alongside winpos (the producer for owinprompt above).
+    let winprompt: i32 = if winpos < lpromptw {
         // c:2588
         lpromptw - winpos // c:2590
     } else {
         // c:2591
         0 // c:2593
     };
+    WINPROMPT.store(winprompt, Ordering::SeqCst); // c:2588
 
     // c:2595-2680 — re-emit left-prompt fragment if winpos changed.
     // !!! STUB: lpromptbuf / Inpar / Outpar / convchar_t /
@@ -3379,7 +3390,9 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     // c:2680 (function tail) — `singmoveto(nvcs);`
     singmoveto(nvcs);
 
-    let _ = (lpromptw, width); // silence unused
+    // owinprompt/winprompt are consumed by the prompt-fragment re-emit
+    // (c:2653-2709), which stays stubbed on output primitives (lpromptbuf etc.).
+    let _ = (lpromptw, width, owinprompt, winprompt); // silence unused
 }
 
 /// Direct port of `static void singmoveto(int pos)` from
@@ -6968,6 +6981,50 @@ mod tests {
         let s = String::from_utf8_lossy(&out);
         assert_eq!(vcs_after, 2, "singmoveto must land global VCS at the target");
         assert!(s.contains('\r'), "CR-home optimisation should emit \\r; got {:?}", s);
+    }
+
+    /// c:2462-2588 — singlerefresh persists the SINGLELINEZLE horizontal scroll
+    /// position via the WINPOS/WINPROMPT statics (it was stubbed to a local
+    /// `winpos = -1` that never wrote back). Seed a bogus stale WINPOS=99 with
+    /// an 8-cell line whose cursor (nvcs=8) is outside that window: the load
+    /// triggers a recompute to the centred winpos = nvcs - winw/2 = 3, which is
+    /// stored back. The old local-only stub never wrote WINPOS, so it would
+    /// stay 99.
+    #[test]
+    fn singlerefresh_persists_winpos_to_static() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(10, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 12]];
+        *OBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 12]];
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        // Bogus persisted values from a "prior keystroke".
+        WINPOS.store(99, Ordering::SeqCst);
+        WINPROMPT.store(77, Ordering::SeqCst);
+
+        let line: Vec<char> = "01234567".chars().collect();
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        singlerefresh(&line, line.len() as i32, line.len() as i32);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        assert_eq!(
+            WINPOS.load(Ordering::SeqCst),
+            3,
+            "winpos must load the persisted static, recompute (nvcs-winw/2=3), \
+             and store back — not stay at the bogus 99 (old local-only stub)"
+        );
+        assert_eq!(
+            WINPROMPT.load(Ordering::SeqCst),
+            0,
+            "winprompt must be recomputed+stored (winpos>=lpromptw → 0), not 77"
+        );
     }
 
     /// c:2320-2331 — tc_downcurs prefers the terminal down capability, but
