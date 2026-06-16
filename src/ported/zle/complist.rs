@@ -2085,7 +2085,7 @@ pub fn singledraw() -> i32 {
 
     if md1 != 0 {
         // c:1952
-        tc_downcurs(md1 as usize); // c:1953
+        tc_downcurs(md1); // c:1953
     }
     if mc1 != 0 {
         // c:1954
@@ -2130,7 +2130,7 @@ pub fn singledraw() -> i32 {
     // c:1964-1965 — relative down-move to second cell.
     if md2 != md1 {
         // c:1964
-        tc_downcurs((md2 - md1) as usize); // c:1965
+        tc_downcurs(md2 - md1); // c:1965
     }
     if mc2 != 0 {
         // c:1966
