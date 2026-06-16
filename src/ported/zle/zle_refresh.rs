@@ -770,36 +770,34 @@ pub fn scrollwindow(tline: i32) {
 /// fresh row exists, then resets `rpms->s`/`sen` to the start/end
 /// of that row.
 ///
-/// **Signature note (faithful to C):** takes the rparams struct
-/// directly + the RefreshState for video-buffer access. Mirrors the
-/// C call where `nbuf`/`winw`/`winh`/`numscrolls` are file-statics.
-pub fn nextline(
-    rpms: &mut rparams,       // c:842
-    state: &mut RefreshState, // for new_video / columns / lines access
-    wrapped: i32,             // c:842
-) -> i32 {
-    let winw = state.columns as i32;
-    let winh = state.lines as i32;
-    let new_video = match state.new_video.as_mut() {
-        Some(v) => v,
-        None => return 1,
-    };
+/// **Signature note (faithful to C):** `nextline(Rparams rpms, int wrapped)`
+/// operates on the global `nbuf`/`winw`/`winh`/`numscrolls` file-statics —
+/// here the global `NBUF` and `WINW`/`WINH`/`NUMSCROLLS` atomics, with
+/// `REFRESH_ELEMENT` cells (consistent with `scrollwindow`, which it calls
+/// at c:863). The earlier port threaded a `RefreshState`/`new_video` (the
+/// `RefreshElement` cell type) — divergent from C and inconsistent with the
+/// now-global `scrollwindow`; this is the first consolidation step toward
+/// driving the live build's vertical scroll through `nextline`.
+pub fn nextline(rpms: &mut rparams, wrapped: i32) -> i32 {
+    // c:841
+    let winw = WINW.load(Ordering::SeqCst);
+    let winh = WINH.load(Ordering::SeqCst);
 
     // c:844-845 — `nbuf[ln][winw+1] = wrapped ? zr_nl : zr_zr; *s = zr_zr;`
-    if let Some(row) = new_video.lines.get_mut(rpms.ln as usize) {
-        let end_idx = (winw + 1) as usize;
-        if end_idx < row.len() {
-            row[end_idx] = if wrapped != 0 {
-                RefreshElement {
-                    chr: '\n',
-                    ..RefreshElement::default()
-                }
-            } else {
-                RefreshElement::default()
-            };
-        }
-        if (rpms.pos) < row.len() {
-            row[rpms.pos] = RefreshElement::default();
+    {
+        let mut nbuf = NBUF.lock().unwrap();
+        if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+            let end_idx = (winw + 1) as usize;
+            if end_idx < row.len() {
+                row[end_idx] = if wrapped != 0 {
+                    REFRESH_ELEMENT { chr: '\n', atr: 0 }
+                } else {
+                    REFRESH_ELEMENT::default()
+                };
+            }
+            if rpms.pos < row.len() {
+                row[rpms.pos] = REFRESH_ELEMENT::default();
+            }
         }
     }
 
@@ -822,18 +820,21 @@ pub fn nextline(
             rpms.canscroll = winh / 2; // c:859
         }
         rpms.canscroll -= 1; // c:862
-        scrollwindow(0); // c:863
+        scrollwindow(0); // c:863 — same global NBUF as this function
         if rpms.nvln != -1 {
             rpms.nvln -= 1; // c:865
         }
     }
 
     // c:867-869 — allocate the row if missing.
-    if rpms.ln as usize >= new_video.lines.len() {
-        new_video.lines.resize(
-            rpms.ln as usize + 1,
-            vec![RefreshElement::default(); (winw + 2) as usize],
-        );
+    {
+        let mut nbuf = NBUF.lock().unwrap();
+        if rpms.ln as usize >= nbuf.len() {
+            nbuf.resize(
+                rpms.ln as usize + 1,
+                vec![REFRESH_ELEMENT::default(); (winw + 2) as usize],
+            );
+        }
     }
     // c:871-872 — `rpms->s = nbuf[ln]; rpms->sen = s + winw;`
     rpms.pos = 0;
@@ -5393,6 +5394,53 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:841-873 — nextline (now on the global NBUF): off the bottom row it
+    /// marks the wrap/terminator, advances ln, allocates the next row, and
+    /// resets pos/end. At the bottom row it scrolls the buffer instead.
+    #[test]
+    fn nextline_advances_then_scrolls_on_global_nbuf() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(4, Ordering::SeqCst);
+        WINH.store(3, Ordering::SeqCst);
+        NUMSCROLLS.store(0, Ordering::SeqCst);
+        ONUMSCROLLS.store(0, Ordering::SeqCst);
+        let row = |c: char| -> REFRESH_STRING {
+            vec![REFRESH_ELEMENT { chr: c, atr: 0 }; 6] // winw + 2 cells
+        };
+        *NBUF.lock().unwrap() = vec![row('A'), row('B'), row('C')];
+
+        // From ln=0 (not bottom), wrapped: advance + wrap marker.
+        let mut rpms = rparams::default();
+        rpms.ln = 0;
+        rpms.pos = 2;
+        rpms.nvln = -1;
+        let ret = nextline(&mut rpms, 1);
+        assert_eq!(ret, 0);
+        assert_eq!(rpms.ln, 1, "advanced to next line");
+        assert_eq!(rpms.pos, 0); // c:871
+        assert_eq!(rpms.end, 4); // c:872 — winw
+        {
+            let nbuf = NBUF.lock().unwrap();
+            assert_eq!(nbuf[0][5].chr, '\n', "wrap marker at winw+1"); // c:844
+            assert_eq!(nbuf[0][2].chr, '\0', "terminated at pos"); // c:845
+        }
+
+        // From ln=winh-1 (bottom) with nvln=-1: scroll instead of advance.
+        let mut rpms2 = rparams::default();
+        rpms2.ln = 2;
+        rpms2.nvln = -1;
+        let ret2 = nextline(&mut rpms2, 0);
+        assert_eq!(ret2, 0);
+        assert_eq!(rpms2.ln, 2, "stays at the bottom row after scroll");
+        // scrollwindow(0) rotated the buffer up: old row 1 ('B') is now row 0.
+        assert_eq!(
+            NBUF.lock().unwrap()[0][0].chr,
+            'B',
+            "buffer scrolled: row 1 rose to row 0"
+        );
     }
 
     /// c:430-479 — get_region_highlight formats each user region highlight
