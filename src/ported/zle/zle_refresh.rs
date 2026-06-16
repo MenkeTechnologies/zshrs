@@ -3836,6 +3836,73 @@ pub fn unset_region_highlight(pm: &mut crate::ported::zsh_h::param, exp: i32) {
     }
 }
 
+/// Direct port of `char **get_region_highlight(Param pm)` from
+/// `Src/Zle/zle_refresh.c:430`. The get hook for the `$region_highlight`
+/// special parameter: format each user region highlight as
+/// `"[P]start end <attr-spec>[ memo=NAME]"` (c:466-476) via the real
+/// `output_highlight` (the highlight spec, `fg=red,bold`). C skips the
+/// first `N_SPECIAL_HIGHLIGHTS` (4) cursor/region/isearch/suffix entries
+/// (c:443); the Rust `REGION_HIGHLIGHTS` holds ONLY user entries (the
+/// special baseline isn't stored there), so every entry is a user
+/// highlight and no skip is needed. Empty store → empty array (c:437-438).
+///
+/// `RegionHighlight` stores `attr` as a `TextAttr` (no `atrmask`, since the
+/// TextAttr-returning `match_highlight` dropped it), so the (atr, mask)
+/// pair `output_highlight` needs is rebuilt from the set flag bits — exact
+/// for positive specs (the common case); the explicit-"no"/layer semantics
+/// aren't recoverable from `TextAttr` and are omitted.
+pub fn get_region_highlight(_pm: &crate::ported::zsh_h::param) -> Vec<String> {
+    // c:430
+    use crate::ported::zsh_h::{
+        zattr, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
+        TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
+    };
+    let rh = REGION_HIGHLIGHTS.lock().unwrap();
+    rh.iter()
+        .map(|rhp| {
+            let mut s = String::new();
+            // c:466-468 — `sprintf("%s%s ", P?, "start end")`.
+            if rhp.flags & ZRH_PREDISPLAY != 0 {
+                s.push('P'); // c:467
+            }
+            s.push_str(&format!("{} {} ", rhp.start, rhp.end));
+            // c:469 — output_highlight(atr, atrmask). Rebuild (atr, mask)
+            // from the TextAttr: every set field contributes both its value
+            // to `atr` and its flag bit to `mask`.
+            let ta = &rhp.attr;
+            let mut atr: zattr = 0;
+            let mut mask: zattr = 0;
+            if ta.bold {
+                atr |= TXTBOLDFACE;
+                mask |= TXTBOLDFACE;
+            }
+            if ta.underline {
+                atr |= TXTUNDERLINE;
+                mask |= TXTUNDERLINE;
+            }
+            if ta.standout {
+                atr |= TXTSTANDOUT;
+                mask |= TXTSTANDOUT;
+            }
+            if let Some(fg) = ta.fg_color {
+                atr |= TXTFGCOLOUR | ((fg as zattr) << TXT_ATTR_FG_COL_SHIFT);
+                mask |= TXTFGCOLOUR;
+            }
+            if let Some(bg) = ta.bg_color {
+                atr |= TXTBGCOLOUR | ((bg as zattr) << TXT_ATTR_BG_COL_SHIFT);
+                mask |= TXTBGCOLOUR;
+            }
+            s.push_str(&crate::ported::prompt::output_highlight(atr, mask));
+            // c:473-475 — `memo=NAME`.
+            if let Some(memo) = &rhp.memo {
+                s.push_str(" memo=");
+                s.push_str(memo);
+            }
+            s
+        })
+        .collect()
+}
+
 /// Process-wide region-highlights table, the Rust analog of C's
 /// `mod_export struct region_highlight *region_highlights` global
 /// (`Src/Zle/zle_refresh.c:471`). Holds parsed `$region_highlight`
@@ -5326,6 +5393,28 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:430-479 — get_region_highlight formats each user region highlight
+    /// as "start end <spec>", with the attribute rendered as the real
+    /// highlight spec (fg=red) now that output_highlight is faithful; an
+    /// empty store yields an empty array.
+    #[test]
+    fn get_region_highlight_formats_user_entries() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        set_region_highlight(Some(&["0 5 fg=red".to_string()]));
+        let arr = get_region_highlight(&crate::ported::zsh_h::param::default());
+        assert_eq!(arr.len(), 1, "one user highlight → one entry; got {:?}", arr);
+        assert_eq!(arr[0], "0 5 fg=red", "spec round-trips, not SGR");
+
+        let mut pm = crate::ported::zsh_h::param::default();
+        unset_region_highlight(&mut pm, 1);
+        assert!(
+            get_region_highlight(&pm).is_empty(),
+            "no highlights → empty array"
+        );
     }
 
     /// c:592 — unset_region_highlight clears the user region highlights
