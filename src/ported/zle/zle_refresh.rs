@@ -1615,20 +1615,29 @@ pub fn refreshline(ln: i32) {
             /* tccan(TCDEL) per zsh.h:2682 */
             {
                 // c:1976
+                let mut first = true; // c:1977 — apply text-area attrs once
                 let mut i_try = 1i32; // c:1978
                 while (i_try as usize) < ol.len() && ol[i_try as usize].chr != '\0' {
                     // c:1979 — `tcdelcost(i) < wpfxlen(ol + i, nl)`
                     let ol_tail = &ol[i_try as usize..];
                     let cheap_delete = tcdelcost(i_try) < wpfxlen(ol_tail, &nl) as i32;
                     if cheap_delete {
-                        // c:2045-2046 — `treplaceattrs(prompt_attr);
-                        // applytextattributes(0);` (once per delete run):
-                        // some terminals output the current attributes into
-                        // the cells a deletion adds at the end, so the text-
-                        // area attrs are applied first. Those attr-output
-                        // functions aren't ported yet (the colour substrate,
-                        // same deferral as NBUF's `atr`), so the attr-apply
-                        // is deferred — the delete itself is now faithful.
+                        // c:2042-2047 — some terminals output the current
+                        // attributes into the cells a deletion adds at the
+                        // end, so apply the text-area attrs once before the
+                        // first delete: `treplaceattrs(prompt_attr);
+                        // applytextattributes(0);` (both ported in prompt.rs).
+                        if first {
+                            crate::ported::prompt::treplaceattrs(
+                                PROMPT_ATTR.load(Ordering::SeqCst),
+                            ); // c:2045
+                            let sgr = crate::ported::prompt::applytextattributes(0); // c:2046
+                            if !sgr.is_empty() {
+                                let fd = SHTTY.load(Ordering::Relaxed);
+                                let _ = write_loop(if fd >= 0 { fd } else { 1 }, sgr.as_bytes());
+                            }
+                            first = false; // c:2047
+                        }
                         // c:2048 — `tc_delchars(i)`: delete `i` characters.
                         tc_delchars(i_try);
                         for _ in 0..i_try {
