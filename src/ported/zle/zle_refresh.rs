@@ -2282,8 +2282,14 @@ pub fn refreshline(ln: i32) {
             } else {
                 char_ins
             };
-            // c:1934 — `tccan(TCDEL) && tcdelcost(i) <= i + 1`
-            let can_del = (tclen.lock().unwrap()[TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ && i_pad <= i_pad + 1;
+            // c:1934 — `tccan(TCDEL) && tcdelcost(i) <= i + 1`. Read tclen[TCDEL]
+            // into a local first: tcdelcost re-locks tclen and std Mutex isn't
+            // reentrant. The earlier port faked the cost gate as `i_pad <= i_pad
+            // + 1` (always true) — that bypassed the real tcdelcost comparison,
+            // so it would delete-chars even when padding with spaces is cheaper.
+            let tcdel_len = tclen.lock().unwrap()[TCDEL as usize];
+            let can_del = tcdel_len != 0  /* tccan(TCDEL) per zsh.h:2682 */
+                && tcdelcost(i_pad) <= i_pad + 1;
             if can_del {
                 // c:1993 — `tc_delchars(i)`: delete `i_pad` chars via the
                 // terminal's delete-char capability (now ported).
@@ -2375,9 +2381,16 @@ pub fn refreshline(ln: i32) {
                     }
                     i_try += 1;
                 }
-                if i_try != 0 {
+                // c:2061-2062 — `if (!i) continue;`. i_try==0 means a cheap
+                // delete fired (ol advanced, char_ins decreased): restart the
+                // main loop to re-diff from the new position. A nonzero i_try
+                // means no delete was found — fall through to the insert try.
+                // (The earlier port inverted this to `!= 0`, which restarted
+                // the loop with NO progress when no delete was found → an
+                // infinite loop the moment TCDEL is available.)
+                if i_try == 0 {
                     continue;
-                } // c:2003-2004
+                }
             }
 
             // c:2012-2060 — TCINS try-block: find chars to insert.
@@ -2428,9 +2441,13 @@ pub fn refreshline(ln: i32) {
                     }
                     i_try += 1;
                 }
-                if i_try != 0 {
+                // c:2116-2117 — `if (!i) continue;`. Same as the delete try:
+                // i_try==0 means a cheap insert fired (nl advanced) — restart
+                // the main loop; nonzero means none found — fall through to the
+                // single-char fallback. (Earlier port inverted to `!= 0`.)
+                if i_try == 0 {
                     continue;
-                } // c:2058-2059
+                }
             }
         }
 
@@ -6596,6 +6613,92 @@ mod tests {
         assert!(
             s.contains("\x1b[@") && s.contains('a'),
             "insert path must emit the TCINS sequence and the new char 'a'; got {:?}",
+            s
+        );
+    }
+
+    /// c:1934 — the rubbish-cleanup cost gate `tcdelcost(i) <= i + 1`. After a
+    /// cheap insert leaves char_ins>0 and nl exhausts, the leftover columns are
+    /// cleaned by tc_delchars only when deleting is no costlier than padding;
+    /// otherwise spaces are written. With TCDEL present but EXPENSIVE
+    /// (tcdelcost(1)=5 > 2), the fixed gate must pad — NOT emit the delete
+    /// sequence. The earlier `i_pad <= i_pad + 1` tautology always deleted.
+    #[test]
+    fn refreshline_cleanup_pads_when_delete_costlier() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ins = crate::ported::zsh_h::TCINS as usize;
+        let mins = crate::ported::zsh_h::TCMULTINS as usize;
+        let del = crate::ported::zsh_h::TCDEL as usize;
+        let mdel = crate::ported::zsh_h::TCMULTDEL as usize;
+        let save = |i: usize| (tclen.lock().unwrap()[i], tcstr.lock().unwrap()[i].clone());
+        let (s_ins_l, s_ins_s) = save(ins);
+        let (s_mins_l, _) = save(mins);
+        let (s_del_l, s_del_s) = save(del);
+        let (s_mdel_l, _) = save(mdel);
+
+        // Cheap insert (fires → char_ins=1), but DELETE is expensive: a single
+        // delete costs 5 > i_pad+1 = 2, so the cleanup must pad with a space.
+        tclen.lock().unwrap()[ins] = 1;
+        tcstr.lock().unwrap()[ins] = "\x1b[@".to_string();
+        tclen.lock().unwrap()[mins] = 0;
+        tclen.lock().unwrap()[del] = 5;
+        tcstr.lock().unwrap()[del] = "\x1bDEL".to_string();
+        tclen.lock().unwrap()[mdel] = 0;
+
+        let winw = WINW.load(Ordering::SeqCst).max(8);
+        WINH.store(24, Ordering::SeqCst);
+        PUT_RPMPT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst);
+        let mk = |s: &str| -> REFRESH_STRING {
+            let mut r: REFRESH_STRING =
+                s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect();
+            r.resize((winw + 2) as usize, REFRESH_ELEMENT::default());
+            r
+        };
+        *NBUF.lock().unwrap() = vec![mk("abc")];
+        *OBUF.lock().unwrap() = vec![mk("bc")];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        refreshline(0);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out).into_owned();
+
+        tclen.lock().unwrap()[ins] = s_ins_l;
+        tcstr.lock().unwrap()[ins] = s_ins_s;
+        tclen.lock().unwrap()[mins] = s_mins_l;
+        tclen.lock().unwrap()[del] = s_del_l;
+        tcstr.lock().unwrap()[del] = s_del_s;
+        tclen.lock().unwrap()[mdel] = s_mdel_l;
+
+        // Insert fired (we reached the cleanup), and the gate chose pad: the
+        // expensive TCDEL sequence must be absent.
+        assert!(
+            s.contains("\x1b[@"),
+            "insert must fire so char_ins>0 reaches the cleanup; got {:?}",
+            s
+        );
+        assert!(
+            !s.contains("\x1bDEL"),
+            "delete costlier than padding → must NOT emit TCDEL; got {:?}",
             s
         );
     }
