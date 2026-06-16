@@ -2104,25 +2104,39 @@ pub fn tc_rightcurs(count: usize) {
     }
 }
 
-/// Port of `void tc_downcurs(int ct)` from
-/// `Src/Zle/zle_refresh.c:2126`. C emits the termcap `do`/`down`
-/// capability `ct` times; Rust emits the parametrised CSI B.
-pub fn tc_downcurs(count: usize) {
-    if count > 0 {
-        let s = format!("\x1b[{}B", count);
-        let _ = write_loop(
-            {
-                use std::sync::atomic::Ordering;
-                let f = SHTTY.load(Ordering::Relaxed);
-                if f >= 0 {
-                    f
-                } else {
-                    1
-                }
-            },
-            s.as_bytes(),
-        );
+/// Direct port of `int tc_downcurs(int ct)` from
+/// `Src/Zle/zle_refresh.c:2320`.
+/// ```c
+/// int tc_downcurs(int ct) {
+///     int ret = 0;
+///     if (ct && !tcmultout(TCDOWN, TCMULTDOWN, ct)) {
+///         while (ct--) zputc(&zr_nl);
+///         zputc(&zr_cr), ret = -1;
+///     }
+///     return ret;
+/// }
+/// ```
+/// Move the cursor down `ct` lines. Prefers the terminal's down
+/// capability via `tcmultout`; when that's unavailable it emits real
+/// newlines (which scroll/create lines past the drawn region — a plain
+/// CSI B can't) followed by a CR, and returns -1 so the caller knows the
+/// column was reset to 0. Returns 0 when the capability moved without
+/// touching the column.
+pub fn tc_downcurs(ct: i32) -> i32 {
+    // c:2320
+    let mut ret = 0; // c:2324
+    // c:2326 — `if (ct && !tcmultout(TCDOWN, TCMULTDOWN, ct))`
+    if ct != 0 && tcmultout(crate::ported::zsh_h::TCDOWN, crate::ported::zsh_h::TCMULTDOWN, ct) == 0
+    {
+        let mut c = ct; // c:2327 while (ct--)
+        while c > 0 {
+            zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }); // c:2328 zputc(&zr_nl)
+            c -= 1;
+        }
+        zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }); // c:2329 zputc(&zr_cr)
+        ret = -1; // c:2329
     }
+    ret // c:2331
 }
 
 /// Direct port of `int tcout_via_func(int cap, int arg, int (*outc)(int))`
@@ -4991,6 +5005,77 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:2320-2331 — tc_downcurs prefers the terminal down capability, but
+    /// with none available it must emit real newlines + CR (which scroll/
+    /// create lines a plain CSI B cannot) and return -1. The old port faked
+    /// it as an unconditional CSI B with no return.
+    #[test]
+    fn tc_downcurs_newline_fallback_and_capability() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let di = crate::ported::zsh_h::TCDOWN as usize;
+        let mi = crate::ported::zsh_h::TCMULTDOWN as usize;
+        // Snapshot in separate statements: locking `tclen` twice inside one
+        // tuple expression keeps both guards alive simultaneously and
+        // self-deadlocks the non-reentrant Mutex.
+        let save_di_len = tclen.lock().unwrap()[di];
+        let save_di_str = tcstr.lock().unwrap()[di].clone();
+        let save_mi_len = tclen.lock().unwrap()[mi];
+
+        // No down capability → newline fallback, returns -1.
+        {
+            let mut t = tclen.lock().unwrap();
+            t[di] = 0;
+            t[mi] = 0;
+        }
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        let ret = tc_downcurs(3);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        assert_eq!(ret, -1, "newline fallback returns -1 (column reset)");
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            "\n\n\n\r",
+            "no down-cap → 3 newlines + CR"
+        );
+
+        // Single-shot down capability available → uses it, returns 0.
+        {
+            let mut t = tclen.lock().unwrap();
+            t[di] = 4;
+        }
+        tcstr.lock().unwrap()[di] = "\x1b[B".to_string();
+        let mut fds2 = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds2.as_mut_ptr()) }, 0, "pipe()");
+        let (rd2, wr2) = (fds2[0], fds2[1]);
+        crate::ported::init::SHTTY.store(wr2, Ordering::SeqCst);
+        let ret2 = tc_downcurs(2);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr2) };
+        let mut out2 = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd2) }.read_to_end(&mut out2);
+        assert_eq!(ret2, 0, "capability path returns 0 (column preserved)");
+        assert_eq!(
+            String::from_utf8_lossy(&out2),
+            "\x1b[B\x1b[B",
+            "down-cap looped ct times, no newlines"
+        );
+
+        tclen.lock().unwrap()[di] = save_di_len;
+        tcstr.lock().unwrap()[di] = save_di_str;
+        tclen.lock().unwrap()[mi] = save_mi_len;
     }
 
     /// c:1782-1783 — tcinscost/tcdelcost read the real termcap costs from
