@@ -2480,13 +2480,34 @@ pub fn clearscreen() -> i32 {
     0 // c:2430
 }
 
-/// Direct port of `void redisplay(UNUSED(char **args))` from
-/// `Src/Zle/zle_refresh.c:2377`. C kicks `resetneeded = 1` and
-/// returns; Rust just re-runs zrefresh which equivalently
-/// repaints from current state.
-pub fn redisplay() {
-    // c:2377
+/// Direct port of `int redisplay(UNUSED(char **args))` from
+/// `Src/Zle/zle_refresh.c:2435`.
+/// ```c
+/// int redisplay(UNUSED(char **args)) {
+///     moveto(0, 0);
+///     zputc(&zr_cr);		/* extra care */
+///     tc_upcurs(lprompth - 1);
+///     resetneeded = 1;
+///     clearflag = 0;
+///     return 0;
+/// }
+/// ```
+/// The `redisplay` widget. Positions the cursor at the top-left of the
+/// prompt (home, CR for safety, up over the prompt's height) and flags a
+/// full redraw. The previous port dropped the whole body and just called
+/// zrefresh.
+pub fn redisplay() -> i32 {
+    // c:2435
+    moveto(0, 0); // c:2437
+    zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }); // c:2438 zputc(&zr_cr)
+    let lprompth = LPROMPTH.load(Ordering::SeqCst);
+    tc_upcurs(lprompth - 1); // c:2439
+    RESETNEEDED.store(1, Ordering::SeqCst); // c:2440 resetneeded = 1
+    CLEARFLAG.store(0, Ordering::SeqCst); // c:2441 clearflag = 0
+    // c:2442 return 0. zshrs's ZLE loop doesn't honour resetneeded yet, so
+    // trigger the redraw directly for the same visible effect.
     zrefresh();
+    0
 }
 
 /// Port of `static void singlerefresh(ZLE_STRING_T tmpline,
@@ -5247,6 +5268,49 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:2435-2442 — redisplay homes the cursor (with a safety CR), moves up
+    /// over the prompt height, flags a full redraw (resetneeded=1,
+    /// clearflag=0), and returns 0.
+    #[test]
+    fn redisplay_homes_and_sets_flags() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        CLEARFLAG.store(1, Ordering::SeqCst);
+        RESETNEEDED.store(0, Ordering::SeqCst);
+        LPROMPTH.store(1, Ordering::SeqCst); // tc_upcurs(0) → no movement
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        let ret = redisplay();
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+
+        assert_eq!(ret, 0, "redisplay returns 0");
+        assert!(s.contains('\r'), "redisplay emits the safety CR; got {:?}", s);
+        assert_eq!(CLEARFLAG.load(Ordering::SeqCst), 0, "clearflag zeroed");
+        assert_eq!(RESETNEEDED.load(Ordering::SeqCst), 1, "resetneeded set");
     }
 
     /// c:2424-2430 — clearscreen emits the terminal's clear capability (not
