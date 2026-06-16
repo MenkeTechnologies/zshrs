@@ -1411,33 +1411,47 @@ pub fn refreshline(ln: i32) {
     let mut vln = VLN.load(Ordering::SeqCst);
     if hasam_v && vcs == winw {
         // c:1839
-        // c:1840 — `if (nbuf[vln] && nbuf[vln][vcs + 1].chr == '\n')`
-        // !!! STUB: nbuf access — defer.
-        let next_is_nl = false; // c:1840 stub
+        // c:1898 — `if (nbuf[vln] && nbuf[vln][vcs + 1].chr == ZWC('\n'))`.
+        let next_is_nl = {
+            let nbuf = NBUF.lock().unwrap();
+            nbuf.get(vln as usize)
+                .and_then(|row| row.get((vcs + 1) as usize))
+                .map(|cell| cell.chr == '\n')
+                .unwrap_or(false)
+        };
         if next_is_nl {
-            // c:1840
-            vln += 1; // c:1841
-            let new_vcs = 1; // c:1841 vcs = 1
+            vln += 1; // c:1899 vln++, vcs = 1
             VLN.store(vln, Ordering::SeqCst);
-            VCS.store(new_vcs, Ordering::SeqCst);
-            // c:1842-1845 — zputc(nbuf[vln]) / zputc(&zr_sp)
+            VCS.store(1, Ordering::SeqCst);
+            // c:1900-1903 — output the first cell of the next line, or a
+            // space if that cell is blank ("I don't think this should
+            // happen", per the C comment).
+            let first_chr = {
+                let nbuf = NBUF.lock().unwrap();
+                nbuf.get(vln as usize)
+                    .and_then(|row| row.first())
+                    .map(|c| c.chr)
+                    .filter(|&c| c != '\0')
+            };
+            match first_chr {
+                Some(c) => zwcputc(c), // c:1901 zputc(nbuf[vln])
+                None => zwcputc(' '),  // c:1903 zputc(&zr_sp)
+            }
             if ln == vln {
-                // c:1846 better safe than sorry
+                // c:1904 — better safe than sorry
                 if !nl.is_empty() {
-                    nl.remove(0);
-                } // c:1847 nl++
-                if !ol.is_empty() && ol[0].chr != '\0' {
-                    // c:1848-1849
-                    ol.remove(0); // c:1849 ol++
+                    nl.remove(0); // c:1905 nl++
                 }
-                ccs = 1; // c:1850
+                if !ol.is_empty() && ol[0].chr != '\0' {
+                    ol.remove(0); // c:1906-1907 ol++
+                }
+                ccs = 1; // c:1908
             }
         } else {
-            // c:1852
-            vln += 1; // c:1853 vln++, vcs = 0
+            vln += 1; // c:1911 vln++, vcs = 0
             VLN.store(vln, Ordering::SeqCst);
             VCS.store(0, Ordering::SeqCst);
-            // c:1854 — zputc(&zr_nl)
+            zwcputc('\n'); // c:1912 zputc(&zr_nl)
         }
     }
     ins_last = 0; // c:1857
