@@ -719,34 +719,44 @@ pub fn resetvideo(state: &mut RefreshState) {
     state.need_full_redraw = true;
 }
 
-/// Port of `void scrollwindow(int tline)` from
-/// `Src/Zle/zle_refresh.c:1991`. Positive lines → scroll up (CSI S),
-/// negative → scroll down (CSI T).
-pub fn scrollwindow(lines: i32) {
-    let s = if lines > 0 {
-        format!("\x1b[{}S", lines)
-    } else if lines < 0 {
-        // c:Src/Zle/zle_refresh.c:708 — C does `-lines` on `int`, which
-        // wraps via two's complement when `lines == INT_MIN`. Rust's
-        // `-i32::MIN` overflows in debug builds. Use wrapping_neg so the
-        // behavior matches C exactly (and the absurd-large value emits
-        // a benign large positive on the escape sequence).
-        format!("\x1b[{}T", lines.wrapping_neg())
-    } else {
-        return;
-    };
-    let _ = write_loop(
-        {
-            use std::sync::atomic::Ordering;
-            let f = SHTTY.load(Ordering::Relaxed);
-            if f >= 0 {
-                f
-            } else {
-                1
-            }
-        },
-        s.as_bytes(),
-    );
+/// Direct port of `void scrollwindow(int tline)` from
+/// `Src/Zle/zle_refresh.c:798`.
+/// ```c
+/// void scrollwindow(int tline) {
+///     int t0;
+///     REFRESH_STRING s = nbuf[tline];
+///     for (t0 = tline; t0 < winh - 1; t0++)
+///         nbuf[t0] = nbuf[t0 + 1];
+///     nbuf[winh - 1] = s;
+///     if (!tline) more_start = 1;
+/// }
+/// ```
+/// Rotate the video buffer: line `tline` is lifted out, the lines below
+/// it shift up one row, and the lifted line wraps to the bottom
+/// (`winh - 1`). When scrolling from the very top, set `more_start` so the
+/// first line can show the "more text above" indicator. The previous port
+/// was a fake — it emitted a terminal scroll escape (CSI S/T) and took a
+/// line *count*, neither of which is what C does.
+pub fn scrollwindow(tline: i32) {
+    // c:798
+    let winh = WINH.load(Ordering::SeqCst);
+    if tline >= 0 {
+        let t = tline as usize;
+        let mut nbuf = NBUF.lock().unwrap();
+        // C operates on the full winh grid; the Vec may be shorter, so
+        // clamp the rotated range to what's allocated.
+        let end = (winh as usize).min(nbuf.len());
+        // c:803-806 — `s = nbuf[tline]; shift [tline..winh-1] up;
+        //              nbuf[winh-1] = s;` is a left-rotation by one over
+        //              the `[tline, winh)` window.
+        if t < end {
+            nbuf[t..end].rotate_left(1);
+        }
+    }
+    // c:807-808 — `if (!tline) more_start = 1;`
+    if tline == 0 {
+        MORE_START.store(1, Ordering::SeqCst);
+    }
 }
 
 /// Direct port of `int nextline(Rparams rpms, int wrapped)` from
@@ -3523,6 +3533,13 @@ pub static WINW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 /// Terminal window height in cells; bounded by `zterm_lines`.
 pub static WINH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(24); // c:682
 
+/// Port of `static int more_start` from `Src/Zle/zle_refresh.c:672` —
+/// "more text before start of screen?". Set by `scrollwindow` when the
+/// buffer scrolls content off the top (c:808), reset each frame (c:1119);
+/// the first-line ">..." indicator reads it (c:1643, not yet rendered).
+pub static MORE_START: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0); // c:672
+
 /// Port of `static int lpromptw` from `Src/Zle/zle_refresh.c:676`.
 /// Left prompt's on-screen width after expansion / truncation.
 pub static LPROMPTW: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:676
@@ -5003,33 +5020,75 @@ mod tests {
         tcoutclear(crate::ported::zsh_h::TCCLEARSCREEN);
     }
 
-    /// c:708 — `scrollwindow(0)` no-op (zero lines).
+    /// c:803-808 — scrollwindow(tline) rotates the video buffer: line
+    /// `tline` lifts out, lower lines shift up, the lifted line wraps to
+    /// the bottom, and more_start is set when scrolling from the top.
     #[test]
-    fn scrollwindow_zero_lines_no_panic() {
+    fn scrollwindow_rotates_buffer_and_sets_more_start() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect()
+        };
+        WINH.store(4, Ordering::SeqCst);
+        MORE_START.store(0, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![mk("L0"), mk("L1"), mk("L2"), mk("L3")];
+
+        scrollwindow(0); // lift L0, shift up, L0 wraps to bottom
+
+        let rows: Vec<String> = NBUF
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.iter().map(|c| c.chr).collect())
+            .collect();
+        assert_eq!(rows, vec!["L1", "L2", "L3", "L0"], "rotate-left by one");
+        assert_eq!(
+            MORE_START.load(Ordering::SeqCst),
+            1,
+            "scrolling from the top sets more_start"
+        );
+    }
+
+    /// c:807 — scrolling from a non-zero line does NOT set more_start, and
+    /// rotates only the window from `tline` down.
+    #[test]
+    fn scrollwindow_from_nonzero_line() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect()
+        };
+        WINH.store(4, Ordering::SeqCst);
+        MORE_START.store(0, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![mk("L0"), mk("L1"), mk("L2"), mk("L3")];
+
+        scrollwindow(1); // rotate [1..4): L1 wraps to bottom, L0 untouched
+
+        let rows: Vec<String> = NBUF
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.iter().map(|c| c.chr).collect())
+            .collect();
+        assert_eq!(rows, vec!["L0", "L2", "L3", "L1"], "rotate from line 1");
+        assert_eq!(
+            MORE_START.load(Ordering::SeqCst),
+            0,
+            "non-top scroll must not set more_start"
+        );
+    }
+
+    /// scrollwindow on an out-of-range / negative tline is a safe no-op
+    /// (the Vec may be shorter than winh).
+    #[test]
+    fn scrollwindow_out_of_range_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *NBUF.lock().unwrap() = vec![];
+        scrollwindow(-1);
         scrollwindow(0);
-    }
-
-    /// c:708 — `scrollwindow(N)` for typical N doesn't panic.
-    /// i32::MIN excluded — covered by the ZSHRS BUG pin below.
-    #[test]
-    fn scrollwindow_typical_lines_no_panic() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
-        for n in [-100, -1, 0, 1, 100, i32::MAX] {
-            scrollwindow(n);
-        }
-    }
-
-    /// c:708 — `scrollwindow(i32::MIN)` PANICS in debug build with
-    /// "attempt to negate with overflow". C body negates `lines` to
-    /// scroll the opposite direction; C silently wraps via two's
-    /// complement, Rust debug build traps on the overflow.
-    #[test]
-    fn scrollwindow_i32_min_panics_zshrs_bug() {
-        let _g = crate::test_util::global_state_lock();
-        let _g2 = zle_test_setup();
+        scrollwindow(i32::MAX);
         scrollwindow(i32::MIN);
     }
 
