@@ -3814,6 +3814,28 @@ pub fn set_region_highlight(aval: Option<&[String]>) {
     // c:586 — freearray(av): aval owned by caller in Rust.
 }
 
+/// Direct port of `void unset_region_highlight(Param pm, int exp)` from
+/// `Src/Zle/zle_refresh.c:592`.
+/// ```c
+/// void unset_region_highlight(Param pm, int exp) {
+///     if (exp) {
+///         set_region_highlight(pm, NULL);
+///         stdunsetfn(pm, exp);
+///     }
+/// }
+/// ```
+/// Unset hook for the `$region_highlight` special parameter: when the
+/// user explicitly unsets it (`exp` true), clear the user region
+/// highlights back to the special baseline (`set_region_highlight(NULL)`,
+/// c:595) and run the standard parameter unset (c:596).
+pub fn unset_region_highlight(pm: &mut crate::ported::zsh_h::param, exp: i32) {
+    // c:592
+    if exp != 0 {
+        set_region_highlight(None); // c:595 set_region_highlight(pm, NULL)
+        crate::ported::params::stdunsetfn(pm, exp); // c:596
+    }
+}
+
 /// Process-wide region-highlights table, the Rust analog of C's
 /// `mod_export struct region_highlight *region_highlights` global
 /// (`Src/Zle/zle_refresh.c:471`). Holds parsed `$region_highlight`
@@ -5304,6 +5326,35 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:592 — unset_region_highlight clears the user region highlights
+    /// (set_region_highlight(NULL)) and runs the standard unset only when
+    /// the parameter is explicitly unset (exp != 0); exp == 0 is a no-op.
+    #[test]
+    fn unset_region_highlight_clears_only_on_exp() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // Seed a user region highlight.
+        set_region_highlight(Some(&["0 5 fg=red".to_string()]));
+        let with_user = REGION_HIGHLIGHTS.lock().unwrap().len();
+        assert!(with_user > 0, "set_region_highlight should add a user entry");
+
+        let mut pm = crate::ported::zsh_h::param::default();
+        // exp == 0 → no change.
+        unset_region_highlight(&mut pm, 0);
+        assert_eq!(
+            REGION_HIGHLIGHTS.lock().unwrap().len(),
+            with_user,
+            "exp=0 must be a no-op"
+        );
+        // exp != 0 → user highlights cleared to the special baseline.
+        unset_region_highlight(&mut pm, 1);
+        assert!(
+            REGION_HIGHLIGHTS.lock().unwrap().len() < with_user,
+            "exp!=0 must clear the user highlights"
+        );
     }
 
     /// c:152 — zrefresh publishes the prompt's trailing attribute to the
