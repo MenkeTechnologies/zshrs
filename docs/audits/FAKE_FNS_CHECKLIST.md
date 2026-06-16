@@ -429,3 +429,35 @@ ported.
      representation change (cascades through the parser, formatter, and struct).
   3. Blocked substrate — RPROMPT emit (rpromptbuf/rprompt_off/pmpt_attr),
      `promptexpand`/`reexpandprompt`, combining-cluster `nmwbuf` multiword path.
+
+## Vertical-scroll consolidation — status + final build-swap plan (Jun 16 2026)
+
+The scroll machinery is fully consolidated onto the global NBUF/REFRESH_ELEMENT
+and proven (zle_refresh 113, stable):
+- `nextline` (c:841) → global NBUF (was RefreshState/RefreshElement).
+- `snextline` (c:875) → real status-pane scroll cascade — **was a FAKE** (made-up
+  guard, no scroll); audit had mis-classified it. Now global NBUF.
+- `scrollwindow` (c:798), `resetvideo` alloc (c:737), `freevideo` free (c:700) — all
+  global NBUF/OBUF.
+- `MORE_START`/`MORE_END` statics added.
+- Integration proof `build_loop_scrolls_global_nbuf_past_winh`: fill past winh →
+  oldest rows scroll off, newest visible.
+
+**Final step (atomic, designed, NOT yet done — proof-before-swap):** replace the
+live `zrefresh` build's local `rows: Vec<REFRESH_STRING>` loop with writes into
+the pre-allocated global NBUF via `rparams` + `nextline`. Five specifics nailed
+down so the swap is mechanical:
+1. Pre-alloc NBUF to (winh+1) rows × (winw+2) cells at build start (resetvideo-style,
+   inline, WITHOUT resetvideo's VLN/VMAXLN reset + RefreshState-prompt side effects).
+2. `emit` writes `NBUF[rpms.ln][rpms.pos]` per-cell (brief lock, RELEASED between
+   cells so nextline's internal lock can't deadlock), `rpms.pos += 1`; at
+   `pos >= winw` call `nextline(&mut rpms, 1)`. Hard `\n` → `nextline(&mut rpms, 0)`.
+   Borrow-OK: `emit(&mut rpms,..)`/`nextline(&mut rpms,..)` don't overlap.
+3. Track `rpms.nvln = rpms.ln` when the build reaches ZLECS (cursor) — nextline's
+   scroll-or-bail (c:850-853) needs it to keep the cursor visible.
+4. Tab loop: `pos % 8 == 0` break (was `rows.last().len() % 8`).
+5. NBUF rows are now winw+2, `\0`-terminated + padded (faithful to C). Update the
+   render tests that assume unpadded rows (`zrefresh_builds_nbuf_cells` `ends_with`,
+   etc.) to check content up to the `\0` terminator.
+   Proof: the existing NBUF-content render tests (adjusted for padding) verify the
+   non-scroll case; `build_loop_scrolls_global_nbuf_past_winh` covers scroll.
