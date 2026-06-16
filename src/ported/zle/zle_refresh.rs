@@ -919,13 +919,20 @@ pub fn addmultiword(
     NMW_IND.set(ind + iadd);
 }
 
-/// Port of `bufswap()` from Src/Zle/zle_refresh.c:946.
-/// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn bufswap(state: &mut RefreshState) {
-    // c:bufswap
-    // C body: swap nbuf and obuf pointers (with mwbuf shadow when
-    // MULTIBYTE_SUPPORT). Rust just swaps the Option<VideoBuffer>.
-    std::mem::swap(&mut state.old_video, &mut state.new_video);
+/// Direct port of `void bufswap(void)` from `Src/Zle/zle_refresh.c:946`.
+/// Swap the new/old video buffers — "better than freeing/allocating
+/// every time" (c:944): last frame's NBUF becomes this frame's OBUF.
+/// Operates on the global NBUF/OBUF as C does on the global nbuf/obuf.
+pub fn bufswap() {
+    // c:946
+    // c:954-956 — `qbuf = nbuf; nbuf = obuf; obuf = qbuf;`
+    let mut nbuf = NBUF.lock().unwrap();
+    let mut obuf = OBUF.lock().unwrap();
+    std::mem::swap(&mut *nbuf, &mut *obuf);
+    // c:960-968 — MULTIBYTE_SUPPORT also swaps the multiword buffers
+    // (nmwbuf/omwbuf + nmw_size) and resets nmw_ind = 1; those buffers
+    // aren't ported (combining-cluster substrate), so that shadow swap
+    // is deferred.
 }
 /// `zrefresh` — see implementation.
 pub fn zrefresh() {
@@ -1078,14 +1085,11 @@ pub fn zrefresh() {
     // now (the cell `chr` is faithful; the colour-diff is wired with
     // refreshline's colour path) — a documented simplification, not a stub.
     {
-        // c:954-955 — last frame's NBUF becomes this frame's OBUF.
-        {
-            let mut nbuf = NBUF.lock().unwrap();
-            let mut obuf = OBUF.lock().unwrap();
-            std::mem::swap(&mut *nbuf, &mut *obuf);
-            OLNCT.store(NLNCT.load(Ordering::SeqCst), Ordering::SeqCst);
-            nbuf.clear();
-        }
+        // c:954-956 — last frame's NBUF becomes this frame's OBUF.
+        bufswap();
+        OLNCT.store(NLNCT.load(Ordering::SeqCst), Ordering::SeqCst);
+        // Rust frame-prep: clear the swapped-in (stale) NBUF for rebuild.
+        NBUF.lock().unwrap().clear();
         // c:1208-1400 — emit prompt + line cells, wrapping at `winw`.
         // c:1226-1248 — each cell carries the resolved attribute (`atr`)
         // so refreshline/zwcputc emit its colour. Convert the per-char
@@ -5168,6 +5172,24 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:946-956 — bufswap exchanges the global NBUF and OBUF buffers so
+    /// last frame's NBUF becomes this frame's OBUF (the diff baseline).
+    #[test]
+    fn bufswap_exchanges_global_nbuf_obuf() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect()
+        };
+        *NBUF.lock().unwrap() = vec![mk("new")];
+        *OBUF.lock().unwrap() = vec![mk("old")];
+        bufswap();
+        let nb: String = NBUF.lock().unwrap()[0].iter().map(|c| c.chr).collect();
+        let ob: String = OBUF.lock().unwrap()[0].iter().map(|c| c.chr).collect();
+        assert_eq!(nb, "old", "NBUF must hold the previously-old buffer");
+        assert_eq!(ob, "new", "OBUF must hold the previously-new buffer");
     }
 
     /// c:2247-2250 — tc_rightcurs prefers the real loaded TCMULTRIGHT
