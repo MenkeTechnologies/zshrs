@@ -1762,8 +1762,18 @@ pub fn zrefresh() {
                     };
                     semit(&mut rpms, c2, all_attr); // c:1505-1508
                 } else {
-                    // c:1525-1527 — `rpms.s->chr = *u; rpms.s->atr = 0;`
-                    semit(&mut rpms, u, 0);
+                    // c:1474-1493 — a width-0 / non-printable orphan in the
+                    // status line (e.g. a combining mark with COMBININGCHARS
+                    // off): render as the hex escape `<%.04x>` / `<%.08x>`, one
+                    // cell per character, carrying all_attr like the C MB path.
+                    let hex = if (u as u32) > 0xffff {
+                        format!("<{:08x}>", u as u32) // c:1480
+                    } else {
+                        format!("<{:04x}>", u as u32) // c:1482
+                    };
+                    for hc in hex.chars() {
+                        semit(&mut rpms, hc, all_attr); // c:1485-1487
+                    }
                 }
             }
             // c:1554 — `*rpms.s = zr_zr;` terminate the final status row.
@@ -5259,6 +5269,45 @@ mod tests {
         assert!(checked, "a status row containing 日 must exist; rows={:?}",
             rows.iter().map(|r| r.iter().map(|c| c.chr)
                 .take_while(|&c| c != '\0').collect::<String>()).collect::<Vec<_>>());
+    }
+
+    /// c:1474-1493 — a width-0 orphan in the status line renders as a hex
+    /// escape too. With COMBININGCHARS off, status "x" + U+0301 lays out as
+    /// "x<0301>".
+    #[test]
+    fn zrefresh_statusline_zero_width_orphan_as_hex() {
+        let _g = crate::test_util::global_state_lock();
+        let cc = crate::ported::zsh_h::opt_name(crate::ported::zsh_h::COMBININGCHARS);
+        crate::ported::options::opt_state_set(cc, false);
+        *ZLELINE.lock().unwrap() = "a".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *crate::ported::zle::zle_main::STATUSLINE.lock().unwrap() =
+            Some("x\u{0301}".to_string());
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        let rows: Vec<String> = NBUF
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.iter().map(|c| c.chr).take_while(|&c| c != '\0').collect())
+            .collect();
+        *crate::ported::zle::zle_main::STATUSLINE.lock().unwrap() = None; // restore
+
+        assert!(
+            rows.iter().any(|r| r.contains("x<0301>")),
+            "status orphan combining mark must render as <0301>; rows={:?}",
+            rows
+        );
     }
 
     /// Proof of the diff path: with NBUF[0]="abc" and an empty OBUF,
