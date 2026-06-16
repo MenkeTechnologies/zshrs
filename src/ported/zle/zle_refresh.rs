@@ -2132,7 +2132,7 @@ pub fn moveto(row: usize, col: usize) {
 pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     // c:2163
     use crate::ported::init::{tclen, tcstr};
-    use crate::ported::zsh_h::{TCLEFT, TCRIGHT, TC_COUNT};
+    use crate::ported::zsh_h::TC_COUNT;
 
     if ct <= 0 {
         return 0;
@@ -2161,31 +2161,24 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     let mult_ok = mult_len > 0;
     let cap_ok = cap_len > 0;
 
+    // c:2223-2225 — `if (tccan(multcap) && (!tccan(cap) ||
+    //                  tclen[multcap] <= tclen[cap]*ct)) { tcoutarg; return 1; }`
     if mult_ok && (!cap_ok || mult_len <= cap_len * ct) {
-        // c:2165-2167 — parametrised multi-cap is cheaper.
         let emitted = mult_str.replace("%d", &ct.to_string());
         let _ = write_loop(out_fd, emitted.as_bytes());
         return 1;
     } else if cap_ok {
-        // c:2168-2171 — loop the single-shot cap.
+        // c:2226-2229 — `else if (tccan(cap)) { while(ct--) tcout(cap); return 1; }`
         for _ in 0..ct {
             let _ = write_loop(out_fd, cap_str.as_bytes());
         }
         return 1;
     }
-    // Fallback when no termcap entries are wired: emit a portable
-    // ASCII default so cursor positioning still works.
-    let fallback: &[u8] = if cap == TCLEFT {
-        b"\x08"
-    } else if cap == TCRIGHT {
-        b" "
-    } else {
-        return 0;
-    };
-    for _ in 0..ct {
-        let _ = write_loop(out_fd, fallback);
-    }
-    1
+    // c:2231 — `return 0;` No capability: the caller decides the fallback
+    // (tc_downcurs emits newlines, tc_rightcurs re-outputs cells / CSI C).
+    // The previous port emitted \x08 / space here, which is not in C and
+    // — for the right case — destructively overwrote cells with spaces.
+    0
 }
 
 /// Port of `static void tc_rightcurs(int ct)` from
