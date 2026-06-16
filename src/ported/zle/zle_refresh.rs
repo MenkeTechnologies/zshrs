@@ -648,16 +648,25 @@ pub fn resetvideo(state: &mut RefreshState) {
     // c:736 — `winpos = -1;`
     WINPOS.store(-1, Ordering::Relaxed);
 
-    // c:737-755 — re-alloc the video buffers (winw/winh changed).
-    //              Rust always rebuilds since VideoBuffer::new is cheap
-    //              and the realloc-on-change check is a no-op
-    //              optimisation in C land.
-    state.old_video = Some(VideoBuffer::new(cols, rows + 1));
-    state.new_video = Some(VideoBuffer::new(cols, rows + 1));
-
-    // c:757-767 — `for (ln = 0; ln <= winh; ln++) { nbuf[ln][0] = nl;
-    //              nbuf[ln][1] = '\0'; ... }`. VideoBuffer::new
-    //              already zero-fills.
+    // c:737-755 — re-alloc the video buffers (winw/winh changed). C
+    //              allocates the global nbuf/obuf: (winh+1) row slots,
+    //              each row (winw+2) cells. Allocate the global NBUF/OBUF
+    //              the same way (eagerly sized; nextline's alloc-if-missing
+    //              still covers the lazy-row case). This replaces the prior
+    //              RefreshState VideoBuffer allocation so the buffer
+    //              lifecycle matches nextline/snextline/scrollwindow, which
+    //              all operate on the global NBUF.
+    let nrows = (rows + 1) as usize;
+    let rowlen = (cols + 2) as usize;
+    let fresh = || -> Vec<REFRESH_STRING> {
+        (0..nrows)
+            .map(|_| vec![REFRESH_ELEMENT::default(); rowlen])
+            .collect()
+    };
+    // c:757-767 — the per-row `nbuf[ln][0]=zr_zr` init is subsumed by the
+    //              REFRESH_ELEMENT::default() zero-fill above.
+    *NBUF.lock().unwrap() = fresh();
+    *OBUF.lock().unwrap() = fresh();
 
     // c:770-774 — `countprompt(lpromptbuf, &lpromptwof, &lprompth, 1);
     //              countprompt(rpromptbuf, &rpromptw, &rprompth, 0);`
@@ -5444,6 +5453,29 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:737-755 — resetvideo allocates the global NBUF/OBUF: (winh+1) rows
+    /// of (winw+2) cells each (matching C's global nbuf/obuf), so the buffer
+    /// lifecycle is on the same buffers as nextline/snextline/scrollwindow.
+    #[test]
+    fn resetvideo_allocates_global_nbuf_obuf() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        let mut state = RefreshState::new();
+        resetvideo(&mut state);
+
+        let winw = WINW.load(Ordering::SeqCst);
+        let winh = WINH.load(Ordering::SeqCst);
+        let nbuf = NBUF.lock().unwrap();
+        let obuf = OBUF.lock().unwrap();
+        assert_eq!(nbuf.len() as i32, winh + 1, "NBUF has winh+1 rows");
+        assert_eq!(obuf.len() as i32, winh + 1, "OBUF has winh+1 rows");
+        assert!(!nbuf.is_empty());
+        assert_eq!(nbuf[0].len() as i32, winw + 2, "row is winw+2 cells");
     }
 
     /// c:875-905 — snextline (status-area row advance, now real): off the
