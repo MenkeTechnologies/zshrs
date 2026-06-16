@@ -1045,6 +1045,76 @@ pub fn zrefresh() {
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
     let _ = write_loop(out_fd, handle.as_bytes());
+
+    // ---- Build NBUF (c:954-1400) ----------------------------------------
+    // The full-repaint output above is the live renderer and is left
+    // untouched. This populates the NBUF/OBUF video buffers that
+    // `refreshline` diffs, so the minimal-update path can be developed and
+    // verified against real frame data without risking the prompt. Once
+    // refreshline's output sites are wired, zrefresh's output switches from
+    // full-repaint to the NBUF/OBUF diff. `atr` is carried as default for
+    // now (the cell `chr` is faithful; the colour-diff is wired with
+    // refreshline's colour path) — a documented simplification, not a stub.
+    {
+        // c:954-955 — last frame's NBUF becomes this frame's OBUF.
+        {
+            let mut nbuf = NBUF.lock().unwrap();
+            let mut obuf = OBUF.lock().unwrap();
+            std::mem::swap(&mut *nbuf, &mut *obuf);
+            OLNCT.store(NLNCT.load(Ordering::SeqCst), Ordering::SeqCst);
+            nbuf.clear();
+        }
+        // c:1208-1400 — emit prompt + line cells, wrapping at `winw`.
+        let cols_n = cols.max(1);
+        let mut rows: Vec<REFRESH_STRING> = vec![Vec::new()];
+        let mut emit = |rows: &mut Vec<REFRESH_STRING>, chr: char| {
+            if rows.last().map(|r| r.len()).unwrap_or(0) >= cols_n {
+                rows.push(Vec::new()); // c:842 nextline
+            }
+            rows.last_mut().unwrap().push(REFRESH_ELEMENT { chr, atr: 0 });
+        };
+        // Prompt's visible chars (skip ANSI escapes — they aren't cells).
+        let mut in_esc = false;
+        for c in prompt.chars() {
+            if in_esc {
+                if c.is_ascii_alphabetic() {
+                    in_esc = false;
+                }
+            } else if c == '\x1b' {
+                in_esc = true;
+            } else {
+                emit(&mut rows, c);
+            }
+        }
+        // Editable line with tab/control expansion (c:1248-1398).
+        for &ch in line_snapshot.iter() {
+            if ch == '\n' {
+                rows.push(Vec::new()); // c:1248-1251
+            } else if ch == '\t' {
+                // c:1259-1264 — spaces to the next 8-column stop.
+                loop {
+                    emit(&mut rows, ' ');
+                    if rows.last().map(|r| r.len()).unwrap_or(0) % 8 == 0 {
+                        break;
+                    }
+                }
+            } else if (ch as u32) < 0x20 || ch as u32 == 0x7f {
+                // c:1340-1356 — control char as `^X` / `^?`.
+                emit(&mut rows, '^');
+                let c2 = if ((ch as u32) & !0x80u32) > 31 {
+                    '?'
+                } else {
+                    char::from_u32((ch as u32) | 0x40).unwrap_or('?')
+                };
+                emit(&mut rows, c2);
+            } else {
+                emit(&mut rows, ch); // c:1398
+            }
+        }
+        let nlnct = rows.len() as i32;
+        *NBUF.lock().unwrap() = rows;
+        NLNCT.store(nlnct, Ordering::SeqCst); // c:nlnct = rpms.ln + 1
+    }
 }
 
 impl HighlightManager {
@@ -3337,6 +3407,33 @@ mod zr_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// zrefresh builds NBUF from the prompt + editable line (c:1208-1400):
+    /// prompt cells, then line chars with tab→8-col-stop and control→`^X`
+    /// expansion. Verifies the video buffer the diff machinery consumes.
+    #[test]
+    fn zrefresh_builds_nbuf_cells() {
+        let _g = crate::test_util::global_state_lock();
+        // Drive the editable line directly: "ab\tc\u{1}d".
+        *ZLELINE.lock().unwrap() = "ab\tc\u{1}d".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(6, Ordering::SeqCst);
+
+        zrefresh();
+
+        let nbuf = NBUF.lock().unwrap();
+        let row0: String = nbuf
+            .first()
+            .map(|r| r.iter().map(|c| c.chr).collect())
+            .unwrap_or_default();
+        // The line content (after whatever prompt prefix): "ab" then a tab
+        // expanded to spaces landing on an 8-col stop, "c", "^A", "d".
+        assert!(
+            row0.contains("ab") && row0.ends_with("c^Ad"),
+            "NBUF row 0 should render the line with tab + ^A expansion, got {:?}",
+            row0
+        );
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     // addmultiword — C-pinned tests covering pattern.c:913-936 push path.
