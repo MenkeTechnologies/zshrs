@@ -1313,6 +1313,25 @@ pub fn zrefresh() {
             }
             false
         };
+        // emit_cell: like emit but writes a PRE-BUILT cell (used for combining
+        // clusters whose chr is an addmultiword nmwbuf index + TXT_MULTIWORD_MASK
+        // in atr — can't be expressed as a (chr, atr) pair through emit). Same
+        // wrap/bail semantics (c:842).
+        let mut emit_cell = |rpms: &mut rparams, cell: REFRESH_ELEMENT| -> bool {
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                    if rpms.pos < row.len() {
+                        row[rpms.pos] = cell;
+                    }
+                }
+            }
+            rpms.pos += 1;
+            if rpms.pos >= cols_n as usize {
+                return nextline(rpms, 1) != 0;
+            }
+            false
+        };
         // Prompt cells. The prompt is an ANSI string here (not attributed
         // cells as in C's putpromptchar), so parse its SGR escapes into the
         // cell `atr` — otherwise the prompt would render colourless when the
@@ -1397,7 +1416,15 @@ pub fn zrefresh() {
         // Editable line with tab/control expansion (c:1248-1398). Each
         // line char's overlay attr is applied to the cell(s) it produces.
         let cursor_idx = ZLECS.load(Ordering::SeqCst);
+        // c:1297-1320 — combining marks absorbed into the preceding base char's
+        // cluster cell are skipped in subsequent iterations (the for-loop can't
+        // advance `i` like C's `t += ichars`, so count them down here).
+        let mut skip_combining = 0usize;
         for (i, &ch) in line_snapshot.iter().enumerate() {
+            if skip_combining > 0 {
+                skip_combining -= 1;
+                continue;
+            }
             // c:1247 — when the build reaches the cursor char, record its
             // video line AND column: `rpms.nvcs = rpms.s - nbuf[rpms.nvln =
             // rpms.ln]`. nvln keeps nextline's scroll-or-bail centred on the
@@ -1444,6 +1471,31 @@ pub fn zrefresh() {
                 };
                 if emit(&mut rpms, c2, atr) {
                     break;
+                }
+            } else if isset(COMBININGCHARS)
+                && unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) > 0
+                && i + 1 < line_snapshot.len()
+                && unicode_width::UnicodeWidthChar::width(line_snapshot[i + 1])
+                    == Some(0)
+            {
+                // c:1293-1320 — base char (width>0) followed by combining
+                // mark(s): scan the (width-0) marks and cluster base+marks into
+                // ONE cell via addmultiword (the producer the multiword zwcputc
+                // reader consumes), then skip the marks. Gated on COMBININGCHARS
+                // so the default-off common case takes the plain emit below.
+                let mut ichars = 1usize; // c:1295
+                while i + ichars < line_snapshot.len()
+                    && unicode_width::UnicodeWidthChar::width(line_snapshot[i + ichars])
+                        == Some(0)
+                {
+                    ichars += 1; // c:1297-1299
+                }
+                let cluster: Vec<char> = line_snapshot[i..i + ichars].to_vec();
+                let mut cell = REFRESH_ELEMENT { chr: ch, atr };
+                addmultiword(&mut cell, &cluster, ichars); // c:1320
+                skip_combining = ichars - 1; // skip the marks (C: t += ichars-1)
+                if emit_cell(&mut rpms, cell) {
+                    break; // c:1257 — nextline bailed
                 }
             } else if emit(&mut rpms, ch, atr) {
                 break; // c:1398 / c:1257
@@ -4802,6 +4854,42 @@ mod tests {
             row0.contains("ab") && row0.ends_with("c^Ad"),
             "NBUF row 0 should render the line with tab + ^A expansion, got {:?}",
             row0
+        );
+    }
+
+    /// c:1293-1320 — the LIVE zrefresh build clusters a base char + combining
+    /// marks into one cell via addmultiword when COMBININGCHARS is set, so NBUF
+    /// holds a TXT_MULTIWORD_MASK cell rather than two separate cells. Pins the
+    /// producer side of the multiword path in the multi-line renderer.
+    #[test]
+    fn zrefresh_clusters_combining_chars_in_nbuf() {
+        let _g = crate::test_util::global_state_lock();
+        let cc = crate::ported::zsh_h::opt_name(crate::ported::zsh_h::COMBININGCHARS);
+        crate::ported::options::opt_state_set(cc, true);
+        *ZLELINE.lock().unwrap() = "e\u{0301}".chars().collect(); // e + acute
+        ZLECS.store(2, Ordering::SeqCst);
+        ZLELL.store(2, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+        crate::ported::options::opt_state_set(cc, false); // restore default-off
+
+        let has_multiword = NBUF
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|r| r.iter())
+            .any(|c| c.atr & TXT_MULTIWORD_MASK != 0);
+        assert!(
+            has_multiword,
+            "COMBININGCHARS build must cluster e+U+0301 into a TXT_MULTIWORD_MASK cell"
         );
     }
 
