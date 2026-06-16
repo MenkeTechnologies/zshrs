@@ -493,14 +493,35 @@ pub fn tcoutclear(cap: i32) {
 /// cell's (c:630), emits the SGR attribute-change diff (c:631 — empty
 /// when the attr is unchanged, so output stays minimal), then writes
 /// the character (c:644-651). The multiword/`nmwbuf` glyph path
-/// (c:634-643) is deferred — combining-cluster substrate.
+/// (c:634-643) reads the combining cluster `addmultiword` stored in the
+/// thread-local `NMWBUF` (length at `nmwbuf[c.chr]`, codepoints following)
+/// and emits each — the matching consumer for the already-ported producer.
 pub fn zwcputc(c: &REFRESH_ELEMENT) {
     use std::sync::atomic::Ordering;
     // c:630-631 — make the cell's attrs pending, emit the SGR diff.
     crate::ported::prompt::treplaceattrs(c.atr);
     let mut out = crate::ported::prompt::applytextattributes(0);
-    // c:644-651 — emit the char (a NUL chr is C's WEOF/empty cell).
-    if c.chr != '\0' {
+    if c.atr & TXT_MULTIWORD_MASK != 0 {
+        // c:633-643 — multiword glyph: the cell's chr is an index into
+        // nmwbuf (set by addmultiword c:934); read the cluster length at
+        // that slot then its codepoints and emit each in turn.
+        let base = c.chr as u32 as usize; // c:634 — `nmwbuf[c->chr]`
+        NMWBUF.with(|buf| {
+            let b = buf.borrow();
+            if let Some(&nchars) = b.get(base) {
+                let mut p = base + 1; // c:635 — `nmwbuf + c->chr + 1`
+                for _ in 0..nchars {
+                    // c:639-641 — `*wcptr++`, wcrtomb → fwrite each char.
+                    if let Some(ch) = b.get(p).copied().and_then(char::from_u32) {
+                        let mut tmp = [0u8; 4];
+                        out.push_str(ch.encode_utf8(&mut tmp));
+                    }
+                    p += 1;
+                }
+            }
+        });
+    } else if c.chr != '\0' {
+        // c:644-651 — single codepoint (a NUL chr models C's WEOF/empty cell).
         let mut buf = [0u8; 4];
         out.push_str(c.chr.encode_utf8(&mut buf));
     }
@@ -4634,6 +4655,47 @@ mod tests {
         assert!(
             s.contains('a') && s.contains('b') && s.contains('c'),
             "refreshline should emit the new-line cells a/b/c; got {:?}",
+            s
+        );
+    }
+
+    /// Proof of zwcputc's multiword path (c:633-643): a combining cluster
+    /// stored by addmultiword (the producer, c:913) into NMWBUF is read back
+    /// and emitted codepoint-by-codepoint when the cell carries
+    /// TXT_MULTIWORD_MASK — the matching consumer half. Captures output via
+    /// SHTTY→pipe like refreshline_emits_new_line_cells.
+    #[test]
+    fn zwcputc_emits_multiword_cluster() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+
+        // base 'e' + U+0301 combining acute → the cell dispatches to nmwbuf.
+        let cluster = ['e', '\u{0301}'];
+        let mut cell = REFRESH_ELEMENT::default();
+        addmultiword(&mut cell, &cluster, cluster.len());
+        assert!(
+            cell.atr & TXT_MULTIWORD_MASK != 0,
+            "addmultiword must set the multiword mask"
+        );
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = SHTTY.load(Ordering::SeqCst);
+        SHTTY.store(wr, Ordering::SeqCst);
+
+        zwcputc(&cell);
+
+        SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains('e') && s.contains('\u{0301}'),
+            "zwcputc must emit both cluster codepoints (e + combining acute); got {:?}",
             s
         );
     }
