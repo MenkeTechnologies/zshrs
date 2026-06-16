@@ -439,14 +439,21 @@ pub fn zattrescape(attrs: zattr) -> String {
     result
 }
 
-/// Parse a `,`-separated highlight specification.
-/// Port of `parsehighlight(char *arg, char endchar, zattr *atr, zattr *mask)` from Src/prompt.c:285 — handles
-// Parse the argument for %H                                                // c:285
-/// `bold` / `underline` / `standout` / `none` plus `fg=NAME` and
-/// `bg=NAME` color targets.
-/// WARNING: param names don't match C — Rust=(spec) vs C=(arg, endchar, atr, mask)
+/// Parse a `,`-separated highlight specification into the attribute bits
+/// (`bold`/`underline`/`standout`/`none` plus `fg=`/`bg=` colours).
+///
+/// CITATION NOTE: despite the name, this is NOT a port of C
+/// `parsehighlight` (`Src/prompt.c:285`) — that function is the
+/// `.zle.hlgroups` group RESOLVER (it looks up a named highlight group in
+/// the `.zle.hlgroups` hash and delegates to `match_highlight`). It is
+/// unported, blocked on the `.zle.hlgroups` hash-parameter substrate. This
+/// Rust function actually implements the attribute-parsing core of C
+/// `match_highlight` (`c:2031`). It also drops the explicit `setmask`
+/// (the caller derives one), 24-bit `#rrggbb` colours, faint/italic, and
+/// the `no` prefix — all of which need the mask + wide-colour
+/// representation change.
 pub fn parsehighlight(spec: &str) -> zattr {
-    // c:285
+    // c:2031 (match_highlight attribute-parse core; see citation note)
     let mut attrs: zattr = 0;
     for part in spec.split(',') {
         let part = part.trim();
