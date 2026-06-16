@@ -1229,8 +1229,11 @@ pub fn zrefresh() {
         rpms.nvln = -1; // c:1751 — cursor video line, set when we reach ZLECS.
         // emit: write one cell at NBUF[ln][pos] (brief lock, RELEASED before
         // nextline so its internal NBUF lock can't deadlock), advance pos, and
-        // wrap via nextline at the right margin (c:842).
-        let mut emit = |rpms: &mut rparams, chr: char, atr: zattr| {
+        // wrap via nextline at the right margin (c:842). Returns true when
+        // nextline bailed (c:1257 `if (nextline(...)) break;`) — the buffer
+        // can't grow further without scrolling the cursor off-screen, so the
+        // caller must stop the line loop.
+        let mut emit = |rpms: &mut rparams, chr: char, atr: zattr| -> bool {
             {
                 let mut nbuf = NBUF.lock().unwrap();
                 if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
@@ -1241,8 +1244,9 @@ pub fn zrefresh() {
             }
             rpms.pos += 1;
             if rpms.pos >= cols_n as usize {
-                nextline(rpms, 1); // c:842 — wrapped, resets pos=0
+                return nextline(rpms, 1) != 0; // c:842 — wrapped, resets pos=0
             }
+            false
         };
         // Prompt cells. The prompt is an ANSI string here (not attributed
         // cells as in C's putpromptchar), so parse its SGR escapes into the
@@ -1314,8 +1318,8 @@ pub fn zrefresh() {
             } else if c == '\x1b' {
                 in_esc = true;
                 esc_params.clear();
-            } else {
-                emit(&mut rpms, c, prompt_attr);
+            } else if emit(&mut rpms, c, prompt_attr) {
+                break; // c:1257 — nextline bailed
             }
         }
         // c:152 / zle_main.c:1280 — publish the prompt's trailing attribute
@@ -1340,26 +1344,41 @@ pub fn zrefresh() {
                 .map(&to_zattr)
                 .unwrap_or(0);
             if ch == '\n' {
-                nextline(&mut rpms, 0); // c:1248-1251 — hard newline (not wrapped)
+                // c:1251 — `if (nextline(&rpms, 0)) break;` hard newline.
+                if nextline(&mut rpms, 0) != 0 {
+                    break;
+                }
             } else if ch == '\t' {
-                // c:1259-1264 — spaces to the next 8-column stop.
+                // c:1254-1265 — spaces to the next 8-column stop, wrapping
+                // (and possibly bailing) at the right margin.
+                let mut bail = false;
                 loop {
-                    emit(&mut rpms, ' ', atr);
+                    if emit(&mut rpms, ' ', atr) {
+                        bail = true;
+                        break;
+                    }
                     if rpms.pos % 8 == 0 {
                         break;
                     }
                 }
+                if bail {
+                    break;
+                }
             } else if (ch as u32) < 0x20 || ch as u32 == 0x7f {
                 // c:1340-1356 — control char as `^X` / `^?`.
-                emit(&mut rpms, '^', atr);
+                if emit(&mut rpms, '^', atr) {
+                    break;
+                }
                 let c2 = if ((ch as u32) & !0x80u32) > 31 {
                     '?'
                 } else {
                     char::from_u32((ch as u32) | 0x40).unwrap_or('?')
                 };
-                emit(&mut rpms, c2, atr);
-            } else {
-                emit(&mut rpms, ch, atr); // c:1398
+                if emit(&mut rpms, c2, atr) {
+                    break;
+                }
+            } else if emit(&mut rpms, ch, atr) {
+                break; // c:1398 / c:1257
             }
         }
         // Cursor at end-of-buffer: its video line is the final one.
@@ -5587,6 +5606,28 @@ mod tests {
         assert_eq!(obuf.len() as i32, winh + 1, "OBUF has winh+1 rows");
         assert!(!nbuf.is_empty());
         assert_eq!(nbuf[0].len() as i32, winw + 2, "row is winw+2 cells");
+    }
+
+    /// c:850-853 — nextline BAILS (returns 1) at the bottom when scrolling
+    /// would push the cursor (nvln) off-screen, so the build stops adding
+    /// lines. The build now honours this return (breaks the line loop).
+    #[test]
+    fn nextline_bails_to_keep_cursor_visible() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(4, Ordering::SeqCst);
+        WINH.store(3, Ordering::SeqCst);
+        NUMSCROLLS.store(0, Ordering::SeqCst);
+        ONUMSCROLLS.store(0, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 6]; 4];
+
+        let mut rpms = rparams::default();
+        rpms.ln = 2; // winh - 1, bottom row
+        rpms.nvln = 1; // cursor on line 1 (not -1, not winh-1, <= winh/2 path)
+        rpms.canscroll = 0;
+        let ret = nextline(&mut rpms, 0);
+        assert_eq!(ret, 1, "must bail rather than scroll the cursor off-screen");
+        assert_eq!(rpms.ln, 2, "ln unchanged on bail (no advance, no scroll)");
     }
 
     /// c:875-905 — snextline (status-area row advance, now real): off the
