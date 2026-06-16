@@ -1865,7 +1865,9 @@ pub fn refreshline(ln: i32) {
 /// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
 /// `print!` fake.
 pub fn moveto(row: usize, col: usize) {
-    // c:2105
+    // c:2105 — move the cursor to (row, col). C optimises the path
+    // (tc_rightcurs / tabs / re-output); modern terminals take the
+    // absolute CSI H, which is C's TCPOS-equivalent.
     let s = format!("\x1b[{};{}H", row + 1, col + 1);
     let _ = write_loop(
         {
@@ -1879,6 +1881,14 @@ pub fn moveto(row: usize, col: usize) {
         },
         s.as_bytes(),
     );
+    // c:2159-2204 — "update vln, vcs": the cursor is now at the target,
+    // so the video-position trackers must follow it (refreshline reads
+    // them to drive the next diff). The Rust port previously left them
+    // stale, which is harmless for single-line absolute writes but wrong
+    // for multi-line and the next frame's cursor-relative logic.
+    use std::sync::atomic::Ordering;
+    VLN.store(row as i32, Ordering::SeqCst);
+    VCS.store(col as i32, Ordering::SeqCst);
 }
 
 /// Direct port of `int tcmultout(int cap, int multcap, int ct)` from
@@ -4614,6 +4624,20 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: () = moveto(0, 0);
+    }
+
+    /// c:2159-2204 — `moveto` updates the video-position trackers (vln, vcs)
+    /// to the target, so the diff engine's next-frame cursor logic is correct.
+    #[test]
+    fn moveto_updates_vcs_vln() {
+        use std::sync::atomic::Ordering;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        moveto(3, 7);
+        assert_eq!(VLN.load(Ordering::SeqCst), 3, "moveto must set VLN to row");
+        assert_eq!(VCS.load(Ordering::SeqCst), 7, "moveto must set VCS to col");
     }
 
     /// c:1629 — `tcmultout(0, 0, 0)` returns i32 (compile-time type pin).
