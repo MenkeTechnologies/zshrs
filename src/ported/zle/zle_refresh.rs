@@ -2169,24 +2169,54 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     1
 }
 
-/// Port of `void tc_rightcurs(int ct)` from
-/// `Src/Zle/zle_refresh.c:2150`. CSI C parametrised cursor-right.
+/// Port of `static void tc_rightcurs(int ct)` from
+/// `Src/Zle/zle_refresh.c:2237`. Move the cursor right `ct` columns,
+/// preferring the most reliable terminal capability:
+///   - `TCMULTRIGHT` parametrised right (c:2247-2250) — most reliable
+///   - `TCHORIZPOS` absolute horizontal position to `ct + vcs` (c:2253-2256)
+///
+/// The remaining C strategies are blocked on substrate not yet ported and
+/// only matter for terminals lacking the above (essentially none today):
+///   - tab-stop stepping (c:2261-2268) needs `oxtabs`
+///   - prompt re-output (c:2287-2306) needs `lpromptbuf`/`lprompth`
+///   - video-cell re-output + space pad (c:2308-2316) is the last resort
+///     "your terminal can't go right" path.
+/// When no termcap entry is loaded (headless), emit the portable ANSI
+/// cursor-forward (CSI C) — the same sequence a loaded `TCMULTRIGHT` holds.
 pub fn tc_rightcurs(count: usize) {
-    if count > 0 {
-        let s = format!("\x1b[{}C", count);
-        let _ = write_loop(
-            {
-                use std::sync::atomic::Ordering;
-                let f = SHTTY.load(Ordering::Relaxed);
-                if f >= 0 {
-                    f
-                } else {
-                    1
-                }
-            },
-            s.as_bytes(),
-        );
+    // c:2237
+    if count == 0 {
+        return;
     }
+    use crate::ported::init::{tclen, tcstr};
+    use crate::ported::zsh_h::{TCHORIZPOS, TCMULTRIGHT};
+    let ct = count as i32;
+    let vcs = VCS.load(Ordering::SeqCst);
+    let cl = ct + vcs; // c:2245 — cl = ct + vcs (desired absolute column)
+    let out_fd = {
+        let f = SHTTY.load(Ordering::Relaxed);
+        if f >= 0 {
+            f
+        } else {
+            1
+        }
+    };
+
+    // c:2247-2250 — `if (tccan(TCMULTRIGHT)) { tcoutarg(TCMULTRIGHT, ct); return; }`
+    if tclen.lock().unwrap()[TCMULTRIGHT as usize] != 0 {
+        let s = tcstr.lock().unwrap()[TCMULTRIGHT as usize].replace("%d", &ct.to_string());
+        let _ = write_loop(out_fd, s.as_bytes());
+        return;
+    }
+    // c:2253-2256 — `if (tccan(TCHORIZPOS)) { tcoutarg(TCHORIZPOS, cl); return; }`
+    if tclen.lock().unwrap()[TCHORIZPOS as usize] != 0 {
+        let s = tcstr.lock().unwrap()[TCHORIZPOS as usize].replace("%d", &cl.to_string());
+        let _ = write_loop(out_fd, s.as_bytes());
+        return;
+    }
+    // Blocked-substrate fallbacks above are deferred; emit the ANSI default.
+    let s = format!("\x1b[{}C", ct);
+    let _ = write_loop(out_fd, s.as_bytes());
 }
 
 /// Direct port of `int tc_downcurs(int ct)` from
@@ -5096,6 +5126,56 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:2247-2250 — tc_rightcurs prefers the real loaded TCMULTRIGHT
+    /// capability (with the move count substituted) over a hardcoded CSI C;
+    /// with no termcap entry it emits the ANSI default. Pins the capability
+    /// preference against the old unconditional CSI C.
+    #[test]
+    fn tc_rightcurs_prefers_loaded_capability() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let mr = crate::ported::zsh_h::TCMULTRIGHT as usize;
+        let hp = crate::ported::zsh_h::TCHORIZPOS as usize;
+        let save_mr_len = tclen.lock().unwrap()[mr];
+        let save_mr_str = tcstr.lock().unwrap()[mr].clone();
+        let save_hp_len = tclen.lock().unwrap()[hp];
+
+        let capture = |f: &dyn Fn()| -> String {
+            let mut fds = [0i32; 2];
+            assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+            let (rd, wr) = (fds[0], fds[1]);
+            let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+            crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+            f();
+            crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+            unsafe { libc::close(wr) };
+            let mut out = Vec::new();
+            let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+            String::from_utf8_lossy(&out).into_owned()
+        };
+
+        VCS.store(0, Ordering::SeqCst);
+        // Loaded TCMULTRIGHT capability is used with the count substituted.
+        tclen.lock().unwrap()[mr] = 3;
+        tcstr.lock().unwrap()[mr] = "\x1bX%dY".to_string();
+        tclen.lock().unwrap()[hp] = 0;
+        let with_cap = capture(&|| tc_rightcurs(5));
+        assert_eq!(with_cap, "\x1bX5Y", "should use loaded TCMULTRIGHT with count");
+
+        // No capability → ANSI cursor-forward fallback.
+        tclen.lock().unwrap()[mr] = 0;
+        let headless = capture(&|| tc_rightcurs(5));
+        assert_eq!(headless, "\x1b[5C", "no cap → CSI C default");
+
+        tclen.lock().unwrap()[mr] = save_mr_len;
+        tcstr.lock().unwrap()[mr] = save_mr_str;
+        tclen.lock().unwrap()[hp] = save_hp_len;
     }
 
     /// c:2195-2212 — moving the cursor down past the drawn region
