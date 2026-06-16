@@ -76,6 +76,18 @@ impl TextAttr {
     }
 }
 
+/// Sentinel for C's `WEOF` in a cell's `chr`. C's `REFRESH_CHAR` is a
+/// `wchar_t`/`wint_t`, so `WEOF` ((wint_t)-1) is a distinct value from the
+/// NUL terminator `ZWC('\0')`. Rust's `chr` is a `char`, which cannot hold
+/// `(wint_t)-1`, so we use the Unicode noncharacter `U+FFFF` — permanently
+/// reserved, never valid in interchange — as the WEOF marker. WEOF cells are
+/// the trailing column placeholders of a wide (CJK) glyph: counted by
+/// `ZR_strlen` (they occupy columns) but NOT emitted by `zwcputc` (the leading
+/// cell already drew the full-width glyph). Using `'\0'` for this — as the
+/// earlier port did — truncated `ZR_strlen`/`ZR_strcpy` at the first wide
+/// char, dropping the rest of the line.
+pub const ZWC_WEOF: char = '\u{FFFF}'; // c: WEOF == (wint_t)-1
+
 /// Port of `ZR_strcpy(REFRESH_ELEMENT *dst, const REFRESH_ELEMENT *src)` from `Src/Zle/zle_refresh.c:95`.
 /// ```c
 /// static void
@@ -520,8 +532,11 @@ pub fn zwcputc(c: &REFRESH_ELEMENT) {
                 }
             }
         });
-    } else if c.chr != '\0' {
-        // c:644-651 — single codepoint (a NUL chr models C's WEOF/empty cell).
+    } else if c.chr != '\0' && c.chr != ZWC_WEOF {
+        // c:644-651 — `else if (c->chr != WEOF)`: emit the single codepoint. A
+        // NUL chr is the empty/terminator cell; ZWC_WEOF is the trailing
+        // column placeholder of a wide glyph — both are skipped (the leading
+        // cell already drew the full-width character).
         let mut buf = [0u8; 4];
         out.push_str(c.chr.encode_utf8(&mut buf));
     }
@@ -3323,15 +3338,18 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                     }
                     vp += 1; // c:2513
                 }
-                // c:2514-2518 — WEOF cells for wide-char width padding.
+                // c:2514-2518 — WEOF cells for wide-char width padding: a
+                // width-N glyph occupies N columns, so emit N-1 WEOF placeholder
+                // cells after the leading cell. ZWC_WEOF (not '\0') so
+                // ZR_strcpy/ZR_strlen don't treat them as the line terminator.
                 let mut w = width - 1;
                 while w > 0 {
                     // c:2514
                     if vp < vbuf.len() {
                         vbuf[vp] = REFRESH_ELEMENT {
-                            chr: '\0',
+                            chr: ZWC_WEOF,
                             atr: base_attr,
-                        }; // c:2515 WEOF
+                        }; // c:2515 — `vp->chr = WEOF`
                         vp += 1; // c:2517
                     }
                     w -= 1;
@@ -7282,6 +7300,47 @@ mod tests {
             s.contains('e') && s.contains('\u{0301}') && !s.contains("0301>"),
             "combining mark must cluster onto 'e' (emit e+U+0301), not a <hex> \
              escape; got {:?}",
+            s
+        );
+    }
+
+    /// c:2514-2517 — a wide (CJK) glyph occupies two columns: the leading cell
+    /// holds the char and a trailing WEOF placeholder fills the second column.
+    /// The WEOF must be ZWC_WEOF, not '\0' — otherwise ZR_strcpy/ZR_strlen
+    /// treat it as the line terminator and everything after the wide char is
+    /// dropped. "日a" must render BOTH the ideograph and the 'a'.
+    #[test]
+    fn singlerefresh_wide_char_does_not_truncate_line() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(80, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+        WINPOS.store(-1, Ordering::SeqCst);
+        WINPROMPT.store(0, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 82]];
+        *OBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 82]];
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let line: Vec<char> = "日a".chars().collect(); // width-2 ideograph + 'a'
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        singlerefresh(&line, line.len() as i32, line.len() as i32);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains('日') && s.contains('a') && !s.contains('\u{FFFF}'),
+            "wide char must not truncate the line: both '日' and 'a' render, \
+             WEOF placeholder not emitted; got {:?}",
             s
         );
     }
