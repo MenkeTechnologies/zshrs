@@ -348,10 +348,17 @@ ported.
   - done: 7 full + 1 partial (`lchdir`, `findsep`, `vireplacechars`,
     `gdbmhashsetfn`, `setstypat`, `cd_new_pwd`, `spaceinline`; partial:
     `source` — FS_SOURCE funcstack push closed) — remaining 44
-  - substrate built: `RegionHighlight.flags` (unblocked `spaceinline`).
-    Confirmed dead-end: hist ring mutator (addhistnode is vestigial —
-    dedup handled inline in hend() c:1602, not via the callerless
-    addnode callback).
+  - substrate built: `RegionHighlight.flags` (unblocked `spaceinline`
+    AND completed `shiftchars`'s predisplay `sub=predisplaylen` path
+    c:890-903, which was hardcoded sub=0 waiting for the flag bit; new
+    predisplay test proves a ZRH_PREDISPLAY region adjusts differently
+    from a plain one).
+  - Confirmed dead-ends (callerless/vestigial — not worth standalone
+    ports): hist ring mutator (`addhistnode` — dedup handled inline in
+    hend() c:1602); `backwardmetafiedchar` (substrate IS_COMBINING/
+    IS_BASECHAR/alignmultiwordleft already exists, but the no-arg Rust fn
+    is test-only — C's `(start,endptr,retchr)` form is used by blocked
+    engines doisearch/complete/zle_misc).
   - reclassified NOT-FAKE on audit: 4 (`zgetdir` — live getcwd branch is
     faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
     AST parser architecture, `{...}`/always split to parse.rs:7025;
