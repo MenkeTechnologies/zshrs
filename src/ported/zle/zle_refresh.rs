@@ -2453,24 +2453,31 @@ pub fn tcout(cap: i32) {
     //          (no scheduling consumer reads it yet).
 }
 
-/// Direct port of `void clearscreen(UNUSED(char **args))` from
-/// `Src/Zle/zle_refresh.c:2366`. Writes CSI 2J + CSI H to the
-/// shell-output fd, then re-renders. Was a `print!` fake.
-pub fn clearscreen() {
-    // c:2366
-    let _ = write_loop(
-        {
-            use std::sync::atomic::Ordering;
-            let f = SHTTY.load(Ordering::Relaxed);
-            if f >= 0 {
-                f
-            } else {
-                1
-            }
-        },
-        b"\x1b[2J\x1b[H",
-    );
+/// Direct port of `int clearscreen(UNUSED(char **args))` from
+/// `Src/Zle/zle_refresh.c:2424`.
+/// ```c
+/// int clearscreen(UNUSED(char **args)) {
+///     tcoutclear(TCCLEARSCREEN);
+///     resetneeded = 1;
+///     clearflag = 0;
+///     reexpandprompt();
+///     return 0;
+/// }
+/// ```
+/// The `clear-screen` widget. The previous port hardcoded `CSI 2J CSI H`
+/// instead of the terminal's real clear capability and dropped the
+/// resetneeded/clearflag/reexpandprompt sequence.
+pub fn clearscreen() -> i32 {
+    // c:2424
+    // c:2426 — `tcoutclear(TCCLEARSCREEN);` use the terminal's clear cap.
+    tcoutclear(crate::ported::zsh_h::TCCLEARSCREEN);
+    RESETNEEDED.store(1, Ordering::SeqCst); // c:2427 resetneeded = 1
+    CLEARFLAG.store(0, Ordering::SeqCst); // c:2428 clearflag = 0
+    // c:2429 — `reexpandprompt();` prompt re-expansion isn't ported yet
+    // (prompt subsystem); deferred. zshrs's ZLE loop doesn't honour
+    // resetneeded yet, so trigger the redraw directly for the same effect.
     zrefresh();
+    0 // c:2430
 }
 
 /// Direct port of `void redisplay(UNUSED(char **args))` from
@@ -3539,6 +3546,15 @@ pub static WINH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 /// the first-line ">..." indicator reads it (c:1643, not yet rendered).
 pub static MORE_START: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0); // c:672
+
+/// Port of `mod_export int resetneeded` from `Src/Zle/zle_refresh.c`.
+/// Set when the display must be fully redrawn (e.g. after clear-screen or
+/// a SIGWINCH); the ZLE loop honours it on its next pass. zshrs's ZLE
+/// loop doesn't read it yet, so widgets that set it also trigger the
+/// redraw directly — this is the name-parity anchor for when the loop's
+/// resetneeded handling lands.
+pub static RESETNEEDED: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0);
 
 /// Port of `static int lpromptw` from `Src/Zle/zle_refresh.c:676`.
 /// Left prompt's on-screen width after expansion / truncation.
@@ -5231,6 +5247,56 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:2424-2430 — clearscreen emits the terminal's clear capability (not
+    /// a hardcoded CSI 2J), zeroes clearflag, sets resetneeded, and returns 0.
+    #[test]
+    fn clearscreen_uses_clear_cap_and_sets_flags() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ci = crate::ported::zsh_h::TCCLEARSCREEN as usize;
+        let save_len = tclen.lock().unwrap()[ci];
+        let save_str = tcstr.lock().unwrap()[ci].clone();
+        tclen.lock().unwrap()[ci] = 4;
+        tcstr.lock().unwrap()[ci] = "\x1b[2J".to_string();
+
+        CLEARFLAG.store(1, Ordering::SeqCst);
+        RESETNEEDED.store(0, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        let ret = clearscreen();
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[ci] = save_len;
+        tcstr.lock().unwrap()[ci] = save_str;
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+
+        assert_eq!(ret, 0, "clearscreen returns 0");
+        assert!(s.contains("\x1b[2J"), "must emit the clear capability; got {:?}", s);
+        assert_eq!(CLEARFLAG.load(Ordering::SeqCst), 0, "clearflag zeroed");
+        assert_eq!(RESETNEEDED.load(Ordering::SeqCst), 1, "resetneeded set");
     }
 
     /// c:946-956 — bufswap exchanges the global NBUF and OBUF buffers so
