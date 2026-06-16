@@ -470,24 +470,25 @@ pub fn tcoutclear(to_end: bool) {
 }
 
 /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
-/// `Src/Zle/zle_refresh.c`. C: `putc(c->chr, shout)`. Rust:
-/// encodes the char as UTF-8 bytes and writes to the shell-out
-/// fd.
-pub fn zwcputc(c: char) {
-    let mut buf = [0u8; 4];
-    let s = c.encode_utf8(&mut buf);
-    let _ = write_loop(
-        {
-            use std::sync::atomic::Ordering;
-            let f = SHTTY.load(Ordering::Relaxed);
-            if f >= 0 {
-                f
-            } else {
-                1
-            }
-        },
-        s.as_bytes(),
-    );
+/// `Src/Zle/zle_refresh.c:622`. Sets the pending attributes to the
+/// cell's (c:630), emits the SGR attribute-change diff (c:631 — empty
+/// when the attr is unchanged, so output stays minimal), then writes
+/// the character (c:644-651). The multiword/`nmwbuf` glyph path
+/// (c:634-643) is deferred — combining-cluster substrate.
+pub fn zwcputc(c: &REFRESH_ELEMENT) {
+    use std::sync::atomic::Ordering;
+    // c:630-631 — make the cell's attrs pending, emit the SGR diff.
+    crate::ported::prompt::treplaceattrs(c.atr);
+    let mut out = crate::ported::prompt::applytextattributes(0);
+    // c:644-651 — emit the char (a NUL chr is C's WEOF/empty cell).
+    if c.chr != '\0' {
+        let mut buf = [0u8; 4];
+        out.push_str(c.chr.encode_utf8(&mut buf));
+    }
+    if !out.is_empty() {
+        let f = SHTTY.load(Ordering::Relaxed);
+        let _ = write_loop(if f >= 0 { f } else { 1 }, out.as_bytes());
+    }
 }
 
 /// Port of `int zwcwrite(const REFRESH_STRING s, size_t i)` from
@@ -500,7 +501,7 @@ pub fn zwcwrite(s: &[REFRESH_ELEMENT], i: usize) -> usize {
     // c:657-659 — `for (j = 0; j < i; j++) zwcputc(s + j);`
     let n = i.min(s.len());
     for cell in &s[..n] {
-        zwcputc(cell.chr); // c:659
+        zwcputc(cell); // c:659
     }
     n // c:660 `return i;`
 }
@@ -1434,8 +1435,8 @@ pub fn refreshline(ln: i32) {
                     .filter(|&c| c != '\0')
             };
             match first_chr {
-                Some(c) => zwcputc(c), // c:1901 zputc(nbuf[vln])
-                None => zwcputc(' '),  // c:1903 zputc(&zr_sp)
+                Some(c) => zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }), // c:1901
+                None => zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }),  // c:1903 zr_sp
             }
             if ln == vln {
                 // c:1904 — better safe than sorry
@@ -1451,7 +1452,7 @@ pub fn refreshline(ln: i32) {
             vln += 1; // c:1911 vln++, vcs = 0
             VLN.store(vln, Ordering::SeqCst);
             VCS.store(0, Ordering::SeqCst);
-            zwcputc('\n'); // c:1912 zputc(&zr_nl)
+            zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }); // c:1912 zr_nl
         }
     }
     ins_last = 0; // c:1857
@@ -1520,7 +1521,7 @@ pub fn refreshline(ln: i32) {
                     .map(|c| c.chr);
                 moveto(ln as usize, (winw - 1) as usize); // c:1966
                 if let Some(c) = deferred {
-                    zwcputc(c); // c:1967 zputc(nl)
+                    zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }); // c:1967 zputc(nl)
                 }
                 VCS.store(vcs + 1, Ordering::SeqCst); // c:1968 vcs++
                 return; // c:1969
@@ -1572,7 +1573,7 @@ pub fn refreshline(ln: i32) {
                 // c:1996-1997 — `while (i-- > 0) zputc(&zr_pad)`: pad the
                 // overwritten run with spaces.
                 for _ in 0..i_pad {
-                    zwcputc(' ');
+                    zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }); // c:1997 zr_pad
                 }
             }
             return; // c:2002
@@ -4123,7 +4124,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         for c in ['\0', 'a', '日', '\u{1F600}', '\u{10FFFF}'] {
-            zwcputc(c);
+            zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 });
         }
     }
 
@@ -4309,7 +4310,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         for c in ['a', '\n', '\t', '\0', '日'] {
-            zwcputc(c);
+            zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 });
         }
     }
 
