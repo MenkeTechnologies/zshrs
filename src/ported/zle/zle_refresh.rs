@@ -3537,6 +3537,52 @@ mod tests {
         );
     }
 
+    /// Proof of the diff path: with NBUF[0]="abc" and an empty OBUF,
+    /// refreshline(0) must emit the new line's cells. Captures output by
+    /// redirecting SHTTY to a pipe. This proves the NBUF→refreshline→
+    /// zwcwrite→zwcputc chain writes real cell data before the live
+    /// renderer is ever switched to it.
+    #[test]
+    fn refreshline_emits_new_line_cells() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        *NBUF.lock().unwrap() = vec!["abc"
+            .chars()
+            .map(|c| REFRESH_ELEMENT { chr: c, atr: 0 })
+            .collect()];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        refreshline(0);
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains('a') && s.contains('b') && s.contains('c'),
+            "refreshline should emit the new-line cells a/b/c; got {:?}",
+            s
+        );
+    }
+
     /// zrefresh converts each line char's overlay attr to the cell's zattr
     /// (c:1226-1248), so refreshline/zwcputc emit its colour. A bold region
     /// over the line must make those cells carry TXTBOLDFACE.
