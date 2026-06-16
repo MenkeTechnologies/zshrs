@@ -1063,15 +1063,45 @@ pub fn zrefresh() {
             nbuf.clear();
         }
         // c:1208-1400 — emit prompt + line cells, wrapping at `winw`.
+        // c:1226-1248 — each cell carries the resolved attribute (`atr`)
+        // so refreshline/zwcputc emit its colour. Convert the per-char
+        // TextAttr overlay (compute_render_attrs) to the zattr bitmap.
+        use crate::ported::zsh_h::zattr;
+        let to_zattr = |ta: &TextAttr| -> zattr {
+            use crate::ported::zsh_h::{
+                TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
+                TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
+            };
+            let mut a: zattr = 0;
+            if ta.bold {
+                a |= TXTBOLDFACE;
+            }
+            if ta.underline {
+                a |= TXTUNDERLINE;
+            }
+            if ta.standout {
+                a |= TXTSTANDOUT;
+            }
+            if let Some(fg) = ta.fg_color {
+                a |= TXTFGCOLOUR | ((fg as zattr) << TXT_ATTR_FG_COL_SHIFT);
+            }
+            if let Some(bg) = ta.bg_color {
+                a |= TXTBGCOLOUR | ((bg as zattr) << TXT_ATTR_BG_COL_SHIFT);
+            }
+            a
+        };
         let cols_n = cols.max(1);
         let mut rows: Vec<REFRESH_STRING> = vec![Vec::new()];
-        let mut emit = |rows: &mut Vec<REFRESH_STRING>, chr: char| {
+        let mut emit = |rows: &mut Vec<REFRESH_STRING>, chr: char, atr: zattr| {
             if rows.last().map(|r| r.len()).unwrap_or(0) >= cols_n {
                 rows.push(Vec::new()); // c:842 nextline
             }
-            rows.last_mut().unwrap().push(REFRESH_ELEMENT { chr, atr: 0 });
+            rows.last_mut().unwrap().push(REFRESH_ELEMENT { chr, atr });
         };
         // Prompt's visible chars (skip ANSI escapes — they aren't cells).
+        // The prompt's own colour is carried by the full-repaint path; its
+        // NBUF cells use the default attr (prompt-colour-in-NBUF is a later
+        // refinement).
         let mut in_esc = false;
         for c in prompt.chars() {
             if in_esc {
@@ -1081,32 +1111,38 @@ pub fn zrefresh() {
             } else if c == '\x1b' {
                 in_esc = true;
             } else {
-                emit(&mut rows, c);
+                emit(&mut rows, c, 0);
             }
         }
-        // Editable line with tab/control expansion (c:1248-1398).
-        for &ch in line_snapshot.iter() {
+        // Editable line with tab/control expansion (c:1248-1398). Each
+        // line char's overlay attr is applied to the cell(s) it produces.
+        for (i, &ch) in line_snapshot.iter().enumerate() {
+            let atr = attrs
+                .get(i)
+                .and_then(|o| o.as_ref())
+                .map(&to_zattr)
+                .unwrap_or(0);
             if ch == '\n' {
                 rows.push(Vec::new()); // c:1248-1251
             } else if ch == '\t' {
                 // c:1259-1264 — spaces to the next 8-column stop.
                 loop {
-                    emit(&mut rows, ' ');
+                    emit(&mut rows, ' ', atr);
                     if rows.last().map(|r| r.len()).unwrap_or(0) % 8 == 0 {
                         break;
                     }
                 }
             } else if (ch as u32) < 0x20 || ch as u32 == 0x7f {
                 // c:1340-1356 — control char as `^X` / `^?`.
-                emit(&mut rows, '^');
+                emit(&mut rows, '^', atr);
                 let c2 = if ((ch as u32) & !0x80u32) > 31 {
                     '?'
                 } else {
                     char::from_u32((ch as u32) | 0x40).unwrap_or('?')
                 };
-                emit(&mut rows, c2);
+                emit(&mut rows, c2, atr);
             } else {
-                emit(&mut rows, ch); // c:1398
+                emit(&mut rows, ch, atr); // c:1398
             }
         }
         let nlnct = rows.len() as i32;
@@ -3498,6 +3534,38 @@ mod tests {
             row0.contains("ab") && row0.ends_with("c^Ad"),
             "NBUF row 0 should render the line with tab + ^A expansion, got {:?}",
             row0
+        );
+    }
+
+    /// zrefresh converts each line char's overlay attr to the cell's zattr
+    /// (c:1226-1248), so refreshline/zwcputc emit its colour. A bold region
+    /// over the line must make those cells carry TXTBOLDFACE.
+    #[test]
+    fn zrefresh_nbuf_cells_carry_attr() {
+        use crate::ported::zsh_h::TXTBOLDFACE;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "abc".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(3, Ordering::SeqCst);
+        // A bold region over the whole line (the path compute_render_attrs
+        // reads — the highlight manager, not the REGION_HIGHLIGHTS static).
+        let custom = TextAttr {
+            bold: true,
+            ..TextAttr::default()
+        };
+        highlight().lock().unwrap().add_region(0, 3, custom);
+        zrefresh();
+        let nbuf = NBUF.lock().unwrap();
+        let row0 = nbuf.first().expect("NBUF has a row");
+        let a_cell = row0
+            .iter()
+            .find(|c| c.chr == 'a')
+            .expect("'a' cell present");
+        assert!(
+            a_cell.atr & TXTBOLDFACE != 0,
+            "bold region -> cell carries TXTBOLDFACE, got atr={:#x}",
+            a_cell.atr
         );
     }
 
