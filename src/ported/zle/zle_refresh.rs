@@ -1547,6 +1547,64 @@ pub fn zrefresh() {
                 }
             }
         }
+
+        // c:1599-1635 — "<....>" indicator inserted into the FIRST status row
+        // (nbuf[tosln]) when the status line itself overflows its pane
+        // (rpms.more_status, set by snextline c:898). Non-MB path; the MB
+        // extra_ellipsis back-off (c:1614-1631) is deferred. Only modifies row
+        // tosln (within [0,nlnct)), so running it after nlnct/truncate is safe.
+        if rpms.more_status != 0 {
+            let winw_m = WINW.load(Ordering::SeqCst);
+            let prompt_attr = PROMPT_ATTR.load(Ordering::SeqCst);
+            let ellipsis_attr = ELLIPSIS_ATTR.load(Ordering::SeqCst);
+            let target = rpms.tosln.max(0) as usize; // c:1602 — nbuf[tosln]
+            let sen = (winw_m - 8).max(0) as usize; // c:1603 — `s + winw - 8`
+            let mut nbuf = NBUF.lock().unwrap();
+            if let Some(row) = nbuf.get_mut(target) {
+                // c:1604-1610 — scan from the row start; at the first '\0' cell
+                // fill zr_sp ({' ', 0}) up to sen and stop.
+                let lim = sen.min(row.len());
+                for s in 0..lim {
+                    if row[s].chr == '\0' {
+                        for k in s..lim {
+                            row[k] = REFRESH_ELEMENT { chr: ' ', atr: 0 };
+                        }
+                        break;
+                    }
+                }
+                // c:1622-1624 — copy zr_mid_ellipsis1 (" <....") at sen; its 2nd
+                // cell carries ellipsis_attr; then advance sen by SIZE1.
+                for (k, cell) in ZR_MID_ELLIPSIS1.iter().enumerate() {
+                    let idx = sen + k;
+                    if idx < row.len() {
+                        row[idx] = *cell;
+                    }
+                }
+                if sen + 1 < row.len() {
+                    row[sen + 1].atr = ellipsis_attr; // c:1623
+                }
+                let sen2 = sen + ZR_MID_ELLIPSIS1_SIZE; // c:1624
+                // c:1632-1633 — copy zr_mid_ellipsis2 ("> ") at sen2; its 2nd
+                // cell carries prompt_attr.
+                for (k, cell) in ZR_MID_ELLIPSIS2.iter().enumerate() {
+                    let idx = sen2 + k;
+                    if idx < row.len() {
+                        row[idx] = *cell;
+                    }
+                }
+                if sen2 + 1 < row.len() {
+                    row[sen2 + 1].atr = prompt_attr; // c:1633
+                }
+                // c:1634 — `nbuf[tosln][winw] = nbuf[tosln][winw+1] = zr_zr;`
+                let wi = winw_m as usize;
+                if wi < row.len() {
+                    row[wi] = REFRESH_ELEMENT::default();
+                }
+                if wi + 1 < row.len() {
+                    row[wi + 1] = REFRESH_ELEMENT::default();
+                }
+            }
+        }
     }
 
     // c:1663-1671 — if the build scrolled content off the TOP this frame
@@ -5986,6 +6044,38 @@ mod tests {
             NBUF.lock().unwrap()[0][0].chr,
             'B',
             "scrollwindow(0) rotated row 1 up to row 0"
+        );
+    }
+
+    /// c:897-899 — snextline's final-else: at the bottom row with the status
+    /// pane already collapsed (tosln <= ln, and not (tosln > 2 && nvln > 1)),
+    /// it sets `more_status` and scrolls from tosln+1. This is the gate that
+    /// drives the new "<....>" more_status indicator (c:1599-1635) in zrefresh.
+    #[test]
+    fn snextline_sets_more_status_on_full_pane() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(4, Ordering::SeqCst);
+        WINH.store(3, Ordering::SeqCst); // winh - 1 == 2
+        MORE_START.store(0, Ordering::SeqCst);
+        let row = |c: char| -> REFRESH_STRING {
+            vec![REFRESH_ELEMENT { chr: c, atr: 0 }; 6]
+        };
+        *NBUF.lock().unwrap() = vec![row('A'), row('B'), row('C')];
+
+        let mut rpms = rparams::default();
+        rpms.ln = 2; // winh - 1
+        rpms.tosln = 2; // not > ln, and not > 2
+        rpms.nvln = 1; // not > 1
+        snextline(&mut rpms);
+
+        assert_eq!(rpms.more_status, 1, "more_status set on a full status pane");
+        // scrollwindow(tosln+1)=scrollwindow(3): range [3,winh=3) is empty, so
+        // no rotation and (tline!=0) no MORE_START — confirm no leak.
+        assert_eq!(
+            MORE_START.load(Ordering::SeqCst),
+            0,
+            "scrollwindow(tosln+1) must not set MORE_START"
         );
     }
 
