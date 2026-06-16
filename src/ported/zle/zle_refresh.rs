@@ -2876,22 +2876,36 @@ pub fn tcdelcost(x: i32) -> i32 {
 /// delete escapes via the multi-form helper. Without curses substrate
 /// it's a no-op.
 #[inline]
-pub fn tc_delchars(_x: i32) { // c:1726
-                              // c:1726 — `tcmultout(TCDEL, TCMULTDEL, x)`. The Rust port
-                              // ZLE redraws full lines on every paint via `zrefresh()`
-                              // rather than emitting per-character delete escapes; no-op.
+pub fn tc_delchars(x: i32) {
+    // c:1784 — `#define tc_delchars(X) (void) tcmultout(TCDEL, TCMULTDEL, (X))`.
+    // Emit the terminal's delete-character capability `x` times. Used by
+    // refreshline's diff path (c:1993, c:2048) to remove characters
+    // without a full repaint.
+    let _ = tcmultout(
+        crate::ported::zsh_h::TCDEL,
+        crate::ported::zsh_h::TCMULTDEL,
+        x,
+    );
 }
 
 /// Port of `tc_inschars(X)` macro from `Src/Zle/zle_refresh.c:1727`.
 /// `(void) tcmultout(TCINS, TCMULTINS, (X))`.
 #[inline]
-pub fn tc_inschars(_x: i32) { // c:1727
+pub fn tc_inschars(x: i32) {
+    // c:1785 — `tcmultout(TCINS, TCMULTINS, (X))`.
+    let _ = tcmultout(
+        crate::ported::zsh_h::TCINS,
+        crate::ported::zsh_h::TCMULTINS,
+        x,
+    );
 }
 
 /// Port of `tc_upcurs(X)` macro from `Src/Zle/zle_refresh.c:1728`.
 /// `(void) tcmultout(TCUP, TCMULTUP, (X))`.
 #[inline]
-pub fn tc_upcurs(_x: i32) { // c:1728
+pub fn tc_upcurs(x: i32) {
+    // c:1786 — `tcmultout(TCUP, TCMULTUP, (X))`.
+    let _ = tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, x);
 }
 
 /// Port of `tc_leftcurs(X)` macro from `Src/Zle/zle_refresh.c:1729`.
