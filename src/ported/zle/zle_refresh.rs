@@ -3352,8 +3352,27 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
         }
     }
 
-    // c:2584 — `ZR_strcpy(nbuf[0], vbuf + winpos);`
-    // !!! STUB: nbuf[] static — defer.
+    // c:2584 — `ZR_strcpy(nbuf[0], vbuf + winpos);` copy the visible window of
+    // the built line (from winpos through the terminator, including any `<`/`>`
+    // continuation markers) into the global nbuf[0]. The render loop below
+    // diffs this against obuf[0]. (Was stubbed "nbuf[] static — defer", so the
+    // built line never reached nbuf[0] and nothing rendered.)
+    {
+        let start = winpos.max(0) as usize;
+        let src: &[REFRESH_ELEMENT] = if start < vbuf.len() {
+            &vbuf[start..]
+        } else {
+            &[]
+        };
+        let mut nbuf = NBUF.lock().unwrap();
+        if nbuf.is_empty() {
+            let w = (WINW.load(Ordering::SeqCst) + 2).max(1) as usize;
+            nbuf.push(vec![REFRESH_ELEMENT::default(); w]);
+        }
+        if let Some(row) = nbuf.get_mut(0) {
+            ZR_strcpy(row, src);
+        }
+    }
 
     // c:2585 — zfree(vbuf, vsiz * sizeof(*vbuf)) — Rust drops on scope.
     drop(vbuf); // c:2585
@@ -3375,24 +3394,90 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     };
     WINPROMPT.store(winprompt, Ordering::SeqCst); // c:2588
 
-    // c:2595-2680 — re-emit left-prompt fragment if winpos changed.
-    // !!! STUB: lpromptbuf / Inpar / Outpar / convchar_t /
-    // MB_METACHARLENCONV / shout / fputc — Src/Zle/zle_refresh.c.
-    // The fragment-re-emit branch is the visible side-effect when
-    // the user scrolls horizontally past the visible prompt; defer
-    // until termcap-output primitives land.
-    if winpos != owinpos {
-        // c:2595
+    // c:2653-2697 — re-emit the visible fragment of the left prompt when the
+    // line has scrolled (winpos != owinpos). The fragment OUTPUT itself is
+    // still stubbed: it walks `lpromptbuf` honouring the Inpar/Outpar `%{..%}`
+    // markers via MB_METACHARLENCONV — none of which are ported yet. We do the
+    // singmoveto(0) (c:2661) so the cursor is homed; the per-char prompt emit
+    // (c:2662-2696) is deferred until lpromptbuf lands.
+    if winpos != owinpos && winprompt != 0 {
+        // c:2661
         singmoveto(0);
-        // c:2603
+        // c:2697 — `vcs = winprompt;` would be set after the fragment output.
+        VCS.store(winprompt, Ordering::SeqCst);
     }
 
-    // c:2680 (function tail) — `singmoveto(nvcs);`
-    singmoveto(nvcs);
+    // c:2700-2738 — display the visible portion of the line: diff nbuf[0]
+    // against obuf[0] from `winprompt`, emitting only changed cells via the
+    // now-ported output primitives (the single-line analogue of refreshline).
+    // The buffers don't change during emit, so snapshot both rows once.
+    let nl0: REFRESH_STRING = NBUF.lock().unwrap().get(0).cloned().unwrap_or_default();
+    let ol0: REFRESH_STRING = OBUF.lock().unwrap().get(0).cloned().unwrap_or_default();
+    let zr_sp = REFRESH_ELEMENT { chr: ' ', atr: 0 };
+    let mut t0c: i32 = winprompt; // c:2700 — output column
+    let mut vp = winprompt.max(0) as usize; // c:2701 — index into nbuf[0]
+    let mut rp = winprompt.max(0) as usize; // c:2702 — index into obuf[0]
+    loop {
+        // c:2709-2712 — skip past matching cells, but only once we're past the
+        // old prompt fragment (owinprompt): earlier cells may hold prompt junk.
+        if (vp as i32) >= owinprompt {
+            while vp < nl0.len()
+                && nl0[vp].chr != '\0'
+                && rp < ol0.len()
+                && ol0[rp] == nl0[vp]
+            {
+                t0c += 1; // c:2711
+                vp += 1;
+                rp += 1;
+            }
+        }
+        let nchr = nl0.get(vp).map(|c| c.chr).unwrap_or('\0');
+        let ochr = ol0.get(rp).map(|c| c.chr).unwrap_or('\0');
+        // c:2714 — both lines ended: done.
+        if nchr == '\0' && ochr == '\0' {
+            break;
+        }
+        singmoveto(t0c); // c:2716 — move to where we output from
+        if ochr == '\0' {
+            // c:2718-2722 — old line ended: write the rest of the new line.
+            let rest = &nl0[vp..];
+            let len = ZR_strlen(rest); // c:2719 — t0 = ZR_strlen(vp)
+            if len != 0 {
+                zwcwrite(rest, len); // c:2720 — zwrite(vp, t0)
+            }
+            VCS.fetch_add(len as i32, Ordering::SeqCst); // c:2721 — vcs += t0
+            break; // c:2722
+        }
+        if nchr == '\0' {
+            // c:2723-2730 — new line ended: clear (or space-pad) the rest.
+            let tcleareol = tclen.lock().unwrap()[TCCLEAREOL as usize];
+            if tcleareol != 0 {
+                tcoutclear(TCCLEAREOL); // c:2726
+            } else {
+                // c:2728-2729 — `for (; refreshop++->chr; vcs++) zputc(&zr_sp)`.
+                let mut k = rp;
+                while k < ol0.len() && ol0[k].chr != '\0' {
+                    zwcputc(&zr_sp); // c:2729
+                    VCS.fetch_add(1, Ordering::SeqCst);
+                    k += 1;
+                }
+            }
+            break; // c:2730
+        }
+        zwcputc(&nl0[vp]); // c:2731 — emit the one changed cell
+        VCS.fetch_add(1, Ordering::SeqCst); // c:2732 — vcs++
+        t0c += 1; // c:2732 — t0++
+        vp += 1; // c:2733 — vp++
+        rp += 1; // c:2733 — refreshop++
+    }
 
-    // owinprompt/winprompt are consumed by the prompt-fragment re-emit
-    // (c:2653-2709), which stays stubbed on output primitives (lpromptbuf etc.).
-    let _ = (lpromptw, width, owinprompt, winprompt); // silence unused
+    // c:2738 — move to the new cursor position.
+    singmoveto(nvcs);
+    // c:2740 — swap the video buffers (singlerefresh manages its own swap; it
+    // is not reached through zrefresh's start-of-frame bufswap).
+    bufswap();
+
+    let _ = (lpromptw, width); // silence unused
 }
 
 /// Direct port of `static void singmoveto(int pos)` from
@@ -6981,6 +7066,46 @@ mod tests {
         let s = String::from_utf8_lossy(&out);
         assert_eq!(vcs_after, 2, "singmoveto must land global VCS at the target");
         assert!(s.contains('\r'), "CR-home optimisation should emit \\r; got {:?}", s);
+    }
+
+    /// c:2700-2740 — singlerefresh's line-render loop emits the visible line
+    /// by diffing nbuf[0] against obuf[0]. With a blank old line, the whole new
+    /// line "abc" goes out through the "old ended" zwrite branch (c:2718-2722).
+    /// The earlier port omitted this loop entirely (it jumped to singmoveto).
+    #[test]
+    fn singlerefresh_renders_line_against_blank_old() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(80, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+        WINPOS.store(-1, Ordering::SeqCst);
+        WINPROMPT.store(0, Ordering::SeqCst);
+        // nbuf[0] is overwritten by singlerefresh; obuf[0] is the blank old line.
+        *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 82]];
+        *OBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 82]];
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let line: Vec<char> = "abc".chars().collect();
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        singlerefresh(&line, line.len() as i32, line.len() as i32);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("abc"),
+            "singlerefresh must emit the visible line 'abc'; got {:?}",
+            s
+        );
     }
 
     /// c:2462-2588 — singlerefresh persists the SINGLELINEZLE horizontal scroll
