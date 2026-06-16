@@ -1042,7 +1042,12 @@ pub fn zrefresh() {
     //          of the controlling tty.
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, handle.as_bytes());
+    // ---- OUTPUT SWAP -----------------------------------------------------
+    // The full-repaint string above is now SUPERSEDED by the NBUF/OBUF diff
+    // emitted by the refreshline loop at the end of this function. The
+    // build is kept (not written) so the swap is one revertable change:
+    // restore this write_loop and delete the refreshline loop to revert.
+    let _ = (out_fd, &handle); // formerly: write_loop(out_fd, handle.as_bytes())
 
     // ---- Build NBUF (c:954-1400) ----------------------------------------
     // The full-repaint output above is the live renderer and is left
@@ -1207,6 +1212,30 @@ pub fn zrefresh() {
         *NBUF.lock().unwrap() = rows;
         NLNCT.store(nlnct, Ordering::SeqCst); // c:nlnct = rpms.ln + 1
     }
+
+    // ---- Render via the NBUF/OBUF diff (c:1700-1739) -------------------
+    // OBUF holds the previous frame (set by the swap inside the build);
+    // refreshline diffs each new line against it and emits the minimal
+    // terminal updates, then we move the cursor to its editing position.
+    let nlnct = NLNCT.load(Ordering::SeqCst);
+    let olnct = OLNCT.load(Ordering::SeqCst);
+    VCS.store(0, Ordering::SeqCst); // start from the home position
+    VLN.store(0, Ordering::SeqCst);
+    for iln in 0..nlnct {
+        refreshline(iln); // c:1710 — update each line
+    }
+    // c:1727-1732 — clear any extra lines the previous frame had.
+    if olnct > nlnct {
+        CLEAREOL.store(1, Ordering::SeqCst);
+        for iln in nlnct..olnct {
+            refreshline(iln);
+        }
+        CLEAREOL.store(0, Ordering::SeqCst);
+    }
+    // c:1739 — `moveto(rpms.nvln, rpms.nvcs)`: cursor to the edit position.
+    // Single buffer wraps at `cols`; row = cursor_col / cols, col = rem.
+    let cols_c = cols.max(1);
+    moveto(cursor_col / cols_c, cursor_col % cols_c);
 }
 
 impl HighlightManager {
@@ -3637,6 +3666,51 @@ mod tests {
         assert!(
             s.contains('a') && s.contains('b') && s.contains('c'),
             "refreshline should emit the new-line cells a/b/c; got {:?}",
+            s
+        );
+    }
+
+    /// Swap validation: the LIVE zrefresh path now renders via the NBUF/
+    /// OBUF diff (refreshline), not full-repaint. Driving the whole
+    /// zrefresh with a clean first frame must emit the editable line.
+    #[test]
+    fn zrefresh_renders_line_via_diff() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // Clean video state so the first frame writes everything.
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLECS.store(5, Ordering::SeqCst);
+        ZLELL.store(5, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        zrefresh();
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("hello"),
+            "live zrefresh (diff path) should render the line; got {:?}",
             s
         );
     }
