@@ -398,21 +398,34 @@ ported.
 
 ## ZLE refresh sweep follow-up (Jun 16 2026)
 
-- **`prompt.rs::output_highlight(zattr) -> String` is a FAKE** — cited as a
-  port of `Src/prompt.c:2179` but the body is `apply_text_attributes(attrs)`,
-  which emits the **ANSI SGR escape** (e.g. `\x1b[31m`), not the zsh highlight
-  **spec** (`fg=red,bold`) that C produces. `output_colour` (prompt.rs:3297)
-  is the same — emits SGR, not a colour name/index. So the Rust has NO
-  highlight-spec FORMATTER at all; only the SGR-emit side and the parser
-  (`match_highlight`, spec→attr). Caught when `zle_refresh.c::get_region_highlight`
-  (c:430) was attempted — it needs the real spec formatter, so it is BLOCKED
-  on porting `output_highlight`/`output_colour` spec-mode + the `highlights`
-  named-attribute table + colour naming (a prompt.c subsystem). `get_region_highlight`
-  reverted rather than ship SGR in `$region_highlight` values.
-- `zle_refresh.c::unset_region_highlight` (c:592) — **PORTED** (c269ed2c4e),
-  pure, exp-gated clear via the already-ported `set_region_highlight(None)` +
-  `stdunsetfn`.
-- Full audit result: the zle_refresh.c **render/output/cursor/widget/video-state
-  layer has ZERO stubs/fakes** — faithfully ported end to end. Remaining
-  zle_refresh.c gaps: `get_region_highlight` (blocked on output_highlight, above),
-  and the vertical-scroll feature (RefreshState↔global two-cell-type consolidation).
+- **`prompt.rs::output_highlight` — FAKE, now FIXED** (9307b9a49d). Was cited
+  as a port of `Src/prompt.c:2179` but its body called `apply_text_attributes`,
+  emitting the **ANSI SGR escape** (`\x1b[31m`) instead of the zsh highlight
+  **spec** (`fg=red,bold`). Ported C's real body line-by-line: TXT_ATTR_ALL
+  reset shortcut, fg/bg via the inlined `output_colour` spec logic (name/number/
+  #rrggbb), and the `highlights[]` named-attribute table with the no-prefix.
+  Proof: `output_highlight_emits_spec_not_sgr`.
+- `prompt.rs::output_colour` — doc corrected (09a9cd0c27): despite the name it
+  emits SGR (ports `set_colour_attribute` c:2440); the spec `output_colour`
+  (c:2136) logic is inlined in `output_highlight`. Kept the name (callers want
+  the escape).
+- `zle_refresh.c::unset_region_highlight` (c:592) — **PORTED** (c269ed2c4e).
+- `zle_refresh.c::get_region_highlight` (c:430) — **PORTED** (22c703c74a), once
+  `output_highlight` was real. `RegionHighlight` stores `attr` as `TextAttr`
+  (no atrmask), so the (atr,mask) pair is rebuilt from the set flag bits —
+  exact for positive specs; explicit-`no`/layer not recoverable.
+- **MILESTONE: every standalone function in `Src/Zle/zle_refresh.c` now has a
+  faithful Rust counterpart** (full audit; 713 ZLE+prompt tests green, stable).
+  The render/output/cursor/widget/video-state layer has ZERO stubs/fakes.
+- **Remaining work is STRUCTURAL, not function-level cherry-picks:**
+  1. Vertical-scroll feature — `nextline`'s scroll logic (canscroll/numscrolls/
+     `scrollwindow`) must drive the LIVE build, but the live build uses a local
+     `rows: Vec<REFRESH_ELEMENT>` while `nextline`/`new_video` use
+     `Vec<RefreshElement>` (TextAttr+width). Needs the two-cell-type +
+     `TextAttr`↔`zattr` representation consolidation.
+  2. Highlight-spec fidelity — `parsehighlight`/`match_highlight`/`RegionHighlight`
+     drop the explicit `setmask`, 24-bit colour (`zattr_set_fg_palette` is u8),
+     faint/italic, and `no` prefix. All need the mask + wide-colour
+     representation change (cascades through the parser, formatter, and struct).
+  3. Blocked substrate — RPROMPT emit (rpromptbuf/rprompt_off/pmpt_attr),
+     `promptexpand`/`reexpandprompt`, combining-cluster `nmwbuf` multiword path.
