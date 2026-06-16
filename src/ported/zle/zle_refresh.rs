@@ -1537,16 +1537,19 @@ pub fn refreshline(ln: i32) {
             // c:1934 — `tccan(TCDEL) && tcdelcost(i) <= i + 1`
             let can_del = (tclen.lock().unwrap()[TCDEL as usize] != 0)  /* tccan(TCDEL) per zsh.h:2682 */ && i_pad <= i_pad + 1;
             if can_del {
-                // c:1935 — tc_delchars(i)
-                // !!! STUB: tc_delchars — Src/Zle/zle_refresh.c.
+                // c:1993 — `tc_delchars(i)`: delete `i_pad` chars via the
+                // terminal's delete-char capability (now ported).
+                tc_delchars(i_pad);
             } else {
-                // c:1936
+                // c:1996 — `vcs += i`.
                 VCS.store(vcs + i_pad, Ordering::SeqCst);
-                // c:1937
-                // c:1938-1939 — for (i--; i > 0; ) zputc(&zr_pad)
-                // !!! STUB: zputc — defer.
+                // c:1996-1997 — `while (i-- > 0) zputc(&zr_pad)`: pad the
+                // overwritten run with spaces.
+                for _ in 0..i_pad {
+                    zwcputc(' ');
+                }
             }
-            return; // c:1941
+            return; // c:2002
         }
 
         // c:1946 — `if (!ol->chr)`
@@ -1560,10 +1563,10 @@ pub fn refreshline(ln: i32) {
             let i_write = i_remain - vcs; // c:1948
             if i_write > 0 {
                 // c:1949 (DPUTS guard)
-                // c:1958 — zwrite(nl, i)
-                // !!! STUB: zwrite — Src/Zle/zle_refresh.c.
-                VCS.store(vcs + i_write, Ordering::SeqCst);
-                // c:1959
+                // c:1958 — `zwrite(nl, i)`: emit the new line's first
+                // `i_write` cells (zwcwrite loops zwcputc over them).
+                zwcwrite(&nl, i_write as usize);
+                VCS.store(vcs + i_write, Ordering::SeqCst); // c:1959 vcs += i
             }
             if col_cleareol >= 0 {
                 // c:1960
