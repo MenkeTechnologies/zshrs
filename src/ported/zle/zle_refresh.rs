@@ -1392,9 +1392,12 @@ pub fn refreshline(ln: i32) {
                 {
                     j_loc -= 1; // c:1829
                 }
-                // c:1831 — tclen[TCCLEAREOL] — termcap-cost lookup.
-                // !!! STUB: tclen[] — Src/init.c:81. Treat as 1.
-                let tclen_clear: i32 = 1;
+                // c:1831 — `if (j > i + tclen[TCCLEAREOL])`: clearing to
+                // end-of-line is only worth it when the trailing-blank run
+                // exceeds the cost (capability length) of the clear-eol
+                // escape. tclen is populated by the termcap loader
+                // (init.rs:108/758); read the real cost instead of 1.
+                let tclen_clear: i32 = tclen.lock().unwrap()[TCCLEAREOL as usize];
                 if j_loc > i_loc + tclen_clear {
                     // c:1831
                     col_cleareol = i_loc; // c:1832
@@ -1500,8 +1503,13 @@ pub fn refreshline(ln: i32) {
                 // c:1915
                 return; // c:1916 written everything
             }
-            if (tclen.lock().unwrap()[TCCLEAREOL as usize] != 0)  /* tccan(TCCLEAREOL) per zsh.h:2682 */                   // c:1917
-                    && (char_ins >= 1) /* tclen[TCCLEAREOL] stubbed to 1 */
+            // c:1975 — `if (tccan(TCCLEAREOL) && char_ins >= tclen[TCCLEAREOL]
+            //            && col_cleareol != -2)`. Read tclen[TCCLEAREOL] once
+            // (Mutex isn't reentrant) and use it for both the tccan != 0
+            // check and the char_ins cost comparison.
+            let tcleareol_len = tclen.lock().unwrap()[TCCLEAREOL as usize];
+            if tcleareol_len != 0  /* tccan(TCCLEAREOL) */
+                    && char_ins >= tcleareol_len  // c:1975
                     && col_cleareol != -2
             {
                 col_cleareol = 0; // c:1920
