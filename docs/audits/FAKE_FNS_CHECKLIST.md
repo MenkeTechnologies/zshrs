@@ -156,10 +156,16 @@ largely illusory: on close inspection most have hidden substrate gaps
 - [x] `modules/db_gdbm.rs::gdbmhashsetfn` — **done** (closed the
   `gdbm_reorganize` gap c:501; binding existed, added a `reorganize()`
   wrapper + `if ht.is_empty()` call; 64 gdbm tests green)
-- [BLOCKED] `zle_utils.rs::spaceinline` — `RegionHighlight` struct lacks
-  `flags`/`start_meta`/`end_meta`, no `predisplaylen`; the
-  region_highlights position-adjustment can't be ported without
-  extending the struct (touches the highlight renderer)
+- [x] `zle_utils.rs::spaceinline` — **substrate built + ported**. Added
+  the `flags: i32` field to `RegionHighlight` (the `P`-prefix
+  `ZRH_PREDISPLAY` flag was being parsed at zle_refresh.rs:3070 then
+  discarded via `let _ = flags` — now stored). `predisplaylen` derived
+  from `get_predisplay().chars().count()`. Ported the missing non-meta
+  region-highlight adjustment (c:830-844) + `viinsbegin` reset
+  (c:827-828): user regions past the cursor shift by `ct` on insert.
+  New test pins the shift; spaceinline (4) + zle_utils (79) green. (The
+  completion-only meta branch — `start_meta`/`end_meta` with
+  `zlemetaline` — stays deferred; it's active only during completion.)
 - [BLOCKED] `compmatch.rs::bld_line` — completion cross-class equivalence;
   `pattern_match_equivalence` has a documented `PP_LOWER`/`PP_UPPER` `lmtp`
   gap (line-side equivalence lookup missing)
@@ -339,9 +345,13 @@ ported.
 ## Counts
 
 - PORT: 52  (genuine fakes — C work faked; require faithful port)
-  - done: 6 full + 1 partial (`lchdir`, `findsep`, `vireplacechars`,
-    `gdbmhashsetfn`, `setstypat`, `cd_new_pwd`; partial: `source` —
-    FS_SOURCE funcstack push closed, smaller gaps tracked) — remaining 45
+  - done: 7 full + 1 partial (`lchdir`, `findsep`, `vireplacechars`,
+    `gdbmhashsetfn`, `setstypat`, `cd_new_pwd`, `spaceinline`; partial:
+    `source` — FS_SOURCE funcstack push closed) — remaining 44
+  - substrate built: `RegionHighlight.flags` (unblocked `spaceinline`).
+    Confirmed dead-end: hist ring mutator (addhistnode is vestigial —
+    dedup handled inline in hend() c:1602, not via the callerless
+    addnode callback).
   - reclassified NOT-FAKE on audit: 4 (`zgetdir` — live getcwd branch is
     faithful, walk fallback platform-dead `USE_GETCWD=1`; `par_subsh` —
     AST parser architecture, `{...}`/always split to parse.rs:7025;

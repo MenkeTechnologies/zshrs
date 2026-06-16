@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-15T22:25:06.484922+00:00
+Generated: 2026-06-16T02:29:55.184501+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 113 stubs across 43 files
+## Summary: 112 stubs across 43 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -27,13 +27,13 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (70 / 745) |
 | `src/ported/zle/zle_main.rs` | 5 | `describekeybriefly` (2 / 28) |
 | `src/ported/zle/zle_refresh.rs` | 4 | `zrefresh` (87 / 658) |
-| `src/ported/zle/zle_utils.rs` | 4 | `showmsg` (4 / 72) |
 | `src/ported/module.rs` | 3 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 3 | `newzstyletable` (1 / 15) |
 | `src/ported/parse.rs` | 3 | `build_cur_dump` (5 / 80) |
 | `src/ported/zle/compcore.rs` | 3 | `set_comp_sep` (9 / 321) |
 | `src/ported/zle/zle_keymap.rs` | 3 | `newkeytab` (1 / 15) |
 | `src/ported/zle/zle_tricky.rs` | 3 | `get_comp_string` (28 / 794) |
+| `src/ported/zle/zle_utils.rs` | 3 | `showmsg` (4 / 72) |
 | `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 404) |
 | `src/ported/exec.rs` | 2 | `namedpipe` (24 / 1085) |
 | `src/ported/glob.rs` | 2 | `zglob` (60 / 614) |
@@ -151,17 +151,8 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 914 | `zrefresh` | 87 | 658 | 13% |
 | 570 | `freevideo` | 4 | 19 | 21% |
-| 1695 | `tc_rightcurs` | 15 | 63 | 23% |
-| 1608 | `moveto` | 13 | 44 | 29% |
-
-### `src/ported/zle/zle_utils.rs` — 4 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1255 | `showmsg` | 4 | 72 | 5% |
-| 47 | `sizeline` | 5 | 20 | 25% |
-| 530 | `zle_free_positions` | 3 | 11 | 27% |
-| 544 | `spaceinline` | 16 | 54 | 29% |
+| 1696 | `tc_rightcurs` | 15 | 63 | 23% |
+| 1609 | `moveto` | 13 | 44 | 29% |
 
 ### `src/ported/module.rs` — 3 stubs
 
@@ -210,6 +201,14 @@ python3 scripts/gen_port_stubs.py
 | 1058 | `get_comp_string` | 28 | 794 | 3% |
 | 1386 | `pfxlen` | 4 | 38 | 10% |
 | 1482 | `listlist` | 32 | 174 | 18% |
+
+### `src/ported/zle/zle_utils.rs` — 3 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 1294 | `showmsg` | 4 | 72 | 5% |
+| 47 | `sizeline` | 5 | 20 | 25% |
+| 530 | `zle_free_positions` | 3 | 11 | 27% |
 
 ### `src/ported/compat.rs` — 2 stubs
 
