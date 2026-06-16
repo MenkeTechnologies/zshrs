@@ -451,22 +451,41 @@ pub fn zle_free_highlight() { // c:415
                               // invalidate fires.
 }
 
-/// Port of `void tcoutclear(int cap)` from
-/// `Src/Zle/zle_refresh.c:607`. C dispatches on `cap` (a termcap
-/// index — TCCLEAREOL/TCCLEAREOD/TCCLEARSCREEN) to emit the
-/// corresponding escape. Rust collapses to a bool `to_end`:
-/// `true` → clear-to-end (CSI J), `false` → clear-entire-screen
-/// (CSI 2J).
-/// C body (3 lines):
-///   `treplaceattrs((cap == TCCLEAREOL) ? prompt_attr : 0);
-///    applytextattributes(0);
-///    tcout(cap);`
-/// WARNING: signature change — C=(int cap) vs Rust=(to_end: bool).
-pub fn tcoutclear(to_end: bool) {
+/// Direct port of `void tcoutclear(int cap)` from
+/// `Src/Zle/zle_refresh.c:607`.
+/// ```c
+/// void tcoutclear(int cap) {
+///     treplaceattrs((cap == TCCLEAREOL) ? prompt_attr : 0);
+///     applytextattributes(0);
+///     tcout(cap);
+/// }
+/// ```
+/// Emit a clear capability (`cap` is the termcap index TCCLEAREOL /
+/// TCCLEAREOD / TCCLEARSCREEN), after making the cleared region carry the
+/// right attributes — the prompt's for clear-to-end-of-line (so a
+/// coloured prompt's background fills correctly), else the default.
+/// The previous port took a `bool` and hardcoded CSI J for both, which
+/// wrongly cleared to end of *display* for the clear-to-end-of-*line*
+/// case (TCCLEAREOL → CSI K) and dropped the attribute setup. Every C
+/// caller guards on `tccan(cap)`, so `tcstr[cap]` is always loaded here.
+pub fn tcoutclear(cap: i32) {
     // c:607
-    let bytes: &[u8] = if to_end { b"\x1b[J" } else { b"\x1b[2J" }; // c:611 tcout
-    let fd = SHTTY.load(Ordering::Relaxed); // c:611 shout
-    let _ = write_loop(if fd >= 0 { fd } else { 1 }, bytes);
+    use crate::ported::zsh_h::TCCLEAREOL;
+    // c:609 — `treplaceattrs((cap == TCCLEAREOL) ? prompt_attr : 0);`
+    let attr = if cap == TCCLEAREOL {
+        PROMPT_ATTR.load(Ordering::SeqCst)
+    } else {
+        0
+    };
+    crate::ported::prompt::treplaceattrs(attr);
+    // c:610 — `applytextattributes(0);` emit the SGR change.
+    let sgr = crate::ported::prompt::applytextattributes(0);
+    let fd = SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    if !sgr.is_empty() {
+        let _ = write_loop(out_fd, sgr.as_bytes());
+    }
+    tcout(cap); // c:611
 }
 
 /// Port of `void zwcputc(const REFRESH_ELEMENT *c)` from
@@ -1524,7 +1543,7 @@ pub fn refreshline(ln: i32) {
     /* tccan(TCCLEAREOL) per zsh.h:2682 */                       // c:1777
     {
         moveto(ln as usize, 0); // c:1778
-        tcoutclear(true); // c:1779
+        tcoutclear(TCCLEAREOL); // c:1779
         return; // c:1780
     }
 
@@ -1792,7 +1811,7 @@ pub fn refreshline(ln: i32) {
         // c:1925-1929 — if we can finish via clear-to-eol, do so
         if col_cleareol >= 0 && ccs >= col_cleareol {
             // c:1926
-            tcoutclear(true); // c:1927 tcoutclear(TCCLEAREOL)
+            tcoutclear(TCCLEAREOL); // c:1927 tcoutclear(TCCLEAREOL)
             return; // c:1928
         }
 
@@ -1843,7 +1862,7 @@ pub fn refreshline(ln: i32) {
             }
             if col_cleareol >= 0 {
                 // c:1960
-                tcoutclear(true); // c:1961
+                tcoutclear(TCCLEAREOL); // c:1961
             }
             return; // c:1962
         }
@@ -4235,12 +4254,15 @@ mod tests {
     fn zrefresh_clears_newly_grown_line() {
         use std::io::Read;
         use std::os::unix::io::FromRawFd;
-        use crate::ported::init::tclen;
+        use crate::ported::init::{tclen, tcstr};
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
 
         let saved_tc = tclen.lock().unwrap()[TCCLEAREOL as usize];
-        tclen.lock().unwrap()[TCCLEAREOL as usize] = 1; // tccan(TCCLEAREOL)
+        let saved_str = tcstr.lock().unwrap()[TCCLEAREOL as usize].clone();
+        tclen.lock().unwrap()[TCCLEAREOL as usize] = 3; // tccan(TCCLEAREOL)
+        // The real clear-to-end-of-LINE escape (CSI K), not CSI J.
+        tcstr.lock().unwrap()[TCCLEAREOL as usize] = "\x1b[K".to_string();
 
         *NBUF.lock().unwrap() = vec![];
         *OBUF.lock().unwrap() = vec![];
@@ -4276,13 +4298,14 @@ mod tests {
         crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
         unsafe { libc::close(wr) };
         tclen.lock().unwrap()[TCCLEAREOL as usize] = saved_tc;
+        tcstr.lock().unwrap()[TCCLEAREOL as usize] = saved_str;
         let mut out = Vec::new();
         let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
         let _ = f.read_to_end(&mut out);
         let s = String::from_utf8_lossy(&out);
         assert!(
-            s.contains("\x1b[J"),
-            "grown line 1 should be cleared via the cleareol short-circuit; got {:?}",
+            s.contains("\x1b[K"),
+            "grown line 1 should be cleared to end-of-line (CSI K); got {:?}",
             s
         );
     }
@@ -4761,13 +4784,12 @@ mod tests {
         assert_eq!(ZR_strlen(&buf), 2, "no NUL → bounded by slice");
     }
 
-    /// `tcoutclear(false)` runs without panic. C `Src/Zle/zle_refresh.c`:
-    ///   helper to clear cap state before tcout.
+    /// `tcoutclear(cap)` runs without panic for each clear capability.
     #[test]
     fn tcoutclear_runs_without_panic() {
         let _g = crate::test_util::global_state_lock();
-        tcoutclear(false);
-        tcoutclear(true);
+        tcoutclear(crate::ported::zsh_h::TCCLEARSCREEN);
+        tcoutclear(crate::ported::zsh_h::TCCLEAREOL);
     }
 
     /// `zle_free_highlight()` runs without panic (no-op when no
@@ -4948,13 +4970,13 @@ mod tests {
         }
     }
 
-    /// c:465 — `tcoutclear(true)` + `tcoutclear(false)` safe both modes.
+    /// c:607 — `tcoutclear(cap)` safe for both clear-line and clear-screen.
     #[test]
     fn tcoutclear_both_modes_safe() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        tcoutclear(true);
-        tcoutclear(false);
+        tcoutclear(crate::ported::zsh_h::TCCLEAREOL);
+        tcoutclear(crate::ported::zsh_h::TCCLEARSCREEN);
     }
 
     /// c:708 — `scrollwindow(0)` no-op (zero lines).
@@ -5479,13 +5501,13 @@ mod tests {
         }
     }
 
-    /// c:465 — `tcoutclear` for both bool arms is safe.
+    /// c:607 — `tcoutclear` for each clear capability is safe.
     #[test]
     fn tcoutclear_both_arms_safe() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        tcoutclear(false);
-        tcoutclear(true);
+        tcoutclear(crate::ported::zsh_h::TCCLEARSCREEN);
+        tcoutclear(crate::ported::zsh_h::TCCLEAREOL);
     }
 
     /// c:1097 — `wpfxlen(empty, empty)` returns 0 (alt name).
