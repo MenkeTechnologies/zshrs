@@ -1643,9 +1643,93 @@ pub fn zrefresh() {
                     snextline(rpms);
                 }
             };
-            // c:1499-1538 — non-MB status render loop.
-            for u in status.chars() {
-                if (u as u32) < 0x20 || u as u32 == 0x7f {
+            // semit_cell: like semit but writes a PRE-BUILT cell (combining
+            // clusters / WEOF placeholders). Same snextline-wrap as semit.
+            let mut semit_cell = |rpms: &mut rparams, cell: REFRESH_ELEMENT| {
+                {
+                    let mut nbuf = NBUF.lock().unwrap();
+                    if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                        if rpms.pos < row.len() {
+                            row[rpms.pos] = cell;
+                        }
+                    }
+                }
+                rpms.pos += 1;
+                if rpms.pos >= rpms.end {
+                    {
+                        let mut nbuf = NBUF.lock().unwrap();
+                        if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                            let end_idx = (winw_s + 1) as usize;
+                            if end_idx < row.len() {
+                                row[end_idx] =
+                                    REFRESH_ELEMENT { chr: '\n', atr: 0 };
+                            }
+                        }
+                    }
+                    snextline(rpms);
+                }
+            };
+            // c:1438-1538 — status render loop. The MB printable branch (wide /
+            // combining glyphs, c:1438-1473) mirrors the main build: combining
+            // scan, margin wrap, leading cell + WEOF padding, '?' when too wide.
+            // The non-MB control (`^X`) and verbatim paths follow. The `<hex>`
+            // rendering of width-0 non-combining glyphs (c:1474-1493) stays a
+            // verbatim emit for now.
+            let status_chars: Vec<char> = status.chars().collect();
+            let mut skip_s = 0usize;
+            for su in 0..status_chars.len() {
+                if skip_s > 0 {
+                    skip_s -= 1;
+                    continue;
+                }
+                let u = status_chars[su];
+                let width = unicode_width::UnicodeWidthChar::width(u).unwrap_or(0);
+                let is_ctrl = (u as u32) < 0x20 || u as u32 == 0x7f;
+                if width > 0 && !is_ctrl {
+                    // c:1442-1446 — combining scan (COMBININGCHARS).
+                    let mut ichars = 1usize;
+                    if isset(COMBININGCHARS) {
+                        while su + ichars < status_chars.len()
+                            && unicode_width::UnicodeWidthChar::width(
+                                status_chars[su + ichars],
+                            ) == Some(0)
+                        {
+                            ichars += 1;
+                        }
+                    }
+                    skip_s = ichars - 1;
+                    // c:1449-1455 — too wide for the line: pad spaces (zr_sp,
+                    // atr 0) to the margin (the last semit wraps via snextline).
+                    let remaining = rpms.end.saturating_sub(rpms.pos);
+                    if width as usize > remaining {
+                        for _ in 0..remaining {
+                            semit(&mut rpms, ' ', 0); // c:1450 zr_sp
+                        }
+                    }
+                    // c:1456-1473 — emit: '?' if still too wide, else the
+                    // leading cell (cluster/char) + WEOF column-placeholders.
+                    let remaining2 = rpms.end.saturating_sub(rpms.pos);
+                    if width as usize > remaining2 {
+                        semit(&mut rpms, '?', all_attr); // c:1457-1459
+                    } else {
+                        let mut cell = REFRESH_ELEMENT { chr: u, atr: 0 }; // c:1462
+                        if ichars > 1 {
+                            let cluster: Vec<char> =
+                                status_chars[su..su + ichars].to_vec();
+                            addmultiword(&mut cell, &cluster, ichars); // c:1464
+                        }
+                        semit_cell(&mut rpms, cell);
+                        let mut w = width - 1;
+                        while w > 0 {
+                            // c:1469-1471 — `while(--width>0){ s->chr=WEOF; }`
+                            semit_cell(&mut rpms, REFRESH_ELEMENT {
+                                chr: ZWC_WEOF,
+                                atr: 0,
+                            });
+                            w -= 1;
+                        }
+                    }
+                } else if is_ctrl {
                     // c:1499-1508 — control char as `^X` / `^?`.
                     semit(&mut rpms, '^', all_attr); // c:1500
                     let c2 = if ((u as u32) & !0x80u32) > 31 {
@@ -5071,6 +5155,52 @@ mod tests {
             "status row (x^Ay) must render below the editable row (ab); rows={:?}",
             rows
         );
+    }
+
+    /// c:1438-1473 — the status pane lays a wide (CJK) glyph at full width too:
+    /// "日x" in the status renders as [日][WEOF][x], not [日][x]. Pins the
+    /// status MB printable branch (now unblocked by ZWC_WEOF).
+    #[test]
+    fn zrefresh_statusline_wide_char_pads_weof() {
+        let _g = crate::test_util::global_state_lock();
+        *ZLELINE.lock().unwrap() = "a".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *crate::ported::zle::zle_main::STATUSLINE.lock().unwrap() =
+            Some("日x".to_string());
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        let rows = NBUF.lock().unwrap().clone();
+        *crate::ported::zle::zle_main::STATUSLINE.lock().unwrap() = None; // restore
+
+        let mut checked = false;
+        for row in &rows {
+            if let Some(idx) = row.iter().position(|c| c.chr == '日') {
+                assert_eq!(
+                    row.get(idx + 1).map(|c| c.chr),
+                    Some(ZWC_WEOF),
+                    "status wide glyph's 2nd column must be a WEOF placeholder"
+                );
+                assert_eq!(
+                    row.get(idx + 2).map(|c| c.chr),
+                    Some('x'),
+                    "'x' must follow the WEOF placeholder in the status row"
+                );
+                checked = true;
+            }
+        }
+        assert!(checked, "a status row containing 日 must exist; rows={:?}",
+            rows.iter().map(|r| r.iter().map(|c| c.chr)
+                .take_while(|&c| c != '\0').collect::<String>()).collect::<Vec<_>>());
     }
 
     /// Proof of the diff path: with NBUF[0]="abc" and an empty OBUF,
