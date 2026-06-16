@@ -1391,12 +1391,162 @@ pub fn zrefresh() {
         if cursor_idx >= line_snapshot.len() {
             rpms.nvln = rpms.ln;
         }
+
+        // c:1423-1554 — the status line (the `zle -M` message) rendered below
+        // the editable line via the status-pane scroll cascade (snextline),
+        // gated on STATUSLINE being set so the common (no-status) path is
+        // untouched. Status runs BEFORE the nlnct computation so its rows are
+        // counted (snextline advances rpms.ln). The MULTIBYTE_SUPPORT branches
+        // (wide/combining chars, `<hex>` escapes; c:1437-1497, 1510-1534) are
+        // deferred; the non-MB path (control → `^X`/`^?`, else verbatim) is
+        // ported faithfully. `stringaszleline` is the metafied→ZLE-string
+        // decode; here STATUSLINE is already a Rust `String`, so we iterate its
+        // chars directly (the decode is the producer's job, zle_main.rs).
+        let statusline_present = if let Some(status) =
+            STATUSLINE.lock().unwrap().clone()
+        {
+            let winw_s = WINW.load(Ordering::SeqCst);
+            let all_attr = SPECIAL_ATTR.load(Ordering::SeqCst); // c:1430
+            // c:1432 — `rpms.tosln = rpms.ln + 1;` top of the status pane.
+            rpms.tosln = rpms.ln + 1;
+            // c:1433 — `nbuf[rpms.ln][winw+1] = zr_zr;` editable line not wrapped.
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                    let end_idx = (winw_s + 1) as usize;
+                    if end_idx < row.len() {
+                        row[end_idx] = REFRESH_ELEMENT::default();
+                    }
+                }
+            }
+            snextline(&mut rpms); // c:1434 — advance into the status area.
+            // semit: write one status cell at NBUF[ln][pos] (brief lock,
+            // RELEASED before snextline so its internal NBUF lock can't
+            // deadlock), advance pos, and wrap via snextline at the right
+            // margin (c:1538 `if (rpms.s==rpms.sen){ nbuf[ln][winw+1]=zr_nl;
+            // snextline(&rpms); }`). Each cell does its own wrap check, which
+            // matches C's mid-pair check (c:1502, after `^`) plus the common
+            // check (c:1538, after the second/verbatim cell).
+            let mut semit = |rpms: &mut rparams, chr: char, atr: zattr| {
+                {
+                    let mut nbuf = NBUF.lock().unwrap();
+                    if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                        if rpms.pos < row.len() {
+                            row[rpms.pos] = REFRESH_ELEMENT { chr, atr };
+                        }
+                    }
+                }
+                rpms.pos += 1;
+                if rpms.pos >= rpms.end {
+                    // c:1538 — mark the row wrapped, then advance the pane.
+                    {
+                        let mut nbuf = NBUF.lock().unwrap();
+                        if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                            let end_idx = (winw_s + 1) as usize;
+                            if end_idx < row.len() {
+                                row[end_idx] =
+                                    REFRESH_ELEMENT { chr: '\n', atr: 0 };
+                            }
+                        }
+                    }
+                    snextline(rpms);
+                }
+            };
+            // c:1499-1538 — non-MB status render loop.
+            for u in status.chars() {
+                if (u as u32) < 0x20 || u as u32 == 0x7f {
+                    // c:1499-1508 — control char as `^X` / `^?`.
+                    semit(&mut rpms, '^', all_attr); // c:1500
+                    let c2 = if ((u as u32) & !0x80u32) > 31 {
+                        '?' // c:1507
+                    } else {
+                        char::from_u32((u as u32) | 0x40).unwrap_or('?') // c:1506
+                    };
+                    semit(&mut rpms, c2, all_attr); // c:1505-1508
+                } else {
+                    // c:1525-1527 — `rpms.s->chr = *u; rpms.s->atr = 0;`
+                    semit(&mut rpms, u, 0);
+                }
+            }
+            // c:1554 — `*rpms.s = zr_zr;` terminate the final status row.
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                    if rpms.pos < row.len() {
+                        row[rpms.pos] = REFRESH_ELEMENT::default();
+                    }
+                }
+            }
+            true
+        } else {
+            false
+        };
+
         // c:1751 — `nlnct = rpms.ln + 1`. NBUF is already populated (the build
         // wrote into it directly); trim any unused pre-allocated tail rows so
         // refreshline/the diff loop see exactly the drawn lines.
         let nlnct = rpms.ln + 1;
         NBUF.lock().unwrap().truncate(nlnct as usize);
         NLNCT.store(nlnct, Ordering::SeqCst);
+
+        // c:1557-1596 — "...>" indicator at the end of the last visible line
+        // when there is more text past the bottom of the screen (more_end,
+        // set only by the status-pane snextline cascade at c:887/895). Non-MB
+        // path; the MB extra_ellipsis back-off (c:1571-1592) is deferred. This
+        // only modifies row tosln-1 (already within [0,nlnct)), so running it
+        // after the nlnct/truncate is safe.
+        if MORE_END.load(Ordering::SeqCst) != 0 {
+            let winw_e = WINW.load(Ordering::SeqCst);
+            let winh_e = WINH.load(Ordering::SeqCst);
+            let prompt_attr = PROMPT_ATTR.load(Ordering::SeqCst);
+            let ellipsis_attr = ELLIPSIS_ATTR.load(Ordering::SeqCst);
+            // c:1561-1562 — `if (!statusline) rpms.tosln = winh;`
+            if !statusline_present {
+                rpms.tosln = winh_e;
+            }
+            let target = (rpms.tosln - 1).max(0) as usize; // c:1563
+            let sen = (winw_e - 7).max(0) as usize; // c:1564 — `s + winw - 7`
+            let mut nbuf = NBUF.lock().unwrap();
+            if let Some(row) = nbuf.get_mut(target) {
+                // c:1566-1573 — scan from the row start; at the first '\0'
+                // cell pad with zr_pad ({' ', prompt_attr}, c:1650) up to sen,
+                // set sen->chr='\0' (avoid the WEOF test), and stop.
+                let lim = sen.min(row.len());
+                for s in 0..lim {
+                    if row[s].chr == '\0' {
+                        for k in s..lim {
+                            row[k] = REFRESH_ELEMENT { chr: ' ', atr: prompt_attr };
+                        }
+                        if sen < row.len() {
+                            row[sen].chr = '\0'; // c:1570
+                        }
+                        break;
+                    }
+                }
+                // c:1593-1595 — copy zr_end_ellipsis at sen; the leading cell
+                // carries prompt_attr, the next ellipsis_attr.
+                for (k, cell) in ZR_END_ELLIPSIS.iter().enumerate() {
+                    let idx = sen + k;
+                    if idx < row.len() {
+                        row[idx] = *cell;
+                    }
+                }
+                if sen < row.len() {
+                    row[sen].atr = prompt_attr; // c:1594
+                }
+                if sen + 1 < row.len() {
+                    row[sen + 1].atr = ellipsis_attr; // c:1595
+                }
+                // c:1596 — `nbuf[tosln-1][winw] = nbuf[tosln-1][winw+1] = zr_zr;`
+                let wi = winw_e as usize;
+                if wi < row.len() {
+                    row[wi] = REFRESH_ELEMENT::default();
+                }
+                if wi + 1 < row.len() {
+                    row[wi + 1] = REFRESH_ELEMENT::default();
+                }
+            }
+        }
     }
 
     // c:1663-1671 — if the build scrolled content off the TOP this frame
@@ -3700,6 +3850,14 @@ pub static PROMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 pub static ELLIPSIS_ATTR: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0); // c:152
 
+/// Port of `static zattr special_attr` from `Src/Zle/zle_refresh.c`. The
+/// attribute applied to the synthesized cells of the status line (the
+/// `^X` control glyphs and `<....>` hex escapes) — `all_attr = special_attr`
+/// at c:1430. C seeds it from the `special` zle_highlight; default until
+/// that wiring lands (same status as `PROMPT_ATTR`/`ELLIPSIS_ATTR`).
+pub static SPECIAL_ATTR: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0); // c:152
+
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
 /// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
 /// and we have to fall back to per-line clear.
@@ -4337,6 +4495,42 @@ mod tests {
             row0.contains("ab") && row0.ends_with("c^Ad"),
             "NBUF row 0 should render the line with tab + ^A expansion, got {:?}",
             row0
+        );
+    }
+
+    /// Proof of the status-pane build (c:1423-1554): with STATUSLINE set, the
+    /// editable line lands in an upper NBUF row and the status text renders in
+    /// a row BELOW it via the snextline cascade, with control chars expanded to
+    /// `^X` (c:1499-1508). Resets STATUSLINE to None before dropping the lock so
+    /// the flag can't leak into another test (the more_start-leak failure mode).
+    #[test]
+    fn zrefresh_renders_statusline_below_editable() {
+        let _g = crate::test_util::global_state_lock();
+        *ZLELINE.lock().unwrap() = "ab".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(2, Ordering::SeqCst);
+        // Status with a control char to exercise the `^X` path (\u{1} → "^A").
+        *crate::ported::zle::zle_main::STATUSLINE.lock().unwrap() =
+            Some("x\u{1}y".to_string());
+
+        zrefresh();
+
+        // Snapshot rows (content up to the first \0 terminator) then clear the
+        // status flag while still holding the global lock.
+        let rows: Vec<String> = NBUF
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.iter().map(|c| c.chr).take_while(|&c| c != '\0').collect())
+            .collect();
+        *crate::ported::zle::zle_main::STATUSLINE.lock().unwrap() = None;
+
+        let edit_row = rows.iter().position(|r| r.contains("ab"));
+        let stat_row = rows.iter().position(|r| r.contains("x^Ay"));
+        assert!(
+            edit_row.is_some() && stat_row.is_some() && stat_row > edit_row,
+            "status row (x^Ay) must render below the editable row (ab); rows={:?}",
+            rows
         );
     }
 
