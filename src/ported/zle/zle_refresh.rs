@@ -1920,12 +1920,17 @@ pub fn zrefresh() {
         cur_nvcs = rpms.nvcs;
     }
 
+    // c:988 — `int rprompt_off = 1;` offset of the right prompt from the right
+    // of the screen. Set by the placement below, read by the emit in the
+    // render loop. A zrefresh local in C; here too (both sites are in zrefresh).
+    let mut rprompt_off: i32 = 1;
+
     // c:1663-1671 — if the build scrolled content off the TOP this frame
     // (more_start, set by nextline→scrollwindow), overwrite line 0 with the
     // ">..." start-ellipsis: lpromptw spaces, the (clamped) start ellipsis,
     // then padding, with the first ellipsis cell carrying ellipsis_attr and
-    // the first pad cell prompt_attr. The `!more_start` branch (right-prompt
-    // placement, c:1646-1662) needs the RPROMPT subsystem and is deferred.
+    // the first pad cell prompt_attr. The `!more_start` branch is the
+    // right-prompt placement (c:1643-1657).
     if MORE_START.load(Ordering::SeqCst) != 0 {
         let winw = WINW.load(Ordering::SeqCst).max(0) as usize;
         let lpromptw = (LPROMPTW.load(Ordering::SeqCst).max(0) as usize).min(winw);
@@ -1954,6 +1959,41 @@ pub fn zrefresh() {
         let mut nbuf = NBUF.lock().unwrap();
         if let Some(first) = nbuf.get_mut(0) {
             *first = row0;
+        }
+    } else {
+        // c:1643-1657 — no scroll-off-top this frame: decide whether the right
+        // prompt is shown this frame and where (put_rpmpt / rprompt_off). The
+        // emit happens in the render loop below. All gated on a non-empty,
+        // single-line right prompt that fits, so the common no-RPROMPT case
+        // leaves put_rpmpt = 0 and changes nothing.
+        if TRASHEDZLE.load(Ordering::SeqCst) != 0
+            && isset(crate::ported::zsh_h::TRANSIENTRPROMPT)
+        {
+            // c:1645-1646 — transient right prompt: drop it once the line is
+            // "trashed" (accepted / a new command started).
+            PUT_RPMPT.store(0, Ordering::SeqCst);
+        } else {
+            let rp = crate::ported::zle::zle_main::rprompt();
+            let winw = WINW.load(Ordering::SeqCst);
+            let rpromptw = RPROMPTW.load(Ordering::SeqCst);
+            // c:1648-1650 — `rprompth == 1 && rpromptbuf[0] && !strchr(rpromptbuf,'\t')`.
+            let mut put = (RPROMPTH.load(Ordering::SeqCst) == 1
+                && !rp.is_empty()
+                && !rp.contains('\t')) as i32;
+            if put != 0 {
+                // c:1651-1654 — rprompt_off = rprompt_indent, clamped >= 0.
+                rprompt_off = *crate::ported::params::RPROMPT_INDENT.lock().unwrap();
+                if rprompt_off < 0 {
+                    rprompt_off = 0;
+                }
+                // c:1655-1656 — it fits iff strlen(nbuf[0]) + rpromptw fits.
+                let nlen = {
+                    let nbuf = NBUF.lock().unwrap();
+                    nbuf.first().map(|r| ZR_strlen(r) as i32).unwrap_or(0)
+                };
+                put = (nlen + rpromptw < winw - rprompt_off) as i32;
+            }
+            PUT_RPMPT.store(put, Ordering::SeqCst);
         }
     }
 
@@ -2068,8 +2108,43 @@ pub fn zrefresh() {
         }
 
         refreshline(iln); // c:1710 — update each line
+
+        // c:1713-1725 — emit the right prompt on the first line when it fits
+        // (put_rpmpt) and wasn't already on screen last frame (!oput_rpmpt).
+        if PUT_RPMPT.load(Ordering::SeqCst) != 0
+            && iln == 0
+            && OPUT_RPMPT.load(Ordering::SeqCst) == 0
+        {
+            let rpromptw = RPROMPTW.load(Ordering::SeqCst);
+            // c:1716 — `moveto(0, winw - rprompt_off - rpromptw)`.
+            let col = (winw - rprompt_off - rpromptw).max(0) as usize;
+            moveto(0, col);
+            // c:1717-1718 — `treplaceattrs(pmpt_attr); applytextattributes(0);`
+            crate::ported::prompt::treplaceattrs(PMPT_ATTR.load(Ordering::SeqCst));
+            let mut out = crate::ported::prompt::applytextattributes(0);
+            // c:1719 — `zputs(rpromptbuf, shout)`: the expanded right prompt
+            // (already carries its own SGR escapes).
+            out.push_str(&crate::ported::zle::zle_main::rprompt());
+            {
+                let fd = SHTTY.load(Ordering::Relaxed);
+                let _ = write_loop(if fd >= 0 { fd } else { 1 }, out.as_bytes());
+            }
+            // c:1720-1724 — fix up the video cursor column after the emit.
+            if rprompt_off != 0 {
+                VCS.store(winw - rprompt_off, Ordering::SeqCst); // c:1721
+            } else {
+                zwcputc(&REFRESH_ELEMENT { chr: '\r', atr: 0 }); // c:1723 zputc(&zr_cr)
+                VCS.store(0, Ordering::SeqCst); // c:1723
+            }
+            // c:1725 — the prompt's literal escapes leave the terminal in
+            // rpmpt_attr; publish it so the next attr-diff is correct.
+            crate::ported::prompt::treplaceattrs(RPMPT_ATTR.load(Ordering::SeqCst));
+        }
     }
     CLEAREOL.store(saved_cleareol, Ordering::SeqCst);
+    // c:1738 — `oput_rpmpt = put_rpmpt`: remember whether the right prompt is
+    // on screen so next frame's emit gate (!oput_rpmpt) won't redraw it.
+    OPUT_RPMPT.store(PUT_RPMPT.load(Ordering::SeqCst), Ordering::SeqCst);
     // c:1751-1752 — `if (nlnct > vmaxln) vmaxln = nlnct`: remember the
     // tallest frame we've drawn so the insert-line opt never scrolls past it.
     if nlnct > VMAXLN.load(Ordering::SeqCst) {
@@ -5152,6 +5227,60 @@ mod tests {
             "orphan combining mark must render as <0301> hex; got {:?}",
             row0
         );
+    }
+
+    /// c:1643-1725 — the right prompt is placed and emitted when it is a
+    /// single-line, non-empty prompt that fits on the first line. With RPROMPT
+    /// set to "RP" and a short editable line, zrefresh emits "RP" to the right
+    /// and records put_rpmpt/oput_rpmpt. (The whole block is gated on a
+    /// non-empty fitting rprompt, so the default no-RPROMPT case never fires.)
+    #[test]
+    fn zrefresh_emits_right_prompt_when_it_fits() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = "RP".to_string();
+        RPROMPTW.store(2, Ordering::SeqCst);
+        RPROMPTH.store(1, Ordering::SeqCst);
+        TRASHEDZLE.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst); // not shown last frame
+        LPROMPTW.store(0, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "a".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        // Restore globals so the rprompt state doesn't leak into other tests.
+        *crate::ported::zle::zle_main::RPROMPT.lock().unwrap() = String::new();
+        let put = PUT_RPMPT.load(Ordering::SeqCst);
+        let oput = OPUT_RPMPT.load(Ordering::SeqCst);
+        PUT_RPMPT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst);
+        RPROMPTW.store(0, Ordering::SeqCst);
+        RPROMPTH.store(0, Ordering::SeqCst);
+
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("RP"),
+            "right prompt 'RP' must be emitted to the right; got {:?}",
+            s
+        );
+        assert_eq!(put, 1, "put_rpmpt set");
+        assert_eq!(oput, 1, "oput_rpmpt carries put_rpmpt for the next frame (c:1738)");
     }
 
     /// c:1741 — the closing moveto positions the cursor at the build-tracked
