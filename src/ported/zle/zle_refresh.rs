@@ -1985,35 +1985,120 @@ pub fn refreshline(ln: i32) {
 }
 
 /// Direct port of `void moveto(int ln, int cl)` from
-/// `Src/Zle/zle_refresh.c:2105`. C uses termcap `cm` / `cup`
-/// strings to teleport the cursor; Rust emits the equivalent
-/// CSI ; H sequence (rows/cols 1-indexed per ANSI). Was a
-/// `print!` fake.
+/// `Src/Zle/zle_refresh.c:2163`. Move the video cursor to (`ln`, `cl`)
+/// using relative terminal movement (the previous port teleported with
+/// an absolute CSI H, which cannot create lines that don't exist yet).
+/// Operates on the global `vcs`/`vln` (the VCS/VLN atomics) exactly as C:
+///   - automargin wrap when at the right margin (c:2167-2182)
+///   - early return when already at the target (c:2184)
+///   - up-movement via `tc_upcurs` (c:2188-2191)
+///   - down-movement: `tc_downcurs` while on-screen, real newlines past
+///     `vmaxln-1` to scroll/create lines (c:2195-2212)
+///   - horizontal close via `singmoveto` (c:2214-2215)
 pub fn moveto(row: usize, col: usize) {
-    // c:2105 — move the cursor to (row, col). C optimises the path
-    // (tc_rightcurs / tabs / re-output); modern terminals take the
-    // absolute CSI H, which is C's TCPOS-equivalent.
-    let s = format!("\x1b[{};{}H", row + 1, col + 1);
-    let _ = write_loop(
-        {
-            use std::sync::atomic::Ordering;
-            let f = SHTTY.load(Ordering::Relaxed);
-            if f >= 0 {
-                f
-            } else {
-                1
+    // c:2163
+    let zr_cr = REFRESH_ELEMENT { chr: '\r', atr: 0 };
+    let zr_nl = REFRESH_ELEMENT { chr: '\n', atr: 0 };
+    let zr_sp = REFRESH_ELEMENT { chr: ' ', atr: 0 };
+    let ln = row as i32;
+    let cl = col as i32;
+    let winw = WINW.load(Ordering::SeqCst);
+    let hasam_v = crate::ported::init::hasam.load(Ordering::SeqCst) != 0;
+    let mut vcs = VCS.load(Ordering::SeqCst);
+    let mut vln = VLN.load(Ordering::SeqCst);
+
+    // c:2167 — `if (vcs == winw)`: wrap off the right margin.
+    if vcs == winw {
+        vln += 1; // c:2168 vln++, vcs = 0
+        vcs = 0;
+        if !hasam_v {
+            // c:2170-2171 — no automargin: CR + NL.
+            zwcputc(&zr_cr);
+            zwcputc(&zr_nl);
+        } else {
+            // c:2173-2176 — rep = first cell of nbuf[vln] if real, else space.
+            let nlnct = NLNCT.load(Ordering::SeqCst);
+            let rep = {
+                let nbuf = NBUF.lock().unwrap();
+                nbuf.get(vln as usize)
+                    .filter(|_| vln < nlnct)
+                    .and_then(|r| r.first())
+                    .copied()
+                    .filter(|c| c.chr != '\0')
+                    .unwrap_or(zr_sp)
+            };
+            zwcputc(&rep); // c:2177
+            zwcputc(&zr_cr); // c:2178
+            // c:2179-2181 — `if (vln<olnct && obuf[vln] && obuf[vln]->chr)
+            //                  *obuf[vln] = *rep;`
+            let olnct = OLNCT.load(Ordering::SeqCst);
+            if vln < olnct {
+                let mut obuf = OBUF.lock().unwrap();
+                if let Some(orow) = obuf.get_mut(vln as usize) {
+                    if let Some(first) = orow.first_mut() {
+                        if first.chr != '\0' {
+                            *first = rep;
+                        }
+                    }
+                }
             }
-        },
-        s.as_bytes(),
-    );
-    // c:2159-2204 — "update vln, vcs": the cursor is now at the target,
-    // so the video-position trackers must follow it (refreshline reads
-    // them to drive the next diff). The Rust port previously left them
-    // stale, which is harmless for single-line absolute writes but wrong
-    // for multi-line and the next frame's cursor-relative logic.
-    use std::sync::atomic::Ordering;
-    VLN.store(row as i32, Ordering::SeqCst);
-    VCS.store(col as i32, Ordering::SeqCst);
+        }
+        VLN.store(vln, Ordering::SeqCst);
+        VCS.store(vcs, Ordering::SeqCst);
+    }
+
+    // c:2184 — `if (ln == vln && cl == vcs) return;`
+    if ln == vln && cl == vcs {
+        return;
+    }
+
+    // c:2188-2191 — move up.
+    if ln < vln {
+        tc_upcurs(vln - ln); // c:2189
+        vln = ln; // c:2190
+        VLN.store(vln, Ordering::SeqCst);
+    }
+
+    // c:2195-2212 — move down; past vmaxln-1 use newlines, not TCDOWN, so
+    // we don't run off the end of what's been drawn.
+    while ln > vln {
+        let vmaxln = VMAXLN.load(Ordering::SeqCst);
+        if vln < vmaxln - 1 {
+            if ln > vmaxln - 1 {
+                // c:2198-2200
+                if tc_downcurs(vmaxln - 1 - vln) != 0 {
+                    vcs = 0;
+                    VCS.store(0, Ordering::SeqCst);
+                }
+                vln = vmaxln - 1;
+                VLN.store(vln, Ordering::SeqCst);
+            } else {
+                // c:2202-2204
+                if tc_downcurs(ln - vln) != 0 {
+                    vcs = 0;
+                    VCS.store(0, Ordering::SeqCst);
+                }
+                vln = ln;
+                VLN.store(vln, Ordering::SeqCst);
+                continue;
+            }
+        }
+        // c:2207 — `zputc(&zr_cr), vcs = 0;` safety precaution.
+        zwcputc(&zr_cr);
+        vcs = 0;
+        VCS.store(0, Ordering::SeqCst);
+        while ln > vln {
+            // c:2208-2211 — newline-scroll the remaining lines.
+            zwcputc(&zr_nl);
+            vln += 1;
+        }
+        VLN.store(vln, Ordering::SeqCst);
+    }
+
+    // c:2214-2215 — `if (cl != vcs) singmoveto(cl);`
+    if cl != vcs {
+        singmoveto(cl);
+    }
 }
 
 /// Direct port of `int tcmultout(int cap, int multcap, int ct)` from
@@ -5011,6 +5096,51 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:2195-2212 — moving the cursor down past the drawn region
+    /// (vmaxln-1) must emit real newlines, which scroll/create lines. The
+    /// old CSI-H port jumped without creating lines. From (0,0) with
+    /// vmaxln=1, moveto(3,0) emits CR + 3 newlines and lands VLN at 3.
+    #[test]
+    fn moveto_down_past_vmaxln_emits_newlines() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::tclen;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // No TCDOWN capability so the newline fallback is taken.
+        let save_d = tclen.lock().unwrap()[crate::ported::zsh_h::TCDOWN as usize];
+        let save_md = tclen.lock().unwrap()[crate::ported::zsh_h::TCMULTDOWN as usize];
+        tclen.lock().unwrap()[crate::ported::zsh_h::TCDOWN as usize] = 0;
+        tclen.lock().unwrap()[crate::ported::zsh_h::TCMULTDOWN as usize] = 0;
+
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        VMAXLN.store(1, Ordering::SeqCst); // nothing drawn below row 0
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        moveto(3, 0);
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[crate::ported::zsh_h::TCDOWN as usize] = save_d;
+        tclen.lock().unwrap()[crate::ported::zsh_h::TCMULTDOWN as usize] = save_md;
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert_eq!(VLN.load(Ordering::SeqCst), 3, "moveto must land VLN at 3");
+        assert!(
+            s.contains("\n\n\n"),
+            "down-past-vmaxln must emit newlines to create lines; got {:?}",
+            s
+        );
     }
 
     /// c:2745-2764 — singmoveto positions the cursor on the current line
