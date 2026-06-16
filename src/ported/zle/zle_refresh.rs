@@ -842,42 +842,84 @@ pub fn nextline(rpms: &mut rparams, wrapped: i32) -> i32 {
     0 // c:873
 }
 
-/// Direct port of `int snextline(Rparams rpms)` from
-/// `Src/Zle/zle_refresh.c:875`.
-///
-/// "Status next line" — advances inside the optional status area
-/// (the line zsh draws below the prompt when more_status is set).
-/// Mirrors the C body's `if (more_status && tosln != ln && ln != winh
-/// - 1)` decision tree: bumps `rpms->ln` if we have room in the
-/// status pane, otherwise gives up (return 1). Returns 0 on success.
-pub fn snextline(
-    rpms: &mut rparams,       // c:875
-    state: &mut RefreshState, // for columns / lines access
-) -> i32 {
-    let winw = state.columns as i32;
-    let winh = state.lines as i32;
+/// Direct port of `void snextline(Rparams rpms)` from
+/// `Src/Zle/zle_refresh.c:875` — "go to the next line in the status area".
+/// ```c
+/// void snextline(Rparams rpms) {
+///     *rpms->s = zr_zr;
+///     if (rpms->ln != winh - 1) rpms->ln++;
+///     else if (rpms->tosln > rpms->ln) {
+///         rpms->tosln--;
+///         if (rpms->nvln > 1) { scrollwindow(0); rpms->nvln--; }
+///         else more_end = 1;
+///     } else if (rpms->tosln > 2 && rpms->nvln > 1) {
+///         rpms->tosln--;
+///         if (rpms->tosln <= rpms->nvln) { scrollwindow(0); rpms->nvln--; }
+///         else { scrollwindow(rpms->tosln); more_end = 1; }
+///     } else { rpms->more_status = 1; scrollwindow(rpms->tosln + 1); }
+///     if (!nbuf[rpms->ln]) nbuf[rpms->ln] = zalloc(...);
+///     rpms->s = nbuf[rpms->ln]; rpms->sen = rpms->s + winw;
+/// }
+/// ```
+/// The previous Rust body was a fake: a made-up `more_status && tosln != ln`
+/// guard, no scroll logic, `RefreshState`/`new_video`, and an `int` return.
+/// Ported faithfully on the global `NBUF` (`REFRESH_ELEMENT`) with the real
+/// status-pane scroll cascade (tosln/nvln/more_end + the three scrollwindow
+/// calls).
+pub fn snextline(rpms: &mut rparams) {
+    // c:875
+    let winw = WINW.load(Ordering::SeqCst);
+    let winh = WINH.load(Ordering::SeqCst);
 
-    // c:877-878 — `if (rpms->more_status && rpms->tosln != rpms->ln
-    //              && rpms->ln != winh - 1) {`
-    if rpms.more_status != 0 && rpms.tosln != rpms.ln && rpms.ln != winh - 1 {
-        // c:879 — `rpms->ln++;`
-        rpms.ln += 1;
-        // c:881-883 — alloc the status row if missing.
-        if let Some(new_video) = state.new_video.as_mut() {
-            if rpms.ln as usize >= new_video.lines.len() {
-                new_video.lines.resize(
-                    rpms.ln as usize + 1,
-                    vec![RefreshElement::default(); (winw + 2) as usize],
-                );
+    // c:877 — `*rpms->s = zr_zr;` terminate the current row at pos.
+    {
+        let mut nbuf = NBUF.lock().unwrap();
+        if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+            if rpms.pos < row.len() {
+                row[rpms.pos] = REFRESH_ELEMENT::default();
             }
         }
-        // c:885-886 — `rpms->s = nbuf[ln]; rpms->sen = s + winw;`
-        rpms.pos = 0;
-        rpms.end = winw as usize;
-        0 // c:887
-    } else {
-        1 // c:889 — out of status pane room.
     }
+
+    if rpms.ln != winh - 1 {
+        rpms.ln += 1; // c:879
+    } else if rpms.tosln > rpms.ln {
+        // c:881-887
+        rpms.tosln -= 1;
+        if rpms.nvln > 1 {
+            scrollwindow(0); // c:884
+            rpms.nvln -= 1; // c:885
+        } else {
+            MORE_END.store(1, Ordering::SeqCst); // c:887
+        }
+    } else if rpms.tosln > 2 && rpms.nvln > 1 {
+        // c:888-896
+        rpms.tosln -= 1;
+        if rpms.tosln <= rpms.nvln {
+            scrollwindow(0); // c:891
+            rpms.nvln -= 1; // c:892
+        } else {
+            scrollwindow(rpms.tosln); // c:894
+            MORE_END.store(1, Ordering::SeqCst); // c:895
+        }
+    } else {
+        // c:897-899
+        rpms.more_status = 1; // c:898
+        scrollwindow(rpms.tosln + 1); // c:899
+    }
+
+    // c:901-904 — alloc the row if missing; reset s/sen to its start/end.
+    {
+        let mut nbuf = NBUF.lock().unwrap();
+        if rpms.ln as usize >= nbuf.len() {
+            nbuf.resize(
+                rpms.ln as usize + 1,
+                vec![REFRESH_ELEMENT::default(); (winw + 2) as usize],
+            );
+        }
+    }
+    rpms.pos = 0; // c:903
+    rpms.end = winw as usize; // c:904
 }
 
 /// Direct port of `static void addmultiword(REFRESH_ELEMENT *base,
@@ -3605,6 +3647,14 @@ pub static WINH: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 pub static MORE_START: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(0); // c:672
 
+/// Port of `static int more_end` from `Src/Zle/zle_refresh.c:672` — "more
+/// text after end of screen?". Set by `snextline` when the status pane
+/// scrolls content off the bottom (c:887/895); reset each frame (c:1119).
+/// The "...<" end indicator reads it (the consumer is unported, like the
+/// `more_start` ">..." one).
+pub static MORE_END: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(0); // c:672
+
 /// Port of `mod_export int resetneeded` from `Src/Zle/zle_refresh.c`.
 /// Set when the display must be fully redrawn (e.g. after clear-screen or
 /// a SIGWINCH); the ZLE loop honours it on its next pass. zshrs's ZLE
@@ -5394,6 +5444,45 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:875-905 — snextline (status-area row advance, now real): off the
+    /// bottom row it terminates + advances; at the bottom with room above
+    /// (tosln > ln, nvln > 1) it scrolls and decrements tosln/nvln.
+    #[test]
+    fn snextline_advances_then_scrolls_status_pane() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(4, Ordering::SeqCst);
+        WINH.store(3, Ordering::SeqCst);
+        let row = |c: char| -> REFRESH_STRING {
+            vec![REFRESH_ELEMENT { chr: c, atr: 0 }; 6]
+        };
+        *NBUF.lock().unwrap() = vec![row('A'), row('B'), row('C')];
+
+        // Not at bottom → terminate + advance.
+        let mut rpms = rparams::default();
+        rpms.ln = 0;
+        rpms.pos = 2;
+        snextline(&mut rpms);
+        assert_eq!(rpms.ln, 1, "advanced");
+        assert_eq!(rpms.pos, 0);
+        assert_eq!(rpms.end, 4);
+        assert_eq!(NBUF.lock().unwrap()[0][2].chr, '\0', "terminated at pos");
+
+        // At bottom, tosln > ln and nvln > 1 → scroll, tosln--/nvln--.
+        let mut rpms2 = rparams::default();
+        rpms2.ln = 2; // winh - 1
+        rpms2.tosln = 5;
+        rpms2.nvln = 2;
+        snextline(&mut rpms2);
+        assert_eq!(rpms2.tosln, 4, "tosln decremented");
+        assert_eq!(rpms2.nvln, 1, "nvln decremented after scroll");
+        assert_eq!(
+            NBUF.lock().unwrap()[0][0].chr,
+            'B',
+            "scrollwindow(0) rotated row 1 up to row 0"
+        );
     }
 
     /// c:841-873 — nextline (now on the global NBUF): off the bottom row it
