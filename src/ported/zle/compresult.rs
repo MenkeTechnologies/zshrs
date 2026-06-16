@@ -45,7 +45,7 @@ use crate::ported::zle::compcore::{
 use crate::ported::zle::complete::COMPLISTMAX;
 use crate::ported::zle::computil::CM_SPACE;
 use crate::ported::zle::zle_h::COMP_LIST_COMPLETE;
-use crate::ported::zle::zle_refresh::tcoutclear;
+use crate::ported::zle::zle_refresh::tcout;
 use crate::ported::zle::zle_tricky::printfmt;
 #[allow(unused_imports)]
 use crate::ported::zle::{
@@ -1385,7 +1385,13 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
     if cl < 2 {
         // c:1986
         cl = -1;
-        tcoutclear(true); // c:1988 tcout(TCCLEAREOD)
+        // c:1987-1988 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+        if crate::ported::init::tclen.lock().unwrap()
+            [crate::ported::zsh_h::TCCLEAREOD as usize]
+            != 0
+        {
+            tcout(crate::ported::zsh_h::TCCLEAREOD);
+        }
     }
 
     let groups = amatches
@@ -1416,7 +1422,13 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 if cl >= 0 && cl <= 1 {
                     // c:2010
                     cl = -1;
-                    tcoutclear(true);
+                    // c:2010-2011 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
+                    if crate::ported::init::tclen.lock().unwrap()
+                        [crate::ported::zsh_h::TCCLEAREOD as usize]
+                        != 0
+                    {
+                        tcout(crate::ported::zsh_h::TCCLEAREOD);
+                    }
                 }
             }
             // c:2017-2018 — printfmt(e.str, count, 1, 1).
