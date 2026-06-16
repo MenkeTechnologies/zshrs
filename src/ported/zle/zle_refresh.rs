@@ -2120,17 +2120,70 @@ pub fn moveto(row: usize, col: usize) {
     }
 }
 
+/// Direct port of `void tcoutarg(int cap, int arg)` from
+/// `Src/Zle/zle_refresh.c:2409`.
+/// ```c
+/// void tcoutarg(int cap, int arg) {
+///     char *result = tgoto(tcstr[cap], arg, arg);
+///     if (tcout_func_name) tcout_via_func(cap, arg, putshout);
+///     else tputs(result, 1, putshout);
+///     SELECT_ADD_COST(strlen(result));
+/// }
+/// ```
+/// Output a parametrised termcap value, substituting `arg` into the
+/// capability string via `tgoto` (the same termcap routine `init.rs`
+/// already links alongside `tgetstr`). C passes `arg` as both tgoto
+/// parameters; the capabilities used here (TCMULTRIGHT / TCHORIZPOS /
+/// the multi-* caps) take a single `%d`, so the col/row order is moot
+/// and the output is deterministic across platforms. The
+/// `tcout_func_name` user-hook (c:2414) and `tputs` padding are deferred
+/// — modern terminals need neither.
+pub fn tcoutarg(cap: i32, arg: i32) {
+    // c:2409
+    use crate::ported::init::tcstr;
+    use crate::ported::zsh_h::TC_COUNT;
+    use std::ffi::{CStr, CString};
+    extern "C" {
+        fn tgoto(
+            cap: *const libc::c_char,
+            col: libc::c_int,
+            row: libc::c_int,
+        ) -> *mut libc::c_char;
+    }
+    let cap_idx = cap as usize;
+    if cap_idx >= TC_COUNT as usize {
+        return;
+    }
+    let cap_str = tcstr.lock().unwrap()[cap_idx].clone();
+    if cap_str.is_empty() {
+        return;
+    }
+    let c_cap = match CString::new(cap_str) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    // c:2413 — `result = tgoto(tcstr[cap], arg, arg);`
+    let result = unsafe { tgoto(c_cap.as_ptr(), arg as libc::c_int, arg as libc::c_int) };
+    if result.is_null() {
+        return;
+    }
+    let bytes = unsafe { CStr::from_ptr(result) }.to_bytes();
+    // c:2416-2417 — `tputs(result, 1, putshout)` (padding dropped).
+    let fd = SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let _ = write_loop(out_fd, bytes);
+    // c:2419 — SELECT_ADD_COST(strlen(result)) cost accounting (no-op).
+}
+
 /// Direct port of `int tcmultout(int cap, int multcap, int ct)` from
-/// `Src/Zle/zle_refresh.c:2163`.
+/// `Src/Zle/zle_refresh.c:2221`.
 ///
-/// Prefers the parametrised multi-arg capability when its escape
-/// is no longer than `ct` repeats of the single cap (c:2165), falls
-/// back to looping the single cap (c:2168-2170), otherwise emits a
-/// safe ASCII fallback so cursor positioning still works on terms
-/// without termcap entries. Returns 1 when any escape was emitted,
-/// 0 when no usable capability existed.
+/// Prefers the parametrised multi-arg capability when its escape is no
+/// longer than `ct` repeats of the single cap (c:2223), falls back to
+/// looping the single cap (c:2226-2229), otherwise returns 0 (c:2231) so
+/// the caller chooses the fallback. Returns 1 when an escape was emitted.
 pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
-    // c:2163
+    // c:2221
     use crate::ported::init::{tclen, tcstr};
     use crate::ported::zsh_h::TC_COUNT;
 
@@ -2162,10 +2215,10 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     let cap_ok = cap_len > 0;
 
     // c:2223-2225 — `if (tccan(multcap) && (!tccan(cap) ||
-    //                  tclen[multcap] <= tclen[cap]*ct)) { tcoutarg; return 1; }`
+    //                  tclen[multcap] <= tclen[cap]*ct)) { tcoutarg(multcap,ct); return 1; }`
+    let _ = mult_str;
     if mult_ok && (!cap_ok || mult_len <= cap_len * ct) {
-        let emitted = mult_str.replace("%d", &ct.to_string());
-        let _ = write_loop(out_fd, emitted.as_bytes());
+        tcoutarg(multcap, ct);
         return 1;
     } else if cap_ok {
         // c:2226-2229 — `else if (tccan(cap)) { while(ct--) tcout(cap); return 1; }`
@@ -2216,14 +2269,12 @@ pub fn tc_rightcurs(count: usize) {
 
     // c:2247-2250 — `if (tccan(TCMULTRIGHT)) { tcoutarg(TCMULTRIGHT, ct); return; }`
     if tclen.lock().unwrap()[TCMULTRIGHT as usize] != 0 {
-        let s = tcstr.lock().unwrap()[TCMULTRIGHT as usize].replace("%d", &ct.to_string());
-        let _ = write_loop(out_fd, s.as_bytes());
+        tcoutarg(TCMULTRIGHT, ct);
         return;
     }
     // c:2253-2256 — `if (tccan(TCHORIZPOS)) { tcoutarg(TCHORIZPOS, cl); return; }`
     if tclen.lock().unwrap()[TCHORIZPOS as usize] != 0 {
-        let s = tcstr.lock().unwrap()[TCHORIZPOS as usize].replace("%d", &cl.to_string());
-        let _ = write_loop(out_fd, s.as_bytes());
+        tcoutarg(TCHORIZPOS, cl);
         return;
     }
     // Blocked-substrate fallbacks above are deferred; emit the ANSI default.
@@ -2386,30 +2437,6 @@ pub fn tcout(cap: i32) {
     let _ = write_loop(out_fd, escape.as_bytes());
     // c:2346 — `SELECT_ADD_COST(tclen[cap])` cost accounting dropped
     //          (no scheduling consumer reads it yet).
-}
-
-/// Port of `void tcoutarg(int cap, int arg)` from
-/// Direct port of `void tcoutarg(int cap, int arg)` from
-/// `Src/Zle/zle_refresh.c:2351`. Resolves the cap escape via
-/// `tcstr[cap]`, expands `%d` against `arg` (the most common
-/// termcap parametrisation), and writes the result to SHTTY.
-pub fn tcoutarg(cap: i32, arg: i32) {
-    // c:2351
-    use crate::ported::init::tcstr;
-    use crate::ported::zsh_h::TC_COUNT;
-    let cap_idx = cap as usize;
-    if cap_idx >= TC_COUNT as usize {
-        return;
-    }
-    // c:2355 — `result = tgoto(tcstr[cap], arg, arg);`
-    let escape = tcstr.lock().unwrap()[cap_idx].clone();
-    if escape.is_empty() {
-        return;
-    }
-    let s = escape.replace("%d", &arg.to_string());
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, s.as_bytes()); // c:2359
 }
 
 /// Direct port of `void clearscreen(UNUSED(char **args))` from
