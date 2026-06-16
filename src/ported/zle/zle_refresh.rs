@@ -3583,6 +3583,63 @@ mod tests {
         );
     }
 
+    /// Integration proof: the NBUF that zrefresh actually builds from the
+    /// editable line renders correctly through refreshline. This validates
+    /// the full build→diff→emit path end to end (zrefresh's NBUF cells are
+    /// real, refreshline renders them) before the live output is ever
+    /// switched from full-repaint to the diff.
+    #[test]
+    fn zrefresh_nbuf_renders_via_refreshline() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLECS.store(5, Ordering::SeqCst);
+        ZLELL.store(5, Ordering::SeqCst);
+
+        // Let zrefresh's full-repaint output go to /dev/null while it
+        // builds NBUF (we only want the NBUF, not its escapes).
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        let devnull = unsafe {
+            libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY)
+        };
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh(); // builds NBUF (and OBUF=previous via its swap)
+        if devnull >= 0 {
+            unsafe { libc::close(devnull) };
+        }
+
+        // Render the just-built NBUF via refreshline, forcing a full write
+        // (empty OBUF), capturing the output.
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        *OBUF.lock().unwrap() = vec![];
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        refreshline(0);
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("hello"),
+            "zrefresh-built NBUF should render 'hello' via refreshline; got {:?}",
+            s
+        );
+    }
+
     /// Diff-path proof, shorten case: OBUF="abcd" → NBUF="ab". The old
     /// trailing "cd" must be erased — when the terminal lacks clear-to-eol
     /// (none in a headless test), refreshline overwrites it with spaces.
