@@ -599,11 +599,11 @@ thread_local! {
 /// `Src/Zle/zle_refresh.c:700`.
 ///
 /// Drops the new/old video buffers and (under MULTIBYTE_SUPPORT) the
-/// multi-codepoint cluster pools. C body's per-row zfree loop
-/// collapses to Rust's Vec drop cascade; the cluster pools live on
-/// VideoBuffer cells, so dropping the buffers releases them too.
-/// Resets `winw_alloc`/`winh_alloc` to 0 so the next [`resetvideo`]
-/// pass reallocates fresh buffers.
+/// multi-codepoint cluster pools (the NMWBUF/OMWBUF thread_locals). C
+/// body's per-row zfree loop collapses to Rust's Vec drop cascade;
+/// clearing the NMWBUF/OMWBUF Vecs is the cluster-pool free.
+/// The empty Vecs are the NULL state so the next [`resetvideo`] pass
+/// reallocates fresh buffers.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
 pub fn freevideo() {
     // c:700
@@ -618,9 +618,15 @@ pub fn freevideo() {
     //             empty Vecs ARE the NULL state; resetvideo always
     //             reallocates (no realloc-on-change optimisation), so no
     //             separate `*_alloc` dimensions are tracked.
-    // c:710-714 — MULTIBYTE_SUPPORT also frees nmwbuf/omwbuf and resets
-    //             nmw_size/nmw_ind; those buffers aren't freed here
-    //             (combining-cluster substrate), deferred.
+    // c:710-714 — MULTIBYTE_SUPPORT: free the multiword cluster stores and
+    //             reset their sizes/index. The empty Vecs are the freed
+    //             (NULL) state; nmw_ind restarts at 1 (never 0, c:43) so the
+    //             next addmultiword's stored index can't alias a NUL cell.
+    NMWBUF.with(|b| b.borrow_mut().clear()); // c:710
+    OMWBUF.with(|b| b.borrow_mut().clear()); // c:711
+    NMW_SIZE.with(|c| c.set(0)); // c:712 — omw_size = nmw_size = 0
+    OMW_SIZE.with(|c| c.set(0)); // c:712
+    NMW_IND.with(|c| c.set(1)); // c:713 — nmw_ind = 1
 }
 
 /// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
@@ -5961,9 +5967,22 @@ mod tests {
         let _g2 = zle_test_setup();
         *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 6]; 3];
         *OBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 6]; 3];
+        // c:710-714 — seed the multiword stores so the MB-free path is covered.
+        NMWBUF.with(|b| *b.borrow_mut() = vec![0, 5, 6]);
+        OMWBUF.with(|b| *b.borrow_mut() = vec![0, 7]);
+        NMW_SIZE.with(|c| c.set(3));
+        OMW_SIZE.with(|c| c.set(2));
+        NMW_IND.with(|c| c.set(9));
+
         freevideo();
+
         assert!(NBUF.lock().unwrap().is_empty(), "NBUF freed");
         assert!(OBUF.lock().unwrap().is_empty(), "OBUF freed");
+        NMWBUF.with(|b| assert!(b.borrow().is_empty(), "NMWBUF freed"));
+        OMWBUF.with(|b| assert!(b.borrow().is_empty(), "OMWBUF freed"));
+        assert_eq!(NMW_SIZE.with(|c| c.get()), 0, "nmw_size reset");
+        assert_eq!(OMW_SIZE.with(|c| c.get()), 0, "omw_size reset");
+        assert_eq!(NMW_IND.with(|c| c.get()), 1, "nmw_ind reset to 1 (c:713)");
     }
 
     /// c:737-755 — resetvideo allocates the global NBUF/OBUF: (winh+1) rows
