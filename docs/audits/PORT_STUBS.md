@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-16T02:29:55.184501+00:00
+Generated: 2026-06-16T03:34:22.661794+00:00
 
 ## Method
 
@@ -206,7 +206,7 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1294 | `showmsg` | 4 | 72 | 5% |
+| 1305 | `showmsg` | 4 | 72 | 5% |
 | 47 | `sizeline` | 5 | 20 | 25% |
 | 530 | `zle_free_positions` | 3 | 11 | 27% |
 
