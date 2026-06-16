@@ -5456,6 +5456,60 @@ mod tests {
         let _: i32 = tcmultout(0, 0, 0);
     }
 
+    /// Integration: the consolidated scroll machinery as the live build will
+    /// drive it — write a row, advance with `nextline`; once content exceeds
+    /// `winh`, `nextline` scrolls the global NBUF (oldest row off the top,
+    /// newest visible). Proves nextline + scrollwindow + the global NBUF
+    /// behave together before the build is wired to them.
+    #[test]
+    fn build_loop_scrolls_global_nbuf_past_winh() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let winw = 4i32;
+        let winh = 3i32;
+        WINW.store(winw, Ordering::SeqCst);
+        WINH.store(winh, Ordering::SeqCst);
+        VMAXLN.store(0, Ordering::SeqCst);
+        NUMSCROLLS.store(0, Ordering::SeqCst);
+        ONUMSCROLLS.store(0, Ordering::SeqCst);
+        // winh+1 row slots, each winw+2 cells (as resetvideo allocates).
+        *NBUF.lock().unwrap() =
+            vec![vec![REFRESH_ELEMENT::default(); (winw + 2) as usize]; (winh + 1) as usize];
+
+        // Drive the build's row loop: advance with nextline BETWEEN lines
+        // (as the build does — a line, then the wrap/newline advance), then
+        // stamp NBUF[ln][0] with the line label. Five labels into a 3-row
+        // window scroll twice.
+        let mut rpms = rparams::default();
+        rpms.nvln = -1; // cursor not yet placed
+        for (i, label) in ['0', '1', '2', '3', '4'].iter().enumerate() {
+            if i > 0 {
+                nextline(&mut rpms, 0);
+            }
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                let ln = rpms.ln as usize;
+                if ln < nbuf.len() && !nbuf[ln].is_empty() {
+                    nbuf[ln][0] = REFRESH_ELEMENT { chr: *label, atr: 0 };
+                }
+            }
+            // The build advances rpms.pos as it writes cells; here one cell
+            // was written, so the next nextline terminates the line AFTER the
+            // stamped cell (at pos=1) rather than clearing it at pos=0.
+            rpms.pos = 1;
+        }
+
+        // After 5 labels in a 3-row window the visible rows hold the last
+        // three line labels in order (older lines scrolled off the top).
+        let visible: String = {
+            let nbuf = NBUF.lock().unwrap();
+            (0..winh as usize)
+                .map(|i| nbuf[i][0].chr)
+                .collect()
+        };
+        assert_eq!(visible, "234", "oldest lines scrolled off; newest visible");
+    }
+
     /// c:700-721 — freevideo clears the global NBUF/OBUF (the lifecycle pair
     /// of resetvideo); the empty Vecs are C's `nbuf = obuf = NULL` state.
     #[test]
