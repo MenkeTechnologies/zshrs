@@ -1487,33 +1487,86 @@ pub fn zrefresh() {
                 if emit(&mut rpms, c2, atr) {
                     break;
                 }
-            } else if isset(COMBININGCHARS)
-                && unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) > 0
-                && i + 1 < line_snapshot.len()
-                && unicode_width::UnicodeWidthChar::width(line_snapshot[i + 1])
-                    == Some(0)
-            {
-                // c:1293-1320 — base char (width>0) followed by combining
-                // mark(s): scan the (width-0) marks and cluster base+marks into
-                // ONE cell via addmultiword (the producer the multiword zwcputc
-                // reader consumes), then skip the marks. Gated on COMBININGCHARS
-                // so the default-off common case takes the plain emit below.
-                let mut ichars = 1usize; // c:1295
-                while i + ichars < line_snapshot.len()
-                    && unicode_width::UnicodeWidthChar::width(line_snapshot[i + ichars])
-                        == Some(0)
-                {
-                    ichars += 1; // c:1297-1299
+            } else {
+                // c:1267-1340 — printable char: lay it out at its display
+                // width, wrapping early if it would straddle the right margin,
+                // clustering combining marks (COMBININGCHARS), and padding the
+                // extra columns of a wide (CJK) glyph with WEOF placeholders.
+                // For the common ASCII case (width 1, COMBININGCHARS off) this
+                // reduces to a single emit_cell — identical to the old emit.
+                let width = unicode_width::UnicodeWidthChar::width(ch)
+                    .unwrap_or(1)
+                    .max(1);
+                // c:1274-1287 — too wide for the columns left on this line: fill
+                // the remainder with spaces (the last emit wraps via nextline)
+                // so the glyph starts whole on the next line.
+                let remaining = (cols_n as usize).saturating_sub(rpms.pos);
+                if width > remaining {
+                    let mut bail = false;
+                    for _ in 0..remaining {
+                        if emit(&mut rpms, ' ', atr) {
+                            // c:1281 — `*s++ = zr_sp` (all_attr); last one wraps.
+                            bail = true;
+                            break;
+                        }
+                    }
+                    if bail {
+                        break; // c:1283 — nextline bailed
+                    }
+                    // c:1284-1286 — cursor was on this char: re-record after wrap.
+                    if i == cursor_idx {
+                        rpms.nvln = rpms.ln;
+                        rpms.nvcs = rpms.pos as i32;
+                    }
                 }
-                let cluster: Vec<char> = line_snapshot[i..i + ichars].to_vec();
-                let mut cell = REFRESH_ELEMENT { chr: ch, atr };
-                addmultiword(&mut cell, &cluster, ichars); // c:1320
-                skip_combining = ichars - 1; // skip the marks (C: t += ichars-1)
-                if emit_cell(&mut rpms, cell) {
-                    break; // c:1257 — nextline bailed
+                // c:1293-1299 — combining scan: absorb following width-0 marks.
+                let mut ichars = 1usize;
+                if isset(COMBININGCHARS) {
+                    while i + ichars < line_snapshot.len()
+                        && unicode_width::UnicodeWidthChar::width(
+                            line_snapshot[i + ichars],
+                        ) == Some(0)
+                    {
+                        ichars += 1; // c:1297-1299
+                    }
                 }
-            } else if emit(&mut rpms, ch, atr) {
-                break; // c:1398 / c:1257
+                skip_combining = ichars - 1; // c:1325 — t += ichars - 1
+                // c:1303-1319 — emit. If the glyph still can't fit (terminal
+                // narrower than its width even on a fresh line), render '?';
+                // otherwise the leading cell (cluster or single char) plus
+                // WEOF column-placeholders for the rest of its width.
+                let remaining2 = (cols_n as usize).saturating_sub(rpms.pos);
+                if width > remaining2 {
+                    if emit(&mut rpms, '?', atr) {
+                        break; // c:1304-1306
+                    }
+                } else {
+                    let mut cell = REFRESH_ELEMENT { chr: ch, atr };
+                    if ichars > 1 {
+                        let cluster: Vec<char> =
+                            line_snapshot[i..i + ichars].to_vec();
+                        addmultiword(&mut cell, &cluster, ichars); // c:1311
+                    }
+                    if emit_cell(&mut rpms, cell) {
+                        break; // c:1257 — nextline bailed
+                    }
+                    let mut w = width - 1;
+                    let mut bail = false;
+                    while w > 0 {
+                        // c:1316-1318 — `while (--width>0){ s->chr=WEOF; s++; }`
+                        if emit_cell(
+                            &mut rpms,
+                            REFRESH_ELEMENT { chr: ZWC_WEOF, atr },
+                        ) {
+                            bail = true;
+                            break;
+                        }
+                        w -= 1;
+                    }
+                    if bail {
+                        break;
+                    }
+                }
             }
         }
         // c:1411-1417 — cursor at end-of-buffer (`t == scs`): record its video
@@ -4908,6 +4961,44 @@ mod tests {
         assert!(
             has_multiword,
             "COMBININGCHARS build must cluster e+U+0301 into a TXT_MULTIWORD_MASK cell"
+        );
+    }
+
+    /// c:1303-1318 — the LIVE zrefresh build pads a wide (CJK) glyph with WEOF
+    /// column-placeholders so it occupies its full display width. "日a" lays
+    /// out as [日][WEOF][a]: the ideograph, one ZWC_WEOF placeholder (second
+    /// column), then 'a' — not [日][a] which would mis-account columns.
+    #[test]
+    fn zrefresh_wide_char_pads_weof_in_nbuf() {
+        let _g = crate::test_util::global_state_lock();
+        *ZLELINE.lock().unwrap() = "日a".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(2, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        let row0 = NBUF.lock().unwrap().first().cloned().unwrap_or_default();
+        let idx = row0
+            .iter()
+            .position(|c| c.chr == '日')
+            .expect("ideograph must be in row 0");
+        assert_eq!(
+            row0.get(idx + 1).map(|c| c.chr),
+            Some(ZWC_WEOF),
+            "wide glyph's second column must be a WEOF placeholder"
+        );
+        assert_eq!(
+            row0.get(idx + 2).map(|c| c.chr),
+            Some('a'),
+            "'a' must follow the WEOF placeholder, not sit in the wide char's column"
         );
     }
 
