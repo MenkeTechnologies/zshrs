@@ -2599,11 +2599,15 @@ pub fn refreshline(ln: i32) {
                     .unwrap()
                     .get(ln as usize)
                     .and_then(|row| row.get((winw - 1) as usize))
-                    .map(|c| c.chr);
+                    .copied();
                 moveto(ln as usize, (winw - 1) as usize); // c:1966
                 vcs = winw - 1; // moveto repositioned the cursor
-                if let Some(c) = deferred {
-                    zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }); // c:1967 zputc(nl)
+                if let Some(cell) = deferred {
+                    // c:1967 — `zputc(nl)`: emit the FULL cell (chr + atr), so
+                    // the deferred automargin glyph keeps its colour. The
+                    // earlier port read only `chr` and emitted atr 0, dropping
+                    // the attribute.
+                    zwcputc(&cell);
                 }
                 vcs += 1; // c:1968 vcs++
                 VCS.store(vcs, Ordering::SeqCst);
@@ -7380,6 +7384,83 @@ mod tests {
         assert_eq!(NMW_SIZE.with(|c| c.get()), 2, "nmw_size swapped");
         assert_eq!(OMW_SIZE.with(|c| c.get()), 3, "omw_size swapped");
         assert_eq!(NMW_IND.with(|c| c.get()), 1, "nmw_ind reset to 1 (c:967)");
+    }
+
+    /// c:1965-1971 — automargin deferred-last-character: on a hasam terminal a
+    /// full line's final glyph is written last, repositioned via moveto, and
+    /// emitted with its FULL cell (chr + atr). Here the last cell carries bold,
+    /// so the emit must include the bold SGR. With winw=4, an insert of 'W'
+    /// onto old "XYZ"/new "WXYZ" fills the line (ccs==winw), sets char_ins and
+    /// ins_last, and leaves the bold 'Z' deferred.
+    #[test]
+    fn refreshline_automargin_deferred_char_keeps_attr() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        use crate::ported::zsh_h::TXTBOLDFACE;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ins = crate::ported::zsh_h::TCINS as usize;
+        let mins = crate::ported::zsh_h::TCMULTINS as usize;
+        let del = crate::ported::zsh_h::TCDEL as usize;
+        let s_ins = (tclen.lock().unwrap()[ins], tcstr.lock().unwrap()[ins].clone());
+        let s_mins = tclen.lock().unwrap()[mins];
+        let s_del = tclen.lock().unwrap()[del];
+        tclen.lock().unwrap()[ins] = 1;
+        tcstr.lock().unwrap()[ins] = "\x1b[@".to_string();
+        tclen.lock().unwrap()[mins] = 0;
+        tclen.lock().unwrap()[del] = 0;
+        // Attribute SGRs are gated off on TERM_UNKNOWN/BAD/NOUP terminals; the
+        // test harness sets one of those, so clear TERMFLAGS to let bold emit.
+        let save_tf = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+        crate::ported::params::TERMFLAGS.store(0, Ordering::SeqCst);
+
+        WINW.store(4, Ordering::SeqCst);
+        WINH.store(24, Ordering::SeqCst);
+        crate::ported::init::hasam.store(1, Ordering::SeqCst); // automargin
+        PUT_RPMPT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        let cell = |c: char, a: u64| REFRESH_ELEMENT { chr: c, atr: a };
+        let mut nl: REFRESH_STRING =
+            vec![cell('W', 0), cell('X', 0), cell('Y', 0), cell('Z', TXTBOLDFACE)];
+        nl.resize(6, REFRESH_ELEMENT::default());
+        let mut ol: REFRESH_STRING = vec![cell('X', 0), cell('Y', 0), cell('Z', 0)];
+        ol.resize(6, REFRESH_ELEMENT::default());
+        *NBUF.lock().unwrap() = vec![nl];
+        *OBUF.lock().unwrap() = vec![ol];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        refreshline(0);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[ins] = s_ins.0;
+        tcstr.lock().unwrap()[ins] = s_ins.1;
+        tclen.lock().unwrap()[mins] = s_mins;
+        tclen.lock().unwrap()[del] = s_del;
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+        crate::ported::params::TERMFLAGS.store(save_tf, Ordering::SeqCst);
+
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out).into_owned();
+        // The bold SGR (CSI 1 m) must appear, proving the deferred 'Z' carried
+        // its attribute rather than being emitted with atr 0.
+        assert!(
+            s.contains("\x1b[1m") && s.contains('Z'),
+            "deferred automargin char must keep its bold attr; got {:?}",
+            s
+        );
     }
 
     /// c:2070-2076 — refreshline's insert-char optimisation. With old line
