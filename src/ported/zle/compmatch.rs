@@ -2314,10 +2314,18 @@ pub fn bld_line(
     //   - CPAT_CHAR : the literal char from the pattern
     //   - CPAT_ANY  : the corresponding char from `word`
     //   - CPAT_CCLASS/NCLASS/EQUIV : the corresponding word char if
-    //     pattern_match1 accepts it (validate-then-emit). For EQUIV,
-    //     fall back to the word char as the "equivalent" since the
-    //     line-side cross-class lookup is substrate-blocked (see
-    //     pattern_match_equivalence's PP_LOWER/PP_UPPER lmtp gap).
+    //     pattern_match1 accepts it (validate-then-emit). EQUIV uses the
+    //     word char as the "equivalent" instead of resolving the
+    //     line-side equivalent via `pattern_match_equivalence`.
+    //     NOTE (corrected): this is NOT a substrate gap —
+    //     `pattern_match_equivalence` is complete (it tracks `lmtp` and
+    //     resolves the PP_LOWER/PP_UPPER case crossings, compmatch.rs:1897).
+    //     The blocker is the ENGINE CALLER: the live caller at
+    //     compmatch.rs:2438 passes an empty `mword` ("CPAT_CHAR-only
+    //     path"), so the EQUIV branch's `*mword` guard never fires. The
+    //     full C two-pass `genpatarr` resolution (c:1772-1875) is
+    //     deferred until the completion-matcher chain that produces EQUIV
+    //     patterns + a non-empty `mword` is itself ported.
     let _ = mword;
     let word_chars: Vec<char> = word.chars().collect();
     let mut consumed: i32 = 0;
