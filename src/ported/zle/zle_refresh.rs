@@ -1098,20 +1098,78 @@ pub fn zrefresh() {
             }
             rows.last_mut().unwrap().push(REFRESH_ELEMENT { chr, atr });
         };
-        // Prompt's visible chars (skip ANSI escapes — they aren't cells).
-        // The prompt's own colour is carried by the full-repaint path; its
-        // NBUF cells use the default attr (prompt-colour-in-NBUF is a later
-        // refinement).
+        // Prompt cells. The prompt is an ANSI string here (not attributed
+        // cells as in C's putpromptchar), so parse its SGR escapes into the
+        // cell `atr` — otherwise the prompt would render colourless when the
+        // output switches to the NBUF diff. (A bridge: the faithful form
+        // would have putpromptchar emit cells directly; flagged.)
+        let apply_sgr = |mut attr: zattr, params: &str| -> zattr {
+            use crate::ported::zsh_h::{
+                TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE,
+                TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_COL_SHIFT,
+            };
+            let nums: Vec<i64> = if params.is_empty() {
+                vec![0] // bare CSI m == reset
+            } else {
+                params.split(';').filter_map(|s| s.parse().ok()).collect()
+            };
+            let set_fg = |a: zattr, c: i64| {
+                (a & !(TXTFGCOLOUR | (0xff << TXT_ATTR_FG_COL_SHIFT)))
+                    | TXTFGCOLOUR
+                    | ((c as zattr) << TXT_ATTR_FG_COL_SHIFT)
+            };
+            let set_bg = |a: zattr, c: i64| {
+                (a & !(TXTBGCOLOUR | (0xff << TXT_ATTR_BG_COL_SHIFT)))
+                    | TXTBGCOLOUR
+                    | ((c as zattr) << TXT_ATTR_BG_COL_SHIFT)
+            };
+            let mut i = 0;
+            while i < nums.len() {
+                match nums[i] {
+                    0 => attr = 0,
+                    1 => attr |= TXTBOLDFACE,
+                    4 => attr |= TXTUNDERLINE,
+                    7 => attr |= TXTSTANDOUT,
+                    30..=37 => attr = set_fg(attr, nums[i] - 30),
+                    40..=47 => attr = set_bg(attr, nums[i] - 40),
+                    90..=97 => attr = set_fg(attr, nums[i] - 90 + 8),
+                    100..=107 => attr = set_bg(attr, nums[i] - 100 + 8),
+                    38 if i + 2 < nums.len() && nums[i + 1] == 5 => {
+                        attr = set_fg(attr, nums[i + 2]);
+                        i += 2;
+                    }
+                    48 if i + 2 < nums.len() && nums[i + 1] == 5 => {
+                        attr = set_bg(attr, nums[i + 2]);
+                        i += 2;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            attr
+        };
+        let mut prompt_attr: zattr = 0;
+        let mut esc_params = String::new();
         let mut in_esc = false;
         for c in prompt.chars() {
             if in_esc {
-                if c.is_ascii_alphabetic() {
+                if c == '[' {
+                    // CSI introducer — not a param.
+                } else if c == 'm' {
+                    prompt_attr = apply_sgr(prompt_attr, &esc_params); // SGR
                     in_esc = false;
+                    esc_params.clear();
+                } else if c.is_ascii_alphabetic() {
+                    in_esc = false; // non-SGR escape (cursor/clear) — ignore
+                    esc_params.clear();
+                } else {
+                    esc_params.push(c);
                 }
             } else if c == '\x1b' {
                 in_esc = true;
+                esc_params.clear();
             } else {
-                emit(&mut rows, c, 0);
+                emit(&mut rows, c, prompt_attr);
             }
         }
         // Editable line with tab/control expansion (c:1248-1398). Each
