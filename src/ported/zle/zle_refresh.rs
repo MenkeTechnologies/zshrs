@@ -3233,13 +3233,42 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
             width = unicode_width::UnicodeWidthChar::width(ch) // c:2496 WCWIDTH
                 .unwrap_or(1) as i32;
             if width > 0 {
-                let ichars: i32 = 1; // c:2497-2507 combining loop
-                                     // !!! STUB: addmultiword — only invoked when ichars>1.
+                // c:2497-2507 — combining-char absorption: when COMBININGCHARS
+                // is set and this is a base char, scan forward over the
+                // following combining marks and cluster them into ONE cell via
+                // addmultiword (the producer the multiword zwcputc reader
+                // consumes). Was stubbed (ichars=1), so combining marks fell to
+                // the non-printable branch and rendered as `<hex>` escapes —
+                // and disagreed with the measure loop, which already absorbs
+                // them.
+                let mut ichars: i32 = 1; // c:2498
+                if isset(COMBININGCHARS) {
+                    // c:2499 — IS_BASECHAR(tmpline[t0]) is the width>0 char we
+                    // are already in; scan the (width-0) combining marks.
+                    while (t0 + ichars) < tmpll {
+                        let nxt = *tmpline.get((t0 + ichars) as usize).unwrap_or(&'\0');
+                        // !!! STUB: IS_COMBINING — Src/zsh.h:3370 (width-0 proxy).
+                        if unicode_width::UnicodeWidthChar::width(nxt) != Some(0) {
+                            break; // c:2501 — !IS_COMBINING
+                        }
+                        ichars += 1; // c:2502
+                    }
+                }
                 if vp < vbuf.len() {
-                    vbuf[vp] = REFRESH_ELEMENT {
-                        chr: ch,
-                        atr: base_attr,
-                    }; // c:2512
+                    if ichars > 1 {
+                        // c:2509 — addmultiword(vp, tmpline+t0, ichars): store
+                        // the base + combining cluster, flag the cell.
+                        let cluster: Vec<char> =
+                            tmpline[t0 as usize..(t0 + ichars) as usize].to_vec();
+                        let mut cell = REFRESH_ELEMENT { chr: ch, atr: base_attr };
+                        addmultiword(&mut cell, &cluster, ichars as usize);
+                        vbuf[vp] = cell;
+                    } else {
+                        vbuf[vp] = REFRESH_ELEMENT {
+                            chr: ch,
+                            atr: base_attr,
+                        }; // c:2512
+                    }
                     vp += 1; // c:2513
                 }
                 // c:2514-2518 — WEOF cells for wide-char width padding.
@@ -7119,6 +7148,52 @@ mod tests {
         assert!(
             s.contains("abc"),
             "singlerefresh must emit the visible line 'abc'; got {:?}",
+            s
+        );
+    }
+
+    /// c:2497-2519 — with COMBININGCHARS set, singlerefresh's build clusters a
+    /// base char + its combining marks into ONE cell via addmultiword (the
+    /// producer the multiword zwcputc reader consumes), so the glyph emits as
+    /// "e"+U+0301. The earlier stub (ichars=1) let the combining mark fall to
+    /// the non-printable branch and render as a "<0301>" hex escape.
+    #[test]
+    fn singlerefresh_clusters_combining_chars() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let cc = crate::ported::zsh_h::opt_name(crate::ported::zsh_h::COMBININGCHARS);
+        crate::ported::options::opt_state_set(cc, true);
+
+        WINW.store(80, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+        WINPOS.store(-1, Ordering::SeqCst);
+        WINPROMPT.store(0, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 82]];
+        *OBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 82]];
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let line: Vec<char> = "e\u{0301}".chars().collect(); // e + combining acute
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        singlerefresh(&line, line.len() as i32, line.len() as i32);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        crate::ported::options::opt_state_set(cc, false); // restore default-off
+
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains('e') && s.contains('\u{0301}') && !s.contains("0301>"),
+            "combining mark must cluster onto 'e' (emit e+U+0301), not a <hex> \
+             escape; got {:?}",
             s
         );
     }
