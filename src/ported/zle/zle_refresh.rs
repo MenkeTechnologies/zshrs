@@ -3055,18 +3055,37 @@ pub static ZR_START_ELLIPSIS: &[REFRESH_ELEMENT] = &[
 /// without them ported we approximate with the single-insert path.
 #[inline]
 pub fn tcinscost(x: i32) -> i32 {
-    // c:1724
-    // Without tccan/tclen substrate: estimate single-char insert cost
-    // as 1 unit per char.
-    x.max(0)
+    // c:1782 — `#define tcinscost(X)
+    //            (tccan(TCMULTINS) ? tclen[TCMULTINS] : (X)*tclen[TCINS])`
+    // tccan(X) is tclen[X] (zsh.h:2680). The tclen substrate (init.rs:108)
+    // is now populated by the termcap loader, so read the real costs: a
+    // parametrised multi-insert costs one capability; otherwise it's `x`
+    // single-char inserts.
+    use crate::ported::init::tclen;
+    use crate::ported::zsh_h::{TCINS, TCMULTINS};
+    let t = tclen.lock().unwrap();
+    if t[TCMULTINS as usize] != 0 {
+        t[TCMULTINS as usize]
+    } else {
+        x * t[TCINS as usize]
+    }
 }
 
 /// Port of `tcdelcost(X)` macro from `Src/Zle/zle_refresh.c:1725`.
 /// `#define tcdelcost(X) (tccan(TCMULTDEL) ? tclen[TCMULTDEL] : (X)*tclen[TCDEL])`.
 #[inline]
 pub fn tcdelcost(x: i32) -> i32 {
-    // c:1725
-    x.max(0)
+    // c:1783 — `#define tcdelcost(X)
+    //            (tccan(TCMULTDEL) ? tclen[TCMULTDEL] : (X)*tclen[TCDEL])`
+    // Mirror of tcinscost for the delete-character capabilities.
+    use crate::ported::init::tclen;
+    use crate::ported::zsh_h::{TCDEL, TCMULTDEL};
+    let t = tclen.lock().unwrap();
+    if t[TCMULTDEL as usize] != 0 {
+        t[TCMULTDEL as usize]
+    } else {
+        x * t[TCDEL as usize]
+    }
 }
 
 /// Port of `tc_delchars(X)` macro from `Src/Zle/zle_refresh.c:1726`.
@@ -3591,14 +3610,45 @@ mod zr_tests {
         assert_eq!(DEF_MWBUF_ALLOC, 32);
     }
 
+    /// c:1782-1783 — tcinscost/tcdelcost follow the literal C macro
+    /// `(X)*tclen[TC*]` in the per-char branch. This previously asserted
+    /// the old `x.max(0)` fake (`tcinscost(5)==5` regardless of tclen);
+    /// now it pins the faithful formula with a deterministic single-char
+    /// cost of 1, matching C exactly (including the unclamped negative,
+    /// which refreshline never produces since `i` starts at 1).
     #[test]
     fn tc_costs_handle_negative() {
+        use crate::ported::init::tclen;
+        use crate::ported::zsh_h::{TCDEL, TCINS, TCMULTDEL, TCMULTINS};
         let _g = crate::test_util::global_state_lock();
-        let _g = zle_test_setup();
-        assert_eq!(tcinscost(-1), 0);
-        assert_eq!(tcdelcost(-1), 0);
+        let _g2 = zle_test_setup();
+
+        let save = {
+            let t = tclen.lock().unwrap();
+            (
+                t[TCMULTINS as usize],
+                t[TCINS as usize],
+                t[TCMULTDEL as usize],
+                t[TCDEL as usize],
+            )
+        };
+        {
+            let mut t = tclen.lock().unwrap();
+            t[TCMULTINS as usize] = 0; // no multi-cap → per-char branch
+            t[TCINS as usize] = 1;
+            t[TCMULTDEL as usize] = 0;
+            t[TCDEL as usize] = 1;
+        }
+        assert_eq!(tcinscost(-1), -1); // c: literal (-1)*tclen[TCINS]
+        assert_eq!(tcdelcost(-1), -1);
         assert_eq!(tcinscost(5), 5);
         assert_eq!(tcdelcost(5), 5);
+
+        let mut t = tclen.lock().unwrap();
+        t[TCMULTINS as usize] = save.0;
+        t[TCINS as usize] = save.1;
+        t[TCMULTDEL as usize] = save.2;
+        t[TCDEL as usize] = save.3;
     }
 
     #[test]
@@ -4699,6 +4749,55 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:1782-1783 — tcinscost/tcdelcost read the real termcap costs from
+    /// tclen: a parametrised multi-cap costs one capability, otherwise it
+    /// is `x` single-char ops. Pins the formula against the old `x.max(0)`
+    /// fake that ignored tclen entirely.
+    #[test]
+    fn tc_ins_del_cost_use_real_tclen() {
+        use crate::ported::init::tclen;
+        use crate::ported::zsh_h::{TCDEL, TCINS, TCMULTDEL, TCMULTINS};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // Snapshot + restore the four tclen slots we mutate.
+        let save = {
+            let t = tclen.lock().unwrap();
+            (
+                t[TCMULTINS as usize],
+                t[TCINS as usize],
+                t[TCMULTDEL as usize],
+                t[TCDEL as usize],
+            )
+        };
+
+        // Per-char fallback: no multi-cap → x * single-cap cost.
+        {
+            let mut t = tclen.lock().unwrap();
+            t[TCMULTINS as usize] = 0;
+            t[TCINS as usize] = 2;
+            t[TCMULTDEL as usize] = 0;
+            t[TCDEL as usize] = 3;
+        }
+        assert_eq!(tcinscost(4), 8, "insert: 4 chars * tclen[TCINS]=2");
+        assert_eq!(tcdelcost(4), 12, "delete: 4 chars * tclen[TCDEL]=3");
+
+        // Multi-cap available: flat one-capability cost regardless of x.
+        {
+            let mut t = tclen.lock().unwrap();
+            t[TCMULTINS as usize] = 5;
+            t[TCMULTDEL as usize] = 7;
+        }
+        assert_eq!(tcinscost(4), 5, "insert: parametrised tclen[TCMULTINS]=5");
+        assert_eq!(tcdelcost(4), 7, "delete: parametrised tclen[TCMULTDEL]=7");
+
+        let mut t = tclen.lock().unwrap();
+        t[TCMULTINS as usize] = save.0;
+        t[TCINS as usize] = save.1;
+        t[TCMULTDEL as usize] = save.2;
+        t[TCDEL as usize] = save.3;
     }
 
     /// c:143 — `ZR_strlen` returns usize (compile-time type pin).
