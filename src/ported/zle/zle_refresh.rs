@@ -2762,6 +2762,13 @@ pub fn refreshline(ln: i32) {
                             } // c:2049 ol += i
                         }
                         char_ins -= i_try; // c:2050
+                        // c:2053-2056 — skip WEOF continuation cells in ol so
+                        // the delete doesn't leave ol mid-wide-glyph (char_ins--
+                        // per skipped column).
+                        while ol.first().map(|c| c.chr == ZWC_WEOF).unwrap_or(false) {
+                            ol.remove(0);
+                            char_ins -= 1;
+                        }
                         i_try = 0; // c:2004
                         break;
                     }
@@ -2802,10 +2809,18 @@ pub fn refreshline(ln: i32) {
                                 nl.remove(0);
                             } // c:2076 — nl += i
                         }
-                        char_ins += i_try; // c:2025
-                        vcs += i_try;
+                        // c:2078-2081 — skip WEOF continuation cells so the
+                        // insert doesn't leave nl mid-wide-glyph; these count
+                        // toward the advanced columns (i++ in C).
+                        let mut i_eff = i_try;
+                        while nl.first().map(|c| c.chr == ZWC_WEOF).unwrap_or(false) {
+                            nl.remove(0);
+                            i_eff += 1;
+                        }
+                        char_ins += i_eff; // c:2025 (incl WEOF skip)
+                        vcs += i_eff;
                         VCS.store(vcs, Ordering::SeqCst);
-                        ccs += i_try; // c:2026
+                        ccs += i_eff; // c:2026
                                       // c:2031-2047 — truncate oldline if past right edge.
                         let mut k = 0i32;
                         while (k as usize) < ol.len()
