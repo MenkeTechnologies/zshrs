@@ -1939,11 +1939,10 @@ pub fn refreshline(ln: i32) {
     // c:1749
 
     // c:1751 — REFRESH_STRING nl, ol, p1. The nbuf/obuf statics are now
-    // exposed (NBUF/OBUF, populated by zrefresh) and read below. The
-    // diff control flow is fully ported; the remaining stubs in this
-    // function are the OUTPUT primitives (zputc cell-emit, zwrite,
-    // tc_delchars, tclen) — wired when zrefresh's output switches from
-    // full-repaint to the NBUF/OBUF diff.
+    // exposed (NBUF/OBUF, populated by zrefresh) and read below. The diff
+    // control flow and all output primitives are ported: zputc (zwcputc),
+    // zwrite (zwcwrite), tc_delchars (c:1993/2048) and tc_inschars (c:2074)
+    // all emit through SHTTY, and tclen drives the cost/capability checks.
     // c:1762 — `nl = nbuf[ln];` — read this frame's new line from NBUF.
     let mut nl: REFRESH_STRING = NBUF
         .lock()
@@ -2392,11 +2391,17 @@ pub fn refreshline(ln: i32) {
                     let nl_tail = &nl[i_try as usize..];
                     let cheap_insert = tcinscost(i_try) < wpfxlen(&ol, nl_tail) as i32;
                     if cheap_insert {
-                        // c:2016-2018 — tc_inschars(i); zwrite(nl, i);
+                        // c:2074-2076 — emit the terminal's insert-`i`-chars
+                        // sequence, write the `i` new cells at the cursor, then
+                        // advance nl past them. The earlier port advanced nl but
+                        // emitted nothing (the diff math ran without producing
+                        // output) — this wires the real TCINS+zwrite primitives.
+                        tc_inschars(i_try); // c:2074 — tc_inschars(i)
+                        zwcwrite(&nl, i_try as usize); // c:2075 — zwrite(nl, i)
                         for _ in 0..i_try {
                             if !nl.is_empty() {
                                 nl.remove(0);
-                            } // c:2018 nl += i
+                            } // c:2076 — nl += i
                         }
                         char_ins += i_try; // c:2025
                         vcs += i_try;
@@ -6521,6 +6526,78 @@ mod tests {
         assert_eq!(NMW_SIZE.with(|c| c.get()), 2, "nmw_size swapped");
         assert_eq!(OMW_SIZE.with(|c| c.get()), 3, "omw_size swapped");
         assert_eq!(NMW_IND.with(|c| c.get()), 1, "nmw_ind reset to 1 (c:967)");
+    }
+
+    /// c:2070-2076 — refreshline's insert-char optimisation. With old line
+    /// "bc" and new line "abc", inserting one char ('a') makes nl+1 == ol, so
+    /// tcinscost(1) < wpfxlen(ol, nl+1)=2 and the path fires: emit the TCINS
+    /// sequence (tc_inschars) then write the new char (zwrite). The earlier
+    /// port advanced nl but emitted neither — this pins both primitives.
+    #[test]
+    fn refreshline_insert_path_emits_tcins_and_new_char() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ins = crate::ported::zsh_h::TCINS as usize;
+        let mins = crate::ported::zsh_h::TCMULTINS as usize;
+        let del = crate::ported::zsh_h::TCDEL as usize;
+        let save_ins_len = tclen.lock().unwrap()[ins];
+        let save_ins_str = tcstr.lock().unwrap()[ins].clone();
+        let save_mins_len = tclen.lock().unwrap()[mins];
+        let save_del_len = tclen.lock().unwrap()[del];
+
+        // Cheap single-char insert; no multi-form (tcinscost(1)=1); no TCDEL so
+        // the delete try is skipped and control reaches the insert block.
+        tclen.lock().unwrap()[ins] = 1;
+        tcstr.lock().unwrap()[ins] = "\x1b[@".to_string();
+        tclen.lock().unwrap()[mins] = 0;
+        tclen.lock().unwrap()[del] = 0;
+
+        let winw = WINW.load(Ordering::SeqCst).max(8);
+        WINH.store(24, Ordering::SeqCst);
+        PUT_RPMPT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst);
+        let mk = |s: &str| -> REFRESH_STRING {
+            let mut r: REFRESH_STRING =
+                s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect();
+            r.resize((winw + 2) as usize, REFRESH_ELEMENT::default());
+            r
+        };
+        *NBUF.lock().unwrap() = vec![mk("abc")];
+        *OBUF.lock().unwrap() = vec![mk("bc")];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        refreshline(0);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out).into_owned();
+
+        tclen.lock().unwrap()[ins] = save_ins_len;
+        tcstr.lock().unwrap()[ins] = save_ins_str;
+        tclen.lock().unwrap()[mins] = save_mins_len;
+        tclen.lock().unwrap()[del] = save_del_len;
+
+        assert!(
+            s.contains("\x1b[@") && s.contains('a'),
+            "insert path must emit the TCINS sequence and the new char 'a'; got {:?}",
+            s
+        );
     }
 
     /// c:2247-2250 — tc_rightcurs prefers the real loaded TCMULTRIGHT
