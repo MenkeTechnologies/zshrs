@@ -1221,9 +1221,17 @@ pub fn zrefresh() {
     let olnct = OLNCT.load(Ordering::SeqCst);
     VCS.store(0, Ordering::SeqCst); // start from the home position
     VLN.store(0, Ordering::SeqCst);
+    let saved_cleareol = CLEAREOL.load(Ordering::SeqCst);
     for iln in 0..nlnct {
+        // c:1672-1674 — if we have more lines than last time, clear the
+        // newly-used lines. cleareol is sticky: once set at iln==olnct it
+        // stays 1 for the rest of the loop, so every new line is cleared.
+        if iln >= olnct {
+            CLEAREOL.store(1, Ordering::SeqCst);
+        }
         refreshline(iln); // c:1710 — update each line
     }
+    CLEAREOL.store(saved_cleareol, Ordering::SeqCst);
     // c:1727-1732 — clear any extra lines the previous frame had.
     if olnct > nlnct {
         CLEAREOL.store(1, Ordering::SeqCst);
@@ -3975,6 +3983,68 @@ mod tests {
             VCS.load(Ordering::SeqCst),
             3,
             "VCS must track to column 3 (ccs=2 after prefix skip + 1 written cell)"
+        );
+    }
+
+    /// c:1672-1674 — when a frame has more lines than the last, the
+    /// newly-used lines must be cleared (cleareol). Growing "a" → "a\n"
+    /// (line 1 empty) drives the clear-eol short-circuit (c:1776-1780):
+    /// refreshline(1) emits moveto + the clear escape. With tccan(TCCLEAREOL)
+    /// off this can't fire, so the test wires tclen[TCCLEAREOL]. Without the
+    /// per-line cleareol, line 1 stays cleareol=0 and no clear is emitted.
+    #[test]
+    fn zrefresh_clears_newly_grown_line() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::tclen;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let saved_tc = tclen.lock().unwrap()[TCCLEAREOL as usize];
+        tclen.lock().unwrap()[TCCLEAREOL as usize] = 1; // tccan(TCCLEAREOL)
+
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        // Frame 1: single line "a" → /dev/null (establishes OBUF/OLNCT=1).
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "a".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        zrefresh();
+        unsafe { libc::close(devnull) };
+
+        // Frame 2: grow to two lines "a\n" (line 1 empty) → capture.
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst); // start the frame un-cleared
+        *ZLELINE.lock().unwrap() = "a\n".chars().collect();
+        ZLECS.store(2, Ordering::SeqCst);
+        ZLELL.store(2, Ordering::SeqCst);
+        zrefresh();
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[TCCLEAREOL as usize] = saved_tc;
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("\x1b[J"),
+            "grown line 1 should be cleared via the cleareol short-circuit; got {:?}",
+            s
         );
     }
 
