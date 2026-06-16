@@ -48,13 +48,13 @@ Three dispositions:
 ### ZLE refresh / input / search engines
 - [ ] `zle/zle_refresh.rs::zrefresh` — C zle_refresh.c:975 (658) — screen-refresh engine, 13% present
 - [ ] `zle/zle_refresh.rs::tc_rightcurs` — C zle_refresh.c:2237 (63) — termcap cursor-right movement choices
-- [ ] `zle/zle_refresh.rs::moveto` — C zle_refresh.c:2163 (44) — cursor move w/ line-wrap + coord handling
+- [x] `zle/zle_refresh.rs::moveto` — C zle_refresh.c:2163 (44) — cursor move w/ line-wrap + coord handling — **FIXED**: emitted absolute CSI H but left VCS/VLN stale; C updates vln/vcs as the cursor moves (c:2159-2204) and the diff renderer reads them for the next frame. Now sets VLN=row, VCS=col. Proof: moveto_updates_vcs_vln.
 - [ ] `zle/zle_hist.rs::doisearch` — C zle_hist.c:1083 (462) — incremental-search engine; 26-line stub, no UI loop
 - [ ] `zle/zle_hist.rs::getvisrchstr` — C zle_hist.c:1815 (118) — minibuffer search-string read w/ keymap switch; snapshots buffer only
 - [~] `zle/zle_main.rs::getbyte` — C zle_main.c:861 (76) — core done (raw_getbyte + \n/\r swap + LASTCHAR); remaining: EINTR retry loop + EIO device-reattach edge cases. **[ZLE engine Phase 1]**
 - [x] `zle/zle_main.rs::raw_getbyte` — C zle_main.c:506 (242) — **PORTED [ZLE engine Phase 1]**: replaced the busy-wait sleep loop with a real `poll(2)` over SHTTY + the `zle -F` watched fds (c:532-589), dispatching watch handlers (widget → `zlecallhook`, function → `callhookfunc` with fd + err/hup/nval flags, c:715-772). Substrate (`WATCH_FDS`/`watch_fd`/`zlecallhook`/`callhookfunc`) already existed — wired it. 93 input tests green (raw_getbyte/getbyte/getfullchar/watch).
 - [ ] `zle/zle_main.rs::zleread` — C zle_main.c:1216 (127+) — skeleton; undo/history/hooks/prompt setup missing
-- [ ] `zle/zle_utils.rs::showmsg` — C zle_utils.c:1310 (72) — multibyte width-aware message display
+- [x] `zle/zle_utils.rs::showmsg` — C zle_utils.c:1310 (72) — multibyte width-aware message display — **PORTED** non-MB branch (c:1389-1408): trashzle + metafied byte scan w/ nicechar expansion + cc/up column tracking + clearflag cursor-restore (tcmultout TCUP). MB branch (mbrtowc/wcs_nicechar) deferred on multibyte substrate. Proof: showmsg_emits_message_and_trailing_newline.
 - [ ] `zle/zle_utils.rs::spaceinline` — C zle_utils.c:784 (54) — buffer insertion w/ region-highlight adjustment
 - [ ] `zle/zle_move.rs::backwardmetafiedchar` — C zle_move.c:170 (75) — UTF-8/Meta backward scan w/ combining chars
 - [x] `zle/zle_vi.rs::vireplacechars` — C zle_vi.c:594 (62) — **PORTED** (was faking the key read with `LASTCHAR` and dropping the region/visual path; now reads via `vigetkey`, handles char/line region selection, the `<return>`→single-newline special case, and `shiftchars`/`spaceinline` width fixup; all deps verified present; 77 zle_vi tests green)
