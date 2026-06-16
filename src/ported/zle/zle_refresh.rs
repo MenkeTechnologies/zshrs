@@ -2991,9 +2991,14 @@ pub fn clearscreen() -> i32 {
     tcoutclear(crate::ported::zsh_h::TCCLEARSCREEN);
     RESETNEEDED.store(1, Ordering::SeqCst); // c:2427 resetneeded = 1
     CLEARFLAG.store(0, Ordering::SeqCst); // c:2428 clearflag = 0
-    // c:2429 — `reexpandprompt();` prompt re-expansion isn't ported yet
-    // (prompt subsystem); deferred. zshrs's ZLE loop doesn't honour
-    // resetneeded yet, so trigger the redraw directly for the same effect.
+    // c:2429 — `reexpandprompt();` re-run prompt expansion against the saved
+    // templates so the cleared screen redraws with a freshly-expanded prompt.
+    // (Now wired — reexpandprompt is ported in zle_main; it was previously
+    // deferred as "prompt subsystem".)
+    crate::ported::zle::zle_main::reexpandprompt(); // c:2429
+    // zshrs's ZLE loop doesn't consume resetneeded yet (the c:1125 block is
+    // blocked on zsetterm/lpromptbuf/trashedzle), so drive the redraw directly
+    // here for the same visible effect that honouring resetneeded would give.
     zrefresh();
     0 // c:2430
 }
@@ -6696,6 +6701,9 @@ mod tests {
 
         CLEARFLAG.store(1, Ordering::SeqCst);
         RESETNEEDED.store(0, Ordering::SeqCst);
+        // c:2429 — clearscreen must reexpandprompt(): seed a raw template and a
+        // deliberately stale expansion so we can prove it was re-run.
+        *crate::ported::zle::zle_main::RAW_LP.lock().unwrap() = "%% > ".to_string();
         *ZLELINE.lock().unwrap() = "x".chars().collect();
         ZLECS.store(1, Ordering::SeqCst);
         ZLELL.store(1, Ordering::SeqCst);
@@ -6726,6 +6734,13 @@ mod tests {
         assert!(s.contains("\x1b[2J"), "must emit the clear capability; got {:?}", s);
         assert_eq!(CLEARFLAG.load(Ordering::SeqCst), 0, "clearflag zeroed");
         assert_eq!(RESETNEEDED.load(Ordering::SeqCst), 1, "resetneeded set");
+        // c:2429 — the raw "%% > " template was re-expanded to "% > ", proving
+        // reexpandprompt() ran (it was previously deferred).
+        assert_eq!(
+            crate::ported::zle::zle_main::prompt(),
+            "% > ",
+            "clearscreen must reexpandprompt the raw template"
+        );
     }
 
     /// c:946-956 — bufswap exchanges the global NBUF and OBUF buffers so
