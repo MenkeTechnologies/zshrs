@@ -1233,6 +1233,13 @@ pub fn zrefresh() {
         // c:954-956 — last frame's NBUF becomes this frame's OBUF.
         bufswap();
         OLNCT.store(NLNCT.load(Ordering::SeqCst), Ordering::SeqCst);
+        // c:1194 — `numscrolls = 0;` reset the per-frame scroll counter before
+        // generating the video buffers. nextline increments it as content
+        // scrolls off the bottom; at frame end it's stored into ONUMSCROLLS
+        // (c:1750) so the NEXT frame's nextline bail heuristic (c:851,
+        // `numscrolls != onumscrolls - 1`) compares against last frame's count.
+        // Without this reset the counter accumulated across every frame.
+        NUMSCROLLS.store(0, Ordering::SeqCst);
         // Rust frame-prep: clear the swapped-in (stale) NBUF for rebuild.
         NBUF.lock().unwrap().clear();
         // c:1208-1400 — emit prompt + line cells, wrapping at `winw`.
@@ -1857,6 +1864,15 @@ pub fn zrefresh() {
     // c:1742 — `cursor_form()`: update the terminal cursor shape (block /
     // beam / underline) for the current ZLE state once it's repositioned.
     crate::ported::zle::termquery::cursor_form();
+
+    // c:1750 — `onumscrolls = numscrolls;` carry this frame's scroll count into
+    // the next frame, where nextline's bail heuristic (c:851) reads it. Must
+    // happen at frame end (after the build), before the next frame resets
+    // NUMSCROLLS at c:1194. (C's c:1748 `ovln = rpms.nvln` is intentionally not
+    // ported: the file-static `ovln` has no reader anywhere in the zsh source —
+    // the only `moveto(ovln, ...)` at c:1092 uses a same-named block local —
+    // so it is dead write-only state.)
+    ONUMSCROLLS.store(NUMSCROLLS.load(Ordering::SeqCst), Ordering::SeqCst);
 }
 
 impl HighlightManager {
@@ -6144,6 +6160,52 @@ mod tests {
             "line 0 shows the start-ellipsis indicator; got {:?}",
             row0
         );
+    }
+
+    /// c:1194 + c:1750 — the numscrolls lifecycle. A frame resets NUMSCROLLS
+    /// to 0 before building (so it doesn't accumulate across frames), nextline
+    /// increments it per scroll, and frame-end stores it into ONUMSCROLLS for
+    /// the next frame's bail heuristic. Seed both high/stale, drive a tall
+    /// (scrolling) frame, and assert: NUMSCROLLS came back small (reset, then
+    /// counted real scrolls — not 1000+), and ONUMSCROLLS == NUMSCROLLS (carry).
+    #[test]
+    fn zrefresh_numscrolls_resets_and_carries_to_onumscrolls() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = String::new();
+        // Stale values from "previous frames" that must be overwritten.
+        NUMSCROLLS.store(1000, Ordering::SeqCst);
+        ONUMSCROLLS.store(999, Ordering::SeqCst);
+
+        let line: Vec<char> = std::iter::repeat('\n').take(300).collect();
+        let n = line.len();
+        *ZLELINE.lock().unwrap() = line;
+        ZLECS.store(n, Ordering::SeqCst); // cursor at end → scroll, no bail
+        ZLELL.store(n, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        let ns = NUMSCROLLS.load(Ordering::SeqCst);
+        let ons = ONUMSCROLLS.load(Ordering::SeqCst);
+        assert!(
+            ns > 0 && ns < 1000,
+            "NUMSCROLLS must reset (not accumulate past the seeded 1000) and \
+             count real scrolls; got {}",
+            ns
+        );
+        assert_eq!(ons, ns, "frame-end must store ONUMSCROLLS = NUMSCROLLS (c:1750)");
     }
 
     /// c:1119 — zrefresh resets MORE_START/MORE_END each frame before the
