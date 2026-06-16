@@ -1231,11 +1231,12 @@ pub fn wpfxlen(olds: &[REFRESH_ELEMENT], news: &[REFRESH_ELEMENT]) -> usize {
 pub fn refreshline(ln: i32) {
     // c:1749
 
-    // c:1751 — REFRESH_STRING nl, ol, p1
-    // !!! STUB: nbuf / obuf statics — Src/Zle/zle_refresh.c not yet
-    // exposed as `pub static NBUF/OBUF: Mutex<Vec<REFRESH_STRING>>`.
-    // Treat row vectors as empty so the function exercises the
-    // null-buffer paths and degrades to "nothing to draw".
+    // c:1751 — REFRESH_STRING nl, ol, p1. The nbuf/obuf statics are now
+    // exposed (NBUF/OBUF, populated by zrefresh) and read below. The
+    // diff control flow is fully ported; the remaining stubs in this
+    // function are the OUTPUT primitives (zputc cell-emit, zwrite,
+    // tc_delchars, tclen) — wired when zrefresh's output switches from
+    // full-repaint to the NBUF/OBUF diff.
     // c:1762 — `nl = nbuf[ln];` — read this frame's new line from NBUF.
     let mut nl: REFRESH_STRING = NBUF
         .lock()
