@@ -2507,16 +2507,20 @@ pub fn refreshline(ln: i32) {
             // c:1900-1903 — output the first cell of the next line, or a
             // space if that cell is blank ("I don't think this should
             // happen", per the C comment).
-            let first_chr = {
+            let first_cell = {
                 let nbuf = NBUF.lock().unwrap();
                 nbuf.get(vln as usize)
                     .and_then(|row| row.first())
-                    .map(|c| c.chr)
-                    .filter(|&c| c != '\0')
+                    .copied()
+                    .filter(|c| c.chr != '\0')
             };
-            match first_chr {
-                Some(c) => zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }), // c:1901
-                None => zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }),  // c:1903 zr_sp
+            match first_cell {
+                // c:1901 — `zputc(nbuf[vln])`: emit the FULL cell (chr + atr) so
+                // the wrapped line's first glyph keeps its attribute (was emitted
+                // with atr 0, dropping colour — same fault as the deferred-char
+                // path at c:1967).
+                Some(cell) => zwcputc(&cell),
+                None => zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }), // c:1903 zr_sp
             }
             if ln == vln {
                 // c:1904 — better safe than sorry
