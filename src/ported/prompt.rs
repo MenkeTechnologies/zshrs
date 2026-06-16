@@ -3291,9 +3291,14 @@ pub fn match_highlight(spec: &str) -> (zattr, zattr) {
     (attrs, mask)
 }
 
-/// Build an ANSI escape for an indexed colour.
-/// Port of `output_colour(int colour, int fg_bg, int truecol, char *buf)` from Src/prompt.c:2136.
-/// WARNING: param names don't match C — Rust=(colour, is_fg) vs C=(colour, fg_bg, truecol, buf)
+/// Build the ANSI SGR escape for an indexed colour (e.g. `\x1b[31m`).
+/// NAME NOTE: despite being called `output_colour`, this emits the SGR
+/// SEQUENCE — it ports the terminfo colour-emit path of
+/// `set_colour_attribute` (`Src/prompt.c:2440`), NOT the textual SPEC
+/// formatter `output_colour` (`Src/prompt.c:2136`, which produces
+/// `fg=red`). That spec formatter's logic is inlined in
+/// `output_highlight` (the `colour_spec` closure). Callers here want the
+/// escape, so the name is kept to avoid churn.
 pub fn output_colour(colour: u8, is_fg: bool) -> String {
     // c:Src/prompt.c:2440 set_colour_attribute — emits the active
     // terminfo color sequence. Real terminals (xterm-style) define
