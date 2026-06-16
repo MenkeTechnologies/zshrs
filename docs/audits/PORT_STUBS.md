@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-06-16T03:55:20.436567+00:00
+Generated: 2026-06-16T04:16:26.238734+00:00
 
 ## Method
 
@@ -26,7 +26,7 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/zle/compresult.rs` | 8 | `do_single` (4 / 180) |
 | `src/ported/zle/compctl.rs` | 6 | `makecomplistflags` (70 / 745) |
 | `src/ported/zle/zle_main.rs` | 4 | `describekeybriefly` (2 / 28) |
-| `src/ported/zle/zle_refresh.rs` | 4 | `zrefresh` (87 / 658) |
+| `src/ported/zle/zle_refresh.rs` | 4 | `freevideo` (4 / 19) |
 | `src/ported/module.rs` | 3 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 3 | `newzstyletable` (1 / 15) |
 | `src/ported/parse.rs` | 3 | `build_cur_dump` (5 / 80) |
@@ -148,10 +148,10 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 914 | `zrefresh` | 87 | 658 | 13% |
 | 570 | `freevideo` | 4 | 19 | 21% |
-| 1696 | `tc_rightcurs` | 15 | 63 | 23% |
-| 1609 | `moveto` | 13 | 44 | 29% |
+| 914 | `zrefresh` | 141 | 658 | 21% |
+| 1779 | `tc_rightcurs` | 15 | 63 | 23% |
+| 1692 | `moveto` | 13 | 44 | 29% |
 
 ### `src/ported/module.rs` — 3 stubs
 
