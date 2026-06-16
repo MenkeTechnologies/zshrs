@@ -1399,6 +1399,43 @@ pub fn zrefresh() {
         NLNCT.store(nlnct, Ordering::SeqCst);
     }
 
+    // c:1663-1671 — if the build scrolled content off the TOP this frame
+    // (more_start, set by nextline→scrollwindow), overwrite line 0 with the
+    // ">..." start-ellipsis: lpromptw spaces, the (clamped) start ellipsis,
+    // then padding, with the first ellipsis cell carrying ellipsis_attr and
+    // the first pad cell prompt_attr. The `!more_start` branch (right-prompt
+    // placement, c:1646-1662) needs the RPROMPT subsystem and is deferred.
+    if MORE_START.load(Ordering::SeqCst) != 0 {
+        let winw = WINW.load(Ordering::SeqCst).max(0) as usize;
+        let lpromptw = (LPROMPTW.load(Ordering::SeqCst).max(0) as usize).min(winw);
+        let prompt_attr = PROMPT_ATTR.load(Ordering::SeqCst);
+        let ellipsis_attr = ELLIPSIS_ATTR.load(Ordering::SeqCst);
+        let t0 = (winw - lpromptw).min(ZR_START_ELLIPSIS_SIZE); // c:1665-1666
+        let mut row0: REFRESH_STRING = Vec::with_capacity(winw + 2);
+        for _ in 0..lpromptw {
+            row0.push(REFRESH_ELEMENT { chr: ' ', atr: 0 }); // c:1664 zr_sp
+        }
+        for k in 0..t0 {
+            let mut cell = ZR_START_ELLIPSIS[k]; // c:1667
+            if k == 0 {
+                cell.atr = ellipsis_attr; // c:1668
+            }
+            row0.push(cell);
+        }
+        for j in 0..(winw - t0 - lpromptw) {
+            let atr = if j == 0 { prompt_attr } else { 0 }; // c:1669-1670
+            row0.push(REFRESH_ELEMENT { chr: ' ', atr });
+        }
+        // c:1671 — the winw/winw+1 zr_zr terminators: append two so the row
+        // matches the winw+2 padded layout the rest of the build uses.
+        row0.push(REFRESH_ELEMENT::default());
+        row0.push(REFRESH_ELEMENT::default());
+        let mut nbuf = NBUF.lock().unwrap();
+        if let Some(first) = nbuf.get_mut(0) {
+            *first = row0;
+        }
+    }
+
     // ---- Render via the NBUF/OBUF diff (c:1700-1739) -------------------
     // OBUF holds the previous frame (set by the swap inside the build);
     // refreshline diffs each new line against it and emits the minimal
@@ -3656,6 +3693,13 @@ pub static RPMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// `PROMPT_ATTR` static.
 pub static PROMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
 
+/// Port of `static zattr ellipsis_attr` from `Src/Zle/zle_refresh.c`. The
+/// attribute on the leading cell of the ">..."/"...<" scroll-ellipsis
+/// indicators. C seeds it from the `special` zle_highlight; default until
+/// that wiring lands.
+pub static ELLIPSIS_ATTR: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0); // c:152
+
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
 /// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
 /// and we have to fall back to per-line clear.
@@ -5612,6 +5656,52 @@ mod tests {
         assert_eq!(obuf.len() as i32, winh + 1, "OBUF has winh+1 rows");
         assert!(!nbuf.is_empty());
         assert_eq!(nbuf[0].len() as i32, winw + 2, "row is winw+2 cells");
+    }
+
+    /// c:1663-1671 — when the live build scrolls content off the top (a
+    /// buffer taller than winh, cursor at the end so nextline never bails),
+    /// MORE_START is set and line 0 is overwritten with the ">..." indicator.
+    /// Deterministic regardless of the terminal-derived winh: 300 newlines
+    /// exceed any winh.
+    #[test]
+    fn zrefresh_more_start_indicator_on_scroll() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = String::new();
+        let line: Vec<char> = std::iter::repeat('\n').take(300).collect();
+        let n = line.len();
+        *ZLELINE.lock().unwrap() = line;
+        ZLECS.store(n, Ordering::SeqCst); // cursor at end → no bail
+        ZLELL.store(n, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        assert_eq!(
+            MORE_START.load(Ordering::SeqCst),
+            1,
+            "a buffer taller than winh must scroll → more_start"
+        );
+        let row0: String = NBUF.lock().unwrap()[0]
+            .iter()
+            .map(|c| c.chr)
+            .take_while(|&c| c != '\0')
+            .collect();
+        assert!(
+            row0.starts_with(">...."),
+            "line 0 shows the start-ellipsis indicator; got {:?}",
+            row0
+        );
     }
 
     /// c:1119 — zrefresh resets MORE_START/MORE_END each frame before the
