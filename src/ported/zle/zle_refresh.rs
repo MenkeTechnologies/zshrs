@@ -1505,13 +1505,25 @@ pub fn refreshline(ln: i32) {
         // c:1906 — `if (!nl->chr)`
         if nl.is_empty() || nl[0].chr == '\0' {
             // c:1906
-            if ccs == winw && hasam_v && char_ins > 0 && ins_last != 0   // c:1907
+            if ccs == winw && hasam_v && char_ins > 0 && ins_last != 0   // c:1964
                     && vcs != winw
             {
-                // c:1908-1913 — print the deferred last char.
-                // !!! STUB: zputc — defer.
-                VCS.store(vcs + 1, Ordering::SeqCst);
-                return; // c:1913
+                // c:1965-1971 — write the deferred last character. C does
+                // `nl--; moveto(ln, winw-1); zputc(nl); vcs++`. In the Vec
+                // model `nl--` steps back to column winw-1; this automargin
+                // case has a full line, so that cell is NBUF[ln][winw-1].
+                let deferred = NBUF
+                    .lock()
+                    .unwrap()
+                    .get(ln as usize)
+                    .and_then(|row| row.get((winw - 1) as usize))
+                    .map(|c| c.chr);
+                moveto(ln as usize, (winw - 1) as usize); // c:1966
+                if let Some(c) = deferred {
+                    zwcputc(c); // c:1967 zputc(nl)
+                }
+                VCS.store(vcs + 1, Ordering::SeqCst); // c:1968 vcs++
+                return; // c:1969
             }
             if char_ins <= 0 || ccs >= winw {
                 // c:1915
