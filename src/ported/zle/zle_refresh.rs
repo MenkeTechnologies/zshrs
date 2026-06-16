@@ -1239,6 +1239,13 @@ pub fn zrefresh() {
                 emit(&mut rows, c, prompt_attr);
             }
         }
+        // c:152 / zle_main.c:1280 — publish the prompt's trailing attribute
+        // so refreshline's TCDEL attr-apply (c:2044) and tcoutclear (c:609)
+        // make deleted/cleared cells carry the prompt's colour. C derives
+        // prompt_attr via mixattrs(pmpt_attr, .., rpmpt_attr) from
+        // promptexpand (blocked); this is the left-prompt SGR-parsed
+        // approximation (rpmpt_attr folding deferred with that subsystem).
+        PROMPT_ATTR.store(prompt_attr, Ordering::Relaxed);
         // Editable line with tab/control expansion (c:1248-1398). Each
         // line char's overlay attr is applied to the cell(s) it produces.
         for (i, &ch) in line_snapshot.iter().enumerate() {
@@ -5297,6 +5304,44 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:152 — zrefresh publishes the prompt's trailing attribute to the
+    /// global PROMPT_ATTR, which refreshline (TCDEL) and tcoutclear read so
+    /// deleted/cleared cells carry the prompt's colour. A bold prompt must
+    /// leave PROMPT_ATTR carrying TXTBOLDFACE.
+    #[test]
+    fn zrefresh_publishes_prompt_attr() {
+        use crate::ported::zsh_h::TXTBOLDFACE;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let saved = crate::ported::zle::zle_main::LPROMPT.lock().unwrap().clone();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = "\x1b[1mPS>".to_string();
+        PROMPT_ATTR.store(0, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = saved;
+
+        assert_ne!(
+            PROMPT_ATTR.load(Ordering::SeqCst) & TXTBOLDFACE,
+            0,
+            "bold prompt must publish TXTBOLDFACE to PROMPT_ATTR"
+        );
     }
 
     /// c:676 — zrefresh syncs LPROMPTW to the left-prompt width each frame,
