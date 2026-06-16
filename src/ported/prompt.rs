@@ -3314,13 +3314,95 @@ pub fn output_colour(colour: u8, is_fg: bool) -> String {
     }
 }
 
-/// Port of `output_highlight(zattr atr, char *buf)` from
-/// Src/prompt.c:2179. Delegates to `apply_text_attributes` which
-/// renders zattr to the comma-joined `bold,fg=red,...` form.
-/// WARNING: param names don't match C — Rust=(attrs) vs C=(atr, mask, buf)
-pub fn output_highlight(attrs: zattr) -> String {
+/// Direct port of `int output_highlight(zattr atr, zattr mask, char *buf)`
+/// from `Src/prompt.c:2179`. Format the attribute bits as the zsh
+/// highlight SPEC (`fg=red,bold,nounderline`), the textual form used by
+/// `$region_highlight` and `zle_highlight` — NOT the ANSI SGR escape (the
+/// previous body called `apply_text_attributes`, which emits SGR; that was
+/// a fake cited as this function). `mask` selects which attributes appear;
+/// only bits set in `mask` are emitted, with a `no` prefix when the bit is
+/// off in `atr`. Returns the spec string (C's `buf`/length convention
+/// collapses to a Rust `String`).
+pub fn output_highlight(atr: zattr, mut mask: zattr) -> String {
     // c:2179
-    apply_text_attributes(attrs)
+    use crate::ported::zsh_h::{
+        TXTBGCOLOUR, TXTBOLDFACE, TXTFAINT, TXTFGCOLOUR, TXTITALIC, TXTSTANDOUT, TXTUNDERLINE,
+        TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK, TXT_ATTR_BG_COL_SHIFT,
+        TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT,
+    };
+    let mut parts: Vec<String> = Vec::new();
+
+    // c:2186-2205 — when the mask covers every attribute and more than one
+    // is unset, it's shorter to start from "reset".
+    if mask == TXT_ATTR_ALL {
+        let mut threebits = !atr & TXT_ATTR_ALL;
+        threebits &= threebits.wrapping_sub(1); // c:2189 can't be bold && faint
+        threebits &= threebits.wrapping_sub(1); // c:2190 allow one "no" entry
+        if threebits != 0 {
+            mask &= atr; // c:2193 — mark atr's unset bits as done
+            parts.push("reset".to_string()); // c:2196
+        }
+    }
+
+    // output_colour (c:2136) as the spec: "fg=NAME" / "fg=NUM" / "fg=#rrggbb".
+    let colour_spec = |col: u32, is_fg: bool, truecol: bool| -> String {
+        let prefix = if is_fg { "fg=" } else { "bg=" };
+        if truecol {
+            // c:2146 — 24-bit hex triplet.
+            format!(
+                "{}#{:02x}{:02x}{:02x}",
+                prefix,
+                (col >> 16) & 0xff,
+                (col >> 8) & 0xff,
+                col & 0xff
+            )
+        } else if col > 7 {
+            format!("{}{}", prefix, col) // c:2155 — numeric index
+        } else {
+            format!("{}{}", prefix, COLOUR_NAMES[col as usize]) // c:2160 — ansi name
+        }
+    };
+
+    // c:2207-2223 — foreground colour.
+    if mask & TXTFGCOLOUR != 0 {
+        if atr & TXTFGCOLOUR != 0 {
+            let col = ((atr & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT) as u32;
+            parts.push(colour_spec(col, true, atr & TXT_ATTR_FG_24BIT != 0));
+        } else {
+            parts.push("fg=default".to_string()); // c:2218
+        }
+    }
+    // c:2225-2243 — background colour.
+    if mask & TXTBGCOLOUR != 0 {
+        if atr & TXTBGCOLOUR != 0 {
+            let col = ((atr & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT) as u32;
+            parts.push(colour_spec(col, false, atr & TXT_ATTR_BG_24BIT != 0));
+        } else {
+            parts.push("bg=default".to_string()); // c:2236
+        }
+    }
+
+    // c:2244-2258 — named attribute table (the C `highlights[]`, c:1896).
+    let highlights: &[(&str, zattr, zattr)] = &[
+        ("reset", 0, TXT_ATTR_ALL),
+        ("bold", TXTBOLDFACE, TXTFAINT),
+        ("faint", TXTFAINT, TXTBOLDFACE),
+        ("standout", TXTSTANDOUT, 0),
+        ("underline", TXTUNDERLINE, 0),
+        ("italic", TXTITALIC, 0),
+    ];
+    for &(name, mask_on, mask_off) in highlights {
+        if mask_on & mask != 0 && (mask_off & mask & atr) == 0 {
+            mask &= !mask_off; // c:2247
+            let mut s = String::new();
+            if mask_on & atr == 0 {
+                s.push_str("no"); // c:2252
+            }
+            s.push_str(name); // c:2255
+            parts.push(s);
+        }
+    }
+    parts.join(",")
 }
 
 /// Compute the default-colour reset sequences.
@@ -4022,6 +4104,25 @@ pub fn set_pending_text_attrs(attrs: zattr) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// c:2179 — output_highlight produces the zsh highlight SPEC (not SGR):
+    /// a foreground colour by name, the named bold attribute, and a `no`
+    /// prefix when a masked attribute is off in `atr`.
+    #[test]
+    fn output_highlight_emits_spec_not_sgr() {
+        use crate::ported::zsh_h::{
+            TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT,
+        };
+        // fg=red (colour index 1) → "fg=red", not an SGR escape.
+        let atr = TXTFGCOLOUR | (1u64 << TXT_ATTR_FG_COL_SHIFT);
+        assert_eq!(output_highlight(atr, TXTFGCOLOUR), "fg=red");
+        // a set named attribute.
+        assert_eq!(output_highlight(TXTBOLDFACE, TXTBOLDFACE), "bold");
+        // masked but unset → "no" prefix.
+        assert_eq!(output_highlight(0, TXTUNDERLINE), "nounderline");
+        // never an escape.
+        assert!(!output_highlight(atr, TXTFGCOLOUR).contains('\u{1b}'));
+    }
 
     /// c:1935-1944 — `truecolor_terminal` returns true iff
     /// `.term.extensions` array contains an un-negated `truecolor`
