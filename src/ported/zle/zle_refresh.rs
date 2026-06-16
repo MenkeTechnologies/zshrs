@@ -2658,55 +2658,61 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
     // until termcap-output primitives land.
     if winpos != owinpos {
         // c:2595
-        singmoveto(&mut RefreshState::new(), 0);
+        singmoveto(0);
         // c:2603
     }
 
     // c:2680 (function tail) — `singmoveto(nvcs);`
-    singmoveto(&mut RefreshState::new(), nvcs as usize);
+    singmoveto(nvcs);
 
     let _ = (lpromptw, width); // silence unused
 }
 
-/// Port of `singmoveto(int pos)` from Src/Zle/zle_refresh.c:2687.
+/// Direct port of `static void singmoveto(int pos)` from
+/// `Src/Zle/zle_refresh.c:2745`. Single-line horizontal cursor
+/// positioning to column `pos`, operating on the global video-cursor
+/// column `vcs` (the VCS atomic) exactly as C does — shared by `moveto`
+/// (c:2216) and `singlerefresh` (c:2661/2717/2738).
+///   - exit early when already at `pos` (c:2750)
+///   - if no TCMULTLEFT or target at/near BOL: emit `\r`, vcs = 0 (c:2755-2758)
+///   - left of current: `tc_leftcurs(vcs - pos)` (c:2760)
+///   - right of current: `tc_rightcurs(pos - vcs)` (c:2762)
+///   - `vcs = pos` (c:2764)
 ///
-/// Line-by-line port of c:2687-2706. Single-line cursor positioning:
-///   - exit early when already at `pos` (c:2689-2690)
-///   - if no TCMULTLEFT or target close to BOL: emit `\r` and reset
-///     vcs to 0 (c:2693-2695)
-///   - if target is left of current: `tc_leftcurs(vcs - pos)` (c:2698)
-///   - else right: `tc_rightcurs(pos - vcs)` (c:2700)
-///   - update `state.vcs` to `pos` for the next call
-/// WARNING: param names don't match C — Rust=(state, pos) vs C=(pos)
-pub fn singmoveto(state: &mut RefreshState, pos: usize) {
-    // c:2687
+/// The previous port threaded a `RefreshState` and its callers passed a
+/// throwaway `RefreshState::new()` (vcs always 0), ignoring the global
+/// VCS that `singlerefresh` actually maintains (line ~691) — fixed here.
+pub fn singmoveto(pos: i32) {
+    // c:2745
     use crate::ported::init::tclen;
     use crate::ported::zsh_h::TCMULTLEFT;
 
-    // c:2689-2690 — `if (pos == vcs) return;`
-    if pos == state.vcs {
+    let vcs = VCS.load(Ordering::SeqCst);
+    // c:2750 — `if (pos == vcs) return;`
+    if pos == vcs {
         return;
     }
 
     let multleft_present = tclen.lock().unwrap()[TCMULTLEFT as usize] > 0;
-    // c:2693-2695 — `if ((!tccan(TCMULTLEFT) || pos == 0) && pos <= vcs / 2)`
-    let mut cur = state.vcs;
+    // c:2755-2758 — `if ((!tccan(TCMULTLEFT) || pos == 0) && pos <= vcs/2)`
+    let mut cur = vcs;
     if (!multleft_present || pos == 0) && pos <= cur / 2 {
         let fd = SHTTY.load(Ordering::Relaxed);
         let out_fd = if fd >= 0 { fd } else { 1 };
-        let _ = write_loop(out_fd, b"\r"); // c:2694 zputc(&zr_cr)
+        let _ = write_loop(out_fd, b"\r"); // c:2756 zputc(&zr_cr)
         cur = 0;
+        VCS.store(0, Ordering::SeqCst); // c:2757 vcs = 0
     }
 
     if pos < cur {
-        // c:2698 — `tc_leftcurs(vcs - pos);`
-        tc_leftcurs((cur - pos) as i32);
+        // c:2760 — `tc_leftcurs(vcs - pos);`
+        tc_leftcurs(cur - pos);
     } else if pos > cur {
-        // c:2700 — `tc_rightcurs(pos - vcs);`
-        tc_rightcurs(pos - cur);
+        // c:2762 — `tc_rightcurs(pos - vcs);`
+        tc_rightcurs((pos - cur) as usize);
     }
-    // c:2705 — `vcs = pos;`
-    state.vcs = pos;
+    // c:2764 — `vcs = pos;`
+    VCS.store(pos, Ordering::SeqCst);
 }
 
 /// Initialize ZLE refresh subsystem
@@ -5005,6 +5011,46 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:2745-2764 — singmoveto positions the cursor on the current line
+    /// using the GLOBAL vcs (the VCS atomic), as C does. With no multi-left
+    /// capability and a target in the left half, it homes via CR (vcs=0)
+    /// then moves right, landing VCS at the target. The old port threaded a
+    /// throwaway RefreshState (vcs always 0); this pins the global tracking.
+    #[test]
+    fn singmoveto_tracks_global_vcs() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::tclen;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let li = crate::ported::zsh_h::TCMULTLEFT as usize;
+        let save_li = tclen.lock().unwrap()[li];
+        tclen.lock().unwrap()[li] = 0; // no multi-left → CR-home path
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        // From column 10, target 2 (<= vcs/2): CR home then move right.
+        VCS.store(10, Ordering::SeqCst);
+        singmoveto(2);
+        let vcs_after = VCS.load(Ordering::SeqCst);
+        // Already at target: early return, no further output.
+        singmoveto(2);
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[li] = save_li;
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert_eq!(vcs_after, 2, "singmoveto must land global VCS at the target");
+        assert!(s.contains('\r'), "CR-home optimisation should emit \\r; got {:?}", s);
     }
 
     /// c:2320-2331 — tc_downcurs prefers the terminal down capability, but
