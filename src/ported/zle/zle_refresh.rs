@@ -1282,6 +1282,42 @@ pub fn zrefresh() {
         NLNCT.store(nlnct, Ordering::SeqCst); // c:nlnct = rpms.ln + 1
     }
 
+    // c:1663-1671 — when there's more text above the visible window
+    // (more_start, set by scrollwindow), overwrite the first line with the
+    // ">..." start-ellipsis indicator: lpromptw spaces, the (clamped) start
+    // ellipsis, then padding. The `!more_start` branch (right-prompt
+    // placement, c:1646-1662) needs the RPROMPT subsystem and is deferred.
+    if MORE_START.load(Ordering::SeqCst) != 0 {
+        let winw = WINW.load(Ordering::SeqCst).max(0) as usize;
+        let lpromptw = (LPROMPTW.load(Ordering::SeqCst).max(0) as usize).min(winw);
+        let prompt_attr = PROMPT_ATTR.load(Ordering::SeqCst);
+        let ellipsis_attr = ELLIPSIS_ATTR.load(Ordering::SeqCst);
+        // c:1665-1666 — t0 = min(winw - lpromptw, ZR_START_ELLIPSIS_SIZE).
+        let t0 = (winw - lpromptw).min(ZR_START_ELLIPSIS_SIZE);
+        let mut row0: REFRESH_STRING = Vec::with_capacity(winw);
+        for _ in 0..lpromptw {
+            row0.push(REFRESH_ELEMENT { chr: ' ', atr: 0 }); // c:1664 zr_sp
+        }
+        for k in 0..t0 {
+            let mut cell = ZR_START_ELLIPSIS[k]; // c:1667 ZR_memcpy
+            if k == 0 {
+                cell.atr = ellipsis_attr; // c:1668 first ellipsis cell
+            }
+            row0.push(cell);
+        }
+        for j in 0..(winw - t0 - lpromptw) {
+            // c:1669 zr_pad; c:1670 first pad cell carries prompt_attr.
+            let atr = if j == 0 { prompt_attr } else { 0 };
+            row0.push(REFRESH_ELEMENT { chr: ' ', atr });
+        }
+        // c:1671 — the winw/winw+1 zr_zr terminators are implicit in the
+        // Vec length (winw); no explicit sentinel needed.
+        let mut nbuf = NBUF.lock().unwrap();
+        if let Some(first) = nbuf.get_mut(0) {
+            *first = row0;
+        }
+    }
+
     // ---- Render via the NBUF/OBUF diff (c:1700-1739) -------------------
     // OBUF holds the previous frame (set by the swap inside the build);
     // refreshline diffs each new line against it and emits the minimal
@@ -3537,6 +3573,13 @@ pub static RPMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// `PROMPT_ATTR` static.
 pub static PROMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
 
+/// Port of `static zattr ellipsis_attr` from `Src/Zle/zle_refresh.c`.
+/// The attribute applied to the leading cell of the ">..."/"...<" scroll
+/// ellipsis indicators. C seeds it from the `special` zle_highlight; until
+/// that wiring lands it stays the default (no extra highlight).
+pub static ELLIPSIS_ATTR: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0); // c:152
+
 /// Port of `static int cleareol` from `Src/Zle/zle_refresh.c:827`.
 /// Clear-to-end-of-line flag — set when the terminal lacks `cleareod`
 /// and we have to fall back to per-line clear.
@@ -5304,6 +5347,40 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:1663-1671 — when more_start is set (more text scrolled above the
+    /// window), zrefresh overwrites the first line with the ">..." start
+    /// ellipsis. With more_start clear the indicator is absent.
+    #[test]
+    fn zrefresh_inserts_more_start_ellipsis() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let saved = crate::ported::zle::zle_main::LPROMPT.lock().unwrap().clone();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = String::new();
+        MORE_START.store(1, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "hello".chars().collect();
+        ZLECS.store(5, Ordering::SeqCst);
+        ZLELL.store(5, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        let row0: String = NBUF.lock().unwrap()[0].iter().take(5).map(|c| c.chr).collect();
+        MORE_START.store(0, Ordering::SeqCst); // cleanup (no per-frame reset yet)
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = saved;
+        assert_eq!(row0, ">....", "more_start must insert the >... ellipsis on line 0");
     }
 
     /// c:152 — zrefresh publishes the prompt's trailing attribute to the
