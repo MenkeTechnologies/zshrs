@@ -1212,6 +1212,14 @@ pub fn zrefresh() {
     // restore this write_loop and delete the refreshline loop to revert.
     let _ = (out_fd, &handle); // formerly: write_loop(out_fd, handle.as_bytes())
 
+    // c:1739 — the build records the cursor's video position (nvln/nvcs) as it
+    // lays cells; captured out of the build block for the final moveto. Init
+    // nvln = -1 (cursor not yet reached) so the bail case (cursor scrolled off,
+    // loop broke early) is detectable and falls back to the single-line
+    // recompute below.
+    let mut cur_nvln: i32 = -1;
+    let mut cur_nvcs: i32 = 0;
+
     // ---- Build NBUF (c:954-1400) ----------------------------------------
     // The full-repaint output above is the live renderer and is left
     // untouched. This populates the NBUF/OBUF video buffers that
@@ -1383,10 +1391,13 @@ pub fn zrefresh() {
         // line char's overlay attr is applied to the cell(s) it produces.
         let cursor_idx = ZLECS.load(Ordering::SeqCst);
         for (i, &ch) in line_snapshot.iter().enumerate() {
-            // c:1751 — when the build reaches the cursor char, record its
-            // video line so nextline's scroll-or-bail keeps it visible.
+            // c:1247 — when the build reaches the cursor char, record its
+            // video line AND column: `rpms.nvcs = rpms.s - nbuf[rpms.nvln =
+            // rpms.ln]`. nvln keeps nextline's scroll-or-bail centred on the
+            // cursor; nvcs is the final cursor column for moveto (c:1741).
             if i == cursor_idx {
                 rpms.nvln = rpms.ln;
+                rpms.nvcs = rpms.pos as i32;
             }
             let atr = attrs
                 .get(i)
@@ -1431,9 +1442,18 @@ pub fn zrefresh() {
                 break; // c:1398 / c:1257
             }
         }
-        // Cursor at end-of-buffer: its video line is the final one.
+        // c:1411-1417 — cursor at end-of-buffer (`t == scs`): record its video
+        // position, and if it sits exactly at the right margin (nvcs == winw),
+        // wrap onto the next line so the cursor isn't faked one column past the
+        // edge: `nextline(&rpms, 1); nvcs = 0; nvln++`.
         if cursor_idx >= line_snapshot.len() {
             rpms.nvln = rpms.ln;
+            rpms.nvcs = rpms.pos as i32;
+            if rpms.nvcs == WINW.load(Ordering::SeqCst) {
+                let _ = nextline(&mut rpms, 1); // c:1414 — actually advance
+                rpms.nvcs = 0; // c:1416
+                rpms.nvln += 1; // c:1417
+            }
         }
 
         // c:1423-1554 — the status line (the `zle -M` message) rendered below
@@ -1649,6 +1669,11 @@ pub fn zrefresh() {
                 }
             }
         }
+
+        // c:1741 — capture the cursor's final video coords out of the build
+        // block (rpms is dropped at the brace below) for the closing moveto.
+        cur_nvln = rpms.nvln;
+        cur_nvcs = rpms.nvcs;
     }
 
     // c:1663-1671 — if the build scrolled content off the TOP this frame
@@ -1815,10 +1840,20 @@ pub fn zrefresh() {
         }
         CLEAREOL.store(0, Ordering::SeqCst);
     }
-    // c:1739 — `moveto(rpms.nvln, rpms.nvcs)`: cursor to the edit position.
-    // Single buffer wraps at `cols`; row = cursor_col / cols, col = rem.
+    // c:1741 — `moveto(rpms.nvln, rpms.nvcs)`: cursor to the edit position
+    // using the video coords the build tracked as it laid cells. This is
+    // exact under hard newlines, tab/control expansion, and vertical scroll —
+    // all of which the old `cursor_col / cols` recompute mishandled (it
+    // assumed a single line wrapping at `cols`). For the single-line common
+    // case nvcs == lpromptw + cursor_idx == cursor_col, so behaviour is
+    // unchanged. Falls back to the recompute only when the cursor was never
+    // reached (nvln stayed -1 because the line loop bailed on a scroll).
     let cols_c = cols.max(1);
-    moveto(cursor_col / cols_c, cursor_col % cols_c);
+    if cur_nvln >= 0 {
+        moveto(cur_nvln as usize, cur_nvcs.max(0) as usize);
+    } else {
+        moveto(cursor_col / cols_c, cursor_col % cols_c);
+    }
     // c:1742 — `cursor_form()`: update the terminal cursor shape (block /
     // beam / underline) for the current ZLE state once it's repositioned.
     crate::ported::zle::termquery::cursor_form();
@@ -4619,6 +4654,41 @@ mod tests {
             row0.contains("ab") && row0.ends_with("c^Ad"),
             "NBUF row 0 should render the line with tab + ^A expansion, got {:?}",
             row0
+        );
+    }
+
+    /// c:1741 — the closing moveto positions the cursor at the build-tracked
+    /// video coords (nvln/nvcs), not the single-line `cursor_col / cols`
+    /// recompute. With a hard newline ("a\nb") and the cursor at end, the
+    /// cursor's video line is 1 — the recompute (which never sees the newline)
+    /// would leave it on line 0. Pins the multi-line cursor placement.
+    #[test]
+    fn zrefresh_cursor_lands_on_second_video_line() {
+        let _g = crate::test_util::global_state_lock();
+        *ZLELINE.lock().unwrap() = "a\nb".chars().collect();
+        ZLECS.store(3, Ordering::SeqCst); // cursor at end (after 'b')
+        ZLELL.store(3, Ordering::SeqCst);
+
+        zrefresh();
+
+        // The hard newline must have produced a second video row holding "b".
+        let rows: Vec<String> = NBUF
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.iter().map(|c| c.chr).take_while(|&c| c != '\0').collect())
+            .collect();
+        assert!(
+            rows.len() >= 2 && rows[1].contains('b'),
+            "newline must create a 2nd video row with 'b'; rows={:?}",
+            rows
+        );
+        // The cursor's final video line is row 1 (where 'b' is), proving the
+        // moveto used nvln, not cursor_col/cols (which would give row 0).
+        assert_eq!(
+            VLN.load(Ordering::SeqCst),
+            1,
+            "cursor must land on video line 1 (nvln), not line 0 (recompute)"
         );
     }
 
