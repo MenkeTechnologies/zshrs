@@ -462,7 +462,20 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
 /// `timeout`/`full` args are folded into the raw reader.
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, timeout, full)
 pub fn getbyte(do_keytmout: bool) -> Option<u8> {
-    let b = raw_getbyte(do_keytmout)?;
+    // c:889-918 — raw_getbyte returning no byte (timeout / EOF / give-up)
+    // is C's `return lastchar = EOF`: the trigger char becomes EOF so
+    // widgets that read `lastchar` after a failed read see EOF, not a
+    // stale previous keystroke. (The full IGNOREEOF retry counter and the
+    // EIO tty-reattach kludge at c:898-938 need zlereadflags / attachtty
+    // substrate and stay deferred; the common timeout/EOF result is the
+    // load-bearing case and is now faithful.)
+    let b = match raw_getbyte(do_keytmout) {
+        Some(b) => b,
+        None => {
+            LASTCHAR.store(-1, SeqCst); // c:891 — `lastchar = EOF` (EOF == -1)
+            return None;
+        }
+    };
 
     // Handle newline/carriage return translation
     // (The C code swaps \n and \r for typeahead handling)
@@ -2814,6 +2827,25 @@ pub fn highlight() -> &'static std::sync::Mutex<HighlightManager> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// getbyte returning no byte must set `lastchar = EOF` (c:891), so a
+    /// widget reading `lastchar` after a failed/timed-out read sees EOF,
+    /// not a stale keystroke. In headless CI stdin is /dev/null → EOF, so
+    /// raw_getbyte returns None and getbyte takes the EOF path.
+    #[test]
+    fn getbyte_no_byte_sets_lastchar_eof() {
+        let _g = crate::test_util::global_state_lock();
+        KUNGETBUF.lock().unwrap().clear();
+        WATCH_FDS.lock().unwrap().clear();
+        LASTCHAR.store(b'x' as i32, SeqCst); // a stale previous char
+        let r = getbyte(false);
+        assert_eq!(r, None, "no input available → None");
+        assert_eq!(
+            LASTCHAR.load(SeqCst),
+            -1,
+            "c:891 — lastchar must be EOF (-1), not the stale 'x'"
+        );
+    }
 
     #[test]
     fn handleprefixes_promotes_tmult_to_mult_when_prefixflag_set() {
