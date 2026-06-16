@@ -1296,18 +1296,69 @@ pub fn printbind(seq: &[u8]) -> String {
 }
 
 /// Direct port of `void showmsg(char const *msg)` from
-/// `Src/Zle/zle_utils.c:1303`. Writes `msg` followed by a newline to
-/// the shell-output fd. The full C body (c:1305-1402) handles
-/// metafied input + nice-character expansion + per-byte color
-/// (mcolors) which need substrate not yet wired; the visible-byte
-/// stream is the same in the un-colored common case where `msg` is
-/// already plain ASCII.
+/// `Src/Zle/zle_utils.c:1310`. Display a message where the completion
+/// list normally goes; `msg` is metafied (c:1303-1305).
+///
+/// Ports the non-`MULTIBYTE_SUPPORT` branch faithfully (c:1389-1397):
+/// trashzle → metafied byte scan with nicechar expansion + cc/up
+/// column tracking → clearflag-driven cursor restore. The
+/// `#ifdef MULTIBYTE_SUPPORT` branch (c:1330-1387, mbrtowc /
+/// wcs_nicechar wide-char path) needs multibyte substrate not yet
+/// wired; the visible-byte stream matches in the common case.
 pub fn showmsg(msg: &str) {
-    // c:1303
+    // c:1310
+    use crate::ported::utils::{nicechar, write_loop};
+    use crate::ported::zle::zle_refresh::{tcmultout, CLEARFLAG, NLNCT, SHOWINGLIST};
+    use crate::ported::zsh_h::{isset, Meta, TCMULTUP, TCUP, ALWAYSLASTPROMPT, USEZLE};
+
+    let mut up: i32 = 0; // c:1316
+    let mut cc: i32 = 0; // c:1316
+
+    trashzle(); // c:1325
+    // c:1326 — clearflag = isset(USEZLE) && !termflags && isset(ALWAYSLASTPROMPT)
+    let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
+    let clearflag = isset(USEZLE) && termflags == 0 && isset(ALWAYSLASTPROMPT);
+    CLEARFLAG.store(if clearflag { 1 } else { 0 }, Ordering::Relaxed);
+
     let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out = if fd >= 0 { fd } else { 2 };
-    let _ = crate::ported::utils::write_loop(out, msg.as_bytes());
-    let _ = crate::ported::utils::write_loop(out, b"\n");
+    let shout = if fd >= 0 { fd } else { 2 };
+    let cols = crate::ported::utils::adjustcolumns().max(1) as i32; // zterm_columns
+
+    // c:1389 — for(p = msg; (c = *p); p++)
+    let bytes = msg.as_bytes();
+    let mut p = 0usize;
+    while p < bytes.len() {
+        let mut c = bytes[p];
+        if c == Meta {
+            // c:1391 — c = *++p ^ 32
+            p += 1;
+            c = bytes.get(p).copied().unwrap_or(0) ^ 32;
+        }
+        if c == b'\n' {
+            // c:1392-1395
+            let _ = write_loop(shout, b"\n"); // putc('\n', shout)
+            up += 1 + (cc - 1) / cols;
+            cc = 0;
+        } else {
+            // c:1396-1399 — n = nicechar(c); zputs(n, shout); cc += strlen(n)
+            let n = nicechar(c as char);
+            let _ = write_loop(shout, n.as_bytes());
+            cc += n.len() as i32;
+        }
+        p += 1;
+    }
+
+    up += (cc - 1) / cols; // c:1403
+    if clearflag {
+        // c:1405-1406
+        let _ = write_loop(shout, b"\r"); // putc('\r', shout)
+        let nlnct = NLNCT.load(Ordering::Relaxed);
+        tcmultout(TCUP, TCMULTUP, up + nlnct);
+    } else {
+        // c:1408
+        let _ = write_loop(shout, b"\n"); // putc('\n', shout)
+    }
+    SHOWINGLIST.store(0, Ordering::Relaxed); // c:1409
 }
 
 /// Port of `handlefeep(UNUSED(char **args))` from `Src/Zle/zle_utils.c:1405`.
@@ -3210,6 +3261,43 @@ mod findbol_findeol_tests {
             "findline start={} must be ≤ end={}",
             start,
             end
+        );
+    }
+
+    /// c:1389-1408 — showmsg writes the message bytes (nicechar-expanded)
+    /// to the shell-output fd followed by a terminating newline (the
+    /// non-clearflag path in a headless test). Proves the scan loop and
+    /// tail emit reach the fd, not just the old thin `msg + "\n"` stub.
+    #[test]
+    fn showmsg_emits_message_and_trailing_newline() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        showmsg("no matches");
+
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains("no matches"),
+            "showmsg should emit the message text; got {:?}",
+            s
+        );
+        assert!(
+            s.ends_with('\n'),
+            "showmsg should end with a newline; got {:?}",
+            s
         );
     }
 }
