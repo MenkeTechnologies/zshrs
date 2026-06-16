@@ -3583,6 +3583,54 @@ mod tests {
         );
     }
 
+    /// Diff-path proof, shorten case: OBUF="abcd" → NBUF="ab". The old
+    /// trailing "cd" must be erased — when the terminal lacks clear-to-eol
+    /// (none in a headless test), refreshline overwrites it with spaces.
+    #[test]
+    fn refreshline_erases_shortened_tail() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect()
+        };
+        *OBUF.lock().unwrap() = vec![mk("abcd")];
+        *NBUF.lock().unwrap() = vec![mk("ab")];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+        // No clear-to-eol capability → forces the space-overwrite path.
+        tclen.lock().unwrap()[TCCLEAREOL as usize] = 0;
+
+        refreshline(0);
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        // The two old tail columns ("cd") are each overwritten with a space
+        // (interspersed with cursor moves), so at least two spaces emit.
+        assert!(
+            s.matches(' ').count() >= 2,
+            "shortened line should erase the 2 old tail cells with spaces; got {:?}",
+            s
+        );
+    }
+
     /// Diff-path proof, edit case: OBUF="abc" → NBUF="abd". After the
     /// common "ab" prefix, refreshline must emit the changed cell 'd'.
     /// Exercises the common-prefix-skip + change branch (not the all-new
