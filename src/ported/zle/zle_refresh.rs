@@ -1227,6 +1227,12 @@ pub fn zrefresh() {
         }
         let mut rpms = rparams::default();
         rpms.nvln = -1; // c:1751 — cursor video line, set when we reach ZLECS.
+        // c:1119 — `more_start = more_end = 0;` reset per frame BEFORE the
+        // build. nextline/snextline set these (via scrollwindow) when content
+        // scrolls off the top/bottom this frame; without the reset a single
+        // scroll would leave them stuck set for every later frame.
+        MORE_START.store(0, Ordering::SeqCst);
+        MORE_END.store(0, Ordering::SeqCst);
         // emit: write one cell at NBUF[ln][pos] (brief lock, RELEASED before
         // nextline so its internal NBUF lock can't deadlock), advance pos, and
         // wrap via nextline at the right margin (c:842). Returns true when
@@ -5606,6 +5612,36 @@ mod tests {
         assert_eq!(obuf.len() as i32, winh + 1, "OBUF has winh+1 rows");
         assert!(!nbuf.is_empty());
         assert_eq!(nbuf[0].len() as i32, winw + 2, "row is winw+2 cells");
+    }
+
+    /// c:1119 — zrefresh resets MORE_START/MORE_END each frame before the
+    /// build, so a scroll flag set on a previous frame doesn't stick. A
+    /// short (non-scrolling) frame must leave them 0.
+    #[test]
+    fn zrefresh_resets_more_flags_each_frame() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        MORE_START.store(1, Ordering::SeqCst); // leaked from a prior frame
+        MORE_END.store(1, Ordering::SeqCst);
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        assert_eq!(MORE_START.load(Ordering::SeqCst), 0, "more_start reset");
+        assert_eq!(MORE_END.load(Ordering::SeqCst), 0, "more_end reset");
     }
 
     /// c:850-853 — nextline BAILS (returns 1) at the bottom when scrolling
