@@ -1621,15 +1621,22 @@ pub fn refreshline(ln: i32) {
                     let ol_tail = &ol[i_try as usize..];
                     let cheap_delete = tcdelcost(i_try) < wpfxlen(ol_tail, &nl) as i32;
                     if cheap_delete {
-                        // c:1985-1990 — apply attributes, tc_delchars(i)
-                        // !!! STUB: treplaceattrs / applytextattributes /
-                        // tc_delchars — Src/Zle/zle_refresh.c.
+                        // c:2045-2046 — `treplaceattrs(prompt_attr);
+                        // applytextattributes(0);` (once per delete run):
+                        // some terminals output the current attributes into
+                        // the cells a deletion adds at the end, so the text-
+                        // area attrs are applied first. Those attr-output
+                        // functions aren't ported yet (the colour substrate,
+                        // same deferral as NBUF's `atr`), so the attr-apply
+                        // is deferred — the delete itself is now faithful.
+                        // c:2048 — `tc_delchars(i)`: delete `i` characters.
+                        tc_delchars(i_try);
                         for _ in 0..i_try {
                             if !ol.is_empty() {
                                 ol.remove(0);
-                            } // c:1991 ol += i
+                            } // c:2049 ol += i
                         }
-                        char_ins -= i_try; // c:1992
+                        char_ins -= i_try; // c:2050
                         i_try = 0; // c:2004
                         break;
                     }
