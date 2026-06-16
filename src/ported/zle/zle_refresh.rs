@@ -983,6 +983,13 @@ pub fn zrefresh() {
     let cursor = ZLECS.load(Ordering::SeqCst);
 
     let prompt_width = countprompt(&prompt);
+    // c:676 — `lpromptw` is the left prompt's display width. The NBUF build
+    // emits that many prompt cells at the start of row 0, so syncing it
+    // enables refreshline's prompt-skip (c:1862) — previously dead because
+    // LPROMPTW stayed at 0 (resetvideo, which sets it, is never called).
+    // The skip is clamped to the row length, so an over-wide value can't
+    // overrun.
+    LPROMPTW.store(prompt_width as i32, Ordering::Relaxed);
     let rprompt_width = countprompt(&rprompt);
     // ZLELINE was locked TWICE in this expression — std::sync::Mutex
     // isn't reentrant, so the second `.lock()` deadlocks forever
@@ -5290,6 +5297,41 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:676 — zrefresh syncs LPROMPTW to the left-prompt width each frame,
+    /// enabling refreshline's prompt-skip (dead while LPROMPTW stayed 0).
+    #[test]
+    fn zrefresh_syncs_lpromptw_from_prompt() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let saved_prompt = crate::ported::zle::zle_main::LPROMPT.lock().unwrap().clone();
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = "abc".to_string();
+        LPROMPTW.store(999, Ordering::SeqCst); // bogus stale value
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+        *crate::ported::zle::zle_main::LPROMPT.lock().unwrap() = saved_prompt;
+
+        assert_eq!(
+            LPROMPTW.load(Ordering::SeqCst),
+            3,
+            "LPROMPTW must sync to the width of prompt \"abc\""
+        );
     }
 
     /// c:729-734 — zrefresh syncs the global video width to the terminal
