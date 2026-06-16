@@ -1747,13 +1747,13 @@ pub fn refreshline(ln: i32) {
         }
         loop {
             // c:2074 do-while wrapper
-            // c:2076-2077 — treplaceattrs(nl->atr); applytextattributes(0)
-            // !!! STUB: treplaceattrs / applytextattributes —
-            // Src/Zle/zle_refresh.c.
-
-            // c:2084 — zputc(nl)
-            // !!! STUB: zputc — emits the char to SHTTY.
-
+            // c:2076-2084 — `treplaceattrs(nl->atr); applytextattributes(0);
+            // zputc(nl);` — emit the cell. zwcputc does the attr-change
+            // (treplaceattrs + applytextattributes) internally, then writes
+            // the char. This is the main per-cell overwrite emit.
+            if let Some(cell) = nl.first().cloned() {
+                zwcputc(&cell); // c:2076-2084
+            }
             if !nl.is_empty() {
                 nl.remove(0);
             } // c:2085 nl++
@@ -3579,6 +3579,51 @@ mod tests {
         assert!(
             s.contains('a') && s.contains('b') && s.contains('c'),
             "refreshline should emit the new-line cells a/b/c; got {:?}",
+            s
+        );
+    }
+
+    /// Diff-path proof, edit case: OBUF="abc" → NBUF="abd". After the
+    /// common "ab" prefix, refreshline must emit the changed cell 'd'.
+    /// Exercises the common-prefix-skip + change branch (not the all-new
+    /// write path of the previous test).
+    #[test]
+    fn refreshline_emits_changed_cell_on_edit() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect()
+        };
+        *OBUF.lock().unwrap() = vec![mk("abc")];
+        *NBUF.lock().unwrap() = vec![mk("abd")];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        refreshline(0);
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let mut f = unsafe { std::fs::File::from_raw_fd(rd) };
+        let _ = f.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains('d'),
+            "edit should emit the changed cell 'd'; got {:?}",
             s
         );
     }
