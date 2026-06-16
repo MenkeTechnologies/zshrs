@@ -166,9 +166,15 @@ largely illusory: on close inspection most have hidden substrate gaps
   New test pins the shift; spaceinline (4) + zle_utils (79) green. (The
   completion-only meta branch — `start_meta`/`end_meta` with
   `zlemetaline` — stays deferred; it's active only during completion.)
-- [BLOCKED] `compmatch.rs::bld_line` — completion cross-class equivalence;
-  `pattern_match_equivalence` has a documented `PP_LOWER`/`PP_UPPER` `lmtp`
-  gap (line-side equivalence lookup missing)
+- [BLOCKED on engine caller] `compmatch.rs::bld_line` — completion
+  cross-class equivalence. **Corrected**: NOT a substrate gap.
+  `pattern_match_equivalence` is COMPLETE (tracks `lmtp`, resolves
+  PP_LOWER/PP_UPPER crossings at compmatch.rs:1897 — the old "lmtp gap"
+  comment was stale, now fixed). The real blocker is the engine caller:
+  the live caller at compmatch.rs:2438 passes an empty `mword`
+  ("CPAT_CHAR-only path"), so the EQUIV branch never fires. Faithful
+  bld_line (C's two-pass genpatarr, c:1772-1875) + a non-empty mword
+  require porting the completion-matcher chain first.
 - [BLOCKED] `hashtable.rs::addhistnode` — `ring_get` returns a clone; no
   `ring_get_mut`, so the C `he->node.flags |= HIST_DUP` ring mutation
   can't be expressed without a new mutable ring accessor
