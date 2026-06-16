@@ -490,22 +490,19 @@ pub fn zwcputc(c: char) {
     );
 }
 
-/// Port of `void zwcwrite(const REFRESH_STRING s, size_t i)`
-/// from `Src/Zle/zle_refresh.c`. C: `fwrite(s, sizeof(*s), i,
-/// shout)`. Rust writes the UTF-8 bytes to shout.
-pub fn zwcwrite(s: &str) {
-    let _ = write_loop(
-        {
-            use std::sync::atomic::Ordering;
-            let f = SHTTY.load(Ordering::Relaxed);
-            if f >= 0 {
-                f
-            } else {
-                1
-            }
-        },
-        s.as_bytes(),
-    );
+/// Port of `int zwcwrite(const REFRESH_STRING s, size_t i)` from
+/// `Src/Zle/zle_refresh.c:655`. Writes the first `i` cells of the
+/// video-buffer string `s`, each via `zwcputc` (c:659). Returns the
+/// number of cells written. The `zwrite(a,b)` macro (c:255/260) is just
+/// `zwcwrite(a, b)`. (Cell attributes are deferred to `zwcputc`'s
+/// colour path; the cell `chr` is faithful.)
+pub fn zwcwrite(s: &[REFRESH_ELEMENT], i: usize) -> usize {
+    // c:657-659 — `for (j = 0; j < i; j++) zwcputc(s + j);`
+    let n = i.min(s.len());
+    for cell in &s[..n] {
+        zwcputc(cell.chr); // c:659
+    }
+    n // c:660 `return i;`
 }
 
 // =====================================================================
@@ -4131,12 +4128,28 @@ mod tests {
         assert_eq!(ZR_strncmp(&[], &[], 5), 0);
     }
 
-    /// c:496 — `zwcwrite("")` empty string is safe.
+    /// c:496 — `zwcwrite(&[], 0)` empty string is safe.
     #[test]
     fn zwcwrite_empty_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        zwcwrite("");
+        zwcwrite(&[], 0);
+    }
+
+    /// c:655-660 — zwcwrite writes the first `i` cells and returns the
+    /// count, clamped to the available length.
+    #[test]
+    fn zwcwrite_returns_clamped_cell_count() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        let cells = [
+            REFRESH_ELEMENT { chr: 'a', atr: 0 },
+            REFRESH_ELEMENT { chr: 'b', atr: 0 },
+            REFRESH_ELEMENT { chr: 'c', atr: 0 },
+        ];
+        assert_eq!(zwcwrite(&cells, 2), 2, "c:660 — returns i");
+        assert_eq!(zwcwrite(&cells, 5), 3, "clamped to available length");
+        assert_eq!(zwcwrite(&cells, 0), 0);
     }
 
     /// c:1097 — `wpfxlen` returns usize (compile-time type pin).
@@ -4227,13 +4240,13 @@ mod tests {
         );
     }
 
-    /// c:496 — `zwcwrite("")` is idempotent across many calls.
+    /// c:496 — `zwcwrite(&[], 0)` is idempotent across many calls.
     #[test]
     fn zwcwrite_empty_idempotent() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         for _ in 0..10 {
-            zwcwrite("");
+            zwcwrite(&[], 0);
         }
     }
 
