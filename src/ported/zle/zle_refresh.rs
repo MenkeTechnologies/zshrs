@@ -1166,8 +1166,23 @@ pub fn refreshline(ln: i32) {
     // exposed as `pub static NBUF/OBUF: Mutex<Vec<REFRESH_STRING>>`.
     // Treat row vectors as empty so the function exercises the
     // null-buffer paths and degrades to "nothing to draw".
-    let mut nl: REFRESH_STRING = Vec::new(); // c:1751 nl = nbuf[ln]
-    let mut ol: REFRESH_STRING = Vec::new(); // c:1751 ol = obuf[ln]
+    // c:1762 — `nl = nbuf[ln];` — read this frame's new line from NBUF.
+    let mut nl: REFRESH_STRING = NBUF
+        .lock()
+        .unwrap()
+        .get(ln as usize)
+        .cloned()
+        .unwrap_or_default();
+    // c:1764-1766 — `if (ln < olnct && obuf[ln]) ol = obuf[ln];` else null.
+    let mut ol: REFRESH_STRING = if ln < OLNCT.load(Ordering::SeqCst) {
+        OBUF.lock()
+            .unwrap()
+            .get(ln as usize)
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let _p1: REFRESH_STRING = Vec::new(); // c:1751 p1
     let mut ccs: i32 = 0; // c:1752 ccs = 0
     let mut char_ins: i32 = 0; // c:1753 char_ins = 0
@@ -1188,10 +1203,8 @@ pub fn refreshline(ln: i32) {
     // nl = nbuf[ln]; rnllen = nllen = nl ? ZR_strlen(nl) : 0;           // c:1762-1763
     rnllen = nl.len() as i32;
     nllen = rnllen;
-    // c:1764-1772 — `if (ln < olnct && obuf[ln]) { ol = obuf[ln]; ollen = ZR_strlen(ol); }`
-    // !!! STUB: olnct static — Src/Zle/zle_refresh.c. Treat obuf row
-    // as the static `nullchr = { '\0', 0 }` per c:1769.
-    let _olnct: i32 = 0; // c:1764
+    // c:1764-1772 — `ollen = ZR_strlen(ol)`. `ol` is read from OBUF above
+    // (or empty when `ln >= olnct`), so its length is the old line length.
     ollen = ol.len() as i32; // c:1766 / c:1771
 
     // optimisation: clear-eol short-circuit                             // c:1774-1775
@@ -1598,7 +1611,7 @@ pub fn refreshline(ln: i32) {
         }
     }
 
-    let _ = (rnllen, ollen, ins_last, _olnct, _p1, _j); // silence
+    let _ = (rnllen, ollen, ins_last, _p1, _j); // silence
 }
 
 /// Direct port of `void moveto(int ln, int cl)` from
@@ -2901,6 +2914,15 @@ pub static ONUMSCROLLS: std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 /// Number of lines counted in the prompt+buffer for the current
 /// refresh — drives nbuf allocation (`nlnct * winw` cells).
 pub static NLNCT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:157
+
+/// Port of `static REFRESH_STRING *nbuf` / `*obuf` from
+/// `Src/Zle/zle_refresh.c:670`. The new (`NBUF`) and old (`OBUF`) video
+/// buffers: one `REFRESH_STRING` (a `Vec<REFRESH_ELEMENT>`) per screen
+/// line. `zrefresh` builds `NBUF`, `refreshline` diffs `NBUF[ln]` against
+/// `OBUF[ln]` and emits the minimal terminal updates, then they are
+/// swapped (c:954-955) so this frame's new buffer is next frame's old.
+pub static NBUF: std::sync::Mutex<Vec<REFRESH_STRING>> = std::sync::Mutex::new(Vec::new()); // c:670
+pub static OBUF: std::sync::Mutex<Vec<REFRESH_STRING>> = std::sync::Mutex::new(Vec::new()); // c:670
 
 /// Port of `static int winw` from `Src/Zle/zle_refresh.c:682`.
 /// Terminal window width in cells; bounded by `zterm_columns`.
