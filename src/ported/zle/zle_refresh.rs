@@ -1212,12 +1212,37 @@ pub fn zrefresh() {
             a
         };
         let cols_n = cols.max(1);
-        let mut rows: Vec<REFRESH_STRING> = vec![Vec::new()];
-        let mut emit = |rows: &mut Vec<REFRESH_STRING>, chr: char, atr: zattr| {
-            if rows.last().map(|r| r.len()).unwrap_or(0) >= cols_n {
-                rows.push(Vec::new()); // c:842 nextline
+        // ---- Build into the global NBUF via rparams + nextline (c:975-1400).
+        // Pre-allocate NBUF to (winh+1) rows × (winw+2) cells (resetvideo's
+        // layout, inline so we DON'T trigger resetvideo's VLN/VMAXLN reset or
+        // RefreshState-prompt side effects, which would corrupt the diff path).
+        let winw_b = WINW.load(Ordering::SeqCst);
+        let winh_b = WINH.load(Ordering::SeqCst);
+        {
+            let nrows = (winh_b + 1).max(1) as usize;
+            let rowlen = (winw_b + 2) as usize;
+            *NBUF.lock().unwrap() = (0..nrows)
+                .map(|_| vec![REFRESH_ELEMENT::default(); rowlen])
+                .collect();
+        }
+        let mut rpms = rparams::default();
+        rpms.nvln = -1; // c:1751 — cursor video line, set when we reach ZLECS.
+        // emit: write one cell at NBUF[ln][pos] (brief lock, RELEASED before
+        // nextline so its internal NBUF lock can't deadlock), advance pos, and
+        // wrap via nextline at the right margin (c:842).
+        let mut emit = |rpms: &mut rparams, chr: char, atr: zattr| {
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                if let Some(row) = nbuf.get_mut(rpms.ln as usize) {
+                    if rpms.pos < row.len() {
+                        row[rpms.pos] = REFRESH_ELEMENT { chr, atr };
+                    }
+                }
             }
-            rows.last_mut().unwrap().push(REFRESH_ELEMENT { chr, atr });
+            rpms.pos += 1;
+            if rpms.pos >= cols_n as usize {
+                nextline(rpms, 1); // c:842 — wrapped, resets pos=0
+            }
         };
         // Prompt cells. The prompt is an ANSI string here (not attributed
         // cells as in C's putpromptchar), so parse its SGR escapes into the
@@ -1290,7 +1315,7 @@ pub fn zrefresh() {
                 in_esc = true;
                 esc_params.clear();
             } else {
-                emit(&mut rows, c, prompt_attr);
+                emit(&mut rpms, c, prompt_attr);
             }
         }
         // c:152 / zle_main.c:1280 — publish the prompt's trailing attribute
@@ -1302,38 +1327,51 @@ pub fn zrefresh() {
         PROMPT_ATTR.store(prompt_attr, Ordering::Relaxed);
         // Editable line with tab/control expansion (c:1248-1398). Each
         // line char's overlay attr is applied to the cell(s) it produces.
+        let cursor_idx = ZLECS.load(Ordering::SeqCst);
         for (i, &ch) in line_snapshot.iter().enumerate() {
+            // c:1751 — when the build reaches the cursor char, record its
+            // video line so nextline's scroll-or-bail keeps it visible.
+            if i == cursor_idx {
+                rpms.nvln = rpms.ln;
+            }
             let atr = attrs
                 .get(i)
                 .and_then(|o| o.as_ref())
                 .map(&to_zattr)
                 .unwrap_or(0);
             if ch == '\n' {
-                rows.push(Vec::new()); // c:1248-1251
+                nextline(&mut rpms, 0); // c:1248-1251 — hard newline (not wrapped)
             } else if ch == '\t' {
                 // c:1259-1264 — spaces to the next 8-column stop.
                 loop {
-                    emit(&mut rows, ' ', atr);
-                    if rows.last().map(|r| r.len()).unwrap_or(0) % 8 == 0 {
+                    emit(&mut rpms, ' ', atr);
+                    if rpms.pos % 8 == 0 {
                         break;
                     }
                 }
             } else if (ch as u32) < 0x20 || ch as u32 == 0x7f {
                 // c:1340-1356 — control char as `^X` / `^?`.
-                emit(&mut rows, '^', atr);
+                emit(&mut rpms, '^', atr);
                 let c2 = if ((ch as u32) & !0x80u32) > 31 {
                     '?'
                 } else {
                     char::from_u32((ch as u32) | 0x40).unwrap_or('?')
                 };
-                emit(&mut rows, c2, atr);
+                emit(&mut rpms, c2, atr);
             } else {
-                emit(&mut rows, ch, atr); // c:1398
+                emit(&mut rpms, ch, atr); // c:1398
             }
         }
-        let nlnct = rows.len() as i32;
-        *NBUF.lock().unwrap() = rows;
-        NLNCT.store(nlnct, Ordering::SeqCst); // c:nlnct = rpms.ln + 1
+        // Cursor at end-of-buffer: its video line is the final one.
+        if cursor_idx >= line_snapshot.len() {
+            rpms.nvln = rpms.ln;
+        }
+        // c:1751 — `nlnct = rpms.ln + 1`. NBUF is already populated (the build
+        // wrote into it directly); trim any unused pre-allocated tail rows so
+        // refreshline/the diff loop see exactly the drawn lines.
+        let nlnct = rpms.ln + 1;
+        NBUF.lock().unwrap().truncate(nlnct as usize);
+        NLNCT.store(nlnct, Ordering::SeqCst);
     }
 
     // ---- Render via the NBUF/OBUF diff (c:1700-1739) -------------------
@@ -1627,11 +1665,14 @@ pub fn refreshline(ln: i32) {
 
     // 0: setup                                                          // c:1761
     // nl = nbuf[ln]; rnllen = nllen = nl ? ZR_strlen(nl) : 0;           // c:1762-1763
-    rnllen = nl.len() as i32;
+    // ZR_strlen counts cells up to the `\0` terminator — NOT the Vec
+    // length, which now includes the winw+2 padding the build writes. An
+    // "empty" row is one whose first cell is `\0`, giving nllen 0 (which the
+    // cleareol short-circuit at c:1776 relies on).
+    rnllen = ZR_strlen(&nl) as i32;
     nllen = rnllen;
-    // c:1764-1772 — `ollen = ZR_strlen(ol)`. `ol` is read from OBUF above
-    // (or empty when `ln >= olnct`), so its length is the old line length.
-    ollen = ol.len() as i32; // c:1766 / c:1771
+    // c:1764-1772 — `ollen = ZR_strlen(ol)`.
+    ollen = ZR_strlen(&ol) as i32; // c:1766 / c:1771
 
     // optimisation: clear-eol short-circuit                             // c:1774-1775
     // c:1776-1781 — `if (cleareol && !nllen && !(hasam && ln < nlnct-1)
@@ -4215,9 +4256,11 @@ mod tests {
         zrefresh();
 
         let nbuf = NBUF.lock().unwrap();
+        // NBUF rows are now winw+2 cells, \0-terminated + padded (faithful to
+        // C). Take the content up to the first \0 terminator.
         let row0: String = nbuf
             .first()
-            .map(|r| r.iter().map(|c| c.chr).collect())
+            .map(|r| r.iter().map(|c| c.chr).take_while(|&c| c != '\0').collect())
             .unwrap_or_default();
         // The line content (after whatever prompt prefix): "ab" then a tab
         // expanded to spaces landing on an 8-col stop, "c", "^A", "d".
