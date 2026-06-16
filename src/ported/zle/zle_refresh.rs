@@ -954,7 +954,29 @@ pub fn zrefresh() {
     //          shout destination and reduces syscall count.
     let mut handle = String::new();
 
-    let (cols, _rows) = (adjustcolumns(), adjustlines());
+    let cols = adjustcolumns();
+    // c:729-734 — sync the global video dimensions to the terminal each
+    // frame, as C's resetvideo does (`winw = zterm_columns`, winh clamped).
+    // The cursor primitives (moveto automargin, scrollwindow, the line-opt)
+    // read these globals; without this they'd stay at the static default
+    // (80×24) on any other terminal size. VLN/VMAXLN are NOT reset here —
+    // the diff path manages them itself (unlike resetvideo, which C only
+    // calls on a size change).
+    {
+        use crate::ported::params::TERMFLAGS;
+        use crate::ported::zsh_h::TERM_SHORT;
+        WINW.store(cols as i32, Ordering::Relaxed); // c:729
+        let real_lines = adjustlines();
+        let rows = if TERMFLAGS.load(Ordering::Relaxed) & TERM_SHORT != 0 {
+            1 // c:730-731
+        } else if real_lines < 2 {
+            24 // c:732-733
+        } else {
+            real_lines
+        };
+        WINH.store(rows as i32, Ordering::Relaxed);
+        RWINH.store(real_lines as i32, Ordering::Relaxed); // c:734
+    }
 
     let prompt = prompt().to_string();
     let rprompt = rprompt().to_string();
@@ -5268,6 +5290,41 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:729-734 — zrefresh syncs the global video width to the terminal
+    /// each frame, so the cursor primitives don't read the stale 80-col
+    /// default. After a frame, WINW must equal adjustcolumns(), regardless
+    /// of any earlier bogus value.
+    #[test]
+    fn zrefresh_syncs_winw_to_terminal() {
+        use crate::ported::utils::adjustcolumns;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        WINW.store(999, Ordering::SeqCst); // bogus stale value
+        *ZLELINE.lock().unwrap() = "x".chars().collect();
+        ZLECS.store(1, Ordering::SeqCst);
+        ZLELL.store(1, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+        NLNCT.store(0, Ordering::SeqCst);
+        OLNCT.store(0, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        assert_eq!(
+            WINW.load(Ordering::SeqCst),
+            adjustcolumns() as i32,
+            "zrefresh must sync WINW to the terminal width"
+        );
     }
 
     /// c:2435-2442 — redisplay homes the cursor (with a safety CR), moves up
