@@ -562,6 +562,45 @@ pub fn spaceinline(ct: i32) {
     if mark_cur > cs {
         MARK.store((mark_cur + ct) as usize, Ordering::SeqCst);
     }
+    // c:827-828 — `if (viinsbegin > zlecs) viinsbegin = 0;`. A buffer
+    // insert before the vi-insert anchor invalidates it.
+    let cs_u = ZLECS.load(Ordering::SeqCst);
+    if crate::ported::zle::zle_main::VIINSBEGIN.load(Ordering::SeqCst) > cs_u {
+        crate::ported::zle::zle_main::VIINSBEGIN.store(0, Ordering::SeqCst);
+    }
+    // c:830-844 — shift the user region-highlight offsets (those past
+    // the N_SPECIAL_HIGHLIGHTS reserved slots) so highlighting stays
+    // aligned with the text after the insertion. Predisplay regions are
+    // measured relative to `predisplaylen`.
+    {
+        use crate::ported::zle::zle_h::{N_SPECIAL_HIGHLIGHTS, ZRH_PREDISPLAY};
+        let predisplaylen = crate::ported::zle::zle_params::get_predisplay()
+            .chars()
+            .count() as i64; // c:836 predisplaylen
+        let zlecs_i = cs_u as i64;
+        let ct_i = ct as i64;
+        let mut rh = crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS
+            .lock()
+            .unwrap();
+        // c:831 — start past the N_SPECIAL_HIGHLIGHTS reserved slots.
+        for rhp in rh.iter_mut().skip(N_SPECIAL_HIGHLIGHTS as usize) {
+            // c:834-837 — `sub = (flags & ZRH_PREDISPLAY) ? predisplaylen : 0`.
+            let sub = if rhp.flags & ZRH_PREDISPLAY != 0 {
+                predisplaylen
+            } else {
+                0
+            };
+            // c:838-839 — `if (rhp->start - sub >= zlecs) rhp->start += ct;`
+            if rhp.start as i64 - sub >= zlecs_i {
+                rhp.start = (rhp.start as i64 + ct_i) as usize;
+            }
+            // c:840-841 — `if (rhp->end - sub >= zlecs && (!predisplaylen
+            //                || zlecs)) rhp->end += ct;`
+            if rhp.end as i64 - sub >= zlecs_i && (predisplaylen == 0 || zlecs_i != 0) {
+                rhp.end = (rhp.end as i64 + ct_i) as usize;
+            }
+        }
+    }
 }
 
 /// Port of `shiftchars(int to, int cnt)` from Src/Zle/zle_utils.c:846.
@@ -2372,6 +2411,60 @@ mod findbol_findeol_tests {
             1,
             "c:851/853 — mark(1) < to(2) → unchanged"
         );
+    }
+
+    /// `Src/Zle/zle_utils.c:830-844` — spaceinline shifts user
+    /// region-highlight offsets past the insertion point so highlighting
+    /// stays aligned. Substrate: the `flags` field added to
+    /// RegionHighlight. The prior port omitted this whole block.
+    #[test]
+    fn spaceinline_shifts_region_highlights() {
+        use crate::ported::zle::zle_h::N_SPECIAL_HIGHLIGHTS;
+        use crate::ported::zle::zle_refresh::{RegionHighlight, REGION_HIGHLIGHTS};
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("abcdefghij", 3); // cursor at 3
+
+        {
+            let mut rh = REGION_HIGHLIGHTS.lock().unwrap();
+            rh.clear();
+            // The first N_SPECIAL_HIGHLIGHTS slots are reserved and skipped.
+            for _ in 0..N_SPECIAL_HIGHLIGHTS {
+                rh.push(RegionHighlight {
+                    start: 0,
+                    end: 0,
+                    attr: Default::default(),
+                    memo: None,
+                    flags: 0,
+                });
+            }
+            // A user region [5,8) entirely past the cursor.
+            rh.push(RegionHighlight {
+                start: 5,
+                end: 8,
+                attr: Default::default(),
+                memo: None,
+                flags: 0,
+            });
+            // A user region [1,2) entirely before the cursor (unaffected).
+            rh.push(RegionHighlight {
+                start: 1,
+                end: 2,
+                attr: Default::default(),
+                memo: None,
+                flags: 0,
+            });
+        }
+
+        spaceinline(2); // open 2 chars at cursor 3
+
+        let rh = REGION_HIGHLIGHTS.lock().unwrap();
+        let past = &rh[N_SPECIAL_HIGHLIGHTS as usize]; // [5,8)
+        assert_eq!(past.start, 7, "start>=zlecs shifts by ct (5→7)");
+        assert_eq!(past.end, 10, "end>=zlecs shifts by ct (8→10)");
+        let before = &rh[N_SPECIAL_HIGHLIGHTS as usize + 1]; // [1,2)
+        assert_eq!(before.start, 1, "region before the cursor is unchanged");
+        assert_eq!(before.end, 2, "region before the cursor is unchanged");
     }
 
     /// `Src/Zle/zle_utils.c:777-844` — `spaceinline(ct)` opens `ct`

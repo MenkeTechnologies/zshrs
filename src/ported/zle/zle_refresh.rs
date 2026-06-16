@@ -1065,6 +1065,7 @@ impl HighlightManager {
             end,
             attr,
             memo: None,
+            flags: 0,
         });
     }
 
@@ -2446,6 +2447,11 @@ pub struct RegionHighlight {
     pub attr: TextAttr,
     /// `memo` field.
     pub memo: Option<String>,
+    /// `flags` field — `ZRH_PREDISPLAY` etc. (Src/Zle/zle_refresh.c
+    /// `struct region_highlight`). Read by `spaceinline`/`shiftchars`
+    /// to decide whether `predisplaylen` is subtracted when shifting
+    /// region offsets on a buffer edit.
+    pub flags: i32,
 }
 
 /// Identifies a fixed slot in zsh's
@@ -3064,7 +3070,6 @@ pub fn set_region_highlight(aval: Option<&[String]>) {
             flags = ZRH_PREDISPLAY; // c:521
             oldstrp = &oldstrp[1..]; // c:522
         }
-        let _ = flags;
         oldstrp = oldstrp.trim_start_matches(|c: char| c == ' ' || c == '\t'); // c:526
         let (start_val, rest1) = crate::ported::utils::zstrtol(oldstrp, 10); // c:529
         let start = if oldstrp.len() == rest1.len() {
@@ -3098,6 +3103,7 @@ pub fn set_region_highlight(aval: Option<&[String]>) {
                 end: end as usize,
                 attr,
                 memo,
+                flags, // c:521 — ZRH_PREDISPLAY from the `P` prefix (was discarded)
             });
         }
     }
