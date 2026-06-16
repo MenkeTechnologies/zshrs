@@ -2333,10 +2333,13 @@ pub fn refreshline(ln: i32) {
     let mut nllen: i32; // c:1757
     let ollen: i32; // c:1757
     let rnllen: i32; // c:1758
+    // c:1817 — `const REFRESH_ELEMENT zr_pad = { ZWC(' '), prompt_attr };`. The
+    // padding cell carries prompt_attr (not 0) so cells cleared/extended by the
+    // diff match the prompt's colour — otherwise a coloured prompt's cleared
+    // tail would render in the default attribute.
     let zr_pad = REFRESH_ELEMENT {
-        // c:1759
         chr: ' ',
-        atr: 0,
+        atr: PROMPT_ATTR.load(Ordering::SeqCst),
     };
 
     // 0: setup                                                          // c:1761
@@ -2670,9 +2673,10 @@ pub fn refreshline(ln: i32) {
                 vcs += i_pad;
                 VCS.store(vcs, Ordering::SeqCst);
                 // c:1996-1997 — `while (i-- > 0) zputc(&zr_pad)`: pad the
-                // overwritten run with spaces.
+                // overwritten run with zr_pad (space + prompt_attr), so the
+                // cleared cells carry the prompt's colour.
                 for _ in 0..i_pad {
-                    zwcputc(&REFRESH_ELEMENT { chr: ' ', atr: 0 }); // c:1997 zr_pad
+                    zwcputc(&zr_pad); // c:1997 zputc(&zr_pad)
                 }
             }
             return; // c:2002
@@ -7621,6 +7625,80 @@ mod tests {
         assert!(
             !s.contains("\x1bDEL"),
             "delete costlier than padding → must NOT emit TCDEL; got {:?}",
+            s
+        );
+    }
+
+    /// c:1817/1997 — zr_pad carries prompt_attr, so cells the diff clears/pads
+    /// keep the prompt's colour. Same cleanup scenario as above but with
+    /// PROMPT_ATTR = bold: the pad space emitted via zputc(&zr_pad) must carry
+    /// the bold SGR (the earlier port hardcoded atr 0, dropping it).
+    #[test]
+    fn refreshline_cleanup_pad_carries_prompt_attr() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        use crate::ported::init::{tclen, tcstr};
+        use crate::ported::zsh_h::TXTBOLDFACE;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        let ins = crate::ported::zsh_h::TCINS as usize;
+        let mins = crate::ported::zsh_h::TCMULTINS as usize;
+        let del = crate::ported::zsh_h::TCDEL as usize;
+        let s_ins = (tclen.lock().unwrap()[ins], tcstr.lock().unwrap()[ins].clone());
+        let s_mins = tclen.lock().unwrap()[mins];
+        let s_del = tclen.lock().unwrap()[del];
+        tclen.lock().unwrap()[ins] = 1;
+        tcstr.lock().unwrap()[ins] = "\x1b[@".to_string();
+        tclen.lock().unwrap()[mins] = 0;
+        tclen.lock().unwrap()[del] = 5; // expensive → cleanup pads (c:1997)
+
+        let save_tf = crate::ported::params::TERMFLAGS.load(Ordering::SeqCst);
+        crate::ported::params::TERMFLAGS.store(0, Ordering::SeqCst); // let bold emit
+        let save_pa = PROMPT_ATTR.load(Ordering::SeqCst);
+        PROMPT_ATTR.store(TXTBOLDFACE, Ordering::SeqCst); // zr_pad picks this up
+
+        let winw = WINW.load(Ordering::SeqCst).max(8);
+        WINH.store(24, Ordering::SeqCst);
+        PUT_RPMPT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst);
+        let mk = |s: &str| -> REFRESH_STRING {
+            let mut r: REFRESH_STRING =
+                s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect();
+            r.resize((winw + 2) as usize, REFRESH_ELEMENT::default());
+            r
+        };
+        *NBUF.lock().unwrap() = vec![mk("abc")];
+        *OBUF.lock().unwrap() = vec![mk("bc")];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        refreshline(0);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        tclen.lock().unwrap()[ins] = s_ins.0;
+        tcstr.lock().unwrap()[ins] = s_ins.1;
+        tclen.lock().unwrap()[mins] = s_mins;
+        tclen.lock().unwrap()[del] = s_del;
+        PROMPT_ATTR.store(save_pa, Ordering::SeqCst);
+        crate::ported::params::TERMFLAGS.store(save_tf, Ordering::SeqCst);
+
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out).into_owned();
+        assert!(
+            s.contains("\x1b[1m"),
+            "the cleanup pad (zr_pad) must carry prompt_attr (bold SGR); got {:?}",
             s
         );
     }
