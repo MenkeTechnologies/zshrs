@@ -1494,9 +1494,32 @@ pub fn zrefresh() {
                 // extra columns of a wide (CJK) glyph with WEOF placeholders.
                 // For the common ASCII case (width 1, COMBININGCHARS off) this
                 // reduces to a single emit_cell — identical to the old emit.
-                let width = unicode_width::UnicodeWidthChar::width(ch)
-                    .unwrap_or(1)
-                    .max(1);
+                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if cw == 0 {
+                    // c:1474-1493 — a zero-width / non-printable orphan (combining
+                    // marks following a base are absorbed above via
+                    // skip_combining; with COMBININGCHARS off they fall here):
+                    // render as the hex escape `<%.04x>` / `<%.08x>`, one cell
+                    // per character.
+                    let hex = if (ch as u32) > 0xffff {
+                        format!("<{:08x}>", ch as u32) // c:1480
+                    } else {
+                        format!("<{:04x}>", ch as u32) // c:1482
+                    };
+                    let mut bail = false;
+                    for hc in hex.chars() {
+                        if emit(&mut rpms, hc, atr) {
+                            // c:1485-1491 — each cell, wrapping at the margin.
+                            bail = true;
+                            break;
+                        }
+                    }
+                    if bail {
+                        break;
+                    }
+                    continue; // c:1493 — char fully rendered
+                }
+                let width = cw;
                 // c:1274-1287 — too wide for the columns left on this line: fill
                 // the remainder with spaces (the last emit wraps via nextline)
                 // so the glyph starts whole on the next line.
@@ -5083,6 +5106,41 @@ mod tests {
             row0.get(idx + 2).map(|c| c.chr),
             Some('a'),
             "'a' must follow the WEOF placeholder, not sit in the wide char's column"
+        );
+    }
+
+    /// c:1474-1493 — with COMBININGCHARS off, a width-0 char is an orphan and
+    /// renders as a `<%.04x>` hex escape rather than overlaying the previous
+    /// glyph. "a" + U+0301 lays out as 'a' then "<0301>".
+    #[test]
+    fn zrefresh_renders_zero_width_orphan_as_hex() {
+        let _g = crate::test_util::global_state_lock();
+        let cc = crate::ported::zsh_h::opt_name(crate::ported::zsh_h::COMBININGCHARS);
+        crate::ported::options::opt_state_set(cc, false); // off → marks are orphans
+        *ZLELINE.lock().unwrap() = "a\u{0301}".chars().collect();
+        ZLECS.store(0, Ordering::SeqCst);
+        ZLELL.store(2, Ordering::SeqCst);
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        let devnull =
+            unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+        zrefresh();
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+
+        let row0: String = NBUF
+            .lock()
+            .unwrap()
+            .first()
+            .map(|r| r.iter().map(|c| c.chr).take_while(|&c| c != '\0').collect())
+            .unwrap_or_default();
+        assert!(
+            row0.contains("a<0301>"),
+            "orphan combining mark must render as <0301> hex; got {:?}",
+            row0
         );
     }
 
