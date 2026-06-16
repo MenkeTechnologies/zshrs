@@ -584,20 +584,22 @@ thread_local! {
 /// Resets `winw_alloc`/`winh_alloc` to 0 so the next [`resetvideo`]
 /// pass reallocates fresh buffers.
 /// WARNING: param names don't match C — Rust=(state) vs C=()
-pub fn freevideo(state: &mut RefreshState) {
-    // c:702-718 — C body walks nbuf/obuf rows calling zfree on each
-    //              REFRESH_STRING, then frees the row arrays
-    //              themselves. Rust drop cascade subsumes both:
-    //              setting the Options to None drops every nested
-    //              Vec atomically.
-    state.old_video = None;
-    state.new_video = None;
-    // c:720-724 — `winw_alloc = winh_alloc = -1;`. Stored on
-    //              RefreshState.columns/lines so the next resetvideo
-    //              comparison forces re-allocation regardless of the
-    //              actual terminal size on next paint.
-    state.columns = 0;
-    state.lines = 0;
+pub fn freevideo() {
+    // c:700
+    // c:702-709 — C walks nbuf/obuf rows calling zfree on each
+    //             REFRESH_STRING, then frees the row arrays. The Rust Vec
+    //             drop cascade subsumes both. Clear the GLOBAL NBUF/OBUF
+    //             (the lifecycle pair of resetvideo, which now allocates
+    //             them), not the RefreshState buffers.
+    *NBUF.lock().unwrap() = Vec::new();
+    *OBUF.lock().unwrap() = Vec::new();
+    // c:716-719 — `nbuf = obuf = NULL; winw_alloc = winh_alloc = -1;`. The
+    //             empty Vecs ARE the NULL state; resetvideo always
+    //             reallocates (no realloc-on-change optimisation), so no
+    //             separate `*_alloc` dimensions are tracked.
+    // c:710-714 — MULTIBYTE_SUPPORT also frees nmwbuf/omwbuf and resets
+    //             nmw_size/nmw_ind; those buffers aren't freed here
+    //             (combining-cluster substrate), deferred.
 }
 
 /// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725.
@@ -3011,8 +3013,7 @@ pub fn zle_refresh_boot() -> RefreshState {
 /// zeroing `n_region_highlights`), then `free_cursor_forms()`.
 pub fn zle_refresh_finish() {
     // c:2720
-    let mut state = RefreshState::new(); // c:2722 freevideo file-statics
-    freevideo(&mut state); // c:2722
+    freevideo(); // c:2722 — frees the global NBUF/OBUF
     let mut rh = REGION_HIGHLIGHTS.lock().unwrap(); // c:2724 if (region_highlights)
     if !rh.is_empty() {
         free_region_highlights_memos(); // c:2726
@@ -5453,6 +5454,19 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
         let _: i32 = tcmultout(0, 0, 0);
+    }
+
+    /// c:700-721 — freevideo clears the global NBUF/OBUF (the lifecycle pair
+    /// of resetvideo); the empty Vecs are C's `nbuf = obuf = NULL` state.
+    #[test]
+    fn freevideo_clears_global_nbuf_obuf() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        *NBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 6]; 3];
+        *OBUF.lock().unwrap() = vec![vec![REFRESH_ELEMENT::default(); 6]; 3];
+        freevideo();
+        assert!(NBUF.lock().unwrap().is_empty(), "NBUF freed");
+        assert!(OBUF.lock().unwrap().is_empty(), "OBUF freed");
     }
 
     /// c:737-755 — resetvideo allocates the global NBUF/OBUF: (winh+1) rows
