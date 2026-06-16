@@ -2563,9 +2563,20 @@ pub fn refreshline(ln: i32) {
         ccs = lpromptw; // c:1867
     }
 
-    // c:1870-1880 — `while (nl->chr == WEOF) { nl++; ccs++; vcs++; ... }`
-    // MULTIBYTE_SUPPORT WEOF realignment. zshrs's REFRESH_CHAR is
-    // `char`; we don't carry a WEOF sentinel, so the loop is empty.
+    // c:1933-1937 — realign to a real character after the prompt-head skip may
+    // have landed nl on a wide-glyph WEOF continuation cell: skip the WEOF
+    // cells, advancing the column counters, and advance ol in step while it
+    // still has content. Now meaningful: ZWC_WEOF gives wide glyphs a distinct
+    // continuation cell (previously '\0'-conflated, so this was a no-op).
+    while nl.first().map(|c| c.chr == ZWC_WEOF).unwrap_or(false) {
+        nl.remove(0); // c:1934 — nl++
+        ccs += 1; // c:1934
+        vcs += 1; // c:1934
+        if ol.first().map(|c| c.chr != '\0').unwrap_or(false) {
+            ol.remove(0); // c:1935-1936 — if (ol->chr) ol++
+        }
+    }
+    VCS.store(vcs, Ordering::SeqCst);
 
     // 3: main display loop                                              // c:1882
     loop {
@@ -5729,6 +5740,59 @@ mod tests {
         assert!(
             s.contains('d'),
             "edit should emit the changed cell 'd'; got {:?}",
+            s
+        );
+    }
+
+    /// The refreshline diff must handle the ZWC_WEOF placeholder cells that
+    /// wide glyphs now produce in NBUF: with old "日Y" and new "日X" (the wide
+    /// ideograph + a trailing char that changed), the shared 日 + its WEOF
+    /// column match and are skipped, only 'X' is emitted, and the WEOF
+    /// placeholder is never written to the wire as a literal U+FFFF.
+    #[test]
+    fn refreshline_diffs_wide_char_line_correctly() {
+        use std::io::Read;
+        use std::os::unix::io::FromRawFd;
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        WINW.store(8, Ordering::SeqCst);
+
+        let wide = |tail: char| -> REFRESH_STRING {
+            let mut r = vec![
+                REFRESH_ELEMENT { chr: '日', atr: 0 },
+                REFRESH_ELEMENT { chr: ZWC_WEOF, atr: 0 },
+                REFRESH_ELEMENT { chr: tail, atr: 0 },
+            ];
+            r.resize(10, REFRESH_ELEMENT::default());
+            r
+        };
+        *OBUF.lock().unwrap() = vec![wide('Y')];
+        *NBUF.lock().unwrap() = vec![wide('X')];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe()");
+        let (rd, wr) = (fds[0], fds[1]);
+        let old = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(wr, Ordering::SeqCst);
+        refreshline(0);
+        crate::ported::init::SHTTY.store(old, Ordering::SeqCst);
+        unsafe { libc::close(wr) };
+        let mut out = Vec::new();
+        let _ = unsafe { std::fs::File::from_raw_fd(rd) }.read_to_end(&mut out);
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.contains('X')
+                && !s.contains('\u{FFFF}')
+                && !s.contains('日'),
+            "wide-char diff must emit only 'X' (skip the matched 日+WEOF) and \
+             never write the WEOF placeholder; got {:?}",
             s
         );
     }
