@@ -1531,7 +1531,12 @@ pub fn refreshline(ln: i32) {
     }
 
     // 2b: automargin niceness                                           // c:1837
-    let vcs = VCS.load(Ordering::SeqCst);
+    // c:1751 — `vcs` is a live video-cursor column. In C it is a global
+    // that `moveto` and every write path keep current; the Rust port must
+    // track it the same way (resync to the moveto target, accumulate on
+    // writes) rather than snapshot it, or the diff engine's column
+    // accounting drifts across loop iterations.
+    let mut vcs = VCS.load(Ordering::SeqCst);
     let mut vln = VLN.load(Ordering::SeqCst);
     if hasam_v && vcs == winw {
         // c:1839
@@ -1545,6 +1550,7 @@ pub fn refreshline(ln: i32) {
         };
         if next_is_nl {
             vln += 1; // c:1899 vln++, vcs = 1
+            vcs = 1;
             VLN.store(vln, Ordering::SeqCst);
             VCS.store(1, Ordering::SeqCst);
             // c:1900-1903 — output the first cell of the next line, or a
@@ -1573,6 +1579,7 @@ pub fn refreshline(ln: i32) {
             }
         } else {
             vln += 1; // c:1911 vln++, vcs = 0
+            vcs = 0;
             VLN.store(vln, Ordering::SeqCst);
             VCS.store(0, Ordering::SeqCst);
             zwcputc(&REFRESH_ELEMENT { chr: '\n', atr: 0 }); // c:1912 zr_nl
@@ -1643,10 +1650,12 @@ pub fn refreshline(ln: i32) {
                     .and_then(|row| row.get((winw - 1) as usize))
                     .map(|c| c.chr);
                 moveto(ln as usize, (winw - 1) as usize); // c:1966
+                vcs = winw - 1; // moveto repositioned the cursor
                 if let Some(c) = deferred {
                     zwcputc(&REFRESH_ELEMENT { chr: c, atr: 0 }); // c:1967 zputc(nl)
                 }
-                VCS.store(vcs + 1, Ordering::SeqCst); // c:1968 vcs++
+                vcs += 1; // c:1968 vcs++
+                VCS.store(vcs, Ordering::SeqCst);
                 return; // c:1969
             }
             if char_ins <= 0 || ccs >= winw {
@@ -1667,6 +1676,7 @@ pub fn refreshline(ln: i32) {
         }
 
         moveto(ln as usize, ccs as usize); // c:1923
+        vcs = ccs; // c:1923 — moveto leaves the cursor (vcs) at ccs
 
         // c:1925-1929 — if we can finish via clear-to-eol, do so
         if col_cleareol >= 0 && ccs >= col_cleareol {
@@ -1692,7 +1702,8 @@ pub fn refreshline(ln: i32) {
                 tc_delchars(i_pad);
             } else {
                 // c:1996 — `vcs += i`.
-                VCS.store(vcs + i_pad, Ordering::SeqCst);
+                vcs += i_pad;
+                VCS.store(vcs, Ordering::SeqCst);
                 // c:1996-1997 — `while (i-- > 0) zputc(&zr_pad)`: pad the
                 // overwritten run with spaces.
                 for _ in 0..i_pad {
@@ -1716,7 +1727,8 @@ pub fn refreshline(ln: i32) {
                 // c:1958 — `zwrite(nl, i)`: emit the new line's first
                 // `i_write` cells (zwcwrite loops zwcputc over them).
                 zwcwrite(&nl, i_write as usize);
-                VCS.store(vcs + i_write, Ordering::SeqCst); // c:1959 vcs += i
+                vcs += i_write; // c:1959 vcs += i
+                VCS.store(vcs, Ordering::SeqCst);
             }
             if col_cleareol >= 0 {
                 // c:1960
@@ -1798,7 +1810,8 @@ pub fn refreshline(ln: i32) {
                             } // c:2018 nl += i
                         }
                         char_ins += i_try; // c:2025
-                        VCS.store(vcs + i_try, Ordering::SeqCst);
+                        vcs += i_try;
+                        VCS.store(vcs, Ordering::SeqCst);
                         ccs += i_try; // c:2026
                                       // c:2031-2047 — truncate oldline if past right edge.
                         let mut k = 0i32;
@@ -1849,7 +1862,8 @@ pub fn refreshline(ln: i32) {
                 ol.remove(0); // c:2087 ol++
             }
             ccs += 1; // c:2088
-            VCS.store(vcs + 1, Ordering::SeqCst);
+            vcs += 1; // c:2089 vcs++
+            VCS.store(vcs, Ordering::SeqCst);
 
             // c:2094-2095 — WEOF do-while: zshrs has no WEOF sentinel.
             break;
@@ -3872,6 +3886,45 @@ mod tests {
             s.contains('d'),
             "edit should emit the changed cell 'd'; got {:?}",
             s
+        );
+    }
+
+    /// c:1923/2089 — after refreshline edits "abc"→"abd", the video cursor
+    /// (VCS) must land at column 3: moveto repositions to ccs=2 (past the
+    /// "ab" common prefix), then writing 'd' advances it to 3. The previous
+    /// snapshot port left the local `vcs` frozen at its initial 0, so it
+    /// stored VCS=1 (0+1) — wrong. This pins the live-tracker fix.
+    #[test]
+    fn refreshline_tracks_vcs_across_prefix_skip() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+
+        // Output goes to /dev/null; we only assert the VCS tracker here.
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY) };
+        let old_shtty = crate::ported::init::SHTTY.load(Ordering::SeqCst);
+        crate::ported::init::SHTTY.store(devnull, Ordering::SeqCst);
+
+        let mk = |s: &str| -> REFRESH_STRING {
+            s.chars().map(|c| REFRESH_ELEMENT { chr: c, atr: 0 }).collect()
+        };
+        *OBUF.lock().unwrap() = vec![mk("abc")];
+        *NBUF.lock().unwrap() = vec![mk("abd")];
+        NLNCT.store(1, Ordering::SeqCst);
+        OLNCT.store(1, Ordering::SeqCst);
+        VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
+        CLEAREOL.store(0, Ordering::SeqCst);
+        LPROMPTW.store(0, Ordering::SeqCst);
+        crate::ported::init::hasam.store(0, Ordering::SeqCst);
+
+        refreshline(0);
+
+        crate::ported::init::SHTTY.store(old_shtty, Ordering::SeqCst);
+        unsafe { libc::close(devnull) };
+        assert_eq!(
+            VCS.load(Ordering::SeqCst),
+            3,
+            "VCS must track to column 3 (ccs=2 after prefix skip + 1 written cell)"
         );
     }
 
