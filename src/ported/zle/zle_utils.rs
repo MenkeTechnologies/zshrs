@@ -618,34 +618,45 @@ pub fn shiftchars(to: i32, cnt: i32) {
         MARK.store(to.max(0) as usize, Ordering::SeqCst); // c:854
     }
 
-    // c:892-908 (!meta branch) — walk
-    // region_highlights[N_SPECIAL_HIGHLIGHTS..n_region_highlights]
-    // and adjust each entry's `start`/`end` by the same rule as
-    // mark: shift past the cut, or clamp to `to`. ZRH_PREDISPLAY-
-    // subtraction (`sub = predisplaylen`) is omitted — the Rust
-    // RegionHighlight struct doesn't carry the flag bit yet.
-    use crate::ported::zle::zle_h::N_SPECIAL_HIGHLIGHTS;
+    // c:888-908 (!meta branch) — walk
+    // region_highlights[N_SPECIAL_HIGHLIGHTS..n_region_highlights] and
+    // adjust each entry's `start`/`end` by the same rule as mark: shift
+    // past the cut, or clamp. Predisplay regions (ZRH_PREDISPLAY) are
+    // measured relative to `predisplaylen` — now that RegionHighlight
+    // carries the `flags` bit, the `sub = predisplaylen` subtraction is
+    // wired faithfully (was hardcoded sub=0).
+    use crate::ported::zle::zle_h::{N_SPECIAL_HIGHLIGHTS, ZRH_PREDISPLAY};
     use crate::ported::zle::zle_refresh::REGION_HIGHLIGHTS;
     let n_special = N_SPECIAL_HIGHLIGHTS as usize;
+    let predisplaylen = crate::ported::zle::zle_params::get_predisplay()
+        .chars()
+        .count() as i64; // c:888 predisplaylen
+    let to_i = to as i64;
+    let cnt_i = cnt as i64;
     if let Ok(mut rh) = REGION_HIGHLIGHTS.lock() {
         let total = rh.len();
-        let upper = total;
-        for idx in n_special..upper {
+        for idx in n_special..total {
             let entry = &mut rh[idx];
-            // c:892 — `if (rhp->start - sub > to)` with sub=0.
-            if (entry.start as i32) > to {
-                if (entry.start as i32) > to + cnt {
-                    entry.start = entry.start.saturating_sub(cnt as usize); // c:894
+            // c:890-891 — `sub = (flags & ZRH_PREDISPLAY) ? predisplaylen : 0`.
+            let sub = if entry.flags & ZRH_PREDISPLAY != 0 {
+                predisplaylen
+            } else {
+                0
+            };
+            // c:892-897 — `if (rhp->start - sub > to) { ... }`
+            if entry.start as i64 - sub > to_i {
+                if entry.start as i64 - sub > to_i + cnt_i {
+                    entry.start = (entry.start as i64 - cnt_i).max(0) as usize; // c:894
                 } else {
-                    entry.start = to.max(0) as usize; // c:896
+                    entry.start = (to_i + sub).max(0) as usize; // c:896
                 }
             }
-            // c:898 — `if (rhp->end - sub > to)` with sub=0.
-            if (entry.end as i32) > to {
-                if (entry.end as i32) > to + cnt {
-                    entry.end = entry.end.saturating_sub(cnt as usize); // c:900
+            // c:898-903 — `if (rhp->end - sub > to) { ... }`
+            if entry.end as i64 - sub > to_i {
+                if entry.end as i64 - sub > to_i + cnt_i {
+                    entry.end = (entry.end as i64 - cnt_i).max(0) as usize; // c:900
                 } else {
-                    entry.end = to.max(0) as usize; // c:902
+                    entry.end = (to_i + sub).max(0) as usize; // c:902
                 }
             }
         }
@@ -2411,6 +2422,54 @@ mod findbol_findeol_tests {
             1,
             "c:851/853 — mark(1) < to(2) → unchanged"
         );
+    }
+
+    /// `Src/Zle/zle_utils.c:890-903` — shiftchars subtracts
+    /// `predisplaylen` for ZRH_PREDISPLAY regions before comparing against
+    /// the cut point. Substrate: the `flags` field on RegionHighlight
+    /// (was hardcoded sub=0). Verify a predisplay region adjusts
+    /// differently from a plain one.
+    #[test]
+    fn shiftchars_predisplay_region_subtracts_predisplaylen() {
+        use crate::ported::zle::zle_h::{N_SPECIAL_HIGHLIGHTS, ZRH_PREDISPLAY};
+        use crate::ported::zle::zle_refresh::{RegionHighlight, REGION_HIGHLIGHTS};
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        zle_with("abcdefghij", 0);
+        crate::ported::zle::zle_params::set_predisplay(Some("12345")); // predisplaylen=5
+
+        let mk = |start: usize, end: usize, flags: i32| RegionHighlight {
+            start,
+            end,
+            attr: Default::default(),
+            memo: None,
+            flags,
+        };
+        {
+            let mut rh = REGION_HIGHLIGHTS.lock().unwrap();
+            rh.clear();
+            for _ in 0..N_SPECIAL_HIGHLIGHTS {
+                rh.push(mk(0, 0, 0));
+            }
+            rh.push(mk(6, 8, ZRH_PREDISPLAY)); // predisplay region
+            rh.push(mk(6, 8, 0)); // plain region, same offsets
+        }
+
+        // shiftchars(to=0, cnt=2): delete 2 chars at position 0.
+        shiftchars(0, 2);
+
+        let rh = REGION_HIGHLIGHTS.lock().unwrap();
+        let pre = &rh[N_SPECIAL_HIGHLIGHTS as usize];
+        let plain = &rh[N_SPECIAL_HIGHLIGHTS as usize + 1];
+        // Predisplay: start-sub=1 not > to+cnt=2 → clamp start=to+sub=5;
+        //             end-sub=3 > 2 → end -= cnt = 6.
+        assert_eq!((pre.start, pre.end), (5, 6), "predisplay region uses sub=5");
+        // Plain (sub=0): start=6 > 2 → start -= 2 = 4; end=8 → 6.
+        assert_eq!((plain.start, plain.end), (4, 6), "plain region uses sub=0");
+        // The two diverge precisely because of the predisplay subtraction.
+        assert_ne!(pre.start, plain.start);
+
+        crate::ported::zle::zle_params::set_predisplay(None);
     }
 
     /// `Src/Zle/zle_utils.c:830-844` — spaceinline shifts user
