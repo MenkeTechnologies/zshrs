@@ -1344,6 +1344,9 @@ pub fn zrefresh() {
     // Single buffer wraps at `cols`; row = cursor_col / cols, col = rem.
     let cols_c = cols.max(1);
     moveto(cursor_col / cols_c, cursor_col % cols_c);
+    // c:1742 — `cursor_form()`: update the terminal cursor shape (block /
+    // beam / underline) for the current ZLE state once it's repositioned.
+    crate::ported::zle::termquery::cursor_form();
 }
 
 impl HighlightManager {
