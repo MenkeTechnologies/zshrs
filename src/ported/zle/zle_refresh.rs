@@ -1007,17 +1007,34 @@ pub fn addmultiword(
 /// Direct port of `void bufswap(void)` from `Src/Zle/zle_refresh.c:946`.
 /// Swap the new/old video buffers — "better than freeing/allocating
 /// every time" (c:944): last frame's NBUF becomes this frame's OBUF.
-/// Operates on the global NBUF/OBUF as C does on the global nbuf/obuf.
+/// Operates on the global NBUF/OBUF as C does on the global nbuf/obuf, and
+/// (MULTIBYTE_SUPPORT) the NMWBUF/OMWBUF multiword stores + nmw_size/omw_size,
+/// resetting nmw_ind = 1 for the next build.
 pub fn bufswap() {
     // c:946
     // c:954-956 — `qbuf = nbuf; nbuf = obuf; obuf = qbuf;`
     let mut nbuf = NBUF.lock().unwrap();
     let mut obuf = OBUF.lock().unwrap();
     std::mem::swap(&mut *nbuf, &mut *obuf);
-    // c:960-968 — MULTIBYTE_SUPPORT also swaps the multiword buffers
-    // (nmwbuf/omwbuf + nmw_size) and resets nmw_ind = 1; those buffers
-    // aren't ported (combining-cluster substrate), so that shadow swap
-    // is deferred.
+    // c:960-968 — MULTIBYTE_SUPPORT: likewise swap the multiword buffers so
+    // the cluster store follows nbuf→obuf, then restart the new buffer's
+    // insert point. Now that zwcputc reads NMWBUF live (c:633-643), this keeps
+    // last frame's clusters in OMWBUF (the diff's old side) while the next
+    // build refills NMWBUF from nmw_ind=1 (c:967 — 1, not 0, so a fresh cell's
+    // index can never look like the NUL/empty-cell sentinel; see c:43).
+    NMWBUF.with(|nmw| {
+        OMWBUF.with(|omw| {
+            std::mem::swap(&mut *nmw.borrow_mut(), &mut *omw.borrow_mut()); // c:961-963
+        });
+    });
+    NMW_SIZE.with(|ns| {
+        OMW_SIZE.with(|os| {
+            let t = ns.get(); // c:965-967 — itmp = nmw_size; nmw_size = omw_size; omw_size = itmp;
+            ns.set(os.get());
+            os.set(t);
+        });
+    });
+    NMW_IND.with(|ind| ind.set(1)); // c:967 — nmw_ind = 1
 }
 /// `zrefresh` — see implementation.
 pub fn zrefresh() {
@@ -6456,6 +6473,35 @@ mod tests {
         let ob: String = OBUF.lock().unwrap()[0].iter().map(|c| c.chr).collect();
         assert_eq!(nb, "old", "NBUF must hold the previously-old buffer");
         assert_eq!(ob, "new", "OBUF must hold the previously-new buffer");
+    }
+
+    /// c:960-968 — bufswap also swaps the multiword stores (NMWBUF/OMWBUF +
+    /// nmw_size/omw_size) and resets nmw_ind = 1, so last frame's clusters
+    /// stay on the diff's old side while the next build refills from a fresh
+    /// index. Required for the live zwcputc multiword reader (c:633-643).
+    #[test]
+    fn bufswap_swaps_multiword_buffers_and_resets_index() {
+        let _g = crate::test_util::global_state_lock();
+        let _g2 = zle_test_setup();
+        NMWBUF.with(|b| *b.borrow_mut() = vec![0, 11, 22]);
+        OMWBUF.with(|b| *b.borrow_mut() = vec![0, 99]);
+        NMW_SIZE.with(|c| c.set(3));
+        OMW_SIZE.with(|c| c.set(2));
+        NMW_IND.with(|c| c.set(7));
+        *NBUF.lock().unwrap() = vec![];
+        *OBUF.lock().unwrap() = vec![];
+
+        bufswap();
+
+        NMWBUF.with(|b| {
+            assert_eq!(*b.borrow(), vec![0, 99], "NMWBUF now holds the old store")
+        });
+        OMWBUF.with(|b| {
+            assert_eq!(*b.borrow(), vec![0, 11, 22], "OMWBUF now holds the new store")
+        });
+        assert_eq!(NMW_SIZE.with(|c| c.get()), 2, "nmw_size swapped");
+        assert_eq!(OMW_SIZE.with(|c| c.get()), 3, "omw_size swapped");
+        assert_eq!(NMW_IND.with(|c| c.get()), 1, "nmw_ind reset to 1 (c:967)");
     }
 
     /// c:2247-2250 — tc_rightcurs prefers the real loaded TCMULTRIGHT
