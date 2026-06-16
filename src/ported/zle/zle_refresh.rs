@@ -3410,12 +3410,12 @@ pub static ZR_START_ELLIPSIS: &[REFRESH_ELEMENT] = &[
     },
 ];
 
-/// Port of `tcinscost(X)` macro from `Src/Zle/zle_refresh.c:1724`.
+/// Port of the `tcinscost(X)` macro from `Src/Zle/zle_refresh.c:1782`.
 /// `#define tcinscost(X) (tccan(TCMULTINS) ? tclen[TCMULTINS] : (X)*tclen[TCINS])`.
-/// Cost (in chars) to insert `x` characters: pick the multi-insert
-/// terminal capability if available, else linear cost via single-insert.
-/// `tccan`/`tclen` are terminal-capability probes (Src/init.c globals);
-/// without them ported we approximate with the single-insert path.
+/// Cost (in chars) to insert `x` characters: the parametrised multi-insert
+/// capability if the terminal has it, else `x` single-inserts. `tccan(X)`
+/// is `tclen[X]` (zsh.h:2680); the `tclen` substrate (init.rs) is populated
+/// by the termcap loader, so the real costs are read here.
 #[inline]
 pub fn tcinscost(x: i32) -> i32 {
     // c:1782 — `#define tcinscost(X)
@@ -3434,7 +3434,7 @@ pub fn tcinscost(x: i32) -> i32 {
     }
 }
 
-/// Port of `tcdelcost(X)` macro from `Src/Zle/zle_refresh.c:1725`.
+/// Port of the `tcdelcost(X)` macro from `Src/Zle/zle_refresh.c:1783`.
 /// `#define tcdelcost(X) (tccan(TCMULTDEL) ? tclen[TCMULTDEL] : (X)*tclen[TCDEL])`.
 #[inline]
 pub fn tcdelcost(x: i32) -> i32 {
