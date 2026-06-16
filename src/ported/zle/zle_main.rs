@@ -315,80 +315,138 @@ fn calc_timeout(do_keytmout: bool) -> ztmout {
 /// C source uses EOF as the same sentinel.
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, cptr, full)
 pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
-    // Check unget buffer first
+    use std::os::unix::io::AsRawFd;
+
+    // c:541 — drain the unget buffer first.
     if let Some(b) = KUNGETBUF.lock().unwrap().pop_front() {
         return Some(b);
     }
 
     let timeout = calc_timeout(do_keytmout);
+    let have_timeout = timeout.tp != ztmouttp::ZTM_NONE;
+    let shtty = io::stdin().as_raw_fd();
 
-    let timeout_duration = if timeout.tp != ztmouttp::ZTM_NONE {
-        Some(Duration::from_millis((timeout.exp100ths * 10) as u64))
-    } else {
-        None
-    };
+    // c:531-577 — snapshot the watched fds (a `zle -F` handler may delete
+    // one mid-loop) as (fd, func, widget) tuples.
+    let watches: Vec<(i32, String, i32)> = WATCH_FDS
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|w| (w.fd, w.func.clone(), w.widget))
+        .collect();
+    let nwatch = watches.len();
 
-    // Use poll/select to wait for input with timeout
-    let mut buf = [0u8; 1];
-
-    if let Some(dur) = timeout_duration {
-        // Set up poll
-        let start = Instant::now();
+    // c:532 — `if (nwatch || tmout.tp != ZTM_NONE)`: poll SHTTY together
+    // with the watched fds, dispatching `zle -F` handlers as they fire.
+    // This replaces the previous busy-wait sleep loop with a real poll(2).
+    if nwatch > 0 || have_timeout {
+        // c:565-577 — pollfd array: SHTTY first, then each watch fd.
+        let mut fds: Vec<libc::pollfd> = Vec::with_capacity(1 + nwatch);
+        fds.push(libc::pollfd {
+            fd: shtty,
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        for w in &watches {
+            fds.push(libc::pollfd {
+                fd: w.0,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        let ready = libc::POLLIN | libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
         loop {
-            if start.elapsed() >= dur {
-                return None; // Timeout
-            }
-
-            // Try non-blocking read
-            match try_read_byte(&mut buf) {
-                Ok(true) => return Some(buf[0]),
-                Ok(false) => {
-                    // No data, sleep a bit and retry
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => return None,
-            }
-        }
-    } else {
-        // No timeout requested. C zsh's `raw_getbyte()` here calls
-        // `read(SHTTY, cptr, 1)` (zle_main.c:560) where SHTTY has
-        // been put into raw mode (VMIN=1, VTIME=0, ICANON cleared)
-        // by `zsetterm()` in zle_main.c:210. In that mode the read
-        // returns one byte per keystroke. Outside ZLE, when stdin
-        // is a TTY in canonical mode (e.g. unit tests, or zshrs not
-        // yet inside a ZLE session), a bare `read` would block
-        // until a full line is typed — which deadlocks tests like
-        // `widget_universal_argument(empty unget_buf)` that expect
-        // None when no input is pending. Detect that case via
-        // `isatty + tcgetattr(ICANON)` and return None instead of
-        // blocking; only honour the C-faithful blocking read when
-        // we know the descriptor is in raw mode.
-        use std::os::unix::io::AsRawFd;
-        let fd = io::stdin().as_raw_fd();
-        // POSIX guarantees isatty returns "non-zero" on true
-        // with the exact value implementation-defined. The
-        // `== 1` strict check is brittle; use `!= 0` to match
-        // the C source's truthy `if (isatty(fd))` semantics.
-        let is_tty = unsafe { libc::isatty(fd) } != 0;
-        let in_raw_mode = if is_tty {
-            let mut t: libc::termios = unsafe { std::mem::zeroed() };
-            if unsafe { libc::tcgetattr(fd, &mut t) } == 0 {
-                (t.c_lflag & libc::ICANON) == 0
+            // c:579-583 — poll timeout in ms (-1 = block forever).
+            let poll_timeout: libc::c_int = if have_timeout {
+                (timeout.exp100ths * 10) as libc::c_int
             } else {
-                false
+                -1
+            };
+            let selret =
+                unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, poll_timeout) };
+
+            // c:632-634 — let a user interrupt through immediately.
+            if selret < 0 && crate::ported::utils::errflag.load(Ordering::SeqCst) != 0 {
+                return None;
             }
-        } else {
-            // Pipe / file / closed — `read` returns Ok(0) on EOF
-            // immediately, so blocking is fine here too.
-            true
-        };
-        if !in_raw_mode {
-            return None;
+            // c:638-643 — EINTR retries; any other poll error gives up.
+            if selret < 0 {
+                if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                return None;
+            }
+            // c:646-660 — timed out, nothing ready (ZTM_KEY → -2/none).
+            if selret == 0 {
+                return None;
+            }
+            // c:710-714 — terminal input ready: break out and read it.
+            if fds[0].revents & ready != 0 {
+                break;
+            }
+            // c:715-772 — service each ready watch fd's handler.
+            for (i, w) in watches.iter().enumerate() {
+                let re = fds[i + 1].revents;
+                if re & ready == 0 {
+                    continue;
+                }
+                let fdbuf = w.0.to_string(); // c:739 — convbase(buf, fd, 10)
+                if w.2 != 0 {
+                    // c:747-748 — call the handler as a widget.
+                    crate::ported::zle::zle_utils::zlecallhook(&w.1, Some(&fdbuf));
+                } else {
+                    // c:750-771 — call as a function: name, fd, then flags.
+                    let mut args: Vec<String> = vec![w.1.clone(), fdbuf];
+                    if re & libc::POLLERR != 0 {
+                        args.push("err".to_string()); // c:758
+                    }
+                    if re & libc::POLLHUP != 0 {
+                        args.push("hup".to_string()); // c:762
+                    }
+                    if re & libc::POLLNVAL != 0 {
+                        args.push("nval".to_string()); // c:766
+                    }
+                    crate::ported::utils::callhookfunc(&w.1, Some(&args), 0, std::ptr::null_mut());
+                    // c:770
+                }
+                // c:776-778 — clear any handler error; nothing to recover.
+                crate::ported::utils::errflag
+                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+            }
+            // loop: re-poll now that the handlers have run.
         }
-        match io::stdin().read(&mut buf) {
+        // c:560 — terminal input is ready; read one byte.
+        let mut buf = [0u8; 1];
+        return match io::stdin().read(&mut buf) {
             Ok(1) => Some(buf[0]),
             _ => None,
+        };
+    }
+
+    // c:560 — no watches and no timeout: a simple blocking read. Outside a
+    // live ZLE session (e.g. unit tests) stdin may be in canonical mode,
+    // where a bare read blocks until a full line; detect that via isatty +
+    // ICANON and return None instead of deadlocking. Only the C-faithful
+    // blocking read runs when the fd is genuinely in raw mode.
+    let mut buf = [0u8; 1];
+    let is_tty = unsafe { libc::isatty(shtty) } != 0;
+    let in_raw_mode = if is_tty {
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(shtty, &mut t) } == 0 {
+            (t.c_lflag & libc::ICANON) == 0
+        } else {
+            false
         }
+    } else {
+        // Pipe / file / closed — read returns Ok(0) on EOF immediately.
+        true
+    };
+    if !in_raw_mode {
+        return None;
+    }
+    match io::stdin().read(&mut buf) {
+        Ok(1) => Some(buf[0]),
+        _ => None,
     }
 }
 
