@@ -4577,18 +4577,19 @@ pub fn try_dump_file(
 
     crate::ported::signals::queue_signals();
 
-    // c:3771-3777 — try digest if newer than (or in absence of) wc/file.
+    // zsh compares `st_mtime` (time_t SECONDS) with `>=` (c:3772-3780). Use
+    // second-granularity mtime — NOT SystemTime (`.modified()`), whose
+    // nanosecond precision disagrees with zsh whenever the dump and source
+    // share a second but differ in nsec, making autoload .zwc preference flaky.
+    use std::os::unix::fs::MetadataExt;
+
+    // c:3771-3777 — use the digest when it is >= both the per-fn .zwc and the
+    // source (or those are absent).
     if let Ok(std_m) = &std_meta {
-        let dig_mtime = std_m.modified().ok();
-        let wc_newer_or_missing = match &stc_meta {
-            Err(_) => true,
-            Ok(c) => dig_mtime >= c.modified().ok(),
-        };
-        let src_newer_or_missing = match &stn_meta {
-            Err(_) => true,
-            Ok(n) => dig_mtime >= n.modified().ok(),
-        };
-        if wc_newer_or_missing && src_newer_or_missing {
+        let dig_s = std_m.mtime();
+        let dig_ge_wc = stc_meta.as_ref().map_or(true, |c| dig_s >= c.mtime()); // c:3772
+        let dig_ge_src = stn_meta.as_ref().map_or(true, |n| dig_s >= n.mtime()); // c:3773
+        if dig_ge_wc && dig_ge_src {
             if let Some(prog) = check_dump_file(&dig, std_m, name, test_only) {
                 unqueue_signals();
                 return Some(prog);
@@ -4596,13 +4597,10 @@ pub fn try_dump_file(
         }
     }
 
-    // c:3779-3784 — try per-function .zwc if newer than (or in absence of) source.
+    // c:3779-3784 — try per-function .zwc when it is >= the source (or absent).
     if let Ok(stc_m) = &stc_meta {
-        let wc_mtime = stc_m.modified().ok();
-        let src_newer_or_missing = match &stn_meta {
-            Err(_) => true,
-            Ok(n) => wc_mtime >= n.modified().ok(),
-        };
+        let wc_s = stc_m.mtime();
+        let src_newer_or_missing = stn_meta.as_ref().map_or(true, |n| wc_s >= n.mtime()); // c:3780
         if src_newer_or_missing {
             if let Some(prog) = check_dump_file(&wc, stc_m, name, test_only) {
                 unqueue_signals();
@@ -4651,8 +4649,11 @@ pub fn try_source_file(file: &str) -> Option<eprog> {
     crate::ported::signals::queue_signals(); // c:3818
                                              // c:3819-3823 — if (!rc && (rn || stc.st_mtime >= stn.st_mtime) && (prog = check_dump_file(...))) return prog;
     if let Ok(meta_c) = &stc {
+        // c:3819 — `stc.st_mtime >= stn.st_mtime`: second-granularity (time_t),
+        // not SystemTime nsec, to agree with zsh on equal-second boundaries.
+        use std::os::unix::fs::MetadataExt;
         let newer_than_src = match (&stc, &stn) {
-            (Ok(c), Ok(n)) => c.modified().ok() >= n.modified().ok(),
+            (Ok(c), Ok(n)) => c.mtime() >= n.mtime(),
             (Ok(_), Err(_)) => true, // c:3819 — `rn` (src missing) ⇒ accept .zwc
             _ => false,
         };
