@@ -538,6 +538,34 @@ pub fn evalcond(
                         _ => 2,
                     };
                 }
+                // c:Src/cond.c:150-188 — a `-X` middle operator that isn't a
+                // builtin cond is a module condition (COND_MODI); with no
+                // matching loadable module zsh emits `zwarnnam(fromtest,
+                // "unknown condition: %s", op)` and errors (errflag aborts the
+                // input). zshrs ships no cond modules, so any unrecognized
+                // `-X` is unknown. Without this the op+RHS were left
+                // unconsumed and the top-level `pos != len` returned 2
+                // silently, so `[[ a -xyz b ]]; echo after` still ran echo.
+                if let Some(op_tok) = peek(*pos) {
+                    if op_tok.starts_with('-') && op_tok.len() > 1 {
+                        match from_test {
+                            Some(n) => crate::ported::utils::zwarnnam(
+                                n,
+                                &format!("unknown condition: {}", op_tok),
+                            ),
+                            None => crate::ported::utils::zerr(&format!(
+                                "unknown condition: {}",
+                                op_tok
+                            )),
+                        }
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        *pos = toks.len();
+                        return 2;
+                    }
+                }
                 // Implicit `-n` (non-empty).
                 b2i(!left.is_empty())
             }
