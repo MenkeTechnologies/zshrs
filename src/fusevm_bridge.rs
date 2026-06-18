@@ -6811,6 +6811,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // MATCH-variable population stays in one place.
         Value::Bool(crate::vm_helper::glob_match_static(&s, &pat))
     });
+    vm.register_builtin(BUILTIN_COND_UNKNOWN, |vm, _argc| {
+        // c:Src/cond.c:150-188 — `zwarnnam(fromtest, "unknown condition: %s",
+        // name)` for a `-X` op with no matching cond module. Like a cond
+        // syntax error it yields status 2 and aborts: arm COND_BAD_PATTERN so
+        // the downstream BUILTIN_COND_STATUS_FROM_BOOL carries the 2 across the
+        // Bool-shaped stack and runs the shared errflag+set_last_status(2)+abort
+        // path (c:Src/exec.c:5216-5221). Returns Bool(false) as the operand.
+        let op = vm.pop().to_str();
+        crate::ported::utils::zerr(&format!("unknown condition: {}", op));
+        COND_BAD_PATTERN.with(|c| c.set(true));
+        Value::Bool(false)
+    });
     vm.register_builtin(BUILTIN_COND_STATUS_FROM_BOOL, |vm, _argc| {
         let ok = vm.pop().to_int() != 0;
         let bad = COND_BAD_PATTERN.with(|c| {
@@ -8579,6 +8591,13 @@ pub const BUILTIN_COND_STRMATCH: u16 = 624;
 /// false→1, but 2 when COND_BAD_PATTERN was armed during this cond
 /// (covers `!=` where LogNot flips the Bool before status time).
 pub const BUILTIN_COND_STATUS_FROM_BOOL: u16 = 625;
+/// `[[ ]]` unknown condition. Pops \[op_name\], emits `zerr("unknown
+/// condition: %s")` and sets ERRFLAG_ERROR so the next BUILTIN_ERREXIT_CHECK
+/// (trigger 4) aborts the input — matching zsh's COND_MODI "unknown condition"
+/// path (Src/cond.c:150-188) for a `-X` op with no matching loadable module.
+/// Returns Bool(false). Replaces a compile-time `eprintln!` hack that printed
+/// the message but never set errflag (so the line didn't abort).
+pub const BUILTIN_COND_UNKNOWN: u16 = 632;
 /// Bare-`exec` redirect epilogue. Consumes `exec.redirect_failed` and
 /// applies the C `done:` tail of execcmd_exec:
 ///   - c:Src/exec.c:252-259 execerr — `redir_err = lastval = 1` (the
