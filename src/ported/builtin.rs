@@ -15318,7 +15318,12 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // bad char. e.g. `%0$s` → "%0$: invalid directive".
                     return Err((out, format!("{}{}: invalid directive", spec, other))); // c:5435
                 }
-                None => out.push('%'),
+                // c:Src/builtin.c:5430-5436 — a bare `%` with nothing
+                // after it (end of format) is an invalid directive, same
+                // as an unknown conversion char: emit any preceding output
+                // then error (rc 1). The previous port pushed a literal
+                // `%`, so `printf '%'` printed `%` with rc 0.
+                None => return Err((out, format!("{}: invalid directive", spec))),
             }
             // c:Src/builtin.c — restore the sequential cursor after a
             // positional conversion (see the swap above).
