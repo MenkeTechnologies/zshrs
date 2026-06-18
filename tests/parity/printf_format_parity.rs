@@ -321,6 +321,22 @@ mod percent_b {
     fn percent_s_doesnt_process_escapes() {
         assert_parity(r#"printf "%s\n" 'a\nb'"#);
     }
+
+    /// `%b` shares `%s` width+precision, applied to the expansion (c:5307-5360).
+    #[test]
+    fn percent_b_width() {
+        assert_parity(r#"printf "[%5b]\n" ab"#);
+    }
+
+    #[test]
+    fn percent_b_width_left() {
+        assert_parity(r#"printf "[%-5b]\n" ab"#);
+    }
+
+    #[test]
+    fn percent_b_width_precision() {
+        assert_parity(r#"printf "[%3.1b]\n" abcdef"#);
+    }
 }
 
 mod char_format {
@@ -330,5 +346,21 @@ mod char_format {
     #[test]
     fn percent_c_first_char() {
         assert_parity(r#"printf "%c\n" hello"#);
+    }
+
+    /// `%c` applies WIDTH/justify but NOT precision (c:5300-5306).
+    #[test]
+    fn percent_c_width_right() {
+        assert_parity(r#"printf "[%3c]\n" x"#);
+    }
+
+    #[test]
+    fn percent_c_width_left() {
+        assert_parity(r#"printf "[%-3c]\n" x"#);
+    }
+
+    #[test]
+    fn percent_c_precision_ignored() {
+        assert_parity(r#"printf "[%.0c]\n" x"#);
     }
 }
