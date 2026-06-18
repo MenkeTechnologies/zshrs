@@ -287,6 +287,18 @@ mod literal_percent {
     fn double_percent_yields_single() {
         assert_parity(r#"printf "100%%\n""#);
     }
+
+    /// A bare `%` at end of format is an invalid directive (rc 1), not a
+    /// literal `%` (c:builtin.c:5430-5436). Preceding output is emitted.
+    #[test]
+    fn bare_trailing_percent_errors() {
+        assert_parity(r#"printf '%'; echo " rc=$?""#);
+    }
+
+    #[test]
+    fn bare_percent_after_text_errors() {
+        assert_parity(r#"printf 'a%' 2>/dev/null; echo " rc=$?""#);
+    }
 }
 
 mod format_reuse {
