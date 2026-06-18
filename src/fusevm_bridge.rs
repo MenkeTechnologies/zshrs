@@ -372,6 +372,32 @@ pub(crate) fn consume_tilde_globsubst_carrier() {
     });
 }
 
+/// Pop `argc` stack slots for a whole-array assignment: the LAST popped
+/// (deepest pushed) is the param name, the rest are the values in stack
+/// order, with any `Value::Array` flattened to its elements. Mirrors the
+/// pop/flatten prologue of BUILTIN_SET_ARRAY / BUILTIN_APPEND_ARRAY.
+fn pop_array_args_with_name(vm: &mut fusevm::VM, argc: u8) -> (String, Vec<String>) {
+    let n = argc as usize;
+    let mut popped: Vec<Value> = Vec::with_capacity(n);
+    for _ in 0..n {
+        popped.push(vm.pop());
+    }
+    popped.reverse();
+    let name = popped.pop().map(|v| v.to_str()).unwrap_or_default();
+    let mut values: Vec<String> = Vec::new();
+    for v in popped {
+        match v {
+            Value::Array(items) => {
+                for it in items {
+                    values.push(it.to_str());
+                }
+            }
+            other => values.push(other.to_str()),
+        }
+    }
+    (name, values)
+}
+
 fn consume_badcshglob() -> bool {
     let v = crate::ported::glob::BADCSHGLOB.swap(0, std::sync::atomic::Ordering::Relaxed);
     if v == 1 {
@@ -2795,6 +2821,54 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
+        Value::Status(status)
+    });
+    // `name[@]=(...)` / `name[*]=(...)` — whole-array SET with the assoc
+    // guard (c:Src/params.c:3324-3327). Stack: [v0..vn, name].
+    vm.register_builtin(BUILTIN_SET_ARRAY_AT, |vm, argc| {
+        let (name, values) = pop_array_args_with_name(vm, argc);
+        let status = with_executor(|exec| {
+            if exec.assoc(&name).is_some() {
+                // c:Src/params.c:3324-3327 — `[@]` (any slice) on a
+                // PM_HASHED target is an error.
+                crate::ported::utils::zerr(&format!(
+                    "{}: attempt to set slice of associative array",
+                    name
+                ));
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                exec.set_last_status(1);
+                return 1;
+            }
+            exec.set_array(name, values); // whole replace (c:3528 setarrvalue)
+            0
+        });
+        Value::Status(status)
+    });
+    // `name[@]+=(...)` / `name[*]+=(...)` — whole-array APPEND (push) with
+    // the same assoc guard.
+    vm.register_builtin(BUILTIN_APPEND_ARRAY_AT, |vm, argc| {
+        let (name, values) = pop_array_args_with_name(vm, argc);
+        let status = with_executor(|exec| {
+            if exec.assoc(&name).is_some() {
+                crate::ported::utils::zerr(&format!(
+                    "{}: attempt to set slice of associative array",
+                    name
+                ));
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                exec.set_last_status(1);
+                return 1;
+            }
+            let mut cur = exec.array(&name).unwrap_or_default();
+            cur.extend(values);
+            exec.set_array(name, cur); // c:3511-3528 AUGMENT on array → push
+            0
+        });
         Value::Status(status)
     });
     vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {
@@ -8404,6 +8478,16 @@ pub const BUILTIN_RUN_COPROC: u16 = 294;
 /// drains args (last popped = name), extends `executor.arrays[name]` (creates
 /// the entry if missing). Mirrors zsh's `+=` semantics for indexed arrays.
 pub const BUILTIN_APPEND_ARRAY: u16 = 295;
+
+/// `name[@]=(...)` / `name[*]=(...)` whole-array SET. Identical to
+/// BUILTIN_SET_ARRAY for an indexed array / scalar (whole replace), but
+/// rejects an associative target with "attempt to set slice of
+/// associative array" (c:Src/params.c:3324-3327).
+pub const BUILTIN_SET_ARRAY_AT: u16 = 633;
+
+/// `name[@]+=(...)` / `name[*]+=(...)` whole-array APPEND. Indexed
+/// append (push), assoc target → same slice-of-assoc error as 633.
+pub const BUILTIN_APPEND_ARRAY_AT: u16 = 634;
 
 /// `select var in words; do body; done` — interactive numbered-menu loop.
 /// Compile emits N word pushes + var-name push + sub-chunk index push, then

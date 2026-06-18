@@ -280,3 +280,64 @@ mod array_in_param_expansion {
         assert_parity(r#"arr=(foo bar baz); print -l "${arr[@]%[oz]}""#);
     }
 }
+
+/// `name[@]=` / `name[*]=` on an assignment LHS selects the WHOLE array
+/// (c:Src/params.c getindex). The prior port rejected these as
+/// "not an identifier: a@" (split_subscript dropped the brackets); now the
+/// compiler routes them to whole-array set/append, scalar RHS → 1-element
+/// array (no word-split), with an assoc-target slice error.
+mod whole_array_subscript_assign {
+    use super::*;
+
+    #[test]
+    fn at_append_scalar() {
+        assert_parity("a=(1 2); a[@]+=3; print -l $a");
+    }
+
+    #[test]
+    fn at_set_array() {
+        assert_parity("a=(1 2); a[@]=(x y z); print -l $a");
+    }
+
+    #[test]
+    fn star_set_array() {
+        assert_parity("a=(1 2); a[*]=(x y z); print -l $a");
+    }
+
+    #[test]
+    fn at_append_array() {
+        assert_parity("a=(1 2); a[@]+=(3 4); print -l $a");
+    }
+
+    #[test]
+    fn at_set_scalar_makes_one_element() {
+        assert_parity("a=(1 2); a[@]=x; print -l $a");
+    }
+
+    #[test]
+    fn at_create_new_array() {
+        assert_parity("a[@]=(new arr); print -l $a");
+    }
+
+    /// scalar RHS to `[@]` is NOT word-split (unlike `a=($foo)`).
+    #[test]
+    fn at_scalar_rhs_no_split() {
+        assert_parity(r#"foo="a b"; typeset -a a; a[@]=$foo; print -l $a"#);
+    }
+
+    #[test]
+    fn at_append_scalar_rhs_no_split() {
+        assert_parity(r#"foo="a b"; a=(1); a[@]+=$foo; print -l $a"#);
+    }
+
+    /// `[@]` on an associative array → slice error (c:3324).
+    #[test]
+    fn at_on_assoc_is_slice_error() {
+        assert_parity("typeset -A h=(a 1 b 2); h[@]=(x y); print -rl -- ${(kv)h}");
+    }
+
+    #[test]
+    fn at_append_on_assoc_is_slice_error() {
+        assert_parity("typeset -A h=(a 1); h[@]+=(x y); echo done");
+    }
+}
