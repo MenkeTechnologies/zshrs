@@ -2662,7 +2662,11 @@ pub fn qualdev(name: &str, buf: &libc::stat, dv: i64, dummy: &str) -> i32 {
 #[allow(unused_variables)]
 pub fn qualnlink(name: &str, buf: &libc::stat, ct: i64, dummy: &str) -> i32 {
     // c:3697
-    let g = G_RANGE.load(Ordering::Relaxed);
+    // c:3699-3701 — `g_range` selects `<` / `>` / `==`. This MUST read the same
+    // `g_range` static the qual-eval sets (glob.rs ~5020) and that qualsize /
+    // qualtime read — not the stale Rust-only `G_RANGE` duplicate, which was
+    // never stored, leaving every `l[+-]N` comparison stuck on `==`.
+    let g = g_range.load(Ordering::Relaxed);
     let nl = buf.st_nlink as i64; // c:3708
     if g < 0 {
         (nl < ct) as i32
@@ -5514,10 +5518,10 @@ pub fn glob_path(pattern: &str) -> Vec<String> {
 }
 
 
-// `g_range` from Src/glob.c — qualifier-comparison direction
-// (-1 = less than, 0 = equal, 1 = greater than).
-/// `G_RANGE` static.
-pub static G_RANGE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// The qualifier-comparison direction static is `g_range` (Src/glob.c, ported at
+// glob.rs ~2799). The duplicate `G_RANGE` that used to live here was a Rust-only
+// erroneous second copy — never written by the qual-eval, so qualnlink (its only
+// reader) was stuck on `==`. Removed; qualnlink now reads `g_range`.
 
 // `mode_to_octal` lives at `crate::ported::utils::mode_to_octal`
 // (port of `Src/utils.c:7634` — 12 bit-by-bit POSIX permission

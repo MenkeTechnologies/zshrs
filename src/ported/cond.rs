@@ -273,8 +273,22 @@ pub fn evalcond(
                                 'G' => b2i(getstat(&arg)
                                     .map(|m| m.gid() == unsafe { libc::getegid() })
                                     .unwrap_or(false)),
+                                // c:380-389 — `-N`: file modified since last
+                                // read. True iff atime <= mtime at full
+                                // (nanosecond) precision: `atime > mtime` →
+                                // false; on an equal-second tie the nsec fields
+                                // break it (`atime_nsec > mtime_nsec` → false).
+                                // Second-only granularity wrongly passed files
+                                // like /dev/null whose atime/mtime share a
+                                // second but differ in nsec.
                                 'N' => b2i(getstat(&arg)
-                                    .map(|m| m.mtime() >= m.atime())
+                                    .map(|m| {
+                                        if m.atime() == m.mtime() {
+                                            m.atime_nsec() <= m.mtime_nsec() // c:385
+                                        } else {
+                                            m.atime() < m.mtime() // c:386
+                                        }
+                                    })
                                     .unwrap_or(false)),
                                 'n' => b2i(!arg.is_empty()),
                                 'z' => b2i(arg.is_empty()),
