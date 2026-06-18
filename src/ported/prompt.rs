@@ -964,112 +964,46 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
 
             // c:509 — `switch (*bv->fm)` — the real escape dispatch.
             let xc = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
-            // c:Src/prompt.c — numeric prefix N on `%/` / `%~` / `%d`
-            // keeps only the trailing N path components. Bug #96 in
-            // docs/BUGS.md: zshrs ignored the prefix and emitted the
-            // full PWD for `%1/` / `%2~` / etc. Reuse the same
-            // truncation helper as `%c`/`%C` arms below.
-            let trunc_to_last = |path: &str, n: usize| -> String {
-                let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-                if parts.len() <= n {
-                    path.to_string()
-                } else {
-                    parts[parts.len() - n..].join("/")
-                }
-            };
+            // Numeric prefix N on `%/` / `%~` / `%d` / `%c` / `%C` (keep N
+            // trailing components; Bug #96) is handled inside `promptpath`,
+            // which all five path directives below now route through.
             match xc {
-                // c:511-514 — `%~` (pwd with home-tilde, optional N
-                // trailing components).
+                // c:540-542 — `%~`: pwd, home/named-dir tilde, optional N
+                // components. Routed through the faithful `promptpath`
+                // (Src/prompt.c:134) so `hash -d` named directories abbreviate
+                // via `finddir` (not just $HOME), the `/homex` false-prefix is
+                // rejected, and negative N (first-N) works — none of which the
+                // inline version did. Passing the live HOME keeps the $HOME
+                // path byte-identical and falls back to finddir otherwise.
                 b'~' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
                     let home = prompt_tls::HOME.with(|c| c.borrow().clone());
-                    let mut s = if !home.is_empty() && pwd.starts_with(&home) {
-                        format!("~{}", &pwd[home.len()..])
-                    } else {
-                        pwd
-                    };
-                    if arg > 0 {
-                        // C `Src/prompt.c::promptpath` walks last N
-                        // components of the post-tilde path. `~/foo/bar`
-                        // with N=1 → `bar`; the tilde itself counts as
-                        // a regular component for the walk, so `~`
-                        // alone (or `~/` after strip) stays unchanged.
-                        s = trunc_to_last(&s, arg as usize);
-                    }
+                    let s = promptpath(&pwd, arg as usize, true, &home); // c:541
                     stradd(bv, &s);
                 }
-                // c:515-518 — `%d` / `%/` (pwd, no tilde, optional N
-                // trailing components). Direct port of
-                // `Src/prompt.c::promptpath(p, npath, 0)`:
-                //   npath > 0: keep last npath components
-                //   npath < 0: drop first |npath| components (keep
-                //              the leading slash + remainder)
-                //   npath == 0: full path
-                // Bug #340 — the negative arm wasn't ported, so
-                // `%-1d` returned the full path.
+                // c:543-546 — `%d` / `%/`: pwd, no tilde, optional N components
+                // (negative N keeps the FIRST |N|; Bug #340).
                 b'd' | b'/' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                    let s = if arg > 0 {
-                        trunc_to_last(&pwd, arg as usize)
-                    } else if arg < 0 {
-                        // c:Src/prompt.c:144-154 — walk from modp+1
-                        // forward, increment npath on each `/`; when
-                        // npath reaches 0, truncate there. For
-                        // "/usr/local" + npath=-1: walk past "u s r",
-                        // hit '/' → npath=0, stop. Truncate at that
-                        // '/' → result "/usr".
-                        let mut npath = arg;
-                        let bytes = pwd.as_bytes();
-                        let mut end = bytes.len();
-                        let mut i = 1usize; // skip leading '/'
-                        while i < bytes.len() {
-                            if bytes[i] == b'/' {
-                                npath += 1;
-                                if npath == 0 {
-                                    end = i;
-                                    break;
-                                }
-                            }
-                            i += 1;
-                        }
-                        pwd[..end].to_string()
-                    } else {
-                        pwd
-                    };
+                    let s = promptpath(&pwd, arg as usize, false, ""); // c:545
                     stradd(bv, &s);
                 }
-                // c:519-522 — `%c`/`%.` (trailing path component, tilde-home)
+                // c:547-550 — `%c` / `%.`: trailing component(s) of the
+                // home/named-dir-abbreviated pwd; `arg ? arg : 1` default.
                 b'c' | b'.' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
                     let home = prompt_tls::HOME.with(|c| c.borrow().clone());
-                    let path = if !home.is_empty() && pwd.starts_with(&home) {
-                        format!("~{}", &pwd[home.len()..])
-                    } else {
-                        pwd
-                    };
-                    let n = if arg > 0 { arg as usize } else { 1 };
-                    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-                    let tail = if parts.len() <= n {
-                        path
-                    } else {
-                        parts[parts.len() - n..].join("/")
-                    };
-                    stradd(bv, &tail);
+                    let n = if arg != 0 { arg } else { 1 }; // c:549 arg ? arg : 1
+                    let s = promptpath(&pwd, n as usize, true, &home);
+                    stradd(bv, &s);
                 }
-                // c:551-556 — `%C` (trailing path component, NO home-tilde).
-                // Like `%c` but skips the home-strip step. Bug #38 in
-                // docs/BUGS.md: previously fell through to the
-                // literal-`%C` default.
+                // c:551-553 — `%C`: like `%c` but no home/named-dir tilde.
+                // Bug #38 in docs/BUGS.md: previously fell through to literal.
                 b'C' => {
                     let pwd = prompt_tls::PWD.with(|c| c.borrow().clone());
-                    let n = if arg > 0 { arg as usize } else { 1 };
-                    let parts: Vec<&str> = pwd.split('/').filter(|s| !s.is_empty()).collect();
-                    let tail = if parts.len() <= n {
-                        pwd
-                    } else {
-                        parts[parts.len() - n..].join("/")
-                    };
-                    stradd(bv, &tail);
+                    let n = if arg != 0 { arg } else { 1 }; // c:552 arg ? arg : 1
+                    let s = promptpath(&pwd, n as usize, false, ""); // c:552
+                    stradd(bv, &s);
                 }
                 // c:540 — `%n` (username)
                 b'n' => {
@@ -4960,6 +4894,33 @@ mod tests {
             crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "~/work");
+    }
+
+    /// `%~` must NOT treat `/homexyz` as living under `/home` — the old inline
+    /// directive did a bare `starts_with` and produced `~xyz`. Routing through
+    /// `promptpath`/`finddir` (which checks the path boundary) keeps the full
+    /// path. Regression guard for the consolidation onto promptpath.
+    #[test]
+    fn putpromptchar_tilde_rejects_partial_home_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_home = std::env::var("HOME").ok();
+        let saved_pwd = std::env::var("PWD").ok();
+        unsafe {
+            std::env::set_var("HOME", "/home");
+            std::env::set_var("PWD", "/homexyz/work");
+        }
+        crate::ported::params::setsparam("HOME", "/home");
+        crate::ported::params::setsparam("PWD", "/homexyz/work");
+        let out = expand_prompt("%~");
+        if let Some(h) = saved_home {
+            unsafe { std::env::set_var("HOME", &h); }
+            crate::ported::params::setsparam("HOME", &h);
+        }
+        if let Some(p) = saved_pwd {
+            unsafe { std::env::set_var("PWD", &p); }
+            crate::ported::params::setsparam("PWD", &p);
+        }
+        assert_eq!(out, "/homexyz/work", "partial home prefix must not tilde-abbreviate");
     }
 
     /// `%d` is the raw pwd with no tilde substitution (c:515-518).
