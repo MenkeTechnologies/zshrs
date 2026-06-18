@@ -78,6 +78,13 @@ pub struct ZshCompiler {
     /// array entry). Distinct from assign_context_depth which is set
     /// for both forms.
     pub scalar_assign_depth: i32,
+    /// Set while compiling a whole-array `name[@]=(...)` / `name[*]=(...)`
+    /// assignment (the array-RHS form recurses through compile_assign with
+    /// the bracket stripped). When true, the array-store emit uses the
+    /// assoc-guarded SET_ARRAY_AT / APPEND_ARRAY_AT builtins so a `[@]`
+    /// LHS on an associative array errors ("attempt to set slice of
+    /// associative array", c:Src/params.c:3324) instead of pair-assigning.
+    pub array_whole_assign: bool,
     /// Subtract this from each pipe's `lineno` when emitting
     /// SET_LINENO calls. Top-level program: 0 (linenos passed
     /// verbatim). Function body: set to (first body line - 1) so
@@ -179,6 +186,7 @@ impl ZshCompiler {
             dq_context_depth: 0,
             assign_context_depth: 0,
             scalar_assign_depth: 0,
+            array_whole_assign: false,
             lineno_offset: 0,
             lineno_addend: 0,
             cmd_stack_depth: 0,
@@ -2755,6 +2763,63 @@ impl ZshCompiler {
         // quote-preserving variant so the key chars survive into the
         // BUILTIN_SET_ASSOC load below. Bug #61 in docs/BUGS.md.
         let untoked_name = crate::lex::untokenize_preserve_quotes(&assign.name);
+        // c:Src/params.c getindex — an assignment LHS whose subscript is
+        // `[@]` or `[*]` selects the WHOLE array (start=0, end=-1):
+        //   `a[@]=(x y z)` ≡ `a=(x y z)`        (replace whole array)
+        //   `a[@]+=v`      ≡ `a+=v`             (push / append)
+        //   `a[@]=scalar`  → ONE-element array  (scalar RHS, NO word-split
+        //                                        — unlike `a=($foo)`)
+        // split_subscript() rejects `[@]`/`[*]` because for READS they are
+        // splice forms (handled by ARRAY_ALL / array_splice_ref). Without
+        // this branch the LHS fell through to the plain-name path, where
+        // untokenize stripped the brackets to `a@`, yielding zsh's
+        // "not an identifier: a@".
+        if let Some(base) = untoked_name
+            .strip_suffix("[@]")
+            .or_else(|| untoked_name.strip_suffix("[*]"))
+        {
+            if !base.is_empty() {
+                match &assign.value {
+                    ZshAssignValue::Array(_) => {
+                        // Identical to plain `base=(...)` / `base+=(...)`
+                        // except the store must reject an associative
+                        // target. Recurse with the bracket stripped and
+                        // flag the store to use the assoc-guarded builtins.
+                        let rewritten = ZshAssign {
+                            name: base.to_string(),
+                            value: assign.value.clone(),
+                            append: assign.append,
+                        };
+                        let prev = self.array_whole_assign;
+                        self.array_whole_assign = true;
+                        self.compile_assign(&rewritten);
+                        self.array_whole_assign = prev;
+                        return;
+                    }
+                    ZshAssignValue::Scalar(s) => {
+                        // Scalar RHS → single-element array. Compile the
+                        // value as a scalar word (assign_context_depth
+                        // suppresses IFS word-split — `a[@]=$foo` keeps
+                        // "a b" as one element), then store the one value
+                        // via the assoc-guarded SET_ARRAY_AT (`=`) /
+                        // APPEND_ARRAY_AT (`+=`).
+                        self.assign_context_depth += 1;
+                        self.compile_word_str(s);
+                        self.assign_context_depth -= 1;
+                        let nc = self.builder.add_constant(Value::str(base));
+                        self.builder.emit(Op::LoadConst(nc), 0);
+                        let bid = if assign.append {
+                            crate::vm_helper::BUILTIN_APPEND_ARRAY_AT
+                        } else {
+                            crate::vm_helper::BUILTIN_SET_ARRAY_AT
+                        };
+                        self.builder.emit(Op::CallBuiltin(bid, 2), 0);
+                        self.builder.emit(Op::Pop, 0);
+                        return;
+                    }
+                }
+            }
+        }
         if let Some((base, key)) = split_subscript(&untoked_name) {
             if let ZshAssignValue::Scalar(s) = &assign.value {
                 // c:Src/params.c:2895 setarrvalue — range subscript
@@ -3198,10 +3263,15 @@ impl ZshCompiler {
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let argc = (stack_values + 1) as u8;
-                let bid = if assign.append {
-                    crate::vm_helper::BUILTIN_APPEND_ARRAY
-                } else {
-                    crate::vm_helper::BUILTIN_SET_ARRAY
+                // `name[@]=(...)` / `name[*]=(...)` (array_whole_assign set
+                // by the [@] branch above) must reject an associative
+                // target (c:Src/params.c:3324); the _AT builtins add that
+                // guard, otherwise identical to SET_ARRAY / APPEND_ARRAY.
+                let bid = match (assign.append, self.array_whole_assign) {
+                    (true, true) => crate::vm_helper::BUILTIN_APPEND_ARRAY_AT,
+                    (true, false) => crate::vm_helper::BUILTIN_APPEND_ARRAY,
+                    (false, true) => crate::vm_helper::BUILTIN_SET_ARRAY_AT,
+                    (false, false) => crate::vm_helper::BUILTIN_SET_ARRAY,
                 };
                 self.builder.emit(Op::CallBuiltin(bid, argc), 0);
                 self.builder.emit(Op::Pop, 0);
