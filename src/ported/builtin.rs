@@ -5910,6 +5910,36 @@ pub fn bin_typeset(
                     }
                 }
             }
+            // c:2528-2533 — the createparam (valueless declare) branch
+            // must ALSO stamp the `-L`/`-R`/`-Z` field width
+            // (typeset_setwidth, c:2002-2011). The base block above
+            // handled `-i`/`-E`/`-F` precision but the width was dropped,
+            // so `typeset -L 10 f` (declare, then assign later) left
+            // pm.width=0 and the value never left/right-justified — and
+            // `typeset -p` rendered `-FL` with no number. The inline-value
+            // arm (the `name=value` path) already stamps width; only this
+            // bare-declare arm was missing it.
+            {
+                let width_arg: Option<&str> = if (on & PM_LEFT) != 0 && OPT_HASARG(&ops, b'L') {
+                    OPT_ARG(&ops, b'L') // c:2003
+                } else if (on & PM_RIGHT_B) != 0 && OPT_HASARG(&ops, b'R') {
+                    OPT_ARG(&ops, b'R') // c:2005
+                } else if (on & PM_RIGHT_Z) != 0 && OPT_HASARG(&ops, b'Z') {
+                    OPT_ARG(&ops, b'Z') // c:2007
+                } else {
+                    None
+                };
+                if let Some(s) = width_arg {
+                    if let Ok(w) = s.trim().parse::<i32>() {
+                        // c:2011 zstrtol
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(arg) {
+                                pm.width = w; // c:2011 pm->width = width
+                            }
+                        }
+                    }
+                }
+            }
             // c:2510+ — stamp post-assign attributes (PM_EXPORTED,
             // PM_READONLY, etc.) on the (possibly newly-created) pm.
             if post_assign_to_set != 0 {

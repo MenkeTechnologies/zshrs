@@ -565,3 +565,41 @@ mod float_getstrvalue_format {
         assert_parity("typeset -F 3 f=2.5; echo $f");
     }
 }
+
+/// `typeset -L N`/`-R N`/`-Z N` field WIDTH must persist when the param
+/// is declared WITHOUT an inline value (the createparam branch,
+/// c:builtin.c:2528-2533 typeset_setwidth) — not only on `name=value`.
+mod valueless_field_width {
+    use super::*;
+
+    #[test]
+    fn left_width_then_assign() {
+        assert_parity(r#"typeset -L 10 f; f="hi"; print "[$f]""#);
+    }
+
+    #[test]
+    fn left_width_then_loop() {
+        assert_parity(r#"typeset -L 10 f; for f in once twice; do print "[$f]"; done"#);
+    }
+
+    #[test]
+    fn right_width_then_assign() {
+        assert_parity(r#"typeset -R 5 r; r=hi; print "[$r]""#);
+    }
+
+    #[test]
+    fn zero_width_then_assign() {
+        assert_parity(r#"typeset -Z 6 z; z=42; print "[$z]""#);
+    }
+
+    /// `-L 10 -F 3` keeps width(10) and precision(3) distinct.
+    #[test]
+    fn width_and_precision_distinct() {
+        assert_parity(r#"typeset -L 10 -F 3 g; g=1.5; print "[$g]""#);
+    }
+
+    #[test]
+    fn typeset_p_shows_width() {
+        assert_parity("typeset -L 10 -F 3 g; typeset -p g");
+    }
+}
