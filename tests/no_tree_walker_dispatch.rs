@@ -1044,7 +1044,15 @@ fn zshflag_array_length_via_pound() {
     // `${(#)x}` is the char-code flag (arith-eval each element, output
     // the corresponding character) — NOT array length. zsh: "65" → "A".
     // `${#arr}` is the actual length form, covered by ARRAY_LENGTH.
-    ok(r#"arr=(65 66 67); echo "${(#)arr}""#, "A B C\n");
+    //
+    // Must be UNQUOTED: `${(#)arr}` converts each element → "A B C". The
+    // QUOTED form `"${(#)arr}"` joins the array to "65 66 67" FIRST, then
+    // arith-evals that multi-number string → empty (verified zsh 5.9.1:
+    // `printf "<%s>" ${(#)arr}` → <A><B><C>; `printf "<%s>" "${(#)arr}"`
+    // → <>). The prior assertion quoted the expansion but expected the
+    // unquoted result, so it asserted non-zsh behavior (zshrs matches zsh
+    // in both forms).
+    ok(r#"arr=(65 66 67); echo ${(#)arr}"#, "A B C\n");
 }
 
 #[test]
