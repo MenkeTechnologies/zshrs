@@ -268,8 +268,13 @@ fn autoload_zwc_mtime_preference() {
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "compiled_body", "zsh sanity (dump newer)");
     assert_eq!(r.stdout, z.stdout, "zshrs ignored newer dump");
-    // Now make the source newer than the dump — the plain file wins.
-    let new = filetime::FileTime::now();
+    // Now make the source newer than the dump — the plain file wins. Use a
+    // fixed far-future mtime rather than `now()`: the .zwc was created moments
+    // earlier, so at second granularity (which both shells compare on) `now()`
+    // can TIE the dump's second under fast/contended execution, flipping
+    // zwc>=source and breaking the test's own premise. 2030 is unambiguously
+    // newer than the just-built dump.
+    let new = filetime::FileTime::from_unix_time(1893456000, 0); // 2030-01-01
     filetime::set_file_mtime(d.path().join("mtfn"), new).unwrap();
     let z = run_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
