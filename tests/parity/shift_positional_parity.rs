@@ -318,3 +318,38 @@ done
         );
     }
 }
+
+/// Bare all-digit name on the LHS of an assignment addresses the
+/// positional parameter $N directly (`2=X`, `2+=end`). zsh maps digit
+/// names onto `argv` (isident accepts them, c:params.c:1336-1340); the
+/// lexer accepts the optional `+` for the augment form (c:1241-1242).
+mod numeric_name_assign {
+    use super::*;
+
+    #[test]
+    fn assign_positional() {
+        assert_parity("set -- a b c; 2=X; echo $2");
+    }
+
+    #[test]
+    fn append_positional() {
+        assert_parity("set -- a b c; 2+=end; echo $2");
+    }
+
+    /// Assigning past $# extends and pads (`5=Z` on 3 args → $#==5).
+    #[test]
+    fn assign_past_end_extends() {
+        assert_parity(r#"set -- a b c; 5=Z; echo "[$5]"; echo $#"#);
+    }
+
+    #[test]
+    fn append_first_positional() {
+        assert_parity(r#"set -- a b c; 1+=Z; echo "$@""#);
+    }
+
+    /// A numeric word in ARGUMENT position stays a literal (not an assign).
+    #[test]
+    fn numeric_word_as_arg_is_literal() {
+        assert_parity("echo 2=3 2+=3");
+    }
+}

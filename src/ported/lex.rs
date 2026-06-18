@@ -4295,14 +4295,23 @@ fn is_valid_assignment_target(s: &str) -> bool {
         }
     }
 
-    // Check for leading digit (invalid)
+    // Leading digit: an all-digit name is a positional-parameter
+    // assignment (`2=X` → $2). c:Src/params.c:1336-1340 isident treats
+    // an all-digit name as a valid identifier; the lexer's assignment
+    // detection (c:1233-1242) then accepts the optional `+` for the
+    // augment form. The prior port required ALL digits with NO trailing
+    // `+`, so `2=X` lexed as ENVSTRING but `2+=end` did not (it became a
+    // command word → "command not found: 2+=end").
     if let Some(&c) = chars.peek() {
         if c.is_ascii_digit() {
-            // Could be array index, check rest
             while let Some(&c) = chars.peek() {
                 if !c.is_ascii_digit() {
                     break;
                 }
+                chars.next();
+            }
+            // c:1241-1242 — `if (*t == '+') t++;` optional `+=` form.
+            if chars.peek() == Some(&'+') {
                 chars.next();
             }
             return chars.peek().is_none();
