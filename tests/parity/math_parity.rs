@@ -676,4 +676,21 @@ mod round_pins {
     fn charcode_missing_char_errors() {
         assert_parity(r#"print $((##))"#);
     }
+
+    /// `forcefloat` promotes integer arithmetic to float (math.c:348/359).
+    #[test]
+    fn force_float_division() {
+        assert_parity("setopt force_float; print $(( 3/4 ))");
+    }
+
+    #[test]
+    fn force_float_integer_literal() {
+        assert_parity("setopt force_float; print $(( 1 ))");
+    }
+
+    /// `cprecedences` switches `(( ))` to C operator precedence (259 vs 1591).
+    #[test]
+    fn cprecedences_uses_c_precedence() {
+        assert_parity("setopt cprecedences; print $(( 4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2 ))");
+    }
 }
