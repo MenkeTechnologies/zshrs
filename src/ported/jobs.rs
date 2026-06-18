@@ -800,6 +800,25 @@ pub fn update_bg_job(jn: &mut [job], pid: i32, status: i32) -> bool {
             jn[ji].procs[pi].status = status;
             jn[ji].procs[pi].endtime = Some(Instant::now());
         }
+        // c:Src/jobs.c:684-699 (update_bg_job) — record a finished
+        // BACKGROUND job's exit status in the bgstatus ring so a later
+        // `wait $pid` can retrieve it after the child is gone (waitpid
+        // returns ECHILD; bin_wait then consults getbgstatus). A bg job
+        // is one not marked STAT_CURSH/STAT_BUILTIN and not the current
+        // foreground job (thisjob). Without this, `(exit 5) & p=$!;
+        // wait $p` reaped the child but dropped its status, so the wait
+        // failed with "pid N is not a child of this shell" (127).
+        let thisjob = *THISJOB
+            .get_or_init(|| Mutex::new(-1))
+            .lock()
+            .expect("thisjob poisoned");
+        if (jn[ji].stat & (stat::CURSH | stat::BUILTIN)) == 0 && ji as i32 != thisjob {
+            if libc::WIFEXITED(status) {
+                addbgstatus(pid, libc::WEXITSTATUS(status)); // c:695
+            } else if libc::WIFSIGNALED(status) {
+                addbgstatus(pid, 0o200 | libc::WTERMSIG(status)); // c:697
+            }
+        }
         update_job(&mut jn[ji]);
         return true;
     }

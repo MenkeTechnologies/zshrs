@@ -359,3 +359,21 @@ fn fg_bg_error_without_job_control() {
 fn dollar_bang_set_by_bg() {
     assert_parity("sleep 5 & [[ -n $! ]] && echo set; kill $!");
 }
+
+// ── wait $pid bgstatus retention (c:Src/jobs.c:684-699 update_bg_job →
+//    addbgstatus; bin_wait getbgstatus fallback c:2566-2570) ──────────
+
+/// `wait $pid` after the bg child has finished must return its stored
+/// exit status (the reap records it in the bgstatus ring), not error
+/// "pid N is not a child of this shell".
+#[test]
+fn wait_pid_after_finish_returns_status() {
+    assert_parity("(exit 5) & p=$!; sleep 0.1; wait $p; echo $?");
+}
+
+/// Waiting on a second bg job must not forget the first — each finished
+/// job's status stays retrievable.
+#[test]
+fn wait_two_pids_each_status_retained() {
+    assert_parity(r#"(exit 1) & p=$!; (exit 2) & q=$!; wait $q; echo "q=$?"; wait $p; echo "p=$?""#);
+}
