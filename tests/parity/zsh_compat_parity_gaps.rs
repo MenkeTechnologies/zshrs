@@ -2813,7 +2813,12 @@ mod corpus_dash_fc_bulk_ah {
         bulk_ah_fc_row_086 => (r#"bulk ah 086"#, r##"ah_l=AbC; print -r "${(L)ah_l}""##);
         bulk_ah_fc_row_087 => (r#"bulk ah 087"#, r##"ary_rev=(9 8); print -r "${ary_rev[-1]}""##);
         bulk_ah_fc_row_088 => (r#"bulk ah 088"#, r##"print -r "$(( 1 != 0 != 0 ))""##);
-        bulk_ah_fc_row_089 => (r#"bulk ah 089"#, r##"[[ -N /dev/null ]]; print -r "nzf=$?""##);
+        // `-N file` on /dev/null was flaky under parallel load: /dev/null's
+        // atime is global mutable state other concurrent tests touch between the
+        // two shells' stat() calls, flipping the atime<=mtime predicate. Use a
+        // private freshly-written temp file (atime<mtime → -N true) so the row
+        // is deterministic while still exercising the `-N` operator.
+        bulk_ah_fc_row_089 => (r#"bulk ah 089"#, r##"f=$(mktemp); print x >| $f; [[ -N $f ]]; print -r "nzf=$?"; command rm -f $f"##);
         bulk_ah_fc_row_090 => (r#"bulk ah 090"#, r##"[[ -O /dev/null ]]; print -r "ow=$?""##);
         bulk_ah_fc_row_091 => (r#"bulk ah 091"#, r##"dirs 2>/dev/null; print -r "drs=$?""##);
         bulk_ah_fc_row_092 => (r#"bulk ah 092"#, r##"print -r "$(( 99 >= 100 ? 1 : 0 ))""##);
