@@ -729,4 +729,16 @@ mod errexit {
     fn no_set_e_false_cond_continues() {
         assert_parity(r#"[[ 0 = 1 ]]; echo after"#);
     }
+
+    /// `[[ -X a ]]` (unknown unary condition) → "unknown condition" + abort.
+    #[test]
+    fn bracket_unknown_unary_aborts() {
+        assert_parity(r#"[[ -X a ]]; echo after"#);
+    }
+
+    /// `[[ a -xyz b ]]` (unknown binary condition) → "unknown condition" + abort.
+    #[test]
+    fn bracket_unknown_binary_aborts() {
+        assert_parity(r#"[[ a -xyz b ]]; echo after"#);
+    }
 }

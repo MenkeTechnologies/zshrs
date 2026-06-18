@@ -7640,15 +7640,17 @@ impl ZshCompiler {
             }
             _ => {
                 // zsh: `[[ -l file ]]` (and any other unknown unary
-                // condition) errors with `unknown condition: -X`.
-                // Emit the diagnostic at compile-time (stderr) and
-                // produce false. Runtime BUILTIN dispatch failed (the
-                // CallBuiltin op didn't reliably fire for this path),
-                // so do the print here in the compile path — it runs
-                // for every shell that tries the unknown condition.
-                eprintln!("zshrs:1: unknown condition: {}", op);
+                // condition) errors with `unknown condition: -X` and aborts
+                // (c:Src/cond.c:150-188). Drop the operand and route the op
+                // through BUILTIN_COND_UNKNOWN, which zerr's + sets errflag at
+                // RUNTIME so the cond's errexit check aborts the input — the
+                // prior compile-time eprintln printed the message but never set
+                // errflag, so the line ran on.
                 self.builder.emit(Op::Pop, 0);
-                self.builder.emit(Op::LoadFalse, 0);
+                let idx = self.builder.add_constant(Value::str(op));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1), 0);
                 return;
             }
         };
@@ -7746,10 +7748,17 @@ impl ZshCompiler {
                 .builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_FILE_OLDER, 2), 0),
             _ => {
-                tracing::debug!(op, "compile_zsh: unknown binary test op");
+                // c:Src/cond.c:150-188 — an unrecognized `-X` binary op is an
+                // unknown module condition: drop both operands and route the op
+                // through BUILTIN_COND_UNKNOWN (zerr + errflag) so the cond's
+                // errexit check aborts, matching `[[ a -xyz b ]]` in zsh. The
+                // prior LoadFalse silently evaluated false and ran on.
                 self.builder.emit(Op::Pop, 0);
                 self.builder.emit(Op::Pop, 0);
-                self.builder.emit(Op::LoadFalse, 0);
+                let idx = self.builder.add_constant(Value::str(op));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1), 0);
                 0usize
             }
         };
