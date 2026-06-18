@@ -2335,6 +2335,17 @@ impl ZshCompiler {
                 || unquoted(s, '\u{97}') // Quest (parse/tokens.rs:30)
                 || unquoted(s, '[')
                 || unquoted(s, '\u{91}') // Inbrack (parse/tokens.rs:24)
+                // c:Src/glob.c:2161 xpandredir — a redirect target that
+                // brace-expands to MULTIPLE words duplicates the redirect
+                // per word (MULTIOS), exactly like a glob match array.
+                // Without detecting brace tokens here, `> dir/{a,b}` fell
+                // to the single-redir path which space-joined the
+                // expansion into ONE filename ("dir/a dir/b"). Route brace
+                // targets through the multios-splice so each expanded word
+                // opens its own fd (gated on MULTIOS by the runtime
+                // builtin, matching xpandredir's `isset(MULTIOS)`).
+                || unquoted(s, '{')
+                || unquoted(s, '\u{8f}') // Inbrace (parse/tokens.rs)
         };
         for r in redirs {
             if is_write_member(r) {
