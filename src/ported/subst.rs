@@ -14550,7 +14550,13 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     }
                     Some(out)
                 }
-                'a' => xsymlinks(w).ok(), // c:4585 (:a absolute, no symlink follow)
+                // c:Src/subst.c:4744/4834 — `:a` → `chabspath`: make the
+                // path absolute and collapse `.` / `..` LEXICALLY, WITHOUT
+                // resolving symlinks AND without requiring the path to
+                // exist (`/..` → `/`, `/deeper/nonexistent/..` →
+                // `/deeper`). The previous port used `xsymlinks`, which is
+                // the `:A`-style physical walk and left `/..` unresolved.
+                'a' => crate::ported::hist::chabspath(w),
                 'A' | 'P' => {
                     // c:4585 (:A / :P absolute + resolve symlinks)
                     // zsh `:A` / `:P` do what realpath(3) does —
