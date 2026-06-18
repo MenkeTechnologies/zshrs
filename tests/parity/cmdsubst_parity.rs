@@ -137,6 +137,49 @@ mod backticks {
     fn backtick_equivalence_to_dollar_paren() {
         assert_parity(r#"echo "[`echo hi`]"; echo "[$(echo hi)]""#);
     }
+
+    /// An UNQUOTED whole-word backtick in argument position IFS
+    /// word-splits its output, exactly like `$(...)` (the prior port
+    /// only split `$(...)`, leaving `set -- \`echo x y z\`` with $#==1).
+    #[test]
+    fn backtick_arg_word_splits() {
+        assert_parity(r#"print -l `echo a b`"#);
+    }
+
+    #[test]
+    fn backtick_set_positional_splits() {
+        assert_parity(r#"set -- `echo x y z`; echo $#"#);
+    }
+
+    #[test]
+    fn backtick_split_with_var() {
+        assert_parity(r#"foo="two words"; print -l `echo $foo bar`"#);
+    }
+
+    /// Quoted backtick does NOT split.
+    #[test]
+    fn quoted_backtick_no_split() {
+        assert_parity(r#"print -l "`echo a b`""#);
+    }
+
+    /// Assignment RHS backtick does NOT split.
+    #[test]
+    fn backtick_assignment_no_split() {
+        assert_parity(r#"v=`echo a b c`; print -l $v"#);
+    }
+
+    /// Mixed word `a\`cmd\`c` concatenates (not a whole-word backtick).
+    #[test]
+    fn backtick_mixed_word_concatenates() {
+        assert_parity(r#"echo a`echo b`c"#);
+    }
+
+    /// Backslash de-escaping inside backticks still works through the
+    /// split path (`\$x` → `$x` → expanded at backtick-run time).
+    #[test]
+    fn backtick_backslash_escape() {
+        assert_parity(r#"x=foo; echo `echo \$x`"#);
+    }
 }
 
 mod nested {

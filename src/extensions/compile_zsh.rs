@@ -5439,7 +5439,19 @@ impl ZshCompiler {
         // "$(printf "a\nb")" → "anb" quoting bug.
         if !has_bnull {
             let preserved_for_cmdsub = crate::lex::untokenize_preserve_quotes(s);
-            if let Some(inner) = strip_cmd_subst(&preserved_for_cmdsub) {
+            // A whole-word backtick `` `cmd` `` is a command substitution
+            // too — and an UNQUOTED one in argument position must IFS
+            // word-split its output exactly like `$(cmd)` (`set -- \`echo
+            // x y z\`` → $# == 3, not 1). The previous port only routed
+            // `$(...)` through CMD_SUBST_TEXT + WORD_SPLIT; backtick fell
+            // to the generic expand bridge, which ran the command but
+            // emitted a single unsplit word. Convert the backtick body to
+            // a `$(...)` body for run_command_substitution (BUILTIN_
+            // CMD_SUBST_TEXT routes through it) — getoutput handles both
+            // forms identically once the inner command text is isolated.
+            let cmdsub_inner =
+                strip_cmd_subst(&preserved_for_cmdsub).or_else(|| strip_backtick_subst(&preserved_for_cmdsub));
+            if let Some(inner) = cmdsub_inner {
                 let idx = self.builder.add_constant(Value::str(inner));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder.emit(
@@ -9236,6 +9248,20 @@ fn scalar_rhs_has_cmd_subst(s: &str) -> bool {
 
 /// If `s` is exactly `$(cmd)` (un-tokenized form), return the inner
 /// command. Excludes `$((…))` arithmetic and partial concatenations.
+/// Whole-word backtick command substitution `` `cmd` `` → inner `cmd`.
+/// Returns None unless the input is exactly ONE top-level backtick span
+/// (mixed words like `` x`cmd`y `` or nested backticks fall through to the
+/// generic expand bridge, which handles their escaping). Used so an
+/// unquoted backtick in argument position gets the same IFS word-split as
+/// `$(...)` (c:Src/lex.c — Tick/Qtick are command-subst tokens).
+fn strip_backtick_subst(s: &str) -> Option<&str> {
+    let inner = s.strip_prefix('`')?.strip_suffix('`')?;
+    if inner.is_empty() || inner.contains('`') {
+        return None;
+    }
+    Some(inner)
+}
+
 fn strip_cmd_subst(s: &str) -> Option<&str> {
     if !s.starts_with("$(") || !s.ends_with(')') || s.starts_with("$((") {
         return None;
