@@ -679,4 +679,17 @@ mod syntax_errors {
     fn valid_operators_still_work() {
         assert_parity(r#"[[ a == a ]]; print r$?; [[ 1 -eq 1 ]]; print r$?; [[ foo =~ f.. ]]; print r$?"#);
     }
+
+    /// `test`/`[` with an unrecognized `-X` operator → "unknown condition"
+    /// (cond.c:150-188), return 2. (test/`[` is non-fatal so the list
+    /// continues; only `[[ ]]` aborts.)
+    #[test]
+    fn test_unknown_dash_condition() {
+        assert_parity(r#"test a -xyz b; print -r "r=$?""#);
+    }
+
+    #[test]
+    fn bracket_unknown_dash_condition() {
+        assert_parity(r#"[ a -pcre-match b ]; print -r "r=$?""#);
+    }
 }
