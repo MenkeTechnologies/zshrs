@@ -383,7 +383,16 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
         eprint!(" ");
     }
     if let Some(e) = errno {
-        eprintln!("{}: {}", msg, io::Error::from_raw_os_error(e));
+        // c:348-365 — `%e`: render the errno exactly as C's zerrmsg does,
+        // through `zsh_errno_msg` (EINTR→"interrupt", EIO verbatim, else
+        // strerror with a lowercased first letter). The previous
+        // `io::Error::from_raw_os_error` kept the capital and appended
+        // " (os error N)" — the byte-diff tracked as docs/BUGS.md #316.
+        if e == libc::EINTR {
+            // c:351-354 — EINTR sets the error flag and stops formatting.
+            errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
+        }
+        eprintln!("{}: {}", msg, zsh_errno_msg(e));
     } else {
         eprintln!("{}", msg);
     }
@@ -9937,6 +9946,52 @@ fn fdtable_lock() -> &'static Mutex<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// zsh_errno_msg / zerrmsg `%e` rendering (utils.c:348-365). EINTR is the
+    /// literal "interrupt"; EIO is verbatim strerror (keeps its capital); every
+    /// other errno lowercases the first letter (`tulower`). The old
+    /// io::Error-based path kept the capital and appended " (os error N)".
+    #[test]
+    fn zsh_errno_msg_matches_c_percent_e() {
+        // c:355-358 — EINTR → "interrupt".
+        assert_eq!(zsh_errno_msg(libc::EINTR), "interrupt");
+
+        // c:366 — non-EIO errno lowercases the first letter and never carries
+        // the Rust "(os error N)" suffix.
+        let acc = zsh_errno_msg(libc::EACCES);
+        assert!(
+            acc.chars().next().is_some_and(|c| c.is_lowercase()),
+            "EACCES first letter must be lowercased: {acc:?}"
+        );
+        assert!(!acc.contains("(os error"), "must be strerror, not io::Error: {acc:?}");
+
+        // c:359-364 — EIO is emitted verbatim (its message reads wrong
+        // lowercased), so its first letter stays capitalized.
+        let eio = zsh_errno_msg(libc::EIO);
+        assert!(
+            eio.chars().next().is_some_and(|c| c.is_uppercase()),
+            "EIO must be verbatim strerror (capitalized): {eio:?}"
+        );
+    }
+
+    /// c:351-354 — zerrmsg's `%e` arm sets errflag |= ERRFLAG_ERROR on EINTR.
+    #[test]
+    fn zerrmsg_eintr_sets_errflag() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = errflag.load(Ordering::Relaxed);
+        errflag.store(0, Ordering::Relaxed);
+        zerrmsg("test", Some(libc::EINTR)); // writes to stderr; side-effect is the flag
+        assert_ne!(
+            errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR,
+            0,
+            "EINTR must set ERRFLAG_ERROR"
+        );
+        // A non-EINTR errno must NOT set the flag.
+        errflag.store(0, Ordering::Relaxed);
+        zerrmsg("test", Some(libc::EACCES));
+        assert_eq!(errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR, 0);
+        errflag.store(saved, Ordering::Relaxed);
+    }
 
     /// zjoin port (utils.c:3622). ASCII delimiters join byte-for-byte; a meta
     /// delimiter (NUL is `imeta` per inittyptab c:4195) must be written in
