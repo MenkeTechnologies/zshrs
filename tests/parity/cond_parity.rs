@@ -640,3 +640,24 @@ mod special_param_pattern_rhs {
         assert_parity(r#"case $# in $#) echo M;; *) echo N;; esac"#);
     }
 }
+
+/// `-N file` — true iff modified since last read (atime <= mtime). zsh compares
+/// at full nanosecond precision; zshrs once compared seconds only, so files
+/// sharing a second but differing in nsec (e.g. /dev/null) diverged.
+mod file_modified_since_read {
+    use super::*;
+
+    /// A freshly-written file has atime <= mtime → `-N` true.
+    #[test]
+    fn n_freshly_written_file() {
+        assert_parity(
+            r#"f=$(mktemp); print x >| $f; [[ -N $f ]]; print -r "nzf=$?"; command rm -f $f"#,
+        );
+    }
+
+    /// Nonexistent file → `-N` false.
+    #[test]
+    fn n_nonexistent_file() {
+        assert_parity(r#"[[ -N /nonexistent_zzz_qqq ]]; print -r "nzf=$?""#);
+    }
+}

@@ -304,3 +304,24 @@ mod combinations {
         assert_parity("print -l {a,b}/{x,y}/{1,2}");
     }
 }
+
+/// Robustness pins: brace expansion must never panic on metafied/multibyte
+/// content. `{$'\x80'..$'\x81'}` under no_multibyte once panicked (char-index
+/// used as a byte slice offset, glob.rs:5202/1707 → exit 101). The range
+/// EXPANSION of metafied chars still differs from zsh (a separate, open gap),
+/// so this pins only the no-panic invariant, not full output parity.
+mod no_panic {
+    use super::*;
+
+    #[test]
+    fn multibyte_brace_range_does_not_panic() {
+        let r = run_zshrs(r#"() { setopt localoptions no_multibyte; echo -E {$'\x80'..$'\x81'} }"#);
+        assert_ne!(r.exit, 101, "multibyte brace range must not panic (was exit 101)");
+    }
+
+    #[test]
+    fn multibyte_brace_content_does_not_panic() {
+        let r = run_zshrs(r#"print {$'\xc3\xa9'..$'\xc3\xaa'}"#);
+        assert_ne!(r.exit, 101, "multibyte brace content must not panic");
+    }
+}

@@ -257,3 +257,40 @@ mod combined {
         assert_parity_sorted(d.path(), "print -l *(.N)");
     }
 }
+
+/// `l[+-]N` link-count qualifier. `qualnlink` once read a stale duplicate
+/// `G_RANGE` static that the qual-eval never set, so every `l+N`/`l-N`
+/// comparison was stuck on `==`. A dir with a subdir has nlink 3; an empty dir
+/// has nlink 2.
+mod link_count_qualifier {
+    use super::*;
+
+    fn setup_link_dirs() -> tempfile::TempDir {
+        let d = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(d.path().join("d")).unwrap(); // nlink 2…
+        std::fs::create_dir(d.path().join("d/sub")).unwrap(); // …→ 3 with subdir
+        std::fs::create_dir(d.path().join("e")).unwrap(); // nlink 2
+        d
+    }
+
+    /// `l+2` → nlink > 2 → only `d`.
+    #[test]
+    fn links_greater_than_two() {
+        let d = setup_link_dirs();
+        assert_parity_sorted(d.path(), "print -l *(/l+2:t)");
+    }
+
+    /// `l-3` → nlink < 3 → only `e`.
+    #[test]
+    fn links_less_than_three() {
+        let d = setup_link_dirs();
+        assert_parity_sorted(d.path(), "print -l *(/l-3:t)");
+    }
+
+    /// `l2` → nlink == 2 → only `e`.
+    #[test]
+    fn links_equal_two() {
+        let d = setup_link_dirs();
+        assert_parity_sorted(d.path(), "print -l *(/l2:t)");
+    }
+}
