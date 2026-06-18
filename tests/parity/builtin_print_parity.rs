@@ -327,4 +327,28 @@ mod print_sort {
     fn print_l_o_words() {
         assert_parity("print -l -o zebra Apple banana Cherry");
     }
+
+    /// The `-o`/`-O` sort applies to the `-f` (format) path too — the
+    /// sort runs BEFORE format rendering (c:4799-4807). `print -of` /
+    /// `-Of` / `-oif` sort the args, then format each.
+    #[test]
+    fn print_of_sorts_then_formats() {
+        assert_parity(r#"print -of '%s\n' foo bar baz"#);
+    }
+
+    #[test]
+    fn print_Of_reverse_sorts_then_formats() {
+        assert_parity(r#"print -Of '%s\n' foo bar baz"#);
+    }
+
+    #[test]
+    fn print_oif_ignore_case_sorts_then_formats() {
+        assert_parity(r#"print -oif '%s\n' B a C"#);
+    }
+
+    /// `-f` alone (no sort flag) keeps argument order.
+    #[test]
+    fn print_f_alone_keeps_order() {
+        assert_parity(r#"print -f '%s\n' foo bar baz"#);
+    }
 }

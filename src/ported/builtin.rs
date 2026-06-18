@@ -9238,6 +9238,28 @@ pub fn bin_print(
         } else {
             rest
         };
+        // c:4799-4807 — the `-o`/`-O`/`-i` argument sort runs BEFORE
+        // format rendering. The non-fmt path sorts at the tail of
+        // bin_print (strmetasort), but this `-f` fast-branch returns
+        // first, so `print -of '%s\n' foo bar baz` rendered the args
+        // unsorted. Apply the same strmetasort to the format args here.
+        let rest_sorted: Vec<String>;
+        let rest: &[String] = if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {
+            let mut v = rest.to_vec();
+            let mut sflags: u32 = if OPT_ISSET(ops, b'i') {
+                SORTIT_IGNORING_CASE as u32 // c:4805
+            } else {
+                0
+            };
+            if OPT_ISSET(ops, b'O') {
+                sflags |= SORTIT_BACKWARDS as u32; // c:4806
+            }
+            strmetasort(&mut v, sflags, None); // c:4807
+            rest_sorted = v;
+            &rest_sorted
+        } else {
+            rest
+        };
         // c:builtin.c:5430-5443 — printf returns 1 on unknown
         // directive after `zwarnnam(name, "%s: invalid directive",
         // start)`. The partial output produced before the bad
