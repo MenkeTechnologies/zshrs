@@ -15025,6 +15025,12 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
     // canonical i32 const lives in `zsh_h` (Src/zsh.h:3180-3181).
     let (fmt, _) =
         getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
+    // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
+    // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
+    // (b) stops the format-reuse loop entirely (no reapplication over the
+    // remaining args). getkeystring_with already cut `fmt` at the `\c`;
+    // take the TLS flag it set so the reuse loop knows to stop.
+    let mut fmttrunc = crate::ported::utils::getkey_truncated_take();
     let mut out = String::new();
     let mut arg_i: usize = 0;
     // c:Src/builtin.c:5166/5176 — `first` is the base of the current
@@ -15270,6 +15276,11 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                         &a,
                         crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
                     );
+                    // c:5380-5383 — a `\c` inside the `%b` arg truncates:
+                    // emit the expansion up to `\c`, then stop the whole
+                    // printf (no rest-of-format, no reuse). getkeystring_with
+                    // already cut `s` at the `\c` and set the TLS flag.
+                    let arg_truncated = crate::ported::utils::getkey_truncated_take();
                     // c:5307-5360 — `%b` shares the `%s` width+precision
                     // handling (`%5b`→"   ab", `%3.1b`→"  a"), applied to the
                     // escape-expanded string. The previous port pushed the
@@ -15277,6 +15288,10 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     spec.push('s');
                     out.push_str(&format_spec_str(&spec, &s));
                     arg_i += 1;
+                    if arg_truncated {
+                        fmttrunc = true; // c:5382
+                        break; // c:5383 — truncate the format here (stop this cycle)
+                    }
                 }
                 // c:builtin.c:5420 — `%n` consumes its arg but writes
                 // nothing. C printf writes the byte-count-so-far to
@@ -15321,7 +15336,9 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 arg_i = first_off;
             }
         }
-        if arg_i == prev || arg_i >= args.len() {
+        // c:Src/builtin.c:5527 — `} while (... && !fmttrunc ...)`. A `\c`
+        // in the format or a `%b` arg stops the reuse loop.
+        if fmttrunc || arg_i == prev || arg_i >= args.len() {
             break;
         }
     }

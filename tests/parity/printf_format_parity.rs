@@ -381,3 +381,30 @@ mod char_format {
         assert_parity(r#"printf "[%.0c]\n" x"#);
     }
 }
+
+/// `\c` in the printf format (or in a `%b` arg) truncates ALL output and
+/// stops the format-reuse loop (c:builtin.c:5382/5527 fmttrunc).
+mod backslash_c_truncation {
+    use super::*;
+
+    #[test]
+    fn c_in_format_stops_reuse() {
+        assert_parity(r#"printf '%s %b!\c%s %s' 1 2 3 4 5 6 7 8 9; echo .EoL."#);
+    }
+
+    #[test]
+    fn c_in_b_arg_truncates() {
+        assert_parity(r#"printf '%s %b!\c%s %s' '1\c' '2\n\c' 3 4 5 6 7 8 9"#);
+    }
+
+    #[test]
+    fn c_in_late_b_arg_truncates() {
+        assert_parity(r#"printf '%b %b\n' 1 2 3 4 '5\c' 6 7 8 9; echo .EoL."#);
+    }
+
+    /// No `\c` → format reuse still works.
+    #[test]
+    fn no_c_reuses_format() {
+        assert_parity(r#"printf '%s\n' a b c"#);
+    }
+}
