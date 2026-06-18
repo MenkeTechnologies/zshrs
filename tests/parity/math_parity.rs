@@ -693,4 +693,21 @@ mod round_pins {
     fn cprecedences_uses_c_precedence() {
         assert_parity("setopt cprecedences; print $(( 4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2 ))");
     }
+
+    /// `[#base_N]` underscore grouping must group only the digits, leaving the
+    /// `0x` / `N#` base prefix untouched (params.c:5654-5657).
+    #[test]
+    fn underscore_grouping_hex_prefix() {
+        assert_parity("setopt cbases; print $(( [#16_] 65536 ))");
+    }
+
+    #[test]
+    fn underscore_grouping_base_prefix() {
+        assert_parity("print $(( [#2_4] 255 ))");
+    }
+
+    #[test]
+    fn underscore_grouping_decimal() {
+        assert_parity("print $(( [#_] 1000000 ))");
+    }
 }

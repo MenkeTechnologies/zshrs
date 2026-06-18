@@ -10011,23 +10011,21 @@ pub fn convbase(val: i64, base: u32) -> String {
 /// = `"16#FF"` instead of `"FF"`.
 /// WARNING: param names don't match C — Rust=(val, base, underscore) vs C=(s, v, base, underscore)
 pub fn convbase_underscore(val: i64, base: i32, underscore: i32) -> String {
-    let s = convbase_ptr(val, base).0;
+    // c:5646 — `convbase_ptr(s, v, base, &ndigits)` returns BOTH the string and
+    // the digit count EXCLUDING the base prefix (`0x`, `N#`, leading `0`).
+    let (s, ndigits) = convbase_ptr(val, base);
     if underscore <= 0 {
-        return s;
+        return s; // c:5648
     }
+    let ndigits = ndigits.max(0) as usize;
 
-    // Find the digits portion
-    let (prefix, digits) = if let Some(rest) = s.strip_prefix('-') {
-        let digit_start = rest
-            .find(|c: char| c.is_ascii_digit() || c.is_ascii_uppercase())
-            .unwrap_or(0);
-        (&s[..1 + digit_start], &rest[digit_start..])
-    } else {
-        let digit_start = s
-            .find(|c: char| c.is_ascii_digit() || c.is_ascii_uppercase())
-            .unwrap_or(0);
-        (&s[..digit_start], &s[digit_start..])
-    };
+    // c:5654-5657 — group only the last `ndigits` chars; the prefix (`len -
+    // ndigits` chars) is copied through untouched. The previous port re-scanned
+    // for the first digit, which matched the `0` in `0x…` and grouped the `0x`
+    // prefix too (`0x10000` → `0_x10_000` instead of `0x10_000`).
+    let split = s.len().saturating_sub(ndigits);
+    let prefix = &s[..split];
+    let digits = &s[split..];
 
     if digits.len() <= underscore as usize {
         return s;
