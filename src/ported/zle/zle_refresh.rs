@@ -2877,7 +2877,19 @@ pub fn refreshline(ln: i32) {
             vcs += 1; // c:2089 vcs++
             VCS.store(vcs, Ordering::SeqCst);
 
-            // c:2094-2095 — WEOF do-while: zshrs has no WEOF sentinel.
+            // c:2090-2095 — "Make sure we always overwrite the complete width
+            // of a character that was there before." Keep emitting while either
+            // side sits on a WEOF continuation cell and the other side still has
+            // a real char to consume, so a wide glyph is never left half-drawn.
+            // The vecs retain their trailing zr_zr ('\0') terminator, so an
+            // exhausted side reads as chr '\0' (C: `nl->chr`/`ol->chr` == 0).
+            let ol_chr = ol.first().map(|c| c.chr).unwrap_or('\0');
+            let nl_chr = nl.first().map(|c| c.chr).unwrap_or('\0');
+            // c:2094-2095 — `(ol->chr==WEOF && nl->chr)||(nl->chr==WEOF && ol->chr)`
+            if (ol_chr == ZWC_WEOF && nl_chr != '\0') || (nl_chr == ZWC_WEOF && ol_chr != '\0')
+            {
+                continue;
+            }
             break;
         }
     }
