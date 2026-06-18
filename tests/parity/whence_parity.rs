@@ -223,3 +223,19 @@ mod command_builtin {
         assert_exit_parity(r#"alias true='false'; command true; echo $?"#);
     }
 }
+
+/// `hash -d` lists named directories in SORTED order (scanhashtable
+/// sorted=1, c:Src/builtin.c:4270), not hash/insertion order.
+mod hash_dir_listing {
+    use super::*;
+
+    #[test]
+    fn hash_d_listing_is_sorted() {
+        assert_parity("hash -d zebra=/z; hash -d apple=/a; hash -d mango=/m; hash -d");
+    }
+
+    #[test]
+    fn hash_d_two_entries_sorted() {
+        assert_parity("hash -d one=/first/dir; hash -d two=/second; hash -d");
+    }
+}
