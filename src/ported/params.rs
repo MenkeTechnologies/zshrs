@@ -5890,11 +5890,23 @@ Some(Box::new(node.clone()))
                 } else {
                     idx - 1
                 };
-                let real_idx = real_idx.max(0) as usize;
-                while arr.len() <= real_idx {
-                    arr.push(String::new());
+                if real_idx < 0 {
+                    // c:Src/params.c:2930-2946 (setarrvalue) — a negative
+                    // subscript that points PAST the start of the array
+                    // (`a[-7]` on a 5-element array) clamps BOTH start and
+                    // end to 0, so the splice `old[start..end]` =
+                    // `old[0..0]` replaces nothing and the value is
+                    // INSERTED at the front. The prior port clamped to
+                    // index 0 and OVERWROTE element 0 (`42 2 3 4 5`);
+                    // zsh prepends keeping every element (`42 1 2 3 4 5`).
+                    arr.insert(0, val.to_string());
+                } else {
+                    let real_idx = real_idx as usize;
+                    while arr.len() <= real_idx {
+                        arr.push(String::new());
+                    }
+                    arr[real_idx] = val.to_string();
                 }
-                arr[real_idx] = val.to_string();
                 pm.u_str = None;
             }
         } else {

@@ -341,3 +341,37 @@ mod whole_array_subscript_assign {
         assert_parity("typeset -A h=(a 1); h[@]+=(x y); echo done");
     }
 }
+
+/// Negative array subscript assignment that points PAST the array start
+/// (`a[-N]` with N > len) clamps to position 0 and INSERTS (prepend),
+/// keeping every element, rather than overwriting element 0
+/// (c:Src/params.c:2930-2946 setarrvalue start/end clamp).
+mod negative_oob_subscript_assign {
+    use super::*;
+
+    #[test]
+    fn negative_past_start_prepends() {
+        assert_parity("a=(1 2 3 4 5); a[-7]=42; print $a");
+    }
+
+    #[test]
+    fn negative_one_past_start_prepends() {
+        assert_parity("a=(1 2 3 4 5); a[-6]=42; print $a");
+    }
+
+    /// `a[-len]` (exactly position 1) OVERWRITES element 0 (boundary).
+    #[test]
+    fn negative_equals_len_overwrites_first() {
+        assert_parity("a=(1 2 3 4 5); a[-5]=42; print $a");
+    }
+
+    #[test]
+    fn negative_last_overwrites() {
+        assert_parity("a=(1 2 3 4 5); a[-1]=42; print $a");
+    }
+
+    #[test]
+    fn chained_negative_past_start() {
+        assert_parity("a=(1 2 3 4 5); a[-7]=42; a[-9]=99; print $a");
+    }
+}
