@@ -288,3 +288,40 @@ mod select_blank_input {
         assert_parity_with_stdin(r#"select x in a b; do echo "got:$x"; break; done"#, "\n1\n");
     }
 }
+
+/// `repeat N body` evaluates N via the faithful math.c evaluator
+/// (mathevali, c:Src/loop.c:517) — so `?`/`$?` (status), arithmetic
+/// expressions, and named refs all resolve, not just bare literals.
+mod repeat_arith_count {
+    use super::*;
+
+    #[test]
+    fn count_from_status_dollar_query() {
+        assert_parity(r#"(exit 3); repeat "$?" echo x"#);
+    }
+
+    #[test]
+    fn count_from_bare_query_op() {
+        assert_parity(r#"(exit 3); repeat '?' echo y"#);
+    }
+
+    #[test]
+    fn count_from_status_after_false() {
+        assert_parity(r#"false; repeat "$?" echo z"#);
+    }
+
+    #[test]
+    fn count_arith_with_status() {
+        assert_parity(r#"(exit 2); repeat $(($?+1)) echo q"#);
+    }
+
+    #[test]
+    fn count_bare_arith() {
+        assert_parity("repeat 2+3 print z");
+    }
+
+    #[test]
+    fn count_quoted_arith() {
+        assert_parity(r#"repeat "1+1" print w"#);
+    }
+}

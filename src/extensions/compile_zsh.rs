@@ -6786,8 +6786,6 @@ impl ZshCompiler {
     }
 
     fn compile_repeat(&mut self, r: &crate::parse::ZshRepeat) {
-        // cmdstack: direct port of Src/loop.c:522 `cmdpush(CS_REPEAT);`
-        self.emit_cmd_push(crate::ported::zsh_h::CS_REPEAT as u8);
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let count_slot = self.next_slot;
@@ -6825,8 +6823,29 @@ impl ZshCompiler {
                 r.count.clone()
             }
         };
-        self.compile_arith_str(&count_str);
+        // c:Src/loop.c:516-517 — `untokenize(tmp); count = mathevali(tmp)`.
+        // The count uses the FAITHFUL math.c evaluator (mathevali →
+        // MathEval), which resolves `?`/`$?` (the status param), named
+        // refs, and full math.c precedence. The previous port used
+        // `compile_arith_str` (the fast-path ArithCompiler), which
+        // `collect_identifiers` can't see `?` in, so `repeat "$?"` /
+        // `repeat ?` evaluated to 0 and the loop never ran. Route through
+        // BUILTIN_ARITH_EVAL (the same MathEval path as `$((…))`) on the
+        // untokenized count text.
+        //
+        // c:Src/loop.c:517 is evaluated BEFORE the lastval reset (c:520)
+        // and `cmdpush(CS_REPEAT)` (c:522), so the count sees the PRIOR
+        // command's `$?`. (BUILTIN_CMD_PUSH returns Status(0) and would
+        // clobber $?.) Emit the count eval first, THEN cmdpush.
+        let count_clean = crate::lex::untokenize(&count_str);
+        let cnt_idx = self.builder.add_constant(Value::str(count_clean.as_str()));
+        self.builder.emit(Op::LoadConst(cnt_idx), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
         self.builder.emit(Op::SetSlot(count_slot), 0);
+
+        // c:Src/loop.c:522 — `cmdpush(CS_REPEAT)` AFTER the count eval.
+        self.emit_cmd_push(crate::ported::zsh_h::CS_REPEAT as u8);
 
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
