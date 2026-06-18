@@ -195,15 +195,37 @@ mod combined_introspect {
 mod nameref {
     use super::*;
 
+    /// `typeset -n` (nameref) exists in the upstream zsh source zshrs is ported
+    /// from (builtin.c PM_NAMEREF / typeset optstring `n`), but predates some
+    /// installed zsh binaries (e.g. 5.9.1 rejects `-n` with "bad option"). When
+    /// the reference zsh lacks nameref the comparison is meaningless, so skip —
+    /// zshrs's nameref behavior is pinned separately by the zshrs_pin tests.
+    fn zsh_has_nameref() -> bool {
+        if !zsh_available() {
+            return false;
+        }
+        Command::new(zsh_path())
+            .args(["-fc", "typeset -n __r=__t"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
     /// `typeset -n REF=TARGET` creates a name reference. $REF reads
     /// $TARGET. nameref shows in $parameters.
     #[test]
     fn nameref_via_typeset_n() {
+        if !zsh_has_nameref() {
+            return;
+        }
         assert_parity(r#"TARGET=value; typeset -n REF=TARGET; echo $REF"#);
     }
 
     #[test]
     fn nameref_in_parameters_hash() {
+        if !zsh_has_nameref() {
+            return;
+        }
         assert_parity(r#"TARGET=value; typeset -n REF=TARGET; echo "${parameters[REF]}""#);
     }
 }
