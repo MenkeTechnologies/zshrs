@@ -15089,11 +15089,16 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     arg_i += 1;
                 }
                 Some('c') => {
-                    if let Some(a) = args.get(arg_i) {
-                        if let Some(ch) = a.chars().next() {
-                            out.push(ch);
-                        }
-                    }
+                    // c:5300-5306 — `%c` outputs the arg's first char with
+                    // WIDTH/justify applied (`%3c`→"  x", `%-3c`→"x  ") but
+                    // precision IGNORED (`%.0c`→"x"). Strip precision from the
+                    // spec, then format as a one-char string. The previous port
+                    // pushed the char raw, dropping width.
+                    let a = args.get(arg_i).cloned().unwrap_or_default();
+                    let ch_str = a.chars().next().map(|c| c.to_string()).unwrap_or_default();
+                    let mut cspec = spec.split('.').next().unwrap_or(spec.as_str()).to_string();
+                    cspec.push('s');
+                    out.push_str(&format_spec_str(&cspec, &ch_str));
                     arg_i += 1;
                 }
                 // c:builtin.c:5403-5409 %q — shell-quote the arg using
@@ -15142,7 +15147,12 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                         &a,
                         crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
                     );
-                    out.push_str(&s);
+                    // c:5307-5360 — `%b` shares the `%s` width+precision
+                    // handling (`%5b`→"   ab", `%3.1b`→"  a"), applied to the
+                    // escape-expanded string. The previous port pushed the
+                    // expansion raw, dropping width/precision.
+                    spec.push('s');
+                    out.push_str(&format_spec_str(&spec, &s));
                     arg_i += 1;
                 }
                 // c:builtin.c:5420 — `%n` consumes its arg but writes
