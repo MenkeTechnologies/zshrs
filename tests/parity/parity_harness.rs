@@ -118,10 +118,17 @@ fn check_parity(src_path: &Path) -> Result<(), String> {
         .ok_or_else(|| format!("[{}] zwc had no functions", name))?;
     let zsh_sexp = ast_to_sexp(&prog);
 
-    // zshrs side
+    // zshrs side. The in-process parser mutates process-global lexer/history
+    // state (chwords/chwordpos/chline etc., hist.rs) that is correct for a
+    // single shell but races when the test harness parses on many threads at
+    // once — concurrent parses overflow chwordpos (raw_vec capacity panic) and
+    // poison the chwords mutex. Serialize in-process parsing under the crate
+    // test lock, matching every other global-state-touching test.
+    let _g = crate::parser_lock::parser_guard();
     zsh::parse::parse_init(&src);
     let zshrs_prog = zsh::parse::parse();
     let zshrs_sexp = ast_to_sexp(&zshrs_prog);
+    drop(_g);
 
     if zsh_sexp == zshrs_sexp {
         Ok(())

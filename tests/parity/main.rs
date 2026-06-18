@@ -16,6 +16,8 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::needless_raw_string_hashes)]
 
+mod parser_lock;
+
 mod advanced_parity;
 mod alias_parity;
 mod always_block_parity;
