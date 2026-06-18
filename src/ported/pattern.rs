@@ -1778,6 +1778,56 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                                 }
                                 chars.push(b'_');
                             }
+                            // c:Src/pattern.c:3707-3719 — zsh-specific
+                            // named classes that track the live $IFS /
+                            // $WORDCHARS via the ztype ISEP/IWORD tables.
+                            // The PP_IFS/PP_IFSSPACE/PP_WORD opcodes
+                            // exist (pattern.rs:3157+) but no parse path
+                            // emits them — this static-expansion path is
+                            // the only named-class parser, and it dropped
+                            // these three (`_ => {}`), so `[[ x =
+                            // [[:IFS:]] ]]` never matched. Expand from the
+                            // current param values (read at compile, like
+                            // IDENT's static set).
+                            "IFS" => {
+                                // c:3709 ISEP — chars in $IFS (default
+                                // space/tab/newline/NUL).
+                                let ifs = crate::ported::params::getsparam("IFS")
+                                    .unwrap_or_else(|| " \t\n\0".to_string());
+                                for c in ifs.bytes() {
+                                    chars.push(c);
+                                }
+                            }
+                            "IFSSPACE" => {
+                                // c:3713 iwsep — the ASCII whitespace
+                                // subset of $IFS.
+                                let ifs = crate::ported::params::getsparam("IFS")
+                                    .unwrap_or_else(|| " \t\n\0".to_string());
+                                for c in ifs.bytes() {
+                                    if c == b' ' || c == b'\t' || c == b'\n' {
+                                        chars.push(c);
+                                    }
+                                }
+                            }
+                            "WORD" => {
+                                // c:3716 IWORD — alnum plus $WORDCHARS.
+                                for c in b'0'..=b'9' {
+                                    chars.push(c);
+                                }
+                                for c in b'A'..=b'Z' {
+                                    chars.push(c);
+                                }
+                                for c in b'a'..=b'z' {
+                                    chars.push(c);
+                                }
+                                let wc = crate::ported::params::getsparam("WORDCHARS")
+                                    .unwrap_or_else(|| {
+                                        "*?_-.[]~=/&;!#$%^(){}<>".to_string()
+                                    });
+                                for c in wc.bytes() {
+                                    chars.push(c);
+                                }
+                            }
                             _ => {}
                         }
                         i_b = j_b + 2;

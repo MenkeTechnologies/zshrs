@@ -309,6 +309,48 @@ mod combined {
     }
 }
 
+/// zsh-specific named character classes that track $IFS / $WORDCHARS
+/// (c:Src/pattern.c:3707-3719). `[[:IFS:]]`, `[[:IFSSPACE:]]`, `[[:WORD:]]`
+/// were unhandled (empty class → never matched).
+mod zsh_named_classes {
+    use super::*;
+
+    #[test]
+    fn ifs_matches_space() {
+        assert_parity(r#"setopt EXTENDED_GLOB; [[ " " = [[:IFS:]] ]]; echo $?"#);
+    }
+
+    #[test]
+    fn ifs_matches_tab() {
+        assert_parity("setopt EXTENDED_GLOB; [[ $'\\t' = [[:IFS:]] ]]; echo $?");
+    }
+
+    #[test]
+    fn ifs_rejects_letter() {
+        assert_parity(r#"setopt EXTENDED_GLOB; [[ x = [[:IFS:]] ]]; echo $?"#);
+    }
+
+    #[test]
+    fn ifsspace_matches_space() {
+        assert_parity(r#"setopt EXTENDED_GLOB; [[ " " = [[:IFSSPACE:]] ]]; echo $?"#);
+    }
+
+    #[test]
+    fn word_matches_slash() {
+        assert_parity(r#"setopt EXTENDED_GLOB; [[ / = [[:WORD:]] ]]; echo $?"#);
+    }
+
+    #[test]
+    fn word_matches_alnum() {
+        assert_parity(r#"setopt EXTENDED_GLOB; [[ a = [[:WORD:]] ]]; echo $?"#);
+    }
+
+    #[test]
+    fn ident_still_works() {
+        assert_parity(r#"setopt EXTENDED_GLOB; [[ _ = [[:IDENT:]] ]]; echo $?"#);
+    }
+}
+
 mod number_qualifier_quantifier {
     use super::*;
 
