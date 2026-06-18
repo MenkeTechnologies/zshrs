@@ -4473,6 +4473,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // ASSPM_AUGMENT) — Src/params.c:3357 c:3402-3412 augment
             // path prepends prior scalar / appends to existing array.
             if exec.array(&name).is_some() {
+                // c:Src/params.c — under KSHARRAYS a bare array name
+                // addresses element 0 (ksh), so `a+=X` (scalar augment)
+                // CONCATENATES onto the first element ("firstlast second"),
+                // it does NOT push a new element. C routes scalar `+=`
+                // through assignsparam (which targets the elem-0 value);
+                // zshrs's APPEND_SCALAR_OR_PUSH would otherwise push.
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS) {
+                    let mut arr = exec.array(&name).unwrap_or_default();
+                    if arr.is_empty() {
+                        arr.push(value.clone());
+                    } else {
+                        arr[0] = format!("{}{}", arr[0], value);
+                    }
+                    exec.set_array(name.clone(), arr);
+                    #[cfg(feature = "recorder")]
+                    if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                        let ctx = exec.recorder_ctx();
+                        let attrs = exec.recorder_attrs_for(&name);
+                        emit_path_or_assign(&name, std::slice::from_ref(&value), attrs, true, &ctx);
+                    }
+                    return;
+                }
                 let _ = crate::ported::params::assignaparam(
                     &name,
                     vec![value.clone()],
