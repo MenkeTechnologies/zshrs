@@ -1704,8 +1704,16 @@ pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
                                 // must appear in the left or right
                                 // endpoint, mirroring c:2085 `idigit
                                 // (lbr[1]) || idigit(str[-1])`.
-                                let left = &content[..dp];
-                                let right = &content[dp + 2..];
+                                // `dp` is a CHAR index; byte-slice via a
+                                // converted offset so multibyte/metafied
+                                // content (`{$'\x80'..$'\x81'}`) can't panic.
+                                let dp_byte = content
+                                    .char_indices()
+                                    .nth(dp)
+                                    .map(|(b, _)| b)
+                                    .unwrap_or(content.len());
+                                let left = &content[..dp_byte];
+                                let right = &content[dp_byte + 2..];
                                 let strip_end =
                                     right.find("..").map(|p| &right[..p]).unwrap_or(right);
                                 let has_digit = left.chars().any(|c| c.is_ascii_digit())
@@ -5199,8 +5207,18 @@ fn expand_range(
     } else {
         content
     };
-    let left = &content[..dotdot_pos];
-    let right_start = dotdot_pos + 2;
+    // `dotdot_pos` is a CHAR index (xpandbraces counts it over a char vector,
+    // `i - start - 1`), but the slicing below is byte-based. For ASCII content
+    // they coincide; for content holding multibyte/metafied chars (e.g.
+    // `{$'\x80'..$'\x81'}`, where the bytes are Meta-escaped) a raw byte slice
+    // at the char index lands mid-char and panics. Convert to a byte offset.
+    let dotdot_byte = content
+        .char_indices()
+        .nth(dotdot_pos)
+        .map(|(b, _)| b)
+        .unwrap_or(content.len());
+    let left = &content[..dotdot_byte];
+    let right_start = dotdot_byte + 2; // ".." is two ASCII bytes
 
     // Check for second `..` for `{N..M..S}` step form. Step may be
     // signed: negative-step REVERSES the natural direction sequence
