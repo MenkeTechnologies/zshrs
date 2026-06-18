@@ -510,3 +510,58 @@ mod readonly_type_conversion {
         assert_parity(r#"typeset -rA h=(a b); typeset -A h=(c d); typeset -p h"#);
     }
 }
+
+/// `name+=(array)` on an existing scalar/integer/float converts the param
+/// to an array, inserting the OLD value (via getstrvalue) at the front
+/// (c:params.c:3344-3354). The prior port dropped the old value for
+/// numeric params (u_str was None) and mis-formatted floats (getstrvalue
+/// float arm bypassed convfloat's format flags).
+mod augment_scalar_to_array {
+    use super::*;
+
+    #[test]
+    fn integer_append_array_keeps_old() {
+        assert_parity("integer i=1; i+=(2 3); print -l $i");
+    }
+
+    #[test]
+    fn integer_base_append_array_keeps_formatted_old() {
+        assert_parity("typeset -i 16 x=255; x+=(2 3); print -l $x");
+    }
+
+    #[test]
+    fn scalar_append_array_keeps_old() {
+        assert_parity("i=hello; i+=(a b); print -l $i");
+    }
+
+    #[test]
+    fn float_e_append_array_keeps_eformat_old() {
+        assert_parity("float f=2.5; f+=(3.5 4.5); print -l $f");
+    }
+
+    #[test]
+    fn float_E_append_array() {
+        assert_parity("typeset -E f=1.5; f+=(2.5); print -l $f");
+    }
+}
+
+/// getstrvalue float arm honors the format flag (PM_EFLOAT/PM_FFLOAT) and
+/// precision (pm.base) per c:2366-2370 — independent of the augment path.
+mod float_getstrvalue_format {
+    use super::*;
+
+    #[test]
+    fn float_default_eformat() {
+        assert_parity("float f=2.5; echo $f");
+    }
+
+    #[test]
+    fn float_F_fixed() {
+        assert_parity("typeset -F f=2.5; echo $f");
+    }
+
+    #[test]
+    fn float_F_precision() {
+        assert_parity("typeset -F 3 f=2.5; echo $f");
+    }
+}

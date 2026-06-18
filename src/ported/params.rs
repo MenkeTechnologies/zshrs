@@ -3439,10 +3439,19 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
             pm.width,                               // c:2373 pm->width for underscore grouping
         )
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
-        // c:2375
-        // c:2377 — `convfloat(getfn(pm), pm->base, pm->flags, NULL)`.
-        // Route through convfloat_underscore which honors pm.width.
-        convfloat_underscore(floatgetfn(pm), pm.width)
+        // c:2366-2370 — `convfloat(getfn(pm), pm->base, pm->node.flags,
+        // NULL)`. The format flag (PM_EFLOAT → e-notation, PM_FFLOAT →
+        // fixed) and the precision (`pm->base` holds digits for floats)
+        // BOTH come straight from the param. The previous Rust port used
+        // `convfloat_underscore(floatgetfn(pm), pm.width)`, which drops
+        // the format flag (convfloat_underscore calls `convfloat(d,0,0)`
+        // → 'g' default) and wrongly applies width grouping that C does
+        // NOT do here (underscore grouping happens in typeset -p output
+        // c:2866, not getstrvalue). That made getstrvalue render a
+        // default `float f=2.5` as "2.5" instead of "2.500000000e+00",
+        // surfacing when `assignaparam`'s AUGMENT prepend (c:3350) routes
+        // an old float value through getstrvalue.
+        convfloat(floatgetfn(pm), pm.base, pm.node.flags as u32)
     } else if t == PM_SCALAR || t == PM_NAMEREF {
         // c:2380
         strgetfn(pm)
@@ -6443,7 +6452,31 @@ Some(Box::new(node.clone()))
     let (existed, prior_scalar, prior_flags) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
-            Some(pm) => (true, pm.u_str.clone(), pm.node.flags),
+            Some(pm) => {
+                // c:3350 — the ASSPM_AUGMENT prepend uses
+                // `ztrdup(getstrvalue(v))`, the type-aware string form of
+                // the old value (PM_INTEGER → base-formatted, PM_FFLOAT/
+                // PM_EFLOAT → convfloat, PM_SCALAR → strgetfn). Reading
+                // `u_str` alone loses it for numeric params — u_str is
+                // None for `integer`/`float`, so `integer i=1; i+=(2 3)`
+                // dropped the "1". Route scalar-type targets through
+                // getstrvalue so the conversion-to-array keeps the value.
+                let f = pm.node.flags as u32;
+                let ps = if f & (PM_ARRAY | PM_HASHED | PM_SPECIAL) == 0 {
+                    let mut pv = value {
+                        pm: Some(pm.clone()),
+                        arr: Vec::new(),
+                        scanflags: 0,
+                        valflags: 0,
+                        start: 0,
+                        end: -1,
+                    };
+                    Some(getstrvalue(Some(&mut pv))) // c:3350
+                } else {
+                    pm.u_str.clone()
+                };
+                (true, ps, pm.node.flags)
+            }
             None => (false, None, 0),
         }
     };
