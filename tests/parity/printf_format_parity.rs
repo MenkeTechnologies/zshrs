@@ -232,6 +232,23 @@ mod float_format {
     fn percent_g_general() {
         assert_parity(r#"printf "%g\n" 1234.5"#);
     }
+
+    /// NaN/Inf force bare lowercase "nan"/"inf"/"-inf" with no
+    /// width/precision/padding (c:builtin.c:5495-5499).
+    #[test]
+    fn nan_inf_forced_lowercase_f() {
+        assert_parity(r#"printf "%.1f|" NaN nan inf Inf -Inf"#);
+    }
+
+    #[test]
+    fn nan_inf_scientific() {
+        assert_parity(r#"printf "%e|%g|" nan inf"#);
+    }
+
+    #[test]
+    fn inf_ignores_width_padding() {
+        assert_parity(r#"printf "[%08.1f][%-8.1f]" inf nan"#);
+    }
 }
 
 mod escape_sequences {
