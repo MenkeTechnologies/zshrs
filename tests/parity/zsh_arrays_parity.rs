@@ -408,3 +408,27 @@ mod slice_range_assign {
         assert_parity("a=(1 2 3 4 5); a[2,-1]=(p); print $a");
     }
 }
+
+/// Under KSHARRAYS a bare array name addresses element 0 (ksh semantics),
+/// so a scalar assignment `a=X` to an existing array sets the FIRST
+/// element keeping the rest, rather than replacing the whole array
+/// (c:Src/params.c getvalue + the unset(KSHARRAYS)-gated reset c:3179).
+mod ksharrays_scalar_assign {
+    use super::*;
+
+    #[test]
+    fn scalar_assign_sets_element_zero() {
+        assert_parity(r#"setopt ksharrays; a=(first second); a=X; print -l "${a[@]}""#);
+    }
+
+    #[test]
+    fn scalar_assign_empty_array_creates_one() {
+        assert_parity(r#"setopt ksharrays; a=(); a=X; print -l "${a[@]}""#);
+    }
+
+    /// Without KSHARRAYS, `a=X` replaces the array with a scalar.
+    #[test]
+    fn non_ksharrays_scalar_assign_replaces() {
+        assert_parity(r#"a=(first second); a=X; print -l "${a[@]}""#);
+    }
+}

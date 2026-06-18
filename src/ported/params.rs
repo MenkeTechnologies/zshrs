@@ -4059,8 +4059,27 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
             // double-borrow.
             let one = vec![val.take().unwrap_or_default()];
             if v.start == 0 && v.end == -1 {
-                // c:2922 — full replace.
-                pm.u_arr = Some(one);
+                if isset(KSHARRAYS) {
+                    // c:Src/params.c getvalue — under KSHARRAYS a bare
+                    // array name addresses element 0 (ksh semantics), so
+                    // a SCALAR assignment `a=X` to an existing array sets
+                    // the FIRST element keeping the rest (a=(X second)),
+                    // not a whole-array replace. The non-KSHARRAYS path
+                    // already reset the array to a scalar before reaching
+                    // here (assignsparam c:3179-3192, gated on
+                    // unset(KSHARRAYS)); only the KSHARRAYS case arrives
+                    // with the param still PM_ARRAY.
+                    let arr = pm.u_arr.get_or_insert_with(Vec::new);
+                    let first = one.into_iter().next().unwrap_or_default();
+                    if arr.is_empty() {
+                        arr.push(first);
+                    } else {
+                        arr[0] = first;
+                    }
+                } else {
+                    // c:2922 — full replace.
+                    pm.u_arr = Some(one);
+                }
             } else {
                 // c:2933+ — slice splice path with bounds adjust.
                 let arr = pm.u_arr.get_or_insert_with(Vec::new);
