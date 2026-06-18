@@ -460,6 +460,15 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
 /// Port of `mathevall(char *s, enum prec_type prec_tp, char **ep)` from `Src/math.c:367`.
 /// WARNING: param names don't match C — Rust=() vs C=(s, prec_tp, ep)
 pub(crate) fn mathevall() -> Result<mnumber, String> {
+    // c:Src/math.c — matheval reads `isset(CPRECEDENCES)` / `isset(FORCEFLOAT)`
+    // / `isset(OCTALZEROES)` live at its use sites (e.g. c:348, 359, 482). The
+    // zshrs port caches them in per-eval thread-locals for speed but never
+    // populated them, so `setopt forcefloat` / `cprecedences` / `octalzeroes`
+    // had no effect inside arithmetic. Sync the caches from the live options at
+    // each eval entry (the option can't change mid-expression).
+    m_c_precedences_set(crate::ported::zsh_h::isset(crate::ported::zsh_h::CPRECEDENCES));
+    m_force_float_set(crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT));
+    m_octal_zeroes_set(crate::ported::zsh_h::isset(crate::ported::zsh_h::OCTALZEROES));
     m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
     // c:Src/math.c:1485-1488 — `outputradix = outputunderscore = 0;`
