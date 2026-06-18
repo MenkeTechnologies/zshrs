@@ -268,6 +268,31 @@ mod multiple_redirects {
             r#"sh -c 'echo OUT; echo ERR >&2' > out.txt 2> err.txt; cat out.txt err.txt"#,
         );
     }
+
+    /// A redirect target that brace-expands to multiple words MULTIOS-
+    /// creates each (c:Src/glob.c:2161 xpandredir), including paths with
+    /// `/`. `: >dir/{a,b,c}` — the canonical ztst-prep idiom — must write
+    /// each file separately, not one space-joined filename.
+    #[test]
+    fn brace_target_multios_with_slash() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "mkdir p; : >p/{a,b,c}; print -l p/*(.N); echo done",
+        );
+    }
+
+    #[test]
+    fn brace_target_multios_simple() {
+        let d = tdir();
+        assert_parity_in(d.path(), ": >{a,b}; print -l *(.N); echo done");
+    }
+
+    #[test]
+    fn brace_target_prefix() {
+        let d = tdir();
+        assert_parity_in(d.path(), ": >x{a,b,c}; print -l x*(.N); echo done");
+    }
 }
 
 mod pipeline_redirect {
