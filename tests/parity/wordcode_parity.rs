@@ -179,6 +179,10 @@ fn esc(out: &mut String, s: &str) {
 fn dump_via_zshrs(src: &str) -> String {
     use zsh::tokens::ENDINPUT;
 
+    // Serialize in-process lex/parse: it mutates process-global lexer/history
+    // state (chwords/chwordpos/chline etc.) that races across parallel test
+    // threads — concurrent parses overflow chwordpos and poison its mutex.
+    let _g = crate::parser_lock::parser_guard();
     zsh::lex::lex_init(src);
     zsh::lex::set_tok(ENDINPUT);
     zsh::parse::init_parse();
