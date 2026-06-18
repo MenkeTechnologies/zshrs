@@ -15472,6 +15472,19 @@ fn format_spec_float(spec: &str, n: f64) -> String {
 /// of %e/%f and strips trailing zeros; %e/%E uses scientific notation;
 /// %f/%F is decimal-fraction (no scientific). Default precision is 6.
 fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
+    // c:Src/builtin.c:5495-5499 — `/* force consistent form for Inf/NaN
+    // output */ if (isnan(doubleval)) fputs("nan"); else if (isinf(doubleval))
+    // fputs(doubleval < 0.0 ? "-inf" : "inf"); else print_val(...)`. zsh emits
+    // the BARE lowercase string with no width/precision/flags/padding,
+    // bypassing the normal formatting (platform-independent). The previous
+    // Rust path ran nan/inf through `format!`, producing "NaN" and garbage
+    // scientific ("NaNe+2147483647").
+    if n.is_nan() {
+        return "nan".to_string(); // c:5496-5497
+    }
+    if n.is_infinite() {
+        return if n < 0.0 { "-inf" } else { "inf" }.to_string(); // c:5498-5499
+    }
     let (left_align, zero_pad, width, prec) = parse_flags_width_prec(spec);
     let body = match conv {
         'f' | 'F' => {
