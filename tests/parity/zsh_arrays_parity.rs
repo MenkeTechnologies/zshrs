@@ -375,3 +375,36 @@ mod negative_oob_subscript_assign {
         assert_parity("a=(1 2 3 4 5); a[-7]=42; a[-9]=99; print $a");
     }
 }
+
+/// Array slice assignment `a[lo,hi]=(...)`. A REVERSED range (lo > hi)
+/// is an EMPTY range → the value is INSERTED at lo keeping every element
+/// (c:Src/params.c:2940-2943 — `if (end < start) end = start`).
+mod slice_range_assign {
+    use super::*;
+
+    #[test]
+    fn reversed_range_inserts() {
+        assert_parity("a=(1 2 3 4 5); a[4,2]=(42 43 44); print $a");
+    }
+
+    #[test]
+    fn forward_range_replaces() {
+        assert_parity("a=(1 2 3 4 5); a[2,4]=(x y); print $a");
+    }
+
+    /// `a[1,0]` — the canonical prepend idiom (end one before start).
+    #[test]
+    fn one_zero_prepends() {
+        assert_parity("a=(1 2 3); a[1,0]=(X Y); print $a");
+    }
+
+    #[test]
+    fn single_element_range_replaces() {
+        assert_parity("a=(1 2 3 4 5); a[3,3]=(z); print $a");
+    }
+
+    #[test]
+    fn negative_end_range() {
+        assert_parity("a=(1 2 3 4 5); a[2,-1]=(p); print $a");
+    }
+}

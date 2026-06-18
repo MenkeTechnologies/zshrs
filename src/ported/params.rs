@@ -4300,7 +4300,6 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
     } else {
         v.end as i64
     };
-    // c:2960-2961 — `if (end < start) end = start`.
     let start_idx = (start.max(1) - 1) as usize;
     let end_idx = end.max(0) as usize;
 
@@ -4309,36 +4308,26 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         arr.push(String::new());
     }
 
-    // c:2989-2998 — splice val into [start..end] range.
-    let end_idx = end_idx.min(arr.len());
+    // c:2940-2943 — `if (v->end < v->start || v->start > oldlen)
+    //                    v->end = v->start; else if (v->end > oldlen)
+    //                    v->end = oldlen;`. A REVERSED range (start > end,
+    // e.g. `a[4,2]=(42 43 44)`) collapses to an EMPTY range at start, so
+    // the splice INSERTS the value there keeping every element
+    // ("1 2 3 42 43 44 4 5") — it does NOT overwrite from start. The
+    // previous Rust port took a custom `start_idx > end_idx` else-branch
+    // that overwrote/extended from start, dropping the tail. `clamp`
+    // implements both C arms: lower-bound start_idx (reversed → empty),
+    // upper-bound arr.len() (end past tail → clamp). After the pad above
+    // arr.len() >= start_idx, so the clamp range is always valid.
+    let end_idx = end_idx.clamp(start_idx, arr.len());
     let val_len = val.len(); // c:3030 post-assign sanity
     let pre_len = arr.len(); // c:3030 (snapshot)
-    if start_idx <= end_idx {
-        arr.splice(start_idx..end_idx, val);
-    } else {
-        for (i, x) in val.into_iter().enumerate() {
-            if start_idx + i < arr.len() {
-                arr[start_idx + i] = x;
-            } else {
-                arr.push(x);
-            }
-        }
-    }
-    // c:3030 — DPUTS2(p - new != post_assignment_length,
-    //                 "setarrvalue: wrong allocation: %d 1= %lu",
-    //                 post_assignment_length, (unsigned long)(p - new))
-    // In C, p-new is the pointer-arithmetic count of elements written
-    // into the freshly-allocated buffer; post_assignment_length is the
-    // pre-calculated expected length. In Rust the post-splice arr.len()
-    // is the equivalent of `p - new`; the expected length follows the
-    // same arithmetic as C's post_assignment_length.
-    let expected = if start_idx <= end_idx {
-        // c:3030
-        pre_len - (end_idx - start_idx) + val_len // c:3030
-    } else {
-        // c:3030
-        (start_idx + val_len).max(pre_len) // c:3030
-    };
+    // c:2989-2998 — splice val into [start..end] range.
+    arr.splice(start_idx..end_idx, val);
+    // c:3030 — DPUTS2(p - new != post_assignment_length, …). The
+    // post-splice arr.len() is C's `p - new`; expected follows C's
+    // post_assignment_length = start + vallen + MAX(0, oldlen - end).
+    let expected = pre_len - (end_idx - start_idx) + val_len; // c:3030
     DPUTS2!(
         // c:3030
         arr.len() != expected, // c:3030
