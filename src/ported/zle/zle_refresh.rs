@@ -1542,13 +1542,12 @@ pub fn zrefresh() {
                         rpms.nvcs = rpms.pos as i32;
                     }
                 }
-                // c:1293-1299 — combining scan: absorb following width-0 marks.
+                // c:1293-1299 — combining scan: absorb following combining marks
+                // via the canonical IS_COMBINING (`wc != 0 && WCWIDTH(wc) == 0`).
                 let mut ichars = 1usize;
                 if isset(COMBININGCHARS) {
                     while i + ichars < line_snapshot.len()
-                        && unicode_width::UnicodeWidthChar::width(
-                            line_snapshot[i + ichars],
-                        ) == Some(0)
+                        && crate::ported::zsh_h::IS_COMBINING(line_snapshot[i + ichars])
                     {
                         ichars += 1; // c:1297-1299
                     }
@@ -1709,13 +1708,12 @@ pub fn zrefresh() {
                 let width = unicode_width::UnicodeWidthChar::width(u).unwrap_or(0);
                 let is_ctrl = (u as u32) < 0x20 || u as u32 == 0x7f;
                 if width > 0 && !is_ctrl {
-                    // c:1442-1446 — combining scan (COMBININGCHARS).
+                    // c:1442-1446 — combining scan (COMBININGCHARS) via the
+                    // canonical IS_COMBINING (`wc != 0 && WCWIDTH(wc) == 0`).
                     let mut ichars = 1usize;
                     if isset(COMBININGCHARS) {
                         while su + ichars < status_chars.len()
-                            && unicode_width::UnicodeWidthChar::width(
-                                status_chars[su + ichars],
-                            ) == Some(0)
+                            && crate::ported::zsh_h::IS_COMBINING(status_chars[su + ichars])
                         {
                             ichars += 1;
                         }
