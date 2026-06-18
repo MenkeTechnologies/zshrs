@@ -9484,10 +9484,35 @@ fn parse_cond_primary() -> Option<ZshCond> {
     let is_regex_op = opc.len() == 2
         && (opc[0] == '=' || opc[0] == Equals)
         && (opc[1] == '~' || opc[1] == Tilde);
+    // c:2659-2710 par_cond_triple — only the documented binary operators are
+    // valid. String ops: `=`/`==`/`!=`/`<`/`>` (and their tokenized forms
+    // Equals/Bang/Inang/Outang). Dash ops (`-eq`, `-nt`, `-pcre-match`, any
+    // `-X`) parse-accept and the evaluator reports "unknown condition" if
+    // unsupported. A `-mod A B C` (s1 is a dash op) is the COND_MOD form. Any
+    // other middle word is `COND_ERROR("condition expected: %s", op)` — a parse
+    // error that YYERRORs (errflag + LEXERR) so the line aborts. Without this
+    // gate `[[ a b c ]]` silently built Binary("a","b","c") and ran on.
+    let is_eq = |c: char| c == '=' || c == Equals;
+    let is_bang = |c: char| c == '!' || c == Bang;
+    let is_recognized_op = (opc.len() == 1
+        && (is_eq(opc[0]) || matches!(opc[0], '<' | '>') || opc[0] == Inang || opc[0] == Outang))
+        || (opc.len() == 2 && is_eq(opc[0]) && is_eq(opc[1]))
+        || (opc.len() == 2 && is_bang(opc[0]) && is_eq(opc[1]))
+        || (!opc.is_empty() && IS_DASH(opc[0]))
+        || (!s1_chars.is_empty() && IS_DASH(s1_chars[0]));
     if is_regex_op {
         Some(ZshCond::Regex(s1, s2))
-    } else {
+    } else if is_recognized_op {
         Some(ZshCond::Binary(s1, op, s2))
+    } else {
+        let display: String = op.chars().map(|c| if IS_DASH(c) { '-' } else { c }).collect();
+        crate::ported::utils::zerr(&format!("condition expected: {}", display));
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        set_tok(LEXERR);
+        None
     }
 }
 
