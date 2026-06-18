@@ -789,4 +789,22 @@ mod round_pins {
     fn array_reverse_match() {
         assert_parity("a=(1 2 3); print -r ${a[(r)2]}");
     }
+
+    /// `:a` modifier is LEXICAL (chabspath, c:subst.c:4744) — collapses
+    /// `.`/`..` and makes absolute WITHOUT resolving symlinks or
+    /// requiring existence. Was using xsymlinks (the `:A` physical walk).
+    #[test]
+    fn modifier_a_collapses_dotdot_absolute() {
+        assert_parity("x=/a/b/../c; print -r ${x:a}");
+    }
+
+    #[test]
+    fn modifier_a_collapses_nonexistent() {
+        assert_parity("x=/nonexistent/../foo; print -r ${x:a}");
+    }
+
+    #[test]
+    fn modifier_a_relative_made_absolute() {
+        assert_parity("cd /tmp; x=./x/../y; print -r ${x:a}");
+    }
 }
