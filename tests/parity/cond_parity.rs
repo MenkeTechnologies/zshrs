@@ -693,3 +693,40 @@ mod syntax_errors {
         assert_parity(r#"[ a -pcre-match b ]; print -r "r=$?""#);
     }
 }
+
+/// A `[[ ]]` command's status participates in errexit like any command:
+/// `set -e; [[ 0 = 1 ]]` exits on the false status. `if`/`&&`/`||`/`while`
+/// contexts are exempt. compile_cond once never ran the errexit check.
+mod errexit {
+    use super::*;
+
+    /// `set -e` + a false `[[ ]]` aborts the list.
+    #[test]
+    fn set_e_false_cond_aborts() {
+        assert_parity(r#"set -e; [[ 0 = 1 ]]; echo after"#);
+    }
+
+    /// True cond does not abort.
+    #[test]
+    fn set_e_true_cond_continues() {
+        assert_parity(r#"set -e; [[ 1 = 1 ]]; echo after"#);
+    }
+
+    /// `&&` context is exempt from errexit.
+    #[test]
+    fn set_e_false_cond_in_and_exempt() {
+        assert_parity(r#"set -e; [[ 0 = 1 ]] && echo x; echo after"#);
+    }
+
+    /// `if` context is exempt.
+    #[test]
+    fn set_e_false_cond_in_if_exempt() {
+        assert_parity(r#"set -e; if [[ 0 = 1 ]]; then echo t; fi; echo after"#);
+    }
+
+    /// Without `set -e`, a false cond does NOT abort.
+    #[test]
+    fn no_set_e_false_cond_continues() {
+        assert_parity(r#"[[ 0 = 1 ]]; echo after"#);
+    }
+}

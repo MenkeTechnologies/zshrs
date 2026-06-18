@@ -883,7 +883,18 @@ impl ZshCompiler {
             ZshCommand::Case(c) => self.compile_case(c),
             ZshCommand::Repeat(r) => self.compile_repeat(r),
             ZshCommand::FuncDef(f) => self.compile_funcdef(f),
-            ZshCommand::Cond(c) => self.compile_cond(c),
+            ZshCommand::Cond(c) => {
+                self.compile_cond(c);
+                // c:Src/exec.c — a `[[ ]]` command's status participates in the
+                // errexit/errflag abort like any other command: `set -e; [[ 0
+                // = 1 ]]` exits on the false status, and a cond eval error
+                // (ERRFLAG_ERROR, e.g. "unknown condition") aborts the input.
+                // compile_cond emitted the status but never ran the check, so
+                // neither fired. emit_errexit_check is gated by
+                // errexit_suppress_depth, so `if`/`&&`/`||`/`while` contexts
+                // stay exempt. Mirrors the Arith arm (Bug #33).
+                self.emit_errexit_check();
+            }
             ZshCommand::Arith(expr) => {
                 self.compile_arith(expr);
                 // c:Src/exec.c WC_ARITH — math command's status is part
