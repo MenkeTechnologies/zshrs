@@ -661,3 +661,22 @@ mod file_modified_since_read {
         assert_parity(r#"[[ -N /nonexistent_zzz_qqq ]]; print -r "nzf=$?""#);
     }
 }
+
+/// `[[ ... ]]` syntax errors must abort the `-c` list (exit nonzero, no
+/// trailing command runs), not silently evaluate false. par_cond_primary once
+/// built `Binary(s1, op, s2)` for any middle word, so `[[ a b c ]]` ran on.
+mod syntax_errors {
+    use super::*;
+
+    /// Unrecognized binary operator → "condition expected: b", abort.
+    #[test]
+    fn unknown_binary_operator_aborts() {
+        assert_parity(r#"[[ a b c ]]; echo after"#);
+    }
+
+    /// Valid string/numeric/regex operators must still parse and run.
+    #[test]
+    fn valid_operators_still_work() {
+        assert_parity(r#"[[ a == a ]]; print r$?; [[ 1 -eq 1 ]]; print r$?; [[ foo =~ f.. ]]; print r$?"#);
+    }
+}
