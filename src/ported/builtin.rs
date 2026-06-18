@@ -5807,6 +5807,24 @@ pub fn bin_typeset(
                     typ == PM_HASHED || typ == PM_ARRAY
                 })
             }).unwrap_or(false);
+            // Capture the param's PRIOR numeric class (before the flag
+            // change below) so the base-stamp arm can reset pm.base when
+            // switching BETWEEN integer and float — the base field means
+            // radix for integers but precision for floats, so a leftover
+            // value leaks (float precision 3 → integer base 3 = "3#10";
+            // int base 16 → float 16-digit precision). E↔F and same-type
+            // re-declares keep it (both float, base=precision). zsh 5.9.1
+            // verified.
+            let (prior_is_integer, prior_is_float) = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get(arg).map(|pm| {
+                        let f = pm.node.flags as u32;
+                        ((f & PM_INTEGER) != 0, (f & (PM_EFLOAT | PM_FFLOAT)) != 0)
+                    })
+                })
+                .unwrap_or((false, false));
             let was_fresh = saved_val.is_none() && !already_typed;
             if was_fresh {
                 // c:3072 — `if (!getsparam(pname)) setsparam(pname, "")`.
@@ -5905,6 +5923,25 @@ pub fn bin_typeset(
                         if let Ok(mut tab) = paramtab().write() {
                             if let Some(pm) = tab.get_mut(arg) {
                                 pm.base = b; // c:1987 pm->base = base
+                            }
+                        }
+                    }
+                } else {
+                    // No explicit base/precision arg. When an EXISTING
+                    // numeric param switches BETWEEN integer and float,
+                    // reset pm.base to the default (0) — the shared base
+                    // field would otherwise leak the old type's value
+                    // (createparam's base default is 0, c:Src/params.c:1155;
+                    // a numeric type change re-creates the representation).
+                    // Gated so E↔F and same-type re-declares keep their
+                    // base/precision (`typeset -i16 f; typeset -i f` stays
+                    // base 16). zsh 5.9.1 verified.
+                    let switching_int_float = ((on & PM_INTEGER) != 0 && prior_is_float)
+                        || ((on & (PM_EFLOAT | PM_FFLOAT)) != 0 && prior_is_integer);
+                    if !was_fresh && switching_int_float {
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(arg) {
+                                pm.base = 0;
                             }
                         }
                     }

@@ -603,3 +603,37 @@ mod valueless_field_width {
         assert_parity("typeset -L 10 -F 3 g; typeset -p g");
     }
 }
+
+/// `pm.base` is shared between integer radix and float precision, so
+/// switching an EXISTING numeric var BETWEEN integer and float must reset
+/// it (else float precision 3 → integer base 3 = "3#10", int base 16 →
+/// float 16-digit precision). E↔F and same-type re-declares keep it.
+mod numeric_type_change_base_reset {
+    use super::*;
+
+    #[test]
+    fn float_to_int_resets_base() {
+        assert_parity("typeset -F3 f=3.14159; typeset -i f; print $f");
+    }
+
+    #[test]
+    fn float_to_int_typeset_p() {
+        assert_parity("typeset -F3 f=3.14159; typeset -i f; typeset -p f");
+    }
+
+    #[test]
+    fn int_to_float_resets_precision() {
+        assert_parity("typeset -i 16 x=255; typeset -F x; print $x");
+    }
+
+    /// Same-type re-declare KEEPS the base.
+    #[test]
+    fn int_to_int_keeps_base() {
+        assert_parity("typeset -i16 f=255; typeset -i f; print $f");
+    }
+
+    #[test]
+    fn float_to_float_keeps_precision() {
+        assert_parity("typeset -F3 f=3.14159; typeset -F f; print $f");
+    }
+}
