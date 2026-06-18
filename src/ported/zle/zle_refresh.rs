@@ -1610,11 +1610,13 @@ pub fn zrefresh() {
         // gated on STATUSLINE being set so the common (no-status) path is
         // untouched. Status runs BEFORE the nlnct computation so its rows are
         // counted (snextline advances rpms.ln). The MULTIBYTE_SUPPORT branches
-        // (wide/combining chars, `<hex>` escapes; c:1437-1497, 1510-1534) are
-        // deferred; the non-MB path (control → `^X`/`^?`, else verbatim) is
-        // ported faithfully. `stringaszleline` is the metafied→ZLE-string
-        // decode; here STATUSLINE is already a Rust `String`, so we iterate its
-        // chars directly (the decode is the producer's job, zle_main.rs).
+        // are ported: the printable wide/combining path (c:1438-1473), the
+        // width-0 / non-printable `<hex>` escape (c:1474-1493 and c:1512-1532,
+        // collapsed into one branch since both emit `<%04x>`/`<%08x>` @all_attr),
+        // and the control `^X`/`^?` path (c:1499-1510). `stringaszleline` is the
+        // metafied→ZLE-string decode; here STATUSLINE is already a Rust `String`,
+        // so we iterate its chars directly (the decode is the producer's job,
+        // zle_main.rs).
         let statusline_present = if let Some(status) =
             STATUSLINE.lock().unwrap().clone()
         {
@@ -1694,9 +1696,9 @@ pub fn zrefresh() {
             // c:1438-1538 — status render loop. The MB printable branch (wide /
             // combining glyphs, c:1438-1473) mirrors the main build: combining
             // scan, margin wrap, leading cell + WEOF padding, '?' when too wide.
-            // The non-MB control (`^X`) and verbatim paths follow. The `<hex>`
-            // rendering of width-0 non-combining glyphs (c:1474-1493) stays a
-            // verbatim emit for now.
+            // The control branch renders `^X`/`^?` (c:1499-1510); the final
+            // `else` renders width-0 / non-printable orphans as the `<hex>`
+            // escape (c:1474-1493 / c:1512-1532).
             let status_chars: Vec<char> = status.chars().collect();
             let mut skip_s = 0usize;
             for su in 0..status_chars.len() {
