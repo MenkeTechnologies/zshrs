@@ -11770,8 +11770,13 @@ pub fn bin_read(
             0
         };
     }
-    if OPT_ISSET(ops, b'k') {
-        // c:6588
+    if OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q') {
+        // c:Src/builtin.c:6630 — `if (OPT_ISSET(ops,'k') ||
+        // OPT_ISSET(ops,'q'))` — both read raw chars (no line/IFS
+        // processing). `-q` reads exactly one char (nchars defaults to
+        // 1) for the yes/no decision applied below. The previous port
+        // gated only on `-k`, so `-q` fell through to the line reader
+        // and never applied the y/Y check (always returned 0).
         // c:Src/builtin.c — `-k 0` (zero chars requested) is a no-op
         // read that zsh treats as failure (returns 1) because no
         // bytes can be consumed. Mirror so `read -k 0` exits 1
@@ -11897,6 +11902,17 @@ pub fn bin_read(
             buf = String::from_utf8_lossy(&buf_bytes).into_owned();
             partial_eof = !saw_newline;
         }
+    }
+
+    // c:Src/builtin.c:6730-6742 — `-q` (read yes/no): the single char
+    // read above is "yes" iff it is exactly 'y' or 'Y'; the reply var is
+    // set to "y"/"n" and the exit status is 0 (yes) / 1 (no). (A timeout
+    // would be status 2; not modeled here.) This must run BEFORE the
+    // IFS/array assignment dispatch — `-q` never does line splitting.
+    if OPT_ISSET(ops, b'q') {
+        let is_yes = buf == "y" || buf == "Y"; // c:6741
+        setsparam(&reply, if is_yes { "y" } else { "n" }); // c:6742
+        return if is_yes { 0 } else { 1 };
     }
 
     // Assign to scalar reply, multi-var split, or array.

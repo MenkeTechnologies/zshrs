@@ -147,6 +147,38 @@ mod count_chars {
     }
 }
 
+/// `read -q` reads ONE char: "yes" (status 0, REPLY=y) iff it is exactly
+/// 'y'/'Y', else "no" (status 1, REPLY=n) — c:Src/builtin.c:6730-6742.
+mod yes_no {
+    use super::*;
+
+    #[test]
+    fn read_q_yes_lowercase() {
+        assert_parity("read -q -u0 <<<y; echo \"$?:$REPLY\"");
+    }
+
+    #[test]
+    fn read_q_yes_uppercase() {
+        assert_parity("read -q -u0 <<<Y; echo \"$?:$REPLY\"");
+    }
+
+    #[test]
+    fn read_q_no_n() {
+        assert_parity("read -q -u0 <<<n; echo \"$?:$REPLY\"");
+    }
+
+    #[test]
+    fn read_q_other_is_no() {
+        assert_parity("read -q -u0 <<<X; echo \"$?:$REPLY\"");
+    }
+
+    /// Loop over y/Y/n/N/X — the workers/42248-style status sequence.
+    #[test]
+    fn read_q_sequence() {
+        assert_parity("for c in y Y n N X; do read -q -u0 <<<$c; print $?; done");
+    }
+}
+
 mod from_pipeline {
     use super::*;
 
