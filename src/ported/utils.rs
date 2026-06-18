@@ -4371,9 +4371,48 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime, use_gmt: bool) -> String
 
 /// Join array with delimiter (from utils.c zjoin)
 /// Port of `zjoin(char **arr, int delim, int heap)` from `Src/utils.c:3622`.
-/// WARNING: param names don't match C — Rust=(arr, delim) vs C=(arr, delim, heap)
+/// Joins `arr` with `delim` between elements. When `delim` is itself a meta
+/// byte (`imeta(delim)` — NUL, `Meta`, `Marker`, or a token in the
+/// Pound..Nularg range; see `inittyptab` c:4195-4201), C writes the delimiter
+/// in *metafied* form (`Meta` byte then `delim ^ 32`, c:3634-3637) rather than
+/// the raw byte (c:3639). The earlier port emitted the raw char always, which
+/// was byte-wrong for meta delimiters — notably `zjoin(array, '\0', …)` (NUL is
+/// imeta), where C emits `0x83 0x20`, not a raw `0x00`.
+///
+/// WARNING: param names don't match C — Rust=(arr, delim) vs C=(arr, delim, heap).
+/// The `heap` arg is dropped (Rust `String` owns its storage). As with
+/// [`metafy`], the `Meta` byte cannot live in valid UTF-8, so the final
+/// `String` boundary uses the same `from_utf8`/lossy fallback — byte-exact for
+/// every ASCII (non-meta) delimiter, lossy only on meta delimiters. Callers
+/// needing byte-exact meta-delimited output should join at the byte level.
 pub fn zjoin(arr: &[String], delim: char) -> String {
-    arr.join(&delim.to_string())
+    // c:3622
+    // c:3629-3630 — empty array → "".
+    if arr.is_empty() {
+        return String::new();
+    }
+    let db = delim as u32;
+    // c:3634 — `imeta(delim)`. Only byte-valued delimiters can be meta.
+    let delim_meta = db < 0x100 && imeta_byte(db as u8);
+    let mut out: Vec<u8> = Vec::new();
+    for (i, s) in arr.iter().enumerate() {
+        if i != 0 {
+            // The separator that C writes after every element then chops off
+            // the trailing one (c:3641) is equivalent to interposing it.
+            if delim_meta {
+                out.push(Meta); // c:3635
+                out.push((db as u8) ^ 32); // c:3636
+            } else if db < 0x100 {
+                out.push(db as u8); // c:3639 — raw single byte
+            } else {
+                // Non-byte char delimiter (no C analogue): emit its UTF-8.
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(delim.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+        out.extend_from_slice(s.as_bytes()); // c:3633 — strucpy(&ptr, *s)
+    }
+    String::from_utf8(out.clone()).unwrap_or_else(|_| String::from_utf8_lossy(&out).into_owned())
 }
 
 /// Port of `char **colonsplit(char *s, int uniq)` from
@@ -9898,6 +9937,31 @@ fn fdtable_lock() -> &'static Mutex<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// zjoin port (utils.c:3622). ASCII delimiters join byte-for-byte; a meta
+    /// delimiter (NUL is `imeta` per inittyptab c:4195) must be written in
+    /// metafied form (`Meta` + `delim^32`), never as a raw byte.
+    #[test]
+    fn zjoin_ascii_and_meta_delims() {
+        let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // c:3632-3641 — ordinary (non-meta) delimiter: plain interposition.
+        assert_eq!(zjoin(&v(&["a", "b", "c"]), ' '), "a b c");
+        assert_eq!(zjoin(&v(&["foo"]), ':'), "foo"); // single elem, no delim
+        // c:3629-3630 — empty array → "".
+        assert_eq!(zjoin(&v(&[]), ' '), "");
+
+        // c:3634-3637 — NUL is imeta, so the separator is metafied, NOT a raw
+        // NUL byte (the prior `arr.join("\0")` bug). The Meta byte (0x83) can't
+        // survive the UTF-8 String boundary, but the raw NUL must be gone.
+        let joined = zjoin(&v(&["a", "b"]), '\0');
+        assert!(
+            !joined.as_bytes().contains(&0u8),
+            "NUL delim must be metafied, not emitted as a raw NUL byte: {joined:?}"
+        );
+        assert_ne!(joined, "a\u{0}b", "must not raw-join on a meta delimiter");
+        assert!(joined.starts_with('a') && joined.ends_with('b'));
+    }
 
     /// findsep port (utils.c:3784). Pure function — no global/cwd state.
     #[test]
