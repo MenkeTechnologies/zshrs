@@ -293,3 +293,38 @@ mod print_array {
         assert_parity(r#"arr=(); print -l "${arr[@]}"; print done"#);
     }
 }
+
+mod print_sort {
+    use super::*;
+
+    /// `print -o` sorts via zsh's `strmetasort` → `eltpcmp` → `strcoll`
+    /// (sort.c:134), locale collation — case-insensitive in UTF-8 locales,
+    /// so lowercase/uppercase interleave (`a b B C`) rather than ASCII
+    /// (`B C a b`). c:builtin.c:4807.
+    #[test]
+    fn print_o_strcoll_collation() {
+        assert_parity("print -o b a C B");
+    }
+
+    #[test]
+    fn print_o_mixed_case() {
+        assert_parity("print -o foo Bar BAZ");
+    }
+
+    /// `-O` → SORTIT_BACKWARDS flips `sortdir` inside the comparator.
+    #[test]
+    fn print_O_reverse() {
+        assert_parity("print -O b a C B");
+    }
+
+    /// `-i` → SORTIT_IGNORING_CASE folds case before strcoll.
+    #[test]
+    fn print_oi_ignore_case() {
+        assert_parity("print -oi b a C B");
+    }
+
+    #[test]
+    fn print_l_o_words() {
+        assert_parity("print -l -o zebra Apple banana Cherry");
+    }
+}
