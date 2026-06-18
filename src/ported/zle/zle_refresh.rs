@@ -3128,30 +3128,41 @@ pub fn tcmultout(cap: i32, multcap: i32, ct: i32) -> i32 {
     0
 }
 
-/// Port of `static void tc_rightcurs(int ct)` from
+/// Direct port of `static void tc_rightcurs(int ct)` from
 /// `Src/Zle/zle_refresh.c:2237`. Move the cursor right `ct` columns,
-/// preferring the most reliable terminal capability:
+/// trying each strategy in the C order of preference:
 ///   - `TCMULTRIGHT` parametrised right (c:2247-2250) — most reliable
 ///   - `TCHORIZPOS` absolute horizontal position to `ct + vcs` (c:2253-2256)
+///   - non-destructive tab stops when `!oxtabs` (c:2260-2267)
+///   - if anywhere in the prompt, step through it with `TCRIGHT` when that's
+///     cheaper than reprinting, else reprint the whole prompt (c:2286-2306)
+///   - carefully re-output the video-buffer cells from column `i` (c:2308-2313)
+///   - last resort: pad with spaces (c:2314-2315) — "not my fault your
+///     terminal can't go right"
 ///
-/// The remaining C strategies are blocked on substrate not yet ported and
-/// only matter for terminals lacking the above (essentially none today):
-///   - tab-stop stepping (c:2261-2268) needs `oxtabs`
-///   - prompt re-output (c:2287-2306) needs `lpromptbuf`/`lprompth`
-///   - video-cell re-output + space pad (c:2308-2316) is the last resort
-///     "your terminal can't go right" path.
-/// When no termcap entry is loaded (headless), emit the portable ANSI
-/// cursor-forward (CSI C) — the same sequence a loaded `TCMULTRIGHT` holds.
+/// This (multibyte) build excludes the `#ifndef MULTIBYTE_SUPPORT`
+/// `strlen(lpromptbuf) == lpromptw` fast path (c:2287-2291): with potentially
+/// wide characters the trick is unsafe, so the prompt is always either stepped
+/// through with `TCRIGHT` or reprinted. `lpromptbuf` is `zle_main::prompt()`.
+/// `tc_rightcurs` never mutates `vcs`/`vln` — the caller owns those.
 pub fn tc_rightcurs(count: usize) {
     // c:2237
     if count == 0 {
         return;
     }
-    use crate::ported::init::{tclen, tcstr};
-    use crate::ported::zsh_h::{TCHORIZPOS, TCMULTRIGHT};
-    let ct = count as i32;
+    use crate::ported::init::tclen;
+    use crate::ported::params::TERMFLAGS;
+    use crate::ported::zsh_h::{TCHORIZPOS, TCMULTRIGHT, TCNEXTTAB, TCRIGHT, TERM_SHORT};
+
+    let zr_cr = REFRESH_ELEMENT { chr: '\r', atr: 0 };
+    let zr_sp = REFRESH_ELEMENT { chr: ' ', atr: 0 };
+
+    let mut ct = count as i32; // c:2237 — ct (reassigned by the tab/prompt paths)
     let vcs = VCS.load(Ordering::SeqCst);
-    let cl = ct + vcs; // c:2245 — cl = ct + vcs (desired absolute column)
+    let vln = VLN.load(Ordering::SeqCst);
+    let winw = WINW.load(Ordering::SeqCst);
+    let mut i = vcs; // c:2240 — i = vcs: cursor position after the initial moves
+    let cl = ct + vcs; // c:2244 — cl = ct + vcs: desired absolute column
     let out_fd = {
         let f = SHTTY.load(Ordering::Relaxed);
         if f >= 0 {
@@ -3171,9 +3182,87 @@ pub fn tc_rightcurs(count: usize) {
         tcoutarg(TCHORIZPOS, cl);
         return;
     }
-    // Blocked-substrate fallbacks above are deferred; emit the ANSI default.
-    let s = format!("\x1b[{}C", ct);
-    let _ = write_loop(out_fd, s.as_bytes());
+
+    // c:2260-2267 — try tabs if non-destructive (`!oxtabs`) and the next tab
+    // stop lies before the target. `(vcs | 7)` is one short of that tab stop.
+    if OXTABS.load(Ordering::SeqCst) == 0
+        && tclen.lock().unwrap()[TCNEXTTAB as usize] != 0
+        && (vcs | 7) < cl
+    {
+        i = (vcs | 7) + 1; // c:2261
+        tcout(TCNEXTTAB); // c:2262
+        while i + 8 <= cl {
+            // c:2263-2264 — `for ( ; i + 8 <= cl; i += 8) tcout(TCNEXTTAB);`
+            tcout(TCNEXTTAB);
+            i += 8;
+        }
+        ct = cl - i; // c:2265 — chars still to move across
+        if ct == 0 {
+            return; // c:2266
+        }
+    }
+
+    // c:2286-2306 — if we're anywhere in the prompt, deal with it: reprint the
+    // whole prompt (going to the left column first), or step through it with
+    // TCRIGHT when that's the cheaper sequence.
+    let lpromptw = LPROMPTW.load(Ordering::SeqCst);
+    if vln == 0 && i < lpromptw && (TERMFLAGS.load(Ordering::Relaxed) & TERM_SHORT) == 0 {
+        let lpromptbuf = crate::ported::zle::zle_main::prompt();
+        let tcright_len = tclen.lock().unwrap()[TCRIGHT as usize];
+        // c:2292-2293 — `if (tccan(TCRIGHT) && (tclen[TCRIGHT]*ct <= ztrlen(lpromptbuf)))`
+        if tcright_len != 0
+            && (tcright_len * ct) as usize <= crate::ported::utils::ztrlen(&lpromptbuf)
+        {
+            // c:2294-2295 — cheaper to send TCRIGHT than reprint the prompt:
+            // `for (ct = lpromptw - i; ct--; ) tcout(TCRIGHT);`
+            let mut k = lpromptw - i;
+            while k > 0 {
+                tcout(TCRIGHT);
+                k -= 1;
+            }
+        } else {
+            // c:2297-2302 — reprint: CR to the left column, up over the prompt
+            // height, dump lpromptbuf, then a newline if it filled the margin.
+            if i != 0 {
+                zwcputc(&zr_cr); // c:2298 — zputc(&zr_cr)
+            }
+            tc_upcurs(LPROMPTH.load(Ordering::SeqCst) - 1); // c:2299
+            let _ = write_loop(out_fd, lpromptbuf.as_bytes()); // c:2300 — zputs(lpromptbuf, shout)
+            if LPROMPTWOF.load(Ordering::SeqCst) == winw {
+                // c:2301-2302 — works with both hasam and !hasam.
+                let _ = write_loop(out_fd, b"\n");
+            }
+        }
+        i = lpromptw; // c:2304
+        ct = cl - i; // c:2305
+    }
+
+    // c:2308-2313 — _carefully_ write the contents of the video buffer: walk
+    // `i` cells in, then emit real cells until `ct` is spent or the line ends.
+    // Clone the row so the lock isn't held across the zwcputc emits.
+    let row = NBUF.lock().unwrap().get(vln as usize).cloned(); // c:2308 `if (nbuf[vln])`
+    if let Some(t) = row {
+        // c:2309 — `for (j = 0, t = nbuf[vln]; t->chr && (j < i); j++, t++);`
+        let mut idx = 0usize;
+        let mut j = 0i32;
+        while idx < t.len() && t[idx].chr != '\0' && j < i {
+            j += 1;
+            idx += 1;
+        }
+        if j == i {
+            // c:2311-2312 — `for ( ; t->chr && ct; ct--, t++) zputc(t);`
+            while idx < t.len() && t[idx].chr != '\0' && ct > 0 {
+                zwcputc(&t[idx]);
+                ct -= 1;
+                idx += 1;
+            }
+        }
+    }
+    // c:2314-2315 — `while (ct--) zputc(&zr_sp);`
+    while ct > 0 {
+        zwcputc(&zr_sp);
+        ct -= 1;
+    }
 }
 
 /// Direct port of `int tc_downcurs(int ct)` from
@@ -7826,7 +7915,11 @@ mod tests {
             String::from_utf8_lossy(&out).into_owned()
         };
 
+        let nt = crate::ported::zsh_h::TCNEXTTAB as usize;
+        let save_nt_len = tclen.lock().unwrap()[nt];
+
         VCS.store(0, Ordering::SeqCst);
+        VLN.store(0, Ordering::SeqCst);
         // Loaded TCMULTRIGHT capability is used with the count substituted.
         tclen.lock().unwrap()[mr] = 3;
         tcstr.lock().unwrap()[mr] = "\x1bX%dY".to_string();
@@ -7834,11 +7927,18 @@ mod tests {
         let with_cap = capture(&|| tc_rightcurs(5));
         assert_eq!(with_cap, "\x1bX5Y", "should use loaded TCMULTRIGHT with count");
 
-        // No capability → ANSI cursor-forward fallback.
+        // No usable capability and nothing to re-output (no tab cap, not in the
+        // prompt, empty video buffer): faithful C falls to the last resort and
+        // pads with spaces — "not my fault your terminal can't go right"
+        // (zle_refresh.c:2314-2315). The earlier port invented a CSI-C here.
         tclen.lock().unwrap()[mr] = 0;
+        tclen.lock().unwrap()[nt] = 0;
+        LPROMPTW.store(0, Ordering::SeqCst);
+        NBUF.lock().unwrap().clear();
         let headless = capture(&|| tc_rightcurs(5));
-        assert_eq!(headless, "\x1b[5C", "no cap → CSI C default");
+        assert_eq!(headless, "     ", "no cap → space pad (c:2314-2315)");
 
+        tclen.lock().unwrap()[nt] = save_nt_len;
         tclen.lock().unwrap()[mr] = save_mr_len;
         tcstr.lock().unwrap()[mr] = save_mr_str;
         tclen.lock().unwrap()[hp] = save_hp_len;
