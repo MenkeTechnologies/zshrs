@@ -629,6 +629,27 @@ fn decode_math_keychar(s: &str) -> Option<(i64, usize)> {
                 None => Some(('c' as i64, 2)),
             }
         }
+        'C' => {
+            // c:Src/utils.c:7041-7046 — `case 'C': if (how & GETKEY_EMACS) {
+            // if (s[1]=='-') s++; control=1; }`. `\C-X` / `\CX` → control
+            // char `X & 0x1f` (e.g. `##\C-a` → 1). GETKEYS_MATH sets
+            // GETKEY_EMACS, so the dash is optional and consumed when present.
+            let dash = cs.get(2) == Some(&'-');
+            let tidx = if dash { 3 } else { 2 };
+            match cs.get(tidx) {
+                Some(c) => Some(((*c as i64) & 0x1f, tidx + 1)),
+                None => Some(('C' as i64, 2)),
+            }
+        }
+        'M' => {
+            // c:Src/utils.c — GETKEY_EMACS meta: `\M-X` / `\MX` → `X | 0x80`.
+            let dash = cs.get(2) == Some(&'-');
+            let tidx = if dash { 3 } else { 2 };
+            match cs.get(tidx) {
+                Some(c) => Some(((*c as i64) | 0x80, tidx + 1)),
+                None => Some(('M' as i64, 2)),
+            }
+        }
         other => simple(other as i64),
     }
 }
