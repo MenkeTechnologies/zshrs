@@ -1995,6 +1995,15 @@ pub(crate) fn zzlex() -> i32 {
                 // Character code: #\x or ##string
                 if peek() == Some('\\') || peek() == Some('#') {
                     advance(); // consume the `\` / 2nd `#` marker
+                    // c:852-854 — `ptr++; if (!*ptr) { zerr("bad math
+                    // expression: character missing after ##"); return EOI; }`.
+                    // `$((##))` with nothing after the marker is an error, not 0.
+                    if peek().is_none() {
+                        crate::ported::utils::zerr(
+                            "bad math expression: character missing after ##",
+                        );
+                        return EOI;
+                    }
                     // c:Src/math.c:856 — `getkeystring(ptr, NULL,
                     // GETKEYS_MATH, &v)` decodes the char AFTER the
                     // marker, honoring backslash escapes: `##\n` → 10,

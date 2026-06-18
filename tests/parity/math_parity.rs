@@ -669,4 +669,11 @@ mod round_pins {
     fn charcode_named_escape() {
         assert_parity(r#"print $(( ##\n ))"#);
     }
+
+    /// `$((##))` with nothing after the marker is a math error (exit nonzero),
+    /// not 0 (math.c:852-854).
+    #[test]
+    fn charcode_missing_char_errors() {
+        assert_parity(r#"print $((##))"#);
+    }
 }
