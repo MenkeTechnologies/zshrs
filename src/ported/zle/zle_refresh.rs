@@ -3586,15 +3586,13 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                 vsiz += width; // c:2417
                                // c:2418-2421 — combining-char absorption; skip combos.
                 if isset(COMBININGCHARS) {
+                    // c:2476-2477 — `while (t0 < tmpll-1 && IS_COMBINING(tmpline[t0+1])) t0++;`
                     while t0 < tmpll - 1 {
-                        // c:2419
                         let next = *tmpline.get((t0 + 1) as usize).unwrap_or(&'\0');
-                        // !!! STUB: IS_COMBINING — Src/zsh.h:3370.
-                        let is_combining = unicode_width::UnicodeWidthChar::width(next) == Some(0);
-                        if !is_combining {
+                        if !crate::ported::zsh_h::IS_COMBINING(next) {
                             break;
                         }
-                        t0 += 1; // c:2420
+                        t0 += 1; // c:2477
                     }
                 }
             }
@@ -3698,11 +3696,12 @@ pub fn singlerefresh(tmpline: &[char], tmpll: i32, mut tmpcs: i32) {
                     // are already in; scan the (width-0) combining marks.
                     while (t0 + ichars) < tmpll {
                         let nxt = *tmpline.get((t0 + ichars) as usize).unwrap_or(&'\0');
-                        // !!! STUB: IS_COMBINING — Src/zsh.h:3370 (width-0 proxy).
-                        if unicode_width::UnicodeWidthChar::width(nxt) != Some(0) {
-                            break; // c:2501 — !IS_COMBINING
+                        // c:2560-2562 — `for (ichars = 1; t0+ichars < tmpll; ichars++)
+                        //   if (!IS_COMBINING(tmpline[t0+ichars])) break;`
+                        if !crate::ported::zsh_h::IS_COMBINING(nxt) {
+                            break;
                         }
-                        ichars += 1; // c:2502
+                        ichars += 1; // c:2560
                     }
                 }
                 if vp < vbuf.len() {
