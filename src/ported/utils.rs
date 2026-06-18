@@ -1679,8 +1679,8 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
 pub fn preprompt() {
     // c:1532 `static time_t lastperiodic;` — periodic-hook last-fire timestamp.
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
-    // c:1447 `static time_t lastmailcheck;` — mailcheck last-fire timestamp.
-    static LAST_MAILCHECK: AtomicI64 = AtomicI64::new(0);
+    // `lastmailcheck` is module-scoped (LAST_MAILCHECK below) because C makes it
+    // a file-static shared between checkmail() and checkmailpath() (c:1447).
 
     // c:1535-1536 — `zlong period = getiparam("PERIOD"); zlong mailcheck
     //                = getiparam("MAILCHECK");`
@@ -1759,8 +1759,11 @@ pub fn preprompt() {
             .map(|p| !p.is_empty() && p.first().map(|s| !s.is_empty()).unwrap_or(false))
             .unwrap_or(false);
         if has_mailpath {
-            // c:1598 `checkmailpath(mailpath);`
-            let _ = checkmailpath(mailpath.as_deref().unwrap()); // c:1598
+            // c:1598 `checkmailpath(mailpath);` — emit each message to the
+            // terminal (C writes directly to `shout`).
+            for m in checkmailpath(mailpath.as_deref().unwrap()) {
+                println!("{}", m);
+            }
         } else {
             // c:1600-1608 — `if ((mailfile = getsparam("MAIL")) && *mailfile)
             //                  { x[0]=mailfile; x[1]=NULL; checkmailpath(x); }`
@@ -1768,7 +1771,9 @@ pub fn preprompt() {
             if let Some(mailfile) = crate::ported::params::getsparam("MAIL") {
                 if !mailfile.is_empty() {
                     let x = vec![mailfile]; // c:1604-1605
-                    let _ = checkmailpath(&x); // c:1606
+                    for m in checkmailpath(&x) {
+                        println!("{}", m); // c:1606
+                    }
                 }
             }
             crate::ported::signals::unqueue_signals(); // c:1608
@@ -1783,29 +1788,104 @@ pub fn preprompt() {
     }
 }
 
-// the last time we checked mail                                            // c:1447
-/// Check mail paths (from utils.c checkmailpath)
-/// Rust idiom replacement: `str::find('?')` + `fs::metadata` covers
-/// the C `strchr`+`stat` mtime-compare loop; the prompt-expansion +
-/// printprompt callback runs in the caller, not in this fn.
-pub fn checkmailpath(paths: &[String]) -> Vec<String> {
+/// `static time_t lastmailcheck;` (Src/utils.c:1447) — the timestamp of the
+/// previous mail check. `checkmail()` reads it (mtime/atime comparisons happen
+/// against the PREVIOUS check) and writes it after walking the paths.
+pub static LAST_MAILCHECK: AtomicI64 = AtomicI64::new(0);
+
+/// Direct port of `void checkmailpath(char **s)` from `Src/utils.c:1620`.
+/// Walks each `PATH` / `PATH?message` MAILPATH component:
+///   - empty component → `zerr` (c:1634-1636)
+///   - `mailstat` failure → `zerr` unless ENOENT (c:1637-1639)
+///   - directory → list entries (`PATH/entry[?message]`) and recurse
+///     (c:1640-1669)
+///   - file, interactive (`shout`) only: "You have new mail." or the
+///     `?`-suffixed message expanded with `$_` bound to the file
+///     (`parsestr`+`singsub`, c:1670-1699); and, under `MAILWARNING`,
+///     "The mail in PATH has been read." (c:1700-1704)
+///
+/// **Signature note:** C is `void` and writes to `shout`; the zshrs caller
+/// drives output, so this returns the messages (in C emission order) instead.
+/// The new-mail / read-warning conditions are now ported faithfully — the
+/// previous adhoc port used an unfaithful "mtime within 60s" heuristic and its
+/// result was discarded by the caller, so the feature did nothing.
+pub fn checkmailpath(s: &[String]) -> Vec<String> {
+    // c:1620
     let mut messages = Vec::new();
-    for path in paths {
-        // PATH?message format
-        let (file, msg) = if let Some(pos) = path.find('?') {
-            (&path[..pos], Some(&path[pos + 1..]))
-        } else {
-            (path.as_str(), None)
+    let interactive = *crate::ported::init::shout.lock().unwrap() != 0; // c:1670 `else if (shout)`
+    let lastmailcheck = LAST_MAILCHECK.load(Ordering::Relaxed);
+
+    for path in s {
+        // c:1627-1633 — split on the first '?': `file` before, `u` after (or None).
+        let (file, u) = match path.find('?') {
+            Some(p) => (&path[..p], Some(&path[p + 1..])),
+            None => (path.as_str(), None),
         };
 
-        if let Ok(meta) = fs::metadata(file) {
-            if let Ok(modified) = meta.modified() {
-                if let Ok(elapsed) = modified.elapsed() {
-                    if elapsed.as_secs() < 60 {
-                        let default_msg = format!("You have new mail in {}", file);
-                        messages.push(msg.unwrap_or(&default_msg).to_string());
+        if file.is_empty() {
+            // c:1634-1636 — `if (**s == 0) zerr("empty MAILPATH component: %s", *s);`
+            zerr(&format!("empty MAILPATH component: {}", path));
+            continue;
+        }
+
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let real = unmeta(file); // c:1637 — mailstat(unmeta(*s), &st)
+        if mailstat(&real, &mut st) == -1 {
+            // c:1638-1639 — report anything other than "no such file".
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if e != libc::ENOENT {
+                zerr(&format!("{}: {}", zsh_errno_msg(e), path));
+            }
+        } else if (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR {
+            // c:1640-1669 — a directory: enumerate entries and recurse.
+            match fs::read_dir(&real) {
+                Err(_) => {
+                    let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    zerr(&format!("{}: {}", zsh_errno_msg(e), path)); // c:1647
+                }
+                Ok(mut rd) => {
+                    let mut arr = Vec::new();
+                    // c:1653-1662 — `while ((fn = zreaddir(lock, 1)) && !errflag)`.
+                    while let Some(fname) = zreaddir(&mut rd, 1) {
+                        if errflag.load(Ordering::Relaxed) != 0 {
+                            break;
+                        }
+                        // c:1654-1657 — keep the `?message` suffix on each entry.
+                        arr.push(match u {
+                            Some(u) => format!("{}/{}?{}", path, fname, u),
+                            None => format!("{}/{}", path, fname),
+                        });
+                    }
+                    messages.extend(checkmailpath(&arr)); // c:1667 — recurse
+                }
+            }
+        } else if interactive {
+            // c:1671-1672 — new mail: non-empty, not yet read, newer than the
+            // last check.
+            if st.st_size != 0 && st.st_atime <= st.st_mtime && st.st_mtime >= lastmailcheck {
+                match u {
+                    // c:1673-1675 — `fprintf(shout, "You have new mail.\n");`
+                    None => messages.push("You have new mail.".to_string()),
+                    // c:1676-1698 — custom message: bind `$_` to the file, then
+                    // parsestr + singsub the message (prompt-style expansion).
+                    Some(u) => {
+                        let usav = crate::ported::init::zunderscore.lock().unwrap().clone();
+                        crate::ported::exec::setunderscore(path); // c:1685 setunderscore(*s)
+                        if let Ok(parsed) = crate::ported::lex::parsestr(u) {
+                            // c:1688-1691 — parse ok → singsub then emit.
+                            messages.push(crate::ported::subst::singsub(&parsed));
+                        }
+                        crate::ported::exec::setunderscore(&usav); // c:1694-1697 restore $_
                     }
                 }
+            }
+            // c:1700-1704 — MAILWARNING: file read since the last check.
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::MAILWARNING)
+                && st.st_atime > st.st_mtime
+                && st.st_atime > lastmailcheck
+                && st.st_size != 0
+            {
+                messages.push(format!("The mail in {} has been read.", unmeta(file)));
             }
         }
     }
@@ -9946,6 +10026,65 @@ fn fdtable_lock() -> &'static Mutex<Vec<i32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// checkmailpath port (utils.c:1620). Drives mtime/atime/size through
+    /// `libc::utimes` so the new-mail condition is deterministic in headless CI.
+    #[test]
+    fn checkmailpath_new_mail_conditions() {
+        use std::io::Write as _;
+        let _g = crate::test_util::global_state_lock();
+
+        // Unique temp file with content (size != 0).
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("zshrs_mailtest_{}", std::process::id()));
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(b"new message\n").unwrap();
+        }
+        let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        // atime (times[0]) <= mtime (times[1]); both well past 0.
+        let set_times = |atime: i64, mtime: i64| {
+            let tv = [
+                libc::timeval { tv_sec: atime as libc::time_t, tv_usec: 0 },
+                libc::timeval { tv_sec: mtime as libc::time_t, tv_usec: 0 },
+            ];
+            assert_eq!(unsafe { libc::utimes(cpath.as_ptr(), tv.as_ptr()) }, 0);
+        };
+
+        let saved_shout = *crate::ported::init::shout.lock().unwrap();
+        let saved_lmc = LAST_MAILCHECK.load(Ordering::Relaxed);
+        *crate::ported::init::shout.lock().unwrap() = 1; // interactive
+        LAST_MAILCHECK.store(0, Ordering::Relaxed);
+
+        let p = path.to_str().unwrap().to_string();
+
+        // c:1671-1675 — unread + newer than last check → "You have new mail."
+        set_times(1_000_000, 2_000_000);
+        assert_eq!(checkmailpath(&[p.clone()]), vec!["You have new mail.".to_string()]);
+
+        // c:1676-1698 — `PATH?message`: the message (here a literal) is emitted.
+        assert_eq!(
+            checkmailpath(&[format!("{}?custom note", p)]),
+            vec!["custom note".to_string()]
+        );
+
+        // c:1672 — mtime older than the last check → nothing.
+        LAST_MAILCHECK.store(9_000_000, Ordering::Relaxed);
+        assert!(checkmailpath(&[p.clone()]).is_empty());
+
+        // c:1670 — non-interactive (no shout) → nothing, even when fresh.
+        LAST_MAILCHECK.store(0, Ordering::Relaxed);
+        *crate::ported::init::shout.lock().unwrap() = 0;
+        assert!(checkmailpath(&[p.clone()]).is_empty());
+
+        // c:1634-1636 — empty component is reported (stderr), yields no message.
+        *crate::ported::init::shout.lock().unwrap() = 1;
+        assert!(checkmailpath(&["?orphan".to_string()]).is_empty());
+
+        *crate::ported::init::shout.lock().unwrap() = saved_shout;
+        LAST_MAILCHECK.store(saved_lmc, Ordering::Relaxed);
+        let _ = std::fs::remove_file(&path);
+    }
 
     /// zsh_errno_msg / zerrmsg `%e` rendering (utils.c:348-365). EINTR is the
     /// literal "interrupt"; EIO is verbatim strerror (keeps its capital); every
