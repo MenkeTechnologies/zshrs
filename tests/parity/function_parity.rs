@@ -175,6 +175,35 @@ mod return_codes {
         // C-faithful: return -1 wraps to 255
         assert_parity("f() { return 255; }; f; echo $?");
     }
+
+    /// An EMPTY function body / list resets $? to 0 (c:Src/exec.c:1439-1442
+    /// execlist "Empty list; this returns status zero"), not the prior
+    /// command's status.
+    #[test]
+    fn empty_body_resets_status() {
+        assert_parity("f() { }; false; f; echo $?");
+    }
+
+    #[test]
+    fn empty_brace_block_resets_status() {
+        assert_parity("false; { }; echo $?");
+    }
+
+    #[test]
+    fn empty_subshell_resets_status() {
+        assert_parity("false; ( ); echo $?");
+    }
+
+    #[test]
+    fn empty_anon_function_resets_status() {
+        assert_parity("false; () { }; echo $?");
+    }
+
+    /// Non-empty body still propagates its own status.
+    #[test]
+    fn nonempty_body_propagates() {
+        assert_parity("f() { return 3; }; f; echo $?");
+    }
 }
 
 mod local_vars {
