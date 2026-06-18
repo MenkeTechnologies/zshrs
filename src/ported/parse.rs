@@ -4578,10 +4578,10 @@ pub fn try_dump_file(
     crate::ported::signals::queue_signals();
 
     // zsh compares `st_mtime` (time_t SECONDS) with `>=` (c:3772-3780). Use
-    // second-granularity mtime — NOT SystemTime (`.modified()`), whose
-    // nanosecond precision disagrees with zsh whenever the dump and source
-    // share a second but differ in nsec, making autoload .zwc preference flaky.
-    use std::os::unix::fs::MetadataExt;
+    // second-granularity mtime (MetadataExt::mtime, imported at top) — NOT
+    // SystemTime (`.modified()`), whose nanosecond precision disagrees with zsh
+    // whenever the dump and source share a second but differ in nsec, making
+    // autoload .zwc preference flaky.
 
     // c:3771-3777 — use the digest when it is >= both the per-fn .zwc and the
     // source (or those are absent).
@@ -4649,9 +4649,9 @@ pub fn try_source_file(file: &str) -> Option<eprog> {
     crate::ported::signals::queue_signals(); // c:3818
                                              // c:3819-3823 — if (!rc && (rn || stc.st_mtime >= stn.st_mtime) && (prog = check_dump_file(...))) return prog;
     if let Ok(meta_c) = &stc {
-        // c:3819 — `stc.st_mtime >= stn.st_mtime`: second-granularity (time_t),
-        // not SystemTime nsec, to agree with zsh on equal-second boundaries.
-        use std::os::unix::fs::MetadataExt;
+        // c:3819 — `stc.st_mtime >= stn.st_mtime`: second-granularity (time_t,
+        // via MetadataExt::mtime imported at top), not SystemTime nsec, to agree
+        // with zsh on equal-second boundaries.
         let newer_than_src = match (&stc, &stn) {
             (Ok(c), Ok(n)) => c.mtime() >= n.mtime(),
             (Ok(_), Err(_)) => true, // c:3819 — `rn` (src missing) ⇒ accept .zwc
