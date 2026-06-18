@@ -5299,6 +5299,59 @@ Some(Box::new(node.clone()))
     });
     let subscript: Option<&str> = subscript_owned.as_deref();
 
+    // c:Src/params.c — a bare all-digit parameter name (`2=X`,
+    // `2+=end`) addresses the positional parameter $N (1-based). C maps
+    // digit names onto the special `argv` value (isident accepts them,
+    // c:1336-1340); zshrs keeps positionals in PPARAMS, so store there
+    // directly — the same backing the `argv[N]=`/`@[N]=` path uses
+    // below. `$0` (n==0) is the shell/script name, not a positional, so
+    // it falls through to the normal param path. `+=` concatenates onto
+    // the existing positional (ASSPM_AUGMENT scalar append, c:3270-3276).
+    if subscript.is_none() && !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(n) = name.parse::<usize>() {
+            if n >= 1 {
+                if let Ok(mut pp) = crate::ported::builtin::PPARAMS.lock() {
+                    while pp.len() < n {
+                        pp.push(String::new());
+                    }
+                    let idx = n - 1;
+                    if (flags & ASSPM_AUGMENT) != 0 {
+                        let cur = pp[idx].clone();
+                        pp[idx] = format!("{}{}", cur, val);
+                    } else {
+                        pp[idx] = val.to_string();
+                    }
+                }
+                unqueue_signals();
+                return Some(Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: name.to_string(),
+                        flags: PM_SCALAR as i32,
+                    },
+                    u_data: 0,
+                    u_tied: None,
+                    u_arr: None,
+                    u_str: Some(val.to_string()),
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                }));
+            }
+        }
+    }
+
     // c:Src/Modules/parameter.c — magic associative-array assignment
     // forms: `functions[name]=body`, `aliases[name]=value`,
     // `dis_functions[name]=body`, `saliases[name]=value`,
