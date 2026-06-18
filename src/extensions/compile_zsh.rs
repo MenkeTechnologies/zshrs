@@ -293,6 +293,18 @@ impl ZshCompiler {
         // at parse time (the parser detects the
         // Simple<Inpar><Outpar> + Inbrace pattern and emits a FuncDef with
         // body_source captured). No compile-side workaround is needed.
+        //
+        // c:Src/exec.c:1439-1442 — execlist: "Empty list; this returns
+        // status zero." An empty command list resets $? to 0, so an empty
+        // body (`{ }`, `( )`, `f() { }`, `() { }`) yields 0 regardless of
+        // the prior command — `false; f` where `f` is empty → 0, not 1.
+        // The previous port emitted nothing for an empty body, leaking the
+        // prior status.
+        if program.lists.is_empty() {
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            return;
+        }
         for list in &program.lists {
             self.compile_list(list);
         }
