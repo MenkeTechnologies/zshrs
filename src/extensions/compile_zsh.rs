@@ -7863,7 +7863,24 @@ impl ZshCompiler {
             || inner_arith.contains("0X")
             || inner_arith.contains("0b")
             || inner_arith.contains("0B")
-            || inner_arith.contains('#');
+            || inner_arith.contains('#')
+            // c:Src/math.c — zsh's operator precedence for the bitwise,
+            // shift, power and comparison operators differs from the C
+            // precedence ArithCompiler bakes in (e.g.
+            // `4 - -3*7 << 1 & 7 ^ 1 | 16 ** 2` → zsh 1591, ArithCompiler
+            // 259). Route any expression using them through MathEval, which
+            // is the faithful math.c precedence. `+ - *` alone share C/zsh
+            // precedence, so the ArithCompiler fast path still serves the
+            // common `(( i = i + 1 ))` / `(( i++ ))` case. `<`/`>` cover the
+            // shift operators and the relational comparisons in one check.
+            || inner_arith.contains('&')
+            || inner_arith.contains('|')
+            || inner_arith.contains('^')
+            || inner_arith.contains('<')
+            || inner_arith.contains('>')
+            || inner_arith.contains("**")
+            || inner_arith.contains('~')
+            || inner_arith.contains('!');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);

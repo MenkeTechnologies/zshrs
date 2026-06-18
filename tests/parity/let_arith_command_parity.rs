@@ -350,3 +350,37 @@ mod base_literals {
         assert_parity(r#"(( X = 36#z )); echo $X"#);
     }
 }
+
+mod precedence {
+    use super::*;
+
+    /// `(( ))` must use zsh's math.c operator precedence, not C precedence.
+    /// This mixed bitwise/shift/power expression is 1591 in zsh; the fusevm
+    /// ArithCompiler fast path produced 259 (C precedence). Regression guard
+    /// for routing precedence-sensitive `(( ))` through MathEval.
+    #[test]
+    fn mixed_bitwise_shift_power() {
+        assert_parity(r#"(( X = 4 - - 3 * 7 << 1 & 7 ^ 1 | 16 ** 2 )); echo $X"#);
+    }
+
+    #[test]
+    fn or_below_and() {
+        assert_parity(r#"(( X = 1 | 2 & 3 )); echo $X"#);
+    }
+
+    #[test]
+    fn shift_with_bitand() {
+        assert_parity(r#"(( X = 4 << 1 & 7 )); echo $X"#);
+    }
+
+    #[test]
+    fn xor_with_and() {
+        assert_parity(r#"(( X = 1 ^ 2 & 3 )); echo $X"#);
+    }
+
+    /// The `+ - *` fast path (shared C/zsh precedence) must stay correct.
+    #[test]
+    fn plus_minus_times_fast_path() {
+        assert_parity(r#"(( X = 2 + 3 * 4 - 1 )); echo $X"#);
+    }
+}
