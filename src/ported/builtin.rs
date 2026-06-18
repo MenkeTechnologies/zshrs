@@ -93,10 +93,12 @@ use crate::ported::zsh_h::{
     PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET,
     PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
     PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME,
-    RCQUOTES, SHINSTDIN, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
+    RCQUOTES, SHINSTDIN, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, STAT_LOCKED, STAT_NOPRINT,
+    STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
     TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR, VERBOSE, XTRACE, ZEXIT_DEFERRED,
     ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC,
 };
+use crate::ported::sort::strmetasort;
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
 
@@ -9365,16 +9367,23 @@ pub fn bin_print(
     // `BAZ Bar foo` ordered by ASCII (caps first).
     if OPT_ISSET(ops, b'o') || OPT_ISSET(ops, b'O') {
         // c:4800
-        let ignore_case = OPT_ISSET(ops, b'i'); // c:4805
-        if ignore_case {
-            processed_args.sort_by_key(|s| s.to_lowercase());
+        // c:4801-4807 — `flags = OPT_ISSET(ops,'i') ? SORTIT_IGNORING_CASE
+        // : 0; if (OPT_ISSET(ops,'O')) flags |= SORTIT_BACKWARDS;
+        // strmetasort(args, flags, len);`. The previous Rust port used an
+        // ad-hoc `processed_args.sort()` (byte/ordinal order) plus a
+        // `.reverse()`, bypassing the faithful comparator. zsh's eltpcmp
+        // sorts via `strcoll(as, bs)` (sort.c:134) — locale collation,
+        // case-insensitive in UTF-8 locales — and SORTIT_BACKWARDS flips
+        // `sortdir` inside the comparator (not a post-sort reverse).
+        let mut flags: u32 = if OPT_ISSET(ops, b'i') {
+            SORTIT_IGNORING_CASE as u32 // c:4805
         } else {
-            processed_args.sort();
-        }
+            0
+        };
         if OPT_ISSET(ops, b'O') {
-            // c:4806
-            processed_args.reverse(); // SORTIT_BACKWARDS
+            flags |= SORTIT_BACKWARDS as u32; // c:4806
         }
+        strmetasort(&mut processed_args, flags, None); // c:4807
     }
     // c:Src/builtin.c:4866-4886 — when `-r` is NOT set, each arg goes
     // through `getkeystring` to interpret backslash escapes (`\n`,
