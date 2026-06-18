@@ -647,4 +647,26 @@ mod round_pins {
     fn c_style_for_loop() {
         assert_parity("for ((i=1;i<=3;i++)); do print -r $i; done");
     }
+
+    /// `##X` char-code operator: plain char, and the GETKEY_EMACS escapes
+    /// `\C-x` (control) / `\M-x` (meta) decoded via getkeystring (math.c:856).
+    #[test]
+    fn charcode_plain() {
+        assert_parity("print $(( ##A ))");
+    }
+
+    #[test]
+    fn charcode_control_escape() {
+        assert_parity(r#"print $(( ##\C-a ))"#);
+    }
+
+    #[test]
+    fn charcode_meta_escape() {
+        assert_parity(r#"print $(( ##\M-a ))"#);
+    }
+
+    #[test]
+    fn charcode_named_escape() {
+        assert_parity(r#"print $(( ##\n ))"#);
+    }
 }
