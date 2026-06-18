@@ -431,4 +431,26 @@ mod ksharrays_scalar_assign {
     fn non_ksharrays_scalar_assign_replaces() {
         assert_parity(r#"a=(first second); a=X; print -l "${a[@]}""#);
     }
+
+    /// `a+=X` (scalar augment) under KSHARRAYS concats onto element 0.
+    #[test]
+    fn scalar_append_concats_element_zero() {
+        assert_parity(r#"setopt ksharrays; a=(first second); a+=last; print -l "${a[@]}""#);
+    }
+
+    #[test]
+    fn scalar_append_empty_array() {
+        assert_parity(r#"setopt ksharrays; a=(); a+=hi; print -l "${a[@]}""#);
+    }
+
+    #[test]
+    fn scalar_append_chained() {
+        assert_parity(r#"setopt ksharrays; a=(x); a+=y; a+=z; print -l "${a[@]}""#);
+    }
+
+    /// Without KSHARRAYS, `a+=X` pushes a new element.
+    #[test]
+    fn non_ksharrays_scalar_append_pushes() {
+        assert_parity(r#"a=(first second); a+=last; print -l "${a[@]}""#);
+    }
 }
