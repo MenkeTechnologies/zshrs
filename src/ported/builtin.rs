@@ -8358,10 +8358,17 @@ pub fn bin_hash(
                          // `-d`). Previous Rust port only walked nameddirtab — `hash`
                          // with no args (the typical user-visible form) silently printed
                          // nothing on cmdnamtab.
+        // c:4270 — `scanhashtable(ht, 1, 0, 0, ht->printnode, printflags)`.
+        // The second arg `1` is `sorted` — the table is listed in
+        // alphabetical (meta-aware hnamcmp) order, not hash/insertion
+        // order. The previous port walked `t.iter()` raw, so `hash -d`
+        // printed entries in an arbitrary order (`two`, `one` instead of
+        // `one`, `two`).
         if dir_mode {
             if let Ok(t) = nameddirtab().lock() {
-                for (_n, nd) in t.iter() {
-                    // c:4270
+                let mut entries: Vec<_> = t.iter().collect();
+                entries.sort_by(|a, b| hnamcmp(a.0, b.0)); // c:4270 sorted=1
+                for (_n, nd) in entries {
                     printnameddirnode(nd, printflags);
                 }
             }
@@ -8370,7 +8377,9 @@ pub fn bin_hash(
             // arr is empty in the printnode call site because per-node
             // hashed entries carry their own resolved path.
             if let Ok(t) = cmdnamtab_lock().read() {
-                for (_n, cn) in t.iter() {
+                let mut entries: Vec<_> = t.iter().collect();
+                entries.sort_by(|a, b| hnamcmp(a.0, b.0)); // c:4270 sorted=1
+                for (_n, cn) in entries {
                     // c:4270 — `scanhashtable(cmdnamtab, ..., printcmdnamnode, ...)`
                     printcmdnamnode(cn, printflags);
                 }
