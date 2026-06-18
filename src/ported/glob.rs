@@ -338,9 +338,18 @@ pub fn addpath(s: &mut String, l: &str) {
     }
 }
 
-/// Stat full path (from glob.c statfullpath lines 282-347)
-/// `stat`/`lstat` a (pathbuf, name) tuple.
-/// Port of `statfullpath(const char *s, struct stat *st, int l)` from Src/glob.c:283.
+/// PARTIAL port of `statfullpath(const char *s, struct stat *st, int l)` from
+/// `Src/glob.c:283` — NOT yet faithful, and currently has NO callers (the live
+/// qualifier matcher inlines `fs::metadata`/`symlink_metadata` on the already-
+/// full path). Two gaps remain, both blocked on the glob path-state flow:
+///   1. C prepends the global `pathbuf[pathbufcwd..pathpos]` (the accumulated
+///      glob directory) to `s`; this port omits it. A faithful version must
+///      take the pathbuf as a parameter — it cannot read the `CURGLOBDATA`
+///      singleton because the matcher already holds that lock (deadlock).
+///   2. C's `st` is the OUTPUT `struct stat *`; the second arg here is a string
+///      suffix, which is not the C contract.
+/// The `l` flag now matches C: `l ? lstat : stat` (l → `symlink_metadata`).
+/// Do not wire this in until gap #1 is resolved.
 pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
     // c:283
     let full = if st.is_empty() {
@@ -353,10 +362,11 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
         format!("{}{}", s, st)
     };
 
+    // c:308 — `return l ? lstat(buf, st) : stat(buf, st);`
     if l {
-        fs::metadata(&full).ok()
+        fs::symlink_metadata(&full).ok() // l → lstat
     } else {
-        fs::symlink_metadata(&full).ok()
+        fs::metadata(&full).ok() // !l → stat (follows symlinks)
     }
 }
 // END moved-from-exec-rs (free ported)
