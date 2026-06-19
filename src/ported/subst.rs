@@ -6062,7 +6062,9 @@ pub fn paramsubst(
                                         }
                                     }
                                 }
-                                'e' => {}
+                                // (e) exact / (p) print-escape are bare
+                                // modifiers; the remainder is the index.
+                                'e' | 'p' => {}
                                 _ => return None,
                             }
                         }
@@ -6556,7 +6558,14 @@ pub fn paramsubst(
                         let mut chars = f.chars().peekable();
                         while let Some(c) = chars.next() {
                             match c {
-                                'w' | 'W' | 'p' => has_word = true,
+                                'w' | 'W' => has_word = true,
+                                // c:Src/params.c:1419-1426 — `(p)` only
+                                // enables print-style escapes in the
+                                // SEPARATOR spec; it is NOT a word flag
+                                // on its own. `(p)1` is a plain char
+                                // index (`${s[(p)1]}` → char 1), not
+                                // word 1. Only flip word mode for w/W/f.
+                                'p' => {}
                                 'f' => {
                                     has_word = true;
                                     sep_explicit = Some("\n".to_string());
@@ -6770,7 +6779,9 @@ pub fn paramsubst(
                                         }
                                     }
                                 }
-                                'e' => {}
+                                // (e) exact / (p) print-escape are bare
+                                // modifiers; the remainder is the index.
+                                'e' | 'p' => {}
                                 // c:Src/params.c:1432 getarg — `n`/`b`
                                 // take a delimited integer arg
                                 // (`(n:5:)`, `(b.3.)`); consume

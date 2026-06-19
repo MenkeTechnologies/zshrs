@@ -886,3 +886,29 @@ mod subscript_w_skip_empty_fields {
         assert_parity(r#"s="a b c"; echo ${s[(w)2]}; echo ${s[(w)-1]}"#);
     }
 }
+
+/// `(p)` alone is a separator-escape modifier, NOT a word flag, so
+/// `${s[(p)1]}` is a plain char index ("h"), not word 1 (c:Src/params.c:
+/// 1419-1426 — only w/W/f flip word mode). zshrs flipped word mode on
+/// `p` and returned the whole string; after removing it from the word
+/// trigger, `(p)` is accepted as a bare flag in the numeric flag-strip
+/// closures so `(p)N` strips the flag and evals N as the index.
+mod subscript_p_not_word_flag {
+    use super::*;
+
+    #[test]
+    fn p_alone_is_char_index() {
+        assert_parity("s=hello; echo ${s[(p)1]}; echo ${s[(p)2]}");
+    }
+
+    #[test]
+    fn p_alone_array_index() {
+        assert_parity("a=(x y z); echo ${a[(p)2]}");
+    }
+
+    /// (pw) still word mode (w present); regression guard.
+    #[test]
+    fn pw_still_word_mode() {
+        assert_parity(r#"s="a b"; echo ${s[(pw)2]}"#);
+    }
+}
