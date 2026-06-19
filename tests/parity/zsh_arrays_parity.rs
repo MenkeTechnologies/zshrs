@@ -788,6 +788,54 @@ mod subscript_bn_delimited_flags {
     }
 }
 
+/// A `b`/`n` delimited modifier COMBINED WITH a search flag on a scalar
+/// (`(rb:2:)l` = forward search for "l" beginning at offset 2). The
+/// scalar search closure consumed flags char-by-char and the raw `:`
+/// from the `:2:` delimiter poisoned the flag check, so the whole
+/// `(rb:2:)l` fell through to mathevali → "bad math expression". The
+/// closure now parses the delimited arg (like the array path) and the
+/// search honors the begin-offset and nth-match. c:Src/params.c:
+/// 1431-1454.
+mod subscript_bn_within_search {
+    use super::*;
+
+    /// (b) begin offset within a search — the target divergence.
+    /// Forward (r/i) treats beg as a lower bound; reverse (R/I) as an
+    /// upper bound scanned from the end (`(Rb:2:)l` finds no "l" in the
+    /// first 2 chars → empty), per the C asymmetry.
+    #[test]
+    fn scalar_rb_begin_offset() {
+        assert_parity("s=hello; echo ${s[(rb:2:)l]}");
+        assert_parity("s=hello; echo ${s[(rb:3:)l]}");
+        assert_parity("s=hello; echo ${s[(Rb:2:)l]}; echo done");
+        assert_parity("s=hello; echo ${s[(Rb:4:)l]}");
+        assert_parity("s=hello; echo ${s[(Ib:2:)l]}");
+        assert_parity("s=hello; echo ${s[(Ib:4:)l]}");
+    }
+
+    /// (n) nth-match within a search, value and index return.
+    #[test]
+    fn scalar_rn_nth_match() {
+        assert_parity("s=ababab; echo ${s[(rn:2:)a]}");
+        assert_parity("s=ababab; echo ${s[(in:1:)a]}; echo ${s[(in:2:)a]}; echo ${s[(in:3:)a]}");
+        assert_parity("s=ababab; echo ${s[(In:1:)a]}");
+    }
+
+    /// (b) begin offset with index return + out-of-range begin.
+    #[test]
+    fn scalar_begin_index_and_oob() {
+        assert_parity("s=ababab; echo ${s[(ib:3:)a]}");
+        assert_parity("s=hello; echo ${s[(rb:2:)z]}; echo done");
+    }
+
+    /// Search flags without a delimited modifier still work (regression).
+    #[test]
+    fn plain_search_unaffected() {
+        assert_parity("s=hello; echo ${s[(r)l]}; echo ${s[(R)l]}; echo ${s[(i)l]}; echo ${s[(I)l]}");
+        assert_parity("s=barfooxyz; echo ${s[(r)foo]}");
+    }
+}
+
 /// `(e)`/`(n)`/`(b)` ALONE (no r/R/i/I search flag) on a scalar are
 /// modifiers, not a search — the remainder is a numeric index, not a
 /// search pattern. zshrs's scalar search closure matched on `e`/`n`/`b`

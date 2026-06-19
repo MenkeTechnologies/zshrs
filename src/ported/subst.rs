@@ -6674,26 +6674,56 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                } else if let Some((flags, num, beg, pat)) = (|s: &str| -> Option<(String, Option<i64>, Option<i64>, String)> {
                     let s = s.trim_start();
                     let rest = s.strip_prefix('(')?;
                     let close = rest.find(')')?;
-                    let f = rest[..close].to_string();
+                    let body = &rest[..close];
                     let p = rest[close + 1..].to_string();
-                    // c:Src/params.c getarg — a scalar char SEARCH needs
-                    // an actual r/R/i/I flag. (e)/(n)/(b) are modifiers
-                    // (exact / nth / begin-offset) meaningless on their
-                    // own: `(e)`-alone is NOT a search, so the remainder
-                    // is a numeric index — `${s[(e)2]}` → char 2 = "e",
-                    // `${s[(e)l]}` → eval "l" = 0 → "". Require a search
-                    // flag here so those fall through to the numeric
-                    // closure; without this `(e)X` did an exact search
-                    // and returned the matched char instead.
-                    if f.chars()
-                        .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e' | 'b'))
-                        && f.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r'))
-                    {
-                        Some((f, p))
+                    // c:Src/params.c:1431-1454 — `(n.N.)` (nth match) and
+                    // `(b.N.)` (begin offset) each take an integer arg
+                    // delimited by the char after the letter; consume the
+                    // `<delim>N<delim>` so a delimited flag inside a scalar
+                    // search (`(rb:2:)l`) parses. Previously the raw `:`
+                    // failed the flag check and the whole `(rb:2:)l` fell
+                    // through to mathevali → "bad math expression: operand
+                    // expected at `)l'". Mirrors the array search closure
+                    // (subst.rs:5844).
+                    let mut flags = String::new();
+                    let mut num: Option<i64> = None;
+                    let mut beg: Option<i64> = None;
+                    let mut chars = body.chars();
+                    while let Some(c) = chars.next() {
+                        match c {
+                            'I' | 'R' | 'i' | 'r' | 'e' => flags.push(c),
+                            'n' | 'b' => {
+                                let delim = chars.next()?;
+                                let mut numstr = String::new();
+                                for cc in chars.by_ref() {
+                                    if cc == delim {
+                                        break;
+                                    }
+                                    numstr.push(cc);
+                                }
+                                let val = numstr.trim().parse::<i64>().ok()?;
+                                if c == 'n' {
+                                    num = Some(val);
+                                } else {
+                                    beg = Some(val);
+                                }
+                                flags.push(c);
+                            }
+                            _ => return None,
+                        }
+                    }
+                    // c:Src/params.c getarg — a scalar char SEARCH needs an
+                    // actual r/R/i/I flag. (e)/(n)/(b) are modifiers (exact
+                    // / nth / begin-offset) meaningless on their own, so
+                    // without a search letter the remainder is a numeric
+                    // index — `${s[(e)2]}` → char 2 — handled by the numeric
+                    // closure below.
+                    if flags.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r')) {
+                        Some((flags, num, beg, p))
                     } else {
                         None
                     }
@@ -6702,52 +6732,79 @@ pub fn paramsubst(
                     let return_index = flags.contains('I') || flags.contains('i');
                     let want_last = flags.contains('I') || flags.contains('R');
                     let exact = flags.contains('e'); // c:1419 e — literal compare, no glob
-                                                     // Sliding-window match across the string (glob unless (e)).
+                    let nth = num.unwrap_or(1).max(1) as usize; // c:1432 (n.N.)
+                    // c:Src/params.c — `(b.N.)` is a 1-based begin offset;
+                    // the sliding-window search starts at that char.
                     let n = s_chars.len();
-                    let mut found: Option<(usize, usize)> = None;
-                    'outer: for start in 0..=n {
-                        let lengths: Box<dyn Iterator<Item = usize>> = if want_last {
-                            Box::new((1..=(n - start)).rev())
+                    let hasbeg = beg.is_some();
+                    // c:Src/params.c:1471-1472 + 1831 — the (b.N.) arg is
+                    // 1-based; decrement positive values to 0-based, wrap
+                    // negatives by len.
+                    let beg0_raw = match beg {
+                        Some(b) if b > 0 => b - 1,
+                        Some(b) => b,
+                        None => 0,
+                    };
+                    let beg0 = if beg0_raw < 0 {
+                        beg0_raw + n as i64
+                    } else {
+                        beg0_raw
+                    };
+                    // Sliding-window match (glob unless (e)); scan forward
+                    // for r/i, backward for R/I, returning the nth match's
+                    // start position.
+                    let is_match = |start: usize, len: usize| -> bool {
+                        let cand: String = s_chars[start..start + len].iter().collect();
+                        if exact {
+                            cand == pat
                         } else {
-                            Box::new(1..=(n - start))
-                        };
-                        for len in lengths {
-                            let cand: String = s_chars[start..start + len].iter().collect();
-                            let matched = if exact {
-                                cand == pat
-                            } else {
-                                patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                                    .map_or(false, |__p| pattry(&__p, &cand))
-                            };
-                            if matched {
-                                found = Some((start, start + len));
-                                if !want_last {
+                            patcompile(
+                                &{
+                                    let mut __pat_tok = (&pat).to_string();
+                                    crate::ported::glob::tokenize(&mut __pat_tok);
+                                    __pat_tok
+                                },
+                                PAT_HEAPDUP as i32,
+                                None,
+                            )
+                            .map_or(false, |__p| pattry(&__p, &cand))
+                        }
+                    };
+                    let mut found: Option<usize> = None;
+                    let mut count = 0usize;
+                    // c:Src/params.c:1888-1998 — the begin offset bounds the
+                    // search ASYMMETRICALLY: forward (r/i) starts AT beg and
+                    // scans toward the end; reverse (R/I) treats beg as the
+                    // UPPER limit and scans [0, beg] from the end, so
+                    // `${s[(Rb:2:)l]}` finds no "l" in the first two chars →
+                    // empty. Without an explicit begin, reverse spans the
+                    // whole string (c:1925 `if (!hasbeg) beg = len`).
+                    let starts: Box<dyn Iterator<Item = usize>> = if want_last {
+                        let hi = if hasbeg { beg0 } else { n as i64 }.min(n as i64);
+                        if hi < 0 {
+                            Box::new(std::iter::empty())
+                        } else {
+                            Box::new((0..=(hi as usize)).rev())
+                        }
+                    } else {
+                        let lo = beg0.max(0).min(n as i64) as usize;
+                        Box::new(lo..=n)
+                    };
+                    'outer: for start in starts {
+                        for len in 1..=(n - start) {
+                            if is_match(start, len) {
+                                count += 1;
+                                if count == nth {
+                                    found = Some(start);
                                     break 'outer;
                                 }
                                 break;
                             }
                         }
                     }
-                    // For (I): keep scanning to find LAST match.
-                    if want_last {
-                        for start in (0..=n).rev() {
-                            for len in 1..=(n - start) {
-                                let cand: String = s_chars[start..start + len].iter().collect();
-                                if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                                    .map_or(false, |__p| pattry(&__p, &cand))
-                                {
-                                    found = Some((start, start + len));
-                                    break;
-                                }
-                            }
-                            if found.is_some() && found.unwrap().0 >= start {
-                                break;
-                            }
-                        }
-                    }
                     match (found, return_index) {
-                        (Some((s, _)), true) => (s + 1).to_string(),
-                        (Some((s, _e)), false) => {
+                        (Some(s), true) => (s + 1).to_string(),
+                        (Some(s), false) => {
                             // c:Src/params.c:1798-1980 — scalar (r)/(R)
                             // returns the CHAR at the match position,
                             // not the full matched substring. Verified
