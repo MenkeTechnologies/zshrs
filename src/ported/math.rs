@@ -2621,6 +2621,37 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         .iter()
         .map(|n| (if n.type_ == MN_FLOAT { n.d } else { n.l as f64 }))
         .collect();
+    // c:Src/math.c:1106-1107 + c:1127 — every math function's arg count
+    // must be within its registered [minargs, maxargs] bounds (maxargs<0
+    // = unbounded); on mismatch C errors "wrong number of arguments:
+    // NAME(args)" and aborts. The MFF_USERFUNC arity check above covers
+    // shfunc-backed entries; this mirrors it for the NUMERIC built-in
+    // dispatch so e.g. `atan(1,2,3)` errors (atan is registered 1..2)
+    // instead of silently dropping the extra arg. Bounds come from the
+    // ported NUMMATHFUNC table (modules/mathfunc.rs num()).
+    if let Some((minargs, maxargs)) = crate::ported::module::MATHFUNCS
+        .lock()
+        .ok()
+        .and_then(|tab| {
+            tab.iter()
+                .find(|p| p.name == name)
+                .map(|p| (p.minargs, p.maxargs))
+        })
+    {
+        let argc = args.len() as i32;
+        if argc < minargs || (maxargs >= 0 && argc > maxargs) {
+            crate::ported::utils::zerr(&format!("wrong number of arguments: {}", call)); // c:1127
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            return mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
+        }
+    }
     let all_int = !arg_nums.is_empty() && arg_nums.iter().all(|n| (n.type_ == MN_INTEGER));
 
     // c:Src/Modules/mathfunc.c:139 — only `int` has TFLAG(TF_NOASS)
@@ -2704,7 +2735,19 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "acosh" => args.first().map(|x| x.acosh()).unwrap_or(0.0), // c:212
         "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
         "asinh" => args.first().map(|x| x.asinh()).unwrap_or(0.0), // c:220
-        "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
+        // c:Src/Modules/mathfunc.c:225-229 — `atan` takes 1 OR 2 args:
+        // the 2-arg form is atan2(y, x) (NUMMATHFUNC("atan", …, 1, 2)).
+        // The previous port ignored the second arg and returned
+        // atan(arg1), so `atan(3,2)` gave 1.249 instead of atan2(3,2)
+        // = 0.98279. (The 3+-arg "wrong number of arguments" error
+        // requires built-in math-func arity validation — see catalog.)
+        "atan" => {
+            if args.len() >= 2 {
+                args[0].atan2(args[1]) // c:227
+            } else {
+                args.first().map(|x| x.atan()).unwrap_or(0.0) // c:229
+            }
+        }
         "atan2" => {
             let y = args.first().copied().unwrap_or(0.0);
             let x = args.get(1).copied().unwrap_or(1.0);
