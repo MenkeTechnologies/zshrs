@@ -3573,6 +3573,15 @@ pub fn paramsubst(
         //     semantic.
         let mut subexp_array_temp: Option<String> = None;
         let mut subexp_arr_parts: Option<Vec<String>> = None;
+        // c:Src/subst.c — when the inner sub-expression is `(P)NAME`
+        // (the `(P)` indirect flag referencing a parameter NAME) and that
+        // name resolves to an ASSOCIATIVE array, the `(P)` acts as a
+        // named reference: an OUTER subscript (`${${(P)n}[key]}`) must do
+        // assoc KEY lookup on the referenced param, not index its
+        // flattened values. multsub() below collapses the assoc to its
+        // values, losing the keys; capture the referenced assoc name here
+        // so the subscript cascade can re-do the key lookup.
+        let mut subexp_passoc_name: Option<String> = None;
                                                           // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
                                                           // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
                                                           // `${(flag)name}` in DQ context and in the new bridge passthru
@@ -4622,6 +4631,43 @@ pub fn paramsubst(
                 }
             }
             let inner: String = body_chars[start..p].iter().collect(); // c:2671
+                                                                       // Detect `${(…P…)NAME}` inner: the `(P)` indirect flag
+                                                                       // referencing an assoc, so an outer subscript can do key
+                                                                       // lookup on the referenced param (see subexp_passoc_name).
+            {
+                // inner is the tokenized nested expansion, e.g.
+                // `${(P)n}` → [Inbrace \u{8f}, Inpar \u{88}, 'P',
+                // Outpar \u{8a}, 'n', Outbrace \u{90}]. Parse char-based
+                // (the paren/brace tokens are multi-byte). Require the
+                // flag block right after the opening brace so we only
+                // match the `${(flags)name}` shape.
+                let ic: Vec<char> = inner.trim().chars().collect();
+                let inpar = ic.iter().position(|&c| c == '\u{88}' || c == '(');
+                if let Some(inpar) = inpar.filter(|&i| i <= 1) {
+                    if let Some(rel) =
+                        ic[inpar + 1..].iter().position(|&c| c == '\u{8a}' || c == ')')
+                    {
+                        let outpar = inpar + 1 + rel;
+                        let flags: String = ic[inpar + 1..outpar].iter().collect();
+                        let nm: String = ic[outpar + 1..]
+                            .iter()
+                            .take_while(|&&c| c != '\u{90}' && c != '}')
+                            .collect();
+                        if flags.contains('P')
+                            && !nm.is_empty()
+                            && nm.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+                        {
+                            // `(P)nm` → nm's VALUE is the referenced param
+                            // name; if that names an assoc, remember it.
+                            if let Some(refname) = vars_get(&nm) {
+                                if !refname.is_empty() && assoc_get(&refname).is_some() {
+                                    subexp_passoc_name = Some(refname);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
                                                                        // Array-shape preservation through nested `${(@)${(@)…}…}`.
                                                                        // C zsh uses `multsub` (subst.c:544) for the inner expansion
                                                                        // when the outer flag set wants array shape; that returns the
@@ -5349,7 +5395,20 @@ pub fn paramsubst(
                         .as_ref()
                         .cloned()
                         .filter(|a| a.len() > 1);
-                    if sub == "@" || sub == "*" {
+                    if let Some(an) = subexp_passoc_name.as_deref() {
+                        // `${${(P)n}[key]}` — the inner `(P)n` references
+                        // assoc `an`; the outer subscript is an assoc KEY
+                        // lookup (string or numeric key), matching
+                        // `${an[key]}`. `@`/`*` keep the values (the
+                        // flattened sv). c:Src/subst.c (P) named-ref.
+                        if sub == "@" || sub == "*" {
+                            sv
+                        } else {
+                            assoc_get(an)
+                                .and_then(|m| m.get(sub).cloned())
+                                .unwrap_or_default()
+                        }
+                    } else if sub == "@" || sub == "*" {
                         match arr_shape {
                             Some(arr) => arr.join(" "),
                             None => sv,
