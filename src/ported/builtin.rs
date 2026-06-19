@@ -15211,7 +15211,21 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 }
                 Some(conv @ ('f' | 'F' | 'g' | 'G' | 'e' | 'E')) => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n: f64 = a.parse().unwrap_or(0.0);
+                    // c:Src/builtin.c:5479-5488 — `doubleval = strtod(curarg,
+                    // &eptr); if (*eptr) mnumval = matheval(curarg)`. The arg
+                    // is parsed as a numeric constant first (handles "2.5",
+                    // "nan", "inf"); if that leaves leftover (a variable name
+                    // like `f`, or an expression like "1.5+1"), it is
+                    // evaluated as a math expression. The previous port did
+                    // only the constant parse, so `printf %g f` / `%f 1.5+1`
+                    // yielded 0.
+                    let n: f64 = a.parse::<f64>().unwrap_or_else(|_| {
+                        match matheval(&a) {
+                            Ok(m) if m.type_ == crate::ported::math::MN_FLOAT => m.d,
+                            Ok(m) => m.l as f64,
+                            Err(_) => 0.0,
+                        }
+                    });
                     // c:Src/builtin.c printf %g/%G uses libc snprintf
                     // which strips trailing zeros; %e/%E uses scientific.
                     out.push_str(&format_spec_float_conv(&spec, n, conv));

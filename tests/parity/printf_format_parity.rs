@@ -420,3 +420,49 @@ mod backslash_c_truncation {
         assert_parity(r#"printf '%s\n' a b c"#);
     }
 }
+
+/// Float conversions (`%f`/`%g`/`%e`) math-evaluate a non-constant arg —
+/// a bare variable name or an expression — just like `%d` does
+/// (c:Src/builtin.c:5479-5488 strtod-then-matheval). The previous port
+/// only parsed numeric constants, so `printf %g f` / `%f 1.5+1` gave 0.
+mod float_arg_matheval {
+    use super::*;
+
+    #[test]
+    fn percent_g_reads_float_var() {
+        assert_parity(r#"float f=3.4; f+=2.3; printf "%g\n" f"#);
+    }
+
+    #[test]
+    fn percent_g_evaluates_expression() {
+        assert_parity(r#"printf "%g\n" "1.5+1""#);
+    }
+
+    #[test]
+    fn percent_f_evaluates_expression() {
+        assert_parity(r#"printf "%f\n" "1.5+1""#);
+    }
+
+    #[test]
+    fn percent_f_reads_scalar_var() {
+        assert_parity(r#"x=3.14; printf "%f\n" x"#);
+    }
+
+    /// Numeric-constant fast path still works (regression guard).
+    #[test]
+    fn literal_constant_still_parses() {
+        assert_parity(r#"printf "%g|%f|%e\n" 5.7 2.5 2.5"#);
+    }
+
+    /// Non-numeric, non-expression arg → 0 (regression guard).
+    #[test]
+    fn non_numeric_arg_is_zero() {
+        assert_parity(r#"printf "%f\n" abc"#);
+    }
+
+    /// nan/inf literals still forced to bare lowercase (regression guard).
+    #[test]
+    fn nan_inf_literals_preserved() {
+        assert_parity(r#"printf "%.1f|" NaN nan inf Inf -Inf"#);
+    }
+}

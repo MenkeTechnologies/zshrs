@@ -5949,6 +5949,9 @@ Some(Box::new(node.clone()))
                     unqueue_signals();
                     return None;
                 }
+                // c:2966-2967 — capture PM_UNIQUE before the mutable
+                // borrow so the post-splice dedup below can fire.
+                let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0;
                 let arr = pm.u_arr.get_or_insert_with(Vec::new);
                 let len = arr.len() as i64;
                 let real_idx = if idx < 0 {
@@ -5974,6 +5977,17 @@ Some(Box::new(node.clone()))
                         arr.push(String::new());
                     }
                     arr[real_idx] = val.to_string();
+                }
+                // c:2966-2967 — `if (pm->node.flags & PM_UNIQUE)
+                // arrunique(pm->u.arr)`. A subscript element assignment to a
+                // PM_UNIQUE array dedupes in-place (first occurrence wins):
+                // `typeset -aU u=(a b c); u[2]=c` → (a c). setarrvalue
+                // already does this at its tail; the single-index element
+                // path bypassed it.
+                if uniq {
+                    let mut seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    arr.retain(|s| seen.insert(s.clone())); // c:2967
                 }
                 pm.u_str = None;
             }
