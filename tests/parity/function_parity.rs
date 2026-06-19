@@ -413,3 +413,42 @@ mod multi_name_funcdef {
         assert_parity("() { echo anon $1 } arg1");
     }
 }
+
+/// `function NAME () <short-body>` (function keyword + parens + braceless
+/// body) parses the body as ONE sublist (c:parse.c:1747 par_list1), not a
+/// greedy list. The port used par_list which swallowed the trailing `;`
+/// command and errored "parse error near `<next>'".
+mod function_keyword_short_body {
+    use super::*;
+
+    #[test]
+    fn function_paren_short_body() {
+        assert_parity("function foo () print bar; foo");
+    }
+
+    #[test]
+    fn function_paren_adjacent_short_body() {
+        assert_parity("function foo() print bar; foo");
+    }
+
+    #[test]
+    fn short_body_then_following_command() {
+        assert_parity("function foo () print bar; echo after");
+    }
+
+    #[test]
+    fn short_body_compound() {
+        assert_parity("function f() for x in 1 2; do echo $x; done; f");
+    }
+
+    /// Braced + braceless-no-keyword forms still work (regression guards).
+    #[test]
+    fn braced_body_unaffected() {
+        assert_parity("function foo () { print bar }; foo");
+    }
+
+    #[test]
+    fn no_keyword_short_body_unaffected() {
+        assert_parity("foo() print bar; foo");
+    }
+}

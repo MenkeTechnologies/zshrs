@@ -2513,9 +2513,34 @@ fn par_funcdef() -> Option<ZshCommand> {
             auto_call_args: None,
             body_source,
         }))
+    } else if unset(SHORTLOOPS) {
+        // c:Src/parse.c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV`.
+        // Braceless short body (`function f () CMD`) requires SHORTLOOPS.
+        zerr("parse error: short function body form requires SHORTLOOPS option");
+        None
     } else {
-        // Short form
-        par_list(false).map(|(list, _terminated)| {
+        // c:Src/parse.c:1747-1748 — `else par_list1(&c)`. The short body
+        // is ONE sublist (a single command), NOT a full list. The prior
+        // `par_list(false)` greedily consumed past the `;` (so `function
+        // foo () print bar; foo` swallowed the trailing `foo` call and
+        // errored "parse error near `foo'"). Use par_cmd for the single
+        // command, matching the brace-less `foo() CMD` path
+        // (parse_inline_funcdef). Bug surface: C04funcdef `function foo ()
+        // print bar`.
+        par_cmd().map(|cmd| {
+            let list = ZshList {
+                sublist: ZshSublist {
+                    pipe: ZshPipe {
+                        cmd,
+                        next: None,
+                        lineno: lineno(),
+                        merge_stderr: false,
+                    },
+                    next: None,
+                    flags: SublistFlags::default(),
+                },
+                flags: ListFlags::default(),
+            };
             ZshCommand::FuncDef(ZshFuncDef {
                 names,
                 body: Box::new(ZshProgram { lists: vec![list] }),
