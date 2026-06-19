@@ -678,3 +678,27 @@ mod paramflag_k_subscript_index {
         assert_parity("a=(x y z); echo ${a[2]}; echo $a[3]; echo ${a[(R)y]}");
     }
 }
+
+/// The `(v)` paramflag FORCES a subscript to return the value even when
+/// `(i)`/`(I)` would return the index (c:Src/params.c:1515 — `else if
+/// (WANTVALS) *inv = 0`). Inverse of `(k)`. `${(v)h[(i)b]}` → element,
+/// not its index. With BOTH `(k)` and `(v)` the subscript's own i/I
+/// flag decides (c:1513 `ind || !WANTVALS` → `ind`).
+mod paramflag_v_forces_value {
+    use super::*;
+
+    #[test]
+    fn v_overrides_i_index_to_value() {
+        assert_parity("h=(a 1 b 2); echo ${(v)h[(i)b]}");
+    }
+
+    #[test]
+    fn v_with_plain_search_unaffected() {
+        assert_parity("a=(x y z); echo ${(v)a[(i)y]}");
+    }
+
+    #[test]
+    fn both_k_and_v_defer_to_subscript_flag() {
+        assert_parity("a=(x y z); echo ${(kv)a[(i)y]}; echo ${(vk)a[(R)y]}");
+    }
+}
