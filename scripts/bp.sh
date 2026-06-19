@@ -92,8 +92,10 @@ fi
 # Build + lex parity gate before tagging anything.
 echo "→ cargo build (sanity check)"
 cargo build --quiet
-echo "→ cargo test --test lexer_parity (sanity check)"
-cargo test --quiet --test lexer_parity corpus_lexer_parity > /dev/null
+# corpus_lexer_parity is a module of the aggregated `parity` test
+# binary (tests/parity/lexer_parity.rs), not a standalone test target.
+echo "→ cargo test --test parity corpus_lexer_parity (sanity check)"
+cargo test --quiet --test parity corpus_lexer_parity > /dev/null
 
 # Stage, commit, tag, push.
 git add Cargo.toml Cargo.lock 2>/dev/null || true
