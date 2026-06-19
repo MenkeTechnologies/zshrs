@@ -730,3 +730,38 @@ mod round_pins {
         assert_parity("print $(( [#_] 1000000 ))");
     }
 }
+
+/// `zsh/mathfunc` `atan` takes 1 OR 2 args: 2-arg form is atan2(y,x)
+/// (c:mathfunc.c:225-229, NUMMATHFUNC 1..2). 3+ args error "wrong
+/// number of arguments" (c:math.c:1106-1127). The port returned
+/// atan(arg1) for 2 args and silently dropped extra args.
+mod mathfunc_atan_arity {
+    use super::*;
+
+    #[test]
+    fn atan_two_args_is_atan2() {
+        assert_parity("zmodload zsh/mathfunc; float -F 5 r; (( r = atan(3,2) )); print $r");
+    }
+
+    #[test]
+    fn atan_one_arg() {
+        assert_parity("zmodload zsh/mathfunc; print $(( atan(1) ))");
+    }
+
+    #[test]
+    fn atan_three_args_errors() {
+        assert_parity("zmodload zsh/mathfunc; print $(( atan(1,2,3) )); echo rc=$?");
+    }
+
+    /// One-arg funcs still reject a second arg.
+    #[test]
+    fn sin_two_args_errors() {
+        assert_parity("zmodload zsh/mathfunc; print $(( sin(0,1) )) 2>/dev/null; echo rc=$?");
+    }
+
+    /// Two-arg func still works (regression guard).
+    #[test]
+    fn fmod_two_args() {
+        assert_parity("zmodload zsh/mathfunc; print $(( fmod(10,3) ))");
+    }
+}
