@@ -10850,6 +10850,20 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
 /// then `nam` + `=value` via `printparamvalue`.
 pub fn printparamnode(hn: &mut param, mut printflags: i32) {
     const PRINT_WITH_NAMESPACE: i32 = 1 << 8; // matches createspecial print enum
+    // c:Src/params.c — the `argv`/`*`/`@` special array IS the positional
+    // parameter list (stored in PPARAMS), not this paramtab entry's u_arr
+    // (which stays empty). Refresh u_arr from PPARAMS so `typeset -p argv`
+    // shows the positionals instead of `( )`. The all-params `set`/typeset
+    // listing path already special-cases these (builtin.rs:1315); mirror
+    // it here for the explicit-name `typeset -p NAME` print.
+    if matches!(hn.node.nam.as_str(), "argv" | "*" | "@") {
+        let pp: Vec<String> = PPARAMS
+            .lock()
+            .ok()
+            .map(|p| p.iter().cloned().collect())
+            .unwrap_or_default();
+        hn.u_arr = Some(pp);
+    }
     let f = hn.node.flags as u32;
     if (f & PM_HASHELEM) == 0
         && (printflags & PRINT_WITH_NAMESPACE) == 0
