@@ -450,6 +450,72 @@ mod slice_range_assign {
     }
 }
 
+/// Subscripted array APPEND `a[N]+=(...)` / `a[lo,hi]+=(...)`. The augment
+/// does NOT prepend the old slice — it collapses the range to an empty
+/// range positioned AFTER the slice end and inserts only the new value
+/// (c:Src/params.c:3518-3520). The bug: the compile path ignored
+/// `assign.append`, so `a[2]+=(d)` OVERWROTE element 2 instead of
+/// inserting after it.
+mod subscript_array_append {
+    use super::*;
+
+    #[test]
+    fn single_index_inserts_after() {
+        assert_parity("a=(a b c); a[2]+=(d); echo $a");
+    }
+
+    #[test]
+    fn single_index_multi_value() {
+        assert_parity("a=(a b c); a[2]+=(d e); echo $a");
+    }
+
+    #[test]
+    fn first_index_inserts_after() {
+        assert_parity("a=(a b c); a[1]+=(d); echo $a");
+    }
+
+    #[test]
+    fn negative_last_appends() {
+        assert_parity("a=(a b c); a[-1]+=(d); echo $a");
+    }
+
+    #[test]
+    fn negative_interior_inserts_after() {
+        assert_parity("a=(a b c); a[-2]+=(m); echo $a");
+    }
+
+    #[test]
+    fn forward_range_inserts_after_end() {
+        assert_parity("a=(1 2 3 4); a[2,3]+=(x); echo $a");
+    }
+
+    #[test]
+    fn range_element_count_preserved() {
+        assert_parity("a=(1 2 3 4); a[2,3]+=(x); echo $#a");
+    }
+
+    #[test]
+    fn past_end_pads_then_appends() {
+        assert_parity("a=(a b c); a[5]+=(z); print -l -- $a; echo $#a");
+    }
+
+    #[test]
+    fn append_to_unset_pads() {
+        assert_parity("typeset -a u; u[1]+=(x); print -l -- $u; echo $#u");
+    }
+
+    #[test]
+    fn cmdsubst_value_splits() {
+        assert_parity(r#"a=(a b c); a[2]+=($(echo "x y")); echo $a"#);
+    }
+
+    /// Non-append must keep plain-replace (regression guard).
+    #[test]
+    fn non_append_replaces() {
+        assert_parity("a=(a b c); a[2]=(d e); echo $a");
+    }
+}
+
 /// Under KSHARRAYS a bare array name addresses element 0 (ksh semantics),
 /// so a scalar assignment `a=X` to an existing array sets the FIRST
 /// element keeping the rest, rather than replacing the whole array

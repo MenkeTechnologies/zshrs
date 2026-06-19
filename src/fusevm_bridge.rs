@@ -5361,9 +5361,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             popped.push(vm.pop());
         }
         popped.reverse();
-        if popped.len() < 2 {
+        if popped.len() < 3 {
             return Value::Status(1);
         }
+        // c:Src/params.c:3511-3526 — trailing append flag. The ARRAY
+        // subscript path (`a[N]+=(v)` / `a[lo,hi]+=(v)`) sets it so the
+        // AUGMENT transform below collapses the range to an empty range
+        // after the slice end and inserts ONLY the new value. The scalar
+        // path pre-concats the old slice (ARRAY_INDEX+Concat) and passes
+        // 0, so it keeps plain-replace semantics.
+        let append = popped.pop().map_or(false, |v| v.to_str() == "1");
         let key = popped.pop().unwrap().to_str();
         let name = popped.pop().unwrap().to_str();
         let mut values: Vec<String> = Vec::new();
@@ -5466,6 +5473,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 let n = start_translate(i);
                 (n, n)
+            };
+            // c:Src/params.c:3518-3520 (assignaparam ASSPM_AUGMENT) — a
+            // subscripted `+=` to an array does NOT prepend the old slice;
+            // it collapses the range to an EMPTY range positioned right
+            // AFTER the slice end (`v->start = v->end--`) and splices in
+            // ONLY the new value: `a[2]+=(d)` on (a b c) → (a b d c);
+            // `a[2,3]+=(x)` on (1 2 3 4) → (1 2 3 x 4). In setarrvalue's
+            // 1-based convention here that means start = end+1 (so
+            // start_idx == end_idx == end → splice arr[end..end]).
+            let (start, end) = if append && end > 0 {
+                (end + 1, end)
+            } else {
+                (start, end)
             };
             // Route through canonical setarrvalue (Src/params.c:2895).
             // It handles PM_READONLY rejection, PM_HASHED slice-error,

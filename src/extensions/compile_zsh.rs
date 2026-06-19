@@ -2889,8 +2889,12 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     let key_const = self.builder.add_constant(Value::str(key));
                     self.builder.emit(Op::LoadConst(key_const), 0);
+                    // Scalar splice pre-concats the old slice above (when
+                    // appending), so the handler keeps plain-replace
+                    // semantics — pass append=0.
+                    self.builder.emit(Op::LoadInt(0), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, 3),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, 4),
                         0,
                     );
                     self.builder.emit(Op::Pop, 0);
@@ -3139,7 +3143,13 @@ impl ZshCompiler {
                         let key_const = self.builder.add_constant(Value::str(key));
                         self.builder.emit(Op::LoadConst(key_const), 0);
                     }
-                    let argc = (elements.len() + 2) as u8;
+                    // c:Src/params.c:3518-3520 — `a[N]+=(v)` / `a[lo,hi]+=(v)`
+                    // collapses the range to an empty range after the slice
+                    // end and inserts only the new value (AUGMENT). Signal
+                    // it to the handler via the trailing append flag.
+                    self.builder
+                        .emit(Op::LoadInt(if assign.append { 1 } else { 0 }), 0);
+                    let argc = (elements.len() + 3) as u8;
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_SUBSCRIPT_RANGE, argc),
                         0,
