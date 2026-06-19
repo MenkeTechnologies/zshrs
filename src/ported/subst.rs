@@ -7491,10 +7491,14 @@ pub fn paramsubst(
                 // arrays because `assoc_get` returned None and the
                 // magic-assoc tables didn't match.
                 .or_else(|| crate::ported::exec::array(&var_name));
+            // c:Src/subst.c — `(kv)` on a plain SCALAR returns the
+            // scalar's value (no-op), not empty (`x=hello; ${(kv)x}` →
+            // `hello`). Fall back to raw_value when the assoc/array/
+            // magic chain is None, matching the (k)/(v) arms below.
             value = magic_assoc_array
                 .as_ref()
                 .map(|v| v.join(" "))
-                .unwrap_or_default(); // c:2247
+                .unwrap_or_else(|| raw_value.clone()); // c:2247
         } else if !has_subscript_for_kvflag && (hkeys & SCANPM_WANTKEYS) != 0 {
             // c:2247
             // Capture the keys-as-Vec for split_parts splat (see
@@ -7584,7 +7588,14 @@ pub fn paramsubst(
                         }),
                     } // c:2247
                 }) // c:2247
-                .unwrap_or_default();
+                // c:Src/subst.c — `(k)`/`(v)` on a plain SCALAR (no
+                // keys/values structure) are no-ops and return the
+                // scalar's value: `x=hello; ${(k)x}` → `hello`. The
+                // assoc/array/magic-assoc lookups above all yield None
+                // for a scalar, so fall back to the resolved scalar
+                // value (raw_value) instead of empty — matching the
+                // no-flag `else` arm below.
+                .unwrap_or_else(|| raw_value.clone());
         } else if !has_subscript_for_kvflag && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2256 — (v) flag: values as array, with magic-assoc
             // fallback chain matching the (k) arm above so
@@ -7611,12 +7622,18 @@ pub fn paramsubst(
                 // c:Src/subst.c — indexed array fallback for (v).
                 // `arr=(a b c); ${(v)arr}` → "a b c" (the values).
                 .or_else(|| crate::ported::exec::array(&var_name));
+            // c:Src/subst.c — `(v)` on a plain SCALAR returns the
+            // scalar's value (no-op), not empty. The chain above is
+            // None for a scalar, so fall back to raw_value and keep
+            // isarr scalar (only assoc/array value-fetch sets isarr=1).
             value = magic_assoc_array
                 .as_ref()
                 .map(|v| v.join(" "))
-                .unwrap_or_default();
+                .unwrap_or_else(|| raw_value.clone());
             // c:2922 — getarrvalue sets isarr=1 for assoc-value fetch.
-            isarr = 1;
+            if magic_assoc_array.is_some() {
+                isarr = 1;
+            }
         } else if (nojoin == 2) {
             // c:2167
             // (@) array splat — preserve element shape via space-join.
