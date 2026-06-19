@@ -4413,27 +4413,25 @@ pub fn bin_typeset(
                         if (f & PM_UNSET) != 0 {
                             return false;
                         }
-                        // c:Src/builtin.c:3081 — `for (i = 0; i <
-                        //   paramtab->hsize; i++)` walks paramtab
-                        // entries. C zsh's PARTAB magic-assoc names
-                        // (aliases/commands/functions/parameters/etc.)
-                        // are NOT in paramtab — they live behind a
-                        // dedicated PARTAB scanfn in Src/Modules/
-                        // parameter.c. The pattry loop therefore
-                        // never sees them and the for-loop's
-                        // typeset_single never fires on them.
-                        //
-                        // zshrs's init_partab_params inserts them into
-                        // paramtab as PM_HIDE-tagged placeholders so
-                        // ${parameters[name]} etc. resolve. Skip
-                        // PM_HIDE entries here to restore the C
-                        // invisibility — `typeset -m "a*"` no longer
-                        // emits `aliases` / `array argv=(  )` etc.
-                        // alongside the legitimate `a=1`. Bug #48 in
-                        // docs/BUGS.md.
-                        if (f & PM_HIDE) != 0 {
-                            return false;
-                        }
+                        // c:Src/builtin.c:3055-3094 / hashtable.c:373-440
+                        // — the `-m`/`+m` PATTERN path scans paramtab
+                        // via `scanmatchtable(paramtab, pprog, ...)`.
+                        // scanmatchtable matches ONLY on flags1/flags2
+                        // + the pattern; it does NOT exclude PM_HIDE.
+                        // An explicit pattern therefore REVEALS hidden
+                        // params — verified vs `/opt/homebrew/bin/zsh`:
+                        //   `typeset +m 'a*'` → `undefined aliases` +
+                        //   `array argv`; `typeset -m 'a*'` → `aliases`
+                        //   + `argv=(  )`. The magic-assoc placeholders
+                        //   (PM_HIDE|PM_HIDEVAL, inserted by
+                        //   init_partab_params) and `private` vars
+                        //   (PM_HIDE, no PM_HIDEVAL — c:Modules/
+                        //   param_private.c:174) must BOTH appear here,
+                        //   unlike the no-args list path (c:2762-2792)
+                        //   where scanhashtable's bare scan keeps them
+                        //   hidden (bug #371). So NO PM_HIDE filter on
+                        //   this PATTERN path — V10private: `private
+                        //   x=5; typeset +m x` → `local x`.
                         if on_roff != 0 && (f & on_roff) == 0 {
                             return false;
                         }

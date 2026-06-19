@@ -700,3 +700,84 @@ mod typeset_p1_multiline {
         assert_parity("local -a a=(x y z); typeset -p a");
     }
 }
+
+/// `typeset +m`/`-m PATTERN` reveal PM_HIDE params (V10private + magic
+/// assocs). The `-m`/`+m` PATTERN path uses scanmatchtable, which (unlike
+/// the bare scanhashtable list path) does NOT exclude PM_HIDE — an
+/// explicit pattern reveals hidden params. Pinned as DIRECT assertions
+/// (not assert_parity) because homebrew zsh 5.9.1 predates the pmtypes
+/// "hide" row (c:Src/params.c:6022, commit 6b21e5c0e2, post-5.9.1), so
+/// zshrs (ported from the newer tree) emits "hide" where 5.9.1 omits it.
+/// These pins assert the actual bug fixes, version-skew-independent:
+///   1. a `private` var APPEARS under `typeset +m` (was wrongly filtered
+///      by a blanket PM_HIDE skip — builtin.rs +m scan path).
+///   2. its listing carries NO spurious "readonly" (PM_RO_BY_DESIGN
+///      readonly-attr expansion must be gated on !PM_REMOVABLE —
+///      params.rs printparamnode; V10private.ztst:31 → `local hide x`).
+///   3. IPDEF4 specials (LINENO) STILL show "readonly" (gate regression
+///      guard — they are PM_READONLY_SPECIAL, not removable).
+mod private_and_hidden_listing {
+    use super::*;
+
+    fn has_private_module() -> bool {
+        run_zshrs("zmodload zsh/param/private; echo ok").stdout.trim() == "ok"
+    }
+
+    #[test]
+    fn private_var_appears_in_typeset_plus_m() {
+        if !has_private_module() {
+            return;
+        }
+        let r = run_zshrs("zmodload zsh/param/private; () { private px=1; typeset +m px }");
+        // Was empty before the +m PM_HIDE-filter removal.
+        assert!(
+            r.stdout.contains("px"),
+            "private var missing from `typeset +m`: {:?}",
+            r.stdout
+        );
+        assert!(
+            r.stdout.contains("local"),
+            "private var not listed as local: {:?}",
+            r.stdout
+        );
+    }
+
+    #[test]
+    fn private_var_listing_has_no_spurious_readonly() {
+        if !has_private_module() {
+            return;
+        }
+        let r = run_zshrs("zmodload zsh/param/private; () { private px=1; typeset +m px }");
+        // PM_RO_BY_DESIGN must NOT expand to the readonly attr for a
+        // PM_REMOVABLE private var (V10private.ztst:31 = `local hide px`).
+        assert!(
+            !r.stdout.contains("readonly"),
+            "private var wrongly shows readonly: {:?}",
+            r.stdout
+        );
+    }
+
+    #[test]
+    fn ipdef4_special_still_shows_readonly() {
+        // Regression guard for the !PM_REMOVABLE gate: LINENO is
+        // PM_READONLY_SPECIAL (non-removable) and keeps its readonly attr.
+        let r = run_zshrs("typeset +m LINENO");
+        assert!(
+            r.stdout.contains("readonly"),
+            "LINENO lost its readonly attr: {:?}",
+            r.stdout
+        );
+    }
+
+    #[test]
+    fn magic_assoc_revealed_by_pattern() {
+        // `typeset +m 'a*'` must surface the `aliases` magic assoc
+        // (scanmatchtable reveals PM_HIDE). Was filtered before.
+        let r = run_zshrs("typeset +m 'a*'");
+        assert!(
+            r.stdout.contains("aliases"),
+            "magic assoc `aliases` not revealed by +m pattern: {:?}",
+            r.stdout
+        );
+    }
+}
