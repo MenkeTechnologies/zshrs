@@ -6623,8 +6623,18 @@ pub fn paramsubst(
                     let close = rest.find(')')?;
                     let f = rest[..close].to_string();
                     let p = rest[close + 1..].to_string();
+                    // c:Src/params.c getarg — a scalar char SEARCH needs
+                    // an actual r/R/i/I flag. (e)/(n)/(b) are modifiers
+                    // (exact / nth / begin-offset) meaningless on their
+                    // own: `(e)`-alone is NOT a search, so the remainder
+                    // is a numeric index — `${s[(e)2]}` → char 2 = "e",
+                    // `${s[(e)l]}` → eval "l" = 0 → "". Require a search
+                    // flag here so those fall through to the numeric
+                    // closure; without this `(e)X` did an exact search
+                    // and returned the matched char instead.
                     if f.chars()
                         .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e' | 'b'))
+                        && f.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r'))
                     {
                         Some((f, p))
                     } else {
