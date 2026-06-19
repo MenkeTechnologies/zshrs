@@ -2606,6 +2606,23 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
     // Parse words and redirections
     loop {
         match tok() {
+            ENVSTRING | ENVARRAY if words.is_empty() => {
+                // c:1843-1907 — still in command position (no command
+                // word collected yet): a `name=val` token here is a
+                // PRE-COMMAND assignment, even when it follows a
+                // redirection (`a=b 2>/dev/null c=d`). C's single
+                // par_simple loop collects assignments and redirs in any
+                // order until the command word; zshrs split that into a
+                // leading-assignments while-loop (above) plus this main
+                // loop, and the leading loop stopped at the first redir.
+                // Without this arm the trailing `c=d` fell into the
+                // typeset-word path below and was silently dropped, so
+                // `a=b 2>/dev/null c=d` set neither parameter.
+                if let Some(assign) = parse_assign() {
+                    assigns.push(assign);
+                }
+                zshlex();
+            }
             ENVSTRING | ENVARRAY => {
                 // Mid-command assignment-shape arg under typeset
                 // / declare / local / etc. (intypeset gates the

@@ -549,6 +549,39 @@ mod subscript_range_autovivify {
     }
 }
 
+/// PM_UNIQUE (`typeset -aU`) dedupes on single-index element assignment
+/// too, not just whole-array/append (c:Src/params.c:2966-2967 arrunique).
+/// The single-index element path bypassed setarrvalue's dedup tail.
+mod unique_array_element_assign {
+    use super::*;
+
+    #[test]
+    fn overwrite_creating_dup_dedupes() {
+        assert_parity("typeset -aU u=(first second); u[1]=second; print $u");
+    }
+
+    #[test]
+    fn interior_dup_dedupes() {
+        assert_parity("typeset -aU u=(a b c); u[2]=c; print $u");
+    }
+
+    #[test]
+    fn past_end_dup_dedupes() {
+        assert_parity(r#"typeset -aU u=(a b c); u[5]=a; print -l -- $u; echo $#u"#);
+    }
+
+    #[test]
+    fn non_dup_assignment_keeps_all() {
+        assert_parity("typeset -aU u=(a b c); u[2]=z; print $u");
+    }
+
+    /// Non-unique array keeps duplicates (regression guard).
+    #[test]
+    fn non_unique_keeps_dups() {
+        assert_parity("typeset -a u=(a b c); u[2]=c; print $u");
+    }
+}
+
 /// Under KSHARRAYS a bare array name addresses element 0 (ksh semantics),
 /// so a scalar assignment `a=X` to an existing array sets the FIRST
 /// element keeping the rest, rather than replacing the whole array
