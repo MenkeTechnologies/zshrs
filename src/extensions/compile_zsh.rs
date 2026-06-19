@@ -1031,6 +1031,13 @@ impl ZshCompiler {
                         0,
                     );
                     self.builder.emit(Op::SetStatus, 0);
+                    // c:Src/exec.c execpline — a `time` pipeline's exit
+                    // status participates in errexit like any other
+                    // command: `setopt errexit; time false; print x`
+                    // aborts before `print x`. The previous port set $?
+                    // but skipped the errexit check, so the timed
+                    // command's failure was swallowed.
+                    self.emit_errexit_check();
                 } else {
                     // Bare `time` — print zero stats and exit 0.
                     self.builder.emit(Op::LoadInt(0), 0);
