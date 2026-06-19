@@ -5904,25 +5904,32 @@ Some(Box::new(node.clone()))
                     return None;
                 }
                 // 1-based forward, negative-from-end. KSHARRAYS = 0-based.
-                let real_idx = if idx < 0 {
-                    (len + idx).max(0)
+                let raw = if idx < 0 {
+                    len + idx
                 } else if isset(KSHARRAYS) {
                     idx
                 } else {
                     idx - 1
                 };
-                let real_idx = real_idx.max(0) as usize;
-                let real_idx = real_idx.min(chars.len());
-                // Replace one char at real_idx with val. If real_idx
-                // is past the end, append (extending with empty
-                // wouldn't make sense for a scalar — C's
-                // assignstrvalue at params.c:3724-3789 clamps end to
-                // zlen and concats).
                 let mut out = String::with_capacity(s.len() + val.len());
-                out.extend(chars[..real_idx].iter());
-                out.push_str(val);
-                if real_idx < chars.len() {
-                    out.extend(chars[real_idx + 1..].iter());
+                if raw < 0 {
+                    // c:Src/params.c:2721-2733 (assignstrvalue) — a negative
+                    // subscript that points PAST the start of the string
+                    // (`a[-4]` on "abc") clamps BOTH start and end to 0, so
+                    // the slice old[0..0] is empty and val is INSERTED at the
+                    // front (overwriting nothing): `a[-4]="x"` → "xabc". The
+                    // prior port clamped to index 0 and OVERWROTE char 0.
+                    out.push_str(val);
+                    out.extend(chars.iter());
+                } else {
+                    // Replace one char at real_idx with val. If real_idx is
+                    // past the end, append (C clamps end to zlen and concats).
+                    let real_idx = (raw as usize).min(chars.len());
+                    out.extend(chars[..real_idx].iter());
+                    out.push_str(val);
+                    if real_idx < chars.len() {
+                        out.extend(chars[real_idx + 1..].iter());
+                    }
                 }
                 pm.u_str = Some(out);
             } else {
