@@ -11126,11 +11126,25 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
                 // writes pass `assignstrvalue` (see vm_helper init at
                 // bug #97 in docs/BUGS.md). The C-side IPDEF4 entries
                 // declare PM_READONLY_SPECIAL = PM_SPECIAL | PM_READONLY |
-                // PM_RO_BY_DESIGN, so both bits are set together. The
-                // attribute walk's readonly check has to expand its match
-                // to either bit; mirrors the `bin_typeset` listing filter
-                // at builtin.rs:3620. Bug #297 in docs/BUGS.md.
-                let effective_binflag = if pmptr.binflag == PM_READONLY {
+                // PM_RO_BY_DESIGN (c:Src/params.c:351,zsh.h:1925), so both
+                // bits are set together. The attribute walk's readonly
+                // check has to expand its match to either bit; mirrors the
+                // `bin_typeset` listing filter at builtin.rs:3620. Bug #297
+                // in docs/BUGS.md.
+                //
+                // GATE on `!PM_REMOVABLE`: the IPDEF4 specials are NOT
+                // removable, but `private` vars (c:Modules/param_private.c:
+                // 174 — PM_HIDE|PM_SPECIAL|PM_REMOVABLE|PM_RO_BY_DESIGN)
+                // carry PM_RO_BY_DESIGN WITHOUT PM_READONLY, exactly as in
+                // C, and must NOT print "readonly". The C walk prints
+                // "readonly" only from the real PM_READONLY bit, which a
+                // private var never has. Without this gate the expansion
+                // mis-fires on private vars — V10private.ztst:31 expects
+                // `local hide scalar_test`, not `local hide readonly
+                // scalar_test`.
+                let effective_binflag = if pmptr.binflag == PM_READONLY
+                    && (f & PM_REMOVABLE) == 0
+                {
                     PM_READONLY | crate::ported::zsh_h::PM_RO_BY_DESIGN
                 } else {
                     pmptr.binflag
