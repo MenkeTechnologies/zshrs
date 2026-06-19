@@ -6082,14 +6082,27 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
 
-        // c:Src/loop.c — POSIX/zsh: a `for` loop that never iterates
-        // exits with status 0 regardless of the prior $?. Reset
-        // before the loop so the body's final iteration (if any)
-        // overwrites; if the iteration count is 0, the reset persists.
-        // Without this, `false; for i in; do :; done; echo $?`
-        // printed 1 instead of 0.
+        // c:Src/loop.c execfor — a `for` loop does NOT reset $? before
+        // the body: the word-list expansion status (or, for a literal
+        // list, the previous command's $?) carries into the FIRST body
+        // iteration. `(exit 2); for x in 1 2; do print $?; done` →
+        // the first `print` sees 2; `false; for x in $(echo 1; (exit 3))`
+        // → the first body iteration sees 3 (the cmdsubst's status).
+        // Only an EMPTY list (zero iterations) resets $? to 0
+        // (`false; for x in $(exit 4); do …; done` → 0). The body itself
+        // (execlist) sets $? on every iteration — including an empty body,
+        // whose compiled chunk emits LoadInt(0)+SetStatus — so the reset
+        // is needed solely for the never-entered case. Previously this
+        // reset was unconditional, clobbering the carried status.
+        self.builder.emit(Op::GetSlot(len_slot), 0);
+        let carry_jump = self.builder.emit(Op::JumpIfFalse(0), 0); // len==0 → reset
+        let skip_reset_jump = self.builder.emit(Op::Jump(0), 0); // len>0 → carry status
+        let reset_pos = self.builder.current_pos();
+        self.builder.patch_jump(carry_jump, reset_pos);
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetStatus, 0);
+        let after_reset = self.builder.current_pos();
+        self.builder.patch_jump(skip_reset_jump, after_reset);
 
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
@@ -6275,14 +6288,27 @@ impl ZshCompiler {
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
 
-        // c:Src/loop.c — POSIX/zsh: a `for` loop that never iterates
-        // exits with status 0 regardless of the prior $?. Reset
-        // before the loop so the body's final iteration (if any)
-        // overwrites; if the iteration count is 0, the reset persists.
-        // Without this, `false; for i in; do :; done; echo $?`
-        // printed 1 instead of 0.
+        // c:Src/loop.c execfor — a `for` loop does NOT reset $? before
+        // the body: the word-list expansion status (or, for a literal
+        // list, the previous command's $?) carries into the FIRST body
+        // iteration. `(exit 2); for x in 1 2; do print $?; done` →
+        // the first `print` sees 2; `false; for x in $(echo 1; (exit 3))`
+        // → the first body iteration sees 3 (the cmdsubst's status).
+        // Only an EMPTY list (zero iterations) resets $? to 0
+        // (`false; for x in $(exit 4); do …; done` → 0). The body itself
+        // (execlist) sets $? on every iteration — including an empty body,
+        // whose compiled chunk emits LoadInt(0)+SetStatus — so the reset
+        // is needed solely for the never-entered case. Previously this
+        // reset was unconditional, clobbering the carried status.
+        self.builder.emit(Op::GetSlot(len_slot), 0);
+        let carry_jump = self.builder.emit(Op::JumpIfFalse(0), 0); // len==0 → reset
+        let skip_reset_jump = self.builder.emit(Op::Jump(0), 0); // len>0 → carry status
+        let reset_pos = self.builder.current_pos();
+        self.builder.patch_jump(carry_jump, reset_pos);
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetStatus, 0);
+        let after_reset = self.builder.current_pos();
+        self.builder.patch_jump(skip_reset_jump, after_reset);
 
         let loop_top = self.builder.current_pos();
         self.builder.emit(Op::GetSlot(i_slot), 0);
@@ -6891,6 +6917,16 @@ impl ZshCompiler {
 
         // c:Src/loop.c:522 — `cmdpush(CS_REPEAT)` AFTER the count eval.
         self.emit_cmd_push(crate::ported::zsh_h::CS_REPEAT as u8);
+
+        // c:Src/loop.c:520 — `lastval = 0;` UNCONDITIONALLY before the
+        // repeat body. Unlike `for` (which carries the prior $? into the
+        // first iteration), `repeat` resets $? to 0: `(exit 3); repeat 2;
+        // do print $?; done` → 0 then 0. The reset also supplies the
+        // zero-count result (`repeat 0; do …; done` → $? 0). The previous
+        // port omitted it, so the prior command's status leaked into the
+        // first body iteration.
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
 
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);

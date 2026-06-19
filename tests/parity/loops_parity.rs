@@ -342,3 +342,50 @@ mod fold_in_pipeline {
         assert_parity("for i in 3 1 4 1 5 9; do echo $i; done | sort -n | head -3");
     }
 }
+
+/// The `for` loop carries the word-list expansion status (or, for a
+/// literal list, the previous command's $?) into the FIRST body
+/// iteration; only an EMPTY list resets $? to 0 (c:Src/loop.c execfor).
+mod for_loop_status_carry {
+    use super::*;
+
+    #[test]
+    fn previous_status_into_first_iter() {
+        assert_parity("(exit 2); for x in 1 2; do print $?; done; echo end=$?");
+    }
+
+    #[test]
+    fn cmdsubst_status_into_first_iter() {
+        assert_parity("false; for x in $(echo 1 2; (exit 3)); do print $?; done");
+    }
+
+    #[test]
+    fn last_body_status_kept_with_cmdsubst_list() {
+        assert_parity("false; for x in $(echo 1; false); do echo $?; (exit 4); done; echo exit=$?");
+    }
+
+    #[test]
+    fn empty_body_resets_to_zero() {
+        assert_parity("false; for x in $(echo 1; false); do done; echo $?");
+    }
+
+    #[test]
+    fn empty_cmdsubst_list_resets_to_zero() {
+        assert_parity("false; for x in $(exit 4); do print no; done; echo $?");
+    }
+
+    #[test]
+    fn empty_glob_list_resets_to_zero() {
+        assert_parity("false; for x in NoSuch*(N); do print no; done; echo $?");
+    }
+
+    #[test]
+    fn literal_list_first_iter_carries() {
+        assert_parity("(exit 7); for x in a b c; do echo $?; done");
+    }
+
+    #[test]
+    fn positional_carries_status() {
+        assert_parity("set -- a b; (exit 5); for x; do echo $?; (exit 6); done");
+    }
+}
