@@ -787,3 +787,35 @@ mod subscript_bn_delimited_flags {
         assert_parity("s=hello; echo ${s[2]}; echo ${s[(r)l]}; echo ${s[2,4]}");
     }
 }
+
+/// `(e)`/`(n)`/`(b)` ALONE (no r/R/i/I search flag) on a scalar are
+/// modifiers, not a search — the remainder is a numeric index, not a
+/// search pattern. zshrs's scalar search closure matched on `e`/`n`/`b`
+/// alone and did an exact-match SEARCH, returning the matched char.
+/// Require an actual search flag so these fall through to the numeric
+/// path: `${s[(e)2]}` → char 2 = "e"; `${s[(e)l]}` → eval "l" = 0 → "".
+mod subscript_e_without_search {
+    use super::*;
+
+    #[test]
+    fn e_alone_numeric_remainder_index() {
+        assert_parity("s=hello; echo ${s[(e)2]}");
+    }
+
+    #[test]
+    fn e_alone_bare_ident_remainder() {
+        assert_parity("s=hello; echo ${s[(e)l]}");
+    }
+
+    /// Real search flags still search (regression guard).
+    #[test]
+    fn search_flags_still_search() {
+        assert_parity("s=hello; echo ${s[(r)l]}; echo ${s[(i)l]}; echo ${s[(I)l]}; echo ${s[(R)l]}");
+    }
+
+    /// (re) exact-match search still works (r present).
+    #[test]
+    fn re_exact_search_unaffected() {
+        assert_parity("s=foobar; echo ${s[(re)o]}");
+    }
+}
