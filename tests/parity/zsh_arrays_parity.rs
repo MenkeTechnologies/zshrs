@@ -627,3 +627,54 @@ mod ksharrays_scalar_assign {
         assert_parity(r#"a=(first second); a+=last; print -l "${a[@]}""#);
     }
 }
+
+/// `(k)` paramflag on an array WITH a subscript returns the resolved
+/// INDEX, not the element (c:Src/params.c:1513-1514 — WANTKEYS sets the
+/// subscript's inverted-index mode). `${(k)a[2]}` → `2`, `${(k)a[(R)y]}`
+/// → matched position. Gated on hkeys so plain `${a[2]}` is unaffected.
+/// Fixed at the flagged (subst.rs:5900) and numeric (subst.rs:6120)
+/// array subscript-resolution sites.
+mod paramflag_k_subscript_index {
+    use super::*;
+
+    #[test]
+    fn numeric_subscript_returns_index() {
+        assert_parity("a=(x y z); echo ${(k)a[2]}");
+    }
+
+    #[test]
+    fn numeric_negative_subscript_returns_resolved_index() {
+        assert_parity("a=(x y z); echo ${(k)a[-1]}");
+    }
+
+    #[test]
+    fn numeric_out_of_range_returns_subscript() {
+        assert_parity("a=(x y); echo ${(k)a[5]}");
+    }
+
+    #[test]
+    fn numeric_on_empty_returns_subscript() {
+        assert_parity("a=(); echo ${(k)a[1]}");
+    }
+
+    #[test]
+    fn reverse_search_returns_match_index() {
+        assert_parity("a=(x y z y); echo ${(k)a[(R)y]}");
+    }
+
+    #[test]
+    fn forward_search_returns_match_index() {
+        assert_parity("a=(foo bar baz); echo ${(k)a[(r)ba*]}");
+    }
+
+    #[test]
+    fn ksharrays_zero_based_index() {
+        assert_parity("setopt ksharrays; a=(x y z); echo ${(k)a[0]}");
+    }
+
+    /// Plain subscript without (k) still returns the element (guard).
+    #[test]
+    fn plain_subscript_unaffected() {
+        assert_parity("a=(x y z); echo ${a[2]}; echo $a[3]; echo ${a[(R)y]}");
+    }
+}

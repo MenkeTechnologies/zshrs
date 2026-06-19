@@ -5897,7 +5897,16 @@ pub fn paramsubst(
                     } else {
                         pat
                     };
-                    let return_index = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
+                    // c:Src/params.c:1513-1514 — `if (scanflags &
+                    // SCANPM_WANTKEYS) *inv = (ind || !(scanflags &
+                    // SCANPM_WANTVALS))`. The OUTER `(k)` paramflag
+                    // (hkeys=SCANPM_WANTKEYS) flips a subscript to return
+                    // the matched INDEX, not the value: `${(k)a[(R)y]}`
+                    // yields the 1-based position. Gated so plain
+                    // `${a[(R)y]}` (no (k)) still returns the value.
+                    let want_keys_index =
+                        (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
+                    let return_index = flags.contains('I') || flags.contains('i') || want_keys_index; // c:1412/1416 ind=1 ; c:1513 WANTKEYS
                     let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
                     let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
                     let nth = num.unwrap_or(1).max(1) as usize;
@@ -6108,7 +6117,20 @@ pub fn paramsubst(
                     } else {
                         idx_n - 1
                     };
-                    if i >= 0 && (i as usize) < arr.len() {
+                    // c:Src/params.c:1513-1514 — the OUTER `(k)`
+                    // paramflag returns the resolved INDEX, not the
+                    // element: `${(k)a[2]}` → `2`. zsh returns the
+                    // subscript position regardless of whether an element
+                    // exists there (`${(k)a[5]}` on a 2-elem array → `5`,
+                    // `${(k)a[1]}` on empty → `1`), so the (k) arm sits
+                    // OUTSIDE the in-range guard. Convention is 1-based
+                    // (0-based under KSH_ARRAYS). Gated so plain
+                    // `${a[2]}` still returns the element.
+                    let want_keys_index =
+                        (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
+                    if want_keys_index {
+                        (if ksh_arrays { i } else { i + 1 }).to_string()
+                    } else if i >= 0 && (i as usize) < arr.len() {
                         arr[i as usize].clone()
                     } else {
                         String::new()
