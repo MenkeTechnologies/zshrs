@@ -260,3 +260,47 @@ mod ps_join_combined {
         assert_parity(r#"arr=(a b c); echo "${(pj.\n.)arr}""#);
     }
 }
+
+/// Bare `$=NAME` (forced IFS word-split) applies to positional and
+/// special parameter names too, not just alpha idents
+/// (c:Src/subst.c:2554). `$=1` previously leaked through as literal.
+mod bare_split_flag_special_names {
+    use super::*;
+
+    #[test]
+    fn positional_single_digit() {
+        assert_parity(r#"1="a b c"; print -l $=1"#);
+    }
+
+    #[test]
+    fn positional_multi_digit() {
+        assert_parity(r#"12="a b"; print -l $=12"#);
+    }
+
+    #[test]
+    fn star_splits_positionals() {
+        assert_parity(r#"set -- "a b"; print -l $=*"#);
+    }
+
+    #[test]
+    fn at_splits_each_positional() {
+        assert_parity(r#"set -- "a b" "c d"; print -l $=@"#);
+    }
+
+    #[test]
+    fn double_equals_disables_split_on_positional() {
+        assert_parity(r#"1="x y"; print -l $==1"#);
+    }
+
+    /// Alpha-ident name still works (regression guard).
+    #[test]
+    fn alpha_name_unaffected() {
+        assert_parity(r#"v="a b"; print -l $=v"#);
+    }
+
+    /// Unset special name → empty (regression guard).
+    #[test]
+    fn unset_name_empty() {
+        assert_parity(r#"print $=notset; echo done"#);
+    }
+}

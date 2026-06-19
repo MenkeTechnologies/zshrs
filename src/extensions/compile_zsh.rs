@@ -4291,7 +4291,15 @@ impl ZshCompiler {
             } else {
                 (true, rest)
             };
-            let valid = !name_part.is_empty()
+            // c:Src/subst.c:2554 — the `=` split flag applies to ANY
+            // parameter, not just alpha-ident names. Accept the
+            // positional (`$=1`, `$=12`) and special-single-char
+            // (`$=*`, `$=@`, `$=#`, …) names too; `$=1` previously fell
+            // through as literal text because the scan required an
+            // alpha/underscore first char. GET_VAR resolves these names
+            // and WORD_SPLIT applies the forced split (`$=@` splits each
+            // positional). Matches the braced `${=NAME}` semantics.
+            let ident_valid = !name_part.is_empty()
                 && name_part
                     .chars()
                     .next()
@@ -4300,7 +4308,14 @@ impl ZshCompiler {
                 && name_part
                     .chars()
                     .all(|c| c == '_' || c.is_ascii_alphanumeric());
-            if valid {
+            let special_valid = !name_part.is_empty()
+                && (name_part.chars().all(|c| c.is_ascii_digit())
+                    || (name_part.chars().count() == 1
+                        && matches!(
+                            name_part.chars().next().unwrap(),
+                            '*' | '@' | '#' | '?' | '$' | '!' | '-'
+                        )));
+            if ident_valid || special_valid {
                 let idx = self.builder.add_constant(Value::str(name_part));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
