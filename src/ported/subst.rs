@@ -2037,11 +2037,23 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
                 return None;
             }
         }
-        // `~user` — getpwnam lookup (libc).
-        // C: `if ((ptr = itype_end(str+1, IUSER, 0)) != str+1)` —
-        // walk identifier chars (alnum + `_`).
+        // `~user` — getpwnam / named-dir lookup.
+        // C: `if ((ptr = itype_end(str+1, IUSER, 0)) != str+1)` — walk
+        // IUSER chars. IUSER (Src/utils.c:4173-4191) = alnum + `_` + `-`
+        // + `.` (plus non-ASCII). The previous scan stopped at `-`/`.`,
+        // so `hash -d t-t=/foo; print ~t-t` left `~t-t` unexpanded
+        // (read only `~t`, looked up the missing dir "t").
+        // c:Src/utils.c:4191 — `typtab[Dash] = IUSER`: the Dash TOKEN
+        // (`\u{9b}`, the lexer's encoding of `-` in word context) is
+        // also IUSER, so accept it alongside the literal `-`.
         let mut p = 1_usize;
-        while p < chars.len() && (chars[p].is_ascii_alphanumeric() || chars[p] == '_') {
+        while p < chars.len()
+            && (chars[p].is_ascii_alphanumeric()
+                || chars[p] == '_'
+                || chars[p] == '-'
+                || chars[p] == '\u{9b}' /* Dash token */
+                || chars[p] == '.')
+        {
             p += 1;
         }
         // c:Src/subst.c isend macro treats string terminator `\0`
@@ -2051,7 +2063,13 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
         // identifier walk consumed every char and the final isend
         // check ran against an out-of-bounds index.
         if p > 1 && (p == chars.len() || isend(chars[p])) {
-            let user: String = chars[1..p].iter().collect();
+            // Untokenize the Dash token (`\u{9b}` → `-`) so the name
+            // matches the literal key stored in nameddirtab / passed to
+            // getpwnam (`hash -d t-t=…` registers the literal "t-t").
+            let user: String = chars[1..p]
+                .iter()
+                .map(|&c| if c == '\u{9b}' { '-' } else { c })
+                .collect();
             let suffix: String = chars[p..].iter().collect();
             // Named-dir lookup FIRST — `hash -d name=path` registered
             // names take precedence over OS users (zsh canonical).
