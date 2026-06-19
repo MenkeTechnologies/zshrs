@@ -465,4 +465,27 @@ mod float_arg_matheval {
     fn nan_inf_literals_preserved() {
         assert_parity(r#"printf "%.1f|" NaN nan inf Inf -Inf"#);
     }
+
+    /// A leading `'`/`"` makes a numeric arg the char code of the next
+    /// char — for float conversions too (c:builtin.c:5431-5447). The int
+    /// arm already did this; the float arm yielded 0.
+    #[test]
+    fn leading_quote_char_code_E() {
+        assert_parity(r#"printf "%.1E\n" \'B"#);
+    }
+
+    #[test]
+    fn leading_quote_char_code_f() {
+        assert_parity(r#"printf "%f\n" \'A"#);
+    }
+
+    #[test]
+    fn leading_quote_char_code_g_digit() {
+        assert_parity(r#"printf "%g\n" \'0"#);
+    }
+
+    #[test]
+    fn leading_quote_char_code_int_still_works() {
+        assert_parity(r#"printf "%d\n" \'B"#);
+    }
 }
