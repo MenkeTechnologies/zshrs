@@ -289,3 +289,96 @@ mod multibyte_text_is_not_glob {
         );
     }
 }
+
+/// Default/alternate-word filename generation (#2 default-word globbing).
+/// The unquoted default/alt word in `${x:-W}` / `${x-W}` / `${x:+W}` /
+/// `${x+W}` is SOURCE text, so a glob metachar in it drives filename
+/// generation on the ASSEMBLED word — a parameter VALUE never globs.
+/// c:Src/subst.c → globlist. The paramsubst arm sets a pending flag
+/// (only for a source-glob default, via pretokenize_src_pat which skips
+/// nested `$..` spans), and the compile-emitted DEFAULT_WORD_GLOB op
+/// globs the assembled word; gated off in DQ / scalar-assign / assign-
+/// builtin-arg contexts.
+mod default_word_globbing {
+    use super::*;
+
+    fn files() -> tempfile::TempDir {
+        mkdir_with_files(&["afile", "bfile"])
+    }
+
+    /// Unquoted source-glob default globs (`*`, `?`, `[...]`).
+    #[test]
+    fn unquoted_default_globs() {
+        let d = files();
+        assert_parity_in(d.path(), "print -l ${x:-*file}");
+        assert_parity_in(d.path(), "print -l ${x-*file}");
+        assert_parity_in(d.path(), "print -l ${x:-*fil?}");
+        assert_parity_in(d.path(), "print -l ${x:-[ab]file}");
+        assert_parity_in(d.path(), "print -l ${x:-a*}");
+    }
+
+    /// The alternate word (`:+`/`+`) globs when the var is set.
+    #[test]
+    fn alternate_word_globs() {
+        let d = files();
+        assert_parity_in(d.path(), "a=set; print -l ${a:+*file}");
+        assert_parity_in(d.path(), "a=set; print -l ${a+*file}");
+    }
+
+    /// Glob runs on the ASSEMBLED word — prefix/suffix concatenate with
+    /// the default before filename generation.
+    #[test]
+    fn assembled_word_globs() {
+        let d = files();
+        assert_parity_in(d.path(), "print -l ${x:-a*}bar; echo done");
+        assert_parity_in(d.path(), "print -l pre${x:-*file}; echo done");
+        assert_parity_in(d.path(), "print -l ${x:-*file}suf; echo done");
+        assert_parity_in(d.path(), "p=pre; print -l ${p}${x:-*file}; echo done");
+    }
+
+    /// A parameter VALUE is never globbed (no GLOB_SUBST), even when the
+    /// default word also carries a glob; quoted defaults stay literal.
+    #[test]
+    fn values_and_quoted_stay_literal() {
+        let d = files();
+        assert_parity_in(d.path(), "x='*file'; print -l $x");
+        assert_parity_in(d.path(), "x='*file'; print -l ${x:-*other}");
+        assert_parity_in(d.path(), "d='*file'; print -l ${x:-$d}");
+        assert_parity_in(d.path(), "print -r -- \"${x:-*file}\"");
+    }
+
+    /// A `*` inside a NESTED strip/filter pattern within the default word
+    /// is not a filename glob (`${x:-${p#a*}}`); pretokenize_src_pat skips
+    /// the nested `${..}` span.
+    #[test]
+    fn nested_pattern_star_is_not_glob() {
+        let d = files();
+        assert_parity_in(d.path(), "p=abc; print -- ${x:-${p#a*}}");
+        assert_parity_in(
+            d.path(),
+            "profile='user:custom'; print -- \"[${${${(M)profile:#*:*}:+${profile#*:}}:-default}]\"",
+        );
+    }
+
+    /// Assignment contexts: scalar `v=` and assignment-builtin
+    /// (typeset/export/...) NAME=value args do NOT glob; an array-literal
+    /// element DOES glob; a regular command's `E=...` arg DOES glob.
+    #[test]
+    fn assignment_context_gating() {
+        let d = files();
+        assert_parity_in(d.path(), "v=${x:-*file}; print -l $v");
+        assert_parity_in(d.path(), "typeset T=${x:-*file}; print $T");
+        assert_parity_in(d.path(), "export E=${x:-*file}; print $E");
+        assert_parity_in(d.path(), "a=(${x:-*file}); print -l $a");
+        assert_parity_in(d.path(), "print -l ${x:=*file}"); // := assign-default never globs
+    }
+
+    /// No-match honours nomatch/nullglob; flag doesn't leak across words.
+    #[test]
+    fn no_match_and_no_leak() {
+        let d = files();
+        assert_parity_in(d.path(), "print -l ${x:-zzz*}; echo done");
+        assert_parity_in(d.path(), "setopt nullglob; print -l ${x:-zzz*}; echo after");
+        assert_parity_in(d.path(), "y=Y; print -l ${y:-*nomatch}; print -l ${x:-*file}");
+    }
+}

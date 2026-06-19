@@ -164,6 +164,19 @@ pub struct ZshCompiler {
     /// wrote to the matches instead of creating the literal file
     /// `*.txt` (Bug #36 follow-up in docs/BUGS.md).
     pub redir_word_depth: i32,
+    /// Recursion guard for the default-word glob pass. `compile_word_str`
+    /// recurses into each Expansion segment of a multi-segment word; only
+    /// the OUTERMOST (depth 0) call brackets the whole assembled word
+    /// with BUILTIN_DEFAULT_WORD_GLOB_RESET/…GLOB. Bumped around the
+    /// segment recursion so inner segments don't emit their own pass.
+    pub word_seg_depth: i32,
+    /// Bumped while compiling the args of a BINF_ASSIGN-family builtin
+    /// (typeset/declare/local/export/readonly/integer/float/private). Such
+    /// args are `NAME=value` assignment forms whose VALUE is not subject
+    /// to filename generation (`typeset T=${x:-*file}` → literal `*file`),
+    /// unlike a regular command arg (`foo E=${x:-*file}` DOES glob). Gates
+    /// the default-word glob bracket off.
+    pub assign_builtin_arg_depth: i32,
 }
 
 impl Default for ZshCompiler {
@@ -196,6 +209,8 @@ impl ZshCompiler {
             is_function_body: false,
             current_sublist_line: 1,
             redir_word_depth: 0,
+            word_seg_depth: 0,
+            assign_builtin_arg_depth: 0,
         }
     }
 
@@ -2003,7 +2018,16 @@ impl ZshCompiler {
                     continue;
                 }
             }
+            // BINF_ASSIGN-family args (`typeset T=${x:-*file}`) don't
+            // filename-generate their value; suppress the default-word
+            // glob bracket while compiling them.
+            if head_is_typeset_family {
+                self.assign_builtin_arg_depth += 1;
+            }
             self.compile_word_str(word);
+            if head_is_typeset_family {
+                self.assign_builtin_arg_depth -= 1;
+            }
             // c:Src/options.c GLOB_SUBST + Src/subst.c — when an
             // unquoted parameter / cmd-subst reference produced the
             // word and `setopt globsubst` is active at runtime, the
@@ -5420,6 +5444,27 @@ impl ZshCompiler {
         let in_dq = raw_dq_word || self.dq_context_depth > 0;
         if (!has_bnull || modifier_safe_with_bnull) && !in_dq {
             if let Some(mut modifier) = parsed_mod {
+                // Default-word glob bracket for the native `:-`/`-`/`:+`/`+`
+                // lowering (#2 default-word globbing). DefaultFamily routes
+                // through BUILTIN_PARAM_DEFAULT_FAMILY → paramsubst, whose
+                // default/alt arm sets DEFAULT_WORD_GLOB_PENDING when it
+                // takes a SOURCE-glob default; the APPLY below globs the
+                // result. A parameter VALUE never sets the flag. Only the
+                // outermost word (word_seg_depth == 0) brackets.
+                let dwg_mod = matches!(modifier.kind, ParamModifierKind::DefaultFamily { .. })
+                    && self.word_seg_depth == 0
+                    && self.dq_context_depth == 0
+                    && self.scalar_assign_depth == 0 // scalar `v=${x:-*}` RHS doesn't glob
+                    && self.assign_builtin_arg_depth == 0 // typeset/export NAME=value arg
+                    && s.chars()
+                        .any(|c| matches!(c, '*' | '?' | '[' | '\u{87}' | '\u{97}' | '\u{91}'));
+                if dwg_mod {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB_RESET, 0),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
                 // The whole-word Dnull wrapping (`"${...}"`) gets
                 // stripped from `untoked` before parse_param_modifier
                 // sees it, but downstream emitters need to know the
@@ -5459,6 +5504,12 @@ impl ZshCompiler {
                 self.emit_param_modifier(&modifier);
                 if raw_dq {
                     self.dq_context_depth -= 1;
+                }
+                if dwg_mod {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB, 0),
+                        0,
+                    );
                 }
                 return;
             }
@@ -5543,6 +5594,34 @@ impl ZshCompiler {
         // expansion separately, defeating tilde-expand). Fall through
         // to the bridge so expand_string sees `~$VAR` whole.
         let starts_with_tilde_and_has_var = untoked.starts_with('~') && untoked.contains('$');
+        // Default-word glob bracket gate (#2 default-word globbing): an
+        // unquoted, top-level word that has BOTH a default/alt operator
+        // (`-`/`+`) AND a glob metachar might carry a `${x:-*file}`-style
+        // source-glob default. Bracket the assembled word with
+        // RESET/…GLOB so the paramsubst arm's DEFAULT_WORD_GLOB_PENDING
+        // flag (set only when a source-glob default branch is taken)
+        // drives filename generation. A parameter VALUE never sets the
+        // flag, so the APPLY no-ops for value branches. Loose gate (may
+        // fire on a literal like `a-b*`) — harmless, the flag stays clear
+        // so APPLY passes through. Only the outermost word (word_seg_depth
+        // == 0) brackets; recursive segment expansions don't.
+        let has_glob_meta = s.chars().any(|c| {
+            matches!(c, '*' | '?' | '[' | '\u{87}' | '\u{97}' | '\u{91}')
+        });
+        let has_default_op = s.contains('-') || s.contains('+') || s.contains('\u{9b}');
+        let default_word_glob_bracket = self.word_seg_depth == 0
+            && self.dq_context_depth == 0
+            && self.scalar_assign_depth == 0 // scalar `v=${x:-*}` RHS doesn't glob
+            && self.assign_builtin_arg_depth == 0 // typeset/export NAME=value arg
+            && has_glob_meta
+            && has_default_op;
+        if default_word_glob_bracket {
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB_RESET, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0); // discard the RESET status
+        }
         if !has_bnull && !starts_with_tilde_and_has_var {
             if let Some(segs) = split_word_segments(s) {
                 // Pick concat operator based on segment shape:
@@ -5702,7 +5781,12 @@ impl ZshCompiler {
                             self.builder.emit(Op::LoadConst(idx), 0);
                         }
                         WordSegment::Expansion(exp) => {
+                            // Inner segment: don't let it emit its own
+                            // default-word glob bracket (the outer word
+                            // owns the assembled-word pass).
+                            self.word_seg_depth += 1;
                             self.compile_word_str(exp);
+                            self.word_seg_depth -= 1;
                         }
                     }
                     if i > 0 {
@@ -5745,6 +5829,16 @@ impl ZshCompiler {
                     // pushes Value::Array (or single-elem when no match).
                     self.builder
                         .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
+                }
+                // Default-word glob: only when needs_glob didn't already
+                // glob the assembled word (a literal-segment glob covers
+                // the whole word, including any flagged default). The
+                // RESET at word start clears any residual flag otherwise.
+                if default_word_glob_bracket && !(needs_glob && !parent_is_dq) {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB, 0),
+                        0,
+                    );
                 }
                 return;
             }
@@ -5827,12 +5921,23 @@ impl ZshCompiler {
         // pattern words that also need expand_glob to run from the
         // brace-expand builtin (kept legacy-compatible).
         let preserved_str = preserved.as_str();
-        if !preserved_str.is_empty()
+        let brace_emitted = !preserved_str.is_empty()
             && (preserved_str.contains('\u{8f}') || preserved_str.contains('\u{87}'))
-            && self.dq_context_depth == 0
-        {
+            && self.dq_context_depth == 0;
+        if brace_emitted {
             self.builder.emit(
                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRACE_EXPAND, 0),
+                0,
+            );
+        }
+        // Default-word glob on the bridge-text path. The brace-expand
+        // above globs only when the SOURCE word carried a Star/Inbrace
+        // TOKEN (literal-segment glob); a `${x:-*file}` default has no
+        // such token in `preserved`, so add the flag-gated assembled-word
+        // glob. Skip when the token-brace path already globbed.
+        if default_word_glob_bracket && !brace_emitted {
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB, 0),
                 0,
             );
         }
