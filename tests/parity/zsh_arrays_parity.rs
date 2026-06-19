@@ -376,6 +376,47 @@ mod negative_oob_subscript_assign {
     }
 }
 
+/// Scalar char-splice with out-of-range subscripts (the SCALAR analog of
+/// the array clamp). `a="abc"; a[-4]="x"` inserts at the FRONT rather than
+/// overwriting char 0, because a negative subscript past the start clamps
+/// both start and end to 0 → empty slice old[0..0]
+/// (c:Src/params.c:2721-2733 assignstrvalue).
+mod scalar_oob_subscript_assign {
+    use super::*;
+
+    #[test]
+    fn negative_past_start_prepends() {
+        assert_parity(r#"a="abc"; a[-4]="x"; print $a"#);
+    }
+
+    #[test]
+    fn negative_far_past_start_prepends() {
+        assert_parity(r#"a="abc"; a[-10]="z"; print $a"#);
+    }
+
+    /// `a[-len]` (exactly char 1) OVERWRITES char 0 (boundary).
+    #[test]
+    fn negative_equals_len_overwrites_first() {
+        assert_parity(r#"a="abc"; a[-3]="x"; print $a"#);
+    }
+
+    #[test]
+    fn negative_last_overwrites() {
+        assert_parity(r#"a="abc"; a[-1]="X"; print $a"#);
+    }
+
+    /// Past the end appends (scalar has no gap-fill).
+    #[test]
+    fn past_end_appends() {
+        assert_parity(r#"a="abc"; a[5]="z"; print $a"#);
+    }
+
+    #[test]
+    fn interior_overwrites() {
+        assert_parity(r#"a="abcde"; a[-2]="X"; print $a"#);
+    }
+}
+
 /// Array slice assignment `a[lo,hi]=(...)`. A REVERSED range (lo > hi)
 /// is an EMPTY range → the value is INSERTED at lo keeping every element
 /// (c:Src/params.c:2940-2943 — `if (end < start) end = start`).
