@@ -491,3 +491,50 @@ mod multios {
         assert_parity_in(d.path(), "print x > a > b; echo $?");
     }
 }
+
+/// Redirections may be interleaved with pre-command assignments in any
+/// order (c:Src/parse.c:1843-1907 par_simple) — `a=b 2>/dev/null c=d`
+/// sets BOTH a and b. The old split parser stopped collecting
+/// assignments at the first redirection, dropping the trailing ones.
+mod redirect_interleaved_with_assignments {
+    use super::*;
+
+    #[test]
+    fn redir_between_two_assignments_no_command() {
+        let d = tdir();
+        assert_parity_in(d.path(), "a=b 2>/dev/null c=d; print $a; print $c");
+    }
+
+    #[test]
+    fn redir_between_assignments_with_command() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            r#"a=b 2>/dev/null c=d echo hi; print "[$a][$c]""#,
+        );
+    }
+
+    #[test]
+    fn multiple_interleaved_redirs() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "x=1 2>/dev/null y=2 3>/dev/null z=3; print $x $y $z",
+        );
+    }
+
+    /// Redir AFTER all assignments still works (regression guard).
+    #[test]
+    fn redir_after_assignments() {
+        let d = tdir();
+        assert_parity_in(d.path(), "a=b c=d 2>/dev/null; print $a $c");
+    }
+
+    /// typeset multi-assign must NOT be reparsed as pre-command
+    /// assignments (regression guard).
+    #[test]
+    fn typeset_multi_assign_unaffected() {
+        let d = tdir();
+        assert_parity_in(d.path(), "typeset a=1 b=2; print $a $b");
+    }
+}
