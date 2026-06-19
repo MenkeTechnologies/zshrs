@@ -850,3 +850,39 @@ mod subscript_w_word_clamp {
         assert_parity(r#"s="x:y:z"; echo ${s[(ws:::)2]}"#);
     }
 }
+
+/// `(w)` word subscript with a custom separator SKIPS empty fields
+/// (between adjacent separators); `(W)` keeps them (c:Src/utils.c
+/// findword/wordcount word-vs-field semantics). zshrs's custom-sep
+/// split kept empties for both, so `s="a::b"; ${s[(ws.:.)2]}` returned
+/// the empty middle field "" instead of zsh's "b".
+mod subscript_w_skip_empty_fields {
+    use super::*;
+
+    #[test]
+    fn w_custom_sep_skips_empty_field() {
+        assert_parity(r#"s="a::b"; echo ${s[(ws.:.)2]}"#);
+    }
+
+    #[test]
+    fn w_custom_sep_multiple_empties() {
+        assert_parity(r#"s="a::b::c"; echo ${s[(ws.:.)2]}"#);
+    }
+
+    #[test]
+    fn w_custom_sep_leading_trailing_empties() {
+        assert_parity(r#"s=":a:b:"; echo ${s[(ws.:.)1]}"#);
+    }
+
+    #[test]
+    fn w_custom_sep_comma() {
+        assert_parity(r#"s="a,,b"; echo ${s[(ws.,.)2]}"#);
+    }
+
+    /// Non-empty custom-sep + whitespace (w) unchanged (regression).
+    #[test]
+    fn w_no_empty_fields_unaffected() {
+        assert_parity(r#"s="x:y:z"; echo ${s[(ws:::)2]}"#);
+        assert_parity(r#"s="a b c"; echo ${s[(w)2]}; echo ${s[(w)-1]}"#);
+    }
+}
