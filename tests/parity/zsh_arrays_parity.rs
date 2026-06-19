@@ -744,3 +744,46 @@ mod paramflag_kv_on_scalar {
         assert_parity("typeset -A h=(a 1 b 2); echo ${(k)h}; echo ${(v)h}");
     }
 }
+
+/// Delimited `(b:N:)`/`(n:N:)` subscript flags WITHOUT a search flag
+/// (r/R/i/I) on a scalar or array: zshrs's flag-strip closures didn't
+/// consume the `:N:` delimited arg (only `s` did) and rejected a
+/// non-numeric remainder, so the form fell through to a full-sub
+/// mathevali and errored "bad math expression". C strips the flag block
+/// (consuming n/b's delimited arg, c:params.c:1432) then math-evals the
+/// REMAINDER (bare ident → 0). `${s[(b:2:)l]}` → "" (eval "l"=0).
+mod subscript_bn_delimited_flags {
+    use super::*;
+
+    #[test]
+    fn scalar_b_flag_bare_ident_remainder() {
+        assert_parity("s=hello; echo ${s[(b:2:)l]}");
+    }
+
+    #[test]
+    fn scalar_n_flag_bare_ident_remainder() {
+        assert_parity("s=hello; echo ${s[(n:2:)l]}");
+    }
+
+    #[test]
+    fn scalar_b_flag_with_set_index_var() {
+        assert_parity("s=hello; l=2; echo ${s[(b:1:)l]}");
+    }
+
+    #[test]
+    fn array_b_flag_bare_ident_remainder() {
+        assert_parity("a=(x y z); echo ${a[(b:1:)l]}");
+    }
+
+    #[test]
+    fn array_b_flag_with_set_index_var() {
+        assert_parity("a=(x y z); l=2; echo ${a[(b:1:)l]}");
+    }
+
+    /// Regression guards: plain/arith/search/word subscripts unchanged.
+    #[test]
+    fn plain_and_search_subscripts_unaffected() {
+        assert_parity("a=(x y z); echo ${a[2]}; echo ${a[1+1]}; echo ${a[(r)y]}; echo ${a[(w)2]}");
+        assert_parity("s=hello; echo ${s[2]}; echo ${s[(r)l]}; echo ${s[2,4]}");
+    }
+}
