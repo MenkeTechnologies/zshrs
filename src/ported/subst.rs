@@ -6217,6 +6217,30 @@ pub fn paramsubst(
                     let len = arr_clone.len() as i64;
                     let start_str = start_s.to_string();
                     let end_str = end_s.to_string();
+                    // c:Src/params.c:2120-2125 getindex — when the START
+                    // bound's subscript sets `inv` (the `(i)`/`(I)` index
+                    // flag) and a range comma follows, zsh rejects with
+                    // "invalid subscript" (`${a[(i)b,(i)d]}`,
+                    // `${a[(I)b,3]}`). Value flags (`(r)`/`(R)`) don't set
+                    // inv, and a numeric/arith start is fine (`${a[2,(i)c]}`
+                    // → ok). Reached for BOTH quoted and unquoted forms
+                    // since raw_value is computed before the auto-splat
+                    // override. Bug: array index-flag-start slices.
+                    {
+                        let t = start_str.trim();
+                        let start_is_inv = t.starts_with('(')
+                            && t.find(')').map_or(false, |c| {
+                                t[1..c].chars().any(|ch| ch == 'i' || ch == 'I')
+                            });
+                        if start_is_inv {
+                            zerr("invalid subscript"); // c:2121
+                            errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return (String::new(), 0, Vec::new()); // c:2124
+                        }
+                    }
                     // c:Src/params.c::getarg — the subscript expression
                     // is routed through singsub then mathevali
                     // (math.c:367), so bare identifier names like `n`
@@ -6231,9 +6255,13 @@ pub fn paramsubst(
                         // the INDEX of the match (the *inv/*w path), not
                         // the value: `${a[(r)3,(r)5]}` slices between the
                         // matched positions. getarg returns the value for
-                        // r/R but the index for i/I, and r/R are reverse
-                        // (last-match) searches, so map r→I / R→I to get
-                        // the matching index in index mode.
+                        // r/R but the index for i/I. r is a FORWARD
+                        // first-match (c:1411 down=0), R a REVERSE
+                        // last-match (c:1416 down=1), so map r→i / R→I to
+                        // get the matching index in the SAME direction
+                        // (preserving forward/reverse for duplicate
+                        // matches and the no-match returns: forward
+                        // no-match → len+1, reverse → 0).
                         let t = expr.trim();
                         // Effective bound text after a leading `(...)` flag.
                         let mut effective = t;
@@ -6248,7 +6276,7 @@ pub fn paramsubst(
                                     // (r/R are reverse → map to I for index).
                                     let mapped: String = flags
                                         .chars()
-                                        .map(|c| if c == 'r' || c == 'R' { 'I' } else { c })
+                                        .map(|c| match c { 'r' => 'i', 'R' => 'I', o => o })
                                         .collect();
                                     let new_sub = format!("({}){}", mapped, &t[close + 1..]);
                                     if let Some(crate::ported::params::getarg_out::Value(v)) =
@@ -12799,23 +12827,95 @@ pub fn paramsubst(
                 }
             } else if let Some(sub) = subscript.as_deref() {
                 // Range subscript: splat the slice elements.
-                if let Some((lo, hi)) = sub.split_once(',') {
+                // Split on the TOP-LEVEL comma (depth 0, outside any
+                // `(...)` flag block) so a per-bound search-flag subscript
+                // stays with its bound (`(r)b,(r)c` → "(r)b","(r)c") and a
+                // whole-subscript separator flag whose delimiters contain a
+                // comma (`(s.,.)1,3`) isn't mis-split. Mirrors the
+                // raw_value slice arm's top-level split at subst.rs:6189.
+                let top_comma = {
+                    let bs: Vec<char> = sub.chars().collect();
+                    let mut depth = 0i32;
+                    let mut at: Option<usize> = None;
+                    for (k, &c) in bs.iter().enumerate() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => {
+                                if depth > 0 {
+                                    depth -= 1;
+                                }
+                            }
+                            ',' if depth == 0 => {
+                                at = Some(k);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    at.map(|k| {
+                        (
+                            bs[..k].iter().collect::<String>(),
+                            bs[k + 1..].iter().collect::<String>(),
+                        )
+                    })
+                };
+                if let Some((lo, hi)) = top_comma {
                     // c:Src/params.c::getarg — bounds route through
                     // singsub then mathevali, so variable / arithmetic
                     // bounds resolve (`${(@)b[1,R]}`, `${(@)b[1,-1*R-1]}`).
-                    // The plain `parse()` used before failed on anything
-                    // non-literal: `hi="R"` → unwrap_or(0) → getarrvalue(1,0)
-                    // = empty. Mirror the scalar slice arm (subst.rs:5988).
-                    let arr_len = arrays_get(&var_name).map_or(0, |a| a.len()) as i64;
+                    let arr_clone = arrays_get(&var_name).unwrap_or_default();
+                    let arr_len = arr_clone.len() as i64;
+                    // c:Src/params.c getindex — a slice bound with a
+                    // search-flag subscript (`(r)pat`/`(i)pat`) yields the
+                    // INDEX of the match (r→i forward, R→I reverse, so the
+                    // direction and no-match returns match); a separator/
+                    // word flag (`(s.X.)`) is a no-op stripped before the
+                    // arith eval. Same resolution as the raw_value slice
+                    // arm (subst.rs:6228 eval_idx) —
+                    // the splat/output path previously parse()/mathevali'd
+                    // the raw `(r)b` → default 1/len → whole array, so
+                    // unquoted `${a[(r)b,(r)c]}` splatted every element
+                    // instead of the slice between matched positions.
                     let eval_bound = |expr: &str, default: i64| -> i64 {
-                        let e = singsub(expr.trim());
-                        if let Ok(n) = e.trim().parse::<i64>() {
+                        let t = expr.trim();
+                        let mut effective = t;
+                        if let Some(close) = t.find(')') {
+                            if t.starts_with('(') {
+                                let flags = &t[1..close];
+                                if flags
+                                    .chars()
+                                    .any(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'k' | 'K'))
+                                {
+                                    let mapped: String = flags
+                                        .chars()
+                                        .map(|c| match c { 'r' => 'i', 'R' => 'I', o => o })
+                                        .collect();
+                                    let new_sub = format!("({}){}", mapped, &t[close + 1..]);
+                                    if let Some(crate::ported::params::getarg_out::Value(v)) =
+                                        crate::ported::params::getarg(
+                                            &new_sub,
+                                            Some(&arr_clone),
+                                            None,
+                                            None,
+                                        )
+                                    {
+                                        if let Ok(n) = v.to_str().trim().parse::<i64>() {
+                                            return n;
+                                        }
+                                    }
+                                } else {
+                                    effective = &t[close + 1..];
+                                }
+                            }
+                        }
+                        let expanded = singsub(effective);
+                        if let Ok(n) = expanded.trim().parse::<i64>() {
                             return n;
                         }
-                        crate::ported::math::mathevali(e.trim()).unwrap_or(default)
+                        crate::ported::math::mathevali(expanded.trim()).unwrap_or(default)
                     };
-                    let lo: i64 = eval_bound(lo, 1); // c:3950
-                    let hi: i64 = eval_bound(hi, arr_len); // c:3950
+                    let lo: i64 = eval_bound(&lo, 1); // c:3950
+                    let hi: i64 = eval_bound(&hi, arr_len); // c:3950
                     // c:Src/params.c — KSH_ARRAYS shifts positive
                     // 0-based slice bounds to 1-based for getarrvalue.
                     // Sibling of #610-#613 in the splat path. Bug #614.
@@ -12827,10 +12927,7 @@ pub fn paramsubst(
                     } else {
                         (lo, hi)
                     };
-                    arrays_get(&var_name)
-                        .as_ref() // c:3950
-                        .map(|arr| getarrvalue(arr, lo, hi))
-                        .unwrap_or_default()
+                    getarrvalue(&arr_clone, lo, hi) // c:3950
                 } else if let Some(arr) = arrays_get(&var_name) {
                     arr.clone() // c:3950 (@ / *)
                 } else {
