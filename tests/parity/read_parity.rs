@@ -260,3 +260,27 @@ mod ifs_handling {
         assert_parity(r#"IFS= read X Y <<< 'one two three'; echo "[$X][$Y]""#);
     }
 }
+
+/// `read -A` combined with `-E`/`-e`: `-E` echoes each word (one per
+/// line) AND sets the array; `-e` echoes each word but leaves the array
+/// untouched (c:Src/builtin.c:6910-6961). The port previously always
+/// assigned and never echoed.
+mod array_with_echo {
+    use super::*;
+
+    #[test]
+    fn big_e_echoes_and_assigns() {
+        assert_parity(r#"read -AE array <<<'one two three'; print ${(j.:.)array}"#);
+    }
+
+    #[test]
+    fn small_e_echoes_without_assigning() {
+        assert_parity(r#"array=(); read -Ae array <<<'four five six'; print ${(j.:.)array}"#);
+    }
+
+    /// Plain `-A` still assigns silently (regression guard).
+    #[test]
+    fn plain_a_assigns_no_echo() {
+        assert_parity(r#"read -A array <<<'a b c'; print ${(j.:.)array}"#);
+    }
+}
