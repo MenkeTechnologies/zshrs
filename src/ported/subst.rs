@@ -6602,17 +6602,30 @@ pub fn paramsubst(
                                 .collect()
                         };
                         let len = words.len() as i64;
-                        let i = if idx_n == 0 {
-                            -1
-                        } else if idx_n < 0 {
-                            len + idx_n
-                        } else {
-                            idx_n - 1
-                        };
-                        if i >= 0 && (i as usize) < words.len() {
-                            words[i as usize].clone()
-                        } else {
+                        // c:Src/params.c:1623-1631 — word subscript CLAMPS
+                        // the index into [1, wordcount]:
+                        //   if (r < 0) r += i + 1;   (negative from end)
+                        //   if (r < 1) r = 1;        (clamp low)
+                        //   if (r > i) r = i;        (clamp high)
+                        // So `${s[(w)2]}` on a 1-word string → "hello"
+                        // (clamped to word 1), `${s[(w)4]}` on "a b c" →
+                        // "c" (clamped to last), `${s[(w)0]}` → first.
+                        // The prior off-by-one returned "" out of range.
+                        if len == 0 {
+                            // c:1630 — `if (!s || !*s) return 0;`
                             String::new()
+                        } else {
+                            let mut r = idx_n;
+                            if r < 0 {
+                                r += len + 1; // c:1625
+                            }
+                            if r < 1 {
+                                r = 1; // c:1627
+                            }
+                            if r > len {
+                                r = len; // c:1629
+                            }
+                            words[(r - 1) as usize].clone()
                         }
                     } else {
                         String::new()

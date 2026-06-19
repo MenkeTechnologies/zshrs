@@ -819,3 +819,34 @@ mod subscript_e_without_search {
         assert_parity("s=foobar; echo ${s[(re)o]}");
     }
 }
+
+/// `(w)` word-subscript index CLAMPS to [1, wordcount] (c:Src/params.c:
+/// 1623-1631 — `if (r<0) r+=i+1; if (r<1) r=1; if (r>i) r=i`). zshrs's
+/// scalar (w) path returned "" out of range / for index 0; clamp like C:
+/// `${s[(w)2]}` on 1-word → first word, `${s[(w)4]}` on 3 words → last,
+/// `${s[(w)0]}` → first.
+mod subscript_w_word_clamp {
+    use super::*;
+
+    #[test]
+    fn w_index_beyond_count_clamps_to_last() {
+        assert_parity(r#"s="a b c"; echo ${s[(w)4]}"#);
+    }
+
+    #[test]
+    fn w_index_on_single_word_clamps() {
+        assert_parity("s=hello; echo ${s[(w)2]}");
+    }
+
+    #[test]
+    fn w_index_zero_clamps_to_first() {
+        assert_parity("s=hello; echo ${s[(w)0]}");
+    }
+
+    /// In-range / negative / custom-separator unchanged (regression).
+    #[test]
+    fn w_in_range_and_negative_unaffected() {
+        assert_parity(r#"s="a b c"; echo ${s[(w)2]}; echo ${s[(w)1]}; echo ${s[(w)-1]}"#);
+        assert_parity(r#"s="x:y:z"; echo ${s[(ws:::)2]}"#);
+    }
+}
