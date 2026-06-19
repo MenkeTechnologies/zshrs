@@ -912,3 +912,90 @@ mod subscript_p_not_word_flag {
         assert_parity(r#"s="a b"; echo ${s[(pw)2]}"#);
     }
 }
+
+/// Array slice with per-bound search FLAGS must resolve each bound's
+/// flag to a matched INDEX, not default to 1/len. The unquoted/auto-
+/// splat output path (subst.rs ~12800) previously parse()/mathevali'd
+/// the raw `(r)b` bound, failed, and defaulted to the full array; only
+/// the quoted raw_value path (subst.rs ~6228 eval_idx) resolved flags.
+/// Now both route through the same flag-aware bound resolver.
+/// c:Src/params.c getindex/getarrvalue.
+mod subscript_flag_bound_slices {
+    use super::*;
+
+    /// `(r)`/`(R)` value-flag bounds slice between matched positions
+    /// (unquoted splat — the previously-broken path).
+    #[test]
+    fn r_flag_both_bounds_unquoted() {
+        assert_parity(r#"a=(a b c d); print -l ${a[(r)b,(r)c]}"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[(R)a,(R)c]}"#);
+    }
+
+    /// Mixed flag + numeric bounds (start flag / end flag).
+    #[test]
+    fn mixed_flag_and_numeric_bounds() {
+        assert_parity(r#"a=(a b c d); print -l ${a[(r)b,3]}"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[2,(i)c]}"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[2,(R)d]}"#);
+    }
+
+    /// Quoted form (raw_value path) stays correct — regression guard
+    /// that the two paths agree.
+    #[test]
+    fn r_flag_bounds_quoted() {
+        assert_parity(r#"a=(a b c d); print -r -- "${a[(r)b,(r)c]}""#);
+    }
+
+    /// c:Src/params.c:2120-2125 — an index-flag `(i)`/`(I)` on the
+    /// START bound of a range is rejected with "invalid subscript"
+    /// (the bound sets `inv` and a comma follows). Value flags and a
+    /// numeric start are accepted.
+    #[test]
+    fn index_flag_start_bound_is_invalid() {
+        assert_parity(r#"a=(a b c d); print -l ${a[(i)b,(i)d]}; echo done"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[(i)b,3]}; echo done"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[(I)b,(I)d]}; echo done"#);
+        assert_parity(r#"a=(a b c d); print -l "${a[(i)b,(i)d]}"; echo done"#);
+    }
+
+    /// Index flag on the END bound only is fine (only START sets inv).
+    #[test]
+    fn index_flag_end_bound_ok() {
+        assert_parity(r#"a=(a b c d); print -l ${a[2,(i)d]}; echo done"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[(r)b,(i)d]}; echo done"#);
+    }
+
+    /// Plain numeric / negative slices unaffected (regression).
+    #[test]
+    fn plain_slices_unaffected() {
+        assert_parity(r#"a=(a b c d); print -l ${a[1,3]}"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[2,-1]}"#);
+        assert_parity(r#"a=(a b c d); print -l "${a[@]}""#);
+    }
+
+    /// No-match bounds: r/R map to i/I in the SAME direction
+    /// (forward/reverse) so the no-match returns match — a forward
+    /// no-match start yields len+1 (empty slice), an end no-match
+    /// extends to the array end (clamped). c:Src/params.c getarg.
+    #[test]
+    fn no_match_bounds() {
+        // start no-match → empty
+        assert_parity(r#"a=(a b c d); print -l ${a[(r)z,(r)c]}; echo X"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[(r)z,3]}; echo X"#);
+        // end no-match → extends to end
+        assert_parity(r#"a=(a b c d); print -l ${a[(r)b,(r)z]}; echo X"#);
+        assert_parity(r#"a=(a b c d); print -l ${a[2,(r)z]}; echo X"#);
+        // reverse start no-match
+        assert_parity(r#"a=(a b c d); print -l ${a[(R)z,(r)c]}; echo X"#);
+    }
+
+    /// Forward (r) vs reverse (R) pick different positions when the
+    /// pattern matches multiple elements; the slice direction must be
+    /// preserved through the index mapping.
+    #[test]
+    fn duplicate_match_direction() {
+        assert_parity(r#"a=(b x b y b); print -l ${a[(r)b,(R)b]}"#);
+        assert_parity(r#"a=(b x b y b); print -l ${a[(R)b,(r)b]}; echo X"#);
+        assert_parity(r#"a=(b x b y b); print -l "${a[(r)b,(R)b]}""#);
+    }
+}
