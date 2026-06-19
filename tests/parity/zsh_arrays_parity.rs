@@ -702,3 +702,45 @@ mod paramflag_v_forces_value {
         assert_parity("a=(x y z); echo ${(kv)a[(i)y]}; echo ${(vk)a[(R)y]}");
     }
 }
+
+/// `(k)`/`(v)`/`(kv)` on a plain SCALAR (no subscript) are no-ops and
+/// return the scalar's value, not empty (c:Src/subst.c — assoc/array
+/// key/value enumeration doesn't apply to a scalar). zshrs's no-subscript
+/// (k)/(v)/(kv) arms fell through to `unwrap_or_default()` → empty for a
+/// scalar; now fall back to the resolved scalar value. Arrays/assocs
+/// (which DO enumerate) are unaffected.
+mod paramflag_kv_on_scalar {
+    use super::*;
+
+    #[test]
+    fn k_on_scalar_returns_value() {
+        assert_parity("x=hello; echo ${(k)x}");
+    }
+
+    #[test]
+    fn v_on_scalar_returns_value() {
+        assert_parity("x=hello; echo ${(v)x}");
+    }
+
+    #[test]
+    fn kv_on_scalar_returns_value() {
+        assert_parity(r#"x="a b c"; echo ${(kv)x}"#);
+    }
+
+    #[test]
+    fn k_on_special_scalar_returns_value() {
+        assert_parity("echo ${(k)PWD}");
+    }
+
+    #[test]
+    fn kv_on_scalar_quoted() {
+        assert_parity(r#"x=hi; echo "${(kv)x}""#);
+    }
+
+    /// Array/assoc enumeration still works (regression guard).
+    #[test]
+    fn k_v_on_array_and_assoc_unaffected() {
+        assert_parity("a=(1 2 3); echo ${(k)a}; echo ${(v)a}");
+        assert_parity("typeset -A h=(a 1 b 2); echo ${(k)h}; echo ${(v)h}");
+    }
+}
