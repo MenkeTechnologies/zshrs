@@ -243,3 +243,34 @@ mod time_in_subshell {
         assert_parity(r#"(time true) 2>/dev/null; echo $?"#);
     }
 }
+
+/// A `time` pipeline's exit status participates in errexit like any
+/// other command (c:Src/exec.c execpline) — `setopt errexit; time
+/// false; print x` aborts before `print x`. The port set $? but
+/// skipped the errexit check, so the failure was swallowed. (stderr
+/// time-stats redirected so only stdout is compared.)
+mod time_errexit {
+    use super::*;
+
+    #[test]
+    fn errexit_aborts_after_timed_false() {
+        assert_parity(r#"( setopt errexit; time false; print notreached ) 2>/dev/null"#);
+    }
+
+    #[test]
+    fn errexit_aborts_after_timed_failing_external() {
+        assert_parity(r#"( setopt errexit; time expr 0; print notreached ) 2>/dev/null"#);
+    }
+
+    /// errexit does NOT abort after a successful timed command.
+    #[test]
+    fn errexit_continues_after_timed_true() {
+        assert_parity(r#"( setopt errexit; time true; print reached ) 2>/dev/null"#);
+    }
+
+    /// $? still reflects the timed command (regression guard).
+    #[test]
+    fn status_propagates_without_errexit() {
+        assert_parity(r#"time false 2>/dev/null; echo rc=$?"#);
+    }
+}
