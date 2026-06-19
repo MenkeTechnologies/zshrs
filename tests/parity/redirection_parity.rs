@@ -622,3 +622,43 @@ mod restrictive_umask_heredoc {
         assert_parity_in(d.path(), "umask 022; cat <<<works");
     }
 }
+
+/// Anonymous function `() { body } <in arg >out arg` collects trailing
+/// args and redirections interleaved in any order (c:Src/parse.c
+/// par_simple). The previous port collected only leading STRING args,
+/// so an arg AFTER a redirection raised "parse error near `<arg>'".
+mod anon_func_interleaved_redirs_args {
+    use super::*;
+
+    #[test]
+    fn redir_arg_redir_arg_mixed() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "print you cannot be serious >input1; \
+             () { local var; read var; print $1 $var $2 } <input1 Shirley >output1 dude; \
+             print Nothing; cat output1",
+        );
+    }
+
+    /// arg-then-redir order.
+    #[test]
+    fn arg_then_redir() {
+        let d = tdir();
+        assert_parity_in(d.path(), "() { print $1 } only <<<x");
+    }
+
+    /// args-only still works (regression guard).
+    #[test]
+    fn args_only() {
+        let d = tdir();
+        assert_parity_in(d.path(), "() { print A $1 $2 } one two");
+    }
+
+    /// redir-only still works (regression guard).
+    #[test]
+    fn redir_only() {
+        let d = tdir();
+        assert_parity_in(d.path(), "() { read v; print got $v } <<<hello");
+    }
+}
