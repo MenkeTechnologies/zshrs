@@ -680,8 +680,38 @@ impl ShellExecutor {
     /// readonly guard. User-facing checks must accept either bit. Bug
     /// #418-family / test_lineno_intrinsic_readonly.
     pub fn is_readonly_param(&self, name: &str) -> bool {
-        let flags = self.param_flags(name) as u32;
-        (flags & (PM_READONLY | crate::ported::zsh_h::PM_RO_BY_DESIGN)) != 0
+        let (flags, pm_level) = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(name).map(|p| (p.node.flags as u32, p.level)))
+            .unwrap_or((0, 0));
+        // c:Src/params.c assignsparam — a real PM_READONLY param always
+        // rejects writes.
+        if (flags & PM_READONLY) != 0 {
+            return true;
+        }
+        if (flags & crate::ported::zsh_h::PM_RO_BY_DESIGN) != 0 {
+            // c:Src/Modules/param_private.c pps_setfn (c:300-307) — a
+            // PRIVATE param (PM_RO_BY_DESIGN + PM_REMOVABLE) is NOT blanket
+            // read-only: a write is permitted iff it is in the SAME scope
+            // (`locallevel == pm->level`, e.g. `() { private p=1; p=2 }`
+            // → 2) or above the wrap level (`locallevel >
+            // private_wraplevel`). A deeper nested-scope write is rejected
+            // (setfn_error) — that is how a nested fn writing an OUTER
+            // function's private still errors and aborts. zshrs never
+            // wires the private GSU, so the level gate is enforced here.
+            if (flags & crate::ported::zsh_h::PM_REMOVABLE) != 0 {
+                let ll = crate::ported::params::locallevel.load(Ordering::Relaxed);
+                let wrap = crate::ported::modules::param_private::private_wraplevel
+                    .load(Ordering::Relaxed);
+                return !(ll == pm_level || ll > wrap); // c:304 (negated: blocked)
+            }
+            // Non-removable PM_RO_BY_DESIGN = IPDEF4 special (LINENO/$?/$$…)
+            // whose PM_READONLY bit zshrs strips for internal writes (bug
+            // #297); RO_BY_DESIGN is their only remaining read-only marker.
+            return true;
+        }
+        false
     }
 
     /// Most-recent-command exit status. Reads canonical
