@@ -538,3 +538,53 @@ mod redirect_interleaved_with_assignments {
         assert_parity_in(d.path(), "typeset a=1 b=2; print $a $b");
     }
 }
+
+/// CLOBBER_EMPTY: under `noclobber`, `>file` may still overwrite an
+/// EMPTY regular file (c:Src/exec.c:2313 clobber_open). The inline
+/// noclobber checks in the redirect bridge ignored this. Scripts
+/// self-clean with `rm -f` so both shells start from identical state.
+mod clobber_empty {
+    use super::*;
+
+    /// Canonical ztst A04 form: empty file is clobberable, non-empty is not.
+    #[test]
+    fn empty_clobbered_nonempty_protected() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "setopt noclobber clobberempty; rm -f foo; touch foo; \
+             print Works >foo; cat foo; print Works not >foo; cat foo",
+        );
+    }
+
+    /// Truncate-then-overwrite an empty file in one script.
+    #[test]
+    fn truncate_then_overwrite_empty() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "setopt noclobber clobberempty; rm -f f; : >f; echo hi >f; echo OK; cat f",
+        );
+    }
+
+    /// Without clobberempty, an empty existing file is still protected.
+    #[test]
+    fn noclobber_alone_protects_empty() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "setopt noclobber; rm -f f; : >f; echo hi >f; echo OK",
+        );
+    }
+
+    /// Multio fan-out honors clobberempty on each target.
+    #[test]
+    fn multio_clobberempty() {
+        let d = tdir();
+        assert_parity_in(
+            d.path(),
+            "setopt noclobber clobberempty; rm -f f g; : >f; : >g; \
+             print x >f >g; echo OK; cat f g",
+        );
+    }
+}
