@@ -516,6 +516,39 @@ mod subscript_array_append {
     }
 }
 
+/// A range/array-value subscript assignment to a NONEXISTENT parameter
+/// auto-creates it as an array (c:Src/exec.c getvalue create flag →
+/// createparam(name, PM_ARRAY)). Before the fix the SET_SUBSCRIPT_RANGE
+/// handler saw v.pm == None and silently stored nothing.
+mod subscript_range_autovivify {
+    use super::*;
+
+    #[test]
+    fn forward_range_creates_array() {
+        assert_parity(r#"unset u; u[1,2]=(a z); echo "${(t)u} = $u""#);
+    }
+
+    #[test]
+    fn negative_range_append_creates_array() {
+        assert_parity("unset u; u[-34,-2]+=(a z); echo $u");
+    }
+
+    #[test]
+    fn single_index_array_value_creates() {
+        assert_parity(r#"unset u; u[1]=(x); echo "${(t)u} = $u""#);
+    }
+
+    #[test]
+    fn append_index_pads_and_creates() {
+        assert_parity("unset u; u[2]+=(a z); print -l -- $u; echo $#u");
+    }
+
+    #[test]
+    fn scalar_value_range_creates_array() {
+        assert_parity(r#"unset s; s[2,3]="XY"; print -l -- $s; echo "n=$#s t=${(t)s}""#);
+    }
+}
+
 /// Under KSHARRAYS a bare array name addresses element 0 (ksh semantics),
 /// so a scalar assignment `a=X` to an existing array sets the FIRST
 /// element keeping the rest, rather than replacing the whole array

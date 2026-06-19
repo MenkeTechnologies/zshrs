@@ -5494,6 +5494,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Ok(mut tab) => tab.remove(&name),
                 Err(_) => None,
             };
+            // c:Src/exec.c:2640 / getvalue(…, 1) — a subscript assignment to
+            // a NONEXISTENT parameter auto-creates it. getindex/fetchvalue
+            // with the create flag calls createparam(name, PM_ARRAY) so the
+            // splice has an array to write into; `unset u; u[1,2]=(a z)`
+            // then yields the array (a z). Without this, setarrvalue saw
+            // v.pm == None and silently stored nothing. The single-index
+            // scalar-value path (SET_ASSOC/SET_ARRAY_AT) already vivifies;
+            // this brings the range/array-value path to parity.
+            let taken = taken.or_else(|| {
+                crate::ported::params::createparam(
+                    &name,
+                    crate::ported::zsh_h::PM_ARRAY as i32,
+                );
+                crate::ported::params::paramtab()
+                    .write()
+                    .ok()
+                    .and_then(|mut t| t.remove(&name))
+            });
             // c:Src/params.c:2748+ — PM_SCALAR with subscript range
             // SPLICES the value into the scalar's char string. Bug
             // #589: zshrs's slice handler always called setarrvalue,
