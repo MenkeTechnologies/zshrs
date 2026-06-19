@@ -6918,16 +6918,6 @@ impl ZshCompiler {
         // c:Src/loop.c:522 — `cmdpush(CS_REPEAT)` AFTER the count eval.
         self.emit_cmd_push(crate::ported::zsh_h::CS_REPEAT as u8);
 
-        // c:Src/loop.c:520 — `lastval = 0;` UNCONDITIONALLY before the
-        // repeat body. Unlike `for` (which carries the prior $? into the
-        // first iteration), `repeat` resets $? to 0: `(exit 3); repeat 2;
-        // do print $?; done` → 0 then 0. The reset also supplies the
-        // zero-count result (`repeat 0; do …; done` → $? 0). The previous
-        // port omitted it, so the prior command's status leaked into the
-        // first body iteration.
-        self.builder.emit(Op::LoadInt(0), 0);
-        self.builder.emit(Op::SetStatus, 0);
-
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetSlot(i_slot), 0);
 
