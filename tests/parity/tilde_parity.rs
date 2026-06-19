@@ -211,3 +211,39 @@ mod no_expand {
         assert_parity(r#"echo /home/~/x"#);
     }
 }
+
+/// Named-directory names allow the full IUSER class (alnum + `_` + `-`
+/// + `.`), both in `hash -d NAME=path` registration (c:builtin.c:4285
+/// itype_end IUSER) and in `~NAME` tilde expansion (c:subst.c filesub,
+/// utils.c:4173-4191). The port previously allowed only alnum + `_`, so
+/// `hash -d t-t=/foo; print ~t-t` errored then left `~t-t` unexpanded.
+mod named_dir_iuser_chars {
+    use super::*;
+
+    #[test]
+    fn hyphen_in_name() {
+        assert_parity(r#"hash -d t-t=/foo; print ~t-t/bar"#);
+    }
+
+    #[test]
+    fn multiple_hyphens() {
+        assert_parity(r#"hash -d a-b-c=/x; print ~a-b-c"#);
+    }
+
+    #[test]
+    fn dot_in_name() {
+        assert_parity(r#"hash -d a.b=/y; print ~a.b/z"#);
+    }
+
+    /// Invalid char (`/`) still rejected (regression guard).
+    #[test]
+    fn slash_still_invalid() {
+        assert_parity(r#"hash -d "a/b"=/x 2>/dev/null; echo rc=$?"#);
+    }
+
+    /// Plain alnum name still works (regression guard).
+    #[test]
+    fn plain_name_unaffected() {
+        assert_parity(r#"hash -d good=/g; print ~good"#);
+    }
+}

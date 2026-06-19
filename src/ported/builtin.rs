@@ -8431,8 +8431,15 @@ pub fn bin_hash(
             if dir_mode {
                 // c:4302
                 // c:4303-4310 — `itype_end(asg->name, IUSER, 0)` validates;
-                // dir name must be all-IUSER chars.
-                if !n.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // dir name must be all-IUSER chars. IUSER (Src/utils.c:
+                // 4173-4191) = digits + alpha + `_` + `-` + `.` (plus
+                // non-ASCII). The previous port allowed only alphanumeric
+                // + `_`, so `hash -d t-t=/foo` was rejected with "invalid
+                // character", which then broke `~t-t` named-dir expansion.
+                if !n
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+                {
                     // c:4305
                     zwarnnam(name, &format!("invalid character in directory name: {}", n)); // c:4306
                     returnval = 1; // c:4308
