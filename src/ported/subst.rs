@@ -6039,6 +6039,36 @@ pub fn paramsubst(
                         }
                     })
                     .or_else(|| {
+                        // c:Src/params.c getarg — `(e)`/`(n:N:)`/`(b:N:)`/
+                        // `(s.X.)` flag form on an ARRAY numeric subscript
+                        // (no r/R/i/I search, no w/W/p word flag): strip
+                        // the flag block (consuming the delimited n/b/s
+                        // arg) and math-eval the REMAINDER, mirroring the
+                        // scalar path. Without this `${a[(b:1:)l]}` fell
+                        // through to the full-sub mathevali → "bad math
+                        // expression" error; zsh evaluates "l" = 0.
+                        let s = sub.trim();
+                        let rest = s.strip_prefix('(')?;
+                        let close = rest.find(')')?;
+                        let f = &rest[..close];
+                        let mut chars = f.chars();
+                        while let Some(c) = chars.next() {
+                            match c {
+                                's' | 'n' | 'b' => {
+                                    let delim = chars.next()?;
+                                    for cc in chars.by_ref() {
+                                        if cc == delim {
+                                            break;
+                                        }
+                                    }
+                                }
+                                'e' => {}
+                                _ => return None,
+                            }
+                        }
+                        crate::ported::math::mathevali(rest[close + 1..].trim()).ok()
+                    })
+                    .or_else(|| {
                         // c:Src/params.c:1419-1432 — getindex(sub) finally
                         // calls mathevali so arith expressions in the
                         // subscript (`${a[1+1]}`, `${a[i+1]}`, `${a[n]}`
@@ -6710,11 +6740,31 @@ pub fn paramsubst(
                                         }
                                     }
                                 }
-                                'e' | 'n' | 'b' => {}
+                                'e' => {}
+                                // c:Src/params.c:1432 getarg — `n`/`b`
+                                // take a delimited integer arg
+                                // (`(n:5:)`, `(b.3.)`); consume
+                                // <delim>NUM<delim> like the `s` arm.
+                                // Without this the `:` after `b`/`n` hit
+                                // `_ => return None`, so `${s[(b:2:)l]}`
+                                // fell through to the full-sub mathevali
+                                // and errored "bad math expression".
+                                'n' | 'b' => {
+                                    let delim = chars.next()?;
+                                    for cc in chars.by_ref() {
+                                        if cc == delim {
+                                            break;
+                                        }
+                                    }
+                                }
                                 _ => return None,
                             }
                         }
-                        rest[close + 1..].trim().parse::<i64>().ok()
+                        // c:Src/params.c getarg — the flag-stripped
+                        // REMAINDER is the subscript expression, math-
+                        // evaluated (bare identifier → 0): `s=hello;
+                        // ${s[(b:2:)l]}` → "" (eval "l" = 0).
+                        crate::ported::math::mathevali(rest[close + 1..].trim()).ok()
                     })
                     .or_else(|| {
                         // mathevali fallback for arith subscripts like
