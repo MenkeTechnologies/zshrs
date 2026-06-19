@@ -6600,18 +6600,23 @@ impl ZshCompiler {
         // cmdstack: direct port of Src/loop.c:615 `cmdpush(CS_CASE);`
         // wrapping the whole case statement.
         self.emit_cmd_push(crate::ported::zsh_h::CS_CASE as u8);
-        // c:Src/loop.c — `case ... esac` with no matching arm OR with
-        // an empty arm body (`x) ;;`) exits with status 0. Without
-        // this reset, the case statement preserved the prior $? when
-        // it produced no command — `false; case x in x) ;; esac;
-        // echo $?` printed 1 instead of 0.
-        self.builder.emit(Op::LoadInt(0), 0);
-        self.builder.emit(Op::SetStatus, 0);
         // Word goes onto a slot for repeated comparison.
+        // c:Src/loop.c:610-612 execcase — the case WORD is evaluated
+        // (singsub) with the INHERITED $? still live; `case $? in …` and
+        // `(( x < y )); case $? in …` (the zmathfunc min/max idiom) must
+        // see the prior command's status. The reset to 0 happens AFTER
+        // (c:705 `if (!anypatok) lastval = 0`), so capture the word
+        // first, THEN reset.
         self.compile_word_str(&c.word);
         let word_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::SetSlot(word_slot), 0);
+        // c:Src/loop.c:705 — `case … esac` with no matching arm OR an
+        // empty matched arm body (`x) ;;`) exits with status 0. The early
+        // reset (before the word) wrongly made `case $?` see 0; reset
+        // AFTER the word is captured instead.
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
 
         let mut end_jumps = Vec::new();
         // Pending fall-through from the previous arm's `;&` terminator.

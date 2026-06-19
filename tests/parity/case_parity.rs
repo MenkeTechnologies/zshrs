@@ -345,3 +345,48 @@ mod open_paren_arms {
         assert_parity(r#"typeset -A h; case a in (a) h+=(k v);; esac; print ${(kv)h}"#);
     }
 }
+
+/// The case WORD is evaluated with the INHERITED $? still live
+/// (c:Src/loop.c:610 execcase evaluates the word before the c:705
+/// `if (!anypatok) lastval=0` reset). `(( x<y )); case $? in …` (the
+/// zmathfunc min/max idiom) and `case $? in …` must see the prior
+/// status. The port reset $? to 0 before the word, so `case $?` saw 0.
+mod case_word_sees_inherited_status {
+    use super::*;
+
+    #[test]
+    fn arith_status_into_case_word() {
+        assert_parity(r#"(( 43 < 42 )); case $? in (0) echo zero;; (1) echo one;; esac"#);
+    }
+
+    #[test]
+    fn exit_status_into_case_word() {
+        assert_parity(r#"(exit 7); case $? in 7) echo seven;; *) echo other;; esac"#);
+    }
+
+    /// Matched branch body still sees the inherited $? (no early reset).
+    #[test]
+    fn branch_body_sees_inherited() {
+        assert_parity(r#"(exit 37); case x in x) echo $?;; esac"#);
+    }
+
+    /// Matched empty body → 0 (regression guard).
+    #[test]
+    fn matched_empty_body_zero() {
+        assert_parity(r#"false; case x in x) ;; esac; echo $?"#);
+    }
+
+    /// No-match → 0 (regression guard).
+    #[test]
+    fn no_match_zero() {
+        assert_parity(r#"false; case nomatch in x) echo no;; esac; echo $?"#);
+    }
+
+    /// zmathfunc min/max use `(( a<r )); case $?` — now correct.
+    #[test]
+    fn zmathfunc_min_max() {
+        assert_parity(
+            r#"autoload -Uz zmathfunc && zmathfunc; echo $(( min(42,43,44) )) $(( max(42,43,44) ))"#,
+        );
+    }
+}
