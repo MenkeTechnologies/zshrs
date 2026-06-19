@@ -6478,10 +6478,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // remaining redirect list (execerr), so `setopt
                     // noclobber; touch a; print x > a > b` errors on
                     // `a` and never creates `b`.
-                    let target_is_regular_file = std::fs::metadata(target)
+                    let target_meta = std::fs::metadata(target).ok();
+                    let target_is_regular_file = target_meta
+                        .as_ref()
                         .map(|m| m.file_type().is_file())
                         .unwrap_or(false);
-                    if noclobber && target_is_regular_file {
+                    // c:Src/exec.c:2313 clobber_open — CLOBBER_EMPTY re-uses
+                    // an empty regular file under noclobber (same allowance
+                    // as the single-redirect path).
+                    let clobber_empty_ok = opt_state_get("clobberempty").unwrap_or(false)
+                        && target_meta.as_ref().map(|m| m.len() == 0).unwrap_or(false);
+                    if noclobber && target_is_regular_file && !clobber_empty_ok {
                         eprintln!("{}:1: file exists: {}", shname(), target);
                         for prev in &target_fds {
                             unsafe {
@@ -10847,10 +10854,18 @@ impl ShellExecutor {
                 // must mirror the same check.
                 let noclobber = opt_state_get("noclobber").unwrap_or(false)
                     || !opt_state_get("clobber").unwrap_or(true);
-                let target_is_regular_file = std::fs::metadata(target)
+                let target_meta = std::fs::metadata(target).ok();
+                let target_is_regular_file = target_meta
+                    .as_ref()
                     .map(|m| m.file_type().is_file())
                     .unwrap_or(false);
-                if noclobber && target_is_regular_file {
+                // c:Src/exec.c:2313 clobber_open — CLOBBER_EMPTY permits
+                // re-using an EMPTY regular file under noclobber: `setopt
+                // noclobber clobberempty; : >f; echo hi >f` overwrites f.
+                // The inline bridge check ignored this and errored.
+                let clobber_empty_ok = opt_state_get("clobberempty").unwrap_or(false)
+                    && target_meta.as_ref().map(|m| m.len() == 0).unwrap_or(false);
+                if noclobber && target_is_regular_file && !clobber_empty_ok {
                     eprintln!("{}:1: file exists: {}", shname(), target);
                     self.set_last_status(1);
                     // c:Src/exec.c — set redirect_failed so the scope-end
