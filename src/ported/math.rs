@@ -198,6 +198,15 @@ pub enum prec_type {
 /// handled by recursively evaluating the string value.
 /// WARNING: param names don't match C — Rust=() vs C=(mptr)
 pub(crate) fn getmathparam(name: &str) -> mnumber {
+    // c:Src/math.c:358-362 — after reading a parameter's value, FORCEFLOAT
+    // coerces an INTEGER result to float, so `integer a=3 b=4; setopt
+    // force_float; $((a/b))` does float division (0.75) not integer (0).
+    // The literal/operator paths already honor force_float; only this
+    // param-read path dropped it. The read logic is wrapped in an
+    // immediately-invoked closure (NOT a named inner fn — the name-parity
+    // build gate requires every `fn` to have a C counterpart, and there is
+    // only one C `getmathparam`).
+    let __raw = (|| -> mnumber {
     // Strip array subscript if present
     let base_name = if let Some(bracket) = name.find('[') {
         &name[..bracket]
@@ -454,6 +463,16 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
         d: 0.0,
         type_: MN_INTEGER,
     }
+    })();
+    if m_force_float() && __raw.type_ == MN_INTEGER {
+        // c:359-362 — coerce integer → float under FORCEFLOAT.
+        return mnumber {
+            l: 0,
+            d: __raw.l as f64,
+            type_: MN_FLOAT,
+        };
+    }
+    __raw
 }
 
 /// Evaluate the expression

@@ -688,6 +688,25 @@ mod round_pins {
         assert_parity("setopt force_float; print $(( 1 ))");
     }
 
+    /// forcefloat coerces INTEGER PARAM reads to float too (c:math.c:359)
+    /// — `integer a=3 b=4; $((a/b))` → 0.75, not 0. The param-read path
+    /// previously dropped the coercion (literals already had it).
+    #[test]
+    fn force_float_integer_param_division() {
+        assert_parity("integer a=3 b=4; setopt force_float; print $(( a/b ))");
+    }
+
+    #[test]
+    fn force_float_integer_param_value() {
+        assert_parity("integer a=10; setopt force_float; print $(( a ))");
+    }
+
+    /// Without force_float, integer params divide as integers.
+    #[test]
+    fn no_force_float_integer_param_division() {
+        assert_parity("integer a=3 b=4; print $(( a/b ))");
+    }
+
     /// `cprecedences` switches `(( ))` to C operator precedence (259 vs 1591).
     #[test]
     fn cprecedences_uses_c_precedence() {
