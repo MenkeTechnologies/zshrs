@@ -11145,6 +11145,16 @@ impl ShellExecutor {
         if std::fs::write(&tmp, content.as_bytes()).is_err() {
             return; // c:4674 — tempfile failure → no redirect
         }
+        // c:Src/utils.c gettempfile → mkstemp creates the temp file mode
+        // 0600 IGNORING the umask, so the O_RDONLY reopen below always
+        // succeeds. `std::fs::write` honors the umask, so under `umask
+        // 0777` the file landed mode 0000 and the reopen failed with
+        // EACCES — `cat <<<x` then read empty stdin. Force 0600 to match
+        // mkstemp's umask-independent permissions.
+        let _ = std::fs::set_permissions(
+            &tmp,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+        );
         // c:4677 — `fd = open(s, O_RDONLY | O_NOCTTY);`
         let file = match std::fs::File::open(&tmp) {
             Ok(f) => f,
