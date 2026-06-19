@@ -3530,11 +3530,23 @@ pub fn typeset_single(
         } else {
             0
         };
+        // c:Src/builtin.c:2761-2765 — `typeset -p1 NAME` adds PRINT_LINE
+        // (one array/assoc element per line). The listing path (~3805)
+        // already parses this; the explicit-name print path here did not,
+        // so `typeset -p1 myarray` printed the single-line `( a b c )`
+        // form instead of zsh's multi-line `(\n  a\n  b\n  c\n)`.
+        let line_flag = if OPT_HASARG(ops, b'p')
+            && OPT_ARG(ops, b'p').map(|a| a.trim()) == Some("1")
+        {
+            PRINT_LINE
+        } else {
+            0
+        };
         if let Some(pm_r) = unsafe { pm.as_mut() } {
             if OPT_ISSET(ops, b'p') {
                 // c:2242
                 // c:2243 — `paramtab->printnode(&pm->node, PRINT_TYPESET|with_ns);`
-                printparamnode(pm_r, PRINT_TYPESET | with_ns);
+                printparamnode(pm_r, PRINT_TYPESET | with_ns | line_flag);
             } else if !OPT_ISSET(ops, b'g')                                  // c:2244
                 && (!isset(TYPESETSILENT) || OPT_ISSET(ops, b'm'))
             // c:2245
@@ -4576,6 +4588,17 @@ pub fn bin_typeset(
             } else {
                 0
             };
+            // c:Src/builtin.c:2761-2765 — `-p1` adds PRINT_LINE (one
+            // array/assoc element per line). The named-arg `typeset -p1
+            // NAME` print path missed it (only the listing path parsed
+            // it), so `typeset -p1 myarray` printed single-line.
+            let line_flag = if OPT_HASARG(&ops, b'p')
+                && OPT_ARG(&ops, b'p').map(|a| a.trim()) == Some("1")
+            {
+                PRINT_LINE
+            } else {
+                0
+            };
             let existed = paramtab()
                 .read()
                 .map(|t| t.contains_key(arg_name))
@@ -4592,7 +4615,7 @@ pub fn bin_typeset(
                 if let Some(ref mut pm) = pm_clone {
                     // c:2243 — `paramtab->printnode(&pm->node,
                     //   PRINT_TYPESET|with_ns);`
-                    printparamnode(pm, PRINT_TYPESET | with_ns);
+                    printparamnode(pm, PRINT_TYPESET | with_ns | line_flag);
                 }
             } else {
                 // c:Src/builtin.c:3110-3113 — when `typeset -p NAME`

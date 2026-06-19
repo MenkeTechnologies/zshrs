@@ -666,3 +666,37 @@ mod typeset_p_positional_array {
         assert_parity("typeset -a arr=(1 2 3); typeset -p arr");
     }
 }
+
+/// `typeset -p1 NAME` prints arrays/assocs one element per line with the
+/// closing paren on its own line (PRINT_LINE, c:builtin.c:2761-2765).
+/// The named-arg print path ignored the `1`, printing single-line.
+mod typeset_p1_multiline {
+    use super::*;
+
+    #[test]
+    fn p1_array() {
+        assert_parity("local -a a=(x y z); typeset -p1 a");
+    }
+
+    #[test]
+    fn p1_assoc() {
+        assert_parity("local -A h=(one two three four); typeset -p1 h");
+    }
+
+    #[test]
+    fn p1_empty_assoc() {
+        assert_parity("local -A e; typeset -p1 e");
+    }
+
+    /// quoted/special elements one-per-line.
+    #[test]
+    fn p1_array_quoting() {
+        assert_parity(r#"local -a a=('&' sand '""' '' plugh); typeset -p1 a"#);
+    }
+
+    /// `-p` (no 1) stays single-line (regression guard).
+    #[test]
+    fn p_without_1_single_line() {
+        assert_parity("local -a a=(x y z); typeset -p a");
+    }
+}
