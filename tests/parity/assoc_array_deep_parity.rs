@@ -300,3 +300,50 @@ echo "outside=[${LOCAL_H[x]}]"
         );
     }
 }
+
+/// Nested subscript on a `(P)`-indirect reference to an ASSOC does key
+/// lookup on the referenced param: `${${(P)n}[key]}` ≡ `${h[key]}` when
+/// $n names assoc h (c:Src/subst.c (P) named-ref). The port flattened
+/// the inner `${(P)n}` to its values first, so the outer string-key
+/// subscript returned all values instead of indexing.
+mod p_flag_indirect_assoc_subscript {
+    use super::*;
+
+    #[test]
+    fn string_key_lookup() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); n=h; print -r - ${${(P)n}[b]}"#);
+    }
+
+    #[test]
+    fn variable_key_lookup() {
+        assert_parity(r#"typeset -A h=(a 1 b 2); n=h; k=a; print -r - ${${(P)n}[$k]}"#);
+    }
+
+    #[test]
+    fn quote_flagged_outer() {
+        assert_parity(r#"typeset -A h=(a 1 b 2); n=h; print -r - ${(q-)${(P)n}[b]}"#);
+    }
+
+    #[test]
+    fn positional_ref_name() {
+        assert_parity(r#"typeset -A opts=(a 1 b 2); set -- opts; print -r - ${${(P)1}[b]}"#);
+    }
+
+    /// `@`/`*` on a `(P)`-assoc still yields the values (regression guard).
+    #[test]
+    fn splat_yields_values() {
+        assert_parity(r#"typeset -A h=(a 1 b 2); n=h; print -r - "${(@kP)n}""#);
+    }
+
+    /// Numeric subscript on a `(P)`-indexed-array still indexes (guard).
+    #[test]
+    fn p_array_numeric_subscript() {
+        assert_parity(r#"typeset -a arr=(x y z); n=arr; print -r - ${${(P)n}[2]}"#);
+    }
+
+    /// Plain nested array subscript unaffected (regression guard).
+    #[test]
+    fn plain_nested_array_subscript() {
+        assert_parity(r#"arr=(hello world); print -r - ${${arr}[2]}"#);
+    }
+}
