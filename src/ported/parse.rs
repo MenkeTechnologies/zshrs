@@ -9056,14 +9056,32 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         return None;
     }
     zshlex();
-    // Collect any trailing args until a separator. zsh's anon-fn form
-    // `() { body } a b c` runs body with $1=a, $2=b, $3=c.
+    // Collect trailing args AND redirections, interleaved in any order,
+    // until a separator. zsh's anon-fn form `() { body } a b c` runs
+    // body with $1=a, $2=b, $3=c; redirs apply to that invocation:
+    // `() { read v; print $1 $v } <input1 Shirley >output1 dude`
+    // (c:Src/parse.c par_simple — the anon function is a simple command
+    // whose words and redirs follow the body in any order). The previous
+    // port collected ONLY leading STRING args here and left redirs to
+    // par_cmd's trailing loop, so an arg AFTER a redir (`<in arg`) was
+    // never reached and hit par_cmd's "parse error near `<arg>'" gate.
     let mut args = Vec::new();
-    while tok() == STRING_LEX {
-        if let Some(s) = tokstr() {
-            args.push(s);
+    let mut redirs: Vec<ZshRedir> = Vec::new();
+    loop {
+        let t = tok();
+        if t == STRING_LEX {
+            if let Some(s) = tokstr() {
+                args.push(s);
+            }
+            zshlex();
+        } else if IS_REDIROP(t) {
+            match par_redir() {
+                Some(r) => redirs.push(r),
+                None => break,
+            }
+        } else {
+            break;
         }
-        zshlex();
     }
 
     // Generate a unique name. Module-level static would be cleaner but
@@ -9072,13 +9090,22 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
     static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
     let n = ANON_COUNTER.fetch_add(1, Ordering::Relaxed);
     let name = format!("_zshrs_anon_{}", n);
-    Some(ZshCommand::FuncDef(ZshFuncDef {
+    let funcdef = ZshCommand::FuncDef(ZshFuncDef {
         names: vec![name],
         body: Box::new(body),
         tracing: false,
         auto_call_args: Some(args),
         body_source: None,
-    }))
+    });
+    // Wrap in Redirected so the redirs bracket the single invocation
+    // (compile_zsh.rs:929 wraps the body in a WithRedirectsBegin/End
+    // scope for Redirected(FuncDef, …)). par_cmd's trailing-redir loop
+    // then finds none and returns this node unwrapped.
+    if redirs.is_empty() {
+        Some(funcdef)
+    } else {
+        Some(ZshCommand::Redirected(Box::new(funcdef), redirs))
+    }
 }
 
 /// Parse {...} cursh
