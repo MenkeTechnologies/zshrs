@@ -637,3 +637,32 @@ mod numeric_type_change_base_reset {
         assert_parity("typeset -F3 f=3.14159; typeset -F f; print $f");
     }
 }
+
+/// `typeset -p argv` prints the positional parameters (the `argv`/`*`/`@`
+/// special array IS the positional list, stored in PPARAMS — not the
+/// paramtab entry's empty u_arr). The explicit-name print path read the
+/// empty u_arr and showed `( )`.
+mod typeset_p_positional_array {
+    use super::*;
+
+    #[test]
+    fn typeset_p_argv_global() {
+        assert_parity("set -- a b c; typeset -p argv");
+    }
+
+    #[test]
+    fn typeset_p_argv_in_function() {
+        assert_parity("() { typeset -p argv } x y z");
+    }
+
+    #[test]
+    fn typeset_p_argv_empty() {
+        assert_parity("set --; typeset -p argv");
+    }
+
+    /// Regular array still prints correctly (regression guard).
+    #[test]
+    fn typeset_p_regular_array() {
+        assert_parity("typeset -a arr=(1 2 3); typeset -p arr");
+    }
+}
