@@ -3730,6 +3730,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let multios = opt_state_get("multios").unwrap_or(true);
         glob_expand_word_value(raw, noglob || !multios)
     });
+    // Clear the default-word glob-pending carrier before the word's
+    // expansion runs, so a flag set by a prior word never leaks in.
+    vm.register_builtin(BUILTIN_DEFAULT_WORD_GLOB_RESET, |_vm, _argc| {
+        crate::ported::subst::DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(false));
+        Value::Status(0)
+    });
+    // After the word is assembled, run filename generation ONLY if the
+    // default/alternate paramsubst arm flagged a source-glob default
+    // (DEFAULT_WORD_GLOB_PENDING). Otherwise pass the word through
+    // literally — a parameter VALUE must not glob. c:Src/subst.c globlist.
+    vm.register_builtin(BUILTIN_DEFAULT_WORD_GLOB, |vm, _argc| {
+        let raw = vm.pop();
+        let pending = crate::ported::subst::DEFAULT_WORD_GLOB_PENDING.with(|c| {
+            let v = c.get();
+            c.set(false); // read + clear
+            v
+        });
+        if !pending {
+            return raw;
+        }
+        let noglob =
+            opt_state_get("noglob").unwrap_or(false) || !opt_state_get("glob").unwrap_or(true);
+        glob_expand_word_value(raw, noglob)
+    });
 
     // `break`/`continue` from a sub-VM body. The compile path emits
     // these when the keyword appears at chunk top-level (no enclosing
@@ -8917,6 +8941,18 @@ pub const BUILTIN_GLOB_EXPAND: u16 = 343;
 // last-registration-wins, so a duplicate id silently shadows the
 // earlier handler.
 pub const BUILTIN_REDIR_GLOB_EXPAND: u16 = 628;
+
+/// Reset the default-word glob-pending carrier at the START of a word
+/// whose source contains a glob metachar (so the flag never leaks from a
+/// prior word/statement). Paired with BUILTIN_DEFAULT_WORD_GLOB.
+pub const BUILTIN_DEFAULT_WORD_GLOB_RESET: u16 = 635;
+
+/// Filename-generate the ASSEMBLED word ONLY when the default/alternate
+/// paramsubst arm took a SOURCE word carrying glob metachars
+/// (subst::DEFAULT_WORD_GLOB_PENDING). A parameter VALUE never sets the
+/// flag, so `x='*file'; ${x:-d}` stays literal while `${x:-*file}` /
+/// `${x:-a*}bar` glob. Reads+clears the flag. c:Src/subst.c → globlist.
+pub const BUILTIN_DEFAULT_WORD_GLOB: u16 = 636;
 /// `BUILTIN_SET_LOOP_VAR` constant — for-loop variable binding via
 /// `setloopvar` (Src/params.c:6362): a PM_NAMEREF loop var REBINDS
 /// to each word (SETREFNAME + setscope) instead of assigning

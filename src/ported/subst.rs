@@ -2890,7 +2890,30 @@ thread_local! {
     /// fzf-tab ANSI strings).
     pub static TILDE_GLOBSUBST_CARRIER: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
+
+    /// !!! WARNING: RUST-ONLY STATE — NO DIRECT C COUNTERPART !!!
+    /// The unquoted default/alternate word in `${x:-WORD}` / `${x-WORD}`
+    /// / `${x:+WORD}` / `${x+WORD}` is SOURCE text, so when that branch
+    /// is taken zsh runs the result through the normal postfork
+    /// filename-generation pass (Src/subst.c → Src/glob.c globlist),
+    /// exactly as it does for a bare source word — whereas a parameter
+    /// VALUE is never globbed (no GLOB_SUBST). zshrs's segment/EXPAND_TEXT
+    /// word pipeline globs only LITERAL source segments (the `${...}`
+    /// node's RESULT never re-enters the glob phase), so a glob-bearing
+    /// default came out literal. This cell is the runtime carrier: the
+    /// paramsubst default/alternate arm SETS it when it takes a branch
+    /// whose SOURCE word carries glob metacharacters (computed via
+    /// `pretokenize_src_pat` + `haswilds`, so `${x:-$d}` with `d='*'`
+    /// does NOT set it — the `*` came from a value), and the
+    /// compile-emitted `BUILTIN_DEFAULT_WORD_GLOB` op at the end of the
+    /// word reads+clears it to decide whether to glob the ASSEMBLED word
+    /// (covers `${x:-a*}bar` → "a*bar"). Reset per word by
+    /// `BUILTIN_DEFAULT_WORD_GLOB_RESET` so the flag never leaks across
+    /// words/statements.
+    pub static DEFAULT_WORD_GLOB_PENDING: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
+
 
 /// Record the user's GLOB_SUBST value before the `${~}` carrier flip
 /// (first flip in a pipeline wins — that's the user's real setting).
@@ -8252,6 +8275,24 @@ pub fn paramsubst(
                 };
                 if vunset {
                     value = singsub(default);
+                    // c:Src/subst.c → globlist — the default word is
+                    // SOURCE text, so a glob metachar in it drives
+                    // filename generation on the assembled word (a
+                    // parameter VALUE never globs). Flag it for the
+                    // compile-emitted BUILTIN_DEFAULT_WORD_GLOB; gated on
+                    // unquoted context. `${x:-$d}` (d='*') has no glob in
+                    // the SOURCE so it is NOT flagged.
+                    if !qt {
+                        // pretokenize_src_pat keeps nested `$..`/`${..}`/
+                        // `$(..)` spans verbatim, so a `*` inside a nested
+                        // strip/filter pattern (`${p#*:}`) is NOT counted as
+                        // a filename glob — only a SOURCE-literal glob in the
+                        // default word sets the flag.
+                        let __dg = pretokenize_src_pat(default);
+                        if crate::ported::pattern::haswilds(&__dg) {
+                            DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
+                        }
+                    }
                     // Parity bug: for `${arr[@]:-default}` with an
                     // empty array, the operator computed the default
                     // into `value`, but the downstream auto_splat
@@ -8285,6 +8326,12 @@ pub fn paramsubst(
                 // c:3193
                 if !is_set {
                     value = singsub(default);
+                    if !qt {
+                        let __dg = pretokenize_src_pat(default); // c:globlist (default-word glob)
+                        if crate::ported::pattern::haswilds(&__dg) {
+                            DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
+                        }
+                    }
                 }
             } else if let Some(default) = r.strip_prefix("::=") {
                 // c:3245 (unconditional assign)
@@ -8390,6 +8437,12 @@ pub fn paramsubst(
                 // c:3296
                 if is_set && !raw_value.is_empty() {
                     value = singsub(alt);
+                    if !qt {
+                        let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
+                        if crate::ported::pattern::haswilds(&__dg) {
+                            DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
+                        }
+                    }
                 } else {
                     value = String::new();
                 }
@@ -8411,6 +8464,12 @@ pub fn paramsubst(
                 // c:3296
                 if is_set {
                     value = singsub(alt);
+                    if !qt {
+                        let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
+                        if crate::ported::pattern::haswilds(&__dg) {
+                            DEFAULT_WORD_GLOB_PENDING.with(|c| c.set(true));
+                        }
+                    }
                 } else {
                     value = String::new();
                 }
