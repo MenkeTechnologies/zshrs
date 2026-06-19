@@ -11976,7 +11976,22 @@ pub fn bin_read(
         if parts.is_empty() {
             parts.push(String::new());
         }
-        setaparam(&reply, parts); // c:6968 setaparam
+        // c:Src/builtin.c:6910-6961 — `-A` with `-e`/`-E`. The word is
+        // echoed (one per line) when `-e` (main per-word loop, c:6910)
+        // OR `-E` (array-display loop, c:6949). The array is SET only
+        // when `-e` is NOT set (c:6921 collects words, c:6945 allocates
+        // p only when !-e). So `read -AE` echoes AND assigns; `read -Ae`
+        // echoes but leaves the array untouched. The previous port
+        // always assigned and never echoed.
+        let opt_e = OPT_ISSET(ops, b'e');
+        if opt_e || OPT_ISSET(ops, b'E') {
+            for w in &parts {
+                println!("{}", w);
+            }
+        }
+        if !opt_e {
+            setaparam(&reply, parts); // c:6960 setaparam
+        }
     } else if argi < args.len() {
         // Multi-var: `read x y [z]`. First var = reply (already
         // consumed); rest are args[argi..]. Split with at most
