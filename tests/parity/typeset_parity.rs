@@ -781,3 +781,67 @@ mod private_and_hidden_listing {
         );
     }
 }
+
+/// Assignment to a declared `private` var. is_readonly_param blanket-
+/// rejected privates (they carry PM_RO_BY_DESIGN), so a SAME-scope write
+/// errored "read-only variable". The gate now mirrors the private GSU's
+/// pps_setfn level check (c:Src/Modules/param_private.c:300-307): a write
+/// in the SAME scope (`locallevel == pm->level`) or above the wrap level
+/// is permitted; a deeper nested-scope write is still rejected and aborts.
+mod private_assignment_scope {
+    use super::*;
+
+    fn has_private() -> bool {
+        run_zshrs("zmodload zsh/param/private; echo ok").stdout.trim() == "ok"
+    }
+    fn p(s: &str) {
+        if !has_private() {
+            return;
+        }
+        assert_parity(&format!("zmodload zsh/param/private 2>/dev/null; {s}"));
+    }
+
+    /// Same-scope write (scalar, +=, valueless-then-set) is permitted.
+    #[test]
+    fn same_scope_write_permitted() {
+        p("() { private px=1; px=2; print $px }");
+        p("() { private px=1; px=2; px+=x; print $px }");
+        p("() { private px; px=set; print $px }");
+    }
+
+    /// A private shadowing a global, written in the same scope, leaves
+    /// the global intact after the scope exits.
+    #[test]
+    fn private_shadow_write_restores_global() {
+        p("typeset -g g=1; () { private g=2; g=3; print $g }; print $g");
+    }
+
+    /// Nested-scope write of an outer function's private still ERRORS and
+    /// aborts the inner function (stdout + nonzero exit match zsh).
+    #[test]
+    fn nested_scope_write_rejected() {
+        p("f(){ private x=inner; g; }; g(){ x=fromG; print \"g:$x\" }; f");
+        p("f(){ private x=1; g; print \"f:$x\" }; g(){ print \"g:${x:-unset}\"; x=2 }; f");
+    }
+
+    /// Nested-scope READ of a shadowing private falls through to the
+    /// shadowed global (the private is hidden), unaffected by the gate.
+    #[test]
+    fn nested_scope_read_falls_through() {
+        p("x=outer; f(){ private x=inner; g; print $x }; g(){ print ${x:-unset} }; f");
+    }
+
+    /// Array private same-scope assignment (regression — already worked
+    /// via the array store path, must stay working).
+    #[test]
+    fn array_private_same_scope() {
+        p("() { private -a arr; arr=(a b c); print -l $arr }");
+    }
+
+    /// Non-private + real readonly unaffected (regression).
+    #[test]
+    fn ordinary_and_readonly_unaffected() {
+        p("typeset -g y=1; y=2; print $y");
+        p("readonly r=1; r=2; print after");
+    }
+}
