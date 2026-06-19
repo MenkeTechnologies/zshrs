@@ -845,3 +845,53 @@ mod private_assignment_scope {
         p("readonly r=1; r=2; print after");
     }
 }
+
+/// `local -P`/`local -Pa` — zsh/param/private's setup_ (c:Src/Modules/
+/// param_private.c:682-685) REPLACES the `local` builtintab node's
+/// handlerfunc+optstr with bin_private's once the module is loaded, so
+/// `local` accepts the -P private-scope flags. zshrs replicates the swap
+/// by routing `local` through the `private` builtin when the module is
+/// bound. Before the module loads, `local -P` errors "bad option: -P"
+/// exactly like stock zsh (compared via assert_parity stdout + exit).
+mod local_dash_p_handler_swap {
+    use super::*;
+
+    /// Before zmodload, `local -P` is an unknown option (stdout + exit).
+    #[test]
+    fn local_dash_p_errors_before_module_load() {
+        assert_parity("() { local -P p=1; print ${p:-none} }");
+        assert_parity("local -P p=1; print ${p:-none}");
+    }
+
+    /// After zmodload, `local -P`/`local -Pa` create private-scoped vars.
+    #[test]
+    fn local_dash_p_after_module_load() {
+        assert_parity("zmodload zsh/param/private; () { local -P p=1; print $p }");
+        assert_parity(
+            "zmodload zsh/param/private; () { local -Pa arr=(a b c); print -l $arr }",
+        );
+        assert_parity("zmodload zsh/param/private; () { local -PU u=(a a b); print -l $u }");
+    }
+
+    /// Plain `local` (no -P) still behaves as a normal local after the
+    /// swap — bin_typeset treats `local`/`private` identically.
+    #[test]
+    fn plain_local_unaffected_after_load() {
+        assert_parity("zmodload zsh/param/private; () { local q=9; print $q }");
+        assert_parity(
+            "zmodload zsh/param/private; x=g; () { local x=loc; print $x }; print $x",
+        );
+        assert_parity(
+            "typeset -g gg=5; zmodload zsh/param/private; () { local gg=7; gg=8; print $gg }; print $gg",
+        );
+    }
+
+    /// A `local -P` private is hidden from a nested function (fall-through
+    /// read of the shadowed global), same as `private -P`.
+    #[test]
+    fn local_private_hidden_in_nested_scope() {
+        assert_parity(
+            "zmodload zsh/param/private; () { local -P p=1; g() { print ${p:-unset} }; g; print $p }",
+        );
+    }
+}

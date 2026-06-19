@@ -1994,6 +1994,25 @@ impl modulestab {
             .unwrap_or(false)
     }
 
+    /// Whether a module is BOUND — its setup_/boot_ has actually run.
+    /// Mirrors the `zmodload -e` existence test (bin_zmodload_exist,
+    /// c:Src/module.c:2637): the union slot `m->u.handle` is non-NULL
+    /// (handle for dlopen, linked for a static module) and the module is
+    /// not mid-unload. Distinct from `is_loaded()` / `module_loaded()`,
+    /// which key off `MOD_LINKED` — a flag `register_builtin_modules`
+    /// pre-seeds for every statically-compiled module at startup, so it
+    /// is true before `zmodload` ever runs. Use this for "was the module
+    /// actually loaded by the user" gates.
+    pub fn is_bound(&self, name: &str) -> bool {
+        self.modules
+            .get(name)
+            .map(|m| {
+                (m.handle.is_some() || m.linked.is_some())
+                    && (m.node.flags & MOD_UNLOAD) == 0
+            })
+            .unwrap_or(false)
+    }
+
     /// List all loaded modules
     pub fn list_loaded(&self) -> Vec<&str> {
         self.modules

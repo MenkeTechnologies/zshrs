@@ -466,6 +466,25 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
             ); // c:2710 ensurefeature
         }
     }
+    // c:Src/Modules/param_private.c:682-685 setup_ — loading
+    // zsh/param/private REPLACES the `local` builtintab node's
+    // handlerfunc + optstr with bin_private's ("Even more horrible
+    // hack"), so once the module is loaded `local` IS bin_private: it
+    // accepts the -P/-Pa private-scope flags, and without -P delegates
+    // to bin_typeset, which already treats `local` and `private`
+    // identically (is_locallike, builtin.rs:3666). Replicate the swap by
+    // routing `local` through the `private` node only after the module
+    // is loaded — before then, `local -P` still errors "bad option: -P"
+    // exactly like stock zsh. The `private` node carries the augmented
+    // optstr (with P) that the `local` node lacks.
+    if name == "local"
+        && crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_bound("zsh/param/private"))
+            .unwrap_or(false)
+    {
+        return dispatch_builtin_raw("private", args);
+    }
     // c:Bugs #475/#504/#555 — bash-only builtins (`mapfile`,
     // `readarray`, `compopt`) should emit "command not found" in
     // `--zsh` mode matching zsh's external-command-lookup miss.
