@@ -5897,16 +5897,25 @@ pub fn paramsubst(
                     } else {
                         pat
                     };
-                    // c:Src/params.c:1513-1514 — `if (scanflags &
-                    // SCANPM_WANTKEYS) *inv = (ind || !(scanflags &
-                    // SCANPM_WANTVALS))`. The OUTER `(k)` paramflag
-                    // (hkeys=SCANPM_WANTKEYS) flips a subscript to return
-                    // the matched INDEX, not the value: `${(k)a[(R)y]}`
-                    // yields the 1-based position. Gated so plain
-                    // `${a[(R)y]}` (no (k)) still returns the value.
-                    let want_keys_index =
-                        (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
-                    let return_index = flags.contains('I') || flags.contains('i') || want_keys_index; // c:1412/1416 ind=1 ; c:1513 WANTKEYS
+                    // c:Src/params.c:1513-1516 — the OUTER paramflags
+                    // override the subscript's index-vs-value (`*inv`):
+                    //   if (WANTKEYS)      *inv = (ind || !WANTVALS);
+                    //   else if (WANTVALS) *inv = 0;
+                    //   else               *inv = ind;
+                    // `(k)` (WANTKEYS) flips a subscript to the INDEX
+                    // (`${(k)a[(R)y]}` → position); `(v)` (WANTVALS)
+                    // FORCES the value even when `(i)`/`(I)` would return
+                    // the index (`${(v)h[(i)b]}` → the element, not 3).
+                    // `ind` is the subscript's own i/I flag. Gated so a
+                    // bare `${a[(R)y]}` (no (k)/(v)) is unchanged.
+                    let ind = flags.contains('I') || flags.contains('i'); // c:1412/1416 ind=1
+                    let return_index = if (hkeys & SCANPM_WANTKEYS) != 0 {
+                        ind || (hvals & SCANPM_WANTVALS) == 0 // c:1513
+                    } else if (hvals & SCANPM_WANTVALS) != 0 {
+                        false // c:1515 — (v) forces value
+                    } else {
+                        ind // c:1518
+                    };
                     let down = flags.contains('I') || flags.contains('R'); // c:1416/c:1418 down=1
                     let exact = flags.contains('e'); // c:Src/params.c:1419 e flag — literal compare, no glob
                     let nth = num.unwrap_or(1).max(1) as usize;
