@@ -8168,28 +8168,40 @@ impl ZshCompiler {
             self.emit_cmd_pop();
             return;
         }
-        self.compile_arith_str(expr);
-        self.builder.emit(Op::LoadInt(0), 0);
-        self.builder.emit(Op::NumNe, 0);
+        // c:Src/exec.c:5234-5265 execarith / Src/math.c:458,1500 — a
+        // `(( expr ))` command is evaluated through the FAITHFUL math
+        // evaluator (matheval), which records the result in `lastmathval`.
+        // `functions -M` math functions return that value (c:math.c:1117),
+        // so a math fn whose last `(( ))` is a simple expr (zmathfunc
+        // `sum`'s `(( sum ))`) needs it set. The old ArithCompiler fast
+        // path computed the result for STATUS only and never set
+        // lastmathval, so such functions returned a stale value. Route
+        // through BUILTIN_ARITH_EVAL (same as the needs_eval/pre-check
+        // arms above) so lastmathval is always recorded. zsh itself has
+        // no fast path — every `(( ))` goes through the math evaluator;
+        // this also keeps the soft-error → status 2 recovery uniform
+        // (#154). (C-style `for ((;;))` uses compile_for_arith, NOT this
+        // path, so loop-counter perf is unaffected.)
+        let idx_const = self.builder.add_constant(Value::str(inner_arith));
+        self.builder.emit(Op::LoadConst(idx_const), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
+        // result string → status: 0 if non-zero, 1 if "0".
+        let zero_const = self.builder.add_constant(Value::str("0"));
+        self.builder.emit(Op::LoadConst(zero_const), 0);
+        self.builder.emit(Op::StrEq, 0);
         let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
-        self.builder.emit(Op::LoadInt(1), 0);
+        self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::SetStatus, 0);
         let end_jump = self.builder.emit(Op::Jump(0), 0);
         let true_target = self.builder.current_pos();
         self.builder.patch_jump(true_jump, true_target);
-        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::LoadInt(1), 0);
         self.builder.emit(Op::SetStatus, 0);
         let end = self.builder.current_pos();
         self.builder.patch_jump(end_jump, end);
-        // c:Src/exec.c:5262-5265 — `if (errflag) { errflag &=
-        //   ~ERRFLAG_ERROR; return 2; }`. The math command (`(( ... ))`)
-        // recovers from soft errors (readonly write, division by zero,
-        // etc.) by clearing ERRFLAG_ERROR and returning status 2. The
-        // needs_eval + pre_check arms above already invoke
-        // BUILTIN_ARITH_CMD_FINISH for this; the ArithCompiler fast
-        // path skipped it, so a readonly-write inside `(( x = 10 ))`
-        // aborted the script instead of setting $? = 2 and continuing.
-        // Bug #154 in docs/BUGS.md.
+        // c:Src/exec.c:5262-5265 — soft-error recovery: clear
+        // ERRFLAG_ERROR + status 2 so the next statement runs (#154).
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
             0,

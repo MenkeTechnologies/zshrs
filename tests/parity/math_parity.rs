@@ -765,3 +765,40 @@ mod mathfunc_atan_arity {
         assert_parity("zmodload zsh/mathfunc; print $(( fmod(10,3) ))");
     }
 }
+
+/// A `(( expr ))` command records its result in `lastmathval`
+/// (c:Src/math.c:458,1500), which `functions -M` math functions return
+/// (c:math.c:1117). The old ArithCompiler fast path skipped that, so a
+/// math fn whose last `(( ))` is a simple expr (zmathfunc `sum`'s
+/// `(( sum ))`) returned a stale value.
+mod arith_command_lastmathval {
+    use super::*;
+
+    #[test]
+    fn zmathfunc_sum() {
+        assert_parity("autoload -Uz zmathfunc && zmathfunc; echo $(( sum(42,43,44) ))");
+    }
+
+    #[test]
+    fn zmathfunc_min_max_sum_combined() {
+        assert_parity(
+            "autoload -Uz zmathfunc && zmathfunc; echo $(( min(42,43,44) )) $(( max(42,43,44) )) $(( sum(42,43,44) ))",
+        );
+    }
+
+    #[test]
+    fn math_func_returns_bare_arith() {
+        assert_parity("s(){ (( 99 )) }; functions -M mn 1 -1 s; echo $(( mn(1) ))");
+    }
+
+    #[test]
+    fn math_func_returns_var_arith() {
+        assert_parity("s(){ local x=$1; (( x )) }; functions -M mn 1 -1 s; echo $(( mn(7) ))");
+    }
+
+    /// `(( ))` command status + assignment still correct (regression).
+    #[test]
+    fn arith_command_status_and_assign() {
+        assert_parity("i=5; (( i++ )); echo $i; (( 0 )); echo $?; (( 5>3 )); echo $?");
+    }
+}
