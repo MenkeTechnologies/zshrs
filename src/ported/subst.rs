@@ -6585,7 +6585,13 @@ pub fn paramsubst(
                         ))
                     })(sub)
                 {
-                    let _ = word_flags;
+                    // c:Src/params.c/utils.c findword — lowercase `(w)`
+                    // (and `(f)`/`(p)`) count WORDS, skipping empty
+                    // fields between adjacent separators; uppercase
+                    // `(W)` keeps empty fields. zshrs's custom-sep split
+                    // kept empties for both, so `s="a::b"; ${s[(ws.:.)2]}`
+                    // gave "" (the empty middle) instead of zsh's "b".
+                    let keep_empty = word_flags.contains('W');
                     if let Ok(idx_n) = num_str.parse::<i64>() {
                         // Split scalar by sep. For default whitespace
                         // sep, split on any whitespace char (matches
@@ -6599,6 +6605,7 @@ pub fn paramsubst(
                             scalar
                                 .split(sep.as_str())
                                 .map(|s| s.to_string())
+                                .filter(|w| keep_empty || !w.is_empty())
                                 .collect()
                         };
                         let len = words.len() as i64;
