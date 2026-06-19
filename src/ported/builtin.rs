@@ -15219,13 +15219,25 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // evaluated as a math expression. The previous port did
                     // only the constant parse, so `printf %g f` / `%f 1.5+1`
                     // yielded 0.
-                    let n: f64 = a.parse::<f64>().unwrap_or_else(|_| {
-                        match matheval(&a) {
-                            Ok(m) if m.type_ == crate::ported::math::MN_FLOAT => m.d,
-                            Ok(m) => m.l as f64,
-                            Err(_) => 0.0,
-                        }
-                    });
+                    let n: f64 = if let Some(rest) =
+                        a.strip_prefix('\'').or_else(|| a.strip_prefix('"'))
+                    {
+                        // c:Src/builtin.c:5431-5447 — a leading `'`/`"` makes
+                        // the value the numeric char code of the next char,
+                        // for FLOAT conversions too (shared with int):
+                        // `printf '%.1E' \'B` → 66 → 6.6E+01. The int arm
+                        // (parse_int_arg) already did this; the float arm
+                        // skipped it, yielding 0.
+                        rest.chars().next().map(|c| c as i64 as f64).unwrap_or(0.0)
+                    } else {
+                        a.parse::<f64>().unwrap_or_else(|_| {
+                            match matheval(&a) {
+                                Ok(m) if m.type_ == crate::ported::math::MN_FLOAT => m.d,
+                                Ok(m) => m.l as f64,
+                                Err(_) => 0.0,
+                            }
+                        })
+                    };
                     // c:Src/builtin.c printf %g/%G uses libc snprintf
                     // which strips trailing zeros; %e/%E uses scientific.
                     out.push_str(&format_spec_float_conv(&spec, n, conv));
