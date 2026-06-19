@@ -383,3 +383,33 @@ mod round_ao_pins {
         assert_parity("whence -w print");
     }
 }
+
+/// Multi-name function definition `f1 f2 f3() { body }` defines EVERY
+/// name with the same body under MULTIFUNCDEF (c:Src/parse.c:2055-2068).
+/// The parser previously kept only the last name, leaving the rest
+/// undefined.
+mod multi_name_funcdef {
+    use super::*;
+
+    #[test]
+    fn three_names_all_defined() {
+        assert_parity("setopt multifuncdef; f1 f2 f3() { print body $0 }; f1; f2; f3");
+    }
+
+    #[test]
+    fn two_names_share_body() {
+        assert_parity("setopt multifuncdef; g1 g2() { print hi $0 }; g1; g2");
+    }
+
+    /// Single-name definition still works (regression guard).
+    #[test]
+    fn single_name_unaffected() {
+        assert_parity("solo() { echo single }; solo");
+    }
+
+    /// Anonymous function with args still works (regression guard).
+    #[test]
+    fn anonymous_function_unaffected() {
+        assert_parity("() { echo anon $1 } arg1");
+    }
+}
