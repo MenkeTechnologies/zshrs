@@ -10832,6 +10832,12 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
             // → `typeset -Ax h=( )`.
             if (printflags & PRINT_LINE) == 0 {
                 print!(" ");
+            } else if had_entries {
+                // c:Src/params.c — under PRINT_LINE (`typeset -p1`) the
+                // closing paren sits on its OWN line after the last
+                // `[k]=v` entry: `(\n  [k]=v\n)`. Without this newline the
+                // `)` was glued to the last entry (`[k]=v)`).
+                print!("\n");
             }
             print!(")");
         }
