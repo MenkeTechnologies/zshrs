@@ -2693,7 +2693,7 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                 zshlex();
                 // Check for function definition foo() { ... }
                 if words.len() == 1 && tok() == INOUTPAR {
-                    return parse_inline_funcdef(words.pop().unwrap());
+                    return parse_inline_funcdef(std::mem::take(&mut words));
                 }
                 // `{name}>file` named-fd redirect: the lexer doesn't
                 // recognize this shape, so the bare word `{name}`
@@ -2753,8 +2753,14 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     crate::ported::utils::zwarn("defining function based on alias `(unknown)'");
                     return None;
                 }
-                // foo() { ... } style function
-                return parse_inline_funcdef(words.pop().unwrap());
+                // foo() { ... } / multi-name `f1 f2 f3() { ... }` style
+                // function. c:Src/parse.c:2055-2068 — under MULTIFUNCDEF
+                // every preceding word names the SAME body; pass them all
+                // so each is registered (the gate above already rejected
+                // multi-name without MULTIFUNCDEF). Previously only the
+                // last word (`words.pop()`) was defined, so `f1 f2 f3()
+                // {...}` left f1/f2 as "command not found".
+                return parse_inline_funcdef(std::mem::take(&mut words));
             }
             _ => break,
         }
@@ -9151,7 +9157,7 @@ fn parse_cursh() -> Option<ZshCommand> {
 /// consumed and pushed by par_simple before this method fires.
 /// C source: handled inline in par_simple's INOUTPAR-after-name
 /// arm (parse.c:1836-2228).
-fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
+fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
     // par_simple's STRING loop left `incmdpos = 0`; the funcdef body
     // `{ ... }` requires `incmdpos = 1` so the lexer recognises `{`
     // as INBRACE_TOK (current-shell block opener) instead of a
@@ -9207,7 +9213,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
             .filter(|s| !s.is_empty());
         zshlex();
         Some(ZshCommand::FuncDef(ZshFuncDef {
-            names: vec![name],
+            names,
             body: Box::new(body),
             tracing: false,
             auto_call_args: None,
@@ -9238,7 +9244,7 @@ fn parse_inline_funcdef(name: String) -> Option<ZshCommand> {
                     flags: ListFlags::default(),
                 };
                 Some(ZshCommand::FuncDef(ZshFuncDef {
-                    names: vec![name],
+                    names,
                     body: Box::new(ZshProgram { lists: vec![list] }),
                     tracing: false,
                     auto_call_args: None,

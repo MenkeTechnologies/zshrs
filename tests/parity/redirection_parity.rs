@@ -588,3 +588,37 @@ mod clobber_empty {
         );
     }
 }
+
+/// Here-strings and here-documents must spool through a temp file whose
+/// permissions ignore the umask (c:Src/utils.c gettempfile → mkstemp,
+/// 0600). The previous port used `std::fs::write` which honors the
+/// umask, so under `umask 0777` the temp file landed mode 0000 and the
+/// read-back reopen failed → empty stdin.
+mod restrictive_umask_heredoc {
+    use super::*;
+
+    #[test]
+    fn here_string_under_umask_0777() {
+        let d = tdir();
+        assert_parity_in(d.path(), "(umask 0777; cat <<<miracle)");
+    }
+
+    #[test]
+    fn here_doc_under_umask_0777() {
+        let d = tdir();
+        assert_parity_in(d.path(), "(umask 0777; cat <<EOF\nhello there\nEOF\n)");
+    }
+
+    #[test]
+    fn read_from_here_string_under_umask() {
+        let d = tdir();
+        assert_parity_in(d.path(), r#"(umask 0777; read x <<<abc; echo "[$x]")"#);
+    }
+
+    /// Normal umask still works (regression guard).
+    #[test]
+    fn here_string_normal_umask() {
+        let d = tdir();
+        assert_parity_in(d.path(), "umask 022; cat <<<works");
+    }
+}
