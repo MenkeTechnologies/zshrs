@@ -1201,11 +1201,21 @@ fn gettok() -> lextok {
     //      expanding AND (not interactive OR not reading stdin OR
     //      reading from a string).
     //
-    // `expanding` and `strin` globals aren't ported yet — treated as 0
-    // (the safe default for non-completion non-string-eval paths).
+    // c:679-681 — `(!lexflags || (lexflags & LEXFLAGS_COMMENTS)) &&
+    //   !expanding && (!interact || unset(SHINSTDIN) || strin)`.
+    // `expanding` (hist.c:65) and `strin` (input.c) ARE ported; the
+    // `|| strin` term is load-bearing: when a file is sourced from an
+    // INTERACTIVE shell, `interact` is set and SHINSTDIN is set, so
+    // without `strin` the `#` in `.zshrc`/`.zshenv`/`~/.cargo/env`
+    // (`#!/bin/sh`, `# comment`) was parsed as a command. `strin` is
+    // set while reading a sourced file / string-eval, which is exactly
+    // when comments must still strip regardless of interactivity.
     let lexflags = LEX_LEXFLAGS.get();
-    let allow_comment_via_flags =
-        (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0) && (!interact() || unset(SHINSTDIN));
+    let expanding = crate::ported::hist::expanding.load(std::sync::atomic::Ordering::SeqCst) != 0;
+    let strin = crate::ported::input::strin.with(|c| c.get()) != 0;
+    let allow_comment_via_flags = (lexflags == 0 || (lexflags & LEXFLAGS_COMMENTS) != 0)
+        && !expanding
+        && (!interact() || unset(SHINSTDIN) || strin);
     if c as i32 == crate::ported::hist::hashchar.load(std::sync::atomic::Ordering::SeqCst)
         && !LEX_NOCOMMENTS.get()
         && (isset(INTERACTIVECOMMENTS) || allow_comment_via_flags)

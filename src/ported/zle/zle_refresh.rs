@@ -1116,6 +1116,27 @@ pub fn zrefresh() {
     };
     let cursor_col = prompt_width + countprompt(&buffer_before_cursor);
 
+    if std::env::var_os("ZSHRS_ZLE_LOG").is_some() {
+        use std::io::Write;
+        let zl: String = ZLELINE.lock().unwrap().iter().collect();
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/zshrs_zle.log")
+        {
+            let _ = writeln!(
+                f,
+                "refresh: cols={} prompt_w={} cursor_cs={} cursor_col={} ll={} line={:?}",
+                cols,
+                prompt_width,
+                cursor,
+                cursor_col,
+                ZLELL.load(Ordering::SeqCst),
+                zl
+            );
+        }
+    }
+
     // Horizontal scroll if the cursor approaches the right edge.
     // Mirrors zle_refresh.c's `winw` clamp logic — without the full
     // multi-line wrap path our single-line shell uses scroll instead.
@@ -1220,12 +1241,18 @@ pub fn zrefresh() {
     //          of the controlling tty.
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    // ---- OUTPUT SWAP -----------------------------------------------------
-    // The full-repaint string above is now SUPERSEDED by the NBUF/OBUF diff
-    // emitted by the refreshline loop at the end of this function. The
-    // build is kept (not written) so the swap is one revertable change:
-    // restore this write_loop and delete the refreshline loop to revert.
-    let _ = (out_fd, &handle); // formerly: write_loop(out_fd, handle.as_bytes())
+    // ---- OUTPUT: full single-line repaint --------------------------------
+    // The NBUF/OBUF diff + refreshline path below mis-positions the cursor
+    // (it emits a per-character CR + cursor-up that scrambles the line), so
+    // the interactive editor was unusable once ZLE was wired into the input
+    // loop. Until that diff path is correct, drive the display from the
+    // full-repaint string built above: `\r\x1b[K` clears the line, then the
+    // prompt + buffer (+ optional rprompt) are written and a single
+    // `\r\x1b[<col>C` places the cursor. This is the documented revert
+    // ("restore this write_loop and skip the refreshline loop"). Returning
+    // here keeps the broken diff machinery from ever writing to the tty.
+    let _ = write_loop(out_fd, handle.as_bytes());
+    return;
 
     // c:1739 — the build records the cursor's video position (nvln/nvcs) as it
     // lays cells; captured out of the build block for the final moveto. Init

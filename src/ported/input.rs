@@ -443,36 +443,79 @@ pub fn inputline() -> i32 {
     // on the first line of a command, PS2 (continuation) otherwise.
     // `ingetcpmptl` is the SOURCE prompt string fed to promptexpand.
     let mut ingetcpmptl: Option<String> = None;
+    let mut ingetcpmptr: Option<String> = None;
     if crate::ported::zsh_h::interact() && isset(SHINSTDIN) {
         // c:372
         if !crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get()) {
-            // c:373-377 — continuation line → PS2 (rprompt2 unsupported here).
+            // c:373-377 — continuation line → PS2 / RPS2.
             ingetcpmptl = crate::ported::params::getsparam("PS2");
+            ingetcpmptr = crate::ported::params::getsparam("RPS2");
         } else {
-            // c:379-382 — first line → PS1 (rprompt unsupported here).
+            // c:379-382 — first line → PS1 / RPS1.
             ingetcpmptl = crate::ported::params::getsparam("PS1");
+            ingetcpmptr = crate::ported::params::getsparam("RPS1");
         }
     }
-    // c:385-405 — non-ZLE input path. C only prints the prompt here when
-    // NOT using the ZLE line editor (`!(… && USEZLE)`); zshrs has no
-    // ZLE_CMD_READ line-reader yet, so this path is ALWAYS taken — print
-    // the expanded prompt to fd 2 before reading, exactly as C does for a
-    // non-ZLE interactive session (`promptexpand` → `unmetafy` →
-    // `write_loop(2, …)`). Gated on `interact && SHINSTDIN` so piped /
-    // non-interactive input prints no prompt.
-    if crate::ported::zsh_h::interact() && isset(SHINSTDIN) {
-        // c:392
-        // c:401-403 — `promptexpand(*ingetcpmptl)` → `write_loop(2, …)`.
-        let (expanded, _, _) = crate::ported::prompt::promptexpand(
-            ingetcpmptl.as_deref().unwrap_or(""), // c:401
-            0,
-            None,
+    // c:385 — `if (!(interact && isset(SHINSTDIN) && SHTTY != -1 &&
+    //   isset(USEZLE)))`: read via the ZLE line editor when interactive
+    // on a real tty with USEZLE; otherwise read straight from the input
+    // file (printing a prompt first).
+    // The ZLE line editor is on for any interactive shell on a real tty
+    // with USEZLE set (zsh's standard gate) — `unsetopt zle` turns it off
+    // and falls back to the cooked reader below, exactly as in zsh.
+    let use_zle = crate::ported::zsh_h::interact()
+        && isset(SHINSTDIN)
+        && crate::ported::init::SHTTY.load(std::sync::atomic::Ordering::Relaxed) != -1
+        && isset(crate::ported::zsh_h::USEZLE);
+    let line = if !use_zle {
+        // c:391-406 — non-ZLE: print the expanded prompt to fd 2 (only
+        // when still interactive, e.g. running under emacs), then
+        // shingetline. Gated on `interact && SHINSTDIN` so piped /
+        // non-interactive input prints no prompt.
+        if crate::ported::zsh_h::interact() && isset(SHINSTDIN) {
+            // c:401-403 — `promptexpand(*ingetcpmptl)` → `write_loop(2, …)`.
+            let (expanded, _, _) = crate::ported::prompt::promptexpand(
+                ingetcpmptl.as_deref().unwrap_or(""), // c:401
+                0,
+                None,
+            );
+            let pptbuf = crate::ported::utils::unmetafy_str(&expanded); // c:401 unmetafy
+            let _ = crate::ported::utils::write_loop(2, &pptbuf); // c:403
+        }
+        shingetline() // c:406 ingetcline = shingetline()
+    } else {
+        // c:413-423 — ZLE path. `int flags = ZLRF_HISTORY|ZLRF_NOSETTY;
+        //   if (isset(IGNOREEOF)) flags |= ZLRF_IGNOREEOF;
+        //   ingetcline = zleentry(ZLE_CMD_READ, ingetcpmptl, ingetcpmptr,
+        //                         flags, context); histdone |= HISTFLAG_SETTY;`
+        // zleentry dispatches to the ZLE module's zle_main_entry; zshrs
+        // links ZLE in (no module-load hop) so call it directly.
+        let mut flags = crate::ported::zsh_h::ZLRF_HISTORY | crate::ported::zsh_h::ZLRF_NOSETTY;
+        if isset(crate::ported::zsh_h::IGNOREEOF) {
+            flags |= crate::ported::zsh_h::ZLRF_IGNOREEOF;
+        }
+        let mut lp = ingetcpmptl.clone();
+        let mut rp = ingetcpmptr.clone();
+        let mut args = crate::ported::zle::zle_main::zle_main_entry_args::Read {
+            lp: &mut lp,
+            rp: &mut rp,
+            flags,
+            context: 0, // ZLCON_LINE_START — normal command line read
+        };
+        let r = crate::ported::zle::zle_main::zle_main_entry(
+            crate::ported::zsh_h::ZLE_CMD_READ,
+            &mut args,
         );
-        let pptbuf = crate::ported::utils::unmetafy_str(&expanded); // c:401 unmetafy
-        let _ = crate::ported::utils::write_loop(2, &pptbuf); // c:403
-    }
-    // c:366 — read a line from SHIN.
-    let line = shingetline(); // c:406 ingetcline = shingetline()
+        // c:423 — `histdone |= HISTFLAG_SETTY;` (defer tty restore to the
+        // end of the current input via the history mechanism).
+        crate::ported::hist::histdone.fetch_or(
+            crate::ported::zsh_h::HISTFLAG_SETTY,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        // zleread returns "" on EOF (^D) and "…\n" otherwise, matching the
+        // C NULL-vs-line distinction the empty-check below relies on.
+        r.unwrap_or_default()
+    };
     // c:425-427 — `if (!ingetcline) { ... return lexstop = 1; }`.
     // shingetline returns "" only at real EOF (a blank line is "\n").
     if line.is_empty() {

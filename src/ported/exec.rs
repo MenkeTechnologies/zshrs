@@ -5704,6 +5704,21 @@ pub fn doshfunc(
     // restore at scope end. Bug #513.
     let funcsave_optind: Option<String> = crate::ported::params::getsparam("OPTIND");
     let funcsave_optarg: Option<String> = crate::ported::params::getsparam("OPTARG");
+    // c:5966-5969 — `if (!isset(POSIXBUILTINS)) { zoptind = 1; optcind = 0; }`.
+    // The snapshot above is only half the contract: C also RESETS the
+    // counter on entry so an inner `getopts` loop starts fresh at the
+    // first positional, independent of the caller's OPTIND. Without
+    // this, a function whose body runs `getopts` after the caller
+    // advanced OPTIND mis-parses its own args — e.g. `add-zsh-hook`
+    // (which `getopts`-parses `precmd func`) printed its usage and
+    // failed when invoked from a config that had run getopts earlier.
+    // zshrs keeps the counter in the $OPTIND param plus the ZOPTIND/
+    // OPTCIND trackers getopts syncs against; reset all three.
+    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXBUILTINS) {
+        crate::ported::params::setiparam("OPTIND", 1); // c:5967 zoptind = 1
+        crate::ported::builtin::ZOPTIND.store(1, Ordering::Relaxed);
+        crate::ported::builtin::OPTCIND.store(0, Ordering::Relaxed); // c:5968 optcind = 0
+    }
 
     // c:5914 — `memcpy(funcsave->opts, opts, sizeof(opts));` — option
     // snapshot. Port wraps opts in OPTS_LIVE; capture the live state
@@ -7436,6 +7451,10 @@ thread_local! {
 /// bin keeps the executor alive until `zsh_main` exits the process).
 pub fn install_session_executor(exec: &mut crate::vm_helper::ShellExecutor) {
     SESSION_EXECUTOR.with(|c| c.set(Some(exec as *mut crate::vm_helper::ShellExecutor)));
+    // Mirror the pointer into the bridge so `with_session_context` can
+    // establish a VM context for startup rc-sourcing (run_init_scripts,
+    // c:1914) before the loop's first execode enters one.
+    crate::fusevm_bridge::register_session_executor(exec);
 }
 
 /// zshrs `execode` — run an already-parsed `ZshProgram` (Src/exec.c:220

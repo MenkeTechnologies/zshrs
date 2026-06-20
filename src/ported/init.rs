@@ -1765,7 +1765,33 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
     init_signals(); // c:1911
     init_bltinmods(); // c:1912
     crate::ported::builtin::init_builtins(); // c:1913
-    run_init_scripts(); // c:1914
+
+    // Initialize the ZLE line editor for interactive sessions BEFORE the
+    // rc files are sourced, so a user's `bindkey` in .zshrc/.zshenv
+    // layers onto the populated emacs/main keymap instead of being wiped
+    // by a later default_bindings(). C loads `zsh/zle` during init
+    // (init.c via the module system); zshrs links ZLE statically, so the
+    // equivalent setup — register the built-in widgets (init_thingies),
+    // create the keymap name table, and build + select the default
+    // keymaps (default_bindings sets curkeymap="main") — runs here once.
+    // Guarded by zle_load_state so it never re-runs and clobbers user
+    // bindings. Gated on `interact` so non-interactive `-c` shells skip
+    // ZLE entirely (they read via shingetline, not the editor).
+    if interact() && zle_load_state.load(Ordering::SeqCst) == 0 {
+        crate::ported::zle::zle_thingy::init_thingies();
+        crate::ported::zle::zle_keymap::createkeymapnamtab();
+        crate::ported::zle::zle_keymap::default_bindings();
+        zle_load_state.store(1, Ordering::SeqCst); // c:1739 — ZLE loaded
+    }
+
+    // c:1914 — run_init_scripts() sources .zshenv/.zshrc/.zlogin via
+    // source(). That runs BEFORE the loop's first execode establishes a
+    // VM execution context, so the sourced bodies must execute under an
+    // explicit SESSION_EXECUTOR context or they silently no-op (rc files
+    // ignored). Scope it to JUST this call — the loop below enters its
+    // own per-command context, and a broad/global executor scope would
+    // re-enter on nested command substitution and hang.
+    crate::fusevm_bridge::with_session_context(run_init_scripts); // c:1914
     setupshin(runscript.as_deref()); // c:1915
     init_misc(cmd.as_deref(), &zsh_name); // c:1916
 

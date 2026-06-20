@@ -323,6 +323,27 @@ impl style_table {
         })
     }
 
+    /// WARNING: NOT IN ZUTIL.C — method on the Rust-only `style_table`
+    /// wrapper. Same best-pattern-match walk as `get`, but returns the
+    /// matched entry's values AND whether it is an `-e` (eval) style, so
+    /// `lookupstyle` can decide to execute the body (C reads the matched
+    /// `Stypat`'s `eval` field inline; the wrapper keeps the map private).
+    pub fn get_match(&self, context: &str, style: &str) -> Option<(Vec<String>, bool)> {
+        self.styles.get(style).and_then(|patterns| {
+            patterns
+                .iter()
+                .find(|p| {
+                    if p.pat == "*" {
+                        true
+                    } else {
+                        patcompile(&{ let mut __pat_tok = (&p.pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
+                            .map_or(false, |prog| pattry(&prog, context))
+                    }
+                })
+                .map(|p| (p.vals.clone(), p.eval.is_some()))
+        })
+    }
+
     /// WARNING: NOT IN ZUTIL.C — method on Rust-only `style_table` wrapper.
     /// C inlines this pattern at every callsite; Rust factors it onto the wrapper.
     /// Remove style/pattern entries from the table. Mirrors the
@@ -803,19 +824,20 @@ pub fn addstyle(name: &str) -> Option<Style> {
 /// Port of `evalstyle(Stypat p)` from Src/Modules/zutil.c:413.
 /// Runs `p.eval` and reads `$reply` (array first, falling back to
 /// scalar form). Returns empty Vec on error or unset.
-pub fn evalstyle(p: &Stypat) -> Vec<String> {
+/// `code` is the joined eval body (the values an `-e` style was
+/// registered with, e.g. `reply=(computed-$((1+1)))`). C runs the
+/// pre-parsed `p->eval` Eprog; zshrs re-runs the stored source through
+/// the live executor, which is equivalent for setting `$reply`.
+pub fn evalstyle(code: &str) -> Vec<String> {
     // c:413
 
     // c:415 — int ef = errflag;
     let ef = errflag.load(Ordering::Relaxed);
     // c:418 — unsetparam("reply");
     unsetparam("reply");
-    // c:419 — execode(p->eval, 1, 0, "style");
-    //         Eprog runner lives in the fusevm bridge; with no
-    //         executable backing the user's `(...)` style value here
-    //         the post-eval $reply read still works when the caller
-    //         pre-populates it (regression tests do this).
-    let _ = p.eval.as_ref();
+    // c:419 — execode(p->eval, 1, 0, "style"): execute the style body so
+    // it can set `$reply`. Runs on the live session executor.
+    let _ = crate::ported::exec::execute_script_zsh_pipeline(code);
     // c:420-425 — restore errflag preserving INT bit only.
     let cur = errflag.load(Ordering::Relaxed);
     errflag.store(ef | (cur & ERRFLAG_INT), Ordering::Relaxed);
@@ -845,15 +867,20 @@ pub fn evalstyle(p: &Stypat) -> Vec<String> {
 pub fn lookupstyle(ctxt: &str, style: &str) -> Vec<String> {
     // c:443
     // c:443-463 — zstyletab->getnode2 + savematch/pattry/restorematch
-    // loop. style_table::get() encapsulates the pat-walk; weight order
-    // is enforced at insert time so first-match wins.
-    match zstyletab.lock() {
-        // c:449
-        Ok(t) => t
-            .get(ctxt, style)
-            .map(|v| v.to_vec()) // c:455 found = p->vals
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
+    // loop. style_table::get_match() encapsulates the pat-walk and also
+    // reports whether the matched entry is an `-e` (eval) style; weight
+    // order is enforced at insert time so first-match wins.
+    let matched = match zstyletab.lock() {
+        Ok(t) => t.get_match(ctxt, style), // (vals, is_eval)
+        Err(_) => None,
+    };
+    // Lock released before evalstyle so the body can touch zstyle/params
+    // without re-entering the table lock.
+    match matched {
+        // c:455-456 — `if (p->eval) return evalstyle(p); return p->vals;`
+        Some((vals, true)) => evalstyle(&crate::ported::utils::zjoin(&vals, ' ')),
+        Some((vals, false)) => vals,
+        None => Vec::new(),
     }
 }
 
@@ -1265,7 +1292,26 @@ pub fn bin_zstyle(
                 Ok(t) => t.get(ctxt, style).is_some(), // c:687 vals != NULL
                 Err(_) => false,
             };
-            setaparam(pname, vals); // c:696 (empty when undefined)
+            // c:696 — `setaparam(args[3], ret)`. C's setaparam routes a
+            // PM_HASHED (associative) target through the hashed-assign
+            // path, treating the flat value list as alternating
+            // key/value pairs. zshrs's setaparam clobbers the assoc into
+            // an indexed array, so detect a PM_HASHED target and use
+            // sethparam (key/val interleave) instead — `typeset -A h;
+            // zstyle -a ctx style h` now populates h's keys.
+            let is_assoc = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get(pname.as_str())
+                        .map(|p| (p.node.flags as u32 & crate::ported::zsh_h::PM_HASHED) != 0)
+                })
+                .unwrap_or(false);
+            if is_assoc {
+                sethparam(pname, vals); // c:696 (assoc: key/val pairs)
+            } else {
+                setaparam(pname, vals); // c:696 (empty when undefined)
+            }
             return if defined { 0 } else { 1 }; // c:689/694
         }
         // -g: handled below (different arg layout).
@@ -1512,7 +1558,14 @@ pub fn bin_zformat(
                     copy.push(bytes[k]); // c:1055
                     k += 1;
                 }
-                if let Some(left_len) = sep_at {
+                // c:1058 — `((cpp==cp && oldc==':') || *cp==':') && cp[1]`:
+                // align ONLY when a colon is present AND the value after it
+                // is non-empty. `empty:` (colon, no value) and `nocolon`
+                // (no colon) both fall to the else and emit just the key —
+                // no padding, no separator. zshrs previously aligned any
+                // colon-bearing spec, leaving a dangling `empty -- `.
+                if sep_at.is_some() && k + 1 < bytes.len() {
+                    let left_len = sep_at.unwrap();
                     // c:1058
                     let after = std::str::from_utf8(&bytes[(k + 1)..]).unwrap_or("");
                     let mut buf = String::with_capacity(pre + sl + after.len());
