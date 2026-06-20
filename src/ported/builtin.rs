@@ -15198,6 +15198,17 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     }
                 }
             }
+            // c:Src/builtin.c:5290 — `/* ignore any size modifier */
+            // if (*c == 'l' || *c == 'L' || *c == 'h') c++;`. zsh accepts
+            // and discards a single length modifier (`%ld`, `%lu`, `%hd`)
+            // — the conversion char that follows determines the type and
+            // C rebuilds the libc format as `%l<conv>` itself. NOT pushed
+            // into `spec`: it would corrupt the format passed to the
+            // format_spec_* helpers. Only one modifier char is skipped,
+            // matching C (so `%lld` then errors on the second `l`).
+            if matches!(iter.peek(), Some('l') | Some('L') | Some('h')) {
+                iter.next();
+            }
             // c:Src/builtin.c:5215/5310 — a `%n$` positional spec sets
             // `curarg` directly; the conversion arms below read from
             // `arg_i`, so point it at the positional index for the
@@ -15226,28 +15237,60 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 }
                 Some('u') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n = parse_int_arg(&a) as u64;
+                    // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
+                    // curarg, &zulongval)) zulongval = mathevali(...)`.
+                    // Unsigned conversions first try a direct unsigned
+                    // parse (so a full-range literal like
+                    // 18446744073709551615 is NOT truncated by the
+                    // signed-math path), then fall back to math eval
+                    // (which wraps a negative result into u64).
+                    let n = crate::ported::utils::zstrtoul_underscore(a.trim())
+                        .unwrap_or_else(|| parse_int_arg(&a) as u64);
                     spec.push('u');
                     out.push_str(&format_spec_uint(&spec, n));
                     arg_i += 1;
                 }
                 Some('x') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n = parse_int_arg(&a) as u64;
+                    // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
+                    // curarg, &zulongval)) zulongval = mathevali(...)`.
+                    // Unsigned conversions first try a direct unsigned
+                    // parse (so a full-range literal like
+                    // 18446744073709551615 is NOT truncated by the
+                    // signed-math path), then fall back to math eval
+                    // (which wraps a negative result into u64).
+                    let n = crate::ported::utils::zstrtoul_underscore(a.trim())
+                        .unwrap_or_else(|| parse_int_arg(&a) as u64);
                     spec.push('x');
                     out.push_str(&format_spec_radix(&spec, n, 'x'));
                     arg_i += 1;
                 }
                 Some('X') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n = parse_int_arg(&a) as u64;
+                    // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
+                    // curarg, &zulongval)) zulongval = mathevali(...)`.
+                    // Unsigned conversions first try a direct unsigned
+                    // parse (so a full-range literal like
+                    // 18446744073709551615 is NOT truncated by the
+                    // signed-math path), then fall back to math eval
+                    // (which wraps a negative result into u64).
+                    let n = crate::ported::utils::zstrtoul_underscore(a.trim())
+                        .unwrap_or_else(|| parse_int_arg(&a) as u64);
                     spec.push('X');
                     out.push_str(&format_spec_radix(&spec, n, 'X'));
                     arg_i += 1;
                 }
                 Some('o') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let n = parse_int_arg(&a) as u64;
+                    // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
+                    // curarg, &zulongval)) zulongval = mathevali(...)`.
+                    // Unsigned conversions first try a direct unsigned
+                    // parse (so a full-range literal like
+                    // 18446744073709551615 is NOT truncated by the
+                    // signed-math path), then fall back to math eval
+                    // (which wraps a negative result into u64).
+                    let n = crate::ported::utils::zstrtoul_underscore(a.trim())
+                        .unwrap_or_else(|| parse_int_arg(&a) as u64);
                     spec.push('o');
                     out.push_str(&format_spec_radix(&spec, n, 'o'));
                     arg_i += 1;
@@ -15293,7 +15336,11 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // spec, then format as a one-char string. The previous port
                     // pushed the char raw, dropping width.
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let ch_str = a.chars().next().map(|c| c.to_string()).unwrap_or_default();
+                    // c:5300-5305 — `intval = curarg ? *curarg : 0`. An
+                    // empty or missing arg yields `*curarg == '\0'`, so
+                    // `%c` emits a NUL byte (not nothing). zsh:
+                    // `printf "%c" "" | od` → 00.
+                    let ch_str = a.chars().next().unwrap_or('\0').to_string();
                     let mut cspec = spec.split('.').next().unwrap_or(spec.as_str()).to_string();
                     cspec.push('s');
                     out.push_str(&format_spec_str(&cspec, &ch_str));
@@ -15456,107 +15503,17 @@ fn parse_int_arg(s: &str) -> i64 {
     if let Some(rest) = s.strip_prefix('\'').or_else(|| s.strip_prefix('"')) {
         return rest.chars().next().map(|c| c as i64).unwrap_or(0);
     }
-    let t = s.trim();
-    if t.is_empty() {
-        return 0;
-    }
-    // Negative sign handled at the top so the inner branches don't
-    // each duplicate the prefix logic.
-    let (neg, body) = if let Some(b) = t.strip_prefix('-') {
-        (true, b)
-    } else if let Some(b) = t.strip_prefix('+') {
-        (false, b)
-    } else {
-        (false, t)
-    };
-    // Hex: 0x.. / 0X..
-    let parsed: i64 = if let Some(h) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
-        i64::from_str_radix(h, 16).unwrap_or(0)
-    // BASE#NNN
-    } else if let Some(idx) = body.find('#') {
-        let base_str = &body[..idx];
-        let digits = &body[idx + 1..];
-        if let Ok(base) = base_str.parse::<u32>() {
-            if (2..=36).contains(&base) {
-                i64::from_str_radix(digits, base).unwrap_or(0)
-            } else {
-                0
-            }
-        } else {
-            0
-        }
-    } else {
-        // c:Src/builtin.c — printf's %d arg accepts arith
-        // expressions, not just plain integers. zsh's
-        // bin_printf at c:4753 routes through mathevalarg/
-        // matheval which evaluates "1+2", "a*2", etc. Bare
-        // parse-int falls back to math.rs::mathevall on failure
-        // (returning 0 on real error, matching zsh's
-        // "no math result" fallback).
-        //
-        // c:Src/utils.c:2511 — `zstrtol` accepts overflow with
-        // truncation and a "number truncated after N digits"
-        // warning. Bug #258 in docs/BUGS.md — plain bare
-        // `parse::<i64>` returns None on overflow, so the math
-        // fallback fires and silently returns 0. Mirror C by
-        // detecting all-digit overflow input, emitting the
-        // warning, and wrapping via u128 → i64 cast (matching
-        // zsh's truncated-then-cast semantics).
-        match body.parse::<i64>() {
-            Ok(n) => n,
-            Err(_) if body.chars().all(|c| c.is_ascii_digit()) && !body.is_empty() => {
-                // i64 overflow on an all-digit input. C zstrtol
-                // (Src/utils.c:2511) accepts digits up to the
-                // overflow point — typically 19 digits for i64 —
-                // then sets `trunc` at the first overflowing
-                // digit, divides calc back by the base (drops the
-                // overflowing digit), and returns the result as
-                // signed i64. So "99999999999999999999" truncates
-                // to "9999999999999999999" (19 nines), parses as
-                // u64, casts to i64 = -8446744073709551617.
-                let truncated = if body.len() > 19 {
-                    &body[..19]
-                } else {
-                    body
-                };
-                let val = truncated.parse::<u64>().map(|u| u as i64).unwrap_or(0);
-                let trunc_after = truncated.len();
-                zwarnnam(
-                    "printf",
-                    &format!("number truncated after {} digits: {}", trunc_after, body),
-                );
-                val
-            }
-            Err(_) => {
-                // c:Src/builtin.c — printf %d accepts a float
-                // operand and truncates toward zero (POSIX). The
-                // bare `body.parse::<i64>()` fails on "3.14" so
-                // route through f64 parse before falling back to
-                // matheval. Verified vs /opt/homebrew/bin/zsh:
-                //   `printf "%d" 3.14`   → 3
-                //   `printf "%i" -5.99`  → -5
-                if let Ok(f) = body.parse::<f64>() {
-                    f.trunc() as i64
-                } else {
-                    let m = matheval(body)
-                        .map(|n| {
-                            if n.type_ == crate::ported::zsh_h::MN_INTEGER {
-                                n.l
-                            } else {
-                                n.d.trunc() as i64
-                            }
-                        })
-                        .unwrap_or(0);
-                    m
-                }
-            }
-        }
-    };
-    if neg {
-        -parsed
-    } else {
-        parsed
-    }
+    // c:Src/builtin.c:5460 — `zlongval = mathevali(metafy(curarg, …))`.
+    // printf evaluates the %d/%i operand as a math expression. matheval
+    // natively handles decimal / 0x-hex / BASE#NNN / float-truncate and
+    // overflow-truncation: the math lexer's zstrtol (Src/utils.c:2511)
+    // emits the "number truncated after N digits" warning, so the
+    // magnitude 9223372036854775808 truncates to 18 digits exactly as
+    // zsh, and INT64_MIN (-9223372036854775808) round-trips without the
+    // manual `-parsed` negate that panicked on i64::MIN.
+    // c:5461-5464 — on a math error C zeroes the value and sets ret=1;
+    // map Err → 0 here.
+    crate::ported::math::mathevali(s.trim()).unwrap_or(0)
 }
 
 fn format_spec_int(spec: &str, n: i64) -> String {
@@ -15658,7 +15615,32 @@ fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
 }
 
 fn format_spec_uint(spec: &str, n: u64) -> String {
-    format_spec_int(spec, n as i64)
+    // c:Src/builtin.c — `%u` is rendered via libc `%lu`. Unsigned
+    // conversions print NO sign: the `+` and ` ` flags are ignored
+    // (they apply only to signed conversions), and a negative math
+    // result has already wrapped into the u64 by the caller's cast
+    // (`-42` → 18446744073709551574). The previous port delegated to
+    // format_spec_int(n as i64), which reinterpreted the wrapped u64
+    // back as a negative i64 and printed `-42`, and honored `+`/` `.
+    let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
+    // libc: with an explicit precision the `0` flag is ignored.
+    let zero_pad = zero_pad_flag && !left_align && prec.is_none();
+    let digits = n.to_string();
+    // Precision = minimum number of digits (zero-fill the body).
+    let body = match prec {
+        Some(p) if digits.len() < p => format!("{}{}", "0".repeat(p - digits.len()), digits),
+        _ => digits,
+    };
+    let pad = width.saturating_sub(body.chars().count());
+    if pad == 0 {
+        body
+    } else if left_align {
+        format!("{}{}", body, " ".repeat(pad))
+    } else if zero_pad {
+        format!("{}{}", "0".repeat(pad), body)
+    } else {
+        format!("{}{}", " ".repeat(pad), body)
+    }
 }
 
 fn format_spec_float(spec: &str, n: f64) -> String {
