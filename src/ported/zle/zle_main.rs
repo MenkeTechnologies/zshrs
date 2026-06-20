@@ -415,12 +415,14 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             }
             // loop: re-poll now that the handlers have run.
         }
-        // c:560 — terminal input is ready; read one byte.
+        // c:560 — terminal input is ready; read one byte. Use a RAW
+        // unbuffered `read(2)`, NOT Rust's `io::stdin()` (which wraps an
+        // internal BufReader that slurps the rest of an escape sequence
+        // into its private buffer — invisible to the poll above — so the
+        // next byte never arrives and multi-byte keys like arrows break).
         let mut buf = [0u8; 1];
-        return match io::stdin().read(&mut buf) {
-            Ok(1) => Some(buf[0]),
-            _ => None,
-        };
+        let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        return if n == 1 { Some(buf[0]) } else { None };
     }
 
     // c:560 — no watches and no timeout: a simple blocking read. Outside a
@@ -444,9 +446,14 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     if !in_raw_mode {
         return None;
     }
-    match io::stdin().read(&mut buf) {
-        Ok(1) => Some(buf[0]),
-        _ => None,
+    // RAW unbuffered read (see the poll-path note above): going through
+    // `io::stdin()`'s BufReader would swallow trailing escape-sequence
+    // bytes into a buffer the poll/typeahead path can't see.
+    let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+    if n == 1 {
+        Some(buf[0])
+    } else {
+        None
     }
 }
 
@@ -462,6 +469,13 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
 /// `timeout`/`full` args are folded into the raw reader.
 /// WARNING: param names don't match C — Rust=(do_keytmout) vs C=(do_keytmout, timeout, full)
 pub fn getbyte(do_keytmout: bool) -> Option<u8> {
+    // c:877 — `lastchar_wide_valid = 0;` at entry. Every byte read
+    // invalidates the cached wide character so the next `selfinsert`
+    // (zle_misc.c:119) refills `lastchar_wide` from the FRESH `lastchar`
+    // instead of reinserting the previous key. Without this, the first
+    // key set the wide cache and every subsequent self-insert re-emitted
+    // it (typing "world" produced "wwwwwww").
+    LASTCHAR_WIDE_VALID.store(0, SeqCst);
     // c:889-918 — raw_getbyte returning no byte (timeout / EOF / give-up)
     // is C's `return lastchar = EOF`: the trigger char becomes EOF so
     // widgets that read `lastchar` after a failed read see EOF, not a
@@ -700,11 +714,18 @@ pub fn zlecore() {
         }
         redrawhook();
 
-        // Refresh display if any widget asked for it.
-        if ZLE_RESET_NEEDED.load(SeqCst) != 0 {
+        // c:1192-1194 — `if (!kungetct) zrefresh();`. Repaint after EVERY
+        // widget so cursor motions (vi-backward-char, forward-char,
+        // up/down-line) become visible — not just inserts. The previous
+        // `if ZLE_RESET_NEEDED` gate skipped the repaint for movement
+        // widgets, so arrow keys moved the internal cursor but the screen
+        // never updated. Skip only when there's still buffered input
+        // (mid escape sequence) to coalesce the paint, exactly as C's
+        // `!kungetct` guard does.
+        if KUNGETBUF.lock().unwrap().is_empty() {
             zrefresh();
-            ZLE_RESET_NEEDED.store(0, SeqCst);
         }
+        ZLE_RESET_NEEDED.store(0, SeqCst);
     }
 }
 
@@ -748,6 +769,37 @@ pub fn zleread(
     ZLELL.store(0, SeqCst);
     MARK.store(0, SeqCst);
     DONE.store(0, SeqCst);
+    EOFSENT.store(0, SeqCst); // c:1294 eofsent = 0 (cleared before zlecore)
+
+    // Sync the ZLE history-navigation list from the LIVE command history
+    // (hist.rs `curhist`/`quietgethist`). zle_goto_hist (up/down-line-or-
+    // history, history-search) reads `zle_hist::history()`, which is only
+    // fed by `zle` parameter writes — never by the interactive accept-line
+    // path — so without this, up-arrow found an empty list and recalled
+    // nothing even though `$history` was populated. Rebuild it each line
+    // edit from the real ring so it always reflects what was actually run.
+    if (flags & crate::ported::zsh_h::ZLRF_HISTORY) != 0 {
+        let first = crate::ported::hist::firsthist();
+        let cur = crate::ported::hist::curhist.load(SeqCst);
+        let mut h = history().lock().unwrap();
+        h.entries.clear();
+        let mut ev = first;
+        while ev <= cur {
+            if let Some(he) = crate::ported::hist::quietgethist(ev) {
+                let t = he.node.nam;
+                if !t.is_empty() {
+                    h.entries.push(crate::ported::zle::zle_hist::HistEntry {
+                        line: t,
+                        num: ev,
+                        time: None,
+                    });
+                }
+            }
+            ev += 1;
+        }
+        h.cursor = h.entries.len(); // start at the live (newest) end
+        h.saved_line = None;
+    }
 
     // Set up terminal
     zsetterm()?;
@@ -759,19 +811,27 @@ pub fn zleread(
         let _ = execzlefunc("zle-line-init", &["zle-line-init".to_string()], 1, 0);
     }
 
-    // Display prompt — port of `write_loop(SHTTY, lprompt, lpromptlen)`
-    // at `Src/Zle/zle_main.c:1321`. C writes the expanded prompt
-    // directly to the shell-output fd; we mirror that, with stdout
-    // fallback for non-interactive paths.
+    // c:1366 — `zrefresh()` paints the initial frame BEFORE the loop, so
+    // the prompt shown is the fully EXPANDED one (e.g. `codelabs-arm% `,
+    // not the raw `%m%# ` template) and the buffer/cursor are positioned.
+    // The previous manual `write_loop(SHTTY, lprompt)` drew the raw,
+    // unexpanded template until the first keypress triggered a refresh.
+    zrefresh();
+
+    // Enter core loop
+    zlecore();
+
+    // c:1380 — `trashzle()` after the loop moves the cursor below the
+    // edited line so the accepted command's own output starts on a fresh
+    // line. Without it `pwd` printed as `pwd/Users/...` (output glued to
+    // the command). zrefresh left the cursor at the end of the line; emit
+    // CR+LF to drop to the next row.
     {
         use std::sync::atomic::Ordering;
         let fd = SHTTY.load(Ordering::Relaxed);
         let out = if fd >= 0 { fd } else { 1 };
-        let _ = write_loop(out, lprompt.as_bytes());
+        let _ = write_loop(out, b"\r\n");
     }
-
-    // Enter core loop
-    zlecore();
 
     // c:1335 — `zlecallhook("zle-line-finish", NULL)` — runs user's
     // zle-line-finish widget after the line is accepted so cleanup
@@ -780,8 +840,25 @@ pub fn zleread(
         let _ = execzlefunc("zle-line-finish", &["zle-line-finish".to_string()], 1, 0);
     }
 
-    // Return the line
-    Ok(ZLELINE.lock().unwrap().iter().collect())
+    // c:1387-1399 — `if (eofsent || errflag || exit_pending) { s = NULL; }
+    //   else { zleline[zlell++] = ZWC('\n'); s = zlegetline(NULL, NULL); }`.
+    // EOF (^D on an empty line), an error, or a pending `exit` yield NULL
+    // so the caller (inputline) sees end-of-input; otherwise the accepted
+    // line gets a trailing newline appended — matching shingetline, which
+    // returns "…\n" — so a bare Enter is an empty COMMAND ("\n"), not EOF.
+    // The Rust entry returns the empty string for the NULL case; inputline
+    // treats an empty (no-newline) result as EOF, a "\n" result as an
+    // empty command line.
+    let is_eof = EOFSENT.load(SeqCst) != 0
+        || (errflag.load(SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0
+        || crate::ported::builtin::EXIT_PENDING.load(SeqCst) != 0;
+    if is_eof {
+        Ok(String::new()) // c:1388 s = NULL
+    } else {
+        let mut s: String = ZLELINE.lock().unwrap().iter().collect();
+        s.push('\n'); // c:1390 zleline[zlell++] = '\n'
+        Ok(s) // c:1391 s = zlegetline(...)
+    }
 }
 
 /// Port of `execimmortal(Thingy func, char **args)` from Src/Zle/zle_main.c:1404.
@@ -2268,7 +2345,24 @@ pub fn get_key_cmd() -> Option<Thingy> {
         // Read one byte. Use timed read once we have a partial match
         // (a prefix that already hit a binding); otherwise block.
         let do_keytmout = last_match.is_some();
-        let b = getbyte(do_keytmout)?;
+        let b = match getbyte(do_keytmout) {
+            Some(b) => b,
+            None => {
+                // c:zle_keymap.c:1614+ — a KEY TIMEOUT while waiting for
+                // the rest of a multi-byte sequence is NOT end-of-input:
+                // getkeymapcmd stops reading and dispatches the longest
+                // binding matched so far (the unget below pushes back any
+                // trailing bytes). Only a None from the BLOCKING read
+                // (no partial match in flight) is genuine EOF — returning
+                // None there is what lets ^D exit. Propagating a timeout
+                // as None made a slow/split arrow-key escape sequence exit
+                // the whole shell.
+                if do_keytmout || !buf.is_empty() {
+                    break;
+                }
+                return None;
+            }
+        };
         buf.push(b);
 
         // Look up the current buffer.
@@ -2279,7 +2373,20 @@ pub fn get_key_cmd() -> Option<Thingy> {
         } else {
             let entry = km.multi.get(&buf[..]);
             let m = entry.and_then(|e| e.bind.clone());
-            let pfx = entry.map(|e| e.prefixct > 0).unwrap_or(false);
+            // Whether the current sequence is a PREFIX of a longer binding.
+            // The entry's `prefixct` only counts when `km.multi` holds an
+            // intermediate node for `buf`; if it stores full sequences
+            // only (e.g. `^[[A` but no `^[[` node), prefixct is 0 and the
+            // walk broke after `^[` — leaking `[A`/`[D` so arrow keys
+            // dispatched ESC + literal bytes (left "deleted", up did
+            // nothing). Detect prefix the same way the single-byte arm
+            // does: ANY bound sequence longer than `buf` that starts with
+            // `buf`.
+            let pfx = entry.map(|e| e.prefixct > 0).unwrap_or(false)
+                || km
+                    .multi
+                    .keys()
+                    .any(|k| k.len() > buf.len() && k.starts_with(&buf[..]));
             (m, pfx)
         };
 
@@ -2302,6 +2409,23 @@ pub fn get_key_cmd() -> Option<Thingy> {
     if last_match.is_some() && buf.len() > last_match_len {
         let extra = buf[last_match_len..].to_vec();
         ungetbytes(&extra);
+    }
+
+    if std::env::var_os("ZSHRS_ZLE_LOG").is_some() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/zshrs_zle.log")
+        {
+            let _ = writeln!(
+                f,
+                "key: bytes={:?} matchlen={} widget={:?}",
+                buf,
+                last_match_len,
+                last_match.as_ref().map(|t| t.nam.clone())
+            );
+        }
     }
 
     last_match

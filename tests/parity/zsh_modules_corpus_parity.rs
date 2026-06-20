@@ -115,7 +115,6 @@ zstyle -s ":a:b" s R; print $R"###);
 
     /// zstyle -e evaluated style.
     #[test]
-    #[ignore = "zshrs gap: zstyle -e does not evaluate the style body — returns the literal code string instead of the computed reply"]
     fn zstyle_e_evaluated() {
         assert_parity(r###"zmodload zsh/zutil
 zstyle -e ":ctx:*" dyn 'reply=(computed-$((1+1)))'
@@ -124,7 +123,6 @@ zstyle -s ":ctx:foo" dyn R; print $R"###);
 
     /// zstyle -e reply unset → style unset.
     #[test]
-    #[ignore = "zshrs gap: zstyle -e with reply left unset should report the style unset; zshrs reports it set to the body string"]
     fn zstyle_e_reply_unset() {
         assert_parity(r###"zmodload zsh/zutil
 zstyle -e ":ctx:*" dyn 'true'
@@ -143,7 +141,6 @@ zstyle -b ":c2" flag R2; print "$R2 $?""###);
 
     /// zstyle -a array, and into assoc.
     #[test]
-    #[ignore = "zshrs gap: zstyle -a into an associative array does not populate values (key1 v1 key2 v2 → empty)"]
     fn zstyle_a_array_assoc() {
         assert_parity(r###"zmodload zsh/zutil
 zstyle ":c" arr one two three
@@ -260,7 +257,6 @@ print $R2"###);
 
     /// zformat -a align.
     #[test]
-    #[ignore = "zshrs gap: zformat -a with an empty-right spec `empty:` should drop the trailing separator; zshrs keeps it"]
     fn zformat_align() {
         assert_parity(r###"zmodload zsh/zutil
 zformat -a out " -- " "foo:bar" "longerkey:val" "nocolon" "empty:"

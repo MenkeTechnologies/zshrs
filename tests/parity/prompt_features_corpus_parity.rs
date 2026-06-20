@@ -724,7 +724,6 @@ print -r -- "$out""###);
 
     /// zstyle -e reply built from (L)var:-fallback.
     #[test]
-    #[ignore = "zshrs gap: zstyle -e does not evaluate the style body (returns literal 'reply=( ... )' string)"]
     fn zstyle_e_casefold() {
         assert_parity(r###"zstyle -e ":x:y" tag "reply=( \${(L)PWD:-fallback} )"
 typeset -a got

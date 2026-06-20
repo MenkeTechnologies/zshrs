@@ -249,6 +249,47 @@ thread_local! {
     /// subshell's exit; C zsh's subshell forks and the child's
     /// process::exit(N) becomes $? in the parent automatically.
     static SUBSHELL_EXIT_STATUS_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The installed session executor, registered by
+    /// `exec::install_session_executor`. Lets [`with_session_context`]
+    /// establish a VM execution context for STARTUP work that runs
+    /// before the loop's first `execode` enters one (rc-file sourcing in
+    /// `run_init_scripts`, c:1914). Mirrors exec.rs's own
+    /// `SESSION_EXECUTOR`; kept here so the context helper lives next to
+    /// `ExecutorContext`/`CURRENT_EXECUTOR`.
+    static SESSION_EXECUTOR_PTR: std::cell::Cell<Option<*mut ShellExecutor>> = const { std::cell::Cell::new(None) };
+}
+
+/// Register the session executor pointer (called from
+/// `install_session_executor`). See [`with_session_context`].
+pub fn register_session_executor(exec: &mut ShellExecutor) {
+    SESSION_EXECUTOR_PTR.with(|c| c.set(Some(exec as *mut ShellExecutor)));
+}
+
+/// Run `f` with the registered session executor established as
+/// `CURRENT_EXECUTOR`, so code reaching the live executor via
+/// `try_with_executor` works even when no per-command `execode` context
+/// is active yet.
+///
+/// Sole caller: `zsh_main`'s `run_init_scripts()` (c:1914), which
+/// sources `.zshenv`/`.zshrc`/`.zlogin` via `source()` BEFORE the loop's
+/// first `execode`. Without an active context those sourced bodies
+/// `try_with_executor` → `None` → no-op, so the shell silently ignored
+/// the user's dotfiles. The scope is entered once around the startup
+/// sourcing window and dropped before the loop begins — deliberately NOT
+/// a global fallback inside `execute_script_zsh_pipeline`, which would
+/// re-enter the executor on nested command substitution and block on
+/// input.
+pub fn with_session_context<R>(f: impl FnOnce() -> R) -> R {
+    let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
+    match ptr {
+        // SAFETY: set by install_session_executor to an executor that
+        // outlives the single-threaded interactive session.
+        Some(ptr) => {
+            let _ctx = ExecutorContext::enter(unsafe { &mut *ptr });
+            f()
+        }
+        None => f(),
+    }
 }
 
 /// RAII guard that sets/clears the thread-local executor pointer.
