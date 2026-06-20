@@ -4400,10 +4400,43 @@ fn patmatch(
                 s_off += len;
             }
             P_ANY => {
-                // c:P_ANY arm
+                // c:P_ANY arm — `?` matches ONE character, advanced via
+                // METACHARINC. zshrs stores `$'\xNN'` escapes metafied
+                // (Meta `\u{83}` + byte^32); a multibyte character is
+                // several Meta-pair chars that must be consumed as one,
+                // else `?` matches a single metafied byte and leaves the
+                // rest unmatched. Walk source chars, demetafying, until
+                // one UTF-8 character forms; advance by its source span.
+                // Identity for non-metafied (single-char advance).
                 let s = &string[s_off..];
-                let c = s.chars().next()?;
-                s_off += c.len_utf8();
+                let mut raw: Vec<u8> = Vec::new();
+                let mut advance = 0usize;
+                let mut chs = s.chars();
+                while let Some(c) = chs.next() {
+                    if c == '\u{83}' {
+                        if let Some(n) = chs.clone().next() {
+                            if (n as u32) >= 0x80 {
+                                raw.push((n as u32 as u8) ^ 32);
+                                advance += c.len_utf8() + n.len_utf8();
+                                chs.next();
+                                if std::str::from_utf8(&raw).is_ok() {
+                                    break;
+                                }
+                                continue;
+                            }
+                        }
+                        // Lone Meta — count it as one character.
+                        advance += c.len_utf8();
+                        break;
+                    }
+                    // Non-metafied char = one logical character.
+                    advance += c.len_utf8();
+                    break;
+                }
+                if advance == 0 {
+                    return None;
+                }
+                s_off += advance;
             }
             P_ANYOF => {
                 // c:P_ANYOF arm
