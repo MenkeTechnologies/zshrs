@@ -884,9 +884,9 @@ mod man_param {
         assert_parity(r###"path=(/aa /bb /cc); print -r -- $PATH; PATH=/xx:/yy; print -rl -- $path"###);
     }
 
-    /// tied unset cascades.
+    /// tied unset cascades — unsetting one half of a `typeset -T` tie
+    /// clears the partner via `pm.ename` (c:Src/params.c:3855).
     #[test]
-    #[ignore = "zshrs gap: unsetting a tied scalar does not cascade-unset its tied array (${+aa} stays 1)"]
     fn tied_unset_cascade() {
         assert_parity(r###"typeset -T AA aa; AA=1:2; unset AA; print -r -- ${+AA} ${+aa}"###);
     }
