@@ -799,3 +799,43 @@ fn parity_sort_o_case_insensitive_order() {
 fn parity_dollar_dash_flags_differ() {
     assert_parity("echo \"$-\"");
 }
+
+// ─── 33. nullglob no-match through zglob drops the word — FIXED ──
+
+/// Command-position globs are expanded via the canonical `zglob`
+/// (exec.rs:9033, port of C `zglob(args, firstnode(args), 0)` at
+/// glob.c:3318). zglob's terminal no-match block (glob.rs:1341)
+/// had only guarded the CSHNULLGLOB and NOMATCH arms with
+/// `!nullglob`; the literal-insert fallback fell through
+/// unconditionally, so under `setopt nullglob` a no-match would
+/// echo the literal pattern instead of dropping the word.
+/// Fixed by hoisting the `!nullglob` test to a single outer gate,
+/// mirroring C's `else if (!gf_nullglob)` (glob.c:1872) which skips
+/// the whole no-match block — leaving matchbuf empty so glob()
+/// removes the word.
+#[test]
+fn parity_nullglob_command_position_drops_word() {
+    assert_parity("setopt nullglob; /nonexistent_xyz_zzz_*; echo exit=$?");
+}
+
+/// Same gate, value position: `setopt nullglob; echo /never_*`
+/// drops the word (empty line), matching zsh.
+#[test]
+fn parity_nullglob_value_position_drops_word() {
+    assert_parity("setopt nullglob; echo /nonexistent_xyz_zzz_*");
+}
+
+/// The `!nullglob` arms still behave: with nullglob OFF and the
+/// default NOMATCH on, a no-match errors `no matches found` and
+/// exits 1 (the literal is NOT echoed).
+#[test]
+fn parity_nomatch_still_errors_with_nullglob_off() {
+    assert_parity("echo /nonexistent_xyz_zzz_*; echo exit=$?");
+}
+
+/// CSHNULLGLOB arm still behaves: a single failed word under
+/// cshnullglob is dropped, not turned into a "no matches" error.
+#[test]
+fn parity_cshnullglob_single_word_dropped() {
+    assert_parity("setopt cshnullglob; echo /nonexistent_xyz_zzz_*; echo exit=$?");
+}

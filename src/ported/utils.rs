@@ -6965,18 +6965,62 @@ pub fn mb_metacharlenconv(s: &str) -> (usize, Option<char>) {
 
 /// Multibyte metastring length to end (from utils.c mb_metastrlenend)
 /// Port of `mb_metastrlenend(char *ptr, int width, char *eptr)` from `Src/utils.c:5655`.
-// Rust idiom replacement: `chars().count()` / unicode-width replaces
-// the C mbrtowc loop + wcwidth fallback.
-/// `mb_metastrlenend` — see implementation.
+///
+/// Counts characters (`width == false`) or display columns
+/// (`width == true`) in a metafied string. C walks the metafied
+/// byte stream, un-metafies inline (`if (*ptr == Meta) inchar =
+/// *++ptr ^ 32`, c:5672), and feeds one byte at a time to
+/// `mbrtowc` to assemble each multibyte character (c:5691); a
+/// complete character counts 1 (or its `WCWIDTH`), an invalid byte
+/// counts as a single character (c:5712-5714).
+///
+/// Rust-port note: zshrs stores both metafied byte-pairs (`Meta` +
+/// `byte ^ 32`, produced by `getkeystring` for `$'\xNN'` escapes)
+/// AND real multibyte `char`s (the literal `$'é'` path) in one
+/// `String`, whereas C only ever holds metafied bytes. So the port
+/// first reduces the slice to its raw byte stream via `unmetafy_str`
+/// (metafied pair → its byte; real `char` → its UTF-8 bytes — the
+/// same bytes C's inline demetafy would yield), then runs C's
+/// `mbrtowc` character-assembly loop over those bytes. Rust's UTF-8
+/// validation is the `mbrtowc` analogue: the shortest valid prefix
+/// is one character; a byte that begins no valid sequence counts as
+/// one (c:5712).
 pub fn mb_metastrlenend(ptr: &str, width: bool, eptr: usize) -> usize {
-    if width {
-        ptr[..eptr.min(ptr.len())]
-            .chars()
-            .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(1))
-            .sum()
-    } else {
-        ptr[..eptr.min(ptr.len())].chars().count()
+    // c:5672 — un-metafy the (optionally end-bounded) slice to raw bytes.
+    let bytes = unmetafy_str(&ptr[..eptr.min(ptr.len())]);
+    let mut num: usize = 0; // c:5658 size_t ret / counter
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        // c:5678-5687 — 7-bit US-ASCII subset: one character, skip mbrtowc.
+        if bytes[i] <= 0x7f {
+            num += 1;
+            i += 1;
+            continue;
+        }
+        // c:5691 — mbrtowc: take the shortest valid UTF-8 character.
+        let mut num_in_char: usize = 1; // c:5701 trailing-octet span
+        let hi = (i + 4).min(bytes.len());
+        for end in (i + 1)..=hi {
+            if std::str::from_utf8(&bytes[i..end]).is_ok() {
+                num_in_char = end - i;
+                break;
+            }
+        }
+        if width {
+            // c:5717-5723 — WCWIDTH of the assembled character (≥0).
+            let wcw = std::str::from_utf8(&bytes[i..i + num_in_char])
+                .ok()
+                .and_then(|s| s.chars().next())
+                .and_then(unicode_width::UnicodeWidthChar::width)
+                .unwrap_or(0);
+            num += wcw;
+        } else {
+            // c:5727 — one character (complete, or invalid treated as one).
+            num += 1;
+        }
+        i += num_in_char;
     }
+    num
 }
 
 /// Multibyte char length with conversion (from utils.c mb_charlenconv_r)

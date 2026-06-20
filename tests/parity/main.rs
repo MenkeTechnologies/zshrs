@@ -38,6 +38,7 @@ mod command_builtin_parity;
 mod cond_parity;
 mod coproc_parity;
 mod dirstack_parity;
+mod discovered_gaps_2026q2_parity;
 mod discovered_parity_failures;
 mod dollar_lt_parity;
 mod echo_builtin_parity;
