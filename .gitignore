@@ -3,14 +3,15 @@
 zsh/
 docs/PORT.md
 
-# Paid products — companion book + reference manual/PDF + their build pipeline —
+# Paid products — companion book + reference manual PDF + their build pipeline —
 # live in the private menke-books repo. Never track them here. The free docs
-# landing page (docs/index.html) and scripts/gen_grammar_docs.py (which feeds
-# index.html) stay tracked; docs/reference.html is a local build artifact.
+# landing page (docs/index.html), scripts/gen_grammar_docs.py (which feeds
+# index.html), and the free HTML reference (docs/reference.html, linked from
+# index.html) stay tracked and published. Only the PDFs, their LaTeX/Markdown
+# sources, and the gen pipeline are private.
 docs/book.md
 docs/book.tex
 docs/book.pdf
-docs/reference.html
 docs/reference.tex
 docs/reference.pdf
 docs/.fonts/
