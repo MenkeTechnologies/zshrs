@@ -7094,7 +7094,14 @@ pub fn paramsubst(
             // Slice form `M,P` or single index `M`. Negative indices
             // count from the end (per zsh's 1-based-from-1 / -1-from-
             // end convention).
-            let n = raw_value.chars().count() as i64;
+            // c:Src/params.c:1656+ — scalar subscripts index CHARACTERS
+            // via MB_METACHARLEN. Demetafy `$'\xNN'` escapes to the
+            // logical-char form so `${x[N]}` / `${x[lo,hi]}` land on
+            // characters, not metafied bytes. Identity for non-metafied.
+            let dv: String =
+                String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&raw_value))
+                    .into_owned();
+            let n = dv.chars().count() as i64;
             let resolve = |k: i64| -> usize {
                 let k = if k < 0 { n + k + 1 } else { k };
                 if k < 1 {
@@ -7134,7 +7141,7 @@ pub fn paramsubst(
                 if l >= h {
                     String::new()
                 } else {
-                    raw_value.chars().skip(l).take(h - l).collect()
+                    dv.chars().skip(l).take(h - l).collect()
                 }
             } else {
                 let k: i64 = s2
@@ -7144,8 +7151,7 @@ pub fn paramsubst(
                     .or_else(|| crate::ported::math::mathevali(s2.trim()).ok())
                     .unwrap_or(1);
                 let i = resolve(k);
-                raw_value
-                    .chars()
+                dv.chars()
                     .nth(i)
                     .map(|c| c.to_string())
                     .unwrap_or_default()
@@ -10844,7 +10850,17 @@ pub fn paramsubst(
                         value = kept.join(" "); // c:715
                         split_parts = Some(kept); // c:715 (auto-splat slice)
                     } else {
-                        let total = raw_value.chars().count() as i64;
+                        // c:3766+ — substring offsets count CHARACTERS via
+                        // MB_METACHARLEN. zshrs stores `$'\xNN'` escapes
+                        // metafied (Meta + byte^32); demetafy to the
+                        // logical-char form so offsets/slices land on
+                        // characters, not metafied bytes (`$'caf\xc3\xa9'`
+                        // is 4 chars, `${x: -1}` → é). Identity for
+                        // non-metafied values.
+                        let dv: String =
+                            String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(&raw_value))
+                                .into_owned();
+                        let total = dv.chars().count() as i64;
                         let start = if off < 0 {
                             (total + off).max(0)
                         } else {
@@ -10855,13 +10871,13 @@ pub fn paramsubst(
                             .map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0));
                         value = match len {
                             Some(l) if l >= 0 => {
-                                raw_value.chars().skip(start).take(l as usize).collect()
+                                dv.chars().skip(start).take(l as usize).collect()
                             }
                             Some(l) => {
                                 let take = ((total - start as i64) + l).max(0) as usize;
-                                raw_value.chars().skip(start).take(take).collect()
+                                dv.chars().skip(start).take(take).collect()
                             }
-                            None => raw_value.chars().skip(start).collect(),
+                            None => dv.chars().skip(start).collect(),
                         };
                     }
                 } // close is_modifier else
@@ -11436,7 +11452,15 @@ pub fn paramsubst(
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
-                // c:3937
+                // c:3937 — casemodify (utils.c) is mb-aware
+                // (MB_METACHARLENCONV). zshrs stores `$'\xNN'` escapes
+                // metafied (Meta + byte^32); demetafy to the logical-char
+                // form first so a metafied multibyte char case-maps
+                // correctly (é → É) instead of mangling its bytes.
+                // Identity for non-metafied values.
+                let s: String =
+                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
+                let s = s.as_str();
                 if casmod == CASMOD_LOWER {
                     // c:3937 CASMOD_LOWER
                     s.to_lowercase() // c:3937
@@ -11623,7 +11647,18 @@ pub fn paramsubst(
             // zsh's `"he  o"` (the joined-with-IFS space-pair).
             let split_one = |s: &str| -> Vec<String> {
                 if sp.is_empty() {
-                    s.chars().map(|c| c.to_string()).collect()
+                    // c:581 — `l = MB_METACHARLENCONV(x, &c)`: split into
+                    // multibyte CHARACTERS. zshrs stores `$'\xNN'` escapes
+                    // metafied (Meta + byte^32), so demetafy to the raw
+                    // byte stream first, then iterate real chars — without
+                    // this a metafied multibyte char splits one-element-
+                    // per-byte (`$'\xc3\xa9'` → 4 not 1). Identity for
+                    // non-metafied strings (unmetafy round-trips them).
+                    let bytes = crate::ported::utils::unmetafy_str(s);
+                    String::from_utf8_lossy(&bytes)
+                        .chars()
+                        .map(|c| c.to_string())
+                        .collect()
                 } else {
                     s.split(sp.as_str()).map(String::from).collect()
                 }

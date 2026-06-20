@@ -147,32 +147,36 @@ mod multibyte_numeric_escapes {
 
     /// `${(U)x}` uppercase over escaped é — zsh: É, zshrs: mojibake.
     /// The case-mapping runs over metafied bytes and corrupts them.
+    /// `${(U)x}` uppercase over escaped é — FIXED. The `(U)`/`(L)`/`(C)`
+    /// case transform now demetafies to the logical-char form first
+    /// (subst.c:3937 casemodify is `MB_METACHARLENCONV`-based), so the
+    /// metafied é uppercases to É instead of mangling its bytes.
     #[test]
-    #[ignore = "zshrs bug: ${(U)x}/${x:u} on $'\\x..' multibyte mangles bytes instead of uppercasing the char"]
     fn case_modify_escaped_multibyte() {
         assert_parity(r#"x=$'\xc3\xa9'; echo ${(U)x}"#);
     }
 
-    /// Char-indexed substring `${x: -1}` over `$'caf\xc3\xa9'` — zsh
-    /// returns the trailing `é`, zshrs returns a single metafied byte.
+    /// Char-indexed substring `${x: -1}` over `$'caf\xc3\xa9'` — FIXED.
+    /// The `${x:off:len}` substring arm demetafies before counting/
+    /// slicing characters (subst.c:3766 MB_METACHARLEN), so `-1` lands
+    /// on the trailing é.
     #[test]
-    #[ignore = "zshrs bug: ${x: -1} on $'\\x..' multibyte indexes a metafied byte, not the last char"]
     fn negative_substring_escaped_multibyte() {
         assert_parity(r#"x=$'caf\xc3\xa9'; echo ${x: -1}"#);
     }
 
-    /// Single-char glob `?` against escaped é — zsh matches (one char),
-    /// zshrs does not (sees multiple metafied bytes).
+    /// Single-char glob `?` against escaped é — FIXED. P_ANY now
+    /// advances one metafied character (METACHARINC), so `?` matches
+    /// the whole é.
     #[test]
-    #[ignore = "zshrs bug: [[ $x == ? ]] on $'\\x..' multibyte fails to match (treats char as multiple bytes)"]
     fn single_char_pattern_escaped_multibyte() {
         assert_parity(r#"x=$'\xc3\xa9'; [[ $x == ? ]] && echo onechar || echo multi"#);
     }
 
-    /// Char-split `${(s::)x}` over escaped é — zsh yields 1 element,
-    /// zshrs yields 4 (one per metafied byte).
+    /// Char-split `${(s::)x}` over escaped é — FIXED. The empty-separator
+    /// split demetafies before iterating characters (subst.c:581
+    /// MB_METACHARLENCONV), so a metafied multibyte char is one element.
     #[test]
-    #[ignore = "zshrs bug: ${(s::)x} on $'\\x..' multibyte splits into metafied bytes (4) not chars (1)"]
     fn char_split_escaped_multibyte() {
         assert_parity(r#"x=$'\xc3\xa9'; arr=( ${(s::)x} ); echo ${#arr}"#);
     }
