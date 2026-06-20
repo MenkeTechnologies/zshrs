@@ -7110,7 +7110,20 @@ impl ZshCompiler {
         let body_bytes = bincode::serialize(&body_chunk).unwrap_or_default();
         let body_str = base64_encode(&body_bytes);
         let source_text = f.body_source.clone().unwrap_or_default();
-        let line_base_str = lineno_off.to_string();
+        // c:Src/exec.c:5409 — `shf->lineno = lineno;` records the line
+        // of the funcdef STATEMENT (where `name()` sits), which
+        // funcsourcetrace and the prompt funcstack report. That is NOT
+        // the body's `$LINENO` offset (`lineno_off = first_body_line -
+        // 1`, used above for the body sub-chunk): the two coincide only
+        // when the body's first statement starts one line below the
+        // def, and disagree for the inline form `name() { body }` (def
+        // and body share a line) — there `lineno_off` underflowed to
+        // `def_line - 1` and funcsourcetrace reported one line too low.
+        // `self.current_sublist_line` was set by the enclosing
+        // compile_list to this funcdef statement's own (offset-adjusted)
+        // line, so it is the correct def line. Bug #396.
+        let _ = lineno_off;
+        let line_base_str = self.current_sublist_line.to_string();
 
         for raw_name in &f.names {
             // Strip any trailing Inpar+Outpar markers (\u{88}\u{8a})
