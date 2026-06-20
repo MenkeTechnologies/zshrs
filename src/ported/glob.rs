@@ -1352,33 +1352,48 @@ pub fn zglob(list: &mut Vec<String>, np: usize, nountok: i32) {
         if errflag.load(Ordering::SeqCst) != 0 {
             return;
         }
-        if !nullglob && csh_nullglob {
-            // c:1874-1875 — `if (isset(CSHNULLGLOB)) { badcshglob |= 1; }`
-            // (already recorded above). The else-if chain means the
-            // ordinary-string arm is NOT reached: the failed word is
-            // DROPPED like nullglob, and globlist's terminal check
-            // (subst.c:505-507, ported at subst.rs:1419) emits the
-            // csh-style `no match` when NO word on the line matched.
-            // Falling through to the literal insert here produced the
-            // NOMATCH-style "no matches found: PAT" instead.
-            return;
+        // c:1872 — `else if (!gf_nullglob) { ... }`. The ENTIRE no-match
+        // handling (CSHNULLGLOB, NOMATCH, literal fallback) is gated on
+        // nullglob being OFF. When nullglob is set the failed word is
+        // simply dropped: C never enters the block, matchbuf stays empty,
+        // and glob() removes the word from the list. Hoisting the
+        // `!nullglob` test to a single outer gate (matching the C
+        // `else if`) ensures the literal-insert fallback below is skipped
+        // under nullglob too — previously it fell through unconditionally
+        // and echoed the literal, diverging from c:1872.
+        if !nullglob {
+            if csh_nullglob {
+                // c:1874-1875 — `if (isset(CSHNULLGLOB)) { badcshglob |= 1; }`
+                // (already recorded above). The else-if chain means the
+                // ordinary-string arm is NOT reached: the failed word is
+                // DROPPED like nullglob, and globlist's terminal check
+                // (subst.c:505-507, ported at subst.rs:1419) emits the
+                // csh-style `no match` when NO word on the line matched.
+                // Falling through to the literal insert here produced the
+                // NOMATCH-style "no matches found: PAT" instead.
+                return;
+            }
+            if isset(crate::ported::zsh_h::NOMATCH) {
+                // c:1876-1880 — `else if (isset(NOMATCH)) { zerr; return; }`
+                crate::ported::utils::zerr(&format!("no matches found: {}", ostr));
+                // c:1878 — `zfree(matchbuf, 0);` (Rust drop handles it)
+                // c:1879 — `restore_globstate(saved);` (handled by guard)
+                return; // c:1880
+            }
+            // c:1882-1887 — `treat as an ordinary string`. The matchptr++
+            // bookkeeping in C maps to our `list.insert`.
+            let restored = if nountok == 0 {
+                crate::ported::lex::untokenize(&ostr) // c:1884 untokenize(matchptr->name = dupstring(ostr))
+            } else {
+                ostr.clone()
+            };
+            let pos = if node > list.len() { list.len() } else { node };
+            list.insert(pos, restored); // c:1885 matchptr++, c:1886 matchct = 1
         }
-        if !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH) {
-            // c:1876-1880 — `else if (isset(NOMATCH)) { zerr; return; }`
-            crate::ported::utils::zerr(&format!("no matches found: {}", ostr));
-            // c:1878 — `zfree(matchbuf, 0);` (Rust drop handles it)
-            // c:1879 — `restore_globstate(saved);` (handled by guard)
-            return; // c:1880
-        }
-        // c:1882-1887 — `treat as an ordinary string`. The matchptr++
-        // bookkeeping in C maps to our `list.insert`.
-        let restored = if nountok == 0 {
-            crate::ported::lex::untokenize(&ostr) // c:1884 untokenize(matchptr->name = dupstring(ostr))
-        } else {
-            ostr.clone()
-        };
-        let pos = if node > list.len() { list.len() } else { node };
-        list.insert(pos, restored); // c:1885 matchptr++, c:1886 matchct = 1
+        // nullglob set → fall through with matchbuf empty: the word is
+        // dropped (c:1872 skips the block entirely). c:1889's
+        // `else if (in_expandredir)` redirect-failure arm is handled by
+        // the caller (vm_helper.rs redirect-glob path), not here.
         return;
     }
 

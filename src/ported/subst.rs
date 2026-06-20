@@ -7592,7 +7592,15 @@ pub fn paramsubst(
                     let multibyte_on =
                         crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
                     if utf8 && multibyte_on {
-                        raw_value_for_len.chars().count()
+                        // c:3879 — `len = MB_METASTRLEN2(val, multi_width)`.
+                        // MB_METASTRLEN demetafies then mbrtowc-counts, so
+                        // `$'\xc3\xa9'` (metafied é) counts 1 char, not the
+                        // 4 metafied bytes a plain char-count would see.
+                        crate::ported::utils::mb_metastrlenend(
+                            &raw_value_for_len,
+                            false,
+                            raw_value_for_len.len(),
+                        )
                     } else {
                         raw_value_for_len.len()
                     }
