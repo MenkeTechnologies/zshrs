@@ -732,9 +732,10 @@ zstyle -a ":x:y" tag got
 print -r -- "${got[*]}""###);
     }
 
-    /// [[ -v name ]] + ${(t)${(P)name}} type introspection.
+    /// [[ -v name ]] + ${(t)${(P)name}} type introspection — `-v $n`
+    /// param-expands its operand and `${(t)${(P)n}}` reports the
+    /// referenced parameter's type (aspar) in both quoted and bare form.
     #[test]
-    #[ignore = "zshrs gap: loop with [[ -v $n ]] + ${(t)${(P)n}} produces no output (nameref-style indirection-in-test errors)"]
     fn v_test_with_type() {
         assert_parity(r###"typeset -A h=( k v )
 typeset -a a=( 1 2 3 )
