@@ -90,33 +90,29 @@ mod printf_unsigned {
         assert_parity(r#"printf '%u\n' 42"#);
     }
 
-    /// `printf %u -1` — zsh reinterprets as the unsigned 64-bit value
-    /// `18446744073709551615`; zshrs prints `-1`.
+    /// `printf %u -1` — both shells reinterpret as the unsigned 64-bit
+    /// value `18446744073709551615` (negative math result cast to u64).
     #[test]
-    #[ignore = "zshrs bug: printf %u of a negative value prints it signed (-1) instead of the unsigned wrap (18446744073709551615)"]
     fn u_negative_one_wraps_unsigned() {
         assert_parity(r#"printf '%u\n' -1"#);
     }
 
     /// `printf %u -42` — same unsigned-wrap divergence.
     #[test]
-    #[ignore = "zshrs bug: printf %u of -42 prints -42 instead of the unsigned wrap (18446744073709551574)"]
     fn u_negative_wraps_unsigned() {
         assert_parity(r#"printf '%u\n' -42"#);
     }
 
-    /// `printf %+u` — `+` flag is meaningless for unsigned; zsh drops it
-    /// (`5`), zshrs emits `+5`.
+    /// `printf %+u` — `+` flag is meaningless for unsigned; both shells
+    /// drop it and print `5` (libc ignores `+`/` ` for `%u`).
     #[test]
-    #[ignore = "zshrs bug: printf %+u honors the + flag (+5); zsh ignores it for unsigned (5)"]
     fn u_plus_flag_ignored() {
         assert_parity(r#"printf '%+u\n' 5"#);
     }
 
     /// `printf '% u'` — space flag is likewise meaningless for unsigned;
-    /// zsh drops it (`5`), zshrs emits ` 5`.
+    /// both shells drop it and print `5`.
     #[test]
-    #[ignore = "zshrs bug: printf '% u' honors the space flag ( 5); zsh ignores it for unsigned (5)"]
     fn u_space_flag_ignored() {
         assert_parity(r#"printf '% u\n' 5"#);
     }
@@ -128,24 +124,21 @@ mod printf_unsigned {
 mod printf_directives {
     use super::*;
 
-    /// `%ld` — zsh accepts (and ignores) the `l` length modifier and
-    /// prints `42`; zshrs rejects it with "invalid directive" (exit 1).
+    /// `%ld` — both shells accept and ignore the `l` length modifier and
+    /// print `42` (builtin.c:5290 skips one `l`/`L`/`h` before the conv).
     #[test]
-    #[ignore = "zshrs bug: printf rejects the 'l' length modifier (%ld → '%l: invalid directive'); zsh accepts/ignores it"]
     fn length_modifier_l() {
         assert_parity(r#"printf '%ld\n' 42"#);
     }
 
     /// `%lu` — same: zsh accepts the `l` modifier, zshrs rejects.
     #[test]
-    #[ignore = "zshrs bug: printf rejects '%lu' length modifier; zsh accepts/ignores it"]
     fn length_modifier_lu() {
         assert_parity(r#"printf '%lu\n' 42"#);
     }
 
     /// `%hd` — same for the `h` length modifier.
     #[test]
-    #[ignore = "zshrs bug: printf rejects the 'h' length modifier (%hd); zsh accepts/ignores it"]
     fn length_modifier_h() {
         assert_parity(r#"printf '%hd\n' 42"#);
     }
@@ -157,10 +150,9 @@ mod printf_directives {
         assert_parity(r#"printf '%lld\n' 42"#);
     }
 
-    /// `printf '%c' ''` — empty argument: zsh emits a single space,
-    /// zshrs emits nothing.
+    /// `printf '%c' ''` — empty argument: both shells emit a NUL byte
+    /// (`intval = *curarg = '\0'`, builtin.c:5300-5305). Pin the parity.
     #[test]
-    #[ignore = "zshrs bug: printf %c of an empty string emits nothing; zsh emits a space"]
     fn c_empty_argument() {
         assert_parity(r#"printf '%c\n' ''"#);
     }
@@ -173,21 +165,20 @@ mod printf_int_overflow {
     use super::*;
 
     /// `printf %d -9223372036854775808` (i64::MIN as a 19-digit literal)
-    /// — zsh truncates the literal after 18 digits and prints
-    /// `-922337203685477580`. zshrs **PANICS** ("attempt to negate with
-    /// overflow", builtin.rs:15556) and exits 101. This is a CRASH, the
-    /// most severe gap in this file.
+    /// — both shells route through the math evaluator, whose zstrtol
+    /// truncates the magnitude after 18 digits and prints
+    /// `-922337203685477580` (builtin.c:5460 `mathevali`). The previous
+    /// zshrs path PANICKED on a manual `-i64::MIN` negate; the math
+    /// route fixed it.
     #[test]
-    #[ignore = "zshrs bug: printf %d of -9223372036854775808 PANICS (negate overflow, exit 101); zsh truncates to 18 digits"]
     fn d_int64_min_panics() {
         assert_parity(r#"printf '%d\n' -9223372036854775808"#);
     }
 
-    /// `printf %d 9223372036854775808` (19-digit positive) — zsh
-    /// truncates after 18 digits (`922337203685477580`); zshrs wraps to
-    /// `-9223372036854775808`.
+    /// `printf %d 9223372036854775808` (19-digit positive) — both shells
+    /// truncate after 18 digits (`922337203685477580`) via the math
+    /// evaluator's zstrtol.
     #[test]
-    #[ignore = "zshrs bug: printf %d of a 19-digit literal wraps to negative instead of zsh's 18-digit truncation"]
     fn d_19_digit_truncation() {
         assert_parity(r#"printf '%d\n' 9223372036854775808"#);
     }
