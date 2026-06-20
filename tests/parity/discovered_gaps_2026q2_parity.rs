@@ -203,7 +203,6 @@ mod type_flag_non_parameter {
     /// `(t)` on an unquoted command substitution — zsh yields the value
     /// (`x`, no parameter to introspect), zshrs reports `array`.
     #[test]
-    #[ignore = "zshrs bug: ${(t)$(echo x)} reports 'array' instead of yielding the value 'x'"]
     fn t_flag_command_substitution() {
         assert_parity(r#"echo ${(t)$(echo x)}"#);
     }
@@ -211,7 +210,6 @@ mod type_flag_non_parameter {
     /// `(t)` on an array-valued nested expansion — zsh yields the value
     /// (`1 2`), zshrs reports `array`.
     #[test]
-    #[ignore = "zshrs bug: ${(t)${a}} on an array yields 'array' instead of the value '1 2'"]
     fn t_flag_array_valued_nested() {
         assert_parity(r#"a=(1 2); echo ${(t)${a}}"#);
     }

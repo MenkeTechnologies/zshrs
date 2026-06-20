@@ -5368,7 +5368,21 @@ pub fn paramsubst(
         // subst.c:2965 getstrvalue / getarrvalue dispatch.
         // If subexp_value is set, the value comes from the recursive
         // $(...)/${...} expansion and we skip var-name lookup.
-        let used_subexp = subexp_value.is_some() || prefiltered_value.is_some();
+        // c:Src/subst.c:2764 — the fetchvalue + (t)-type block is gated
+        // by `if (!subexp || aspar)`: when the body is ANY nested
+        // expansion / command-sub (a "subexp") and not `(P)`, the type
+        // logic is skipped and the resolved subexp value flows through.
+        // zshrs carries a subexp result in three places: a scalar in
+        // `subexp_value`, or an ARRAY in `subexp_arr_parts` /
+        // `subexp_array_temp`. The previous `used_subexp` only checked
+        // the scalar carrier, so `${(t)$(echo x)}` and `${(t)${arr}}`
+        // (array-shaped subexps) fell into the (t) type arm and emitted
+        // "array" instead of the value. Include the array carriers so
+        // the subexp gate matches C. Bug #173.
+        let used_subexp = subexp_value.is_some()
+            || prefiltered_value.is_some()
+            || subexp_arr_parts.is_some()
+            || subexp_array_temp.is_some();
         let raw_value: String = if let Some(pv) = prefiltered_value.clone() {
             // Pre-resolved scalar value from `${(flags)NAME[KEY]}`
             // fast-path. Skip lookup entirely; the flag chain
