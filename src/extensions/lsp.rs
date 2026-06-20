@@ -9100,15 +9100,8 @@ fn inline_md(s: &str) -> String {
         if c == '`' {
             out.push_str("<code>");
             i += 1;
-            while i < bytes.len() && bytes[i] as char != '`' {
-                let cc = bytes[i] as char;
-                match cc {
-                    '&' => out.push_str("&amp;"),
-                    '<' => out.push_str("&lt;"),
-                    '>' => out.push_str("&gt;"),
-                    _ => out.push(cc),
-                }
-                i += 1;
+            while i < bytes.len() && bytes[i] != b'`' {
+                i = push_html_escaped(&mut out, bytes, i);
             }
             out.push_str("</code>");
             if i < bytes.len() {
@@ -9149,15 +9142,40 @@ fn inline_md(s: &str) -> String {
                 }
             }
         }
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            _ => out.push(c),
-        }
-        i += 1;
+        // Default: HTML-escape ASCII metacharacters; copy multibyte UTF-8
+        // whole. (`c` only matches ASCII markers above, so high bytes — e.g.
+        // the em-dash `—` (e2 80 94) — fall through to here.)
+        i = push_html_escaped(&mut out, bytes, i);
     }
     out
+}
+
+/// Append the character starting at `bytes[i]` to `out`, HTML-escaping the
+/// ASCII metacharacters and copying any multibyte UTF-8 sequence whole.
+/// Returns the index just past the emitted character. Never cast individual
+/// bytes of a multibyte sequence to `char` — that re-encodes Latin-1→UTF-8 and
+/// produces mojibake (e.g. `—` → `Ã¢ÂÂ`).
+fn push_html_escaped(out: &mut String, bytes: &[u8], i: usize) -> usize {
+    let b = bytes[i];
+    if b < 0x80 {
+        match b {
+            b'&' => out.push_str("&amp;"),
+            b'<' => out.push_str("&lt;"),
+            b'>' => out.push_str("&gt;"),
+            _ => out.push(b as char),
+        }
+        i + 1
+    } else {
+        let len = match b {
+            0xF0..=0xF4 => 4,
+            0xE0..=0xEF => 3,
+            0xC0..=0xDF => 2,
+            _ => 1,
+        };
+        let end = (i + len).min(bytes.len());
+        out.push_str(std::str::from_utf8(&bytes[i..end]).unwrap_or("\u{fffd}"));
+        end
+    }
 }
 
 fn find_close(bytes: &[u8], start: usize, needle: &[u8]) -> Option<usize> {
