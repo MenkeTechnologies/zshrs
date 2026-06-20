@@ -408,9 +408,9 @@ outer() { inner; }
 outer"###);
     }
 
-    /// funcsourcetrace filename:lineno.
+    /// funcsourcetrace filename:lineno — reports the def-statement line
+    /// (`inner()` on line 2), not the body offset.
     #[test]
-    #[ignore = "zshrs gap: funcsourcetrace reports wrong definition line number (zsh: 2; zshrs: 1)"]
     fn funcsourcetrace() {
         assert_parity(r###"zmodload zsh/parameter
 inner() { print ${funcsourcetrace[1]##*:}; }
