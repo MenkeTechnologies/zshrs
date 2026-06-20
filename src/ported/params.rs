@@ -7505,11 +7505,22 @@ pub fn unsetparam(name: &str) -> i32 {
         return 1; // c:3854 — unsetparam_pm's readonly rejection status
     }
     let mut retval = 0i32;
-    let (found, is_nameref) = {
+    // c:Src/params.c:3855 — `if (pm->ename && !altflag) altremove =
+    // ztrdup(pm->ename)`. User ties created by `typeset -T FOO foo`
+    // cross-link the two params via `pm.ename` (each side names the
+    // other); the static `tied_alt` map above only covers the
+    // canonical PM_SPECIAL pairs (PATH/path …). Capture the unset
+    // param's ename here so the cascade below can clear the tied
+    // partner for user ties too.
+    let (found, is_nameref, param_ename) = {
         let tab = paramtab().read().unwrap();
         match tab.get(name) {
-            Some(pm) => (true, (pm.node.flags as u32 & PM_NAMEREF) != 0),
-            None => (false, false),
+            Some(pm) => (
+                true,
+                (pm.node.flags as u32 & PM_NAMEREF) != 0,
+                pm.ename.clone(),
+            ),
+            None => (false, false, None),
         }
     };
     if found && !is_nameref {
@@ -7592,7 +7603,10 @@ pub fn unsetparam(name: &str) -> i32 {
     // unset to the paired name (PATH↔path etc.). Also clear the OS
     // env mirror since command lookup at the syscall level reads
     // the inherited libc environ.
-    if let Some(alt) = tied_alt {
+    // Static canonical pair (PATH↔path …) takes precedence; otherwise
+    // fall back to the unset param's `ename` (user `typeset -T` ties).
+    let effective_alt: Option<String> = tied_alt.map(|s| s.to_string()).or(param_ename);
+    if let Some(alt) = effective_alt.as_deref() {
         let alt_present = paramtab().read().map(|t| t.contains_key(alt)).unwrap_or(false);
         if alt_present {
             if let Some(mut alt_pm) = paramtab().write().ok().and_then(|mut t| t.remove(alt)) {
