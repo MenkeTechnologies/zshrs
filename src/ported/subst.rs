@@ -9497,6 +9497,14 @@ pub fn paramsubst(
                             // `${v/a#/X}` on "" → "X").
                             (0..=nn).collect()
                         };
+                        // c:Src/glob.c:3057 — `if (!--n ...)`: the (I:N:)
+                        // match-index selects the Nth match, not the first.
+                        // c:3095-3096 — `if (!flnum) flnum++`: default is
+                        // the 1st match. Count one match per leftmost start
+                        // position (C advances past each non-selected match
+                        // and keeps scanning), replacing only the Nth.
+                        let target = flnum.max(1);
+                        let mut count: u32 = 0;
                         for start in start_range {
                             let end_iter: Vec<usize> = if has_end_anchor {
                                 if nn >= start + 1 {
@@ -9516,6 +9524,12 @@ pub fn paramsubst(
                             for end in end_iter {
                                 let cand: String = cv[start..end].iter().collect();
                                 if gms(&cand, &pat) {
+                                    count += 1; // c:3057 `--n`
+                                    if count < target {
+                                        // c:3063-3071 — not the Nth match
+                                        // yet: continue from the next start.
+                                        break;
+                                    }
                                     let span_byte: usize =
                                         cv[..start].iter().map(|c| c.len_utf8()).sum();
                                     let dyn_repl = resolve_repl(&cand, span_byte);

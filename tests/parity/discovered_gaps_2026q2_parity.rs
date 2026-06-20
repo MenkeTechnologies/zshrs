@@ -265,10 +265,11 @@ mod cmdsubst_ifs_join {
 mod subst_match_index {
     use super::*;
 
-    /// `${(SI:2:)s/a/X}` — replace the *2nd* match. zsh: `aXa`,
-    /// zshrs replaces the 1st: `Xaa`.
+    /// `${(SI:2:)s/a/X}` — replace the *2nd* match. FIXED: the substr
+    /// replace loop now threads `flnum` (the `(I:N:)` index), counting one
+    /// match per leftmost start and replacing only the Nth (glob.c:3057
+    /// `if (!--n …)`, default 1 per c:3095-3096). zsh: `aXa`.
     #[test]
-    #[ignore = "zshrs bug: ${(SI:2:)s/a/X} replaces the 1st match (Xaa) instead of the 2nd (aXa)"]
     fn search_index_two_replaces_second_match() {
         assert_parity(r#"s=aaa; echo ${(SI:2:)s/a/X}"#);
     }
