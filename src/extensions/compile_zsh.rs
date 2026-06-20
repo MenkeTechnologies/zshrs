@@ -7400,9 +7400,30 @@ impl ZshCompiler {
                 // BUILTIN_VAR_EXISTS handler sees `a[1]` intact and
                 // can split on `[` to look up `arr[1]` element.
                 if op_clean == "-v" {
-                    let arg_clean = crate::lex::untokenize(arg);
-                    let idx = self.builder.add_constant(Value::str(arg_clean.as_str()));
-                    self.builder.emit(Op::LoadConst(idx), 0);
+                    // `-v` takes a parameter NAME and must not glob-expand
+                    // subscript brackets (`[[ -v a[1] ]]` is "is element
+                    // a[1] set", not a `[1]` char-class). But, like every
+                    // cond operand (c:Src/cond.c prefork), it DOES undergo
+                    // parameter expansion: `[[ -v $n ]]` checks the
+                    // variable NAMED BY $n. When the operand carries a `$`
+                    // (literal or tokenized String/Qstring), param-expand
+                    // it with globbing suppressed (dq_context); otherwise
+                    // emit the bare subscripted name literally so the
+                    // runtime parses the subscript. Previously the operand
+                    // was always emitted literally, so `[[ -v $n ]]` fed
+                    // the runtime the raw text `$n` → "bad substitution".
+                    let has_dollar = arg
+                        .chars()
+                        .any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
+                    if has_dollar {
+                        self.dq_context_depth += 1;
+                        self.compile_word_str(arg);
+                        self.dq_context_depth -= 1;
+                    } else {
+                        let arg_clean = crate::lex::untokenize(arg);
+                        let idx = self.builder.add_constant(Value::str(arg_clean.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    }
                 } else {
                     // c:Src/cond.c — `[[ ]]` arguments undergo parameter
                     // expansion but NOT filesystem globbing. Per zsh's
@@ -7467,9 +7488,24 @@ impl ZshCompiler {
                     // Treat the operand as a literal name string and
                     // let the runtime parse the subscript.
                     if left_clean == "-v" {
-                        let op_clean_arg = crate::lex::untokenize(op);
-                        let idx = self.builder.add_constant(Value::str(op_clean_arg.as_str()));
-                        self.builder.emit(Op::LoadConst(idx), 0);
+                        // Param-expand a `$`-bearing operand (glob
+                        // suppressed); emit a bare subscripted name
+                        // literally. Mirrors the Unary `-v` arm — see the
+                        // comment there. `[[ -v $n ]]` must check the
+                        // variable named by $n, not the literal text $n.
+                        let has_dollar = op
+                            .chars()
+                            .any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
+                        if has_dollar {
+                            self.dq_context_depth += 1;
+                            self.compile_word_str(op);
+                            self.dq_context_depth -= 1;
+                        } else {
+                            let op_clean_arg = crate::lex::untokenize(op);
+                            let idx =
+                                self.builder.add_constant(Value::str(op_clean_arg.as_str()));
+                            self.builder.emit(Op::LoadConst(idx), 0);
+                        }
                     } else {
                         // c:Src/cond.c — `[[ ]]` unary file tests don't
                         // glob-expand operands. Same logic as the

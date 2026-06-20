@@ -3605,6 +3605,13 @@ pub fn paramsubst(
         // values, losing the keys; capture the referenced assoc name here
         // so the subscript cascade can re-do the key lookup.
         let mut subexp_passoc_name: Option<String> = None;
+        // c:Src/subst.c:2764 — when the inner subexp carries `(P)` (the
+        // aspar indirect flag), the outer `(t)` must report the type of
+        // the REFERENCED parameter, not pass the value through (the
+        // `aspar` term in `if (!subexp || aspar)`). Set to the resolved
+        // param name (value of the (P) operand) whenever the inner is
+        // `(P)NAME` and NAME's value names a defined parameter.
+        let mut subexp_aspar_name: Option<String> = None;
                                                           // c:Src/subst.c:2147 — flag-block entry. Accept both ASCII `(`
                                                           // and Inpar TOKEN (\u{88}) — the lexer emits Inpar TOKEN for
                                                           // `${(flag)name}` in DQ context and in the new bridge passthru
@@ -4665,8 +4672,20 @@ pub fn paramsubst(
                 // flag block right after the opening brace so we only
                 // match the `${(flags)name}` shape.
                 let ic: Vec<char> = inner.trim().chars().collect();
-                let inpar = ic.iter().position(|&c| c == '\u{88}' || c == '(');
-                if let Some(inpar) = inpar.filter(|&i| i <= 1) {
+                // Anchor the flag-block `(` to immediately follow the
+                // opening brace (`\u{8f}` Inbrace / literal `{`). A fixed
+                // `inpar <= 1` index check broke the double-quoted form:
+                // there the `$` arrives as the Qstring token `\u{8c}`
+                // (not Unicode-whitespace, so `trim()` keeps it) and the
+                // parens are literal ASCII, pushing `(` to index 2 —
+                // `${(P)n}` inside `"…"` then missed the (P) detection,
+                // so `"${(t)${(P)n}}"` reported the value, not the type.
+                let inpar = ic
+                    .iter()
+                    .position(|&c| c == '\u{8f}' || c == '{')
+                    .map(|b| b + 1)
+                    .filter(|&i| ic.get(i).is_some_and(|&c| c == '\u{88}' || c == '('));
+                if let Some(inpar) = inpar {
                     if let Some(rel) =
                         ic[inpar + 1..].iter().position(|&c| c == '\u{8a}' || c == ')')
                     {
@@ -4684,7 +4703,21 @@ pub fn paramsubst(
                             // name; if that names an assoc, remember it.
                             if let Some(refname) = vars_get(&nm) {
                                 if !refname.is_empty() && assoc_get(&refname).is_some() {
-                                    subexp_passoc_name = Some(refname);
+                                    subexp_passoc_name = Some(refname.clone());
+                                }
+                                // Record the referenced name for the (t)
+                                // type-report path when it names a DEFINED
+                                // param (scalar / array / assoc / integer
+                                // all report their type). An undefined ref
+                                // is left None so `${(t)${(P)unset}}` falls
+                                // through to the empty-value passthrough,
+                                // matching zsh (c:subst.c:2812 v->pm gate).
+                                if !refname.is_empty()
+                                    && (vars_contains(&refname)
+                                        || arrays_contains(&refname)
+                                        || assoc_contains(&refname))
+                                {
+                                    subexp_aspar_name = Some(refname);
                                 }
                             }
                         }
@@ -10958,9 +10991,22 @@ pub fn paramsubst(
                 value = String::new();
             }
         }
+        // c:Src/subst.c:2764 — `(t)` on a `(P)`-indirect subexp
+        // (`${(t)${(P)n}}`) reports the REFERENCED parameter's type, not
+        // the value: the `aspar` term keeps the type block live even
+        // though the body is a subexp. Redirect var_name to the
+        // referenced param so the type branch below introspects it, and
+        // (via the `subexp_aspar_name.is_none()` guard on the passthrough
+        // arm) suppress the value-passthrough that plain nested subexps
+        // (`${(t)${a}}`) take.
+        if wantt {
+            if let Some(ref aspar) = subexp_aspar_name {
+                var_name = aspar.clone();
+            }
+        }
         // Apply post-processing flags to the substituted value.
         // C lines 3950-4070 — case mods, quoting, etc.
-        if wantt && used_subexp {
+        if wantt && used_subexp && subexp_aspar_name.is_none() {
             // c:Src/subst.c — `${(t)$(cmdsub)}` and `${(t)$((arith))}`
             // have no underlying parameter to type-check, so zsh
             // passes the resolved value through unchanged rather
