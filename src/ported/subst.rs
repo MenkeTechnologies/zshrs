@@ -5014,6 +5014,21 @@ pub fn paramsubst(
             while idx < body_chars.len() && depth > 0 {
                 // c:2867
                 let bc = body_chars[idx];
+                // c:Src/lex.c:1499 — a backslash-escaped bracket arrives
+                // as Bnull (or Bnullkeep) + literal `[`/`]` (the lexer's
+                // BKSLASH arm emits the marker then the raw char). The
+                // escaped bracket is subscript CONTENT, not a depth
+                // delimiter (`${A[\]]}` keys on `]`), so skip the marker
+                // and the char it escapes. Without this, the escaped `]`
+                // closed the subscript early, leaving a lone-Bnull key
+                // that crashed the downstream singsub/parsestr re-lex
+                // ("parse error").
+                if bc == crate::ported::zsh_h::Bnull
+                    || bc == crate::ported::zsh_h::Bnullkeep
+                {
+                    idx += 2;
+                    continue;
+                }
                 if bc == '[' || bc == Inbrack {
                     depth += 1;
                 }
