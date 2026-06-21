@@ -13882,7 +13882,17 @@ pub fn paramsubst(
                     let chars_arr: Vec<String> = chars_v.iter().map(|c| c.to_string()).collect(); // c:1625
                     getarrvalue(&chars_arr, lo, hi).concat()
                 // c:1625
-                } else if let Ok(idx) = sub.parse::<i32>() {
+                } else if let Some(idx) = sub.parse::<i32>().ok().or_else(|| {
+                    // c:Src/params.c:1419-1432 — getarg routes a numeric
+                    // scalar subscript through mathevali, so `$s[n]`,
+                    // `$s[#c%N+1]`, `$s[$#s%2+1]` all evaluate as math, not
+                    // just bare-integer literals. The array branch above
+                    // already does this; the scalar char-index arm only
+                    // accepted bare integers, so a subscript carrying an
+                    // expanded `$#var` (→ "3%2+1") failed parse and returned
+                    // empty.
+                    crate::ported::math::mathevali(sub.trim()).ok().map(|v| v as i32)
+                }) {
                     // c:1625
                     let n = chars_v.len() as i32; // c:1625
                                                   // c:Src/params.c:2125-2150 — KSHZEROSUBSCRIPT
