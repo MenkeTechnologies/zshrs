@@ -119,7 +119,6 @@ mod man_expn {
     /// (S) non-greedy GLOBAL substitution — the manual's "twinkle" Examples entry:
     /// ${(S)foo//${~sub}/$rep} replaces each shortest match (HTML Expansion examples).
     #[test]
-    #[ignore = "zshrs gap: (S) non-greedy flag on global // substitution does not shortest-match per position (twinkle example: zshrs 'spy star' vs zsh 'spy spy lispy star')"]
     fn S_nongreedy_global_subst() {
         assert_parity(r###"foo="twinkle twinkle little star"; sub="t*e"; rep="spy"; print ${foo//${~sub}/$rep}; print ${(S)foo//${~sub}/$rep}"###);
     }

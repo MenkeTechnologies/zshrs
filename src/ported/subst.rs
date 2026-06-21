@@ -9200,7 +9200,7 @@ pub fn paramsubst(
                     // "a" (length 1), so each `a` is replaced
                     // individually → "XXX". Without (S) the longest
                     // match consumes all "aaa" → single "X". Bug #356.
-                    let substr_short = (sub_flags_get() & SUB_SUBSTR) != 0;
+                    let substr_short = (sub_flags_bits & SUB_SUBSTR) != 0; // local: nested ${~pat} paramsubst clobbers the shared sub_flags cell, so read the per-paramsubst parsed flags
                     // c:Src/pattern.c P_ISSTART / P_ISEND — `(#s)` /
                     // `(#e)` anchors that compare the absolute string
                     // position against 0 / `string.len()`. The sliding
@@ -9719,7 +9719,7 @@ pub fn paramsubst(
                         // it's LONGEST-leftmost. The single-`/`
                         // replace form defaults to LONGEST; `(S)`
                         // flips to SHORTEST.
-                        let substr_short = (sub_flags_get() & SUB_SUBSTR) != 0;
+                        let substr_short = (sub_flags_bits & SUB_SUBSTR) != 0; // local: nested ${~pat} paramsubst clobbers the shared sub_flags cell, so read the per-paramsubst parsed flags
                         let cv: Vec<char> = val.chars().collect();
                         let nn = cv.len();
                         // c:Src/glob.c:3008-3015 — `case SUB_SUBSTR:`
@@ -9903,7 +9903,7 @@ pub fn paramsubst(
                 // `##` search the WHOLE string for a substring match
                 // (leftmost), longest at that position. Bug #179 in
                 // docs/BUGS.md.
-                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                 // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion (only
@@ -10084,7 +10084,7 @@ pub fn paramsubst(
                 // `#` search the WHOLE string for a substring match
                 // (leftmost), shortest at that position. Bug #179 in
                 // docs/BUGS.md.
-                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                 // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
@@ -10245,7 +10245,7 @@ pub fn paramsubst(
                 // — `(S)` flag makes `%%` search the WHOLE string for a
                 // substring match (rightmost), longest at that position.
                 // Bug #179 in docs/BUGS.md.
-                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                 // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
@@ -10431,7 +10431,7 @@ pub fn paramsubst(
                 // flag makes `%`/`%%` search the WHOLE string for a
                 // substring match (rightmost), then take shortest/longest
                 // at that position. Bug #179 in docs/BUGS.md.
-                let substr_mode = (sub_flags_get() & SUB_SUBSTR) != 0;
+                let substr_mode = (sub_flags_bits & SUB_SUBSTR) != 0; // local: see substr_short note
                 // c:Src/glob.c:2592-2607 — (B)/(E)/(N) numeric results.
                 let ben = sub_flags_get() & (SUB_BIND | SUB_EIND | SUB_LEN);
                 // c:Src/glob.c:2626-2636 — (R) rest portion.
