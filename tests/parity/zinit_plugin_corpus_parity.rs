@@ -1252,7 +1252,6 @@ print -r -- "joined=$mywordsleft""##,
 
     /// zpwrExpandApi.zsh:48-56 — reverse C-loop over words, double element delete.
     #[test]
-    #[ignore = "zshrs gap: `for (( i=$#arr; i>=1; i-- ))` C-loop with arr[i]=() deletion produces no output"]
     fn reverse_word_loop_delete() {
         assert_parity(
             r##"typeset -a mywordsleft=( ls -l '&&' grep x '>' out.txt )
