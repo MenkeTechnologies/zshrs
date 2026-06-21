@@ -8585,7 +8585,24 @@ fn parse_assign() -> Option<ZshAssign> {
         let mut brace = 0i32;
         let mut bracket = 0i32;
         let mut paren = 0i32;
+        let mut skip_next = false;
         for (i, c) in s.char_indices() {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            // Bnull/Bnullkeep mark the next char as a backslash-escaped
+            // literal — `A[\[]=v` keys on `[`, `A[\]]=v` on `]`. The
+            // escaped bracket/paren/brace is CONTENT, not a depth
+            // delimiter, so skip the marker and the char it escapes.
+            // Without this, the escaped `[` over-counted bracket depth
+            // and the assignment's `=` was never found (depth never
+            // returned to 0), so the whole assignment was dropped and
+            // `A[\[]=v; cmd` parse-errored on the `;`.
+            if c == '\u{9f}' /* Bnull */ || c == '\u{a0}' /* Bnullkeep */ {
+                skip_next = true;
+                continue;
+            }
             match c {
                     '{' | '\u{8f}' /* Inbrace */ => brace += 1,
                     '}' | '\u{90}' /* Outbrace */ => {
