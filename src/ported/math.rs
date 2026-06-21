@@ -2410,6 +2410,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "pow"
             | "rand"
             | "rand48"
+            | "rint"
             | "round"
             | "scalb"
             | "sin"
@@ -2728,6 +2729,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         fn log1p(x: f64) -> f64;
         fn copysign(x: f64, y: f64) -> f64;
         fn nextafter(x: f64, y: f64) -> f64;
+        fn rint(x: f64) -> f64;
         fn fmod(x: f64, y: f64) -> f64;
         fn ldexp(x: f64, exp: i32) -> f64;
         fn scalbn(x: f64, exp: i32) -> f64;
@@ -2821,6 +2823,9 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             base.powf(exp)
         }
         "rand" => rand::random::<f64>(),
+        // c:Src/Modules/mathfunc.c:374 — `retd = rint(argd)` (round to
+        // nearest, ties to even — distinct from `round`'s ties-away).
+        "rint" => unsafe { rint(args.first().copied().unwrap_or(0.0)) },
         "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
         "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
         "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
