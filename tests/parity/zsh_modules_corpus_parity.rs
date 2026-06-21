@@ -1151,21 +1151,18 @@ mod contrib {
 
     /// zargs -n batching.
     #[test]
-    #[ignore = "zshrs gap: zargs -n batching produces no output (zargs autoload non-functional)"]
     fn zargs_n() {
         assert_parity(r###"autoload -U zargs; zargs -n 2 -- a b c d e -- print"###);
     }
 
     /// zargs default command.
     #[test]
-    #[ignore = "zshrs gap: zargs with default command produces no output"]
     fn zargs_default() {
         assert_parity(r###"autoload -U zargs; zargs -- x y z -- print -r --"###);
     }
 
     /// zargs -i replacement.
     #[test]
-    #[ignore = "zshrs gap: zargs -i {} replacement produces no output"]
     fn zargs_i() {
         assert_parity(r###"autoload -U zargs; zargs -i -- a b -- print got: {} end"###);
     }
