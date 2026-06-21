@@ -7220,13 +7220,32 @@ impl ZshCompiler {
             let stripped = raw_name
                 .trim_end_matches('\u{8a}')
                 .trim_end_matches('\u{88}');
-            let cleaned = crate::lex::untokenize(stripped);
-            // Bug #27: track defined names so later dispatch sites can
-            // route to CallFunction (user fn) instead of the extension
-            // builtin fast-path.
-            self.defined_functions.insert(cleaned.clone());
-            let name_const = self.builder.add_constant(Value::str(cleaned.as_str()));
-            self.builder.emit(Op::LoadConst(name_const), 0);
+            // c:Src/exec.c execfuncdef — the function NAME word is
+            // prefork-expanded before registration, so `function $x()`,
+            // `function name"$x"()` and `function $0_inner()` define the
+            // function under the EXPANDED name (zinit configure.zsh's
+            // `$0_error` helper). A name carrying a param/command-sub
+            // expansion (`$`, String/Qstring/Tick tokens, backtick) must
+            // be expanded at runtime; otherwise it registers under the
+            // literal token text and the call site never finds it.
+            let name_needs_expand = stripped.contains('$')
+                || stripped.contains('\u{85}')  // String ($ token)
+                || stripped.contains('\u{8c}')  // Qstring (DQ $ token)
+                || stripped.contains('`')
+                || stripped.contains('\u{93}')  // Tick
+                || stripped.contains('\u{99}'); // Qtick
+            if name_needs_expand {
+                // Push the expanded name onto the stack (scalar word).
+                self.compile_word_str(stripped);
+            } else {
+                let cleaned = crate::lex::untokenize(stripped);
+                // Bug #27: track defined names so later dispatch sites can
+                // route to CallFunction (user fn) instead of the extension
+                // builtin fast-path.
+                self.defined_functions.insert(cleaned.clone());
+                let name_const = self.builder.add_constant(Value::str(cleaned.as_str()));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+            }
             let body_const = self.builder.add_constant(Value::str(body_str.as_str()));
             self.builder.emit(Op::LoadConst(body_const), 0);
             let source_const = self.builder.add_constant(Value::str(source_text.as_str()));
@@ -8976,10 +8995,21 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     // which never pre-splits DQ content — multsub/stringsubst/paramsubst
     // process the whole string inline.
     let chars: Vec<char> = s.chars().collect();
-    for w in chars.windows(2) {
+    // c:Src/subst.c:2199 — `$+NAME[sub]` (unbraced set-test) is handled
+    // by find_expansion_end's `$+` arm + the `$+NAME[KEY]` fast path, so
+    // it no longer needs the whole-string bail. Only bail for a `$+`
+    // shape with NO following name char (e.g. `$+ ` / `$+}`), which the
+    // segment splitter still can't model — route those to EXPAND_TEXT.
+    for (k, w) in chars.windows(2).enumerate() {
         let dollar = w[0] == '$' || w[0] == '\u{85}' || w[0] == '\u{8c}';
         if dollar && w[1] == '+' {
-            return None;
+            let after = chars.get(k + 2).copied();
+            let name_follows = after.is_some_and(|n| {
+                n.is_ascii_alphanumeric() || n == '_' || matches!(n, '@' | '*' | '#' | '?')
+            });
+            if !name_follows {
+                return None;
+            }
         }
     }
     let n = chars.len();
@@ -9039,6 +9069,14 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
                         || n.is_ascii_alphanumeric()
                         || n == '@' || n == '*' || n == '#' || n == '?'
                         || n == '!' || n == '$'
+                        // `$+NAME[sub]` set-test (only when a name follows
+                        // the `+`, matching find_expansion_end's `$+` arm).
+                        || (n == '+'
+                            && chars.get(i + 2).is_some_and(|&m| {
+                                m.is_ascii_alphanumeric()
+                                    || m == '_'
+                                    || matches!(m, '@' | '*' | '#' | '?')
+                            }))
                 })
                 .unwrap_or(false)
         };
@@ -9432,6 +9470,42 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 {
                     j += 1;
                 }
+            }
+            j
+        }
+        // c:Src/subst.c:2199 — `$+NAME` / `$+NAME[sub]` is the unbraced
+        // set-test shorthand for `${+NAME}` / `${+NAME[sub]}`. Span the
+        // `+`, the name, and any trailing `[subscript]` so the segment
+        // reaches the `$+NAME[KEY]` fast path (compile_zsh ~4332) as ONE
+        // piece. Without this the splitter bailed and `x=$+functions[f]`
+        // left `[f]` as literal text (`x=1[f]` vs zsh `x=1`).
+        Some('+')
+            if chars.get(i + 2).is_some_and(|&n| {
+                n.is_ascii_alphanumeric() || n == '_' || matches!(n, '@' | '*' | '#' | '?')
+            }) =>
+        {
+            let mut j = i + 2;
+            if chars[j].is_ascii_alphabetic() || chars[j] == '_' {
+                while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+                    j += 1;
+                }
+            } else {
+                j += 1; // single-char special (@/*/#/?)
+            }
+            if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
+                let in_b = chars[j];
+                let out_b = if in_b == '\u{91}' { '\u{92}' } else { ']' };
+                let mut depth = 1;
+                let mut k = j + 1;
+                while k < chars.len() && depth > 0 {
+                    if chars[k] == in_b {
+                        depth += 1;
+                    } else if chars[k] == out_b {
+                        depth -= 1;
+                    }
+                    k += 1;
+                }
+                j = k;
             }
             j
         }
