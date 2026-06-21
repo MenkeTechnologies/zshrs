@@ -552,7 +552,6 @@ mod man_glob {
 
     /// local error count (#a0) section.
     #[test]
-    #[ignore = "zshrs gap: (#a0) local zero-error section not enforced — error in the dog segment wrongly tolerated"]
     fn approx_local_zero() {
         assert_parity(r###"setopt extendedglob; [[ catdogfox = (#a1)cat(#a0)dog(#a1)fox ]] && echo m1 || echo n1; [[ catdigfox = (#a1)cat(#a0)dog(#a1)fox ]] && echo m2 || echo n2"###);
     }
@@ -583,7 +582,6 @@ mod man_glob {
 
     /// approximate exclusion matched without approximation.
     #[test]
-    #[ignore = "zshrs gap: (#a1)README~READ_ME — approximate match with exclusion mishandled (READ.ME not matched)"]
     fn approx_exclusion() {
         assert_parity(r###"setopt extendedglob; [[ "READ.ME" = (#a1)README~READ_ME ]] && echo m1 || echo n1; [[ "READ_ME" = (#a1)README~READ_ME ]] && echo m2 || echo n2"###);
     }

@@ -1201,8 +1201,15 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
             let rest = std::str::from_utf8(&bytes[off..]).unwrap_or("").to_string();
             if let Some((bits, assertp, consumed)) = patgetglobflags(&rest) {
                 patparse_off.fetch_add(consumed, Ordering::Relaxed);
-                // Emit P_GFLAGS for flag-bit changes if any.
-                let flag_bits = bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE);
+                // Emit P_GFLAGS for flag-bit changes if any. Include the
+                // low byte (the `(#aN)` approximation budget) so a
+                // mid-pattern `(#a0)` / `(#a2)` actually changes the
+                // error allowance for the following segment — c:Src/
+                // pattern.c:2941 `patglobflags = P_OPERAND(scan)->l`
+                // sets the WHOLE value. Without the 0xff, `(#a1)cat(#a0)
+                // dog` kept the outer budget and `dog` wrongly tolerated
+                // an error.
+                let flag_bits = bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | 0xff);
                 if flag_bits != 0 || (flag_bits == 0 && assertp == 0) {
                     let gf_off = patnode(P_GFLAGS);
                     let mut buf = patout.lock().unwrap();
@@ -4708,15 +4715,22 @@ fn patmatch(
                         while excl != 0 && excl < code.len() && P_ISEXCLUDE(code[excl + I_OP]) {
                             let excl_operand = excl + I_BODY + 8; // after 8-byte syncptr
                             let mut e_state = state.clone();
-                            // c:3142 — approximations off inside exclusions.
+                            // c:3134-3142 — `patglobflags &= ~0xff;
+                            // errsfound = 0;` — exclusions match EXACTLY,
+                            // with approximation turned off. Clear both the
+                            // running error count AND the budget (low byte
+                            // of glob_flags); otherwise `(#a1)README~READ_ME`
+                            // matched the exclusion READ_ME against READ.ME
+                            // approximately and wrongly excluded it.
                             e_state.errsfound = 0;
+                            let excl_flags = glob_flags & !0xff;
                             if let Some(em) = patmatch(
                                 code,
                                 excl_operand,
                                 span,
                                 s_off,
                                 &mut e_state,
-                                glob_flags,
+                                excl_flags,
                             ) {
                                 if em == span_end {
                                     excluded = true;
@@ -4994,8 +5008,12 @@ fn patmatch(
                 let bits = i32::from_le_bytes(code[body..body + 4].try_into().unwrap());
                 // C uses absolute set; for the on/off toggle pairs
                 // we currently encode only the "on" bits (i.e. (#I)
-                // emits 0 to clear). Set the running flags directly.
-                glob_flags = (glob_flags & !(GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE)) | bits;
+                // emits 0 to clear). Set the running flags directly,
+                // INCLUDING the low byte (`(#aN)` approximation budget)
+                // so mid-pattern `(#a0)`/`(#a2)` re-arm the error
+                // allowance — c:Src/pattern.c:2941.
+                glob_flags =
+                    (glob_flags & !(GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | 0xff)) | bits;
             }
             P_COUNT => {
                 // c:P_COUNT arm
