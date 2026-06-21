@@ -2918,10 +2918,17 @@ pub(crate) fn getarg<'a>(
 
         let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
             // c:1752 — `for (p = ta + beg; p >= ta; p--)`: clamp start
-            // into the valid range then walk backwards.
-            let s_idx = if start < 0 { 0 } else { start as usize };
-            let s_idx = s_idx.min(arr.len().saturating_sub(1));
-            Box::new(arr[..=s_idx].iter().enumerate().rev())
+            // into the valid range then walk backwards. An empty array
+            // has no element to walk (C's loop body never dereferences a
+            // valid `p`), so yield an empty iterator rather than indexing
+            // `arr[..=0]` on a zero-length slice.
+            if arr.is_empty() {
+                Box::new(std::iter::empty())
+            } else {
+                let s_idx = if start < 0 { 0 } else { start as usize };
+                let s_idx = s_idx.min(arr.len() - 1);
+                Box::new(arr[..=s_idx].iter().enumerate().rev())
+            }
         } else {
             // c:1757 — `for (p = ta + beg; *p; p++)`: skip first beg.
             let s_idx = if start < 0 { 0 } else { start as usize };

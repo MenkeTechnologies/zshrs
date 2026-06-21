@@ -13530,46 +13530,29 @@ pub fn paramsubst(
                     } else {
                         arr.join(" ") // c:1625
                     }
-                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
-                    // (I)/(i)/(R)/(r) on bare $arr[...]. Same as
-                    // braced form. Direct port of params.c getarg
-                    // array-pattern routing.
-                    let s = s.trim_start();
-                    let rest = s.strip_prefix('(')?;
-                    let close = rest.find(')')?;
-                    let f = rest[..close].to_string();
-                    let p = rest[close + 1..].to_string();
-                    if f.chars()
-                        .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
-                    {
-                        Some((f, p))
-                    } else {
-                        None
-                    }
-                })(sub)
-                {
-                    let return_index = flags.contains('I') || flags.contains('i');
-                    let return_all = flags.contains('I') || flags.contains('R');
-                    let mut out: Vec<String> = Vec::new();
-                    for (idx, elem) in arr.iter().enumerate() {
-                        if patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |__p| pattry(&__p, elem))
+                } else if let Some(crate::ported::params::getarg_out::Value(v)) =
+                    // c:Src/params.c::getarg — (I)/(i)/(R)/(r)/(e)/(n) flag
+                    // routing on bare `$arr[(flags)pat]`. Delegate to the
+                    // canonical getarg so reverse search ((I)/(R) walk
+                    // backwards, single last-match index/value) and the
+                    // no-match defaults ((i)/(r)→len+1, (I)/(R)→0) match C
+                    // exactly. The prior inline reimplementation collected
+                    // ALL matches and returned len+1 for both (i) AND (I)
+                    // no-match, so `$(( $a[(I)nomatch] ))` yielded len+1
+                    // instead of 0 (zargs --version/--help misfire).
+                    sub.trim_start().strip_prefix('(').and_then(|rest| {
+                        let close = rest.find(')')?;
+                        if rest[..close]
+                            .chars()
+                            .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e'))
                         {
-                            if return_index {
-                                out.push((idx + 1).to_string());
-                            } else {
-                                out.push(elem.clone());
-                            }
-                            if !return_all {
-                                break;
-                            }
+                            crate::ported::params::getarg(sub.trim_start(), Some(&arr), None, None)
+                        } else {
+                            None
                         }
-                    }
-                    if out.is_empty() && return_index {
-                        (arr.len() + 1).to_string()
-                    } else {
-                        out.join(" ")
-                    }
+                    })
+                {
+                    v.to_str().to_string()
                 } else if let Some((lo, hi)) = sub.split_once(',') {
                     // c:1625
                     // Delegate to the canonical slice helper —
