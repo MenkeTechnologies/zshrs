@@ -2314,7 +2314,6 @@ print -r -- "pick=[${back[pick]}] as=[${back[as]}] src=[${back[src]}]""##,
 
     /// zinit-side.zsh:187 — `(PA)name::=…` indirect array assignment.
     #[test]
-    #[ignore = "zshrs gap: : ${(PA)name::=...} indirect array assignment populates nothing (named hash empty)"]
     fn indirect_array_assignment() {
         assert_parity(
             r##"setopt extendedglob warncreateglobal

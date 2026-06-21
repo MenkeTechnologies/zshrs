@@ -16186,7 +16186,22 @@ fn assoc_contains(name: &str) -> bool {
 /// Array assignment via paramtab. Equivalent to C's
 /// `assignaparam(name, parts)` (`Src/params.c:3357`).
 fn exec_assignaparam(name: &str, parts: Vec<String>) {
-    arrays_insert(name.to_string(), parts);
+    // c:Src/params.c:3357 assignaparam — when the target is ALREADY an
+    // associative array, a whole-array (A) assignment populates it from
+    // key/value pairs (c:2918-2920 arrhashsetfn), NOT as a plain indexed
+    // array. `: ${(PA)name::="${(kv)src[@]}"}` into a `typeset -A` target
+    // (zinit-side.zsh:187) left the assoc empty because this shim
+    // unconditionally stored a flat indexed array under the assoc name.
+    let is_assoc = paramtab()
+        .read()
+        .ok()
+        .and_then(|t| t.get(name).map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0))
+        .unwrap_or(false);
+    if is_assoc {
+        exec_sethparam(name, parts);
+    } else {
+        arrays_insert(name.to_string(), parts);
+    }
 }
 
 // ============================================================================
