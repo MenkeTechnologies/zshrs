@@ -5176,7 +5176,24 @@ pub fn bin_typeset(
             // when typeset's BINF_MAGICEQUALS is set; the `(` / `)` are
             // literal first/last bytes. Strip them and split on
             // whitespace to recover the element list.
-            let is_paren_init = raw_v.starts_with('(') && raw_v.ends_with(')') && raw_v.len() >= 2;
+            //
+            // c:Src/parse.c par_simple/intypeset — the array-vs-scalar
+            // distinction is SYNTACTIC (the `asg->flags & ASG_ARRAY`
+            // bit), set when the `(` is an UNQUOTED paren at parse time,
+            // NOT a heuristic on the expanded value. zshrs encodes that
+            // bit as the `\u{1f}` REJOIN_SEP marker inserted by
+            // compile_zsh's BUILTIN_TYPESET_PAREN_PACK, which only fires
+            // for syntactic (unquoted) paren-inits. A double-quoted
+            // value that happens to expand to `(...)` —
+            // `typeset out="(${x:gs/%/%%})"` — reaches here as a plain
+            // dequoted scalar with NO marker and must stay a SCALAR
+            // (zsh: `out=(ruby-3.2%%@1.0)`). Keying on `starts_with('(')`
+            // alone mis-stored it as an array. The `()`-empty and
+            // `=(\u{1f}elem…)` pack forms always carry the marker.
+            let is_paren_init = raw_v.starts_with('(')
+                && raw_v.ends_with(')')
+                && raw_v.len() >= 2
+                && raw_v.contains('\u{1f}');
             // c:Src/builtin.c:2095-2097 — `if (ASG_ARRAYP(asg) &&
             // PM_TYPE(on) == PM_SCALAR && ...) on |= PM_ARRAY;`. Auto-
             // promote to array when the assignment shape is array but
