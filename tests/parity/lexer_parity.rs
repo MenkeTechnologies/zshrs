@@ -204,6 +204,14 @@ fn shell_escape(s: &str) -> String {
 /// and unmetafies tokstr before printing (see `Src/Modules/zshrs_dump.c`);
 /// we do the equivalent here via `zsh::lexer::untokenize`.
 fn dump_via_zshrs(src: &str) -> String {
+    // Serialize in-process lexing against the other in-process
+    // lex/parse consumers (wordcode_parity). The lexer mutates
+    // process-global state (chline/chwords/chwordpos, history, typtab);
+    // two test threads lexing concurrently corrupt it, surfacing as
+    // spurious "parse error" / "array assignment exceeded maximum
+    // elements" failures in whichever parse loses the race. Same guard
+    // wordcode_parity takes.
+    let _g = crate::parser_lock::parser_guard();
     let mut out = String::new();
     zsh::lex::lex_init(src);
     use zsh::tokens::{ENDINPUT, LEXERR};
