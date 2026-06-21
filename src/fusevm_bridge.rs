@@ -8138,6 +8138,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // stays literal. Bug #625.
                         if is_glob_pre && !is_assignment_shape {
                             exec.expand_glob(&s)
+                        } else if is_assignment_shape
+                            && crate::ported::zsh_h::isset(
+                                crate::ported::zsh_h::MAGICEQUALSUBST,
+                            )
+                        {
+                            // c:Src/exec.c:3353 — when MAGIC_EQUAL_SUBST is set
+                            // on a non-typeset command, esprefork = PREFORK_TYPESET,
+                            // so every NAME=value arg runs through
+                            // filesub(PREFORK_TYPESET): the `~`/`=` after the
+                            // first `=` (and after each `:`) undergo filename
+                            // expansion. `print foo=~/bar` → `foo=$HOME/bar`.
+                            // filesubstr (subst.c:741) keys on the Tilde TOKEN,
+                            // not literal `~`; this `s` was already untokenized
+                            // above, so re-tokenize (as BUILTIN_MAGIC_EQUALS_PREFORK
+                            // does) before filesub, then untokenize the result.
+                            let mut tokd = s.clone();
+                            crate::ported::glob::shtokenize(&mut tokd);
+                            let exp = crate::ported::subst::filesub(
+                                &tokd,
+                                crate::ported::zsh_h::PREFORK_TYPESET,
+                            );
+                            vec![crate::lex::untokenize(&exp).to_string()]
                         } else {
                             vec![s]
                         }

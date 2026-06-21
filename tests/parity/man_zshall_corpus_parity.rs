@@ -1386,7 +1386,6 @@ mod man_options {
 
     /// MAGIC_EQUAL_SUBST.
     #[test]
-    #[ignore = "zshrs gap: MAGIC_EQUAL_SUBST does not expand a leading ~ after = in word=~/path arguments"]
     fn magicequalsubst() {
         assert_parity(r###"setopt magicequalsubst; export HOME=/tmp/fakehome; print -r -- foo=~/bar"###);
     }

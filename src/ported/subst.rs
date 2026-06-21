@@ -1662,7 +1662,7 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
 /// lists, reapplying filesubstr to each suffix that begins with a
 /// tilde/equals.
 // ~, = subs: assign & PREFORK_TYPESET => typeset or magic equals          // c:667
-fn filesub(namptr: &str, assign: i32) -> String {
+pub(crate) fn filesub(namptr: &str, assign: i32) -> String {
     // c:667
     // C: `filesubstr(namptr, assign);`  (line 672)
     let mut namptr: String = filesubstr(namptr, assign != 0).unwrap_or_else(|| namptr.to_string()); // c:672
