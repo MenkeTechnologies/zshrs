@@ -1208,7 +1208,6 @@ mod contrib {
 
     /// zcalc -e non-interactive eval + float + PI + multiple.
     #[test]
-    #[ignore = "zshrs gap: zcalc -e -f float mode gives 0 not 0.75 for 3/4, and drops a result line"]
     fn zcalc_e() {
         assert_parity(r###"autoload -U zcalc; zcalc -e "2+3"; zcalc -e -f "3/4"; zcalc -e "2+3" "10*10""###);
     }

@@ -8946,24 +8946,57 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
 /// which evaluates a single expression and prints the result.
 /// Without `-e`, interactive mode is not supported and we exit 1.
 pub(crate) fn zcalc(args: &[String]) -> i32 {
-    // -e EXPR / --expression EXPR — evaluate one expression and
-    // print the result.
-    let mut iter = args.iter().peekable();
-    while let Some(a) = iter.next() {
-        if a == "-e" || a == "--expression" {
-            if let Some(expr) = iter.next() {
-                let result = crate::ported::subst::arithsubst(expr, "", "");
-                println!("{}", result);
-                return 0;
-            }
-        } else if let Some(expr) = a.strip_prefix("-e") {
-            let result = crate::ported::subst::arithsubst(expr, "", "");
-            println!("{}", result);
-            return 0;
+    // c:Functions/Misc/zcalc — option scan: `-e` = expression mode
+    // (all non-option args are expressions, each evaluated and printed),
+    // `-f` = `setopt forcefloat` (float arithmetic, so `3/4` → 0.75).
+    // Options may be bundled (`-ef`). Interactive REPL mode (no `-e`)
+    // is unsupported in a non-tty.
+    let mut expression_mode = false;
+    let mut force_float = false;
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--" {
+            i += 1;
+            break;
         }
+        // A leading `-` followed only by alphabetic flag letters is an
+        // option bundle; anything else (a bare expression, a negative
+        // number like `-5+3`) ends the option scan.
+        let is_opt = a.len() > 1
+            && a.starts_with('-')
+            && a[1..].chars().all(|c| c.is_ascii_alphabetic());
+        if !is_opt {
+            break;
+        }
+        for c in a[1..].chars() {
+            match c {
+                'e' => expression_mode = true,
+                'f' => force_float = true,
+                _ => {}
+            }
+        }
+        i += 1;
     }
-    eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
-    1
+    let exprs = &args[i..];
+    if !expression_mode || exprs.is_empty() {
+        eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
+        return 1;
+    }
+    // c:Functions/Misc/zcalc:187 `setopt forcefloat` for `-f`. Save and
+    // restore so the option doesn't leak into the caller's shell state.
+    let saved_ff = crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT);
+    if force_float {
+        crate::ported::options::opt_state_set("forcefloat", true);
+    }
+    for expr in exprs {
+        let result = crate::ported::subst::arithsubst(expr, "", "");
+        println!("{}", result);
+    }
+    if force_float {
+        crate::ported::options::opt_state_set("forcefloat", saved_ff);
+    }
+    0
 }
 
 #[cfg(test)]
