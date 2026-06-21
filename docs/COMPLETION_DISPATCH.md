@@ -102,13 +102,13 @@ architectural divergence (functionally equivalent end-state, see
 | `expandorcomplete` (zle_tricky.c:299) | `src/ported/zle/zle_tricky.rs:268` | identical |
 | `completecall` (zle_tricky.c:201) | `src/ported/zle/zle_tricky.rs:98` | identical |
 | `completeword` (zle_tricky.c:216) | `src/ported/zle/zle_tricky.rs:144` | identical |
-| `docomplete` (zle_tricky.c:599) | `src/ported/zle/zle_tricky.rs:696` | split — see (A) |
-| (in docomplete) `runhookdef(COMPLETEHOOK,…)` (zle_tricky.c:2347) | `src/ported/zle/zle_tricky.rs:1397` (`docompletion`) | identical |
+| `docomplete` (zle_tricky.c:599) | `src/ported/zle/zle_tricky.rs:705` | split — see (A) |
+| (in docomplete) `runhookdef(COMPLETEHOOK,…)` (zle_tricky.c:2347) | `src/ported/zle/zle_tricky.rs:1376` (`docompletion`) | identical |
 | `do_completion` (compcore.c:287) | `src/ported/zle/compcore.rs:74` | identical |
 | `callcompfunc` (compcore.c:544) | `src/ported/zle/compcore.rs:587` | divergent body — see (B) |
-| `getshfunc` (utils.c) | `src/ported/utils.rs:4723` | identical |
-| `doshfunc` (exec.c) | `src/ported/exec.rs:5476` | identical |
-| `runhookdef` (module.c) | `src/ported/module.rs:663` | identical |
+| `getshfunc` (utils.c) | `src/ported/utils.rs:5063` | identical |
+| `doshfunc` (exec.c) | `src/ported/exec.rs:5610` | identical |
+| `runhookdef` (module.c) | `src/ported/module.rs:839` | identical |
 
 ### Divergence A — `docomplete` split
 
@@ -125,10 +125,10 @@ C `docomplete(int lst)` (zle_tricky.c:599-880) does:
 
 Rust splits this into two fns:
 
-- `docomplete(lst)` (zle_tricky.rs:696) — handles steps 1-4 + 6 +
+- `docomplete(lst)` (zle_tricky.rs:705) — handles steps 1-4 + 6 +
   the dispatch on `lst`. For the COMP_COMPLETE / COMP_LIST_COMPLETE
   cases it delegates to `docompletion`.
-- `docompletion(s, lst, incmd)` (zle_tricky.rs:1384) — handles
+- `docompletion(s, lst, incmd)` (zle_tricky.rs:1363) — handles
   step 5 only: build `compldat`, look up `gethookdef("complete")`,
   fire `runhookdef`, fall through to `do_completion` if no hook
   is registered (matching C's `def`-fallback at module.c:993-994).
@@ -154,7 +154,7 @@ does:
 3. Constructs a `body_runner` closure that dispatches via
    `compsys::router::try_rust_dispatch(fn_name)` first (in-process
    Rust port of compsys helpers), falling back to
-   `exec_hooks::dispatch_function_call(fn_name, args)` which is
+   `ported::exec::dispatch_function_call(fn_name, args)` which is
    the standard fusevm bytecode dispatch.
 4. Calls `doshfunc(&mut synth_shf, largs, true, body_runner)` —
    doshfunc wraps the body_runner in the C-faithful prologue /
@@ -166,7 +166,7 @@ proper Shfunc scope. The divergence is purely in *how* the body
 gets resolved — C uses `getshfunc` to fetch the precompiled
 Eprog and `runshfunc` to execute it; Rust uses a closure that
 either routes to a native Rust port or to the bytecode VM via
-exec_hooks. Both produce identical observable behavior because
+`ported::exec::dispatch_function_call`. Both produce identical observable behavior because
 `doshfunc`'s scope plumbing is the same.
 
 ## Test coverage of the chain
@@ -175,9 +175,9 @@ exec_hooks. Both produce identical observable behavior because
   expandorcomplete unit tests around line 4500 (in
   `compcore.rs::tests`): `callcompfunc_empty_fn_no_panic`,
   `callcompfunc_sets_compstate_context`.
-- `tests/bindkey_parity.rs` — full bindkey round-trip (verifies
+- `tests/parity/bindkey_parity.rs` — full bindkey round-trip (verifies
   the Comp widget registration path that compinit uses).
-- ZTST `Test/Y*-compsys-*.ztst` files — end-to-end completion
+- ZTST `test_corpus/Y0*.ztst` files — end-to-end completion
   scenarios that exercise the full chain via the test harness.
 
 ## Why this matters for the port

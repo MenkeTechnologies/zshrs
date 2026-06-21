@@ -258,7 +258,7 @@ shells). The guard's original motivation — unit tests calling
 `bin_zselect` with empty args hanging `cargo test --lib` — is
 addressed by switching those tests to `-t 0` forms (zselect.rs test
 mod); blocking parity is pinned at the subprocess level by
-`zselect_bare_blocks_in_select_like_c` in tests/modules_parity.rs
+`zselect_bare_blocks_in_select_like_c` in tests/parity/modules_parity.rs
 (spawns both shells, asserts still-running + zero output after a
 grace period, then kills — never blocks CI).
 
@@ -336,7 +336,7 @@ bogus module r1=1/r2=127, `-ab zsh/zselect notreal` (autoload
 cancelled + failed-to-define, rc=1, list aborts), `-af zsh/mathfunc
 sin` → `0.`, no-zmodload `sin` still unknown, load→unload→`sin`
 unknown again. Pinned by `zmodload_autoload_on_use` (7 cases) in
-tests/modules_parity.rs.
+tests/parity/modules_parity.rs.
 
 ---
 
@@ -362,7 +362,7 @@ routes through compile_word_str / BUILTIN_EXPAND_TEXT like any
 `$NAME`. C: singsub → paramsubst handles these specials
 (Src/subst.c:2024+); Src/cond.c:303-310 singsubs the raw RHS before
 patcompile. Pinned by the `special_param_pattern_rhs` module in
-tests/cond_parity.rs (12 cases incl. case-arm shapes); cond suite
+tests/parity/cond_parity.rs (12 cases incl. case-arm shapes); cond suite
 87/0.
 
 **Original report:**
@@ -459,7 +459,7 @@ haswilds call). Escapes are handled by tokenize's Bnull mechanism
 
 Multibyte text (`↔`, U+2194) passes through tokenize unchanged and
 matches no token codepoint. Pinned by `multibyte_text_is_not_glob`
-in tests/glob_parity.rs; haswilds unit tests now build inputs
+in tests/parity/glob_parity.rs; haswilds unit tests now build inputs
 through `tokenize` per the C contract.
 
 ---
@@ -523,7 +523,7 @@ no-op because the markers are gone by then; the real fix is keeping
 the lexer markers intact through the `${...}` body until paramsubst's
 flag parser, which has a wide blast radius across compile_word_str
 consumers. Pinned by `bulk_e_join_newline_j_flag` in
-tests/zsh_compat_parity_gaps.rs.
+tests/parity/zsh_compat_parity_gaps.rs.
 
 ---
 
@@ -2788,7 +2788,7 @@ a2
 
 `BUILTIN_MULTIOS_READ` stack layout changed to `[source, op]` pairs
 (argc = 2N+1) so `<&N` dup members and glob arrays ride the same
-shape as the write side. Pinned in `tests/redirection_parity.rs`
+shape as the write side. Pinned in `tests/parity/redirection_parity.rs`
 `mod multios` (17 tests).
 
 **Original report:** below.
@@ -6225,7 +6225,7 @@ $ ./target/debug/zshrs --zsh -fc 'sleep 1 & kill %1' 2>&1
 $ ./target/debug/zshrs --zsh -fc 'sleep 5 & disown; jobs; kill $!'
 (empty — job removed from table)
 ```
-Pinned in tests/jobs_parity.rs (byte-vs-zsh, pid-normalized).
+Pinned in tests/parity/jobs_parity.rs (byte-vs-zsh, pid-normalized).
 
 **Original report:**
 
@@ -7055,7 +7055,7 @@ Fix in `src/ported/subst.rs` (both replace closures):
 Verified: 39-probe zero-length matrix byte-identical vs zsh
 (incl. `${v//a#/X}`, `${(S)v//a#/X}`, empty string, empty pattern
 `${v///X}` → `XaXb`, anchored forms, `(ab)#` group, array
-elements). Pinned in `tests/subst_flags_more_parity.rs`
+elements). Pinned in `tests/parity/subst_flags_more_parity.rs`
 `zero_length_quantifier_replace` (12 tests). Regression suites
 clean: lib pattern 334/0, lib glob 302/0, lib subst 409/0,
 glob_numeric 14/0, qualifiers 13/0, cond 90/0, case 37/0,
@@ -17236,7 +17236,7 @@ process_file() {
 **Status:** `fixed` 2026-06-02; re-verified at HEAD 2026-06-12
 (`setopt promptsubst; v=hi; print -P '${v} $(echo cmd)'` → `hi cmd`,
 option-off form stays literal — both byte-match zsh 5.9). Pinned by
-the `promptsubst_pre_pass` module in tests/prompt_escapes_parity.rs
+the `promptsubst_pre_pass` module in tests/parity/prompt_escapes_parity.rs
 (suite 93/0). Original fix notes below: `expand_prompt` in
 `src/ported/prompt.rs` skipped the C `Src/prompt.c:192-212`
 PROMPTSUBST pre-pass entirely; the `%`-escape parser never saw
@@ -21884,7 +21884,7 @@ $ ./target/debug/zshrs --zsh -fc 'sleep 5 & sleep 4 & for n in ${(ko)jobtexts}; 
 [1: sleep 5]
 [2: sleep 4]
 ```
-Byte-identical to zsh 5.9; pinned in tests/jobs_parity.rs.
+Byte-identical to zsh 5.9; pinned in tests/parity/jobs_parity.rs.
 
 **Original report:**
 
@@ -22056,7 +22056,7 @@ shell pwd C's `pwd` global carries) instead of the symlink-resolved
 $ ./target/debug/zshrs --zsh -fc 'cd /tmp; sleep 5 & print -r -- "[$jobstates[1]][$jobdirs[1]]"; kill %1'
 [running:+:1558=running][/tmp]
 ```
-Matches zsh byte-for-byte modulo pid; pinned in tests/jobs_parity.rs.
+Matches zsh byte-for-byte modulo pid; pinned in tests/parity/jobs_parity.rs.
 
 **Original report:**
 
@@ -27226,7 +27226,7 @@ that commit and returns 1. zshrs follows the spec.
 Also surfaced (separate, NOT a module bug): `[[ $$ == $$ ]]` is
 false in zshrs — filed as #628.
 
-Pinned by `system_bug316` (21 cases) in tests/modules_parity.rs.
+Pinned by `system_bug316` (21 cases) in tests/parity/modules_parity.rs.
 
 **Earlier status:** `fixed` 2026-06-04 — all five `zsh/system`
 builtins are now registered AND `syserror`'s output format
@@ -31747,7 +31747,7 @@ $ ./target/debug/zshrs --zsh -fc 'wait %2; echo "ec=$?"' 2>&1
 zsh:wait:1: %2: no such job
 ec=127
 ```
-All byte-identical to zsh; pinned in tests/jobs_parity.rs
+All byte-identical to zsh; pinned in tests/parity/jobs_parity.rs
 (`wait %name` and `%?str` resolution included).
 
 **Original report:**
@@ -32222,7 +32222,7 @@ rc=0, element readback, whence/hash visibility. Other introspection
 assocs (`builtins[x]=y` → `read-only variable: builtins`, rc=1)
 unchanged and still parity-correct. Pinned by
 `commands_subscript_write_installs_cmdnam_node` in
-tests/modules_parity.rs.
+tests/parity/modules_parity.rs.
 
 **Residual — CLOSED 2026-06-12:** whole-hash assignment
 `commands=(q /r)` (and the whole writable family: `options=(...)`,
@@ -32238,7 +32238,7 @@ builtins, parameters, ...) reject with `read-only variable: NAME`
 rc=1; non-hash specials (`SECONDS=(1 2)`) emit C's setarrvalue
 message `attempt to assign array value to non-array` rc=1
 (Src/params.c:2905). Pinned by the `*_whole_assoc_*` tests in
-tests/modules_parity.rs.
+tests/parity/modules_parity.rs.
 
 **Superseded 2026-06-03 note:** `assignsparam`'s
 readonly-magic-assoc list (added for #242) covered
@@ -32327,7 +32327,7 @@ intentionally omitted (zshrs is statically linked — no dlopen, no
 dlerror; a synthetic path-not-found tail would be a fabricated
 diagnostic). This omission is the FINAL intended state, so the
 status graduates from partially-fixed. Pinned by
-`zmodload_nonexistent_diagnostic` in tests/modules_parity.rs
+`zmodload_nonexistent_diagnostic` in tests/parity/modules_parity.rs
 (prefix + rc on both shells). Original notes: `require_module`
 (`src/ported/module.rs:2602`) now emits the canonical
 `zsh:1: failed to load module \`zsh/nonexistent'` diagnostic, so
@@ -33283,7 +33283,7 @@ $ both -fc 'echo hi | read "?just prompt"; print -r $REPLY'
 hi                                       # rc=0 both
 ```
 
-Pinned in `tests/read_advanced_parity.rs::prompt_with_dash_p`
+Pinned in `tests/parity/read_advanced_parity.rs::prompt_with_dash_p`
 (3 new tests; suite 23 → 26).
 
 **Root cause** — zshrs's `bin_read` did parse `-p` as a
@@ -33447,7 +33447,7 @@ c                                        # rc=0 both
 zsh-truth note: the `exec 3>&p; exec 3>&-` "EOF" form hangs in
 REAL zsh too (the shell still holds `coprocout`) — verified
 rc=124 under timeout in both shells; parity on the hang. Pinned
-in `tests/coproc_parity.rs` (10 tests).
+in `tests/parity/coproc_parity.rs` (10 tests).
 
 **Sub-issue (still open, follow-up)** — `coproc cat; print -p x;
 cat <&p` as the LAST command of `-c`: zsh prints `x` and exits 0
@@ -39565,7 +39565,7 @@ $ ./target/debug/zshrs --zsh -fc 'sleep 5 & (jobs); kill %1'
 $ ./target/debug/zshrs --zsh -fc 'sleep 5 & (kill %1); echo rc=$?; kill %1'
 rc=0
 ```
-All byte-identical to zsh; pinned in tests/jobs_parity.rs.
+All byte-identical to zsh; pinned in tests/parity/jobs_parity.rs.
 
 **Original report:**
 
@@ -41366,7 +41366,7 @@ with no `(os error N)` anywhere (probed byte-for-byte against
 /opt/homebrew/bin/zsh). The shared strip helper lives in
 `src/ported/compat.rs:140-167`; pinning tests
 `test_cd_missing_dir_zsh_format` (tests/zshrs_shell.rs) and
-`cd_missing_dir_stderr` (tests/zsh_compat_parity_gaps.rs:200)
+`cd_missing_dir_stderr` (tests/parity/zsh_compat_parity_gaps.rs:200)
 already cover the format.
 
 **Verify**
@@ -46333,7 +46333,7 @@ backslash is a member (`a\b` fully matched); `[[:alpha:]]+`
 unchanged; `[]]` leading-]` literal; `[a&b]+` matches `a&b`;
 `[a-z-]+` trailing `-` literal; `[^\n]+` negated class matches
 across the newline. Pinned by `regex_bracket_*` (3 tests) in
-tests/cond_parity.rs.
+tests/parity/cond_parity.rs.
 
 **Residual (separate gap, #557 family):** OUTSIDE bracket
 expressions `\<ordinary-char>` divergence remains — zsh's regcomp

@@ -8,9 +8,9 @@ Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; 
 
 ## [0x00] Mission
 
-zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 27,387 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
+zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 39,566 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
 
-**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 23 in-process coreutils builtins. These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
+**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 24 in-process coreutils builtins. These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
 
 ---
 
@@ -50,7 +50,7 @@ These are load-bearing numerical commitments, not aspirations.
 | Builtin dispatch | <1µs | — |
 | Multicore utilization (runtime) | All cores active during parallel work | — |
 
-"Fully featured" means: 27,387+ completions registered, full .zshrc loaded, full zpwr loaded (506+ subcommands), all hooks installed, prompt rendered. **NEVER instant-prompt fakery.** First paint = full functionality, period.
+"Fully featured" means: 39,566+ completions registered, full .zshrc loaded, full zpwr loaded (506+ subcommands), all hooks installed, prompt rendered. **NEVER instant-prompt fakery.** First paint = full functionality, period.
 
 **Comparison to existing shells (M-series Apple Silicon, full config):**
 
@@ -108,7 +108,7 @@ Architectural hierarchy: **zshrs is the parent runtime, the process supervisor, 
 
 - **stryke** runs INSIDE zshrs (`@`-prefix dispatch via `lib.rs:138-160`). When forced to choose between zshrs and stryke priorities, zshrs wins.
 - **zpwr** lives inside zshrs (it's the `.zshrc`-tier user code that zshrs hosts).
-- **External tools** (fzf, ripgrep, eza, atuin, bat, etc.) run as either `host.exec` children or in-process builtins (23 coreutils already are).
+- **External tools** (fzf, ripgrep, eza, atuin, bat, etc.) run as either `host.exec` children or in-process builtins (24 coreutils already are).
 - **GUI applications** are a separate track, not part of the CLI substrate.
 
 When designing new features, default to "this lives inside zshrs as a builtin or host op" rather than "this is a separate process zshrs invokes." Builtins cost 0 forks; externals cost 2-5ms each. Millions of commands per day; every fork avoided is real wall time.

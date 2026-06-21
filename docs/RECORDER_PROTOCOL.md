@@ -114,8 +114,8 @@ The `kind` discriminant maps 1:1 to a recorder DefKind in
 | `kind` | Meaning | Typical shell construct(s) |
 |---|---|---|
 | `alias`       | Plain alias               | bash/zsh `alias name=value`, fish `alias name value` |
-| `galias`      | Global alias              | zsh `alias -g` |
-| `salias`      | Suffix alias              | zsh `alias -s ext=value` |
+| `g_alias`     | Global alias              | zsh `alias -g` |
+| `s_alias`     | Suffix alias              | zsh `alias -s ext=value` |
 | `function`    | Function definition       | bash/zsh `function name { … }`, fish `function name; …; end` |
 | `assign`      | Plain variable assignment | `name=value`; record EVERY assign of a non-local variable |
 | `typeset`     | Declared/typed assignment | zsh `typeset -aU`, bash `declare -A`, fish `set -gx` |
@@ -176,7 +176,7 @@ Outermost call first, innermost last, separated by ` > `:
 
 Translation: `_main` was called, which called `_setup_aliases`, which
 called `_company_overrides` (which is the function that fired the
-event). This format matches `src/exec.rs:25710 recorder_ctx()` and is
+event). This format matches `src/extensions/recorder.rs:59 recorder_ctx()` and is
 what `zwhere -l` / `zd defs query` consumers expect.
 
 If your shell exposes call chain as a stack (innermost-first), reverse

@@ -49,7 +49,7 @@ Missing/wrong token → `401 {"ok":false,"code":"unauthorized","msg":"..."}`.
 
 ```sh
 curl -s http://127.0.0.1:7733/health
-# {"ok":true,"version":"0.10.7","uptime_ms":12345}
+# {"ok":true,"version":"0.12.0","uptime_ms":12345}
 ```
 
 ### Op list

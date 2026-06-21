@@ -13,7 +13,7 @@
 
 > *"Tab is the most powerful key on the keyboard."*
 
-The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/zshrs) Tab completion — ported from zsh's `Src/Zle/complist.c` and `Src/Zle/compresult.c` with **rkyv**-mmap'd bytecode shards (the completion cache), read-only SQLite **mirrors** for SQL/`dbview` introspection only (no role in Tab cache hit/miss), a full menuselect state machine, and zstyle configuration. 27 source files, 23k+ lines of Rust.
+The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/zshrs) Tab completion — ported from zsh's `Src/Zle/complist.c` and `Src/Zle/compresult.c` with **rkyv**-mmap'd bytecode shards (the completion cache), read-only SQLite **mirrors** for SQL/`dbview` introspection only (no role in Tab cache hit/miss), a full menuselect state machine, and zstyle configuration. 133 source files, 25k+ lines of Rust.
 
 ### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang)
 
@@ -33,7 +33,7 @@ The completion engine that powers [zshrs](https://github.com/MenkeTechnologies/z
 
 ## [0x00] OVERVIEW
 
-compsys replaces zsh's C completion system with a Rust implementation whose **hot path is rkyv**: pre-compiled [fusevm](https://github.com/MenkeTechnologies/fusevm) chunks live in mmap'd shards under `~/.zshrs/images/`, coordinated by `index.rkyv` (see [`docs/DAEMON.md`](../docs/DAEMON.md)). Where zsh scans `fpath` and reparses on every `compinit`, compsys consumes daemon-built images and falls through to compile-on-demand only on miss.
+compsys replaces zsh's C completion system with a Rust implementation whose **hot path is rkyv**: pre-compiled [fusevm](https://github.com/MenkeTechnologies/fusevm) chunks live in mmap'd shards under `~/.zshrs/images/`, coordinated by `index.rkyv` (see [`docs/DAEMON.md`](../../docs/DAEMON.md)). Where zsh scans `fpath` and reparses on every `compinit`, compsys consumes daemon-built images and falls through to compile-on-demand only on miss.
 
 **SQLite** exists only as **read-only mirrors** (joinable rows, optional FTS materializations) for humans and `dbview`. Mirrors are hydrated from daemon state; they **do not define or influence** the shell completion cache.
 
@@ -107,7 +107,7 @@ ZshrsCompleter::complete()
 
 ## [0x04] SQLITE MIRROR TABLES
 
-Daemon-hydrated **read-only** views for SQL and `dbview`. They duplicate metadata for human queries; **shell behavior never depends on these rows for caching or dispatch.** Authoritative compiled payloads are in **rkyv** shards (`image_path` / offsets per [`docs/DAEMON.md`](../docs/DAEMON.md)).
+Daemon-hydrated **read-only** views for SQL and `dbview`. They duplicate metadata for human queries; **shell behavior never depends on these rows for caching or dispatch.** Authoritative compiled payloads are in **rkyv** shards (`image_path` / offsets per [`docs/DAEMON.md`](../../docs/DAEMON.md)).
 
 | Table | Purpose (mirror / inspection only) |
 |-------|---------|
@@ -124,14 +124,9 @@ Daemon-hydrated **read-only** views for SQL and `dbview`. They duplicate metadat
 ## [0x05] COMPLETION FUNCTIONS
 
 compsys ships with Rust ports of every zsh `Completion/` shell function,
-organised in the same upstream directory layout. Two parallel trees:
+organised in the same upstream directory layout:
 
 ```
-compsys/functions/             ← VENDORED shell source (reference)
-├── Base/{Completer,Core,Utility,Widget}/
-├── Unix/Type/
-└── Zsh/Command/
-
 compsys/ported/                ← RUST PORTS (canonical impl)
 ├── Base/
 │   ├── Completer/   _all_matches / _approximate / _complete / _correct /
@@ -171,7 +166,7 @@ one upstream zsh shell function**. The rules:
 - **Faithful semantics.** Every flag the shell function accepts must be
   honored (or explicitly documented as deferred). No "returns true to
   make the test pass" stubs — those failed an internal audit
-  ([`docs/audits/PORT_STUBS.md`](../docs/audits/PORT_STUBS.md)) and were
+  ([`docs/audits/PORT_STUBS.md`](../../docs/audits/PORT_STUBS.md)) and were
   replaced with full ports.
 - **Shell-source citations.** Each `.rs` file has a module-level
   `//! Port of _<NAME>` header naming the upstream

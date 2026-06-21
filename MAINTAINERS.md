@@ -18,15 +18,15 @@ _To be populated when the maintainer team is assembled._
 | Handle | Role | Areas |
 |---|---|---|
 | (TBD) | Lead maintainer | release management, CI |
-| (TBD) | Shell core / executor | `src/exec.rs`, `src/extensions/canonical_apply.rs`, `bins/zshrs.rs` |
-| (TBD) | Strict-port surface (FROZEN) | `src/ported/**` (89 files), `tests/port_purity.rs`, `docs/PORT.md`, `docs/zsh_c_functions.txt` |
-| (TBD) | Extensions / non-port | `src/extensions/**` (31 files) — non-C-ancestor features |
+| (TBD) | Shell core / executor | `src/ported/exec.rs`, `src/extensions/canonical_apply.rs`, `bins/zshrs.rs` |
+| (TBD) | Strict-port surface (FROZEN) | `src/ported/**` (106 files), `tests/port_purity.rs`, `docs/PORT.md`, `docs/zsh_c_functions.txt` |
+| (TBD) | Extensions / non-port | `src/extensions/**` (42 files) — non-C-ancestor features |
 | (TBD) | Daemon / IPC | `daemon/server.rs`, `daemon/ops.rs`, `daemon/state.rs` |
 | (TBD) | Recorder / canonical | `bins/zshrs-recorder.rs`, `src/recorder/`, `daemon/canonical.rs` |
 | (TBD) | Job supervisor / pty | `daemon/jobs.rs`, `daemon/zjob_builtin.rs` |
 | (TBD) | HTTP / OpenAPI | `daemon/http.rs`, `daemon/auth.rs` |
-| (TBD) | Parser / lexer | `parse/src/`, `compsys/` |
-| (TBD) | Compat / zsh source | `src/zsh/` (read-only reference), `tests/ztst_runner.rs` |
+| (TBD) | Parser / lexer | `src/ported/parse.rs`, `src/ported/lex.rs`, `src/compsys/` |
+| (TBD) | Compat / zsh source | `docs/zsh_c_functions.txt` (read-only reference), `test_corpus/`, `tests/ztst_runner.rs` |
 
 ## Responsibilities
 

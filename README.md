@@ -20,7 +20,7 @@
 
 ## `[PATENT PENDING]`
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **658k+ lines, 614 source files** across a 2-crate workspace (`zshrs` runtime + `zshrs-daemon`; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 107 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 41 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility.
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **658k+ lines, 486 source files** across a 2-crate workspace (`zshrs` runtime + `zshrs-daemon`; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 42 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility.
 
 ### [`Read the Docs`](https://menketechnologies.github.io/zshrs/index.html) &middot; [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](src/compsys/)
 
@@ -496,11 +496,11 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 ```
                   ┌────────────────────────────────────────────────────────────────┐
                   │                       zshrs workspace                          │
-                  │             2 crates · 614 .rs files · 658k+ lines             │
+                  │             2 crates · 486 .rs files · 658k+ lines             │
                   ├──────────────────────────────────────────┬─────────────────────┤
                   │  src/ (288 .rs — runtime crate)           │  fish/ (157 .rs)    │
                   │  ┌────────────────────────────────────┐   │  reader / line edit │
-                  │  │  src/ported/  (107 — STRICT PORT)  │   │  syntax highlight   │
+                  │  │  src/ported/  (106 — STRICT PORT)  │   │  syntax highlight   │
                   │  │  every .rs ↔ a real Src/<x>.c file │   │  autosuggest        │
                   │  │  every fn carries `/// Port of …`  │   │  abbreviations      │
                   │  │  enforced by tests/port_purity.rs  │   │  env dispatch       │
@@ -510,7 +510,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
                   │  │  prompt · utils · init · …         │   ├─────────────────────┤
                   │  └────────────────────────────────────┘   │  parse + lex now    │
                   │  ┌────────────────────────────────────┐   │  live IN-RUNTIME    │
-                  │  │  src/extensions/  (41 — NON-PORT)  │   │  (folded from the   │
+                  │  │  src/extensions/  (42 — NON-PORT)  │   │  (folded from the   │
                   │  │  features zsh C does NOT have:     │   │  old parse crate)   │
                   │  │  AOT · plugin/script/autoload      │   ├─────────────────────┤
                   │  │  cache · fish_features · worker    │   │  daemon/ (41 .rs)   │
@@ -537,7 +537,7 @@ The codebase is **structurally divided into ported code vs extensions**, with th
 
 | Directory | Rule | Enforcement |
 |-----------|------|-------------|
-| `src/ported/` | **Strict 1:1 port.** Every `.rs` mirrors a real upstream zsh `Src/<x>.c`; every top-level `fn` carries `/// Port of <cname>() from Src/<file>.c:NNNN`; no invented helpers; **directory and file set FROZEN** (107 files, no new files allowed). | `tests/port_purity.rs` |
+| `src/ported/` | **Strict 1:1 port.** Every `.rs` mirrors a real upstream zsh `Src/<x>.c`; every top-level `fn` carries `/// Port of <cname>() from Src/<file>.c:NNNN`; no invented helpers; **directory and file set FROZEN** (106 files, no new files allowed). | `tests/port_purity.rs` |
 | `src/compsys/ported/` | **1:1 mirror of zsh's `Completion/` tree.** Engine functions (`Base/{Completer,Core,Utility,Widget}`, `Zsh/Context`, plus engine-only entries in `Unix/Type`, `Zsh/Type`, `Zsh/Command`, `Unix/Command`, and top-level `compinit`/`compdump`) are ported to Rust as `<name>.rs` and carry a `Port of _<NAME>` header citing the upstream shell source. End-user shell completers (`*/Command`, `Zsh/Function`, end-user type files) are **copied as-is alongside** the Rust ports — same dir layout, same filename, no `.rs` extension — and dispatched via the `_call_function` bridge. Current coverage: **991 upstream files mirrored, 128 engine .rs ports**. Regenerate the coverage report with `scripts/gen_compsys_port_report.py`. | per-fn tests; doc-comment shell-source citations; `gen_compsys_port_report.py` |
 | `src/extensions/` | **Non-port only.** Features zsh C demonstrably does *not* have. Must not duplicate or shadow any port. | `port_purity` exempts the 1:1 file rule for this directory only |
 | `src/recorder/` | **Feature-gated.** Every symbol `#[cfg(feature = "recorder")]`; deleted by rustc when off. | `Cargo.toml` `required-features = ["recorder"]` on the `zshrs-recorder` bin |

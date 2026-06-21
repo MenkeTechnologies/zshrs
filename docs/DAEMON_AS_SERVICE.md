@@ -387,7 +387,7 @@ Deferred to a follow-up round, named here for forward compatibility:
 0600-mode in the user's own cache dir. The HTTP listener is
 **disabled by default** and refuses to bind anywhere except loopback
 unless at least one bearer token is configured (see
-`daemon/http.rs:91`). For solo use, leave `[http.tokens]` empty —
+`daemon/http.rs:95`). For solo use, leave `[http.tokens]` empty —
 loopback HTTP needs no auth.
 
 **Multi-client opt-in.** Configure bearer tokens in
