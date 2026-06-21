@@ -87,6 +87,20 @@ thread_local! {
     /// XTRACE_NEWLINE after emitting the trailing `\n`.
     static XTRACE_DONE_PS4: Cell<bool> = const { Cell::new(false) };
 
+    /// Port of C's `FILE *xtrerr` xtrace stream (Src/exec.c:81). C builds
+    /// each trace line in this stdio buffer — `printprompt4` does
+    /// `fprintf(xtrerr, …)`, then args via `fputs`/`fputc` — and
+    /// `fflush(xtrerr)` writes the WHOLE line to stderr in one syscall
+    /// (makecline c:2122-2123, addvars c:2588, condition c:1372). That
+    /// single flush is exactly why a forked pipeline stage's trace line
+    /// reaches the shared stderr fd atomically and never interleaves with
+    /// a concurrent stage. zshrs previously emitted PS4 and the command
+    /// text as separate `eprint!` writes, which raced under load. Model
+    /// the FILE buffer as this thread-local String (a forked child owns
+    /// its own copy); `xtrerr_fputs` appends, `xtrerr_flush` does the
+    /// single write.
+    static XTRERR: RefCell<String> = const { RefCell::new(String::new()) };
+
     /// Stack of (RETFLAG, BREAKS, CONTFLAG, EXIT_PENDING) tuples saved
     /// at try-block exit so the always-arm body can run cleanly even
     /// when the try-block fired `return` / `break` / `continue` /
@@ -130,6 +144,28 @@ thread_local! {
     /// (e.g. `tee >(wc) $(print x)` — print must not close tee's
     /// fd). Mirrors C's per-job filelist ownership.
     static PSUB_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Port of `fputs(s, xtrerr)` / `fprintf(xtrerr, "%s", s)` (Src/exec.c):
+/// append `s` to the buffered xtrace line. Nothing reaches stderr until
+/// [`xtrerr_flush`] (the port of `fflush(xtrerr)`) writes the line whole.
+pub(crate) fn xtrerr_fputs(s: &str) {
+    XTRERR.with(|b| b.borrow_mut().push_str(s));
+}
+
+/// Port of `fflush(xtrerr)` (Src/exec.c:1373/2123/2596): write the
+/// buffered xtrace line to stderr in ONE `write` and clear the buffer, so
+/// the line lands on the shared fd atomically (no interleaving across
+/// concurrent pipeline stages).
+pub(crate) fn xtrerr_flush() {
+    XTRERR.with(|b| {
+        let mut buf = b.borrow_mut();
+        if !buf.is_empty() {
+            use std::io::Write;
+            let _ = std::io::stderr().write_all(buf.as_bytes());
+            buf.clear();
+        }
+    });
 }
 
 /// RAII guard bumping the psub scope depth — see PSUB_SCOPE_DEPTH.
@@ -6088,7 +6124,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if !already {
                 printprompt4();
             }
-            eprintln!("{}", cmd_text);
+            // c:exec.c:5240/5286 — `fprintf(xtrerr, "%s\n", expr)`. Buffer
+            // the line + newline, flush once (single write).
+            xtrerr_fputs(&cmd_text);
+            xtrerr_fputs("\n");
+            xtrerr_flush();
             XTRACE_DONE_PS4.with(|f| f.set(false));
         }
         Value::Status(0)
@@ -6160,11 +6200,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 //   if (!doneps4) printprompt4();
                 //   ... emit args + spaces ...
                 //   fputc('\n', xtrerr); fflush(xtrerr);
+                // printprompt4 + the args + `\n` all land in the xtrerr
+                // buffer; the single fflush below writes the whole line in
+                // one syscall so concurrent pipeline stages never
+                // interleave (c:makecline:2122-2123).
                 let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
                 if !already_ps4 {
                     printprompt4();
                 }
-                eprintln!("{}", line);
+                xtrerr_fputs(&line);
+                xtrerr_fputs("\n"); // c:2122 fputc('\n', xtrerr)
+                xtrerr_flush(); // c:2123 fflush(xtrerr)
             }
             XTRACE_DONE_PS4.with(|f| f.set(false));
         }
@@ -6200,8 +6246,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     XTRACE_DONE_PS4.with(|f| f.set(true));
                 }
                 // C: `fprintf(xtrerr, "%s=", name)` then `quotedzputs
-                // (val); fputc(' ', xtrerr);`. Emit no newline.
-                eprint!("{}={} ", name, quotedzputs(&value));
+                // (val); fputc(' ', xtrerr);`. Append to the xtrerr buffer
+                // (no newline / no flush — the line continues with the
+                // command via XTRACE_ARGS, or ends at XTRACE_NEWLINE).
+                xtrerr_fputs(&format!("{}={} ", name, quotedzputs(&value)));
             }
         }
         Value::Status(0)
@@ -6216,7 +6264,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if on {
             let already_ps4 = XTRACE_DONE_PS4.with(|f| f.get());
             if already_ps4 {
-                eprintln!();
+                xtrerr_fputs("\n"); // c:3398 fputc('\n', xtrerr)
+                xtrerr_flush(); // c:3398 fflush(xtrerr)
                 XTRACE_DONE_PS4.with(|f| f.set(false));
             }
         }
