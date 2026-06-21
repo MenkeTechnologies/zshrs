@@ -4,10 +4,6 @@
 // asserts the chunk's expected stdout/status; un-ignore as fixed.
 
 #[test]
-#[ignore = "ztst gap A01grammar.ztst:5 — Executing command that evaluates to empty resets status"]
-fn ztst_a01grammar_005() { assert_ztst_chunk("A01grammar.ztst", 5); }
-
-#[test]
 #[ignore = "ztst gap A01grammar.ztst:13 — End of sublist containing ! with no command"]
 fn ztst_a01grammar_013() { assert_ztst_chunk("A01grammar.ztst", 13); }
 
