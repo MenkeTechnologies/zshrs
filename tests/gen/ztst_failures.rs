@@ -188,18 +188,6 @@ fn ztst_a05execution_009() { assert_ztst_chunk("A05execution.ztst", 9); }
 fn ztst_a05execution_019() { assert_ztst_chunk("A05execution.ztst", 19); }
 
 #[test]
-#[ignore = "ztst gap A05execution.ztst:23 — Check whether '$pipestatus[]' behaves."]
-fn ztst_a05execution_023() { assert_ztst_chunk("A05execution.ztst", 23); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:24 — Check $pipestatus with a known difficult case"]
-fn ztst_a05execution_024() { assert_ztst_chunk("A05execution.ztst", 24); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:25 — Bug regression: piping a shell construct to an external process may hang"]
-fn ztst_a05execution_025() { assert_ztst_chunk("A05execution.ztst", 25); }
-
-#[test]
 #[ignore = "ztst gap A05execution.ztst:26 — Bug regression: piping to anonymous function; piping to background function"]
 fn ztst_a05execution_026() { assert_ztst_chunk("A05execution.ztst", 26); }
 
@@ -208,24 +196,8 @@ fn ztst_a05execution_026() { assert_ztst_chunk("A05execution.ztst", 26); }
 fn ztst_a05execution_027() { assert_ztst_chunk("A05execution.ztst", 27); }
 
 #[test]
-#[ignore = "ztst gap A05execution.ztst:28 — The status of recently exited background jobs is recorded"]
-fn ztst_a05execution_028() { assert_ztst_chunk("A05execution.ztst", 28); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:29 — False  if  condition handled correctly by  for  loops with ERR_EXIT"]
-fn ztst_a05execution_029() { assert_ztst_chunk("A05execution.ztst", 29); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:30 — The status of  select  is zero when the loop body does not execute"]
-fn ztst_a05execution_030() { assert_ztst_chunk("A05execution.ztst", 30); }
-
-#[test]
 #[ignore = "ztst gap A05execution.ztst:31 — Background job exit does not affect reaping foreground job"]
 fn ztst_a05execution_031() { assert_ztst_chunk("A05execution.ztst", 31); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:32 — return  in  if  or  while  conditional"]
-fn ztst_a05execution_032() { assert_ztst_chunk("A05execution.ztst", 32); }
 
 #[test]
 #[ignore = "ztst gap A05execution.ztst:33 — 'wait' exit status and warning for unknown ID"]
@@ -234,18 +206,6 @@ fn ztst_a05execution_033() { assert_ztst_chunk("A05execution.ztst", 33); }
 #[test]
 #[ignore = "ztst gap A05execution.ztst:34 — 'wait' exit status for unknown ID (POSIX mode)"]
 fn ztst_a05execution_034() { assert_ztst_chunk("A05execution.ztst", 34); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:35 — wait for stopped and continued process"]
-fn ztst_a05execution_035() { assert_ztst_chunk("A05execution.ztst", 35); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:36 — exit code 130 isn't mistaken for a signal (unit test for workers/46060)"]
-fn ztst_a05execution_036() { assert_ztst_chunk("A05execution.ztst", 36); }
-
-#[test]
-#[ignore = "ztst gap A05execution.ztst:37 — 'repeat' loop can use lastval in the count"]
-fn ztst_a05execution_037() { assert_ztst_chunk("A05execution.ztst", 37); }
 
 #[test]
 #[ignore = "ztst gap A05execution.ztst:38 — 'repeat 0' resets lastval"]
@@ -808,10 +768,6 @@ fn ztst_b07emulate_019() { assert_ztst_chunk("B07emulate.ztst", 19); }
 fn ztst_b07emulate_020() { assert_ztst_chunk("B07emulate.ztst", 20); }
 
 #[test]
-#[ignore = "ztst gap B09hash.ztst:6 — hash -m option"]
-fn ztst_b09hash_006() { assert_ztst_chunk("B09hash.ztst", 6); }
-
-#[test]
 #[ignore = "ztst gap B09hash.ztst:10 — Dashes are untokenized in directory hash names"]
 fn ztst_b09hash_010() { assert_ztst_chunk("B09hash.ztst", 10); }
 
@@ -896,96 +852,12 @@ fn ztst_c01arith_068() { assert_ztst_chunk("C01arith.ztst", 68); }
 fn ztst_c01arith_073() { assert_ztst_chunk("C01arith.ztst", 73); }
 
 #[test]
-#[ignore = "ztst gap C02cond.ztst:13 — -r cond"]
-fn ztst_c02cond_013() { assert_ztst_chunk("C02cond.ztst", 13); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:21 — -N cond"]
-fn ztst_c02cond_021() { assert_ztst_chunk("C02cond.ztst", 21); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:22 — -nt cond"]
-fn ztst_c02cond_022() { assert_ztst_chunk("C02cond.ztst", 22); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:23 — -ot cond"]
-fn ztst_c02cond_023() { assert_ztst_chunk("C02cond.ztst", 23); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:24 — -ef cond"]
-fn ztst_c02cond_024() { assert_ztst_chunk("C02cond.ztst", 24); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:25 — =, == and != conds"]
-fn ztst_c02cond_025() { assert_ztst_chunk("C02cond.ztst", 25); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:26 — < and > conds"]
-fn ztst_c02cond_026() { assert_ztst_chunk("C02cond.ztst", 26); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:27 — -eq and -ne conds"]
-fn ztst_c02cond_027() { assert_ztst_chunk("C02cond.ztst", 27); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:28 — -lt and -gt conds"]
-fn ztst_c02cond_028() { assert_ztst_chunk("C02cond.ztst", 28); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:29 — -le cond"]
-fn ztst_c02cond_029() { assert_ztst_chunk("C02cond.ztst", 29); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:30 — -ge cond"]
-fn ztst_c02cond_030() { assert_ztst_chunk("C02cond.ztst", 30); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:31 — || and && in conds"]
-fn ztst_c02cond_031() { assert_ztst_chunk("C02cond.ztst", 31); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:32 — /dev/fd support in conds handled by access"]
-fn ztst_c02cond_032() { assert_ztst_chunk("C02cond.ztst", 32); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:33 — /dev/fd support in conds handled by stat"]
-fn ztst_c02cond_033() { assert_ztst_chunk("C02cond.ztst", 33); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:34 — complex conds with skipping"]
-fn ztst_c02cond_034() { assert_ztst_chunk("C02cond.ztst", 34); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:35 — strings with `[' builtin"]
-fn ztst_c02cond_035() { assert_ztst_chunk("C02cond.ztst", 35); }
-
-#[test]
 #[ignore = "ztst gap C02cond.ztst:36 — string comparisons with `[' builtin"]
 fn ztst_c02cond_036() { assert_ztst_chunk("C02cond.ztst", 36); }
 
 #[test]
 #[ignore = "ztst gap C02cond.ztst:37 — string comparison with strings that look like operators"]
 fn ztst_c02cond_037() { assert_ztst_chunk("C02cond.ztst", 37); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:38 — substitution in `[' builtin"]
-fn ztst_c02cond_038() { assert_ztst_chunk("C02cond.ztst", 38); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:39 — argument checking for [ builtin"]
-fn ztst_c02cond_039() { assert_ztst_chunk("C02cond.ztst", 39); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:40 — argument checking for test builtin"]
-fn ztst_c02cond_040() { assert_ztst_chunk("C02cond.ztst", 40); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:41 — argument checking for [ builtin"]
-fn ztst_c02cond_041() { assert_ztst_chunk("C02cond.ztst", 41); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:42 — argument checking for test builtin"]
-fn ztst_c02cond_042() { assert_ztst_chunk("C02cond.ztst", 42); }
 
 #[test]
 #[ignore = "ztst gap C02cond.ztst:43 — argument checking for [ builtin"]
@@ -996,14 +868,6 @@ fn ztst_c02cond_043() { assert_ztst_chunk("C02cond.ztst", 43); }
 fn ztst_c02cond_044() { assert_ztst_chunk("C02cond.ztst", 44); }
 
 #[test]
-#[ignore = "ztst gap C02cond.ztst:45 — -nt shouldn't abort on non-existent files"]
-fn ztst_c02cond_045() { assert_ztst_chunk("C02cond.ztst", 45); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:46 — -v cond"]
-fn ztst_c02cond_046() { assert_ztst_chunk("C02cond.ztst", 46); }
-
-#[test]
 #[ignore = "ztst gap C02cond.ztst:47 — -v cond with array"]
 fn ztst_c02cond_047() { assert_ztst_chunk("C02cond.ztst", 47); }
 
@@ -1012,28 +876,8 @@ fn ztst_c02cond_047() { assert_ztst_chunk("C02cond.ztst", 47); }
 fn ztst_c02cond_048() { assert_ztst_chunk("C02cond.ztst", 48); }
 
 #[test]
-#[ignore = "ztst gap C02cond.ztst:49 — -v cond with positional parameters"]
-fn ztst_c02cond_049() { assert_ztst_chunk("C02cond.ztst", 49); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:50 — regex tests shouldn't crash"]
-fn ztst_c02cond_050() { assert_ztst_chunk("C02cond.ztst", 50); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:51 — MATCH, MBEGIN, MEND, match, mbegin, mend"]
-fn ztst_c02cond_051() { assert_ztst_chunk("C02cond.ztst", 51); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:52 — regex infix operator should not invert following conditions"]
-fn ztst_c02cond_052() { assert_ztst_chunk("C02cond.ztst", 52); }
-
-#[test]
 #[ignore = "ztst gap C02cond.ztst:53 — Error message for unknown prefix condition"]
 fn ztst_c02cond_053() { assert_ztst_chunk("C02cond.ztst", 53); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:54 — Error message for unknown infix condition"]
-fn ztst_c02cond_054() { assert_ztst_chunk("C02cond.ztst", 54); }
 
 #[test]
 #[ignore = "ztst gap C02cond.ztst:55 — Regression test for examining code with regular expression match"]
@@ -1044,20 +888,12 @@ fn ztst_c02cond_055() { assert_ztst_chunk("C02cond.ztst", 55); }
 fn ztst_c02cond_056() { assert_ztst_chunk("C02cond.ztst", 56); }
 
 #[test]
-#[ignore = "ztst gap C02cond.ztst:57 — bash compatibility with single [[ ... ]] argument"]
-fn ztst_c02cond_057() { assert_ztst_chunk("C02cond.ztst", 57); }
-
-#[test]
 #[ignore = "ztst gap C02cond.ztst:58 — test with two arguments and a token"]
 fn ztst_c02cond_058() { assert_ztst_chunk("C02cond.ztst", 58); }
 
 #[test]
 #[ignore = "ztst gap C02cond.ztst:59 — yet more old-fashioned test fix ups: prefer comparison to parentheses"]
 fn ztst_c02cond_059() { assert_ztst_chunk("C02cond.ztst", 59); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:60 — = and == appear as input"]
-fn ztst_c02cond_060() { assert_ztst_chunk("C02cond.ztst", 60); }
 
 #[test]
 #[ignore = "ztst gap C02cond.ztst:61 — -o invalidoption"]
@@ -1100,10 +936,6 @@ fn ztst_c03traps_011() { assert_ztst_chunk("C03traps.ztst", 11); }
 fn ztst_c03traps_012() { assert_ztst_chunk("C03traps.ztst", 12); }
 
 #[test]
-#[ignore = "ztst gap C03traps.ztst:13 — basic localtraps handling"]
-fn ztst_c03traps_013() { assert_ztst_chunk("C03traps.ztst", 13); }
-
-#[test]
 #[ignore = "ztst gap C03traps.ztst:14 — more sophisticated error trapping"]
 fn ztst_c03traps_014() { assert_ztst_chunk("C03traps.ztst", 14); }
 
@@ -1114,10 +946,6 @@ fn ztst_c03traps_015() { assert_ztst_chunk("C03traps.ztst", 15); }
 #[test]
 #[ignore = "ztst gap C03traps.ztst:16 — ksh-style EXIT traps preserve return value"]
 fn ztst_c03traps_016() { assert_ztst_chunk("C03traps.ztst", 16); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:17 — ksh-style EXIT traps can force return status of enclosing function"]
-fn ztst_c03traps_017() { assert_ztst_chunk("C03traps.ztst", 17); }
 
 #[test]
 #[ignore = "ztst gap C03traps.ztst:18 — autoloaded TRAPEXIT (exit status > 128 indicates an old bug is back)"]
@@ -1140,28 +968,12 @@ fn ztst_c03traps_021() { assert_ztst_chunk("C03traps.ztst", 21); }
 fn ztst_c03traps_022() { assert_ztst_chunk("C03traps.ztst", 22); }
 
 #[test]
-#[ignore = "ztst gap C03traps.ztst:23 — Normal return from TRAPZERR."]
-fn ztst_c03traps_023() { assert_ztst_chunk("C03traps.ztst", 23); }
-
-#[test]
 #[ignore = "ztst gap C03traps.ztst:24 — Return with zero status triggered from within trap '...' ZERR."]
 fn ztst_c03traps_024() { assert_ztst_chunk("C03traps.ztst", 24); }
 
 #[test]
 #[ignore = "ztst gap C03traps.ztst:25 — EXIT trap set in current shell at left of pipeline"]
 fn ztst_c03traps_025() { assert_ztst_chunk("C03traps.ztst", 25); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:26 — EXIT trap set in subshell at left of pipeline"]
-fn ztst_c03traps_026() { assert_ztst_chunk("C03traps.ztst", 26); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:27 — EXIT trap set in subshell reset in subsubshell"]
-fn ztst_c03traps_027() { assert_ztst_chunk("C03traps.ztst", 27); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:28 — EXIT trap set in command substitution"]
-fn ztst_c03traps_028() { assert_ztst_chunk("C03traps.ztst", 28); }
 
 #[test]
 #[ignore = "ztst gap C03traps.ztst:29 — POSIX_TRAPS option"]
@@ -1180,240 +992,28 @@ fn ztst_c03traps_031() { assert_ztst_chunk("C03traps.ztst", 31); }
 fn ztst_c03traps_032() { assert_ztst_chunk("C03traps.ztst", 32); }
 
 #[test]
-#[ignore = "ztst gap C03traps.ztst:33 — ERREXIT in loop with simple commands"]
-fn ztst_c03traps_033() { assert_ztst_chunk("C03traps.ztst", 33); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:34 — ERREXIT with false from inside && within function"]
-fn ztst_c03traps_034() { assert_ztst_chunk("C03traps.ztst", 34); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:35 — ERREXIT not triggered on empty function after false in if."]
-fn ztst_c03traps_035() { assert_ztst_chunk("C03traps.ztst", 35); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:36 — ERREXIT is triggered in an else block after a cmd subst returning false"]
-fn ztst_c03traps_036() { assert_ztst_chunk("C03traps.ztst", 36); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:37 — ERR_RETURN not triggered in if condition"]
-fn ztst_c03traps_037() { assert_ztst_chunk("C03traps.ztst", 37); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:38 — ERR_RETURN in  if"]
-fn ztst_c03traps_038() { assert_ztst_chunk("C03traps.ztst", 38); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:39 — ERR_RETURN in  else  branch (regression test)"]
-fn ztst_c03traps_039() { assert_ztst_chunk("C03traps.ztst", 39); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:40 — ERR_RETURN when false  if  is the first statement in an  else  (regression)"]
-fn ztst_c03traps_040() { assert_ztst_chunk("C03traps.ztst", 40); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:41 — ERR_RETURN, basic case"]
-fn ztst_c03traps_041() { assert_ztst_chunk("C03traps.ztst", 41); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:42 — ERR_RETURN with  !"]
-fn ztst_c03traps_042() { assert_ztst_chunk("C03traps.ztst", 42); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:43 — ERR_RETURN with  !  and a following false"]
-fn ztst_c03traps_043() { assert_ztst_chunk("C03traps.ztst", 43); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:44 — ERR_RETURN with  !  suppressed inside complex structure"]
-fn ztst_c03traps_044() { assert_ztst_chunk("C03traps.ztst", 44); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:45 — ERR_RETURN with no  !  suppression (control case)"]
-fn ztst_c03traps_045() { assert_ztst_chunk("C03traps.ztst", 45); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:46 — ERR_RETURN with  &&  in function (regression test)"]
-fn ztst_c03traps_046() { assert_ztst_chunk("C03traps.ztst", 46); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:47 — ERR_RETURN not triggered on LHS of  &&  in function"]
-fn ztst_c03traps_047() { assert_ztst_chunk("C03traps.ztst", 47); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:48 — ERR_RETURN triggered on RHS of  &&  in function"]
-fn ztst_c03traps_048() { assert_ztst_chunk("C03traps.ztst", 48); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:49 — ERR_RETURN not triggered on LHS of  &&  in function on LHS of  &&  (regression test)"]
-fn ztst_c03traps_049() { assert_ztst_chunk("C03traps.ztst", 49); }
-
-#[test]
 #[ignore = "ztst gap C03traps.ztst:50 — ERR_RETURN within initialisation code with special flags"]
 fn ztst_c03traps_050() { assert_ztst_chunk("C03traps.ztst", 50); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:51 — ERR_RETURN caused by function returning false from within shell construct"]
-fn ztst_c03traps_051() { assert_ztst_chunk("C03traps.ztst", 51); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:52 — ERR_RETURN in  else  branch in nested function"]
-fn ztst_c03traps_052() { assert_ztst_chunk("C03traps.ztst", 52); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:53 — ERR_EXIT not triggered by  ! true"]
-fn ztst_c03traps_053() { assert_ztst_chunk("C03traps.ztst", 53); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:54 — ERR_EXIT not triggered by  ! fn"]
-fn ztst_c03traps_054() { assert_ztst_chunk("C03traps.ztst", 54); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:55 — ERR_EXIT not triggered by  false && true"]
-fn ztst_c03traps_055() { assert_ztst_chunk("C03traps.ztst", 55); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:56 — ERR_EXIT not triggered by  false && true  but by return from fn"]
-fn ztst_c03traps_056() { assert_ztst_chunk("C03traps.ztst", 56); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:57 — ERR_EXIT not triggered by status 1 at end of for"]
-fn ztst_c03traps_057() { assert_ztst_chunk("C03traps.ztst", 57); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:58 — ERR_EXIT not triggered by status 1 at end of for but by return from fn"]
-fn ztst_c03traps_058() { assert_ztst_chunk("C03traps.ztst", 58); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:59 — ERR_EXIT not triggered by status 1 at end of repeat"]
-fn ztst_c03traps_059() { assert_ztst_chunk("C03traps.ztst", 59); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:60 — ERR_EXIT not triggered by status 1 at end of repeat but by return from fn"]
-fn ztst_c03traps_060() { assert_ztst_chunk("C03traps.ztst", 60); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:61 — ERR_EXIT not triggered by status 1 at end of if"]
-fn ztst_c03traps_061() { assert_ztst_chunk("C03traps.ztst", 61); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:62 — ERR_EXIT not triggered by status 1 at end of if but by return from fn"]
-fn ztst_c03traps_062() { assert_ztst_chunk("C03traps.ztst", 62); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:63 — ERR_EXIT not triggered by status 1 at end of while"]
-fn ztst_c03traps_063() { assert_ztst_chunk("C03traps.ztst", 63); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:64 — ERR_EXIT not triggered by status 1 at end of while but by return from fn"]
-fn ztst_c03traps_064() { assert_ztst_chunk("C03traps.ztst", 64); }
 
 #[test]
 #[ignore = "ztst gap C03traps.ztst:65 — ERR_EXIT not triggered by status 1 at end of always"]
 fn ztst_c03traps_065() { assert_ztst_chunk("C03traps.ztst", 65); }
 
 #[test]
-#[ignore = "ztst gap C03traps.ztst:66 — ERR_EXIT not triggered by status 1 at end of always but by return from fn"]
-fn ztst_c03traps_066() { assert_ztst_chunk("C03traps.ztst", 66); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:67 — ERR_EXIT not triggered by status 1 at end of { }"]
-fn ztst_c03traps_067() { assert_ztst_chunk("C03traps.ztst", 67); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:68 — ERR_EXIT not triggered by status 1 at end of { } but by return from fn"]
-fn ztst_c03traps_068() { assert_ztst_chunk("C03traps.ztst", 68); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:69 — ERR_EXIT triggered by status 1 within for"]
-fn ztst_c03traps_069() { assert_ztst_chunk("C03traps.ztst", 69); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:70 — ERR_EXIT triggered by status 1 within while"]
-fn ztst_c03traps_070() { assert_ztst_chunk("C03traps.ztst", 70); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:71 — ERR_EXIT triggered by status 1 within repeat"]
-fn ztst_c03traps_071() { assert_ztst_chunk("C03traps.ztst", 71); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:72 — ERR_EXIT triggered by status 1 within if"]
-fn ztst_c03traps_072() { assert_ztst_chunk("C03traps.ztst", 72); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:73 — ERR_EXIT triggered by status 1 within { }"]
-fn ztst_c03traps_073() { assert_ztst_chunk("C03traps.ztst", 73); }
-
-#[test]
 #[ignore = "ztst gap C03traps.ztst:74 — ERR_EXIT triggered by status 1 at end of anon func"]
 fn ztst_c03traps_074() { assert_ztst_chunk("C03traps.ztst", 74); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:75 — ERR_EXIT neither triggered inside loop nor triggered by while statement"]
-fn ztst_c03traps_075() { assert_ztst_chunk("C03traps.ztst", 75); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:76 — ERR_EXIT not triggered inside loop but triggered by rhs of ||"]
-fn ztst_c03traps_076() { assert_ztst_chunk("C03traps.ztst", 76); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:77 — ERR_EXIT not triggered inside loop but triggered by eval"]
-fn ztst_c03traps_077() { assert_ztst_chunk("C03traps.ztst", 77); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:78 — ERR_EXIT not triggered inside loop but triggered by source"]
-fn ztst_c03traps_078() { assert_ztst_chunk("C03traps.ztst", 78); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:79 — ERR_EXIT not triggered inside loop but triggered by command substitution"]
-fn ztst_c03traps_079() { assert_ztst_chunk("C03traps.ztst", 79); }
 
 #[test]
 #[ignore = "ztst gap C03traps.ztst:80 — ERR_EXIT is triggered by last command in an AND-OR list"]
 fn ztst_c03traps_080() { assert_ztst_chunk("C03traps.ztst", 80); }
 
 #[test]
-#[ignore = "ztst gap C03traps.ztst:81 — ERR_RETURN is triggered in function calls on the left of an AND-OR"]
-fn ztst_c03traps_081() { assert_ztst_chunk("C03traps.ztst", 81); }
-
-#[test]
 #[ignore = "ztst gap C03traps.ztst:82 — EXIT trap from TERM trap"]
 fn ztst_c03traps_082() { assert_ztst_chunk("C03traps.ztst", 82); }
 
 #[test]
-#[ignore = "ztst gap C03traps.ztst:83 — EXIT trap not called in LHS of pipeline: Shell construct on LHS"]
-fn ztst_c03traps_083() { assert_ztst_chunk("C03traps.ztst", 83); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:84 — EXIT trap not called in LHS of pipeline: External command on LHS"]
-fn ztst_c03traps_084() { assert_ztst_chunk("C03traps.ztst", 84); }
-
-#[test]
 #[ignore = "ztst gap C03traps.ztst:85 — No early exit from nested function in EXIT trap."]
 fn ztst_c03traps_085() { assert_ztst_chunk("C03traps.ztst", 85); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:86 — Explicit exit in exit trap overrides status"]
-fn ztst_c03traps_086() { assert_ztst_chunk("C03traps.ztst", 86); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:87 — Progated exit status through exit trap"]
-fn ztst_c03traps_087() { assert_ztst_chunk("C03traps.ztst", 87); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:88 — Explicit exit in exit trap overrides implicit exit status"]
-fn ztst_c03traps_088() { assert_ztst_chunk("C03traps.ztst", 88); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:89 — Explicit exit status 0 in exit trap overrides implicit non-zero status"]
-fn ztst_c03traps_089() { assert_ztst_chunk("C03traps.ztst", 89); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:90 — Exit status from exit trap, script-like path"]
-fn ztst_c03traps_090() { assert_ztst_chunk("C03traps.ztst", 90); }
-
-#[test]
-#[ignore = "ztst gap C03traps.ztst:91 — Explicit exit status overrides implicit: script-like code path"]
-fn ztst_c03traps_091() { assert_ztst_chunk("C03traps.ztst", 91); }
 
 #[test]
 #[ignore = "ztst gap C03traps.ztst:92 — 'exit' in trap causes calling function to return"]
@@ -3236,18 +2836,6 @@ fn ztst_v01zmodload_039() { assert_ztst_chunk("V01zmodload.ztst", 39); }
 fn ztst_v01zmodload_040() { assert_ztst_chunk("V01zmodload.ztst", 40); }
 
 #[test]
-#[ignore = "ztst gap V03mathfunc.ztst:9 — Test random number generator distributions are not grossly broken"]
-fn ztst_v03mathfunc_009() { assert_ztst_chunk("V03mathfunc.ztst", 9); }
-
-#[test]
-#[ignore = "ztst gap V03mathfunc.ztst:10 — Test Gamma function gamma and lgamma"]
-fn ztst_v03mathfunc_010() { assert_ztst_chunk("V03mathfunc.ztst", 10); }
-
-#[test]
-#[ignore = "ztst gap V03mathfunc.ztst:11 — log2"]
-fn ztst_v03mathfunc_011() { assert_ztst_chunk("V03mathfunc.ztst", 11); }
-
-#[test]
 #[ignore = "ztst gap V03mathfunc.ztst:12 — isinf, isnan"]
 fn ztst_v03mathfunc_012() { assert_ztst_chunk("V03mathfunc.ztst", 12); }
 
@@ -3338,6 +2926,10 @@ fn ztst_v05styles_004() { assert_ztst_chunk("V05styles.ztst", 4); }
 #[test]
 #[ignore = "ztst gap V05styles.ztst:14 — retrieving patterns"]
 fn ztst_v05styles_014() { assert_ztst_chunk("V05styles.ztst", 14); }
+
+#[test]
+#[ignore = "ztst gap V05styles.ztst:17 — retrieving styles by pattern"]
+fn ztst_v05styles_017() { assert_ztst_chunk("V05styles.ztst", 17); }
 
 #[test]
 #[ignore = "ztst gap V05styles.ztst:19 — deleting styles by pattern only"]
