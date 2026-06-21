@@ -714,7 +714,12 @@ pub(crate) fn lexconstant() -> i32 {
                     .chars()
                     .filter(|&c| c != '_')
                     .collect();
-                let val = i64::from_str_radix(&hex_str, 16).unwrap_or(0);
+                // c:Src/math.c lexconstant — zsh parses every integer base via
+                // zstrtol, which truncates on overflow with a
+                // "number truncated after N digits" warning (utils.c:2511).
+                // i64::from_str_radix just errored to 0 on a >63-bit hex
+                // literal (0xFFFFFFFFFFFFFFFF). Route through the port.
+                let val = crate::ported::utils::zstrtol(&hex_str, 16).0;
                 m_lastbase_set(16);
                 m_yyval_set(if m_force_float() {
                     mnumber {
@@ -746,7 +751,7 @@ pub(crate) fn lexconstant() -> i32 {
                     .chars()
                     .filter(|&c| c != '_')
                     .collect();
-                let val = i64::from_str_radix(&bin_str, 2).unwrap_or(0);
+                let val = crate::ported::utils::zstrtol(&bin_str, 2).0; // c:zstrtol base 2
                 m_lastbase_set(2);
                 m_yyval_set(if m_force_float() {
                     mnumber {
@@ -842,7 +847,7 @@ pub(crate) fn lexconstant() -> i32 {
                         let val = if oct_str.is_empty() {
                             0 // c:zstrtol leading-0-only → value 0
                         } else {
-                            i64::from_str_radix(&oct_str, 8).unwrap_or(0)
+                            crate::ported::utils::zstrtol(&oct_str, 8).0 // c:zstrtol base 8
                         };
                         let _ = hit_invalid_octal; // implicit via leftover digit
                         m_lastbase_set(8);
@@ -1921,7 +1926,7 @@ pub(crate) fn zzlex() -> i32 {
                         }
                     }
                     let val_str = &m_input_clone()[val_start..m_pos()];
-                    let val = i64::from_str_radix(val_str, base).unwrap_or(0);
+                    let val = crate::ported::utils::zstrtol(val_str, base as i32).0; // c:zstrtol base#N
                     m_lastbase_set(base as i32);
                     m_yyval_set(mnumber {
                         l: val,

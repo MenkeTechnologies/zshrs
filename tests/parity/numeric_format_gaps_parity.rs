@@ -190,11 +190,11 @@ mod printf_int_overflow {
 mod arith_literal_overflow {
     use super::*;
 
-    /// `$(( 0xFFFFFFFFFFFFFFFF ))` (16 hex digits) — zsh truncates the
-    /// literal after 15 hex digits and yields `1152921504606846975`;
-    /// zshrs yields `0`.
+    /// `$(( 0xFFFFFFFFFFFFFFFF ))` (16 hex digits) — both shells route
+    /// the integer literal through zstrtol, which truncates after 15 hex
+    /// digits and yields `1152921504606846975` (the math lexer used
+    /// i64::from_str_radix, which errored to 0 on overflow).
     #[test]
-    #[ignore = "zshrs bug: $(( 0xFFFFFFFFFFFFFFFF )) yields 0 instead of zsh's 15-hex-digit truncation (1152921504606846975)"]
     fn hex_literal_16_digits_truncation() {
         assert_parity(r#"echo $(( 0xFFFFFFFFFFFFFFFF ))"#);
     }
