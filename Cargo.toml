@@ -20,7 +20,7 @@ exclude = [
     "/docs/",
     "/scripts/",
     "/bench/",
-    "/fish/",
+    "/vendor/",
     "/completions/",
     "/zshrs_dump.*",
     "/examples/"
