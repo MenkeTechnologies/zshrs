@@ -933,7 +933,6 @@ print "tail=${VIRTUAL_ENV:t}""###,
 
     /// OMZP::python:112 — rc-expansion `${^ARR}/suffix` cross-product + (N.) qualifier.
     #[test]
-    #[ignore = "zshrs gap: rc-expansion ${^NAMES[@]}/bin/activate(N.) cross-product+glob yields the array elements, not the matched paths"]
     fn rc_expansion_crossproduct() {
         assert_parity(
             r###"d=$(mktemp -d)

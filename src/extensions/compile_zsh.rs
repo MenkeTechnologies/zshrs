@@ -8849,6 +8849,16 @@ fn is_splice_expansion(s: &str) -> bool {
         return true;
     }
     if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
+        // c:Src/subst.c:2551 — a leading `^` (RC_EXPAND_PARAM) makes the
+        // expansion DISTRIBUTE (cross-product) with surrounding text, NOT
+        // first/last splice — even when it also carries `[@]`/`[*]`.
+        // `"${^arr[@]}"/suffix` must cross-product the suffix onto every
+        // element (handled by is_distribute_expansion); treating it as a
+        // splice here ran CONCAT_SPLICE (first/last sticking) so only the
+        // last element got the suffix. `^^` turns RC_EXPAND off → splice.
+        if inner.starts_with('^') && !inner.starts_with("^^") {
+            return false;
+        }
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
