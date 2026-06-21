@@ -710,7 +710,6 @@ decode "001011"; decode "010110010""###);
 
     /// snapshot/diff function set via (k)functions and :|.
     #[test]
-    #[ignore = "zshrs gap: ${(k)functions[@]:|before} diff of the functions-hash key snapshot finds no additions (added= empty)"]
     fn function_set_diff() {
         assert_parity(r###"setopt extendedglob
 helper_a(){ :; }

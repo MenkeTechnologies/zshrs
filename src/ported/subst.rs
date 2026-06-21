@@ -10524,7 +10524,18 @@ pub fn paramsubst(
                 // An earlier port used `glob_match_static` here,
                 // which made `(bar` (a malformed glob) fail to match
                 // an array element of literal text `(bar`.
-                let arr = arrays_get(&var_name).unwrap_or_default();
+                // c:Src/subst.c:3522 — the LHS is the CURRENT expansion's
+                // array value (`val`), not a fresh raw-parameter fetch. For a
+                // plain array `${arr[@]:|x}` that IS `arrays_get(arr)`; but for
+                // `${(k)h[@]:|x}` the value is the (k) KEY array carried in
+                // split_parts and the assoc `h` has no plain array, so
+                // `arrays_get("h")` was empty and excluded everything. Use the
+                // raw array when present (preserving the plain-array path),
+                // else the computed split_parts.
+                let arr = arrays_get(&var_name)
+                    .filter(|a| !a.is_empty())
+                    .or_else(|| split_parts.clone())
+                    .unwrap_or_default();
                 let other_name = rhs.trim(); // c:3543
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
@@ -10545,7 +10556,13 @@ pub fn paramsubst(
                 // elems of arr literally present in other. Same
                 // hash-based lookup as `:|` per subst.c:3548
                 // `gethashnode2` literal-key path.
-                let arr = arrays_get(&var_name).unwrap_or_default();
+                // c:Src/subst.c:3522 — LHS is the current expansion array
+                // (the (k) keys of `${(k)h[@]:*x}` live in split_parts), with
+                // the raw array preferred when present. See the `:|` arm above.
+                let arr = arrays_get(&var_name)
+                    .filter(|a| !a.is_empty())
+                    .or_else(|| split_parts.clone())
+                    .unwrap_or_default();
                 let other_name = rhs.trim(); // c:3543
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
