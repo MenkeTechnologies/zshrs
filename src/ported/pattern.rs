@@ -936,6 +936,16 @@ pub fn patcompswitch(paren: i32, flagp: &mut i32) -> i64 {
         if inner < 0 {
             return -1;
         }
+        // c:Src/pattern.c:891-892 — `if (excsync) patoptail(br,
+        // patnode(P_EXCEND));`. Terminate an exclusion branch's operand
+        // with P_EXCEND so the matcher knows where the excluded pattern
+        // ends; without it `A~B` ran B past its own end into the
+        // following pattern and never excluded (`STATES__*~*local*`
+        // failed to drop STATES__local_bar).
+        if excsync != 0 {
+            let excend = patnode(P_EXCEND);
+            patoptail(br, excend);
+        }
         *flagp |= bf & P_HSTART;
         last_branch = br;
     }
@@ -4217,6 +4227,19 @@ thread_local! {
 /// legitimate zsh pattern (Misc/globtests tops out around 30).
 const PATMATCH_MAX_DEPTH: u32 = 128;
 
+thread_local! {
+    // c:Src/pattern.c — the P_EXCLUDE `syncptr->p` heap buffer. Keyed by
+    // the EXCLUDE node offset; value is a per-input-position byte array
+    // recording where the asserted branch's excludable part matched (so
+    // EXCSYNC can fail a revisit and force backtracking to a different
+    // split). C stores this in the bytecode payload + a raw heap pointer
+    // that survives backtracking; the Rust matcher clones `rpat` per
+    // branch, so the buffer lives here (outside the cloned state) to
+    // stay shared across recursion, exactly like C's global syncstrp->p.
+    static EXCSYNC_BUF: std::cell::RefCell<std::collections::HashMap<usize, Vec<u8>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 fn patmatch(
     code: &[u8],
     prog_off: usize,
@@ -4333,6 +4356,38 @@ fn patmatch(
                     return Some(s_off);
                 }
                 return None;
+            }
+            P_EXCSYNC => {
+                // c:Src/pattern.c:2992-3035 — record where the asserted
+                // branch reached the EXCLUDE sync point (the end of the
+                // excludable part) in the following EXCLUDE node's sync
+                // buffer. If this position was already recorded (with
+                // <= the current error count), fail so the asserted
+                // branch backtracks to a different split. The EXCLUDE
+                // node sits PHYSICALLY right after EXCSYNC (both
+                // patcompnot and the `~` arm emit them adjacent).
+                let exclude_node = scan + I_BODY;
+                let already = EXCSYNC_BUF.with(|b| {
+                    let mut m = b.borrow_mut();
+                    if let Some(buf) = m.get_mut(&exclude_node) {
+                        if s_off < buf.len() {
+                            let cur = (state.errsfound + 1) as u8;
+                            if buf[s_off] != 0 && (state.errsfound + 1) >= buf[s_off] as i32 {
+                                return true; // c:3008 already matched here → fail
+                            }
+                            buf[s_off] = cur; // c:3017
+                            // c:3033 — earlier marks are now invalid.
+                            for x in buf[..s_off].iter_mut() {
+                                *x = 0;
+                            }
+                        }
+                    }
+                    false
+                });
+                if already {
+                    return None;
+                }
+                // else fall through to next node
             }
             P_EXACTLY => {
                 // c:P_EXACTLY arm
@@ -4588,56 +4643,60 @@ fn patmatch(
                 // SAME consumed length, fail; else succeed.
                 if next != 0 && next < code.len() && P_ISEXCLUDE(code[next + I_OP]) {
                     // c:Src/pattern.c:3056-3201 — `^pat` / `(^pat)` /
-                    // `!(pat)` / `A~B` exclusion. patcompnot always emits
-                    // the asserted branch as `STAR EXCSYNC rest`, where
-                    // EXCSYNC marks where the excludable STAR ended and
-                    // `rest` is the pattern AFTER the group (e.g. the
-                    // `.zsh` in `(^zunit).zsh`). C drives STAR
-                    // backtracking via a shared sync buffer that the
-                    // EXCSYNC node writes; that model clashes with this
-                    // port's state-cloning matcher, so enumerate the STAR
-                    // split point `p` directly instead:
-                    //   for each p (greedy: longest STAR first) where
-                    //   `rest` matches string[p..], test the exclusion
-                    //   operand(s) against the excludable span
-                    //   string[s_off..p]; the first split whose span is
-                    //   NOT excluded wins. This is equivalent to C's
-                    //   EXCSYNC/backtrack loop for the asserted STAR.
-                    let star = scan + I_BODY + operand_off_extra; // P_STAR
-                    // The node after the STAR is EXCSYNC; matching from
-                    // there (EXCSYNC is a no-op) continues EXCSYNC →
-                    // NOTHING → rest.
-                    let after_star = {
-                        let nb: [u8; 4] =
-                            code[star + I_NEXT..star + I_NEXT + 4].try_into().unwrap();
-                        u32::from_le_bytes(nb) as usize
-                    };
-                    // c:3142 — exclusions run with approximation off;
-                    // collect the EXCLUDE/EXCLUDP chain once.
-                    for p in (s_off..=string.len()).rev() {
-                        // Does the pattern after the group match from p?
-                        let mut rest_state = state.clone();
-                        let end = match patmatch(
+                    // `!(pat)` / `A~B` exclusion. The asserted branch
+                    // (`STAR EXCSYNC rest` for `^`/`!`, or `A EXCSYNC
+                    // rest` for `A~B`) is matched normally; its EXCSYNC
+                    // node records where the EXCLUDABLE part ended into
+                    // the EXCLUDE node's sync buffer. We then truncate to
+                    // that synclen and test the exclusion operand(s); if
+                    // any matches the excludable span, this candidate is
+                    // excluded and we re-run the asserted branch — EXCSYNC
+                    // now fails at the recorded position, forcing a
+                    // different split — until an un-excluded split is
+                    // found or the asserted branch can no longer match.
+                    let asserted_operand = scan + I_BODY + operand_off_extra;
+                    let exclude_node = next;
+                    // Allocate (reset) the sync buffer for this EXCLUDE.
+                    let prev_buf = EXCSYNC_BUF.with(|b| {
+                        b.borrow_mut()
+                            .insert(exclude_node, vec![0u8; string.len() + 1])
+                    });
+                    let mut found: Option<(usize, rpat)> = None;
+                    loop {
+                        let mut a_state = state.clone();
+                        let matchpt = match patmatch(
                             code,
-                            after_star,
+                            asserted_operand,
                             string,
-                            p,
-                            &mut rest_state,
+                            s_off,
+                            &mut a_state,
                             glob_flags,
                         ) {
                             Some(e) => e,
-                            None => continue,
+                            None => break,
                         };
-                        // Test each exclusion against the excludable span
-                        // string[s_off..p]. The span is truncated to `p`
-                        // so the operand's trailing P_EXCEND succeeds iff
-                        // it consumed exactly to `p` (a full-span match).
-                        let span = &string[..p];
+                        // c:3128-3130 — synclen = first marked position in
+                        // the sync buffer (the end of the excludable part).
+                        let synclen = EXCSYNC_BUF.with(|b| {
+                            b.borrow()
+                                .get(&exclude_node)
+                                .and_then(|buf| buf.iter().position(|&x| x != 0))
+                                .unwrap_or(s_off)
+                        });
+                        // c:3134-3138 — test each EXCLUDE/EXCLUDP operand
+                        // against the excludable span string[s_off..synclen].
+                        // Truncating to `synclen` makes the operand's
+                        // trailing P_EXCEND succeed iff the span matched in
+                        // full.
+                        let span_end = synclen.min(string.len());
+                        let span = &string[..span_end];
                         let mut excluded = false;
-                        let mut excl = next;
+                        let mut excl = exclude_node;
                         while excl != 0 && excl < code.len() && P_ISEXCLUDE(code[excl + I_OP]) {
-                            let excl_operand = excl + I_BODY + 8; // after syncptr
+                            let excl_operand = excl + I_BODY + 8; // after 8-byte syncptr
                             let mut e_state = state.clone();
+                            // c:3142 — approximations off inside exclusions.
+                            e_state.errsfound = 0;
                             if let Some(em) = patmatch(
                                 code,
                                 excl_operand,
@@ -4646,7 +4705,7 @@ fn patmatch(
                                 &mut e_state,
                                 glob_flags,
                             ) {
-                                if em == p {
+                                if em == span_end {
                                     excluded = true;
                                     break;
                                 }
@@ -4660,11 +4719,32 @@ fn patmatch(
                             excl = n;
                         }
                         if !excluded {
-                            *state = rest_state;
+                            found = Some((matchpt, a_state));
+                            break;
+                        }
+                        // Excluded: loop. The sync buffer now records this
+                        // split, so the next asserted patmatch's EXCSYNC
+                        // fails here and backtracks to a different split.
+                    }
+                    // Restore/clear the sync buffer slot.
+                    EXCSYNC_BUF.with(|b| {
+                        let mut m = b.borrow_mut();
+                        match prev_buf {
+                            Some(p) => {
+                                m.insert(exclude_node, p);
+                            }
+                            None => {
+                                m.remove(&exclude_node);
+                            }
+                        }
+                    });
+                    match found {
+                        Some((end, a_state)) => {
+                            *state = a_state;
                             return Some(end);
                         }
+                        None => return None,
                     }
-                    return None;
                 }
                 let next_is_branch = next != 0
                     && next < code.len()

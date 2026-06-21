@@ -2448,7 +2448,6 @@ done"##,
 
     /// zinit-autoload.zsh:1725 — keys filter with `~` exclusion then prefix strip.
     #[test]
-    #[ignore = "zshrs gap: ${(M)keys:##pat~excl} — :## now parses, but a trailing-* exclusion sub-pattern (~*local*) isn't excluded: the pattern matcher treats P_EXCSYNC/P_EXCEND as no-ops, so the exclude end-sync never fires"]
     fn keys_filter_exclude_strip() {
         assert_parity(
             r##"setopt extendedglob
