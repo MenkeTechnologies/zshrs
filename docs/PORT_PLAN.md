@@ -26,8 +26,8 @@ identity.** Those globals must become `Arc<Mutex/RwLock<…>>`, not
 **Phase 2 remaining structs to dissolve:** none
 
 **Phase 6 in flight:** `pub struct ShellExecutor` relocated to
-`src/vm_helper.rs:238` (was `src/exec.rs:345`); current field count
-is 37 per `awk '/^pub struct ShellExecutor/,/^}/' src/vm_helper.rs |
+`src/vm_helper.rs:338` (was `src/exec.rs:345`); current field count
+is 49 per `awk '/^pub struct ShellExecutor/,/^}/' src/vm_helper.rs |
 grep -cE '^\s*(pub )?[a-z_]+:'`. Each remaining field maps to a
 canonical zsh C global that callers should reach directly. Recent
 deletions (older→newer): `autoload_pending`, `options`, `cmd_stack`,
@@ -49,7 +49,7 @@ globals with no `struct executor` in C).
   `compctlreadptr`, `use_exit_printed`. No aggregator struct.
 - `subst.rs` `SubstState` — verified absent via grep.
 - `modules/parameter.rs` `JobState` — verified absent via grep.
-  (The `JobState` enum at `src/exec_jobs.rs:20` is a separate type
+  (The `JobState` enum at `src/exec_jobs.rs:101` is a separate type
   modeling job lifecycle states Running/Stopped/Done — not the
   bag-of-globals JobState the plan called out.)
 - `glob.rs` `GlobState` — renamed to `GlobData` at `glob.rs:402`,

@@ -1,7 +1,7 @@
 # zshrs JetBrains Plugin
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![IDE](https://img.shields.io/badge/IDE-2024.2%2B-orange.svg)](https://plugins.jetbrains.com/)
+[![IDE](https://img.shields.io/badge/IDE-2025.2%2B-orange.svg)](https://plugins.jetbrains.com/)
 [![JDK](https://img.shields.io/badge/JDK-17-blue.svg)](https://adoptium.net/)
 [![Plugin SDK](https://img.shields.io/badge/IntelliJ%20Platform%20Gradle-2.16-purple.svg)](https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html)
 
@@ -11,9 +11,9 @@
 
 ## `[BUILT FOR ZSHRS]`
 
-A JetBrains-platform plugin that drives the LSP and DAP servers compiled into the `zshrs` binary. Hand-rolled lexer with **41 color slots**, semantic-token overlay from the LSP, **549** hover-card-backed identifiers spanning every canonical builtin / keyword / option / special variable / compsys function / extension builtin, full breakpoint-debugger over DAP, a 7-tab reflection tool window that mirrors the runtime registries 1:1 (`all` / `builtins` / `keywords` / `options` / `special_vars` / `compsys` / `extensions`), Extract Variable / Constant / Function refactors plus Shift-F6 cross-file rename, run configs that auto-create from any `.zsh` / `.zshrc` / `.zshenv` / `.zlogin` / `.zlogout` / `.zprofile` / `.zpreztorc` file. Talks to the in-tree `src/extensions/lsp.rs` + `src/extensions/dap.rs` over JSON-RPC; no upstream `lsp-server` / `dap-types` crates anywhere in the build.
+A JetBrains-platform plugin that drives the LSP and DAP servers compiled into the `zshrs` binary. Hand-rolled lexer with **45 color slots**, semantic-token overlay from the LSP, **1388** hover-card-backed identifiers spanning every canonical builtin / keyword / option / special variable / compsys function / extension builtin, full breakpoint-debugger over DAP, a 7-tab reflection tool window that mirrors the runtime registries 1:1 (`all` / `builtins` / `keywords` / `options` / `special_vars` / `compsys` / `extensions`), Extract Variable / Constant / Function refactors plus Shift-F6 cross-file rename, run configs that auto-create from any `.zsh` / `.zshrc` / `.zshenv` / `.zlogin` / `.zlogout` / `.zprofile` / `.zpreztorc` file. Talks to the in-tree `src/extensions/lsp.rs` + `src/extensions/dap.rs` over JSON-RPC; no upstream `lsp-server` / `dap-types` crates anywhere in the build.
 
-### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) · [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](../../compsys/) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang)
+### [`zshrs`](https://github.com/MenkeTechnologies/zshrs) · [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](../../src/compsys/) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang)
 
 ---
 
@@ -71,7 +71,7 @@ The `zshrs` binary must be on `$PATH`, or configured under *Settings → Tools �
 |---------|----------|
 | File association | `.zsh`, `.zshrc`, `.zshenv`, `.zlogin`, `.zlogout`, `.zprofile`, `.zpreztorc` (configurable; see [§0x0A](#0x0a-configuration)) |
 | Lexer | Hand-rolled in `ZshrsLexer.kt` — instant first-paint highlighting before the LSP semantic-tokens response lands |
-| Color slots | **41** stable `ZSHRS_*` `TextAttributesKey`s under *Settings → Editor → Color Scheme → zshrs* |
+| Color slots | **45** stable `ZSHRS_*` `TextAttributesKey`s under *Settings → Editor → Color Scheme → zshrs* |
 | Brace matching | `{` / `}`, `(` / `)`, `[` / `]` via `ZshrsBraceMatcher.kt` — also pairs `[[` / `]]` and `((` / `))` conditional/arithmetic forms |
 | Comments | Cmd/Ctrl-`/` for `#` line comments via `ZshrsCommenter.kt` |
 | Quote handler | `"`, `'`, `` ` ``, `$'...'` ANSI-C auto-pair; inside-string typing recognized via `ZshrsQuoteHandler.kt` |
@@ -87,7 +87,7 @@ The `zshrs` binary must be on `$PATH`, or configured under *Settings → Tools �
 | Declaration | `local` / `typeset` / `declare` / `export` / `readonly` / `integer` / `float` / `private` |
 | Modifier | `alias` / `setopt` / `zstyle` / `zmodload` / `autoload` / `bindkey` / `compdef` / `zcompile` |
 | I/O | `source` / `.` / `eval` / `exec` / `echo` / `print` / `printf` / `read` / `trap` |
-| Builtins | full canonical set from `ported::builtin::BUILTINS` (154 entries) |
+| Builtins | full canonical set from `ported::builtin::BUILTINS` (156 entries) |
 | Variables | `$name`, `${name}`, `${(P)var}`, `$0…$9`, `$?`, `$!`, `$$`, `$#`, `$*`, `$@`, `$-`, `$_` |
 | Operators | `|`, `|&`, `&&`, `||`, `&`, `=`, `+=`, `:=`, `?=`, `=~`, `==` |
 | Redirects | `>`, `>>`, `<`, `<<`, `<<<`, `&>`, `2>&1`, `>&`, `>|` |
@@ -106,7 +106,7 @@ The LSP server is in-process inside the `zshrs` binary — `zshrs --lsp` spawns 
 | Capability | Trigger / scope |
 |------------|-----------------|
 | `completion` | builtins, keywords, options, special vars, in-file functions; trigger chars `$` `{` `-` `:` plus all letters |
-| `hover` | full markdown cards for **549** identifiers (154 builtins, 24 keywords, 194 options, 41 specials, 39 compsys fns, 97 extension builtins) |
+| `hover` | full markdown cards for **1388** identifiers (156 builtins, 31 keywords, 756 options, 279 specials, 52 compsys fns, 114 extension builtins) |
 | `definition` / `references` | function names declared in the open document; cross-file for package-scoped symbols |
 | `documentHighlight` | same scan as references |
 | `documentSymbol` | `function foo`, `foo()`, `alias`, `local`/`typeset`/`export` decls |
@@ -126,10 +126,10 @@ The LSP server is in-process inside the `zshrs` binary — `zshrs --lsp` spawns 
 3. **`BUILTIN_DOCS`** hand fallback — coreutils, `chdir` / `bye` / `declare` / `r` / `unfunction` / `zf_*` and other names with no per-name `item(tt(NAME))` block upstream.
 4. **`SPECIAL_VAR_DOCS`** hand fallback — `$SHELL` / `$EDITOR` / `$VISUAL` + every well-known env var.
 5. **`OPTION_DOCS_FALLBACK`** — `RESTRICTED` (the one option upstream doesn't document via an item block).
-6. **`EXT_BUILTIN_DOCS`** — every entry in `ext_builtins::EXT_BUILTIN_NAMES` (74) + `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23) = 97 hand bodies.
+6. **`EXT_BUILTIN_DOCS`** — every entry in `ext_builtins::EXT_BUILTIN_NAMES` (91) + `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23) = 114 hand bodies.
 7. **`COMPSYS_FN_DOCS`** — fallback for compsys functions without a yodl item block (`_main_complete` / `_directories` / `_git` / `_docker` / `_cargo` / etc.).
 
-Coverage is **gated by `tests/doc_coverage_audit.rs`** — 7 tests, every canonical name in every registry must resolve to a non-placeholder body. The gate also pins `keywords_inventory_excludes_declaration_commands` so `local` / `typeset` / `export` / etc. never leak back into the Keywords tab.
+Coverage is **gated by `tests/doc_coverage_audit.rs`** — 8 tests, every canonical name in every registry must resolve to a non-placeholder body. The gate also pins `keywords_inventory_matches_man_zshmisc_reserved_words` so the Keywords inventory tracks every reserved word in `man zshmisc` (including the declaration commands `local` / `typeset` / `export` / etc., which `man zshmisc` lists as reserved words and which also appear in the Builtins tab).
 
 ### Transport
 
@@ -158,7 +158,7 @@ Behavior:
 
 Surfaced under **Alt-Enter** (intentions popup). The IntelliJ Refactor menu (Ctrl-T) routes via `ZshrsRefactoringSupportProvider.kt` so Extract Method / Variable / Constant on the platform's binding all reach the LSP. Cmd-Opt-P (Extract Parameter) has no LSP-side action: zsh functions don't have a parameter list, so Extract Variable into `local NAME=$1` is the canonical workaround.
 
-Pinned by 5 tests under `lsp::tests::code_actions_*`.
+Pinned by 8 tests under `lsp::tests::code_actions_*`.
 
 ---
 
@@ -168,13 +168,13 @@ Pinned by 5 tests under `lsp::tests::code_actions_*`.
 
 | Tab | Source registry | Count |
 |-----|-----------------|------:|
-| **All** | merged union (last-write-wins on collisions) | 545 |
-| **Builtins** | `ported::builtin::BUILTINS` | 154 |
-| **Keywords** | `ported::hashtable::RESWDS` − TYPESET-tokened (declaration commands live in Builtins only) | 24 |
-| **Options** | `ported::options::ZSH_OPTIONS_SET` (full canonical setopt registry) | 194 |
-| **Special vars** | hand list of zsh-defined parameters + well-known env vars | 41 |
-| **Compsys** | `compsys::COMPSYS_FN_NAMES` (Rust-native `_arguments` / `_files` / `_describe` / per-command completers) | 39 |
-| **Extensions** | `ext_builtins::EXT_BUILTIN_NAMES` (74 in-process) ∪ `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23 daemon-backed `z*` builtins) | 97 |
+| **All** | merged union (last-write-wins on collisions) | 1439 |
+| **Builtins** | `ported::builtin::BUILTINS` | 156 |
+| **Keywords** | `ported::hashtable::RESWDS` (all reserved words per `man zshmisc`; declaration commands appear in both tabs) | 31 |
+| **Options** | `zsh_option_docs::OPTION_DOCS` ∪ `OPTION_ALIASES` (canonical CAPS form per `man zshoptions`) | 756 |
+| **Special vars** | `zsh_special_var_docs::SPECIAL_VAR_DOCS` ∪ `SPECIAL_VAR_ALIASES` | 279 |
+| **Compsys** | `compsys::COMPSYS_FN_NAMES` (Rust-native `_arguments` / `_files` / `_describe` / per-command completers) | 52 |
+| **Extensions** | `ext_builtins::EXT_BUILTIN_NAMES` (91 in-process) ∪ `daemon::builtins::ZSHRS_BUILTIN_NAMES` (23 daemon-backed `z*` builtins) | 114 |
 
 Each tab is a tree with a per-tab search field filtering across name + category.
 
@@ -185,7 +185,7 @@ Each tab is a tree with a per-tab search field filtering across name + category.
 | **Toolbar → Refresh** | Re-runs `zshrs --dump-reflection` and reloads every tab |
 | **Toolbar → Settings** | Opens *Settings → Tools → zshrs* |
 
-The "Extensions" tab includes daemon-backed `z*` builtins (`zd`, `zcache`, `zls`, `zping`, `zlock`, `zpublish`, `znotify`, `zsend`, `zsubscribe`, `zunsubscribe`, `ztag`, `zuntag`, `zsync`, `zjob`, `zask`, `zhistory`, `zsource`, `zcomplete`, `zsuggest`, `zcmd-result`, `zlog`, `zwhere`) — these proxy to `zshrs-daemon` over a Unix socket for cross-shell state.
+The "Extensions" tab includes daemon-backed `z*` builtins (`zd`, `zcache`, `zls`, `zid`, `zping`, `zlock`, `zpublish`, `znotify`, `zsend`, `zsubscribe`, `zunsubscribe`, `ztag`, `zuntag`, `zsync`, `zjob`, `zask`, `zhistory`, `zsource`, `zcomplete`, `zsuggest`, `zcmd-result`, `zlog`, `zwhere`) — these proxy to `zshrs-daemon` over a Unix socket for cross-shell state.
 
 ---
 
@@ -324,7 +324,7 @@ Implementation: plugin handler in `ZshrsRenameHandler.kt`; server-side rename in
 | Editor      | File extensions                        | `zsh`                | comma-separated; the rc dotfiles always match |
 | Run configs | Default new configs to `-f` / `--no-rcs` | off                | skip startup files in new run configs |
 
-Color scheme entries: *Settings → Editor → Color Scheme → zshrs* (**41 sub-categories** grouped under Comments / Strings / Numbers / Keywords / Names / Variables / Operators / Punctuation / Errors).
+Color scheme entries: *Settings → Editor → Color Scheme → zshrs* (**45 sub-categories** grouped under Comments / Strings / Numbers / Keywords / Names / Variables / Operators / Punctuation / Errors).
 
 ---
 
@@ -368,7 +368,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # macOS; or set to any JDK 17
 ./gradlew test                    # runs ZshrsLexerTest + ZshrsCommenterTest + ZshrsPluginManifestTest + ZshrsRegistryTest + ZshrsSettingsTest
 ```
 
-**JDK 17 is required.** Kotlin 2.0.21 (pinned by the IntelliJ Platform Gradle Plugin 2.16) crashes parsing the 3-part version string of newer JDKs (`25.0.2`, `26.0.1`, …) inside `JavaVersion.parse`. Set `JAVA_HOME` to a JDK 17 install before running gradle. The plugin itself targets JVM 17, so any IDE on 2024.2+ runs it.
+**JDK 17 is required.** Kotlin 2.2.0 (pinned by the IntelliJ Platform Gradle Plugin 2.16) crashes parsing the 3-part version string of newer JDKs (`25.0.2`, `26.0.1`, …) inside `JavaVersion.parse`. Set `JAVA_HOME` to a JDK 17 install before running gradle. The plugin itself targets JVM 17, so any IDE on 2025.2+ runs it.
 
 First build downloads the IntelliJ Platform SDK (~1 GB), takes a few minutes, and is cached under `editors/intellij/.intellijPlatform/` (which is gitignored).
 
@@ -386,7 +386,7 @@ editors/intellij/
     │   ├── ZshrsLanguage.kt                  # Language singleton
     │   ├── ZshrsFileType.kt                  # .zsh + dotfiles → zshrs
     │   ├── ZshrsIcons.kt                     # icon loader
-    │   ├── ZshrsColors.kt                    # 41 ZSHRS_* TextAttributesKey constants
+    │   ├── ZshrsColors.kt                    # 45 ZSHRS_* TextAttributesKey constants
     │   ├── ZshrsTokenTypes.kt                # token type enum
     │   ├── ZshrsLexer.kt                     # hand-rolled zsh lexer
     │   ├── ZshrsSyntaxHighlighter.kt         # token → color mapping
@@ -444,20 +444,20 @@ The Rust side lives in:
 | `src/extensions/lsp.rs` | LSP server (`zshrs --lsp`) — hover, completion, codeAction, rename, semanticTokens, foldingRange, diagnostics, formatting |
 | `src/extensions/dap.rs` | DAP server (`zshrs --dap HOST:PORT`) — breakpoints, stepping, scopes, variables, evaluate |
 | `src/extensions/plugin_cache.rs` | `plugins` SQLite table + classification helpers + `dump_plugins_json()` (consumed by the IntelliJ External Libraries view) |
-| `src/extensions/zsh_*_docs.rs` | Yodl-derived hover bodies (4 files, ~1900 lines total) — `zsh_builtin_docs.rs`, `zsh_option_docs.rs`, `zsh_keyword_docs.rs`, `zsh_special_var_docs.rs` |
-| `src/extensions/ext_builtins.rs` | `EXT_BUILTIN_NAMES` const (74) — every in-process zshrs-only builtin |
+| `src/extensions/zsh_*_docs.rs` | Yodl-derived hover bodies (5 files, ~4400 lines total) — `zsh_builtin_docs.rs`, `zsh_ext_builtin_docs.rs`, `zsh_option_docs.rs`, `zsh_keyword_docs.rs`, `zsh_special_var_docs.rs` |
+| `src/extensions/ext_builtins.rs` | `EXT_BUILTIN_NAMES` const (91) — every in-process zshrs-only builtin |
 | `daemon/builtins.rs` | `ZSHRS_BUILTIN_NAMES` const (23) — daemon-backed `z*` builtins |
-| `compsys/lib.rs` | `COMPSYS_FN_NAMES` const (39) — Rust-native completion functions |
+| `src/compsys/mod.rs` | `COMPSYS_FN_NAMES` const (52) — Rust-native completion functions |
 | `src/ported/hashtable.rs` | `RESWDS` const — canonical reserved-word table (port of `Src/hashtable.c:1076-1108`) |
-| `src/ported/options.rs` | `ZSH_OPTIONS_SET` — canonical setopt registry (203 entries) |
-| `src/ported/builtin.rs` | `BUILTINS` — canonical builtin registry (154 entries) |
+| `src/ported/options.rs` | `ZSH_OPTIONS_SET` — canonical setopt registry (197 entries) |
+| `src/ported/builtin.rs` | `BUILTINS` — canonical builtin registry (156 entries) |
 | `src/ported/lex.rs` + `parse.rs` | Tokenizer + AST used by LSP diagnostics + DAP statement boundaries |
 
 ---
 
 ## [0x0E] VERSION COMPATIBILITY
 
-Plugin version tracks the zshrs Cargo workspace version. `gradle.properties` controls the supported IDE range via `pluginSinceBuild` / `pluginUntilBuild`. Currently targets `2024.2.4` SDK against builds `242..261.*` — every paid JetBrains IDE on **2024.2 +** loads it (RustRover, IDEA Ultimate, GoLand, PyCharm Pro, WebStorm, RubyMine, PhpStorm, CLion, Rider, DataGrip, Aqua). Community editions don't have the LSP API, so the plugin won't load there.
+Plugin version tracks the zshrs Cargo workspace version. `gradle.properties` controls the supported IDE range via `pluginSinceBuild` / `pluginUntilBuild`. Currently targets the `2025.2` SDK against builds `252..261.*` — every paid JetBrains IDE on **2025.2 +** loads it (RustRover, IDEA Ultimate, GoLand, PyCharm Pro, WebStorm, RubyMine, PhpStorm, CLion, Rider, DataGrip, Aqua). Community editions don't have the LSP API, so the plugin won't load there.
 
 ---
 

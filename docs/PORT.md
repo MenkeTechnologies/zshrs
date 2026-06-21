@@ -262,10 +262,10 @@ file conflicts with the freeze below, the freeze wins.
 - ❌ **You may NOT create any new `.rs` file under `src/ported/`.** Not
   for a port that doesn't have a Rust home yet, not for a "tiny one,"
   not even if the matching `Src/<x>.c` is sitting right there.
-- The legal file set is the **107 files currently checked in** under
+- The legal file set is the **106 files currently checked in** under
   `src/ported/` (run `find src/ported -name '*.rs' | sort` to see the
   exhaustive list). That set is the universe. New ports either land in
-  one of those 107 files or they do not land at all.
+  one of those 106 files or they do not land at all.
 - ❌ No new directories under `src/ported/` either. The directory tree
   is frozen identically to the file tree.
 - If a C function genuinely belongs in `src/ported/<x>.rs` and that file
@@ -829,7 +829,7 @@ If the Rust code is a port of a *macro*, cite it the same way and note
 
 The allowlist of legal function names is in:
 
-- **`docs/zsh_c_functions.txt`** — 2,488 unique C function names.
+- **`docs/zsh_c_functions.txt`** — 2,484 unique C function names.
 - **`docs/zsh_c_functions_with_locations.txt`** — same names with
   `Src/path.c:line` for cross-reference.
 
@@ -884,7 +884,7 @@ uses an out-of-allowlist name, it is treated as adhoc and deleted on
 sight.
 
 **Inside `src/ported/`, you may not create any Rust file at all** —
-not even one that mirrors a real `Src/<x>.c`. The 107 files currently
+not even one that mirrors a real `Src/<x>.c`. The 106 files currently
 checked in are the closed legal set (see ABSOLUTE FREEZE above). New
 non-port files belong only in `src/extensions/` (features zsh lacks)
 or `src/recorder/` (the recorder feature). See Rule 1.
@@ -911,7 +911,7 @@ or `src/recorder/` (the recorder feature). See Rule 1.
 - ❌ **No new Rust files under `src/ported/`, period.** See the
   ABSOLUTE FREEZE section above. The previous "find a C file with no
   Rust counterpart yet, then create the mirror file" workflow is
-  RESCINDED. The 89 existing files in `src/ported/` are the complete,
+  RESCINDED. The 106 existing files in `src/ported/` are the complete,
   closed legal set. If a port needs a Rust file that doesn't exist in
   that set, raise it with the maintainer; do not create it yourself.
 - ✅ The only legal way to add a new file under `src/extensions/` is:
@@ -992,7 +992,7 @@ Before writing any code:
 1. Identify the C function you intend to port. Get its exact name,
    file, and line. Confirm it appears in `docs/zsh_c_functions.txt`.
 2. Identify the destination Rust file using the 1:1 mapping table.
-   The destination MUST be one of the 89 existing files under
+   The destination MUST be one of the 106 existing files under
    `src/ported/`. If it isn't — STOP. Do not create a new file. Do not
    reroute the port to a "close enough" file. Raise it with the
    maintainer. (See the ABSOLUTE FREEZE section.)
@@ -1013,7 +1013,7 @@ Before writing any code:
 ## What You Must Never Do
 
 - ❌ **Create ANY new Rust file under `src/ported/`.** Period.
-  `src/ported/` is frozen at its current 89-file set. Even when a real
+  `src/ported/` is frozen at its current 106-file set. Even when a real
   `Src/<x>.c` exists with no Rust counterpart, you do not get to add
   the file. (See the ABSOLUTE FREEZE section.)
 - ❌ **Create any Rust file outside `src/ported/`** other than the two
@@ -1119,10 +1119,10 @@ Before writing any code:
 > accessors." Stop, ask, wait for an explicit yes. See Rule 0 at
 > the top of this file for the required flow + past-damage list.
 >
-> **`src/ported/` is FROZEN. The 89 existing files are the legal set —
+> **`src/ported/` is FROZEN. The 106 existing files are the legal set —
 > no new files, no new directories, ever.**
 >
-> Inside the frozen 89, **every name must exist in upstream zsh C**:
+> Inside the frozen 106, **every name must exist in upstream zsh C**:
 > - **Functions**: name appears in `src/zsh/Src/**/*.c` (verify with
 >   `grep` or `docs/zsh_c_functions.txt`).
 > - **Structs / enums / typedefs / unions / statics**: name appears

@@ -86,7 +86,7 @@ The new components are the **codegen pass** (Chunk → `.o`) and the **runtime s
 
 **Where the pass lives:** Two options.
 
-- **(a) Upstream in fusevm.** Correct long-term — stryke shares fusevm and benefits automatically. Requires fusevm version bump (workspace pins **0.12.2** on crates.io today; see root `Cargo.toml`).
+- **(a) Upstream in fusevm.** Correct long-term — stryke shares fusevm and benefits automatically. Requires fusevm version bump (workspace pins **0.14.0** on crates.io today; see root `Cargo.toml`).
 - **(b) zshrs-side wrapper.** Faster v1 — call into fusevm's existing IR-emit code from a zshrs-specific cranelift-object module. Refactor upstream later.
 
 **Decision: (a).** Reasoning: stryke is priority #2 per [`CLAUDE.md`](../../.claude/CLAUDE.md). Building the codegen as a fusevm module aligns both projects on a single pipeline. The version bump is required regardless once we add cranelift-object as a fusevm dep.
@@ -287,7 +287,7 @@ Each phase has its own load-bearing tests added to [`tests/`](./tests/) per [`DE
 
 The AOT binary must pass every existing zshrs behavioral test that doesn't require interactivity. Specifically:
 
-- **All 158 `no_tree_walker_dispatch` tests** run against an AOT-built `test_runner` binary, not source-mode zshrs.
+- **All 160 `no_tree_walker_dispatch` tests** run against an AOT-built `test_runner` binary, not source-mode zshrs.
 - **All 392 corpus tests** (plugin compat, parameter expansion, etc.) run against AOT.
 - **All 70 ztst tests** (zsh test suite ports) run against AOT.
 - **New AOT-specific tests:**

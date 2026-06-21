@@ -17,7 +17,7 @@ Acceptance: `cargo test --test ztst_pty_harness` runs every `.ztst` file in `tes
 - Cross-platform Windows support. Headless Linux + macOS only.
 - Cross-shell test reuse — this harness is zsh-grammar-specific.
 - Speed parity with upstream `make test`. Correctness wins.
-- Replacing the existing 227-test construct corpus (`tests/zsh_construct_corpus.rs`). That layer is non-interactive and stays as-is. ZTST is the *interactive* and *stateful* layer above it.
+- Replacing the existing 392-test construct corpus (`tests/zsh_construct_corpus.rs`). That layer is non-interactive and stays as-is. ZTST is the *interactive* and *stateful* layer above it.
 
 ---
 

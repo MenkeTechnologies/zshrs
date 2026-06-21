@@ -31,6 +31,7 @@ as exposed by `zmodload`.
 | `stat.rs`          | `stat.c`          | `zstat` builtin                                                        |
 | `system.rs`        | `system.c`        | `sysopen` / `sysread` / `syswrite` / `syserror` / `zsystem`            |
 | `tcp.rs`           | `tcp.c`           | `ztcp` TCP socket                                                      |
+| `tcp_h.rs`         | `tcp.h`           | `tcp_session` types / `ZTCP_*` flags shared by `tcp.rs` and `zftp.rs` |
 | `termcap.rs`       | `termcap.c`       | `echotc`, termcap capability access                                    |
 | `terminfo.rs`      | `terminfo.c`      | `${terminfo[capname]}` via ncurses FFI                                 |
 | `watch.rs`         | `watch.c`         | `$watch` login/logout monitoring                                       |

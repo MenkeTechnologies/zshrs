@@ -117,9 +117,10 @@ What that report tells you and what it does not:
 
 ### The problem with static analysis
 
-The daemon's `ast_walker.rs` already does AST-based static analysis to
-catalog the user's shell config. But static analysis hits a hard
-ceiling:
+The daemon used to do AST-based static analysis (the `ast_walker` /
+`walk` / `plugin_walk` / `zshrc_analysis` pipeline, since removed — see
+`daemon/lib.rs`) to catalog the user's shell config. But static
+analysis hits a hard ceiling:
 
 - **Plugin frameworks rewrite control flow.** Zinit-turbo defers
   loading via `wait` ICE; oh-my-zsh chains `source` calls through
@@ -128,7 +129,7 @@ ceiling:
   metaprogramming layer that's hostile to AST walking.
 - **Dynamic constructs can't be resolved without execution.**
   `eval $(starship init zsh)`, `source <(kubectl completion zsh)`,
-  `[[ $TERM == xterm* ]] && alias x=...`, `for f in $ZDOTDIR/*.zsh; do source $f; done` — none of these yield definite information from a static walker. We've already hit this in `daemon/ast_walker.rs`.
+  `[[ $TERM == xterm* ]] && alias x=...`, `for f in $ZDOTDIR/*.zsh; do source $f; done` — none of these yield definite information from a static walker. We hit this in the daemon's former `ast_walker` pipeline (since removed — see `daemon/lib.rs`).
 - **Conditional load matters.** `if [[ -d ~/.rbenv ]]; then source ...; fi` produces different state on different machines. Static analysis must assume both branches; runtime knows which actually fired.
 - **Plugin-manager coupling is non-monotonic.** Even if we wrote a perfect zinit static analyzer today, it'd break on the next zinit ICE feature, on the next oh-my-zsh version that introduces new sourcing primitives, or on the user's hand-rolled framework. There is no end-state to that work — every framework version is a new static-analysis target.
 
@@ -136,7 +137,7 @@ The static path has been the standard answer (zinit's `@zinit-report`, antibody'
 
 ### The runtime answer
 
-Run the user's actual init under instrumented zshrs. Every time a state-mutating builtin executes, capture (kind, name, value, file, line, fn_chain, timestamp) and forward it to the daemon. The shell already has the lineno and file context — `parse/src/parser.rs` plumbs it through `ZshPipe.lineno` and `crate::ported::lex::toklineno()`. We just need to carry it across the builtin dispatch boundary and emit a record.
+Run the user's actual init under instrumented zshrs. Every time a state-mutating builtin executes, capture (kind, name, value, file, line, fn_chain, timestamp) and forward it to the daemon. The shell already has the lineno and file context — `src/ported/parse.rs` plumbs it through `ZshPipe.lineno` and `crate::ported::lex::toklineno()`. We just need to carry it across the builtin dispatch boundary and emit a record.
 
 This is plugin-framework-**agnostic by construction**: it doesn't matter how the alias got defined — through 5 layers of zinit ice modifiers or in raw .zshrc — the `bin_alias` dispatcher fires once per definition, with the file:line at the moment of execution. The recorder catches all of them uniformly.
 

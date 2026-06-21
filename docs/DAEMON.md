@@ -256,7 +256,7 @@ now flows through `zshrs-recorder` — a separate one-shot binary
 init under runtime AOP and ships the captured bundle to the daemon via
 `recorder_ingest`. The user re-runs the recorder when `.zshrc` /
 plugins change. See `docs/RECORDER.md` for the recorder design and
-`daemon/ops.rs:535` for the deletion comment.
+`daemon/ops.rs:627` for the deletion comment.
 
 The daemon's role narrowed from "active analyzer" to "passive
 canonical store + queryable catalog":
@@ -298,7 +298,7 @@ compares any two. See `docs/SHELL_IDS.md` and
 `_patcomps` / `_describe_handlers`) come from recorder-captured
 `compdef` rows folded into the canonical engine. `eval $(zcache
 export _comps)` rebuilds them in a new shell. The four-table set is
-listed at `daemon/builtins.rs:696` + `daemon/export.rs:477`.
+listed at `daemon/builtins.rs:704` + `daemon/export.rs:480`.
 
 **`fork+exec`'d user commands** (`find`, `ls`, `rg`, `grep`, etc.)
 are user code, not shell-internal state — they run normally in the
@@ -614,10 +614,9 @@ Hot-path escape hatch: if JSON parse cost shows up in flamegraphs for `highlight
 
 ### Operation table (client → daemon)
 
-Authoritative source: `daemon/ops.rs:OP_NAMES`. The
-`tests/daemon_doc_drift.rs` test asserts this table stays in lockstep
-— add a row here when adding an op there. See
-`docs/DAEMON_AS_SERVICE.md` for the full HTTP-surfaced contract per op.
+Authoritative source: `daemon/ops.rs:OP_NAMES` — add a row here when
+adding an op there. See `docs/DAEMON_AS_SERVICE.md` for the full
+HTTP-surfaced contract per op.
 
 | Area | Op | Purpose |
 |---|---|---|
@@ -657,7 +656,7 @@ Authoritative source: `daemon/ops.rs:OP_NAMES`. The
 | ask      | `ask_ask` / `ask_pending` / `ask_take` / `ask_dismiss` / `ask_response` | pull-mode UI queue (see `zask` section) |
 | cache    | `cache_put` / `cache_get` / `cache_del` / `cache_list` / `cache_stats` | persistent KV store |
 | artifact | `artifact_put` / `artifact_get` / `artifact_get_by_digest` / `artifact_list` / `artifact_gc` | sha256-content-addressed cache |
-| job      | `job_submit` / `job_status` / `job_output` / `job_list` / `job_kill` / `job_cancel` / `job_wait` | tokio task queue |
+| job      | `job_submit` / `job_status` / `job_output` / `job_list` / `job_kill` / `job_cancel` / `job_wait` / `job_input` / `job_resize` | tokio task queue (`job_input` writes to PTY master fd; `job_resize` propagates TIOCSWINSZ) |
 | schedule | `schedule_add` / `schedule_add_once` / `schedule_remove` / `schedule_list` | cron-equivalent |
 | lock     | `lock_acquire` / `lock_try_acquire` / `lock_release` / `lock_list` | named cross-process mutex |
 | snapshot | `snapshot_save` / `snapshot_list` / `snapshot_load` / `snapshot_diff` | tag-based canonical state captures |
@@ -903,7 +902,7 @@ caching wins.
 #### Detect-at-startup probe
 
 zshrs probes the daemon socket once at process startup (see
-`src/daemon_presence.rs`). The probe is connect-only — no handshake,
+`src/extensions/daemon_presence.rs`). The probe is connect-only — no handshake,
 no spawn — so it costs ~tens-of-microseconds when the daemon is up
 and a single `stat()` failure when it's down. Result is cached in an
 atomic; subsequent IPC sites read it via `daemon_presence::is_present()`
