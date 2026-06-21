@@ -2418,7 +2418,6 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "sqrt"
             | "tan"
             | "tanh"
-            | "trunc"
             | "y0"
             | "y1"
     );
@@ -2663,13 +2662,14 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
     // c:Src/Modules/mathfunc.c:139 — only `int` has TFLAG(TF_NOASS)
     // which collapses the result to MN_INTEGER. `ceil`/`floor` lack
     // TF_NOASS so they return float (rendered as `5.` for whole
-    // values), and `trunc` doesn't exist in zsh's mathfunc table.
+    // values), and `trunc` doesn't exist in zsh's mathfunc table at
+    // all — it must error "unknown function: trunc" like zsh.
     // The previous Rust port forced all four to integer, so
     // `$(( ceil(1.1) ))` printed `2` instead of zsh's `2.`.
-    let always_int = matches!(name, "int" | "trunc");
+    let always_int = matches!(name, "int");
     if always_int {
         let i = match name {
-            "int" | "trunc" => arg_nums
+            "int" => arg_nums
                 .first()
                 .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
                 .unwrap_or(0),
@@ -2868,7 +2868,6 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
         "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
         "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
-        "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
         "y0" => unsafe { y0(args.first().copied().unwrap_or(0.0)) }, // c:417
         "y1" => unsafe { y1(args.first().copied().unwrap_or(0.0)) }, // c:423
         // `float(x)` — widen int/float to float. Identity on
