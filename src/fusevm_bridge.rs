@@ -7162,6 +7162,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         Value::Int(if ok { 0 } else { 1 })
     });
+    vm.register_builtin(BUILTIN_USE_CMDOUTVAL_RESET, |_vm, _argc| {
+        crate::ported::exec::use_cmdoutval
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        Value::Status(0)
+    });
+
     vm.register_builtin(BUILTIN_EXEC_DYNAMIC, |vm, argc| {
         let raw = pop_args(vm, argc);
         // Flatten Array entries into argv slots (matches fusevm
@@ -7182,10 +7188,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(1);
         }
         if args.is_empty() {
-            // c:Src/exec.c — empty argv preserves prior \$?. The
-            // cmd-subst inside the word already set last_status; just
-            // round-trip it back through SetStatus.
-            return Value::Status(vm.last_status);
+            // c:Src/exec.c:3442 — a command whose words expand to ZERO
+            // words is a NULL command: `cmdoutval = use_cmdoutval ?
+            // lastval : 0`. `use_cmdoutval` is set (below, in
+            // BUILTIN_CMD_SUBST_TEXT) only when a command substitution
+            // ran during this command's word expansion, so:
+            //   `false; $(exit 5)`  → keep the subst status (5)
+            //   `false; $nonexistent` → reset to 0 (null command).
+            // The previous port unconditionally kept `$?`, so
+            // `false; $unset` wrongly stayed 1 (A01grammar.ztst:5).
+            let keep = crate::ported::exec::use_cmdoutval
+                .load(std::sync::atomic::Ordering::Relaxed)
+                != 0;
+            let status = if keep { vm.last_status } else { 0 };
+            crate::ported::exec::use_cmdoutval
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            return Value::Status(status);
         }
         if args[0].is_empty() {
             // Explicit empty command word — exec returns EACCES.
@@ -7840,6 +7858,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // exec since it owns the canonical post-subst record.
         let cs_status = with_executor(|exec| exec.last_status());
         vm.last_status = cs_status;
+        // c:Src/exec.c — a command substitution running during a
+        // command's word expansion makes its exit the status of an
+        // otherwise-empty command (`$(exit 5)` → 5). Flag it so
+        // BUILTIN_EXEC_DYNAMIC's null-command branch keeps `$?` instead
+        // of resetting to 0.
+        crate::ported::exec::use_cmdoutval
+            .store(1, std::sync::atomic::Ordering::Relaxed);
         Value::str(result)
     });
 
@@ -8927,6 +8952,11 @@ pub const BUILTIN_REDIRECT_FAILED_CHECK: u16 = 605;
 /// "permission denied" when `argv[0]` is empty, otherwise routes
 /// through executor.host_exec_external like Op::Exec did.
 pub const BUILTIN_EXEC_DYNAMIC: u16 = 606;
+/// Reset `use_cmdoutval` to 0 at the START of a dynamic command (before
+/// its words expand), so a command substitution from a PREVIOUS command
+/// can't leak into this command's null-command status decision
+/// (c:Src/exec.c:3009 `use_cmdoutval = !args`). See BUILTIN_EXEC_DYNAMIC.
+pub const BUILTIN_USE_CMDOUTVAL_RESET: u16 = 637;
 /// `[[ lhs == pat ]]` / `!=` glob compare — cond-specific so the
 /// bad-pattern diagnostic follows Src/cond.c:308-316: zwarnnam
 /// "bad pattern: %s" WITHOUT errflag (the script continues) and the
