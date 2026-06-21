@@ -125,7 +125,6 @@ mod man_expn {
 
     /// (SI:N:) indexed substring match — Nth match.
     #[test]
-    #[ignore = "zshrs gap: (SI:N:) Nth-match index ignored — always removes the 1st match regardless of N"]
     fn SI_indexed_match() {
         assert_parity(r###"s="which switch is the right switch for Ipswich?"; for n in 1 2 3 4; do echo ${(SI:$n:)s#w*ch}; done"###);
     }
@@ -361,7 +360,6 @@ mod man_expn {
 
     /// (I:N:) on substitution — // all from Nth, / only Nth.
     #[test]
-    #[ignore = "zshrs gap: (I:N:) on substitution ignored — // should start from Nth match, / should hit only Nth"]
     fn I_on_substitution() {
         assert_parity(r###"s="aXbXcXd"; print -- ${(SI:2:)s//X/-}; print -- ${(I:2:)s/X/-}"###);
     }

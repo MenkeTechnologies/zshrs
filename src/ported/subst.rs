@@ -9229,6 +9229,13 @@ pub fn paramsubst(
                         }
                         return o;
                     }
+                    // c:Src/glob.c:3057/3095 — the (I:N:) index makes a
+                    // GLOBAL `//` substitution start replacing from the
+                    // Nth match onward (matches 1..N-1 are copied
+                    // verbatim). Default flnum 0 → target 1 → replace
+                    // every match (the normal `//` behavior).
+                    let target_global = flnum.max(1);
+                    let mut match_count: u32 = 0;
                     let mut q = 0_usize;
                     while q < nn {
                         let mut m: Option<usize> = None;
@@ -9284,7 +9291,15 @@ pub fn paramsubst(
                         if let Some(e) = m {
                             let span_text: String = cv[q..e].iter().collect();
                             let span_byte = cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
-                            o.push_str(&eval_repl_for_match(&span_text, span_byte));
+                            match_count += 1; // c:3057
+                            if match_count >= target_global {
+                                o.push_str(&eval_repl_for_match(&span_text, span_byte));
+                            } else {
+                                // Before the Nth match — copy the matched
+                                // span verbatim (no replacement, no
+                                // replacement side-effect).
+                                o.push_str(&span_text);
+                            }
                             if e == q {
                                 // c:Src/glob.c:3060-3061 — `if (mpos ==
                                 // t) mpos += mb_charlenconv(...)`: the
@@ -10127,13 +10142,28 @@ pub fn paramsubst(
                     // Match bounds [b, e) in chars; None = no match.
                     let bounds: Option<(usize, usize)> = (|| {
                         if substr_mode {
-                            // Leftmost shortest substring match.
+                            // Leftmost shortest substring match. The
+                            // (I:N:) index flag selects the Nth such
+                            // match rather than the 1st — c:Src/glob.c:3057
+                            // `if (!--n …)` counts one match per leftmost
+                            // start position and replaces only the Nth
+                            // (c:3095 default flnum=1). Mirrors the
+                            // single-`/` SUB_SUBSTR loop (subst.rs:9760).
+                            let target = flnum.max(1);
+                            let mut count: u32 = 0;
                             for start in 0..=total {
                                 for k in 0..=(total - start) {
                                     let candidate: String =
                                         cv[start..start + k].iter().collect();
                                     if gms(&candidate, &p) {
-                                        return Some((start, start + k));
+                                        count += 1; // c:3057 `--n`
+                                        if count >= target {
+                                            return Some((start, start + k));
+                                        }
+                                        // Not the Nth yet — advance to the
+                                        // next start position (one match
+                                        // counted per leftmost start).
+                                        break;
                                     }
                                 }
                             }
