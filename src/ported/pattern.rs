@@ -4321,6 +4321,19 @@ fn patmatch(
             }
             P_NOTHING => { /* empty match, just continue */ }
             P_BACK => { /* zero-width, walk back via next */ }
+            P_EXCEND => {
+                // c:Src/pattern.c:3037-3047 — terminal node ending an
+                // exclusion operand: the exclusion matches iff the
+                // (truncated) excludable span was fully consumed
+                // (`patinput >= patinend`). Returns success here without
+                // following the chain (which would wrongly continue into
+                // the post-group pattern). The caller truncates the span
+                // so `string.len()` IS the excludable end.
+                if s_off >= string.len() {
+                    return Some(s_off);
+                }
+                return None;
+            }
             P_EXACTLY => {
                 // c:P_EXACTLY arm
                 let body = scan + I_BODY;
@@ -4574,99 +4587,84 @@ fn patmatch(
                 // same input range; if any exclude matches with the
                 // SAME consumed length, fail; else succeed.
                 if next != 0 && next < code.len() && P_ISEXCLUDE(code[next + I_OP]) {
-                    let operand = scan + I_BODY + operand_off_extra;
-                    let mut asserted_state = state.clone();
-                    let asserted_end = patmatch(
-                        code,
-                        operand,
-                        string,
-                        s_off,
-                        &mut asserted_state,
-                        glob_flags,
-                    );
-                    if asserted_end.is_none() {
-                        return None;
-                    }
-                    let mut end = asserted_end.unwrap();
-                    // c:3102-3193 — walk every EXCLUDE in the next chain
-                    // (multiple `~` clauses chain via .next). Truncate
-                    // the input to `end` and try the exclude operand at
-                    // s_off; on full-length match the assertion fails
-                    // for this candidate.
-                    let mut excl = next;
-                    let mut excluded = false;
-                    while excl != 0 && excl < code.len() && P_ISEXCLUDE(code[excl + I_OP]) {
-                        // EXCLUDE operand sits after the 8-byte syncptr.
-                        let excl_operand = excl + I_BODY + 8;
-                        let truncated = &string[..end];
-                        let mut e_state = state.clone();
-                        if let Some(em) = patmatch(
+                    // c:Src/pattern.c:3056-3201 — `^pat` / `(^pat)` /
+                    // `!(pat)` / `A~B` exclusion. patcompnot always emits
+                    // the asserted branch as `STAR EXCSYNC rest`, where
+                    // EXCSYNC marks where the excludable STAR ended and
+                    // `rest` is the pattern AFTER the group (e.g. the
+                    // `.zsh` in `(^zunit).zsh`). C drives STAR
+                    // backtracking via a shared sync buffer that the
+                    // EXCSYNC node writes; that model clashes with this
+                    // port's state-cloning matcher, so enumerate the STAR
+                    // split point `p` directly instead:
+                    //   for each p (greedy: longest STAR first) where
+                    //   `rest` matches string[p..], test the exclusion
+                    //   operand(s) against the excludable span
+                    //   string[s_off..p]; the first split whose span is
+                    //   NOT excluded wins. This is equivalent to C's
+                    //   EXCSYNC/backtrack loop for the asserted STAR.
+                    let star = scan + I_BODY + operand_off_extra; // P_STAR
+                    // The node after the STAR is EXCSYNC; matching from
+                    // there (EXCSYNC is a no-op) continues EXCSYNC →
+                    // NOTHING → rest.
+                    let after_star = {
+                        let nb: [u8; 4] =
+                            code[star + I_NEXT..star + I_NEXT + 4].try_into().unwrap();
+                        u32::from_le_bytes(nb) as usize
+                    };
+                    // c:3142 — exclusions run with approximation off;
+                    // collect the EXCLUDE/EXCLUDP chain once.
+                    for p in (s_off..=string.len()).rev() {
+                        // Does the pattern after the group match from p?
+                        let mut rest_state = state.clone();
+                        let end = match patmatch(
                             code,
-                            excl_operand,
-                            truncated,
-                            s_off,
-                            &mut e_state,
+                            after_star,
+                            string,
+                            p,
+                            &mut rest_state,
                             glob_flags,
                         ) {
-                            if em == end {
-                                excluded = true;
-                                break;
-                            }
-                        }
-                        let next_bytes: [u8; 4] =
-                            code[excl + I_NEXT..excl + I_NEXT + 4].try_into().unwrap();
-                        let n = u32::from_le_bytes(next_bytes) as usize;
-                        if n == 0 || n == excl {
-                            break;
-                        }
-                        excl = n;
-                    }
-                    if excluded {
-                        // c:3189-3193 — backtrack the asserted match
-                        // (truncate by one char and retry). Simple
-                        // approximation: shrink `end` by 1 byte and
-                        // re-test exclude. Bounded by s_off.
-                        while end > s_off {
-                            end -= 1;
-                            let mut excl2 = next;
-                            let mut still_excluded = false;
-                            while excl2 != 0
-                                && excl2 < code.len()
-                                && P_ISEXCLUDE(code[excl2 + I_OP])
-                            {
-                                let excl_operand = excl2 + I_BODY + 8;
-                                let truncated = &string[..end];
-                                let mut e_state = state.clone();
-                                if let Some(em) = patmatch(
-                                    code,
-                                    excl_operand,
-                                    truncated,
-                                    s_off,
-                                    &mut e_state,
-                                    glob_flags,
-                                ) {
-                                    if em == end {
-                                        still_excluded = true;
-                                        break;
-                                    }
-                                }
-                                let nb: [u8; 4] =
-                                    code[excl2 + I_NEXT..excl2 + I_NEXT + 4].try_into().unwrap();
-                                let n = u32::from_le_bytes(nb) as usize;
-                                if n == 0 || n == excl2 {
+                            Some(e) => e,
+                            None => continue,
+                        };
+                        // Test each exclusion against the excludable span
+                        // string[s_off..p]. The span is truncated to `p`
+                        // so the operand's trailing P_EXCEND succeeds iff
+                        // it consumed exactly to `p` (a full-span match).
+                        let span = &string[..p];
+                        let mut excluded = false;
+                        let mut excl = next;
+                        while excl != 0 && excl < code.len() && P_ISEXCLUDE(code[excl + I_OP]) {
+                            let excl_operand = excl + I_BODY + 8; // after syncptr
+                            let mut e_state = state.clone();
+                            if let Some(em) = patmatch(
+                                code,
+                                excl_operand,
+                                span,
+                                s_off,
+                                &mut e_state,
+                                glob_flags,
+                            ) {
+                                if em == p {
+                                    excluded = true;
                                     break;
                                 }
-                                excl2 = n;
                             }
-                            if !still_excluded {
-                                *state = asserted_state;
-                                return Some(end);
+                            let nb: [u8; 4] =
+                                code[excl + I_NEXT..excl + I_NEXT + 4].try_into().unwrap();
+                            let n = u32::from_le_bytes(nb) as usize;
+                            if n == 0 || n == excl {
+                                break;
                             }
+                            excl = n;
                         }
-                        return None;
+                        if !excluded {
+                            *state = rest_state;
+                            return Some(end);
+                        }
                     }
-                    *state = asserted_state;
-                    return Some(end);
+                    return None;
                 }
                 let next_is_branch = next != 0
                     && next < code.len()

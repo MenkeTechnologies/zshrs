@@ -1942,7 +1942,6 @@ _zunit_assert_is_key_in gamma alpha 1 beta 2"##,
 
     /// zunit.plugin.zsh:18-22 — recursive negation glob `**/(^zunit).zsh`.
     #[test]
-    #[ignore = "zshrs gap: **/(^zunit).zsh recursive-glob result ordering differs from zsh (zsh sorts breadth/lexical differently)"]
     fn recursive_negation_glob() {
         assert_parity(
             r##"t=$(mktemp -d)
