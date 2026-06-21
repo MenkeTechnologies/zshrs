@@ -8001,9 +8001,8 @@ impl ZshCompiler {
             "-e" | "-a" => file_test::EXISTS,
             "-f" => file_test::IS_FILE,
             "-d" => file_test::IS_DIR,
-            "-r" => file_test::IS_READABLE,
-            "-w" => file_test::IS_WRITABLE,
-            "-x" => file_test::IS_EXECUTABLE,
+            // -r/-w/-x are handled by the BUILTIN_COND_ACCESS arm below
+            // (access(2), not fusevm's existence-only Op::TestFile).
             "-s" => file_test::IS_NONEMPTY,
             "-L" | "-h" => file_test::IS_SYMLINK,
             "-c" => {
@@ -8123,6 +8122,22 @@ impl ZshCompiler {
                 // host-side builtin that calls libc::isatty.
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_IS_TTY, 1), 0);
+                return;
+            }
+            "-r" | "-w" | "-x" => {
+                // `[[ -r/-w/-x file ]]` — must use access(2) (doaccess),
+                // NOT fusevm's Op::TestFile which only checks existence
+                // for -r/-w (a `chmod 000` file read as readable). Push
+                // the access(2) mode bit (R_OK=4, W_OK=2, X_OK=1) and
+                // route through BUILTIN_COND_ACCESS. c:Src/cond.c:438.
+                let mode: i64 = match op {
+                    "-r" => 4,
+                    "-w" => 2,
+                    _ => 1,
+                };
+                self.builder.emit(Op::LoadInt(mode), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_ACCESS, 2), 0);
                 return;
             }
             _ => {

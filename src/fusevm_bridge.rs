@@ -5357,6 +5357,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(saved)
     });
 
+    // `[[ -r/-w/-x file ]]` — the cond path must use access(2) (the
+    // C-faithful doaccess), NOT fusevm's generic Op::TestFile which only
+    // checks existence for -r/-w (so a `chmod 000` file read as readable;
+    // C02cond.ztst:13). Stack: [path, mode]; mode is the access(2) bit
+    // (R_OK=4, W_OK=2, X_OK=1). Mirrors cond.rs:232/238/267 `doaccess`.
+    vm.register_builtin(BUILTIN_COND_ACCESS, |vm, _argc| {
+        let mode = vm.pop().to_int() as i32;
+        let path = vm.pop().to_str();
+        Value::Bool(crate::ported::cond::doaccess(&path, mode) != 0)
+    });
+
     vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {
         let fd_str = vm.pop().to_str();
         let fd: i32 = fd_str.trim().parse().unwrap_or(-1);
@@ -9098,6 +9109,8 @@ pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
 /// `[[ -t fd ]]` — fd-is-a-tty check. Stack: \[fd_string\].
 /// Routes through libc::isatty. Pushes Bool.
 pub const BUILTIN_IS_TTY: u16 = 325;
+/// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
+pub const BUILTIN_COND_ACCESS: u16 = 638;
 
 /// Update `$LINENO` to track the source line of the next statement.
 /// Stack: \[n\] (the line number from `ZshPipe.lineno`). Direct port
