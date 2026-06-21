@@ -813,7 +813,6 @@ mod man_param {
 
     /// (e) literal star key.
     #[test]
-    #[ignore = "zshrs gap: assoc [(e)*] literal-key assignment+lookup yields empty (e subscript flag on assoc key)"]
     fn e_literal_star_key() {
         assert_parity(r###"typeset -A aa; aa[(e)*]=star; print -r -- $aa[(e)*]"###);
     }

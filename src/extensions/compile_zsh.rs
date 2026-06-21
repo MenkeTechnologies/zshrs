@@ -2875,6 +2875,22 @@ impl ZshCompiler {
             }
         }
         if let Some((base, key)) = split_subscript(&untoked_name) {
+            // c:Src/params.c:1449-1450,1708-1709 — a leading `(e)`/`(E)` flag
+            // group (quote_arg) on an assignment subscript makes the key
+            // LITERAL: getindex consumes the group and runs `untokenize(s)`,
+            // so `aa[(e)*]=v` stores key "*", not "(e)*". Search-and-assign
+            // groups ((r)/(R)/(i)/…) are left intact for their own handlers.
+            let key_norm: Option<String> = key.strip_prefix('(').and_then(|r| {
+                r.find(')').and_then(|c| {
+                    let grp = &r[..c];
+                    if !grp.is_empty() && grp.chars().all(|ch| ch == 'e' || ch == 'E') {
+                        Some(crate::lex::untokenize(&r[c + 1..]))
+                    } else {
+                        None
+                    }
+                })
+            });
+            let key: &str = key_norm.as_deref().unwrap_or(key);
             if let ZshAssignValue::Scalar(s) = &assign.value {
                 // c:Src/params.c:2895 setarrvalue — range subscript
                 // `a[lo,hi]=val` SPLICES the value into the array,

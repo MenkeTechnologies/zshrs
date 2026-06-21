@@ -2746,6 +2746,31 @@ pub(crate) fn getarg<'a>(
         let exact = flags.contains('e');
         let key_match = flags.contains('k') || flags.contains('K');
         let return_index = flags.contains('i') || flags.contains('I');
+        // c:Src/params.c — on a HASH, i/I/k/K all match against KEYS while
+        // r/R match against VALUES (zsh 5.9: `${h[(i)KEY]}`→KEY,
+        // `${h[(r)VAL]}`→VAL, `${h[(i)VAL]}`→empty). k/K are exact key
+        // compares (pprog=NULL, c:1707-1708); i/I glob the key; r/R glob the
+        // value; (e) forces exact. Return: i/I→KEY, k/K→VALUE, r/R→VALUE.
+        let match_against_key = key_match || return_index;
+        let key_glob = return_index; // i/I glob the key; k/K are exact-only
+        // c:Src/params.c:1689,1708-1729 — the value/key SCAN only runs when
+        // `v->scanflags` is set, which requires a search-direction flag
+        // (i/I/r/R/k/K). With none of those (e.g. a bare `(e)key`), C never
+        // builds scanflags: getindex falls back to a plain `gethashnode`
+        // exact KEY lookup. `(e)` (quote_arg, c:1450) only makes that key
+        // literal (no glob). Without this, `(e)*` wrongly scanned VALUES for
+        // an exact "*" and returned empty instead of the value at key "*".
+        let has_search = flags.contains('i')
+            || flags.contains('I')
+            || flags.contains('r')
+            || flags.contains('R')
+            || flags.contains('k')
+            || flags.contains('K');
+        if !has_search {
+            return Some(getarg_out::Value(Value::str(
+                map.get(pat).cloned().unwrap_or_default(),
+            )));
+        }
         // C params.c:1488-1491 — negative `num` flips `down`. Since
         // R/I/K already set down=1, neg_num XORs the bit (r/i/k +
         // neg → return_all; R/I/K + neg → single-match again).
@@ -2771,28 +2796,21 @@ pub(crate) fn getarg<'a>(
         //         literally named "*".
         //   r/R/i/I — value path: pprog=patcompile, glob/exact.
         let key_compare = |target: &str| -> bool {
-            if key_match {
-                target == pat
-            } else if exact {
+            if exact || (match_against_key && !key_glob) {
+                // (e) literal, and k/K exact key compare (no glob).
                 target == pat
             } else {
+                // i/I glob the key; r/R glob the value.
                 patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, target))
             }
         };
         if return_all {
             let mut out: Vec<String> = Vec::new();
             for (k, v) in map.iter().skip(skip) {
-                let target = if key_match { k.as_str() } else { v.as_str() };
+                let target = if match_against_key { k.as_str() } else { v.as_str() };
                 if key_compare(target) {
-                    // `K` (key-match) returns VALUE; `I` (value-match+ind)
-                    // returns KEY; `R` (value-match) returns VALUE.
-                    out.push(if key_match {
-                        v.clone()
-                    } else if return_index {
-                        k.clone()
-                    } else {
-                        v.clone()
-                    });
+                    // i/I → KEY; k/K → VALUE; r/R → VALUE.
+                    out.push(if return_index { k.clone() } else { v.clone() });
                 }
             }
             return Some(getarg_out::Value(Value::str(out.join(" "))));
@@ -2800,13 +2818,11 @@ pub(crate) fn getarg<'a>(
         // c:1753 — `!--num` skips matches until the Nth.
         let mut remaining = num;
         for (k, v) in map.iter().skip(skip) {
-            let target = if key_match { k.as_str() } else { v.as_str() };
+            let target = if match_against_key { k.as_str() } else { v.as_str() };
             if key_compare(target) {
                 remaining -= 1;
                 if remaining == 0 {
-                    return Some(getarg_out::Value(Value::str(if key_match {
-                        v.clone()
-                    } else if return_index {
+                    return Some(getarg_out::Value(Value::str(if return_index {
                         k.clone()
                     } else {
                         v.clone()

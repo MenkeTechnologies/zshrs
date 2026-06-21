@@ -5814,6 +5814,13 @@ pub fn paramsubst(
                     // → SCANPM_WANTINDEX promotion as the plain-key
                     // arm below ((e) only disables pattern compile;
                     // the inv derivation is shared).
+                    // c:Src/params.c:1708-1709 — quote_arg ((e)) calls
+                    // `untokenize(s)` so the key is the LITERAL string: a
+                    // glob char like `*` in `(e)*` is the key "*", not a Star
+                    // pattern token. Untokenize before the exact lookup so a
+                    // tokenized subscript matches the literal stored key.
+                    let key_owned = crate::lex::untokenize(key);
+                    let key = key_owned.as_str();
                     if (hkeys & SCANPM_WANTKEYS) != 0
                         && (hvals & SCANPM_WANTVALS) == 0
                     {
@@ -13471,45 +13478,27 @@ pub fn paramsubst(
             // (zsh treats `$scalar[N]` as char-N of the scalar
             // string, 1-based; `$scalar[N,M]` as substring).
             if let Some(map) = assoc_get(&var_name) {
-                // c:1625
-                // Subscript-flag form: (I)/(i)/(R)/(r) on assoc.
-                // Same plumbing as braced path. Direct port of
-                // Src/params.c getarg hash routing.
-                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
-                    let s = s.trim_start();
-                    let rest = s.strip_prefix('(')?;
-                    let close = rest.find(')')?;
-                    let f = rest[..close].to_string();
-                    let p = rest[close + 1..].to_string();
-                    if f.chars()
-                        .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
-                    {
-                        Some((f, p))
-                    } else {
-                        None
-                    }
-                })(sub)
-                {
-                    let by_key = flags.contains('I') || flags.contains('i');
-                    let return_all = flags.contains('I') || flags.contains('R');
-                    let exact = flags.contains('e'); // c:1419 e flag — literal compare
-                    let mut out: Vec<String> = Vec::new();
-                    for (k, v) in map.iter() {
-                        let hay = if by_key { k.as_str() } else { v.as_str() };
-                        let matched = if exact {
-                            hay == pat.as_str()
+                // c:Src/params.c::getarg — (I)/(i)/(R)/(r)/(k)/(K)/(e)/(n)/(b)
+                // hash subscript routing. Delegate to the canonical getarg so
+                // the (e)-no-search exact KEY lookup and the search-flag value/
+                // key variants match C exactly; the prior inline closure
+                // treated `(e)` as a value compare, so `$h[(e)*]` scanned
+                // values for "*" and returned empty instead of the value at
+                // key "*". A non-flag `[key]` stays a plain exact key lookup.
+                if let Some(crate::ported::params::getarg_out::Value(v)) =
+                    sub.trim_start().strip_prefix('(').and_then(|rest| {
+                        let close = rest.find(')')?;
+                        if rest[..close]
+                            .chars()
+                            .all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b'))
+                        {
+                            crate::ported::params::getarg(sub.trim_start(), None, Some(&map), None)
                         } else {
-                            patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                                .map_or(false, |__p| pattry(&__p, hay))
-                        };
-                        if matched {
-                            out.push(if by_key { k.clone() } else { v.clone() });
-                            if !return_all {
-                                break;
-                            }
+                            None
                         }
-                    }
-                    out.join(" ")
+                    })
+                {
+                    v.to_str().to_string()
                 } else {
                     map.get(sub).cloned().unwrap_or_default() // c:1625
                 }
