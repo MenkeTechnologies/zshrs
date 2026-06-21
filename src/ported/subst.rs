@@ -6660,17 +6660,16 @@ pub fn paramsubst(
                         let n = rest[close + 1..].to_string();
                         let mut sep_explicit: Option<String> = None;
                         let mut has_word = false;
+                        // c:Src/params.c:1477 — `(p)` sets `escapes = 1`; it is
+                        // NOT a word flag on its own (`(p)1` is char index 1,
+                        // not word 1). Its only effect is to print-decode the
+                        // following `(s:SEP:)` separator spec.
+                        let mut escapes = false;
                         let mut chars = f.chars().peekable();
                         while let Some(c) = chars.next() {
                             match c {
                                 'w' | 'W' => has_word = true,
-                                // c:Src/params.c:1419-1426 — `(p)` only
-                                // enables print-style escapes in the
-                                // SEPARATOR spec; it is NOT a word flag
-                                // on its own. `(p)1` is a plain char
-                                // index (`${s[(p)1]}` → char 1), not
-                                // word 1. Only flip word mode for w/W/f.
-                                'p' => {}
+                                'p' => escapes = true, // c:1477
                                 'f' => {
                                     has_word = true;
                                     sep_explicit = Some("\n".to_string());
@@ -6683,6 +6682,20 @@ pub fn paramsubst(
                                             break;
                                         }
                                         body.push(cc);
+                                    }
+                                    // c:Src/params.c:1488-1492 — when `(p)` was
+                                    // seen, the separator is run through
+                                    // `getkeystring(s, &len, GETKEYS_SEP, NULL)`
+                                    // so `\t`/`\n`/`\NNN` decode to the literal
+                                    // bytes (`(pws:\t:)` splits on a real TAB).
+                                    if escapes {
+                                        body = crate::ported::utils::getkeystring_with(
+                                            &body,
+                                            (crate::ported::zsh_h::GETKEY_OCTAL_ESC
+                                                | crate::ported::zsh_h::GETKEY_EMACS)
+                                                as u32,
+                                        )
+                                        .0;
                                     }
                                     sep_explicit = Some(body);
                                 }
