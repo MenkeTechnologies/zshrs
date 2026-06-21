@@ -611,9 +611,15 @@ pub fn execbuiltin(
         // (including consumed option words) so XTRACE shows what the
         // user typed, not the option-stripped tail.
         let fullargv = &argarr; // c:441
-        printprompt4(); // c:442
+        // All emits below are `fprintf(xtrerr, …)` / `fputc(…, xtrerr)` in
+        // C: append to the xtrerr line buffer and flush ONCE at the
+        // trailing `\n` (c:492-493), so the builtin's trace line reaches
+        // the shared stderr fd in a single write — a forked pipeline
+        // stage never interleaves with a concurrent one.
+        use crate::fusevm_bridge::{xtrerr_flush, xtrerr_fputs};
+        printprompt4(); // c:442 — buffers PS4 into xtrerr
                         // c:443 — `fprintf(xtrerr, "%s", name);`
-        eprint!("{}", name); // c:443
+        xtrerr_fputs(&name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
         // C zsh's parser pre-splits `name=value` args for
         // BINF_ASSIGN-flagged builtins (export/typeset/declare/local/
@@ -633,7 +639,7 @@ pub fn execbuiltin(
         let is_assign = (bn_ref.node.flags as u32 & BINF_ASSIGN) != 0;
         for s in fullargv {
             // c:444
-            eprint!(" "); // c:445 fputc(' ', xtrerr)
+            xtrerr_fputs(" "); // c:445 fputc(' ', xtrerr)
             let mut emitted = false;
             if is_assign {
                 let sbytes = s.as_bytes();
@@ -677,24 +683,24 @@ pub fn execbuiltin(
                         };
                         if sep_len != 0 {
                             // c:453,487-488 — emit name + sep + quoted(value).
-                            eprint!("{}{}{}", &s[..i], sep, quotedzputs(&s[i + sep_len..]));
+                            xtrerr_fputs(&format!("{}{}{}", &s[..i], sep, quotedzputs(&s[i + sep_len..])));
                             emitted = true;
                         }
                     }
                 }
             }
             if !emitted {
-                eprint!("{}", quotedzputs(s)); // c:446
+                xtrerr_fputs(&quotedzputs(s)); // c:446
             }
         }
         // c:448-491 — `if (assigns) { for (node = firstnode(assigns); ...) }`.
         for asg in &assigns {
             // c:450 firstnode/incnode
-            eprint!(" "); // c:452 fputc(' ', xtrerr)
-            eprint!("{}", quotedzputs(&asg.name)); // c:453
+            xtrerr_fputs(" "); // c:452 fputc(' ', xtrerr)
+            xtrerr_fputs(&quotedzputs(&asg.name)); // c:453
             if (asg.flags & ASG_ARRAY) != 0 {
                 // c:454
-                eprint!("=("); // c:455
+                xtrerr_fputs("=("); // c:455
                 if let Some(ref list) = asg.array {
                     // c:456
                     if (asg.flags & ASG_KEY_VALUE) != 0 {
@@ -722,18 +728,18 @@ pub fn execbuiltin(
                                 None => break, // c:465
                             };
                             // c:466-468 — `fputc('['); quotedzputs(getdata(keynode));`
-                            eprint!("["); // c:466
+                            xtrerr_fputs("["); // c:466
                             if let Some(k) = list.getdata(kidx) {
                                 // c:467 getdata
-                                eprint!("{}", quotedzputs(k));
+                                xtrerr_fputs(&quotedzputs(k));
                                 // c:467
                             }
                             // c:469 — `fprintf(stderr, "]=");`
-                            eprint!("]="); // c:469
+                            xtrerr_fputs("]="); // c:469
                                            // c:470-471 — `quotedzputs(getdata(valnode));`
                             if let Some(v) = list.getdata(vidx) {
                                 // c:470
-                                eprint!("{}", quotedzputs(v));
+                                xtrerr_fputs(&quotedzputs(v));
                                 // c:470
                             }
                             // c:472 — `keynode = nextnode(valnode);`
@@ -746,26 +752,26 @@ pub fn execbuiltin(
                         let mut arrnode = list.firstnode(); // c:476
                         while let Some(idx) = arrnode {
                             // c:477
-                            eprint!(" "); // c:479 fputc(' ', xtrerr)
+                            xtrerr_fputs(" "); // c:479 fputc(' ', xtrerr)
                             if let Some(elem) = list.getdata(idx) {
                                 // c:480 getdata
-                                eprint!("{}", quotedzputs(elem));
+                                xtrerr_fputs(&quotedzputs(elem));
                                 // c:480
                             }
                             arrnode = list.nextnode(idx); // c:478 incnode
                         }
                     }
                 }
-                eprint!(" )"); // c:485
+                xtrerr_fputs(" )"); // c:485
             } else if let Some(ref scalar) = asg.scalar {
                 // c:486
-                eprint!("="); // c:487 fputc('=', xtrerr)
-                eprint!("{}", quotedzputs(scalar)); // c:488
+                xtrerr_fputs("="); // c:487 fputc('=', xtrerr)
+                xtrerr_fputs(&quotedzputs(scalar)); // c:488
             }
         }
         // c:492-493 — `fputc('\n', xtrerr); fflush(xtrerr);`
-        eprintln!(); // c:492
-                     // c:493 — fflush is automatic on `eprintln!` (stderr line-buffered).
+        xtrerr_fputs("\n"); // c:492 fputc('\n', xtrerr)
+        xtrerr_flush(); // c:493 fflush(xtrerr) — one write for the whole line
     }
 
     // c:506 — `return (*(bn->handlerfunc))(name, argv, &ops, bn->funcid);`

@@ -1934,7 +1934,12 @@ pub(crate) fn printprompt4() {
     opt_state_set(&opt_name(XTRACE), false);
     let prefix = crate::prompt::expand_prompt(&prefix_template);
     opt_state_set(&opt_name(XTRACE), saved);
-    eprint!("{}", prefix);
+    // c:utils.c:1736 — `fprintf(xtrerr, "%s", s)`. Append to the xtrerr
+    // line buffer rather than writing straight to stderr; the emitter
+    // appends the command/args and flushes the whole line in one write,
+    // matching C's single `fflush(xtrerr)` (so concurrent pipeline-stage
+    // trace lines never interleave).
+    crate::fusevm_bridge::xtrerr_fputs(&prefix);
 }
 
 /// Port of `freestr(void *a)` from `Src/utils.c:1739`.
