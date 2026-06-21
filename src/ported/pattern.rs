@@ -4084,8 +4084,21 @@ fn approx_match_exactly(
             *state = saved_outer;
             return best;
         }
+        // c:Src/pattern.c:2676 CHARMATCH — inline case-aware byte
+        // compare (the C macro, not a fn). Honors GF_IGNCASE /
+        // GF_LCMATCHUC so under `(#i)` a case-only difference is NOT an
+        // edit: `(#ia2)readme` matches `READXME` (only X→M costs an
+        // error). Raw byte `==` counted every case difference as an edit.
+        let charmatch_inline = |chin: u8, chpa: u8| -> bool {
+            chin == chpa
+                || ((glob_flags & GF_IGNCASE) != 0
+                    && chin.to_ascii_lowercase() == chpa.to_ascii_lowercase())
+                || ((glob_flags & GF_LCMATCHUC) != 0
+                    && chpa.is_ascii_lowercase()
+                    && chpa.to_ascii_uppercase() == chin)
+        };
         // Exact-byte match — try advancing both.
-        if s_off < input_bytes.len() && str_bytes[p_off] == input_bytes[s_off] {
+        if s_off < input_bytes.len() && charmatch_inline(input_bytes[s_off], str_bytes[p_off]) {
             *state = saved_outer.clone();
             let r = walk(
                 code,
@@ -4109,8 +4122,8 @@ fn approx_match_exactly(
             // pin for `(#a3)abcd` matching "dcba" — needs sub + transp +
             // sub = 3 edits to bridge the reversal.
             if s_off + 1 < input_bytes.len() && p_off + 1 < str_bytes.len()
-                && input_bytes[s_off] == str_bytes[p_off + 1]
-                && input_bytes[s_off + 1] == str_bytes[p_off]
+                && charmatch_inline(input_bytes[s_off], str_bytes[p_off + 1])
+                && charmatch_inline(input_bytes[s_off + 1], str_bytes[p_off])
             {
                 *state = saved_outer.clone();
                 state.errsfound += 1;

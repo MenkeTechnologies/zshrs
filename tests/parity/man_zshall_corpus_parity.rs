@@ -559,7 +559,6 @@ mod man_glob {
 
     /// combined (#ia2).
     #[test]
-    #[ignore = "zshrs gap: (#ia2) combined case-insensitive + approximate match fails (READXME vs readme)"]
     fn approx_ci_combined() {
         assert_parity(r###"setopt extendedglob; [[ READXME = (#ia2)readme ]] && echo yes || echo no"###);
     }
