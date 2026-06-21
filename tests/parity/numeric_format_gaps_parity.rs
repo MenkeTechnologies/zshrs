@@ -230,7 +230,6 @@ mod mathfunc_set {
     /// "unknown function: trunc". zshrs added it (returns 2), so it
     /// accepts a name zsh rejects.
     #[test]
-    #[ignore = "zshrs bug: zsh/mathfunc accepts trunc() (returns 2); zsh has no such function and errors"]
     fn trunc_extra() {
         assert_parity(r#"zmodload zsh/mathfunc; echo $(( trunc(2.7) ))"#);
     }
