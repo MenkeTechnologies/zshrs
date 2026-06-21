@@ -219,10 +219,9 @@ mod mathfunc_set {
     }
 
     /// `rint(x)` (round to nearest, ties-to-even) is a zsh/mathfunc
-    /// function — `rint(2.5)`→2, `rint(3.5)`→4. zshrs reports
-    /// "unknown function: rint".
+    /// function — `rint(2.5)`→2, `rint(3.5)`→4. Now registered
+    /// (mathfunc.c:156/374), gated on `zmodload zsh/mathfunc`.
     #[test]
-    #[ignore = "zshrs bug: zsh/mathfunc is missing rint() (round-half-to-even); zsh has it"]
     fn rint_missing() {
         assert_parity(r#"zmodload zsh/mathfunc; printf '%g\n' $(( rint(2.5) ))"#);
     }
