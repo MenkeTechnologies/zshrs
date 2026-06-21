@@ -315,7 +315,6 @@ fi"###);
 
     /// zpwrSnapshot — `${functions[name]}` body capture distinguishes real fn from stub.
     #[test]
-    #[ignore = "zshrs gap: ${functions[name]} body capture collapses multi-statement body to 1 line (zsh: 2 lines)"]
     fn functions_body_capture() {
         assert_parity(r###"realfn(){ print hello; print world; }
 local body="${functions[realfn]}"
