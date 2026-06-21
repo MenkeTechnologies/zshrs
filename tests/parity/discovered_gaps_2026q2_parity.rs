@@ -233,25 +233,22 @@ mod cmdsubst_ifs_join {
         assert_parity(r#"(IFS=:; set -- a b c; echo "$*")"#);
     }
 
-    /// Unquoted command substitution in command-argument position — zsh
-    /// joins `$*` with the inner IFS (`a:b:c`), zshrs uses the outer
-    /// IFS (`a b c`).
+    /// Unquoted command substitution in command-argument position —
+    /// `$*` joins with the cmdsub's own IFS (`a:b:c`); the cmdsub is a
+    /// subshell so its `IFS=:` does not leak to the parent's result-split.
     #[test]
-    #[ignore = "zshrs bug: echo $(IFS=:; set -- a b c; echo \"$*\") joins with outer IFS (space) not inner (:)"]
     fn unquoted_cmdsubst_positional_star_join() {
         assert_parity(r#"echo $(IFS=:; set -- a b c; echo "$*")"#);
     }
 
     /// Same divergence via `${arr[*]}`.
     #[test]
-    #[ignore = "zshrs bug: echo $(IFS=:; arr=(a b c); echo \"${arr[*]}\") joins with outer IFS not inner"]
     fn unquoted_cmdsubst_array_star_join() {
         assert_parity(r#"echo $(IFS=:; arr=(a b c); echo "${arr[*]}")"#);
     }
 
     /// Same divergence via backticks.
     #[test]
-    #[ignore = "zshrs bug: backtick cmdsubst `IFS=:; set -- a b c; echo \"$*\"` joins with outer IFS not inner"]
     fn unquoted_backtick_star_join() {
         assert_parity(r#"echo `IFS=:; set -- a b c; echo "$*"`"#);
     }
