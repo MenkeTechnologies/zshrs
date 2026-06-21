@@ -294,7 +294,6 @@ done"###);
 
     /// quote-span via (i)/(b:N:i)/(I) subscript flags.
     #[test]
-    #[ignore = "zshrs gap: the (b:N:i) indexed-from-N subscript flag errors (exit 1)"]
     fn quote_span_subscripts() {
         assert_parity(r###"emulate -L zsh
 setopt extendedglob
