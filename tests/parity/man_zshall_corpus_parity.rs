@@ -393,7 +393,6 @@ mod man_expn {
 
     /// (e+code+) glob qualifier with reply override.
     #[test]
-    #[ignore = "zshrs gap: *(e+code+) glob qualifier does not run the code / honor reply override (filenames returned unchanged)"]
     fn e_glob_qualifier_reply() {
         assert_parity(r###"setopt extendedglob; t=$(mktemp -d); :>$t/aa; :>$t/bbb; cd $t; m=( *(e+"reply=( \${#REPLY} )"+) ); print -- ${(on)m}; cd /; rm -rf $t"###);
     }
@@ -602,7 +601,6 @@ mod man_glob {
 
     /// P:str: prepend qualifier.
     #[test]
-    #[ignore = "zshrs gap: *(P:-x:) prepend glob qualifier errors (exit 1) instead of inserting -x before each match"]
     fn P_prepend_qualifier() {
         assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch f1 f2; args=( *(P:-x:) ); print -r -- "${args[@]}"; cd /; rm -rf $t"###);
     }

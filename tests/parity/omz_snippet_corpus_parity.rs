@@ -141,7 +141,6 @@ done"###,
 
     /// OMZL::git.zsh:120,122,124 — iterate assoc keys, build per-key anchored regex, test status.
     #[test]
-    #[ignore = "zshrs gap: $'(^|\\n)'-anchored regex built per assoc-key fails to match multi-line status text (no SEEN output)"]
     fn per_key_anchored_regex() {
         assert_parity(
             r###"typeset -A m=("\?\? " UNTRACKED "M  " MODIFIED " M " MODIFIED "A  " ADDED)
