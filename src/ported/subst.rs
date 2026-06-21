@@ -15787,7 +15787,49 @@ fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
         .ok()
         .and_then(|s| s.get(resolved.as_str()).cloned())
     {
-        return Some(m);
+        // c:Src/hashtable.c scanhashtable — an associative array enumerates
+        // in zsh hash-bucket order, not insertion order. The store keeps an
+        // insertion-ordered IndexMap, so rebuild zsh's bucket layout to
+        // recover the visit order before any whole-map consumer
+        // ((k)/(v)/(kv)/[@]/[*]/(r)/(R)/(i)/(I)) iterates it. Single-key
+        // `.get()` is order-independent and unaffected. Inlined composite of
+        // addhashnode2 front insertion (c:217), expandhashtable ×4 growth
+        // (c:457), and scanmatchtable's unsorted bucket walk (c:426).
+        let keys: Vec<String> = m.keys().cloned().collect();
+        let mut hsize = 17usize; // c:Src/params.c:1602 newparamtable(17, …)
+        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); hsize];
+        let mut ct = 0usize; // c:Src/hashtable.c:118 ct = 0
+        for (i, k) in keys.iter().enumerate() {
+            let hv = (crate::ported::hashtable::hasher(k) as usize) % hsize; // c:176
+            buckets[hv].insert(0, i); // c:217 prepend to bucket chain
+            ct += 1; // c:219 ++ht->ct
+            if ct >= hsize * 2 {
+                // c:219 → expandhashtable
+                let new_size = hsize * 4; // c:466 hsize = osize * 4
+                let old = std::mem::replace(&mut buckets, vec![Vec::new(); new_size]);
+                hsize = new_size;
+                ct = 0; // c:468
+                for chain in old {
+                    // c:472 walk old buckets in order, chain head→tail
+                    for idx in chain {
+                        let hv = (crate::ported::hashtable::hasher(&keys[idx]) as usize) % hsize;
+                        buckets[hv].insert(0, idx); // c:475 addnode (front insert)
+                        ct += 1;
+                    }
+                }
+            }
+        }
+        let mut reordered = indexmap::IndexMap::with_capacity(m.len());
+        for chain in &buckets {
+            // c:426 buckets 0..hsize
+            for &i in chain {
+                // c:427 chain head→tail
+                if let Some((k, v)) = m.get_index(i) {
+                    reordered.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        return Some(reordered);
     }
     // c:Src/Modules/parameter.c:2235+ — PM_HASHED magic assocs
     // (functions/aliases/commands/builtins/…): materialize via the
