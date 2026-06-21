@@ -2376,7 +2376,6 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "asin"
             | "asinh"
             | "atan"
-            | "atan2"
             | "atanh"
             | "cbrt"
             | "ceil"
@@ -2404,14 +2403,9 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "log1p"
             | "log2"
             | "logb"
-            | "max"
-            | "min"
             | "nextafter"
-            | "pow"
-            | "rand"
             | "rand48"
             | "rint"
-            | "round"
             | "scalb"
             | "sin"
             | "sinh"
@@ -2681,22 +2675,19 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             type_: MN_INTEGER,
         };
     }
-    let int_preserving = matches!(name, "abs" | "min" | "max");
+    // c:Src/Modules/mathfunc.c:115 — only `abs` is a real mathfunc that
+    // returns an integer when fed integers. `min`/`max` are NOT mathfunc
+    // entries (zsh provides them only via the `zmathfunc` autoload, which
+    // registers them as `functions -M` shfuncs handled by the userfunc
+    // path above) — calling them through zsh/mathfunc errors "unknown
+    // function". Keeping them here let `zmodload zsh/mathfunc; min(1,2)`
+    // wrongly return a value.
+    let int_preserving = matches!(name, "abs");
     if all_int && int_preserving {
         let i = match name {
             "abs" => arg_nums
                 .first()
                 .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }).abs())
-                .unwrap_or(0),
-            "min" => arg_nums
-                .iter()
-                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
-                .min()
-                .unwrap_or(0),
-            "max" => arg_nums
-                .iter()
-                .map(|n| (if n.type_ == MN_FLOAT { n.d as i64 } else { n.l }))
-                .max()
                 .unwrap_or(0),
             _ => 0,
         };
@@ -2791,11 +2782,6 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                 args.first().map(|x| x.atan()).unwrap_or(0.0) // c:229
             }
         }
-        "atan2" => {
-            let y = args.first().copied().unwrap_or(0.0);
-            let x = args.get(1).copied().unwrap_or(1.0);
-            y.atan2(x)
-        }
         "atanh" => args.first().map(|x| x.atanh()).unwrap_or(0.0), // c:233
         "cbrt" => unsafe { cbrt(args.first().copied().unwrap_or(0.0)) }, // c:237
         "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
@@ -2846,23 +2832,15 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "log1p" => unsafe { log1p(args.first().copied().unwrap_or(0.0)) }, // c:357
         "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
         "logb" => unsafe { logb(args.first().copied().unwrap_or(0.0)) }, // c:365
-        "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-        "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
         "nextafter" => {
             let x = args.first().copied().unwrap_or(0.0);
             let y = args.get(1).copied().unwrap_or(0.0);
             unsafe { nextafter(x, y) } // c:373
         }
-        "pow" => {
-            let base = args.first().copied().unwrap_or(0.0);
-            let exp = args.get(1).copied().unwrap_or(1.0);
-            base.powf(exp)
-        }
-        "rand" => rand::random::<f64>(),
         // c:Src/Modules/mathfunc.c:374 — `retd = rint(argd)` (round to
-        // nearest, ties to even — distinct from `round`'s ties-away).
+        // nearest, ties to even). Note zsh has NO `round`/`pow`/`rand`
+        // mathfunc — `**` is the power operator and `round` doesn't exist.
         "rint" => unsafe { rint(args.first().copied().unwrap_or(0.0)) },
-        "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
         "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
         "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
         "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),

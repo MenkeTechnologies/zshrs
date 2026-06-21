@@ -557,14 +557,12 @@ mod zmod_math {
 
     /// pow NOT provided as a function (** operator instead).
     #[test]
-    #[ignore = "zshrs divergence: zshrs provides pow() as a math function; zsh/mathfunc has no pow (uses ** operator) and errors"]
     fn pow_not_function() {
         assert_parity(r###"zmodload zsh/mathfunc; echo $(( pow(2,10) )) 2>&1"###);
     }
 
     /// min/max/sum NOT in module.
     #[test]
-    #[ignore = "zshrs divergence: zshrs provides min() as a math function; zsh/mathfunc has no min (only via zmathfunc autoload) and errors"]
     fn min_not_in_module() {
         assert_parity(r###"zmodload zsh/mathfunc; echo $(( min(3,5) )) 2>&1"###);
     }
@@ -1206,7 +1204,6 @@ mod contrib {
 
     /// zmathfunc min/max/sum.
     #[test]
-    #[ignore = "zshrs gap: zmathfunc autoload (min/max/sum math functions) non-functional (errors, exit 1)"]
     fn zmathfunc() {
         assert_parity(r###"autoload -U zmathfunc; zmathfunc; print $(( max(3,7,2) )) $(( min(3,7,2) )) $(( sum(1,2,3,4) ))"###);
     }
