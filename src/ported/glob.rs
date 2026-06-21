@@ -3487,6 +3487,81 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     let (pat, quals) = parse_qualifiers(pattern);
     state.qualifiers = quals;
 
+    // c:Src/glob.c — `A~B` exclusion. zsh compiles the ENTIRE glob
+    // (path components + `~B` exclusion + `**`) into ONE Patprog and
+    // matches each candidate PATH against it, so the `~B` applies to the
+    // whole path. zshrs's component scanner can't express a path-level
+    // exclusion, so split a TOP-LEVEL `~` (extendedglob; depth 0, not in
+    // `[...]`/`(...)`, not Bnull-escaped) off here into the main pattern
+    // plus full-path exclusion patterns, glob the main pattern, then drop
+    // matched paths matching any exclusion below. Without this the `~B`
+    // (which may contain `/`) was split across path components and either
+    // excluded everything (`~*/.git/*` → `*.txt~*` matched all) or
+    // nothing. `~` inside one component still works the same (main globs,
+    // the post-filter applies the exclusion).
+    let (pat, glob_exclusions): (String, Vec<String>) =
+        if glob_isset(EXTENDEDGLOB) && (pat.contains('~') || pat.contains('\u{98}')) {
+            let cv: Vec<char> = pat.chars().collect();
+            let mut parts: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            let mut bd = 0i32; // `[...]` depth
+            let mut pd = 0i32; // `(...)` depth
+            let mut k = 0usize;
+            while k < cv.len() {
+                let c = cv[k];
+                match c {
+                    '\u{9f}' => {
+                        // Bnull escape — next char is literal.
+                        cur.push(c);
+                        if k + 1 < cv.len() {
+                            cur.push(cv[k + 1]);
+                            k += 2;
+                            continue;
+                        }
+                    }
+                    '[' => {
+                        bd += 1;
+                        cur.push(c);
+                    }
+                    ']' => {
+                        if bd > 0 {
+                            bd -= 1;
+                        }
+                        cur.push(c);
+                    }
+                    '(' | '\u{88}' => {
+                        pd += 1;
+                        cur.push(c);
+                    }
+                    ')' | '\u{8a}' => {
+                        if pd > 0 {
+                            pd -= 1;
+                        }
+                        cur.push(c);
+                    }
+                    '~' | '\u{98}' if bd == 0 && pd == 0 => {
+                        parts.push(std::mem::take(&mut cur));
+                    }
+                    _ => cur.push(c),
+                }
+                k += 1;
+            }
+            parts.push(cur);
+            // Only split when there's a non-empty main pattern AND at
+            // least one exclusion (a leading `~` is home-dir, handled by
+            // filesub before glob — never reaches here as an exclusion).
+            if parts.len() > 1 && !parts[0].is_empty() {
+                let main = parts.remove(0);
+                (main, parts)
+            } else {
+                // No usable split — restore the original pattern verbatim
+                // (the `~` separators dropped during the scan).
+                (cv.iter().collect(), Vec::new())
+            }
+        } else {
+            (pat, Vec::new())
+        };
+
     // c:Src/glob.c:1843-1854 — `if (!q || errflag) { ... return; }`. When
     // the qualifier parser already emitted a diagnostic (e.g. "number
     // expected" from qgetnum at c:832) and set errflag, abort glob
@@ -3526,6 +3601,19 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
 
         // Do the actual globbing
         scanner(state, &complist, 0);
+    }
+
+    // c:Src/glob.c — apply top-level `~B` exclusions to the full matched
+    // paths (split off above). A match is dropped if its emitted path
+    // matches ANY exclusion pattern (`*` matches `/` here, matching zsh's
+    // flat-string exclusion semantics).
+    if !glob_exclusions.is_empty() {
+        let eg = glob_isset(EXTENDEDGLOB);
+        let cg = glob_isset(CASEGLOB);
+        state.matches.retain(|m| {
+            let p = glob_emit_path(&m.path);
+            !glob_exclusions.iter().any(|ex| matchpat(ex, &p, eg, cg))
+        });
     }
 
     // c:1680 — populate GS_EXEC sort keys before sorting. Evaluate each

@@ -619,7 +619,6 @@ print -r -- "added=$added deleted=$deleted""###);
 
     /// recursive glob with exclusion **/*.txt~*/.git/* + (.N:t).
     #[test]
-    #[ignore = "zshrs gap: **/*.txt~*/.git/*(.N:t) — :t modifier not applied after recursive-glob-with-exclusion (full paths returned)"]
     fn recursive_glob_exclusion() {
         assert_parity(r###"setopt extendedglob
 d=$(mktemp -d)
