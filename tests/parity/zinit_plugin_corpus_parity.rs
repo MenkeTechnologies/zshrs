@@ -141,7 +141,6 @@ print -r -- "${${(@0)line}[2]}""##,
     /// zsh-autosuggestions.zsh:663,707 — `[(r)pat]` value match and
     /// `${(k)assoc[(R)$~pat]}` all-matching-keys.
     #[test]
-    #[ignore = "zshrs gap: assoc [(r)]/[(R)] value/key iteration order differs from zsh (zsh returns ls bar/3,1; zshrs ls foo/1,3)"]
     fn assoc_reverse_subscript_value_and_keys() {
         assert_parity(
             r##"typeset -A hist_map=( 1 "ls foo" 2 "pwd" 3 "ls bar" 4 "git st" )
@@ -2299,7 +2298,6 @@ print -rl -- $kept"##,
 
     /// zinit.zsh:2337 + zinit-side.zsh:103-104 — ice pack/unpack round-trip.
     #[test]
-    #[ignore = "zshrs gap: (qkv) hash flatten emits keys in different iteration order than zsh (packed string differs)"]
     fn ice_pack_unpack_roundtrip() {
         assert_parity(
             r##"setopt extendedglob
