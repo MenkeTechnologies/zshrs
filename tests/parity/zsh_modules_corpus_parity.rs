@@ -833,9 +833,9 @@ mod zmod_system {
         assert_parity(r###"zmodload zsh/system; t=$(mktemp -d); exec {fd}>$t/f; syswrite -c c -o $fd "hello"; print "wrote=$c"; exec {fd}>&-; print "$(<$t/f)"; rm -rf $t"###);
     }
 
-    /// sysseek + systell().
+    /// sysseek + systell() — the zsh/system systell math function now
+    /// dispatches to the ported math_systell (gated on zmodload).
     #[test]
-    #[ignore = "zshrs gap: zsh/system sysseek and the systell() math function not implemented (errors, exit 1)"]
     fn sysseek_systell() {
         assert_parity(r###"zmodload zsh/system; t=$(mktemp -d); print -n "0123456789" >$t/f; exec {fd}<$t/f; sysseek -u $fd 3; sysread -i $fd buf; print "[$buf] tell=$(( systell($fd) ))"; exec {fd}<&-; rm -rf $t"###);
     }
