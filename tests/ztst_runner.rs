@@ -514,10 +514,16 @@ fn sq(s: &str) -> String {
 }
 
 fn timeout_ms() -> u64 {
+    // Default must clear the corpus's deliberate delays — C02cond's `-N`
+    // test does `sleep 2` (ztst:151), V09datetime sleeps, etc. At the
+    // old 2000ms those legit chunks hit the per-chunk timeout, which
+    // WEDGES the file's shell and makes every later chunk "not run" — a
+    // single slow chunk masqueraded as ~30 failures. 10s leaves margin
+    // while still catching a genuine hang. Override with ZTST_TIMEOUT_MS.
     env::var("ZTST_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(2000)
+        .unwrap_or(10000)
 }
 
 /// Compute the $fpath the real harness builds at ztst.zsh:112-114:
