@@ -2707,6 +2707,42 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         };
     }
 
+    // c:Src/Modules/system.c:467/900 — zsh/system registers the
+    // `systell` math function (NUMMATHFUNC("systell", math_systell)).
+    // It returns lseek(fd, 0, SEEK_CUR). Dispatch to the ported
+    // math_systell when zsh/system is loaded; otherwise fall through to
+    // the "unknown function" error like any unregistered name (gated the
+    // same way as the zsh/mathfunc functions above).
+    if name == "systell" {
+        let system_loaded = crate::ported::module::MODULESTAB
+            .lock()
+            .ok()
+            .and_then(|tab| {
+                tab.modules.get("zsh/system").map(|m| {
+                    let flags = m.node.flags;
+                    (flags & crate::ported::zsh_h::MOD_INIT_B) != 0
+                        && (flags & crate::ported::zsh_h::MOD_UNLOAD) == 0
+                })
+            })
+            .unwrap_or(false);
+        if system_loaded {
+            let argv: Vec<mnumber> = args
+                .iter()
+                .map(|&x| mnumber {
+                    l: x as i64,
+                    d: x,
+                    type_: if x.fract() == 0.0 { MN_INTEGER } else { MN_FLOAT },
+                })
+                .collect();
+            return crate::ported::modules::system::math_systell(
+                "systell",
+                argv.len() as i32,
+                &argv,
+                0,
+            );
+        }
+    }
+
     // c:Src/Modules/mathfunc.c:24-44 — extern math fns provided by
     // libc on every UNIX. Rust's `f64` exposes most directly
     // (acosh/asinh/atanh/sqrt/...). The libgm-only ones (erf/erfc/
