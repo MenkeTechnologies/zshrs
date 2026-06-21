@@ -493,7 +493,6 @@ for k in "${(@kon)INI}"; do print -r -- "$k=${INI[$k]}"; done"###);
 
     /// bulk-populate a caller-named assoc via : ${(PAA)name::="${(kv)src}"}.
     #[test]
-    #[ignore = "zshrs gap: : ${(PAA)name::=\"${(kv)src}\"} bulk-assoc write-back splits quoted values with spaces ('beta gamma' → 'gamma' becomes a key)"]
     fn paa_bulk_assoc() {
         assert_parity(r###"setopt extendedglob
 local -A src
