@@ -7015,7 +7015,7 @@ impl ZshCompiler {
                     // so the grammar can distinguish syntax from literal.
                     // For the matcher we want the original glob char
                     // back — un-tokenize before pushing.
-                    let pat_clean = crate::lex::untokenize(pattern);
+                    let pat_clean = case_pattern_for_match(pattern);
                     let pat_const = self.builder.add_constant(Value::str(pat_clean.as_str()));
                     self.builder.emit(Op::LoadConst(pat_const), 0);
                 }
@@ -11740,6 +11740,53 @@ fn has_numeric_range_glob(s: &str) -> bool {
 /// prefork pipeline; the ASCII materialization happens at the very end.
 /// The Rust port's segment-fast-path is a port-time optimization that
 /// breaks that invariant — this helper restores the brace half of it.
+/// Convert a tokenized `case` pattern into a glob-safe string for the
+/// matcher (`str_match` → tokenize → patcompile). Outside quote spans,
+/// glob TOKEN chars (`Star` etc.) are untokenized to their ASCII glob
+/// form so they re-tokenize as globs. INSIDE Snull/Dnull quote spans the
+/// metachars are LITERAL — Bnull-escape them so patcompile treats them
+/// literally (`case x in '(')` must match the literal `(`, not a glob
+/// group open). Plain `untokenize` stripped the Snull markers, leaving a
+/// bare `(` that re-tokenized to a glob open → "bad pattern: (".
+/// (`[[ ]]` already handles this via its operand compilation; this brings
+/// `case` to parity.)
+fn case_pattern_for_match(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut in_q = false; // inside a Snull (\u{9d}) / Dnull (\u{9e}) span
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{9d}' | '\u{9e}' => {
+                in_q = !in_q; // strip the marker, toggle quote state
+            }
+            '\u{9f}' | '\u{8b}' => {
+                // Bnull / Bnullkeep escape — keep it and its escaped char
+                // verbatim (already a literal escape patcompile honors).
+                out.push(c);
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+            }
+            _ if in_q => {
+                // Quoted: glob metachars are literal — Bnull-escape them.
+                if matches!(
+                    c,
+                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '#' | '^' | '~' | '<' | '>' | '\\'
+                ) {
+                    out.push('\u{9f}'); // Bnull
+                }
+                out.push(c);
+            }
+            _ => {
+                // Unquoted: untokenize a single glob token char to ASCII.
+                let one = c.to_string();
+                out.push_str(&crate::lex::untokenize(&one));
+            }
+        }
+    }
+    out
+}
+
 fn untokenize_keep_braces(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut buf = String::new();
