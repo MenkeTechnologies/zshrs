@@ -610,7 +610,6 @@ mod omzp_git {
 
     /// OMZP::git:112 — multi-command alias body with `;` and embedded quotes verbatim.
     #[test]
-    #[ignore = "zshrs gap: alias body stores over-escaped inner double-quotes (zshrs keeps \\\" backslashes that zsh strips in ${aliases[name]})"]
     fn alias_multicommand_body() {
         assert_parity(r###"alias gwip="git add -A; git commit --no-verify --message \"--wip-- [skip ci]\""; print -r -- "${aliases[gwip]}""###);
     }
