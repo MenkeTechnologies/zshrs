@@ -6804,6 +6804,15 @@ pub fn paramsubst(
                     // without a search letter the remainder is a numeric
                     // index — `${s[(e)2]}` → char 2 — handled by the numeric
                     // closure below.
+                    // c:Src/params.c parse_subscript — a comma AFTER the flag
+                    // group is the RANGE separator, never part of the pattern
+                    // (`(r),` errors as an empty bound in zsh, not a literal
+                    // comma search). Decline so `${s[(r)d?,(r)h?]}` falls
+                    // through to the comma-range arm, which parses each bound's
+                    // own flags.
+                    if p.contains(',') {
+                        return None;
+                    }
                     if flags.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r')) {
                         Some((flags, num, beg, p))
                     } else {
@@ -7045,7 +7054,20 @@ pub fn paramsubst(
                     } else {
                         String::new()
                     }
-                } else if let Some((lo, hi)) = sub.split_once(',') {
+                } else if let Some((lo, hi)) = {
+                    // c:Src/params.c parse_subscript — split on the TOP-LEVEL
+                    // range comma. A comma inside the leading `(flags)` group
+                    // (delimited `(n,N,)`/`(s,X,)` args) is NOT the separator,
+                    // so skip the group before searching for the comma.
+                    let scan = if sub.starts_with('(') {
+                        sub.find(')').map(|c| c + 1).unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    sub[scan..]
+                        .find(',')
+                        .map(|rel| (&sub[..scan + rel], &sub[scan + rel + 1..]))
+                } {
                     // `${var[N,M]}` scalar char-slice — bug-for-bug port
                     // of getarrvalue's range arm operating on a per-char
                     // pseudo-array. Direct port of Src/params.c:1625
@@ -7059,24 +7081,167 @@ pub fn paramsubst(
                     // literals — bare `n` or `n+1` fell through to the
                     // default bounds and returned the full string.
                     // Bug #155 in docs/BUGS.md.
-                    let eval_idx = |expr: &str, default: i64| -> i64 {
-                        let trimmed = expr.trim();
-                        // Fast-path bare integer literal so tests
-                        // exercising the simple `[1,3]` form don't
-                        // round-trip through the math evaluator.
-                        if let Ok(n) = trimmed.parse::<i64>() {
-                            return n;
+                    // c:Src/params.c:1819-2002 — a range BOUND can itself be
+                    // a (r)/(R)/(i)/(I) pattern char-search, not just a math
+                    // expression. The FIRST bound (a2=0, c:1981-1998) returns
+                    // the START index of the match (suffix begins with pat);
+                    // the SECOND bound (a2=1, c:1896-1912) returns the END
+                    // index — the prefix length whose tail matches pat. So
+                    // `${s[(r)d?,(r)h?]}` on "abcdefghi" → bounds 4 and 9 →
+                    // "defghi". A non-search bound stays a math expression.
+                    let bound_idx = |expr: &str, is_second: bool, default: i64| -> i64 {
+                        let e = expr.trim();
+                        if let Some(rest) = e.strip_prefix('(') {
+                            if let Some(close) = rest.find(')') {
+                                let body = &rest[..close];
+                                let pat_raw = &rest[close + 1..];
+                                let mut flags = String::new();
+                                let mut nth: i64 = 1; // c:1432 (n.N.)
+                                let mut beg: Option<i64> = None; // c:1443 (b.N.)
+                                let mut ok = true;
+                                let mut it = body.chars();
+                                while let Some(c) = it.next() {
+                                    match c {
+                                        'r' | 'R' | 'i' | 'I' | 'e' => flags.push(c),
+                                        'n' | 'b' => {
+                                            let d = match it.next() {
+                                                Some(d) => d,
+                                                None => {
+                                                    ok = false;
+                                                    break;
+                                                }
+                                            };
+                                            let mut ns = String::new();
+                                            for cc in it.by_ref() {
+                                                if cc == d {
+                                                    break;
+                                                }
+                                                ns.push(cc);
+                                            }
+                                            // c:1458,1471 — mathevalarg, not bare int.
+                                            let v = crate::ported::math::mathevali(ns.trim())
+                                                .unwrap_or(0);
+                                            if c == 'n' {
+                                                nth = v;
+                                            } else {
+                                                beg = Some(v);
+                                            }
+                                            flags.push(c);
+                                        }
+                                        _ => {
+                                            ok = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if ok && flags.chars().any(|c| matches!(c, 'r' | 'R' | 'i' | 'I')) {
+                                    let want_last = flags.contains('R') || flags.contains('I');
+                                    let exact = flags.contains('e'); // c:1450 (e)
+                                    let nth = nth.max(1) as usize;
+                                    // c:1571 singsub the subscript text first.
+                                    let pat = if pat_raw.contains('$') || pat_raw.contains('`') {
+                                        singsub(pat_raw)
+                                    } else {
+                                        pat_raw.to_string()
+                                    };
+                                    let pat = crate::lex::untokenize(&pat); // c:1584
+                                    let n = s_chars.len();
+                                    let is_match = |start: usize, len: usize| -> bool {
+                                        if start + len > n {
+                                            return false;
+                                        }
+                                        let cand: String =
+                                            s_chars[start..start + len].iter().collect();
+                                        if exact {
+                                            cand == pat
+                                        } else {
+                                            patcompile(
+                                                &{
+                                                    let mut t = pat.clone();
+                                                    crate::ported::glob::tokenize(&mut t);
+                                                    t
+                                                },
+                                                PAT_HEAPDUP as i32,
+                                                None,
+                                            )
+                                            .map_or(false, |p| pattry(&p, &cand))
+                                        }
+                                    };
+                                    // c:1443-1472 — (b.N.) 1-based begin offset.
+                                    let beg0: usize = match beg {
+                                        Some(b) if b > 0 => (b - 1) as usize,
+                                        Some(b) => (b + n as i64).max(0) as usize,
+                                        None => 0,
+                                    };
+                                    if !is_second {
+                                        // c:1976-1998 — arg1 returns START index
+                                        // (1-based) of the nth match; R/I scan
+                                        // from the end.
+                                        let hi_lim = if beg.is_some() {
+                                            beg0
+                                        } else {
+                                            n.saturating_sub(1)
+                                        }
+                                        .min(n.saturating_sub(1));
+                                        let starts: Vec<usize> = if want_last {
+                                            (0..=hi_lim).rev().collect()
+                                        } else {
+                                            (beg0..n).collect()
+                                        };
+                                        let mut count = 0;
+                                        for start in starts {
+                                            for len in 1..=(n.saturating_sub(start)) {
+                                                if is_match(start, len) {
+                                                    count += 1;
+                                                    if count == nth {
+                                                        return (start + 1) as i64;
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        return default;
+                                    } else {
+                                        // c:1896-1912 — arg2 returns END index:
+                                        // the smallest (R/I: largest) prefix
+                                        // length whose tail matches pat.
+                                        let ends: Vec<usize> = if want_last {
+                                            (beg0 + 1..=n).rev().collect()
+                                        } else {
+                                            (beg0 + 1..=n).collect()
+                                        };
+                                        let mut count = 0;
+                                        for end in ends {
+                                            let mut hit = false;
+                                            for start in (0..end).rev() {
+                                                if is_match(start, end - start) {
+                                                    hit = true;
+                                                    break;
+                                                }
+                                            }
+                                            if hit {
+                                                count += 1;
+                                                if count == nth {
+                                                    return end as i64;
+                                                }
+                                            }
+                                        }
+                                        return default;
+                                    }
+                                }
+                            }
                         }
-                        // c:Src/params.c::getarg routes the subscript
-                        // through singsub (param expansion) then
-                        // mathevali. The math evaluator handles
-                        // identifier refs (`n` → 5) and the operator
-                        // grammar (`n+1`).
-                        let expanded = singsub(trimmed);
+                        // c:Src/params.c::getarg — non-search bound: a math
+                        // expression (variable refs, arithmetic). Fast-path a
+                        // bare integer literal, else singsub + mathevali.
+                        if let Ok(nv) = e.parse::<i64>() {
+                            return nv;
+                        }
+                        let expanded = singsub(e);
                         crate::ported::math::mathevali(&expanded).unwrap_or(default)
                     };
-                    let lo: i64 = eval_idx(lo, 1);
-                    let hi: i64 = eval_idx(hi, s_chars.len() as i64);
+                    let lo: i64 = bound_idx(lo, false, 1);
+                    let hi: i64 = bound_idx(hi, true, s_chars.len() as i64);
                     // c:Src/params.c — KSH_ARRAYS shifts scalar slice
                     // bounds from 1-based to 0-based inclusive. `a[0,2]`
                     // under KSH_ARRAYS = chars at positions 0,1,2.
