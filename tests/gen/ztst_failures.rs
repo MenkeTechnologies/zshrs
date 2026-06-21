@@ -1700,10 +1700,6 @@ fn ztst_d06subscript_006() { assert_ztst_chunk("D06subscript.ztst", 6); }
 fn ztst_d06subscript_007() { assert_ztst_chunk("D06subscript.ztst", 7); }
 
 #[test]
-#[ignore = "ztst gap D06subscript.ztst:9 — Associative array lookup (reverse subscripting)"]
-fn ztst_d06subscript_009() { assert_ztst_chunk("D06subscript.ztst", 9); }
-
-#[test]
 #[ignore = "ztst gap D06subscript.ztst:11 — Associative array assignment"]
 fn ztst_d06subscript_011() { assert_ztst_chunk("D06subscript.ztst", 11); }
 
