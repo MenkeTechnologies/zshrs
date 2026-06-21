@@ -213,7 +213,7 @@ print -r -- "dummy: $(chruby_prompt_info; echo rc=$?)""###);
 
     /// prompt_info_functions.zsh — rvm_prompt :gs/%/%% percent-doubling vs print -P.
     #[test]
-    #[ignore = "zshrs gap: literal parens surrounding a ${var:gs/%/%%}-modified value are dropped from the result"]
+    #[ignore = "zshrs gap: local out=\"(...)\" — a DQ-quoted scalar value that starts with ( is mis-stored as an array by bin_typeset (is_paren_init keys on raw_v.starts_with('('), losing the quoting once compile_word_str dequotes); the :gs/%/%% part itself now works"]
     fn rvm_pct_double() {
         assert_parity(r###"local rvm_prompt='ruby-3.2%@1.0'
 local out="(${rvm_prompt:gs/%/%%})"
