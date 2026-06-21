@@ -1116,7 +1116,6 @@ print "di=$modecolors[di] ln=$modecolors[ln]""##,
 
     /// fzf-tab.zsh:363-364 — NUL-field swap-sort-swap with (#b) backrefs.
     #[test]
-    #[ignore = "zshrs gap: unquoted per-element array `${arr//$'\\0'/|}` does not replace embedded NUL (joined/quoted form works) — Meta-encoding mismatch in the per-element // replace path; the `:/(#b)` backref half is now fixed"]
     fn nul_field_swap_sort() {
         assert_parity(
             r##"setopt extendedglob

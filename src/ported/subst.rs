@@ -8925,11 +8925,17 @@ pub fn paramsubst(
                     let mut i = 0;
                     while i < cv.len() {
                         let c = cv[i];
-                        // c:Src/subst.c — Bnull/NUL markers from the
-                        // lexer wrap the next char as user-literal.
-                        // Re-emit as `\X` so patcompile sees an
-                        // escape pair.
-                        if (c == '\x00' || c == '\u{9f}') && i + 1 < cv.len() {
+                        // c:Src/subst.c — the Bnull marker (`\u{9f}`)
+                        // wraps the next char as user-literal; re-emit as
+                        // `\X` so patcompile sees an escape pair. A RAW
+                        // NUL (`\x00`) is DATA, not a marker: it comes
+                        // from `$'\0'` in the pattern and must match a
+                        // literal NUL (zsh Meta-encodes NUL so it's never
+                        // confused with a marker; zshrs keeps it raw).
+                        // Treating it as an escape consumed the following
+                        // `/` separator, corrupting `${a//$'\0'/|}`'s
+                        // pattern to `\/\|` so the NUL never matched.
+                        if c == '\u{9f}' && i + 1 < cv.len() {
                             pat_buf.push('\\');
                             pat_buf.push(cv[i + 1]);
                             i += 2;
@@ -9424,7 +9430,10 @@ pub fn paramsubst(
                     let mut i = 0;
                     while i < cv.len() {
                         let c = cv[i];
-                        if (c == '\x00' || c == '\u{9f}' || c == '\\') && i + 1 < cv.len() {
+                        // Bnull (`\u{9f}`) / backslash escape the next
+                        // char. A RAW NUL (`\x00`) is `$'\0'` DATA, not a
+                        // marker — match it literally (see the `//` arm).
+                        if (c == '\u{9f}' || c == '\\') && i + 1 < cv.len() {
                             if cv[i + 1] == '/' {
                                 pat_buf.push('/');
                                 i += 2;
