@@ -2449,12 +2449,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Array→String join. Pops one value; if it's an Array (e.g. from Op::Glob),
     // joins string-coerced elements with a single space. Pass-through for
     // non-arrays so the op is safe to chain after any String-or-Array producer.
+    // Scalar coercion of an assembled word: pop a Value; if it's an
+    // Array (produced by a splice segment like `"$@"` / `"${arr[@]}"`),
+    // IFS[0]-join it to a single scalar; a scalar passes through. This
+    // is the assignment-context coercion C zsh applies in multsub when
+    // the expansion is the RHS of a SCALAR assignment (Src/subst.c
+    // c:3032 sepjoin under ssub) — `v="$@"` joins the positionals with
+    // ${IFS[1]} rather than leaving an array whose splat would lose all
+    // but the first element. Joins via sepjoin so a custom / empty IFS
+    // is honored (not a hardcoded space).
     vm.register_builtin(BUILTIN_ARRAY_JOIN, |vm, _argc| {
         let val = vm.pop();
         match val {
             Value::Array(items) => {
-                let parts: Vec<String> = items.iter().map(|v| v.to_str()).collect();
-                Value::str(parts.join(" "))
+                let strs: Vec<String> = items.iter().map(|v| v.to_str()).collect();
+                Value::str(crate::ported::utils::sepjoin(&strs, None))
             }
             other => other,
         }
