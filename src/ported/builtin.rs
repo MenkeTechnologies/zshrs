@@ -5235,6 +5235,22 @@ pub fn bin_typeset(
             }
             if is_paren_init {
                 let inner = &raw_v[1..raw_v.len() - 1]; // c:2950
+                // c:Src/builtin.c:2555-2556 globlist — C glob-expands each
+                // element working on the TOKENIZED value where quoted
+                // metachars keep their Bnull escape, so a quoted `(` / `*`
+                // is inert. zshrs's compile path (compile_zsh's
+                // BUILTIN_TYPESET_PAREN_PACK) already runs the per-element
+                // glob via compile_word_str — identical to the bare
+                // `arr=(…)` path (compile_zsh.rs ~3294) — and hands
+                // bin_typeset the FULLY-EXPANDED, DEQUOTED elements via the
+                // `\u{1f}` sentinel form. Re-globbing those dequoted values
+                // here is a double-glob that loses the original quoting:
+                // `typeset -a p=("*.txt")` globbed the quoted star, and
+                // `typeset -a p=("a=\$((1+2))")` parsed the literal `((` as
+                // a bareglobqual ("unknown file attribute: ("). Skip the
+                // re-glob for the pack (`\u{1f}`) form; only the legacy
+                // whitespace form (elements not pre-expanded) needs it.
+                let from_pack = inner.contains('\u{1f}');
                 // c:2952 globlist — each list node is one element. When
                 // the multi-arg rejoin loop above ran, elements are
                 // separated by the `\u{1f}` REJOIN_SEP sentinel
@@ -5327,9 +5343,16 @@ pub fn bin_typeset(
                     out
                 };
                 // c:2555-2556 — `globlist(vl, prefork_ret)` glob-expands
-                // each element when it contains wildcards.
+                // each element when it contains wildcards. Skipped for the
+                // pre-expanded pack form (see `from_pack` above): those
+                // elements were already glob-expanded (quote-aware) at
+                // compile time, so re-globbing the dequoted values is wrong.
                 let mut elems: Vec<String> = Vec::with_capacity(raw_elems.len());
                 for re in raw_elems {
+                    if from_pack {
+                        elems.push(re);
+                        continue;
+                    }
                     // c:Src/glob.c:1230 zglob — `if (... !haswilds(ostr)
                     // ...) return;` short-circuits before patcompile.
                     // In C, lexer/prefork preserves Bnull-escape on
