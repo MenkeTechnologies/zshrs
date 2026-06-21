@@ -1260,6 +1260,250 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
 }
 
 // ---------------------------------------------------------------------------
+// Per-chunk replay — used by the extracted ztst-failure unit tests and
+// their generator. Mirrors run_ztst_file's execution exactly (persistent
+// shell, %prep, the same per-chunk body) but COLLECTS a TestResult per
+// %test chunk (in order) instead of counting/printing. A prep that sets
+// ZTST_unimplemented marks every chunk skipped; a prep failure / shell
+// spawn failure marks every chunk failed (matching run_ztst_file).
+// ---------------------------------------------------------------------------
+
+fn run_file_results(zshrs: &Path, ztst_path: &Path) -> Vec<TestResult> {
+    let ztst = parse_ztst(ztst_path);
+    if ztst.tests.is_empty() {
+        return Vec::new();
+    }
+    let mk = |t: &TestBlock, passed: bool, skipped: bool, detail: String| TestResult {
+        message: t.message.clone(),
+        passed,
+        skipped,
+        detail,
+    };
+    let all = |skipped: bool, detail: &str| -> Vec<TestResult> {
+        ztst.tests
+            .iter()
+            .map(|t| mk(t, false, skipped, detail.to_string()))
+            .collect()
+    };
+
+    let timeout = Duration::from_millis(timeout_ms());
+    let corpus = ztst_path.parent().unwrap_or(Path::new("."));
+    let stem = ztst_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut shell = match PersistentShell::spawn(zshrs, &stem, corpus) {
+        Ok(s) => s,
+        Err(e) => return all(false, &format!("shell spawn failed: {}", e)),
+    };
+
+    // %prep
+    for chunk in &ztst.prep {
+        let body = format!("ZTST_code={}\n\\ZTST_execchunk >/dev/null", sq(chunk));
+        match shell.run_payload(&body, "${ZTST_unimplemented:-}", timeout) {
+            ChunkOutcome::Done { status, aux } => {
+                if !aux.is_empty() {
+                    shell.shutdown();
+                    return all(true, &format!("prep unimplemented: {}", aux));
+                }
+                if status != 0 {
+                    shell.shutdown();
+                    return all(false, &format!("prep failed: non-zero status {}", status));
+                }
+            }
+            ChunkOutcome::Timeout => {
+                shell.shutdown();
+                return all(false, "prep TIMEOUT");
+            }
+            ChunkOutcome::Died => {
+                shell.shutdown();
+                return all(false, "prep shell exited");
+            }
+        }
+    }
+
+    // %test
+    let mut results: Vec<TestResult> = Vec::with_capacity(ztst.tests.len());
+    let mut wedged: Option<&'static str> = None;
+    for test in &ztst.tests {
+        if let Some(why) = wedged {
+            results.push(mk(test, false, false, format!("not run — {}", why)));
+            continue;
+        }
+        let mut body = String::new();
+        if test.flags.contains('q') && !test.stdin_data.is_empty() {
+            let _ = fs::write(&shell.ztst_in, "");
+            body.push_str(&format!(
+                "ZTST_redir={}\n\\builtin print -r -- \"${{(e)ZTST_redir}}\" >\"$ZTST_in\"\n",
+                sq(&test.stdin_data)
+            ));
+        } else if test.stdin_data.is_empty() {
+            let _ = fs::write(&shell.ztst_in, "");
+        } else {
+            let _ = fs::write(&shell.ztst_in, format!("{}\n", test.stdin_data));
+        }
+        body.push_str(&format!(
+            "ZTST_code={}\n\\ZTST_execchunk <\"$ZTST_in\" >\"$ZTST_tout\" 2>\"$ZTST_terr\"",
+            sq(&test.code)
+        ));
+        let use_q = test.flags.contains('q')
+            && (!test.expected_stdout.is_empty() || !test.expected_stderr.is_empty());
+        if use_q {
+            body.push_str(&format!(
+                "\nZTST_expect_out={}\nZTST_expect_err={}\n\
+                 \\builtin print -r -- \"${{(e)ZTST_expect_out}}\" >{} 2>/dev/null\n\
+                 \\builtin print -r -- \"${{(e)ZTST_expect_err}}\" >{} 2>/dev/null",
+                sq(&test.expected_stdout),
+                sq(&test.expected_stderr),
+                sq(&shell.qout.to_string_lossy()),
+                sq(&shell.qerr.to_string_lossy()),
+            ));
+        }
+        body.push_str("\nZTST_mskip=\"${ZTST_skip:-}\"\nZTST_skip=");
+
+        match shell.run_payload(&body, "$ZTST_mskip", timeout) {
+            ChunkOutcome::Done { status, aux } => {
+                if !aux.is_empty() {
+                    results.push(mk(test, false, true, format!("skipped: {}", aux)));
+                    continue;
+                }
+                let stdout =
+                    String::from_utf8_lossy(&fs::read(&shell.ztst_tout).unwrap_or_default())
+                        .into_owned();
+                let stderr =
+                    String::from_utf8_lossy(&fs::read(&shell.ztst_terr).unwrap_or_default())
+                        .into_owned();
+                let test_eff: TestBlock = if use_q {
+                    let mut t = test.clone();
+                    if let Ok(s) = fs::read_to_string(&shell.qout) {
+                        if !test.expected_stdout.is_empty() {
+                            t.expected_stdout = s.trim_end_matches('\n').to_string();
+                        }
+                    }
+                    if let Ok(s) = fs::read_to_string(&shell.qerr) {
+                        if !test.expected_stderr.is_empty() {
+                            t.expected_stderr = s.trim_end_matches('\n').to_string();
+                        }
+                    }
+                    let _ = fs::remove_file(&shell.qout);
+                    let _ = fs::remove_file(&shell.qerr);
+                    t
+                } else {
+                    test.clone()
+                };
+                results.push(compare_test(&test_eff, status, &stdout, &stderr));
+            }
+            ChunkOutcome::Timeout => {
+                results.push(mk(
+                    test,
+                    false,
+                    false,
+                    format!("TIMEOUT after {}ms", timeout_ms()),
+                ));
+                wedged = Some("shell killed after earlier hang");
+            }
+            ChunkOutcome::Died => {
+                results.push(mk(test, false, false, "shell exited during chunk".into()));
+                wedged = Some("shell exited during earlier chunk");
+            }
+        }
+    }
+
+    shell.shutdown();
+    results
+}
+
+/// Assertion used by the extracted (ignored) ztst-failure unit tests:
+/// replay `filename`'s whole .ztst (so prior-chunk state is correct) and
+/// assert that the 1-based `chunk` matches zsh's expectation. A chunk
+/// that's currently SKIPPED (e.g. its module isn't built) passes
+/// vacuously — the test pins a real OUTPUT/STATUS divergence only.
+#[allow(dead_code)]
+fn assert_ztst_chunk(filename: &str, chunk: usize) {
+    let zshrs = find_zshrs();
+    let corpus = find_test_corpus();
+    let path = corpus.join(filename);
+    let results = run_file_results(&zshrs, &path);
+    let idx = chunk - 1;
+    let r = results
+        .get(idx)
+        .unwrap_or_else(|| panic!("ztst {}: no chunk {}", filename, chunk));
+    if r.skipped {
+        return;
+    }
+    assert!(
+        r.passed,
+        "ztst {}:{} — {}\n{}",
+        filename, chunk, r.message, r.detail
+    );
+}
+
+/// Generator (run manually): replays every .ztst, and for each currently
+/// FAILING chunk emits an `#[ignore]`d unit test calling assert_ztst_chunk
+/// into `tests/gen/ztst_failures.rs` (a subdir so cargo doesn't compile it
+/// as its own test binary; it's `include!`d at the bottom of this file).
+///   cargo test --test ztst_runner gen_ztst_failures -- --ignored --nocapture
+#[test]
+#[ignore = "generator — run with --ignored to (re)write tests/gen/ztst_failures.rs"]
+fn gen_ztst_failures() {
+    let zshrs = find_zshrs();
+    let corpus = find_test_corpus();
+    let mut files: Vec<PathBuf> = fs::read_dir(&corpus)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|x| x == "ztst").unwrap_or(false))
+        .collect();
+    files.sort();
+
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = String::new();
+    out.push_str(
+        "// AUTO-GENERATED by ztst_runner::gen_ztst_failures — DO NOT EDIT.\n\
+         // One #[ignore]d test per .ztst chunk that currently diverges from zsh.\n\
+         // Each replays its whole .ztst file (prior-chunk state intact) and\n\
+         // asserts the chunk's expected stdout/status; un-ignore as fixed.\n\n",
+    );
+    let mut count = 0usize;
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let results = run_file_results(&zshrs, path);
+        for (i, r) in results.iter().enumerate() {
+            if r.passed || r.skipped {
+                continue;
+            }
+            let chunk = i + 1;
+            // fn-name: lower stem + chunk, deduped.
+            let stem: String = name
+                .trim_end_matches(".ztst")
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                .collect();
+            let mut fname = format!("ztst_{}_{:03}", stem, chunk);
+            while !used.insert(fname.clone()) {
+                fname.push('x');
+            }
+            // ignore reason: file:chunk + the (one-line) message.
+            let msg: String = r
+                .message
+                .chars()
+                .take(90)
+                .map(|c| if c == '"' || c == '\\' { ' ' } else { c })
+                .collect();
+            out.push_str(&format!(
+                "#[test]\n#[ignore = \"ztst gap {}:{} — {}\"]\nfn {}() {{ assert_ztst_chunk(\"{}\", {}); }}\n\n",
+                name, chunk, msg.trim(), fname, name, chunk
+            ));
+            count += 1;
+        }
+    }
+
+    let gen_dir = Path::new("tests/gen");
+    fs::create_dir_all(gen_dir).unwrap();
+    fs::write(gen_dir.join("ztst_failures.rs"), out).unwrap();
+    eprintln!("generated {} ztst failure tests → tests/gen/ztst_failures.rs", count);
+}
+
+// ---------------------------------------------------------------------------
 // Test entry points — one per .ztst file
 // ---------------------------------------------------------------------------
 
@@ -1437,3 +1681,9 @@ fn ztst_summary() {
         }
     );
 }
+
+// Extracted per-chunk ztst-failure unit tests (auto-generated by
+// gen_ztst_failures). In a subdir so cargo doesn't treat it as a separate
+// integration-test binary; included here so the tests share this file's
+// assert_ztst_chunk / run_file_results helpers.
+include!("gen/ztst_failures.rs");
