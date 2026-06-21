@@ -3695,7 +3695,18 @@ impl ZshCompiler {
                     .iter()
                     .any(|c| matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}'));
                 if prefix_is_ident && value_is_whole_dq && !needs_runtime {
-                    let inner: String = inner_chars.iter().collect();
+                    let mut inner: String = inner_chars.iter().collect();
+                    // c:Src/subst.c:3649 remnulargs — strip the DQ quote
+                    // markers (Bnull/Dnull/Snull). A `\"`/`\\`/`\$` inside the
+                    // value lexes to a Bnull marker before the escaped char;
+                    // in a stored VALUE (alias/assignment body) that char must
+                    // come through bare, NOT as the `\` that `untokenize`
+                    // emits for the pattern path (lex.rs:4827). Without this,
+                    // `alias x="echo \"hi\""` stored the over-escaped
+                    // `echo \"hi\"` instead of `echo "hi"`. remnulargs runs
+                    // first (while the markers are still inull bytes); the
+                    // trailing untokenize maps any residual non-inull token.
+                    crate::ported::glob::remnulargs(&mut inner);
                     let inner = crate::lex::untokenize(&inner);
                     let mut out = String::with_capacity(prefix_clean.len() + 2 + inner.len());
                     out.push_str(&prefix_clean);
