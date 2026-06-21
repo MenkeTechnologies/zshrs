@@ -559,7 +559,6 @@ pick refs/heads/main; pick refs/remotes/origin/trunk; pick refs/heads/nonexist; 
 
     /// genpass — char-code-to-modulo string index $chars[#c%$#chars+1].
     #[test]
-    #[ignore = "zshrs gap: $chars[#c%$#chars+1] char-code arithmetic string subscript yields empty"]
     fn genpass_modulo_index() {
         assert_parity(r###"chars=abcdefghjkmnpqrstvwxyz0123456789
 local c
