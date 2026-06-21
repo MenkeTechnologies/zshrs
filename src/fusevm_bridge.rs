@@ -452,6 +452,24 @@ pub(crate) fn consume_tilde_globsubst_carrier() {
 /// Pop `argc` stack slots for a whole-array assignment: the LAST popped
 /// (deepest pushed) is the param name, the rest are the values in stack
 /// order, with any `Value::Array` flattened to its elements. Mirrors the
+/// Flatten an array-assignment RHS value into scalar strings, descending
+/// through nested `Value::Array`s. zsh arrays are always flat, so recursion
+/// only collapses the wrapper layers the compiler introduces — in particular
+/// the single `Value::Array` built by `Op::MakeArray` for `arr=(...)` literals
+/// (used to dodge `CallBuiltin`'s u8 argc cap), whose own elements may
+/// themselves be arrays from an unquoted `$other_array` expansion. A
+/// one-level flatten would stringify those inner arrays into a single element.
+fn flatten_array_value(v: Value, out: &mut Vec<String>) {
+    match v {
+        Value::Array(items) => {
+            for it in items {
+                flatten_array_value(it, out);
+            }
+        }
+        other => out.push(other.to_str()),
+    }
+}
+
 /// pop/flatten prologue of BUILTIN_SET_ARRAY / BUILTIN_APPEND_ARRAY.
 fn pop_array_args_with_name(vm: &mut fusevm::VM, argc: u8) -> (String, Vec<String>) {
     let n = argc as usize;
@@ -463,14 +481,7 @@ fn pop_array_args_with_name(vm: &mut fusevm::VM, argc: u8) -> (String, Vec<Strin
     let name = popped.pop().map(|v| v.to_str()).unwrap_or_default();
     let mut values: Vec<String> = Vec::new();
     for v in popped {
-        match v {
-            Value::Array(items) => {
-                for it in items {
-                    values.push(it.to_str());
-                }
-            }
-            other => values.push(other.to_str()),
-        }
+        flatten_array_value(v, &mut values);
     }
     (name, values)
 }
@@ -2562,14 +2573,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = popped.pop().unwrap().to_str();
         let mut values: Vec<String> = Vec::new();
         for v in popped {
-            match v {
-                Value::Array(items) => {
-                    for it in items {
-                        values.push(it.to_str());
-                    }
-                }
-                other => values.push(other.to_str()),
-            }
+            flatten_array_value(v, &mut values);
         }
         let blocked = with_executor(|exec| {
             // Assoc init `typeset -A m; m=(k v k v ...)` — route to
@@ -2779,14 +2783,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = popped.pop().unwrap().to_str();
         let mut values: Vec<String> = Vec::new();
         for v in popped {
-            match v {
-                Value::Array(items) => {
-                    for it in items {
-                        values.push(it.to_str());
-                    }
-                }
-                other => values.push(other.to_str()),
-            }
+            flatten_array_value(v, &mut values);
         }
         let blocked = with_executor(|exec| -> bool {
             // Assoc append `m+=(k1 v1 ...)`: merge the (k,v) pairs into

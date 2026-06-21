@@ -3354,9 +3354,20 @@ impl ZshCompiler {
                     0,
                 );
                 self.builder.emit(Op::Pop, 0);
+                // Collapse the N element values into ONE Value::Array before
+                // the SET_ARRAY call. CallBuiltin's argc is u8 in the fusevm
+                // opcode (op.rs `CallBuiltin(u16, u8)`), so passing N+1
+                // separate stack args wrapped the count mod 256 for a literal
+                // `arr=(...)` with >254 elements — silently dropping the first
+                // 256. MakeArray takes a u16 count; SET_ARRAY/APPEND_ARRAY
+                // flatten a single Value::Array arg and still run the
+                // `[key]=value` marker detection on the flattened list, so
+                // both plain and assoc-pair literals round-trip at any size
+                // (the same shape `arr=($other_array)` already takes).
+                self.builder.emit(Op::MakeArray(stack_values as u16), 0);
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                let argc = (stack_values + 1) as u8;
+                let argc = 2u8;
                 // `name[@]=(...)` / `name[*]=(...)` (array_whole_assign set
                 // by the [@] branch above) must reject an associative
                 // target (c:Src/params.c:3324); the _AT builtins add that

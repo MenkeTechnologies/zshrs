@@ -702,7 +702,6 @@ mod fzf {
 
     /// shell/completion.zsh:34 — snapshot+restore all options via eval.
     #[test]
-    #[ignore = "zshrs gap: eval of `options=(${(kv)options})` snapshot does not restore option state (shwordsplit stays on)"]
     fn snapshot_restore_options() {
         assert_parity(
             r##"__opts_save="options=(${(j: :)${(kv)options[@]}})"
