@@ -551,12 +551,12 @@
         <h3>Source-tree layout: ported / extensions / recorder split</h3>
         <p>The runtime crate is physically split so port code and original code can never be confused. Bots, contributors, and humans all read <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/docs/PORT.md" style="color:var(--cyan);"><code>docs/PORT.md</code></a> before writing a single line of code; <code>tests/port_purity.rs</code> mechanically enforces the rules in CI.</p>
         <ul>
-          <li><strong><code>src/ported/</code> &mdash; 107 files, FROZEN.</strong> Strict 1:1 port. Every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file (same stem, same relative subpath). Every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment. New file creation is banned; new fn names that don't exist in upstream zsh C source are banned. The freeze closes both drift vectors: bots invent helper names ("shell_quote", "find_in_path") and bots create fresh files to drop helpers in. Both blocked.</li>
-          <li><strong><code>src/extensions/</code> &mdash; 40 files.</strong> The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload/plugin/script caches, fish-style autosuggest/abbrev/highlight, persistent worker pool, arith JIT, AST s-exp dump, ZWC byte-code helpers, recorder hooks, daemon presence, structured logging, ZLE keymaps/widgets, ext builtins, regex module, config, overlay snapshot + canonical apply, subscript/fds/hist extensions. <code>port_purity</code> exempts this directory from the 1:1 file-existence rule on the basis that no C ancestor exists.</li>
+          <li><strong><code>src/ported/</code> &mdash; 106 files, FROZEN.</strong> Strict 1:1 port. Every <code>.rs</code> mirrors a real <code>src/zsh/Src/&lt;x&gt;.c</code> file (same stem, same relative subpath). Every top-level <code>fn</code> carries a <code>/// Port of &lt;cname&gt;() from Src/&lt;file&gt;.c:NNNN</code> doc-comment. New file creation is banned; new fn names that don't exist in upstream zsh C source are banned. The freeze closes both drift vectors: bots invent helper names ("shell_quote", "find_in_path") and bots create fresh files to drop helpers in. Both blocked.</li>
+          <li><strong><code>src/extensions/</code> &mdash; 42 files.</strong> The non-port directory. Features zsh C demonstrably does <em>not</em> have: AOT (<code>aot.rs</code>, <code>compile_zsh.rs</code>), autoload/plugin/script caches, fish-style autosuggest/abbrev/highlight, persistent worker pool, arith JIT, AST s-exp dump, ZWC byte-code helpers, recorder hooks, daemon presence, structured logging, ZLE keymaps/widgets, ext builtins, regex module, config, overlay snapshot + canonical apply, subscript/fds/hist extensions. <code>port_purity</code> exempts this directory from the 1:1 file-existence rule on the basis that no C ancestor exists.</li>
           <li><strong><code>src/recorder/</code> &mdash; 1 file, feature-gated.</strong> Every symbol <code>#[cfg(feature = "recorder")]</code>; deleted by rustc when the feature is off. Compiled into the separate <code>zshrs-recorder</code> binary, never the default <code>zshrs</code> build.</li>
           <li><strong><code>src/zsh/</code> &mdash; vendored upstream.</strong> Read-only reference. The C spec; never modified.</li>
         </ul>
-        <p>Lexer + parser ports live in <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> (no separate <code>parse/</code> crate). Workspace sibling: <code>daemon/</code> (41 files, <code>zshrs-daemon</code>); <code>compsys</code> was folded into the main <code>zshrs</code> crate (no longer a standalone sibling). Top-level dirs: <code>fish/</code> (157 files, fish-style reader/highlighter/abbreviations), <code>bins/</code> (4 entry points: <code>zshrs</code>, <code>zshrs-recorder</code> with <code>required-features = ["recorder"]</code>, <code>zd</code> with <code>required-features = ["zd"]</code>, <code>bench-autoload</code>). 609 <code>.rs</code> files total &middot; 645,344 Rust LOC (<code>git ls-files '*.rs' | xargs wc -l</code>, 2026-06-05). Test count: 14,552 <code>#[test]</code> markers across the tree.</p>
+        <p>Lexer + parser ports live in <code>src/ported/lex.rs</code> and <code>src/ported/parse.rs</code> (no separate <code>parse/</code> crate). Workspace sibling: <code>daemon/</code> (41 files, <code>zshrs-daemon</code>); <code>compsys</code> was folded into the main <code>zshrs</code> crate (no longer a standalone sibling). Vendored: <code>vendor/fish/</code> (157 files, fish-style reader/highlighter/abbreviations), <code>bins/</code> (4 entry points: <code>zshrs</code>, <code>zshrs-recorder</code> with <code>required-features = ["recorder"]</code>, <code>zd</code> with <code>required-features = ["zd"]</code>, <code>bench-autoload</code>). 628 <code>.rs</code> files total &middot; 700,413 Rust LOC (<code>git ls-files '*.rs' | xargs wc -l</code>, 2026-06-21). Test count: 16,369 <code>#[test]</code> markers across the tree.</p>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->
@@ -1138,20 +1138,22 @@ Every subsequent call (client path, ZERO daemon RTT):
       <section class="tutorial-section">
         <h2><span class="section-num">[0x08]</span> INSTALL</h2>
 
-        <div class="code-block"><span class="comment"># Lean build &mdash; pure shell, all features, no stryke</span>
-cargo install --path zsh
+        <div class="code-block"><span class="comment"># Via Homebrew tap (auto-bumped by each release)</span>
+brew tap MenkeTechnologies/menketech
+brew install zshrs        <span class="comment"># core: zshrs + zd</span>
+<span class="comment"># OR the umbrella: zshrs + zd + zshrs-recorder + zshrs-daemon</span>
+brew install zshrs-all
 
-<span class="comment"># Fat build &mdash; shell + stryke runtime (@ prefix, AOP stryke advice)</span>
-cargo install strykelang
+<span class="comment"># From crates.io</span>
+cargo install zshrs
 
-<span class="comment"># From source</span>
-git clone https://github.com/MenkeTechnologies/strykelang
-cd strykelang
-cargo build --release -p zsh    <span class="comment"># target/release/zshrs</span></div>
+<span class="comment"># From source &mdash; lean build, pure shell, no stryke dependency</span>
+git clone https://github.com/MenkeTechnologies/zshrs
+cd zshrs &amp;&amp; cargo build --release    <span class="comment"># target/release/zshrs</span></div>
 
-        <div class="code-block"><span class="comment"># Set as default shell</span>
-sudo sh -c 'echo /Users/$(whoami)/.cargo/bin/zshrs >> /etc/shells'
-chsh -s /Users/$(whoami)/.cargo/bin/zshrs
+        <div class="code-block"><span class="comment"># Set as login shell</span>
+sudo sh -c 'echo "$(which zshrs)" >> /etc/shells'
+chsh -s "$(which zshrs)"
 
 <span class="comment"># Tab completion for zshrs itself</span>
 cp completions/_zshrs /usr/local/share/zsh/site-functions/</div>
@@ -11619,7 +11621,7 @@ builtin setopt noaliases
 
     <footer style="border-top: 1px solid var(--border); padding: 1rem 1.5rem; text-align: center; color: var(--text-muted); font-size: 11px;">
       &copy; 2026 MenkeTechnologies &middot; MIT License &middot;
-      <a href="https://github.com/MenkeTechnologies/strykelang" style="color: var(--cyan);">GitHub</a>
+      <a href="https://github.com/MenkeTechnologies/zshrs" style="color: var(--cyan);">GitHub</a>
     </footer>
   </div>
 
