@@ -5607,6 +5607,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 (start, end)
             };
+            // c:Src/params.c:392-430 IPDEF9("argv"/"@"/"*", &pparams) —
+            // the positional parameters live in the `pparams` vector, NOT
+            // paramtab, so a subscript splice (`argv[2]=(X Y Z)`,
+            // `2=(X Y Z)`) must read/write pparams. Splice a synthetic
+            // array param holding the current positionals via the
+            // canonical setarrvalue, then store the result back to
+            // pparams — mirroring assignaparam's argv/@/* special-case
+            // (params.rs:6937) for the whole-array form.
+            if name == "argv" || name == "@" || name == "*" {
+                let mut pm = {
+                    crate::ported::params::createparam(
+                        &name,
+                        crate::ported::zsh_h::PM_ARRAY as i32,
+                    );
+                    crate::ported::params::paramtab()
+                        .write()
+                        .ok()
+                        .and_then(|mut t| t.remove(&name))
+                };
+                if let Some(ref mut p) = pm {
+                    p.u_arr = Some(exec.pparams());
+                }
+                let mut v = crate::ported::zsh_h::value {
+                    pm,
+                    arr: Vec::new(),
+                    scanflags: 0,
+                    valflags: 0,
+                    start,
+                    end,
+                };
+                crate::ported::params::setarrvalue(&mut v, values);
+                let result = v.pm.and_then(|p| p.u_arr).unwrap_or_default();
+                exec.set_pparams(result);
+                return;
+            }
             // Route through canonical setarrvalue (Src/params.c:2895).
             // It handles PM_READONLY rejection, PM_HASHED slice-error,
             // PM_ARRAY splice + bounds clamp + padding (c:2980+).

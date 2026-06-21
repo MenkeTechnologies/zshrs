@@ -982,9 +982,9 @@ mod man_param {
         assert_parity(r###"typeset -A h=(a foo); h[a]+=bar; print -r -- $h[a]"###);
     }
 
-    /// positional n=(...) shifts following.
+    /// positional n=(...) shifts following — `N=(...)` is `argv[N]=(...)`
+    /// (IPDEF9 argv), splicing into the positionals.
     #[test]
-    #[ignore = "zshrs gap: positional array assignment 2=(X Y Z) is a no-op (should splice into $@)"]
     fn positional_array_assign() {
         assert_parity(r###"set -- a b c d; 2=(X Y Z); print -r -- $*"###);
     }
