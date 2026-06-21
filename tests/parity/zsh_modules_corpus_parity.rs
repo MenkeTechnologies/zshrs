@@ -973,7 +973,6 @@ mod zmod_pcre_regex {
 
     /// ZPCRE_OP byte offsets (-b).
     #[test]
-    #[ignore = "zshrs gap: pcre_match -b does not set $ZPCRE_OP byte-offset pair (empty)"]
     fn pcre_zpcre_op() {
         assert_parity(r###"zmodload zsh/pcre; pcre_compile "\d+"; pcre_match -b "ab1234"; print "$ZPCRE_OP""###);
     }
@@ -1191,7 +1190,6 @@ mod contrib {
 
     /// regexp-replace global + class + $MATCH + no-match.
     #[test]
-    #[ignore = "zshrs gap: regexp-replace mishandles match — global ERE replace empties the variable and no-match returns 0 (should be 1, unchanged)"]
     fn regexp_replace() {
         assert_parity(r###"autoload -U regexp-replace; v="foo123bar456"; regexp-replace v "[0-9]+" "#"; print $v; v2="aaa"; regexp-replace v2 "x" "y"; print "rc=$? v=$v2""###);
     }

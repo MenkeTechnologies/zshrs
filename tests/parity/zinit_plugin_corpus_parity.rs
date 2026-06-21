@@ -864,7 +864,6 @@ done"##,
 
     /// zsh-z.plugin.zsh:256-265 — smartcase match with positional reassignment.
     #[test]
-    #[ignore = "zshrs gap: positional 1=${1// ##/*} reassign + ${1:l} compare mishandles space-containing pattern (last case)"]
     fn smartcase_match() {
         assert_parity(
             r##"fn() {
