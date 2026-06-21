@@ -592,7 +592,6 @@ print -r -- "expanded=[$LBUFFER]""###);
 
     /// prezto git-info — (pws:\t:)N tab-field subscript on scalar.
     #[test]
-    #[ignore = "zshrs gap: scalar subscript $s[(pws:\\t:)N] does not split on tab (field 1 = whole string, field 2 empty)"]
     fn pws_tab_subscript() {
         assert_parity(r###"ahead_and_behind=$(printf "3\t5")
 ahead="$ahead_and_behind[(pws:\t:)1]"
