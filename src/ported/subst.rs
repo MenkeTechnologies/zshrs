@@ -5106,6 +5106,47 @@ pub fn paramsubst(
                     || c == crate::ported::zsh_h::Dnull      // "
                     || c == crate::ported::zsh_h::Bnull      // \
                 });
+                // c:Src/params.c:1577-1582 — "If we're NOT reverse
+                // subscripting, strip the inull()s so brackets are not
+                // backslashed after parsestr(). Otherwise leave them
+                // alone so that the brackets will be escaped when we
+                // patcompile()." C: `if (ishash && (keymatch || !rev))
+                // remnulargs(s)` BEFORE the parsestr/singsub block. This
+                // de-escapes a backslash-escaped key (`${A[\]]}`→`]`,
+                // `${A[\\3]}`→`\3`) so it matches the stored key, while
+                // leaving search-flag subscripts (`(i)\?`) untouched so
+                // their pattern keeps the escape for patcompile.
+                //
+                // Gate on "not a flag/search group": a subscript that
+                // does NOT open with `(`/Inpar is a plain key/index
+                // (C's !rev). zshrs only strips Bnull/Bnullkeep here, NOT
+                // Snull/Dnull — C keeps `"` literal inside subscripts
+                // whereas zshrs tokenizes it to Dnull (kept so
+                // untokenize_preserve_quotes restores the literal quote
+                // in `${H["a b"]}`→key `"a b"`). remnulargs drops Bnull
+                // (next char becomes the literal escaped char) and turns
+                // Bnullkeep into a literal backslash (c:Src/glob.c
+                // remnulargs).
+                let raw_sub = {
+                    let trimmed = raw_sub.trim_start();
+                    let is_flag = trimmed.starts_with('(')
+                        || trimmed.starts_with(crate::ported::zsh_h::Inpar);
+                    if is_flag {
+                        raw_sub
+                    } else {
+                        let mut out = String::with_capacity(raw_sub.len());
+                        for c in raw_sub.chars() {
+                            if c == crate::ported::zsh_h::Bnull {
+                                continue; // drop marker; next char is literal
+                            } else if c == crate::ported::zsh_h::Bnullkeep {
+                                out.push('\\');
+                            } else {
+                                out.push(c);
+                            }
+                        }
+                        out
+                    }
+                };
                 let expanded = if needtok {
                     // c:Src/params.c::getarg:1564-1572 — when needtok
                     // fires, the full sequence is:
@@ -13737,6 +13778,18 @@ pub fn paramsubst(
             while q < chars.len() && depth > 0 {
                 // c:1625
                 let ch = chars[q];
+                // A backslash-escaped bracket arrives as Bnull (or
+                // Bnullkeep) + literal `[`/`]`; the escaped bracket is
+                // subscript CONTENT, not a depth delimiter (`$A[\]]`
+                // keys on `]`). Skip the marker and the char it escapes.
+                // Mirrors the braced `${arr[sub]}` walk (commit
+                // 44fa3bf020) and the lexer BKSLASH emission.
+                if ch == crate::ported::zsh_h::Bnull
+                    || ch == crate::ported::zsh_h::Bnullkeep
+                {
+                    q += 2;
+                    continue;
+                }
                 if ch == '[' || ch == Inbrack {
                     depth += 1;
                 } else if ch == ']' || ch == Outbrack {
@@ -13750,6 +13803,35 @@ pub fn paramsubst(
             if depth == 0 {
                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
+                // c:Src/params.c:1577-1582 — `if (ishash && (keymatch ||
+                // !rev)) remnulargs(s)` BEFORE singsub: de-escape a
+                // backslash-escaped key (`$A[\]]`→`]`, `$A[\\3]`→`\3`)
+                // so it matches the stored key, while leaving search-
+                // flag subscripts (`(i)\?`) untouched so the pattern
+                // keeps its escape. Gate on "not a `(`/Inpar flag
+                // group" (C's !rev); strip only Bnull/Bnullkeep, never
+                // Snull/Dnull (zshrs's quote markers — see the braced
+                // arm). Mirrors the braced `${arr[sub]}` handling.
+                let raw_sub = {
+                    let trimmed = raw_sub.trim_start();
+                    let is_flag = trimmed.starts_with('(')
+                        || trimmed.starts_with(crate::ported::zsh_h::Inpar);
+                    if is_flag {
+                        raw_sub
+                    } else {
+                        let mut out = String::with_capacity(raw_sub.len());
+                        for c in raw_sub.chars() {
+                            if c == crate::ported::zsh_h::Bnull {
+                                continue;
+                            } else if c == crate::ported::zsh_h::Bnullkeep {
+                                out.push('\\');
+                            } else {
+                                out.push(c);
+                            }
+                        }
+                        out
+                    }
+                };
                                                                           // c:Src/params.c::getarg:1571 — `singsub(&s)` runs on
                                                                           // the subscript text after the needtok scan. The post-
                                                                           // singsub form still carries lexer TOKEN bytes for
