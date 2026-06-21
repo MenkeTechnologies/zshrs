@@ -436,8 +436,20 @@ fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) 
         PatternComponent::Recursive { follow_links } => {
             // Match zero directories first
             scanner(state, &components[1..], depth);
-            // Then recurse into subdirectories
-            scan_recursive(state, &base_path, &components[1..], *follow_links, depth);
+            // Then recurse into subdirectories (no name filter → `**`).
+            scan_recursive(state, &base_path, &components[1..], *follow_links, depth, None);
+        }
+        PatternComponent::PathClosure { pat, plus } => {
+            // c:Src/glob.c:745-766 — `(pat/)#rest` matches zero-or-more
+            // `pat/` directory levels then `rest`; `##` requires at
+            // least one. The zero-level case (only for `#`) tries `rest`
+            // at the current directory; scan_recursive with a name
+            // filter descends every dir matching `pat` and recurses
+            // (same descent shape as `**`, but restricted to `pat`).
+            if !plus {
+                scanner(state, &components[1..], depth);
+            }
+            scan_recursive(state, &base_path, &components[1..], false, depth, Some(pat));
         }
     }
 }
@@ -3378,6 +3390,14 @@ pub struct qualifier_set {
 enum PatternComponent {
     Pattern(String),
     Recursive { follow_links: bool },
+    // c:Src/glob.c:745-766 parsecomplist — `(dir/)#` / `(dir/)##` path
+    // closure: zero-or-more (`#`) / one-or-more (`##`) directory levels
+    // each matching `pat`, e.g. `(sub/)#end` matches end, sub/end,
+    // sub/sub/end. zsh stores this as a `complist` node with the
+    // `closure` bit (1 = `#`, 2 = `##`); we model it as its own
+    // component since the Rust scanner walks a Vec, not a linked list
+    // with a per-node closure flag.
+    PathClosure { pat: String, plus: bool },
 }
 
 /// Enter a glob scope: snapshot options into TLS if no outer scope
@@ -4600,18 +4620,97 @@ fn parse_subscript(
 /// of `PatternComponent` enum variants instead.
 fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
     // RUST-ONLY
+    let cv: Vec<char> = pattern.chars().collect();
     let mut components = Vec::new();
     let mut current = String::new();
-    let mut chars = pattern.chars().peekable();
     let mut in_bracket = false;
+    let mut idx = 0usize;
 
     // Skip leading slash for absolute paths
-    if chars.peek() == Some(&'/') {
-        chars.next();
+    if cv.first() == Some(&'/') {
+        idx = 1;
     }
 
-    while let Some(c) = chars.next() {
+    // Token / literal forms the lexer may leave for grouping chars.
+    let is_inpar = |c: char| c == '(' || c == '\u{88}'; // Inpar
+    let is_outpar = |c: char| c == ')' || c == '\u{8a}'; // Outpar
+    let is_hash = |c: char| c == '#' || c == '\u{84}'; // Pound
+
+    // A small Peekable-like shim over the index walk to keep the rest
+    // of the original logic readable.
+    macro_rules! peek {
+        () => {
+            cv.get(idx).copied()
+        };
+        ($n:expr) => {
+            cv.get(idx + $n).copied()
+        };
+    }
+
+    while idx < cv.len() {
+        let c = cv[idx];
+        idx += 1;
         match c {
+            // c:Src/glob.c:745-766 — `(dir/)#` / `(dir/)##` path closure.
+            // Detect a balanced `(...)` group (not inside `[...]`) that
+            // is immediately followed by `#` and whose body ends with a
+            // `/`: that is a directory-level closure spanning path
+            // components, NOT an in-component group. Anything else (an
+            // alternation `(a|b)`, a non-path closure `(a)#`) is left in
+            // the current component for matchpat to interpret.
+            _ if !in_bracket && is_inpar(c) => {
+                // Find the matching close paren (respecting nesting and
+                // `[...]` char-classes).
+                let mut depth = 1i32;
+                let mut j = idx;
+                let mut jb = false;
+                while j < cv.len() && depth > 0 {
+                    let d = cv[j];
+                    if d == '[' {
+                        jb = true;
+                    } else if d == ']' {
+                        jb = false;
+                    } else if !jb && is_inpar(d) {
+                        depth += 1;
+                    } else if !jb && is_outpar(d) {
+                        depth -= 1;
+                    }
+                    j += 1;
+                }
+                // j now points one past the close paren (if balanced).
+                let close_idx = j.wrapping_sub(1);
+                let balanced = depth == 0;
+                let body_ends_slash = balanced && close_idx >= 1 && cv[close_idx - 1] == '/';
+                let followed_by_hash = balanced && cv.get(j).copied().is_some_and(is_hash);
+                if balanced && body_ends_slash && followed_by_hash {
+                    // Path closure. Flush any pending component first.
+                    if !current.is_empty() {
+                        components.push(PatternComponent::Pattern(std::mem::take(&mut current)));
+                    }
+                    // Body without the surrounding parens and trailing `/`.
+                    let body: String = cv[idx..close_idx - 1].iter().collect();
+                    // `##` (one-or-more) vs `#` (zero-or-more).
+                    let plus = cv.get(j + 1).copied().is_some_and(is_hash);
+                    components.push(PatternComponent::PathClosure { pat: body, plus });
+                    idx = j + 1 + if plus { 1 } else { 0 };
+                    continue;
+                }
+                // Not a path closure: push the whole `(...)` group (and a
+                // trailing `#`/`##` if present) into the current component
+                // verbatim so matchpat handles alternation / closure.
+                if balanced {
+                    current.extend(cv[idx - 1..j].iter());
+                    idx = j;
+                    while peek!().is_some_and(is_hash) {
+                        current.push(cv[idx]);
+                        idx += 1;
+                    }
+                } else {
+                    // Unbalanced — leave as-is; downstream patcompile
+                    // reports "bad pattern" exactly like zsh.
+                    current.push(c);
+                }
+            }
             '/' if !in_bracket => {
                 if !current.is_empty() {
                     components.push(PatternComponent::Pattern(current.clone()));
@@ -4626,12 +4725,12 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
                 in_bracket = false;
                 current.push(c);
             }
-            '*' if !in_bracket && chars.peek() == Some(&'*') => {
-                chars.next();
+            '*' if !in_bracket && peek!() == Some('*') => {
+                idx += 1;
                 // Check for ***
-                let follow = chars.peek() == Some(&'*');
+                let follow = peek!() == Some('*');
                 if follow {
-                    chars.next();
+                    idx += 1;
                 }
                 // Direct port of zsh/Src/glob.c:717-742 parsecomplist:
                 // `**` is recursive ONLY when followed by `/` (or `***/`,
@@ -4640,10 +4739,10 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
                 // treats as a single `*` since `**` ≡ `*` for non-recursive
                 // contexts in zsh). The glob_star_short option flips the
                 // strict gate off so bare `**` recurses without `/`.
-                let has_slash = chars.peek() == Some(&'/');
+                let has_slash = peek!() == Some('/');
                 let recursive = has_slash || follow || glob_isset(GLOBSTARSHORT);
                 if has_slash {
-                    chars.next();
+                    idx += 1;
                 }
                 if recursive {
                     if !current.is_empty() {
@@ -4664,7 +4763,7 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
                     // `!has_slash && !follow` since `**/X` and `***/X`
                     // already consumed their separator and don't need
                     // the glue star.
-                    if !has_slash && !follow && chars.peek().is_some() && chars.peek() != Some(&'/')
+                    if !has_slash && !follow && peek!().is_some() && peek!() != Some('/')
                     {
                         current.push('*');
                     }
@@ -4921,11 +5020,17 @@ fn scan_recursive(
     rest: &[PatternComponent],
     follow_links: bool,
     depth: usize,
+    // c:Src/glob.c:745-766 — when `Some(pat)`, this is a `(pat/)#`
+    // path closure: only descend dirs whose name matches `pat` (vs `**`
+    // which descends every dir). `None` = the unrestricted `**` walk.
+    match_pat: Option<&str>,
 ) {
     let dir = match fs::read_dir(base) {
         Ok(d) => d,
         Err(_) => return,
     };
+    let extended_glob = glob_isset(EXTENDEDGLOB);
+    let case_glob = glob_isset(CASEGLOB);
 
     // c:Src/glob.c — globdots is the GLOBAL `dotglob`/`globdots`
     // option OR the per-glob `(D)` qualifier (`gf_glob.dots = 1`).
@@ -4941,8 +5046,11 @@ fn scan_recursive(
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Skip hidden files (bash `dotglob` aliases to zsh
-        // `globdots` per OPT_ALIAS entry at options.c:270).
-        if !include_dots && name.starts_with('.') {
+        // `globdots` per OPT_ALIAS entry at options.c:270). For a
+        // `(pat/)#` closure, a hidden dir is still eligible when the
+        // closure pattern itself begins with `.` (scan_pattern parity).
+        let dot_ok = include_dots || match_pat.is_some_and(|p| p.starts_with('.'));
+        if !dot_ok && name.starts_with('.') {
             continue;
         }
 
@@ -4954,6 +5062,13 @@ fn scan_recursive(
         };
 
         if is_dir {
+            // `(pat/)#` closure: only descend dirs whose name matches
+            // `pat`. `**` (match_pat None) descends every dir.
+            if let Some(p) = match_pat {
+                if !matchpat(p, &name, extended_glob, case_glob) {
+                    continue;
+                }
+            }
             let old_pos = state.pathbuf.len();
             if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
                 state.pathbuf.push('/');
@@ -4963,9 +5078,9 @@ fn scan_recursive(
             // Try matching rest from this directory
             scanner(state, rest, depth + 1);
 
-            // Continue recursing
+            // Continue recursing (carrying the closure filter, if any).
             let next_base = state.pathbuf.clone();
-            scan_recursive(state, &next_base, rest, follow_links, depth + 1);
+            scan_recursive(state, &next_base, rest, follow_links, depth + 1, match_pat);
 
             state.pathbuf.truncate(old_pos);
         }
