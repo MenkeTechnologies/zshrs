@@ -334,7 +334,6 @@ mod powerlevel10k {
 
     /// gitstatus.plugin.zsh:145-148 — dynamic fn name + recover suffix.
     #[test]
-    #[ignore = "zshrs gap: `function name\"$x\"()` dynamic-name definition unsupported (zsh: suffix=<_demo>; zshrs: exit 127)"]
     fn dynamic_function_name_suffix() {
         assert_parity(
             r##"function gitstatus_query"${1:-_demo}"() {
@@ -469,7 +468,6 @@ f"##,
 
     /// internal/configure.zsh:13-68 — nested helper `$0_error` torn down in always.
     #[test]
-    #[ignore = "zshrs gap: $0-derived nested fn name not defined inside fn; $+functions[x] prints `1[x]` (subscript after ${+} not parsed)"]
     fn nested_helper_always_teardown() {
         assert_parity(
             r##"function can_cfg() {
