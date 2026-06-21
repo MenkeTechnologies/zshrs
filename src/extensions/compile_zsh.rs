@@ -3154,7 +3154,21 @@ impl ZshCompiler {
                 // The Scalar branch above only handles single-value
                 // assigns; this branch handles the array-literal form
                 // including the empty-list delete idiom.
-                if let Some((base, key)) = split_subscript(&untoked_name) {
+                //
+                // c:Src/params.c IPDEF9("argv", &pparams) — a bare numeric
+                // assignment name `N=(...)` is a positional-parameter
+                // splice equivalent to `argv[N]=(...)` (`set -- a b c d;
+                // 2=(X Y Z)` → `a X Y Z c d`). Rewrite to the `argv[N]`
+                // subscript form so it routes through the same
+                // setarrvalue-into-pparams splice as `argv[N]=(...)`.
+                let numeric_pos = !untoked_name.is_empty()
+                    && untoked_name.chars().all(|c| c.is_ascii_digit());
+                let subscript = if numeric_pos {
+                    Some(("argv", untoked_name.as_str()))
+                } else {
+                    split_subscript(&untoked_name)
+                };
+                if let Some((base, key)) = subscript {
                     for elem in elements {
                         self.compile_word_str(elem);
                         if has_unquoted_expansion(elem) {
