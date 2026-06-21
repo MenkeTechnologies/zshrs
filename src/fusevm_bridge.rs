@@ -4858,12 +4858,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   - env-var fallback (`HOME` set via getsparam → lookup_special_var)
     vm.register_builtin(BUILTIN_VAR_EXISTS, |vm, _argc| {
         let name = vm.pop().to_str();
-        let body = format!("${{+{}}}", name);
-        let mut ret_flags: i32 = 0;
-        let (_full, _pos, nodes) =
-            crate::ported::subst::paramsubst(&body, 0, false, 0i32, &mut ret_flags);
-        let result = nodes.into_iter().next().unwrap_or_default();
-        Value::Bool(result == "1")
+        // c:Src/cond.c:361 `case 'v': return !issetvar(left)`. `-v` is
+        // NOT `${+name}` — issetvar (params.c:751) additionally rejects
+        // trailing chars after the parsed name/subscript (`arr[3]extra`,
+        // nested `arr[2][1]`) and validates array-slice bounds (an
+        // out-of-range `(i)`-not-found index is "unset"). `${+}` is
+        // lenient and reported those as set.
+        Value::Bool(crate::ported::params::issetvar(&name) != 0)
     });
 
     // `time { compound; ... }` — runs the sub-chunk and prints elapsed

@@ -868,14 +868,6 @@ fn ztst_c02cond_043() { assert_ztst_chunk("C02cond.ztst", 43); }
 fn ztst_c02cond_044() { assert_ztst_chunk("C02cond.ztst", 44); }
 
 #[test]
-#[ignore = "ztst gap C02cond.ztst:47 — -v cond with array"]
-fn ztst_c02cond_047() { assert_ztst_chunk("C02cond.ztst", 47); }
-
-#[test]
-#[ignore = "ztst gap C02cond.ztst:48 — -v cond with association"]
-fn ztst_c02cond_048() { assert_ztst_chunk("C02cond.ztst", 48); }
-
-#[test]
 #[ignore = "ztst gap C02cond.ztst:53 — Error message for unknown prefix condition"]
 fn ztst_c02cond_053() { assert_ztst_chunk("C02cond.ztst", 53); }
 
