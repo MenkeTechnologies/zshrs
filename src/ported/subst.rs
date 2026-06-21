@@ -14922,6 +14922,21 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             // Bug #595.
             let mut pat_closed = false;
             while let Some(&c) = chars.peek() {
+                if c == crate::ported::zsh_h::Bnull || c == crate::ported::zsh_h::Bnullkeep {
+                    // c:Src/subst.c — a lexer INULL marker (Bnull) means the
+                    // FOLLOWING char is an already-quoted literal (`\X` in the
+                    // source lexes to Bnull+X). Consume the marker and take the
+                    // next char verbatim — BEFORE the delimiter test — so an
+                    // escaped delimiter (`\/` → Bnull `/`) and an escaped
+                    // backslash (`\\` → Bnull `\`) both land literally instead
+                    // of closing the field or escaping the next char.
+                    chars.next();
+                    if let Some(&nx) = chars.peek() {
+                        pat.push(nx);
+                        chars.next();
+                    }
+                    continue;
+                }
                 if c == delim {
                     chars.next();
                     pat_closed = true;
@@ -14952,6 +14967,17 @@ pub fn modify(s: &str, modifiers: &str) -> String {
             // Read replacement with `&` and `\X` handling.
             let mut repl = String::new(); // c:4625
             while let Some(&c) = chars.peek() {
+                if c == crate::ported::zsh_h::Bnull || c == crate::ported::zsh_h::Bnullkeep {
+                    // c:Src/subst.c — INULL-marked literal (see the pattern
+                    // loop). `:s/X/\\/` → repl Bnull `\` → a literal backslash,
+                    // not an escape of the trailing delimiter.
+                    chars.next();
+                    if let Some(&nx) = chars.peek() {
+                        repl.push(nx);
+                        chars.next();
+                    }
+                    continue;
+                }
                 if c == delim {
                     chars.next();
                     break;

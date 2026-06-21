@@ -350,7 +350,6 @@ done"###,
 
     /// OMZL::functions.zsh:264-269 — omz_urldecode: chained :gs modifiers + printf.
     #[test]
-    #[ignore = "zshrs gap: chained :gs modifiers feeding printf -- (with \\\\x escapes) errors (exit 1; zsh decodes to 'a b&c d')"]
     fn urldecode_gs_chain() {
         assert_parity(
             r###"encoded_url="a%20b%26c+d"
