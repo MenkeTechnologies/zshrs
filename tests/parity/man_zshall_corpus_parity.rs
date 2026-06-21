@@ -480,7 +480,6 @@ mod man_glob {
 
     /// (pat/)# path closure.
     #[test]
-    #[ignore = "zshrs gap: (sub/)# path closure (zero-or-more dir components) matches nothing"]
     fn path_closure() {
         assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir -p sub/sub/sub; touch end sub/end sub/sub/end; print -rl -- (sub/)#end | sort; cd /; rm -rf $t"###);
     }
