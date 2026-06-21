@@ -9529,20 +9529,6 @@ pub fn paramsubst(
                 // C's untokenize ONLY drops Bnull markers, NOT literal
                 // backslashes; the bridge already converted Bnull to
                 // `\` so we keep them. Bug #609.
-                let repl = {
-                    // c:Src/subst.c around line 3354 — `prefork(replstr,
-                    // SUB_FLAG|SKIP_FILESUB)`. The replacement string
-                    // must NOT undergo file/tilde expansion: `${p/x/\~}`
-                    // yields a literal `~`, not the user's home. Match
-                    // the canonical `//` arm at subst.rs:5018 which
-                    // already sets SKIP_FILESUB around singsub; the
-                    // single-replace `/` arm was missing this gate.
-                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
-                    SKIP_FILESUB.with(|c| c.set(true));
-                    let s_singsub = singsub(&raw_repl);
-                    SKIP_FILESUB.with(|c| c.set(saved_skip));
-                    untokenize(&s_singsub)
-                };
                 // c:Src/glob.c::getmatch — `(#m)` flag in the pattern
                 // populates `$MATCH` / `$MBEGIN` / `$MEND` with the
                 // matched span at replace-time. The `//` arm above
@@ -9556,6 +9542,30 @@ pub fn paramsubst(
                     let pat_after_anchor =
                         pat.strip_prefix('#').or(pat.strip_prefix('%')).unwrap_or(&pat);
                     pat_after_anchor.contains("(#m)") || pat_after_anchor.contains("(#b)")
+                };
+                let repl = if pat_has_m_one {
+                    // c:Src/glob.c:2680 — when the replacement references
+                    // match state (`(#m)$MATCH` / `(#b)$match`) it is
+                    // singsub'd PER MATCH by resolve_repl below, so the
+                    // eager evaluation here is both unused AND harmful: a
+                    // replacement with a side-effect (`${v::=0}`) would
+                    // fire once unconditionally, even when the pattern
+                    // never matches (`: ${(S)str/(#b)(pat)/${rv::=0}}` on
+                    // a non-matching subject wrongly ran `rv::=0`). Defer.
+                    String::new()
+                } else {
+                    // c:Src/subst.c around line 3354 — `prefork(replstr,
+                    // SUB_FLAG|SKIP_FILESUB)`. The replacement string
+                    // must NOT undergo file/tilde expansion: `${p/x/\~}`
+                    // yields a literal `~`, not the user's home. Match
+                    // the canonical `//` arm at subst.rs:5018 which
+                    // already sets SKIP_FILESUB around singsub; the
+                    // single-replace `/` arm was missing this gate.
+                    let saved_skip = SKIP_FILESUB.with(|c| c.get());
+                    SKIP_FILESUB.with(|c| c.set(true));
+                    let s_singsub = singsub(&raw_repl);
+                    SKIP_FILESUB.with(|c| c.set(saved_skip));
+                    untokenize(&s_singsub)
                 };
                 let raw_repl_clone = raw_repl.clone();
                 let repl_default = repl.clone();
