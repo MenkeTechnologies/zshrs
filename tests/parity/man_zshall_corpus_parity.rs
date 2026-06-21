@@ -928,7 +928,6 @@ mod man_param {
 
     /// pattern-range substring (r)d?,(r)h?.
     #[test]
-    #[ignore = "zshrs gap: ${string[(r)d?,(r)h?]} pattern-range scalar substring yields empty (zsh: defghi)"]
     fn pattern_range_substring() {
         assert_parity(r###"string="abcdefghijklm"; print -r -- ${string[(r)d?,(r)h?]}"###);
     }
