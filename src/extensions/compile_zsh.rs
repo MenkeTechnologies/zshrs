@@ -4473,13 +4473,30 @@ impl ZshCompiler {
             }
         }
 
+        // A Bnull escape that sits INSIDE the subscript brackets (after
+        // the `[`/Inbrack) is safe for the bare-subscript fast paths:
+        // `untokenize` restores it to a literal backslash, and
+        // `array_index_lookup` rebuilds `${name[key]}` (raw ASCII) which
+        // paramsubst's subscript arm handles identically to the braced
+        // form. Only an escape BEFORE the `[` (an escaped `$`/name, e.g.
+        // `\$a[x]`, `$a\[x]`) must stay on the runtime path. Without
+        // this, escaped pattern metachars in unbraced subscripts
+        // (`$a[(i)\?]`) reached paramsubst in TOKENIZED form (Inpar /
+        // Bnull) that the array flag-parser couldn't read, so `\?` was
+        // globbed as `?` instead of literal-matched.
+        let bnull_in_subscript = {
+            let inbrack = s.find('\u{91}').or_else(|| s.find('[')); // Inbrack
+            let bnull = s.find('\u{9f}'); // Bnull
+            matches!((inbrack, bnull), (Some(ib), Some(bn)) if bn > ib)
+        };
+
         // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
         // `$NAME` as the variable name and `[KEY]` as a subscript that
         // applies to it (NOT a literal `[KEY]` suffix) — UNLESS
         // KSHARRAYS is set at expansion time (c:Src/subst.c:2800-2802
         // + 2867), which is a runtime decision: emit the UNBRACED
         // subscript opcode and let the bridge dispatch.
-        if !has_bnull {
+        if !has_bnull || bnull_in_subscript {
             if let Some((name, key)) = bare_subscript_ref(&untoked) {
                 self.emit_unbraced_subscript(
                     name,
@@ -4496,7 +4513,7 @@ impl ZshCompiler {
         // literal `[KEY]` text BEFORE filename generation: zsh 5.9
         // `setopt ksharrays; a=(x y z); print -- $a[0]suffix` →
         // `zsh:1: no matches found: x[0]suffix`).
-        if !has_bnull {
+        if !has_bnull || bnull_in_subscript {
             if let Some((name, key, suffix)) = bare_subscript_with_suffix(&untoked) {
                 self.emit_unbraced_subscript(
                     name,
