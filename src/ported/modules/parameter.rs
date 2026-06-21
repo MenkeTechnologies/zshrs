@@ -1067,7 +1067,24 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                     };
                     format!("builtin autoload -X{}", suffix)
                 }
-                Some(text) => format!("\t{}", text), // c:409-431 getpermtext
+                Some(text) => {
+                    // c:Src/Modules/parameter.c:419 — `getpermtext(shf->funcdef,
+                    // NULL, 1)`: C re-deparses the parsed body with tnewlins=1
+                    // so a multi-statement body renders one statement per line,
+                    // tab-indented (`print a; print b` → two `\t`-prefixed
+                    // lines). zshrs stores the body as source text rather than
+                    // the Eprog, so re-parse it and run the same getpermtext
+                    // deparser to recover the line breaks. On a parse failure
+                    // (should not happen — it parsed at definition time) fall
+                    // back to the raw single-line text.
+                    match crate::ported::exec::parse_string(text, 0) {
+                        Some(prog) => format!(
+                            "\t{}",
+                            crate::ported::text::getpermtext(Box::new(prog), None, 1)
+                        ),
+                        None => format!("\t{}", text),
+                    }
+                }
             };
             (v, true)
         } else {
