@@ -1691,13 +1691,6 @@ fn ztst_d06subscript_002() { assert_ztst_chunk("D06subscript.ztst", 2); }
 #[ignore = "ztst gap D06subscript.ztst:4 — Scalar subscripting using a pattern subscript to get the index"]
 fn ztst_d06subscript_004() { assert_ztst_chunk("D06subscript.ztst", 4); }
 
-#[test]
-#[ignore = "ztst gap D06subscript.ztst:6 — Array pattern subscripts with multiple backslashes"]
-fn ztst_d06subscript_006() { assert_ztst_chunk("D06subscript.ztst", 6); }
-
-#[test]
-#[ignore = "ztst gap D06subscript.ztst:7 — Associative array lookup (direct subscripting)"]
-fn ztst_d06subscript_007() { assert_ztst_chunk("D06subscript.ztst", 7); }
 
 #[test]
 #[ignore = "ztst gap D06subscript.ztst:11 — Associative array assignment"]
