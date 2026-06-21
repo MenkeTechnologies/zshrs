@@ -1433,7 +1433,14 @@ pub fn issetvar(name: &str) -> i32 {
         // c:739
         return 0; // c:740 no value or more chars after the variable name
     }
-    if (v.scanflags as u32 & !SCANPM_ARRONLY) != 0 {
+    // c:741 — `if (v->scanflags & ~SCANPM_ARRONLY) return v->end > 1`.
+    // The extracted-elements branch keys on EXTRACTION scanflags. zshrs's
+    // getvalue additionally sets SCANPM_CHECKING (the issetvar/`-v` call
+    // passes the no-create flag) which C's getvalue does NOT leave in
+    // v->scanflags — so mask it out here too, else a whole-array `-v arr`
+    // (scanflags = CHECKING only, end = -1) wrongly took this branch and
+    // returned `end > 1` = 0.
+    if (v.scanflags as u32 & !(SCANPM_ARRONLY | SCANPM_CHECKING)) != 0 {
         // c:741
         return if v.end > 1 { 1 } else { 0 }; // c:742
     }
@@ -1441,7 +1448,22 @@ pub fn issetvar(name: &str) -> i32 {
     let slice = v.start != 0 || v.end != -1; // c:744
     let pm = match v.pm.as_ref() {
         Some(p) => p,
-        None => return 0,
+        None => {
+            // c:2222-2224 — positional `-v N`: C sets `v->pm = argvparam`
+            // (the PM_ARRAY over the positionals) and falls through to the
+            // array range check below. zshrs keeps positionals in PPARAMS
+            // rather than a real pm, so fetchvalue leaves `pm = None` with
+            // `start = N-1`, `end = N`; range-check `end` against the
+            // pparams length to report whether `$N` is set.
+            if v.end >= 1 && !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+                let len = crate::ported::builtin::PPARAMS
+                    .lock()
+                    .map(|p| p.len())
+                    .unwrap_or(0);
+                return if (v.end as usize) <= len { 1 } else { 0 };
+            }
+            return 0;
+        }
     };
     if PM_TYPE(pm.node.flags as u32) != PM_ARRAY || !slice {
         // c:745
@@ -3178,6 +3200,83 @@ pub fn getindex(pptr: &mut &str, v: &mut value, scanflags: i32) -> i32 {
     }
 
     let _ = scanflags;
+    // c:2058-2114 — flag subscripts `[(i)pat]` / `[(I)pat]` on an
+    // array. The numeric parser below can't handle these; route
+    // through getarg (c:2058 `getarg(&s, &inv, v, 0, ...)`). The
+    // index-returning reverse flags (i/I) yield the 1-based array
+    // index of the match (len+1 / 0 when not found). C's getindex
+    // inv branch (c:2110-2114) turns that into a single-element
+    // access: `v->valflags |= VALFLAG_INV; v->scanflags = 0;
+    // v->start = start; v->end = start + 1`. issetvar then range-
+    // checks `end` against the array length, so `arr[(i)x]` (index
+    // = len+1, out of range) correctly reports unset. Non-index
+    // flags (r/R/k/K) still fall through to the substitution
+    // pipeline's getarg.
+    // c:1597-1615 — hash subscript resolution. For a PM_HASHED param
+    // the subscript names a key (or a flag search over keys/values).
+    // C resolves it to the element's own pm (`ht->getnode` / a fresh
+    // PM_SCALAR|PM_UNSET on a miss) so issetvar's PM_UNSET check
+    // (c:765) reports the *element's* set-ness, not the hash's. zshrs
+    // keeps assoc values in `paramtab_hashed_storage` keyed by name;
+    // resolve existence here and shape `v` so issetvar returns the
+    // right answer: found → leave the (set) hash pm with no slice
+    // (c:765 `!slice && !PM_UNSET` → 1); missing → clear `v.pm` so
+    // issetvar's `getvalue` NULL-pm guard (c:761) returns 0.
+    if let Some(p) = v.pm.as_ref() {
+        if PM_TYPE(p.node.flags as u32) == PM_HASHED {
+            let name = p.node.nam.clone();
+            let map: IndexMap<String, String> = paramtab_hashed_storage()
+                .lock()
+                .unwrap()
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let exists = if body.starts_with('(') {
+                // Flag search (i/I over keys, etc.) — getarg returns the
+                // matched key/value, empty when nothing matched.
+                match getarg(body, None, Some(&map), None) {
+                    Some(getarg_out::Value(val)) => !val.to_str().is_empty(),
+                    _ => false,
+                }
+            } else {
+                map.contains_key(body)
+            };
+            *pptr = &after_lbrack[close_pos + 1..];
+            if exists {
+                v.scanflags = 0;
+                v.start = 0;
+                v.end = -1;
+            } else {
+                v.pm = None;
+            }
+            return 0;
+        }
+    }
+    if body.starts_with('(') {
+        let pm_is_array = v
+            .pm
+            .as_ref()
+            .map_or(false, |p| PM_TYPE(p.node.flags as u32) == PM_ARRAY);
+        if pm_is_array {
+            let flag_part = &body[1..body.find(')').unwrap_or(1)];
+            let return_index = flag_part.contains('i') || flag_part.contains('I');
+            if return_index {
+                let arr: Vec<String> =
+                    v.pm.as_ref().map(|p| arrgetfn(p)).unwrap_or_default();
+                if let Some(getarg_out::Value(val)) = getarg(body, Some(&arr), None, None) {
+                    if let Ok(idx) = val.to_str().parse::<i64>() {
+                        // c:2110-2114 — inv branch single-element access.
+                        v.valflags |= VALFLAG_INV;
+                        v.scanflags = 0;
+                        v.start = idx as i32;
+                        v.end = (idx + 1) as i32;
+                        *pptr = &after_lbrack[close_pos + 1..];
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
     // c:2035-2040 — general path: getarg() would parse the start
     // index. The Rust `getarg` has a different signature (flag
     // dispatcher returning getarg_out, not C's char**+int*+zlong
