@@ -2968,6 +2968,18 @@ impl ShellExecutor {
                     .unwrap_or_default();
                 let pparams_snap = self.pparams();
                 let opts_snap = crate::ported::options::opt_state_snapshot();
+                // c:Src/exec.c:1161 — a command substitution runs in a
+                // subshell, so IFS changes inside it must NOT leak to the
+                // parent. IFS lives in the external `ifs_lock` global (not
+                // paramtab), so the paramtab snapshot above doesn't cover
+                // it: `echo $(IFS=:; set -- a b c; echo "$*")` set IFS=":"
+                // which both produced "a:b:c" AND then word-split the
+                // UNQUOTED result on the leaked ":" → "a b c". Snapshot the
+                // global IFS here and restore it (with inittyptab) below.
+                let ifs_snap = crate::ported::params::ifs_lock()
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
                 let traps_snap = crate::ported::builtin::traps_table()
                     .lock()
                     .map(|t| t.clone())
@@ -3103,6 +3115,22 @@ impl ShellExecutor {
                 }
                 self.set_pparams(pparams_snap);
                 crate::ported::options::opt_state_restore(opts_snap);
+                // Restore the parent's IFS (subshell isolation): the body's
+                // `IFS=` must not leak out and word-split the parent's use
+                // of the cmdsub result. Runtime word-splitting reads the
+                // IFS *string* (this `ifs_lock` global), so restoring it is
+                // sufficient. Deliberately do NOT call inittyptab() here —
+                // that rewrites the process-global typtab the LEXER reads
+                // on every character, and firing it per-cmdsub races
+                // concurrent lexing in zshrs's worker threads, producing
+                // spurious "parse error" flakes (HEAD ran clean 3/3; the
+                // per-cmdsub inittyptab flaked ~50%). The typtab only
+                // affects re-lexing — the parent is already compiled — and
+                // leaving it at the body's value is strictly less divergent
+                // than the prior behavior, which leaked the whole IFS.
+                if let Ok(mut g) = crate::ported::params::ifs_lock().lock() {
+                    *g = ifs_snap;
+                }
                 if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
                     *t = traps_snap;
                 }
