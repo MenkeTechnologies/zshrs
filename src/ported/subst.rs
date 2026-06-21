@@ -8609,32 +8609,53 @@ pub fn paramsubst(
                 // '::=' which call assignsparam (params.c:3193) /
                 // assignaparam (params.c:3357) / sethparam
                 // (params.c:3602) based on the `arrasg` flag.
-                value = singsub(default);
-                if arrasg == 1 {
-                    // c:3263 (A)
-                    let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                    let parts: Vec<String> = value
-                        .split(|c: char| ifs.contains(c))
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect();
-                    exec_assignaparam(&var_name, parts);
-                } else if arrasg == 2 {
-                    // c:3263 (AA)
-                    let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                    let parts: Vec<String> = value
-                        .split(|c: char| ifs.contains(c))
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect();
-                    exec_sethparam(&var_name, parts);
+                // c:Src/subst.c:3270-3273 — an array/assoc assignment
+                // (A/AA) expands the value with `multsub(&val,
+                // PREFORK_NOSHWORDSPLIT, &aval, …)` when there's no
+                // explicit split (`spbreak`/`spsep`). That preserves the
+                // ELEMENTS of a quoted array expansion (`"${(kv)src[@]}"`
+                // keeps "beta gamma" as one value) AND does NOT word-split
+                // a plain string (`${(A)n::=a b c}` → ONE element "a b c",
+                // matching zsh). The previous port singsub'd to a scalar
+                // then IFS-split, which both lost quoting and wrongly
+                // split. Only the (s:…:) flag (spsep) re-splits.
+                if arrasg != 0 && spsep.is_none() {
+                    let (joined, parts, _isarr, _ms) =
+                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    value = joined;
+                    if arrasg == 1 {
+                        exec_assignaparam(&var_name, parts); // c:3263 (A)
+                    } else {
+                        exec_sethparam(&var_name, parts); // c:3263 (AA)
+                    }
                 } else {
-                    let __s = match subscript.as_deref() {
-                        Some(k) => format!("{}[{}]", var_name, k),
-                        None => var_name.clone(),
-                    };
-                    assignsparam(&__s, &value, 0);
-                    exec_sync_state_from_paramtab();
+                    value = singsub(default);
+                    if arrasg == 1 {
+                        // c:3263 (A) with (s) separator
+                        let sep = spsep.clone().unwrap_or_default();
+                        let parts: Vec<String> = value
+                            .split(|c: char| sep.contains(c))
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect();
+                        exec_assignaparam(&var_name, parts);
+                    } else if arrasg == 2 {
+                        // c:3263 (AA) with (s) separator
+                        let sep = spsep.clone().unwrap_or_default();
+                        let parts: Vec<String> = value
+                            .split(|c: char| sep.contains(c))
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect();
+                        exec_sethparam(&var_name, parts);
+                    } else {
+                        let __s = match subscript.as_deref() {
+                            Some(k) => format!("{}[{}]", var_name, k),
+                            None => var_name.clone(),
+                        };
+                        assignsparam(&__s, &value, 0);
+                        exec_sync_state_from_paramtab();
+                    }
                 }
             } else if let Some(default) = r.strip_prefix(":=") {
                 // c:3245
