@@ -7673,6 +7673,12 @@ pub fn paramsubst(
                     // (keep matching instead of dropping it). Mirrors the
                     // match_fn + invert logic of the main `:#` arm.
                     if let Some(pat) = rest.as_str().strip_prefix(":#") {
+                        // c:Src/subst.c:3101 — consume a doubled `#`
+                        // (`:##pat` ≡ `:#pat`); see the main `:#` arm.
+                        let pat = pat
+                            .strip_prefix('#')
+                            .or_else(|| pat.strip_prefix(crate::ported::zsh_h::Pound))
+                            .unwrap_or(pat);
                         let arr_src: Vec<String> = arrays_get(&var_name)
                             .or_else(|| {
                                 assoc_get(&var_name).map(|m| m.values().cloned().collect())
@@ -8335,6 +8341,17 @@ pub fn paramsubst(
             let r = rest.as_str();
             if let Some(pat) = r.strip_prefix(":#") {
                 // c:3540 (:#pat filter)
+                // c:Src/subst.c:3101 — `(c == '#' || c == Pound) && c == s[1]`
+                // consumes a DOUBLED operator char and sets SUB_LONG, so
+                // `${a:##pat}` is identical to `${a:#pat}` for the filter (the
+                // second `#` is the operator, not the pattern). Strip the
+                // optional doubling `#` so `STATES__*` isn't compiled as the
+                // bad pattern `#STATES__*`. SUB_LONG is a no-op for a
+                // whole-element filter match, so only the consume is needed.
+                let pat = pat
+                    .strip_prefix('#')
+                    .or_else(|| pat.strip_prefix(crate::ported::zsh_h::Pound))
+                    .unwrap_or(pat);
                 // Match-test on element(s). Drops elements (or
                 // empties scalar) when pattern matches; keeps
                 // unchanged when not. With (M) flag in sub_flags,
