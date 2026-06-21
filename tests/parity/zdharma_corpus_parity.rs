@@ -883,7 +883,6 @@ line_count $'a\nb\nc\nd\n'"###);
 
     /// zshelldoc — (S) non-greedy block capture between markers.
     #[test]
-    #[ignore = "zshrs gap: ${(S)body/(#b)*BEGIN(*)END*/...} non-greedy block capture drops the trailing *-matched text ('outro' lost)"]
     fn s_block_capture() {
         assert_parity(r###"setopt extendedglob
 body_comments="intro BEGIN the synopsis text END outro"
