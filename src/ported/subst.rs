@@ -6782,7 +6782,12 @@ pub fn paramsubst(
                                     }
                                     numstr.push(cc);
                                 }
-                                let val = numstr.trim().parse::<i64>().ok()?;
+                                // c:Src/params.c:1458,1471 — `(n.N.)`/`(b.N.)`
+                                // arg is `mathevalarg(...)`, a full math
+                                // expression (variables, arithmetic), not a
+                                // bare integer. `(b:itmp+2:i)` evaluates
+                                // `itmp+2` with itmp looked up + arithmetic.
+                                let val = crate::ported::math::mathevali(numstr.trim()).ok()?;
                                 if c == 'n' {
                                     num = Some(val);
                                 } else {
