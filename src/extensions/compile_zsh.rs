@@ -1569,6 +1569,16 @@ impl ZshCompiler {
                 || first_untoked.starts_with('='));
         if first_is_dynamic {
             let argc = simple.words.len() as u8;
+            // c:Src/exec.c:3009 `use_cmdoutval = !args` — clear the
+            // cmd-subst-ran flag BEFORE this command's words expand, so a
+            // `$(...)` from an earlier command can't make THIS command's
+            // null-command branch (BUILTIN_EXEC_DYNAMIC empty-argv) keep a
+            // stale `$?`. A `$(...)` inside these words re-sets it.
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_USE_CMDOUTVAL_RESET, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
             for w in &simple.words {
                 self.compile_word_str(w);
             }
