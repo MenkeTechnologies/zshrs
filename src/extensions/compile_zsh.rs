@@ -5422,7 +5422,42 @@ impl ZshCompiler {
         // Direct port of zsh's aval threading through paramsubst when
         // the operand is itself a recursive substitution.
         if !has_bnull {
-            if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+            // Guard: this fast path is for a SINGLE outer `${…}` whose
+            // operand is a nested `${…}`. `strip_prefix("${") +
+            // strip_suffix('}')` alone does NOT verify the leading `${`
+            // matches the FINAL `}` — for two adjacent expansions
+            // `${a}${b}` it stripped `${b}`'s close and swallowed `${b}`
+            // into the body, emitting it literally. Require the leading
+            // `${`'s matching close (counting `${` opens / `}` closes) to
+            // be the last char so a multi-expansion word falls through to
+            // the segment splitter instead.
+            let leading_brace_spans_word = untoked.starts_with("${") && {
+                let ub = untoked.as_bytes();
+                let mut d = 0i32;
+                let mut k = 0usize;
+                let mut spans = false;
+                while k < ub.len() {
+                    if ub[k] == b'$' && k + 1 < ub.len() && ub[k + 1] == b'{' {
+                        d += 1;
+                        k += 2;
+                        continue;
+                    }
+                    if ub[k] == b'}' {
+                        d -= 1;
+                        if d == 0 {
+                            spans = k + 1 == ub.len();
+                            break;
+                        }
+                    }
+                    k += 1;
+                }
+                spans
+            };
+            if let Some(inner) = untoked
+                .strip_prefix("${")
+                .and_then(|s| s.strip_suffix('}'))
+                .filter(|_| leading_brace_spans_word)
+            {
                 // Operand starts with `${`: the inner expansion is
                 // the value-source. Detect outer operator `/` / `//` /
                 // `/#` / `/%` / `##` / `#` / `%%` / `%` after the
@@ -9265,14 +9300,20 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // Inbrace: ${...}
+        // Inbrace: ${...}. Track BOTH token (\u{8f}/\u{90}) AND literal
+        // `{`/`}` braces — a nested `${…}` inside the body can arrive in
+        // either form (e.g. `${${x%${x##pat}}/a/b}` mixes Inbrace tokens
+        // with literal inner braces), and counting only the token form
+        // closed the outer expansion at the first INNER `}`, so the
+        // trailing expansion in `${…nested…}${x##pat}` was left literal.
+        // Mirrors the literal-`{` arm below.
         Some('\u{8f}') => {
             let mut depth = 1;
             let mut j = i + 2;
             while j < chars.len() && depth > 0 {
                 match chars[j] {
-                    '\u{8f}' => depth += 1,
-                    '\u{90}' => depth -= 1,
+                    '{' | '\u{8f}' => depth += 1,
+                    '}' | '\u{90}' => depth -= 1,
                     _ => {}
                 }
                 j += 1;

@@ -946,7 +946,6 @@ print -l $descending_list"##,
 
     /// zsh-z.plugin.zsh:402 — `(@on)` sort + nested POSIX-class `##` strip.
     #[test]
-    #[ignore = "zshrs gap: nested ${x##[[:digit:]]##[[:punct:]]...} POSIX-class repetition inside ${x%...} not expanded (literal pattern emitted)"]
     fn ascending_sort_posix_class_strip() {
         assert_parity(
             r##"setopt extendedglob
