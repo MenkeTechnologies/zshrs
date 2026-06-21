@@ -701,7 +701,6 @@ for k in ${(ok)kv}; do print "$k -> $kv[$k]"; done"###);
 
     /// qrcode — $* arg-join with empty-input stdin sentinel.
     #[test]
-    #[ignore = "zshrs gap: `local input=\"$*\"` captures only the first positional (plain x=\"$*\" and local x=\"$var\" both work); confirmed in isolation"]
     fn qrcode_sentinel() {
         assert_parity(r###"qc() {
   local input="$*"

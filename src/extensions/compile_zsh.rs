@@ -4651,7 +4651,15 @@ impl ZshCompiler {
                 };
                 let argc = if splice == ' ' { 1 } else { 0 };
                 self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
-                let in_scalar_assign = self.scalar_assign_depth > 0;
+                // c:Src/subst.c:3901-3920 — `ssub` (scalar-substitution)
+                // suppresses the forced split for BOTH bare `v=…` and the
+                // typeset-family `NAME=…` arg form. `typeset v="$*"` is as
+                // much a scalar assignment as `v="$*"`, so the join must
+                // fire for assign_builtin_arg_depth too (otherwise `$*`/`$@`
+                // expanded as an array and only the first element survived
+                // the scalar coercion — qrcode plugin `local input="$*"`).
+                let in_scalar_assign =
+                    self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
                 if force_split && !in_scalar_assign {
                     self.builder
                         .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
@@ -4696,7 +4704,10 @@ impl ZshCompiler {
                 if let Some(name) = array_splice_ref(&untoked) {
                     let idx = self.builder.add_constant(Value::str(name));
                     self.builder.emit(Op::LoadConst(idx), 0);
-                    let force_join = self.scalar_assign_depth > 0;
+                    // Typeset-family scalar RHS joins `[@]` like `[*]`,
+                    // same as a bare `b="${a[@]}"` scalar assign.
+                    let force_join =
+                        self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
                     let bid = if is_star || force_join {
                         crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR
                     } else {
@@ -5864,6 +5875,24 @@ impl ZshCompiler {
                         }
                     }
                 }
+                // c:Src/subst.c:3032 (sepjoin under ssub) — a SCALAR
+                // assignment RHS coerces an assembled array to one
+                // string via ${IFS[1]}. A splice segment (`"$@"` /
+                // `"${arr[@]}"`) inside a partially-quoted typeset arg
+                // (`local input="$*"`, `typeset v="$@"`) leaves the word
+                // as an array after CONCAT_SPLICE; without the coerce the
+                // array splats into the builtin arg list and only the
+                // first element survives (qrcode plugin). Bare `v="$@"`
+                // already joins via compile_assign's single-segment fast
+                // path — this covers the typeset-family multi-segment
+                // path. Gate on a splice segment (the only shape that can
+                // leave an array); the coerce is a no-op on scalars.
+                if has_splice_seg
+                    && (self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0)
+                {
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_JOIN, 0), 0);
+                }
                 if dq_marker_wrap {
                     self.dq_context_depth -= 1;
                 }
@@ -5944,9 +5973,10 @@ impl ZshCompiler {
         // "Globbing is only done for multios."). Without this,
         // `unsetopt multios; echo hi > *.txt` globbed the target
         // instead of creating the literal file `*.txt`.
-        let mode = if base_mode == 1 && self.scalar_assign_depth > 0 {
+        let scalar_assign_ctx = self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+        let mode = if base_mode == 1 && scalar_assign_ctx {
             5
-        } else if base_mode == 0 && self.scalar_assign_depth > 0 {
+        } else if base_mode == 0 && scalar_assign_ctx {
             6
         } else if base_mode == 0 && self.redir_word_depth > 0 {
             7
