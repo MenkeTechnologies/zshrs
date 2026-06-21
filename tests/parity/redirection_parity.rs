@@ -250,7 +250,6 @@ mod multiple_redirects {
 
     /// Multiple `>` on same command — only last takes effect for fd 1.
     #[test]
-    #[ignore = "ZSHRS DIVERGENCE: multi-`>` on same cmd vs zsh's last-wins or both-fail"]
     fn second_gt_wins_for_stdout() {
         let d = tdir();
         assert_parity_in(
