@@ -457,7 +457,6 @@ mod zdlibs {
 
     /// (S) non-greedy match via (#b) backref + side-effect ::= inside discard.
     #[test]
-    #[ignore = "zshrs gap: (S) non-greedy match is greedy (m1=abbb vs ab) and the no-match retval path is wrong"]
     fn s_nongreedy_match_sidefx() {
         assert_parity(r###"setopt extendedglob
 f(){ local str=$1 pat=$2 retval=1; local -a match mbegin mend
