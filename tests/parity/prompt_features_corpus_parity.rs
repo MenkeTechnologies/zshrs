@@ -631,7 +631,6 @@ rm -rf "$d""###);
 
     /// (e) templating over an array.
     #[test]
-    #[ignore = "zshrs gap: ${(e)parts[@]} eval-expansion over an array yields nothing (scalar (e) works, array (e) does not)"]
     fn e_templating_array() {
         assert_parity(r###"name="world"; greeting="hello \$name"
 print -r -- "${(e)greeting}"
