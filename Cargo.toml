@@ -28,7 +28,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.0"
+version = "0.12.1"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies"]
@@ -181,7 +181,7 @@ members = [".", "daemon"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-zshrs-daemon = { path = "daemon", version = "0.12.0" }
+zshrs-daemon = { path = "daemon", version = "0.12.1" }
 
 [profile.release]
 opt-level = 3
