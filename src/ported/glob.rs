@@ -4723,6 +4723,14 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
     let is_inpar = |c: char| c == '(' || c == '\u{88}'; // Inpar
     let is_outpar = |c: char| c == ')' || c == '\u{8a}'; // Outpar
     let is_hash = |c: char| c == '#' || c == '\u{84}'; // Pound
+    // glob_path is fed BOTH raw (`*`) and lexer-TOKENIZED (`Star` =
+    // \u{87}) patterns — zglob/stryke tokenize before calling, the
+    // expand_glob fast paths don't (see globdata_glob's haswilds note).
+    // The `**`-recursion detection below must see a star in EITHER form,
+    // exactly as the paren/hash helpers above already do; matching only
+    // ASCII `*` left tokenized `**` as a literal component, collapsing
+    // `**/x` to a single directory level.
+    let is_star = |c: char| c == '*' || c == crate::ported::zsh_h::Star; // Star
 
     // A small Peekable-like shim over the index walk to keep the rest
     // of the original logic readable.
@@ -4813,10 +4821,10 @@ fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
                 in_bracket = false;
                 current.push(c);
             }
-            '*' if !in_bracket && peek!() == Some('*') => {
+            c if !in_bracket && is_star(c) && peek!().is_some_and(is_star) => {
                 idx += 1;
-                // Check for ***
-                let follow = peek!() == Some('*');
+                // Check for *** (third star, raw or tokenized)
+                let follow = peek!().is_some_and(is_star);
                 if follow {
                     idx += 1;
                 }
