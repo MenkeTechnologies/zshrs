@@ -550,7 +550,21 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // emit/parse helpers mutate them in sequence. C is single-threaded
     // so the statics are race-free there; Rust must serialise.
     let _compile_guard = PATCOMPILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // c:1610 `patstartch` — the leading plain character of the pattern.
+    // C only needs the NOGLD leading-dot rule to know whether a pattern
+    // explicitly begins with `.` (so `.*` matches dot files while `*`
+    // does not). Capture it before `exp` is shadowed by the normalizer
+    // below. A leading glob token (Star/Quest/Inbrack/…) is not plain, so
+    // only a literal `.` is recorded; everything else stays 0.
+    let patstartch_lead: u8 = if exp.starts_with('.') { b'.' } else { 0 };
     patcompstart();
+    // c:525 — `patcompstart` seeds `patglobflags` with the option-derived
+    // default (GF_IGNCASE when CASEGLOB/CASEPATHS are off, GF_MULTIBYTE when
+    // MULTIBYTE is on). The `patglobflags.store(0)` reset below (clean slate
+    // for the `(#…)` hoist loop) would otherwise drop that seed before the
+    // prog's globflags are built — capture the case bits now so `pattry`
+    // honors `setopt nocaseglob`.
+    let seeded_globflags = patglobflags.load(Ordering::Relaxed);
     // === C-contract input decode (zpc_chars, Src/pattern.c:248) =====
     // C's patcompile consumes the LEXER'S tokenized encoding: glob
     // metachars arrive as token bytes (`Pound`..`Bang`, zsh.h:159-183
@@ -675,7 +689,15 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // compared the raw byte `b'#'`, allowing `(#s)` / `(#e)` /
     // `(#i)` to fire even without EXTENDEDGLOB (parity bugs #18/#19
     // vs real zsh).
-    let mut hoisted_globflags: i32 = GF_MULTIBYTE; // c:525
+    // c:525 — the compiled prog's globflags accumulate from `patglobflags`,
+    // which `patcompstart` seeded with GF_IGNCASE when CASEGLOB/CASEPATHS are
+    // off (`setopt nocaseglob`). Carry those case bits through so `pattry`
+    // matches case-insensitively; `matchpat` masks the loss by pre-folding
+    // both sides, but the glob scanner now drives `pattry` directly. Keep
+    // the prior unconditional GF_MULTIBYTE to avoid disturbing multibyte
+    // callers that relied on it.
+    let mut hoisted_globflags: i32 =
+        GF_MULTIBYTE | (seeded_globflags & (GF_IGNCASE | GF_LCMATCHUC));
     let hash_char_pre = zpc_special.lock().unwrap()[ZPC_HASH as usize]; // c:957
     while hash_char_pre == b'#' {
         let off = patparse_off.load(Ordering::Relaxed);
@@ -775,7 +797,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                     globend: patglobflags.load(Ordering::Relaxed),
                     flags: pf_pre | PAT_PURES as i32, // c:625
                     patnpar: 0,
-                    patstartch: 0,
+                    patstartch: patstartch_lead, // c:1610
                 },
                 literal,
             )));
@@ -821,7 +843,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             flags: patflags.load(Ordering::Relaxed),
 
             patnpar: patnpar.load(Ordering::Relaxed) - 1,
-            patstartch: 0,
+            patstartch: patstartch_lead, // c:1610
         },
         code,
     )))
@@ -2872,14 +2894,24 @@ pub fn pattryrefs(
     // the Rust port carries it through a fn param. The PAT_* flags
     // (PAT_STATIC etc.) stay on `prog.0.flags` for the outer
     // anchor/PURES checks at lines below.
-    let match_result = patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.globflags);
-    let (mut ok, matched_end) = match match_result {
-        Some(end_pos) => {
-            // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
-            let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0;
-            (no_anchor || end_pos == trial.len(), end_pos)
+    // c:Src/pattern.c — `if (prog->flags & PAT_ANY) { ret = 1; } else { ... }`.
+    // Optimisation for a single "*" (the `**` complist node compiles its
+    // section as `patcompile(NULL, …|PAT_ANY, …)`): it always matches the
+    // whole string without running the bytecode. The PAT_NOGLD leading-dot
+    // rejection below still applies (the "except for no_glob_dots" caveat).
+    // Without this the empty `PAT_ANY` program was matched literally and
+    // only matched the empty string, so `**` descended into nothing.
+    let (mut ok, matched_end) = if (prog.0.flags & PAT_ANY as i32) != 0 {
+        (true, trial.len())
+    } else {
+        match patmatch(&prog.1, 0, trial, 0, &mut state, prog.0.globflags) {
+            Some(end_pos) => {
+                // c:2438 — `if (matched && !(prog->flags & (PAT_NOANCH|PAT_NOTEND))) ...`
+                let no_anchor = (prog.0.flags & (PAT_NOANCH | PAT_NOTEND) as i32) != 0;
+                (no_anchor || end_pos == trial.len(), end_pos)
+            }
+            None => (false, 0),
         }
-        None => (false, 0),
     };
     // c:2399-2406 — for files (PAT_NOGLD), a successful match is rejected
     // when the string starts with '.' (unless glob_dots is set, in which
@@ -2887,7 +2919,16 @@ pub fn pattryrefs(
     // glob scanner rely on the matcher for the leading-dot skip, exactly
     // as C does, instead of an explicit check in the walker. Inert for
     // non-file patterns (matchpat / [[ ]] / :# never set PAT_NOGLD).
-    if ok && (prog.0.flags & PAT_NOGLD as i32) != 0 && trial.starts_with('.') {
+    if ok
+        && (prog.0.flags & PAT_NOGLD as i32) != 0
+        && trial.starts_with('.')
+        && prog.0.patstartch != b'.'
+    {
+        // c:Src/pattern.c — NOGLD rejects a leading-dot file UNLESS the
+        // pattern itself explicitly begins with a literal `.` (so `.*`
+        // matches dot files while `*` does not). C bakes this into the
+        // compiled bytecode; the Rust matcher carries the signal on
+        // `patstartch` (c:1610) and applies the exception here.
         ok = false;
     }
     if ok {

@@ -378,79 +378,245 @@ pub fn statfullpath(s: &str, st: &str, l: bool) -> Option<Metadata> {
 // for the drift gate.
 // ===========================================================
 
-/// Top-level glob walker dispatching by pattern component.
+/// Port of `scanner(Complist q, int shortcircuit)` from `Src/glob.c:500`.
 ///
-/// Closest C equivalent: `scanner(Complist q, int shortcircuit)`
-/// at Src/glob.c:500. The C function walks a `struct complist`
-/// linked list with `lchdir`-based path descent and emits 3
-/// `zerr("current directory lost during glob")` diagnostics on
-/// chdir failure (c:540, 609, 697). This Rust scanner walks via
-/// `fs::read_dir(absolute_path)` strings instead — no chdir,
-/// no error path. Faithful port is deferred (see
-/// docs/PORT_CHECKLIST.md glob.rs entry).
-fn scanner(state: &mut globdata, components: &[PatternComponent], depth: usize) {
-    // c:500 partial port
-    if components.is_empty() {
+/// Walks the `complist` path-component chain built by `parsecomplist`,
+/// descending the directory tree one component per node. `q.closure`
+/// (set for `**` and `(dir/)#` / `(dir/)##`) drives the any-depth match:
+/// the zero-directory case scans `q.next` directly, then each matching
+/// subdirectory is re-scanned against `(q.closure) ? q : q.next` — i.e.
+/// the same node `q` repeats for `**`, matching at every depth.
+///
+/// Deviations from C, all pre-existing in this engine — NOT introduced
+/// by this port:
+///   * directory entries come from `fs::read_dir` + `zreaddir` (the
+///     ported `zreaddir`, glob.c:5217) instead of C `opendir`; same
+///     skip-`.`/`..` behaviour, and names are real (non-metafied) so no
+///     `unmeta` round-trip is needed;
+///   * the approximate-match error-reduction block (`forceerrs`/
+///     `errsfound`, glob.c:619-639) is omitted — the Rust matcher keeps
+///     no per-match error count;
+///   * `glob_pre`/`glob_suf` (ZLE prefix/suffix) filtering is omitted.
+/// Leading-dot files are filtered by `pattry`'s `PAT_NOGLD` check
+/// (pattern.rs:2890); `globdata_glob` sets `gf_noglobdots` so
+/// `parsecomplist` compiles the flag in (faithful to C's `glob()`).
+///
+/// The `in_closure_repeat` parameter is Rust-only: it carries C's
+/// `q->closure = 1` mutation across the recursion. A `(dir/)##` node
+/// (closure==2) requires at least one directory, so the zero-directory
+/// match is skipped only the FIRST time the node is entered; once we have
+/// descended one closure level it behaves like `(dir/)#` (zero-or-more).
+/// `q` is shared (`&complist`), so C's in-place field mutation is modelled
+/// by this argument instead. Callers pass `false`.
+fn scanner(
+    state: &mut globdata,
+    q: Option<&complist>,
+    shortcircuit: i32,
+    in_closure_repeat: bool,
+) {
+    use std::sync::atomic::Ordering;
+    // c:506 — `if (!q || errflag) return;`
+    let Some(q) = q else { return };
+    if errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
         return;
     }
+    let pbcwdsav = state.pathbufcwd; // c:503
+    let mut ds = init_dirsav(); // c:508
+    let path_max = crate::ported::zsh_system_h::PATH_MAX;
 
-    let base_path = if state.pathbuf.is_empty() {
-        ".".to_string()
-    } else {
-        state.pathbuf.clone()
-    };
-
-    match &components[0] {
-        PatternComponent::Pattern(pat) => {
-            // c:Src/glob.c — literal `.` / `..` path components are
-            // navigations, not pattern matches against dir entries.
-            // `./*` parses as [Pattern("."), Pattern("*")]; scan_pattern
-            // would try to read_dir match `.` against entries (which
-            // don't include `.` itself) and fail. Mirror C's path-walk
-            // by appending the literal segment to pathbuf and
-            // recursing with the rest.
-            //
-            // The leading `./` must be preserved in output (zsh:
-            // \`print -l ./*\` → "./a\n./b"), so resolve via the
-            // current dir but prepend `./` to each match path
-            // after globbing.
-            if pat == "." || pat == ".." {
-                let saved_pathbuf = state.pathbuf.clone();
-                let saved_pathpos = state.pathpos;
-                if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
-                    state.pathbuf.push('/');
-                }
-                state.pathbuf.push_str(pat);
-                state.pathbuf.push('/');
-                state.pathpos = state.pathbuf.len();
-                scanner(state, &components[1..], depth);
-                // Output preservation of `./` / `../` happens in
-                // globdata_glob's emit loop via the
-                // `leading_dot_prefix` re-prepend pass.
-                state.pathbuf = saved_pathbuf;
-                state.pathpos = saved_pathpos;
+    // c:510-518 — closure preamble: try zero directories via q.next first
+    // (skipped for `(dir/)##` until at least one directory is consumed).
+    let closure = q.closure;
+    if closure != 0 {
+        let skip_zero = q.closure == 2 && !in_closure_repeat;
+        if !skip_zero {
+            scanner(state, q.next.as_deref(), shortcircuit, false); // c:515
+            if shortcircuit != 0 && shortcircuit == state.matchct {
                 return;
             }
-            scan_pattern(state, &base_path, pat, &components[1..], depth);
         }
-        PatternComponent::Recursive { follow_links } => {
-            // Match zero directories first
-            scanner(state, &components[1..], depth);
-            // Then recurse into subdirectories (no name filter → `**`).
-            scan_recursive(state, &base_path, &components[1..], *follow_links, depth, None);
-        }
-        PatternComponent::PathClosure { pat, plus } => {
-            // c:Src/glob.c:745-766 — `(pat/)#rest` matches zero-or-more
-            // `pat/` directory levels then `rest`; `##` requires at
-            // least one. The zero-level case (only for `#`) tries `rest`
-            // at the current directory; scan_recursive with a name
-            // filter descends every dir matching `pat` and recurses
-            // (same descent shape as `**`, but restricted to `pat`).
-            if !plus {
-                scanner(state, &components[1..], depth);
+    }
+
+    let p = &q.pat; // c:519
+    if (p.0.flags & crate::ported::zsh_h::PAT_PURES as i32) != 0 {
+        // c:521-565 — pure literal section: append to the path (intermediate)
+        // or emit (final); no directory scan.
+        let start = p.0.startoff as usize;
+        let l = p.0.patmlen as usize;
+        let str_lit = String::from_utf8_lossy(&p.1[start..start + l]).into_owned();
+
+        // c:524-536 — PATH_MAX guard.
+        if l + (l == 0) as usize + state.pathpos - state.pathbufcwd as usize >= path_max {
+            if l >= path_max {
+                return;
             }
-            scan_recursive(state, &base_path, &components[1..], false, depth, Some(pat));
+            let anchor = state
+                .pathbuf
+                .get(state.pathbufcwd as usize..)
+                .unwrap_or("")
+                .to_string();
+            let err = lchdir(&anchor, Some(&mut ds), 0);
+            if err == -1 {
+                return;
+            }
+            if err != 0 {
+                zerr("current directory lost during glob");
+                return;
+            }
+            state.pathbufcwd = state.pathpos as i32;
         }
+
+        if q.next.is_some() {
+            // c:539-560 — not the last section: add to path, recurse.
+            let oppos = state.pathpos;
+            if errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR == 0 {
+                // c:543-552 — `.`/`..` handling inside a closure walk.
+                let mut add = true;
+                if closure != 0 && !state.pathbuf.is_empty() {
+                    if str_lit == "." {
+                        add = false; // c:546
+                    } else if str_lit == ".." {
+                        // c:547-551 — drop `..` that would escape the root.
+                        use std::os::unix::fs::MetadataExt;
+                        let cur: &str = &state.pathbuf;
+                        add = match (fs::metadata("/"), fs::metadata(cur)) {
+                            (Ok(r), Ok(c)) => r.ino() != c.ino() || r.dev() != c.dev(),
+                            _ => true,
+                        };
+                    }
+                }
+                if add {
+                    addpath(&mut state.pathbuf, &str_lit); // c:553
+                    state.pathpos = state.pathbuf.len();
+                    // c:554 — closure: only recurse when the new path is a
+                    // real directory (`!statfullpath("", NULL, 1)`).
+                    let recurse = closure == 0
+                        || fs::metadata(state.pathbuf.as_str())
+                            .map(|m| m.is_dir())
+                            .unwrap_or(false);
+                    if recurse {
+                        scanner(
+                            state,
+                            if closure != 0 { Some(q) } else { q.next.as_deref() },
+                            shortcircuit,
+                            closure != 0,
+                        ); // c:555
+                        if shortcircuit != 0 && shortcircuit == state.matchct {
+                            return;
+                        }
+                    }
+                    state.pathbuf.truncate(oppos); // c:558
+                    state.pathpos = oppos;
+                }
+            }
+        } else {
+            // c:561-564 — last section: emit the literal.
+            let full = std::path::Path::new(&state.pathbuf).join(&str_lit);
+            insert(state, &full, 0);
+            if shortcircuit != 0 && shortcircuit == state.matchct {
+                return;
+            }
+        }
+    } else {
+        // c:567-685 — pattern-matched section: scan the directory.
+        let base = {
+            let from_cwd = state.pathbuf.get(state.pathbufcwd as usize..).unwrap_or("");
+            if from_cwd.is_empty() {
+                ".".to_string()
+            } else {
+                from_cwd.to_string()
+            }
+        };
+        let dirs = q.next.is_some(); // c:570
+        let mut rd = match fs::read_dir(&base) {
+            Ok(d) => d,
+            Err(_) => return, // c:573 — opendir == NULL
+        };
+        // c:572-573 — collect matching subdirs, descend AFTER the dir
+        // handle is dropped (C buffers them in `subdirs`). `zreaddir(lock, 1)`
+        // ALWAYS skips `.`/`..` (c:5217); leading-dot files are admitted and
+        // then accepted/rejected by `pattry`'s PAT_NOGLD rule, so dotglob /
+        // `(D)` is handled by the compiled flag, never by re-including
+        // `.`/`..` here (that previously leaked `.`/`..` under dotglob).
+        let mut subdirs: Vec<String> = Vec::new();
+        while let Some(name) = crate::ported::utils::zreaddir(&mut rd, 1) {
+            if errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR != 0 {
+                break;
+            }
+            if !crate::ported::pattern::pattry(p, &name) {
+                continue; // c:583
+            }
+            // c:585-597 — PATH_MAX lchdir bookkeeping.
+            if pbcwdsav == state.pathbufcwd
+                && name.len() + state.pathpos - state.pathbufcwd as usize >= path_max
+            {
+                let anchor = state
+                    .pathbuf
+                    .get(state.pathbufcwd as usize..)
+                    .unwrap_or("")
+                    .to_string();
+                let err = lchdir(&anchor, Some(&mut ds), 0);
+                if err == -1 {
+                    break;
+                }
+                if err != 0 {
+                    zerr("current directory lost during glob");
+                    break;
+                }
+                state.pathbufcwd = state.pathpos as i32;
+            }
+            if dirs {
+                // c:642-655 — closure: only descend real directories.
+                if closure != 0 {
+                    let probe = std::path::Path::new(&base).join(&name);
+                    let md = if q.follow != 0 {
+                        fs::metadata(&probe)
+                    } else {
+                        fs::symlink_metadata(&probe)
+                    };
+                    match md {
+                        Ok(m) if m.is_dir() => {}
+                        _ => continue,
+                    }
+                }
+                subdirs.push(name); // c:657-663
+            } else {
+                // c:665-670 — last component: emit.
+                let full = std::path::Path::new(&base).join(&name);
+                insert(state, &full, 1);
+                if shortcircuit != 0 && shortcircuit == state.matchct {
+                    return;
+                }
+            }
+        }
+        drop(rd); // c:672 — closedir
+        // c:674-684 — descend into each collected subdir.
+        if !subdirs.is_empty() {
+            let oppos = state.pathpos;
+            for name in subdirs {
+                addpath(&mut state.pathbuf, &name);
+                state.pathpos = state.pathbuf.len();
+                scanner(
+                    state,
+                    if closure != 0 { Some(q) } else { q.next.as_deref() },
+                    shortcircuit,
+                    closure != 0,
+                ); // c:681
+                if shortcircuit != 0 && shortcircuit == state.matchct {
+                    return;
+                }
+                state.pathbuf.truncate(oppos);
+                state.pathpos = oppos;
+            }
+        }
+    }
+
+    // c:687-694 — restore cwd if we lchdir'd partway through.
+    if pbcwdsav < state.pathbufcwd {
+        if restoredir(&mut ds) != 0 {
+            zerr("current directory lost during glob"); // c:689
+        }
+        state.pathbufcwd = pbcwdsav;
     }
 }
 
@@ -487,15 +653,26 @@ pub fn parsecomplist(instr: &str) -> Option<Box<complist>> {
         let cond_a = chars.get(2) == Some(&'/'); // c:719
         let cond_b =
             chars.get(2) == Some(&crate::ported::zsh_h::Star) && chars.get(3) == Some(&'/'); // c:719
-        let cond_c = {
-            shortglob = if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSTARSHORT) {
-                1
-            } else {
-                0
-            };
-            shortglob != 0
-        }; // c:720
-        if cond_a || cond_b || cond_c {
+        // c:719-720 — `instr[2] == '/' || (instr[2] == Star && instr[3] == '/')
+        // || (shortglob = isset(GLOBSTARSHORT))`. C's `||` SHORT-CIRCUITS:
+        // the `shortglob = isset(GLOBSTARSHORT)` assignment runs ONLY when
+        // `**` is not explicitly followed by `/`. Mirror that with a lazy
+        // `||` so cond_a/cond_b keep `shortglob == 0` — an eager
+        // `let cond_c = { shortglob = … }` set it unconditionally, making
+        // `**/x` advance by 1 (`shortglob ? 1 : 3`) instead of 3, leaving a
+        // stray `*` that collapsed `**/` to a single directory level.
+        let enter = cond_a
+            || cond_b
+            || {
+                shortglob =
+                    if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSTARSHORT) {
+                        1
+                    } else {
+                        0
+                    };
+                shortglob != 0
+            }; // c:720
+        if enter {
             /* Match any number of directories. */
             // c:721
             /* with three stars, follow symbolic links */                    // c:724
@@ -3061,7 +3238,7 @@ pub fn qualnonemptydir(name: &str, buf: &libc::stat, days: i64, str: &str) -> i3
 
 /// Snapshot of glob-relevant zsh options taken at glob entry. Holds
 /// the live `isset(...)` value for each option that the glob engine
-/// or its helpers (`parse_qualifiers`, `scanner`, `scan_pattern`,
+/// or its helpers (`parse_qualifiers`, `scanner`,
 /// `sort_matches`, `glob_emit_path`) consult.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GlobOptSnapshot {
@@ -3385,21 +3562,6 @@ pub struct qualifier_set {
     pub short_circuit: Option<i32>,
 }
 
-/// Pattern component
-#[derive(Debug, Clone)]
-enum PatternComponent {
-    Pattern(String),
-    Recursive { follow_links: bool },
-    // c:Src/glob.c:745-766 parsecomplist — `(dir/)#` / `(dir/)##` path
-    // closure: zero-or-more (`#`) / one-or-more (`##`) directory levels
-    // each matching `pat`, e.g. `(sub/)#end` matches end, sub/end,
-    // sub/sub/end. zsh stores this as a `complist` node with the
-    // `closure` bit (1 = `#`, 2 = `##`); we model it as its own
-    // component since the Rust scanner walks a Vec, not a linked list
-    // with a per-node closure flag.
-    PathClosure { pat: String, plus: bool },
-}
-
 /// Enter a glob scope: snapshot options into TLS if no outer scope
 /// is active, returning a guard that clears the snapshot on Drop.
 /// Re-entrant calls (nested globdata_glob via brace expansion etc.)
@@ -3453,8 +3615,8 @@ pub fn glob_isset(opt: i32) -> bool {
 /// Closest C equivalent: `zglob` driver at glob.c:1214 calls
 /// `parsepat` (c:791) and then `scanner` (c:500). The Rust port
 /// here orchestrates qualifier parsing, brace expansion (which C
-/// does separately in `xpandbraces`), and the Rust scanner
-/// trio (`scanner`/`scan_pattern`/`scan_recursive`).
+/// does separately in `xpandbraces`), then drives the faithful
+/// `parsecomplist` (c:710) → `complist` → `scanner` (c:500) path.
 pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     // RUST-ONLY
     // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
@@ -3591,16 +3753,39 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         return vec![pattern.to_string()];
     }
 
-    // Parse the pattern into components
-    if let Some(complist) = parse_pattern(&pat) {
-        // Handle absolute vs relative paths
-        if pat.starts_with('/') {
-            state.pathbuf.push('/');
-            state.pathpos = 1;
-        }
+    // c:glob() — `gd.gf_noglobdots = !isset(GLOBDOTS)` (plus the `(D)`
+    // qualifier). parsecomplist reads this from CURGLOBDATA to compile
+    // PAT_NOGLD into each component, which is what makes pattry reject
+    // leading-dot files (pattern.rs:2890). Set it before parsing so the
+    // faithful flag-driven dot filtering replaces the old manual skip.
+    {
+        let globdots = glob_isset(GLOBDOTS)
+            || state
+                .qualifiers
+                .as_ref()
+                .map(|qf| qf.globdots)
+                .unwrap_or(false);
+        let mut gd = CURGLOBDATA.lock().unwrap_or_else(|e| e.into_inner());
+        gd.gf_noglobdots = if globdots { 0 } else { 1 };
+    }
 
-        // Do the actual globbing
-        scanner(state, &complist, 0);
+    // c:parsepat (glob.c:809-820) — init pathbuf for absolute vs relative,
+    // strip the leading `/`, then parse into a `complist` and run the
+    // faithful `scanner`. parsecomplist consumes TOKENIZED input (it tests
+    // for the `Star` token and hands segments to patcompile), so feed it
+    // `pat_tok` (already tokenized above; tokenize is idempotent).
+    state.pathbufcwd = 0; // c:812 — `DPUTS(pathbufcwd, ...)` invariant
+    let parse_src = if let Some(rest) = pat_tok.strip_prefix('/') {
+        // c:813-816 — absolute path.
+        state.pathbuf.push('/');
+        state.pathpos = 1;
+        rest.to_string()
+    } else {
+        // c:817-818 — relative to pwd.
+        pat_tok.clone()
+    };
+    if let Some(complist) = parsecomplist(&parse_src) {
+        scanner(state, Some(&complist), 0, false);
     }
 
     // c:Src/glob.c — apply top-level `~B` exclusions to the full matched
@@ -4702,213 +4887,6 @@ fn parse_subscript(
     (first, last)
 }
 
-/// Tokenize a glob pattern into `PatternComponent`s.
-/// **RUST-ONLY** — C uses `parsecomplist` (glob.c:710) which emits
-/// a `struct complist` linked list; this Rust port builds a Vec
-/// of `PatternComponent` enum variants instead.
-fn parse_pattern(pattern: &str) -> Option<Vec<PatternComponent>> {
-    // RUST-ONLY
-    let cv: Vec<char> = pattern.chars().collect();
-    let mut components = Vec::new();
-    let mut current = String::new();
-    let mut in_bracket = false;
-    let mut idx = 0usize;
-
-    // Skip leading slash for absolute paths
-    if cv.first() == Some(&'/') {
-        idx = 1;
-    }
-
-    // Token / literal forms the lexer may leave for grouping chars.
-    let is_inpar = |c: char| c == '(' || c == '\u{88}'; // Inpar
-    let is_outpar = |c: char| c == ')' || c == '\u{8a}'; // Outpar
-    let is_hash = |c: char| c == '#' || c == '\u{84}'; // Pound
-    // glob_path is fed BOTH raw (`*`) and lexer-TOKENIZED (`Star` =
-    // \u{87}) patterns — zglob/stryke tokenize before calling, the
-    // expand_glob fast paths don't (see globdata_glob's haswilds note).
-    // The `**`-recursion detection below must see a star in EITHER form,
-    // exactly as the paren/hash helpers above already do; matching only
-    // ASCII `*` left tokenized `**` as a literal component, collapsing
-    // `**/x` to a single directory level.
-    let is_star = |c: char| c == '*' || c == crate::ported::zsh_h::Star; // Star
-
-    // A small Peekable-like shim over the index walk to keep the rest
-    // of the original logic readable.
-    macro_rules! peek {
-        () => {
-            cv.get(idx).copied()
-        };
-        ($n:expr) => {
-            cv.get(idx + $n).copied()
-        };
-    }
-
-    while idx < cv.len() {
-        let c = cv[idx];
-        idx += 1;
-        match c {
-            // c:Src/glob.c:745-766 — `(dir/)#` / `(dir/)##` path closure.
-            // Detect a balanced `(...)` group (not inside `[...]`) that
-            // is immediately followed by `#` and whose body ends with a
-            // `/`: that is a directory-level closure spanning path
-            // components, NOT an in-component group. Anything else (an
-            // alternation `(a|b)`, a non-path closure `(a)#`) is left in
-            // the current component for matchpat to interpret.
-            _ if !in_bracket && is_inpar(c) => {
-                // Find the matching close paren (respecting nesting and
-                // `[...]` char-classes).
-                let mut depth = 1i32;
-                let mut j = idx;
-                let mut jb = false;
-                while j < cv.len() && depth > 0 {
-                    let d = cv[j];
-                    if d == '[' {
-                        jb = true;
-                    } else if d == ']' {
-                        jb = false;
-                    } else if !jb && is_inpar(d) {
-                        depth += 1;
-                    } else if !jb && is_outpar(d) {
-                        depth -= 1;
-                    }
-                    j += 1;
-                }
-                // j now points one past the close paren (if balanced).
-                let close_idx = j.wrapping_sub(1);
-                let balanced = depth == 0;
-                let body_ends_slash = balanced && close_idx >= 1 && cv[close_idx - 1] == '/';
-                let followed_by_hash = balanced && cv.get(j).copied().is_some_and(is_hash);
-                if balanced && body_ends_slash && followed_by_hash {
-                    // Path closure. Flush any pending component first.
-                    if !current.is_empty() {
-                        components.push(PatternComponent::Pattern(std::mem::take(&mut current)));
-                    }
-                    // Body without the surrounding parens and trailing `/`.
-                    let body: String = cv[idx..close_idx - 1].iter().collect();
-                    // `##` (one-or-more) vs `#` (zero-or-more).
-                    let plus = cv.get(j + 1).copied().is_some_and(is_hash);
-                    components.push(PatternComponent::PathClosure { pat: body, plus });
-                    idx = j + 1 + if plus { 1 } else { 0 };
-                    continue;
-                }
-                // Not a path closure: push the whole `(...)` group (and a
-                // trailing `#`/`##` if present) into the current component
-                // verbatim so matchpat handles alternation / closure.
-                if balanced {
-                    current.extend(cv[idx - 1..j].iter());
-                    idx = j;
-                    while peek!().is_some_and(is_hash) {
-                        current.push(cv[idx]);
-                        idx += 1;
-                    }
-                } else {
-                    // Unbalanced — leave as-is; downstream patcompile
-                    // reports "bad pattern" exactly like zsh.
-                    current.push(c);
-                }
-            }
-            '/' if !in_bracket => {
-                if !current.is_empty() {
-                    components.push(PatternComponent::Pattern(current.clone()));
-                    current.clear();
-                }
-            }
-            '[' => {
-                in_bracket = true;
-                current.push(c);
-            }
-            ']' => {
-                in_bracket = false;
-                current.push(c);
-            }
-            c if !in_bracket && is_star(c) && peek!().is_some_and(is_star) => {
-                idx += 1;
-                // Check for *** (third star, raw or tokenized)
-                let follow = peek!().is_some_and(is_star);
-                if follow {
-                    idx += 1;
-                }
-                // Direct port of zsh/Src/glob.c:717-742 parsecomplist:
-                // `**` is recursive ONLY when followed by `/` (or `***/`,
-                // or when GLOBSTARSHORT is set). Without those, it should
-                // collapse to a literal `*` + `*` pair (which the matcher
-                // treats as a single `*` since `**` ≡ `*` for non-recursive
-                // contexts in zsh). The glob_star_short option flips the
-                // strict gate off so bare `**` recurses without `/`.
-                let has_slash = peek!() == Some('/');
-                let recursive = has_slash || follow || glob_isset(GLOBSTARSHORT);
-                if has_slash {
-                    idx += 1;
-                }
-                if recursive {
-                    if !current.is_empty() {
-                        components.push(PatternComponent::Pattern(current.clone()));
-                        current.clear();
-                    }
-                    components.push(PatternComponent::Recursive {
-                        follow_links: follow,
-                    });
-                    // GLOBSTARSHORT semantics — zsh/Src/glob.c:727-730
-                    // `instr += ((shortglob ? 1 : 3) + follow);` leaves
-                    // ONE `*` in place when entering the recursive path
-                    // without a `/` separator, so `**.c` ≡ `**/*.c` and
-                    // `**foo` ≡ `**/*foo`. Without this prepend, the
-                    // remaining segment was parsed literally — `**.stk`
-                    // became [Recursive, Pattern(".stk")], which only
-                    // matched files literally named `.stk`. Gate on
-                    // `!has_slash && !follow` since `**/X` and `***/X`
-                    // already consumed their separator and don't need
-                    // the glue star.
-                    if !has_slash && !follow && peek!().is_some() && peek!() != Some('/')
-                    {
-                        current.push('*');
-                    }
-                } else {
-                    // Strict zsh: `**foo` (no slash, no shortglob) is
-                    // a literal pair of stars in the same path component.
-                    // Two `*` collapse to one in zsh pattern semantics.
-                    current.push('*');
-                }
-            }
-            _ => current.push(c),
-        }
-    }
-
-    if !current.is_empty() {
-        components.push(PatternComponent::Pattern(current));
-    }
-
-    // Trailing `**` (or `**/`) with no following pattern — without an
-    // implicit `*`, the scanner walks the tree but emits nothing, since
-    // `Pattern` components are what produce match output. zshrs synthesis
-    // direction (per CLAUDE.md): absorb good ideas from other shells. Both
-    // zsh-strict (`**` ≡ `*` top-level) and bash-globstar (`**` ≡ `**/*`
-    // recursive) are reasonable; we pick the bash-globstar interpretation
-    // because `**` empty-handed should mean "everything", and `*` already
-    // exists for the top-level case. A user wanting top-level only writes
-    // `*`, never `**`. This makes `**(/)` ≡ "every directory recursively"
-    // and `**(.)` ≡ "every file recursively" — the readings users reach
-    // for first.
-    if let Some(PatternComponent::Recursive { .. }) = components.last() {
-        components.push(PatternComponent::Pattern("*".to_string()));
-    }
-
-    if components.is_empty() {
-        None
-    } else {
-        Some(components)
-    }
-}
-
-/// One-component scanner — match `pattern` against entries in `base`.
-///
-/// Body mirrors C `scanner()` glob.c:580-694 (the
-/// `else { /* Do pattern matching on current path section */ }`
-/// arm). Now with the chdir-based path descent + 3 `zerr("current
-/// directory lost during glob")` emissions when:
-///   - the accumulated path would exceed PATH_MAX and `lchdir` fails (c:539-541)
-///   - the discovered match path likewise exceeds PATH_MAX and `lchdir` fails (c:608-610)
-///   - `restoredir` fails at the end of the walk (c:696-697)
 /// Port of `static void insert(char *s, int checked)` from `Src/glob.c:346`.
 /// Records one matched path into the glob result list: runs the qualifier
 /// walk (`check_qualifiers` = the c:381-419 `struct qual` walk over the
@@ -5010,176 +4988,6 @@ pub fn insert(state: &mut globdata, s: &Path, checked: i32) {
             sort_strings: Vec::new(),
         });
         state.matchct += 1; // c:479 matchptr++
-    }
-}
-
-fn scan_pattern(
-    state: &mut globdata,
-    base: &str,
-    pattern: &str,
-    rest: &[PatternComponent],
-    depth: usize,
-) {
-    // c:580
-    let pbcwdsav = state.pathbufcwd; // c:504
-    let mut ds = init_dirsav(); // c:510
-    let path_max = crate::ported::zsh_system_h::PATH_MAX;
-
-    let dir = match fs::read_dir(base) {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-
-    // c:Src/glob.c — globdots is the GLOBAL `dotglob`/`globdots`
-    // option OR the per-glob `(D)` qualifier. The qualifier lives
-    // on state.qualifiers and is parsed BEFORE walking starts.
-    let qual_globdots = state
-        .qualifiers
-        .as_ref()
-        .map(|q| q.globdots)
-        .unwrap_or(false);
-    let no_glob_dots = !glob_isset(GLOBDOTS) && !qual_globdots;
-    for entry in dir.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        // Skip hidden files unless pattern starts with `.`. The bash
-        // alias `dotglob` resolves to `globdots` in zsh (per
-        // OPT_ALIAS entry at options.c:270); we read only the canonical name.
-        if no_glob_dots && name.starts_with('.') && !pattern.starts_with('.') {
-            continue;
-        }
-        let extended_glob = glob_isset(EXTENDEDGLOB);
-        let case_glob = glob_isset(CASEGLOB);
-        if matchpat(pattern, &name, extended_glob, case_glob) {
-            let path = entry.path();
-
-            if rest.is_empty() {
-                // c:666-668 — final filename component: hand the match to
-                // insert(), which runs the qualifier walk and appends the
-                // entry (replacing the former inline check+push).
-                insert(state, &path, 0);
-            } else {
-                // c:599-613 — discovered name lengthens path; if the
-                // accumulated path > PATH_MAX, descend into the cwd
-                // with lchdir so further reads use shorter paths.
-                if pbcwdsav == state.pathbufcwd
-                    && name.len() + state.pathpos - state.pathbufcwd as usize >= path_max
-                {
-                    let cwd_anchor = state.pathbuf.get(state.pathbufcwd as usize..).unwrap_or("");
-                    // c:605 — `err = lchdir(unmeta(pathbuf+pathbufcwd), &ds, 0);`
-                    // d=&ds (soft mode) so ds.level accumulates for the
-                    // final restoredir; hard=0.
-                    if lchdir(cwd_anchor, Some(&mut ds), 0) == 0 {
-                        state.pathbufcwd = state.pathpos as i32; // c:612
-                    } else {
-                        // c:608-610 — `zerr("current directory lost
-                        // during glob"); break;` — restoredir at the
-                        // end runs unconditionally so we abandon the
-                        // walk cleanly.
-                        zerr("current directory lost during glob");
-                        break;
-                    }
-                }
-                // c:614 — recurse into subdir.
-                if path.is_dir() {
-                    let old_pos = state.pathbuf.len();
-                    if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
-                        state.pathbuf.push('/');
-                    }
-                    state.pathbuf.push_str(&name);
-                    state.pathpos = state.pathbuf.len();
-                    scanner(state, rest, depth + 1);
-                    state.pathbuf.truncate(old_pos);
-                    state.pathpos = old_pos;
-                }
-            }
-        }
-    }
-    // c:695-702 — restore cwd if we lchdir'd partway through this walk.
-    if pbcwdsav < state.pathbufcwd {
-        if restoredir(&mut ds) != 0 {
-            zerr("current directory lost during glob"); // c:697
-        }
-        state.pathbufcwd = pbcwdsav; // c:701
-    }
-    let _ = (depth, base); // suppress unused warnings
-}
-
-/// Recursive `**`-style descent matching `rest` from every
-/// descendant directory of `base`.
-/// **RUST-ONLY** — C handles recursion via the `closure` bit on
-/// each `struct complist` node, not via a separate function.
-fn scan_recursive(
-    // RUST-ONLY
-    state: &mut globdata,
-    base: &str,
-    rest: &[PatternComponent],
-    follow_links: bool,
-    depth: usize,
-    // c:Src/glob.c:745-766 — when `Some(pat)`, this is a `(pat/)#`
-    // path closure: only descend dirs whose name matches `pat` (vs `**`
-    // which descends every dir). `None` = the unrestricted `**` walk.
-    match_pat: Option<&str>,
-) {
-    let dir = match fs::read_dir(base) {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    let extended_glob = glob_isset(EXTENDEDGLOB);
-    let case_glob = glob_isset(CASEGLOB);
-
-    // c:Src/glob.c — globdots is the GLOBAL `dotglob`/`globdots`
-    // option OR the per-glob `(D)` qualifier (`gf_glob.dots = 1`).
-    // The qualifier lives on state.qualifiers and is parsed BEFORE
-    // walking starts.
-    let qual_globdots = state
-        .qualifiers
-        .as_ref()
-        .map(|q| q.globdots)
-        .unwrap_or(false);
-    let include_dots = glob_isset(GLOBDOTS) || qual_globdots;
-    for entry in dir.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        // Skip hidden files (bash `dotglob` aliases to zsh
-        // `globdots` per OPT_ALIAS entry at options.c:270). For a
-        // `(pat/)#` closure, a hidden dir is still eligible when the
-        // closure pattern itself begins with `.` (scan_pattern parity).
-        let dot_ok = include_dots || match_pat.is_some_and(|p| p.starts_with('.'));
-        if !dot_ok && name.starts_with('.') {
-            continue;
-        }
-
-        let path = entry.path();
-        let is_dir = if follow_links {
-            path.is_dir()
-        } else {
-            entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
-        };
-
-        if is_dir {
-            // `(pat/)#` closure: only descend dirs whose name matches
-            // `pat`. `**` (match_pat None) descends every dir.
-            if let Some(p) = match_pat {
-                if !matchpat(p, &name, extended_glob, case_glob) {
-                    continue;
-                }
-            }
-            let old_pos = state.pathbuf.len();
-            if !state.pathbuf.is_empty() && !state.pathbuf.ends_with('/') {
-                state.pathbuf.push('/');
-            }
-            state.pathbuf.push_str(&name);
-
-            // Try matching rest from this directory
-            scanner(state, rest, depth + 1);
-
-            // Continue recursing (carrying the closure filter, if any).
-            let next_base = state.pathbuf.clone();
-            scan_recursive(state, &next_base, rest, follow_links, depth + 1, match_pat);
-
-            state.pathbuf.truncate(old_pos);
-        }
     }
 }
 
