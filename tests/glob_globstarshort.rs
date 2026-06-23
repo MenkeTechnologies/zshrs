@@ -59,7 +59,12 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
     let pattern = format!("{}/**.stk", root.display());
     let mut got = {
         set_opts();
-        zsh::glob::glob(&pattern)
+        // glob_path's matcher recognizes only glob-TOKENIZED metacharacters
+        // (`Star` etc.); a raw `*` reaches it as a literal. Tokenize first,
+        // exactly as the production caller (stryke's stryke_glob) does.
+        let mut tok = pattern.clone();
+        zsh::glob::tokenize(&mut tok);
+        zsh::glob::glob_path(&tok)
     };
     got.sort();
 
@@ -102,7 +107,12 @@ fn globstarshort_double_star_dot_rs_finds_project_sources() {
     let pattern = format!("{}/src/**.rs", manifest_dir);
     let got = {
         set_opts();
-        zsh::glob::glob(&pattern)
+        // glob_path's matcher recognizes only glob-TOKENIZED metacharacters
+        // (`Star` etc.); a raw `*` reaches it as a literal. Tokenize first,
+        // exactly as the production caller (stryke's stryke_glob) does.
+        let mut tok = pattern.clone();
+        zsh::glob::tokenize(&mut tok);
+        zsh::glob::glob_path(&tok)
     };
 
     assert!(
@@ -118,9 +128,61 @@ fn globstarshort_double_star_dot_rs_finds_project_sources() {
         );
     }
 
-    // Spot check: known nested files exist.
-    let has_glob_rs = got.iter().any(|p| p.ends_with("/src/glob.rs"));
-    let has_exec_rs = got.iter().any(|p| p.ends_with("/src/vm_helper"));
-    assert!(has_glob_rs, "src/glob.rs not found in `**.rs` results");
-    assert!(has_exec_rs, "src/exec.rs not found in `**.rs` results");
+    // Spot check: known nested files exist. glob.rs lives under
+    // src/ported/ (nested) — proves the walk descends past depth 1;
+    // vm_helper.rs sits directly under src/ (depth 0 relative to the
+    // `**` anchor) — proves the zero-directory branch fires too.
+    let has_glob_rs = got.iter().any(|p| p.ends_with("/src/ported/glob.rs"));
+    let has_vm_helper_rs = got.iter().any(|p| p.ends_with("/src/vm_helper.rs"));
+    assert!(has_glob_rs, "src/ported/glob.rs not found in `**.rs` results");
+    assert!(has_vm_helper_rs, "src/vm_helper.rs not found in `**.rs` results");
+}
+
+/// Explicit-separator `**/*.md` must keep recursing at EVERY depth (0, 1, N)
+/// even with GLOBSTARSHORT on. parsecomplist mirrors C's short-circuiting
+/// `str[2]=='/' || … || (shortglob = isset(GLOBSTARSHORT))`: when `**` is
+/// followed by an explicit `/`, the `shortglob` assignment never runs, so
+/// the parser advances past `**/` (3 chars) and the next component stays
+/// `*.md`. An eager evaluation of the `shortglob` branch set it to 1
+/// regardless, advanced by 1, left a stray `*`, and collapsed `**/` to a
+/// single directory level — so `**/*.md` returned only the depth-1 match.
+#[test]
+fn globstarshort_explicit_slash_double_star_recurses_all_depths() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    let top = root.join("top.md");
+    let mid = root.join("a/mid.md");
+    let deep = root.join("a/b/c/deep.md");
+
+    for f in [&top, &mid, &deep] {
+        fs::create_dir_all(f.parent().unwrap()).unwrap();
+        fs::write(f, b"").unwrap();
+    }
+
+    let pattern = format!("{}/**/*.md", root.display());
+    let mut got = {
+        set_opts();
+        // glob_path's matcher recognizes only glob-TOKENIZED metacharacters
+        // (`Star` etc.); a raw `*` reaches it as a literal. Tokenize first,
+        // exactly as the production caller (stryke's stryke_glob) does.
+        let mut tok = pattern.clone();
+        zsh::glob::tokenize(&mut tok);
+        zsh::glob::glob_path(&tok)
+    };
+    got.sort();
+
+    let normalize = |p: &Path| p.canonicalize().unwrap().to_string_lossy().to_string();
+    let mut want = vec![normalize(&top), normalize(&mid), normalize(&deep)];
+    want.sort();
+    let got_normalized: Vec<String> = got
+        .iter()
+        .map(|s| Path::new(s).canonicalize().unwrap().to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(
+        got_normalized, want,
+        "`**/*.md` with globstarshort must hit depth 0/1/N; got {:?}",
+        got
+    );
 }
