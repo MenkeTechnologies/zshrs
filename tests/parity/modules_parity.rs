@@ -1719,10 +1719,7 @@ sysread -s 5 -i $fd c; echo "eofrc=$? c=[$c]""#,
     /// any read, c:64-66 contract).
     #[test]
     fn sysread_bad_fd_code_2() {
-        assert_parity(&with_modules(
-            &["system"],
-            "sysread -i 99 buf; echo rc=$?",
-        ));
+        assert_parity(&with_modules(&["system"], "sysread -i 99 buf; echo rc=$?"));
     }
 
     /// `sysread -i in -o out` copies straight fd-to-fd without touching
@@ -1855,10 +1852,7 @@ print -rn -- "$(<{p})""#,
         }
         let dir = tempfile::tempdir().expect("tempdir");
         let f = dir.path().join("nodir").join("f");
-        let script = with_modules(
-            &["system"],
-            &format!("sysopen -w -u fd {}", f.display()),
-        );
+        let script = with_modules(&["system"], &format!("sysopen -w -u fd {}", f.display()));
         let z = run_zsh(&script);
         let r = run_zshrs(&script);
         assert_eq!(z.stderr, r.stderr, "stderr divergence on:\n{}", script);
@@ -2035,7 +2029,9 @@ mod zmodload_autoload_on_use {
         // First call: load_module's `failed to load module` diagnostic,
         // rc=1 (C's execbuiltin head deletes the stub, builtin.c:264-267).
         // Second call: plain `command not found`, rc=127.
-        assert_parity(r#"zmodload -ab zsh/bogus mybltn 2>/dev/null; mybltn 2>/dev/null; echo "r1=$?"; mybltn 2>/dev/null; echo "r2=$?""#);
+        assert_parity(
+            r#"zmodload -ab zsh/bogus mybltn 2>/dev/null; mybltn 2>/dev/null; echo "r1=$?"; mybltn 2>/dev/null; echo "r2=$?""#,
+        );
     }
 
     #[test]
@@ -2043,7 +2039,9 @@ mod zmodload_autoload_on_use {
         // Module loads but lacks feature b:notreal — ensurefeature
         // cancels the autoload and resolvebuiltin zerrs (c:2716-2720);
         // zerr aborts the remaining list, so no echo output, rc=1.
-        assert_parity(r#"zmodload -ab zsh/zselect notreal 2>/dev/null; notreal 2>/dev/null; echo "r1=$?""#);
+        assert_parity(
+            r#"zmodload -ab zsh/zselect notreal 2>/dev/null; notreal 2>/dev/null; echo "r1=$?""#,
+        );
     }
 
     #[test]
@@ -2058,7 +2056,9 @@ mod zmodload_autoload_on_use {
 
     #[test]
     fn mathfunc_unload_deregisters() {
-        assert_parity(r#"zmodload zsh/mathfunc; zmodload -u zsh/mathfunc; echo $(( sin(0) )) 2>/dev/null; echo "rc=$?""#);
+        assert_parity(
+            r#"zmodload zsh/mathfunc; zmodload -u zsh/mathfunc; echo $(( sin(0) )) 2>/dev/null; echo "rc=$?""#,
+        );
     }
 }
 

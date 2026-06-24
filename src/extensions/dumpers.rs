@@ -180,8 +180,8 @@ pub fn dump_tokens(src: &str) -> String {
         // here after the untokenize pass so the in-tree consumer
         // contract (stringsubst etc.) is untouched but the dump
         // shows what `dumptokens` shows.
-        let plain = lex::untokenize_preserve_quotes(&raw)
-            .replace(crate::ported::zsh_h::Qstring, "$");
+        let plain =
+            lex::untokenize_preserve_quotes(&raw).replace(crate::ported::zsh_h::Qstring, "$");
         out.push_str(tok_name(tok));
         out.push('\t');
         out.push_str(&plain);

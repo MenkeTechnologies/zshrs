@@ -316,7 +316,10 @@ mod no_panic {
     #[test]
     fn multibyte_brace_range_does_not_panic() {
         let r = run_zshrs(r#"() { setopt localoptions no_multibyte; echo -E {$'\x80'..$'\x81'} }"#);
-        assert_ne!(r.exit, 101, "multibyte brace range must not panic (was exit 101)");
+        assert_ne!(
+            r.exit, 101,
+            "multibyte brace range must not panic (was exit 101)"
+        );
     }
 
     #[test]

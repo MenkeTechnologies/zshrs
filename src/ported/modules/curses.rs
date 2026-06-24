@@ -584,8 +584,8 @@ pub(crate) fn zccmd_init(_nam: &str, _args: &[String]) -> i32 {
     let _ = write!(stdout, "\x1b[?1049h\x1b[2J\x1b[H");
     let _ = stdout.flush();
     let _ = cbreak(); // c:492-493 cbreak(); noecho();
-    // c:494 — `gettyinfo(&curses_tty_state);` — snapshot the termios
-    // AFTER cbreak/noecho; this is what re-entry restores.
+                      // c:494 — `gettyinfo(&curses_tty_state);` — snapshot the termios
+                      // AFTER cbreak/noecho; this is what re-entry restores.
     {
         let mut cur = curses_tty_state.lock().unwrap();
         let mut ti: libc::termios = unsafe { std::mem::zeroed() };
@@ -655,7 +655,10 @@ pub(crate) fn zccmd_addwin(nam: &str, args: &[String]) -> i32 {
         zwarnnam(nam, &format!("failed to create window `{}'", args[0]));
         1
     };
-    if nlines_raw < 0 || ncols_raw < 0 || begin_y_raw < 0 || begin_x_raw < 0
+    if nlines_raw < 0
+        || ncols_raw < 0
+        || begin_y_raw < 0
+        || begin_x_raw < 0
         || begin_y_raw >= scr_rows
         || begin_x_raw >= scr_cols
     {
@@ -1135,9 +1138,9 @@ pub(crate) fn zccmd_attr(nam: &str, args: &[String]) -> i32 {
         // c:872-885 — leading +/- selects ATTRON/ATTROFF; bare name
         // defaults to ATTRON.
         let (mode, attr_name) = match spec.as_bytes().first() {
-            Some(b'+') => (ZCURSES_ATTRON, &spec[1..]), // c:877-879
+            Some(b'+') => (ZCURSES_ATTRON, &spec[1..]),  // c:877-879
             Some(b'-') => (ZCURSES_ATTROFF, &spec[1..]), // c:873-875
-            _ => (ZCURSES_ATTRON, spec.as_str()), // c:881-883
+            _ => (ZCURSES_ATTRON, spec.as_str()),        // c:881-883
         };
         match zcurses_attrget(w, attr_name) {
             Some(entry) => match mode {
@@ -2307,25 +2310,25 @@ fn keypad_name(code: i32) -> Option<String> {
     let name = match code {
         // c:base set
         0o401 => "BREAK",
-        KEY_DOWN => "DOWN",     // 0o402
-        KEY_UP => "UP",         // 0o403
-        KEY_LEFT => "LEFT",     // 0o404
-        KEY_RIGHT => "RIGHT",   // 0o405
-        KEY_HOME => "HOME",     // 0o406
+        KEY_DOWN => "DOWN",   // 0o402
+        KEY_UP => "UP",       // 0o403
+        KEY_LEFT => "LEFT",   // 0o404
+        KEY_RIGHT => "RIGHT", // 0o405
+        KEY_HOME => "HOME",   // 0o406
         0o407 => "BACKSPACE",
         // c:extended set
         0o510 => "DL",
         0o511 => "IL",
-        KEY_DC => "DC",         // 0o512
-        KEY_IC => "IC",         // 0o513
+        KEY_DC => "DC", // 0o512
+        KEY_IC => "IC", // 0o513
         0o514 => "EIC",
         0o515 => "CLEAR",
         0o516 => "EOS",
         0o517 => "EOL",
         0o520 => "SF",
         0o521 => "SR",
-        KEY_NPAGE => "NPAGE",   // 0o522
-        KEY_PPAGE => "PPAGE",   // 0o523
+        KEY_NPAGE => "NPAGE", // 0o522
+        KEY_PPAGE => "PPAGE", // 0o523
         0o524 => "STAB",
         0o525 => "CTAB",
         0o526 => "CATAB",
@@ -2346,7 +2349,7 @@ fn keypad_name(code: i32) -> Option<String> {
         0o545 => "COMMAND",
         0o546 => "COPY",
         0o547 => "CREATE",
-        KEY_END => "END",       // 0o550
+        KEY_END => "END", // 0o550
         0o551 => "EXIT",
         0o552 => "FIND",
         0o553 => "HELP",

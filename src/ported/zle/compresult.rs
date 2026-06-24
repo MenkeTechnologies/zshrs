@@ -1386,8 +1386,7 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         // c:1986
         cl = -1;
         // c:1987-1988 — `if (tccan(TCCLEAREOD)) tcout(TCCLEAREOD);`
-        if crate::ported::init::tclen.lock().unwrap()
-            [crate::ported::zsh_h::TCCLEAREOD as usize]
+        if crate::ported::init::tclen.lock().unwrap()[crate::ported::zsh_h::TCCLEAREOD as usize]
             != 0
         {
             tcout(crate::ported::zsh_h::TCCLEAREOD);

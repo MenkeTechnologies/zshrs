@@ -246,8 +246,7 @@ fn parseargs(
     // isatty(0);`. SHINSTDIN starts unset here (set below), so this is
     // normally a no-op; honor it for an explicitly-set SHINSTDIN.
     if isset(SHINSTDIN) {
-        let usezle =
-            isset(crate::ported::zsh_h::USEZLE) && unsafe { libc::isatty(0) != 0 };
+        let usezle = isset(crate::ported::zsh_h::USEZLE) && unsafe { libc::isatty(0) != 0 };
         // USEZLE's canonical option name is `zle` (zsh_h.rs:4145
         // `opt_name(USEZLE) == "zle"`); `isset(USEZLE)` reads the `zle`
         // key, so the write MUST use `zle` too. The prior `"usezle"` key
@@ -591,10 +590,10 @@ pub fn init_io(_cmd: Option<&str>) {
     if interact() {
         // c:689
         init_shout(); // c:690
-        // c:691-692 — `if (!SHTTY || !shout) opts[USEZLE] = 0;`. zshrs has
-        // no `shout` FILE* (it writes the tty via SHTTY / fd 2), so the C
-        // `!shout` arm collapses into the SHTTY check. The option's
-        // canonical name is `zle` (options.rs:92), NOT `usezle`.
+                      // c:691-692 — `if (!SHTTY || !shout) opts[USEZLE] = 0;`. zshrs has
+                      // no `shout` FILE* (it writes the tty via SHTTY / fd 2), so the C
+                      // `!shout` arm collapses into the SHTTY check. The option's
+                      // canonical name is `zle` (options.rs:92), NOT `usezle`.
         if SHTTY.load(Ordering::SeqCst) == -1 {
             crate::ported::options::opt_state_set("zle", false); // c:692 opts[USEZLE]=0
         }
@@ -684,10 +683,7 @@ pub fn init_term() -> i32 {
     // extern block matches the modules/terminfo.rs pattern).
     extern "C" {
         fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
-        fn tgetstr(
-            id: *const libc::c_char,
-            area: *mut *mut libc::c_char,
-        ) -> *mut libc::c_char;
+        fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
         fn tgetflag(id: *const libc::c_char) -> libc::c_int;
         fn tgetnum(id: *const libc::c_char) -> libc::c_int;
     }
@@ -726,15 +722,11 @@ pub fn init_term() -> i32 {
         // c:791 — `if (interact) zerr("can't find terminal definition
         // for %s", term);` — interact gate keeps -fc scripts quiet.
         if crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE) {
-            crate::ported::utils::zerr(&format!(
-                "can't find terminal definition for {}",
-                term
-            )); // c:792
+            crate::ported::utils::zerr(&format!("can't find terminal definition for {}", term));
+            // c:792
         }
-        crate::ported::utils::errflag.fetch_and(
-            !crate::ported::utils::ERRFLAG_ERROR,
-            Ordering::Relaxed,
-        ); // c:793
+        crate::ported::utils::errflag
+            .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::Relaxed); // c:793
         TERMFLAGS.fetch_or(TERM_BAD, Ordering::SeqCst); // c:794
         return 0; // c:795
     }
@@ -1215,7 +1207,14 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
         // hostname prompt; ksh/sh emulation gets the bare `$`/`#`.
         if isset(INTERACTIVE) && cmd.is_none() && runscript.is_none() {
             if ksh_sh {
-                set_default("PS1", if crate::ported::utils::privasserted() { "# " } else { "$ " }); // c:1185
+                set_default(
+                    "PS1",
+                    if crate::ported::utils::privasserted() {
+                        "# "
+                    } else {
+                        "$ "
+                    },
+                ); // c:1185
                 set_default("PS2", "> "); // c:1186
             } else {
                 set_default("PS1", "%m%# "); // c:1188
@@ -1550,12 +1549,12 @@ pub fn source(s: &str) -> i32 {
         .or_else(|| old_scriptfilename.clone())
         .or_else(|| Some("zsh".to_string()));
         let frame = crate::ported::zsh_h::funcstack {
-            prev: None,                 // c:1617 (Vec-stack index encodes link)
-            name: us.clone(),           // c:1611 fstack.name = scriptfilename
-            filename: Some(us.clone()), // c:1616
-            caller,                     // c:1612
-            flineno: 0,                 // c:1614
-            lineno: oldlineno,          // c:1615
+            prev: None,                          // c:1617 (Vec-stack index encodes link)
+            name: us.clone(),                    // c:1611 fstack.name = scriptfilename
+            filename: Some(us.clone()),          // c:1616
+            caller,                              // c:1612
+            flineno: 0,                          // c:1614
+            lineno: oldlineno,                   // c:1615
             tp: crate::ported::zsh_h::FS_SOURCE, // c:1618
         };
         crate::ported::modules::parameter::FUNCSTACK
@@ -1624,7 +1623,8 @@ pub fn sourcehome(s: &str) {
 }
 
 /// Port of `void init_bltinmods(void)` from Src/init.c:1703.
-pub fn init_bltinmods() { // c:1703
+pub fn init_bltinmods() {
+    // c:1703
     // #include "bltinmods.list"                                             // c:1705
     // load_module("zsh/main", NULL, 0);                                     // c:1706
     //
@@ -1799,9 +1799,9 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
         // c:1918
         let mut errexit = 0; // c:1924
                              // maybeshrinkjobtab();                                              // c:1925
-        // c:1927-1935 — `do { retflag = 0; loop(1,0); if (errflag &&
-        // !interact && !isset(CONTINUEONERROR)) { errexit = 1; break; } }
-        // while (tok != ENDINPUT && (tok != LEXERR || isset(SHINSTDIN)));`
+                             // c:1927-1935 — `do { retflag = 0; loop(1,0); if (errflag &&
+                             // !interact && !isset(CONTINUEONERROR)) { errexit = 1; break; } }
+                             // while (tok != ENDINPUT && (tok != LEXERR || isset(SHINSTDIN)));`
         loop {
             // c:1927 do
             RETFLAG.store(0, Ordering::SeqCst); // c:1929 retflag = 0
@@ -1823,7 +1823,8 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
                 LASTVAL.store(1, Ordering::SeqCst);
             }
             STOPMSG.store(1, Ordering::SeqCst); // c:1940 stopmsg = 1
-            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL); // c:1941
+            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL);
+            // c:1941
         }
         if !(isset(IGNOREEOF) && interact()) {
             // c:1943
@@ -1836,7 +1837,8 @@ pub fn zsh_main(_argc: i32, argv: &[String]) -> i32 {
         if noexitct.load(Ordering::SeqCst) >= 10 {
             // c:1952
             STOPMSG.store(1, Ordering::SeqCst); // c:1953 stopmsg = 1
-            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL); // c:1954
+            crate::ported::builtin::zexit(LASTVAL.load(Ordering::SeqCst), ZEXIT_NORMAL);
+            // c:1954
         }
         // c:1961-1963 — IGNOREEOF interactive nudge.
         if use_exit_printed.load(Ordering::SeqCst) == 0 {
@@ -2210,7 +2212,7 @@ fn parseopts_setemulate(nam: &str, flags: i32) {
     // `"usezle"` key was never read by `isset(USEZLE)` → this default was a
     // silent no-op. init_io (c:691-694) downgrades it for non-tty shells.
     crate::ported::options::opt_state_set("zle", true); // c:368 opts[USEZLE]=1
-    // c:369-370 — `opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;`
+                                                        // c:369-370 — `opts[SHINSTDIN] = 0; opts[SINGLECOMMAND] = 0;`
     crate::ported::options::opt_state_set("shinstdin", false);
     crate::ported::options::opt_state_set("singlecommand", false);
 }

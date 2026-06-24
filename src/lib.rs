@@ -53,8 +53,7 @@
 /// Bugs #475 / #504 / #555 in docs/BUGS.md — bash-only builtins
 /// (`caller`/`help`/`mapfile`/`readarray`/`compgen`/etc.) should
 /// dispatch as "command not found" when this is true.
-pub static IS_ZSH_MODE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+pub static IS_ZSH_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `compsys` submodule.
 pub mod compsys;
@@ -261,10 +260,6 @@ pub mod regex_mod;
 /// `stringsort` submodule.
 #[path = "extensions/stringsort.rs"]
 pub mod stringsort;
-/// `ztest` submodule — shell-level unit test framework
-/// (port of `../strykelang` test framework).
-#[path = "extensions/ztest.rs"]
-pub mod ztest;
 /// `worker` submodule.
 #[path = "extensions/worker.rs"]
 pub mod worker;
@@ -283,6 +278,10 @@ pub mod zsh_option_docs;
 /// `zsh_special_var_docs` submodule.
 #[path = "extensions/zsh_special_var_docs.rs"]
 pub mod zsh_special_var_docs;
+/// `ztest` submodule — shell-level unit test framework
+/// (port of `../strykelang` test framework).
+#[path = "extensions/ztest.rs"]
+pub mod ztest;
 /// `zwc` submodule.
 #[path = "extensions/zwc.rs"]
 pub mod zwc;

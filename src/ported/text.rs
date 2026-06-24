@@ -1417,11 +1417,9 @@ mod tests {
         // cannot yet parse `(pat)` arms (pre-existing gap, surfaces
         // as `par_case: expected )` — the renderer under test here
         // is independent of that parser arm).
-        let prog = crate::ported::exec::parse_string(
-            "case x in\na) echo A ;;\n*) echo other ;;\nesac",
-            0,
-        )
-        .expect("parse");
+        let prog =
+            crate::ported::exec::parse_string("case x in\na) echo A ;;\n*) echo other ;;\nesac", 0)
+                .expect("parse");
         let txt = getpermtext(Box::new(prog), None, 0);
         assert!(
             txt.matches(";;").count() == 2,

@@ -14,8 +14,8 @@
 use std::process::Child;
 use std::sync::Mutex;
 
-use crate::ported::jobs::{deletejob, CURJOB, MAXJOB, PREVJOB, THISJOB};
 use crate::ported::jobs::stat;
+use crate::ported::jobs::{deletejob, CURJOB, MAXJOB, PREVJOB, THISJOB};
 use crate::ported::zsh_h::job;
 
 /// Executor-side stand-in for C `printjob`'s done-job delete tail,
@@ -77,10 +77,7 @@ fn setprevjob_locked(tab: &[job]) {
             } else {
                 (j.stat & stat::INUSE) != 0
             };
-            if stat_ok
-                && (j.stat & stat::SUBJOB) == 0
-                && i as i32 != curjob
-                && i as i32 != thisjob
+            if stat_ok && (j.stat & stat::SUBJOB) == 0 && i as i32 != curjob && i as i32 != thisjob
             {
                 return i as i32;
             }

@@ -817,11 +817,11 @@ pub fn killjb(jn_idx: usize, sig: i32) -> i32 {
 #[allow(non_camel_case_types)]
 pub struct savetrap {
     // c:611
-    pub sig: i32,                // c:613
-    pub flags: i32,              // c:614
-    pub local: i32,              // c:615 locallevel at save
-    pub posix: i32,              // c:616 exit_trap_posix snapshot
-    pub list: Option<Eprog>,     // c:617 trap eval-list Eprog
+    pub sig: i32,            // c:613
+    pub flags: i32,          // c:614
+    pub local: i32,          // c:615 locallevel at save
+    pub posix: i32,          // c:616 exit_trap_posix snapshot
+    pub list: Option<Eprog>, // c:617 trap eval-list Eprog
     /// Snapshot of the body string from `traps_table` at save time.
     /// Rust-only — C zsh stores the body in `siglists[sig]` as an
     /// Eprog (already covered by `list` above), but zshrs stores the
@@ -1803,8 +1803,7 @@ pub fn dotrapargs(sig: i32, sigtr: &mut i32, sigfn: Option<&str>) {
             let body_args = args.clone();
             let name_for_body = fn_name.clone();
             let body_runner = move || -> i32 {
-                crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
-                    .unwrap_or(0)
+                crate::ported::exec::run_function_body(&name_for_body, &body_args[1..]).unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(&mut shf, args.clone(), true, body_runner);
         }

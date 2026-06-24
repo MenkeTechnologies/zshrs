@@ -206,7 +206,12 @@ fn autoload_zwc_only_dir_real_zsh_compiled() {
     );
     let z = run_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
-    assert_eq!(z.stdout.trim(), "zw_body arg1", "zsh sanity: {:?}", z.stdout);
+    assert_eq!(
+        z.stdout.trim(),
+        "zw_body arg1",
+        "zsh sanity: {:?}",
+        z.stdout
+    );
     assert_eq!(
         r.stdout, z.stdout,
         "zshrs failed to autoload from .zwc-only fpath dir"
@@ -260,10 +265,7 @@ fn autoload_zwc_mtime_preference() {
     std::fs::write(d.path().join("mtfn"), "echo source_body\n").unwrap();
     let old = filetime::FileTime::from_unix_time(1577836800, 0); // 2020-01-01
     filetime::set_file_mtime(d.path().join("mtfn"), old).unwrap();
-    let script = format!(
-        r#"fpath=({}); autoload -Uz mtfn; mtfn"#,
-        d.path().display()
-    );
+    let script = format!(r#"fpath=({}); autoload -Uz mtfn; mtfn"#, d.path().display());
     let z = run_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "compiled_body", "zsh sanity (dump newer)");
@@ -279,7 +281,10 @@ fn autoload_zwc_mtime_preference() {
     let z = run_zsh_in(d.path(), &script);
     let r = run_zshrs_in(d.path(), &script);
     assert_eq!(z.stdout.trim(), "source_body", "zsh sanity (source newer)");
-    assert_eq!(r.stdout, z.stdout, "zshrs preferred stale dump over newer source");
+    assert_eq!(
+        r.stdout, z.stdout,
+        "zshrs preferred stale dump over newer source"
+    );
 }
 
 /// `zcompile -k` marks the dump FDHF_KSHLOAD (c:parse.c:3149); the
@@ -292,11 +297,7 @@ fn autoload_zwc_kshload_flag() {
         return;
     }
     let d = tempfile::tempdir().unwrap();
-    std::fs::write(
-        d.path().join("kfn"),
-        "kfn() { echo kbody $1; }\nkfn boot\n",
-    )
-    .unwrap();
+    std::fs::write(d.path().join("kfn"), "kfn() { echo kbody $1; }\nkfn boot\n").unwrap();
     let z = run_zsh_in(d.path(), "zcompile -k kfn");
     assert_eq!(z.exit, 0, "zsh zcompile -k sanity");
     std::fs::remove_file(d.path().join("kfn")).unwrap();
@@ -401,7 +402,11 @@ fn autoload_zwc_open_paren_case_arms() {
     )
     .unwrap();
     let r = run_zshrs_in(d.path(), "zcompile opfn");
-    assert_eq!(r.exit, 0, "zshrs zcompile of (pat) case arms failed: {}", r.stdout);
+    assert_eq!(
+        r.exit, 0,
+        "zshrs zcompile of (pat) case arms failed: {}",
+        r.stdout
+    );
     std::fs::remove_file(d.path().join("opfn")).unwrap();
     for (arg, want) in [("a", "A"), ("c", "BC"), ("e", "DE"), ("zz", "other")] {
         let script = format!(
@@ -411,7 +416,12 @@ fn autoload_zwc_open_paren_case_arms() {
         );
         let z = run_zsh_in(d.path(), &script);
         let r = run_zshrs_in(d.path(), &script);
-        assert_eq!(z.stdout.trim(), want, "real zsh rejected zshrs dump: {}", z.stdout);
+        assert_eq!(
+            z.stdout.trim(),
+            want,
+            "real zsh rejected zshrs dump: {}",
+            z.stdout
+        );
         assert_eq!(r.stdout, z.stdout, "zshrs cannot run its own (pat) dump");
         assert_eq!(z.exit, r.exit);
     }

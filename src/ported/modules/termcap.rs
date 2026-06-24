@@ -228,10 +228,7 @@ pub fn bin_echotc(
             .and_then(|s| s.parse().ok())
             .or_else(|| argv_rest.first().and_then(|s| s.parse().ok()))
             .unwrap_or(0); // c:132
-        let arg0_n: libc::c_int = argv_rest
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0); // c:133 atoi(*argv)
+        let arg0_n: libc::c_int = argv_rest.first().and_then(|s| s.parse().ok()).unwrap_or(0); // c:133 atoi(*argv)
         unsafe {
             // c:133 — tgoto(t, num, atoi(*argv))
             let resolved = tgoto(value_cstr.as_ptr(), num, arg0_n);
@@ -430,11 +427,7 @@ unsafe extern "C" {
         affcnt: libc::c_int,
         putc_fn: extern "C" fn(libc::c_int) -> libc::c_int,
     ) -> libc::c_int;
-    fn tgoto(
-        cap: *const libc::c_char,
-        col: libc::c_int,
-        row: libc::c_int,
-    ) -> *mut libc::c_char;
+    fn tgoto(cap: *const libc::c_char, col: libc::c_int, row: libc::c_int) -> *mut libc::c_char;
 }
 
 /// Port of `putraw(int c)` from `Src/utils.c:424`. Single-byte

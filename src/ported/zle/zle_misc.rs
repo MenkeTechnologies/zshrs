@@ -1876,8 +1876,7 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
             let name_for_body = sf.clone();
             let body_args: Vec<String> = vec![suffix_len.to_string()];
             let body_runner = move || -> i32 {
-                crate::ported::exec::run_function_body(&name_for_body, &body_args)
-                    .unwrap_or(0)
+                crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
         }

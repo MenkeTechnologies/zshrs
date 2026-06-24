@@ -8,12 +8,12 @@
 //! Provides zstyle, zformat, zparseopts builtins.
 
 use crate::ported::builtin::PPARAMS;
+use crate::ported::glob::tokenize;
 use crate::ported::mem::{popheap, pushheap};
 use crate::ported::options::opt_state_set;
 use crate::ported::params::{
     assignaparam, getaparam, getsparam, paramtab, setaparam, sethparam, setsparam, unsetparam,
 };
-use crate::ported::glob::tokenize;
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals_h::{queue_signals, unqueue_signals};
 use crate::ported::utils::{errflag, zwarnnam};
@@ -257,10 +257,7 @@ impl style_table {
             // c:365 — `if (first && *str == '*' && (!str[1] || str[1] == ':'))`
             //   "alone-star component": star is the first char AND the
             //   next char ends the component (NUL or `:`).
-            if first
-                && ch == '*'
-                && (next.is_none() || next == Some(b':'))
-            {
+            if first && ch == '*' && (next.is_none() || next == Some(b':')) {
                 tmp = 0;
                 i += 1;
                 continue;
@@ -287,12 +284,12 @@ impl style_table {
                        // so we record None here and rely on get() to match.
         let prog: Option<Patprog> = None;
         let sp = stypat {
-            next: None,                // c:342
-            pat: pattern.to_string(),  // c:338
-            prog,                      // c:339
-            weight,                    // c:386
-            eval: eval_prog,           // c:341 p->eval = eprog (the parsed program)
-            vals: values,              // c:340
+            next: None,               // c:342
+            pat: pattern.to_string(), // c:338
+            prog,                     // c:339
+            weight,                   // c:386
+            eval: eval_prog,          // c:341 p->eval = eprog (the parsed program)
+            vals: values,             // c:340
         };
         // c:388-396 — insert q in weight-descending order (highest first).
         let pos = style_patterns
@@ -315,8 +312,16 @@ impl style_table {
                     if p.pat == "*" {
                         true
                     } else {
-                        patcompile(&{ let mut __pat_tok = (&p.pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |prog| pattry(&prog, context))
+                        patcompile(
+                            &{
+                                let mut __pat_tok = (&p.pat).to_string();
+                                crate::ported::glob::tokenize(&mut __pat_tok);
+                                __pat_tok
+                            },
+                            PAT_HEAPDUP as i32,
+                            None,
+                        )
+                        .map_or(false, |prog| pattry(&prog, context))
                     }
                 })
                 .map(|p| p.vals.as_slice())
@@ -336,8 +341,16 @@ impl style_table {
                     if p.pat == "*" {
                         true
                     } else {
-                        patcompile(&{ let mut __pat_tok = (&p.pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |prog| pattry(&prog, context))
+                        patcompile(
+                            &{
+                                let mut __pat_tok = (&p.pat).to_string();
+                                crate::ported::glob::tokenize(&mut __pat_tok);
+                                __pat_tok
+                            },
+                            PAT_HEAPDUP as i32,
+                            None,
+                        )
+                        .map_or(false, |prog| pattry(&prog, context))
                     }
                 })
                 .map(|p| (p.vals.clone(), p.eval.is_some()))
@@ -383,8 +396,16 @@ impl style_table {
                     let matches = if pat.pat == "*" {
                         true
                     } else {
-                        patcompile(&{ let mut __pat_tok = (&pat.pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None)
-                            .map_or(false, |prog| pattry(&prog, ctx))
+                        patcompile(
+                            &{
+                                let mut __pat_tok = (&pat.pat).to_string();
+                                crate::ported::glob::tokenize(&mut __pat_tok);
+                                __pat_tok
+                            },
+                            PAT_HEAPDUP as i32,
+                            None,
+                        )
+                        .map_or(false, |prog| pattry(&prog, ctx))
                     };
                     if !matches {
                         continue;
@@ -953,10 +974,7 @@ pub fn bin_zstyle(
             if fb.len() > 2 {
                 // c:497-499 — extra chars after the option letter
                 // (e.g. `-Lx`) → "invalid argument: -Lx" rc=1.
-                crate::ported::utils::zwarnnam(
-                    nam,
-                    &format!("invalid argument: {}", first),
-                );
+                crate::ported::utils::zwarnnam(nam, &format!("invalid argument: {}", first));
                 return 1;
             }
             let oc = fb[1];
@@ -980,10 +998,7 @@ pub fn bin_zstyle(
                 positional_start = 1;
             } else {
                 // c:597-599 default arm — "invalid option: -X".
-                crate::ported::utils::zwarnnam(
-                    nam,
-                    &format!("invalid option: {}", first),
-                );
+                crate::ported::utils::zwarnnam(nam, &format!("invalid option: {}", first));
                 return 1;
             }
         } else if fb == b"-" || fb == b"--" {
@@ -1007,7 +1022,9 @@ pub fn bin_zstyle(
     // diagnostic.
     let min_args = if OPT_ISSET(ops, b'd') {
         0
-    } else if OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'b') || OPT_ISSET(ops, b'a')
+    } else if OPT_ISSET(ops, b's')
+        || OPT_ISSET(ops, b'b')
+        || OPT_ISSET(ops, b'a')
         || OPT_ISSET(ops, b'm')
     {
         3
@@ -1023,11 +1040,7 @@ pub fn bin_zstyle(
         crate::ported::utils::zwarnnam(nam, "not enough arguments");
         return 1;
     }
-    if args.is_empty()
-        && !OPT_ISSET(ops, b'L')
-        && !OPT_ISSET(ops, b'l')
-        && !OPT_ISSET(ops, b'e')
-    {
+    if args.is_empty() && !OPT_ISSET(ops, b'L') && !OPT_ISSET(ops, b'l') && !OPT_ISSET(ops, b'e') {
         // c:491-492 + c:580-581 — bare `zstyle` invocation:
         // `list = ZSLIST_BASIC; scanhashtable(zstyletab, ..., printstylenode, list);`
         //
@@ -1394,13 +1407,13 @@ pub fn bin_zstyle(
         }
     }
     let eval = OPT_ISSET(ops, b'e'); // c:505 eval = add = 1
-    // c:533 — `setstypat(s, pat, prog, args + 2, eval)`. Route through
-    // setstypat (which parses the `-e` value and locks zstyletab itself)
-    // rather than locking + `t.set` here, matching C and avoiding a
-    // re-entrant lock on the non-reentrant zstyletab mutex.
+                                     // c:533 — `setstypat(s, pat, prog, args + 2, eval)`. Route through
+                                     // setstypat (which parses the `-e` value and locks zstyletab itself)
+                                     // rather than locking + `t.set` here, matching C and avoiding a
+                                     // re-entrant lock on the non-reentrant zstyletab mutex.
     setstypat(style, ctxt, None, values.clone(), eval as i32); // c:533
-    // PFA-SMR: one event per zstyle call. `rest` carries the style
-    // name + values so replay can re-emit the full setter.
+                                                               // PFA-SMR: one event per zstyle call. `rest` carries the style
+                                                               // name + values so replay can re-emit the full setter.
     #[cfg(feature = "recorder")]
     if crate::recorder::is_enabled() {
         let ctx = crate::recorder::recorder_ctx_global();
@@ -1571,12 +1584,12 @@ pub fn bin_zformat(
                     let mut buf = String::with_capacity(pre + sl + after.len());
                     let prefix = std::str::from_utf8(&copy[..left_len]).unwrap_or("");
                     buf.push_str(prefix); // c:1072 memcpy(buf, copy, cpp-copy)
-                    // c:1071 memset(buf, ' ', pre) — pad up to byte count
-                    // `pre` (matches C !MULTIBYTE_SUPPORT byte-counting; the
-                    // first pass already computed `pre = cp - *ap - nbc`
-                    // in bytes c:1015). Using prefix.len() (bytes) not
-                    // chars().count() — for non-ASCII labels chars<bytes,
-                    // so the prior char-count version over-padded.
+                                          // c:1071 memset(buf, ' ', pre) — pad up to byte count
+                                          // `pre` (matches C !MULTIBYTE_SUPPORT byte-counting; the
+                                          // first pass already computed `pre = cp - *ap - nbc`
+                                          // in bytes c:1015). Using prefix.len() (bytes) not
+                                          // chars().count() — for non-ASCII labels chars<bytes,
+                                          // so the prior char-count version over-padded.
                     for _ in prefix.len()..pre {
                         buf.push(' ');
                     }
@@ -2358,8 +2371,7 @@ pub fn bin_zregexparse(
         //
         // Read the actual front-of-queue from RPARSEARGS so the
         // diagnostic points at the failing token the way C does.
-        let leftover_first: Option<String> =
-            RPARSEARGS.with(|q| q.borrow().front().cloned());
+        let leftover_first: Option<String> = RPARSEARGS.with(|q| q.borrow().front().cloned());
         match leftover_first {
             Some(tok) => zwarnnam(nam, &format!("invalid regex : {}", tok)), // c:1502
             None => zwarnnam(nam, "not enough regex arguments"),             // c:1504
@@ -2810,23 +2822,22 @@ pub fn bin_zparseopts(
     fn push_val(descs: &mut [Desc], idx: usize, arg: Option<String>, val_seq: &mut usize) {
         let dflags = descs[idx].flags;
         let n = format!("-{}", descs[idx].name); // c:1645
-        let str_: Option<String> = if (dflags & ZOF_ARG) != 0
-            && (dflags & (ZOF_OPT | ZOF_SAME)) == 0
-        {
-            None // c:1661-1664 — two-element (name, arg) form
-        } else if arg.is_some() || (dflags & ZOF_GNUL) != 0 {
-            // c:1665-1676 — combined "-name" + ["="] + arg
-            let mut s = n.clone();
-            if (dflags & ZOF_GNUL) != 0 {
-                s.push('='); // c:1671-1672
-            }
-            if let Some(a) = &arg {
-                s.push_str(a); // c:1673
-            }
-            Some(s) // c:1674
-        } else {
-            None // c:1677-1681
-        };
+        let str_: Option<String> =
+            if (dflags & ZOF_ARG) != 0 && (dflags & (ZOF_OPT | ZOF_SAME)) == 0 {
+                None // c:1661-1664 — two-element (name, arg) form
+            } else if arg.is_some() || (dflags & ZOF_GNUL) != 0 {
+                // c:1665-1676 — combined "-name" + ["="] + arg
+                let mut s = n.clone();
+                if (dflags & ZOF_GNUL) != 0 {
+                    s.push('='); // c:1671-1672
+                }
+                if let Some(a) = &arg {
+                    s.push_str(a); // c:1673
+                }
+                Some(s) // c:1674
+            } else {
+                None // c:1677-1681
+            };
         if (dflags & ZOF_MULT) == 0 {
             // c:1652-1653 — `if (!(d->flags & ZOF_MULT)) v = d->vals;`
             if let Some(v) = descs[idx].vals.first_mut() {
@@ -4622,7 +4633,11 @@ mod tests {
     #[test]
     fn testforstyle_empty_inputs_returns_zero() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(testforstyle("", ""), 1, "empty ctx/style → 1 (not present, per C `!found`)");
+        assert_eq!(
+            testforstyle("", ""),
+            1,
+            "empty ctx/style → 1 (not present, per C `!found`)"
+        );
     }
 
     /// c:837 — `bin_zstyle` returns i32 (compile-time type pin).

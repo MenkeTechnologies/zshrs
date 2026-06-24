@@ -89,13 +89,13 @@ pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {
             // c:462-463 — `unsigned short tmp_seedbuf[3], *seedbufptr; int do_init = 1;`
             let mut tmp_seedbuf: [u16; 3] = [0; 3];
             let mut do_init: bool = true; // c:463
-            // c:464-506 — choose seedbufptr (tmp from param vs static) and
-            // decide do_init.
-            //
-            // Two-step ptr selection: in C `seedbufptr` is either `&tmp_seedbuf`
-            // or `&seedbuf`. In Rust we mirror via a bool — `use_static` —
-            // since `&mut [u16; 3]` can't switch between the two without
-            // borrow gymnastics; copy in/out of tmp_seedbuf instead.
+                                          // c:464-506 — choose seedbufptr (tmp from param vs static) and
+                                          // decide do_init.
+                                          //
+                                          // Two-step ptr selection: in C `seedbufptr` is either `&tmp_seedbuf`
+                                          // or `&seedbuf`. In Rust we mirror via a bool — `use_static` —
+                                          // since `&mut [u16; 3]` can't switch between the two without
+                                          // borrow gymnastics; copy in/out of tmp_seedbuf instead.
             let use_static: bool;
             if !arg_trim.is_empty() {
                 // c:465 — `if (*arg) { ... }`
@@ -105,7 +105,7 @@ pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {
                     let sbytes = seedstr.as_bytes();
                     if sbytes.len() >= 12 {
                         do_init = false; // c:471
-                        // c:476-493 — decode 3 sets of 4 hex chars into tmp_seedbuf.
+                                         // c:476-493 — decode 3 sets of 4 hex chars into tmp_seedbuf.
                         let mut cursor = 0;
                         'outer: for i in 0..3 {
                             let mut acc: u16 = 0;
@@ -146,7 +146,8 @@ pub fn math_string(name: &str, arg: &str, id: i32) -> mnumber {
                                    //             when arg is empty. Preserved verbatim — quirk
                                    //             is in the C source, not the port.
                 if !SEEDBUF_INIT.load(std::sync::atomic::Ordering::Relaxed) {
-                    SEEDBUF_INIT.store(true, std::sync::atomic::Ordering::Relaxed); // c:503
+                    SEEDBUF_INIT.store(true, std::sync::atomic::Ordering::Relaxed);
+                // c:503
                 } else {
                     do_init = true; // c:505
                 }
@@ -409,14 +410,14 @@ pub fn math_func(_name: &str, argc: i32, argv: &[mnumber], id: i32) -> mnumber {
         d: 0.0,
         type_: MN_FLOAT,
     }; // c:173,193
-    // C's mathfunc dispatch (via `callmathfunc` at math.c:1037+ and
-    // the `Math_func_set` per-fn `min_args`/`max_args` fields registered
-    // in mftab) rejects out-of-range argc BEFORE calling math_func, so
-    // C's body can index `argv[0]` safely. The Rust port calls this
-    // dispatcher directly from tests and (eventually) other paths
-    // without that upstream guard. Bail to a zero mnumber when argc is
-    // 0 AND argv is empty so MF_ABS-default-id calls don't OOB. Other
-    // arms that genuinely need 2+ args already check `argc > 1` below.
+       // C's mathfunc dispatch (via `callmathfunc` at math.c:1037+ and
+       // the `Math_func_set` per-fn `min_args`/`max_args` fields registered
+       // in mftab) rejects out-of-range argc BEFORE calling math_func, so
+       // C's body can index `argv[0]` safely. The Rust port calls this
+       // dispatcher directly from tests and (eventually) other paths
+       // without that upstream guard. Bail to a zero mnumber when argc is
+       // 0 AND argv is empty so MF_ABS-default-id calls don't OOB. Other
+       // arms that genuinely need 2+ args already check `argc > 1` below.
     if argc <= 0 && argv.is_empty() {
         return ret;
     }

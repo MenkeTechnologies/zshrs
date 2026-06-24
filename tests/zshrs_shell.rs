@@ -3560,9 +3560,8 @@ fn test_functions_dash_m_glob_lists_matching() {
     // The matching names come out of `${(k)functions[(I)PAT]}` as
     // a space-joined scalar (same in /bin/zsh `-c` mode). Split on
     // whitespace and assert membership; iteration order isn't fixed.
-    let (_, output, _) = run_zshrs(
-        r#"fa() { :; }; fb() { :; }; print -r -- ${(k)functions[(I)f*]}"#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"fa() { :; }; fb() { :; }; print -r -- ${(k)functions[(I)f*]}"#);
     let mut tokens: Vec<&str> = output.split_whitespace().collect();
     tokens.sort();
     assert_eq!(tokens, vec!["fa", "fb"], "got: {output:?}");
@@ -12135,9 +12134,7 @@ fn test_paramsubst_replace_dollar_brace_match_ref() {
     // Real zsh output for this construct is the matched span itself
     // (`A`) — pin to that so future replacement-string changes don't
     // silently diverge from zsh.
-    let (status, output, stderr) = run_zshrs(
-        r#"x=A; echo "${x:/(#m)*/\${${(q)MATCH}-y\}}""#,
-    );
+    let (status, output, stderr) = run_zshrs(r#"x=A; echo "${x:/(#m)*/\${${(q)MATCH}-y\}}""#);
     assert_eq!(status, 0, "stderr was: {stderr}");
     assert_eq!(output.trim(), "A");
     assert!(
@@ -12331,14 +12328,10 @@ fn test_tied_module_path_fignore_mailpath_psvar_both_directions() {
         ("PSVAR", "psvar"),
     ] {
         // scalar → array (split on `:`).
-        let (_, out, _) = run_zshrs_parity(&format!(
-            r#"{scalar}=/x:/y; echo "[${{{arr}[@]}}]""#
-        ));
+        let (_, out, _) = run_zshrs_parity(&format!(r#"{scalar}=/x:/y; echo "[${{{arr}[@]}}]""#));
         assert_eq!(out.trim(), "[/x /y]", "{scalar} scalar->array got: {out:?}");
         // array → scalar (join with `:`).
-        let (_, out, _) = run_zshrs_parity(&format!(
-            r#"{arr}=(/a /b); echo "[${scalar}]""#
-        ));
+        let (_, out, _) = run_zshrs_parity(&format!(r#"{arr}=(/a /b); echo "[${scalar}]""#));
         assert_eq!(out.trim(), "[/a:/b]", "{arr} array->scalar got: {out:?}");
     }
 }
@@ -12390,25 +12383,21 @@ fn test_nameref_create_and_list() {
 #[test]
 fn test_nameref_deref_scalar_and_array() {
     // K01 "basic nameref expansion" + "nameref array expansion"
-    let (_, out, _) =
-        run_zshrs_parity("typeset var=value; typeset -n ptr=var; print $ptr");
+    let (_, out, _) = run_zshrs_parity("typeset var=value; typeset -n ptr=var; print $ptr");
     assert_eq!(out.trim(), "value");
-    let (_, out, _) =
-        run_zshrs_parity("typeset var=(v1 v2); typeset -n ptr=var; print $ptr");
+    let (_, out, _) = run_zshrs_parity("typeset var=(v1 v2); typeset -n ptr=var; print $ptr");
     assert_eq!(out.trim(), "v1 v2");
 }
 
 #[test]
 fn test_nameref_assign_through_existing_and_dangling() {
     // K01 "assign existing scalar via nameref"
-    let (_, out, _) = run_zshrs_parity(
-        "typeset -n ptr=var; typeset var=value; ptr=new; typeset -p var",
-    );
+    let (_, out, _) =
+        run_zshrs_parity("typeset -n ptr=var; typeset var=value; ptr=new; typeset -p var");
     assert_eq!(out.trim(), "typeset var=new");
     // K01 "assign new scalar via nameref" — dangling target created
     // as a global (typeset -g shape when printed from level 0).
-    let (_, out, _) =
-        run_zshrs_parity("typeset -n ptr=var; ptr=value; typeset -p var ptr");
+    let (_, out, _) = run_zshrs_parity("typeset -n ptr=var; ptr=value; typeset -p var ptr");
     assert_eq!(out.trim(), "typeset var=value\ntypeset -n ptr=var");
 }
 
@@ -12420,8 +12409,7 @@ fn test_nameref_chain_and_self_reference_loop() {
     );
     assert_eq!(out.trim(), "value");
     // K01 "direct nameref loop not allowed" — c:6426 zerr.
-    let (st, _, err) =
-        run_zshrs_parity("typeset -n ptr1=ptr2; typeset -n ptr2=ptr1");
+    let (st, _, err) = run_zshrs_parity("typeset -n ptr1=ptr2; typeset -n ptr2=ptr1");
     assert_ne!(st, 0);
     assert!(
         err.contains("invalid self reference"),
@@ -12432,21 +12420,18 @@ fn test_nameref_chain_and_self_reference_loop() {
 #[test]
 fn test_nameref_subscript_element() {
     // K01 "nameref to hash element" + "assign array element by nameref"
-    let (_, out, _) = run_zshrs_parity(
-        "typeset -A hash=(x MISS y HIT); typeset -n p='hash[y]'; print -r -- $p",
-    );
+    let (_, out, _) =
+        run_zshrs_parity("typeset -A hash=(x MISS y HIT); typeset -n p='hash[y]'; print -r -- $p");
     assert_eq!(out.trim(), "HIT");
-    let (_, out, _) = run_zshrs_parity(
-        "typeset -a ary=(1 2); typeset -n p='ary[2]'; p=TWO; typeset -p ary",
-    );
+    let (_, out, _) =
+        run_zshrs_parity("typeset -a ary=(1 2); typeset -n p='ary[2]'; p=TWO; typeset -p ary");
     assert_eq!(out.trim(), "typeset -a ary=( 1 TWO )");
 }
 
 #[test]
 fn test_nameref_plus_n_toggle_keeps_refname_as_value() {
     // K01 "remove nameref attribute" — c:2374 type-conversion arm.
-    let (_, out, _) =
-        run_zshrs_parity("typeset -n ptr=var; typeset +n ptr; typeset -p ptr");
+    let (_, out, _) = run_zshrs_parity("typeset -n ptr=var; typeset +n ptr; typeset -p ptr");
     assert_eq!(out.trim(), "typeset ptr=var");
 }
 
@@ -12454,9 +12439,8 @@ fn test_nameref_plus_n_toggle_keeps_refname_as_value() {
 fn test_nameref_unset_through_ref_vs_unset_n() {
     // K01 "unset of the nameref itself" — `unset -n` removes the REF,
     // the target survives.
-    let (st, out, _) = run_zshrs_parity(
-        "typeset -gn ptr=var; typeset -g var=value; unset -n ptr; typeset -p var",
-    );
+    let (st, out, _) =
+        run_zshrs_parity("typeset -gn ptr=var; typeset -g var=value; unset -n ptr; typeset -p var");
     assert_eq!(st, 0);
     // printed at level 0 → plain `typeset` prefix (params.c:6196).
     assert_eq!(out.trim(), "typeset var=value");
@@ -12466,14 +12450,11 @@ fn test_nameref_unset_through_ref_vs_unset_n() {
 fn test_nameref_typet_reports_target_type() {
     // K01 "for-loop variable is a reference, part 4" shape — (t)
     // resolves the chain (subst.c:2800-2818).
-    let (_, out, _) = run_zshrs_parity(
-        "typeset -g var=x; typeset -gn ref=var; print -r ${(t)ref}",
-    );
+    let (_, out, _) = run_zshrs_parity("typeset -g var=x; typeset -gn ref=var; print -r ${(t)ref}");
     assert_eq!(out.trim(), "scalar");
     // dangling ref (target never defined): empty tag (fetchvalue
     // NULL → vunset, subst.c:2855-2856).
-    let (_, out, _) =
-        run_zshrs_parity(r#"typeset -gn ref=zz_undef; print -r "[${(t)ref}]""#);
+    let (_, out, _) = run_zshrs_parity(r#"typeset -gn ref=zz_undef; print -r "[${(t)ref}]""#);
     assert_eq!(out.trim(), "[]");
 }
 
@@ -12482,9 +12463,8 @@ fn test_nameref_up_reference_reads_bind_scope() {
     // K01 "up-reference part 1" — ref bound at global scope keeps
     // reading the GLOBAL gval even when a local shadows it
     // (upscope walk, Src/params.c:6455-6462).
-    let (_, out, _) = run_zshrs_parity(
-        "typeset -n ptr=gval; gval=global; () { local gval=local; print $ptr; }",
-    );
+    let (_, out, _) =
+        run_zshrs_parity("typeset -n ptr=gval; gval=global; () { local gval=local; print $ptr; }");
     assert_eq!(out.trim(), "global");
 }
 
@@ -12507,9 +12487,6 @@ fn test_nameref_for_loop_rebinds_and_detects_self() {
         "typeset -n ref; typeset one=ONE; for ref in one ref two; do print -r $ref; done",
     );
     assert_eq!(out.trim(), "ONE");
-    assert!(
-        err.contains("invalid self reference"),
-        "got: {err:?}"
-    );
+    assert!(err.contains("invalid self reference"), "got: {err:?}");
     assert_ne!(st, 0);
 }

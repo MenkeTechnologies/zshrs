@@ -321,17 +321,13 @@ fn jobtexts_keys_iteration() {
 fn jobstates_and_jobdirs_running_bg_job() {
     // Src/Modules/parameter.c:1340-1379 pmjobstate ("running:+:PID=running")
     // + 1447-1453 pmjobdir (job pwd, falling back to shell pwd).
-    assert_parity(
-        "cd /tmp; sleep 5 & print -r -- \"[$jobstates[1]][$jobdirs[1]]\"; kill %1",
-    );
+    assert_parity("cd /tmp; sleep 5 & print -r -- \"[$jobstates[1]][$jobdirs[1]]\"; kill %1");
 }
 
 #[test]
 fn jobstates_markers_two_jobs() {
     // `:+` on curjob, `:-` on prevjob (parameter.c:1346-1351).
-    assert_parity(
-        "sleep 5 & sleep 4 & print -r -- \"$jobstates[1]|$jobstates[2]\"; kill %1 %2",
-    );
+    assert_parity("sleep 5 & sleep 4 & print -r -- \"$jobstates[1]|$jobstates[2]\"; kill %1 %2");
 }
 
 #[test]
@@ -375,5 +371,7 @@ fn wait_pid_after_finish_returns_status() {
 /// job's status stays retrievable.
 #[test]
 fn wait_two_pids_each_status_retained() {
-    assert_parity(r#"(exit 1) & p=$!; (exit 2) & q=$!; wait $q; echo "q=$?"; wait $p; echo "p=$?""#);
+    assert_parity(
+        r#"(exit 1) & p=$!; (exit 2) & q=$!; wait $q; echo "q=$?"; wait $p; echo "p=$?""#,
+    );
 }

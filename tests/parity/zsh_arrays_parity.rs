@@ -831,7 +831,9 @@ mod subscript_bn_within_search {
     /// Search flags without a delimited modifier still work (regression).
     #[test]
     fn plain_search_unaffected() {
-        assert_parity("s=hello; echo ${s[(r)l]}; echo ${s[(R)l]}; echo ${s[(i)l]}; echo ${s[(I)l]}");
+        assert_parity(
+            "s=hello; echo ${s[(r)l]}; echo ${s[(R)l]}; echo ${s[(i)l]}; echo ${s[(I)l]}",
+        );
         assert_parity("s=barfooxyz; echo ${s[(r)foo]}");
     }
 }
@@ -858,7 +860,9 @@ mod subscript_e_without_search {
     /// Real search flags still search (regression guard).
     #[test]
     fn search_flags_still_search() {
-        assert_parity("s=hello; echo ${s[(r)l]}; echo ${s[(i)l]}; echo ${s[(I)l]}; echo ${s[(R)l]}");
+        assert_parity(
+            "s=hello; echo ${s[(r)l]}; echo ${s[(i)l]}; echo ${s[(I)l]}; echo ${s[(R)l]}",
+        );
     }
 
     /// (re) exact-match search still works (r present).

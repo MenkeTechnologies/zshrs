@@ -228,8 +228,7 @@ pub fn stattimeprint(tim: i64, nsecs: i64, flags: i32) -> String {
         // pack into Duration::new(secs, nsec) so ztrftime sees the
         // fractional digits for the `%.` / `%N.` zsh-extension.
         let nsec_u32 = nsecs.clamp(0, 999_999_999) as u32;
-        let st = std::time::UNIX_EPOCH
-            + std::time::Duration::new(tim.max(0) as u64, nsec_u32);
+        let st = std::time::UNIX_EPOCH + std::time::Duration::new(tim.max(0) as u64, nsec_u32);
         let fmt: String = TIMEFMT
             .get_or_init(|| std::sync::Mutex::new(TIMEFMT_DEFAULT.to_string()))
             .lock()
@@ -294,14 +293,14 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
         String::new()
     };
     let val = match iwhich {
-        ST_DEV => format!("{}", meta.dev()),              // c:240
-        ST_INO => format!("{}", meta.ino()),              // c:241
-        ST_MODE => statmodeprint(meta.mode(), flags),     // c:242
-        ST_NLINK => format!("{}", meta.nlink()),          // c:243
-        ST_UID => statuidprint(meta.uid(), flags),        // c:244
-        ST_GID => statgidprint(meta.gid(), flags),        // c:245
-        ST_RDEV => format!("{}", meta.rdev()),            // c:246
-        ST_SIZE => statulprint(meta.size()),              // c:247
+        ST_DEV => format!("{}", meta.dev()),          // c:240
+        ST_INO => format!("{}", meta.ino()),          // c:241
+        ST_MODE => statmodeprint(meta.mode(), flags), // c:242
+        ST_NLINK => format!("{}", meta.nlink()),      // c:243
+        ST_UID => statuidprint(meta.uid(), flags),    // c:244
+        ST_GID => statgidprint(meta.gid(), flags),    // c:245
+        ST_RDEV => format!("{}", meta.rdev()),        // c:246
+        ST_SIZE => statulprint(meta.size()),          // c:247
         // c:290-296 — GET_ST_ATIME_NSEC(*sbuf): the per-platform macro
         // pulls the sub-second component out of struct stat
         // (st_atim.tv_nsec on POSIX 2008, st_atimespec.tv_nsec on
@@ -314,9 +313,9 @@ pub fn statprint(meta: &fs::Metadata, fname: &str, iwhich: i32, flags: i32) -> S
         ST_ATIM => stattimeprint(meta.atime(), meta.atime_nsec(), flags), // c:292
         ST_MTIM => stattimeprint(meta.mtime(), meta.mtime_nsec(), flags), // c:300
         ST_CTIM => stattimeprint(meta.ctime(), meta.ctime_nsec(), flags), // c:308
-        ST_BLKSIZE => statulprint(meta.blksize()),        // c:251
-        ST_BLOCKS => statulprint(meta.blocks()),          // c:252
-        ST_READLINK => statlinkprint(meta.mode(), fname), // c:253
+        ST_BLKSIZE => statulprint(meta.blksize()),                        // c:251
+        ST_BLOCKS => statulprint(meta.blocks()),                          // c:252
+        ST_READLINK => statlinkprint(meta.mode(), fname),                 // c:253
         _ => String::new(),
     };
     format!("{}{}", name_prefix, val)

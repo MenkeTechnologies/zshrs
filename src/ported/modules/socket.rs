@@ -233,12 +233,12 @@ pub fn bin_zsocket(
                         std::io::Error::last_os_error()
                     ),
                 ); // c:209
-                // c:214 — `zclose(rfd);` — rfd was registered as
-                // FDT_EXTERNAL at c:208 above (addmodulefd call).
-                // Raw libc::close would leave the marker stale on
-                // the freed fd (same leak shape as the init_io
-                // SHTTY fix ff15efec5f and the tcp_close fix
-                // 9b4dae375a).
+                   // c:214 — `zclose(rfd);` — rfd was registered as
+                   // FDT_EXTERNAL at c:208 above (addmodulefd call).
+                   // Raw libc::close would leave the marker stale on
+                   // the freed fd (same leak shape as the init_io
+                   // SHTTY fix ff15efec5f and the tcp_close fix
+                   // 9b4dae375a).
                 let _ = crate::ported::utils::zclose(rfd);
                 return 1; // c:215
             }
@@ -316,11 +316,11 @@ pub fn bin_zsocket(
                         std::io::Error::last_os_error()
                     ),
                 ); // c:256
-                // c:257 — `zclose(sfd);` — sfd was just registered as
-                // FDT_EXTERNAL at c:252 above; raw libc::close would
-                // leave the marker stale (same fix shape as the c:214
-                // case earlier in this builtin and the init_io fix
-                // ff15efec5f).
+                   // c:257 — `zclose(sfd);` — sfd was just registered as
+                   // FDT_EXTERNAL at c:252 above; raw libc::close would
+                   // leave the marker stale (same fix shape as the c:214
+                   // case earlier in this builtin and the init_io fix
+                   // ff15efec5f).
                 let _ = crate::ported::utils::zclose(sfd);
                 return 1; // c:258
             }
@@ -730,12 +730,7 @@ mod tests {
         let _ = bin_zsocket("zsocket", &[xyz_path.to_string_lossy().into()], &ops, 0);
         let mut ops2 = empty_ops();
         ops2.ind[b'l' as usize] = 1;
-        let _ = bin_zsocket(
-            "zsocket",
-            &[abc_path.to_string_lossy().into()],
-            &ops2,
-            0,
-        );
+        let _ = bin_zsocket("zsocket", &[abc_path.to_string_lossy().into()], &ops2, 0);
         let _ = std::fs::remove_file(&xyz_path);
         let _ = std::fs::remove_file(&abc_path);
     }

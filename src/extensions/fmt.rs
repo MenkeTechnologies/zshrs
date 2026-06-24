@@ -150,7 +150,9 @@ pub fn format_source(src: &str, opts: &FmtOptions) -> String {
                 .count(),
             in_case_pattern: matches!(
                 stack.last(),
-                Some(Block::Case { sub: CaseSub::Pattern })
+                Some(Block::Case {
+                    sub: CaseSub::Pattern
+                })
             ),
         };
         let body = normalize_spacing(body, norm_ctx);
@@ -174,10 +176,7 @@ pub fn format_source(src: &str, opts: &FmtOptions) -> String {
                 _ => None,
             };
             if let Some(kw) = join_kw {
-                let prev_nonblank = out
-                    .rsplit_once('\n')
-                    .map(|(_, _last)| ())
-                    .is_some()
+                let prev_nonblank = out.rsplit_once('\n').map(|(_, _last)| ()).is_some()
                     && !out.ends_with("\n\n")
                     && out.len() >= 2;
                 if prev_nonblank {
@@ -266,11 +265,7 @@ fn stack_indent(stack: &[Block]) -> usize {
 /// Scan one (whitespace-trimmed) line: update `stack` with every
 /// structural token, queue heredocs, and report the indent level the
 /// line itself should print at.
-fn scan_line(
-    body: &str,
-    stack: &mut Vec<Block>,
-    heredocs: &mut Vec<Heredoc>,
-) -> LineScan {
+fn scan_line(body: &str, stack: &mut Vec<Block>, heredocs: &mut Vec<Heredoc>) -> LineScan {
     let b = body.as_bytes();
     let n = b.len();
     let mut i = 0usize;
@@ -410,7 +405,10 @@ fn scan_line(
                 // In a case arm-pattern position, `(pat)` parens are
                 // part of the pattern: push nothing, the matching `)`
                 // closes the pattern.
-                if let Some(Block::Case { sub: CaseSub::Pattern }) = stack.last() {
+                if let Some(Block::Case {
+                    sub: CaseSub::Pattern,
+                }) = stack.last()
+                {
                     // Optional leading `(` of an arm pattern: skip.
                     i += 1;
                     seen_token = true;
@@ -506,8 +504,8 @@ fn scan_line(
                                             i += 1;
                                         }
                                     }
-                                    b' ' | b'\t' | b';' | b'&' | b'|' | b'<' | b'>'
-                                    | b'(' | b')' => break,
+                                    b' ' | b'\t' | b';' | b'&' | b'|' | b'<' | b'>' | b'('
+                                    | b')' => break,
                                     _ => {
                                         tag.push(ch as char);
                                         i += 1;
@@ -545,10 +543,7 @@ fn scan_line(
                 seen_token = true;
             }
             b']' => {
-                if i + 1 < n
-                    && b[i + 1] == b']'
-                    && matches!(stack.last(), Some(Block::DCond))
-                {
+                if i + 1 < n && b[i + 1] == b']' && matches!(stack.last(), Some(Block::DCond)) {
                     stack.pop();
                     if at_line_start!() {
                         indent_basis = indent_basis.saturating_sub(1);
@@ -567,8 +562,8 @@ fn scan_line(
                 let start = i;
                 while i < n {
                     match b[i] {
-                        b' ' | b'\t' | b';' | b'(' | b')' | b'<' | b'>' | b'\''
-                        | b'"' | b'`' | b'\\' => break,
+                        b' ' | b'\t' | b';' | b'(' | b')' | b'<' | b'>' | b'\'' | b'"' | b'`'
+                        | b'\\' => break,
                         b'{' | b'}' => {
                             // Brace glued inside a word = brace
                             // expansion / ${…} tail — consume it as
@@ -613,8 +608,7 @@ fn scan_line(
                     }
                     "fi" => {
                         if matches!(stack.last(), Some(Block::If { .. })) {
-                            let was_open =
-                                matches!(stack.last(), Some(Block::If { open: true }));
+                            let was_open = matches!(stack.last(), Some(Block::If { open: true }));
                             stack.pop();
                             if leading && was_open {
                                 indent_basis = indent_basis.saturating_sub(1);
@@ -636,8 +630,7 @@ fn scan_line(
                     }
                     "done" => {
                         if matches!(stack.last(), Some(Block::Loop { .. })) {
-                            let was_open =
-                                matches!(stack.last(), Some(Block::Loop { open: true }));
+                            let was_open = matches!(stack.last(), Some(Block::Loop { open: true }));
                             stack.pop();
                             if leading && was_open {
                                 indent_basis = indent_basis.saturating_sub(1);
@@ -652,8 +645,7 @@ fn scan_line(
                             let contrib = Block::Case { sub: *sub }.contributes();
                             stack.pop();
                             if leading {
-                                indent_basis =
-                                    indent_basis.saturating_sub(contrib);
+                                indent_basis = indent_basis.saturating_sub(contrib);
                             }
                         }
                     }
@@ -840,7 +832,9 @@ fn normalize_spacing(body: &str, ctx: NormCtx) -> String {
                     .trim_end()
                     .chars()
                     .last()
-                    .map(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':' || ch == '-')
+                    .map(|ch| {
+                        ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':' || ch == '-'
+                    })
                     .unwrap_or(false);
                 if empty_pair && after_word {
                     no_space!();
@@ -1002,9 +996,8 @@ fn normalize_spacing(body: &str, ctx: NormCtx) -> String {
                 let start = i;
                 while i < n {
                     match b[i] {
-                        b' ' | b'\t' | b'\\' | b'\'' | b'"' | b'`' | b'#'
-                        | b'$' | b'(' | b')' | b'&' | b'|' | b';' | b'<'
-                        | b'>' => break,
+                        b' ' | b'\t' | b'\\' | b'\'' | b'"' | b'`' | b'#' | b'$' | b'(' | b')'
+                        | b'&' | b'|' | b';' | b'<' | b'>' => break,
                         _ => i += 1,
                     }
                 }

@@ -507,10 +507,7 @@ mod redirect_interleaved_with_assignments {
     #[test]
     fn redir_between_assignments_with_command() {
         let d = tdir();
-        assert_parity_in(
-            d.path(),
-            r#"a=b 2>/dev/null c=d echo hi; print "[$a][$c]""#,
-        );
+        assert_parity_in(d.path(), r#"a=b 2>/dev/null c=d echo hi; print "[$a][$c]""#);
     }
 
     #[test]

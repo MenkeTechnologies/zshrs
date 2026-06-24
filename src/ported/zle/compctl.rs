@@ -2382,7 +2382,16 @@ pub(crate) fn makecomplistpc(os: &str, incmd: bool) -> i32 {
         // c:2542
         // c:2543 — patcompile(pc->pat) compiles the pattern once.
         // c:2544-2545 — pattry(prog, cmdstr) || (s && pattry(prog, s)).
-        let matches = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |prog| {
+        let matches = patcompile(
+            &{
+                let mut __pat_tok = (pat).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            PAT_HEAPDUP as i32,
+            None,
+        )
+        .map_or(false, |prog| {
             pattry(&prog, &cmdstr)             // c:2544
                     || s_resolved.as_deref()
                         .map(|sr| pattry(&prog, sr)) // c:2545
@@ -2839,8 +2848,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, s: &str, _incmd: bool, _compa
             let name_for_body = func_name.clone();
             let body_args: Vec<String> = vec![s.to_string()];
             let body_runner = move || -> i32 {
-                crate::ported::exec::run_function_body(&name_for_body, &body_args)
-                    .unwrap_or(0)
+                crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
             };
             let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
             // c:3726-3727 — `sfcontext = osc; incompctlfunc = 0;`.

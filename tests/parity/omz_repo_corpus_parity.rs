@@ -34,7 +34,11 @@ fn zsh_path() -> &'static str {
 }
 
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 struct ShellResult {
@@ -45,7 +49,10 @@ struct ShellResult {
 }
 
 fn run_zsh(script: &str) -> ShellResult {
-    let out = Command::new(zsh_path()).args(["-fc", script]).output().expect("invoke zsh");
+    let out = Command::new(zsh_path())
+        .args(["-fc", script])
+        .output()
+        .expect("invoke zsh");
     ShellResult {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -93,7 +100,8 @@ mod omz_lib {
     /// spectrum.zsh — typeset -AHg FX FG BG + {000..255} loop building 256-entry arrays.
     #[test]
     fn spectrum_construct() {
-        assert_parity(r###"typeset -AHg FX FG BG
+        assert_parity(
+            r###"typeset -AHg FX FG BG
 FX=(reset "%{\e[00m%}" bold "%{\e[01m%}" no-bold "%{\e[22m%}")
 for color in {000..255}; do
   FG[$color]="%{\e[38;5;${color}m%}"
@@ -101,13 +109,15 @@ for color in {000..255}; do
 done
 print -r -- "FGcount=${#FG} BGcount=${#BG} FXcount=${#FX}"
 print -r -- "FG001=${FG[001]}" | cat -v
-print -r -- "FXbold=${FX[bold]}" | cat -v"###);
+print -r -- "FXbold=${FX[bold]}" | cat -v"###,
+        );
     }
 
     /// git.zsh — git_prompt_status accumulation: anchored regex over porcelain, ordered prepend.
     #[test]
     fn git_prompt_status_accum() {
-        assert_parity(r###"local -A prefix_constant_map constant_prompt_map statuses_seen
+        assert_parity(
+            r###"local -A prefix_constant_map constant_prompt_map statuses_seen
 local status_text status_prompt status_prefix status_constant status_regex
 local status_constants
 prefix_constant_map=('\?\? ' 'UNTRACKED' 'A  ' 'ADDED' ' M ' 'MODIFIED' 'UU ' 'UNMERGED')
@@ -126,13 +136,15 @@ done
 for status_constant in $status_constants; do
   (( ${+statuses_seen[$status_constant]} )) && status_prompt="$constant_prompt_map[$status_constant]$status_prompt"
 done
-echo "PROMPT=$status_prompt""###);
+echo "PROMPT=$status_prompt""###,
+        );
     }
 
     /// git.zsh — branch-header parse: =~ capture + (@s/,/) split + nested numeric capture.
     #[test]
     fn git_branch_header_parse() {
-        assert_parity(r###"local -A prefix_constant_map statuses_seen
+        assert_parity(
+            r###"local -A prefix_constant_map statuses_seen
 local status_lines branch_statuses line branch_status last_parsed_status
 prefix_constant_map=(ahead AHEAD behind BEHIND diverged DIVERGED)
 status_lines=("## main...origin/main [ahead 2, behind 1]" "## feature...origin/feature [ahead 5]")
@@ -146,13 +158,15 @@ for line in $status_lines; do
     done
   fi
 done
-for k in AHEAD BEHIND DIVERGED; do print -r -- "$k=${statuses_seen[$k]:-_}"; done"###);
+for k in AHEAD BEHIND DIVERGED; do print -r -- "$k=${statuses_seen[$k]:-_}"; done"###,
+        );
     }
 
     /// git.zsh — parse_git_dirty FLAGS accumulation + tail-driven DIRTY/CLEAN.
     #[test]
     fn parse_git_dirty_flags() {
-        assert_parity(r###"local STATUS
+        assert_parity(
+            r###"local STATUS
 local -a FLAGS
 local DISABLE_UNTRACKED_FILES_DIRTY=true GIT_STATUS_IGNORE_SUBMODULES=''
 FLAGS=('--porcelain')
@@ -164,13 +178,15 @@ esac
 print -r -- "FLAGS=${(j: :)FLAGS}"
 local canned=' M file.c'
 STATUS=$(print -r -- "$canned" | tail -n 1)
-[[ -n $STATUS ]] && echo dirty || echo clean"###);
+[[ -n $STATUS ]] && echo dirty || echo clean"###,
+        );
     }
 
     /// history.zsh — HISTSIZE/SAVEHIST floor + HIST_STAMPS case mapping.
     #[test]
     fn history_floor_stamps() {
-        assert_parity(r###"local HISTSIZE=1000 SAVEHIST=500 HIST_STAMPS
+        assert_parity(
+            r###"local HISTSIZE=1000 SAVEHIST=500 HIST_STAMPS
 [ "$HISTSIZE" -lt 50000 ] && HISTSIZE=50000
 [ "$SAVEHIST" -lt 10000 ] && SAVEHIST=10000
 print -r -- "HISTSIZE=$HISTSIZE SAVEHIST=$SAVEHIST"
@@ -182,13 +198,15 @@ for HIST_STAMPS in "mm/dd/yyyy" "dd.mm.yyyy" "yyyy-mm-dd" "" "%F"; do
     "") print -r -- "alias=omz_history" ;;
     *) print -r -- "alias=omz_history -t '$HIST_STAMPS'" ;;
   esac
-done"###);
+done"###,
+        );
     }
 
     /// theme-and-appearance.zsh — case "$OSTYPE" alternation selecting ls flag.
     #[test]
     fn theme_ostype_ls() {
-        assert_parity(r###"choose() {
+        assert_parity(
+            r###"choose() {
   local os="$1" lsalias
   case "$os" in
     netbsd*)  lsalias="gls --color=tty" ;;
@@ -198,56 +216,67 @@ done"###);
   esac
   print -r -- "$os -> $lsalias"
 }
-choose darwin23.0; choose freebsd13; choose netbsd9; choose openbsd7; choose linux-gnu"###);
+choose darwin23.0; choose freebsd13; choose netbsd9; choose openbsd7; choose linux-gnu"###,
+        );
     }
 
     /// prompt_info_functions.zsh — multi-name dummy fn def + function_exists via typeset -f.
     #[test]
     fn prompt_info_multifn() {
-        assert_parity(r###"function chruby_prompt_info rbenv_prompt_info hg_prompt_info { return 1 }
+        assert_parity(
+            r###"function chruby_prompt_info rbenv_prompt_info hg_prompt_info { return 1 }
 function_exists() { typeset -f "$1" > /dev/null }
 print -r -- "exists chruby=$(function_exists chruby_prompt_info && echo yes || echo no)"
 print -r -- "exists nope=$(function_exists nope_prompt_info && echo yes || echo no)"
-print -r -- "dummy: $(chruby_prompt_info; echo rc=$?)""###);
+print -r -- "dummy: $(chruby_prompt_info; echo rc=$?)""###,
+        );
     }
 
     /// prompt_info_functions.zsh — rvm_prompt :gs/%/%% percent-doubling vs print -P.
     #[test]
     fn rvm_pct_double() {
-        assert_parity(r###"local rvm_prompt='ruby-3.2%@1.0'
+        assert_parity(
+            r###"local rvm_prompt='ruby-3.2%@1.0'
 local out="(${rvm_prompt:gs/%/%%})"
 print -r -- "raw=$out"
-print -rn -- "P="; print -P -- "$out""###);
+print -rn -- "P="; print -P -- "$out""###,
+        );
     }
 
     /// functions.zsh — env_default existence test + conditional export + distinct rc.
     #[test]
     fn env_default() {
-        assert_parity(r###"env_default() { (( ${+parameters[$1]} )) && return 0; export "$1=$2" && return 3; }
+        assert_parity(
+            r###"env_default() { (( ${+parameters[$1]} )) && return 0; export "$1=$2" && return 3; }
 typeset -gx PAGER=less
 env_default 'PAGER' 'more'; print -r -- "PAGER=$PAGER rc=$?"
 unset NEWVAR 2>/dev/null
-env_default 'NEWVAR' 'hello'; print -r -- "NEWVAR=$NEWVAR rc=$?""###);
+env_default 'NEWVAR' 'hello'; print -r -- "NEWVAR=$NEWVAR rc=$?""###,
+        );
     }
 
     /// prompt_info_functions.zsh — ${+functions[name]} define-if-absent override.
     #[test]
     fn functions_redef() {
-        assert_parity(r###"function git_prompt_info() { echo stub }
+        assert_parity(
+            r###"function git_prompt_info() { echo stub }
 print -r -- "defined=${+functions[git_prompt_info]} missing=${+functions[no_such_fn]}"
 if (( ! ${+functions[ruby_prompt_info]} )); then function ruby_prompt_info() { echo default-ruby }; fi
 print -r -- "$(ruby_prompt_info)"
-print -r -- "body_has_stub=$([[ ${functions[git_prompt_info]} == *stub* ]] && echo 1 || echo 0)""###);
+print -r -- "body_has_stub=$([[ ${functions[git_prompt_info]} == *stub* ]] && echo 1 || echo 0)""###,
+        );
     }
 
     /// git.zsh — porcelain XY char-index classification ${code[1]}/${code[2]}.
     #[test]
     fn porcelain_xy_index() {
-        assert_parity(r###"local code
+        assert_parity(
+            r###"local code
 for code in 'M ' ' M' 'MM' '??' 'A ' 'UU'; do
   local x="${code[1]}" y="${code[2]}"
   print -r -- "code='$code' X='$x' Y='$y' staged=$([[ $x != ' ' && $x != '?' ]] && echo 1 || echo 0)"
-done"###);
+done"###,
+        );
     }
 }
 
@@ -259,149 +288,179 @@ mod omz_themes {
     /// agnoster — prompt_segment with %K{}+%F{} both wrapped in %{...%}, (%) on $(fn).
     #[test]
     fn prompt_segment_expand() {
-        assert_parity(r###"prompt_segment() { print -n "%{%K{$1}%}%{%F{$2}%} $3 "; }
+        assert_parity(
+            r###"prompt_segment() { print -n "%{%K{$1}%}%{%F{$2}%} $3 "; }
 s="${(%)$(prompt_segment blue black DIR)}${(%)$(prompt_segment green white GIT)}"
 print -rn -- "$s" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// robbyrussell — %(?:t:t) colon-form ternary + %1{x%} width hint + $fg_bold.
     #[test]
     fn robby_colon_ternary() {
-        assert_parity(r###"autoload -U colors; colors
+        assert_parity(
+            r###"autoload -U colors; colors
 false
 P="%(?:%{$fg_bold[green]%}%1{>%} :%{$fg_bold[red]%}%1{>%} ) %{$fg[cyan]%}OK%{$reset_color%}"
 print -rn -- "${(%)P}" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// af-magic — dashed rule via ${(l:COLUMNS::-:)} (COLUMNS bare in pad spec).
     #[test]
     fn columns_rule() {
-        assert_parity(r###"COLUMNS=20
+        assert_parity(
+            r###"COLUMNS=20
 rule="${(l:$COLUMNS::-:)}"
 print -rn -- "$rule" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// bira — multi-line PROMPT with embedded newline + %B%(!.#.>)%b.
     #[test]
     fn multiline_prompt() {
-        assert_parity(r###"autoload -U colors; colors
+        assert_parity(
+            r###"autoload -U colors; colors
 d="$(mktemp -d)"; mkdir -p "$d/proj"; cd "$d/proj"
 cur="%{$fg[blue]%}%c%{$reset_color%}"
 P="X-${cur}
 Y-%B%(!.#.>)%b "
 print -rn -- "${(%)P}" | cat -v
 echo
-cd /; rm -rf "$d""###);
+cd /; rm -rf "$d""###,
+        );
     }
 
     /// fishy — collapse cwd: (s:/:) split, per-segment first-letter, (j:/:) join.
     #[test]
     fn fishy_collapse() {
-        assert_parity(r###"collapse(){ local i pwd; pwd=("${(s:/:)1}")
+        assert_parity(
+            r###"collapse(){ local i pwd; pwd=("${(s:/:)1}")
   if (( $#pwd > 1 )); then for i in {1..$(($#pwd-1))}; do
     if [[ "$pwd[$i]" = .* ]]; then pwd[$i]="${${pwd[$i]}[1,2]}"; else pwd[$i]="${${pwd[$i]}[1]}"; fi
   done; fi
   echo "${(j:/:)pwd}"; }
-collapse "home/user/.config/projects/zshrs""###);
+collapse "home/user/.config/projects/zshrs""###,
+        );
     }
 
     /// ys — %{$terminfo[bold]%} terminfo-driven bold + $fg.
     #[test]
     fn terminfo_bold() {
-        assert_parity(r###"autoload -U colors; colors
+        assert_parity(
+            r###"autoload -U colors; colors
 P="%{$terminfo[bold]%}%{$fg[yellow]%}DIR%{$reset_color%}"
 print -rn -- "${(%)P}" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// fishy — dynamic color-array key $fg[$var].
     #[test]
     fn dynamic_color_key() {
-        assert_parity(r###"autoload -U colors; colors
+        assert_parity(
+            r###"autoload -U colors; colors
 user_color=green; host_color=yellow
 P="%{$fg[$user_color]%}user%{$reset_color%}@%{$fg[$host_color]%}host%{$reset_color%}%(!.#.>) "
 print -rn -- "${(%)P}" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// robbyrussell — real setopt promptsubst PROMPT with $(fn) cmdsubst via print -P.
     #[test]
     fn promptsubst_cmdsubst() {
-        assert_parity(r###"setopt promptsubst
+        assert_parity(
+            r###"setopt promptsubst
 seg(){ print -n "[$1]"; }
 PROMPT='%F{green}$(seg A)$(seg B)%f'
 print -Pn -- "$PROMPT" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// af-magic — PS1 dynamic rule ${(l.$(fn)..=.)} with $() in pad-spec under promptsubst.
     #[test]
     #[ignore = "zshrs gap: promptsubst PS1 with ${(l.$(fn)..=.)} (command-sub inside pad-spec) renders empty under print -P"]
     fn promptsubst_dynamic_pad() {
-        assert_parity(r###"setopt promptsubst
+        assert_parity(
+            r###"setopt promptsubst
 COLUMNS=12
 dashes(){ echo $COLUMNS; }
 PS1='%F{240}${(l.$(dashes)..=.)}%f'
 print -Pn -- "$PS1" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// ys — $fg_no_bold explicit non-bold color-array variant.
     #[test]
     fn fg_no_bold() {
-        assert_parity(r###"autoload -U colors; colors
+        assert_parity(
+            r###"autoload -U colors; colors
 P="%{$fg_no_bold[blue]%}plain%{$reset_color%}"
 print -rn -- "${(%)P}" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// sorin — %(N~|t|f) bar-form path-depth conditional.
     #[test]
     fn bar_form_depth() {
-        assert_parity(r###"d=$(mktemp -d); mkdir -p "$d/a/b/c/d/e"; cd "$d/a/b/c/d/e"
+        assert_parity(
+            r###"d=$(mktemp -d); mkdir -p "$d/a/b/c/d/e"; cd "$d/a/b/c/d/e"
 P="%(4~|DEEP|SHALLOW)"
 print -rn -- "${(%)P}" | cat -v
-echo; cd /; rm -rf "$d""###);
+echo; cd /; rm -rf "$d""###,
+        );
     }
 
     /// agnoster — segment transition: current bg + next bg around a separator.
     #[test]
     fn segment_transition() {
-        assert_parity(r###"seg(){ print -n "%K{$1}%F{$2} $3 %k"; }
+        assert_parity(
+            r###"seg(){ print -n "%K{$1}%F{$2} $3 %k"; }
 s="${(%)$(seg blue white A)}%F{blue}%K{green}>%f${(%)$(seg green black B)}"
 print -rn -- "${(%)s}" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// jonathan — repeat builtin building a rule string by appending.
     #[test]
     fn repeat_rule() {
-        assert_parity(r###"rule=""; repeat 10 rule+="-"
+        assert_parity(
+            r###"rule=""; repeat 10 rule+="-"
 print -rn -- "$rule" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// gallois — vcs_info_msg_0_-style format placeholder substitution then prompt-expand.
     #[test]
     fn vcs_format_subst() {
-        assert_parity(r###"autoload -U colors; colors
+        assert_parity(
+            r###"autoload -U colors; colors
 fmt="%{$fg[yellow]%}(git)-[BRANCH]%{$reset_color%}"
 vcs_info_msg_0_="${fmt//BRANCH/main}"
 print -rn -- "${(%)vcs_info_msg_0_}" | cat -v
-echo"###);
+echo"###,
+        );
     }
 
     /// gnzh — nested prompt conditionals combining exit-status and privilege.
     #[test]
     fn nested_status_priv() {
-        assert_parity(r###"P="%(?.%(!.RA.UA).%(!.RF.UF))"
+        assert_parity(
+            r###"P="%(?.%(!.RA.UA).%(!.RF.UF))"
 ok=$( (exit 0); print -rn -- "${(%)P}" )
 bad=$( (exit 1); print -rn -- "${(%)P}" )
 print -rn -- "$ok|$bad" | cat -v
-echo"###);
+echo"###,
+        );
     }
 }
 
@@ -413,7 +472,8 @@ mod omz_plugins {
     /// extract — big case "$1" in (*.tar.gz|*.tgz) multi-pattern extension dispatch.
     #[test]
     fn extract_case_dispatch() {
-        assert_parity(r###"for f in archive.tar.gz photo.zip data.tar.bz2 doc.rar pkg.deb blob.7z note.txt music.tar.xz; do
+        assert_parity(
+            r###"for f in archive.tar.gz photo.zip data.tar.bz2 doc.rar pkg.deb blob.7z note.txt music.tar.xz; do
   case "$f" in
     (*.tar.gz|*.tgz)  print "$f -> tar xzf" ;;
     (*.tar.bz2|*.tbz) print "$f -> tar xjf" ;;
@@ -424,13 +484,15 @@ mod omz_plugins {
     (*.7z)   print "$f -> 7z x" ;;
     (*)      print "$f -> unknown" ;;
   esac
-done"###);
+done"###,
+        );
     }
 
     /// universalarchive — build command vector into local -a, join with (j: :).
     #[test]
     fn ua_cmd_vector() {
-        assert_parity(r###"build() {
+        assert_parity(
+            r###"build() {
   local ext="$1" output="$2"; shift 2
   local -a cmd
   case "$ext" in
@@ -441,45 +503,53 @@ done"###);
   esac
   print -r -- "${(j: :)cmd}"
 }
-build tgz out.tgz a b c; build zip out.zip dir; build gz out.gz file; build foo out.foo x; print "rc=$?""###);
+build tgz out.tgz a b c; build zip out.zip dir; build gz out.gz file; build foo out.foo x; print "rc=$?""###,
+        );
     }
 
     /// universalarchive — output-name via ${input:r:t} vs ${input:t} modifier chains.
     #[test]
     fn ua_outname_modifiers() {
-        assert_parity(r###"for input ext in /home/u/proj.txt tgz /home/u/dir gz /home/u/a.b.c zip; do
+        assert_parity(
+            r###"for input ext in /home/u/proj.txt tgz /home/u/dir gz /home/u/a.b.c zip; do
   print "input=$input r:t=${input:r:t} t=${input:t} -> file:${input:r:t}.${ext}"
-done"###);
+done"###,
+        );
     }
 
     /// encode64 — $#-gated stdin-vs-arg branch, base64 roundtrip.
     #[test]
     fn encode64_roundtrip() {
-        assert_parity(r###"encode64() { if [[ $# -eq 0 ]]; then cat | base64; else printf "%s" "$1" | base64; fi }
+        assert_parity(
+            r###"encode64() { if [[ $# -eq 0 ]]; then cat | base64; else printf "%s" "$1" | base64; fi }
 decode64() { if [[ $# -eq 0 ]]; then cat | base64 --decode; else printf "%s" "$1" | base64 --decode; fi }
 e=$(encode64 "hello world")
 print "enc=$e"
 print "dec=$(decode64 "$e")"
-print "pipe=$(print -n "ohmyzsh" | encode64)""###);
+print "pipe=$(print -n "ohmyzsh" | encode64)""###,
+        );
     }
 
     /// web-search — assoc engine lookup + (j://:)(s:/:)[1,2] host extraction.
     #[test]
     fn websearch_assoc_host() {
-        assert_parity(r###"typeset -A urls
+        assert_parity(
+            r###"typeset -A urls
 urls=( google "https://www.google.com/search?q=" archive "https://web.archive.org/web/*/" )
 lookup() {
   if [[ -z "$urls[$1]" ]]; then print "Search engine ${1} not supported."; return 1; fi
   if [[ $# -gt 1 ]]; then print "${urls[$1]}${(j:+:)@[2,-1]}"
   else print "${(j://:)${(s:/:)urls[$1]}[1,2]}"; fi
 }
-lookup google rust lang; lookup archive; lookup nope; print "rc=$?""###);
+lookup google rust lang; lookup archive; lookup nope; print "rc=$?""###,
+        );
     }
 
     /// dirhistory — stack push/pop with no_ksh_arrays, shift arr, arr[i]=().
     #[test]
     fn dirhistory_stack() {
-        assert_parity(r###"setopt no_ksh_arrays
+        assert_parity(
+            r###"setopt no_ksh_arrays
 typeset -ga past=()
 DIRHISTORY_SIZE=3
 push_past() {
@@ -491,37 +561,43 @@ push_past /a; push_past /a; push_past /b; push_past /c; push_past /d
 print "stack=${(j:,:)past} size=$#past"
 local top=""
 pop_past top
-print "popped=$top remain=${(j:,:)past}""###);
+print "popped=$top remain=${(j:,:)past}""###,
+        );
     }
 
     /// copypath — absolute-path build + prompt-escape via ${(%):-"%B...%b"}.
     #[test]
     fn copypath_abs() {
-        assert_parity(r###"cp_logic() {
+        assert_parity(
+            r###"cp_logic() {
   local file="${1:-.}"
   [[ $file = /* ]] || file="/sandbox/base/$file"
   print "abs=$file"
   print -r -- "${(%):-"%B${file}%b ready."}" | cat -v
 }
-cp_logic; cp_logic sub/dir; cp_logic /etc/hosts"###);
+cp_logic; cp_logic sub/dir; cp_logic /etc/hosts"###,
+        );
     }
 
     /// magic-enter — empty-BUFFER + CONTEXT==start gate + : ${VAR:=default}.
     #[test]
     fn magic_enter() {
-        assert_parity(r###"me() {
+        assert_parity(
+            r###"me() {
   local BUFFER="$1" CONTEXT="$2" in_git="$3"
   : ${GIT_CMD:="git status -u ."} ${OTHER_CMD:="ls -lh ."}
   if [[ -n "$BUFFER" || "$CONTEXT" != start ]]; then print "(noop)"; return; fi
   if [[ "$in_git" == yes ]]; then print "$GIT_CMD"; else print "$OTHER_CMD"; fi
 }
-me "" start yes; me "" start no; me "ls" start no; me "" vared no"###);
+me "" start yes; me "" start no; me "ls" start no; me "" vared no"###,
+        );
     }
 
     /// dirpersist — load file into array (f)"$(<file)", prepend, dedup (u).
     #[test]
     fn dirpersist_load() {
-        assert_parity(r###"d=$(mktemp -d)
+        assert_parity(
+            r###"d=$(mktemp -d)
 printf "%s\n" /x /y /z /x > "$d/zdirs"
 dirstack=( ${(f)"$(< $d/zdirs)"} )
 print "loaded=${(j:,:)dirstack} first=$dirstack[1]"
@@ -529,23 +605,27 @@ local -a my_stack
 my_stack=( /new ${dirstack} )
 print "--uniq--"
 print -l ${(u)my_stack}
-rm -rf "$d""###);
+rm -rf "$d""###,
+        );
     }
 
     /// history-substring-search — escape glob metachars (#m) then join with (j:*:).
     #[test]
     fn hss_escape_join() {
-        assert_parity(r###"setopt extended_glob
+        assert_parity(
+            r###"setopt extended_glob
 q="ls *.txt | grep [a-z]"
 parts=(${=q})
 search="${(j:*:)parts[@]//(#m)[\][()|\\*?#<>~^]/\\$MATCH}*"
-print -r -- "pattern=$search" | cat -v"###);
+print -r -- "pattern=$search" | cat -v"###,
+        );
     }
 
     /// git — git_main_branch brace-expanded candidate refs, first match wins, :t + fallback.
     #[test]
     fn git_main_branch() {
-        assert_parity(r###"pick() {
+        assert_parity(
+            r###"pick() {
   local found="$1"; shift
   local ref
   for ref in refs/{heads,remotes/{origin,upstream}}/{main,trunk,master}; do
@@ -553,53 +633,63 @@ print -r -- "pattern=$search" | cat -v"###);
   done
   print master; return 1
 }
-pick refs/heads/main; pick refs/remotes/origin/trunk; pick refs/heads/nonexist; print "rc=$?""###);
+pick refs/heads/main; pick refs/remotes/origin/trunk; pick refs/heads/nonexist; print "rc=$?""###,
+        );
     }
 
     /// genpass — char-code-to-modulo string index $chars[#c%$#chars+1].
     #[test]
     fn genpass_modulo_index() {
-        assert_parity(r###"chars=abcdefghjkmnpqrstvwxyz0123456789
+        assert_parity(
+            r###"chars=abcdefghjkmnpqrstvwxyz0123456789
 local c
 for c in A B Z a z 0 9 "~"; do printf "%s" $chars[#c%$#chars+1]; done
-print"###);
+print"###,
+        );
     }
 
     /// colored-man-pages — assoc-to-NAME=VALUE via for k v in (@kv), sorted (o).
     #[test]
     fn colored_man_kv() {
-        assert_parity(r###"typeset -A tc
+        assert_parity(
+            r###"typeset -A tc
 tc=( md "BOLD" me "RESET" so "STANDOUT" se "RESET" )
 local -a environment k v
 for k v in "${(@kv)tc}"; do environment+=( "LESS_TERMCAP_${k}=${v}" ); done
-print -l ${(o)environment}"###);
+print -l ${(o)environment}"###,
+        );
     }
 
     /// alias-finder — progressively strip trailing word with ${cmd% *}.
     #[test]
     fn alias_finder_strip() {
-        assert_parity(r###"cmd="git commit --amend --no-edit"
+        assert_parity(
+            r###"cmd="git commit --amend --no-edit"
 while [[ -n "$cmd" ]]; do
   print "try: [$cmd]"
   [[ "$cmd" != *" "* ]] && break
   cmd="${cmd% *}"
-done"###);
+done"###,
+        );
     }
 
     /// jsontools — method auto-detect loop with break + unset over (I) membership.
     #[test]
     fn jsontools_detect() {
-        assert_parity(r###"typeset M
+        assert_parity(
+            r###"typeset M
 avail=(ruby python3 node)
 has() { (( ${avail[(I)$1]} )) }
 for M in node python3 ruby; do if has $M; then break; fi; unset M; done
-print "method=${M:-NONE}""###);
+print "method=${M:-NONE}""###,
+        );
     }
 
     /// git — git_develop_branch membership via word-bounded *" $x "*.
     #[test]
     fn git_develop_member() {
-        assert_parity(r###"pick() {
+        assert_parity(
+            r###"pick() {
   local present="$1"; shift
   local branch
   for branch in dev devel develop development; do
@@ -607,13 +697,15 @@ print "method=${M:-NONE}""###);
   done
   print develop; return 1
 }
-pick "main develop foo"; pick "main dev"; pick "main feature"; print "rc=$?""###);
+pick "main develop foo"; pick "main dev"; pick "main feature"; print "rc=$?""###,
+        );
     }
 
     /// extract — while [[ "$1" == -* ]] option loop with shift/shift 2 and --.
     #[test]
     fn extract_option_loop() {
-        assert_parity(r###"parse() {
+        assert_parity(
+            r###"parse() {
   local remove=0 todir=""
   while [[ "$1" == -* ]]; do
     case "$1" in
@@ -625,13 +717,15 @@ pick "main develop foo"; pick "main dev"; pick "main feature"; print "rc=$?""###
   done
   print "remove=$remove todir=[$todir] file=$1"
 }
-parse -r archive.zip; parse -t /tmp/out archive.tar.gz; parse --remove --to-directory dest file.7z"###);
+parse -r archive.zip; parse -t /tmp/out archive.tar.gz; parse --remove --to-directory dest file.7z"###,
+        );
     }
 
     /// urltools — pure-shell percent-encode: per-char loop, case allow-list, printf "%%%02X".
     #[test]
     fn urltools_encode() {
-        assert_parity(r###"urlencode() {
+        assert_parity(
+            r###"urlencode() {
   local s="$1" out="" i ch
   for (( i=1; i<=${#s}; i++ )); do
     ch="${s[i]}"
@@ -642,13 +736,15 @@ parse -r archive.zip; parse -t /tmp/out archive.tar.gz; parse --remove --to-dire
   done
   print -r -- "$out"
 }
-urlencode "a b/c?d=e&f+g"; urlencode "100% sure!""###);
+urlencode "a b/c?d=e&f+g"; urlencode "100% sure!""###,
+        );
     }
 
     /// urltools — pure-shell percent-decode: ${1//+/ }, 2-char slice ${s[i+1,i+2]}, printf \x.
     #[test]
     fn urltools_decode() {
-        assert_parity(r###"urldecode() {
+        assert_parity(
+            r###"urldecode() {
   local s="${1//+/ }" out="" i ch hex
   for (( i=1; i<=${#s}; i++ )); do
     ch="${s[i]}"
@@ -657,65 +753,78 @@ urlencode "a b/c?d=e&f+g"; urlencode "100% sure!""###);
   done
   print -r -- "$out"
 }
-urldecode "a%20b%2Fc"; urldecode "hello+world%21""###);
+urldecode "a%20b%2Fc"; urldecode "hello+world%21""###,
+        );
     }
 
     /// otp — non-digit strip sanitize ${var//[^0-9]/}.
     #[test]
     fn otp_sanitize() {
-        assert_parity(r###"for s in "v1.2.3" "(555) 123-4567" "abc"; do
+        assert_parity(
+            r###"for s in "v1.2.3" "(555) 123-4567" "abc"; do
   print "$s -> [${s//[^0-9]/}]"
-done"###);
+done"###,
+        );
     }
 
     /// web-search — rest-of-args slice ${@[2,-1]} joined as query.
     #[test]
     fn websearch_slice() {
-        assert_parity(r###"f() {
+        assert_parity(
+            r###"f() {
   print "engine=$1"
   local rest=(${@[2,-1]})
   print "query=${(j:+:)rest}"
 }
-f google how to port zsh; f bing single"###);
+f google how to port zsh; f bing single"###,
+        );
     }
 
     /// colored-man-pages — combined path modifiers ${p:A:h} vs :h/:t.
     #[test]
     fn p_A_h_modifiers() {
-        assert_parity(r###"p="/a/b/../c/./plugin.zsh"
+        assert_parity(
+            r###"p="/a/b/../c/./plugin.zsh"
 print "A:h=${p:A:h}"
 print "h=${p:h}"
-print "t=${p:t}""###);
+print "t=${p:t}""###,
+        );
     }
 
     /// jsontools — while IFS="=" read -r k v building assoc, sorted-keys (ok).
     #[test]
     fn jsontools_ifs_read() {
-        assert_parity(r###"data="name=foo
+        assert_parity(
+            r###"data="name=foo
 size=42
 type=bar"
 typeset -A kv
 while IFS="=" read -r k v; do kv[$k]="$v"; done <<< "$data"
-for k in ${(ok)kv}; do print "$k -> $kv[$k]"; done"###);
+for k in ${(ok)kv}; do print "$k -> $kv[$k]"; done"###,
+        );
     }
 
     /// qrcode — $* arg-join with empty-input stdin sentinel.
     #[test]
     fn qrcode_sentinel() {
-        assert_parity(r###"qc() {
+        assert_parity(
+            r###"qc() {
   local input="$*"
   [ -z "$input" ] && input="@/dev/stdin"
   print "payload=[$input]"
 }
-qc hello world test; qc"###);
+qc hello world test; qc"###,
+        );
     }
 
     /// otp — basename-strip ${${f:t}%.otp.asc} over array into reply.
     #[test]
     fn otp_basename_strip() {
-        assert_parity(r###"local -a files; files=(/h/.otp/work.otp.asc /h/.otp/personal.otp.asc)
+        assert_parity(
+            r###"local -a files; files=(/h/.otp/work.otp.asc /h/.otp/personal.otp.asc)
 local -a reply
 for f in $files; do reply+=( ${${f:t}%.otp.asc} ); done
-print -l $reply"###);
+print -l $reply"###,
+        );
     }
 }

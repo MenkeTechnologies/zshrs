@@ -1739,7 +1739,15 @@ pub fn compdef(args: &[String]) -> i32 {
 /// sh:311 pattern-matching helper. Uses the real `pattern.rs`
 /// matcher so `(K)` assoc-key glob matching is faithful.
 fn pattern_matches(pat: &str, s: &str) -> bool {
-    match crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None) {
+    match crate::ported::pattern::patcompile(
+        &{
+            let mut __pat_tok = (pat).to_string();
+            crate::ported::glob::tokenize(&mut __pat_tok);
+            __pat_tok
+        },
+        0,
+        None,
+    ) {
         Some(prog) => crate::ported::pattern::pattry(&prog, s),
         None => pat == s,
     }

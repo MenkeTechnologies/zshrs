@@ -9451,7 +9451,10 @@ mod tests {
         // The card must mention the symbol but carry no doc body.
         let src = "function greet() {}\n";
         let card = super::find_user_symbol_doc(src, "greet").expect("minimal card");
-        assert!(card.contains("greet"), "card must name the symbol: {card:?}");
+        assert!(
+            card.contains("greet"),
+            "card must name the symbol: {card:?}"
+        );
     }
 
     #[test]

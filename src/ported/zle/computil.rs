@@ -3689,10 +3689,17 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
         // c:2061 goto end — fall through to actopts count.
     } else {
         // c:2063-2064 — compile -A nonarg pattern.
-        let napat = d
-            .nonarg
-            .as_deref()
-            .and_then(|s| patcompile(&{ let mut __pat_tok = (s).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None::<&mut String>));
+        let napat = d.nonarg.as_deref().and_then(|s| {
+            patcompile(
+                &{
+                    let mut __pat_tok = (s).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                0,
+                None::<&mut String>,
+            )
+        });
         let mut endpat: Option<Patprog> = None;
 
         // c:2068 — walk words.
@@ -4149,7 +4156,15 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
                 if dt == CAA_RREST || dt == CAA_RARGS {
                     let end_pat_str = state.def.as_deref().and_then(|d| d.end.clone());
                     if let Some(eps) = end_pat_str {
-                        endpat = patcompile(&{ let mut __pat_tok = (&eps).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None::<&mut String>);
+                        endpat = patcompile(
+                            &{
+                                let mut __pat_tok = (&eps).to_string();
+                                crate::ported::glob::tokenize(&mut __pat_tok);
+                                __pat_tok
+                            },
+                            0,
+                            None::<&mut String>,
+                        );
                     } else {
                         // c:2342-2353 — no end-pattern: gather rest into oargs.
                         if cur < compcur {
@@ -4180,7 +4195,15 @@ pub fn ca_parse_line(d: &mut cadef, all: &cadef, multi: i32, first: i32) -> i32 
             } else if state.def.is_some() {
                 let eps = state.def.as_deref().and_then(|d| d.end.clone());
                 if let Some(eps) = eps {
-                    endpat = patcompile(&{ let mut __pat_tok = (&eps).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None::<&mut String>);
+                    endpat = patcompile(
+                        &{
+                            let mut __pat_tok = (&eps).to_string();
+                            crate::ported::glob::tokenize(&mut __pat_tok);
+                            __pat_tok
+                        },
+                        0,
+                        None::<&mut String>,
+                    );
                 }
             }
 

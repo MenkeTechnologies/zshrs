@@ -1084,12 +1084,12 @@ pub type Zpc_disables_save = Box<zpc_disables_save>; // c:1691
 #[allow(non_camel_case_types)]
 pub struct imatchdata {
     // c:1740
-    pub mstr: Option<String>,       // c:1742
-    pub mlen: i32,                  // c:1744
-    pub ustr: Option<String>,       // c:1746
-    pub ulen: i32,                  // c:1748
-    pub flags: i32,                 // c:1750 SUB_*
-    pub replstr: Option<String>,    // c:1752
+    pub mstr: Option<String>,    // c:1742
+    pub mlen: i32,               // c:1744
+    pub ustr: Option<String>,    // c:1746
+    pub ulen: i32,               // c:1748
+    pub flags: i32,              // c:1750 SUB_*
+    pub replstr: Option<String>, // c:1752
     // c:1759 — C `LinkList repllist` is a heterogeneous void* list of
     // `struct repldata`. The Rust `LinkList`/`linklist` substrate stores
     // a placeholder `dat: usize` and can't hold `repldata`, so the
@@ -1173,7 +1173,7 @@ pub struct param {
     // c:1829
     pub node: hashnode, // c:1830
     // u union (c:1833-1842):
-    pub u_data: usize,              // c:1834 void *data
+    pub u_data: usize, // c:1834 void *data
     // c:1834 — typed view of `u.data` for PM_TIED scalars, where C
     // stores a `struct tieddata *` (Src/zsh.h:1870-1873) carrying the
     // partner-array pointer and the joinchar from `typeset -T s a SEP`.

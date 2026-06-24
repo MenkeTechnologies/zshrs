@@ -551,7 +551,15 @@ pub fn bin_setopt(
                 .map(|c| c.to_ascii_lowercase())
                 .collect();
             // c:670 — patcompile(s, PAT_HEAPDUP, NULL).
-            let prog = patcompile(&{ let mut __pat_tok = (&normalized).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None);
+            let prog = patcompile(
+                &{
+                    let mut __pat_tok = (&normalized).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_HEAPDUP,
+                None,
+            );
             if prog.is_none() {
                 // c:670
                 zwarnnam(nam, &format!("bad pattern: {}", raw)); // c:671
@@ -562,7 +570,15 @@ pub fn bin_setopt(
             // setoption, !isun): the `setoption` static at c:572 calls
             // `dosetopt(optname->optno, !isun, 0, opts)` on each match.
             let v = (isun == 0) as i32;
-            if let Some(prog) = patcompile(&{ let mut __pat_tok = (&normalized).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None) {
+            if let Some(prog) = patcompile(
+                &{
+                    let mut __pat_tok = (&normalized).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_HEAPDUP as i32,
+                None,
+            ) {
                 for opt_name in ZSH_OPTIONS_SET.iter() {
                     // c:676
                     if pattry(&prog, opt_name) {
@@ -1206,40 +1222,203 @@ pub static FULLY_EMULATING: std::sync::atomic::AtomicBool =
 /// `rmstarsilent` per zsh 5.9 (removed from master in workers/54181);
 /// kept for 5.9 parity.
 pub static OPTNS: &[&str] = &[
-    "aliases", "aliasfuncdef", "allexport", "alwayslastprompt", "alwaystoend", "appendcreate",
-    "appendhistory", "autocd", "autocontinue", "autolist", "automenu", "autonamedirs",
-    "autoparamkeys", "autoparamslash", "autopushd", "autoremoveslash", "autoresume",
-    "badpattern", "banghist", "bareglobqual", "bashautolist", "bashrematch", "beep", "bgnice",
-    "braceccl", "bsdecho", "caseglob", "casematch", "casepaths", "cbases", "cprecedences",
-    "cdablevars", "cdsilent", "chasedots", "chaselinks", "checkjobs", "checkrunningjobs",
-    "clobber", "clobberempty", "combiningchars", "completealiases", "completeinword",
-    "continueonerror", "correct", "correctall", "cshjunkiehistory", "cshjunkieloops",
-    "cshjunkiequotes", "cshnullcmd", "cshnullglob", "debugbeforecmd", "emacs", "equals",
-    "errexit", "errreturn", "exec", "extendedglob", "extendedhistory", "evallineno",
-    "flowcontrol", "forcefloat", "functionargzero", "glob", "globalexport", "globalrcs",
-    "globassign", "globcomplete", "globdots", "globstarshort", "globsubst", "hashcmds",
-    "hashdirs", "hashexecutablesonly", "hashlistall", "histallowclobber", "histbeep",
-    "histexpiredupsfirst", "histfcntllock", "histfindnodups", "histignorealldups",
-    "histignoredups", "histignorespace", "histlexwords", "histnofunctions", "histnostore",
-    "histsubstpattern", "histreduceblanks", "histsavebycopy", "histsavenodups", "histverify",
-    "hup", "ignorebraces", "ignoreclosebraces", "ignoreeof", "incappendhistory",
-    "incappendhistorytime", "interactive", "interactivecomments", "ksharrays", "kshautoload",
-    "kshglob", "kshoptionprint", "kshtypeset", "kshzerosubscript", "listambiguous", "listbeep",
-    "listpacked", "listrowsfirst", "listtypes", "localoptions", "localloops", "localpatterns",
-    "localtraps", "login", "longlistjobs", "magicequalsubst", "mailwarning", "markdirs",
-    "menucomplete", "monitor", "multibyte", "multifuncdef", "multios", "nomatch", "notify",
-    "nullglob", "numericglobsort", "octalzeroes", "overstrike", "pathdirs", "pathscript",
-    "pipefail", "posixaliases", "posixargzero", "posixbuiltins", "posixcd", "posixidentifiers",
-    "posixjobs", "posixstrings", "posixtraps", "printeightbit", "printexitvalue", "privileged",
-    "promptbang", "promptcr", "promptpercent", "promptsp", "promptsubst", "pushdignoredups",
-    "pushdminus", "pushdsilent", "pushdtohome", "rcexpandparam", "rcquotes", "rcs", "recexact",
-    "rematchpcre", "restricted", "rmstarsilent", "rmstarwait", "sharehistory",
-    "shfileexpansion", "shglob", "shinstdin", "shnullcmd", "shoptionletters", "shortloops",
-    "shortrepeat", "shwordsplit", "singlecommand", "singlelinezle", "sourcetrace",
-    "sunkeyboardhack", "transientrprompt", "trapsasync", "typesetsilent", "typesettounset",
-    "unset", "verbose", "vi", "warncreateglobal", "warnnestedvar", "xtrace", "zle",
-    "braceexpand", "dotglob", "hashall", "histappend", "histexpand", "log", "mailwarn",
-    "onecmd", "physical", "promptvars", "stdin", "trackall", "dvorak",
+    "aliases",
+    "aliasfuncdef",
+    "allexport",
+    "alwayslastprompt",
+    "alwaystoend",
+    "appendcreate",
+    "appendhistory",
+    "autocd",
+    "autocontinue",
+    "autolist",
+    "automenu",
+    "autonamedirs",
+    "autoparamkeys",
+    "autoparamslash",
+    "autopushd",
+    "autoremoveslash",
+    "autoresume",
+    "badpattern",
+    "banghist",
+    "bareglobqual",
+    "bashautolist",
+    "bashrematch",
+    "beep",
+    "bgnice",
+    "braceccl",
+    "bsdecho",
+    "caseglob",
+    "casematch",
+    "casepaths",
+    "cbases",
+    "cprecedences",
+    "cdablevars",
+    "cdsilent",
+    "chasedots",
+    "chaselinks",
+    "checkjobs",
+    "checkrunningjobs",
+    "clobber",
+    "clobberempty",
+    "combiningchars",
+    "completealiases",
+    "completeinword",
+    "continueonerror",
+    "correct",
+    "correctall",
+    "cshjunkiehistory",
+    "cshjunkieloops",
+    "cshjunkiequotes",
+    "cshnullcmd",
+    "cshnullglob",
+    "debugbeforecmd",
+    "emacs",
+    "equals",
+    "errexit",
+    "errreturn",
+    "exec",
+    "extendedglob",
+    "extendedhistory",
+    "evallineno",
+    "flowcontrol",
+    "forcefloat",
+    "functionargzero",
+    "glob",
+    "globalexport",
+    "globalrcs",
+    "globassign",
+    "globcomplete",
+    "globdots",
+    "globstarshort",
+    "globsubst",
+    "hashcmds",
+    "hashdirs",
+    "hashexecutablesonly",
+    "hashlistall",
+    "histallowclobber",
+    "histbeep",
+    "histexpiredupsfirst",
+    "histfcntllock",
+    "histfindnodups",
+    "histignorealldups",
+    "histignoredups",
+    "histignorespace",
+    "histlexwords",
+    "histnofunctions",
+    "histnostore",
+    "histsubstpattern",
+    "histreduceblanks",
+    "histsavebycopy",
+    "histsavenodups",
+    "histverify",
+    "hup",
+    "ignorebraces",
+    "ignoreclosebraces",
+    "ignoreeof",
+    "incappendhistory",
+    "incappendhistorytime",
+    "interactive",
+    "interactivecomments",
+    "ksharrays",
+    "kshautoload",
+    "kshglob",
+    "kshoptionprint",
+    "kshtypeset",
+    "kshzerosubscript",
+    "listambiguous",
+    "listbeep",
+    "listpacked",
+    "listrowsfirst",
+    "listtypes",
+    "localoptions",
+    "localloops",
+    "localpatterns",
+    "localtraps",
+    "login",
+    "longlistjobs",
+    "magicequalsubst",
+    "mailwarning",
+    "markdirs",
+    "menucomplete",
+    "monitor",
+    "multibyte",
+    "multifuncdef",
+    "multios",
+    "nomatch",
+    "notify",
+    "nullglob",
+    "numericglobsort",
+    "octalzeroes",
+    "overstrike",
+    "pathdirs",
+    "pathscript",
+    "pipefail",
+    "posixaliases",
+    "posixargzero",
+    "posixbuiltins",
+    "posixcd",
+    "posixidentifiers",
+    "posixjobs",
+    "posixstrings",
+    "posixtraps",
+    "printeightbit",
+    "printexitvalue",
+    "privileged",
+    "promptbang",
+    "promptcr",
+    "promptpercent",
+    "promptsp",
+    "promptsubst",
+    "pushdignoredups",
+    "pushdminus",
+    "pushdsilent",
+    "pushdtohome",
+    "rcexpandparam",
+    "rcquotes",
+    "rcs",
+    "recexact",
+    "rematchpcre",
+    "restricted",
+    "rmstarsilent",
+    "rmstarwait",
+    "sharehistory",
+    "shfileexpansion",
+    "shglob",
+    "shinstdin",
+    "shnullcmd",
+    "shoptionletters",
+    "shortloops",
+    "shortrepeat",
+    "shwordsplit",
+    "singlecommand",
+    "singlelinezle",
+    "sourcetrace",
+    "sunkeyboardhack",
+    "transientrprompt",
+    "trapsasync",
+    "typesetsilent",
+    "typesettounset",
+    "unset",
+    "verbose",
+    "vi",
+    "warncreateglobal",
+    "warnnestedvar",
+    "xtrace",
+    "zle",
+    "braceexpand",
+    "dotglob",
+    "hashall",
+    "histappend",
+    "histexpand",
+    "log",
+    "mailwarn",
+    "onecmd",
+    "physical",
+    "promptvars",
+    "stdin",
+    "trackall",
+    "dvorak",
 ];
 
 /// Scan order of the C global `optiontab` (`Src/options.c:14`).
@@ -1520,38 +1699,38 @@ fn optns_flags(name: &str) -> u16 {
         "pathscript" => OPT_EMULATE | (OPT_BOURNE as u16),    // c:207
         "pipefail" => OPT_EMULATE,                            // c:208
         "posixaliases" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:209
-        "posixargzero" => OPT_EMULATE,                        // c:219 — no OPT_BOURNE (unlike the other posix* options); `emulate sh` leaves it off
+        "posixargzero" => OPT_EMULATE, // c:219 — no OPT_BOURNE (unlike the other posix* options); `emulate sh` leaves it off
         "posixbuiltins" => OPT_EMULATE | (OPT_BOURNE as u16), // c:211
-        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16),       // c:212
+        "posixcd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:212
         "posixidentifiers" => OPT_EMULATE | (OPT_BOURNE as u16), // c:213
-        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16),     // c:214
-        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16),  // c:215
-        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16),    // c:216
-        "printeightbit" => 0,                                 // c:217
-        "printexitvalue" => 0,                                // c:218
-        "privileged" => OPT_SPECIAL as u16,                   // c:219
-        "promptbang" => OPT_KSH as u16,                       // c:229
-        "promptcr" => OPT_ALL as u16,                         // c:221
-        "promptpercent" => OPT_NONBOURNE as u16,              // c:231
-        "promptsp" => OPT_ALL as u16,                         // c:223
-        "promptsubst" => OPT_BOURNE as u16,                   // c:233
-        "pushdignoredups" => OPT_EMULATE,                     // c:234
-        "pushdminus" => OPT_EMULATE,                          // c:235
-        "pushdsilent" => 0,                                   // c:227
-        "pushdtohome" => OPT_EMULATE,                         // c:237
-        "rcexpandparam" => OPT_EMULATE,                       // c:229
-        "rcquotes" => OPT_EMULATE,                            // c:239
-        "rcs" => OPT_ALL as u16,                              // c:231
-        "recexact" => 0,                                      // c:232
-        "rematchpcre" => 0,                                   // c:233
-        "restricted" => OPT_SPECIAL as u16,                   // c:234
-        "rmstarsilent" => OPT_BOURNE as u16,                  // c:243
-        "rmstarwait" => 0,                                    // c:236
-        "sharehistory" => 0,                                  // c:237
+        "posixjobs" => OPT_EMULATE | (OPT_BOURNE as u16), // c:214
+        "posixstrings" => OPT_EMULATE | (OPT_BOURNE as u16), // c:215
+        "posixtraps" => OPT_EMULATE | (OPT_BOURNE as u16), // c:216
+        "printeightbit" => 0,          // c:217
+        "printexitvalue" => 0,         // c:218
+        "privileged" => OPT_SPECIAL as u16, // c:219
+        "promptbang" => OPT_KSH as u16, // c:229
+        "promptcr" => OPT_ALL as u16,  // c:221
+        "promptpercent" => OPT_NONBOURNE as u16, // c:231
+        "promptsp" => OPT_ALL as u16,  // c:223
+        "promptsubst" => OPT_BOURNE as u16, // c:233
+        "pushdignoredups" => OPT_EMULATE, // c:234
+        "pushdminus" => OPT_EMULATE,   // c:235
+        "pushdsilent" => 0,            // c:227
+        "pushdtohome" => OPT_EMULATE,  // c:237
+        "rcexpandparam" => OPT_EMULATE, // c:229
+        "rcquotes" => OPT_EMULATE,     // c:239
+        "rcs" => OPT_ALL as u16,       // c:231
+        "recexact" => 0,               // c:232
+        "rematchpcre" => 0,            // c:233
+        "restricted" => OPT_SPECIAL as u16, // c:234
+        "rmstarsilent" => OPT_BOURNE as u16, // c:243
+        "rmstarwait" => 0,             // c:236
+        "sharehistory" => 0,           // c:237
         "shfileexpansion" => OPT_EMULATE | (OPT_BOURNE as u16), // c:238
-        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16),        // c:239
-        "shinstdin" => OPT_SPECIAL as u16,                    // c:240
-        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16),     // c:241
+        "shglob" => OPT_EMULATE | (OPT_BOURNE as u16), // c:239
+        "shinstdin" => OPT_SPECIAL as u16, // c:240
+        "shnullcmd" => OPT_EMULATE | (OPT_BOURNE as u16), // c:241
         "shoptionletters" => OPT_EMULATE | (OPT_BOURNE as u16), // c:242
         "shortloops" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:243
         // c:Src/options.c:252 — `shortrepeat` is OPT_EMULATE only

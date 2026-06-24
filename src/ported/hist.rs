@@ -1301,14 +1301,14 @@ pub fn digitcount() -> i32 {
 pub fn strinbeg(dohist: i32) {
     // c:1033
     strin.fetch_add(1, SeqCst); // c:1035
-    // C has ONE `strin`; zshrs splits it into hist.rs `strin` (history
-    // logic above/below) and input.rs `strin` (the copy `ingetc` checks
-    // at input.rs:390 to decide "string input drained → EOF" vs "read
-    // more SHIN"). The single C `strin++` must bump BOTH — same
-    // paired-global rule as `lexstop`. Without the input-side bump, a
-    // nested string parse (cmd-subst body via parse_isolated) that
-    // drained its LEX_INPUT fell through to `inputline()` and STOLE the
-    // outer reader's next SHIN line.
+                                // C has ONE `strin`; zshrs splits it into hist.rs `strin` (history
+                                // logic above/below) and input.rs `strin` (the copy `ingetc` checks
+                                // at input.rs:390 to decide "string input drained → EOF" vs "read
+                                // more SHIN"). The single C `strin++` must bump BOTH — same
+                                // paired-global rule as `lexstop`. Without the input-side bump, a
+                                // nested string parse (cmd-subst body via parse_isolated) that
+                                // drained its LEX_INPUT fell through to `inputline()` and STOLE the
+                                // outer reader's next SHIN line.
     crate::ported::input::strin.with(|s| s.set(s.get() + 1));
     hbegin(dohist); // c:1036
     lexinit(); // c:1037
@@ -1337,7 +1337,7 @@ pub fn strinend() {
         "BUG: strinend() called without strinbeg()"  // c:1052
     );
     strin.fetch_sub(1, SeqCst); // c:1053
-    // Mirror the input-side `strin` decrement (see strinbeg note).
+                                // Mirror the input-side `strin` decrement (see strinbeg note).
     crate::ported::input::strin.with(|s| s.set(s.get() - 1));
     LEX_ISFIRSTCH.with(|f| f.set(true)); // c:1054 isfirstch = 1
     histdone.store(0, SeqCst); // c:1055 histdone = 0
@@ -1973,14 +1973,14 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             .load(Ordering::Relaxed);
         errflag.store(0, Ordering::Relaxed); // c:1518
         let args = vec!["zshaddhistory".to_string(), chline_text.clone()]; // c:1520-1521
-        // c:1522 — `callhookfunc("zshaddhistory", hookargs, 1, &hookret);`.
-        // `hookret` is the HOOK's return value (the 4th out-param `*retval =
-        // ret`, 0 when no hook ran), NOT callhookfunc's return (`stat`,
-        // which is 1 whenever no hook exists). The prior port used the
-        // `stat` return and passed NULL for retval, so with no zshaddhistory
-        // hook (e.g. `zsh -f`) hookret was 1 → hend's `else if (hookret)`
-        // set save=-1 (HIST_TMPSTORE) → every line was dropped by the next
-        // command's tmpstore-purge. Pass &hookret and read the out-param.
+                                                                           // c:1522 — `callhookfunc("zshaddhistory", hookargs, 1, &hookret);`.
+                                                                           // `hookret` is the HOOK's return value (the 4th out-param `*retval =
+                                                                           // ret`, 0 when no hook ran), NOT callhookfunc's return (`stat`,
+                                                                           // which is 1 whenever no hook exists). The prior port used the
+                                                                           // `stat` return and passed NULL for retval, so with no zshaddhistory
+                                                                           // hook (e.g. `zsh -f`) hookret was 1 → hend's `else if (hookret)`
+                                                                           // set save=-1 (HIST_TMPSTORE) → every line was dropped by the next
+                                                                           // command's tmpstore-purge. Pass &hookret and read the out-param.
         crate::ported::utils::callhookfunc(
             "zshaddhistory",
             Some(&args),
@@ -3675,10 +3675,10 @@ pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
     }
     let explicit_path = fn_path.is_some();
     let cap = savehistsiz.load(SeqCst); // c:2932 savehistsiz
-    // For explicit fc -W path in -c mode, fall back to histsiz when
-    // savehistsiz isn't configured so the entries actually get
-    // written. Default histsiz is also 0 in -fc, so use the live
-    // ring length as the upper bound when both are unset.
+                                        // For explicit fc -W path in -c mode, fall back to histsiz when
+                                        // savehistsiz isn't configured so the entries actually get
+                                        // written. Default histsiz is also 0 in -fc, so use the live
+                                        // ring length as the upper bound when both are unset.
     let cap = if cap <= 0 && explicit_path {
         // Use live ring length as the upper bound. Even when the
         // ring is empty we still want to create the destination
@@ -4109,11 +4109,11 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
         lasthist: lasthist.lock().unwrap().clone(), // c:3861 h->lasthist = lasthist
         histfile: old_histfile,                     // c:3862-3868 OLD HISTFILE
         hist_ring: std::mem::take(&mut *hist_ring.lock().unwrap()), // c:3870 h->hist_ring = hist_ring
-        curhist: curhist.load(SeqCst),              // c:3871 h->curhist = curhist
-        histlinect: histlinect.load(SeqCst),        // c:3872
-        histsiz: histsiz.load(SeqCst),              // c:3873
-        savehistsiz: savehistsiz.load(SeqCst),      // c:3874
-        locallevel: level,                          // c:3875
+        curhist: curhist.load(SeqCst),                              // c:3871 h->curhist = curhist
+        histlinect: histlinect.load(SeqCst),                        // c:3872
+        histsiz: histsiz.load(SeqCst),                              // c:3873
+        savehistsiz: savehistsiz.load(SeqCst),                      // c:3874
+        locallevel: level,                                          // c:3875
     };
     histsave_stack.lock().unwrap().push(snap); // c:3859 histsave_stack[pos++] = *h
     histsave_stack_size.fetch_add(1, SeqCst);
@@ -4135,7 +4135,7 @@ pub fn pushhiststack(hf: Option<&str>, hs: i64, shs: i64, level: i32) -> i32 {
     histlinect.store(0, SeqCst);
     histsiz.store(hs, SeqCst); // c:3888 histsiz = hs
     savehistsiz.store(shs, SeqCst); // c:3889 savehistsiz = shs
-    // c:3895 — return histsave_stack_pos.
+                                    // c:3895 — return histsave_stack_pos.
     histsave_stack_pos.load(SeqCst)
 }
 

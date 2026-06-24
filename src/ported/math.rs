@@ -207,130 +207,152 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
     // build gate requires every `fn` to have a C counterpart, and there is
     // only one C `getmathparam`).
     let __raw = (|| -> mnumber {
-    // Strip array subscript if present
-    let base_name = if let Some(bracket) = name.find('[') {
-        &name[..bracket]
-    } else {
-        name
-    };
-    if let Some(v) = m_variables_get(base_name) {
-        return v;
-    }
-    // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
-    // which parses the full subscript syntax (params.c:2180).
-    // The Rust port previously required callers to seed
-    // `with_string_variables` (a pre-populate pattern that
-    // diverged from C). Read paramtab + array subscripts here
-    // so matheval works without seeding.
-    if let Some(bracket) = name.find('[') {
-        let close = name.rfind(']').unwrap_or(name.len());
-        let arr_name = &name[..bracket];
-        let idx_str = &name[bracket + 1..close];
+        // Strip array subscript if present
+        let base_name = if let Some(bracket) = name.find('[') {
+            &name[..bracket]
+        } else {
+            name
+        };
+        if let Some(v) = m_variables_get(base_name) {
+            return v;
+        }
+        // c:Src/math.c:337 getmathparam — falls back to `getvalue(s)`
+        // which parses the full subscript syntax (params.c:2180).
+        // The Rust port previously required callers to seed
+        // `with_string_variables` (a pre-populate pattern that
+        // diverged from C). Read paramtab + array subscripts here
+        // so matheval works without seeding.
+        if let Some(bracket) = name.find('[') {
+            let close = name.rfind(']').unwrap_or(name.len());
+            let arr_name = &name[..bracket];
+            let idx_str = &name[bracket + 1..close];
 
-        // c:Src/params.c::getarg — subscript-flag form `(i)pat` /
-        // `(I)pat` inside an arith subscript: search the array for
-        // `pat` and return the 1-based index (or len+1 / 0 for
-        // miss). Bug #341. The other flag arms (`r`/`R` returning
-        // strings, `n`/`b`/`e`/`w`/`s` etc.) don't yield arith
-        // values, so we only handle `i`/`I` here.
-        // Flag block `(flags)pat`: `i`/`I` make it an index search
-        // (forward / reverse), an optional `e` modifier forces EXACT
-        // (literal) compare instead of glob match. Accepts `(i)`,`(I)`,
-        // `(ie)`,`(Ie)`,`(ei)`,… so membership tests like
-        // `(( arr[(Ie)$x] ))` resolve. Other flag letters (r/R/n/b/w/s)
-        // don't yield an arith value and fall through.
-        if idx_str.starts_with('(') {
-            if let Some(close) = idx_str.find(')') {
-                let flags = &idx_str[1..close];
-                let pat = &idx_str[close + 1..];
-                let is_index = flags.contains('i') || flags.contains('I');
-                if is_index && flags.chars().all(|c| matches!(c, 'i' | 'I' | 'e' | 'n')) {
-                    let reverse = flags.contains('I');
-                    let exact = flags.contains('e');
-                    let matches_elem = |e: &str| -> bool {
-                        if exact {
-                            e == pat
-                        } else {
-                            crate::ported::pattern::patcompile(
-                                &{
-                                    let mut t = pat.to_string();
-                                    crate::ported::glob::tokenize(&mut t);
-                                    t
-                                },
-                                crate::ported::zsh_h::PAT_HEAPDUP as i32,
-                                None,
-                            )
-                            .map_or(e == pat, |p| crate::ported::pattern::pattry(&p, e))
-                        }
-                    };
-                    if let Ok(tab) = crate::ported::params::paramtab().read() {
-                        if let Some(pm) = tab.get(arr_name) {
-                            if let Some(arr) = &pm.u_arr {
-                                let len = arr.len() as i64;
-                                let mut found: i64 = if reverse { 0 } else { len + 1 };
-                                let it: Vec<(usize, &String)> = if reverse {
-                                    arr.iter().enumerate().rev().collect()
-                                } else {
-                                    arr.iter().enumerate().collect()
-                                };
-                                for (i, e) in it {
-                                    if matches_elem(e) {
-                                        found = (i + 1) as i64;
-                                        break;
+            // c:Src/params.c::getarg — subscript-flag form `(i)pat` /
+            // `(I)pat` inside an arith subscript: search the array for
+            // `pat` and return the 1-based index (or len+1 / 0 for
+            // miss). Bug #341. The other flag arms (`r`/`R` returning
+            // strings, `n`/`b`/`e`/`w`/`s` etc.) don't yield arith
+            // values, so we only handle `i`/`I` here.
+            // Flag block `(flags)pat`: `i`/`I` make it an index search
+            // (forward / reverse), an optional `e` modifier forces EXACT
+            // (literal) compare instead of glob match. Accepts `(i)`,`(I)`,
+            // `(ie)`,`(Ie)`,`(ei)`,… so membership tests like
+            // `(( arr[(Ie)$x] ))` resolve. Other flag letters (r/R/n/b/w/s)
+            // don't yield an arith value and fall through.
+            if idx_str.starts_with('(') {
+                if let Some(close) = idx_str.find(')') {
+                    let flags = &idx_str[1..close];
+                    let pat = &idx_str[close + 1..];
+                    let is_index = flags.contains('i') || flags.contains('I');
+                    if is_index && flags.chars().all(|c| matches!(c, 'i' | 'I' | 'e' | 'n')) {
+                        let reverse = flags.contains('I');
+                        let exact = flags.contains('e');
+                        let matches_elem = |e: &str| -> bool {
+                            if exact {
+                                e == pat
+                            } else {
+                                crate::ported::pattern::patcompile(
+                                    &{
+                                        let mut t = pat.to_string();
+                                        crate::ported::glob::tokenize(&mut t);
+                                        t
+                                    },
+                                    crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                                    None,
+                                )
+                                .map_or(e == pat, |p| crate::ported::pattern::pattry(&p, e))
+                            }
+                        };
+                        if let Ok(tab) = crate::ported::params::paramtab().read() {
+                            if let Some(pm) = tab.get(arr_name) {
+                                if let Some(arr) = &pm.u_arr {
+                                    let len = arr.len() as i64;
+                                    let mut found: i64 = if reverse { 0 } else { len + 1 };
+                                    let it: Vec<(usize, &String)> = if reverse {
+                                        arr.iter().enumerate().rev().collect()
+                                    } else {
+                                        arr.iter().enumerate().collect()
+                                    };
+                                    for (i, e) in it {
+                                        if matches_elem(e) {
+                                            found = (i + 1) as i64;
+                                            break;
+                                        }
                                     }
+                                    return mnumber {
+                                        l: found,
+                                        d: 0.0,
+                                        type_: MN_INTEGER,
+                                    };
                                 }
+                            }
+                        }
+                        return mnumber {
+                            l: 0,
+                            d: 0.0,
+                            type_: MN_INTEGER,
+                        };
+                    }
+                }
+            }
+
+            // Recursively eval the index (so a[i+1], h[$k], etc work).
+            // CRITICAL: save/restore evaluator state around the recursive
+            // matheval — without this, the inner call's `push(idx_value)`
+            // contaminates the OUTER expression's operand stack. Bug
+            // manifested as `$((1 + arr[1]))` returning 10 (just arr[1])
+            // because the outer NUM(1) got popped by the inner eval's
+            // op() during `op(PLUS)` (which sees [NUM(1), ID(arr[1]),
+            // NUM(1_from_idx_eval)] instead of [NUM(1), ID(arr[1])]).
+            // C mathevall at math.c:367 does the same xyy* save/restore
+            // around recursive entry.
+            let saved = save_state();
+            let idx_val = matheval(idx_str)
+                .map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })
+                .unwrap_or(0);
+            restore_state(saved);
+            // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
+            if let Ok(tab) = crate::ported::params::paramtab().read() {
+                if let Some(pm) = tab.get(arr_name) {
+                    if let Some(arr) = &pm.u_arr {
+                        let len = arr.len() as i64;
+                        let pos = if idx_val < 0 {
+                            len + idx_val
+                        } else {
+                            idx_val - 1
+                        };
+                        if pos >= 0 && (pos as usize) < arr.len() {
+                            let raw = &arr[pos as usize];
+                            if let Ok(n) = raw.parse::<i64>() {
                                 return mnumber {
-                                    l: found,
+                                    l: n,
                                     d: 0.0,
                                     type_: MN_INTEGER,
                                 };
                             }
+                            if let Ok(f) = raw.parse::<f64>() {
+                                return mnumber {
+                                    l: 0,
+                                    d: f,
+                                    type_: MN_FLOAT,
+                                };
+                            }
                         }
                     }
-                    return mnumber {
-                        l: 0,
-                        d: 0.0,
-                        type_: MN_INTEGER,
-                    };
                 }
             }
-        }
-
-        // Recursively eval the index (so a[i+1], h[$k], etc work).
-        // CRITICAL: save/restore evaluator state around the recursive
-        // matheval — without this, the inner call's `push(idx_value)`
-        // contaminates the OUTER expression's operand stack. Bug
-        // manifested as `$((1 + arr[1]))` returning 10 (just arr[1])
-        // because the outer NUM(1) got popped by the inner eval's
-        // op() during `op(PLUS)` (which sees [NUM(1), ID(arr[1]),
-        // NUM(1_from_idx_eval)] instead of [NUM(1), ID(arr[1])]).
-        // C mathevall at math.c:367 does the same xyy* save/restore
-        // around recursive entry.
-        let saved = save_state();
-        let idx_val = matheval(idx_str)
-            .map(|n| if n.type_ == MN_FLOAT { n.d as i64 } else { n.l })
-            .unwrap_or(0);
-        restore_state(saved);
-        // Read paramtab directly: PM_ARRAY → u_arr indexed by 1-based pos.
-        if let Ok(tab) = crate::ported::params::paramtab().read() {
-            if let Some(pm) = tab.get(arr_name) {
-                if let Some(arr) = &pm.u_arr {
-                    let len = arr.len() as i64;
-                    let pos = if idx_val < 0 {
-                        len + idx_val
-                    } else {
-                        idx_val - 1
-                    };
-                    if pos >= 0 && (pos as usize) < arr.len() {
-                        let raw = &arr[pos as usize];
-                        if let Ok(n) = raw.parse::<i64>() {
+            // PM_HASHED via paramtab_hashed_storage.
+            if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                if let Some(map) = m.get(arr_name) {
+                    if let Some(v) = map.get(idx_str) {
+                        if let Ok(n) = v.parse::<i64>() {
                             return mnumber {
                                 l: n,
                                 d: 0.0,
                                 type_: MN_INTEGER,
                             };
                         }
-                        if let Ok(f) = raw.parse::<f64>() {
+                        if let Ok(f) = v.parse::<f64>() {
                             return mnumber {
                                 l: 0,
                                 d: f,
@@ -340,129 +362,107 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                     }
                 }
             }
-        }
-        // PM_HASHED via paramtab_hashed_storage.
-        if let Ok(m) = crate::ported::params::paramtab_hashed_storage().lock() {
-            if let Some(map) = m.get(arr_name) {
-                if let Some(v) = map.get(idx_str) {
-                    if let Ok(n) = v.parse::<i64>() {
-                        return mnumber {
-                            l: n,
-                            d: 0.0,
-                            type_: MN_INTEGER,
-                        };
-                    }
-                    if let Ok(f) = v.parse::<f64>() {
-                        return mnumber {
-                            l: 0,
-                            d: f,
-                            type_: MN_FLOAT,
-                        };
-                    }
-                }
-            }
-        }
-        return mnumber {
-            l: 0,
-            d: 0.0,
-            type_: MN_INTEGER,
-        };
-    }
-    if let Some(raw) = getsparam(base_name) {
-        if let Ok(n) = raw.parse::<i64>() {
             return mnumber {
-                l: n,
+                l: 0,
                 d: 0.0,
                 type_: MN_INTEGER,
             };
         }
-        if let Ok(f) = raw.parse::<f64>() {
-            return mnumber {
-                l: 0,
-                d: f,
-                type_: MN_FLOAT,
+        if let Some(raw) = getsparam(base_name) {
+            if let Ok(n) = raw.parse::<i64>() {
+                return mnumber {
+                    l: n,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                };
+            }
+            if let Ok(f) = raw.parse::<f64>() {
+                return mnumber {
+                    l: 0,
+                    d: f,
+                    type_: MN_FLOAT,
+                };
+            }
+            // c:Src/math.c:337 getmathparam — falls back to recursively
+            // evaluating the raw string as an arith expression. zsh: a
+            // scalar holding `0xff` / `0b101` / `3+2` / `1e3` all evaluate
+            // when used in arith context. Direct path through `matheval`
+            // gives lexconstant + parser its full integer-base + float
+            // handling.
+            let saved = save_state();
+            let inherited_strs = saved.string_variables.clone();
+            new(&raw);
+            m_variables_set(saved.variables.clone());
+            let mut strs = inherited_strs;
+            strs.remove(base_name);
+            m_string_variables_set(strs);
+            m_prec_set(saved.prec);
+            m_c_precedences_set(saved.c_precedences);
+            let result = mathevall();
+            // c:Src/math.c::matheval — when the recursive eval errors
+            // (e.g. raw is "42xyz" with trailing junk), preserve the error
+            // message so it propagates to the outer arith caller instead
+            // of being clobbered by restore_state. zsh: `a="42xyz";
+            // $((a+1))` → "bad math expression: operator expected at
+            // `xyz'" rc=1. zshrs previously swallowed the error and
+            // returned 0 (then +1 = 1) silently. Bug #494.
+            let err_to_propagate = match &result {
+                Err(msg) => Some(msg.clone()),
+                Ok(_) => None,
             };
+            restore_state(saved);
+            if let Ok(r) = result {
+                return r;
+            }
+            if let Some(msg) = err_to_propagate {
+                m_error_set(msg);
+            }
+            // Non-numeric and non-evaluable string: fall through.
         }
-        // c:Src/math.c:337 getmathparam — falls back to recursively
-        // evaluating the raw string as an arith expression. zsh: a
-        // scalar holding `0xff` / `0b101` / `3+2` / `1e3` all evaluate
-        // when used in arith context. Direct path through `matheval`
-        // gives lexconstant + parser its full integer-base + float
-        // handling.
-        let saved = save_state();
-        let inherited_strs = saved.string_variables.clone();
-        new(&raw);
-        m_variables_set(saved.variables.clone());
-        let mut strs = inherited_strs;
-        strs.remove(base_name);
-        m_string_variables_set(strs);
-        m_prec_set(saved.prec);
-        m_c_precedences_set(saved.c_precedences);
-        let result = mathevall();
-        // c:Src/math.c::matheval — when the recursive eval errors
-        // (e.g. raw is "42xyz" with trailing junk), preserve the error
-        // message so it propagates to the outer arith caller instead
-        // of being clobbered by restore_state. zsh: `a="42xyz";
-        // $((a+1))` → "bad math expression: operator expected at
-        // `xyz'" rc=1. zshrs previously swallowed the error and
-        // returned 0 (then +1 = 1) silently. Bug #494.
-        let err_to_propagate = match &result {
-            Err(msg) => Some(msg.clone()),
-            Ok(_) => None,
-        };
-        restore_state(saved);
-        if let Ok(r) = result {
-            return r;
-        }
-        if let Some(msg) = err_to_propagate {
-            m_error_set(msg);
-        }
-        // Non-numeric and non-evaluable string: fall through.
-    }
-    // Recursive eval: if the var holds a non-numeric string, evaluate
-    // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
-    // to one level of indirection — fresh evaluator each call so we
-    // don't accidentally pollute s.variables.
-    if let Some(raw) = m_string_variables_get(base_name) {
-        // Save parent's eval state — `new(&raw)` resets thread_locals
-        // for the sub-eval, which would otherwise clobber the parent.
-        // Mirrors C `mathevall()` xyy* save/restore pattern (math.c:367).
-        let saved = save_state();
-        // Inherit caller's variables/string_variables/prec into the
-        // sub-eval, with `base_name` removed from the indirect map to
-        // prevent infinite recursion on `a="$a"`-style cycles.
-        let inherited_vars = saved.variables.clone();
-        let mut inherited_strs = saved.string_variables.clone();
-        inherited_strs.remove(base_name);
-        let inherited_prec = saved.prec;
-        let inherited_c_prec = saved.c_precedences;
+        // Recursive eval: if the var holds a non-numeric string, evaluate
+        // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
+        // to one level of indirection — fresh evaluator each call so we
+        // don't accidentally pollute s.variables.
+        if let Some(raw) = m_string_variables_get(base_name) {
+            // Save parent's eval state — `new(&raw)` resets thread_locals
+            // for the sub-eval, which would otherwise clobber the parent.
+            // Mirrors C `mathevall()` xyy* save/restore pattern (math.c:367).
+            let saved = save_state();
+            // Inherit caller's variables/string_variables/prec into the
+            // sub-eval, with `base_name` removed from the indirect map to
+            // prevent infinite recursion on `a="$a"`-style cycles.
+            let inherited_vars = saved.variables.clone();
+            let mut inherited_strs = saved.string_variables.clone();
+            inherited_strs.remove(base_name);
+            let inherited_prec = saved.prec;
+            let inherited_c_prec = saved.c_precedences;
 
-        new(&raw);
-        m_variables_set(inherited_vars);
-        m_string_variables_set(inherited_strs);
-        m_prec_set(inherited_prec);
-        m_c_precedences_set(inherited_c_prec);
+            new(&raw);
+            m_variables_set(inherited_vars);
+            m_string_variables_set(inherited_strs);
+            m_prec_set(inherited_prec);
+            m_c_precedences_set(inherited_c_prec);
 
-        let result = mathevall();
-        restore_state(saved);
-        if let Ok(r) = result {
-            return r;
+            let result = mathevall();
+            restore_state(saved);
+            if let Ok(r) = result {
+                return r;
+            }
         }
-    }
-    // c:Src/math.c:345-346 — `if (unset(UNSET)) zerr("%s: parameter
-    // not set", mptr->lval);`. When `nounset` is set (i.e., the
-    // canonical `UNSET` option is OFF), referring to an unset
-    // parameter in arith context is an error. Bug #88 in
-    // docs/BUGS.md: zshrs silently used 0, masking typos and
-    // breaking defensive `set -u` scripts.
-    if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
-        crate::ported::utils::zerr(&format!("{}: parameter not set", name));
-    }
-    mnumber {
-        l: 0,
-        d: 0.0,
-        type_: MN_INTEGER,
-    }
+        // c:Src/math.c:345-346 — `if (unset(UNSET)) zerr("%s: parameter
+        // not set", mptr->lval);`. When `nounset` is set (i.e., the
+        // canonical `UNSET` option is OFF), referring to an unset
+        // parameter in arith context is an error. Bug #88 in
+        // docs/BUGS.md: zshrs silently used 0, masking typos and
+        // breaking defensive `set -u` scripts.
+        if !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+            crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+        }
+        mnumber {
+            l: 0,
+            d: 0.0,
+            type_: MN_INTEGER,
+        }
     })();
     if m_force_float() && __raw.type_ == MN_INTEGER {
         // c:359-362 — coerce integer → float under FORCEFLOAT.
@@ -485,9 +485,15 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
     // populated them, so `setopt forcefloat` / `cprecedences` / `octalzeroes`
     // had no effect inside arithmetic. Sync the caches from the live options at
     // each eval entry (the option can't change mid-expression).
-    m_c_precedences_set(crate::ported::zsh_h::isset(crate::ported::zsh_h::CPRECEDENCES));
-    m_force_float_set(crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT));
-    m_octal_zeroes_set(crate::ported::zsh_h::isset(crate::ported::zsh_h::OCTALZEROES));
+    m_c_precedences_set(crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::CPRECEDENCES,
+    ));
+    m_force_float_set(crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::FORCEFLOAT,
+    ));
+    m_octal_zeroes_set(crate::ported::zsh_h::isset(
+        crate::ported::zsh_h::OCTALZEROES,
+    ));
     m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
     // c:Src/math.c:1485-1488 — `outputradix = outputunderscore = 0;`
@@ -1862,8 +1868,8 @@ pub(crate) fn zzlex() -> i32 {
                     // `LASTVAL` atomic (zsh C's `lastval` global). The local
                     // `m_lastval()` cache is unset by any matheval caller —
                     // it would always be 0. Bug #367.
-                    let lv = crate::ported::builtin::LASTVAL
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let lv =
+                        crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
                     m_yyval_set(mnumber {
                         l: lv as i64,
                         d: 0.0,
@@ -2028,9 +2034,9 @@ pub(crate) fn zzlex() -> i32 {
                 // Character code: #\x or ##string
                 if peek() == Some('\\') || peek() == Some('#') {
                     advance(); // consume the `\` / 2nd `#` marker
-                    // c:852-854 — `ptr++; if (!*ptr) { zerr("bad math
-                    // expression: character missing after ##"); return EOI; }`.
-                    // `$((##))` with nothing after the marker is an error, not 0.
+                               // c:852-854 — `ptr++; if (!*ptr) { zerr("bad math
+                               // expression: character missing after ##"); return EOI; }`.
+                               // `$((##))` with nothing after the marker is an error, not 0.
                     if peek().is_none() {
                         crate::ported::utils::zerr(
                             "bad math expression: character missing after ##",
@@ -2478,62 +2484,62 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                 })
         });
     if let Some((impl_name, minargs, maxargs)) = userfunc_impl {
-    if let Some(mut shfunc) = crate::ported::utils::getshfunc(&impl_name) {
-        // c:1059-1062 — `addlinknode(l, n)`: the FIRST positional ($0)
-        // is the MATH function NAME (`max`/`min`), NOT the implementing
-        // shfunc name. A shared impl (zmathfunc registers max/min/sum to
-        // one function) switches on $0, so it must see the math name.
-        // The body to RUN is still the impl shfunc.
-        let mut largs: Vec<String> = vec![name.to_string()];
-        let argv_str: Vec<String> = call[paren..]
-            .trim_start_matches('(')
-            .trim_end_matches(')')
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        // c:Src/math.c:1106-1107 — `if (argc >= f->minargs &&
-        // (f->maxargs < 0 || argc <= f->maxargs))`. The actual arg count
-        // (NOT counting the math-fn name pushed as $0 at c:1061) must be
-        // within the registered bounds; `maxargs < 0` means unbounded.
-        // On mismatch C falls to c:1127 `zerr("wrong number of
-        // arguments: %s", o)` where `o` is the original `name(args)`
-        // call text, and aborts the math eval. Without this check zshrs
-        // dispatched the body anyway (e.g. a 0-arg `functions -M` fn
-        // called as `cube(3)` ran the body instead of erroring).
-        let argc = argv_str.len() as i32;
-        if argc < minargs || (maxargs >= 0 && argc > maxargs) {
-            crate::ported::utils::zerr(&format!("wrong number of arguments: {}", call)); // c:1127
-            crate::ported::utils::errflag.fetch_or(
-                crate::ported::zsh_h::ERRFLAG_ERROR,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            return mnumber {
-                l: 0,
-                d: 0.0,
-                type_: MN_INTEGER,
+        if let Some(mut shfunc) = crate::ported::utils::getshfunc(&impl_name) {
+            // c:1059-1062 — `addlinknode(l, n)`: the FIRST positional ($0)
+            // is the MATH function NAME (`max`/`min`), NOT the implementing
+            // shfunc name. A shared impl (zmathfunc registers max/min/sum to
+            // one function) switches on $0, so it must see the math name.
+            // The body to RUN is still the impl shfunc.
+            let mut largs: Vec<String> = vec![name.to_string()];
+            let argv_str: Vec<String> = call[paren..]
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            // c:Src/math.c:1106-1107 — `if (argc >= f->minargs &&
+            // (f->maxargs < 0 || argc <= f->maxargs))`. The actual arg count
+            // (NOT counting the math-fn name pushed as $0 at c:1061) must be
+            // within the registered bounds; `maxargs < 0` means unbounded.
+            // On mismatch C falls to c:1127 `zerr("wrong number of
+            // arguments: %s", o)` where `o` is the original `name(args)`
+            // call text, and aborts the math eval. Without this check zshrs
+            // dispatched the body anyway (e.g. a 0-arg `functions -M` fn
+            // called as `cube(3)` ran the body instead of erroring).
+            let argc = argv_str.len() as i32;
+            if argc < minargs || (maxargs >= 0 && argc > maxargs) {
+                crate::ported::utils::zerr(&format!("wrong number of arguments: {}", call)); // c:1127
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                return mnumber {
+                    l: 0,
+                    d: 0.0,
+                    type_: MN_INTEGER,
+                };
+            }
+            largs.extend(argv_str.iter().cloned());
+            let name_for_body = impl_name.clone();
+            let body_args = argv_str.clone();
+            let body_runner = move || -> i32 {
+                crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
             };
+            // c:1114 — `doshfunc(shfunc, l, 1)`. The body runs a nested
+            // `(( ))` which RE-ENTERS this evaluator and clobbers the outer
+            // parser's input/pos/stack thread-locals; save + restore them
+            // around the call so the OUTER `$(( fn(x) ))` keeps parsing
+            // (without this it errored "operand expected at end of string").
+            // M_LASTMATHVAL is NOT part of save_state, so the body's last
+            // `(( ))` result survives the restore.
+            let saved = save_state();
+            let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
+            restore_state(saved);
+            // c:1115 — `return lastmathval`. The body's last arithmetic
+            // evaluation (e.g. `(( REPLY = $1 + 2 ))`) is the function's value.
+            return M_LASTMATHVAL.with(|c| c.get());
         }
-        largs.extend(argv_str.iter().cloned());
-        let name_for_body = impl_name.clone();
-        let body_args = argv_str.clone();
-        let body_runner = move || -> i32 {
-            crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
-        };
-        // c:1114 — `doshfunc(shfunc, l, 1)`. The body runs a nested
-        // `(( ))` which RE-ENTERS this evaluator and clobbers the outer
-        // parser's input/pos/stack thread-locals; save + restore them
-        // around the call so the OUTER `$(( fn(x) ))` keeps parsing
-        // (without this it errored "operand expected at end of string").
-        // M_LASTMATHVAL is NOT part of save_state, so the body's last
-        // `(( ))` result survives the restore.
-        let saved = save_state();
-        let _ = crate::ported::exec::doshfunc(&mut shfunc, largs, true, body_runner);
-        restore_state(saved);
-        // c:1115 — `return lastmathval`. The body's last arithmetic
-        // evaluation (e.g. `(( REPLY = $1 + 2 ))`) is the function's value.
-        return M_LASTMATHVAL.with(|c| c.get());
-    }
     } // close `if mathfunc_entry.is_some()`
 
     if is_module_func && !module_loaded {
@@ -2549,9 +2555,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         let autoloaded = crate::ported::module::MODULESTAB
             .lock()
             .ok()
-            .map(|mut tab| {
-                crate::ported::module::getmathfunc(&mut tab, name, 1).is_some()
-            })
+            .map(|mut tab| crate::ported::module::getmathfunc(&mut tab, name, 1).is_some())
             .unwrap_or(false);
         if !autoloaded {
             crate::ported::utils::zerr(&format!("unknown function: {}", name));
@@ -2722,7 +2726,11 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
                 .map(|&x| mnumber {
                     l: x as i64,
                     d: x,
-                    type_: if x.fract() == 0.0 { MN_INTEGER } else { MN_FLOAT },
+                    type_: if x.fract() == 0.0 {
+                        MN_INTEGER
+                    } else {
+                        MN_FLOAT
+                    },
                 })
                 .collect();
             return crate::ported::modules::system::math_systell(
@@ -2792,11 +2800,11 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         }
         "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
         "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
-        "erf" => unsafe { erf(args.first().copied().unwrap_or(0.0)) },   // c:257
+        "erf" => unsafe { erf(args.first().copied().unwrap_or(0.0)) }, // c:257
         "erfc" => unsafe { erfc(args.first().copied().unwrap_or(0.0)) }, // c:261
         "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
         "expm1" => unsafe { expm1(args.first().copied().unwrap_or(0.0)) }, // c:269
-        "fabs" => args.first().map(|x| x.abs()).unwrap_or(0.0),          // c:273
+        "fabs" => args.first().map(|x| x.abs()).unwrap_or(0.0),            // c:273
         "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
         "fmod" => {
             let x = args.first().copied().unwrap_or(0.0);
@@ -2896,7 +2904,7 @@ fn math_string(_name: &str, arg: &str, id: i32) -> mnumber {
         d: 0.0,
         type_: MN_INTEGER,
     }; // c:440 zero_mnumber
-    // c:446-453 — trim leading/trailing blanks from the verbatim arg.
+       // c:446-453 — trim leading/trailing blanks from the verbatim arg.
     let arg = arg.trim_matches(|c: char| c == ' ' || c == '\t');
     match id {
         MS_RAND48 => {
@@ -2912,13 +2920,13 @@ fn math_string(_name: &str, arg: &str, id: i32) -> mnumber {
             if !arg.is_empty() {
                 // c:465-494 — seed comes from the named parameter.
                 use_static = false; // c:467 seedbufptr = tmp_seedbuf
-                // c:468 — `(seedstr = getsparam(arg)) && strlen(seedstr) >= 12`
+                                    // c:468 — `(seedstr = getsparam(arg)) && strlen(seedstr) >= 12`
                 if let Some(seedstr) = crate::ported::params::getsparam(arg) {
                     let sb = seedstr.as_bytes();
                     if sb.len() >= 12 {
                         do_init = false; // c:470
                         let mut p = 0usize; // walks seedstr (c: seedstr++)
-                        // c:474-492 — decode three u16 from 12 hex digits.
+                                            // c:474-492 — decode three u16 from 12 hex digits.
                         for i in 0..3 {
                             if do_init {
                                 break;
@@ -3738,8 +3746,8 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     let result = mathevall();
     // c:1496 — `mtok = xmtok;` restore. Done even on error path.
     M_MTOK.with(|c| c.set(xmtok)); // c:1496
-    // c:Src/math.c:1500 — `lastmathval = z;` records the result of this
-    // top-level eval so callmathfunc's MFF_USERFUNC branch can return it.
+                                   // c:Src/math.c:1500 — `lastmathval = z;` records the result of this
+                                   // top-level eval so callmathfunc's MFF_USERFUNC branch can return it.
     if let Ok(ref n) = result {
         M_LASTMATHVAL.with(|c| c.set(*n));
     }
@@ -3794,7 +3802,13 @@ pub fn mathevali_noeval(s: &str) -> Result<i64, String> {
     let result = mathevall();
     m_noeval_set(0);
     M_MTOK.with(|c| c.set(xmtok));
-    result.map(|n| if (n.type_ & MN_FLOAT) != 0 { n.d as i64 } else { n.l })
+    result.map(|n| {
+        if (n.type_ & MN_FLOAT) != 0 {
+            n.d as i64
+        } else {
+            n.l
+        }
+    })
 }
 
 /// Port of `zlong mathevalarg(char *s, char **ss)` from `Src/math.c:1514-1539`.

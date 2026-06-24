@@ -302,8 +302,7 @@ mod heredoc_delimiter_word {
         if !zsh_available() {
             return;
         }
-        let path =
-            std::env::temp_dir().join(format!("zshrs_hd_unterm_{}.zsh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("zshrs_hd_unterm_{}.zsh", std::process::id()));
         std::fs::write(&path, "cat <<XX\nbody\n").unwrap();
         let z = Command::new(zsh_path())
             .arg("-f")
@@ -330,6 +329,8 @@ mod heredoc_delimiter_word {
     /// "Here-documents do perform $'...' expansion on the initial word".
     #[test]
     fn dollar_quote_hex_escapes_in_delimiter() {
-        assert_parity("cat <<-$'\\x45\\x4e\\x44\\t\\x44\\x4f\\x43'\n\tunfathomable\n\tEND\tDOC\necho after");
+        assert_parity(
+            "cat <<-$'\\x45\\x4e\\x44\\t\\x44\\x4f\\x43'\n\tunfathomable\n\tEND\tDOC\necho after",
+        );
     }
 }

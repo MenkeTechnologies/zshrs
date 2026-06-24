@@ -1201,8 +1201,16 @@ pub fn do_comp_vars(
                 return 0;
             } // c:965
               // c:968 — singsub(&sa); — caller already expanded.
-            let pp = patcompile(&{ let mut __pat_tok = (sa).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None); // c:969
-                                                        // c:971-977 — walk compwords backward looking for sa match.
+            let pp = patcompile(
+                &{
+                    let mut __pat_tok = (sa).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_HEAPDUP,
+                None,
+            ); // c:969
+               // c:971-977 — walk compwords backward looking for sa match.
             i -= 1; // c:971
             while i >= 0 {
                 if let Some(ref prog) = pp {
@@ -1219,7 +1227,15 @@ pub fn do_comp_vars(
             if t != 0 && !sb.is_empty() {
                 // c:980
                 let mut tt = 0i32;
-                let pp2 = patcompile(&{ let mut __pat_tok = (sb).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None); // c:983
+                let pp2 = patcompile(
+                    &{
+                        let mut __pat_tok = (sb).to_string();
+                        crate::ported::glob::tokenize(&mut __pat_tok);
+                        __pat_tok
+                    },
+                    PAT_HEAPDUP,
+                    None,
+                ); // c:983
                 i += 1; // c:984
                 while i < l {
                     if let Some(ref prog) = pp2 {
@@ -1285,7 +1301,15 @@ pub fn do_comp_vars(
             if na == 0 {
                 return 0;
             } // c:1045
-            let pp = match patcompile(&{ let mut __pat_tok = (sa).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None) {
+            let pp = match patcompile(
+                &{
+                    let mut __pat_tok = (sa).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_HEAPDUP,
+                None,
+            ) {
                 // c:1047
                 Some(p) => p,
                 None => return 0,

@@ -823,7 +823,11 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
                 let dir = &after[..end];
                 let name = dir.replacen("---", "/", 1);
                 let root: PathBuf = s[..start + marker.len() + end].into();
-                return PluginEntry { manager: "zinit".into(), name, root };
+                return PluginEntry {
+                    manager: "zinit".into(),
+                    name,
+                    root,
+                };
             }
         }
     }
@@ -839,9 +843,17 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
             let after = &s[start + marker.len()..];
             let end = after.find('/').unwrap_or(after.len());
             let leaf = &after[..end];
-            let name = if kind == "theme" { format!("{}.theme", leaf) } else { leaf.to_string() };
+            let name = if kind == "theme" {
+                format!("{}.theme", leaf)
+            } else {
+                leaf.to_string()
+            };
             let root: PathBuf = s[..start + marker.len() + end].into();
-            return PluginEntry { manager: "oh-my-zsh".into(), name, root };
+            return PluginEntry {
+                manager: "oh-my-zsh".into(),
+                name,
+                root,
+            };
         }
     }
 
@@ -851,7 +863,11 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
         let end = after.find('/').unwrap_or(after.len());
         let name = after[..end].to_string();
         let root: PathBuf = s[..start + "/.zprezto/modules/".len() + end].into();
-        return PluginEntry { manager: "prezto".into(), name, root };
+        return PluginEntry {
+            manager: "prezto".into(),
+            name,
+            root,
+        };
     }
 
     // antidote: `~/.cache/antidote/<user>/<repo>/<file>` or
@@ -863,14 +879,13 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
             let mut split = after.splitn(3, '/');
             if let (Some(user), Some(repo), _) = (split.next(), split.next(), split.next()) {
                 let name = format!("{}/{}", user, repo);
-                let root: PathBuf = format!(
-                    "{}{}/{}",
-                    &s[..start + marker.len()],
-                    user,
-                    repo
-                )
-                .into();
-                return PluginEntry { manager: "antidote".into(), name, root };
+                let root: PathBuf =
+                    format!("{}{}/{}", &s[..start + marker.len()], user, repo).into();
+                return PluginEntry {
+                    manager: "antidote".into(),
+                    name,
+                    root,
+                };
             }
         }
     }
@@ -888,7 +903,11 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
                 repo
             )
             .into();
-            return PluginEntry { manager: "antigen".into(), name, root };
+            return PluginEntry {
+                manager: "antigen".into(),
+                name,
+                root,
+            };
         }
     }
 
@@ -898,14 +917,13 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
         let mut split = after.splitn(3, '/');
         if let (Some(user), Some(repo), _) = (split.next(), split.next(), split.next()) {
             let name = format!("{}/{}", user, repo);
-            let root: PathBuf = format!(
-                "{}/{}/{}",
-                &s[..start + "/.zplug/repos".len()],
-                user,
-                repo
-            )
-            .into();
-            return PluginEntry { manager: "zplug".into(), name, root };
+            let root: PathBuf =
+                format!("{}/{}/{}", &s[..start + "/.zplug/repos".len()], user, repo).into();
+            return PluginEntry {
+                manager: "zplug".into(),
+                name,
+                root,
+            };
         }
     }
 
@@ -933,12 +951,19 @@ fn classify_plugin_path(path: &Path) -> PluginEntry {
     }
 
     // Loose: the file's parent directory is the root, basename is the name.
-    let root = path.parent().map(PathBuf::from).unwrap_or_else(|| path.into());
+    let root = path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.into());
     let name = root
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "(loose)".into());
-    PluginEntry { manager: "loose".into(), name, root }
+    PluginEntry {
+        manager: "loose".into(),
+        name,
+        root,
+    }
 }
 
 /// Read every entry in `plugins` and group by `(manager, name, root)`.
@@ -953,8 +978,12 @@ pub fn list_plugins(cache_path: &Path) -> Vec<PluginEntry> {
         std::collections::BTreeMap::new();
     for (path, _mtime) in cache.list_plugin_paths() {
         let entry = classify_plugin_path(Path::new(&path));
-        seen.entry((entry.manager.clone(), entry.name.clone(), entry.root.clone()))
-            .or_insert(entry);
+        seen.entry((
+            entry.manager.clone(),
+            entry.name.clone(),
+            entry.root.clone(),
+        ))
+        .or_insert(entry);
     }
     seen.into_values().collect()
 }
@@ -976,7 +1005,9 @@ pub fn dump_plugins_json() -> String {
     let entries = list_plugins(&default_cache_path());
     let mut s = String::from("{\"schema\":1,\"plugins\":[");
     for (i, e) in entries.iter().enumerate() {
-        if i > 0 { s.push(','); }
+        if i > 0 {
+            s.push(',');
+        }
         s.push_str(&format!(
             "{{\"manager\":{},\"name\":{},\"root\":{}}}",
             json_str(&e.manager),
@@ -1233,9 +1264,8 @@ mod classify_tests {
 
     #[test]
     fn zinit_xdg_dir_user_repo() {
-        let (m, n, _) = classify(
-            "/home/u/.local/share/zinit/plugins/romkatv---powerlevel10k/p10k.zsh",
-        );
+        let (m, n, _) =
+            classify("/home/u/.local/share/zinit/plugins/romkatv---powerlevel10k/p10k.zsh");
         assert_eq!(m, "zinit");
         assert_eq!(n, "romkatv/powerlevel10k");
     }
@@ -1259,8 +1289,7 @@ mod classify_tests {
 
     #[test]
     fn oh_my_zsh_theme_tagged_with_theme_suffix() {
-        let (m, n, _) =
-            classify("/Users/wizard/.oh-my-zsh/themes/agnoster.zsh-theme");
+        let (m, n, _) = classify("/Users/wizard/.oh-my-zsh/themes/agnoster.zsh-theme");
         assert_eq!(m, "oh-my-zsh");
         assert_eq!(n, "agnoster.zsh-theme.theme");
     }
@@ -1301,9 +1330,8 @@ mod classify_tests {
 
     #[test]
     fn zsh_more_completions_groups_into_one() {
-        let (m, n, _) = classify(
-            "/Users/wizard/forkedRepos/zsh-more-completions/src/_some_long_completion",
-        );
+        let (m, n, _) =
+            classify("/Users/wizard/forkedRepos/zsh-more-completions/src/_some_long_completion");
         assert_eq!(m, "zsh-more-completions");
         assert_eq!(n, "zsh-more-completions");
     }

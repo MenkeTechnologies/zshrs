@@ -186,9 +186,7 @@ fn parse_ztst(path: &Path) -> ZtstFile {
 ///     spaces; `<<-HERE` tests need their literal tabs).
 fn read_code_chunk(lines: &[&str], idx: &mut usize) -> Option<String> {
     // Skip blank lines and column-0 comment lines (ztst.zsh:208-214)
-    while *idx < lines.len()
-        && (lines[*idx].trim().is_empty() || lines[*idx].starts_with('#'))
-    {
+    while *idx < lines.len() && (lines[*idx].trim().is_empty() || lines[*idx].starts_with('#')) {
         *idx += 1;
     }
     if *idx >= lines.len() {
@@ -539,7 +537,11 @@ fn compute_fpath() -> Vec<PathBuf> {
     let root = env::var("ZTST_ZSH_SOURCE")
         .map(PathBuf::from)
         .ok()
-        .or_else(|| env::var("HOME").ok().map(|h| PathBuf::from(h).join("forkedRepos/zsh")))
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join("forkedRepos/zsh"))
+        })
         .filter(|p| p.is_dir());
     let Some(root) = root else { return Vec::new() };
 
@@ -887,8 +889,7 @@ done
                 Ok(line) => {
                     if let Some(rest) = line.strip_prefix(&marker) {
                         let rest = rest.trim_start();
-                        let (status_s, aux) =
-                            rest.split_once(' ').unwrap_or((rest, ""));
+                        let (status_s, aux) = rest.split_once(' ').unwrap_or((rest, ""));
                         let status = status_s.parse::<i32>().unwrap_or(-1);
                         return ChunkOutcome::Done {
                             status,
@@ -1002,7 +1003,10 @@ fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
                 }
             }
             ChunkOutcome::Timeout => {
-                prep_failed = Some(format!("TIMEOUT after {}ms in preparation code", timeout_ms()));
+                prep_failed = Some(format!(
+                    "TIMEOUT after {}ms in preparation code",
+                    timeout_ms()
+                ));
                 break;
             }
             ChunkOutcome::Died => {
@@ -1482,7 +1486,13 @@ fn gen_ztst_failures() {
             let stem: String = name
                 .trim_end_matches(".ztst")
                 .chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             let mut fname = format!("ztst_{}_{:03}", stem, chunk);
             while !used.insert(fname.clone()) {
@@ -1506,7 +1516,10 @@ fn gen_ztst_failures() {
     let gen_dir = Path::new("tests/gen");
     fs::create_dir_all(gen_dir).unwrap();
     fs::write(gen_dir.join("ztst_failures.rs"), out).unwrap();
-    eprintln!("generated {} ztst failure tests → tests/gen/ztst_failures.rs", count);
+    eprintln!(
+        "generated {} ztst failure tests → tests/gen/ztst_failures.rs",
+        count
+    );
 }
 
 // ---------------------------------------------------------------------------

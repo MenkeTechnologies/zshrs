@@ -223,9 +223,7 @@ pub fn watchlog2(inout: i32, u: &libc::utmpx, fmt: &str, prnt: i32, fini: i32) -
                 let hb = host.as_bytes();
                 let mut k = 0usize;
                 while k < hb.len() {
-                    if hb[k] == b'.'
-                        && !hb.get(k + 1).is_some_and(|c| c.is_ascii_digit())
-                    {
+                    if hb[k] == b'.' && !hb.get(k + 1).is_some_and(|c| c.is_ascii_digit()) {
                         break; // c:302-303
                     }
                     k += 1; // c:304 putchar(*p)
@@ -342,7 +340,15 @@ pub fn watchlog_match(pattern: &str, value: &str) -> bool {
     // tokenization internally per Src/pattern.c:547.
     // c:445 — PAT_STATIC = 0x80 per zsh.h.
     use crate::ported::pattern::{patcompile, pattry};
-    match patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0x80, None) {
+    match patcompile(
+        &{
+            let mut __pat_tok = (pattern).to_string();
+            crate::ported::glob::tokenize(&mut __pat_tok);
+            __pat_tok
+        },
+        0x80,
+        None,
+    ) {
         Some(prog) => {
             // c:446-449 — queue_signals + pattry + unqueue_signals.
             // pattry doesn't actually touch the signal queue from the

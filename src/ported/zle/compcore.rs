@@ -1901,13 +1901,14 @@ pub fn addmatches(
             let mut tmp = entry.clone();
             crate::ported::glob::tokenize(&mut tmp); // c:2231
             crate::ported::glob::remnulargs(&mut tmp); // c:2232
-            // c:2233-2236 — `(tmp[0] == Quest && tmp[1] == Star) ||
-            // (tmp[1] == Quest && tmp[0] == Star)` token short-circuit:
-            // trailing literal suffix.
+                                                       // c:2233-2236 — `(tmp[0] == Quest && tmp[1] == Star) ||
+                                                       // (tmp[1] == Quest && tmp[0] == Star)` token short-circuit:
+                                                       // trailing literal suffix.
             let tch: Vec<char> = tmp.chars().collect();
             let suffix: String = tch.iter().skip(2).collect();
             let star_prefix = tch.len() >= 3
-                && ((tch[0] == crate::ported::zsh_h::Quest && tch[1] == crate::ported::zsh_h::Star)
+                && ((tch[0] == crate::ported::zsh_h::Quest
+                    && tch[1] == crate::ported::zsh_h::Star)
                     || (tch[1] == crate::ported::zsh_h::Quest
                         && tch[0] == crate::ported::zsh_h::Star))
                 && !crate::ported::pattern::haswilds(&suffix);
