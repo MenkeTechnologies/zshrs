@@ -1755,114 +1755,115 @@ fn par_case() -> Option<ZshCommand> {
         if !patterns.is_empty() && absorbed_outpar {
             // skip to body parse
         } else {
-        loop {
-            if tok() == STRING_LEX {
-                let s = tokstr();
-                if s.as_deref().map(|s| s == "esac").unwrap_or(false) {
+            loop {
+                if tok() == STRING_LEX {
+                    let s = tokstr();
+                    if s.as_deref().map(|s| s == "esac").unwrap_or(false) {
+                        break;
+                    }
+                    let mut str_val = s.unwrap_or_default();
+
+                    // c:1322-1354 hack: when this is the first alt AND
+                    // the string starts with the Inpar marker, the lexer
+                    // absorbed the whole `(...)` as one token. Chuck the
+                    // blanks around `|`/parens at depth 1 (c:1332-1338 —
+                    // `( d | e )` must become `(d|e)`), then strip the
+                    // surrounding parens — the remainder IS the pattern.
+                    // The closing arm-paren was absorbed too, so we don't
+                    // expect a separate OUTPAR token afterward.
+                    if patterns.is_empty() && str_val.starts_with(crate::ported::zsh_h::Inpar) {
+                        use crate::ported::zsh_h::{Bar, Inpar, Outpar};
+                        let meta = crate::ported::zsh_h::Meta as char;
+                        let blank =
+                            |c: char| c.is_ascii() && crate::ported::ztype_h::iblank(c as u8);
+                        let mut chars: Vec<char> = str_val.chars().collect();
+                        let mut pct = 0i32;
+                        let mut i = 0usize;
+                        let mut end_idx: Option<usize> = None;
+                        while i < chars.len() {
+                            if chars[i] == Inpar {
+                                pct += 1;
+                            }
+                            if pct == 1 {
+                                // c:1332-1334 — chuck blanks AFTER `|`/`(`.
+                                if chars[i] == Bar || chars[i] == Inpar {
+                                    while i + 1 < chars.len() && blank(chars[i + 1]) {
+                                        chars.remove(i + 1);
+                                    }
+                                }
+                                // c:1335-1338 — chuck blanks BEFORE `|`/`)`
+                                // (not Meta-escaped blanks).
+                                if chars[i] == Bar || chars[i] == Outpar {
+                                    while i >= 1
+                                        && blank(chars[i - 1])
+                                        && (i < 2 || chars[i - 2] != meta)
+                                    {
+                                        chars.remove(i - 1);
+                                        i -= 1;
+                                    }
+                                }
+                            }
+                            if chars[i] == Outpar {
+                                pct -= 1;
+                                if pct == 0 {
+                                    end_idx = Some(i);
+                                    break;
+                                }
+                            }
+                            i += 1;
+                        }
+                        if let Some(idx) = end_idx {
+                            // c:1346-1352 — the surrounding-paren strip is only
+                            // valid when the WHOLE string is `(...)` (close-paren
+                            // is the last char). C asserts this with
+                            // `DPUTS(*str != Inpar || str[sl-1] != Outpar)` and
+                            // `YYERRORV` on `if (*s || pct ...)` when anything
+                            // follows the matched close-paren. When trailing
+                            // content exists (`(a|b)*`, `(a|b)c`), the `(...)` is
+                            // a glob GROUP, not the optional case-opener — keep
+                            // the whole string verbatim as one pattern and let
+                            // the separate arm-closing `)` (OUTPAR_TOK) be
+                            // consumed below. Stripping here turned `(a|b)*` into
+                            // `a|b*` ("a" or "b*"), breaking OS-dispatch case arms.
+                            if idx == chars.len() - 1 {
+                                chars.remove(idx);
+                                chars.remove(0);
+                                str_val = chars.into_iter().collect();
+                                absorbed_outpar = true;
+                            }
+                        }
+                    }
+                    patterns.push(str_val);
+                    if absorbed_outpar {
+                        // c:Src/parse.c:1300-1302 — after a whole-`(...)`
+                        // pattern the next token may be the body's first
+                        // command word; C lexes it with `incasepat = -1;
+                        // incmdpos = 1;` so assignments (`out+=hit`)
+                        // become ENVSTRING instead of a plain STRING
+                        // (lex.c:1229-1230 gates ENVSTRING on incmdpos).
+                        set_incasepat(-1);
+                        set_incmdpos(true);
+                    } else {
+                        set_incasepat(2);
+                    }
+                    zshlex();
+                    // When the hack fired the closing `)` is already
+                    // consumed; don't read alt-`|` continuations either.
+                    if absorbed_outpar {
+                        break;
+                    }
+                } else if tok() != BAR_TOK {
                     break;
                 }
-                let mut str_val = s.unwrap_or_default();
 
-                // c:1322-1354 hack: when this is the first alt AND
-                // the string starts with the Inpar marker, the lexer
-                // absorbed the whole `(...)` as one token. Chuck the
-                // blanks around `|`/parens at depth 1 (c:1332-1338 —
-                // `( d | e )` must become `(d|e)`), then strip the
-                // surrounding parens — the remainder IS the pattern.
-                // The closing arm-paren was absorbed too, so we don't
-                // expect a separate OUTPAR token afterward.
-                if patterns.is_empty() && str_val.starts_with(crate::ported::zsh_h::Inpar) {
-                    use crate::ported::zsh_h::{Bar, Inpar, Outpar};
-                    let meta = crate::ported::zsh_h::Meta as char;
-                    let blank = |c: char| c.is_ascii() && crate::ported::ztype_h::iblank(c as u8);
-                    let mut chars: Vec<char> = str_val.chars().collect();
-                    let mut pct = 0i32;
-                    let mut i = 0usize;
-                    let mut end_idx: Option<usize> = None;
-                    while i < chars.len() {
-                        if chars[i] == Inpar {
-                            pct += 1;
-                        }
-                        if pct == 1 {
-                            // c:1332-1334 — chuck blanks AFTER `|`/`(`.
-                            if chars[i] == Bar || chars[i] == Inpar {
-                                while i + 1 < chars.len() && blank(chars[i + 1]) {
-                                    chars.remove(i + 1);
-                                }
-                            }
-                            // c:1335-1338 — chuck blanks BEFORE `|`/`)`
-                            // (not Meta-escaped blanks).
-                            if chars[i] == Bar || chars[i] == Outpar {
-                                while i >= 1
-                                    && blank(chars[i - 1])
-                                    && (i < 2 || chars[i - 2] != meta)
-                                {
-                                    chars.remove(i - 1);
-                                    i -= 1;
-                                }
-                            }
-                        }
-                        if chars[i] == Outpar {
-                            pct -= 1;
-                            if pct == 0 {
-                                end_idx = Some(i);
-                                break;
-                            }
-                        }
-                        i += 1;
-                    }
-                    if let Some(idx) = end_idx {
-                        // c:1346-1352 — the surrounding-paren strip is only
-                        // valid when the WHOLE string is `(...)` (close-paren
-                        // is the last char). C asserts this with
-                        // `DPUTS(*str != Inpar || str[sl-1] != Outpar)` and
-                        // `YYERRORV` on `if (*s || pct ...)` when anything
-                        // follows the matched close-paren. When trailing
-                        // content exists (`(a|b)*`, `(a|b)c`), the `(...)` is
-                        // a glob GROUP, not the optional case-opener — keep
-                        // the whole string verbatim as one pattern and let
-                        // the separate arm-closing `)` (OUTPAR_TOK) be
-                        // consumed below. Stripping here turned `(a|b)*` into
-                        // `a|b*` ("a" or "b*"), breaking OS-dispatch case arms.
-                        if idx == chars.len() - 1 {
-                            chars.remove(idx);
-                            chars.remove(0);
-                            str_val = chars.into_iter().collect();
-                            absorbed_outpar = true;
-                        }
-                    }
-                }
-                patterns.push(str_val);
-                if absorbed_outpar {
-                    // c:Src/parse.c:1300-1302 — after a whole-`(...)`
-                    // pattern the next token may be the body's first
-                    // command word; C lexes it with `incasepat = -1;
-                    // incmdpos = 1;` so assignments (`out+=hit`)
-                    // become ENVSTRING instead of a plain STRING
-                    // (lex.c:1229-1230 gates ENVSTRING on incmdpos).
-                    set_incasepat(-1);
-                    set_incmdpos(true);
+                if tok() == BAR_TOK {
+                    set_incasepat(1);
+                    zshlex();
                 } else {
-                    set_incasepat(2);
-                }
-                zshlex();
-                // When the hack fired the closing `)` is already
-                // consumed; don't read alt-`|` continuations either.
-                if absorbed_outpar {
                     break;
                 }
-            } else if tok() != BAR_TOK {
-                break;
             }
-
-            if tok() == BAR_TOK {
-                set_incasepat(1);
-                zshlex();
-            } else {
-                break;
-            }
-        }
-        }  // end else of "skip legacy loop when nested-paren branch fired"
+        } // end else of "skip legacy loop when nested-paren branch fired"
         set_incasepat(0);
 
         // c:1305 — expect OUTPAR (arm-close) when the hack didn't
@@ -2116,6 +2117,23 @@ fn par_if() -> Option<ZshCommand> {
                     };
 
                     elif.push((econd, ebody));
+
+                    // Brace-form elif already consumed its closing `}`. If a
+                    // separator follows (rather than another `elif`/`else` on
+                    // the same line), the if-construct is finished — break out
+                    // WITHOUT letting the loop's top-of-iteration
+                    // skip_separators() eat the SEPER. The outer par_list needs
+                    // that separator between the if and the next command;
+                    // swallowing it makes the next command a "STRING after
+                    // compound" parse error. Mirrors the then-body early-exit
+                    // above. Without this, zinit-install.zsh:91
+                    //   } elif { ! .zinit-download-file-stdout … } { … }
+                    //   <newline> [[ -e $tmpfile ]] && …
+                    // aborted the whole top-level parse, so the file's line-5
+                    // `source` never fired (recorder captured 0 events).
+                    if elif_use_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
+                        break;
+                    }
                 }
                 ELSE => {
                     zshlex();
@@ -2275,16 +2293,16 @@ fn par_repeat() -> Option<ZshCommand> {
 /// fork-isolates execution in the executor.
 fn par_subsh() -> Option<ZshCommand> {
     zshlex(); // skip (
-    // c:Src/parse.c:par_subsh — `parse_event(OUTPAR)` parses until
-    // the matching `)`. zshrs's previous port called bare
-    // `parse_program()` (parse_program_until(None, false)) which has no
-    // way to know it should stop at OUTPAR_TOK — at top-level
-    // that's fine (the outer loop just sees an extra OUTPAR after
-    // the inner body), but the parse_event-equivalent's new
-    // yyerror-on-unconsumed-token behavior at parse_program_until's
-    // None arm now reports a spurious "parse error near `)'" when
-    // the construct ends. Pass OUTPAR_TOK so parse_program_until
-    // stops cleanly at the closing paren.
+              // c:Src/parse.c:par_subsh — `parse_event(OUTPAR)` parses until
+              // the matching `)`. zshrs's previous port called bare
+              // `parse_program()` (parse_program_until(None, false)) which has no
+              // way to know it should stop at OUTPAR_TOK — at top-level
+              // that's fine (the outer loop just sees an extra OUTPAR after
+              // the inner body), but the parse_event-equivalent's new
+              // yyerror-on-unconsumed-token behavior at parse_program_until's
+              // None arm now reports a spurious "parse error near `)'" when
+              // the construct ends. Pass OUTPAR_TOK so parse_program_until
+              // stops cleanly at the closing paren.
     let prog = parse_program_until(Some(&[OUTPAR_TOK]), false);
     if tok() == OUTPAR_TOK {
         zshlex();
@@ -2678,7 +2696,9 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                             //   bin_typeset never sees the empty key.
                             //   Bug #93 in docs/BUGS.md.
                             let mut buf = String::with_capacity(
-                                assign.name.len() + 4 + elems.iter().map(|e| e.len() + 1).sum::<usize>(),
+                                assign.name.len()
+                                    + 4
+                                    + elems.iter().map(|e| e.len() + 1).sum::<usize>(),
                             );
                             buf.push_str(&assign.name);
                             buf.push_str("=(");
@@ -2951,7 +2971,9 @@ fn par_cond() -> Option<ZshCommand> {
             SEMI => ";".to_string(),
             DSEMI => ";;".to_string(),
             NEWLIN | SEPER => String::new(),
-            _ => tokstr().map(|s| crate::ported::lex::untokenize(&s)).unwrap_or_default(),
+            _ => tokstr()
+                .map(|s| crate::ported::lex::untokenize(&s))
+                .unwrap_or_default(),
         };
         if tok_text.is_empty() {
             zerr("parse error");
@@ -3411,10 +3433,8 @@ pub fn yyerror(noerr: i32) {
     let mut t0: usize = 0;
     while t0 != 20 {
         // c:2741
-        let stop = t_opt.is_none()
-            || t0 >= t_bytes.len()
-            || t_bytes[t0] == 0
-            || t_bytes[t0] == b'\n';
+        let stop =
+            t_opt.is_none() || t0 >= t_bytes.len() || t_bytes[t0] == 0 || t_bytes[t0] == b'\n';
         if stop {
             break;
         }
@@ -3425,10 +3445,8 @@ pub fn yyerror(noerr: i32) {
     //   ERRFLAG_INT))`. The HISTFLAG_NOEXEC gate suppresses warnings
     //   from history-recall paths that aren't actually executing.
     let histdone_v = crate::ported::hist::histdone.load(Ordering::SeqCst);
-    let hist_noexec =
-        (histdone_v & crate::ported::zsh_h::HISTFLAG_NOEXEC as i32) != 0;
-    let int_flagged =
-        (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT) != 0;
+    let hist_noexec = (histdone_v & crate::ported::zsh_h::HISTFLAG_NOEXEC as i32) != 0;
+    let int_flagged = (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_INT) != 0;
     if !hist_noexec && !int_flagged {
         // c:2744
         if t0 != 0 {
@@ -3437,13 +3455,10 @@ pub fn yyerror(noerr: i32) {
             //   the truncated head so embedded Meta bytes display
             //   correctly. The Rust port already holds an untokenized
             //   string; use the byte slice [0..t0] directly.
-            let head =
-                std::str::from_utf8(&t_bytes[..t0]).unwrap_or_default();
+            let head = std::str::from_utf8(&t_bytes[..t0]).unwrap_or_default();
             let suffix = if t0 == 20 { "..." } else { "" };
-            crate::ported::utils::zwarn(&format!(
-                "parse error near `{}{}'",
-                head, suffix
-            )); // c:2747
+            crate::ported::utils::zwarn(&format!("parse error near `{}{}'", head, suffix));
+        // c:2747
         } else {
             // c:2748
             crate::ported::utils::zwarn("parse error"); // c:2749
@@ -3455,13 +3470,10 @@ pub fn yyerror(noerr: i32) {
     let noerrs_v = *crate::ported::utils::noerrs_lock().lock().unwrap();
     if noerr == 0 && noerrs_v != 2 {
         // c:2751
-        errflag.fetch_or(
-            crate::ported::zsh_h::ERRFLAG_ERROR,
-            Ordering::SeqCst,
-        ); // c:2752
+        errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+        // c:2752
     }
 }
-
 
 // ============================================================
 // Eprog runtime ops (parse.c:2767-2853)
@@ -3593,9 +3605,9 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
         let b2 = ((c >> 19) & 0xff) as u8;
         let v = [b0, b1, b2];
         let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2869 strlen(buf)
-        // C reads raw bytes (token codes included) — widen via the
-        // wordcode-pool bridge, never from_utf8_lossy (which mangles
-        // raw token bytes from C-zsh-written .zwc dumps to U+FFFD).
+                                                                     // C reads raw bytes (token codes included) — widen via the
+                                                                     // wordcode-pool bridge, never from_utf8_lossy (which mangles
+                                                                     // raw token bytes from C-zsh-written .zwc dumps to U+FFFD).
         crate::zwc::wordcode_pool_str(&v[..end])
     } else {
         // c:2877 `else r = s->strs + (c >> 2);`
@@ -3649,7 +3661,7 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         let b2 = ((c >> 19) & 0xff) as u8;
         let v = [b0, b1, b2];
         let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2906 strlen(buf)
-        // Raw-byte widening — see ecgetstr (same C-convention bridge).
+                                                                     // Raw-byte widening — see ecgetstr (same C-convention bridge).
         crate::zwc::wordcode_pool_str(&v[..end])
     } else {
         // c:2911
@@ -3995,7 +4007,7 @@ pub struct wcfunc {
     /// Compiled program (`Eprog prog` c:3160) — wordcode + strs +
     /// npats as built by `bld_eprog`.
     pub prog: eprog, // c:3160
-    pub flags: u32, // c:3161
+    pub flags: u32,   // c:3161
 }
 
 /// Port of `dump_find_func(Wordcode h, char *name)` from
@@ -4304,8 +4316,8 @@ pub fn write_dump(
             // sizeof(Patprog))`.
             let len_bytes = prog.len - prog.npats * patprog_size;
             let mut head = fdhead {
-                start: cur_hlen as u32, // c:3360
-                len: len_bytes as u32,  // c:3363
+                start: cur_hlen as u32,   // c:3360
+                len: len_bytes as u32,    // c:3363
                 npats: prog.npats as u32, // c:3364
                 // c:3365 — `head.strs = prog->strs - ((char *) prog->prog);`
                 // In bld_eprog's layout strs sits right after the code
@@ -4863,15 +4875,15 @@ pub fn check_dump_file(
     let strs_string = unsafe { String::from_utf8_unchecked(bytes[strs_off..].to_vec()) };
     let po = h.npats as usize * size_of::<*const u8>(); // c:3920
     let prog = eprog {
-        flags: EF_REAL,                  // c:3941
+        flags: EF_REAL,                    // c:3941
         len: (h.len as usize + po) as i32, // c:3942
-        npats: h.npats as i32,           // c:3943
-        nref: 1,                         // c:3944
-        pats: Vec::new(),                // c:3945/3952 dummy_patprog1 fill
-        prog: prog_words,                // c:3946
-        strs: Some(strs_string),         // c:3947
-        shf: None,                       // c:3948
-        dump: None,                      // c:3949
+        npats: h.npats as i32,             // c:3943
+        nref: 1,                           // c:3944
+        pats: Vec::new(),                  // c:3945/3952 dummy_patprog1 fill
+        prog: prog_words,                  // c:3946
+        strs: Some(strs_string),           // c:3947
+        shf: None,                         // c:3948
+        dump: None,                        // c:3949
     };
 
     // c:3899 — incrdumpcount(f) on the mmap-cache hit path.
@@ -8468,8 +8480,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                             }
                             set_tok(LEXERR); // c:672
                             yyerror(1);
-                            let noerrs_v =
-                                *crate::ported::utils::noerrs_lock().lock().unwrap();
+                            let noerrs_v = *crate::ported::utils::noerrs_lock().lock().unwrap();
                             if noerrs_v != 2 {
                                 errflag.fetch_or(
                                     crate::ported::zsh_h::ERRFLAG_ERROR,
@@ -8508,17 +8519,14 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                 // tok's canonical text into LEX_TOKSTR here so the
                 // C-faithful yyerror lookup finds it. Mirrors the
                 // visible effect of C's zshlextext fallback.
-                let already_flagged = (errflag.load(Ordering::SeqCst)
-                    & crate::ported::zsh_h::ERRFLAG_ERROR)
-                    != 0;
+                let already_flagged =
+                    (errflag.load(Ordering::SeqCst) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0;
                 let offending_tok = tok();
                 if crate::ported::lex::tokstr().is_none() {
                     let i = offending_tok as usize;
                     if i < crate::ported::lex::tokstrings.len() {
                         if let Some(s) = crate::ported::lex::tokstrings[i] {
-                            crate::ported::lex::set_tokstr(Some(
-                                s.to_string(),
-                            ));
+                            crate::ported::lex::set_tokstr(Some(s.to_string()));
                         }
                     }
                 }
@@ -8531,13 +8539,9 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                 // for the parse_string path) can't distinguish "no
                 // parse error" from "parse error already printed", so
                 // $? stays at 0 after `eval ')foo'`.
-                let noerrs_v =
-                    *crate::ported::utils::noerrs_lock().lock().unwrap();
+                let noerrs_v = *crate::ported::utils::noerrs_lock().lock().unwrap();
                 if noerrs_v != 2 {
-                    errflag.fetch_or(
-                        crate::ported::zsh_h::ERRFLAG_ERROR,
-                        Ordering::SeqCst,
-                    );
+                    errflag.fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
                 }
                 break;
             }
@@ -8553,9 +8557,7 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
         // looping (same logical line). Multi-line compounds were already
         // fully consumed inside par_list, so their internal newlines
         // never reach this check.
-        if single_event
-            && tok() == SEPER
-            && crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) > 0
+        if single_event && tok() == SEPER && crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) > 0
         {
             break;
         }
@@ -8599,7 +8601,9 @@ fn parse_assign() -> Option<ZshAssign> {
             // and the assignment's `=` was never found (depth never
             // returned to 0), so the whole assignment was dropped and
             // `A[\[]=v; cmd` parse-errored on the `;`.
-            if c == '\u{9f}' /* Bnull */ || c == '\u{a0}' /* Bnullkeep */ {
+            if c == '\u{9f}' /* Bnull */ || c == '\u{a0}'
+            /* Bnullkeep */
+            {
                 skip_next = true;
                 continue;
             }
@@ -9086,10 +9090,10 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
         })));
     }
     zshlex(); // skip {
-    // c:Src/parse.c:par_subsh — anon `() { … }` body must terminate at
-    // OUTBRACE_TOK. Pass it as the explicit end-token so the inner
-    // parse stops cleanly at `}` rather than hitting the top-level
-    // stray-`}` arm (#168). Bug #167 family.
+              // c:Src/parse.c:par_subsh — anon `() { … }` body must terminate at
+              // OUTBRACE_TOK. Pass it as the explicit end-token so the inner
+              // parse stops cleanly at `}` rather than hitting the top-level
+              // stray-`}` arm (#168). Bug #167 family.
     let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
     // c:Src/parse.c:1733-1737 — same `if (tok != OUTBRACE) YYERRORV`
     // gate as the named-funcdef path. Bug #405 sibling.
@@ -9157,11 +9161,11 @@ fn parse_anon_funcdef() -> Option<ZshCommand> {
 /// arm into a dedicated method.
 fn parse_cursh() -> Option<ZshCommand> {
     zshlex(); // skip {
-    // c:Src/parse.c:par_subsh — pass OUTBRACE_TOK as the explicit
-    // body terminator so the inner parse stops cleanly at `}` rather
-    // than falling through the top-level `OUTBRACE_TOK if
-    // end_tokens.is_none()` arm (which errors on stray `}` per bug
-    // #168). Bug #167 in docs/BUGS.md.
+              // c:Src/parse.c:par_subsh — pass OUTBRACE_TOK as the explicit
+              // body terminator so the inner parse stops cleanly at `}` rather
+              // than falling through the top-level `OUTBRACE_TOK if
+              // end_tokens.is_none()` arm (which errors on stray `}` per bug
+              // #168). Bug #167 in docs/BUGS.md.
     let prog = parse_program_until(Some(&[OUTBRACE_TOK]), false);
 
     // c:Src/parse.c:par_subsh — `{ … }` requires a matching `}`.
@@ -9461,13 +9465,11 @@ fn parse_cond_primary() -> Option<ZshCond> {
                 // Convert Dash (\u{9b}) back to ASCII `-` for the
                 // user-visible diagnostic so it reads "unknown
                 // condition: -z" not "unknown condition: <Dash>z".
-                let display: String = s1.chars().map(|c| {
-                    if IS_DASH(c) { '-' } else { c }
-                }).collect();
-                crate::ported::utils::zerr(&format!(
-                    "unknown condition: {}",
-                    display
-                ));
+                let display: String = s1
+                    .chars()
+                    .map(|c| if IS_DASH(c) { '-' } else { c })
+                    .collect();
+                crate::ported::utils::zerr(&format!("unknown condition: {}", display));
                 return None;
             }
         };
@@ -9549,13 +9551,11 @@ fn parse_cond_primary() -> Option<ZshCond> {
             //
             // Convert Dash (\u{9b}) back to ASCII `-` in the LHS
             // display so the diagnostic reads cleanly.
-            let display: String = s1.chars().map(|c| {
-                if IS_DASH(c) { '-' } else { c }
-            }).collect();
-            crate::ported::utils::zerr(&format!(
-                "parse error: condition expected: {}",
-                display
-            ));
+            let display: String = s1
+                .chars()
+                .map(|c| if IS_DASH(c) { '-' } else { c })
+                .collect();
+            crate::ported::utils::zerr(&format!("parse error: condition expected: {}", display));
             crate::ported::utils::errflag.fetch_or(
                 crate::ported::zsh_h::ERRFLAG_ERROR,
                 std::sync::atomic::Ordering::Relaxed,
@@ -9573,9 +9573,8 @@ fn parse_cond_primary() -> Option<ZshCond> {
     // `op == "=~"` check missed every real `[[ x =~ pat ]]` and fell
     // through to Binary.
     let opc: Vec<char> = op.chars().collect();
-    let is_regex_op = opc.len() == 2
-        && (opc[0] == '=' || opc[0] == Equals)
-        && (opc[1] == '~' || opc[1] == Tilde);
+    let is_regex_op =
+        opc.len() == 2 && (opc[0] == '=' || opc[0] == Equals) && (opc[1] == '~' || opc[1] == Tilde);
     // c:2659-2710 par_cond_triple — only the documented binary operators are
     // valid. String ops: `=`/`==`/`!=`/`<`/`>` (and their tokenized forms
     // Equals/Bang/Inang/Outang). Dash ops (`-eq`, `-nt`, `-pcre-match`, any
@@ -9597,7 +9596,10 @@ fn parse_cond_primary() -> Option<ZshCond> {
     } else if is_recognized_op {
         Some(ZshCond::Binary(s1, op, s2))
     } else {
-        let display: String = op.chars().map(|c| if IS_DASH(c) { '-' } else { c }).collect();
+        let display: String = op
+            .chars()
+            .map(|c| if IS_DASH(c) { '-' } else { c })
+            .collect();
         crate::ported::utils::zerr(&format!("condition expected: {}", display));
         crate::ported::utils::errflag.fetch_or(
             crate::ported::zsh_h::ERRFLAG_ERROR,
