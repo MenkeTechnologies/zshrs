@@ -1983,225 +1983,155 @@ fn par_case() -> Option<ZshCommand> {
 }
 
 /// Parse if statement
-/// Parse `if COND; then BODY; [elif COND; then BODY;]* [else BODY;] fi`.
-/// Direct port of zsh/Src/parse.c:1411 `par_if`. The C source
-/// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
-/// (cond, then_body) tuples plus an optional else_body.
+/// Parse `if COND; then BODY; [elif COND; then BODY;]* [else BODY;] fi`, plus
+/// the brace forms `if COND { BODY } [elif COND { BODY }]* [else { BODY }]`.
+///
+/// Faithful port of zsh/Src/parse.c:1411 `par_if` — a SINGLE `for(;;)` loop that
+/// processes the `if` arm and every `elif` arm through the same body code, so the
+/// C's one `if (tok == SEPER) break;` after a brace body (c:1471-1472) covers
+/// if- and elif-bodies uniformly. (The previous port split this into a pre-loop
+/// if-body + a separate elif/else loop, which forced that single break to be
+/// duplicated per arm and needed a special `fi`-gate; the single loop retires
+/// all of that.) The C emits WC_IF wordcodes per arm; zshrs builds a ZshIf AST —
+/// arm 0 -> (cond, then), later arms -> elif, plus an optional else_.
 fn par_if() -> Option<ZshCommand> {
-    zshlex(); // skip 'if'
+    // tok() == IF on entry (the dispatcher matched `if`); the loop consumes it.
+    let mut if_cond: Option<Box<ZshProgram>> = None;
+    let mut if_then: Option<Box<ZshProgram>> = None;
+    let mut elif: Vec<(ZshProgram, ZshProgram)> = Vec::new();
+    let mut else_: Option<Box<ZshProgram>> = None;
+    // `usebrace` mirrors c:1449/1458 — the body form of the LAST arm parsed; it
+    // gates whether a trailing `else {` is a brace-else (c:1492 `tok == INBRACE
+    // && usebrace`) or, for a then-form arm, a brace-group statement inside the
+    // else body that still ends at `fi` (p10k.zsh:5575).
+    let mut usebrace = false;
+    // Mirrors C's `xtok` where the loop exits, for the post-loop else check
+    // (c:1487 `if (xtok == ELSE || tok == ELSE)`).
+    let mut xtok_at_exit = IF;
 
-    // c:1414 — `par_save_list(cmplx);` — the cond is an ORDINARY
-    // list (same grammar as par_while's cond): a leading `{ … }`
-    // block is the cond's first command (`if { false } { body }`,
-    // `if { CMD } || { CMD }; then …` — p10k.zsh:8376), and the
-    // brace-form BODY opener is reachable because a list followed
-    // by `{` without a separator ends (the chaining rule in
-    // parse_program_until). Only THEN needs to be in the stop set
-    // (`then` at command position can't start a command).
-    // fast-syntax-highlighting.plugin.zsh:365-375 is the canonical
-    // real-world load: `if [[ … ]] { … } elif { type curl … } { … }`.
-    let cond = Box::new(parse_program_until(Some(&[THEN]), false));
-
-    skip_separators();
-
-    // Expect 'then' or {
-    let use_brace = tok() == INBRACE_TOK;
-    if tok() != THEN && !use_brace {
-        zerr("expected 'then' or '{' after if condition");
-        return None;
-    }
-    zshlex();
-
-    // Parse then-body - stops at else/elif/fi, or } if using brace syntax
-    let then = if use_brace {
-        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
-        if tok() == OUTBRACE_TOK {
+    loop {
+        let xtok = tok(); // c:1420
+        // c:1422-1425 — `fi` at the top closes a then-form if/elif chain.
+        if xtok == FI {
+            set_incmdpos(false);
             zshlex();
-            // c:Src/parse.c:1469-1470 — `zshlex(); incmdpos = 1;`. C
-            // par_if explicitly resets incmdpos to 1 after consuming
-            // OUTBRACE so subsequent commands (`; echo after`, `else`
-            // following the `}` without a `;`) are at command position
-            // and tokenize correctly.
+            xtok_at_exit = FI;
+            break;
+        }
+        zshlex(); // c:1426 — consume IF / ELIF / ELSE
+        // c:1428-1429 — `else` ends the arm loop (handled after it).
+        if xtok == ELSE {
+            xtok_at_exit = ELSE;
+            break;
+        }
+        skip_separators(); // c:1430
+        // c:1432-1435 — only IF / ELIF may open an arm.
+        if xtok != IF && xtok != ELIF {
+            zerr("parse error near `if'");
+            return None;
+        }
+        // c:1438 — the cond is an ordinary list; a `{ … }` body opener ends it
+        // via the no-separator chaining rule, so only THEN is a hard stop.
+        // fast-syntax-highlighting.plugin.zsh:365-375:
+        //   if [[ … ]] { … } elif { type curl … } { … }
+        let cond = parse_program_until(Some(&[THEN]), false);
+        set_incmdpos(true); // c:1438
+        // c:1439-1442 — ENDINPUT right after the cond is an unterminated if.
+        if tok() == ENDINPUT {
+            zerr("parse error: unterminated if");
+            return None;
+        }
+        skip_separators(); // c:1444
+        xtok_at_exit = FI; // c:1446 — `xtok = FI` sentinel for the else check
+
+        let mut this_arm_brace = false;
+        let body = if tok() == THEN {
+            // c:1448-1456 — classic `then … (fi|elif|else)`.
+            zshlex(); // consume then
+            let b = parse_program_until(Some(&[ELSE, ELIF, FI]), false);
             set_incmdpos(true);
-        }
-        Box::new(body)
-    } else {
-        Box::new(parse_program_until(Some(&[ELSE, ELIF, FI]), false))
-    };
-
-    // c:Src/parse.c:1471-1472 — `if (tok == SEPER) break;`. For
-    // brace-form `if … { … }`, C par_if breaks out of the outer
-    // construct loop WITHOUT consuming the SEPER when one
-    // immediately follows the closing `}`. The SEPER stays in the
-    // lexer for the OUTER par_list to consume as the if-statement's
-    // list separator. Our Rust port's loop below calls skip_separators
-    // which would eat that SEPER and leave tok=STRING(next-command),
-    // triggering par_cmd's "STRING_LEX after compound = parse error"
-    // check at line ~1170. Without this early-exit, brace-form
-    //   if [[ … ]] { … }; echo after
-    // failed with `parse error near 'echo'` on zinit.zsh:1422.
-    //
-    // We only need this when use_brace is true and the next token
-    // is a separator (SEPER / NEWLIN / SEMI) AND it's NOT followed
-    // by ELSE/ELIF (those would extend the construct). Since the
-    // brace-form already consumed its closing `}` (saw_terminator
-    // is true), early-return is safe.
-    if use_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
-        return Some(ZshCommand::If(ZshIf {
-            cond,
-            then,
-            elif: Vec::new(),
-            else_: None,
-        }));
-    }
-
-    // Parse elif and else. zsh accepts the SAME elif/else
-    // continuations for both classic `then/fi` AND the brace
-    // form `{ ... } elif ... { ... } else { ... }`. Direct port
-    // of zsh/Src/parse.c:1417-1500 par_if where the elif/else
-    // arms are checked AFTER the body close regardless of which
-    // delimiter style opened the block. Without this, zinit's
-    //   if [[ -z $sel ]] { ... } else { ... }
-    // hung the parser — `else` was treated as an external
-    // command following the if-statement, which the lexer state
-    // mis-classified inside the still-open function body.
-    //
-    // For brace-form: skip the `fi` consumption at the end of
-    // the loop (no `fi` after a brace block), and `else` may
-    // arrive after a `}` close. Skip-separators between the
-    // body close and the elif/else token.
-    let mut elif = Vec::new();
-    let mut else_ = None;
-    // c:Src/parse.c:1501-1504 — `if (tok != FI) { cmdpop(); YYERRORV; }`.
-    // The C parser fails the whole if-construct when the body close
-    // isn't seen. zshrs's loop fell through silently on ENDINPUT, so
-    // `if true; then echo yes` (no `fi`) was accepted. Track whether
-    // we hit a real terminator and error after the loop if not.
-    let mut saw_terminator = use_brace; // `{ … }` body already consumed its close
-
-    {
-        loop {
-            skip_separators();
-
-            match tok() {
-                ELIF => {
-                    zshlex();
-                    // c:1414 — elif cond is an ordinary list like the
-                    // if cond above: `elif { type curl &>/dev/null }
-                    // { … }` parses the brace block as the COND's
-                    // command, and the body `{` ends the list via the
-                    // no-separator chaining rule. INBRACE_TOK in the
-                    // stop set made the cond parse EMPTY and the cond
-                    // block masquerade as the body (fsh:370).
-                    let econd = parse_program_until(Some(&[THEN]), false);
-                    skip_separators();
-
-                    let elif_use_brace = tok() == INBRACE_TOK;
-                    if tok() != THEN && !elif_use_brace {
-                        zerr("expected 'then' after elif");
-                        return None;
-                    }
-                    zshlex();
-
-                    // elif body stops at else/elif/fi or } if using braces
-                    let ebody = if elif_use_brace {
-                        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
-                        if tok() == OUTBRACE_TOK {
-                            zshlex();
-                            saw_terminator = true; // brace close on elif
-                        }
-                        body
-                    } else {
-                        parse_program_until(Some(&[ELSE, ELIF, FI]), false)
-                    };
-
-                    elif.push((econd, ebody));
-
-                    // Brace-form elif already consumed its closing `}`. If a
-                    // separator follows (rather than another `elif`/`else` on
-                    // the same line), the if-construct is finished — break out
-                    // WITHOUT letting the loop's top-of-iteration
-                    // skip_separators() eat the SEPER. The outer par_list needs
-                    // that separator between the if and the next command;
-                    // swallowing it makes the next command a "STRING after
-                    // compound" parse error. Mirrors the then-body early-exit
-                    // above. Without this, zinit-install.zsh:91
-                    //   } elif { ! .zinit-download-file-stdout … } { … }
-                    //   <newline> [[ -e $tmpfile ]] && …
-                    // aborted the whole top-level parse, so the file's line-5
-                    // `source` never fired (recorder captured 0 events).
-                    if elif_use_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
-                        break;
-                    }
-                }
-                ELSE => {
-                    zshlex();
-                    skip_separators();
-
-                    // Brace-form `else { … }` is only legal when the
-                    // PARENT IF itself was opened brace-form (`if cond
-                    // { … }`). For a `then`-form if, `else { stmt }`
-                    // is `else` followed by a brace-group STATEMENT
-                    // that's part of the else body's statement list,
-                    // which still terminates at `fi`. p10k.zsh:5575
-                    // hits exactly this shape:
-                    //   else
-                    //     { local v=($(<$file)) } 2>/dev/null
-                    //   fi
-                    // The prior port unconditionally consumed the `{`
-                    // as else-brace-opener, then expected the `fi`
-                    // outside the if construct → "expected `done'".
-                    let else_use_brace = use_brace && tok() == INBRACE_TOK;
-                    if else_use_brace {
-                        zshlex();
-                    }
-
-                    // else body stops at 'fi' or '}'
-                    else_ = Some(Box::new(if else_use_brace {
-                        let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
-                        if tok() == OUTBRACE_TOK {
-                            zshlex();
-                            saw_terminator = true;
-                        }
-                        body
-                    } else {
-                        parse_program_until(Some(&[FI]), false)
-                    }));
-
-                    // Consume the 'fi' if present (not for brace syntax)
-                    if !else_use_brace && tok() == FI {
-                        zshlex();
-                        saw_terminator = true;
-                    }
-                    break;
-                }
-                FI => {
-                    // Brace-form `if ... { ... }` is already terminated by
-                    // its closing `}`. Do NOT consume `fi` here — it belongs
-                    // to an enclosing then-form if. Without this gate, a
-                    // brace-form if inside a then-form if's body would steal
-                    // the outer `fi`, leaving the outer parser to see
-                    // "unterminated if". This bit zinit-install.zsh:978
-                    // where `if (( … )) {` (brace) inside `if … ; then …`
-                    // (then-form) ate the outer `fi`.
-                    if use_brace {
-                        break;
-                    }
-                    zshlex();
-                    saw_terminator = true;
-                    break;
-                }
-                _ => break,
+            b
+        } else if tok() == INBRACE_TOK {
+            // c:1457-1473 — brace body `{ … }`.
+            this_arm_brace = true;
+            zshlex(); // consume {
+            let b = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+            if tok() != OUTBRACE_TOK {
+                zerr("parse error: expected `}'");
+                return None;
             }
+            zshlex(); // c:1469 — consume }
+            set_incmdpos(true); // c:1470
+            b
+        } else {
+            // c:1474-1476 — `unset(SHORTLOOPS)` is the default for `if`: a body
+            // that is neither `then …` nor `{ … }` is a parse error.
+            zerr("expected `then' or `{' after if condition");
+            return None;
+        };
+        usebrace = this_arm_brace;
+
+        // Record the arm: the first is the `if`, the rest are `elif`.
+        if if_cond.is_none() {
+            if_cond = Some(Box::new(cond));
+            if_then = Some(Box::new(body));
+        } else {
+            elif.push((cond, body));
+        }
+
+        // c:1471-1472 — after a brace body, a following separator ends the
+        // construct; break WITHOUT consuming it so the outer par_list keeps the
+        // separator between the if and the next command (otherwise that command
+        // becomes a "STRING after compound" parse error). A then-form body
+        // instead falls through to the loop top to read the next ELSE/ELIF/FI;
+        // a brace body with no separator also falls through (e.g. `} elif`,
+        // `} else` on the same line). Because a brace arm never reaches the
+        // loop-top `fi`-consume, it cannot steal an enclosing then-form's `fi`.
+        if this_arm_brace && matches!(tok(), SEPER | NEWLIN | SEMI | ENDINPUT) {
+            break;
         }
     }
 
-    if !saw_terminator {
-        // c:1501-1504 — YYERRORV when the if-construct never closed.
-        zerr("parse error: unterminated if");
-        return None;
+    // c:1487-1505 — the optional else clause. When the loop exited via
+    // `xtok == ELSE`, the `else` keyword was already consumed by the loop's
+    // zshlex; the inner guard re-consumes only if we are somehow still on it.
+    if xtok_at_exit == ELSE || tok() == ELSE {
+        if tok() == ELSE {
+            zshlex();
+        }
+        skip_separators(); // c:1490
+        let ebody = if usebrace && tok() == INBRACE_TOK {
+            // c:1492-1497 — brace else (only when the preceding arm was brace).
+            zshlex(); // consume {
+            let b = parse_program_until(Some(&[OUTBRACE_TOK]), false);
+            if tok() != OUTBRACE_TOK {
+                zerr("parse error: expected `}'");
+                return None;
+            }
+            zshlex(); // consume }
+            b
+        } else {
+            // c:1498-1502 — then-form else, stops at and consumes `fi`.
+            let b = parse_program_until(Some(&[FI]), false);
+            if tok() != FI {
+                zerr("parse error: unterminated if");
+                return None;
+            }
+            zshlex(); // consume fi
+            b
+        };
+        set_incmdpos(false); // c:1502 — incmdpos = 0 after the else body
+        else_ = Some(Box::new(ebody));
     }
 
+    let cond = match if_cond {
+        Some(c) => c,
+        None => {
+            zerr("parse error: empty if");
+            return None;
+        }
+    };
+    let then = if_then.expect("if_then set with if_cond");
     Some(ZshCommand::If(ZshIf {
         cond,
         then,
