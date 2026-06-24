@@ -126,7 +126,6 @@ fn do_completion(
     0
 }
 
-
 /// Print help message identical to zsh --help
 /// Render an LSP hover card (`**name** — _kind_\n\n<body>`) as a
 /// colored terminal page. Matches the `stryke docs NAME` shape:
@@ -544,8 +543,9 @@ and other LSP/DAP clients — Helix, Neovim, VS Code, …):
   --lsp                  LSP server on stdio (completion / hover / definition
                          / references / rename / documentSymbol / foldingRange
                          / semanticTokens / formatting / diagnostics)
-  --dap HOST:PORT        DAP debug adapter; connects back to the IDE's listener
-                         at HOST:PORT and serves the Debug Adapter Protocol
+  --dap [HOST:PORT]      DAP debug adapter. With HOST:PORT, connects back to the
+                         IDE's listener over TCP (JetBrains). Without, serves DAP
+                         over stdio (for executable-spawned clients, e.g. VS Code)
   --dump-reflection      emit the JSON consumed by the IntelliJ "zshrs"
                          reflection tool window (builtins / keywords / options
                          / special_vars, each tagged by category)
@@ -966,7 +966,6 @@ fn main() {
 /// Main entry point — extracted so the fat binary can call it after
 /// registering the stryke handler.
 pub fn zshrs_main() {
-
     // Initialize logging first — everything after this can use tracing macros.
     let startup_t0 = Instant::now();
 
@@ -1445,11 +1444,19 @@ pub fn zshrs_main() {
         std::process::exit(zsh::lsp::run_lsp());
     }
 
-    // --dap HOST:PORT: connect back to the IntelliJ DAP client at the
-    // given address and serve the Debug Adapter Protocol. Implementation
-    // in src/extensions/dap.rs.
+    // --dap [HOST:PORT]: serve the Debug Adapter Protocol.
+    //   --dap HOST:PORT  → connect back to the IDE's DAP listener over TCP
+    //                      (the path JetBrains uses; stdout stays free).
+    //   --dap            → serve DAP over stdio (for clients that spawn the
+    //                      adapter as an executable, e.g. VS Code).
+    // Implementation in src/extensions/dap.rs.
     if let Some(i) = args.iter().position(|a| a == "--dap") {
-        let addr = args.get(i + 1).map(|s| s.as_str()).unwrap_or("127.0.0.1:0");
+        // A following arg is the listener address only if it looks like one
+        // (HOST:PORT); otherwise it's a script/flag and we serve over stdio.
+        let addr = args
+            .get(i + 1)
+            .map(|s| s.as_str())
+            .filter(|s| s.contains(':'));
         std::process::exit(zsh::dap::run_dap(addr));
     }
 

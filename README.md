@@ -553,7 +553,8 @@ binary, plus a **JetBrains IDE plugin** that drives both.
 
 ```sh
 zshrs --lsp                  # LSP server over stdio
-zshrs --dap HOST:PORT        # DAP debugger; connect-back to IDE listener
+zshrs --dap HOST:PORT        # DAP debugger; TCP connect-back to IDE listener
+zshrs --dap                  # DAP debugger over stdio (executable-spawned clients)
 zshrs --dump-reflection      # JSON dump of builtins / keywords / options
 zshrs --dump-plugins         # JSON dump of every sourced plugin grouped
                              # by manager (zinit / oh-my-zsh / prezto /
@@ -601,7 +602,12 @@ default build lean.
 Trigger characters for completion: `$`, `{`, `-`, `:`. Optional
 `ZSHRS_LSP_LOG=<path>` env var dumps every request/response for debugging.
 
-### DAP capabilities (`zshrs --dap HOST:PORT`)
+### DAP capabilities (`zshrs --dap [HOST:PORT]`)
+
+Two transports, same DAP server: `--dap HOST:PORT` connects back to the IDE's
+TCP listener (JetBrains; keeps stdout free for the script), while bare `--dap`
+serves DAP over stdio for clients that spawn the adapter as an executable
+(e.g. VS Code's `DebugAdapterExecutable`).
 
 | Request                               | Behaviour (v1)                          |
 |---------------------------------------|-----------------------------------------|
