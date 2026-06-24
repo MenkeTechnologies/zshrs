@@ -333,3 +333,36 @@ fi
         );
     }
 }
+
+/// zsh's alternate `if { cond } { body }` brace-block form, with the
+/// `elif { cond } { body }` continuation. The regression that motivated these:
+/// a brace-form `elif` (no trailing `else`) followed by a separator and another
+/// command aborted the whole parse — the elif loop's skip_separators() ate the
+/// separator the outer list needed, making the next command a "STRING after
+/// compound" error. That blocked real zinit code (`zinit-install.zsh`) entirely.
+mod brace_form {
+    use super::*;
+
+    #[test]
+    fn brace_if_elif_then_trailing_command() {
+        // The exact failing shape: brace-elif, no else, then another command.
+        assert_parity("if { true } { print a } elif { false } { print b }\nprint done");
+    }
+
+    #[test]
+    fn brace_test_cond_elif_brace_trailing_command() {
+        // `[[ … ]]` cond + brace body + brace-elif + trailing command.
+        assert_parity("if [[ -z x ]] { print a } elif { false } { print b }\nprint done");
+    }
+
+    #[test]
+    fn brace_if_elif_taken_then_trailing_command() {
+        // The elif branch fires, and the trailing command still runs.
+        assert_parity("if { false } { print a } elif { true } { print b }\nprint done");
+    }
+
+    #[test]
+    fn brace_if_elif_else_chain() {
+        assert_parity("if { false } { print a } elif { false } { print b } else { print c }");
+    }
+}
