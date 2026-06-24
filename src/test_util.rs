@@ -89,8 +89,10 @@ pub fn global_state_lock() -> MutexGuard<'static, ()> {
     // Reset emulation to EMULATE_ZSH so `init_builtins` (called by
     // builtin tests) doesn't disable the `repeat` reswd in reswdtab
     // for every subsequent test that tries to parse `repeat N do …`.
-    crate::ported::options::emulation
-        .store(crate::ported::zsh_h::EMULATE_ZSH, std::sync::atomic::Ordering::Relaxed);
+    crate::ported::options::emulation.store(
+        crate::ported::zsh_h::EMULATE_ZSH,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // Re-enable `repeat` in reswdtab — once a prior test ran
     // init_builtins under non-zsh emulation, the disable persists in
     // the process-wide table. tab.enable is the C `disablenode(hn, 1)`

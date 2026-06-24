@@ -9,9 +9,7 @@
 //! `nl_langinfo(3)`.
 
 use crate::ported::zsh_h::features;
-use crate::ported::zsh_h::{
-    hashnode, param, HashTable, Param, ScanFunc, PM_READONLY, PM_SCALAR,
-};
+use crate::ported::zsh_h::{hashnode, param, HashTable, Param, ScanFunc, PM_READONLY, PM_SCALAR};
 use crate::utils::unmetafy;
 use crate::zsh_h::module;
 /// `nl_names[]` — port of the static name-array at `langinfo.c:65`.
@@ -769,11 +767,7 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let first = scanli();
         for _ in 0..3 {
-            assert_eq!(
-                scanli(),
-                first,
-                "scanlanginfo must be fully deterministic"
-            );
+            assert_eq!(scanli(), first, "scanlanginfo must be fully deterministic");
         }
     }
 
@@ -853,10 +847,7 @@ mod tests {
     #[test]
     fn getlanginfo_empty_name_returns_none_alt() {
         let _g = crate::test_util::global_state_lock();
-        assert!(
-            getli("").is_none(),
-            "empty langinfo name must yield None"
-        );
+        assert!(getli("").is_none(), "empty langinfo name must yield None");
     }
 
     /// c:119 — `getlanginfo` for nonsense name returns None.

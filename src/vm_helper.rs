@@ -240,8 +240,7 @@ pub struct SubshellSnapshot {
     /// the full `HashMap<String, Box<shfunc>>` clone — shfunc is
     /// `Clone` and the table snapshot is bounded by the user's
     /// declared function set.
-    pub shfuncs:
-        std::collections::HashMap<String, Box<crate::ported::zsh_h::shfunc>>,
+    pub shfuncs: std::collections::HashMap<String, Box<crate::ported::zsh_h::shfunc>>,
     /// Parent's compiled-function chunks at subshell entry. Companion
     /// to `shfuncs` above — `ShellExecutor.functions_compiled` is the
     /// runtime dispatch table that `Op::CallFunction` reads through;
@@ -596,16 +595,16 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     use crate::ported::lex::{tok, LEXERR, LEX_INPUT, LEX_LINENO, LEX_POS, LEX_UNGET_BUF};
 
     crate::ported::context::zcontext_save(); // c:288
-    // Save the zshrs-specific lexer window + line counter that lex_init
-    // overwrites but zcontext doesn't cover.
+                                             // Save the zshrs-specific lexer window + line counter that lex_init
+                                             // overwrites but zcontext doesn't cover.
     let saved_input = LEX_INPUT.with_borrow(|s| s.clone());
     let saved_pos = LEX_POS.get();
     let saved_unget = LEX_UNGET_BUF.with_borrow(|b| b.clone());
     let saved_lineno = LEX_LINENO.get(); // c:291 oldlineno
-    // input.rs `lexstop` is the input-side half of C's single `lexstop`;
-    // draining the nested LEX_INPUT sets it true and zcontext only covers
-    // the lex.rs half (LEX_LEXSTOP). Restore it so the outer reader isn't
-    // left at EOF.
+                                         // input.rs `lexstop` is the input-side half of C's single `lexstop`;
+                                         // draining the nested LEX_INPUT sets it true and zcontext only covers
+                                         // the lex.rs half (LEX_LEXSTOP). Restore it so the outer reader isn't
+                                         // left at EOF.
     let saved_in_lexstop = crate::ported::input::lexstop.with(|c| c.get());
 
     crate::ported::hist::strinbeg(0); // c:290 — strin++ → drained nested input EOFs (no SHIN steal)
@@ -619,15 +618,15 @@ pub(crate) fn parse_isolated(input: &str) -> crate::parse::ZshProgram {
     }
 
     crate::ported::hist::strinend(); // c:298 — strin--
-    // Restore the zshrs window, then the token/parse/history state.
+                                     // Restore the zshrs window, then the token/parse/history state.
     LEX_INPUT.with_borrow_mut(|s| *s = saved_input);
     LEX_POS.set(saved_pos);
     LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
     LEX_LINENO.set(saved_lineno); // c:295
     crate::ported::input::lexstop.with(|c| c.set(saved_in_lexstop));
     crate::ported::context::zcontext_restore(); // c:300
-    // zcontext_restore → parse_context_restore clears ERRFLAG_ERROR
-    // (parse.c:354); re-raise so callers gating on the bit still see it.
+                                                // zcontext_restore → parse_context_restore clears ERRFLAG_ERROR
+                                                // (parse.c:354); re-raise so callers gating on the bit still see it.
     if parse_err {
         errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed);
     }
@@ -763,9 +762,9 @@ impl ShellExecutor {
     pub fn assoc(&self, name: &str) -> Option<IndexMap<String, String>> {
         // c:Src/params.c:570-575 — nameref deref before the read.
         let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
-        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
-        _ => name.to_string(),
-    };
+            crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+            _ => name.to_string(),
+        };
         paramtab_hashed_storage()
             .lock()
             .ok()
@@ -791,9 +790,9 @@ impl ShellExecutor {
     pub fn has_assoc(&self, name: &str) -> bool {
         // c:Src/params.c:570-575 — nameref deref before the read.
         let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
-        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
-        _ => name.to_string(),
-    };
+            crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+            _ => name.to_string(),
+        };
         paramtab_hashed_storage()
             .lock()
             .ok()
@@ -953,14 +952,14 @@ impl ShellExecutor {
             }
         }
         .unwrap_or_else(|| "/".to_string()); // c:1230-1232 EMULATE_ZSH home = "/"
-        // ispwd (src/zsh/Src/utils.c:809-829): a candidate is honored
-        // only when it (a) is absolute, (b) stat's to the same
-        // dev+inode as ".", and (c) has no `.`/`..` components.
-        // Without this chain, a child that inherits $PWD from a parent
-        // run in a different directory (cargo test setting
-        // current_dir(tempdir) while leaking PWD=/project/root) treats
-        // the stale PWD as the logical-path base, so `cd sub` resolves
-        // against the wrong directory.
+                                             // ispwd (src/zsh/Src/utils.c:809-829): a candidate is honored
+                                             // only when it (a) is absolute, (b) stat's to the same
+                                             // dev+inode as ".", and (c) has no `.`/`..` components.
+                                             // Without this chain, a child that inherits $PWD from a parent
+                                             // run in a different directory (cargo test setting
+                                             // current_dir(tempdir) while leaking PWD=/project/root) treats
+                                             // the stale PWD as the logical-path base, so `cd sub` resolves
+                                             // against the wrong directory.
         let pwd_val = if ispwd(&home) {
             home // c:1245-1246 — pwd = ztrdup(ptr) [HOME]
         } else if let Some(p) = env::var("PWD")
@@ -1012,10 +1011,7 @@ impl ShellExecutor {
         // Use the cleaned `patchlevel::ZSH_VERSION` here ("5.9") and
         // surface the full snapshot tag as `$ZSHRS_VERSION` for
         // zshrs-specific identity checks.
-        setsparam(
-            "ZSH_VERSION",
-            crate::ported::patchlevel::ZSH_VERSION,
-        );
+        setsparam("ZSH_VERSION", crate::ported::patchlevel::ZSH_VERSION);
         // c:Src/params.c:43 + Src/patchlevel.h — `ZSH_PATCHLEVEL` is
         // a git-describe-style identifier (`zsh-MAJOR.MINOR-N-gHASH`)
         // of the upstream commit zshrs targets. `build.rs` emits
@@ -1024,20 +1020,14 @@ impl ShellExecutor {
         // `patchlevel.rs` instead (snapshot of `src/zsh/Src/patchlevel.h`).
         // Bug #90 in docs/BUGS.md — scripts that fingerprint by
         // $ZSH_PATCHLEVEL fell to the wildcard arm under "unknown".
-        setsparam(
-            "ZSH_PATCHLEVEL",
-            crate::ported::patchlevel::ZSH_PATCHLEVEL,
-        );
+        setsparam("ZSH_PATCHLEVEL", crate::ported::patchlevel::ZSH_PATCHLEVEL);
         // Skip ZSHRS_VERSION in `--zsh` parity mode so `${(k)parameters}`
         // doesn't carry a name zsh doesn't ship — matches the guard
         // in `ported::params::createparamtable`. Scripts running under
         // `--zsh` mode can still detect zshrs via `$ZSH_VERSION` which
         // carries a `-test` suffix.
         if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            setsparam(
-                "ZSHRS_VERSION",
-                crate::ported::patchlevel::ZSHRS_VERSION,
-            );
+            setsparam("ZSHRS_VERSION", crate::ported::patchlevel::ZSHRS_VERSION);
         }
         setsparam("ZSH_NAME", "zsh");
         // c:params.c:971 — ZSH_ARGZERO from `posixzero` (Src/init.c:271):
@@ -1087,10 +1077,7 @@ impl ShellExecutor {
         // invoked from this bin entry — its setsparam calls don't
         // run, so TIMEFMT only existed via the lookup_special_var
         // fallback, which scanpmparameters can't see).
-        setsparam(
-            "TIMEFMT",
-            crate::ported::zsh_system_h::DEFAULT_TIMEFMT,
-        );
+        setsparam("TIMEFMT", crate::ported::zsh_system_h::DEFAULT_TIMEFMT);
         // c:Src/init.c:1214-1215 — `nullcmd = ztrdup("cat");
         // readnullcmd = ztrdup(DEFAULT_READNULLCMD);`. Real paramtab
         // seeds (NOT read-time fallbacks) so `unset NULLCMD` truly
@@ -1107,10 +1094,7 @@ impl ShellExecutor {
             setsparam("NULLCMD", "cat");
         }
         if getsparam("READNULLCMD").map_or(true, |v| v.is_empty()) {
-            setsparam(
-                "READNULLCMD",
-                crate::ported::config_h::DEFAULT_READNULLCMD,
-            );
+            setsparam("READNULLCMD", crate::ported::config_h::DEFAULT_READNULLCMD);
         }
         // c:Src/init.c:963 — `setsparam("TTY", ttyname(0) ?: "")`.
         // Even in non-interactive -fc mode zsh creates the param;
@@ -1210,8 +1194,16 @@ impl ShellExecutor {
         // prompt-theme layer; only seed when the slot is empty so any
         // prior theme write wins.
         let interactive = crate::ported::zsh_h::isset(crate::ported::zsh_h::INTERACTIVE);
-        seed_prompt("PS1", Some("PROMPT"), if interactive { "%m%# " } else { "" });
-        seed_prompt("PS2", Some("PROMPT2"), if interactive { "%_> " } else { "" });
+        seed_prompt(
+            "PS1",
+            Some("PROMPT"),
+            if interactive { "%m%# " } else { "" },
+        );
+        seed_prompt(
+            "PS2",
+            Some("PROMPT2"),
+            if interactive { "%_> " } else { "" },
+        );
         // c:Src/init.c:1191 — `prompt3 = ztrdup("?# ");`
         seed_prompt("PS3", Some("PROMPT3"), "?# ");
         // c:Src/init.c:1194 — `sprompt = ztrdup("zsh: correct '%R'
@@ -1232,9 +1224,7 @@ impl ShellExecutor {
             ("PROMPT3", "PS3"),
             ("PROMPT4", "PS4"),
         ] {
-            if crate::ported::params::getsparam(alias)
-                .map_or(true, |s| s.is_empty())
-            {
+            if crate::ported::params::getsparam(alias).map_or(true, |s| s.is_empty()) {
                 if let Some(v) = crate::ported::params::getsparam(source) {
                     setsparam(alias, &v);
                 }
@@ -1249,14 +1239,14 @@ impl ShellExecutor {
         // gates on arithmetic-typed semantics. Bug #268 in
         // docs/BUGS.md.
         crate::ported::params::setiparam("MAILCHECK", 60); // c:858
-        // c:Src/params.c:859 — original `KEYTIMEOUT = 40` but
-        // zsh 5.9.1 observably reports 10 (Homebrew arm-darwin).
-        // Match the observed default so vi-mode / multi-key
-        // bindings feel responsive. Bug #321 in docs/BUGS.md.
+                                                           // c:Src/params.c:859 — original `KEYTIMEOUT = 40` but
+                                                           // zsh 5.9.1 observably reports 10 (Homebrew arm-darwin).
+                                                           // Match the observed default so vi-mode / multi-key
+                                                           // bindings feel responsive. Bug #321 in docs/BUGS.md.
         crate::ported::params::setiparam("KEYTIMEOUT", 10); // c:859
         crate::ported::params::setiparam("LISTMAX", 100); // c:860
-        // c:config.h:1004 — MAX_FUNCTION_DEPTH=500. Advisory cap;
-        // dispatch_function_call enforces against this.
+                                                          // c:config.h:1004 — MAX_FUNCTION_DEPTH=500. Advisory cap;
+                                                          // dispatch_function_call enforces against this.
         crate::ported::params::setiparam("FUNCNEST", 500);
 
         // Run setlocale(LC_ALL, "") so nl_langinfo() (used by the
@@ -1520,9 +1510,8 @@ impl ShellExecutor {
                     let _ = PM_SCALAR;
                     let _ = PM_DONTIMPORT;
                     if let Some(pm) = tab.get_mut(entry.name) {
-                        let was_integer = (pm.node.flags as u32
-                            & crate::ported::zsh_h::PM_INTEGER)
-                            != 0;
+                        let was_integer =
+                            (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0;
                         pm.node.flags |= bits as i32;
                         // c:Src/params.c:344 IPDEF4 / c:353 IPDEF5 — the
                         // C struct literal initialises the `base` field
@@ -1534,9 +1523,7 @@ impl ShellExecutor {
                         // params.rs:9341 emits "10" between
                         // `integer` and the name (`integer 10 readonly
                         // !=0`). Bug #297 in docs/BUGS.md.
-                        if entry.pm_type == crate::ported::zsh_h::PM_INTEGER
-                            && pm.base == 0
-                        {
+                        if entry.pm_type == crate::ported::zsh_h::PM_INTEGER && pm.base == 0 {
                             pm.base = 10;
                         }
                         // When OR-ing PM_INTEGER onto a param that
@@ -1551,8 +1538,7 @@ impl ShellExecutor {
                         // it lands as PM_SCALAR storage that the
                         // type-flip needs to migrate.
                         if !was_integer
-                            && entry.pm_type
-                                == crate::ported::zsh_h::PM_INTEGER
+                            && entry.pm_type == crate::ported::zsh_h::PM_INTEGER
                             && pm.u_val == 0
                         {
                             if let Some(ref s) = pm.u_str {
@@ -1710,9 +1696,8 @@ impl ShellExecutor {
                         // assignsparam(...,ASSPM_ENV_IMPORT) and ours
                         // didn't yet" gap that bug #599 (HOME=` `) and
                         // %~ prompt expansion need.
-                        let still_unset = (pm.node.flags as u32
-                            & crate::ported::zsh_h::PM_UNSET)
-                            != 0;
+                        let still_unset =
+                            (pm.node.flags as u32 & crate::ported::zsh_h::PM_UNSET) != 0;
                         if still_unset {
                             pm.u_str = Some(env_value.clone());
                             pm.env = Some(format!("{}={}", env_name, env_value));
@@ -1734,18 +1719,16 @@ impl ShellExecutor {
                             // UNUSED(Param pm)), so passing the
                             // borrowed paramtab entry is safe.
                             match env_name.as_str() {
-                                "HOME" => crate::ported::params::homesetfn(
-                                    pm.as_mut(),
-                                    env_value.clone(),
-                                ),
+                                "HOME" => {
+                                    crate::ported::params::homesetfn(pm.as_mut(), env_value.clone())
+                                }
                                 "USERNAME" => crate::ported::params::usernamesetfn(
                                     pm.as_mut(),
                                     env_value.clone(),
                                 ),
-                                "TERM" => crate::ported::params::termsetfn(
-                                    pm.as_mut(),
-                                    env_value.clone(),
-                                ),
+                                "TERM" => {
+                                    crate::ported::params::termsetfn(pm.as_mut(), env_value.clone())
+                                }
                                 "WORDCHARS" => crate::ported::params::wordcharssetfn(
                                     pm.as_mut(),
                                     env_value.clone(),
@@ -2330,9 +2313,7 @@ impl ShellExecutor {
             .ok()
             .and_then(|t| {
                 let entry = t.get_including_disabled(name)?;
-                Some(
-                    (entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0,
-                )
+                Some((entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0)
             })
             .unwrap_or(false);
         if is_disabled {
@@ -2489,8 +2470,10 @@ impl ShellExecutor {
         // funcsourcetrace reports the def line as 1-based, so clamp
         // to >= 1 to handle the inline case without rebuilding
         // line tracking through the parser. Bug #396.
-        let synth_lineno =
-            std::cmp::max(1i64, self.function_line_base.get(name).copied().unwrap_or(0));
+        let synth_lineno = std::cmp::max(
+            1i64,
+            self.function_line_base.get(name).copied().unwrap_or(0),
+        );
         let mut synth_shf = crate::ported::zsh_h::shfunc {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
@@ -2599,8 +2582,8 @@ impl ShellExecutor {
                 .map(|p| !p.is_empty())
                 .unwrap_or(false);
             if !path_set_and_nonempty {
-                let sn = crate::ported::utils::scriptname_get()
-                    .unwrap_or_else(|| "zshrs".to_string());
+                let sn =
+                    crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
                 eprintln!("{}:1: command not found: {}", sn, cmd);
                 return Ok(127);
             }
@@ -2708,10 +2691,9 @@ impl ShellExecutor {
                             let mut hook_args = Vec::with_capacity(args.len() + 1);
                             hook_args.push(cmd.to_string());
                             hook_args.extend_from_slice(args);
-                            if let Some(rc) = self.dispatch_function_call(
-                                "command_not_found_handler",
-                                &hook_args,
-                            ) {
+                            if let Some(rc) =
+                                self.dispatch_function_call("command_not_found_handler", &hook_args)
+                            {
                                 return Ok(rc);
                             }
                         }
@@ -2804,9 +2786,20 @@ impl ShellExecutor {
             // Bug #615.
             let is_single_word = !filename.is_empty()
                 && !filename.chars().any(|c| {
-                    matches!(c,
-                        ' ' | '\t' | '\n' | ';' | '&' | '|' |
-                        '<' | '>' | '(' | ')' | '`' | '"' | '\''
+                    matches!(
+                        c,
+                        ' ' | '\t'
+                            | '\n'
+                            | ';'
+                            | '&'
+                            | '|'
+                            | '<'
+                            | '>'
+                            | '('
+                            | ')'
+                            | '`'
+                            | '"'
+                            | '\''
                     )
                 });
             if is_single_word {
@@ -2863,8 +2856,7 @@ impl ShellExecutor {
         // c:Src/utils.c:1996 — `movefd(dup(fd))`: saved copies of the
         // user-visible fds are shell-internal, so they too must live
         // at fd >= 10 / FDT_INTERNAL.
-        let saved_stdout =
-            crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
+        let saved_stdout = crate::ported::utils::movefd(unsafe { libc::dup(libc::STDOUT_FILENO) });
         if saved_stdout < 0 {
             crate::ported::utils::zclose(read_fd);
             crate::ported::utils::zclose(write_fd);
@@ -2890,10 +2882,8 @@ impl ShellExecutor {
         // c:Src/utils.c:1996 — movefd(dup(fd)): internal fd, keep >= 10.
         let saved_stderr_for_trap =
             crate::ported::utils::movefd(unsafe { libc::dup(libc::STDERR_FILENO) });
-        crate::fusevm_bridge::CMDSUBST_OUTER_FDS.with(|s| {
-            s.borrow_mut()
-                .push((saved_stdout, saved_stderr_for_trap))
-        });
+        crate::fusevm_bridge::CMDSUBST_OUTER_FDS
+            .with(|s| s.borrow_mut().push((saved_stdout, saved_stderr_for_trap)));
         unsafe {
             libc::dup2(write_fd, libc::STDOUT_FILENO);
         }
@@ -3459,10 +3449,7 @@ use crate::ported::subst::*;
 use crate::ported::utils::{zerr, zerrnam, zwarn, zwarnnam};
 use ::regex::{Error as RegexError, Regex, RegexBuilder};
 
-
-
 pub use crate::ported::modules::regex::posix_ere_bracket_escape;
-
 
 impl ShellExecutor {
     /// Every option name in `ZSH_OPTIONS_SET` (port of `optns[]` at
@@ -3824,7 +3811,11 @@ pub fn partab_get(name: &str, key: &str) -> Option<String> {
     // resolve via the empty-fallback path (matching ${sysparams[k]:-x}
     // taking the default). Bug #69 in docs/BUGS.md.
     if let Some(modname) = module_gated_partab_module(name) {
-        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(modname) {
+        if !crate::ported::module::MODULESTAB
+            .lock()
+            .unwrap()
+            .is_loaded(modname)
+        {
             return None;
         }
     }
@@ -3858,7 +3849,11 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
     // Bug #69 — gate module-bound PARTAB names on the owning
     // module's MOD_LINKED && !MOD_UNLOAD state.
     if let Some(modname) = module_gated_partab_module(name) {
-        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(modname) {
+        if !crate::ported::module::MODULESTAB
+            .lock()
+            .unwrap()
+            .is_loaded(modname)
+        {
             return None;
         }
     }
@@ -3870,17 +3865,17 @@ pub fn partab_array_get(name: &str) -> Option<Vec<String>> {
     None
 }
 
-
-
-
-
 /// Scan helper for `${(k)name}` — enumerates keys via canonical
 /// scanfn, collected into Vec via SCAN_KEYS thread-local.
 pub fn partab_scan_keys(name: &str) -> Option<Vec<String>> {
     // Bug #69 — gate module-bound PARTAB names on the owning
     // module's MOD_LINKED && !MOD_UNLOAD state.
     if let Some(modname) = module_gated_partab_module(name) {
-        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded(modname) {
+        if !crate::ported::module::MODULESTAB
+            .lock()
+            .unwrap()
+            .is_loaded(modname)
+        {
             return None;
         }
     }
@@ -4021,7 +4016,12 @@ pub fn seed_partab_param(name: &str) {
         .iter()
         .find(|e| e.name == name)
         .map(|e| e.flags)
-        .or_else(|| PARTAB_ARRAY.iter().find(|e| e.name == name).map(|e| e.flags));
+        .or_else(|| {
+            PARTAB_ARRAY
+                .iter()
+                .find(|e| e.name == name)
+                .map(|e| e.flags)
+        });
     let Some(flags) = flags else {
         return;
     };
@@ -4181,7 +4181,15 @@ impl ShellExecutor {
 /// and the VM bridge; `src/ported/*` files inline the compile+match
 /// idiom directly to preserve PORT.md Rule 1 faithfulness.
 pub fn glob_match_static(s: &str, pattern: &str) -> bool {
-    let Some(prog) = patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None) else {
+    let Some(prog) = patcompile(
+        &{
+            let mut __pat_tok = (pattern).to_string();
+            crate::ported::glob::tokenize(&mut __pat_tok);
+            __pat_tok
+        },
+        PAT_HEAPDUP as i32,
+        None,
+    ) else {
         return false;
     };
     // (#b) (GF_BACKREF) — capture-aware path. Use pattryrefs so the
@@ -4270,14 +4278,9 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
 
 pub use crate::ported::lex::untokenize_ztokens;
 
-
-
-
 pub use crate::ported::utils::unmetafy_str;
 
-
 pub use crate::ported::utils::zsh_errno_msg;
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // PM_NAMEREF bridge helpers (typeset -n / named references).

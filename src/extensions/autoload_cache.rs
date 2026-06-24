@@ -436,9 +436,7 @@ pub fn default_cache_path() -> PathBuf {
 /// init can disable caches without exporting `ZSHRS_CACHE=0` (which
 /// would otherwise leak into `${(k)parameters}`).
 pub fn cache_enabled() -> bool {
-    if crate::extensions::script_cache::CACHE_DISABLED
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
+    if crate::extensions::script_cache::CACHE_DISABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
     !matches!(

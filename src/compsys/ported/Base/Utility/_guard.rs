@@ -79,7 +79,15 @@ pub fn _guard(args: &[String]) -> i32 {
     let prefix = getsparam("PREFIX").unwrap_or_default();
     let suffix = getsparam("SUFFIX").unwrap_or_default();
     let combined = format!("{}{}", prefix, suffix);
-    let matched = if let Some(prog) = patcompile(&{ let mut __pat_tok = (&pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None) {
+    let matched = if let Some(prog) = patcompile(
+        &{
+            let mut __pat_tok = (&pattern).to_string();
+            crate::ported::glob::tokenize(&mut __pat_tok);
+            __pat_tok
+        },
+        0,
+        None,
+    ) {
         pattry(&prog, &combined)
     } else {
         pattern == combined

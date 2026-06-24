@@ -59,24 +59,21 @@ pub fn reverse_strftime(
     // chrono's `parse_and_remainder` returns the remainder slice on
     // success, which is the equivalent of `endp`.
     let mut parsed = Parsed::new();
-    let remainder = match chrono::format::parse_and_remainder(
-        &mut parsed,
-        input,
-        StrftimeItems::new(format),
-    ) {
-        Ok(rem) => rem,
-        Err(_) => {
-            // c:64-69 — `if (!endp) { if (!quiet) zwarnnam(nam,
-            //                          'format not matched'); return 1; }`
-            // C emits the bare 'format not matched' string with no
-            // input echo; prior Rust port appended ': {input}' which
-            // diverged from zsh -fc parity.
-            if quiet == 0 {
-                zwarnnam(nam, "format not matched"); // c:67
+    let remainder =
+        match chrono::format::parse_and_remainder(&mut parsed, input, StrftimeItems::new(format)) {
+            Ok(rem) => rem,
+            Err(_) => {
+                // c:64-69 — `if (!endp) { if (!quiet) zwarnnam(nam,
+                //                          'format not matched'); return 1; }`
+                // C emits the bare 'format not matched' string with no
+                // input echo; prior Rust port appended ': {input}' which
+                // diverged from zsh -fc parity.
+                if quiet == 0 {
+                    zwarnnam(nam, "format not matched"); // c:67
+                }
+                return 1; // c:68
             }
-            return 1; // c:68
-        }
-    };
+        };
     // c:59-61 — `memset(&tm, 0, sizeof(tm)); tm.tm_isdst = -1; tm.tm_mday = 1;`
     //
     // C zero-fills the struct tm and then sets tm_isdst=-1 + tm_mday=1.
@@ -102,7 +99,11 @@ pub fn reverse_strftime(
         .unwrap_or(1900); // c:59 — tm_year=0 means 1900.
     let month = parsed.month.unwrap_or(1);
     let day = parsed.day.unwrap_or(1);
-    let hour = parsed.hour_div_12.zip(parsed.hour_mod_12).map(|(d, m)| (d * 12 + m) as u32).unwrap_or(0);
+    let hour = parsed
+        .hour_div_12
+        .zip(parsed.hour_mod_12)
+        .map(|(d, m)| (d * 12 + m) as u32)
+        .unwrap_or(0);
     let minute = parsed.minute.unwrap_or(0);
     let second = parsed.second.unwrap_or(0);
     let date = match NaiveDate::from_ymd_opt(year, month, day) {
@@ -120,7 +121,8 @@ pub fn reverse_strftime(
             return 1;
         }
     };
-    let time = NaiveTime::from_hms_opt(hour, minute, second).unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let time = NaiveTime::from_hms_opt(hour, minute, second)
+        .unwrap_or_else(|| NaiveTime::from_hms_opt(0, 0, 0).unwrap());
     let dt = NaiveDateTime::new(date, time);
     // c:71 — `mytime = (zlong)mktime(&tm);`
     // C uses `tm.tm_isdst = -1` (set at c:60) to ask mktime to
@@ -482,17 +484,23 @@ pub fn boot_(m: *const module) -> i32 {
     // that resolves via lookup_special_var). Register the entries
     // here so the canonical introspection paths see the right
     // PM_* flag set. Bug #512.
-    use crate::ported::params::{paramtab, createparam};
+    use crate::ported::params::{createparam, paramtab};
     use crate::ported::zsh_h::{
-        PM_INTEGER, PM_FFLOAT, PM_ARRAY, PM_READONLY, PM_HIDE, PM_HIDEVAL, PM_SPECIAL,
+        PM_ARRAY, PM_FFLOAT, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_READONLY, PM_SPECIAL,
     };
     let entries: &[(&str, u32)] = &[
-        ("EPOCHSECONDS",
-            PM_INTEGER | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL),
-        ("EPOCHREALTIME",
-            PM_FFLOAT  | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL),
-        ("epochtime",
-            PM_ARRAY   | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL),
+        (
+            "EPOCHSECONDS",
+            PM_INTEGER | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL,
+        ),
+        (
+            "EPOCHREALTIME",
+            PM_FFLOAT | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL,
+        ),
+        (
+            "epochtime",
+            PM_ARRAY | PM_READONLY | PM_HIDE | PM_HIDEVAL | PM_SPECIAL,
+        ),
     ];
     for (name, flags) in entries {
         let exists = paramtab()

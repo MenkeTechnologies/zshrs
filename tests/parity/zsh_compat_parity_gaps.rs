@@ -1352,7 +1352,11 @@ mod corpus_dash_fc_bulk_g {
     #[test]
     fn bulk_g_nameref_typeset_n_zshrs_pin() {
         let r = run_zshrs("typeset -n nrg=trg_g; trg_g=valn_g; print $nrg");
-        assert_eq!(r.stdout, "valn_g\n", "nameref read-through; stderr: {}", r.stderr);
+        assert_eq!(
+            r.stdout, "valn_g\n",
+            "nameref read-through; stderr: {}",
+            r.stderr
+        );
         assert_eq!(r.exit, 0);
     }
 }
@@ -47668,7 +47672,7 @@ mod probe_sweep_2026_06_12_c {
         probe_c_subexp_w2 => (r#"probe c subexp (w)2"#, r###"print -- ${${:-one two three}[(w)2]}"###);
         probe_c_subexp_w3_var => (r#"probe c subexp (w)3 var"#, r###"x="a b c"; print -- ${${x}[(w)3]}"###);
         probe_c_subexp_f2 => (r#"probe c subexp (f)2"#, r###"print -- ${${:-l1
-l2}[(f)2]}"###);
+    l2}[(f)2]}"###);
         probe_c_subexp_plain_idx => (r#"probe c subexp plain idx"#, r###"print -- ${${:-one two}[2]}"###);
         // --- brace short syntax: lexer trailing-} hack ---
         probe_c_brace_inline_block => (r#"probe c brace inline block"#, r###"{print hi}"###);
@@ -47970,19 +47974,19 @@ mod probe_sweep_2026_06_12_f {
         // the -c-without-newline EOF rejection is a separate zsh
         // quirk, see GAPS.md)
         probe_f_if_dbrack_brace => (r#"probe f if dbrack brace"#, r###"if [[ -n x ]] { print t }
-"###);
+    "###);
         probe_f_if_brace_else => (r#"probe f if brace else"#, r###"if [[ -z x ]] { print t } else { print e }
-"###);
+    "###);
         probe_f_if_elif_cursh => (r#"probe f if elif cursh"#, r###"if [[ -z x ]] { print a } elif { true } { print b }
-"###);
+    "###);
         probe_f_if_elif_false_else => (r#"probe f if elif false else"#, r###"if [[ -z x ]] { print a } elif { false } { print b } else { print c }
-"###);
+    "###);
         probe_f_if_arith_brace => (r#"probe f if arith brace"#, r###"if (( 1 )) { print arith }
-"###);
+    "###);
         probe_f_if_cursh_cond => (r#"probe f if cursh cond"#, r###"if { true } { print cursh }
-"###);
+    "###);
         probe_f_if_cursh_false => (r#"probe f if cursh false"#, r###"if { false } { print no } else { print e }
-"###);
+    "###);
         probe_f_if_or_cond_then => (r#"probe f if or-cond then"#, r###"if { true } || { false }; then print or-cond; fi"###);
         // 3 — mixed-word glob protection
         probe_f_mixed_dq_brackets => (r#"probe f mixed dq brackets"#, r###"V=b; print -r V="$V x[a]""###);

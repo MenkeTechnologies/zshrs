@@ -39,7 +39,15 @@ use crate::ported::params::{getaparam, getsparam, setsparam};
 /// Falls back to literal equality when the key isn't a valid
 /// glob pattern.
 fn pattern_match(pat: &str, s: &str) -> bool {
-    match crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None) {
+    match crate::ported::pattern::patcompile(
+        &{
+            let mut __pat_tok = (pat).to_string();
+            crate::ported::glob::tokenize(&mut __pat_tok);
+            __pat_tok
+        },
+        0,
+        None,
+    ) {
         Some(prog) => crate::ported::pattern::pattry(&prog, s),
         None => pat == s,
     }

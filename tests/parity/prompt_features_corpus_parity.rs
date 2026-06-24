@@ -38,7 +38,11 @@ fn zsh_path() -> &'static str {
 }
 
 fn zsh_available() -> bool {
-    Command::new(zsh_path()).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(zsh_path())
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 struct ShellResult {
@@ -49,7 +53,10 @@ struct ShellResult {
 }
 
 fn run_zsh(script: &str) -> ShellResult {
-    let out = Command::new(zsh_path()).args(["-fc", script]).output().expect("invoke zsh");
+    let out = Command::new(zsh_path())
+        .args(["-fc", script])
+        .output()
+        .expect("invoke zsh");
     ShellResult {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -102,14 +109,16 @@ mod prompt {
 
     /// %(?.t.f) after false.
     #[test]
-        fn ternary_status_false() {
+    fn ternary_status_false() {
         assert_parity(r###"false; print -P '%(?.OK.NO)' | cat -v"###);
     }
 
     /// %(N?.t.f) explicit exit-status match.
     #[test]
-        fn ternary_status_explicit() {
-        assert_parity(r###"(exit 42); print -P '%(42?.MATCH.NO)' | cat -v; (exit 5); print -P '%(42?.MATCH.NO)' | cat -v"###);
+    fn ternary_status_explicit() {
+        assert_parity(
+            r###"(exit 42); print -P '%(42?.MATCH.NO)' | cat -v; (exit 5); print -P '%(42?.MATCH.NO)' | cat -v"###,
+        );
     }
 
     /// %(!.r.u) privilege ternary.
@@ -121,7 +130,9 @@ mod prompt {
     /// %(Nj.t.f) jobs ternary (0 jobs).
     #[test]
     fn ternary_jobs() {
-        assert_parity(r###"print -P '%(1j.HASJOBS.NOJOBS)' | cat -v; print -P '%(0j.ZEROJOBS.X)' | cat -v"###);
+        assert_parity(
+            r###"print -P '%(1j.HASJOBS.NOJOBS)' | cat -v; print -P '%(0j.ZEROJOBS.X)' | cat -v"###,
+        );
     }
 
     /// %F{name} foreground color.
@@ -133,13 +144,17 @@ mod prompt {
     /// %F{NNN} numeric (zero-padded + palette index).
     #[test]
     fn fg_numeric() {
-        assert_parity(r###"print -P '%F{009}A%f' | cat -v; print -P '%F{196}B%f' | cat -v; print -P '%F{1}C%f' | cat -v"###);
+        assert_parity(
+            r###"print -P '%F{009}A%f' | cat -v; print -P '%F{196}B%f' | cat -v; print -P '%F{1}C%f' | cat -v"###,
+        );
     }
 
     /// %F{#rrggbb} truecolor.
     #[test]
     fn fg_hex() {
-        assert_parity(r###"print -P '%F{#ff0000}R%f' | cat -v; print -P '%F{#00ff00}g%f' | cat -v"###);
+        assert_parity(
+            r###"print -P '%F{#ff0000}R%f' | cat -v; print -P '%F{#00ff00}g%f' | cat -v"###,
+        );
     }
 
     /// %NF numeric prefix-arg form.
@@ -192,7 +207,7 @@ mod prompt {
 
     /// nested ternary in false branch.
     #[test]
-        fn nested_ternary_false() {
+    fn nested_ternary_false() {
         assert_parity(r###"false; print -P '%(?..%(!.R.U))' | cat -v"###);
     }
 
@@ -284,19 +299,25 @@ mod prompt {
     /// %1~ last component with tilde contraction.
     #[test]
     fn cwd_tilde_component() {
-        assert_parity(r###"d=$(mktemp -d)/zsbx; mkdir -p "$d"; cd "$d"; print -P "%1~" | cat -v"###);
+        assert_parity(
+            r###"d=$(mktemp -d)/zsbx; mkdir -p "$d"; cd "$d"; print -P "%1~" | cat -v"###,
+        );
     }
 
     /// %2c trailing 2 components.
     #[test]
     fn cwd_two_components() {
-        assert_parity(r###"d=$(mktemp -d)/aa/bb/cc; mkdir -p "$d"; cd "$d"; print -P "%2c" | cat -v"###);
+        assert_parity(
+            r###"d=$(mktemp -d)/aa/bb/cc; mkdir -p "$d"; cd "$d"; print -P "%2c" | cat -v"###,
+        );
     }
 
     /// %(N/.t.f) path-depth ternary.
     #[test]
     fn ternary_path_depth() {
-        assert_parity(r###"cd /; print -P "%(4/.DEEP.SHALLOW)" | cat -v; d=$(mktemp -d)/a/b/c/d/e; mkdir -p "$d"; cd "$d"; print -P "%(4/.DEEP.SHALLOW)" | cat -v"###);
+        assert_parity(
+            r###"cd /; print -P "%(4/.DEEP.SHALLOW)" | cat -v; d=$(mktemp -d)/a/b/c/d/e; mkdir -p "$d"; cd "$d"; print -P "%(4/.DEEP.SHALLOW)" | cat -v"###,
+        );
     }
 
     /// ${(%)var} parameter prompt expansion.
@@ -319,8 +340,10 @@ mod prompt {
 
     /// literal %) and %% inside ternary text.
     #[test]
-        fn ternary_literals_inside() {
-        assert_parity(r###"false; print -P '%(?.t.f%)x)' | cat -v; print -P '%(?.100%%.fail)' | cat -v"###);
+    fn ternary_literals_inside() {
+        assert_parity(
+            r###"false; print -P '%(?.t.f%)x)' | cat -v; print -P '%(?.100%%.fail)' | cat -v"###,
+        );
     }
 
     /// %(Nl.t.f) line-position ternary.
@@ -363,17 +386,21 @@ mod features {
     /// functions -M user math function.
     #[test]
     fn functions_M() {
-        assert_parity(r###"_addtwo(){ REPLY=$(( $1 + $2 )) }
+        assert_parity(
+            r###"_addtwo(){ REPLY=$(( $1 + $2 )) }
 functions -M addtwo 2 2 _addtwo
-print $(( addtwo(10,20) ))"###);
+print $(( addtwo(10,20) ))"###,
+        );
     }
 
     /// functions -M with branching logic.
     #[test]
     fn functions_M_branch() {
-        assert_parity(r###"_mymax(){ REPLY=$(( $1 > $2 ? $1 : $2 )) }
+        assert_parity(
+            r###"_mymax(){ REPLY=$(( $1 > $2 ? $1 : $2 )) }
 functions -M mymax 2 2 _mymax
-print $(( mymax(3,7) ))"###);
+print $(( mymax(3,7) ))"###,
+        );
     }
 
     /// <(...) input process substitution.
@@ -385,7 +412,9 @@ print $(( mymax(3,7) ))"###);
     /// >(...) output process substitution.
     #[test]
     fn procsubst_out() {
-        assert_parity(r###"d=$(mktemp -d); print hi > >(cat > $d/out); wait; print "$(<$d/out)"; rm -rf $d"###);
+        assert_parity(
+            r###"d=$(mktemp -d); print hi > >(cat > $d/out); wait; print "$(<$d/out)"; rm -rf $d"###,
+        );
     }
 
     /// two =(...) in one command.
@@ -451,19 +480,25 @@ print $(( mymax(3,7) ))"###);
     /// return propagates through always.
     #[test]
     fn return_through_always() {
-        assert_parity(r###"f(){ { return 3 } always { print "tbe=$TRY_BLOCK_ERROR" } }; f; print "rc=$?""###);
+        assert_parity(
+            r###"f(){ { return 3 } always { print "tbe=$TRY_BLOCK_ERROR" } }; f; print "rc=$?""###,
+        );
     }
 
     /// multios output to multiple files.
     #[test]
     fn multios_out() {
-        assert_parity(r###"d=$(mktemp -d); print x > $d/f1 > $d/f2; print "$(<$d/f1)|$(<$d/f2)"; rm -rf $d"###);
+        assert_parity(
+            r###"d=$(mktemp -d); print x > $d/f1 > $d/f2; print "$(<$d/f1)|$(<$d/f2)"; rm -rf $d"###,
+        );
     }
 
     /// multios input concatenation.
     #[test]
     fn multios_in() {
-        assert_parity(r###"d=$(mktemp -d); print a > $d/f1; print b > $d/f2; cat < $d/f1 < $d/f2; rm -rf $d"###);
+        assert_parity(
+            r###"d=$(mktemp -d); print a > $d/f1; print b > $d/f2; cat < $d/f1 < $d/f2; rm -rf $d"###,
+        );
     }
 
     /// <<- tab-stripped heredoc.
@@ -487,7 +522,9 @@ print $(( mymax(3,7) ))"###);
     /// [[ -o noclobber ]] negated-name option test.
     #[test]
     fn option_test_negated() {
-        assert_parity(r###"setopt noclobber; [[ -o noclobber ]] && print A; [[ -o clobber ]] && print B || print noB"###);
+        assert_parity(
+            r###"setopt noclobber; [[ -o noclobber ]] && print A; [[ -o clobber ]] && print B || print noB"###,
+        );
     }
 
     /// ${(A)=name=...} array assign with split.
@@ -499,13 +536,17 @@ print $(( mymax(3,7) ))"###);
     /// autoload +X immediate load + functions body.
     #[test]
     fn autoload_plus_X() {
-        assert_parity(r###"d=$(mktemp -d); print "print loaded-body" > $d/myfn; fpath=($d $fpath); autoload +X myfn; functions myfn; rm -rf $d"###);
+        assert_parity(
+            r###"d=$(mktemp -d); print "print loaded-body" > $d/myfn; fpath=($d $fpath); autoload +X myfn; functions myfn; rm -rf $d"###,
+        );
     }
 
     /// unloaded autoload placeholder body via ${functions[name]}.
     #[test]
     fn autoload_unloaded_marker() {
-        assert_parity(r###"d=$(mktemp -d); print "print B" > $d/g; fpath=($d $fpath); autoload g; print ${functions[g]}; rm -rf $d"###);
+        assert_parity(
+            r###"d=$(mktemp -d); print "print B" > $d/g; fpath=($d $fpath); autoload g; print ${functions[g]}; rm -rf $d"###,
+        );
     }
 
     /// $(<file) fast read.
@@ -517,7 +558,9 @@ print $(( mymax(3,7) ))"###);
     /// setopt globstarshort ** shorthand.
     #[test]
     fn globstarshort() {
-        assert_parity(r###"setopt globstarshort; d=$(mktemp -d); mkdir -p $d/a/b; touch $d/a/b/f.txt; print -l $d/**.txt | sed "s#$d#SB#"; rm -rf $d"###);
+        assert_parity(
+            r###"setopt globstarshort; d=$(mktemp -d); mkdir -p $d/a/b; touch $d/a/b/f.txt; print -l $d/**.txt | sed "s#$d#SB#"; rm -rf $d"###,
+        );
     }
 }
 
@@ -530,24 +573,29 @@ mod frameworks {
     #[test]
     #[ignore = "zshrs gap: ${(j:,:):-\\$${^@}} — rc-expand ${^@} over positionals not applied before join (no per-element distribution)"]
     fn join_default_rc_positionals() {
-        assert_parity(r###"f() { print -r -- "${(j:,:):-\$${^@}}"; }
-f alpha beta gamma"###);
+        assert_parity(
+            r###"f() { print -r -- "${(j:,:):-\$${^@}}"; }
+f alpha beta gamma"###,
+        );
     }
 
     /// prezto — (@M)${(f)var}:#alternation line filter.
     #[test]
     fn at_M_f_alternation() {
-        assert_parity(r###"_ls_version="ls (GNU coreutils) 9.1
+        assert_parity(
+            r###"_ls_version="ls (GNU coreutils) 9.1
 something else
 lsd 0.23.1
 busybox v1.36"
-print -rl -- ${(@M)${(f)_ls_version}:#*(GNU|lsd|uutils) *}"###);
+print -rl -- ${(@M)${(f)_ls_version}:#*(GNU|lsd|uutils) *}"###,
+        );
     }
 
     /// prezto — case dispatch on ./* /* *:* path shapes.
     #[test]
     fn case_path_shapes() {
-        assert_parity(r###"setopt extendedglob
+        assert_parity(
+            r###"setopt extendedglob
 typeset -a argo
 for arg in ./rel /abs host:remote plainword; do
   case $arg in
@@ -557,52 +605,62 @@ for arg in ./rel /abs host:remote plainword; do
     (   * ) argo+=( "other:$arg" ) ;;
   esac
 done
-print -rl -- "${argo[@]}""###);
+print -rl -- "${argo[@]}""###,
+        );
     }
 
     /// grml — ${(%):-...} deterministic prompt expansions.
     #[test]
     fn colon_minus_prompt() {
-        assert_parity(r###"print -r -- "${(%):-%(?.OK.FAIL)}"
+        assert_parity(
+            r###"print -r -- "${(%):-%(?.OK.FAIL)}"
 false; print -r -- "${(%):-%(?.OK.FAIL)}"
 print -r -- "${(%):-%5(l.wide.narrow)}"
-print -r -- "${(%):-%3<..<abcdefghij}""###);
+print -r -- "${(%):-%3<..<abcdefghij}""###,
+        );
     }
 
     /// ${PWD/#$HOME/~} anchored-prefix vs literal \~.
     #[test]
     fn pwd_home_abbrev() {
-        assert_parity(r###"HOME=/home/jacob
+        assert_parity(
+            r###"HOME=/home/jacob
 PWD=/home/jacob/projects/zshrs
 print -r -- "${PWD/#$HOME/~}"
-print -r -- "${PWD/#$HOME/\~}""###);
+print -r -- "${PWD/#$HOME/\~}""###,
+        );
     }
 
     /// grml — ${LBUFFER%%(#m)pat} capture + assoc fallback.
     #[test]
     fn lbuffer_strip_capture() {
-        assert_parity(r###"setopt extendedglob
+        assert_parity(
+            r###"setopt extendedglob
 typeset -A abk=( "G" "git status" "L" "ls -la" )
 LBUFFER="echo G"
 LBUFFER=${LBUFFER%%(#m)[.\-+:|_a-zA-Z0-9]#}
 print -r -- "stripped=[$LBUFFER] match=[$MATCH]"
 LBUFFER+=${abk[$MATCH]:-$MATCH}
-print -r -- "expanded=[$LBUFFER]""###);
+print -r -- "expanded=[$LBUFFER]""###,
+        );
     }
 
     /// prezto git-info — (pws:\t:)N tab-field subscript on scalar.
     #[test]
     fn pws_tab_subscript() {
-        assert_parity(r###"ahead_and_behind=$(printf "3\t5")
+        assert_parity(
+            r###"ahead_and_behind=$(printf "3\t5")
 ahead="$ahead_and_behind[(pws:\t:)1]"
 behind="$ahead_and_behind[(pws:\t:)2]"
-print -r -- "ahead=$ahead behind=$behind""###);
+print -r -- "ahead=$ahead behind=$behind""###,
+        );
     }
 
     /// prezto git-info — porcelain alternation class patterns.
     #[test]
     fn porcelain_class_patterns() {
-        assert_parity(r###"setopt extendedglob
+        assert_parity(
+            r###"setopt extendedglob
 status_text="## main...origin/main [ahead 2]
  M file1
 ?? file2
@@ -614,119 +672,144 @@ for line in "${status_lines[@]}"; do
   [[ "$line" == ([ACDMT][\ MT]|[ACMT]D)\ * ]] && (( added++ ))
   [[ "$line" == [\ ACMRT]D\ * ]] && (( deleted++ ))
 done
-print -r -- "added=$added deleted=$deleted""###);
+print -r -- "added=$added deleted=$deleted""###,
+        );
     }
 
     /// recursive glob with exclusion **/*.txt~*/.git/* + (.N:t).
     #[test]
     fn recursive_glob_exclusion() {
-        assert_parity(r###"setopt extendedglob
+        assert_parity(
+            r###"setopt extendedglob
 d=$(mktemp -d)
 mkdir -p "$d"/{src,.git,src/sub}
 : > "$d/src/a.txt"; : > "$d/src/sub/b.txt"; : > "$d/.git/c.txt"
 print -rl -- ${d}/**/*.txt~*/.git/*(.N:t)
-rm -rf "$d""###);
+rm -rf "$d""###,
+        );
     }
 
     /// (e) templating over an array.
     #[test]
     fn e_templating_array() {
-        assert_parity(r###"name="world"; greeting="hello \$name"
+        assert_parity(
+            r###"name="world"; greeting="hello \$name"
 print -r -- "${(e)greeting}"
 typeset -a parts=( "a=\$((1+2))" "b=\$name" )
-print -rl -- "${(e)parts[@]}""###);
+print -rl -- "${(e)parts[@]}""###,
+        );
     }
 
     /// grml — (i) index used to blank an element in place.
     #[test]
     fn index_blank_element() {
-        assert_parity(r###"typeset -a wl=(foo bar baz qux)
+        assert_parity(
+            r###"typeset -a wl=(foo bar baz qux)
 PREFIX=baz
 wl[${wl[(i)$PREFIX]}]=""
-print -r -- "after: ${(j:,:)wl}""###);
+print -r -- "after: ${(j:,:)wl}""###,
+        );
     }
 
     /// (ou) sort-unique + (j:|:) over :t.
     #[test]
     fn sort_unique_join_tail() {
-        assert_parity(r###"typeset -a paths=(/a/b/c /d/e /f)
+        assert_parity(
+            r###"typeset -a paths=(/a/b/c /d/e /f)
 print -r -- "${(j:|:)${(@)paths:t}}"
 typeset -a dups=(x y x z y)
 typeset -a s=( "${(ou)dups[@]}" )
-print -r -- "${(j:,:)s}""###);
+print -r -- "${(j:,:)s}""###,
+        );
     }
 
     /// negative array slices [1,-2]/[2,-1] + negative index.
     #[test]
     fn negative_slices() {
-        assert_parity(r###"typeset -a argv2=(a b c d e)
+        assert_parity(
+            r###"typeset -a argv2=(a b c d e)
 print -r -- "${(@)argv2[1,-2]}"
 print -r -- "${(@)argv2[2,-1]}"
-print -r -- "last=${argv2[-1]} second-last=${argv2[-2]}""###);
+print -r -- "last=${argv2[-1]} second-last=${argv2[-2]}""###,
+        );
     }
 
     /// (@ko) key iteration with arithmetic percentages.
     #[test]
     fn ko_percentages() {
-        assert_parity(r###"typeset -A CMD=( ls 10 cd 5 grep 3 )
+        assert_parity(
+            r###"typeset -A CMD=( ls 10 cd 5 grep 3 )
 total=0
 for k in "${(@k)CMD}"; do (( total += CMD[$k] )); done
 typeset -a report
 for k in "${(@ko)CMD}"; do report+=( "$k=$(( CMD[$k]*100/total ))%" ); done
-print -r -- "${(j: :)report}""###);
+print -r -- "${(j: :)report}""###,
+        );
     }
 
     /// ${^arr} rc-expand distribution with affixes.
     #[test]
     fn caret_rc_expand_affix() {
-        assert_parity(r###"typeset -a v=(a b c)
-print -rl -- pre-${^v}-post"###);
+        assert_parity(
+            r###"typeset -a v=(a b c)
+print -rl -- pre-${^v}-post"###,
+        );
     }
 
     /// (D) directory abbreviation.
     #[test]
     fn D_dir_abbrev() {
-        assert_parity(r###"HOME=/home/jacob
+        assert_parity(
+            r###"HOME=/home/jacob
 p=/home/jacob/src/proj
 print -r -- "${(D)p}"
 q=/usr/local
-print -r -- "${(D)q}""###);
+print -r -- "${(D)q}""###,
+        );
     }
 
     /// (q+) minimal quoting.
     #[test]
     fn q_plus_minimal() {
-        assert_parity(r###"plain="abc"
+        assert_parity(
+            r###"plain="abc"
 special="a b\"c"
 print -r -- ${(q+)plain}
-print -r -- ${(q+)special}"###);
+print -r -- ${(q+)special}"###,
+        );
     }
 
     /// (ws.:.) negative field subscript.
     #[test]
     fn ws_negative_field() {
-        assert_parity(r###"str="alpha:beta:gamma:delta"
+        assert_parity(
+            r###"str="alpha:beta:gamma:delta"
 print -r -- "${str[(ws.:.)2]}"
-print -r -- "${str[(ws.:.)-1]}""###);
+print -r -- "${str[(ws.:.)-1]}""###,
+        );
     }
 
     /// zformat -f %b/%r template.
     #[test]
     fn zformat_template() {
-        assert_parity(r###"zmodload zsh/zutil
+        assert_parity(
+            r###"zmodload zsh/zutil
 local out
 zformat -f out "%b on %r" "b:main" "r:origin"
-print -r -- "$out""###);
+print -r -- "$out""###,
+        );
     }
 
     /// zstyle -e reply built from (L)var:-fallback.
     #[test]
     fn zstyle_e_casefold() {
-        assert_parity(r###"zstyle -e ":x:y" tag "reply=( \${(L)PWD:-fallback} )"
+        assert_parity(
+            r###"zstyle -e ":x:y" tag "reply=( \${(L)PWD:-fallback} )"
 typeset -a got
 PWD=/Some/Mixed/Case
 zstyle -a ":x:y" tag got
-print -r -- "${got[*]}""###);
+print -r -- "${got[*]}""###,
+        );
     }
 
     /// [[ -v name ]] + ${(t)${(P)name}} type introspection — `-v $n`
@@ -734,11 +817,13 @@ print -r -- "${got[*]}""###);
     /// referenced parameter's type (aspar) in both quoted and bare form.
     #[test]
     fn v_test_with_type() {
-        assert_parity(r###"typeset -A h=( k v )
+        assert_parity(
+            r###"typeset -A h=( k v )
 typeset -a a=( 1 2 3 )
 s="scalar"
 for n in h a s missing; do
   if [[ -v $n ]]; then print -r -- "$n is-set type=${(t)${(P)n}}"; else print -r -- "$n unset"; fi
-done"###);
+done"###,
+        );
     }
 }

@@ -213,9 +213,11 @@ impl CmdSubstSubshellBump {
                 pm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
             }
         }
-        crate::ported::exec::zsh_subshell
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        CmdSubstSubshellBump { saved_val, saved_str }
+        crate::ported::exec::zsh_subshell.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        CmdSubstSubshellBump {
+            saved_val,
+            saved_str,
+        }
     }
 }
 
@@ -227,8 +229,7 @@ impl Drop for CmdSubstSubshellBump {
                 pm.u_str = self.saved_str.take();
             }
         }
-        crate::ported::exec::zsh_subshell
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::exec::zsh_subshell.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -546,12 +547,8 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // (needs_load checks MOD_INIT_B).
     if name == "private" {
         if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
-            let _ = crate::ported::module::require_module(
-                &mut tab,
-                "zsh/param/private",
-                None,
-                0,
-            ); // c:2710 ensurefeature
+            let _ = crate::ported::module::require_module(&mut tab, "zsh/param/private", None, 0);
+            // c:2710 ensurefeature
         }
     }
     // c:Src/Modules/param_private.c:682-685 setup_ — loading
@@ -675,8 +672,7 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
         // builtintab, Src/Modules/files.c:816-824; PATH has no
         // /bin/zf_rm). The previous zf_-strip silently ran the
         // system binary instead.
-        let status = with_executor(|exec| exec.execute_external(name, &args, &[]))
-            .unwrap_or(127);
+        let status = with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
         return status;
     }
     // c:Src/Modules/stat.c:637-638 — zsh/stat registers BOTH `stat`
@@ -693,8 +689,7 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
             .map(|t| t.is_loaded("zsh/stat"))
             .unwrap_or(false)
     {
-        let status =
-            with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
+        let status = with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
         return status;
     }
     // c:Src/exec.c:3050-3068 — builtin lookup hits `builtintab` (the
@@ -729,9 +724,24 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
 fn module_gated_files_builtin(name: &str) -> bool {
     matches!(
         name,
-        "mkdir" | "rmdir" | "rm" | "mv" | "ln" | "chmod" | "chown" | "chgrp" | "sync"
-            | "zf_mkdir" | "zf_rmdir" | "zf_rm" | "zf_mv" | "zf_ln" | "zf_chmod"
-            | "zf_chown" | "zf_chgrp" | "zf_sync"
+        "mkdir"
+            | "rmdir"
+            | "rm"
+            | "mv"
+            | "ln"
+            | "chmod"
+            | "chown"
+            | "chgrp"
+            | "sync"
+            | "zf_mkdir"
+            | "zf_rmdir"
+            | "zf_rm"
+            | "zf_mv"
+            | "zf_ln"
+            | "zf_chmod"
+            | "zf_chown"
+            | "zf_chgrp"
+            | "zf_sync"
     )
 }
 
@@ -845,10 +855,8 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         .map(|s| s.contains(name))
         .unwrap_or(false);
     if disabled {
-        let status = with_executor(|exec| exec.execute_external(name, &args, &[]))
-            .unwrap_or(127);
-        crate::ported::builtin::LASTVAL
-            .store(status, std::sync::atomic::Ordering::Relaxed);
+        let status = with_executor(|exec| exec.execute_external(name, &args, &[])).unwrap_or(127);
+        crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
         return status;
@@ -861,21 +869,23 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
     // aliases (`zf_rm`, `zf_chmod`, …) are bound by the same module
     // and gated the same way. Bug #28 in docs/BUGS.md.
     if module_gated_files_builtin(name) {
-        if !crate::ported::module::MODULESTAB.lock().unwrap().is_loaded("zsh/files") {
+        if !crate::ported::module::MODULESTAB
+            .lock()
+            .unwrap()
+            .is_loaded("zsh/files")
+        {
             // PATH lookup uses the literal name. In --zsh parity mode
             // `zf_rm` must 127 like zsh -fc (no /bin/zf_rm); default
             // zshrs mode keeps the convenience zf_-strip so the alias
             // still reaches the system binary.
-            let path_name = if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
-            {
+            let path_name = if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
                 name
             } else {
                 name.strip_prefix("zf_").unwrap_or(name)
             };
-            let status = with_executor(|exec| exec.execute_external(path_name, &args, &[]))
-                .unwrap_or(127);
-            crate::ported::builtin::LASTVAL
-                .store(status, std::sync::atomic::Ordering::Relaxed);
+            let status =
+                with_executor(|exec| exec.execute_external(path_name, &args, &[])).unwrap_or(127);
+            crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
             let mut synth = crate::ported::zsh_h::job::default();
             crate::ported::jobs::waitonejob(&mut synth);
             return status;
@@ -1237,13 +1247,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Status(0); // c:6160
         }
         let src = args.join(" "); // c:6166
-        // c:Src/builtin.c:6164-6165 — `if (!ineval) scriptname =
-        // "(eval)";`. Diagnostics emitted while the eval body runs
-        // (command-not-found, parse errors, etc.) use scriptname as
-        // the source-context prefix. Without setting it here the
-        // BUILTIN_EVAL fast-path leaked the outer "zsh" prefix
-        // through, breaking the `(eval):N:` convention zsh uses
-        // for in-eval errors. Bug #420.
+                                  // c:Src/builtin.c:6164-6165 — `if (!ineval) scriptname =
+                                  // "(eval)";`. Diagnostics emitted while the eval body runs
+                                  // (command-not-found, parse errors, etc.) use scriptname as
+                                  // the source-context prefix. Without setting it here the
+                                  // BUILTIN_EVAL fast-path leaked the outer "zsh" prefix
+                                  // through, breaking the `(eval):N:` convention zsh uses
+                                  // for in-eval errors. Bug #420.
         let oscriptname = crate::ported::utils::scriptname_get();
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
         let mut status = with_executor(|exec| {
@@ -1599,21 +1609,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // execvp/spawn if the name isn't shell-resolvable.
         let has_user_fn = with_executor(|exec| exec.functions_compiled.contains_key(&cmd));
         if has_user_fn {
-            let status = with_executor(|exec| {
-                exec.dispatch_function_call(&cmd, &rest).unwrap_or(127)
-            });
+            let status =
+                with_executor(|exec| exec.dispatch_function_call(&cmd, &rest).unwrap_or(127));
             // Top-level `exec funcname` — exit the shell with the
             // function's status (mirrors C's "exec replaces shell as
             // last act"). Subshell `(exec funcname)` — return through
             // the EXIT_PENDING path so the subshell body aborts and
             // the parent resumes via subshell_end.
-            let in_subshell_now =
-                with_executor(|exec| !exec.subshell_snapshots.is_empty());
+            let in_subshell_now = with_executor(|exec| !exec.subshell_snapshots.is_empty());
             if in_subshell_now {
                 crate::ported::builtin::EXIT_VAL
                     .store(status, std::sync::atomic::Ordering::Relaxed);
-                crate::ported::builtin::EXIT_PENDING
-                    .store(1, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
                 return Value::Status(status);
             }
             std::process::exit(status);
@@ -1623,13 +1630,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let bn_in_tab = crate::ported::builtin::createbuiltintable().contains_key(&cmd);
         if bn_in_tab {
             let status = dispatch_builtin_raw(&cmd, rest.clone());
-            let in_subshell_now =
-                with_executor(|exec| !exec.subshell_snapshots.is_empty());
+            let in_subshell_now = with_executor(|exec| !exec.subshell_snapshots.is_empty());
             if in_subshell_now {
                 crate::ported::builtin::EXIT_VAL
                     .store(status, std::sync::atomic::Ordering::Relaxed);
-                crate::ported::builtin::EXIT_PENDING
-                    .store(1, std::sync::atomic::Ordering::Relaxed);
+                crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
                 return Value::Status(status);
             }
             std::process::exit(status);
@@ -1682,10 +1687,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if !has_slash && errno == libc::ENOENT {
                         // c:876 — PATH search exhausted with no good
                         // errno → `command not found: arg0`.
-                        crate::ported::utils::zerr(&format!(
-                            "command not found: {}",
-                            cmd
-                        ));
+                        crate::ported::utils::zerr(&format!("command not found: {}", cmd));
                     } else {
                         let mut errmsg = crate::ported::compat::strerror(errno);
                         if errno != libc::EIO {
@@ -1712,10 +1714,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // is gone" reality in C. EXIT_PENDING + EXIT_VAL drive
             // the next ERREXIT_CHECK to unwind to the subshell-end
             // patch.
-            crate::ported::builtin::EXIT_VAL
-                .store(status, std::sync::atomic::Ordering::Relaxed);
-            crate::ported::builtin::EXIT_PENDING
-                .store(1, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::EXIT_VAL.store(status, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::builtin::EXIT_PENDING.store(1, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(status);
         }
         let mut command = std::process::Command::new(&cmd);
@@ -1742,11 +1742,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let mut errmsg = crate::ported::compat::strerror(errno);
             if errno != libc::EIO {
                 if let Some(c) = errmsg.chars().next() {
-                    errmsg = format!(
-                        "{}{}",
-                        c.to_ascii_lowercase(),
-                        &errmsg[c.len_utf8()..]
-                    );
+                    errmsg = format!("{}{}", c.to_ascii_lowercase(), &errmsg[c.len_utf8()..]);
                 }
             }
             crate::ported::utils::zerr(&format!("{}: {}", errmsg, cmd));
@@ -1812,8 +1808,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             Value::Array(items) => items.into_iter().map(|v| v.to_str()).collect(),
             other => vec![other.to_str()],
         };
-        let mut as_linklist: crate::ported::linklist::LinkList<String> =
-            Default::default();
+        let mut as_linklist: crate::ported::linklist::LinkList<String> = Default::default();
         for s in &inputs {
             let mut tokd = s.clone();
             crate::ported::glob::shtokenize(&mut tokd);
@@ -2299,9 +2294,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // already copy-isolates the statics, so mutating
                     // them here can't leak to the parent.
                     with_executor(|exec| {
-                        let monitor = crate::ported::zsh_h::isset(
-                            crate::ported::zsh_h::MONITOR,
-                        ) as i32;
+                        let monitor =
+                            crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
                         crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
                     });
                     *crate::ported::jobs::THISJOB
@@ -2537,10 +2531,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         idx
                     };
                     jobs::clearoldjobtab(); // c:exec.c:1744
-                    if let Ok(mut tj) = jobs::THISJOB
-                        .get_or_init(|| Mutex::new(-1))
-                        .lock()
-                    {
+                    if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
                         *tj = idx as i32;
                     }
                     jobs::spawnjob(); // c:exec.c:1758
@@ -2912,7 +2903,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 let merged = exec.array(&name).unwrap_or_default();
                 let joined = merged.join(&sep);
                 exec.set_scalar(scalar_name.clone(), joined.clone());
-                let _ = crate::ported::params::zputenv(&format!("{}={}", &scalar_name, &joined)); // c:Src/params.c:5354
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &scalar_name, &joined));
+                // c:Src/params.c:5354
             }
             false
         });
@@ -3260,12 +3252,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // KSHARRAYS bare form: no subscript. Bare-`$name` words +
         // literal `[idx]suffix` glued onto the last word.
         let mut words = ksharrays_bare_words(&name);
-        let last = format!(
-            "{}[{}]{}",
-            words.pop().unwrap_or_default(),
-            idx,
-            suffix
-        );
+        let last = format!("{}[{}]{}", words.pop().unwrap_or_default(), idx, suffix);
         if quoted {
             // DQ context — no filename generation, bracket text stays
             // literal.
@@ -3469,13 +3456,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                     let matched = if exact {
                                         elem == pat
                                     } else {
-                                        crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
+                                        crate::ported::pattern::patcompile(
+                                            &{
+                                                let mut __pat_tok = (pat).to_string();
+                                                crate::ported::glob::tokenize(&mut __pat_tok);
+                                                __pat_tok
+                                            },
                                             crate::ported::zsh_h::PAT_HEAPDUP as i32,
                                             None,
                                         )
-                                        .map_or(false, |p| {
-                                            crate::ported::pattern::pattry(&p, elem)
-                                        })
+                                        .map_or(false, |p| crate::ported::pattern::pattry(&p, elem))
                                     };
                                     if matched {
                                         found = Some(idx);
@@ -3524,7 +3514,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                         let matched = if exact {
                                             cand == pat
                                         } else {
-                                            crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
+                                            crate::ported::pattern::patcompile(
+                                                &{
+                                                    let mut __pat_tok = (pat).to_string();
+                                                    crate::ported::glob::tokenize(&mut __pat_tok);
+                                                    __pat_tok
+                                                },
                                                 crate::ported::zsh_h::PAT_HEAPDUP as i32,
                                                 None,
                                             )
@@ -3551,7 +3546,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                             let matched = if exact {
                                                 cand == pat
                                             } else {
-                                                crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
+                                                crate::ported::pattern::patcompile(
+                                                    &{
+                                                        let mut __pat_tok = (pat).to_string();
+                                                        crate::ported::glob::tokenize(
+                                                            &mut __pat_tok,
+                                                        );
+                                                        __pat_tok
+                                                    },
                                                     crate::ported::zsh_h::PAT_HEAPDUP as i32,
                                                     None,
                                                 )
@@ -3564,9 +3566,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                                 break;
                                             }
                                         }
-                                        if last_found.is_some()
-                                            && last_found.unwrap() >= start
-                                        {
+                                        if last_found.is_some() && last_found.unwrap() >= start {
                                             break;
                                         }
                                     }
@@ -3669,8 +3669,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // c:2128-2143 — ASCII specials get backslash-prefixed
             // then fall through to emit the literal char.
             match c {
-                '\\' | '<' | '>' | '(' | '|' | ')' | '^' | '#' | '~'
-                | '[' | ']' | '*' | '?' | '$' | ' ' => {
+                '\\' | '<' | '>' | '(' | '|' | ')' | '^' | '#' | '~' | '[' | ']' | '*' | '?'
+                | '$' | ' ' => {
                     out.push('\\');
                     out.push(c);
                     i += 1;
@@ -3882,8 +3882,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // when OFF, pass through unchanged. Bug #119 in docs/BUGS.md.
     vm.register_builtin(BUILTIN_GLOB_SUBST_EXPAND, |vm, _argc| {
         let raw = vm.pop();
-        let glob_subst =
-            crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        let glob_subst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         if !glob_subst {
             return raw;
         }
@@ -3948,16 +3947,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // See BUILTIN_GLOB_SUBST_GUARD docs above for full rationale.
     vm.register_builtin(BUILTIN_GLOB_SUBST_GUARD, |vm, _argc| {
         let p = vm.pop().to_str();
-        let glob_subst =
-            crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
+        let glob_subst = crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBSUBST);
         if glob_subst {
             return Value::str(p);
         }
         let mut out = String::with_capacity(p.len() * 2);
         for c in p.chars() {
             match c {
-                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '#' | '^'
-                | '~' | '\\' => {
+                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '<' | '>' | '#' | '^' | '~' | '\\' => {
                     out.push('\\');
                     out.push(c);
                 }
@@ -3975,9 +3972,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // IFS="" (→ EMPTY separator → fields concatenate).
             // chars().next() collapsed both into the default, so
             // IFS="" was treated as IFS=" ".
-            let ifs_full = exec
-                .scalar("IFS")
-                .unwrap_or_else(|| " \t\n".to_string());
+            let ifs_full = exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string());
             let sep = ifs_full
                 .chars()
                 .next()
@@ -4163,8 +4158,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             use std::sync::atomic::Ordering;
             let old_in = crate::ported::modules::clone::coprocin.load(Ordering::Relaxed);
             if old_in >= 0 {
-                let old_out =
-                    crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
+                let old_out = crate::ported::modules::clone::coprocout.load(Ordering::Relaxed);
                 unsafe {
                     libc::close(old_in);
                     if old_out >= 0 {
@@ -4259,14 +4253,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // fdtable[coprocout] = FDT_UNUSED;`: the two kept ends
                 // are user-reachable (via `>&p` / `<&p`), so they drop
                 // the FDT_INTERNAL mark movefd gave them.
-                crate::ported::utils::fdtable_set(
-                    read_fd,
-                    crate::ported::zsh_h::FDT_UNUSED,
-                );
-                crate::ported::utils::fdtable_set(
-                    write_fd,
-                    crate::ported::zsh_h::FDT_UNUSED,
-                );
+                crate::ported::utils::fdtable_set(read_fd, crate::ported::zsh_h::FDT_UNUSED);
+                crate::ported::utils::fdtable_set(write_fd, crate::ported::zsh_h::FDT_UNUSED);
                 // c:Src/exec.c:2837 — `lastpid = (zlong) pid;`. zsh
                 // sets the `$!` global to the coproc child's PID so
                 // subsequent `$!` reads return it. The Rust port at
@@ -4304,10 +4292,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         idx
                     };
                     jobs::clearoldjobtab(); // c:exec.c:1744
-                    if let Ok(mut tj) = jobs::THISJOB
-                        .get_or_init(|| Mutex::new(-1))
-                        .lock()
-                    {
+                    if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
                         *tj = idx as i32;
                     }
                     jobs::spawnjob(); // c:exec.c:1758
@@ -4735,7 +4720,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .last_mut()
                     .unwrap()
                     .push((name.clone(), prev_var, prev_env));
-                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value)); // c:Src/params.c:5354
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
+                // c:Src/params.c:5354
             }
             // Canonical setsparam handles readonly, integer math, case
             // fold, GSU dispatch. For Int values (arith assigns) route
@@ -4787,7 +4773,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value)); // c:Src/params.c:5354
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
+                // c:Src/params.c:5354
             }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled()
@@ -4814,7 +4801,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let name = args.first().cloned().unwrap_or_default();
         let value = args.get(1).cloned().unwrap_or_default();
         if crate::vm_helper::is_nameref(&name) {
-            let ef_before = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+            let ef_before =
+                crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
             crate::ported::params::setloopvar(&name, &value); // c:6362
             let ef_after = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
             if (ef_after & crate::ported::utils::ERRFLAG_ERROR) != 0 && ef_after != ef_before {
@@ -4837,7 +4825,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let already_exported =
                 (exec.param_flags(&name) as u32 & crate::ported::zsh_h::PM_EXPORTED) != 0;
             if allexport || already_exported {
-                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value)); // c:Src/params.c:5354
+                let _ = crate::ported::params::zputenv(&format!("{}={}", &name, &value));
+                // c:Src/params.c:5354
             }
         });
         Value::Bool(true)
@@ -4903,8 +4892,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // process with no job, so `zsh -fc 'time true'` emits NOTHING.
         // Snapshot the fork-event counter; report only if the timed
         // body forked (external command or subshell).
-        let forks_before =
-            crate::vm_helper::FORK_EVENTS.load(std::sync::atomic::Ordering::Relaxed);
+        let forks_before = crate::vm_helper::FORK_EVENTS.load(std::sync::atomic::Ordering::Relaxed);
         let start = Instant::now();
         crate::fusevm_disasm::maybe_print_stdout("time_sublist", &chunk);
         let mut sub_vm = fusevm::VM::new(chunk);
@@ -5005,8 +4993,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // c:3830-3835 — bad=3: fd >= 10 marked FDT_INTERNAL.
                 if fd1 >= 10
                     && fd1 <= crate::ported::utils::MAX_ZSH_FD.load(Ordering::Relaxed)
-                    && crate::ported::utils::fdtable_get(fd1)
-                        == crate::ported::zsh_h::FDT_INTERNAL
+                    && crate::ported::utils::fdtable_get(fd1) == crate::ported::zsh_h::FDT_INTERNAL
                 {
                     crate::ported::utils::zwarn(&format!(
                         "file descriptor {} used by shell, not closed",
@@ -5045,10 +5032,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 // c:2404-2412 addfd varid arm — movefd + FDT_EXTERNAL.
                 let final_fd = crate::ported::utils::movefd(dup);
-                crate::ported::utils::fdtable_set(
-                    final_fd,
-                    crate::ported::zsh_h::FDT_EXTERNAL,
-                );
+                crate::ported::utils::fdtable_set(final_fd, crate::ported::zsh_h::FDT_EXTERNAL);
                 with_executor(|exec| {
                     exec.set_scalar(varid, final_fd.to_string());
                 });
@@ -5073,8 +5057,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             let body = format!("{}\n", path.trim_end_matches('\n'));
             let mut tmpl: Vec<u8> = b"/tmp/zshrs_hd_XXXXXX\0".to_vec();
-            let write_fd =
-                unsafe { libc::mkstemp(tmpl.as_mut_ptr() as *mut libc::c_char) };
+            let write_fd = unsafe { libc::mkstemp(tmpl.as_mut_ptr() as *mut libc::c_char) };
             if write_fd < 0 {
                 crate::ported::utils::zwarn(&format!(
                     "can't create temp file for here document: {}",
@@ -5099,9 +5082,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 off += n as usize;
             }
             unsafe { libc::close(write_fd) };
-            let read_fd = unsafe {
-                libc::open(tmpl.as_ptr() as *const libc::c_char, libc::O_RDONLY)
-            };
+            let read_fd =
+                unsafe { libc::open(tmpl.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
             unsafe { libc::unlink(tmpl.as_ptr() as *const libc::c_char) };
             if read_fd < 0 {
                 return Value::Status(1);
@@ -5130,9 +5112,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // c:2199-2213 — NO_CLOBBER refuses to overwrite a parameter
         // already holding an OPEN fd (decimal value, fdtable says
         // FDT_EXTERNAL).
-        if !isset(crate::ported::zsh_h::CLOBBER)
-            && op_byte != fusevm::op::redirect_op::CLOBBER
-        {
+        if !isset(crate::ported::zsh_h::CLOBBER) && op_byte != fusevm::op::redirect_op::CLOBBER {
             if let Some(val) = with_executor(|exec| exec.scalar(&varid)) {
                 if let Ok(fd) = val.parse::<i32>() {
                     if fd >= 0
@@ -5232,15 +5212,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             crate::ported::r#loop::try_errflag.store(try_err, Ordering::Relaxed);
             crate::ported::r#loop::try_interrupt.store(0, Ordering::Relaxed);
             if errored {
-                exec.set_scalar(
-                    "TRY_BLOCK_ERROR".to_string(),
-                    vm_status.to_string(),
-                );
+                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
                 // Clear errflag so always-arm runs cleanly. c:768.
-                crate::ported::utils::errflag.fetch_and(
-                    !crate::ported::zsh_h::ERRFLAG_ERROR,
-                    Ordering::Relaxed,
-                );
+                crate::ported::utils::errflag
+                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
             } else {
                 exec.set_scalar("TRY_BLOCK_ERROR".to_string(), "0".to_string());
             }
@@ -5544,22 +5519,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .array(&name)
                 .map(|a| a.len() as i64)
                 .or_else(|| {
-                    crate::ported::params::paramtab()
-                        .read()
-                        .ok()
-                        .and_then(|t| {
-                            t.get(&name).and_then(|pm| {
-                                if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
-                                    == crate::ported::zsh_h::PM_SCALAR
-                                {
-                                    pm.u_str
-                                        .as_ref()
-                                        .map(|s| s.chars().count() as i64)
-                                } else {
-                                    None
-                                }
-                            })
+                    crate::ported::params::paramtab().read().ok().and_then(|t| {
+                        t.get(&name).and_then(|pm| {
+                            if crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32)
+                                == crate::ported::zsh_h::PM_SCALAR
+                            {
+                                pm.u_str.as_ref().map(|s| s.chars().count() as i64)
+                            } else {
+                                None
+                            }
                         })
+                    })
                 })
                 .unwrap_or(0);
             let start_translate = |raw: i64| -> i32 {
@@ -5584,7 +5554,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // Bug #613.
             let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
             let ksh_shift = |raw: i64| -> i64 {
-                if ksh_arrays && raw >= 0 { raw + 1 } else { raw }
+                if ksh_arrays && raw >= 0 {
+                    raw + 1
+                } else {
+                    raw
+                }
             };
             // c:Src/params.c getindex — subscript bounds are MATH
             // expressions, not bare integers: `a[(( ${#a}+1 ))]=(x)`,
@@ -5676,10 +5650,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // scalar-value path (SET_ASSOC/SET_ARRAY_AT) already vivifies;
             // this brings the range/array-value path to parity.
             let taken = taken.or_else(|| {
-                crate::ported::params::createparam(
-                    &name,
-                    crate::ported::zsh_h::PM_ARRAY as i32,
-                );
+                crate::ported::params::createparam(&name, crate::ported::zsh_h::PM_ARRAY as i32);
                 crate::ported::params::paramtab()
                     .write()
                     .ok()
@@ -5900,17 +5871,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // default UNQUOTED path emits argc=2 (lhs + rhs). Treat
         // argc==1 as "force rc_expand off." Bug #246 in docs/BUGS.md.
         let dq_suppress = argc == 1;
-        let rc_expand = !dq_suppress
-            && with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
+        let rc_expand =
+            !dq_suppress && with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
         // Helper: join an Array to scalar via sepjoin's IFS default.
         // c:Src/utils.c:3936-3945 — set-but-empty IFS joins with ""
         // (`IFS=""; echo "x$*y"` → `xabcy`); only unset /
         // space-leading IFS yields " ".
         let join_arr = |arr: Vec<Value>| -> String {
-            let strs: Vec<String> = arr
-                .iter()
-                .map(|v| v.as_str_cow().into_owned())
-                .collect();
+            let strs: Vec<String> = arr.iter().map(|v| v.as_str_cow().into_owned()).collect();
             crate::ported::utils::sepjoin(&strs, None)
         };
         if !rc_expand {
@@ -6436,10 +6404,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             args.extend(words.iter().map(|s| s.as_str()));
         }
-        let opts: std::collections::HashMap<String, bool> =
-            std::collections::HashMap::new();
-        let vars: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let opts: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        let vars: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         // c:Src/cond.c:62-66 — `evalcond` returns 0=true, 1=false,
         // 2=syntax-error. Coerce error to false (observable behavior
         // in zsh: `[[ -z a b ]]` errors and the test as a whole
@@ -6502,7 +6468,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             off += n as usize;
         }
         unsafe { libc::close(write_fd) }; // c:4676
-        // Path null-terminated by mkstemp; reopen for reading.
+                                          // Path null-terminated by mkstemp; reopen for reading.
         let read_fd = unsafe { libc::open(tmpl.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
         // c:4678 — unlink immediately so the file disappears on
         // close, leaving only the fd reference.
@@ -6687,9 +6653,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // Sink the upcoming command's output (mirrors
                         // the single-redirect noclobber arm in
                         // host_apply_redirect).
-                        if let Ok(file) =
-                            fs::OpenOptions::new().write(true).open("/dev/null")
-                        {
+                        if let Ok(file) = fs::OpenOptions::new().write(true).open("/dev/null") {
                             let new_fd = file.into_raw_fd();
                             unsafe {
                                 libc::dup2(new_fd, fd);
@@ -6920,19 +6884,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut source_fds: Vec<i32> = Vec::with_capacity(entries.len());
         for (i, (op_byte, source)) in entries.iter().enumerate() {
             let open_result: std::io::Result<i32> = match *op_byte {
-                r::DUP_READ | r::DUP_WRITE => {
-                    match source.trim_start_matches('&').parse::<i32>() {
-                        Ok(src) => {
-                            let d = unsafe { libc::dup(src) };
-                            if d >= 0 {
-                                Ok(d)
-                            } else {
-                                Err(std::io::Error::last_os_error())
-                            }
+                r::DUP_READ | r::DUP_WRITE => match source.trim_start_matches('&').parse::<i32>() {
+                    Ok(src) => {
+                        let d = unsafe { libc::dup(src) };
+                        if d >= 0 {
+                            Ok(d)
+                        } else {
+                            Err(std::io::Error::last_os_error())
                         }
-                        Err(_) => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
                     }
-                }
+                    Err(_) => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+                },
                 _ => fs::File::open(source).map(|f| f.into_raw_fd()),
             };
             match open_result {
@@ -7002,11 +6964,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             for sfd in source_fds_for_thread {
                 loop {
                     let n = unsafe {
-                        libc::read(
-                            sfd,
-                            buf.as_mut_ptr() as *mut libc::c_void,
-                            buf.len(),
-                        )
+                        libc::read(sfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
                     };
                     if n <= 0 {
                         break;
@@ -7056,9 +7014,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         // c:255 — `redir_err = lastval = 1`.
         vm.last_status = 1;
-        if isset(crate::ported::zsh_h::POSIXBUILTINS)
-            && !isset(crate::ported::zsh_h::INTERACTIVE)
-        {
+        if isset(crate::ported::zsh_h::POSIXBUILTINS) && !isset(crate::ported::zsh_h::INTERACTIVE) {
             // c:4379-4383 — non-interactive POSIX fatal: exit(1).
             // In-process equivalent: arm EXIT_PENDING/EXIT_VAL so the
             // next BUILTIN_ERREXIT_CHECK (trigger 2) unwinds the
@@ -7175,8 +7131,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Int(if ok { 0 } else { 1 })
     });
     vm.register_builtin(BUILTIN_USE_CMDOUTVAL_RESET, |_vm, _argc| {
-        crate::ported::exec::use_cmdoutval
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::exec::use_cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed);
         Value::Status(0)
     });
 
@@ -7209,12 +7164,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             //   `false; $nonexistent` → reset to 0 (null command).
             // The previous port unconditionally kept `$?`, so
             // `false; $unset` wrongly stayed 1 (A01grammar.ztst:5).
-            let keep = crate::ported::exec::use_cmdoutval
-                .load(std::sync::atomic::Ordering::Relaxed)
-                != 0;
+            let keep =
+                crate::ported::exec::use_cmdoutval.load(std::sync::atomic::Ordering::Relaxed) != 0;
             let status = if keep { vm.last_status } else { 0 };
-            crate::ported::exec::use_cmdoutval
-                .store(0, std::sync::atomic::Ordering::Relaxed);
+            crate::ported::exec::use_cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed);
             return Value::Status(status);
         }
         if args[0].is_empty() {
@@ -7315,11 +7268,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         crate::ported::exec::execcmd_exec(
             &mut state,
             &mut eparams,
-            0,                                    // input  (c:2989)
-            0,                                    // output (c:2988)
-            crate::ported::zsh_h::Z_SYNC as i32,  // how
-            2,                                    // last1=2 — shell continues (c:2014)
-            -1,                                   // close_if_forked
+            0,                                   // input  (c:2989)
+            0,                                   // output (c:2988)
+            crate::ported::zsh_h::Z_SYNC as i32, // how
+            2,                                   // last1=2 — shell continues (c:2014)
+            -1,                                  // close_if_forked
         );
         // c:Src/exec.c:1828-1835 — execpline's Z_SYNC tail: waitjobs()
         // reaps the forked external. c:Src/jobs.c:487-495 + 551-552 —
@@ -7353,8 +7306,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = pj;
         }
-        let status = crate::ported::builtin::LASTVAL
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let status = crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
         let mut synth = crate::ported::zsh_h::job::default();
         crate::ported::jobs::waitonejob(&mut synth);
         Value::Status(status)
@@ -7514,8 +7466,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // (run_chunk returns vm.last_status). Without this, a
                 // POSIX-fatal `.` failure exited 127 (bin_dot's return)
                 // instead of C's exit(1) at Src/exec.c:4383.
-                vm.last_status =
-                    crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed) & 0xFF;
+                vm.last_status = crate::ported::builtin::EXIT_VAL.load(Ordering::Relaxed) & 0xFF;
             }
             return Value::Int(1);
         }
@@ -7582,8 +7533,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // is reset at top-level statement boundaries via
         // BUILTIN_DONETRAP_RESET (compile_list emit at
         // compile_zsh.rs).
-        let already_done =
-            crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
+        let already_done = crate::ported::exec::DONETRAP.load(Ordering::Relaxed) != 0;
         if !already_done {
             // c:Src/signals.c:1245 dotrap(SIGZERR) — canonical ZERR
             // trap dispatch. Fires whenever a command exits
@@ -7601,9 +7551,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let locallvl = crate::ported::params::locallevel.load(Ordering::Relaxed);
         let sourcelvl = crate::ported::init::sourcelevel.load(Ordering::Relaxed);
         let errreturn_opt = isset(crate::ported::zsh_h::ERRRETURN);
-        let in_unwindable_scope = isset(crate::ported::zsh_h::INTERACTIVE)
-            || locallvl != 0
-            || sourcelvl != 0;
+        let in_unwindable_scope =
+            isset(crate::ported::zsh_h::INTERACTIVE) || locallvl != 0 || sourcelvl != 0;
         let errreturn = errreturn_opt
             && in_unwindable_scope
             && (no_err & crate::ported::zsh_h::NOERREXIT_RETURN) == 0;
@@ -7616,12 +7565,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             return Value::Int(1);
         }
         let (errexit_on, in_subshell) = with_executor(|exec| {
-            let on_canonical = isset(ERREXIT)
-                || (errreturn_opt && !errreturn); // c:1608-1609
+            let on_canonical = isset(ERREXIT) || (errreturn_opt && !errreturn); // c:1608-1609
             let on_legacy = opt_state_get("errexit").unwrap_or(false);
             (
-                (on_canonical || on_legacy)
-                    && (no_err & crate::ported::zsh_h::NOERREXIT_EXIT) == 0,
+                (on_canonical || on_legacy) && (no_err & crate::ported::zsh_h::NOERREXIT_EXIT) == 0,
                 !exec.subshell_snapshots.is_empty(),
             )
         });
@@ -7875,8 +7822,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // otherwise-empty command (`$(exit 5)` → 5). Flag it so
         // BUILTIN_EXEC_DYNAMIC's null-command branch keeps `$?` instead
         // of resetting to 0.
-        crate::ported::exec::use_cmdoutval
-            .store(1, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::exec::use_cmdoutval.store(1, std::sync::atomic::Ordering::Relaxed);
         Value::str(result)
     });
 
@@ -8182,9 +8128,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if is_glob_pre && !is_assignment_shape {
                             exec.expand_glob(&s)
                         } else if is_assignment_shape
-                            && crate::ported::zsh_h::isset(
-                                crate::ported::zsh_h::MAGICEQUALSUBST,
-                            )
+                            && crate::ported::zsh_h::isset(crate::ported::zsh_h::MAGICEQUALSUBST)
                         {
                             // c:Src/exec.c:3353 — when MAGIC_EQUAL_SUBST is set
                             // on a non-typeset command, esprefork = PREFORK_TYPESET,
@@ -8439,9 +8383,7 @@ impl ZshrsHost {
 fn array_index_lookup(name: &str, idx: &str) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
-        if let Some(v) =
-            with_executor(|exec| exec.assoc(name).and_then(|m| m.get(idx).cloned()))
-        {
+        if let Some(v) = with_executor(|exec| exec.assoc(name).and_then(|m| m.get(idx).cloned())) {
             return Value::str(v);
         }
     }
@@ -9901,11 +9843,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 aliases: crate::ported::hashtable::aliastab_lock()
                     .read()
                     .ok()
-                    .map(|t| {
-                        t.iter()
-                            .map(|(k, v)| (k.clone(), v.text.clone()))
-                            .collect()
-                    })
+                    .map(|t| t.iter().map(|(k, v)| (k.clone(), v.text.clone())).collect())
                     .unwrap_or_default(),
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. `(f() { ... })` defined
@@ -10008,8 +9946,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // hits the empty control job instead of the parent's job 1.
             // The snapshot pushed above restores the parent's table at
             // subshell_end. Bug #462.
-            let monitor =
-                crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
+            let monitor = crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
             crate::ported::jobs::clearjobtab(&mut exec.jobs, monitor);
             // clearjobtab left THISJOB on the control job (Src/jobs.c:
             // 1828). In C the very next pipeline's execpline reassigns
@@ -10431,7 +10368,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // `${:?msg}`) does NOT come paired with glob_failed, so
         // those still short-circuit + propagate.
         consume_tilde_globsubst_carrier();
-    let glob_failed = with_executor(|exec| {
+        let glob_failed = with_executor(|exec| {
             let f = exec.current_command_glob_failed.get();
             exec.current_command_glob_failed.set(false);
             f
@@ -10710,8 +10647,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 Some((entry.node.flags as u32 & crate::ported::zsh_h::DISABLED as u32) != 0)
             })
             .unwrap_or(false);
-        let has_user_fn = !user_fn_disabled
-            && with_executor(|exec| exec.functions_compiled.contains_key(name));
+        let has_user_fn =
+            !user_fn_disabled && with_executor(|exec| exec.functions_compiled.contains_key(name));
         if !has_user_fn {
             // c:Src/exec.c:3056 — `builtintab->getnode(builtintab,
             // cmdarg)` returns NULL for DISABLED entries, falling
@@ -10722,8 +10659,8 @@ impl fusevm::ShellHost for ZshrsHost {
                 .lock()
                 .map(|s| s.contains(name))
                 .unwrap_or(false);
-            let bn_in_tab = !disabled
-                && crate::ported::builtin::createbuiltintable().contains_key(name);
+            let bn_in_tab =
+                !disabled && crate::ported::builtin::createbuiltintable().contains_key(name);
             if bn_in_tab {
                 return Some(dispatch_builtin_raw(name, args));
             }
@@ -11187,12 +11124,7 @@ impl ShellExecutor {
                         .append(true)
                         .open(target)
                 };
-                if !Self::redir_open_or_fail(
-                    fd,
-                    open_result,
-                    target,
-                    &mut self.redirect_failed,
-                ) {
+                if !Self::redir_open_or_fail(fd, open_result, target, &mut self.redirect_failed) {
                     self.set_last_status(1);
                 }
             }

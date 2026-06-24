@@ -1031,10 +1031,7 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         // `((#s)|/)` anchor pin) must keep '/' literal. C's unconditional
         // break + c:914-917 file-accept termination is equivalent for the
         // top-level file-glob case this serves.
-        if c == b'/'
-            && paren == 0
-            && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0
-        {
+        if c == b'/' && paren == 0 && (patflags.load(Ordering::Relaxed) & PAT_FILE as i32) != 0 {
             break;
         }
         // c:950-952 — `~` is an additional terminator when active as
@@ -1298,7 +1295,11 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         let mut piece_tail: usize = 0;
         // Snapshot the chain tail BEFORE patcomppiece — used by a
         // following POSTFIX (#cN,M) to detach this piece from the chain.
-        let prev_tail_before_piece: i64 = if chain_start < 0 { -1 } else { last_tail as i64 };
+        let prev_tail_before_piece: i64 = if chain_start < 0 {
+            -1
+        } else {
+            last_tail as i64
+        };
         let piece = patcomppiece(&mut piece_flags, paren, &mut piece_tail);
         if piece < 0 {
             return -1;
@@ -1860,9 +1861,7 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                                     chars.push(c);
                                 }
                                 let wc = crate::ported::params::getsparam("WORDCHARS")
-                                    .unwrap_or_else(|| {
-                                        "*?_-.[]~=/&;!#$%^(){}<>".to_string()
-                                    });
+                                    .unwrap_or_else(|| "*?_-.[]~=/&;!#$%^(){}<>".to_string());
                                 for c in wc.bytes() {
                                     chars.push(c);
                                 }
@@ -2081,10 +2080,10 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             if j > lo_start {
                 len_flag |= 1;
             } // c:1538 — `len |= 1`
-            // Mandatory dash. C's isnumglob bails (ret=0) here too —
-            // walks until non-digit, then if non-digit isn't `-` (or `>`
-            // after seeing `-`), returns "not numglob". Rewind the `<`
-            // consumption and fall through to the literal-run arm.
+              // Mandatory dash. C's isnumglob bails (ret=0) here too —
+              // walks until non-digit, then if non-digit isn't `-` (or `>`
+              // after seeing `-`), returns "not numglob". Rewind the `<`
+              // consumption and fall through to the literal-run arm.
             if j >= nb.len() || nb[j] != b'-' {
                 drop(parse_n);
                 patparse_off.store(entry_off, Ordering::Relaxed);
@@ -2108,8 +2107,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             if j > hi_start {
                 len_flag |= 2;
             } // c:1548 — `len |= 2`
-            // Expect closing '>'. Mirror the dash-failure rewind here
-            // too: a `<N-` without `>` is non-numglob per C's isnumglob.
+              // Expect closing '>'. Mirror the dash-failure rewind here
+              // too: a `<N-` without `>` is non-numglob per C's isnumglob.
             if j >= nb.len() || nb[j] != b'>' {
                 drop(parse_n);
                 patparse_off.store(entry_off, Ordering::Relaxed);
@@ -2215,10 +2214,8 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                 // EXTENDEDGLOB case. Gate the break on the actual
                 // zpc_special slot so an EXTENDEDGLOB-off run treats
                 // `^` and `#` as ordinary chars. Bug #421.
-                if matches!(
-                    b,
-                    b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'<'
-                ) || (b == b'^' && sp_hat_lit == b'^')
+                if matches!(b, b'?' | b'*' | b'[' | b'(' | b')' | b'|' | b'\\' | b'<')
+                    || (b == b'^' && sp_hat_lit == b'^')
                     || (b == b'#' && sp_hash_lit == b'#')
                 {
                     break;
@@ -2963,7 +2960,8 @@ pub fn pattryrefs(
             };
             crate::ported::params::setsparam("MATCH", &mstr); // c:2537
             crate::ported::params::setiparam("MBEGIN", patoffset as i64 + base); // c:2538
-            crate::ported::params::setiparam("MEND", mlen + patoffset as i64 + base - 1); // c:2539-2541
+            crate::ported::params::setiparam("MEND", mlen + patoffset as i64 + base - 1);
+            // c:2539-2541
         }
         // c:2425+ — emit captured offsets to begp/endp out-arrays.
         // Check the CLOSE bit (high stripe at NSUBEXP+i) since the
@@ -3027,8 +3025,8 @@ pub fn pattryrefs(
                     let hi = e.min(trial.len()).max(lo);
                     match_arr.push(trial[lo..hi].to_string()); // c:2587 metafy(*sp..*ep)
                     begin_arr.push((b as i32 + patoffset + base).to_string()); // c:2596-2599
-                    // c:2601-2604 — mend = last matched char index
-                    // (inclusive): end + offset + base - 1.
+                                                                               // c:2601-2604 — mend = last matched char index
+                                                                               // (inclusive): end + offset + base - 1.
                     end_arr.push((e as i32 + patoffset + base - 1).to_string());
                 } else {
                     // c:2607-2613 — unmatched branch / hashed paren.
@@ -3743,7 +3741,6 @@ pub fn haswilds(str: &str) -> bool {
     false // c:4374
 }
 
-
 // =====================================================================
 // 4. struct patprog — zsh.h:1601
 // =====================================================================
@@ -4169,7 +4166,8 @@ fn approx_match_exactly(
             // input[s..s+2] reversed equals pat[p..p+2]). Costs 1 edit;
             // pin for `(#a3)abcd` matching "dcba" — needs sub + transp +
             // sub = 3 edits to bridge the reversal.
-            if s_off + 1 < input_bytes.len() && p_off + 1 < str_bytes.len()
+            if s_off + 1 < input_bytes.len()
+                && p_off + 1 < str_bytes.len()
                 && charmatch_inline(input_bytes[s_off], str_bytes[p_off + 1])
                 && charmatch_inline(input_bytes[s_off + 1], str_bytes[p_off])
             {
@@ -4437,7 +4435,7 @@ fn patmatch(
                                 return true; // c:3008 already matched here → fail
                             }
                             buf[s_off] = cur; // c:3017
-                            // c:3033 — earlier marks are now invalid.
+                                              // c:3033 — earlier marks are now invalid.
                             for x in buf[..s_off].iter_mut() {
                                 *x = 0;
                             }
@@ -4575,7 +4573,9 @@ fn patmatch(
                 let input_bytes = string.as_bytes();
                 let max_errs = (glob_flags & 0xff) as i32;
                 let has_match = s_off < input_bytes.len()
-                    && set.iter().any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
+                    && set
+                        .iter()
+                        .any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
                 if !has_match {
                     // c:Src/pattern.c:3463-3505 — approximate-match fail
                     // handler. For non-P_EXACTLY opcodes, the ONLY
@@ -4602,7 +4602,9 @@ fn patmatch(
                 // c:2694 charmatch — same asymmetry as P_ANYOF; ANYBUT
                 // succeeds iff no set element charmatches the input.
                 let has_match = s_off < input_bytes.len()
-                    && !set.iter().any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
+                    && !set
+                        .iter()
+                        .any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
                 if !has_match {
                     if state.errsfound < max_errs && s_off < input_bytes.len() {
                         // c:3463 — omit-input approx path (same as P_ANYOF).
@@ -4765,14 +4767,9 @@ fn patmatch(
                             // approximately and wrongly excluded it.
                             e_state.errsfound = 0;
                             let excl_flags = glob_flags & !0xff;
-                            if let Some(em) = patmatch(
-                                code,
-                                excl_operand,
-                                span,
-                                s_off,
-                                &mut e_state,
-                                excl_flags,
-                            ) {
+                            if let Some(em) =
+                                patmatch(code, excl_operand, span, s_off, &mut e_state, excl_flags)
+                            {
                                 if em == span_end {
                                     excluded = true;
                                     break;
@@ -5512,7 +5509,16 @@ mod tests {
 
     fn compile(p: &str) -> Patprog {
         let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        patcompile(&{ let mut __pat_tok = (p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).expect("compile failed")
+        patcompile(
+            &{
+                let mut __pat_tok = (p).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            PAT_HEAPDUP as i32,
+            None,
+        )
+        .expect("compile failed")
     }
 
     /// Test-only `patcompile + pattry` pair (Rule 3 exempt — `#[cfg(test)]`).
@@ -5526,7 +5532,16 @@ mod tests {
     /// calling, `patcompile_concurrent_safe` exercises 8 threads that
     /// would serialise via this fn instead of through the real engine).
     fn patmatch(pat: &str, text: &str) -> bool {
-        patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |prog| pattry(&prog, text))
+        patcompile(
+            &{
+                let mut __pat_tok = (pat).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            PAT_HEAPDUP as i32,
+            None,
+        )
+        .map_or(false, |prog| pattry(&prog, text))
     }
 
     #[test]
@@ -6675,7 +6690,10 @@ mod tests {
             t
         };
         crate::ported::options::opt_state_set("extendedglob", false);
-        assert!(!haswilds(&tok("%?foo")), "%?foo is a job ref (c:4318), not wild");
+        assert!(
+            !haswilds(&tok("%?foo")),
+            "%?foo is a job ref (c:4318), not wild"
+        );
         // But the `?` later in the string IS wild.
         assert!(haswilds(&tok("%?foo?bar")), "%? exempt, later ? still wild");
     }
@@ -6779,7 +6797,10 @@ mod tests {
         crate::ported::options::opt_state_set("extendedglob", false);
         assert!(!haswilds(&tok("a^b")), "^ without EXTENDEDGLOB is literal");
         crate::ported::options::opt_state_set("extendedglob", true);
-        assert!(haswilds(&tok("a^b")), "^ with EXTENDEDGLOB is wild (c:4370)");
+        assert!(
+            haswilds(&tok("a^b")),
+            "^ with EXTENDEDGLOB is wild (c:4370)"
+        );
         crate::ported::options::opt_state_set("extendedglob", false);
     }
 
@@ -6842,7 +6863,10 @@ mod tests {
             t
         };
         assert!(!haswilds(&tok("~")), "~ alone (tilde-expand, not haswilds)");
-        assert!(!haswilds(&tok("~/file")), "~/file is tilde-expand candidate");
+        assert!(
+            !haswilds(&tok("~/file")),
+            "~/file is tilde-expand candidate"
+        );
         assert!(!haswilds(&tok("~user/file")), "~user is tilde-expand");
     }
 
@@ -6863,8 +6887,14 @@ mod tests {
         assert!(!haswilds(&tok(r"\?")), r"\? is literal question");
         assert!(!haswilds(&tok(r"\[")), r"\[ is literal bracket");
         // Escape only consumes ONE next byte.
-        assert!(haswilds(&tok(r"\**")), r"\* eats first *, second * still wild");
-        assert!(haswilds(&tok(r"\?b?c")), r"\? eats first ?, later ? still wild");
+        assert!(
+            haswilds(&tok(r"\**")),
+            r"\* eats first *, second * still wild"
+        );
+        assert!(
+            haswilds(&tok(r"\?b?c")),
+            r"\? eats first ?, later ? still wild"
+        );
     }
 
     /// Empty + plain literal: `Src/pattern.c:4324` `for (; *str; …)`

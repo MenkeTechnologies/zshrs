@@ -66,6 +66,7 @@ use crate::ported::params::{
 };
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::settrap;
+use crate::ported::sort::strmetasort;
 use crate::ported::utils::{
     argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir,
     print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn,
@@ -85,20 +86,19 @@ use crate::ported::zsh_h::{
     HASHED, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, INTERACTIVE, KSHARRAYS,
     LOGINSHELL, MAX_OPS, MFF_STR, MFF_USERFUNC, MONITOR, NULLBINCMD, OPT_ARG, OPT_HASARG,
     OPT_ISSET, OPT_MINUS, OPT_PLUS, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY,
-    PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
-    PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL, PM_LOWER, PM_NAMEREF,
-    PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL,
-    PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED, PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED,
-    PM_ZSHSTORED, POSIXBUILTINS, POSIXCD, POSIXTRAPS, PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST,
-    PRINT_NAMEONLY, PRINT_POSIX_EXPORT, PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET,
-    PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
-    PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE, PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME,
-    RCQUOTES, SHINSTDIN, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, STAT_LOCKED, STAT_NOPRINT,
-    STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
+    PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT,
+    PM_HASHED, PM_HIDE, PM_HIDEVAL, PM_INTEGER, PM_KSHSTORED, PM_LEFT, PM_LOADDIR, PM_LOCAL,
+    PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_RO_BY_DESIGN, PM_SCALAR,
+    PM_SPECIAL, PM_TAGGED, PM_TAGGED_LOCAL, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNDEFINED,
+    PM_UNIQUE, PM_UNSET, PM_UPPER, PM_WARNNESTED, PM_ZSHSTORED, POSIXBUILTINS, POSIXCD, POSIXTRAPS,
+    PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT,
+    PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF,
+    PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE,
+    PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME, RCQUOTES, SHINSTDIN, SORTIT_BACKWARDS,
+    SORTIT_IGNORING_CASE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
     TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR, VERBOSE, XTRACE, ZEXIT_DEFERRED,
     ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC,
 };
-use crate::ported::sort::strmetasort;
 #[allow(unused_imports)]
 use crate::zwc::ZwcFile;
 
@@ -611,31 +611,31 @@ pub fn execbuiltin(
         // (including consumed option words) so XTRACE shows what the
         // user typed, not the option-stripped tail.
         let fullargv = &argarr; // c:441
-        // All emits below are `fprintf(xtrerr, …)` / `fputc(…, xtrerr)` in
-        // C: append to the xtrerr line buffer and flush ONCE at the
-        // trailing `\n` (c:492-493), so the builtin's trace line reaches
-        // the shared stderr fd in a single write — a forked pipeline
-        // stage never interleaves with a concurrent one.
+                                // All emits below are `fprintf(xtrerr, …)` / `fputc(…, xtrerr)` in
+                                // C: append to the xtrerr line buffer and flush ONCE at the
+                                // trailing `\n` (c:492-493), so the builtin's trace line reaches
+                                // the shared stderr fd in a single write — a forked pipeline
+                                // stage never interleaves with a concurrent one.
         use crate::fusevm_bridge::{xtrerr_flush, xtrerr_fputs};
         printprompt4(); // c:442 — buffers PS4 into xtrerr
                         // c:443 — `fprintf(xtrerr, "%s", name);`
         xtrerr_fputs(&name); // c:443
                              // c:444-447 — `while (*fullargv) { fputc(' ',xtrerr); quotedzputs(...); }`
-        // C zsh's parser pre-splits `name=value` args for
-        // BINF_ASSIGN-flagged builtins (export/typeset/declare/local/
-        // readonly/integer/float) into asg{name,value} nodes, which
-        // the c:448-491 branch emits as
-        //   `quotedzputs(name) + '=' + quotedzputs(value)` (c:453,487-488).
-        // zshrs's compiler doesn't populate `assigns`; args arrive
-        // here as the unsplit `"name=value"` whole-strings, so the
-        // c:443-446 path quotes the entire string and produces
-        // `export 'VAR=val'` instead of `export VAR=val`. Inline the
-        // same split here — the prefix is a legal scalar/array name
-        // (ident, optionally `[subscript]`) followed by `=` or
-        // `+=`, and the suffix is the value. Detection mirrors the
-        // C parser at Src/lex.c:2169 (gettokstr ASSIGN recognition)
-        // and is faithful to what the C path would have produced
-        // from a pre-split asg node.
+                             // C zsh's parser pre-splits `name=value` args for
+                             // BINF_ASSIGN-flagged builtins (export/typeset/declare/local/
+                             // readonly/integer/float) into asg{name,value} nodes, which
+                             // the c:448-491 branch emits as
+                             //   `quotedzputs(name) + '=' + quotedzputs(value)` (c:453,487-488).
+                             // zshrs's compiler doesn't populate `assigns`; args arrive
+                             // here as the unsplit `"name=value"` whole-strings, so the
+                             // c:443-446 path quotes the entire string and produces
+                             // `export 'VAR=val'` instead of `export VAR=val`. Inline the
+                             // same split here — the prefix is a legal scalar/array name
+                             // (ident, optionally `[subscript]`) followed by `=` or
+                             // `+=`, and the suffix is the value. Detection mirrors the
+                             // C parser at Src/lex.c:2169 (gettokstr ASSIGN recognition)
+                             // and is faithful to what the C path would have produced
+                             // from a pre-split asg node.
         let is_assign = (bn_ref.node.flags as u32 & BINF_ASSIGN) != 0;
         for s in fullargv {
             // c:444
@@ -645,9 +645,7 @@ pub fn execbuiltin(
                 let sbytes = s.as_bytes();
                 // Walk the ident prefix.
                 let mut i = 0usize;
-                if !sbytes.is_empty()
-                    && (sbytes[0].is_ascii_alphabetic() || sbytes[0] == b'_')
-                {
+                if !sbytes.is_empty() && (sbytes[0].is_ascii_alphabetic() || sbytes[0] == b'_') {
                     i = 1;
                     while i < sbytes.len()
                         && (sbytes[i].is_ascii_alphanumeric() || sbytes[i] == b'_')
@@ -672,18 +670,22 @@ pub fn execbuiltin(
                     }
                     if i > 0 {
                         // Match `=` or `+=` separator.
-                        let (sep_len, sep) = if sbytes.get(i) == Some(&b'+')
-                            && sbytes.get(i + 1) == Some(&b'=')
-                        {
-                            (2usize, "+=")
-                        } else if sbytes.get(i) == Some(&b'=') {
-                            (1usize, "=")
-                        } else {
-                            (0, "")
-                        };
+                        let (sep_len, sep) =
+                            if sbytes.get(i) == Some(&b'+') && sbytes.get(i + 1) == Some(&b'=') {
+                                (2usize, "+=")
+                            } else if sbytes.get(i) == Some(&b'=') {
+                                (1usize, "=")
+                            } else {
+                                (0, "")
+                            };
                         if sep_len != 0 {
                             // c:453,487-488 — emit name + sep + quoted(value).
-                            xtrerr_fputs(&format!("{}{}{}", &s[..i], sep, quotedzputs(&s[i + sep_len..])));
+                            xtrerr_fputs(&format!(
+                                "{}{}{}",
+                                &s[..i],
+                                sep,
+                                quotedzputs(&s[i + sep_len..])
+                            ));
                             emitted = true;
                         }
                     }
@@ -736,7 +738,7 @@ pub fn execbuiltin(
                             }
                             // c:469 — `fprintf(stderr, "]=");`
                             xtrerr_fputs("]="); // c:469
-                                           // c:470-471 — `quotedzputs(getdata(valnode));`
+                                                // c:470-471 — `quotedzputs(getdata(valnode));`
                             if let Some(v) = list.getdata(vidx) {
                                 // c:470
                                 xtrerr_fputs(&quotedzputs(v));
@@ -1028,7 +1030,12 @@ pub fn bin_enable(
         for arg in argv {
             // c:562
             queue_signals(); // c:563
-            let pprog = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:566
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (arg).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:566
                 PAT_HEAPDUP,
                 None,
             );
@@ -1433,7 +1440,10 @@ pub fn bin_set(
             paramtab()
                 .read()
                 .ok()
-                .and_then(|tab| tab.get(&aname).map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0))
+                .and_then(|tab| {
+                    tab.get(&aname)
+                        .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
+                })
                 .unwrap_or(false)
         };
         if target_is_hashed {
@@ -1500,10 +1510,7 @@ pub fn bin_pwd(
                 _ => false,
             }
         });
-        println!(
-            "{}",
-            logical_pwd.map(String::from).unwrap_or_else(zgetcwd)
-        ); // c:734
+        println!("{}", logical_pwd.map(String::from).unwrap_or_else(zgetcwd)); // c:734
     }
     0 // c:737
 }
@@ -1611,7 +1618,7 @@ pub fn set_pwd_env() {
             .unwrap_or_default()
     });
     setsparam("PWD", &pwd); // c:818
-    // c:819 — `assignsparam("OLDPWD", ztrdup(oldpwd), 0);`
+                            // c:819 — `assignsparam("OLDPWD", ztrdup(oldpwd), 0);`
     if let Ok(oldpwd) = env::var("OLDPWD") {
         setsparam("OLDPWD", &oldpwd); // c:819
         env::set_var("OLDPWD", &oldpwd); // c:825-826 addenv(pm, oldpwd)
@@ -1750,11 +1757,8 @@ pub fn bin_cd(
                     let mut full: Vec<String> = Vec::with_capacity(n);
                     full.push(pre_pwd.clone());
                     full.extend(d.iter().cloned());
-                    let rotated: Vec<String> = full[k..]
-                        .iter()
-                        .chain(full[..k].iter())
-                        .cloned()
-                        .collect();
+                    let rotated: Vec<String> =
+                        full[k..].iter().chain(full[..k].iter()).cloned().collect();
                     d.clear();
                     d.extend(rotated.into_iter().skip(1));
                 }
@@ -1951,10 +1955,13 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
             // cd_new_pwd's push then leaves DIRSTACK = [pre_pwd].
             let pushdtohome = isset(PUSHDTOHOME);
             if !pushdtohome {
-                let popped = DIRSTACK
-                    .lock()
-                    .ok()
-                    .and_then(|mut d| if d.is_empty() { None } else { Some(d.remove(0)) });
+                let popped = DIRSTACK.lock().ok().and_then(|mut d| {
+                    if d.is_empty() {
+                        None
+                    } else {
+                        Some(d.remove(0))
+                    }
+                });
                 if let Some(target) = popped {
                     return Some(target);
                 }
@@ -1987,17 +1994,17 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
                                                                 // "no such entry in dir stack". Previous Rust port
                                                                 // returned None silently and bin_cd's caller exited 1
                                                                 // with no stderr, breaking parity.
-            // c:899-903 — index into the FULL dirstack: in zsh
-            //   `dirstack` is a LinkList with current PWD at firstnode,
-            //   so `+N` advances N nodes from firstnode (0 = current,
-            //   1 = first non-current entry) and `-N` walks back N nodes
-            //   from lastnode (0 = last non-current entry). zshrs's
-            //   DIRSTACK omits PWD entirely (PWD lives in paramtab), so
-            //   build the virtual full stack `[PWD] ++ DIRSTACK` to index
-            //   against. Bug #302 in docs/BUGS.md: previous Rust port
-            //   indexed DIRSTACK directly, so `+1` returned DIRSTACK[1]
-            //   instead of DIRSTACK[0], and `+0`/`-len` errored instead of
-            //   returning PWD.
+                                                                // c:899-903 — index into the FULL dirstack: in zsh
+                                                                //   `dirstack` is a LinkList with current PWD at firstnode,
+                                                                //   so `+N` advances N nodes from firstnode (0 = current,
+                                                                //   1 = first non-current entry) and `-N` walks back N nodes
+                                                                //   from lastnode (0 = last non-current entry). zshrs's
+                                                                //   DIRSTACK omits PWD entirely (PWD lives in paramtab), so
+                                                                //   build the virtual full stack `[PWD] ++ DIRSTACK` to index
+                                                                //   against. Bug #302 in docs/BUGS.md: previous Rust port
+                                                                //   indexed DIRSTACK directly, so `+1` returned DIRSTACK[1]
+                                                                //   instead of DIRSTACK[0], and `+0`/`-len` errored instead of
+                                                                //   returning PWD.
             let pwd_now = getsparam("PWD").unwrap_or_else(|| zgetcwd());
             let resolved = DIRSTACK.lock().ok().and_then(|d| {
                 let m = d.len();
@@ -2601,7 +2608,12 @@ pub fn bin_fc(
         // c:1494
         let pat = argv.remove(0);
         // c:1495 — tokenize(*argv); — Rust `patcompile` handles tokenisation.
-        match patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:1496
+        match patcompile(
+            &{
+                let mut __pat_tok = (&pat).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            }, // c:1496
             PAT_HEAPDUP,
             None,
         ) {
@@ -3022,7 +3034,15 @@ pub fn fclist(
         //          Rust compiles per-call. Most fc -l calls have no
         //          pattern so the gate is cheap.
         if let Some(pat) = pprog {
-            let prog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0, None);
+            let prog = patcompile(
+                &{
+                    let mut __pat_tok = (pat).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                0,
+                None,
+            );
             let matched = prog.as_ref().map(|p| pattry(p, &line)).unwrap_or(true);
             if !matched {
                 if ev == last {
@@ -3541,13 +3561,12 @@ pub fn typeset_single(
         // already parses this; the explicit-name print path here did not,
         // so `typeset -p1 myarray` printed the single-line `( a b c )`
         // form instead of zsh's multi-line `(\n  a\n  b\n  c\n)`.
-        let line_flag = if OPT_HASARG(ops, b'p')
-            && OPT_ARG(ops, b'p').map(|a| a.trim()) == Some("1")
-        {
-            PRINT_LINE
-        } else {
-            0
-        };
+        let line_flag =
+            if OPT_HASARG(ops, b'p') && OPT_ARG(ops, b'p').map(|a| a.trim()) == Some("1") {
+                PRINT_LINE
+            } else {
+                0
+            };
         if let Some(pm_r) = unsafe { pm.as_mut() } {
             if OPT_ISSET(ops, b'p') {
                 // c:2242
@@ -3863,7 +3882,7 @@ pub fn bin_typeset(
         //     PM_ARRAY / PM_HASHED values printed as empty.
         // printparamnode (params.c:6123) handles all of these.
         let printflags_final = printflags | if roff != 0 { PRINT_NAMEONLY } else { 0 }; // c:2792
-        // c:2792 scanmatchtable flags1=on|roff, flags2=0.
+                                                                                        // c:2792 scanmatchtable flags1=on|roff, flags2=0.
         let on_roff = (on as u32) | (roff as u32);
         // PM_RO_BY_DESIGN expansion: zshrs's special-param
         // setup (vm_helper.rs:1054+) replaces the dropped
@@ -4042,22 +4061,22 @@ pub fn bin_typeset(
                                          // separates it. Reconstruct the single arg here: when one entry
                                          // starts with `NAME=(` and a later entry ends with `)`, rejoin
                                          // the run with spaces between elements.
-    // c:Src/builtin.c — paren-init rejoin. C's parser hands the whole
-    // `NAME=(e1 e2 …)` shape as one ENVARRAY token via parse-time paren-
-    // walking so empty elements (`""` quoted to lexer Dnull-Dnull) stay
-    // as separate list nodes. zshrs's compile path emits the args
-    // pre-split through prefork — each `""` produces a true empty
-    // entry in argv. The previous rejoin glued them with single-space
-    // separators, then split_whitespace collapsed consecutive empties
-    // → key/value swap on `typeset -A h=( "" val )`. Bug #93 in
-    // docs/BUGS.md.
-    //
-    // Use `\u{1f}` (ASCII US — unit separator) as the rejoin
-    // separator. The paren-init branch below splits on `\u{1f}` AND
-    // whitespace, preserving consecutive `\u{1f}` as empty elements
-    // (the original quoted-empty args) while still tolerating
-    // single-arg-form paren-init like `a=(1 2 3)` where no rejoin
-    // ran.
+                                         // c:Src/builtin.c — paren-init rejoin. C's parser hands the whole
+                                         // `NAME=(e1 e2 …)` shape as one ENVARRAY token via parse-time paren-
+                                         // walking so empty elements (`""` quoted to lexer Dnull-Dnull) stay
+                                         // as separate list nodes. zshrs's compile path emits the args
+                                         // pre-split through prefork — each `""` produces a true empty
+                                         // entry in argv. The previous rejoin glued them with single-space
+                                         // separators, then split_whitespace collapsed consecutive empties
+                                         // → key/value swap on `typeset -A h=( "" val )`. Bug #93 in
+                                         // docs/BUGS.md.
+                                         //
+                                         // Use `\u{1f}` (ASCII US — unit separator) as the rejoin
+                                         // separator. The paren-init branch below splits on `\u{1f}` AND
+                                         // whitespace, preserving consecutive `\u{1f}` as empty elements
+                                         // (the original quoted-empty args) while still tolerating
+                                         // single-arg-form paren-init like `a=(1 2 3)` where no rejoin
+                                         // ran.
     const REJOIN_SEP: char = '\u{1f}';
     let argv: Vec<String> = {
         let mut out: Vec<String> = Vec::with_capacity(argv.len());
@@ -4165,10 +4184,7 @@ pub fn bin_typeset(
                 } else {
                     // Fallback: whitespace split for synthetic args
                     // that didn't pass through the REJOIN_SEP emitter.
-                    inner
-                        .split_whitespace()
-                        .map(|s| s.to_string())
-                        .collect()
+                    inner.split_whitespace().map(|s| s.to_string()).collect()
                 };
                 (aname, Some(parts))
             } else if let Some(eq_idx) = a.find('=') {
@@ -4237,9 +4253,10 @@ pub fn bin_typeset(
         // PATH seeds `path` from the live PATH instead of clobbering
         // it with empty.
         let existing_scalar: Option<String> = {
-            let from_tab = paramtab().read().ok().and_then(|t| {
-                t.get(sname).and_then(|p| p.u_str.clone())
-            });
+            let from_tab = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(sname).and_then(|p| p.u_str.clone()));
             from_tab.or_else(|| std::env::var(sname).ok())
         };
 
@@ -4387,13 +4404,17 @@ pub fn bin_typeset(
         // || OPT_ISSET(ops,'m')))` — typeset_single suppresses
         // PRINT_INCLUDEVALUE when `-g` is set. `-p` bypasses (c:2242).
         let do_minus_print = OPT_ISSET(&ops, b'p')
-            || (!OPT_ISSET(&ops, b'g')
-                && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm')));
+            || (!OPT_ISSET(&ops, b'g') && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm')));
         for pattern in argv.iter() {
             // c:3061 — `patcompile(asg->name, 0, NULL)` glob-compile.
             // Use the canonical pattern.rs port. On compile failure,
             // emit "bad pattern" and continue to the next arg.
-            let pat = crate::ported::pattern::patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok },
+            let pat = crate::ported::pattern::patcompile(
+                &{
+                    let mut __pat_tok = (pattern).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
                 crate::ported::zsh_h::PAT_HEAPDUP as i32,
                 None,
             );
@@ -4596,13 +4617,12 @@ pub fn bin_typeset(
             // array/assoc element per line). The named-arg `typeset -p1
             // NAME` print path missed it (only the listing path parsed
             // it), so `typeset -p1 myarray` printed single-line.
-            let line_flag = if OPT_HASARG(&ops, b'p')
-                && OPT_ARG(&ops, b'p').map(|a| a.trim()) == Some("1")
-            {
-                PRINT_LINE
-            } else {
-                0
-            };
+            let line_flag =
+                if OPT_HASARG(&ops, b'p') && OPT_ARG(&ops, b'p').map(|a| a.trim()) == Some("1") {
+                    PRINT_LINE
+                } else {
+                    0
+                };
             let existed = paramtab()
                 .read()
                 .map(|t| t.contains_key(arg_name))
@@ -4634,239 +4654,242 @@ pub fn bin_typeset(
 
         // c:3117-3150 — `typeset -n NAME[=refname]` arm.
         if (on as u32 & PM_NAMEREF) != 0 {
-        // c:Src/builtin.c:3117-3150 — the `-n` literal-name arm,
-        // INLINE in C's bin_typeset (no separate C function; the
-        // former vm_helper::typeset_nameref_arg helper relocated
-        // here 2026-06-12 per the no-fake-fns-in-ported rule).
-        // Combined with typeset_single's nameref pieces:
-        // subscripted-name reject (c:2452-2456), read-only
-        // reference guard (c:2249-2256), fresh-start unset
-        // (c:3127-3141), scalar→nameref conversion carrying the
-        // value as refname (c:3132-3135), creation + refname
-        // assignment (assignsparam → PM_NAMEREF arm → setscope).
-        let nameref_arm = |on: u32, off: u32| -> i32 {
-    let value: Option<&str> = arg.find('=').map(|i| &arg[i + 1..]);
+            // c:Src/builtin.c:3117-3150 — the `-n` literal-name arm,
+            // INLINE in C's bin_typeset (no separate C function; the
+            // former vm_helper::typeset_nameref_arg helper relocated
+            // here 2026-06-12 per the no-fake-fns-in-ported rule).
+            // Combined with typeset_single's nameref pieces:
+            // subscripted-name reject (c:2452-2456), read-only
+            // reference guard (c:2249-2256), fresh-start unset
+            // (c:3127-3141), scalar→nameref conversion carrying the
+            // value as refname (c:3132-3135), creation + refname
+            // assignment (assignsparam → PM_NAMEREF arm → setscope).
+            let nameref_arm = |on: u32, off: u32| -> i32 {
+                let value: Option<&str> = arg.find('=').map(|i| &arg[i + 1..]);
 
-    // c:2452-2456 — `typeset -n ptr[1]=...` is invalid.
-    if arg_name.contains('[') {
-        zerrnam(
-            name,
-            &format!("{}: reference variable cannot be an array", arg_name),
-        );
-        return 1;
-    }
+                // c:2452-2456 — `typeset -n ptr[1]=...` is invalid.
+                if arg_name.contains('[') {
+                    zerrnam(
+                        name,
+                        &format!("{}: reference variable cannot be an array", arg_name),
+                    );
+                    return 1;
+                }
 
-    // c:3118-3126 — refname target that is itself a PM_SPECIAL nameref.
-    if let Some(v) = value {
-        let special_ref = paramtab()
-            .read()
-            .ok()
-            .and_then(|t| {
-                t.get(v).map(|pm| {
-                    let f = pm.node.flags as u32;
-                    (f & PM_NAMEREF) != 0 && (f & PM_SPECIAL) != 0
-                })
-            })
-            .unwrap_or(false);
-        if special_ref {
-            zwarnnam(name, &format!("{}: invalid reference", v)); // c:3122
-            return 1; // c:3123-3124
-        }
-    }
-
-    let cur_ll = locallevel_param.load(Relaxed) as i32;
-    let existing = paramtab().read().ok().and_then(|t| {
-        t.get(arg_name)
-            .map(|pm| (pm.node.flags as u32, pm.level, pm.u_str.clone()))
-    });
-
-    let mut carried_value: Option<String> = value.map(String::from);
-    let mut reuse_existing = false;
-
-    let existing_level: Option<i32> = existing.as_ref().map(|(_, l, _)| *l);
-    if let Some((eflags, elevel, estr)) = existing {
-        // c:2249-2256 — read-only guard (typeset_single). Fires when
-        // the existing pm is readonly, +r wasn't given, and either the
-        // nameref-ness changes or a nameref gets a new value.
-        if (eflags & PM_READONLY) != 0
-            && (off & PM_READONLY) == 0
-            && !OPT_ISSET(&ops, b'p')
-        {
-            let kind = if (eflags & PM_NAMEREF) != 0 {
-                "reference"
-            } else {
-                "variable"
-            };
-            zerrnam(name, &format!("{}: read-only {}", arg_name, kind)); // c:2254
-            return 1; // c:2256
-        }
-        // c:3127-3141 — namerefs always start over fresh.
-        if elevel >= cur_ll || ((on & PM_LOCAL) == 0 && elevel < cur_ll) {
-            // c:3132-3135 — converting a scalar: its value becomes
-            // the refname.
-            if carried_value.is_none()
-                && PM_TYPE(eflags) == PM_SCALAR
-                && estr.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
-            {
-                carried_value = estr.clone();
-            }
-            // c:3136-3140 — `if (!(hn->flags & PM_READONLY)) {
-            //   unsetparam_pm(oldpm, 0, 1); hn = NULL; }` — only a
-            // non-readonly ref starts over fresh; a readonly one is
-            // KEPT and handed to typeset_single (c:3148-3149), where
-            // `typeset +r -n ref[=val]` clears the flag in place and
-            // any =val ASSIGNS THROUGH the surviving refname.
-            if (eflags & PM_READONLY) != 0 {
-                reuse_existing = true;
-            } else if let Some(mut old) = paramtab()
-                .write()
-                .ok()
-                .and_then(|mut t| t.remove(arg_name))
-            {
-                // keep the shadowed outer binding for re-chaining
-                if let Some(prev) = old.old.take() {
-                    if let Ok(mut tab) = paramtab().write() {
-                        tab.insert(arg_name.to_string(), prev);
+                // c:3118-3126 — refname target that is itself a PM_SPECIAL nameref.
+                if let Some(v) = value {
+                    let special_ref = paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| {
+                            t.get(v).map(|pm| {
+                                let f = pm.node.flags as u32;
+                                (f & PM_NAMEREF) != 0 && (f & PM_SPECIAL) != 0
+                            })
+                        })
+                        .unwrap_or(false);
+                    if special_ref {
+                        zwarnnam(name, &format!("{}: invalid reference", v)); // c:3122
+                        return 1; // c:3123-3124
                     }
                 }
-            }
-        } else if (eflags & PM_READONLY) != 0 {
-            // c:3142-3149 — only a READONLY ref survives as the pm
-            // handed to typeset_single (so `typeset -rn ref=var` can
-            // error properly); everything else gets `hn = NULL` and
-            // a fresh local SHADOW is created below (c:3148-3149).
-            reuse_existing = true;
-        }
-    }
 
-    // (Re)create the nameref param (typeset_single c:2577+ createparam
-    // with PM_NAMEREF type).
-    if !reuse_existing {
-        let shadowed = paramtab()
-            .write()
-            .ok()
-            .and_then(|mut t| {
-                if (on & PM_LOCAL) != 0 && cur_ll > 0 {
-                    t.remove(arg_name)
+                let cur_ll = locallevel_param.load(Relaxed) as i32;
+                let existing = paramtab().read().ok().and_then(|t| {
+                    t.get(arg_name)
+                        .map(|pm| (pm.node.flags as u32, pm.level, pm.u_str.clone()))
+                });
+
+                let mut carried_value: Option<String> = value.map(String::from);
+                let mut reuse_existing = false;
+
+                let existing_level: Option<i32> = existing.as_ref().map(|(_, l, _)| *l);
+                if let Some((eflags, elevel, estr)) = existing {
+                    // c:2249-2256 — read-only guard (typeset_single). Fires when
+                    // the existing pm is readonly, +r wasn't given, and either the
+                    // nameref-ness changes or a nameref gets a new value.
+                    if (eflags & PM_READONLY) != 0
+                        && (off & PM_READONLY) == 0
+                        && !OPT_ISSET(&ops, b'p')
+                    {
+                        let kind = if (eflags & PM_NAMEREF) != 0 {
+                            "reference"
+                        } else {
+                            "variable"
+                        };
+                        zerrnam(name, &format!("{}: read-only {}", arg_name, kind)); // c:2254
+                        return 1; // c:2256
+                    }
+                    // c:3127-3141 — namerefs always start over fresh.
+                    if elevel >= cur_ll || ((on & PM_LOCAL) == 0 && elevel < cur_ll) {
+                        // c:3132-3135 — converting a scalar: its value becomes
+                        // the refname.
+                        if carried_value.is_none()
+                            && PM_TYPE(eflags) == PM_SCALAR
+                            && estr.as_deref().map(|s| !s.is_empty()).unwrap_or(false)
+                        {
+                            carried_value = estr.clone();
+                        }
+                        // c:3136-3140 — `if (!(hn->flags & PM_READONLY)) {
+                        //   unsetparam_pm(oldpm, 0, 1); hn = NULL; }` — only a
+                        // non-readonly ref starts over fresh; a readonly one is
+                        // KEPT and handed to typeset_single (c:3148-3149), where
+                        // `typeset +r -n ref[=val]` clears the flag in place and
+                        // any =val ASSIGNS THROUGH the surviving refname.
+                        if (eflags & PM_READONLY) != 0 {
+                            reuse_existing = true;
+                        } else if let Some(mut old) =
+                            paramtab().write().ok().and_then(|mut t| t.remove(arg_name))
+                        {
+                            // keep the shadowed outer binding for re-chaining
+                            if let Some(prev) = old.old.take() {
+                                if let Ok(mut tab) = paramtab().write() {
+                                    tab.insert(arg_name.to_string(), prev);
+                                }
+                            }
+                        }
+                    } else if (eflags & PM_READONLY) != 0 {
+                        // c:3142-3149 — only a READONLY ref survives as the pm
+                        // handed to typeset_single (so `typeset -rn ref=var` can
+                        // error properly); everything else gets `hn = NULL` and
+                        // a fresh local SHADOW is created below (c:3148-3149).
+                        reuse_existing = true;
+                    }
+                }
+
+                // (Re)create the nameref param (typeset_single c:2577+ createparam
+                // with PM_NAMEREF type).
+                if !reuse_existing {
+                    let shadowed = paramtab().write().ok().and_then(|mut t| {
+                        if (on & PM_LOCAL) != 0 && cur_ll > 0 {
+                            t.remove(arg_name)
+                        } else {
+                            None
+                        }
+                    });
+                    let mut flags = PM_NAMEREF as i32;
+                    // c:2544 — TYPESET_TO_UNSET: declared-but-unassigned.
+                    if carried_value.is_none() && isset(crate::ported::zsh_h::TYPESETTOUNSET) {
+                        flags |= crate::ported::zsh_h::PM_DEFAULTED as i32;
+                    }
+                    // crate::ported::zsh_h::PM_UPPER on a nameref marks the -u upscope variant (c:2698
+                    // allows -u with -n); crate::ported::zsh_h::PM_HIDEVAL likewise.
+                    flags |= (on
+                        & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL))
+                        as i32;
+                    // c:1108-1132 — createparam REUSES the just-unset node at its
+                    // own level when !PM_LOCAL (`typeset -gn` rebind of a local
+                    // ref keeps the ref's level; it does NOT hoist to level 0).
+                    let level = if (on & PM_LOCAL) != 0 {
+                        cur_ll
+                    } else if let Some(elevel) = existing_level {
+                        elevel
+                    } else {
+                        0
+                    };
+                    let pm = Box::new(crate::ported::zsh_h::param {
+                        node: crate::ported::zsh_h::hashnode {
+                            next: None,
+                            nam: arg_name.to_string(),
+                            flags,
+                        },
+                        u_data: 0,
+                        u_tied: None,
+                        u_arr: None,
+                        u_str: if carried_value.is_none() && value.is_some() {
+                            Some(String::new()) // `typeset -n ptr=` placeholder
+                        } else {
+                            None
+                        },
+                        u_val: 0,
+                        u_dval: 0.0,
+                        u_hash: None,
+                        gsu_s: None,
+                        gsu_i: None,
+                        gsu_f: None,
+                        gsu_a: None,
+                        gsu_h: None,
+                        base: 0,
+                        width: 0,
+                        env: None,
+                        ename: None,
+                        old: shadowed,
+                        level,
+                    });
+                    if let Ok(mut tab) = paramtab().write() {
+                        tab.insert(arg_name.to_string(), pm);
+                    }
                 } else {
-                    None
+                    // reuse path (read-only refs surviving the fresh-start gate,
+                    // c:3148-3149): apply on/off bits in place. A readonly
+                    // SCALAR + `-n` converts to a nameref here — its current
+                    // value becomes the refname (c:2117+ type-conversion inside
+                    // typeset_single with the pm kept; the `typeset +r -n
+                    // ref=RW` shape: "assignment occurs after type change").
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(arg_name) {
+                            pm.node.flags |= (on
+                                & (crate::ported::zsh_h::PM_UPPER
+                                    | crate::ported::zsh_h::PM_HIDEVAL))
+                                as i32;
+                            pm.node.flags |= PM_NAMEREF as i32;
+                            pm.node.flags &= !((off
+                                & (crate::ported::zsh_h::PM_UPPER
+                                    | crate::ported::zsh_h::PM_HIDEVAL
+                                    | PM_READONLY))
+                                as i32);
+                        }
+                    }
                 }
-            });
-        let mut flags = PM_NAMEREF as i32;
-        // c:2544 — TYPESET_TO_UNSET: declared-but-unassigned.
-        if carried_value.is_none() && isset(crate::ported::zsh_h::TYPESETTOUNSET) {
-            flags |= crate::ported::zsh_h::PM_DEFAULTED as i32;
-        }
-        // crate::ported::zsh_h::PM_UPPER on a nameref marks the -u upscope variant (c:2698
-        // allows -u with -n); crate::ported::zsh_h::PM_HIDEVAL likewise.
-        flags |= (on & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL)) as i32;
-        // c:1108-1132 — createparam REUSES the just-unset node at its
-        // own level when !PM_LOCAL (`typeset -gn` rebind of a local
-        // ref keeps the ref's level; it does NOT hoist to level 0).
-        let level = if (on & PM_LOCAL) != 0 {
-            cur_ll
-        } else if let Some(elevel) = existing_level {
-            elevel
-        } else {
-            0
-        };
-        let pm = Box::new(crate::ported::zsh_h::param {
-            node: crate::ported::zsh_h::hashnode {
-                next: None,
-                nam: arg_name.to_string(),
-                flags,
-            },
-            u_data: 0,
-            u_tied: None,
-            u_arr: None,
-            u_str: if carried_value.is_none() && value.is_some() {
-                Some(String::new()) // `typeset -n ptr=` placeholder
-            } else {
-                None
-            },
-            u_val: 0,
-            u_dval: 0.0,
-            u_hash: None,
-            gsu_s: None,
-            gsu_i: None,
-            gsu_f: None,
-            gsu_a: None,
-            gsu_h: None,
-            base: 0,
-            width: 0,
-            env: None,
-            ename: None,
-            old: shadowed,
-            level,
-        });
-        if let Ok(mut tab) = paramtab().write() {
-            tab.insert(arg_name.to_string(), pm);
-        }
-    } else {
-        // reuse path (read-only refs surviving the fresh-start gate,
-        // c:3148-3149): apply on/off bits in place. A readonly
-        // SCALAR + `-n` converts to a nameref here — its current
-        // value becomes the refname (c:2117+ type-conversion inside
-        // typeset_single with the pm kept; the `typeset +r -n
-        // ref=RW` shape: "assignment occurs after type change").
-        if let Ok(mut tab) = paramtab().write() {
-            if let Some(pm) = tab.get_mut(arg_name) {
-                pm.node.flags |= (on & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL)) as i32;
-                pm.node.flags |= PM_NAMEREF as i32;
-                pm.node.flags &=
-                    !((off & (crate::ported::zsh_h::PM_UPPER | crate::ported::zsh_h::PM_HIDEVAL | PM_READONLY)) as i32);
-            }
-        }
-    }
 
-    // Assign the refname (typeset_single c:2326 assignsparam →
-    // PM_NAMEREF assignstrvalue arm + valid_refname + setscope).
-    let mut rc = 0;
-    if reuse_existing {
-        // c:2326 — the surviving (previously-readonly) ref keeps its
-        // refname; a =value assignment goes through the canonical
-        // assignsparam which RESOLVES the chain (`typeset +r -n
-        // ref=RW` writes RW into the referent, not the ref).
-        if let Some(v) = value {
-            if crate::ported::params::setsparam(arg_name, v).is_none() {
-                rc = 1;
-            }
-        }
-    } else if let Some(v) = carried_value.as_deref() {
-        if v.is_empty() {
-            // `typeset -n ptr=` — empty placeholder, no setscope error.
-            if let Ok(mut tab) = paramtab().write() {
-                if let Some(pm) = tab.get_mut(arg_name) {
-                    pm.u_str = Some(String::new());
-                    pm.node.flags &= !(crate::ported::zsh_h::PM_DEFAULTED as i32);
+                // Assign the refname (typeset_single c:2326 assignsparam →
+                // PM_NAMEREF assignstrvalue arm + valid_refname + setscope).
+                let mut rc = 0;
+                if reuse_existing {
+                    // c:2326 — the surviving (previously-readonly) ref keeps its
+                    // refname; a =value assignment goes through the canonical
+                    // assignsparam which RESOLVES the chain (`typeset +r -n
+                    // ref=RW` writes RW into the referent, not the ref).
+                    if let Some(v) = value {
+                        if crate::ported::params::setsparam(arg_name, v).is_none() {
+                            rc = 1;
+                        }
+                    }
+                } else if let Some(v) = carried_value.as_deref() {
+                    if v.is_empty() {
+                        // `typeset -n ptr=` — empty placeholder, no setscope error.
+                        if let Ok(mut tab) = paramtab().write() {
+                            if let Some(pm) = tab.get_mut(arg_name) {
+                                pm.u_str = Some(String::new());
+                                pm.node.flags &= !(crate::ported::zsh_h::PM_DEFAULTED as i32);
+                            }
+                        }
+                    } else if crate::ported::params::setsparam(arg_name, v).is_none() {
+                        // c:2326 — typeset_single's assignsparam; the fresh
+                        // PM_NAMEREF pm routes to assignstrvalue's nameref arm
+                        // (c:2690-2720: valid_refname + SETREFNAME + setscope).
+                        rc = 1;
+                    }
+                } else if !reuse_existing && crate::ported::params::is_nameref(arg_name) {
+                    // bare placeholder — still run setscope for parity (no-op).
+                    let _ = crate::ported::params::setscope_by_name(arg_name);
                 }
-            }
-        } else if crate::ported::params::setsparam(arg_name, v).is_none() {
-            // c:2326 — typeset_single's assignsparam; the fresh
-            // PM_NAMEREF pm routes to assignstrvalue's nameref arm
-            // (c:2690-2720: valid_refname + SETREFNAME + setscope).
-            rc = 1;
-        }
-    } else if !reuse_existing && crate::ported::params::is_nameref(arg_name) {
-        // bare placeholder — still run setscope for parity (no-op).
-        let _ = crate::ported::params::setscope_by_name(arg_name);
-    }
 
-    // c:2618 — `pm->node.flags |= (on & PM_READONLY);` AFTER the
-    // assignment so `typeset -rn ref=var` can set its initial value.
-    if (on & PM_READONLY) != 0 {
-        if let Ok(mut tab) = paramtab().write() {
-            if let Some(pm) = tab.get_mut(arg_name) {
-                pm.node.flags |= PM_READONLY as i32;
+                // c:2618 — `pm->node.flags |= (on & PM_READONLY);` AFTER the
+                // assignment so `typeset -rn ref=var` can set its initial value.
+                if (on & PM_READONLY) != 0 {
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(arg_name) {
+                            pm.node.flags |= PM_READONLY as i32;
+                        }
+                    }
+                }
+                rc
+            };
+            if nameref_arm(on as u32, off as u32) != 0 {
+                returnval = 1; // c:3153-3156
             }
-        }
-    }
-    rc
-        };
-        if nameref_arm(on as u32, off as u32) != 0 {
-            returnval = 1; // c:3153-3156
-        }
-        continue;
+            continue;
         }
 
         // c:2032-2050 — existing pm is a nameref and ±n was not
@@ -4884,12 +4907,10 @@ pub fn bin_typeset(
                 .unwrap_or((0, None));
             if pm_level == cur_ll || (on as u32 & PM_LOCAL) == 0 {
                 // c:2033
-                let type_change =
-                    (on as u32 & !(PM_NAMEREF | PM_LOCAL | PM_READONLY)) != 0; // c:2038
+                let type_change = (on as u32 & !(PM_NAMEREF | PM_LOCAL | PM_READONLY)) != 0; // c:2038
                 use crate::ported::params::nameref_resolution;
                 match crate::ported::params::resolve_nameref_name(arg_name, None) {
-                    nameref_resolution::SelfRef
-                    | nameref_resolution::OutOfScope => {
+                    nameref_resolution::SelfRef | nameref_resolution::OutOfScope => {
                         returnval = 1;
                         continue;
                     }
@@ -4898,10 +4919,7 @@ pub fn bin_typeset(
                         if type_change {
                             zwarnnam(
                                 name, // c:2046
-                                &format!(
-                                    "{}: can't change type of a named reference",
-                                    last
-                                ),
+                                &format!("{}: can't change type of a named reference", last),
                             );
                             returnval = 1;
                             continue; // c:2048 return NULL
@@ -4911,9 +4929,7 @@ pub fn bin_typeset(
                         // through assignsparam which writes the refname.
                     }
                     nameref_resolution::Target {
-                        name: t,
-                        subscript,
-                        ..
+                        name: t, subscript, ..
                     } => {
                         if subscript.is_some() && type_change {
                             // c:2041-2044 — pm->width set: subscripted ref.
@@ -5090,9 +5106,7 @@ pub fn bin_typeset(
                     // (assignment paths get PM_UNSET cleared as a side
                     // effect of the value write). Bug #280 in
                     // docs/BUGS.md.
-                    if !arg.contains('=')
-                        && isset(crate::ported::zsh_h::TYPESETTOUNSET)
-                    {
+                    if !arg.contains('=') && isset(crate::ported::zsh_h::TYPESETTOUNSET) {
                         pm.node.flags |= PM_DEFAULTED as i32;
                     }
                 }
@@ -5137,8 +5151,8 @@ pub fn bin_typeset(
             // the attribute to the element. Bug #219 in
             // docs/BUGS.md. Plain `h[k]=value` (no `-` flag) has
             // PM_TYPE(on) == PM_SCALAR and stays valid.
-            let pm_type_bits = on as u32
-                & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED);
+            let pm_type_bits =
+                on as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED);
             if pm_type_bits != 0 {
                 zerrnam(
                     name,
@@ -5235,21 +5249,21 @@ pub fn bin_typeset(
             }
             if is_paren_init {
                 let inner = &raw_v[1..raw_v.len() - 1]; // c:2950
-                // c:Src/builtin.c:2555-2556 globlist — C glob-expands each
-                // element working on the TOKENIZED value where quoted
-                // metachars keep their Bnull escape, so a quoted `(` / `*`
-                // is inert. zshrs's compile path (compile_zsh's
-                // BUILTIN_TYPESET_PAREN_PACK) already runs the per-element
-                // glob via compile_word_str — identical to the bare
-                // `arr=(…)` path (compile_zsh.rs ~3294) — and hands
-                // bin_typeset the FULLY-EXPANDED, DEQUOTED elements via the
-                // `\u{1f}` sentinel form. Re-globbing those dequoted values
-                // here is a double-glob that loses the original quoting:
-                // `typeset -a p=("*.txt")` globbed the quoted star, and
-                // `typeset -a p=("a=\$((1+2))")` parsed the literal `((` as
-                // a bareglobqual ("unknown file attribute: ("). Skip the
-                // re-glob for the pack (`\u{1f}`) form; only the legacy
-                // whitespace form (elements not pre-expanded) needs it.
+                                                        // c:Src/builtin.c:2555-2556 globlist — C glob-expands each
+                                                        // element working on the TOKENIZED value where quoted
+                                                        // metachars keep their Bnull escape, so a quoted `(` / `*`
+                                                        // is inert. zshrs's compile path (compile_zsh's
+                                                        // BUILTIN_TYPESET_PAREN_PACK) already runs the per-element
+                                                        // glob via compile_word_str — identical to the bare
+                                                        // `arr=(…)` path (compile_zsh.rs ~3294) — and hands
+                                                        // bin_typeset the FULLY-EXPANDED, DEQUOTED elements via the
+                                                        // `\u{1f}` sentinel form. Re-globbing those dequoted values
+                                                        // here is a double-glob that loses the original quoting:
+                                                        // `typeset -a p=("*.txt")` globbed the quoted star, and
+                                                        // `typeset -a p=("a=\$((1+2))")` parsed the literal `((` as
+                                                        // a bareglobqual ("unknown file attribute: ("). Skip the
+                                                        // re-glob for the pack (`\u{1f}`) form; only the legacy
+                                                        // whitespace form (elements not pre-expanded) needs it.
                 let from_pack = inner.contains('\u{1f}');
                 // c:2952 globlist — each list node is one element. When
                 // the multi-arg rejoin loop above ran, elements are
@@ -5414,9 +5428,7 @@ pub fn bin_typeset(
                         .ok()
                         .and_then(|t| t.get(n).map(|pm| pm.node.flags as u32));
                     if let Some(f) = existing_flags {
-                        if (f & PM_UNSET) == 0
-                            && crate::ported::zsh_h::PM_TYPE(f) != requested
-                        {
+                        if (f & PM_UNSET) == 0 && crate::ported::zsh_h::PM_TYPE(f) != requested {
                             // c:2357 — carry readonly/exported into `on`.
                             on |= !off & (PM_READONLY | PM_EXPORTED) & f;
                             // c:2359 — `pm->node.flags &= ~PM_READONLY;`
@@ -5620,24 +5632,24 @@ pub fn bin_typeset(
                     }
                 }
                 setsparam(n, &folded); // c:params.c:3350
-                // c:2326-2328 + c:2336-2337 (typeset_single) —
-                // `if (asg->value.scalar && !(pm = assignsparam(
-                //     pname, ztrdup(asg->value.scalar), 0)))
-                //      return NULL;
-                //  ... if (errflag) return NULL;`
-                // A readonly rejection inside assignstrvalue
-                // (c:Src/params.c:2697) sets errflag and the value is
-                // refused; typeset_single returns NULL and bin_typeset
-                // records `returnval = 1` (c:3153-3156). Skip the
-                // attribute stamps — C never reaches them on this path.
-                // Gated on usepm: the c:2336 check lives ONLY in the
-                // reuse-existing-pm branch.
+                                       // c:2326-2328 + c:2336-2337 (typeset_single) —
+                                       // `if (asg->value.scalar && !(pm = assignsparam(
+                                       //     pname, ztrdup(asg->value.scalar), 0)))
+                                       //      return NULL;
+                                       //  ... if (errflag) return NULL;`
+                                       // A readonly rejection inside assignstrvalue
+                                       // (c:Src/params.c:2697) sets errflag and the value is
+                                       // refused; typeset_single returns NULL and bin_typeset
+                                       // records `returnval = 1` (c:3153-3156). Skip the
+                                       // attribute stamps — C never reaches them on this path.
+                                       // Gated on usepm: the c:2336 check lives ONLY in the
+                                       // reuse-existing-pm branch.
                 if usepm_existing && (errflag.load(Relaxed) & ERRFLAG_ERROR) != 0 {
                     returnval = 1; // c:3156
                     continue; // c:2337 return NULL
                 }
-                                       // c:2510-2520 — `on = pm->node.flags;` then stamp the
-                                       // attribute bits on the just-assigned param.
+                // c:2510-2520 — `on = pm->node.flags;` then stamp the
+                // attribute bits on the just-assigned param.
                 let post_assign_mask = (PM_READONLY
                     | PM_EXPORTED
                     | PM_LEFT
@@ -5843,16 +5855,15 @@ pub fn bin_typeset(
             // chain and return the target's value instead (c:2374 via
             // the +n type-conversion arm; K01 "remove nameref
             // attribute" expects `typeset ptr=var`).
-            let saved_val = if (off as u32 & PM_NAMEREF) != 0
-                && crate::ported::params::is_nameref(arg)
-            {
-                paramtab()
-                    .read()
-                    .ok()
-                    .and_then(|t| t.get(arg.as_str()).and_then(|p| p.u_str.clone()))
-            } else {
-                getsparam(arg)
-            };
+            let saved_val =
+                if (off as u32 & PM_NAMEREF) != 0 && crate::ported::params::is_nameref(arg) {
+                    paramtab()
+                        .read()
+                        .ok()
+                        .and_then(|t| t.get(arg.as_str()).and_then(|p| p.u_str.clone()))
+                } else {
+                    getsparam(arg)
+                };
             // c:Src/builtin.c:3072 — `if (!getsparam(pname))
             //     setsparam(pname, "");`. C zsh's getsparam returns the
             // join-of-values for PM_HASHED and PM_ARRAY so this gate
@@ -5867,13 +5878,17 @@ pub fn bin_typeset(
             // Gate on the paramtab flag instead: if the param exists
             // and is PM_HASHED/PM_ARRAY, treat it as already-declared
             // even though getsparam returned None.
-            let already_typed = paramtab().read().ok().and_then(|t| {
-                t.get(arg).map(|pm| {
-                    let f = pm.node.flags as u32;
-                    let typ = PM_TYPE(f);
-                    typ == PM_HASHED || typ == PM_ARRAY
+            let already_typed = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get(arg).map(|pm| {
+                        let f = pm.node.flags as u32;
+                        let typ = PM_TYPE(f);
+                        typ == PM_HASHED || typ == PM_ARRAY
+                    })
                 })
-            }).unwrap_or(false);
+                .unwrap_or(false);
             // Capture the param's PRIOR numeric class (before the flag
             // change below) so the base-stamp arm can reset pm.base when
             // switching BETWEEN integer and float — the base field means
@@ -5896,14 +5911,14 @@ pub fn bin_typeset(
             if was_fresh {
                 // c:3072 — `if (!getsparam(pname)) setsparam(pname, "")`.
                 setsparam(arg, ""); // c:3074
-                // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
-                //     pm->node.flags |= PM_DEFAULTED;`. Under
-                // `setopt typeset_to_unset`, bare `typeset NAME` (no
-                // `=`) creates a "declared but not assigned" entry:
-                // PM_DECLARED + PM_UNSET (= PM_DEFAULTED). `${+NAME}`
-                // and `[[ -v NAME ]]` then return false until an
-                // explicit assignment clears PM_UNSET. Bug #280 in
-                // docs/BUGS.md.
+                                    // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
+                                    //     pm->node.flags |= PM_DEFAULTED;`. Under
+                                    // `setopt typeset_to_unset`, bare `typeset NAME` (no
+                                    // `=`) creates a "declared but not assigned" entry:
+                                    // PM_DECLARED + PM_UNSET (= PM_DEFAULTED). `${+NAME}`
+                                    // and `[[ -v NAME ]]` then return false until an
+                                    // explicit assignment clears PM_UNSET. Bug #280 in
+                                    // docs/BUGS.md.
                 if isset(crate::ported::zsh_h::TYPESETTOUNSET) {
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(arg) {
@@ -6063,10 +6078,8 @@ pub fn bin_typeset(
                     if let Some(arr) = existing {
                         let mut seen: std::collections::HashSet<String> =
                             std::collections::HashSet::new();
-                        let deduped: Vec<String> = arr
-                            .into_iter()
-                            .filter(|e| seen.insert(e.clone()))
-                            .collect();
+                        let deduped: Vec<String> =
+                            arr.into_iter().filter(|e| seen.insert(e.clone())).collect();
                         crate::ported::params::setaparam(arg, deduped);
                     }
                 }
@@ -6156,8 +6169,7 @@ pub fn bin_typeset(
             // suppressed that in-function re-declaration case.
             let user_on = (on as u32) & !PM_LOCAL;
             let cur_ll = locallevel.load(Relaxed);
-            let not_localizing =
-                pm_level_existing == cur_ll || (on as u32 & PM_LOCAL) == 0;
+            let not_localizing = pm_level_existing == cur_ll || (on as u32 & PM_LOCAL) == 0;
             // c:Src/builtin.c:2244 — `else if (!OPT_ISSET(ops,'g') &&
             // (unset(TYPESETSILENT) || OPT_ISSET(ops,'m')))`. The `-g`
             // (global-scope) flag SUPPRESSES the bare-name print so
@@ -6209,11 +6221,7 @@ pub fn bin_typeset(
                             s.push(' ');
                         }
                         first = false;
-                        s.push_str(&format!(
-                            "[{}]={}",
-                            k,
-                            crate::ported::utils::quotedzputs(v)
-                        ));
+                        s.push_str(&format!("[{}]={}", k, crate::ported::utils::quotedzputs(v)));
                     }
                     s.push_str(" )");
                     println!("{}", s);
@@ -6829,7 +6837,15 @@ pub fn bin_functions(
             for arg in argv.iter() {
                 queue_signals(); // c:3488
                                  // c:3489 — `tokenize(*argv)`; Rust patcompile handles it.
-                if let Some(pprog) = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_STATIC, None) {
+                if let Some(pprog) = patcompile(
+                    &{
+                        let mut __pat_tok = (arg).to_string();
+                        crate::ported::glob::tokenize(&mut __pat_tok);
+                        __pat_tok
+                    },
+                    PAT_STATIC,
+                    None,
+                ) {
                     // c:3490
                     if OPT_PLUS(ops, b'M') {
                         // c:3497
@@ -7133,7 +7149,12 @@ pub fn bin_functions(
             // c:3675
             queue_signals(); // c:3676
                              // c:3678 — `tokenize(*argv)` + `patcompile(...)`
-            let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:3680
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (pat).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:3680
                 PAT_HEAPDUP,
                 None,
             );
@@ -7403,7 +7424,12 @@ pub fn bin_unset(
         for s in argv {
             // c:3832
             queue_signals(); // c:3833
-            let pprog = patcompile(&{ let mut __pat_tok = (s).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:3836
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (s).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:3836
                 PAT_HEAPDUP,
                 None,
             );
@@ -7576,8 +7602,9 @@ pub fn bin_unset(
                         use crate::ported::params::nameref_resolution;
                         match crate::ported::params::resolve_nameref_name(nm, None) {
                             // c:3942-3943 — `if (!(pm = resolve_nameref(pm))) continue;`
-                            nameref_resolution::SelfRef
-                            | nameref_resolution::OutOfScope => continue,
+                            nameref_resolution::SelfRef | nameref_resolution::OutOfScope => {
+                                continue
+                            }
                             nameref_resolution::Placeholder(last) => {
                                 // chain ends at a ref → that ref is the
                                 // unset object (resolve_nameref returns it).
@@ -7655,10 +7682,7 @@ pub fn bin_unset(
                         let keep_local = paramtab()
                             .read()
                             .ok()
-                            .and_then(|t| {
-                                t.get(&refnam)
-                                    .map(|p| p.level > 0 && cur_ll >= p.level)
-                            })
+                            .and_then(|t| t.get(&refnam).map(|p| p.level > 0 && cur_ll >= p.level))
                             .unwrap_or(false);
                         if keep_local {
                             if let Ok(mut tab) = paramtab().write() {
@@ -7865,7 +7889,12 @@ pub fn bin_whence(
             // c:4035
             // c:4037 — `tokenize(*argv);` (Rust patcompile handles the
             // tokenize step internally; explicit call is a no-op here).
-            let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4038
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (pat).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:4038
                 PAT_HEAPDUP,
                 None,
             );
@@ -8150,9 +8179,24 @@ pub fn bin_whence(
             // below. Bug #28 in docs/BUGS.md.
             let is_files_gated = matches!(
                 arg.as_str(),
-                "mkdir" | "rmdir" | "rm" | "mv" | "ln" | "chmod" | "chown" | "chgrp" | "sync"
-                    | "zf_mkdir" | "zf_rmdir" | "zf_rm" | "zf_mv" | "zf_ln" | "zf_chmod"
-                    | "zf_chown" | "zf_chgrp" | "zf_sync"
+                "mkdir"
+                    | "rmdir"
+                    | "rm"
+                    | "mv"
+                    | "ln"
+                    | "chmod"
+                    | "chown"
+                    | "chgrp"
+                    | "sync"
+                    | "zf_mkdir"
+                    | "zf_rmdir"
+                    | "zf_rm"
+                    | "zf_mv"
+                    | "zf_ln"
+                    | "zf_chmod"
+                    | "zf_chown"
+                    | "zf_chgrp"
+                    | "zf_sync"
             ) && !crate::ported::module::MODULESTAB
                 .lock()
                 .unwrap()
@@ -8179,8 +8223,7 @@ pub fn bin_whence(
             let is_zpty_gated = is_module_gated("zsh/zpty", &["zpty"]);
             let is_ztcp_gated = is_module_gated("zsh/net/tcp", &["ztcp"]);
             let is_zftp_gated = is_module_gated("zsh/zftp", &["zftp"]);
-            let is_system_gated =
-                is_module_gated("zsh/system", &["zsystem", "syserror"]);
+            let is_system_gated = is_module_gated("zsh/system", &["zsystem", "syserror"]);
             let is_module_bound_gated = is_stat_gated
                 || is_zselect_gated
                 || is_zpty_gated
@@ -8425,12 +8468,12 @@ pub fn bin_hash(
                          // `-d`). Previous Rust port only walked nameddirtab — `hash`
                          // with no args (the typical user-visible form) silently printed
                          // nothing on cmdnamtab.
-        // c:4270 — `scanhashtable(ht, 1, 0, 0, ht->printnode, printflags)`.
-        // The second arg `1` is `sorted` — the table is listed in
-        // alphabetical (meta-aware hnamcmp) order, not hash/insertion
-        // order. The previous port walked `t.iter()` raw, so `hash -d`
-        // printed entries in an arbitrary order (`two`, `one` instead of
-        // `one`, `two`).
+                         // c:4270 — `scanhashtable(ht, 1, 0, 0, ht->printnode, printflags)`.
+                         // The second arg `1` is `sorted` — the table is listed in
+                         // alphabetical (meta-aware hnamcmp) order, not hash/insertion
+                         // order. The previous port walked `t.iter()` raw, so `hash -d`
+                         // printed entries in an arbitrary order (`two`, `one` instead of
+                         // `one`, `two`).
         if dir_mode {
             if let Ok(t) = nameddirtab().lock() {
                 let mut entries: Vec<_> = t.iter().collect();
@@ -8466,7 +8509,12 @@ pub fn bin_hash(
         if OPT_ISSET(ops, b'm') {
             // c:4279
             // c:4280-4290 — glob-match path.
-            let pprog = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4282
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (arg).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:4282
                 PAT_HEAPDUP,
                 None,
             );
@@ -8773,7 +8821,12 @@ pub fn bin_unhash(
         for arg in argv {
             // c:4396
             queue_signals(); // c:4397
-            let pprog = patcompile(&{ let mut __pat_tok = (arg).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4400
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (arg).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:4400
                 PAT_HEAPDUP,
                 None,
             );
@@ -8947,7 +9000,12 @@ pub fn bin_alias(
             // c:4504
             queue_signals(); // c:4505
                              // c:4506 — `tokenize + patcompile`.
-            let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, // c:4507
+            let pprog = patcompile(
+                &{
+                    let mut __pat_tok = (pat).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                }, // c:4507
                 PAT_HEAPDUP,
                 None,
             );
@@ -9191,8 +9249,8 @@ pub fn bin_print(
     // diagnostic + rc=1 zsh does (Src/builtin.c:5050
     // `zwarnnam(name, "-p: no coprocess")`). Bug #388.
     let print_dash_p_fd: Option<fs::File> = if OPT_ISSET(ops, b'p') {
-        let coprocout = crate::ported::modules::clone::coprocout
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let coprocout =
+            crate::ported::modules::clone::coprocout.load(std::sync::atomic::Ordering::Relaxed);
         if coprocout < 0 {
             zwarnnam(name, "-p: no coprocess");
             return 1;
@@ -9294,9 +9352,7 @@ pub fn bin_print(
             let pat = &rest[0];
             let mut pat_tok = pat.to_string();
             crate::ported::glob::tokenize(&mut pat_tok); // c:4727
-            let Some(pprog) =
-                crate::ported::pattern::patcompile(&pat_tok, PAT_STATIC, None)
-            else {
+            let Some(pprog) = crate::ported::pattern::patcompile(&pat_tok, PAT_STATIC, None) else {
                 zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
                 return 1;
             };
@@ -9381,7 +9437,8 @@ pub fn bin_print(
                     .read()
                     .ok()
                     .and_then(|tab| {
-                        tab.get(v).map(|pm| PM_TYPE(pm.node.flags as u32) == PM_ARRAY)
+                        tab.get(v)
+                            .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_ARRAY)
                     })
                     .unwrap_or(false)
             };
@@ -9436,7 +9493,15 @@ pub fn bin_print(
         }
         // c:4728 — `patcompile(*args, PAT_STATIC, NULL)`.
         let pat = &args[0];
-        let pprog = patcompile(&{ let mut __pat_tok = (pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_STATIC, None);
+        let pprog = patcompile(
+            &{
+                let mut __pat_tok = (pat).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            PAT_STATIC,
+            None,
+        );
         match pprog {
             None => {
                 zwarnnam(name, &format!("bad pattern: {}", pat)); // c:4730
@@ -9629,11 +9694,11 @@ pub fn bin_print(
         let argc = processed_args.len();
         let nr = (argc + nc - 1) / nc;
         let across = OPT_ISSET(ops, b'a'); // c:4947 / c:4980
-        // c:Src/builtin.c:4946-4956 — max-width walk skips
-        // last-column items because they don't need trailing
-        // padding. The skip set differs by mode:
-        //   -a (row-major): skip i where (i % nc) == nc-1
-        //   default (col-major): skip i where i >= nr * (nc-1)
+                                           // c:Src/builtin.c:4946-4956 — max-width walk skips
+                                           // last-column items because they don't need trailing
+                                           // padding. The skip set differs by mode:
+                                           //   -a (row-major): skip i where (i % nc) == nc-1
+                                           //   default (col-major): skip i where i >= nr * (nc-1)
         let max_w = processed_args
             .iter()
             .enumerate()
@@ -9693,7 +9758,9 @@ pub fn bin_print(
         // was ported but never wired into print output.
         let all = OPT_HASARG(ops, b'X');
         let which = if all { b'X' } else { b'x' };
-        let width: i32 = OPT_ARG(ops, which).and_then(|a| a.parse().ok()).unwrap_or(8);
+        let width: i32 = OPT_ARG(ops, which)
+            .and_then(|a| a.parse().ok())
+            .unwrap_or(8);
         let n = processed_args.len();
         let mut out = String::new();
         let mut startpos = 0i32;
@@ -9746,13 +9813,13 @@ pub fn bin_print(
         }
         let event_id = crate::ported::hist::prepnexthistent(); // c:5066/5072
         crate::ported::hashtable::addhistnode(&body, event_id as i32); // c:5090
-        // c:Src/builtin.c — C's `addhistnode(histtab, …)` uses the
-        // ent ALREADY linked into hist_ring by prepnexthistent. zshrs's
-        // prepnexthistent only bumps curhist and doesn't insert into
-        // the ring, so `fc -l` finds no events. Push the ent into the
-        // ring here so the gethistent lookup in fc/history sees it.
-        // Without this, `print -s X; fc -l` reported "no such event: 1"
-        // even though the histtab had the entry.
+                                                                       // c:Src/builtin.c — C's `addhistnode(histtab, …)` uses the
+                                                                       // ent ALREADY linked into hist_ring by prepnexthistent. zshrs's
+                                                                       // prepnexthistent only bumps curhist and doesn't insert into
+                                                                       // the ring, so `fc -l` finds no events. Push the ent into the
+                                                                       // ring here so the gethistent lookup in fc/history sees it.
+                                                                       // Without this, `print -s X; fc -l` reported "no such event: 1"
+                                                                       // even though the histtab had the entry.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -9774,8 +9841,7 @@ pub fn bin_print(
         };
         if let Ok(mut ring) = crate::ported::hist::hist_ring.lock() {
             ring.insert(0, ent);
-            crate::ported::hist::histlinect
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::ported::hist::histlinect.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         return 0;
     }
@@ -9820,16 +9886,16 @@ pub fn bin_print(
             let mut lk = stdout.lock();
             let _ = lk.write_all(&body_bytes); // c:5124
             let _ = lk.write_all(final_term); // c:5132
-            // c:Src/builtin.c — C printf goes through libc fwrite to
-            // stdout (fd 1) which is unbuffered when the builtin runs
-            // under a redirect (because dup2 to fd 1 puts the file
-            // there). Rust's `io::stdout()` is LINE-buffered, so
-            // `printf "abcde"` (no `\n`) leaves bytes pending in the
-            // userspace buffer; when the surrounding `> file` redirect
-            // closes the dup'd fd, those bytes flush AFTER the restore
-            // — landing on the original stdout (terminal) AND missing
-            // the file. Flush here so the bytes hit fd 1 (the redirect
-            // target) before bin_print returns. Bug #397.
+                                              // c:Src/builtin.c — C printf goes through libc fwrite to
+                                              // stdout (fd 1) which is unbuffered when the builtin runs
+                                              // under a redirect (because dup2 to fd 1 puts the file
+                                              // there). Rust's `io::stdout()` is LINE-buffered, so
+                                              // `printf "abcde"` (no `\n`) leaves bytes pending in the
+                                              // userspace buffer; when the surrounding `> file` redirect
+                                              // closes the dup'd fd, those bytes flush AFTER the restore
+                                              // — landing on the original stdout (terminal) AND missing
+                                              // the file. Flush here so the bytes hit fd 1 (the redirect
+                                              // target) before bin_print returns. Bug #397.
             let _ = lk.flush();
         }
     }
@@ -10834,10 +10900,10 @@ pub fn bin_dot(
     let old_scriptname = crate::ported::utils::scriptname_get(); // c:1557
     let old_scriptfilename = crate::ported::utils::scriptfilename_get(); // c:1558
     crate::ported::utils::set_scriptname(Some(arg0.clone())); // c:1591
-    // c:1592 — `scriptfilename = s;` — PS4 `%x` reads this; without
-    // the store the bottom of an `xtrace` line stack stays "zsh"
-    // (the executor seed) even inside the sourced file. Bug shared
-    // with source_from_memory in bins/zshrs.rs.
+                                                              // c:1592 — `scriptfilename = s;` — PS4 `%x` reads this; without
+                                                              // the store the bottom of an `xtrace` line stack stays "zsh"
+                                                              // (the executor seed) even inside the sourced file. Bug shared
+                                                              // with source_from_memory in bins/zshrs.rs.
     crate::ported::utils::set_scriptfilename(Some(arg0.clone())); // c:1592
 
     crate::ported::init::sourcelevel.fetch_add(1, Relaxed); // c:1606
@@ -10869,10 +10935,10 @@ pub fn bin_dot(
             .or_else(|| Some("zsh".to_string()));
         let frame = crate::ported::zsh_h::funcstack {
             prev: None,
-            name: arg0.clone(),           // c:1608 fstack.name = scriptfilename
-            filename: Some(arg0.clone()), // c:1613 fstack.filename = scriptfilename
-            caller: prev_caller,          // c:1609
-            flineno: 0,                   // c:1611
+            name: arg0.clone(),            // c:1608 fstack.name = scriptfilename
+            filename: Some(arg0.clone()),  // c:1613 fstack.filename = scriptfilename
+            caller: prev_caller,           // c:1609
+            flineno: 0,                    // c:1611
             lineno: prev_funcstack_lineno, // c:1612
             tp: crate::ported::zsh_h::FS_SOURCE, // c:1615
         };
@@ -10911,8 +10977,7 @@ pub fn bin_dot(
     // sourcing a file that hits `readonly` reassign prints its next
     // line with $? = 126.
     if (crate::ported::utils::errflag.load(Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0 {
-        crate::ported::utils::errflag
-            .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
+        crate::ported::utils::errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
         result = 128 - 2; // c:6143 — 128 - SOURCE_ERROR
     }
     if pushed_frame {
@@ -10926,15 +10991,15 @@ pub fn bin_dot(
         stack.pop();
     }
     crate::ported::init::sourcelevel.fetch_sub(1, Relaxed); // c:1644
-    // c:1666 — `scriptname = old_scriptname;` and matching
-    // scriptfilename restore from the c:1667 line.
+                                                            // c:1666 — `scriptname = old_scriptname;` and matching
+                                                            // scriptfilename restore from the c:1667 line.
     crate::ported::utils::set_scriptname(old_scriptname);
     crate::ported::utils::set_scriptfilename(old_scriptfilename);
-                                                            // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
-                                                            // sourced file's execute_script unwinds, the return has been
-                                                            // serviced; clear the flag so the outer compile unit's main loop
-                                                            // (init.rs:1252's `if retflag break` guard) doesn't see a stale
-                                                            // request and abort `echo done` after `source foo`.
+    // c:5842 RETFLAG is set by bin_break's BIN_RETURN arm. Once the
+    // sourced file's execute_script unwinds, the return has been
+    // serviced; clear the flag so the outer compile unit's main loop
+    // (init.rs:1252's `if retflag break` guard) doesn't see a stale
+    // request and abort `echo done` after `source foo`.
     RETFLAG.store(0, Relaxed); // c:5842 unwind
                                // c:6149 again — restore argzero on the success path as well.
     if let Some(prev) = saved_argzero {
@@ -11250,10 +11315,9 @@ pub fn bin_emulate(
     // shell-exit).
     let saveopts = crate::ported::options::opt_state_snapshot(); // c:6303
     let saveemulation = emulation.load(Relaxed); // c:6326
-    let saveemulation_live =
-        crate::ported::options::EMULATION.load(Relaxed); // c:6326 (port keeps 2 cells)
-    // c:6306 — `emulate(shname, opt_R, &new_emulation, new_opts);` —
-    // apply emulation defaults to the live opts table.
+    let saveemulation_live = crate::ported::options::EMULATION.load(Relaxed); // c:6326 (port keeps 2 cells)
+                                                                              // c:6306 — `emulate(shname, opt_R, &new_emulation, new_opts);` —
+                                                                              // apply emulation defaults to the live opts table.
     crate::ported::options::emulate(shname.as_str(), opt_r);
 
     // c:6308 — `parseopts(nam, &argv, new_opts, &cmd, optlist, 0)`.
@@ -11289,10 +11353,10 @@ pub fn bin_emulate(
     let mut i = 1; // skip shname (argv[0])
     let mut optionbreak = false;
     let mut cmd_body: Option<String> = None; // c:6310 — `-c command` capture.
-    // c:6308 `optlist` — parseopts records each explicitly-set option
-    // (as an index into new_opts) so the `-c` arm can build the
-    // sticky struct's on_opts/off_opts at c:6347-6373. Rust tracks
-    // (canonical-name, on?) pairs.
+                                             // c:6308 `optlist` — parseopts records each explicitly-set option
+                                             // (as an index into new_opts) so the `-c` arm can build the
+                                             // sticky struct's on_opts/off_opts at c:6347-6373. Rust tracks
+                                             // (canonical-name, on?) pairs.
     let mut optlist: Vec<(String, bool)> = Vec::new();
     while !optionbreak && i < argv.len() {
         let arg = &argv[i];
@@ -11302,8 +11366,8 @@ pub fn bin_emulate(
             break;
         }
         let action = first == '-'; // c:420
-        // c:421-422 — bare `-` / `+` treated as `--` (end-of-options
-        // marker preserved as-is for caller).
+                                   // c:421-422 — bare `-` / `+` treated as `--` (end-of-options
+                                   // marker preserved as-is for caller).
         if arg.len() == 1 {
             i += 1;
             break;
@@ -11325,10 +11389,7 @@ pub fn bin_emulate(
                 // inside NAME become `_` (c:457-459). For bin_emulate
                 // we don't recognize `--version` / `--help` / etc.,
                 // just route the inline NAME as a long-form option.
-                let name: String = bytes[j + 1..]
-                    .iter()
-                    .collect::<String>()
-                    .replace('-', "_");
+                let name: String = bytes[j + 1..].iter().collect::<String>().replace('-', "_");
                 let canon = name.to_lowercase().replace('_', "");
                 crate::ported::options::opt_state_set(&canon, action);
                 optlist.push((canon, action)); // c:6308 optlist record
@@ -11442,16 +11503,15 @@ pub fn bin_emulate(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) =
                 Some(Box::new(crate::ported::zsh_h::emulation_options {
-                    emulation:
-                        crate::ported::options::EMULATION.load(Relaxed), // c:6346
-                    n_on_opts: on_opts.len() as i32,    // c:6351
-                    n_off_opts: off_opts.len() as i32,  // c:6353
-                    on_opts,                            // c:6356-6358
-                    off_opts,                           // c:6360-6362
+                    emulation: crate::ported::options::EMULATION.load(Relaxed), // c:6346
+                    n_on_opts: on_opts.len() as i32,                            // c:6351
+                    n_off_opts: off_opts.len() as i32,                          // c:6353
+                    on_opts,                                                    // c:6356-6358
+                    off_opts,                                                   // c:6360-6362
                 }));
         }
         let r = eval(&[body]); // c:6374 — `ret = eval(argv);`
-        // c:6375 — `sticky = save_sticky;`
+                               // c:6375 — `sticky = save_sticky;`
         *crate::ported::options::sticky
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = save_sticky;
@@ -11460,9 +11520,9 @@ pub fn bin_emulate(
         crate::ported::options::EMULATION.store(saveemulation_live, Relaxed); // c:6377
         crate::ported::options::opt_state_restore(saveopts); // c:6378
         crate::ported::pattern::restorepatterndisables(savepatterns); // c:6379
-        // c:6381-6382 restore: — keyboardhackchar + inittyptab()
-        // (keyboard hack char isn't ported; typtab rebuild is a
-        // no-op in the Rust lexer).
+                                                                      // c:6381-6382 restore: — keyboardhackchar + inittyptab()
+                                                                      // (keyboard hack char isn't ported; typtab rebuild is a
+                                                                      // no-op in the Rust lexer).
         return r;
     }
 
@@ -11635,11 +11695,10 @@ pub fn bin_read(
     // "-p: no coprocess" rather than "not an identifier". Bug #387.
     // The `-u`-with-arg path falls through and shares this same gate
     // when its arg is "p" (c:6494) — also handled.
-    if OPT_ISSET(ops, b'p')
-        || (OPT_HASARG(ops, b'u') && OPT_ARG(ops, b'u').as_deref() == Some("p"))
+    if OPT_ISSET(ops, b'p') || (OPT_HASARG(ops, b'u') && OPT_ARG(ops, b'u').as_deref() == Some("p"))
     {
-        let coprocin = crate::ported::modules::clone::coprocin
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let coprocin =
+            crate::ported::modules::clone::coprocin.load(std::sync::atomic::Ordering::Relaxed);
         if coprocin < 0 {
             zwarnnam(name, "-p: no coprocess");
             return 1;
@@ -11658,8 +11717,7 @@ pub fn bin_read(
     // read for completion context".
     if OPT_ISSET(ops, b'l') || OPT_ISSET(ops, b'c') {
         // c:6453
-        let zsh_mode =
-            crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
+        let zsh_mode = crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
         // In --zsh mode, regardless of MODULESTAB's "loaded" flag
         // (which we set true at startup for QoL), route through
         // fallback_compctlread because zsh -fc's reported behavior
@@ -11690,8 +11748,7 @@ pub fn bin_read(
     // RUN_COPROC handler at fusevm_bridge.rs around the
     // `coproc CMD` launch). Bug #388.
     let ufd: i32 = if OPT_ISSET(ops, b'p') {
-        crate::ported::modules::clone::coprocin
-            .load(std::sync::atomic::Ordering::Relaxed)
+        crate::ported::modules::clone::coprocin.load(std::sync::atomic::Ordering::Relaxed)
     } else if OPT_HASARG(ops, b'u') {
         // c:Src/builtin.c:6494-6500 — `fdarg = (int)zstrtol(argptr,
         // &eptr, 10); if (*eptr) { zwarnnam(name, "number expected
@@ -12310,13 +12367,9 @@ pub fn bin_test(
     if argv.len() == 3 && argv[0].starts_with('-') && argv[0].len() >= 3 {
         if matches!(
             argv[0].as_str(),
-            "-eq" | "-ne" | "-lt" | "-gt" | "-le" | "-ge"
-                | "-nt" | "-ot" | "-ef"
+            "-eq" | "-ne" | "-lt" | "-gt" | "-le" | "-ge" | "-nt" | "-ot" | "-ef"
         ) {
-            crate::ported::utils::zwarnnam(
-                name,
-                &format!("unknown condition: {}", argv[0]),
-            );
+            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", argv[0]));
             return 2;
         }
     }
@@ -12327,19 +12380,55 @@ pub fn bin_test(
     //   (c) `[ a b c ]` (no recognised op at pos 1) →
     //       "condition expected: b"
     let known_binops: &[&str] = &[
-        "=", "==", "!=", "<", ">",
-        "-eq", "-ne", "-lt", "-gt", "-le", "-ge",
-        "-nt", "-ot", "-ef",
-        "&&", "||", "-a", "-o",
-        "=~", "-regex-match",
+        "=",
+        "==",
+        "!=",
+        "<",
+        ">",
+        "-eq",
+        "-ne",
+        "-lt",
+        "-gt",
+        "-le",
+        "-ge",
+        "-nt",
+        "-ot",
+        "-ef",
+        "&&",
+        "||",
+        "-a",
+        "-o",
+        "=~",
+        "-regex-match",
     ];
     if argv.len() == 3 && argv[0].starts_with('-') && argv[0].len() == 2 {
         let op_char = argv[0].chars().nth(1).unwrap_or(' ');
         let is_known_unary = matches!(
             op_char,
-            'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L'
-                | 'n' | 'o' | 'p' | 'r' | 's' | 'S' | 't' | 'u' | 'v'
-                | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+            'a' | 'b'
+                | 'c'
+                | 'd'
+                | 'e'
+                | 'f'
+                | 'g'
+                | 'h'
+                | 'k'
+                | 'L'
+                | 'n'
+                | 'o'
+                | 'p'
+                | 'r'
+                | 's'
+                | 'S'
+                | 't'
+                | 'u'
+                | 'v'
+                | 'w'
+                | 'x'
+                | 'z'
+                | 'G'
+                | 'N'
+                | 'O'
         );
         // For unary-flag-at-pos-0 with a 3rd extra arg, the canonical
         // diagnostic is "too many arguments" — UNLESS args[1] is itself
@@ -12349,35 +12438,31 @@ pub fn bin_test(
             return 2;
         }
     }
-    if argv.len() == 3
-        && !argv[0].starts_with('-')
-        && argv[0] != "!"
-        && argv[0] != "("
-    {
+    if argv.len() == 3 && !argv[0].starts_with('-') && argv[0] != "!" && argv[0] != "(" {
         let mid = argv[1].as_str();
-        if mid.starts_with('-')
-            && argv[1].len() >= 2
-            && !known_binops.contains(&mid)
-        {
-            crate::ported::utils::zwarnnam(
-                name,
-                &format!("unknown condition: {}", argv[1]),
-            );
+        if mid.starts_with('-') && argv[1].len() >= 2 && !known_binops.contains(&mid) {
+            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", argv[1]));
             return 2;
         }
         if !known_binops.contains(&mid) {
-            crate::ported::utils::zwarn(&format!(
-                "condition expected: {}",
-                argv[1]
-            ));
+            crate::ported::utils::zwarn(&format!("condition expected: {}", argv[1]));
             return 2;
         }
     }
     if argv.len() == 4
         && matches!(
             argv[1].as_str(),
-            "=" | "==" | "!=" | "-eq" | "-ne" | "-lt" | "-gt" | "-le" | "-ge"
-                | "-nt" | "-ot" | "-ef"
+            "=" | "=="
+                | "!="
+                | "-eq"
+                | "-ne"
+                | "-lt"
+                | "-gt"
+                | "-le"
+                | "-ge"
+                | "-nt"
+                | "-ot"
+                | "-ef"
         )
     {
         crate::ported::utils::zwarnnam(name, "too many arguments");
@@ -12390,9 +12475,30 @@ pub fn bin_test(
         let op_char = argv[0].chars().nth(1).unwrap_or(' ');
         if matches!(
             op_char,
-            'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L'
-                | 'n' | 'o' | 'p' | 'r' | 's' | 'S' | 't' | 'u' | 'v'
-                | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+            'a' | 'b'
+                | 'c'
+                | 'd'
+                | 'e'
+                | 'f'
+                | 'g'
+                | 'h'
+                | 'k'
+                | 'L'
+                | 'n'
+                | 'o'
+                | 'p'
+                | 'r'
+                | 's'
+                | 'S'
+                | 't'
+                | 'u'
+                | 'v'
+                | 'w'
+                | 'x'
+                | 'z'
+                | 'G'
+                | 'N'
+                | 'O'
         ) {
             crate::ported::utils::zwarnnam(name, "too many arguments");
             return 2;
@@ -12406,14 +12512,9 @@ pub fn bin_test(
             .iter()
             .any(|a| matches!(a.as_str(), "&&" | "||" | "-a" | "-o"));
         let has_paren = argv.iter().any(|a| a == "(");
-        let has_known_binop_mid = argv
-            .iter()
-            .any(|a| known_binops.contains(&a.as_str()));
+        let has_known_binop_mid = argv.iter().any(|a| known_binops.contains(&a.as_str()));
         if !has_connective && !has_paren && !has_known_binop_mid {
-            crate::ported::utils::zwarn(&format!(
-                "condition expected: {}",
-                argv[0]
-            ));
+            crate::ported::utils::zwarn(&format!("condition expected: {}", argv[0]));
             let _ = name;
             return 2;
         }
@@ -12461,24 +12562,38 @@ pub fn bin_test(
         crate::ported::utils::zwarnnam(name, "argument expected");
         return 2;
     }
-    if argv.len() == 2
-        && argv[0].starts_with('-')
-        && argv[0].len() >= 2
-        && argv[0] != "!"
-    {
+    if argv.len() == 2 && argv[0].starts_with('-') && argv[0].len() >= 2 && argv[0] != "!" {
         let op_char = argv[0].chars().nth(1).unwrap_or(' ');
         let is_known_unary = argv[0].len() == 2
             && matches!(
                 op_char,
-                'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L'
-                    | 'n' | 'o' | 'p' | 'r' | 's' | 'S' | 't' | 'u' | 'v'
-                    | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+                'a' | 'b'
+                    | 'c'
+                    | 'd'
+                    | 'e'
+                    | 'f'
+                    | 'g'
+                    | 'h'
+                    | 'k'
+                    | 'L'
+                    | 'n'
+                    | 'o'
+                    | 'p'
+                    | 'r'
+                    | 's'
+                    | 'S'
+                    | 't'
+                    | 'u'
+                    | 'v'
+                    | 'w'
+                    | 'x'
+                    | 'z'
+                    | 'G'
+                    | 'N'
+                    | 'O'
             );
         if !is_known_unary {
-            crate::ported::utils::zwarnnam(
-                name,
-                &format!("unknown condition: {}", argv[0]),
-            );
+            crate::ported::utils::zwarnnam(name, &format!("unknown condition: {}", argv[0]));
             return 2;
         }
     } else if argv.len() == 2
@@ -12493,10 +12608,7 @@ pub fn bin_test(
         // (via zwarn, no builtin-name prefix). Verified vs
         // /opt/homebrew/bin/zsh: `[ "" "" ]` →
         //   "zsh:1: parse error: condition expected: " rc=2
-        crate::ported::utils::zwarn(&format!(
-            "parse error: condition expected: {}",
-            argv[0]
-        ));
+        crate::ported::utils::zwarn(&format!("parse error: condition expected: {}", argv[0]));
         let _ = name;
         return 2;
     }
@@ -12562,13 +12674,8 @@ pub fn bin_test(
     // `name` argument is C's `fromtest` signal — non-NULL means "called
     // from test/[", which enables the strict integer-expression error
     // path (c:Src/cond.c:236-251). Bug #411.
-    let mut ret = crate::ported::cond::evalcond(
-        &args_refs,
-        &options,
-        &variables,
-        posix,
-        Some(name),
-    ); // c:7305
+    let mut ret =
+        crate::ported::cond::evalcond(&args_refs, &options, &variables, posix, Some(name)); // c:7305
 
     // c:7307-7308 — `if (ret < 2 && sense) ret = !ret;`
     if ret < 2 && sense != 0 {
@@ -15112,13 +15219,12 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
     // truncation marker. Route through `_with(GETKEYS_PRINTF_FMT)`
     // to match C exactly. `_with` takes a u32 `how` mask; the
     // canonical i32 const lives in `zsh_h` (Src/zsh.h:3180-3181).
-    let (fmt, _) =
-        getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
-    // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
-    // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
-    // (b) stops the format-reuse loop entirely (no reapplication over the
-    // remaining args). getkeystring_with already cut `fmt` at the `\c`;
-    // take the TLS flag it set so the reuse loop knows to stop.
+    let (fmt, _) = getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
+                                                                                            // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
+                                                                                            // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
+                                                                                            // (b) stops the format-reuse loop entirely (no reapplication over the
+                                                                                            // remaining args). getkeystring_with already cut `fmt` at the `\c`;
+                                                                                            // take the TLS flag it set so the reuse loop knows to stop.
     let mut fmttrunc = crate::ported::utils::getkey_truncated_take();
     let mut out = String::new();
     let mut arg_i: usize = 0;
@@ -15351,25 +15457,22 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // evaluated as a math expression. The previous port did
                     // only the constant parse, so `printf %g f` / `%f 1.5+1`
                     // yielded 0.
-                    let n: f64 = if let Some(rest) =
-                        a.strip_prefix('\'').or_else(|| a.strip_prefix('"'))
-                    {
-                        // c:Src/builtin.c:5431-5447 — a leading `'`/`"` makes
-                        // the value the numeric char code of the next char,
-                        // for FLOAT conversions too (shared with int):
-                        // `printf '%.1E' \'B` → 66 → 6.6E+01. The int arm
-                        // (parse_int_arg) already did this; the float arm
-                        // skipped it, yielding 0.
-                        rest.chars().next().map(|c| c as i64 as f64).unwrap_or(0.0)
-                    } else {
-                        a.parse::<f64>().unwrap_or_else(|_| {
-                            match matheval(&a) {
+                    let n: f64 =
+                        if let Some(rest) = a.strip_prefix('\'').or_else(|| a.strip_prefix('"')) {
+                            // c:Src/builtin.c:5431-5447 — a leading `'`/`"` makes
+                            // the value the numeric char code of the next char,
+                            // for FLOAT conversions too (shared with int):
+                            // `printf '%.1E' \'B` → 66 → 6.6E+01. The int arm
+                            // (parse_int_arg) already did this; the float arm
+                            // skipped it, yielding 0.
+                            rest.chars().next().map(|c| c as i64 as f64).unwrap_or(0.0)
+                        } else {
+                            a.parse::<f64>().unwrap_or_else(|_| match matheval(&a) {
                                 Ok(m) if m.type_ == crate::ported::math::MN_FLOAT => m.d,
                                 Ok(m) => m.l as f64,
                                 Err(_) => 0.0,
-                            }
-                        })
-                    };
+                            })
+                        };
                     // c:Src/builtin.c printf %g/%G uses libc snprintf
                     // which strips trailing zeros; %e/%E uses scientific.
                     out.push_str(&format_spec_float_conv(&spec, n, conv));
@@ -15434,10 +15537,8 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 // so `\141` was octal-eval'd to `a` — diverged.
                 Some('b') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let (s, _) = getkeystring_with(
-                        &a,
-                        crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32,
-                    );
+                    let (s, _) =
+                        getkeystring_with(&a, crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32);
                     // c:5380-5383 — a `\c` inside the `%b` arg truncates:
                     // emit the expansion up to `\c`, then stop the whole
                     // printf (no rest-of-format, no reuse). getkeystring_with
@@ -15478,7 +15579,8 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // inclusive (C null-terminates at `c[1]`). `spec`
                     // already holds `%`+flags+width+`.prec`; append the
                     // bad char. e.g. `%0$s` → "%0$: invalid directive".
-                    return Err((out, format!("{}{}: invalid directive", spec, other))); // c:5435
+                    return Err((out, format!("{}{}: invalid directive", spec, other)));
+                    // c:5435
                 }
                 // c:Src/builtin.c:5430-5436 — a bare `%` with nothing
                 // after it (end of format) is an invalid directive, same

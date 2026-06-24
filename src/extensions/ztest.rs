@@ -943,7 +943,10 @@ pub fn run_ztests_pool(targets: &[String], j_threads: Option<&str>, quiet: bool)
 
                     if !quiet {
                         let _g = print_lock.lock().unwrap();
-                        eprintln!("\x1b[1m\u{2500}\u{2500} {} \u{2500}\u{2500}\x1b[0m", resp.name);
+                        eprintln!(
+                            "\x1b[1m\u{2500}\u{2500} {} \u{2500}\u{2500}\x1b[0m",
+                            resp.name
+                        );
                         if !resp.stderr.is_empty() {
                             eprint!("{}", resp.stderr);
                         }
@@ -996,7 +999,10 @@ pub fn run_ztests_pool(targets: &[String], j_threads: Option<&str>, quiet: bool)
             eprintln!("\x1b[1;31m{}\x1b[0m", bar);
             for (file_name, details) in &failure_details {
                 eprintln!();
-                eprintln!("\x1b[1;33m\u{2500}\u{2500} {} \u{2500}\u{2500}\x1b[0m", file_name);
+                eprintln!(
+                    "\x1b[1;33m\u{2500}\u{2500} {} \u{2500}\u{2500}\x1b[0m",
+                    file_name
+                );
                 for line in details.lines().take(20) {
                     eprintln!("  {}", line);
                 }

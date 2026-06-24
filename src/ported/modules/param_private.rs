@@ -191,8 +191,8 @@ pub fn makeprivate(hn: *mut param, flags: i32) {
                         old.u_dval = u_dval; // c:112 gsu.f->setfn
                         old.u_arr = u_arr; // c:115 gsu.a->setfn
                         old.u_hash = u_hash; // c:119 gsu.h->setfn
-                        // c:124-125 — `if (!(tpm->node.flags & PM_UNSET))
-                        //               pm->node.flags &= ~PM_UNSET;`
+                                             // c:124-125 — `if (!(tpm->node.flags & PM_UNSET))
+                                             //               pm->node.flags &= ~PM_UNSET;`
                         if !tpm_unset {
                             old.node.flags &= !(PM_UNSET as i32); // c:125
                         }
@@ -347,22 +347,20 @@ pub fn bin_private(
     let mut from_typeset: i32 = 1; // c:220
                                    // c:221 — `int ofake = fakelevel;`
     let ofake = FAKELEVEL.load(Ordering::Relaxed); // c:221
-    // c:222 — `int hasargs = /* *args != NULL || */ (assigns &&
-    //           firstnode(assigns));`
-    // C's `assigns` is the BINF_ASSIGN-split LinkList: execbuiltin
-    // (Src/builtin.c) peels `name=value` words off into `assigns`,
-    // leaving bare names in `args`. The commented-out `*args != NULL`
-    // shows hasargs deliberately counts ONLY assignment forms.
-    // zshrs's dispatcher doesn't split — `name=value` words arrive
-    // in `args` — so the faithful adaptation detects them there.
-    // Prior port computed `!assigns.is_empty()` on a hardcoded-empty
-    // local Vec: always false, making `private +r x=1` take the
-    // `(!hasargs && '+')` bin_typeset shortcut at c:243 even though
-    // an assignment was present.
-    let hasargs = args
-        .iter()
-        .any(|a| a.find('=').is_some_and(|p| p > 0)); // c:222
-                                       // c:223 — `makeprivate_error = 0;`
+                                                   // c:222 — `int hasargs = /* *args != NULL || */ (assigns &&
+                                                   //           firstnode(assigns));`
+                                                   // C's `assigns` is the BINF_ASSIGN-split LinkList: execbuiltin
+                                                   // (Src/builtin.c) peels `name=value` words off into `assigns`,
+                                                   // leaving bare names in `args`. The commented-out `*args != NULL`
+                                                   // shows hasargs deliberately counts ONLY assignment forms.
+                                                   // zshrs's dispatcher doesn't split — `name=value` words arrive
+                                                   // in `args` — so the faithful adaptation detects them there.
+                                                   // Prior port computed `!assigns.is_empty()` on a hardcoded-empty
+                                                   // local Vec: always false, making `private +r x=1` take the
+                                                   // `(!hasargs && '+')` bin_typeset shortcut at c:243 even though
+                                                   // an assignment was present.
+    let hasargs = args.iter().any(|a| a.find('=').is_some_and(|p| p > 0)); // c:222
+                                                                           // c:223 — `makeprivate_error = 0;`
     MAKEPRIVATE_ERROR.store(0, Ordering::Relaxed); // c:223
 
     // c:225-230 — `if (!OPT_ISSET(ops, 'P'))` straight-through to bin_typeset.
@@ -434,14 +432,14 @@ pub fn bin_private(
     });
     startparamscope(&mut paramscope_buf); // c:250
     from_typeset = bin_typeset("private", args, ops, func); // c:251
-    // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
-    // walk paramtab calling makeprivate on each entry. makeprivate
-    // self-filters on `pm->level == locallevel` (c:83): only the
-    // params bin_typeset just created inside the startparamscope-
-    // bumped scope are promoted (PM_HIDE|PM_SPECIAL|PM_REMOVABLE|
-    // PM_RO_BY_DESIGN, then `pm->level -= 1` so the upcoming
-    // endparamscope at c:253 does NOT pop them back out of the
-    // function's real scope).
+                                                            // c:252 — `scanhashtable(paramtab, 0, 0, 0, makeprivate, 0);` —
+                                                            // walk paramtab calling makeprivate on each entry. makeprivate
+                                                            // self-filters on `pm->level == locallevel` (c:83): only the
+                                                            // params bin_typeset just created inside the startparamscope-
+                                                            // bumped scope are promoted (PM_HIDE|PM_SPECIAL|PM_REMOVABLE|
+                                                            // PM_RO_BY_DESIGN, then `pm->level -= 1` so the upcoming
+                                                            // endparamscope at c:253 does NOT pop them back out of the
+                                                            // function's real scope).
     {
         let mut tab = paramtab().write().unwrap();
         for (_name, pm) in tab.iter_mut() {
@@ -966,16 +964,16 @@ pub fn wrap_private(
         // c:552
         let owl = pwl; // c:553
         private_wraplevel.store(local, Ordering::Relaxed); // c:554
-        // c:555 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, PM_UNSET);`
-        // Hide every private param from the function we're about to run.
+                                                           // c:555 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, PM_UNSET);`
+                                                           // Hide every private param from the function we're about to run.
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, PM_UNSET as i32); // c:555
             }
         }
         runshfunc(); // c:556 — runshfunc(prog, w, name);
-        // c:557 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);`
-        // Restore each param's saved PM_UNSET/PM_READONLY state.
+                     // c:557 — `scanhashtable(paramtab, 0, 0, 0, scopeprivate, 0);`
+                     // Restore each param's saved PM_UNSET/PM_READONLY state.
         if let Ok(mut tab) = crate::ported::params::paramtab().write() {
             for pm in tab.values_mut() {
                 scopeprivate(&mut **pm as *mut param, 0); // c:557

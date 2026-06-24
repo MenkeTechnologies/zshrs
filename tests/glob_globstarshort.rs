@@ -134,8 +134,14 @@ fn globstarshort_double_star_dot_rs_finds_project_sources() {
     // `**` anchor) — proves the zero-directory branch fires too.
     let has_glob_rs = got.iter().any(|p| p.ends_with("/src/ported/glob.rs"));
     let has_vm_helper_rs = got.iter().any(|p| p.ends_with("/src/vm_helper.rs"));
-    assert!(has_glob_rs, "src/ported/glob.rs not found in `**.rs` results");
-    assert!(has_vm_helper_rs, "src/vm_helper.rs not found in `**.rs` results");
+    assert!(
+        has_glob_rs,
+        "src/ported/glob.rs not found in `**.rs` results"
+    );
+    assert!(
+        has_vm_helper_rs,
+        "src/vm_helper.rs not found in `**.rs` results"
+    );
 }
 
 /// Explicit-separator `**/*.md` must keep recursing at EVERY depth (0, 1, N)
@@ -177,7 +183,13 @@ fn globstarshort_explicit_slash_double_star_recurses_all_depths() {
     want.sort();
     let got_normalized: Vec<String> = got
         .iter()
-        .map(|s| Path::new(s).canonicalize().unwrap().to_string_lossy().to_string())
+        .map(|s| {
+            Path::new(s)
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
         .collect();
 
     assert_eq!(

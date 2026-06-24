@@ -342,10 +342,10 @@ pub fn listexpand(_args: &[String]) -> i32 {
 pub fn reversemenucomplete(args: &[String]) -> i32 {
     // c:344
     WOULDINSTAB.store(0, Ordering::SeqCst); // c:346
-    // c:347 — `zmult = -zmult`. Cannot lock ZMOD twice in one
-    // expression: the RHS guard outlives the read (Rust temporary
-    // scope = end of statement) and the LHS lock attempt then
-    // deadlocks the same thread on a non-reentrant std::sync::Mutex.
+                                            // c:347 — `zmult = -zmult`. Cannot lock ZMOD twice in one
+                                            // expression: the RHS guard outlives the read (Rust temporary
+                                            // scope = end of statement) and the LHS lock attempt then
+                                            // deadlocks the same thread on a non-reentrant std::sync::Mutex.
     {
         let mut g = ZMOD.lock().unwrap();
         g.mult = -g.mult;

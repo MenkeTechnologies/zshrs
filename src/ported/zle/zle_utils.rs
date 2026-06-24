@@ -1309,13 +1309,13 @@ pub fn showmsg(msg: &str) {
     // c:1310
     use crate::ported::utils::{nicechar, write_loop};
     use crate::ported::zle::zle_refresh::{tcmultout, CLEARFLAG, NLNCT, SHOWINGLIST};
-    use crate::ported::zsh_h::{isset, Meta, TCMULTUP, TCUP, ALWAYSLASTPROMPT, USEZLE};
+    use crate::ported::zsh_h::{isset, Meta, ALWAYSLASTPROMPT, TCMULTUP, TCUP, USEZLE};
 
     let mut up: i32 = 0; // c:1316
     let mut cc: i32 = 0; // c:1316
 
     trashzle(); // c:1325
-    // c:1326 — clearflag = isset(USEZLE) && !termflags && isset(ALWAYSLASTPROMPT)
+                // c:1326 — clearflag = isset(USEZLE) && !termflags && isset(ALWAYSLASTPROMPT)
     let termflags = crate::ported::params::TERMFLAGS.load(Ordering::Relaxed);
     let clearflag = isset(USEZLE) && termflags == 0 && isset(ALWAYSLASTPROMPT);
     CLEARFLAG.store(if clearflag { 1 } else { 0 }, Ordering::Relaxed);

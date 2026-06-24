@@ -106,9 +106,7 @@ pub fn getpmwidgets(
                 match w_opt {
                     None => "undefined".to_string(),
                     Some(w) => {
-                        use crate::ported::zle::zle_h::{
-                            WidgetImpl, WIDGET_INT, WIDGET_NCOMP,
-                        };
+                        use crate::ported::zle::zle_h::{WidgetImpl, WIDGET_INT, WIDGET_NCOMP};
                         if (w.flags & WIDGET_INT) != 0 {
                             "builtin".to_string()
                         } else if (w.flags & WIDGET_NCOMP) != 0 {

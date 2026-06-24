@@ -1074,9 +1074,9 @@ pub fn bin_zsystem_flock(
             let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if eno != libc::EINTR && eno != libc::EACCES && eno != libc::EAGAIN {
                 zclose(flock_fd); // c:735
-                // c:736 — `zwarnnam(nam, "failed to lock file %s: %e", args[0], errno);`
-                // Format from the errno captured BEFORE zclose — close(2)
-                // may clobber errno.
+                                  // c:736 — `zwarnnam(nam, "failed to lock file %s: %e", args[0], errno);`
+                                  // Format from the errno captured BEFORE zclose — close(2)
+                                  // may clobber errno.
                 zwarnnam(
                     nam,
                     &format!(
@@ -1128,8 +1128,8 @@ pub fn bin_zsystem_flock(
                 continue;
             } // c:756-757
             zclose(flock_fd); // c:758
-            // c:759 — `zwarnnam(nam, "failed to lock file %s: %e", args[0], errno);`
-            // Format from the errno captured BEFORE zclose.
+                              // c:759 — `zwarnnam(nam, "failed to lock file %s: %e", args[0], errno);`
+                              // Format from the errno captured BEFORE zclose.
             zwarnnam(
                 nam,
                 &format!(

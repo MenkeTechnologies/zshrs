@@ -147,8 +147,12 @@ fn run_with_timeout(mut cmd: Command) -> Output {
             Err(_) => break -1,
         }
     };
-    let stdout = stdout_handle.and_then(|h| h.join().ok()).unwrap_or_default();
-    let stderr = stderr_handle.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stdout = stdout_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
     Output {
         stdout,
         stderr,
@@ -198,11 +202,15 @@ fn run_zsh(src: &Path, sandbox: &Path) -> Output {
 
 fn run_zshrs(src: &Path, sandbox: &Path) -> Output {
     let mut cmd = Command::new(zshrs_bin());
-    cmd.args(["--zsh", "-fxc", &format!("source {}", src.to_string_lossy())])
-        .current_dir(sandbox)
-        .env("PS4", pinned_ps4())
-        .env_remove("PROMPT4")
-        .env_remove("ZSHRS_CACHE");
+    cmd.args([
+        "--zsh",
+        "-fxc",
+        &format!("source {}", src.to_string_lossy()),
+    ])
+    .current_dir(sandbox)
+    .env("PS4", pinned_ps4())
+    .env_remove("PROMPT4")
+    .env_remove("ZSHRS_CACHE");
     run_with_timeout(cmd)
 }
 
@@ -238,10 +246,7 @@ fn report_mismatch(name: &str, z: &Output, r: &Output) -> String {
     let mut buf = String::new();
     buf.push_str(&format!("\n=== {} ===\n", name));
     if z.status != r.status {
-        buf.push_str(&format!(
-            "  exit: zsh={} zshrs={}\n",
-            z.status, r.status
-        ));
+        buf.push_str(&format!("  exit: zsh={} zshrs={}\n", z.status, r.status));
     }
     if z.stdout != r.stdout {
         let div = first_divergence_byte(&z.stdout, &r.stdout);
@@ -291,10 +296,7 @@ fn report_mismatch(name: &str, z: &Output, r: &Output) -> String {
 ///   pgrp SIGKILL races with the orphaned pipe drain thread.
 /// - `110_while_multi_cond.zsh` — `while echo a; echo b; do …`
 ///   head always evaluates truthy → infinite loop in both shells.
-const KNOWN_INFINITE_LOOPS: &[&str] = &[
-    "37_proc_subst.zsh",
-    "110_while_multi_cond.zsh",
-];
+const KNOWN_INFINITE_LOOPS: &[&str] = &["37_proc_subst.zsh", "110_while_multi_cond.zsh"];
 
 /// Snippets that currently produce divergent xtrace output between
 /// `zsh -fxc` and `zshrs -fxc`. Each represents a separate gap in
@@ -460,7 +462,9 @@ fn corpus_xtrace_parity() {
 #[ignore = "diagnostic — set FILE=tests/parity_corpus/NN_*.zsh and run with --ignored --nocapture"]
 fn single_file() {
     let Some(path) = std::env::var("FILE").ok().map(PathBuf::from) else {
-        eprintln!("usage: FILE=path/to/snippet.zsh cargo test single_file -- --ignored --nocapture");
+        eprintln!(
+            "usage: FILE=path/to/snippet.zsh cargo test single_file -- --ignored --nocapture"
+        );
         return;
     };
     if !zsh_available() {

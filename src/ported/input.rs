@@ -212,8 +212,7 @@ pub fn shingetchar() -> i32 {
         // c:231-234 — `do { errno=0; nread=read(...); } while (nread<0
         //   && errno==EINTR);`
         let nread = loop {
-            let n =
-                unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, SHINBUFSIZE) };
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, SHINBUFSIZE) };
             if n < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
                 continue;
             }
@@ -540,7 +539,7 @@ pub fn inputline() -> i32 {
     inbufpos.with(|p| p.set(0)); // c:499 inbufptr = inbuf
     inbufct.with(|c| c.set(len)); // c:501 inbufct = inbufleft
     inbufflags.with(|f| f.set(0)); // c:502 inbufflags = 0
-    // Fresh input arrived — clear any stale EOF latch so ingetc reads it.
+                                   // Fresh input arrived — clear any stale EOF latch so ingetc reads it.
     lexstop.with(|c| c.set(false));
     0 // c:508 return 0
 }

@@ -1103,10 +1103,10 @@ impl ZshCompiler {
                 self.compile_program(&t.try_block);
                 self.try_block_depth -= 1;
                 self.emit_cmd_pop(); // c:Src/loop.c:759 — `cmdpop();`
-                // After the try-block, snapshot the escape patches it
-                // accumulated. Their targets will be patched to land
-                // at the always-arm entry so the finally clause runs
-                // regardless of how the try-block left.
+                                     // After the try-block, snapshot the escape patches it
+                                     // accumulated. Their targets will be patched to land
+                                     // at the always-arm entry so the finally clause runs
+                                     // regardless of how the try-block left.
                 let inner_returns = std::mem::take(&mut self.return_patches);
                 let inner_breaks: Vec<Vec<usize>> = self
                     .break_patches
@@ -1311,8 +1311,7 @@ impl ZshCompiler {
         // The bare-assign + redir case (words empty + redirs non-empty)
         // also defers — assigns must run AFTER WithRedirectsBegin per
         // exec.c:3963.
-        let defer_assigns_to_redir_scope =
-            simple.words.is_empty() && !simple.redirs.is_empty();
+        let defer_assigns_to_redir_scope = simple.words.is_empty() && !simple.redirs.is_empty();
         if !has_inline_env_scope && !defer_assigns_to_redir_scope {
             for assign in &simple.assigns {
                 self.last_assign_had_cmd_subst = false;
@@ -1631,10 +1630,8 @@ impl ZshCompiler {
             }
             let tc = self.builder.add_constant(Value::str(trace_text.as_str()));
             self.builder.emit(Op::LoadConst(tc), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
             let levels: usize = simple
                 .words
@@ -1698,10 +1695,8 @@ impl ZshCompiler {
             }
             let tc = self.builder.add_constant(Value::str(trace_text.as_str()));
             self.builder.emit(Op::LoadConst(tc), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
             let levels: usize = simple
                 .words
@@ -1936,8 +1931,8 @@ impl ZshCompiler {
         // per-word BUILTIN_MAGIC_EQUALS_PREFORK so the equals/tilde
         // expansion (and its zerr, e.g. `alias bad===` → "= not
         // found") fires before the redirect scope opens.
-        let head_is_magic_equals = !user_function_shadow
-            && (dispatch_first_raw == "alias" || first_clean == "alias");
+        let head_is_magic_equals =
+            !user_function_shadow && (dispatch_first_raw == "alias" || first_clean == "alias");
 
         // c:Src/builtin.c BUILTIN table — BINF_ASSIGN family: typeset /
         // declare / local / export / readonly / integer / float /
@@ -2048,10 +2043,7 @@ impl ZshCompiler {
             // Bug #329.
             if has_unquoted_param_or_subst(word) {
                 self.builder.emit(
-                    Op::CallBuiltin(
-                        crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND,
-                        1,
-                    ),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND, 1),
                     0,
                 );
             }
@@ -2076,10 +2068,7 @@ impl ZshCompiler {
                 && !word.contains('\u{9f}')
             {
                 self.builder.emit(
-                    Op::CallBuiltin(
-                        crate::vm_helper::BUILTIN_MAGIC_EQUALS_PREFORK,
-                        1,
-                    ),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_MAGIC_EQUALS_PREFORK, 1),
                     0,
                 );
             }
@@ -2205,8 +2194,19 @@ impl ZshCompiler {
             None
         } else if matches!(
             dispatch_first_raw,
-            "mkdir" | "rmdir" | "ln" | "mv" | "zf_mkdir" | "zf_rm" | "zf_rmdir" | "zf_chmod"
-                | "zf_chown" | "zf_chgrp" | "zf_ln" | "zf_mv" | "zf_sync"
+            "mkdir"
+                | "rmdir"
+                | "ln"
+                | "mv"
+                | "zf_mkdir"
+                | "zf_rm"
+                | "zf_rmdir"
+                | "zf_chmod"
+                | "zf_chown"
+                | "zf_chgrp"
+                | "zf_ln"
+                | "zf_mv"
+                | "zf_sync"
         ) && crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
         {
             // c:Src/Modules/files.c — these are zsh/files builtins,
@@ -2334,10 +2334,7 @@ impl ZshCompiler {
             }
         };
         let is_write_side = |t: i32| -> bool {
-            t == REDIR_WRITE
-                || t == REDIR_WRITENOW
-                || t == REDIR_APP
-                || t == REDIR_APPNOW
+            t == REDIR_WRITE || t == REDIR_WRITENOW || t == REDIR_APP || t == REDIR_APPNOW
         };
         let is_read_side = |t: i32| -> bool { t == REDIR_READ };
         // c:Src/exec.c:3884-3917 REDIR_MERGEIN/REDIR_MERGEOUT — a
@@ -2352,13 +2349,11 @@ impl ZshCompiler {
         };
         let is_write_member = |r: &crate::parse::ZshRedir| -> bool {
             r.varid.is_none()
-                && (is_write_side(r.rtype)
-                    || (r.rtype == REDIR_MERGEOUT && name_is_numeric_fd(r)))
+                && (is_write_side(r.rtype) || (r.rtype == REDIR_MERGEOUT && name_is_numeric_fd(r)))
         };
         let is_read_member = |r: &crate::parse::ZshRedir| -> bool {
             r.varid.is_none()
-                && (is_read_side(r.rtype)
-                    || (r.rtype == REDIR_MERGEIN && name_is_numeric_fd(r)))
+                && (is_read_side(r.rtype) || (r.rtype == REDIR_MERGEIN && name_is_numeric_fd(r)))
         };
         // c:Src/glob.c:2150-2207 xpandredir — under MULTIOS the
         // target word is globbed; multiple matches duplicate the
@@ -2409,10 +2404,8 @@ impl ZshCompiler {
         // CWD instead of `/tmp/gap_mo_a_PID` etc. (mirrors C
         // `Src/exec.c:2418 mfds` setup where each addfd target runs
         // through full word expansion before open).
-        let mut pending_multios: std::collections::HashMap<
-            u8,
-            Vec<(String, u8)>,
-        > = std::collections::HashMap::new();
+        let mut pending_multios: std::collections::HashMap<u8, Vec<(String, u8)>> =
+            std::collections::HashMap::new();
         let mut pending_multios_read: std::collections::HashMap<u8, Vec<(String, u8)>> =
             std::collections::HashMap::new();
         // We don't have direct access to op_byte without re-deriving
@@ -2442,9 +2435,7 @@ impl ZshCompiler {
             // (c:Src/glob.c:2195-2203).
             let is_multios_read_candidate = is_read_member(redir)
                 && (read_total >= 2
-                    || (read_total == 1
-                        && is_read_side(redir.rtype)
-                        && has_glob_tokens(redir)));
+                    || (read_total == 1 && is_read_side(redir.rtype) && has_glob_tokens(redir)));
             if is_multios_read_candidate {
                 let op_byte = match derive_op(redir) {
                     Some(o) => o,
@@ -2462,10 +2453,7 @@ impl ZshCompiler {
                     .entry(fd)
                     .or_default()
                     .push((redir.name.clone(), op_byte));
-                let bag_now = pending_multios_read
-                    .get(&fd)
-                    .map(|v| v.len())
-                    .unwrap_or(0);
+                let bag_now = pending_multios_read.get(&fd).map(|v| v.len()).unwrap_or(0);
                 let total = read_total;
                 if bag_now == total {
                     if let Some(pairs) = pending_multios_read.remove(&fd) {
@@ -2482,10 +2470,7 @@ impl ZshCompiler {
                         self.builder.emit(Op::LoadInt(fd as i64), 0);
                         let argc = (2 * n + 1) as u8;
                         self.builder.emit(
-                            Op::CallBuiltin(
-                                crate::vm_helper::BUILTIN_MULTIOS_READ,
-                                argc,
-                            ),
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_MULTIOS_READ, argc),
                             0,
                         );
                         self.builder.emit(Op::Pop, 0);
@@ -2496,9 +2481,7 @@ impl ZshCompiler {
             let write_total = writes_per_fd.get(&fd).copied().unwrap_or(0);
             let is_multios_candidate = is_write_member(redir)
                 && (write_total >= 2
-                    || (write_total == 1
-                        && is_write_side(redir.rtype)
-                        && has_glob_tokens(redir)));
+                    || (write_total == 1 && is_write_side(redir.rtype) && has_glob_tokens(redir)));
             if !is_multios_candidate {
                 self.compile_redir(redir, false);
                 continue;
@@ -2539,10 +2522,7 @@ impl ZshCompiler {
                     // CallBuiltin pops 2N + 1 from the stack.
                     let argc = (2 * n + 1) as u8;
                     self.builder.emit(
-                        Op::CallBuiltin(
-                            crate::vm_helper::BUILTIN_MULTIOS_REDIRECT,
-                            argc,
-                        ),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_MULTIOS_REDIRECT, argc),
                         0,
                     );
                     self.builder.emit(Op::Pop, 0); // discard Status
@@ -2591,10 +2571,8 @@ impl ZshCompiler {
                         let text_const = self.builder.add_constant(Value::str(trimmed));
                         self.builder.emit(Op::LoadConst(text_const), 0);
                         self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
-                        self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
-                            0,
-                        );
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                     }
                     let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
                     self.builder.emit(Op::LoadConst(vid_const), 0);
@@ -2626,10 +2604,8 @@ impl ZshCompiler {
                         let text_const = self.builder.add_constant(Value::str(trimmed));
                         self.builder.emit(Op::LoadConst(text_const), 0);
                         self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
-                        self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
-                            0,
-                        );
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
                     }
                     self.builder.emit(Op::LoadInt(fd as i64), 0);
                     self.builder.emit(
@@ -2915,9 +2891,7 @@ impl ZshCompiler {
                 // (no `$` / backtick — those expand at runtime to
                 // single keys, not ranges) and dispatch as a single-
                 // element array RHS.
-                let key_is_range = !key.contains('$')
-                    && !key.contains('`')
-                    && key.contains(',');
+                let key_is_range = !key.contains('$') && !key.contains('`') && key.contains(',');
                 if key_is_range {
                     // c:Src/params.c:2895 setarrvalue — range append
                     // `a[lo,hi]+=tail` pre-concats the existing slice
@@ -2978,8 +2952,8 @@ impl ZshCompiler {
                     && key.ends_with('\'')
                     && key.len() >= 3
                     && !key[2..key.len() - 1].contains('\'');
-                let key_has_expansion = !key_is_ansi_c_literal
-                    && (key.contains('$') || key.contains('`'));
+                let key_has_expansion =
+                    !key_is_ansi_c_literal && (key.contains('$') || key.contains('`'));
                 if key_has_expansion {
                     self.compile_word_str(key);
                 } else {
@@ -3045,25 +3019,27 @@ impl ZshCompiler {
                 // Swap top 2 so XTRACE_ASSIGN sees [..., trace_name, value]:
                 self.builder.emit(Op::Swap, 0);
                 // Stack: [name, key, value, trace_name, value]
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ASSIGN, 2), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ASSIGN, 2),
+                    0,
+                );
                 // XTRACE_ASSIGN peeks top 2 (trace_name, value) and
                 // emits; leaves stack unchanged. Drop the result
                 // status + the two helper slots:
                 self.builder.emit(Op::Pop, 0); // status from XTRACE_ASSIGN
                 self.builder.emit(Op::Pop, 0); // value dup
                 self.builder.emit(Op::Pop, 0); // trace_name
-                // Stack restored to: [name, key, value]
-                // Dynamic-key marker: C's assignsparam sees the RAW
-                // subscript text (`H[$1$2]`) so its isident gate
-                // passes and the EXPANDED key — even empty — stores
-                // fine (zinit's .zinit-pack-ice writes
-                // ZINIT_SICE[$1…$2] with both empty). Only a
-                // SOURCE-LITERAL empty subscript (`H[]=v`) is the
-                // "not an identifier" error. zshrs expands the key
-                // before the bridge, so the handler needs the
-                // compile-time literal/dynamic bit to reproduce the
-                // split (argc 4 = dynamic).
+                                               // Stack restored to: [name, key, value]
+                                               // Dynamic-key marker: C's assignsparam sees the RAW
+                                               // subscript text (`H[$1$2]`) so its isident gate
+                                               // passes and the EXPANDED key — even empty — stores
+                                               // fine (zinit's .zinit-pack-ice writes
+                                               // ZINIT_SICE[$1…$2] with both empty). Only a
+                                               // SOURCE-LITERAL empty subscript (`H[]=v`) is the
+                                               // "not an identifier" error. zshrs expands the key
+                                               // before the bridge, so the handler needs the
+                                               // compile-time literal/dynamic bit to reproduce the
+                                               // split (argc 4 = dynamic).
                 if key_has_expansion {
                     self.builder.emit(Op::LoadInt(1), 0);
                     self.builder
@@ -3187,8 +3163,8 @@ impl ZshCompiler {
                 // 2=(X Y Z)` → `a X Y Z c d`). Rewrite to the `argv[N]`
                 // subscript form so it routes through the same
                 // setarrvalue-into-pparams splice as `argv[N]=(...)`.
-                let numeric_pos = !untoked_name.is_empty()
-                    && untoked_name.chars().all(|c| c.is_ascii_digit());
+                let numeric_pos =
+                    !untoked_name.is_empty() && untoked_name.chars().all(|c| c.is_ascii_digit());
                 let subscript = if numeric_pos {
                     Some(("argv", untoked_name.as_str()))
                 } else {
@@ -3344,10 +3320,8 @@ impl ZshCompiler {
                 let sep_const = self.builder.add_constant(Value::str(" "));
                 for slot in &trace_slots {
                     self.builder.emit(Op::GetSlot(*slot), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1),
-                        0,
-                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1), 0);
                     self.builder.emit(Op::Concat, 0);
                     self.builder.emit(Op::LoadConst(sep_const), 0);
                     self.builder.emit(Op::Concat, 0);
@@ -3359,10 +3333,8 @@ impl ZshCompiler {
                 // live xtrace opt-state and skips the printprompt4 +
                 // eprintln when xtrace is off (same as C's
                 // `if (xtr) { … }` guard at c:Src/exec.c:2517).
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
                 self.builder.emit(Op::Pop, 0);
                 // Collapse the N element values into ONE Value::Array before
                 // the SET_ARRAY call. CallBuiltin's argc is u8 in the fusevm
@@ -3875,13 +3847,11 @@ impl ZshCompiler {
                     let after = chars.get(e + 1);
                     matches!(after, Some('=') | Some('\u{8d}' /* Equals */))
                         || (after == Some(&'+')
-                            && matches!(
-                                chars.get(e + 2),
-                                Some('=') | Some('\u{8d}' /* Equals */)
-                            ))
+                            && matches!(chars.get(e + 2), Some('=') | Some('\u{8d}' /* Equals */)))
                 })
             };
-        let trigger_glob = !looks_like_kv_pair && (unquoted(s, '*')
+        let trigger_glob = !looks_like_kv_pair
+            && (unquoted(s, '*')
             || unquoted(s, '\u{87}')   // Star (parse/tokens.rs:14)
             || unquoted(s, '?')
             || unquoted(s, '\u{97}')   // Quest (parse/tokens.rs:30)
@@ -4110,10 +4080,8 @@ impl ZshCompiler {
                 let body_const = self.builder.add_constant(Value::str("$*"));
                 self.builder.emit(Op::LoadConst(body_const), 0);
                 self.builder.emit(Op::LoadInt(1), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 2), 0);
             }
             return;
         }
@@ -4181,8 +4149,8 @@ impl ZshCompiler {
             let mut found = false;
             for c in s.chars() {
                 match c {
-                    '\u{8f}' => depth += 1,                       // Inbrace
-                    '\u{90}' => depth = (depth - 1).max(0),       // Outbrace
+                    '\u{8f}' => depth += 1,                 // Inbrace
+                    '\u{90}' => depth = (depth - 1).max(0), // Outbrace
                     '\u{9d}' | '\u{9e}' if depth > 0 => {
                         found = true;
                         break;
@@ -4717,7 +4685,8 @@ impl ZshCompiler {
         // slow EXPAND_TEXT → multsub → paramsubst chain keeps the
         // single-string semantics intact. Bug #428.
         if !has_bnull {
-            let raw_dq_for_splice = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+            let raw_dq_for_splice =
+                s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
             let dq_for_splice = raw_dq_for_splice || self.dq_context_depth > 0;
             let is_star = array_splice_is_star(&untoked);
             // Force-join via the fast path only when (a) it's
@@ -4931,12 +4900,11 @@ impl ZshCompiler {
                     // integer literals so they still take the
                     // substring path.
                     let key_looks_like_assoc_lit = !key.is_empty()
-                        && key.chars().next().map_or(false, |c| {
-                            c == '_' || c.is_ascii_alphabetic()
-                        })
-                        && key.chars().all(|c| {
-                            c == '_' || c.is_ascii_alphanumeric()
-                        });
+                        && key
+                            .chars()
+                            .next()
+                            .map_or(false, |c| c == '_' || c.is_ascii_alphabetic())
+                        && key.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
                     if key_looks_like_assoc_lit {
                         // c:Src/subst.c:2867-2900 — the assoc-key case
                         // is NOT a simple empty: zsh runs the post-
@@ -4960,19 +4928,13 @@ impl ZshCompiler {
                         // (which carries the mathevali port at
                         // subst.rs:9580+) runs the same math eval as
                         // C zsh.
-                        if let Some(inner) = untoked
-                            .strip_prefix("${")
-                            .and_then(|s| s.strip_suffix('}'))
+                        if let Some(inner) =
+                            untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
                         {
-                            let body_const = self
-                                .builder
-                                .add_constant(Value::str(inner));
+                            let body_const = self.builder.add_constant(Value::str(inner));
                             self.builder.emit(Op::LoadConst(body_const), 0);
                             self.builder.emit(
-                                Op::CallBuiltin(
-                                    crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY,
-                                    1,
-                                ),
+                                Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
                                 0,
                             );
                         } else {
@@ -4980,8 +4942,7 @@ impl ZshCompiler {
                             self.builder.emit(Op::LoadConst(idx), 0);
                         }
                     } else {
-                        let body =
-                            format!("${{(t){}}}:$(({}-1)):1", base, key);
+                        let body = format!("${{(t){}}}:$(({}-1)):1", base, key);
                         let body_const = self.builder.add_constant(Value::str(body));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
@@ -5007,9 +4968,10 @@ impl ZshCompiler {
                 // paramsubst routing so the sort applies to the
                 // slice's elements rather than being skipped at the
                 // BUILTIN_ARRAY_INDEX scalar-collapse stage.
-                let key_is_slice_or_idx_flag =
-                    key.starts_with("(I)") || key.starts_with("(R)") || key.starts_with("(K)")
-                        || (key.contains(',') && !key.starts_with('('));
+                let key_is_slice_or_idx_flag = key.starts_with("(I)")
+                    || key.starts_with("(R)")
+                    || key.starts_with("(K)")
+                    || (key.contains(',') && !key.starts_with('('));
                 // c:Src/subst.c — single paramsubst call for the whole
                 // `${(flags)NAME[KEY]}` form is the C-faithful path:
                 // flag parsing, subscript flag dispatch (`getarg`), and
@@ -5156,8 +5118,10 @@ impl ZshCompiler {
                     let key_const = self.builder.add_constant(Value::str(key));
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSOC_HAS_KEY, 2), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ASSOC_HAS_KEY, 2),
+                        0,
+                    );
                     return;
                 }
                 if redundant {
@@ -5228,9 +5192,7 @@ impl ZshCompiler {
                 // subscript (r)/(R)/(i)/(I)) is fixed at subst.rs:9670
                 // — non-splat-subscript casmod now applies to `value`
                 // directly instead of refetching the source array.
-                if let Some(inner) =
-                    untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
-                {
+                if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
                     let body_const = self.builder.add_constant(Value::str(inner));
                     self.builder.emit(Op::LoadConst(body_const), 0);
                     self.builder.emit(
@@ -5323,7 +5285,8 @@ impl ZshCompiler {
                         // `[@]`, `[(I)]`, `[(R)]`, `[(K)]`) so escaping
                         // quoted metachars is correct in all cases
                         // that reach this gate.
-                        let inner_safe = strip_brace_wrap_for_bridge(s).unwrap_or_else(|| inner.to_string());
+                        let inner_safe =
+                            strip_brace_wrap_for_bridge(s).unwrap_or_else(|| inner.to_string());
                         // c:Src/subst.c:3032 — in DQ without `(@)`, the
                         // qt sepjoin runs BEFORE the SUB_FILTER getmatch
                         // at c:3540, so `"${(M)a:#pat}"` tests ONE joined
@@ -5334,10 +5297,9 @@ impl ZshCompiler {
                         // Without this, the filter ran per-element in DQ
                         // (zshrs printed "ha he hi" for
                         // `"${(M)a:#h?}"` where zsh prints "").
-                        let in_dq_ba = (s.starts_with('\u{9e}')
-                            && s.ends_with('\u{9e}')
-                            && s.len() >= 2)
-                            || self.dq_context_depth > 0;
+                        let in_dq_ba =
+                            (s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2)
+                                || self.dq_context_depth > 0;
                         let body_text = if in_dq_ba {
                             format!("\u{8c}{}", inner_safe)
                         } else {
@@ -5680,8 +5642,8 @@ impl ZshCompiler {
             // a `$(...)` body for run_command_substitution (BUILTIN_
             // CMD_SUBST_TEXT routes through it) — getoutput handles both
             // forms identically once the inner command text is isolated.
-            let cmdsub_inner =
-                strip_cmd_subst(&preserved_for_cmdsub).or_else(|| strip_backtick_subst(&preserved_for_cmdsub));
+            let cmdsub_inner = strip_cmd_subst(&preserved_for_cmdsub)
+                .or_else(|| strip_backtick_subst(&preserved_for_cmdsub));
             if let Some(inner) = cmdsub_inner {
                 let idx = self.builder.add_constant(Value::str(inner));
                 self.builder.emit(Op::LoadConst(idx), 0);
@@ -5730,9 +5692,9 @@ impl ZshCompiler {
         // fire on a literal like `a-b*`) — harmless, the flag stays clear
         // so APPLY passes through. Only the outermost word (word_seg_depth
         // == 0) brackets; recursive segment expansions don't.
-        let has_glob_meta = s.chars().any(|c| {
-            matches!(c, '*' | '?' | '[' | '\u{87}' | '\u{97}' | '\u{91}')
-        });
+        let has_glob_meta = s
+            .chars()
+            .any(|c| matches!(c, '*' | '?' | '[' | '\u{87}' | '\u{97}' | '\u{91}'));
         let has_default_op = s.contains('-') || s.contains('+') || s.contains('\u{9b}');
         let default_word_glob_bracket = self.word_seg_depth == 0
             && self.dq_context_depth == 0
@@ -5835,8 +5797,7 @@ impl ZshCompiler {
                 {
                     let mut in_sq = false;
                     let mut in_dq = false;
-                    let extglob =
-                        crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+                    let extglob = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
                     for seg in &segs {
                         let lit = match seg {
                             WordSegment::Literal(l) => l,
@@ -6387,19 +6348,18 @@ impl ZshCompiler {
         self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
         // c:Src/loop.c execfor → setloopvar (params.c:6362) — see
         // compile_for_words for the nameref-rebind rationale.
-        self.builder
-            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2),
+            0,
+        );
         let loop_var_abort = self.builder.emit(Op::JumpIfFalse(0), 0);
         // c:Src/exec.c::execlist:28+292 — restore `lineno` to the
         // for-statement's line before the per-iter trace; matches
         // execlist's save/restore around each body. See compile_for_words
         // for the equivalent fix on the named-list path.
+        self.builder.emit(Op::LoadInt(self.current_sublist_line), 0);
         self.builder
-            .emit(Op::LoadInt(self.current_sublist_line), 0);
-        self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
-            0,
-        );
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
         self.builder.emit(Op::Pop, 0);
         // xtrace: emit `name=value\n` per iteration. Direct port of
         // Src/loop.c:163-166. XTRACE_LINE no-ops when -x is off.
@@ -6540,10 +6500,7 @@ impl ZshCompiler {
             // `$` outside quotes.
             if has_unquoted_param_or_subst(word) {
                 self.builder.emit(
-                    Op::CallBuiltin(
-                        crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND,
-                        1,
-                    ),
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_EXPAND, 1),
                     0,
                 );
             }
@@ -6611,8 +6568,10 @@ impl ZshCompiler {
             // REBIND per iteration; Bool(false) return = zerr fired
             // (invalid self reference / read-only reference) → abort
             // the loop (C errflag check in execfor).
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LOOP_VAR, 2),
+                0,
+            );
             let aj = self.builder.emit(Op::JumpIfFalse(0), 0);
             loop_var_abort_jumps.push(aj);
             // c:Src/exec.c::execlist:28+292 — restore `lineno` to
@@ -6625,12 +6584,9 @@ impl ZshCompiler {
             // line. Reset to current_sublist_line (captured by
             // compile_sublist) so each iter's trace shows the for
             // line, matching zsh.
+            self.builder.emit(Op::LoadInt(self.current_sublist_line), 0);
             self.builder
-                .emit(Op::LoadInt(self.current_sublist_line), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
-                0,
-            );
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
             self.builder.emit(Op::Pop, 0);
             // xtrace: emit `name=value\n` per iteration. Direct port
             // of Src/loop.c:163-166:
@@ -6765,10 +6721,8 @@ impl ZshCompiler {
         // before the trace so each iter's cond/step line shows
         // the for-statement's line not the body's last line.
         self.builder.emit(Op::LoadInt(for_header_line), 0);
-        self.builder.emit(
-            Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
-            0,
-        );
+        self.builder
+            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
         self.builder.emit(Op::Pop, 0);
         if !cond.is_empty() {
             let txt = self.builder.add_constant(Value::str(untoked_cond.as_str()));
@@ -6818,10 +6772,8 @@ impl ZshCompiler {
             // Restore LINENO to the for-header line first (same
             // reason as the cond trace above).
             self.builder.emit(Op::LoadInt(for_header_line), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_SET_LINENO, 1), 0);
             self.builder.emit(Op::Pop, 0);
             let txt = self.builder.add_constant(Value::str(untoked_step.as_str()));
             self.builder.emit(Op::LoadConst(txt), 0);
@@ -6970,10 +6922,7 @@ impl ZshCompiler {
                     let pc = self.builder.add_constant(Value::str(raw));
                     self.builder.emit(Op::LoadConst(pc), 0);
                     self.builder.emit(
-                        Op::CallBuiltin(
-                            crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT,
-                            1,
-                        ),
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTE_TOKENIZED_OUTPUT, 1),
                         0,
                     );
                     self.builder.emit(Op::Concat, 0);
@@ -7040,10 +6989,8 @@ impl ZshCompiler {
                         let pat_const = self.builder.add_constant(Value::str(pattern.as_str()));
                         self.builder.emit(Op::LoadConst(pat_const), 0);
                         self.builder.emit(Op::LoadInt(4), 0);
-                        self.builder.emit(
-                            Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
-                            0,
-                        );
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0), 0);
                     } else {
                         for (sidx, seg) in segments.iter().enumerate() {
                             match seg {
@@ -7052,17 +6999,13 @@ impl ZshCompiler {
                                     self.builder.emit(Op::LoadConst(pc), 0);
                                     self.builder.emit(Op::LoadInt(4), 0);
                                     self.builder.emit(
-                                        Op::CallBuiltin(
-                                            crate::vm_helper::BUILTIN_EXPAND_TEXT,
-                                            0,
-                                        ),
+                                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
                                         0,
                                     );
                                 }
                                 PatSeg::Literal(text) => {
                                     let lit = crate::lex::untokenize(text);
-                                    let pc =
-                                        self.builder.add_constant(Value::str(lit.as_str()));
+                                    let pc = self.builder.add_constant(Value::str(lit.as_str()));
                                     self.builder.emit(Op::LoadConst(pc), 0);
                                 }
                             }
@@ -7455,10 +7398,8 @@ impl ZshCompiler {
         // as `[[ -n OP ]]` — the raw ESC + "OP" bytes leaked.
         let push_word = |s: &mut Self, word: &str| {
             s.compile_word_str(word);
-            s.builder.emit(
-                Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1),
-                0,
-            );
+            s.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1), 0);
             s.builder.emit(Op::Concat, 0);
         };
         // Pattern-op RHS variant — `=` / `==` / `!=` route through
@@ -7514,8 +7455,7 @@ impl ZshCompiler {
                     // COND_STRDEQ / COND_STRNEQ (`=`, `==`, `!=`)
                     // the RHS is the source pattern; render via
                     // quote_tokenized_output, not quotedzputs.
-                    let is_pattern_op =
-                        matches!(op_clean.as_str(), "=" | "==" | "!=");
+                    let is_pattern_op = matches!(op_clean.as_str(), "=" | "==" | "!=");
                     if is_pattern_op {
                         push_word_pattern(self, right);
                     } else {
@@ -7575,9 +7515,7 @@ impl ZshCompiler {
                     // runtime parses the subscript. Previously the operand
                     // was always emitted literally, so `[[ -v $n ]]` fed
                     // the runtime the raw text `$n` → "bad substitution".
-                    let has_dollar = arg
-                        .chars()
-                        .any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
+                    let has_dollar = arg.chars().any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
                     if has_dollar {
                         self.dq_context_depth += 1;
                         self.compile_word_str(arg);
@@ -7656,17 +7594,14 @@ impl ZshCompiler {
                         // literally. Mirrors the Unary `-v` arm — see the
                         // comment there. `[[ -v $n ]]` must check the
                         // variable named by $n, not the literal text $n.
-                        let has_dollar = op
-                            .chars()
-                            .any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
+                        let has_dollar = op.chars().any(|c| matches!(c as u32, 0x24 | 0x85 | 0x8c));
                         if has_dollar {
                             self.dq_context_depth += 1;
                             self.compile_word_str(op);
                             self.dq_context_depth -= 1;
                         } else {
                             let op_clean_arg = crate::lex::untokenize(op);
-                            let idx =
-                                self.builder.add_constant(Value::str(op_clean_arg.as_str()));
+                            let idx = self.builder.add_constant(Value::str(op_clean_arg.as_str()));
                             self.builder.emit(Op::LoadConst(idx), 0);
                         }
                     } else {
@@ -7836,8 +7771,7 @@ impl ZshCompiler {
                             let _ = brace;
                             // `~` may itself arrive as the Tilde token
                             // (U+0098) from the lexer.
-                            let is_tilde =
-                                |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0x98);
+                            let is_tilde = |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0x98);
                             is_tilde(cs.get(flag_at)) && !is_tilde(cs.get(flag_at + 1))
                         };
                         if segments.len() <= 1 {
@@ -7852,10 +7786,7 @@ impl ZshCompiler {
                             // would eat the leading `$` token.
                             if !tilde_glob(right) {
                                 self.builder.emit(
-                                    Op::CallBuiltin(
-                                        crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
-                                        1,
-                                    ),
+                                    Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
                                     0,
                                 );
                             }
@@ -7887,9 +7818,7 @@ impl ZshCompiler {
                                         // → `*`) so patcompile
                                         // treats them as globs.
                                         let lit = crate::lex::untokenize(text);
-                                        let c = self
-                                            .builder
-                                            .add_constant(Value::str(lit.as_str()));
+                                        let c = self.builder.add_constant(Value::str(lit.as_str()));
                                         self.builder.emit(Op::LoadConst(c), 0);
                                     }
                                 }
@@ -8168,8 +8097,10 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
                 let idx = self.builder.add_constant(Value::str(op));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1),
+                    0,
+                );
                 return;
             }
         };
@@ -8183,12 +8114,10 @@ impl ZshCompiler {
             // distinct from case's Src/loop.c:667 zerr. Dedicated
             // builtin instead of Op::StrMatch so the diagnostic path
             // splits per consumer.
-            "=" | "==" => {
-                self.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STRMATCH, 2),
-                    0,
-                )
-            }
+            "=" | "==" => self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STRMATCH, 2),
+                0,
+            ),
             "!=" => {
                 self.builder.emit(
                     Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_STRMATCH, 2),
@@ -8276,8 +8205,10 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
                 let idx = self.builder.add_constant(Value::str(op));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_UNKNOWN, 1),
+                    0,
+                );
                 0usize
             }
         };
@@ -8570,8 +8501,10 @@ impl ZshCompiler {
             let slot = ac.slot_for(name);
             let name_const = ac.builder.add_constant(Value::str(name.as_str()));
             ac.builder.emit(Op::LoadConst(name_const), 0);
-            ac.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_MATH_VAR, 1), 0);
+            ac.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_MATH_VAR, 1),
+                0,
+            );
             ac.builder.emit(Op::SetSlot(slot), 0);
         }
 
@@ -8996,7 +8929,10 @@ fn is_splice_expansion(s: &str) -> bool {
                 // matching `Z`, the DQ-wrapped form `"${(Z+c+)cmd}"` fell
                 // through to scalar concat and the split words got
                 // IFS-joined back into one arg. Bug #244 in docs/BUGS.md.
-                if flags.chars().any(|c| matches!(c, '@' | 'z' | 'Z' | 's' | 'f' | '0' | 'w')) {
+                if flags
+                    .chars()
+                    .any(|c| matches!(c, '@' | 'z' | 'Z' | 's' | 'f' | '0' | 'w'))
+                {
                     return true;
                 }
             }
@@ -9549,18 +9485,12 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         Some('~') | Some('\u{98}') => {
             let mut j = i + 2;
             // Optional second `~` for the `$~~NAME` toggle-off form.
-            if j < chars.len()
-                && (chars[j] == '~' || chars[j] == '\u{98}')
-            {
+            if j < chars.len() && (chars[j] == '~' || chars[j] == '\u{98}') {
                 j += 1;
             }
             // Optional trailing identifier.
-            if j < chars.len()
-                && (chars[j].is_ascii_alphabetic() || chars[j] == '_')
-            {
-                while j < chars.len()
-                    && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
-                {
+            if j < chars.len() && (chars[j].is_ascii_alphabetic() || chars[j] == '_') {
+                while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
                     j += 1;
                 }
             }
@@ -10469,7 +10399,9 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         // path already resolves these names (the quoted "${#-}"
         // form worked; only this unquoted parse rejected them and
         // fell through to a ${#}-shaped misparse printing argc).
-        if matches!(body, "-" | "?" | "$") || (!body.is_empty() && body.chars().all(|c| c.is_ascii_digit())) {
+        if matches!(body, "-" | "?" | "$")
+            || (!body.is_empty() && body.chars().all(|c| c.is_ascii_digit()))
+        {
             return Some(ParamModifier {
                 name: body.to_string(),
                 kind: ParamModifierKind::Length,
@@ -11625,12 +11557,14 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
     // NAME — ident chars only (subscripted / quoted names take the
     // generic path).
     let mut i = 0;
-    while i < chars.len()
-        && (chars[i] == '_' || chars[i].is_ascii_alphanumeric())
-    {
+    while i < chars.len() && (chars[i] == '_' || chars[i].is_ascii_alphanumeric()) {
         i += 1;
     }
-    if i == 0 || !chars.first().map_or(false, |c| *c == '_' || c.is_ascii_alphabetic()) {
+    if i == 0
+        || !chars
+            .first()
+            .map_or(false, |c| *c == '_' || c.is_ascii_alphabetic())
+    {
         return None;
     }
     let name_end = i;
@@ -11689,15 +11623,11 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
             // \u{8a}, NOT \u{89}; the first cut used \u{89} so a
             // `$(…)` element never re-balanced and the splitter
             // bailed as unbalanced, skipping the pack rewrite).
-            '(' | '\u{88}' | '\u{89}' | '{' | '\u{8f}' | '[' | '\u{91}'
-                if !in_sq && !in_dq =>
-            {
+            '(' | '\u{88}' | '\u{89}' | '{' | '\u{8f}' | '[' | '\u{91}' if !in_sq && !in_dq => {
                 depth += 1;
                 cur.push(c);
             }
-            ')' | '\u{8a}' | '\u{8b}' | '}' | '\u{90}' | ']' | '\u{92}'
-                if !in_sq && !in_dq =>
-            {
+            ')' | '\u{8a}' | '\u{8b}' | '}' | '\u{90}' | ']' | '\u{92}' if !in_sq && !in_dq => {
                 depth -= 1;
                 cur.push(c);
             }
@@ -11706,9 +11636,7 @@ fn split_typeset_paren_init(word: &str) -> Option<(String, Vec<String>)> {
                     elems.push(std::mem::take(&mut cur));
                 }
             }
-            ' ' | '\t' | '\n'
-                if !in_sq && !in_dq && !in_tick && depth == 0 =>
-            {
+            ' ' | '\t' | '\n' if !in_sq && !in_dq && !in_tick && depth == 0 => {
                 if !cur.is_empty() {
                     elems.push(std::mem::take(&mut cur));
                 }

@@ -29,9 +29,9 @@ use crate::ported::zsh_h::{
     Param, ScanFunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, FS_EVAL, FS_SOURCE, INTERACTIVE,
     ND_USERNAME, PM_ARRAY, PM_AUTOLOAD, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT, PM_HASHED, PM_HIDE,
     PM_HIDEVAL, PM_INTEGER, PM_LEFT, PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z,
-    PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE, PM_UNSET, PM_UPPER,
-    SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE, STAT_NOPRINT,
-    STAT_STOPPED,
+    PM_SCALAR, PM_SPECIAL, PM_TAGGED, PM_TIED, PM_TYPE, PM_UNALIASED, PM_UNIQUE, PM_UNSET,
+    PM_UPPER, SCANPM_MATCHVAL, SCANPM_WANTKEYS, SCANPM_WANTVALS, SP_RUNNING, STAT_DONE,
+    STAT_NOPRINT, STAT_STOPPED,
 };
 use crate::zsh_h::{shfunc, HASHED};
 use crate::DPUTS;
@@ -1607,9 +1607,7 @@ pub fn getbuiltin(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
     let (value, found) = if let Some(bn) = entry {
         // c:785 — `bn != NULL`. Check the DISABLED state.
         let is_disabled = {
-            let set = crate::ported::builtin::BUILTINS_DISABLED
-                .lock()
-                .ok();
+            let set = crate::ported::builtin::BUILTINS_DISABLED.lock().ok();
             set.map(|s| s.contains(name)).unwrap_or(false)
         };
         let dis_match = if dis != 0 {
@@ -1737,10 +1735,8 @@ pub fn scanbuiltins(
         // C is a hash table so re-adds collapse, but Vec iteration
         // here visits each occurrence. Dedup by name to match the
         // hash-table shape `${#builtins}` exposes.
-        let is_zsh_mode =
-            crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
-        let mut emitted: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let is_zsh_mode = crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed);
+        let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
         // c:825 — runtime DISABLED tracking lives in
         // BUILTINS_DISABLED (a HashSet maintained by `disable` /
         // `enable -r`). The BUILTINS slice's static `flags` field
@@ -1749,11 +1745,12 @@ pub fn scanbuiltins(
         // set instead so `${(k)dis_builtins}` reflects the user's
         // `disable` invocations (and `${(k)builtins}` correctly
         // omits disabled entries).
-        let disabled_set: std::collections::HashSet<String> = crate::ported::builtin::BUILTINS_DISABLED
-            .lock()
-            .ok()
-            .map(|g| g.iter().cloned().collect())
-            .unwrap_or_default();
+        let disabled_set: std::collections::HashSet<String> =
+            crate::ported::builtin::BUILTINS_DISABLED
+                .lock()
+                .ok()
+                .map(|g| g.iter().cloned().collect())
+                .unwrap_or_default();
         for b in BUILTINS.iter() {
             // c:823
             let is_disabled = disabled_set.contains(&b.node.nam); // c:825 hn->flags & DISABLED
@@ -1774,11 +1771,10 @@ pub fn scanbuiltins(
             if is_zsh_mode {
                 let owning_module: Option<&str> = match b.node.nam.as_str() {
                     // zsh/files (Src/Modules/files.c:806-824).
-                    "chmod" | "chgrp" | "chown" | "ln" | "mkdir" | "mv"
-                    | "rm" | "rmdir" | "sync" => Some("zsh/files"),
-                    "zf_chmod" | "zf_chgrp" | "zf_chown" | "zf_ln"
-                    | "zf_mkdir" | "zf_mv" | "zf_rm" | "zf_rmdir"
-                    | "zf_sync" => Some("zsh/files"),
+                    "chmod" | "chgrp" | "chown" | "ln" | "mkdir" | "mv" | "rm" | "rmdir"
+                    | "sync" => Some("zsh/files"),
+                    "zf_chmod" | "zf_chgrp" | "zf_chown" | "zf_ln" | "zf_mkdir" | "zf_mv"
+                    | "zf_rm" | "zf_rmdir" | "zf_sync" => Some("zsh/files"),
                     // zsh/zftp (Src/Modules/zftp.c).
                     "zftp" => Some("zsh/zftp"),
                     // zsh/net/tcp (Src/Modules/tcp.c).
@@ -1794,8 +1790,9 @@ pub fn scanbuiltins(
                     // zsh/zprof (Src/Modules/zprof.c).
                     "zprof" => Some("zsh/zprof"),
                     // zsh/system (Src/Modules/system.c).
-                    "zsystem" | "syserror" | "sysopen" | "sysread"
-                    | "sysseek" | "syswrite" => Some("zsh/system"),
+                    "zsystem" | "syserror" | "sysopen" | "sysread" | "sysseek" | "syswrite" => {
+                        Some("zsh/system")
+                    }
                     // zsh/clone (Src/Modules/clone.c).
                     "clone" => Some("zsh/clone"),
                     // zsh/curses (Src/Modules/curses.c).
@@ -1809,9 +1806,7 @@ pub fn scanbuiltins(
                     // zsh/cap (Src/Modules/cap.c).
                     "cap" | "getcap" | "setcap" => Some("zsh/cap"),
                     // zsh/attr (Src/Modules/attr.c).
-                    "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => {
-                        Some("zsh/attr")
-                    }
+                    "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => Some("zsh/attr"),
                     // zsh/datetime (Src/Modules/datetime.c).
                     "strftime" => Some("zsh/datetime"),
                     // zsh/param/private — Src/Modules/param_private.c:217.
@@ -1824,9 +1819,7 @@ pub fn scanbuiltins(
                     // `patdebug` / `nameref` — debug builtins in
                     // zshrs's BUILTINS table that have no upstream
                     // counterpart.
-                    "hashinfo" | "mem" | "patdebug" | "nameref" => {
-                        Some("__zshrs_only")
-                    }
+                    "hashinfo" | "mem" | "patdebug" | "nameref" => Some("__zshrs_only"),
                     // zsh/main core builtins.
                     _ => None,
                 };
@@ -2547,7 +2540,7 @@ pub fn getpmhistory(ht: *mut HashTable, name: &str) -> Option<Param> {
         None
     };
     let (val, found) = match value {
-        Some(v) => (v, true),       // c:1178
+        Some(v) => (v, true),           // c:1178
         None => (String::new(), false), // c:1180-1181
     };
     let pm = Box::new(param {
@@ -3318,7 +3311,7 @@ pub fn scanpmnameddirs(
                 }
                 let node = Box::new(hashnode {
                     next: None,
-                    nam: nam.clone(), // c:1630
+                    nam: nam.clone(),        // c:1630
                     flags: PM_SCALAR as i32, // c:1623 pm.node.flags
                 });
                 f(&node, flags); // c:1640

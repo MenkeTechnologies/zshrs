@@ -1507,9 +1507,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                                         chars[body_open..close_idx].iter().collect();
                                     let body_trim = body_src
                                         .trim_start_matches(|c: char| c.is_whitespace())
-                                        .trim_end_matches(|c: char| {
-                                            c.is_whitespace() || c == ';'
-                                        })
+                                        .trim_end_matches(|c: char| c.is_whitespace() || c == ';')
                                         .to_string();
                                     out.push_str(&name_str);
                                     out.push_str(" () {\n");
@@ -1521,9 +1519,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                                     // Consume trailing `;` and ws.
                                     let saved = i;
                                     while i < chars.len()
-                                        && (chars[i] == ' '
-                                            || chars[i] == '\t'
-                                            || chars[i] == ';')
+                                        && (chars[i] == ' ' || chars[i] == '\t' || chars[i] == ';')
                                     {
                                         i += 1;
                                     }
@@ -1548,17 +1544,10 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                                 _ => {}
                             }
                         }
-                        if !in_sq
-                            && !in_dq
-                            && brace_depth == 0
-                            && paren_depth == 0
-                            && c == ';'
-                        {
+                        if !in_sq && !in_dq && brace_depth == 0 && paren_depth == 0 && c == ';' {
                             i += 1;
                             while i < chars.len()
-                                && (chars[i] == ' '
-                                    || chars[i] == '\t'
-                                    || chars[i] == ';')
+                                && (chars[i] == ' ' || chars[i] == '\t' || chars[i] == ';')
                             {
                                 i += 1;
                             }
@@ -1576,21 +1565,14 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                 fn is_ident_byte(b: u8) -> bool {
                     b == b'_' || b.is_ascii_alphanumeric()
                 }
-                fn try_match_fn_def(
-                    chars: &[char],
-                    start: usize,
-                ) -> Option<(usize, String)> {
+                fn try_match_fn_def(chars: &[char], start: usize) -> Option<(usize, String)> {
                     // Skip leading `function ` keyword (optional).
                     let mut i = start;
                     let _function_prefix = {
                         let rest: String = chars[i..].iter().collect();
-                        if rest.starts_with("function ")
-                            || rest.starts_with("function\t")
-                        {
+                        if rest.starts_with("function ") || rest.starts_with("function\t") {
                             i += "function".len();
-                            while i < chars.len()
-                                && (chars[i] == ' ' || chars[i] == '\t')
-                            {
+                            while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
                                 i += 1;
                             }
                             true
@@ -1600,9 +1582,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     };
                     // Match identifier.
                     let name_start = i;
-                    while i < chars.len()
-                        && is_ident_byte(chars[i] as u8)
-                    {
+                    while i < chars.len() && is_ident_byte(chars[i] as u8) {
                         i += 1;
                     }
                     if i == name_start {
@@ -1617,8 +1597,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     // C zsh accepts `function name { ... }` without parens.
                     if i < chars.len() && chars[i] == '(' {
                         i += 1;
-                        while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t')
-                        {
+                        while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
                             i += 1;
                         }
                         if i >= chars.len() || chars[i] != ')' {
@@ -1647,9 +1626,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                     if !chars[i..i + kl].iter().copied().eq(kw.chars()) {
                         return false;
                     }
-                    let before_ok = i == 0
-                        || chars[i - 1].is_whitespace()
-                        || chars[i - 1] == ';';
+                    let before_ok = i == 0 || chars[i - 1].is_whitespace() || chars[i - 1] == ';';
                     let after_ok = i + kl == chars.len()
                         || chars[i + kl].is_whitespace()
                         || chars[i + kl] == ';';
@@ -1877,8 +1854,7 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                             }
                             i += 1;
                         }
-                        let body_src: String =
-                            chars[body_start..body_end].iter().collect();
+                        let body_src: String = chars[body_start..body_end].iter().collect();
                         let body_trim = body_src.trim().trim_end_matches(';').trim_end();
                         rendered.push('\n');
                         rendered.push_str(&indent_arm);
@@ -3159,7 +3135,16 @@ fn simple_glob_match(pattern: &str, name: &str) -> bool {
     // c:hashtable.c:412 — `scanmatchtable` callers pass a compiled
     // `Patprog`; this helper inlines the compile+match since callers
     // here have only the raw pattern string.
-    patcompile(&{ let mut __pat_tok = (pattern).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP as i32, None).map_or(false, |p| pattry(&p, name))
+    patcompile(
+        &{
+            let mut __pat_tok = (pattern).to_string();
+            crate::ported::glob::tokenize(&mut __pat_tok);
+            __pat_tok
+        },
+        PAT_HEAPDUP as i32,
+        None,
+    )
+    .map_or(false, |p| pattry(&p, name))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

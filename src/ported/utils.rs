@@ -1621,8 +1621,7 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
         let name_for_body = name.to_string();
         let body_args = args.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
-                .unwrap_or(0)
+            crate::ported::exec::run_function_body(&name_for_body, &body_args[1..]).unwrap_or(0)
         };
         ret = crate::ported::exec::doshfunc(&mut shf, args, true, body_runner);
         stat = 0; // c:1504
@@ -3990,7 +3989,15 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     // c:3173-3178 — compile CORRECT_IGNORE pattern if set.
     if let Some(ci) = getsparam("CORRECT_IGNORE") {
         // c:3173
-        let prog = patcompile(&{ let mut __pat_tok = (&ci).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None); // c:3176
+        let prog = patcompile(
+            &{
+                let mut __pat_tok = (&ci).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            PAT_HEAPDUP,
+            None,
+        ); // c:3176
         SPCK_PAT.with(|p| *p.borrow_mut() = prog);
     } else {
         SPCK_PAT.with(|p| *p.borrow_mut() = None); // c:3178
@@ -3998,7 +4005,15 @@ pub fn spckword(s: &mut String, hist: i32, cmd: i32, ask: i32) {
     // c:3180-3185 — compile CORRECT_IGNORE_FILE pattern if set.
     if let Some(ci) = getsparam("CORRECT_IGNORE_FILE") {
         // c:3180
-        let prog = patcompile(&{ let mut __pat_tok = (&ci).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_HEAPDUP, None); // c:3183
+        let prog = patcompile(
+            &{
+                let mut __pat_tok = (&ci).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            PAT_HEAPDUP,
+            None,
+        ); // c:3183
         SPCK_NAMEPAT.with(|p| *p.borrow_mut() = prog);
     } else {
         SPCK_NAMEPAT.with(|p| *p.borrow_mut() = None); // c:3185
@@ -4676,10 +4691,14 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     let mut si = 0usize;
     let mut t = si; // c:3729 — `t = s;`
     si = skipwsep_at(si); // c:3730 — `skipwsep(&s);`
-    // c:3732-3735 — leading-field handling.
+                          // c:3732-3735 — leading-field handling.
     if si < bytes.len() && isep_one(si) != si {
         // c:3733 — at an IFS-non-whitespace sep after skipping whitespace.
-        ret.push(if allownull { String::new() } else { nulstring() });
+        ret.push(if allownull {
+            String::new()
+        } else {
+            nulstring()
+        });
     } else if !allownull && t != si {
         // c:3734-3735 — leading IFS-whitespace was skipped → real "".
         ret.push(String::new());
@@ -4987,9 +5006,11 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
         None => {
             ifs_storage = match getsparam("IFS") {
                 // c:3938-3940 — set, first char not space (empty → "").
-                Some(ifs) if !ifs.starts_with(' ') => {
-                    ifs.chars().next().map(|c| c.to_string()).unwrap_or_default()
-                }
+                Some(ifs) if !ifs.starts_with(' ') => ifs
+                    .chars()
+                    .next()
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
                 // c:3941-3944 — unset (NULL) or leading space → " ".
                 _ => " ".to_string(),
             };
@@ -5111,8 +5132,7 @@ pub fn subst_string_by_func(
         let name_for_body = func_name.to_string();
         let body_args = args.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec::run_function_body(&name_for_body, &body_args[1..])
-                .unwrap_or(0)
+            crate::ported::exec::run_function_body(&name_for_body, &body_args[1..]).unwrap_or(0)
         };
         crate::ported::exec::doshfunc(&mut shf, args.clone(), true, body_runner)
     } else {
@@ -7704,11 +7724,11 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         // c:6533 — RCQUOTES: wrap entire string in `'…'`; each
         // embedded `'` becomes `''` (the rc-style doubled quote).
         out.push('\''); // c:6539
-        // c:6540-6547 — C walks METAFIED bytes; the Rust String is
-        // UTF-8, so the faithful transposition walks CHARS (a byte
-        // walk Latin-1-casts every multibyte char: em-dash E2 80 94
-        // became "â" + a token byte that downstream passes ate).
-        // Token chars (Dash U+009B, Meta U+0083) are codepoints here.
+                        // c:6540-6547 — C walks METAFIED bytes; the Rust String is
+                        // UTF-8, so the faithful transposition walks CHARS (a byte
+                        // walk Latin-1-casts every multibyte char: em-dash E2 80 94
+                        // became "â" + a token byte that downstream passes ate).
+                        // Token chars (Dash U+009B, Meta U+0083) are codepoints here.
         let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
         while i < chars_v.len() {
@@ -7746,8 +7766,8 @@ pub(crate) fn quotedzputs(s: &str) -> String {
         // strings". Tracks `inquote` so that `it's` becomes
         // `'it'\''s'` (no empty `''` runs).
         let mut inquote = false; // c:6466 (initialised at top of C fn)
-        // c:6579-6586 — char-wise decode, same transposition as the
-        // RCQUOTES arm above (C's byte walk is over metafied bytes).
+                                 // c:6579-6586 — char-wise decode, same transposition as the
+                                 // RCQUOTES arm above (C's byte walk is over metafied bytes).
         let chars_v: Vec<char> = s.chars().collect();
         let mut i = 0;
         while i < chars_v.len() {
@@ -8339,16 +8359,16 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     // keep the codepoint form. Bug #127.
                     if byte <= 0xff {
                         {
-                        // c:Src/utils.c metafy byte-encode step:
-                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                        let b_ = byte as u8;
-                        if b_ < 0x80 {
-                            result.push(b_ as char);
-                        } else {
-                            result.push('\u{83}');
-                            result.push(char::from(b_ ^ 32));
+                            // c:Src/utils.c metafy byte-encode step:
+                            // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                            let b_ = byte as u8;
+                            if b_ < 0x80 {
+                                result.push(b_ as char);
+                            } else {
+                                result.push('\u{83}');
+                                result.push(char::from(b_ ^ 32));
+                            }
                         }
-                    }
                     } else if let Some(c) = char::from_u32(byte) {
                         result.push(c);
                     }
@@ -8469,7 +8489,7 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
 
     let mut ds = init_dirsav(); // c:7405 — local fallback `struct dirsav ds`
     let used_local = d.is_none(); // tracks C's `d == &ds`
-    // c:7415-7418 — `if (!d) { init_dirsav(&ds); d = &ds; }`
+                                  // c:7415-7418 — `if (!d) { init_dirsav(&ds); d = &ds; }`
     let d: &mut dirsav = d.unwrap_or(&mut ds);
 
     let bytes = path.as_bytes();
@@ -8481,7 +8501,7 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
         level = -1; // c:7425
     } else {
         level = 0; // c:7431
-        // c:7432-7435 — record dev/ino of `.` if not already captured.
+                   // c:7432-7435 — record dev/ino of `.` if not already captured.
         if d.dev == 0 && d.ino == 0 {
             if let Ok(meta) = fs::metadata(".") {
                 d.dev = meta.dev(); // c:7433
@@ -8512,14 +8532,17 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
 
     // c:7453+ — hard path (HAVE_LSTAT + HAVE_FCHDIR).
     let mut close_dir = false; // c:7412
-    // c:7455-7460 — save the starting dir via an fd if we don't have one.
+                               // c:7455-7460 — save the starting dir via an fd if we don't have one.
     if d.dirfd < 0 {
         close_dir = true; // c:7456
         let dot = CString::new(".").unwrap();
         d.dirfd = unsafe { libc::open(dot.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY) }; // c:7457
         if d.dirfd < 0
             && zgetdir(Some(&mut *d)).is_some()
-            && d.dirname.as_deref().map(|s| !s.starts_with('/')).unwrap_or(false)
+            && d.dirname
+                .as_deref()
+                .map(|s| !s.starts_with('/'))
+                .unwrap_or(false)
         {
             // c:7458-7459 — cwd is relative; fall back to opening "..".
             let dotdot = CString::new("..").unwrap();
@@ -8531,7 +8554,10 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
     if bytes.first() == Some(&b'/') {
         let root = CString::new("/").unwrap();
         if unsafe { libc::chdir(root.as_ptr()) } < 0 {
-            zwarn(&format!("failed to chdir(/): {}", io::Error::last_os_error())); // c:7464
+            zwarn(&format!(
+                "failed to chdir(/): {}",
+                io::Error::last_os_error()
+            )); // c:7464
         }
     }
 
@@ -8611,7 +8637,7 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
     // c:7512-7548 — descent failed; restore the saved directory.
     if restoredir(&mut *d) != 0 {
         let restoreerr = io::Error::last_os_error(); // c:7513
-        // c:7519-7532 — restore failed too; force cwd to $HOME then "/".
+                                                     // c:7519-7532 — restore failed too; force cwd to $HOME then "/".
         let mut reached = false;
         for i in 0..2 {
             // c:7521-7527 — destination: $HOME on pass 0, "/" on pass 1.
@@ -8619,8 +8645,8 @@ pub fn lchdir(path: &str, d: Option<&mut dirsav>, hard: i32) -> i32 {
                 "/".to_string()
             } else {
                 match getsparam("HOME") {
-                    Some(h) => h,        // c:7526
-                    None => continue,    // c:7525 `if (!home) continue;`
+                    Some(h) => h,     // c:7526
+                    None => continue, // c:7525 `if (!home) continue;`
                 }
             };
             setsparam("PWD", &cdest); // c:7528-7529 `zsfree(pwd); pwd = ztrdup(cdest);`
@@ -9767,9 +9793,7 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                 result.push(val as char);
                 // c:utils.c:7172-7173 — same `%` doubling under
                 // GETKEY_PRINTF_PERCENT as the hex/octal arms.
-                if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
-                    && val == b'%'
-                {
+                if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0 && val == b'%' {
                     result.push('%');
                 }
             }
@@ -10094,8 +10118,14 @@ mod tests {
         // atime (times[0]) <= mtime (times[1]); both well past 0.
         let set_times = |atime: i64, mtime: i64| {
             let tv = [
-                libc::timeval { tv_sec: atime as libc::time_t, tv_usec: 0 },
-                libc::timeval { tv_sec: mtime as libc::time_t, tv_usec: 0 },
+                libc::timeval {
+                    tv_sec: atime as libc::time_t,
+                    tv_usec: 0,
+                },
+                libc::timeval {
+                    tv_sec: mtime as libc::time_t,
+                    tv_usec: 0,
+                },
             ];
             assert_eq!(unsafe { libc::utimes(cpath.as_ptr(), tv.as_ptr()) }, 0);
         };
@@ -10109,7 +10139,10 @@ mod tests {
 
         // c:1671-1675 — unread + newer than last check → "You have new mail."
         set_times(1_000_000, 2_000_000);
-        assert_eq!(checkmailpath(&[p.clone()]), vec!["You have new mail.".to_string()]);
+        assert_eq!(
+            checkmailpath(&[p.clone()]),
+            vec!["You have new mail.".to_string()]
+        );
 
         // c:1676-1698 — `PATH?message`: the message (here a literal) is emitted.
         assert_eq!(
@@ -10151,7 +10184,10 @@ mod tests {
             acc.chars().next().is_some_and(|c| c.is_lowercase()),
             "EACCES first letter must be lowercased: {acc:?}"
         );
-        assert!(!acc.contains("(os error"), "must be strerror, not io::Error: {acc:?}");
+        assert!(
+            !acc.contains("(os error"),
+            "must be strerror, not io::Error: {acc:?}"
+        );
 
         // c:359-364 — EIO is emitted verbatim (its message reads wrong
         // lowercased), so its first letter stays capitalized.
@@ -10191,7 +10227,7 @@ mod tests {
         // c:3632-3641 — ordinary (non-meta) delimiter: plain interposition.
         assert_eq!(zjoin(&v(&["a", "b", "c"]), ' '), "a b c");
         assert_eq!(zjoin(&v(&["foo"]), ':'), "foo"); // single elem, no delim
-        // c:3629-3630 — empty array → "".
+                                                     // c:3629-3630 — empty array → "".
         assert_eq!(zjoin(&v(&[]), ' '), "");
 
         // c:3634-3637 — NUL is imeta, so the separator is metafied, NOT a raw
@@ -10210,7 +10246,7 @@ mod tests {
     #[test]
     fn findsep_default_ifs_separators() {
         inittyptab(); // ISEP bits are set by the type table (c:4155)
-        // c:3814-3817 — advance to the first ISEP char, return 1.
+                      // c:3814-3817 — advance to the first ISEP char, return 1.
         let mut s = "foo bar".to_string();
         let mut pos = 0usize;
         assert_eq!(findsep(&mut s, &mut pos, None, false), 1);
@@ -10227,8 +10263,8 @@ mod tests {
     #[test]
     fn findsep_quote_strips_escaped_separator() {
         inittyptab(); // ISEP bits are set by the type table (c:4155)
-        // c:3795-3804 — `\<sep>` is not a separator; the backslash is
-        // stripped in place and the bare char is consumed into the word.
+                      // c:3795-3804 — `\<sep>` is not a separator; the backslash is
+                      // stripped in place and the bare char is consumed into the word.
         let mut s = "foo\\ bar".to_string(); // foo<bslash><space>bar
         let mut pos = 0usize;
         let r = findsep(&mut s, &mut pos, None, true);

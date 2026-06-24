@@ -395,11 +395,7 @@ pub fn evalcond(
                                 // operand: left if left failed, else
                                 // right. Bug #411.
                                 if let Some(name) = from_test {
-                                    let err = if parse_num(l).is_none() {
-                                        l
-                                    } else {
-                                        r
-                                    };
+                                    let err = if parse_num(l).is_none() { l } else { r };
                                     crate::ported::utils::zwarnnam(
                                         name,
                                         &format!("integer expression expected: {}", err),
@@ -573,7 +569,9 @@ pub fn evalcond(
     }
 
     let mut pos = 0usize;
-    let r = walk(&toks, &mut pos, options, variables, posix_mode, from_test, 0);
+    let r = walk(
+        &toks, &mut pos, options, variables, posix_mode, from_test, 0,
+    );
     if pos != toks.len() {
         2
     } else {
@@ -911,7 +909,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let vars = HashMap::new();
-        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false, None);
+        let r = evalcond(
+            &["abc123", "=~", "([a-z]+)([0-9]+)"],
+            &opts,
+            &vars,
+            false,
+            None,
+        );
         assert_eq!(r, 0);
         let m = getaparam("match");
         assert_eq!(
@@ -929,7 +933,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let opts = HashMap::new();
         let vars = HashMap::new();
-        let r = evalcond(&["abc123", "=~", "([a-z]+)([0-9]+)"], &opts, &vars, false, None);
+        let r = evalcond(
+            &["abc123", "=~", "([a-z]+)([0-9]+)"],
+            &opts,
+            &vars,
+            false,
+            None,
+        );
         assert_eq!(r, 0);
         let b = getaparam("mbegin");
         let e = getaparam("mend");
@@ -978,8 +988,14 @@ mod tests {
     fn test_string_compare() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["hello", "=", "hello"], &opts, &vars, true, None), 0);
-        assert_eq!(evalcond(&["hello", "!=", "world"], &opts, &vars, true, None), 0);
+        assert_eq!(
+            evalcond(&["hello", "=", "hello"], &opts, &vars, true, None),
+            0
+        );
+        assert_eq!(
+            evalcond(&["hello", "!=", "world"], &opts, &vars, true, None),
+            0
+        );
         assert_eq!(evalcond(&["abc", "<", "def"], &opts, &vars, true, None), 0);
         assert_eq!(evalcond(&["xyz", ">", "abc"], &opts, &vars, true, None), 0);
     }
@@ -1085,7 +1101,13 @@ mod tests {
         let mut f = File::create(&nonempty).unwrap();
         f.write_all(b"data").unwrap();
         assert_eq!(
-            evalcond(&["-s", nonempty.to_str().unwrap()], &opts, &vars, true, None),
+            evalcond(
+                &["-s", nonempty.to_str().unwrap()],
+                &opts,
+                &vars,
+                true,
+                None
+            ),
             0,
             "c:179 — `-s` must be true for non-empty file"
         );
@@ -1243,8 +1265,14 @@ mod tests {
     fn test_double_negation_cancels() {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
-        assert_eq!(evalcond(&["!", "!", "-n", "x"], &opts, &vars, true, None), 0);
-        assert_eq!(evalcond(&["!", "!", "-z", "x"], &opts, &vars, true, None), 1);
+        assert_eq!(
+            evalcond(&["!", "!", "-n", "x"], &opts, &vars, true, None),
+            0
+        );
+        assert_eq!(
+            evalcond(&["!", "!", "-z", "x"], &opts, &vars, true, None),
+            1
+        );
     }
 
     /// `Src/cond.c:81-185` — Implicit `-n` for a bare arg. `[[ foo ]]`
@@ -1336,7 +1364,10 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let (opts, vars) = empty_maps();
         // Balanced: ! ( -z "" )  →  ! true → false (1)
-        assert_eq!(evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true, None), 1);
+        assert_eq!(
+            evalcond(&["!", "(", "-z", "", ")"], &opts, &vars, true, None),
+            1
+        );
         // Missing close paren: error
         assert_eq!(
             evalcond(&["(", "-z", ""], &opts, &vars, true, None),
@@ -1749,7 +1780,13 @@ mod tests {
         File::create(&readable).unwrap();
         std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(
-            evalcond(&["-r", readable.to_str().unwrap()], &opts, &vars, false, None),
+            evalcond(
+                &["-r", readable.to_str().unwrap()],
+                &opts,
+                &vars,
+                false,
+                None
+            ),
             0,
             "ztst:117 — -r true for 0644 file",
         );

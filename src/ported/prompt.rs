@@ -756,8 +756,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // putpromptchar entry, mirroring C's read of the
                     // file-static cmdsp).
                     b'_' => {
-                        let cmdsp = prompt_tls::CMDSTACK
-                            .with(|c| c.borrow().len() as i32);
+                        let cmdsp = prompt_tls::CMDSTACK.with(|c| c.borrow().len() as i32);
                         if cmdsp >= arg {
                             test = 1;
                         }
@@ -1080,7 +1079,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let _ = tunsetattrs(TXTSTANDOUT);
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = tsetcap(crate::ported::zsh_h::TCSTANDOUTEND, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    let sgr = tsetcap(
+                        crate::ported::zsh_h::TCSTANDOUTEND,
+                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1103,7 +1105,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let _ = tsetattrs(TXTBOLDFACE);
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = tsetcap(crate::ported::zsh_h::TCBOLDFACEBEG, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    let sgr = tsetcap(
+                        crate::ported::zsh_h::TCBOLDFACEBEG,
+                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1125,7 +1130,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let _ = tunsetattrs(TXTBOLDFACE);
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = tsetcap(crate::ported::zsh_h::TCALLATTRSOFF, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    let sgr = tsetcap(
+                        crate::ported::zsh_h::TCALLATTRSOFF,
+                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1168,7 +1176,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let _ = tunsetattrs(TXTUNDERLINE);
                     *current_attrs_lock().lock().expect("current_attrs poisoned") =
                         *pending_attrs_lock().lock().expect("pending_attrs poisoned");
-                    let sgr = tsetcap(crate::ported::zsh_h::TCUNDERLINEEND, TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY);
+                    let sgr = tsetcap(
+                        crate::ported::zsh_h::TCUNDERLINEEND,
+                        TSC_PROMPT | crate::ported::zsh_h::TSC_DIRTY,
+                    );
                     for ch in sgr.chars() {
                         if ch == Inpar || ch == Outpar {
                             addbufspc(bv, 1);
@@ -1427,7 +1438,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         // (handled by ztrftime preprocessor at
                         // utils.rs:4279). zsh renders 9 AM as `9:06`,
                         // NOT `09:06`. Bug #619 sibling of #599.
-                        b'T' => tmfmt = "%K:%M".to_string(),    // c:715
+                        b'T' => tmfmt = "%K:%M".to_string(), // c:715
                         // c:718 — exact C source: `tmfmt = "%K:%M:%S";`.
                         b'*' => tmfmt = "%K:%M:%S".to_string(), // c:718
                         // c:721 — exact C source: `tmfmt = "%a %f";`.
@@ -1437,7 +1448,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         // which pads single-digit days with a space).
                         // zsh's `%w` renders as `Thu 4` not `Thu  4`.
                         // Bug #599.
-                        b'w' => tmfmt = "%a %f".to_string(),    // c:721
+                        b'w' => tmfmt = "%a %f".to_string(), // c:721
                         b'W' => tmfmt = "%m/%d/%y".to_string(), // c:724
                         b'D' => {
                             // c:727-746 — `%D{...}` format from braces;
@@ -1499,9 +1510,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // that backs $LINENO. Bug #618.
                     let ln = crate::ported::params::getsparam("LINENO")
                         .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or_else(|| {
-                            crate::ported::input::lineno.with(|l| l.get()) as i64
-                        });
+                        .unwrap_or_else(|| crate::ported::input::lineno.with(|l| l.get()) as i64);
                     stradd(bv, &ln.to_string());
                 }
                 // c:Src/prompt.c:889 — `%L` emits the current `$SHLVL`
@@ -1540,12 +1549,10 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     let nam = crate::ported::utils::scriptname_get()
                         .filter(|s: &String| !s.is_empty())
                         .or_else(|| {
-                            crate::ported::params::getsparam("ZSH_SCRIPT")
-                                .filter(|s| !s.is_empty())
+                            crate::ported::params::getsparam("ZSH_SCRIPT").filter(|s| !s.is_empty())
                         })
                         .or_else(|| {
-                            crate::ported::params::getsparam("ZSH_NAME")
-                                .filter(|s| !s.is_empty())
+                            crate::ported::params::getsparam("ZSH_NAME").filter(|s| !s.is_empty())
                         })
                         .unwrap_or_else(|| "zsh".to_string());
                     stradd(bv, &nam);
@@ -1574,8 +1581,8 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // which don't move on `source`, so `%x` stayed at
                 // "zsh" through .zshenv / .zshrc execution.
                 b'x' => {
-                    let in_fn_filename = prompt_tls::FUNCSTACK_FILENAME
-                        .with(|c| c.borrow().clone());
+                    let in_fn_filename =
+                        prompt_tls::FUNCSTACK_FILENAME.with(|c| c.borrow().clone());
                     let nam = if let Some(fname) = in_fn_filename {
                         // Inside a function (not a sourced top-level)
                         // — use funcstack->filename. Hydration at
@@ -1587,10 +1594,16 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     } else {
                         prompt_tls::SCRIPTFILENAME
                             .with(|c| c.borrow().clone())
-                            .or_else(|| prompt_tls::ARGEXTRA.with(|c| {
-                                let s = c.borrow().clone();
-                                if s.is_empty() { None } else { Some(s) }
-                            }))
+                            .or_else(|| {
+                                prompt_tls::ARGEXTRA.with(|c| {
+                                    let s = c.borrow().clone();
+                                    if s.is_empty() {
+                                        None
+                                    } else {
+                                        Some(s)
+                                    }
+                                })
+                            })
                             .unwrap_or_else(|| "zsh".to_string())
                     };
                     stradd(bv, &nam);
@@ -1782,11 +1795,7 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     } else {
                         crate::ported::exec::array("psvar").unwrap_or_default()
                     };
-                    let idx: i32 = if n < 0 {
-                        arr.len() as i32 + n
-                    } else {
-                        n - 1
-                    };
+                    let idx: i32 = if n < 0 { arr.len() as i32 + n } else { n - 1 };
                     if idx >= 0 && (idx as usize) < arr.len() {
                         stradd(bv, &arr[idx as usize]);
                     }
@@ -2140,10 +2149,9 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
     // (and each gets its own Inpar/Outpar wrap in TSC_PROMPT).
     if dirty {
         use crate::ported::zsh_h::{
-            TCBOLDFACEBEG, TCSTANDOUTBEG, TCUNDERLINEBEG, TXTBGCOLOUR, TXTBOLDFACE,
-            TXTFGCOLOUR, TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
-            TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
-            TXT_ATTR_FG_COL_SHIFT,
+            TCBOLDFACEBEG, TCSTANDOUTBEG, TCUNDERLINEBEG, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR,
+            TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
+            TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK, TXT_ATTR_FG_COL_SHIFT,
         };
         let cur = *current_attrs_lock().lock().expect("current_attrs poisoned");
         if cur & TXTBOLDFACE != 0 && cap != TCBOLDFACEBEG {
@@ -2434,9 +2442,7 @@ pub fn prompttrunc(
             bv.fm_pos += 1; // c:1614
         }
         // c:1616-1617 — `if (bv->truncwidth || !*bv->fm) return 0;`
-        if bv.truncwidth != 0
-            || bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == 0
-        {
+        if bv.truncwidth != 0 || bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == 0 {
             return 0;
         }
     }
@@ -3775,19 +3781,17 @@ pub fn expand_prompt(s: &str) -> String {
     //   status (preserve user-interrupt bit per c:210).
     let s_owned: String;
     let s = if crate::ported::zsh_h::isset(crate::ported::zsh_h::PROMPTSUBST) {
-        let saved_errflag = crate::ported::utils::errflag
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let saved_lastval = crate::ported::builtin::LASTVAL
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let saved_errflag =
+            crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
+        let saved_lastval =
+            crate::ported::builtin::LASTVAL.load(std::sync::atomic::Ordering::Relaxed);
         s_owned = crate::ported::subst::singsub(s);
-        let cur = crate::ported::utils::errflag
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let cur = crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed);
         crate::ported::utils::errflag.store(
             saved_errflag | (cur & crate::ported::zsh_h::ERRFLAG_INT),
             std::sync::atomic::Ordering::Relaxed,
         );
-        crate::ported::builtin::LASTVAL
-            .store(saved_lastval, std::sync::atomic::Ordering::Relaxed);
+        crate::ported::builtin::LASTVAL.store(saved_lastval, std::sync::atomic::Ordering::Relaxed);
         s_owned.as_str()
     } else {
         s
@@ -4056,9 +4060,7 @@ mod tests {
     /// prefix when a masked attribute is off in `atr`.
     #[test]
     fn output_highlight_emits_spec_not_sgr() {
-        use crate::ported::zsh_h::{
-            TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT,
-        };
+        use crate::ported::zsh_h::{TXTBOLDFACE, TXTFGCOLOUR, TXTUNDERLINE, TXT_ATTR_FG_COL_SHIFT};
         // fg=red (colour index 1) → "fg=red", not an SGR escape.
         let atr = TXTFGCOLOUR | (1u64 << TXT_ATTR_FG_COL_SHIFT);
         assert_eq!(output_highlight(atr, TXTFGCOLOUR), "fg=red");
@@ -4886,11 +4888,15 @@ mod tests {
         crate::ported::params::setsparam("PWD", "/home/user/work");
         let out = expand_prompt("%~");
         if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", &h); }
+            unsafe {
+                std::env::set_var("HOME", &h);
+            }
             crate::ported::params::setsparam("HOME", &h);
         }
         if let Some(p) = saved_pwd {
-            unsafe { std::env::set_var("PWD", &p); }
+            unsafe {
+                std::env::set_var("PWD", &p);
+            }
             crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "~/work");
@@ -4913,14 +4919,21 @@ mod tests {
         crate::ported::params::setsparam("PWD", "/homexyz/work");
         let out = expand_prompt("%~");
         if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", &h); }
+            unsafe {
+                std::env::set_var("HOME", &h);
+            }
             crate::ported::params::setsparam("HOME", &h);
         }
         if let Some(p) = saved_pwd {
-            unsafe { std::env::set_var("PWD", &p); }
+            unsafe {
+                std::env::set_var("PWD", &p);
+            }
             crate::ported::params::setsparam("PWD", &p);
         }
-        assert_eq!(out, "/homexyz/work", "partial home prefix must not tilde-abbreviate");
+        assert_eq!(
+            out, "/homexyz/work",
+            "partial home prefix must not tilde-abbreviate"
+        );
     }
 
     /// `%d` is the raw pwd with no tilde substitution (c:515-518).
@@ -4928,11 +4941,15 @@ mod tests {
     fn putpromptchar_d_emits_raw_pwd() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/tmp/x"); }
+        unsafe {
+            std::env::set_var("PWD", "/tmp/x");
+        }
         crate::ported::params::setsparam("PWD", "/tmp/x");
         let out = expand_prompt("%d");
         if let Some(p) = saved {
-            unsafe { std::env::set_var("PWD", &p); }
+            unsafe {
+                std::env::set_var("PWD", &p);
+            }
             crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "/tmp/x");
@@ -4971,11 +4988,15 @@ mod tests {
         crate::ported::params::setsparam("PWD", "/home/u/proj/src");
         let out = expand_prompt("%c");
         if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", &h); }
+            unsafe {
+                std::env::set_var("HOME", &h);
+            }
             crate::ported::params::setsparam("HOME", &h);
         }
         if let Some(p) = saved_pwd {
-            unsafe { std::env::set_var("PWD", &p); }
+            unsafe {
+                std::env::set_var("PWD", &p);
+            }
             crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "src");
@@ -4986,11 +5007,15 @@ mod tests {
     fn putpromptchar_2c_emits_two_trailing_components() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/a/b/c/d"); }
+        unsafe {
+            std::env::set_var("PWD", "/a/b/c/d");
+        }
         crate::ported::params::setsparam("PWD", "/a/b/c/d");
         let out = expand_prompt("%2c");
         if let Some(p) = saved {
-            unsafe { std::env::set_var("PWD", &p); }
+            unsafe {
+                std::env::set_var("PWD", &p);
+            }
             crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "c/d");
@@ -5164,11 +5189,15 @@ mod tests {
     fn putpromptchar_plain_text_between_escapes_preserved() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("USER").ok();
-        unsafe { std::env::set_var("USER", "bob"); }
+        unsafe {
+            std::env::set_var("USER", "bob");
+        }
         crate::ported::params::setsparam("USER", "bob");
         let out = expand_prompt("user=%n done");
         if let Some(u) = saved {
-            unsafe { std::env::set_var("USER", &u); }
+            unsafe {
+                std::env::set_var("USER", &u);
+            }
             crate::ported::params::setsparam("USER", &u);
         }
         assert_eq!(out, "user=bob done");
@@ -5290,7 +5319,10 @@ mod tests {
     fn putpromptchar_truncation_bracket_truncates_to_width() {
         let _g = crate::test_util::global_state_lock();
         let out = expand_prompt("%5[a]bcdef");
-        assert!(out.len() <= 5, "%5[a] should truncate to width 5, got {out:?}");
+        assert!(
+            out.len() <= 5,
+            "%5[a] should truncate to width 5, got {out:?}"
+        );
     }
 
     /// GAP: `%T` time-of-day in HH:MM (c:778-782 strftime). Requires
@@ -5397,13 +5429,17 @@ mod tests {
     fn putpromptchar_uppercase_C_trailing_no_tilde() {
         let _g = crate::test_util::global_state_lock();
         let saved = std::env::var("PWD").ok();
-        unsafe { std::env::set_var("PWD", "/a/b/c"); }
+        unsafe {
+            std::env::set_var("PWD", "/a/b/c");
+        }
         // sync_from_globals reads PWD from paramtab first; stamp it
         // too so a prior test that wrote PWD doesn't shadow the env.
         crate::ported::params::setsparam("PWD", "/a/b/c");
         let out = expand_prompt("%C");
         if let Some(p) = saved {
-            unsafe { std::env::set_var("PWD", &p); }
+            unsafe {
+                std::env::set_var("PWD", &p);
+            }
             crate::ported::params::setsparam("PWD", &p);
         }
         assert_eq!(out, "c", "%C with default arg=1 → last component");
@@ -5686,10 +5722,16 @@ mod tests {
         assert!(
             n == 4 || n == 5,
             "%T → 'H:MM' or 'HH:MM' (4 or 5 chars), got {:?} (len {})",
-            got, n
+            got,
+            n
         );
         let colon_at = n - 3;
-        assert_eq!(&got[colon_at..colon_at + 1], ":", "colon at H/HH boundary in {:?}", got);
+        assert_eq!(
+            &got[colon_at..colon_at + 1],
+            ":",
+            "colon at H/HH boundary in {:?}",
+            got
+        );
     }
 
     /// c:Src/prompt.c:718 — `%*` (HH:MM:SS time).
@@ -5704,11 +5746,24 @@ mod tests {
         assert!(
             n == 7 || n == 8,
             "%* → 'H:MM:SS' or 'HH:MM:SS' (7 or 8 chars), got {:?} (len {})",
-            got, n
+            got,
+            n
         );
         // Last colon always at offset n-3, first at n-6.
-        assert_eq!(&got[n - 3..n - 2], ":", "second colon at offset {} in {:?}", n - 3, got);
-        assert_eq!(&got[n - 6..n - 5], ":", "first colon at offset {} in {:?}", n - 6, got);
+        assert_eq!(
+            &got[n - 3..n - 2],
+            ":",
+            "second colon at offset {} in {:?}",
+            n - 3,
+            got
+        );
+        assert_eq!(
+            &got[n - 6..n - 5],
+            ":",
+            "first colon at offset {} in {:?}",
+            n - 6,
+            got
+        );
     }
 
     /// c:Src/prompt.c:727-746 — `%D{fmt}` (strftime with user fmt).

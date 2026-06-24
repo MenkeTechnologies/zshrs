@@ -641,7 +641,7 @@ pub fn vireplacechars() -> i32 {
                 b = zlell; // c:618-619
             }
             n = (b - a) as i32; // c:620 `n = b - a`
-            // c:621-624 — count displayed chars in the range.
+                                // c:621-624 — count displayed chars in the range.
             let mut aa = a;
             while aa < b {
                 newchars += 1; // c:622

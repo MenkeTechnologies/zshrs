@@ -8963,9 +8963,8 @@ pub(crate) fn zcalc(args: &[String]) -> i32 {
         // A leading `-` followed only by alphabetic flag letters is an
         // option bundle; anything else (a bare expression, a negative
         // number like `-5+3`) ends the option scan.
-        let is_opt = a.len() > 1
-            && a.starts_with('-')
-            && a[1..].chars().all(|c| c.is_ascii_alphabetic());
+        let is_opt =
+            a.len() > 1 && a.starts_with('-') && a[1..].chars().all(|c| c.is_ascii_alphabetic());
         if !is_opt {
             break;
         }

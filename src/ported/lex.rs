@@ -2450,9 +2450,11 @@ fn gettokstr(c: char, sub: bool) -> lextok {
         // one (alias expansion can desynchronize them, per the C
         // comment "Just go with it, OK?").
         let lar = LEX_LEX_ADD_RAW.get();
-        LEX_LEX_ADD_RAW.set(LEX_LEXBUF_RAW.with_borrow(|b| {
-            (b.len > 0 && b.ptr.as_deref().unwrap_or("").ends_with('}')) as i32
-        }));
+        LEX_LEX_ADD_RAW.set(
+            LEX_LEXBUF_RAW.with_borrow(|b| {
+                (b.len > 0 && b.ptr.as_deref().unwrap_or("").ends_with('}')) as i32
+            }),
+        );
         // c:1465-1466 — `lexbuf.ptr--; lexbuf.len--;`
         LEX_LEXBUF.with_borrow_mut(|b| {
             b.pop();
@@ -3332,8 +3334,9 @@ pub fn exalias() -> bool {
         // `[[ x == "}" ]]` and `echo "}"` both used to silently
         // discard the `}` because exalias promoted the quoted `}`
         // to OUTBRACE_TOK.
-        let tokstr_has_quote_marker = tokstr.chars().any(|c|
-            c == Snull || c == Dnull || c == Bnull);
+        let tokstr_has_quote_marker = tokstr
+            .chars()
+            .any(|c| c == Snull || c == Dnull || c == Bnull);
         let is_close_brace_special = lextext == "}"
             && unset(IGNOREBRACES)
             && unset(IGNORECLOSEBRACES)
@@ -3386,10 +3389,7 @@ pub fn exalias() -> bool {
             // lex.c:2010-2012 — `]]` closes the cond expression.
             set_tok(DOUTBRACK);
             LEX_INCOND.set(0);
-        } else if LEX_INCOND.get() == 1
-            && lextext == "!"
-            && !tokstr_has_quote_marker
-        {
+        } else if LEX_INCOND.get() == 1 && lextext == "!" && !tokstr_has_quote_marker {
             // lex.c:2013-2014 — `!` inside `[[ ]]` is the Bang
             // negation, not a literal. Gate on
             // `tokstr_has_quote_marker` so QUOTED `"!"` (which
@@ -3648,13 +3648,8 @@ fn skipcomm() -> Result<(), ()> {
         let iswhite = crate::ztype_h::inblank(c as u8);
 
         // Word boundary keyword tracking.
-        let is_word_terminator = iswhite
-            || c == '\n'
-            || c == ';'
-            || c == '&'
-            || c == '|'
-            || c == '('
-            || c == ')';
+        let is_word_terminator =
+            iswhite || c == '\n' || c == ';' || c == '&' || c == '|' || c == '(' || c == ')';
         if is_word_terminator && !word_buf.is_empty() {
             match word_buf.as_str() {
                 "case" => case_pending = 1,
@@ -4002,40 +3997,39 @@ pub fn set_incasepat(v: i32) {
 /// matching C exactly.
 #[allow(non_upper_case_globals)]
 pub static tokstrings: [Option<&'static str>; (WHILE + 1) as usize] = {
-    let mut t: [Option<&'static str>; (WHILE + 1) as usize] =
-        [None; (WHILE + 1) as usize];
-    t[SEPER as usize] = Some(";");           // c:173
-    t[NEWLIN as usize] = Some("\\n");        // c:174
-    t[SEMI as usize] = Some(";");            // c:175
-    t[DSEMI as usize] = Some(";;");          // c:176
-    t[AMPER as usize] = Some("&");           // c:177
-    t[INPAR_TOK as usize] = Some("(");       // c:178
-    t[OUTPAR_TOK as usize] = Some(")");      // c:179
-    t[DBAR as usize] = Some("||");           // c:180
-    t[DAMPER as usize] = Some("&&");         // c:181
-    t[OUTANG_TOK as usize] = Some(">");      // c:182
-    t[OUTANGBANG as usize] = Some(">|");     // c:183
-    t[DOUTANG as usize] = Some(">>");        // c:184
-    t[DOUTANGBANG as usize] = Some(">>|");   // c:185
-    t[INANG_TOK as usize] = Some("<");       // c:186
-    t[INOUTANG as usize] = Some("<>");       // c:187
-    t[DINANG as usize] = Some("<<");         // c:188
-    t[DINANGDASH as usize] = Some("<<-");    // c:189
-    t[INANGAMP as usize] = Some("<&");       // c:190
-    t[OUTANGAMP as usize] = Some(">&");      // c:191
-    t[AMPOUTANG as usize] = Some("&>");      // c:192
+    let mut t: [Option<&'static str>; (WHILE + 1) as usize] = [None; (WHILE + 1) as usize];
+    t[SEPER as usize] = Some(";"); // c:173
+    t[NEWLIN as usize] = Some("\\n"); // c:174
+    t[SEMI as usize] = Some(";"); // c:175
+    t[DSEMI as usize] = Some(";;"); // c:176
+    t[AMPER as usize] = Some("&"); // c:177
+    t[INPAR_TOK as usize] = Some("("); // c:178
+    t[OUTPAR_TOK as usize] = Some(")"); // c:179
+    t[DBAR as usize] = Some("||"); // c:180
+    t[DAMPER as usize] = Some("&&"); // c:181
+    t[OUTANG_TOK as usize] = Some(">"); // c:182
+    t[OUTANGBANG as usize] = Some(">|"); // c:183
+    t[DOUTANG as usize] = Some(">>"); // c:184
+    t[DOUTANGBANG as usize] = Some(">>|"); // c:185
+    t[INANG_TOK as usize] = Some("<"); // c:186
+    t[INOUTANG as usize] = Some("<>"); // c:187
+    t[DINANG as usize] = Some("<<"); // c:188
+    t[DINANGDASH as usize] = Some("<<-"); // c:189
+    t[INANGAMP as usize] = Some("<&"); // c:190
+    t[OUTANGAMP as usize] = Some(">&"); // c:191
+    t[AMPOUTANG as usize] = Some("&>"); // c:192
     t[OUTANGAMPBANG as usize] = Some("&>|"); // c:193
-    t[DOUTANGAMP as usize] = Some(">>&");    // c:194
+    t[DOUTANGAMP as usize] = Some(">>&"); // c:194
     t[DOUTANGAMPBANG as usize] = Some(">>&|"); // c:195
-    t[TRINANG as usize] = Some("<<<");       // c:196
-    t[BAR_TOK as usize] = Some("|");         // c:197
-    t[BARAMP as usize] = Some("|&");         // c:198
-    t[INOUTPAR as usize] = Some("()");       // c:199
-    t[DINPAR as usize] = Some("((");         // c:200
-    t[DOUTPAR as usize] = Some("))");        // c:201
-    t[AMPERBANG as usize] = Some("&|");      // c:202
-    t[SEMIAMP as usize] = Some(";&");        // c:203
-    t[SEMIBAR as usize] = Some(";|");        // c:204
+    t[TRINANG as usize] = Some("<<<"); // c:196
+    t[BAR_TOK as usize] = Some("|"); // c:197
+    t[BARAMP as usize] = Some("|&"); // c:198
+    t[INOUTPAR as usize] = Some("()"); // c:199
+    t[DINPAR as usize] = Some("(("); // c:200
+    t[DOUTPAR as usize] = Some("))"); // c:201
+    t[AMPERBANG as usize] = Some("&|"); // c:202
+    t[SEMIAMP as usize] = Some(";&"); // c:203
+    t[SEMIBAR as usize] = Some(";|"); // c:204
     t
 };
 
@@ -4533,16 +4527,16 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                         // bytes); metafied per c:Src/utils.c:7289-
                         // 7294. Bug #127.
                         {
-                        // c:Src/utils.c metafy byte-encode step:
-                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                        let b_ = (val & 0xff) as u8;
-                        if b_ < 0x80 {
-                            out.push(b_ as char);
-                        } else {
-                            out.push('\u{83}');
-                            out.push(char::from(b_ ^ 32));
+                            // c:Src/utils.c metafy byte-encode step:
+                            // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                            let b_ = (val & 0xff) as u8;
+                            if b_ < 0x80 {
+                                out.push(b_ as char);
+                            } else {
+                                out.push('\u{83}');
+                                out.push(char::from(b_ ^ 32));
+                            }
                         }
-                    }
                     }
                     i += consumed;
                 }
@@ -4681,16 +4675,16 @@ fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
                     // masking) keep the codepoint form. Bug #127.
                     if byte <= 0xff {
                         {
-                        // c:Src/utils.c metafy byte-encode step:
-                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                        let b_ = byte as u8;
-                        if b_ < 0x80 {
-                            out.push(b_ as char);
-                        } else {
-                            out.push('\u{83}');
-                            out.push(char::from(b_ ^ 32));
+                            // c:Src/utils.c metafy byte-encode step:
+                            // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                            let b_ = byte as u8;
+                            if b_ < 0x80 {
+                                out.push(b_ as char);
+                            } else {
+                                out.push('\u{83}');
+                                out.push(char::from(b_ ^ 32));
+                            }
                         }
-                    }
                     } else {
                         ch = char::from_u32(byte).unwrap_or('\0');
                         out.push(ch);
@@ -6172,8 +6166,8 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                INPAR_TOK, INPAR_TOK, STRING_LEX, BAR_TOK, OUTPAR_TOK,
-                STRING_LEX, OUTPAR_TOK, ENDINPUT
+                INPAR_TOK, INPAR_TOK, STRING_LEX, BAR_TOK, OUTPAR_TOK, STRING_LEX, OUTPAR_TOK,
+                ENDINPUT
             ],
             "((a|)b) must emit two OUTPAR tokens — the inner one is \
              what cmd_or_math's `hungetc(')')` restore (c:lex.c:511-518) \
@@ -6192,10 +6186,7 @@ mod tests {
         let kinds = collect_lex_kinds("(a|)b");
         assert_eq!(
             kinds,
-            vec![
-                INPAR_TOK, STRING_LEX, BAR_TOK, OUTPAR_TOK,
-                STRING_LEX, ENDINPUT
-            ],
+            vec![INPAR_TOK, STRING_LEX, BAR_TOK, OUTPAR_TOK, STRING_LEX, ENDINPUT],
             "(a|)b single-paren alt — five tokens, no `((` math probe"
         );
     }
@@ -6210,10 +6201,7 @@ mod tests {
         let kinds = collect_lex_kinds("((a)b)");
         assert_eq!(
             kinds,
-            vec![
-                INPAR_TOK, INPAR_TOK, STRING_LEX, OUTPAR_TOK,
-                STRING_LEX, OUTPAR_TOK, ENDINPUT
-            ],
+            vec![INPAR_TOK, INPAR_TOK, STRING_LEX, OUTPAR_TOK, STRING_LEX, OUTPAR_TOK, ENDINPUT],
             "((a)b) — two OUTPARs preserved through cmd_or_math rewind"
         );
     }
@@ -6268,12 +6256,7 @@ pub fn untokenize_ztokens(s: &str) -> String {
             // c:2089 — `if (c != Nularg) *p++ = ztokens[c - Pound];`
             if c != crate::ported::zsh_h::Nularg {
                 let idx = (cu - 0x84) as usize;
-                result.push(
-                    crate::ported::lex::ztokens
-                        .chars()
-                        .nth(idx)
-                        .unwrap_or(c),
-                );
+                result.push(crate::ported::lex::ztokens.chars().nth(idx).unwrap_or(c));
             }
         } else {
             result.push(c);

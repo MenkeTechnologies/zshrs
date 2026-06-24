@@ -713,13 +713,13 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                           // c:405-414 — install $MATCH (or -v target) + $match (or -a
                           // receptacle). C uses zpcre_get_substrings which calls
                           // setsparam / setaparam directly; Rust mirrors that.
-        // c:179-182 — -b: write the match start/end byte offsets to
-        // $ZPCRE_OP as "start end" (relative to the whole subject,
-        // honoring the -n start offset). Prior port read the
-        // want_offset_pair flag but discarded it (`let _ = ...`), so
-        // `pcre_match -b` left $ZPCRE_OP unset and downstream scripts
-        // (zsh-syntax-highlighting + zsh-autosuggestions both consume
-        // this) saw stale values from prior invocations.
+                          // c:179-182 — -b: write the match start/end byte offsets to
+                          // $ZPCRE_OP as "start end" (relative to the whole subject,
+                          // honoring the -n start offset). Prior port read the
+                          // want_offset_pair flag but discarded it (`let _ = ...`), so
+                          // `pcre_match -b` left $ZPCRE_OP unset and downstream scripts
+                          // (zsh-syntax-highlighting + zsh-autosuggestions both consume
+                          // this) saw stale values from prior invocations.
         if want_offset_pair != 0 {
             if let Some((s, e)) = full_range {
                 let zop = format!("{} {}", s + search_base_offset, e + search_base_offset);
@@ -747,10 +747,10 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             subs.insert(0, full_match.clone().unwrap_or_default());
         }
         crate::ported::params::setaparam(receptacle, subs); // c:212
-        // c:215-231 — named-captures assoc. The c:216 `&& ncount` gate
-        // means the assoc is touched ONLY when the pattern actually
-        // declares named groups — a pattern without names leaves the
-        // -A target (default `.pcre.match` per c:350) untouched.
+                                                            // c:215-231 — named-captures assoc. The c:216 `&& ncount` gate
+                                                            // means the assoc is touched ONLY when the pattern actually
+                                                            // declares named groups — a pattern without names leaves the
+                                                            // -A target (default `.pcre.match` per c:350) untouched.
         if !named_pairs.is_empty() {
             if let Some(na) = named {
                 crate::ported::params::sethparam(na, named_pairs); // c:230
@@ -884,12 +884,11 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                         let ksharr = isset(KSHARRAYS) as i64;
                         if let Some(m0) = caps.get(0) {
                             crate::ported::params::setsparam("MATCH", m0.as_str()); // c:190
-                            // c:243-261 — char-offset MBEGIN/MEND over the
-                            // unmetafied subject (MB_CHARLEN walk ⟺
-                            // chars().count() on the UTF-8 String).
+                                                                                    // c:243-261 — char-offset MBEGIN/MEND over the
+                                                                                    // unmetafied subject (MB_CHARLEN walk ⟺
+                                                                                    // chars().count() on the UTF-8 String).
                             let beg_chars = lhs_plain[..m0.start()].chars().count() as i64;
-                            let len_chars =
-                                lhs_plain[m0.start()..m0.end()].chars().count() as i64;
+                            let len_chars = lhs_plain[m0.start()..m0.end()].chars().count() as i64;
                             crate::ported::params::setiparam("MBEGIN", beg_chars + 1 - ksharr); // c:252
                             crate::ported::params::setiparam(
                                 "MEND",
@@ -907,14 +906,12 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                                 match caps.get(i) {
                                     Some(m) => {
                                         subs.push(m.as_str().to_string()); // c:209
-                                        let b =
-                                            lhs_plain[..m.start()].chars().count() as i64;
-                                        let l = lhs_plain[m.start()..m.end()]
-                                            .chars()
-                                            .count()
-                                            as i64;
+                                        let b = lhs_plain[..m.start()].chars().count() as i64;
+                                        let l =
+                                            lhs_plain[m.start()..m.end()].chars().count() as i64;
                                         mbegin_arr.push((b + 1 - ksharr).to_string()); // c:286
-                                        mend_arr.push((b + l - ksharr).to_string()); // c:296
+                                        mend_arr.push((b + l - ksharr).to_string());
+                                        // c:296
                                     }
                                     None => {
                                         // Unparticipated group: empty match
@@ -945,7 +942,8 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                         }
                     }
                     if !named_kv.is_empty() {
-                        crate::ported::params::sethparam(".pcre.match", named_kv); // c:230
+                        crate::ported::params::sethparam(".pcre.match", named_kv);
+                        // c:230
                     }
                     1 // c:487 return_value = 1
                 }
@@ -993,8 +991,7 @@ pub fn cond_pcre_match(a: &[String], _id: i32) -> i32 {
                 .unwrap_or_else(|| raw.replace('\n', " "));
             crate::ported::utils::zwarn(&format!(
                 "failed to compile regexp /{}/: {}",
-                rhre,
-                detail
+                rhre, detail
             ));
             0
         }

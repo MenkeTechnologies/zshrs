@@ -76,10 +76,9 @@ use crate::ported::utils::{
     ERRFLAG_ERROR, MAX_ZSH_FD,
 };
 use crate::ported::zsh_h::{
-    builtin, cmdnam, emulation_options, eprog, execstack, funcwrap, hashnode, isset, jobfile, multio,
-    redir,
-    shfunc, unset, wc_code, Emulation_options, Inang, Inpar, Meta, Nularg, Outpar, Pound,
-    BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS,
+    builtin, cmdnam, emulation_options, eprog, execstack, funcwrap, hashnode, isset, jobfile,
+    multio, redir, shfunc, unset, wc_code, Emulation_options, Inang, Inpar, Meta, Nularg, Outpar,
+    Pound, BINF_BUILTIN, BINF_CLEARENV, BINF_COMMAND, BINF_DASH, BINF_EXEC, BINF_PREFIX, CHASEDOTS,
     CHASELINKS, CLOBBER, CLOBBEREMPTY, CS_CMDSUBST, ERRFLAG_INT, FDT_EXTERNAL, FDT_INTERNAL,
     FDT_PROC_SUBST, FDT_SAVED_MASK, FDT_TYPE_MASK, FDT_UNUSED, FDT_XTRACE, HASHDIRS, INP_LINENO,
     INTERACTIVE, IS_CLOBBER_REDIR, IS_DASH, JOBTEXTSIZE, MAX_PIPESTATS, MONITOR, MULTIOS,
@@ -635,10 +634,7 @@ pub fn loadautofn(
             // format string itself (the dance in C is only to keep
             // the prefix line counter consistent with the function-
             // body context). Bug #107 in docs/BUGS.md.
-            crate::ported::utils::zwarn(&format!(
-                "{}: function definition file not found",
-                name
-            ));
+            crate::ported::utils::zwarn(&format!("{}: function definition file not found", name));
             return 1; // c:5719 NULL
         }
     };
@@ -764,7 +760,7 @@ pub fn getfpfunc(
     name: &str,
     dir_path_out: &mut Option<String>, // c:6219 (Src/exec.c)
     spec_path: Option<&[String]>,
-    test_only: i32, // c:6219 `int test_only`
+    test_only: i32,                      // c:6219 `int test_only`
     dump_out: &mut Option<(eprog, i32)>, // c:6219 `int *ksh` + dump Eprog return
 ) -> Option<String> {
     // C reads $fpath via `getaparam("fpath")` (the param-table array form
@@ -790,12 +786,10 @@ pub fn getfpfunc(
             continue;
         }
         let path = format!("{}/{}", dir, name); // c:6230 snprintf(buf, ..., "%s/%s", *pp, s)
-        // c:6238 — `if ((r = try_dump_file(*pp, s, buf, ksh, test_only)))`
-        // — the .zwc digest / per-function dump is tried BEFORE the
-        // plain file in each directory.
-        if let Some(hit) =
-            crate::ported::parse::try_dump_file(dir, name, &path, test_only != 0)
-        {
+                                                // c:6238 — `if ((r = try_dump_file(*pp, s, buf, ksh, test_only)))`
+                                                // — the .zwc digest / per-function dump is tried BEFORE the
+                                                // plain file in each directory.
+        if let Some(hit) = crate::ported::parse::try_dump_file(dir, name, &path, test_only != 0) {
             *dump_out = Some(hit);
             *dir_path_out = Some(dir.clone()); // c:6240 `*fdir = *pp;`
             return Some(path); // c:6241
@@ -3233,11 +3227,8 @@ pub fn commandnotfound(arg0: &str, args: &mut Vec<String>) -> i32 {
     if let Some(mut shf) = shf_clone {
         let body_args = args.clone();
         let body_runner = move || -> i32 {
-            crate::ported::exec::run_function_body(
-                "command_not_found_handler",
-                &body_args[1..],
-            )
-            .unwrap_or(0)
+            crate::ported::exec::run_function_body("command_not_found_handler", &body_args[1..])
+                .unwrap_or(0)
         };
         let lv = doshfunc(&mut shf, args.clone(), true, body_runner);
         LASTVAL.store(lv, Ordering::Relaxed);
@@ -5513,7 +5504,8 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
                     //                jobtab[thisjob].filelist = NULL;` — preserve
                     //                the filelist so deletejob doesn't unlink temp
                     //                files. Rust take()s the Vec into a local.
-                    let _last_file_list: Vec<jobfile> = if let Some(j) = guard.get_mut(tj as usize) {
+                    let _last_file_list: Vec<jobfile> = if let Some(j) = guard.get_mut(tj as usize)
+                    {
                         std::mem::take(&mut j.filelist)
                     } else {
                         Vec::new()
@@ -5579,8 +5571,7 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
             Vec::new()
         };
         let body_runner = move || -> i32 {
-            crate::ported::exec::run_function_body(&name_for_body, &body_args_owned)
-                .unwrap_or(0)
+            crate::ported::exec::run_function_body(&name_for_body, &body_args_owned).unwrap_or(0)
         };
         let _ = doshfunc(shf, args.clone(), false, body_runner);
     }
@@ -7401,7 +7392,12 @@ pub fn restore_params(restorelist: Vec<crate::ported::zsh_h::param>, removelist:
 /// instead. This wordcode entry is retained for the internal
 /// function-body callers (`doshfunc` / autoload) that already hold an
 /// `Eprog`.
-pub fn execode_wordcode(p: crate::ported::zsh_h::Eprog, dont_change_job: i32, exiting: i32, context: &str) {
+pub fn execode_wordcode(
+    p: crate::ported::zsh_h::Eprog,
+    dont_change_job: i32,
+    exiting: i32,
+    context: &str,
+) {
     // c:1245
     let prog_ref = *p;
     // c:1247 — `struct estate s;`
@@ -8423,7 +8419,15 @@ pub fn execcase(state: &mut estate, do_exec: i32) -> i32 {
             } else {
                 pat_raw
             };
-            if let Some(pprog) = patcompile(&{ let mut __pat_tok = (&pat).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, PAT_STATIC, None) {
+            if let Some(pprog) = patcompile(
+                &{
+                    let mut __pat_tok = (&pat).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_STATIC,
+                None,
+            ) {
                 // c:660 — `if (pprog && pattry(pprog, word)) patok = anypatok = 1;`
                 if pattry(&pprog, &word) {
                     patok = true;
@@ -8513,19 +8517,14 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     // running the always-arm. `$TRY_BLOCK_ERROR` / `$TRY_BLOCK_INTERRUPT`
     // read these globals directly (lookup_special_var arms), so the
     // always body must see "errflag at try-end" not "-1 sentinel".
-    let saved_try_errflag = crate::ported::r#loop::try_errflag
-        .load(Ordering::Relaxed);
-    let saved_try_interrupt = crate::ported::r#loop::try_interrupt
-        .load(Ordering::Relaxed);
-    crate::ported::r#loop::try_errflag.store(
-        (saved_err & ERRFLAG_ERROR) as i64,
-        Ordering::Relaxed,
-    ); // c:765
+    let saved_try_errflag = crate::ported::r#loop::try_errflag.load(Ordering::Relaxed);
+    let saved_try_interrupt = crate::ported::r#loop::try_interrupt.load(Ordering::Relaxed);
+    crate::ported::r#loop::try_errflag.store((saved_err & ERRFLAG_ERROR) as i64, Ordering::Relaxed); // c:765
     crate::ported::r#loop::try_interrupt.store(
         if (saved_err & ERRFLAG_INT) != 0 { 1 } else { 0 },
         Ordering::Relaxed,
     ); // c:766
-    // c:768 — `errflag = 0;` (clear both bits).
+       // c:768 — `errflag = 0;` (clear both bits).
     errflag.fetch_and(!(ERRFLAG_ERROR | ERRFLAG_INT), Ordering::Relaxed);
     // c:769-774 — save retflag/breaks/contflag.
     let save_retflag = RETFLAG.swap(0, Ordering::SeqCst);
@@ -8546,8 +8545,7 @@ pub fn exectry(state: &mut estate, _do_exec: i32) -> i32 {
     }
     // c:Src/loop.c:787-788 — restore the canonical globals.
     crate::ported::r#loop::try_errflag.store(saved_try_errflag, Ordering::Relaxed);
-    crate::ported::r#loop::try_interrupt
-        .store(saved_try_interrupt, Ordering::Relaxed);
+    crate::ported::r#loop::try_interrupt.store(saved_try_interrupt, Ordering::Relaxed);
     // c:789-794 — re-arm retflag/breaks/contflag only if always didn't override.
     if RETFLAG.load(Ordering::SeqCst) == 0 {
         RETFLAG.store(save_retflag, Ordering::SeqCst);
@@ -8649,8 +8647,8 @@ pub fn execcmd_exec(
     // c:2904-2916 — locals.
     let mut hn: Option<*mut builtin> = None; // c:2904 HashNode hn = NULL
     let mut filelist: Vec<jobfile> = Vec::new(); // c:2905 LinkList filelist = NULL
-                                                // c:2906 LinkNode node; (loop locals)
-                                                // c:2907 Redir fn;       (loop locals)
+                                                 // c:2906 LinkNode node; (loop locals)
+                                                 // c:2907 Redir fn;       (loop locals)
     let mut mfds: [Option<Box<multio>>; 10] =                              // c:2908 struct multio *mfds[10]
         [None, None, None, None, None, None, None, None, None, None];
     let mut text: Option<String> = None; // c:2909 char *text
@@ -11742,7 +11740,10 @@ mod tests {
         } else {
             crate::ported::params::unsetparam("PWD");
         }
-        assert!(r.is_some(), "empty path → Some(pwd) per cancd2-via-PWD path");
+        assert!(
+            r.is_some(),
+            "empty path → Some(pwd) per cancd2-via-PWD path"
+        );
     }
 
     /// c:4603 — `cancd("/")` root dir returns Some (always exists).

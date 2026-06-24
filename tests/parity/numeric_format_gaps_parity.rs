@@ -47,7 +47,10 @@ struct R {
     exit: i32,
 }
 fn run_zsh(s: &str) -> R {
-    let o = Command::new(zsh_path()).args(["-fc", s]).output().expect("zsh");
+    let o = Command::new(zsh_path())
+        .args(["-fc", s])
+        .output()
+        .expect("zsh");
     R {
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         exit: o.status.code().unwrap_or(-1),

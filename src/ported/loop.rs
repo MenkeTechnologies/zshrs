@@ -87,14 +87,12 @@ pub static try_tryflag: std::sync::atomic::AtomicI64 = std::sync::atomic::Atomic
 /// scope"); the `exectry` always-arm sets it to `errflag & ERRFLAG_ERROR`
 /// before running the always body, then restores. `TRY_BLOCK_ERROR`
 /// param (IPDEF6 at `Src/params.c:364`) reads this global directly.
-pub static try_errflag: std::sync::atomic::AtomicI64 =
-    std::sync::atomic::AtomicI64::new(-1); // c:719
+pub static try_errflag: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // c:719
 
 /// Port of `mod_export zlong try_interrupt` from `Src/loop.c:727`.
 /// Initialized to -1; mirrors `try_errflag` for the `ERRFLAG_INT` bit.
 /// `TRY_BLOCK_INTERRUPT` param reads this.
-pub static try_interrupt: std::sync::atomic::AtomicI64 =
-    std::sync::atomic::AtomicI64::new(-1); // c:727
+pub static try_interrupt: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // c:727
 
 // execselect moved to src/ported/exec.rs as a faithful port of
 // `Src/loop.c:217`. See exec.rs for the C-line-cited body.

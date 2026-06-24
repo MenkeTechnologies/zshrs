@@ -53,7 +53,10 @@ struct ShellResult {
 }
 
 fn run_zsh(script: &str) -> ShellResult {
-    let out = Command::new(zsh_path()).args(["-fc", script]).output().expect("invoke zsh");
+    let out = Command::new(zsh_path())
+        .args(["-fc", script])
+        .output()
+        .expect("invoke zsh");
     ShellResult {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -120,37 +123,49 @@ mod man_expn {
     /// ${(S)foo//${~sub}/$rep} replaces each shortest match (HTML Expansion examples).
     #[test]
     fn S_nongreedy_global_subst() {
-        assert_parity(r###"foo="twinkle twinkle little star"; sub="t*e"; rep="spy"; print ${foo//${~sub}/$rep}; print ${(S)foo//${~sub}/$rep}"###);
+        assert_parity(
+            r###"foo="twinkle twinkle little star"; sub="t*e"; rep="spy"; print ${foo//${~sub}/$rep}; print ${(S)foo//${~sub}/$rep}"###,
+        );
     }
 
     /// (SI:N:) indexed substring match — Nth match.
     #[test]
     fn SI_indexed_match() {
-        assert_parity(r###"s="which switch is the right switch for Ipswich?"; for n in 1 2 3 4; do echo ${(SI:$n:)s#w*ch}; done"###);
+        assert_parity(
+            r###"s="which switch is the right switch for Ipswich?"; for n in 1 2 3 4; do echo ${(SI:$n:)s#w*ch}; done"###,
+        );
     }
 
     /// (SM)(SB)(SE)(SN)(SR) match-data flags.
     #[test]
     fn S_match_data_flags() {
-        assert_parity(r###"str="aXbXc"; echo M=${(SM)str#X*} B=${(SB)str#X*} E=${(SE)str#X*} N=${(SN)str#X*} R=${(SR)str#X*}"###);
+        assert_parity(
+            r###"str="aXbXc"; echo M=${(SM)str#X*} B=${(SB)str#X*} E=${(SE)str#X*} N=${(SN)str#X*} R=${(SR)str#X*}"###,
+        );
     }
 
     /// (l:N::s1::s2:) left padding with optional fills.
     #[test]
     fn l_left_pad() {
-        assert_parity(r###"foo=ab; print -- "${(l:5:)foo}"; print -- "${(l:5::-:)foo}"; print -- "${(l:5::-::X:)foo}""###);
+        assert_parity(
+            r###"foo=ab; print -- "${(l:5:)foo}"; print -- "${(l:5::-:)foo}"; print -- "${(l:5::-::X:)foo}""###,
+        );
     }
 
     /// (r:N::s1::s2:) right padding + truncation.
     #[test]
     fn r_right_pad_truncate() {
-        assert_parity(r###"foo=ab; print -- "${(r:5::.:)foo}|"; print -- "${(r:5::.::Y:)foo}|"; print -- "${(l:3:)foo}-${(l:3:)$(printf abcdefg)}""###);
+        assert_parity(
+            r###"foo=ab; print -- "${(r:5::.:)foo}|"; print -- "${(r:5::.::Y:)foo}|"; print -- "${(l:3:)foo}-${(l:3:)$(printf abcdefg)}""###,
+        );
     }
 
     /// combined l+r padding.
     #[test]
     fn l_r_combined() {
-        assert_parity(r###"foo=xy; print -- "[${(l:3::-:)foo}][${(r:3::-:)foo}]"; print -- "${(l:4::L::R:)foo}""###);
+        assert_parity(
+            r###"foo=xy; print -- "[${(l:3::-:)foo}][${(r:3::-:)foo}]"; print -- "${(l:4::L::R:)foo}""###,
+        );
     }
 
     /// (#) character from numeric code.
@@ -162,19 +177,25 @@ mod man_expn {
     /// (s) split elides empty fields unless (@).
     #[test]
     fn s_split_elide_empty() {
-        assert_parity(r###"line="one::three"; print -l "${(s.:.)line}"; print MID; print -l "${(@s.:.)line}""###);
+        assert_parity(
+            r###"line="one::three"; print -l "${(s.:.)line}"; print MID; print -l "${(@s.:.)line}""###,
+        );
     }
 
     /// (s/x/) on array vs (j/x/s/x/).
     #[test]
     fn s_array_vs_join_split() {
-        assert_parity(r###"foo=(ax1 bx1); print -l "${(s/x/)foo}"; print MID; print -l "${(j/x/s/x/)foo}""###);
+        assert_parity(
+            r###"foo=(ax1 bx1); print -l "${(s/x/)foo}"; print MID; print -l "${(j/x/s/x/)foo}""###,
+        );
     }
 
     /// (P) with nested ${...} and $(...) producing the name.
     #[test]
     fn P_indirection_forms() {
-        assert_parity(r###"foo=bar; bar=baz; print -- ${(P)foo}; print -- ${(P)${foo}}; print -- ${(P)$(echo bar)}"###);
+        assert_parity(
+            r###"foo=bar; bar=baz; print -- ${(P)foo}; print -- ${(P)${foo}}; print -- ${(P)$(echo bar)}"###,
+        );
     }
 
     /// (P) with nested subscript into assoc.
@@ -186,25 +207,33 @@ mod man_expn {
     /// (n) numeric sort, +/- not special, more leading zeros first.
     #[test]
     fn n_numeric_sort() {
-        assert_parity(r###"export LC_ALL=C; a=(foo+24 foo1 foo02 foo2 foo3 foo20 foo23); print -- ${(n)a}"###);
+        assert_parity(
+            r###"export LC_ALL=C; a=(foo+24 foo1 foo02 foo2 foo3 foo20 foo23); print -- ${(n)a}"###,
+        );
     }
 
     /// (Oa) reverse index order; (u) unique.
     #[test]
     fn Oa_reverse_u_unique() {
-        assert_parity(r###"a=(one two three); print -- ${(Oa)a}; a2=(a b a c b); print -- ${(u)a2}"###);
+        assert_parity(
+            r###"a=(one two three); print -- ${(Oa)a}; a2=(a b a c b); print -- ${(u)a2}"###,
+        );
     }
 
     /// ${name:offset:length} negative offset/length.
     #[test]
     fn offset_length_negatives() {
-        assert_parity(r###"foo=abcdefgh; print -- ${foo:2} ${foo:2:3} ${foo: -3} ${foo: -3:2} ${foo:2:-2}"###);
+        assert_parity(
+            r###"foo=abcdefgh; print -- ${foo:2} ${foo:2:3} ${foo: -3} ${foo: -3:2} ${foo:2:-2}"###,
+        );
     }
 
     /// ${*:offset:length} positional offset (0 = $0).
     #[test]
     fn positional_offset() {
-        assert_parity(r###"a=(w x y z); print -- ${a:1:2}; set -- one two three; print -- ${*:1:1} ${*:2:2}"###);
+        assert_parity(
+            r###"a=(w x y z); print -- ${a:1:2}; set -- one two three; print -- ${*:1:1} ${*:2:2}"###,
+        );
     }
 
     /// ${name//#pat/r} and ${name//%pat/r} anchored gsub.
@@ -222,7 +251,9 @@ mod man_expn {
     /// ${name:|arr} difference and ${name:*arr} intersection.
     #[test]
     fn set_diff_intersect() {
-        assert_parity(r###"a=(1 2 3 4 5); b=(2 4); print -- ${a:|b}; c=(2 4 9); print -- ${a:*c}"###);
+        assert_parity(
+            r###"a=(1 2 3 4 5); b=(2 4); print -- ${a:|b}; c=(2 4 9); print -- ${a:*c}"###,
+        );
     }
 
     /// ${name:^arr} zip and ${name:^^arr} cyclic zip.
@@ -234,13 +265,17 @@ mod man_expn {
     /// :s/l/r/, :gs/l/r/, :& repeat last s.
     #[test]
     fn modifier_s_gs_amp() {
-        assert_parity(r###"v=hello; print -- ${v:s/l/L/}; print -- ${v:gs/l/L/}; v2=labels; print -- ${v:s/l/L/}${v2:&}"###);
+        assert_parity(
+            r###"v=hello; print -- ${v:s/l/L/}; print -- ${v:gs/l/L/}; v2=labels; print -- ${v:s/l/L/}${v2:&}"###,
+        );
     }
 
     /// brace numeric ranges incl decreasing and negative step.
     #[test]
     fn brace_numeric_ranges() {
-        assert_parity(r###"print -- {1..5}; print -- {5..1}; print -- {1..10..2}; print -- {1..10..-3}"###);
+        assert_parity(
+            r###"print -- {1..5}; print -- {5..1}; print -- {1..10..2}; print -- {1..10..-3}"###,
+        );
     }
 
     /// brace zero-padding and negative width.
@@ -264,38 +299,50 @@ mod man_expn {
     /// ${^arr} rc-expand distribution.
     #[test]
     fn caret_rc_expand() {
-        assert_parity(r###"a=(1 2 3); print -- foo${^a}bar; setopt rcexpandparam; print -- foo${^^a}bar"###);
+        assert_parity(
+            r###"a=(1 2 3); print -- foo${^a}bar; setopt rcexpandparam; print -- foo${^^a}bar"###,
+        );
     }
 
     /// (e) re-evaluation of param/cmd/arith.
     #[test]
     fn e_reeval() {
-        assert_parity(r###"inner=world; v="hello $inner"; print -- ${(e)v}; w=inner; print -- ${(e):-\$$w}"###);
+        assert_parity(
+            r###"inner=world; v="hello $inner"; print -- ${(e)v}; w=inner; print -- ${(e):-\$$w}"###,
+        );
     }
 
     /// (@) inner scalar vs inner array subscript detection.
     #[test]
     #[ignore = "zshrs gap: \"${(@)${foo}[1]}\" — inner ${foo} should be scalar (char subscript -> b); zshrs treats it as array (-> bar baz)"]
     fn at_inner_scalar_vs_array() {
-        assert_parity(r###"foo=(bar baz); print -- "${(@)${foo}[1]}"; print -- "${${(@)foo}[1]}""###);
+        assert_parity(
+            r###"foo=(bar baz); print -- "${(@)${foo}[1]}"; print -- "${${(@)foo}[1]}""###,
+        );
     }
 
     /// (z) lexical split then (Q) dequote.
     #[test]
     fn z_split_then_Q() {
-        assert_parity(r###"foo='a "b c" d'; print -l "${(z)foo}"; print MID; print -l "${(Q)${(z)foo}}""###);
+        assert_parity(
+            r###"foo='a "b c" d'; print -l "${(z)foo}"; print MID; print -l "${(Q)${(z)foo}}""###,
+        );
     }
 
     /// (Z+C+) strips comments, (Z+c+) retains them.
     #[test]
     fn Z_comment_flags() {
-        assert_parity(r###"foo='a # comment'; print -l "${(Z+C+)foo}"; print MID; print -l "${(Z+c+)foo}""###);
+        assert_parity(
+            r###"foo='a # comment'; print -l "${(Z+C+)foo}"; print MID; print -l "${(Z+c+)foo}""###,
+        );
     }
 
     /// (w)/(c) counting with ${#}.
     #[test]
     fn w_c_counting() {
-        assert_parity(r###"v="a b c d"; print -- ${(w)#v}; arr=(x y z); print -- ${(w)#arr}; ar2=(ab cd); print -- ${(c)#ar2}"###);
+        assert_parity(
+            r###"v="a b c d"; print -- ${(w)#v}; arr=(x y z); print -- ${(w)#arr}; ar2=(ab cd); print -- ${(c)#ar2}"###,
+        );
     }
 
     /// :h with digits; absolute leading / is first component.
@@ -307,13 +354,17 @@ mod man_expn {
     /// :tN, :r, :e modifiers.
     #[test]
     fn t_digits_r_e() {
-        assert_parity(r###"var=/a/b/c/d/e; print -- ${var:t} ${var:t2} ${var:t3}; v2=foo.orig.c; print -- ${v2:r} ${v2:e}"###);
+        assert_parity(
+            r###"var=/a/b/c/d/e; print -- ${var:t} ${var:t2} ${var:t3}; v2=foo.orig.c; print -- ${v2:r} ${v2:e}"###,
+        );
     }
 
     /// short-form digit ambiguity ($var:h2 == ${var:h}2); :a logical abspath.
     #[test]
     fn shortform_ambiguity_a() {
-        assert_parity(r###"var=/a/b/c/d; print -- $var:h2; print -- ${var:h2}; v=/before/here/../after; print -- ${v:a}"###);
+        assert_parity(
+            r###"var=/a/b/c/d; print -- $var:h2; print -- ${var:h2}; v=/before/here/../after; print -- ${v:a}"###,
+        );
     }
 
     /// (b) backslash-quote pattern chars.
@@ -355,7 +406,9 @@ mod man_expn {
     /// (w)/(W) with s delimiter — empty-word counting.
     #[test]
     fn w_W_delim_counting() {
-        assert_parity(r###"v="a::b::c"; print -- ${(ws.::.)#v}; v2="a::b"; print -- ${(ws.:.)#v2} ${(Ws.:.)#v2}"###);
+        assert_parity(
+            r###"v="a::b::c"; print -- ${(ws.::.)#v}; v2="a::b"; print -- ${(ws.:.)#v2} ${(Ws.:.)#v2}"###,
+        );
     }
 
     /// (I:N:) on substitution — // all from Nth, / only Nth.
@@ -373,7 +426,9 @@ mod man_expn {
     /// (D) reverse-of-~ substitution; (q-) minimal quote.
     #[test]
     fn D_and_q_minus() {
-        assert_parity(r###"foo=$HOME/x; print -- ${(D)foo}; v="plain"; w="has space"; print -r -- ${(q-)v} ${(q-)w}"###);
+        assert_parity(
+            r###"foo=$HOME/x; print -- ${(D)foo}; v="plain"; w="has space"; print -r -- ${(q-)v} ${(q-)w}"###,
+        );
     }
 
     /// rule-23 semantic join before (P).
@@ -391,13 +446,17 @@ mod man_expn {
     /// (e+code+) glob qualifier with reply override.
     #[test]
     fn e_glob_qualifier_reply() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); :>$t/aa; :>$t/bbb; cd $t; m=( *(e+"reply=( \${#REPLY} )"+) ); print -- ${(on)m}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); :>$t/aa; :>$t/bbb; cd $t; m=( *(e+"reply=( \${#REPLY} )"+) ); print -- ${(on)m}; cd /; rm -rf $t"###,
+        );
     }
 
     /// in-glob (#q...) with colon modifiers.
     #[test]
     fn inglob_q_colon_modifiers() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); :>$t/foo.c; :>$t/bar.c; cd $t; print -r -- ${(o)$(print -l -- *.c(#q:t:s/.c/.X/))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); :>$t/foo.c; :>$t/bar.c; cd $t; print -r -- ${(o)$(print -l -- *.c(#q:t:s/.c/.X/))}; cd /; rm -rf $t"###,
+        );
     }
 }
 
@@ -409,139 +468,185 @@ mod man_glob {
     /// numeric range <n-m>.
     #[test]
     fn numeric_range() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; for n in 1 5 10 50 100 200; do touch file$n; done; print -rl -- ${(on)$(print -l -- file<5-100>(:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; for n in 1 5 10 50 100 200; do touch file$n; done; print -rl -- ${(on)$(print -l -- file<5-100>(:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// half-open numeric <n->.
     #[test]
     fn half_open_numeric() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch 12 5 99 7 030 200; print -rl -- ${(on)$(print -l -- <30->(:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch 12 5 99 7 030 200; print -rl -- ${(on)$(print -l -- <30->(:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// mixed POSIX class [[:alpha:]0-9].
     #[test]
     fn mixed_posix_class() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch fa f0 f% f_; print -rl -- ${(o)$(print -l -- f[[:alpha:]0-9](:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch fa f0 f% f_; print -rl -- ${(o)$(print -l -- f[[:alpha:]0-9](:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// leading - literal in [...].
     #[test]
     fn leading_dash_in_class() {
-        assert_parity(r###"[[ "-" = [-a] ]] && echo yes || echo no; [[ "a" = [-a] ]] && echo yes || echo no; [[ "b" = [-a] ]] && echo yes || echo no"###);
+        assert_parity(
+            r###"[[ "-" = [-a] ]] && echo yes || echo no; [[ "a" = [-a] ]] && echo yes || echo no; [[ "b" = [-a] ]] && echo yes || echo no"###,
+        );
     }
 
     /// size qualifiers L0 / L+n / L-n.
     #[test]
     fn size_qualifiers() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; print -n "" > empty; print -n "abcde" > five; print -n "0123456789" > ten; print zero:; print -rl -- ${(o)$(print -l -- *(L0:t))}; print gt4:; print -rl -- ${(o)$(print -l -- *(L+4:t))}; print lt6:; print -rl -- ${(o)$(print -l -- *(L-6:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; print -n "" > empty; print -n "abcde" > five; print -n "0123456789" > ten; print zero:; print -rl -- ${(o)$(print -l -- *(L0:t))}; print gt4:; print -rl -- ${(o)$(print -l -- *(L+4:t))}; print lt6:; print -rl -- ${(o)$(print -l -- *(L-6:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// link-count qualifier l+n.
     #[test]
     fn link_count_qualifier() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir d; mkdir d/sub; mkdir e; print -rl -- ${(o)$(print -l -- *(/l+2:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir d; mkdir d/sub; mkdir e; print -rl -- ${(o)$(print -l -- *(/l+2:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// negation qualifier (^/).
     #[test]
     fn negation_qualifier() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch reg; mkdir dir; print -rl -- ${(o)$(print -l -- *(^/:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch reg; mkdir dir; print -rl -- ${(o)$(print -l -- *(^/:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// executable qualifier (*).
     #[test]
     fn executable_qualifier() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch plain; touch exe; chmod 755 exe; print -rl -- ${(o)$(print -l -- *(*:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch plain; touch exe; chmod 755 exe; print -rl -- ${(o)$(print -l -- *(*:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// subscript-after-sort (.OL[1,2]).
     #[test]
     fn subscript_after_sort() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; print -n a > f1; print -n "" > f2; print -n abc > f3; print -n "" > f4; print -n abcde > f5; print -rl -- *(.OL[1,2]:t); cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; print -n a > f1; print -n "" > f2; print -n abc > f3; print -n "" > f4; print -n abcde > f5; print -rl -- *(.OL[1,2]:t); cd /; rm -rf $t"###,
+        );
     }
 
     /// exclusion x~y and chained x~a~b.
     #[test]
     fn exclusion_tilde() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch a b c d; print -rl -- ${(o)$(print -l -- *~a~c(:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch a b c d; print -rl -- ${(o)$(print -l -- *~a~c(:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// exclusion of alternation ^(foo|bar).
     #[test]
     fn exclude_alternation() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch foo bar baz qux; print -rl -- ${(o)$(print -l -- ^(foo|bar)(:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch foo bar baz qux; print -rl -- ${(o)$(print -l -- ^(foo|bar)(:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// recursive **/ matches current + subdirs.
     #[test]
     fn recursive_globstar() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir -p a/b/c; touch bar a/bar a/b/bar a/b/c/bar; print -rl -- **/bar | sort; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir -p a/b/c; touch bar a/bar a/b/bar a/b/c/bar; print -rl -- **/bar | sort; cd /; rm -rf $t"###,
+        );
     }
 
     /// (pat/)# path closure.
     #[test]
     fn path_closure() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir -p sub/sub/sub; touch end sub/end sub/sub/end; print -rl -- (sub/)#end | sort; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; mkdir -p sub/sub/sub; touch end sub/end sub/sub/end; print -rl -- (sub/)#end | sort; cd /; rm -rf $t"###,
+        );
     }
 
     /// case-insensitive (#i).
     #[test]
     fn ci_glob_flag() {
-        assert_parity(r###"setopt extendedglob; [[ FOOXX = (#i)fooxx ]] && echo m1 || echo n1; [[ fooxx = (#i)FOOXX ]] && echo m2 || echo n2; [[ FooXx = (#i)fooxx ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ FOOXX = (#i)fooxx ]] && echo m1 || echo n1; [[ fooxx = (#i)FOOXX ]] && echo m2 || echo n2; [[ FooXx = (#i)fooxx ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// lower-matches-both (#l).
     #[test]
     fn l_glob_flag() {
-        assert_parity(r###"setopt extendedglob; [[ FOOXX = (#l)fooxx ]] && echo m1 || echo n1; [[ fooxx = (#l)FOOXX ]] && echo m2 || echo n2"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ FOOXX = (#l)fooxx ]] && echo m1 || echo n1; [[ fooxx = (#l)FOOXX ]] && echo m2 || echo n2"###,
+        );
     }
 
     /// local negate (#I).
     #[test]
     fn I_glob_flag_negate() {
-        assert_parity(r###"setopt extendedglob; [[ fooxx = (#i)FOO(#I)XX ]] && echo yes || echo no; [[ fooXX = (#i)FOO(#I)XX ]] && echo yes || echo no"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ fooxx = (#i)FOO(#I)XX ]] && echo yes || echo no; [[ fooXX = (#i)FOO(#I)XX ]] && echo yes || echo no"###,
+        );
     }
 
     /// flag scope ends at enclosing group.
     #[test]
     fn flag_scope_group() {
-        assert_parity(r###"setopt extendedglob; [[ fooxx = ((#i)FOOX)X ]] && echo yes || echo no; [[ fooxX = ((#i)FOOX)X ]] && echo yes || echo no"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ fooxx = ((#i)FOOX)X ]] && echo yes || echo no; [[ fooxX = ((#i)FOOX)X ]] && echo yes || echo no"###,
+        );
     }
 
     /// (#b) backref indices via $mbegin/$mend.
     #[test]
     fn b_backref_indices() {
-        assert_parity(r###"setopt extendedglob; [[ "a short string" = *s(#b)(???)t* ]] && print "$match[1] $mbegin[1] $mend[1]""###);
+        assert_parity(
+            r###"setopt extendedglob; [[ "a short string" = *s(#b)(???)t* ]] && print "$match[1] $mbegin[1] $mend[1]""###,
+        );
     }
 
     /// (#m) match-data — uppercase vowels.
     #[test]
     fn m_matchdata_vowels() {
-        assert_parity(r###"setopt extendedglob; arr=(veldt jynx grimps waqf zho buck); print ${arr//(#m)[aeiou]/${(U)MATCH}}"###);
+        assert_parity(
+            r###"setopt extendedglob; arr=(veldt jynx grimps waqf zho buck); print ${arr//(#m)[aeiou]/${(U)MATCH}}"###,
+        );
     }
 
     /// (#b) with # keeps last match.
     #[test]
     fn b_hash_last_match() {
-        assert_parity(r###"setopt extendedglob; [[ abab = (#b)([ab])# ]] && print "[$match[1]]""###);
+        assert_parity(
+            r###"setopt extendedglob; [[ abab = (#b)([ab])# ]] && print "[$match[1]]""###,
+        );
     }
 
     /// ((ab|cd)#) captures whole repeated segment.
     #[test]
     fn capture_whole_segment() {
-        assert_parity(r###"setopt extendedglob; [[ XababcdY = X(#b)((ab|cd)#)Y ]] && print "$match[1]""###);
+        assert_parity(
+            r###"setopt extendedglob; [[ XababcdY = X(#b)((ab|cd)#)Y ]] && print "$match[1]""###,
+        );
     }
 
     /// count (#cN,M).
     #[test]
     fn count_closure() {
-        assert_parity(r###"setopt extendedglob; [[ aaa = a(#c2,3) ]] && echo m1 || echo n1; [[ a = a(#c2,3) ]] && echo m2 || echo n2; [[ aaaa = a(#c2,3) ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ aaa = a(#c2,3) ]] && echo m1 || echo n1; [[ a = a(#c2,3) ]] && echo m2 || echo n2; [[ aaaa = a(#c2,3) ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// approximate (#a1) — sub/del/ins.
     #[test]
     fn approx_one_error() {
-        assert_parity(r###"setopt extendedglob; [[ fooybar = (#a1)fooxbar ]] && echo m1 || echo n1; [[ rod = (#a1)road ]] && echo m2 || echo n2; [[ strove = (#a1)stove ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ fooybar = (#a1)fooxbar ]] && echo m1 || echo n1; [[ rod = (#a1)road ]] && echo m2 || echo n2; [[ strove = (#a1)stove ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// (#a3)abcd matches dcba.
@@ -553,67 +658,89 @@ mod man_glob {
     /// local error count (#a0) section.
     #[test]
     fn approx_local_zero() {
-        assert_parity(r###"setopt extendedglob; [[ catdogfox = (#a1)cat(#a0)dog(#a1)fox ]] && echo m1 || echo n1; [[ catdigfox = (#a1)cat(#a0)dog(#a1)fox ]] && echo m2 || echo n2"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ catdogfox = (#a1)cat(#a0)dog(#a1)fox ]] && echo m1 || echo n1; [[ catdigfox = (#a1)cat(#a0)dog(#a1)fox ]] && echo m2 || echo n2"###,
+        );
     }
 
     /// combined (#ia2).
     #[test]
     fn approx_ci_combined() {
-        assert_parity(r###"setopt extendedglob; [[ READXME = (#ia2)readme ]] && echo yes || echo no"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ READXME = (#ia2)readme ]] && echo yes || echo no"###,
+        );
     }
 
     /// closure precedence: 12# == 1(2#).
     #[test]
     fn closure_precedence() {
-        assert_parity(r###"setopt extendedglob; [[ 1222 = 12# ]] && echo m1 || echo n1; [[ 1212 = 12# ]] && echo m2 || echo n2"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ 1222 = 12# ]] && echo m1 || echo n1; [[ 1212 = 12# ]] && echo m2 || echo n2"###,
+        );
     }
 
     /// anchors (#s)/(#e).
     #[test]
     fn anchors_s_e() {
-        assert_parity(r###"setopt extendedglob; for s in test test/at/start at/end/test in/test/middle nomatch; do [[ $s = *((#s)|/)test((#e)|/)* ]] && print "$s:y" || print "$s:n"; done"###);
+        assert_parity(
+            r###"setopt extendedglob; for s in test test/at/start at/end/test in/test/middle nomatch; do [[ $s = *((#s)|/)test((#e)|/)* ]] && print "$s:y" || print "$s:n"; done"###,
+        );
     }
 
     /// ksh-like glob operators @()/*()/+()/?()/!().
     #[test]
     fn ksh_glob_operators() {
-        assert_parity(r###"setopt kshglob; [[ foo = @(foo|bar) ]] && echo a1 || echo a0; [[ aaa = *(a) ]] && echo b1 || echo b0; [[ "" = +(a) ]] && echo c1 || echo c0; [[ a = ?(a) ]] && echo d1 || echo d0; [[ baz = !(foo) ]] && echo e1 || echo e0"###);
+        assert_parity(
+            r###"setopt kshglob; [[ foo = @(foo|bar) ]] && echo a1 || echo a0; [[ aaa = *(a) ]] && echo b1 || echo b0; [[ "" = +(a) ]] && echo c1 || echo c0; [[ a = ?(a) ]] && echo d1 || echo d0; [[ baz = !(foo) ]] && echo e1 || echo e0"###,
+        );
     }
 
     /// approximate exclusion matched without approximation.
     #[test]
     fn approx_exclusion() {
-        assert_parity(r###"setopt extendedglob; [[ "READ.ME" = (#a1)README~READ_ME ]] && echo m1 || echo n1; [[ "READ_ME" = (#a1)README~READ_ME ]] && echo m2 || echo n2"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ "READ.ME" = (#a1)README~READ_ME ]] && echo m1 || echo n1; [[ "READ_ME" = (#a1)README~READ_ME ]] && echo m2 || echo n2"###,
+        );
     }
 
     /// e:code: shell-code qualifier with REPLY.
     #[test]
     fn e_code_qualifier() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch keep1 keep2 drop; print -rl -- ${(o)$(print -l -- *(e@[[ \$REPLY == keep* ]]@:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch keep1 keep2 drop; print -rl -- ${(o)$(print -l -- *(e@[[ \$REPLY == keep* ]]@:t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// P:str: prepend qualifier.
     #[test]
     fn P_prepend_qualifier() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch f1 f2; args=( *(P:-x:) ); print -r -- "${args[@]}"; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch f1 f2; args=( *(P:-x:) ); print -r -- "${args[@]}"; cd /; rm -rf $t"###,
+        );
     }
 
     /// mtime sort + subscript (om[1,2]).
     #[test]
     fn mtime_sort_subscript() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch -t 202101010000 a; touch -t 202201010000 b; touch -t 202301010000 c; touch -t 202401010000 d; print -rl -- *(.om[1,2]:t); cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch -t 202101010000 a; touch -t 202201010000 b; touch -t 202301010000 c; touch -t 202401010000 d; print -rl -- *(.om[1,2]:t); cd /; rm -rf $t"###,
+        );
     }
 
     /// file-mode f:gu+w: qualifier.
     #[test]
     fn fmode_gu_plus_w() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch a; chmod 664 a; touch b; chmod 600 b; print -rl -- ${(o)$(print -l -- *(f:gu+w::t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch a; chmod 664 a; touch b; chmod 600 b; print -rl -- ${(o)$(print -l -- *(f:gu+w::t))}; cd /; rm -rf $t"###,
+        );
     }
 
     /// file-mode f-100 (owner lacks execute).
     #[test]
     fn fmode_minus_100() {
-        assert_parity(r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch noexec; chmod 644 noexec; touch yesexec; chmod 744 yesexec; print -rl -- ${(o)$(print -l -- *(f-100:t))}; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"setopt extendedglob; t=$(mktemp -d); cd $t; touch noexec; chmod 644 noexec; touch yesexec; chmod 744 yesexec; print -rl -- ${(o)$(print -l -- *(f-100:t))}; cd /; rm -rf $t"###,
+        );
     }
 }
 
@@ -625,67 +752,89 @@ mod man_cond_arith {
     /// = pattern vs quoted literal.
     #[test]
     fn cond_pattern_vs_literal() {
-        assert_parity(r###"[[ abc = a*c ]] && echo m1 || echo n1; [[ abc != a*d ]] && echo m2 || echo n2; [[ abc = "a*c" ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"[[ abc = a*c ]] && echo m1 || echo n1; [[ abc != a*d ]] && echo m2 || echo n2; [[ abc = "a*c" ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// < > ASCII comparison.
     #[test]
     fn cond_ascii_compare() {
-        assert_parity(r###"[[ apple < banana ]] && echo m1 || echo n1; [[ banana > apple ]] && echo m2 || echo n2; [[ Z < a ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"[[ apple < banana ]] && echo m1 || echo n1; [[ banana > apple ]] && echo m2 || echo n2; [[ Z < a ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// -nt -ot -ef.
     #[test]
     fn cond_file_compare() {
-        assert_parity(r###"t=$(mktemp -d); cd $t; touch -t 202001010000 old; touch -t 202501010000 new; cp old samefile; [[ new -nt old ]] && echo m1 || echo n1; [[ old -ot new ]] && echo m2 || echo n2; [[ old -ef old ]] && echo m3 || echo n3; [[ old -ef new ]] && echo m4 || echo n4; cd /; rm -rf $t"###);
+        assert_parity(
+            r###"t=$(mktemp -d); cd $t; touch -t 202001010000 old; touch -t 202501010000 new; cp old samefile; [[ new -nt old ]] && echo m1 || echo n1; [[ old -ot new ]] && echo m2 || echo n2; [[ old -ef old ]] && echo m3 || echo n3; [[ old -ef new ]] && echo m4 || echo n4; cd /; rm -rf $t"###,
+        );
     }
 
     /// =~ regex backref vars.
     #[test]
     fn cond_regex_backrefs() {
-        assert_parity(r###"if [[ "a short string" =~ "s(...)t" ]]; then print "$MATCH|$MBEGIN|$MEND|$match[1]|$mbegin[1]|$mend[1]"; fi"###);
+        assert_parity(
+            r###"if [[ "a short string" =~ "s(...)t" ]]; then print "$MATCH|$MBEGIN|$MEND|$match[1]|$mbegin[1]|$mend[1]"; fi"###,
+        );
     }
 
     /// -o option test.
     #[test]
     fn cond_option_test() {
-        assert_parity(r###"setopt extendedglob; [[ -o extendedglob ]] && echo m1 || echo n1; setopt noextendedglob; [[ -o extendedglob ]] && echo m2 || echo n2; [[ -o monitor ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"setopt extendedglob; [[ -o extendedglob ]] && echo m1 || echo n1; setopt noextendedglob; [[ -o extendedglob ]] && echo m2 || echo n2; [[ -o monitor ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// -v varname test (set even if empty).
     #[test]
     fn cond_v_set_test() {
-        assert_parity(r###"foo=bar; [[ -v foo ]] && echo m1 || echo n1; [[ -v notset999 ]] && echo m2 || echo n2; empty=; [[ -v empty ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"foo=bar; [[ -v foo ]] && echo m1 || echo n1; [[ -v notset999 ]] && echo m2 || echo n2; empty=; [[ -v empty ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// nested ( ) with || &&.
     #[test]
     fn cond_nested_groups() {
-        assert_parity(r###"[[ ( 1 = 1 && 2 = 2 ) || 3 = 4 ]] && echo m1 || echo n1; [[ 1 = 2 || ( 3 = 3 && 4 = 4 ) ]] && echo m2 || echo n2; [[ ( 1 = 2 || 3 = 4 ) && 5 = 5 ]] && echo m3 || echo n3"###);
+        assert_parity(
+            r###"[[ ( 1 = 1 && 2 = 2 ) || 3 = 4 ]] && echo m1 || echo n1; [[ 1 = 2 || ( 3 = 3 && 4 = 4 ) ]] && echo m2 || echo n2; [[ ( 1 = 2 || 3 = 4 ) && 5 = 5 ]] && echo m3 || echo n3"###,
+        );
     }
 
     /// ** power, -3**2, right-assoc.
     #[test]
     fn arith_power() {
-        assert_parity(r###"print $(( 2 ** 10 )); print $(( -3 ** 2 )); print $(( 2 ** 3 ** 2 ))"###);
+        assert_parity(
+            r###"print $(( 2 ** 10 )); print $(( -3 ** 2 )); print $(( 2 ** 3 ** 2 ))"###,
+        );
     }
 
     /// % modulus, << >> shifts.
     #[test]
     fn arith_mod_shift() {
-        assert_parity(r###"print $(( 17 % 5 )); print $(( -17 % 5 )); print $(( 1 << 4 )); print $(( 256 >> 2 ))"###);
+        assert_parity(
+            r###"print $(( 17 % 5 )); print $(( -17 % 5 )); print $(( 1 << 4 )); print $(( 256 >> 2 ))"###,
+        );
     }
 
     /// bitwise & | ^ ~.
     #[test]
     fn arith_bitwise() {
-        assert_parity(r###"print $(( 12 & 10 )); print $(( 12 | 10 )); print $(( 12 ^ 10 )); print $(( ~5 ))"###);
+        assert_parity(
+            r###"print $(( 12 & 10 )); print $(( 12 | 10 )); print $(( 12 ^ 10 )); print $(( ~5 ))"###,
+        );
     }
 
     /// base#n in bases 2..36.
     #[test]
     fn arith_base_input() {
-        assert_parity(r###"print $(( 16#ff )); print $(( 2#1010 )); print $(( 8#777 )); print $(( 36#z ))"###);
+        assert_parity(
+            r###"print $(( 16#ff )); print $(( 2#1010 )); print $(( 8#777 )); print $(( 36#z ))"###,
+        );
     }
 
     /// underscores in literals.
@@ -697,7 +846,9 @@ mod man_cond_arith {
     /// ternary and comma operator.
     #[test]
     fn arith_ternary_comma() {
-        assert_parity(r###"print $(( 1 ? 10 : 20 )); print $(( 0 ? 10 : 20 )); print $(( (1, 2, 3) ))"###);
+        assert_parity(
+            r###"print $(( 1 ? 10 : 20 )); print $(( 0 ? 10 : 20 )); print $(( (1, 2, 3) ))"###,
+        );
     }
 
     /// pre/post increment.
@@ -715,7 +866,9 @@ mod man_cond_arith {
     /// output base [#base]/[##base].
     #[test]
     fn arith_output_base() {
-        assert_parity(r###"print $(( [#16] 255 )); print $(( [##16] 255 )); print $(( [#2] 10 ))"###);
+        assert_parity(
+            r###"print $(( [#16] 255 )); print $(( [##16] 255 )); print $(( [#2] 10 ))"###,
+        );
     }
 
     /// (( )) return status.
@@ -757,7 +910,9 @@ mod man_param {
     /// implicit [key]=value gap fill.
     #[test]
     fn implicit_index_assign() {
-        assert_parity(r###"array=(one [3]=three four); print -r -- ${#array}; print -rl -- $array"###);
+        assert_parity(
+            r###"array=(one [3]=three four); print -r -- ${#array}; print -rl -- $array"###,
+        );
     }
 
     /// (i) absent yields len+1.
@@ -775,7 +930,9 @@ mod man_param {
     /// (R) last match, (I) last index.
     #[test]
     fn R_I_last() {
-        assert_parity(r###"a=(foo bar foo baz); print -r -- ${a[(R)foo]}; print -r -- ${a[(I)foo]}"###);
+        assert_parity(
+            r###"a=(foo bar foo baz); print -r -- ${a[(R)foo]}; print -r -- ${a[(I)foo]}"###,
+        );
     }
 
     /// (i) on assoc returns matching key.
@@ -787,19 +944,25 @@ mod man_param {
     /// (r) on assoc compares values.
     #[test]
     fn r_assoc_value() {
-        assert_parity(r###"typeset -A h; h=(k1 apple k2 banana k3 apricot); print -r -- ${h[(r)ap*]}"###);
+        assert_parity(
+            r###"typeset -A h; h=(k1 apple k2 banana k3 apricot); print -r -- ${h[(r)ap*]}"###,
+        );
     }
 
     /// (R) on assoc gives all matching values.
     #[test]
     fn R_assoc_all_values() {
-        assert_parity(r###"typeset -A h; h=(k1 apple k2 banana k3 apricot); print -rl -- ${(o)h[(R)ap*]}"###);
+        assert_parity(
+            r###"typeset -A h; h=(k1 apple k2 banana k3 apricot); print -rl -- ${(o)h[(R)ap*]}"###,
+        );
     }
 
     /// (I) on assoc gives all matching keys.
     #[test]
     fn I_assoc_all_keys() {
-        assert_parity(r###"typeset -A h=(apple 1 apricot 2 banana 3); print -rl -- ${(o)h[(I)ap*]}"###);
+        assert_parity(
+            r###"typeset -A h=(apple 1 apricot 2 banana 3); print -rl -- ${(o)h[(I)ap*]}"###,
+        );
     }
 
     /// (e) literal star key.
@@ -829,7 +992,9 @@ mod man_param {
     /// (rn:2:) nth match.
     #[test]
     fn rn_nth_match() {
-        assert_parity(r###"a=(x foo y foo z foo); print -r -- ${a[(rn:2:)foo]}; print -r -- ${a[(in:2:)foo]}"###);
+        assert_parity(
+            r###"a=(x foo y foo z foo); print -r -- ${a[(rn:2:)foo]}; print -r -- ${a[(in:2:)foo]}"###,
+        );
     }
 
     /// (ib:3:) begin at nth.
@@ -859,7 +1024,9 @@ mod man_param {
     /// (t) tied scalar/array.
     #[test]
     fn t_tied_types() {
-        assert_parity(r###"typeset -T VV vv; VV=a:b; print -r -- ${(t)VV}; print -r -- ${(t)vv}"###);
+        assert_parity(
+            r###"typeset -T VV vv; VV=a:b; print -r -- ${(t)VV}; print -r -- ${(t)vv}"###,
+        );
     }
 
     /// (t) unique array.
@@ -871,7 +1038,9 @@ mod man_param {
     /// tied path<->PATH two-way.
     #[test]
     fn tied_path_PATH() {
-        assert_parity(r###"path=(/aa /bb /cc); print -r -- $PATH; PATH=/xx:/yy; print -rl -- $path"###);
+        assert_parity(
+            r###"path=(/aa /bb /cc); print -r -- $PATH; PATH=/xx:/yy; print -rl -- $path"###,
+        );
     }
 
     /// tied unset cascades — unsetting one half of a `typeset -T` tie
@@ -884,7 +1053,9 @@ mod man_param {
     /// KSH_ARRAYS zero-based.
     #[test]
     fn ksharrays_zero_based() {
-        assert_parity(r###"setopt ksharrays; a=(x y z); print -r -- ${a[0]}; print -r -- ${a[1]}"###);
+        assert_parity(
+            r###"setopt ksharrays; a=(x y z); print -r -- ${a[0]}; print -r -- ${a[1]}"###,
+        );
     }
 
     /// KSH_ARRAYS $name is element 0.
@@ -908,7 +1079,9 @@ mod man_param {
     /// ZSH_SUBSHELL fork depth.
     #[test]
     fn zsh_subshell_depth() {
-        assert_parity(r###"print -r -- $ZSH_SUBSHELL; (print -r -- $ZSH_SUBSHELL); ( (print -r -- $ZSH_SUBSHELL) )"###);
+        assert_parity(
+            r###"print -r -- $ZSH_SUBSHELL; (print -r -- $ZSH_SUBSHELL); ( (print -r -- $ZSH_SUBSHELL) )"###,
+        );
     }
 
     /// reswords reverse subscript.
@@ -926,7 +1099,9 @@ mod man_param {
     /// (i)/(I) offset within scalar.
     #[test]
     fn i_I_scalar_offset() {
-        assert_parity(r###"string=banana; print -r -- ${string[(i)a]}; print -r -- ${string[(I)a]}"###);
+        assert_parity(
+            r###"string=banana; print -r -- ${string[(i)a]}; print -r -- ${string[(I)a]}"###,
+        );
     }
 
     /// set -A array builtin.
@@ -938,7 +1113,9 @@ mod man_param {
     /// sparse [key]=value fills gaps.
     #[test]
     fn sparse_fill() {
-        assert_parity(r###"a=([2]=two [4]=four); print -r -- "1=[$a[1]] 2=[$a[2]] 3=[$a[3]] 4=[$a[4]]"; print -r -- ${#a}"###);
+        assert_parity(
+            r###"a=([2]=two [4]=four); print -r -- "1=[$a[1]] 2=[$a[2]] 3=[$a[3]] 4=[$a[4]]"; print -r -- ${#a}"###,
+        );
     }
 
     /// subscript-on-unset creates array.
@@ -962,7 +1139,9 @@ mod man_param {
     /// unset "name[key]" deletes assoc element.
     #[test]
     fn unset_assoc_element() {
-        assert_parity(r###"typeset -A h=(x 1 y 2 z 3); unset "h[y]"; print -r -- ${(oj:,:)h}; print -r -- ${#h}"###);
+        assert_parity(
+            r###"typeset -A h=(x 1 y 2 z 3); unset "h[y]"; print -r -- ${(oj:,:)h}; print -r -- ${#h}"###,
+        );
     }
 
     /// [key]+=value appends to element.
@@ -1071,7 +1250,9 @@ mod man_builtins {
     /// printf -v array, one element per reuse.
     #[test]
     fn printf_v_array() {
-        assert_parity(r###"typeset -a arr; printf -v arr "%s+%s\n" a b c d; print -r -- "${#arr}|${arr[1]}""###);
+        assert_parity(
+            r###"typeset -a arr; printf -v arr "%s+%s\n" a b c d; print -r -- "${#arr}|${arr[1]}""###,
+        );
     }
 
     /// typeset -i base output.
@@ -1101,7 +1282,9 @@ mod man_builtins {
     /// typeset -l / -u expansion case.
     #[test]
     fn typeset_l_u() {
-        assert_parity(r###"typeset -l v=HeLLo; print -r -- "$v"; typeset -u w=HeLLo; print -r -- "$w""###);
+        assert_parity(
+            r###"typeset -l v=HeLLo; print -r -- "$v"; typeset -u w=HeLLo; print -r -- "$w""###,
+        );
     }
 
     /// typeset -F fixed-point.
@@ -1137,7 +1320,9 @@ mod man_builtins {
     /// unset -m pattern.
     #[test]
     fn unset_m() {
-        assert_parity(r###"foo1=a foo2=b bar=c; unset -m "foo*"; print -r -- "${foo1-unset} ${bar}""###);
+        assert_parity(
+            r###"foo1=a foo2=b bar=c; unset -m "foo*"; print -r -- "${foo1-unset} ${bar}""###,
+        );
     }
 
     /// read -A array.
@@ -1197,7 +1382,9 @@ mod man_builtins {
     /// functions -c copy.
     #[test]
     fn functions_c_copy() {
-        assert_parity(r###"orig(){ print original; }; functions -c orig copy; orig(){ print changed; }; copy"###);
+        assert_parity(
+            r###"orig(){ print original; }; functions -c orig copy; orig(){ print changed; }; copy"###,
+        );
     }
 
     /// hash -d / ~name.
@@ -1251,7 +1438,9 @@ mod man_builtins {
     /// unsetopt -m pattern.
     #[test]
     fn unsetopt_m() {
-        assert_parity(r###"setopt extendedglob globdots; unsetopt -m "glob*"; [[ -o globdots ]] && print on || print off"###);
+        assert_parity(
+            r###"setopt extendedglob globdots; unsetopt -m "glob*"; [[ -o globdots ]] && print on || print off"###,
+        );
     }
 }
 
@@ -1275,7 +1464,9 @@ mod man_options {
     /// NULL_GLOB deletes non-matching.
     #[test]
     fn nullglob() {
-        assert_parity(r###"setopt nullglob; d=$(mktemp -d); cd "$d"; set -- pre nomatch_xyz* post; print -r -- "$#: $@"; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt nullglob; d=$(mktemp -d); cd "$d"; set -- pre nomatch_xyz* post; print -r -- "$#: $@"; cd /; rm -rf "$d""###,
+        );
     }
 
     /// NOMATCH errors.
@@ -1287,44 +1478,58 @@ mod man_options {
     /// GLOB_DOTS includes dotfiles.
     #[test]
     fn globdots() {
-        assert_parity(r###"setopt globdots; d=$(mktemp -d); cd "$d"; touch .hidden visible; print -rl -- ${(o)$(print -l -- *)}; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt globdots; d=$(mktemp -d); cd "$d"; touch .hidden visible; print -rl -- ${(o)$(print -l -- *)}; cd /; rm -rf "$d""###,
+        );
     }
 
     /// NUMERIC_GLOB_SORT.
     #[test]
     fn numericglobsort() {
-        assert_parity(r###"setopt numericglobsort; d=$(mktemp -d); cd "$d"; touch f1 f10 f2 f20 f3; print -r -- f*; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt numericglobsort; d=$(mktemp -d); cd "$d"; touch f1 f10 f2 f20 f3; print -r -- f*; cd /; rm -rf "$d""###,
+        );
     }
 
     /// NO_CASE_GLOB.
     #[test]
     fn nocaseglob() {
-        assert_parity(r###"unsetopt caseglob; d=$(mktemp -d); cd "$d"; touch ABC; print -r -- abc*; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"unsetopt caseglob; d=$(mktemp -d); cd "$d"; touch ABC; print -r -- abc*; cd /; rm -rf "$d""###,
+        );
     }
 
     /// BARE_GLOB_QUAL.
     #[test]
     fn bareglobqual() {
-        assert_parity(r###"setopt bareglobqual; d=$(mktemp -d); cd "$d"; mkdir adir; touch afile; print -r -- *(/); cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt bareglobqual; d=$(mktemp -d); cd "$d"; mkdir adir; touch afile; print -r -- *(/); cd /; rm -rf "$d""###,
+        );
     }
 
     /// GLOB_SUBST.
     #[test]
     fn globsubst() {
-        assert_parity(r###"setopt globsubst; d=$(mktemp -d); cd "$d"; touch abc; pat="a*"; print -r -- $pat; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt globsubst; d=$(mktemp -d); cd "$d"; touch abc; pat="a*"; print -r -- $pat; cd /; rm -rf "$d""###,
+        );
     }
 
     /// MARK_DIRS.
     #[test]
     fn markdirs() {
-        assert_parity(r###"setopt markdirs; d=$(mktemp -d); cd "$d"; mkdir sub; print -r -- *; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt markdirs; d=$(mktemp -d); cd "$d"; mkdir sub; print -r -- *; cd /; rm -rf "$d""###,
+        );
     }
 
     /// GLOB_ASSIGN.
     #[test]
     #[ignore = "zshrs gap: GLOB_ASSIGN does not glob the RHS of v=x* into an array (v stays the literal pattern)"]
     fn globassign() {
-        assert_parity(r###"setopt globassign; d=$(mktemp -d); cd "$d"; touch x1 x2; v=x*; print -r -- "${#v} ${v[1]}"; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt globassign; d=$(mktemp -d); cd "$d"; touch x1 x2; v=x*; print -r -- "${#v} ${v[1]}"; cd /; rm -rf "$d""###,
+        );
     }
 
     /// RC_QUOTES.
@@ -1336,7 +1541,9 @@ mod man_options {
     /// PROMPT_SUBST on vs off.
     #[test]
     fn promptsubst() {
-        assert_parity(r###"setopt promptsubst; x=world; print -rP 'hi $x'; unsetopt promptsubst; print -rP 'hi $x'"###);
+        assert_parity(
+            r###"setopt promptsubst; x=world; print -rP 'hi $x'; unsetopt promptsubst; print -rP 'hi $x'"###,
+        );
     }
 
     /// WARN_CREATE_GLOBAL.
@@ -1348,7 +1555,9 @@ mod man_options {
     /// MULTIOS tee.
     #[test]
     fn multios() {
-        assert_parity(r###"d=$(mktemp -d); echo hi > "$d/a" > "$d/b"; cat "$d/a" "$d/b"; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); echo hi > "$d/a" > "$d/b"; cat "$d/a" "$d/b"; rm -rf "$d""###,
+        );
     }
 
     /// PIPE_FAIL.
@@ -1378,7 +1587,9 @@ mod man_options {
     /// MAGIC_EQUAL_SUBST.
     #[test]
     fn magicequalsubst() {
-        assert_parity(r###"setopt magicequalsubst; export HOME=/tmp/fakehome; print -r -- foo=~/bar"###);
+        assert_parity(
+            r###"setopt magicequalsubst; export HOME=/tmp/fakehome; print -r -- foo=~/bar"###,
+        );
     }
 
     /// KSH_ZERO_SUBSCRIPT.
@@ -1390,18 +1601,24 @@ mod man_options {
     /// APPEND_CREATE off errors.
     #[test]
     fn appendcreate_off() {
-        assert_parity(r###"unsetopt clobber appendcreate; d=$(mktemp -d); { echo hi >> "$d/n.txt"; } 2>/dev/null; print -r -- "exit=$? exists=$([[ -e $d/n.txt ]] && echo y || echo n)"; rm -rf "$d""###);
+        assert_parity(
+            r###"unsetopt clobber appendcreate; d=$(mktemp -d); { echo hi >> "$d/n.txt"; } 2>/dev/null; print -r -- "exit=$? exists=$([[ -e $d/n.txt ]] && echo y || echo n)"; rm -rf "$d""###,
+        );
     }
 
     /// GLOB_STAR_SHORT.
     #[test]
     fn globstarshort() {
-        assert_parity(r###"setopt globstarshort; d=$(mktemp -d); cd "$d"; mkdir sub; touch sub/deep.c top.c; print -rl -- ${(o)$(print -l -- **.c)}; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"setopt globstarshort; d=$(mktemp -d); cd "$d"; mkdir sub; touch sub/deep.c top.c; print -rl -- ${(o)$(print -l -- **.c)}; cd /; rm -rf "$d""###,
+        );
     }
 
     /// HIST_SUBST_PATTERN.
     #[test]
     fn histsubstpattern() {
-        assert_parity(r###"setopt histsubstpattern extendedglob; v=hello123world; print -r -- ${v//(#m)[0-9]##/N}"###);
+        assert_parity(
+            r###"setopt histsubstpattern extendedglob; v=hello123world; print -r -- ${v//(#m)[0-9]##/N}"###,
+        );
     }
 }

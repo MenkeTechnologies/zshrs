@@ -379,6 +379,9 @@ mod default_word_globbing {
         let d = files();
         assert_parity_in(d.path(), "print -l ${x:-zzz*}; echo done");
         assert_parity_in(d.path(), "setopt nullglob; print -l ${x:-zzz*}; echo after");
-        assert_parity_in(d.path(), "y=Y; print -l ${y:-*nomatch}; print -l ${x:-*file}");
+        assert_parity_in(
+            d.path(),
+            "y=Y; print -l ${y:-*nomatch}; print -l ${x:-*file}",
+        );
     }
 }

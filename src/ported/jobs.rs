@@ -1301,9 +1301,7 @@ pub fn printjob(
             // c:1257-1267 — group extent.
             let mut group_end = i + 1;
             if (lng & 3) == 0 {
-                while group_end < job.procs.len()
-                    && job.procs[group_end].status == pn.status
-                {
+                while group_end < job.procs.len() && job.procs[group_end].status == pn.status {
                     group_end += 1;
                 }
             }
@@ -1341,7 +1339,6 @@ pub fn printjob(
     header
 }
 
-
 /// Port of `addfilelist(const char *name, int fd)` from `Src/jobs.c:1373`.
 ///
 /// C body:
@@ -1364,9 +1361,17 @@ pub fn addfilelist(job: &mut job, name: Option<&str>, fd: i32) {
     //          folds into `Vec::push` (the Vec is the always-present list).
     let jf = match name {
         // c:1379 — `jf->u.name = ztrdup(name); jf->is_fd = 0;`
-        Some(n) => jobfile { name: Some(n.to_string()), fd: 0, is_fd: 0 },
+        Some(n) => jobfile {
+            name: Some(n.to_string()),
+            fd: 0,
+            is_fd: 0,
+        },
         // c:1383 — `jf->u.fd = fd; jf->is_fd = 1;`
-        None => jobfile { name: None, fd, is_fd: 1 },
+        None => jobfile {
+            name: None,
+            fd,
+            is_fd: 1,
+        },
     };
     job.filelist.push(jf); // c:1385 zaddlinknode(ll, jf)
 }
@@ -1884,9 +1889,9 @@ pub fn clearjobtab(table: &mut JobTable, monitor: i32) {
     jobs.clear();
     jobs.push(job::new()); // slot 0 — the shell's own entry
     *MAXJOB.get_or_init(|| Mutex::new(0)).lock().unwrap() = 0; // c:1819
-    // c:1821-1828 — "Although we don't have job control in subshells,
-    // we sometimes need control structures for other purposes such as
-    // multios. Grab a job for this purpose." `thisjob = initjob();`
+                                                               // c:1821-1828 — "Although we don't have job control in subshells,
+                                                               // we sometimes need control structures for other purposes such as
+                                                               // multios. Grab a job for this purpose." `thisjob = initjob();`
     let control = initjob(&mut jobs); // c:1828
     *THISJOB.get_or_init(|| Mutex::new(-1)).lock().unwrap() = control as i32;
 }
@@ -2330,8 +2335,16 @@ pub fn scanjobs(jobtab: &mut [job]) {
                     &jobtab[i],
                     i,
                     long_list as i32,
-                    if curjob >= 0 { Some(curjob as usize) } else { None },
-                    if prevjob >= 0 { Some(prevjob as usize) } else { None },
+                    if curjob >= 0 {
+                        Some(curjob as usize)
+                    } else {
+                        None
+                    },
+                    if prevjob >= 0 {
+                        Some(prevjob as usize)
+                    } else {
+                        None
+                    },
                 ); // c:2000
                 if !s.is_empty() {
                     eprintln!("{}", s);
@@ -3114,10 +3127,7 @@ pub fn bin_fg(
                         if let Some(bg) = getbgstatus(pid) {
                             returnval = bg;
                         } else {
-                            zwarnnam(
-                                name,
-                                &format!("pid {} is not a child of this shell", pid),
-                            );
+                            zwarnnam(name, &format!("pid {} is not a child of this shell", pid));
                             returnval = 127;
                         }
                     } else {
@@ -3366,9 +3376,8 @@ pub fn bin_kill(
                         // though TERM IS a valid signal name. Mirror
                         // that: when token has a leading `-`/`+`,
                         // skip the lookup and emit unknown directly.
-                        let sign_stripped = token
-                            .strip_prefix('-')
-                            .or_else(|| token.strip_prefix('+'));
+                        let sign_stripped =
+                            token.strip_prefix('-').or_else(|| token.strip_prefix('+'));
                         if let Some(stripped) = sign_stripped {
                             let upper = stripped.to_ascii_uppercase();
                             let bare = upper.strip_prefix("SIG").unwrap_or(&upper);
@@ -3510,13 +3519,13 @@ pub fn bin_kill(
             }
             None => {
                 zwarnnam(nam, &format!("unknown signal: SIG{}", bare)); // c:2974
-                // c:Src/jobs.c — when `-NAME` lookup fails AND there's
-                // at least one positional remaining, zsh emits the
-                // follow-up hint `type kill -L for a list of signals`
-                // rc=1. The bundled C source uses capital `-L` (the
-                // tabular listing flag added in zsh 5.9.x-dev). Older
-                // /bin/zsh 5.9 shows lowercase `-l`; the bundled
-                // source AND /opt/homebrew/bin/zsh 5.9.1+ use `-L`.
+                                                                        // c:Src/jobs.c — when `-NAME` lookup fails AND there's
+                                                                        // at least one positional remaining, zsh emits the
+                                                                        // follow-up hint `type kill -L for a list of signals`
+                                                                        // rc=1. The bundled C source uses capital `-L` (the
+                                                                        // tabular listing flag added in zsh 5.9.x-dev). Older
+                                                                        // /bin/zsh 5.9 shows lowercase `-l`; the bundled
+                                                                        // source AND /opt/homebrew/bin/zsh 5.9.1+ use `-L`.
                 zwarnnam(nam, "type kill -L for a list of signals");
                 return 1;
             }
@@ -4991,14 +5000,22 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let mut tab = vec![job::new(), job::new(), job::new()];
         tab[1].stat = stat::INUSE;
-        tab[1].filelist = vec![jobfile { name: Some("/tmp/foo".to_string()), fd: 0, is_fd: 0 }];
+        tab[1].filelist = vec![jobfile {
+            name: Some("/tmp/foo".to_string()),
+            fd: 0,
+            is_fd: 0,
+        }];
         assert!(havefiles(&tab));
         // job marked but no files → no.
         tab[1].filelist.clear();
         assert!(!havefiles(&tab));
         // Files but no stat (released slot) → C `jobtab[i].stat &&` requires both.
         tab[2].stat = 0;
-        tab[2].filelist = vec![jobfile { name: Some("/tmp/bar".to_string()), fd: 0, is_fd: 0 }];
+        tab[2].filelist = vec![jobfile {
+            name: Some("/tmp/bar".to_string()),
+            fd: 0,
+            is_fd: 0,
+        }];
         assert!(!havefiles(&tab));
     }
 

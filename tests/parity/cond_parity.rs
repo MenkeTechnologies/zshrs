@@ -677,7 +677,9 @@ mod syntax_errors {
     /// Valid string/numeric/regex operators must still parse and run.
     #[test]
     fn valid_operators_still_work() {
-        assert_parity(r#"[[ a == a ]]; print r$?; [[ 1 -eq 1 ]]; print r$?; [[ foo =~ f.. ]]; print r$?"#);
+        assert_parity(
+            r#"[[ a == a ]]; print r$?; [[ 1 -eq 1 ]]; print r$?; [[ foo =~ f.. ]]; print r$?"#,
+        );
     }
 
     /// `test`/`[` with an unrecognized `-X` operator → "unknown condition"

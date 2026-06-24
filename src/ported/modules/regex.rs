@@ -63,15 +63,15 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     let lhstr_zshmeta = a[0]; // c:62 cond_str(a,0,0)
     let rhre_zshmeta = a[1]; // c:63 cond_str(a,1,0)
     let mut return_value: i32 = 0; // c:65
-    // c:67-70 — `lhstr = ztrdup(lhstr_zshmeta); unmetafy(lhstr, NULL);
-    //            rhre  = ztrdup(rhre_zshmeta);  unmetafy(rhre, NULL);`
-    // Both operands arrive in zsh's metafied encoding; the regex
-    // engine must see raw bytes. Prior port matched against the
-    // metafied forms — high-byte subjects/patterns matched against
-    // their Meta+(byte^32) expansion instead of the real text, and
-    // the c:109 metafy of captures (cut from the already-metafied
-    // subject) DOUBLE-encoded the output. C's order: unmetafy in,
-    // match raw, metafy captures once on the way out.
+                                   // c:67-70 — `lhstr = ztrdup(lhstr_zshmeta); unmetafy(lhstr, NULL);
+                                   //            rhre  = ztrdup(rhre_zshmeta);  unmetafy(rhre, NULL);`
+                                   // Both operands arrive in zsh's metafied encoding; the regex
+                                   // engine must see raw bytes. Prior port matched against the
+                                   // metafied forms — high-byte subjects/patterns matched against
+                                   // their Meta+(byte^32) expansion instead of the real text, and
+                                   // the c:109 metafy of captures (cut from the already-metafied
+                                   // subject) DOUBLE-encoded the output. C's order: unmetafy in,
+                                   // match raw, metafy captures once on the way out.
     let lhstr_owned = crate::ported::utils::unmeta(lhstr_zshmeta); // c:67-68
     let rhre_owned = crate::ported::utils::unmeta(rhre_zshmeta); // c:69-70
     let lhstr = lhstr_owned.as_str();
@@ -146,10 +146,7 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
                 .find_map(|l| l.trim().strip_prefix("error: "))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| raw.replace('\n', " "));
-            crate::ported::utils::zwarn(&format!(
-                "failed to compile regex: {}",
-                detail
-            ));
+            crate::ported::utils::zwarn(&format!("failed to compile regex: {}", detail));
             return 0; // c:81 break;
         }
     };

@@ -465,9 +465,7 @@ mod m_pattern_listing {
     /// against pattern-matched params, no shadow creation.
     #[test]
     fn dash_m_in_function_still_lists() {
-        assert_parity(
-            r#"TPSM_J=v; f() { typeset -m 'TPSM_J' | sort; }; f; echo END"#,
-        );
+        assert_parity(r#"TPSM_J=v; f() { typeset -m 'TPSM_J' | sort; }; f; echo END"#);
     }
 
     /// `-gm` inside a function — silent (combined with c:2244 gate).
@@ -720,7 +718,10 @@ mod private_and_hidden_listing {
     use super::*;
 
     fn has_private_module() -> bool {
-        run_zshrs("zmodload zsh/param/private; echo ok").stdout.trim() == "ok"
+        run_zshrs("zmodload zsh/param/private; echo ok")
+            .stdout
+            .trim()
+            == "ok"
     }
 
     #[test]
@@ -792,7 +793,10 @@ mod private_assignment_scope {
     use super::*;
 
     fn has_private() -> bool {
-        run_zshrs("zmodload zsh/param/private; echo ok").stdout.trim() == "ok"
+        run_zshrs("zmodload zsh/param/private; echo ok")
+            .stdout
+            .trim()
+            == "ok"
     }
     fn p(s: &str) {
         if !has_private() {
@@ -867,9 +871,7 @@ mod local_dash_p_handler_swap {
     #[test]
     fn local_dash_p_after_module_load() {
         assert_parity("zmodload zsh/param/private; () { local -P p=1; print $p }");
-        assert_parity(
-            "zmodload zsh/param/private; () { local -Pa arr=(a b c); print -l $arr }",
-        );
+        assert_parity("zmodload zsh/param/private; () { local -Pa arr=(a b c); print -l $arr }");
         assert_parity("zmodload zsh/param/private; () { local -PU u=(a a b); print -l $u }");
     }
 
@@ -878,9 +880,7 @@ mod local_dash_p_handler_swap {
     #[test]
     fn plain_local_unaffected_after_load() {
         assert_parity("zmodload zsh/param/private; () { local q=9; print $q }");
-        assert_parity(
-            "zmodload zsh/param/private; x=g; () { local x=loc; print $x }; print $x",
-        );
+        assert_parity("zmodload zsh/param/private; x=g; () { local x=loc; print $x }; print $x");
         assert_parity(
             "typeset -g gg=5; zmodload zsh/param/private; () { local gg=7; gg=8; print $gg }; print $gg",
         );

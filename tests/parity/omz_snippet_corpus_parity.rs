@@ -174,7 +174,9 @@ echo "$sp""###,
     /// OMZL::git.zsh:239 — `${var/refs\/remotes\//}` single-subst stripping slash-prefix.
     #[test]
     fn strip_remotes_prefix() {
-        assert_parity(r###"remote="refs/remotes/origin/main"; echo "${remote/refs\/remotes\//}""###);
+        assert_parity(
+            r###"remote="refs/remotes/origin/main"; echo "${remote/refs\/remotes\//}""###,
+        );
     }
 
     /// OMZL::git.zsh:277 — `${ref#refs/heads/}` prefix strip to bare branch.
@@ -186,8 +188,10 @@ echo "$sp""###,
     /// OMZL::git.zsh:27 — `||`-chained cmdsubst fallthrough for ref resolution.
     #[test]
     fn cmdsubst_or_fallthrough() {
-        assert_parity(r###"ref=$(false) || ref=$(echo tagname) || ref=$(echo sha) || ref="none"
-echo "$ref""###);
+        assert_parity(
+            r###"ref=$(false) || ref=$(echo tagname) || ref=$(echo sha) || ref="none"
+echo "$ref""###,
+        );
     }
 
     /// OMZL::git.zsh:272,274 — capture $? into ret, then == 128 early branch.
@@ -273,8 +277,10 @@ mod omzl_functions {
     /// OMZL::functions.zsh:50 — `${@:$#}` slice the last positional.
     #[test]
     fn last_positional_slice() {
-        assert_parity(r###"set -- a b c
-echo "last=${@:$#}""###);
+        assert_parity(
+            r###"set -- a b c
+echo "last=${@:$#}""###,
+        );
     }
 
     /// OMZL::functions.zsh:102 — `(( $+aliases[$1] ))` existence test on $aliases assoc.
@@ -404,8 +410,10 @@ v="ftp://x"
     /// OMZL::functions.zsh:43 — `${=var}` forced field-splitting of a command string.
     #[test]
     fn forced_field_split() {
-        assert_parity(r###"open_cmd="cmd a b"
-print -l -- ${=open_cmd}"###);
+        assert_parity(
+            r###"open_cmd="cmd a b"
+print -l -- ${=open_cmd}"###,
+        );
     }
 
     /// OMZL::functions.zsh:2-4 — zsh_stats awk frequency table + sort -nr | head.
@@ -525,91 +533,121 @@ mod omzp_git {
     /// OMZP::git:3 — `${${(As: :)$(...)}[3]}` split cmdsubst on space then index.
     #[test]
     fn split_cmdsubst_index() {
-        assert_parity(r###"v="${${(As: :)$(printf "git version 2.43.0")}[3]}"; print -r -- "$v""###);
+        assert_parity(
+            r###"v="${${(As: :)$(printf "git version 2.43.0")}[3]}"; print -r -- "$v""###,
+        );
     }
 
     /// OMZP::git:32 — nested brace expansion of ref paths.
     #[test]
     fn nested_brace_refs() {
-        assert_parity(r###"for ref in refs/{heads,remotes/{origin,upstream}}/{main,master}; do print -r -- $ref; done"###);
+        assert_parity(
+            r###"for ref in refs/{heads,remotes/{origin,upstream}}/{main,master}; do print -r -- $ref; done"###,
+        );
     }
 
     /// OMZP::git:43 — `${ref#"$remote/"}` quoted-prefix removal with variable.
     #[test]
     fn quoted_prefix_removal() {
-        assert_parity(r###"remote=origin; ref="origin/feature/x"; print -r -- ${ref#"$remote/"}"###);
+        assert_parity(
+            r###"remote=origin; ref="origin/feature/x"; print -r -- ${ref#"$remote/"}"###,
+        );
     }
 
     /// OMZP::git:42 — `[[ $ref == $remote/* ]]` glob match against variable prefix.
     #[test]
     fn glob_match_var_prefix() {
-        assert_parity(r###"remote=origin; ref="origin/main"; if [[ $ref == $remote/* ]]; then print yes; else print no; fi"###);
+        assert_parity(
+            r###"remote=origin; ref="origin/main"; if [[ $ref == $remote/* ]]; then print yes; else print no; fi"###,
+        );
     }
 
     /// OMZP::git:12 — `function name() { }` with `&& return N` short-circuit.
     #[test]
     fn function_paren_return() {
-        assert_parity(r###"function f() { [[ -z "$1" ]] && return 3; print -r -- "got:$1"; }; f hello; print exit=$?; f; print exit=$?"###);
+        assert_parity(
+            r###"function f() { [[ -z "$1" ]] && return 3; print -r -- "got:$1"; }; f hello; print exit=$?; f; print exit=$?"###,
+        );
     }
 
     /// OMZP::git:53 — usage guard with $0 in function.
     #[test]
     fn usage_guard_zero() {
-        assert_parity(r###"g() { if [[ -z "$1" || -z "$2" ]]; then print "Usage: $0 a b"; return 1; fi; print "$1->$2"; }; g a; print rc=$?; g a b; print rc=$?"###);
+        assert_parity(
+            r###"g() { if [[ -z "$1" || -z "$2" ]]; then print "Usage: $0 a b"; return 1; fi; print "$1->$2"; }; g a; print rc=$?; g a b; print rc=$?"###,
+        );
     }
 
     /// OMZP::git:176 — `${${@[(r)PAT]}:-DEF}` extendedglob reverse-subscript URL match + default.
     #[test]
     fn at_reverse_subscript_url() {
-        assert_parity(r###"setopt extendedglob; set -- foo https://github.com/u/r.git bar; repo="${${@[(r)(ssh://*|git://*|ftp(s)#://*|http(s)#://*|*@*)(.git/#)#]}:-NONE}"; print -r -- "$repo""###);
+        assert_parity(
+            r###"setopt extendedglob; set -- foo https://github.com/u/r.git bar; repo="${${@[(r)(ssh://*|git://*|ftp(s)#://*|http(s)#://*|*@*)(.git/#)#]}:-NONE}"; print -r -- "$repo""###,
+        );
     }
 
     /// OMZP::git:183 — chained tail-modifier then extendedglob suffix strip.
     #[test]
     fn tail_then_suffix_strip() {
-        assert_parity(r###"setopt extendedglob; repo="https://github.com/u/myrepo.git"; print -r -- "${${repo:t}%.git/#}""###);
+        assert_parity(
+            r###"setopt extendedglob; repo="https://github.com/u/myrepo.git"; print -r -- "${${repo:t}%.git/#}""###,
+        );
     }
 
     /// OMZP::git:84 — `cmd | grep -q -- "--wip--" && echo` literal double-dash.
     #[test]
     fn grep_q_double_dash() {
-        assert_parity(r###"printf "commit abc\n    --wip-- [skip ci]\n" | grep -q -- "--wip--" && echo "WIP!!""###);
+        assert_parity(
+            r###"printf "commit abc\n    --wip-- [skip ci]\n" | grep -q -- "--wip--" && echo "WIP!!""###,
+        );
     }
 
     /// OMZP::git:97 — `[[ $# == 0 ]]` arg-count test + ${*} join.
     #[test]
     fn argcount_star_join() {
-        assert_parity(r###"h() { if [[ $# == 0 ]]; then print "none"; else print "args:${*}"; fi }; h; h a b c"###);
+        assert_parity(
+            r###"h() { if [[ $# == 0 ]]; then print "none"; else print "args:${*}"; fi }; h; h a b c"###,
+        );
     }
 
     /// OMZP::git:276 — `[[ $# != 1 ]] && b=...` then ${b:-$1} fallback.
     #[test]
     fn argcount_fallback_to_first() {
-        assert_parity(r###"f() { local b; [[ $# != 1 ]] && b="DEFBR"; print -r -- "${b:-$1}"; }; f; f only"###);
+        assert_parity(
+            r###"f() { local b; [[ $# != 1 ]] && b="DEFBR"; print -r -- "${b:-$1}"; }; f; f only"###,
+        );
     }
 
     /// OMZP::git:141 — `(( ! $? ))` arithmetic negation of last exit.
     #[test]
     fn arith_negate_exit() {
-        assert_parity(r###"true; (( ! $? )) && print "was-zero"; false; (( ! $? )) || print "was-nonzero""###);
+        assert_parity(
+            r###"true; (( ! $? )) && print "was-zero"; false; (( ! $? )) || print "was-nonzero""###,
+        );
     }
 
     /// OMZP::git:146 — `[[ $out = -* ]]` leading-dash glob anchor.
     #[test]
     fn leading_dash_glob() {
-        assert_parity(r###"out="- abc123"; if [[ $out = -* ]]; then print "starts-dash"; else print "no"; fi"###);
+        assert_parity(
+            r###"out="- abc123"; if [[ $out = -* ]]; then print "starts-dash"; else print "no"; fi"###,
+        );
     }
 
     /// OMZP::git:416 — alias body defining a fn inline + noglob, stored verbatim.
     #[test]
     fn alias_inline_function_body() {
-        assert_parity(r###"alias gtl="gtl(){ print -r -- \"tag-list:\${1}\" }; noglob gtl"; print -r -- "${aliases[gtl]}""###);
+        assert_parity(
+            r###"alias gtl="gtl(){ print -r -- \"tag-list:\${1}\" }; noglob gtl"; print -r -- "${aliases[gtl]}""###,
+        );
     }
 
     /// OMZP::git:112 — multi-command alias body with `;` and embedded quotes verbatim.
     #[test]
     fn alias_multicommand_body() {
-        assert_parity(r###"alias gwip="git add -A; git commit --no-verify --message \"--wip-- [skip ci]\""; print -r -- "${aliases[gwip]}""###);
+        assert_parity(
+            r###"alias gwip="git add -A; git commit --no-verify --message \"--wip-- [skip ci]\""; print -r -- "${aliases[gwip]}""###,
+        );
     }
 
     /// OMZP::git:427 — `aliases[$old]=` direct assoc assignment with multi-line body.
@@ -631,19 +669,25 @@ mod omzp_git {
     /// OMZP::git:226 — `is-at-least V "$ver" && A || B` version-gated alias.
     #[test]
     fn is_at_least_gate() {
-        assert_parity(r###"autoload -Uz is-at-least; is-at-least 2.8 2.43.0 && alias gfa="fetch-new" || alias gfa="fetch-old"; print -r -- "${aliases[gfa]}""###);
+        assert_parity(
+            r###"autoload -Uz is-at-least; is-at-least 2.8 2.43.0 && alias gfa="fetch-new" || alias gfa="fetch-old"; print -r -- "${aliases[gfa]}""###,
+        );
     }
 
     /// OMZP::git:94 — alias with cmdsubst `||` fallback stored verbatim.
     #[test]
     fn alias_cmdsubst_fallback() {
-        assert_parity(r###"alias grt="cd \"\$(git rev-parse --show-toplevel || echo .)\""; print -r -- "${aliases[grt]}""###);
+        assert_parity(
+            r###"alias grt="cd \"\$(git rev-parse --show-toplevel || echo .)\""; print -r -- "${aliases[grt]}""###,
+        );
     }
 
     /// OMZP::git:152 — gone-branch extraction pipeline (grep|cut|awk).
     #[test]
     fn gone_branch_pipeline() {
-        assert_parity(r###"printf "  feature/x abc123 [origin/feature/x: gone] msg\n  main def456 [origin/main] msg\n" | grep ": gone\]" | cut -c 3- | awk "{print \$1}""###);
+        assert_parity(
+            r###"printf "  feature/x abc123 [origin/feature/x: gone] msg\n  main def456 [origin/main] msg\n" | grep ": gone\]" | cut -c 3- | awk "{print \$1}""###,
+        );
     }
 }
 
@@ -655,7 +699,9 @@ mod omzp_github {
     /// OMZP::github:14 — keyword-less function + emulate -L zsh.
     #[test]
     fn keywordless_fn_emulate() {
-        assert_parity(r###"empty_gh() { emulate -L zsh; local repo=$1; print -r -- "repo=$repo"; }; empty_gh proj"###);
+        assert_parity(
+            r###"empty_gh() { emulate -L zsh; local repo=$1; print -r -- "repo=$repo"; }; empty_gh proj"###,
+        );
     }
 
     /// OMZP::github:36 — concatenated quoted-literal with embedded newline.
@@ -673,7 +719,9 @@ mod omzp_github {
     /// OMZP::github:30 — `cd "$1" || return N` short-circuit in a function.
     #[test]
     fn cd_or_return() {
-        assert_parity(r###"d=$(mktemp -d); mkdir "$d/sub"; f() { cd "$1" || return 7; print -r -- "in:${PWD:t}"; }; f "$d/sub"; print rc=$?; f "/no/such/dir/xyz"; print rc=$?; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); mkdir "$d/sub"; f() { cd "$1" || return 7; print -r -- "in:${PWD:t}"; }; f "$d/sub"; print rc=$?; f "/no/such/dir/xyz"; print rc=$?; cd /; rm -rf "$d""###,
+        );
     }
 }
 
@@ -710,25 +758,33 @@ Repository Root: https://svn.example.com/repo"; b=$(awk -F/ "/^URL:/ {for(i=0;i<
     /// OMZP::svn:58 — `sed -n <<<"${1:-default}"` here-string from param-default.
     #[test]
     fn sed_herestring_param_default() {
-        assert_parity(r###"svn_get_rev_nr() { sed -n "s/Revision:\ //p" <<<"${1:-fallback}"; }; svn_get_rev_nr "Revision: 1234""###);
+        assert_parity(
+            r###"svn_get_rev_nr() { sed -n "s/Revision:\ //p" <<<"${1:-fallback}"; }; svn_get_rev_nr "Revision: 1234""###,
+        );
     }
 
     /// OMZP::svn:54 — `${branch:-$(fallback)}` default expanding to cmdsubst.
     #[test]
     fn default_to_cmdsubst() {
-        assert_parity(r###"fb() { print "REPONAME"; }; branch=""; print -r -- "${branch:-$(fb)}"; branch="trunk"; print -r -- "${branch:-$(fb)}""###);
+        assert_parity(
+            r###"fb() { print "REPONAME"; }; branch=""; print -r -- "${branch:-$(fb)}"; branch="trunk"; print -r -- "${branch:-$(fb)}""###,
+        );
     }
 
     /// OMZP::svn:68 — `grep -Eq '^\s*[ACDIM!?L]' && echo $2 || echo $3` dirty/clean.
     #[test]
     fn grep_dirty_choose() {
-        assert_parity(r###"choose() { if printf "%s\n" "$1" | command grep -Eq "^\s*[ACDIM!?L]"; then echo "$2"; else echo "$3"; fi; }; choose "M  file.txt" DIRTY CLEAN; choose "        " DIRTY CLEAN"###);
+        assert_parity(
+            r###"choose() { if printf "%s\n" "$1" | command grep -Eq "^\s*[ACDIM!?L]"; then echo "$2"; else echo "$3"; fi; }; choose "M  file.txt" DIRTY CLEAN; choose "        " DIRTY CLEAN"###,
+        );
     }
 
     /// OMZP::svn:3 — `info="$(...)" || return 1` capture-or-return.
     #[test]
     fn capture_or_return() {
-        assert_parity(r###"f() { local info; info="$(printf "ok")" || return 1; print -r -- "info=$info"; }; f; print rc=$?"###);
+        assert_parity(
+            r###"f() { local info; info="$(printf "ok")" || return 1; print -r -- "info=$info"; }; f; print rc=$?"###,
+        );
     }
 }
 
@@ -740,7 +796,9 @@ mod omzp_tig {
     /// OMZP::tig:1 — multiple aliases in one statement + ${aliases[name]} introspection.
     #[test]
     fn multi_alias_one_statement() {
-        assert_parity(r###"alias tis="tig status" til="tig log" tib="tig blame -C"; for a in tis til tib; do print -r -- "$a => ${aliases[$a]}"; done"###);
+        assert_parity(
+            r###"alias tis="tig status" til="tig log" tib="tig blame -C"; for a in tis til tib; do print -r -- "$a => ${aliases[$a]}"; done"###,
+        );
     }
 }
 
@@ -752,7 +810,9 @@ mod omzp_gradle {
     /// OMZP::gradle:8 — `while [[ "$dir" != / ]]; ...; dir="${dir:h}"` head-modifier walk.
     #[test]
     fn head_modifier_dir_walk() {
-        assert_parity(r###"dir="/a/b/c/d"; while [[ "$dir" != / ]]; do print -r -- "$dir"; dir="${dir:h}"; done"###);
+        assert_parity(
+            r###"dir="/a/b/c/d"; while [[ "$dir" != / ]]; do print -r -- "$dir"; dir="${dir:h}"; done"###,
+        );
     }
 }
 
@@ -764,25 +824,33 @@ mod omzp_mvn {
     /// OMZP::mvn:4 — `while [[ ! -x "$d/mvnw" && "$d" != / ]]` compound test + :h ascent.
     #[test]
     fn mvnw_ascent_search() {
-        assert_parity(r###"d=$(mktemp -d); mkdir -p "$d/x/y"; touch "$d/mvnw"; chmod +x "$d/mvnw"; cur="$d/x/y"; while [[ ! -x "$cur/mvnw" && "$cur" != / ]]; do cur="${cur:h}"; done; if [[ -x "$cur/mvnw" ]]; then print "found-mvnw"; else print "not-found"; fi; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); mkdir -p "$d/x/y"; touch "$d/mvnw"; chmod +x "$d/mvnw"; cur="$d/x/y"; while [[ ! -x "$cur/mvnw" && "$cur" != / ]]; do cur="${cur:h}"; done; if [[ -x "$cur/mvnw" ]]; then print "found-mvnw"; else print "not-found"; fi; rm -rf "$d""###,
+        );
     }
 
     /// OMZP::mvn:47 — alias with `$(cmd 2>/dev/null || echo ".")` fallback verbatim.
     #[test]
     fn alias_cmdsubst_devnull_fallback() {
-        assert_parity(r###"alias mvnbang='mvn -f $(git rev-parse --show-toplevel 2>/dev/null || echo ".")/pom.xml'; print -r -- "${aliases[mvnbang]}""###);
+        assert_parity(
+            r###"alias mvnbang='mvn -f $(git rev-parse --show-toplevel 2>/dev/null || echo ".")/pom.xml'; print -r -- "${aliases[mvnbang]}""###,
+        );
     }
 
     /// OMZP::mvn:84 — `local -a` + append with absolute-path `:A` modifier.
     #[test]
     fn local_a_append_abs() {
-        assert_parity(r###"d=$(mktemp -d); local -a POM_FILES; POM_FILES=(~/.m2/settings.xml); file="$d/pom.xml"; touch "$file"; POM_FILES+=("${file:A}"); print -r -- "count=${#POM_FILES}"; print -r -- "last-basename=${POM_FILES[-1]:t}"; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); local -a POM_FILES; POM_FILES=(~/.m2/settings.xml); file="$d/pom.xml"; touch "$file"; POM_FILES+=("${file:A}"); print -r -- "count=${#POM_FILES}"; print -r -- "last-basename=${POM_FILES[-1]:t}"; rm -rf "$d""###,
+        );
     }
 
     /// OMZP::mvn:106 — `file="${file:h}/${new_file}"` head-modifier path rebuild.
     #[test]
     fn head_path_rebuild() {
-        assert_parity(r###"file="/proj/sub/pom.xml"; new_file="../pom.xml"; file="${file:h}/${new_file}"; print -r -- "$file""###);
+        assert_parity(
+            r###"file="/proj/sub/pom.xml"; new_file="../pom.xml"; file="${file:h}/${new_file}"; print -r -- "$file""###,
+        );
     }
 
     /// OMZP::mvn:124 — `grep -A 1 | grep | sed 's?...?-P\1?'` profile-id pipeline.
@@ -803,19 +871,25 @@ mod omzp_mvn {
     /// OMZP::mvn:128 — `print -l **/pom.xml(-.N:h)` glob qualifiers (deref/regular/null/head).
     #[test]
     fn glob_qualifiers_pom_head() {
-        assert_parity(r###"d=$(mktemp -d); mkdir -p "$d/m1" "$d/m2" "$d/m2/target/classes/META-INF"; touch "$d/m1/pom.xml" "$d/m2/pom.xml" "$d/m2/target/classes/META-INF/pom.xml"; cd "$d"; print -l **/pom.xml(-.N:h) | grep -v "/target/classes/META-INF/" | sort; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); mkdir -p "$d/m1" "$d/m2" "$d/m2/target/classes/META-INF"; touch "$d/m1/pom.xml" "$d/m2/pom.xml" "$d/m2/target/classes/META-INF/pom.xml"; cd "$d"; print -l **/pom.xml(-.N:h) | grep -v "/target/classes/META-INF/" | sort; cd /; rm -rf "$d""###,
+        );
     }
 
     /// OMZP::mvn:342 — `[ -d ] && find | sed 's?.../\([^/]*\)\..*?-Dtest=\1?'` test-class enum.
     #[test]
     fn test_class_enumeration() {
-        assert_parity(r###"d=$(mktemp -d); mkdir -p "$d/src/test/java/com"; touch "$d/src/test/java/com/FooTest.java" "$d/src/test/java/com/BarTest.java"; cd "$d"; if [ -d ./src/test/java ]; then find ./src/test/java -type f -name "*.java" | sed "s?.*/\([^/]*\)\..*?-Dtest=\1?" | sort; fi; cd /; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); mkdir -p "$d/src/test/java/com"; touch "$d/src/test/java/com/FooTest.java" "$d/src/test/java/com/BarTest.java"; cd "$d"; if [ -d ./src/test/java ]; then find ./src/test/java -type f -name "*.java" | sed "s?.*/\([^/]*\)\..*?-Dtest=\1?" | sort; fi; cd /; rm -rf "$d""###,
+        );
     }
 
     /// OMZP::mvn:27 — `( unset LANG; LC_CTYPE=C; ... )` subshell environment isolation.
     #[test]
     fn subshell_env_isolation() {
-        assert_parity(r###"LANG=en_US.UTF-8; ( unset LANG; LC_CTYPE=C; print "inside LANG=[${LANG}] LC_CTYPE=[$LC_CTYPE]"; ); print "outside LANG=[${LANG}]""###);
+        assert_parity(
+            r###"LANG=en_US.UTF-8; ( unset LANG; LC_CTYPE=C; print "inside LANG=[${LANG}] LC_CTYPE=[$LC_CTYPE]"; ); print "outside LANG=[${LANG}]""###,
+        );
     }
 }
 
@@ -992,13 +1066,17 @@ print "ge_count=${#ks}""###,
     /// OMZP::ruby:16 — introspect related aliases sorted by key via (ko)aliases[(I)pat*].
     #[test]
     fn aliases_sorted_key_introspect() {
-        assert_parity(r###"alias geca="gem cert --add" gecr="gem cert --remove" gecb="gem cert --build"; for k in ${(ko)aliases[(I)gec*]}; do print "alias $k=${(qq)aliases[$k]}"; done"###);
+        assert_parity(
+            r###"alias geca="gem cert --add" gecr="gem cert --remove" gecb="gem cert --build"; for k in ${(ko)aliases[(I)gec*]}; do print "alias $k=${(qq)aliases[$k]}"; done"###,
+        );
     }
 
     /// OMZP::ruby:5 — alias whose body is a pipeline; introspect without running.
     #[test]
     fn alias_pipeline_body() {
-        assert_parity(r###"alias rfind="find . -name *.rb | xargs grep -n"; print -r -- "rfind=>${aliases[rfind]}""###);
+        assert_parity(
+            r###"alias rfind="find . -name *.rb | xargs grep -n"; print -r -- "rfind=>${aliases[rfind]}""###,
+        );
     }
 }
 
@@ -1072,7 +1150,9 @@ mod omzp_golang {
     /// OMZP::golang:13 — multi-alias define + iterate (ko)aliases[(I)go*].
     #[test]
     fn go_aliases_iterate() {
-        assert_parity(r###"alias gob="go build" goc="go clean" gor="go run" got="go test"; for k in ${(ko)aliases[(I)go*]}; do print "$k -> ${aliases[$k]}"; done"###);
+        assert_parity(
+            r###"alias gob="go build" goc="go clean" gor="go run" got="go test"; for k in ${(ko)aliases[(I)go*]}; do print "$k -> ${aliases[$k]}"; done"###,
+        );
     }
 
     /// OMZP::golang:6 — `for p in 5 6 8` numeric word-list loop interpolating into strings.
@@ -1386,19 +1466,25 @@ mod omzp_macos {
     /// OMZP::macos:9 — `(( ! $# ))` zero-arg dispatch.
     #[test]
     fn zero_arg_dispatch() {
-        assert_parity(r###"f(){ if (( ! $# )); then print "no-args-mode"; else print "args:$*"; fi }; f; f a b"###);
+        assert_parity(
+            r###"f(){ if (( ! $# )); then print "no-args-mode"; else print "args:$*"; fi }; f; f a b"###,
+        );
     }
 
     /// OMZP::macos:37 — `(( $# > 0 )) && command="...; $*"` conditional append of joined args.
     #[test]
     fn conditional_append_joined() {
-        assert_parity(r###"cmd="cd; clear"; set -- echo hi; (( $# > 0 )) && cmd="${cmd}; $*"; print -r -- "$cmd""###);
+        assert_parity(
+            r###"cmd="cd; clear"; set -- echo hi; (( $# > 0 )) && cmd="${cmd}; $*"; print -r -- "$cmd""###,
+        );
     }
 
     /// OMZP::macos:271 — `[[ $# -eq 0 ]] && >&2 echo ... && return 1` usage-guard chain.
     #[test]
     fn usage_guard_stderr_chain() {
-        assert_parity(r###"f(){ [[ $# -eq 0 ]] && >&2 echo "Usage: prog cmd" && return 1; print "ran with $#"; }; f; print "rc=$?"; f x; print "rc=$?""###);
+        assert_parity(
+            r###"f(){ [[ $# -eq 0 ]] && >&2 echo "Usage: prog cmd" && return 1; print "ran with $#"; }; f; print "rc=$?"; f x; print "rc=$?""###,
+        );
     }
 
     /// OMZP::macos:286 — `${@:-.}` default applied to whole positional list.
@@ -1410,7 +1496,9 @@ mod omzp_macos {
     /// OMZP::macos:96 — `case` app dispatch with stderr error + return 1 for unsupported.
     #[test]
     fn app_case_dispatch_error() {
-        assert_parity(r###"f(){ local app=$1; case $app in (Terminal|iTerm) print "supported: $app";; (*) print "prog: unsupported: $app" >&2; return 1;; esac }; f Terminal; f Chrome; print "rc=$?""###);
+        assert_parity(
+            r###"f(){ local app=$1; case $app in (Terminal|iTerm) print "supported: $app";; (*) print "prog: unsupported: $app" >&2; return 1;; esac }; f Terminal; f Chrome; print "rc=$?""###,
+        );
     }
 
     /// OMZP::macos:274 — `for page in "${(@f)data}"` line-split loop + ${page:t} basename.
@@ -1442,7 +1530,9 @@ tmpfs 10 1 9
     /// OMZP::macos:244 — command substitution into builtin arg (cd "$(pfd)") pure part.
     #[test]
     fn cmdsubst_into_builtin_arg() {
-        assert_parity(r###"pfd(){ print "/tmp/somedir"; }; target="$(pfd)"; print "would-cd-to: $target""###);
+        assert_parity(
+            r###"pfd(){ print "/tmp/somedir"; }; target="$(pfd)"; print "would-cd-to: $target""###,
+        );
     }
 }
 
@@ -1464,19 +1554,25 @@ mod omzp_tmux {
     /// OMZP::tmux:67 — `${(z)var}` word split, ${#s[@]} count, negative index.
     #[test]
     fn z_split_count_negindex() {
-        assert_parity(r###"arg="attach -d -t"; s=(${(z)arg}); print "count=${#s[@]} first=$s[1] last=$s[-1]""###);
+        assert_parity(
+            r###"arg="attach -d -t"; s=(${(z)arg}); print "count=${#s[@]} first=$s[1] last=$s[-1]""###,
+        );
     }
 
     /// OMZP::tmux:184 — `${PWD##*/}` basename + `${md5:0:6}` substring concat.
     #[test]
     fn basename_substring_concat() {
-        assert_parity(r###"p=/home/user/projects/myrepo; dir=${p##*/}; h=abcdef0123456789; print "${dir}-${h:0:6}""###);
+        assert_parity(
+            r###"p=/home/user/projects/myrepo; dir=${p##*/}; h=abcdef0123456789; print "${dir}-${h:0:6}""###,
+        );
     }
 
     /// OMZP::tmux:117 — `local -a` array + conditional `+=()` command-vector build.
     #[test]
     fn command_vector_build() {
-        assert_parity(r###"tc=(command tmux); cc=true; uu=true; [[ $cc == true ]] && tc+=(-CC); [[ $uu == true ]] && tc+=(-u); print -r -- "$tc""###);
+        assert_parity(
+            r###"tc=(command tmux); cc=true; uu=true; [[ $cc == true ]] && tc+=(-CC); [[ $uu == true ]] && tc+=(-u); print -r -- "$tc""###,
+        );
     }
 
     /// OMZP::tmux:128 — `case` dispatch on $PWD for session naming.
@@ -1496,25 +1592,33 @@ done"###,
     /// OMZP::tmux:8 — `: ${VAR:=default}` null-command default-assignment.
     #[test]
     fn null_command_default_assign() {
-        assert_parity(r###"unset T; : ${T:=false}; print "T=$T"; T=true; : ${T:=false}; print "T=$T""###);
+        assert_parity(
+            r###"unset T; : ${T:=false}; print "T=$T"; T=true; : ${T:=false}; print "T=$T""###,
+        );
     }
 
     /// OMZP::tmux:45 — nested default `${XDG_CONFIG_HOME:-$HOME/.config}` inside path.
     #[test]
     fn nested_default_in_path() {
-        assert_parity(r###"HOME=/home/u; unset XDG_CONFIG_HOME; print "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; XDG_CONFIG_HOME=/cfg; print "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf""###);
+        assert_parity(
+            r###"HOME=/home/u; unset XDG_CONFIG_HOME; print "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"; XDG_CONFIG_HOME=/cfg; print "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf""###,
+        );
     }
 
     /// OMZP::tmux:55 — `setopt localoptions no_nomatch` restored on function return.
     #[test]
     fn localoptions_restored() {
-        assert_parity(r###"f(){ setopt localoptions no_nomatch; print "in-fn nomatch-disabled"; }; f; if [[ -o nomatch ]]; then print "outside: nomatch restored"; fi"###);
+        assert_parity(
+            r###"f(){ setopt localoptions no_nomatch; print "in-fn nomatch-disabled"; }; f; if [[ -o nomatch ]]; then print "outside: nomatch restored"; fi"###,
+        );
     }
 
     /// OMZP::tmux:182 — `${var:0:6}` / `${var:N:M}` substring extraction.
     #[test]
     fn substring_extraction() {
-        assert_parity(r###"dir=myrepo; full=0123456789abcdef; print "${dir}-${full:0:6}"; print "${full:3:4}""###);
+        assert_parity(
+            r###"dir=myrepo; full=0123456789abcdef; print "${dir}-${full:0:6}"; print "${full:3:4}""###,
+        );
     }
 
     /// OMZP::tmux:170 — `IFS== read` parse of key=value lines via here-string.
@@ -1529,7 +1633,9 @@ BAZ=qux"; while IFS== read -r k val; do print "set $k to $val"; done <<< "$out""
     /// OMZP::tmux:91 — `[[ $colors == 256 ]]` if/else selecting exported TERM.
     #[test]
     fn colors_term_select() {
-        assert_parity(r###"colors=256; if [[ $colors == 256 ]]; then term=tmux-256color; else term=screen; fi; print "TERM=$term"; colors=8; if [[ $colors == 256 ]]; then term=tmux-256color; else term=screen; fi; print "TERM=$term""###);
+        assert_parity(
+            r###"colors=256; if [[ $colors == 256 ]]; then term=tmux-256color; else term=screen; fi; print "TERM=$term"; colors=8; if [[ $colors == 256 ]]; then term=tmux-256color; else term=screen; fi; print "TERM=$term""###,
+        );
     }
 }
 
@@ -1541,19 +1647,25 @@ mod omzp_docker_compose {
     /// OMZP::docker-compose:7 — alias family from interpolated $dccmd + introspection.
     #[test]
     fn alias_family_interp() {
-        assert_parity(r###"dccmd="docker compose"; alias dco="$dccmd"; alias dcb="$dccmd build"; alias dcupd="$dccmd up -d"; for a in dco dcb dcupd; do print "$a=${aliases[$a]}"; done"###);
+        assert_parity(
+            r###"dccmd="docker compose"; alias dco="$dccmd"; alias dcb="$dccmd build"; alias dcupd="$dccmd up -d"; for a in dco dcb dcupd; do print "$a=${aliases[$a]}"; done"###,
+        );
     }
 
     /// OMZP::docker-compose:5 — `[[ -x "${x:A}" ]] && A || B` ternary command select.
     #[test]
     fn ternary_command_select() {
-        assert_parity(r###"fake=/nonexistent/docker-compose; [[ -x "${fake:A}" ]] && dccmd=docker-compose || dccmd="docker compose"; print "chose: $dccmd""###);
+        assert_parity(
+            r###"fake=/nonexistent/docker-compose; [[ -x "${fake:A}" ]] && dccmd=docker-compose || dccmd="docker compose"; print "chose: $dccmd""###,
+        );
     }
 
     /// OMZP::docker-compose:5 — symlink `${link:A}` resolution + :t + [[ -x ]] in sandbox.
     #[test]
     fn symlink_resolution_sandbox() {
-        assert_parity(r###"d=$(mktemp -d); print "#!/bin/sh" > "$d/realtool"; chmod +x "$d/realtool"; ln -s "$d/realtool" "$d/linktool"; link="$d/linktool"; print "resolved=${link:A:t}"; [[ -x "$link" ]] && print "exec-ok"; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); print "#!/bin/sh" > "$d/realtool"; chmod +x "$d/realtool"; ln -s "$d/realtool" "$d/linktool"; link="$d/linktool"; print "resolved=${link:A:t}"; [[ -x "$link" ]] && print "exec-ok"; rm -rf "$d""###,
+        );
     }
 }
 
@@ -1565,7 +1677,9 @@ mod omzp_brew {
     /// OMZP::brew:68 — alias referencing another alias (bubu='bubo && bup') + introspection.
     #[test]
     fn alias_referencing_alias() {
-        assert_parity(r###"alias bi="brew install"; alias bu="brew update"; alias bubo="brew update && brew outdated"; alias bubu="bubo && bup"; alias | grep -E "^(bi|bu|bubo|bubu)=""###);
+        assert_parity(
+            r###"alias bi="brew install"; alias bu="brew update"; alias bubo="brew update && brew outdated"; alias bubu="bubo && bup"; alias | grep -E "^(bi|bu|bubo|bubu)=""###,
+        );
     }
 
     /// OMZP::brew:83 — `sed` backreference rewrite of name:deps lines.
@@ -1581,7 +1695,9 @@ wget:openssl gettext"; print -r -- "$data" | sed "s/^\(.*\):\(.*\)$/\1 [\2]/""##
     /// OMZP::brew:82 — `print -r --` literal output with embedded color-var markers.
     #[test]
     fn print_color_markers() {
-        assert_parity(r###"blue="<B>"; off="<O>"; bold="<b>"; print -r -- "${blue}==>${off} ${bold}Formulae${off}"; print -r -- "${blue}==>${off} ${bold}Casks${off}""###);
+        assert_parity(
+            r###"blue="<B>"; off="<O>"; bold="<b>"; print -r -- "${blue}==>${off} ${bold}Formulae${off}"; print -r -- "${blue}==>${off} ${bold}Casks${off}""###,
+        );
     }
 }
 
@@ -1593,7 +1709,9 @@ mod omzp_rsync {
     /// OMZP::rsync:4 — alias-value pattern test `[[ $v == *--delete* ]]` via ${aliases[name]}.
     #[test]
     fn alias_value_pattern_test() {
-        assert_parity(r###"alias rsync-synchronize="rsync -avzu --delete --progress -h"; v=${aliases[rsync-synchronize]}; if [[ $v == *--delete* ]]; then print "deletes-enabled"; fi; print -r -- "$v""###);
+        assert_parity(
+            r###"alias rsync-synchronize="rsync -avzu --delete --progress -h"; v=${aliases[rsync-synchronize]}; if [[ $v == *--delete* ]]; then print "deletes-enabled"; fi; print -r -- "$v""###,
+        );
     }
 }
 
@@ -1605,13 +1723,17 @@ mod omzp_nmap {
     /// OMZP::nmap:20 — scan-mode alias family + ${aliases[name]} flag introspection.
     #[test]
     fn scan_alias_family() {
-        assert_parity(r###"alias nmap_slow="sudo nmap -sS -v -T1"; alias nmap_fast="nmap -F -T5 --version-light --top-ports 300"; for a in nmap_slow nmap_fast; do print "$a: ${aliases[$a]}"; done"###);
+        assert_parity(
+            r###"alias nmap_slow="sudo nmap -sS -v -T1"; alias nmap_fast="nmap -F -T5 --version-light --top-ports 300"; for a in nmap_slow nmap_fast; do print "$a: ${aliases[$a]}"; done"###,
+        );
     }
 
     /// OMZP::nmap:25 — alias-value word munging ${v%% *} (first) / ${v##* } (last).
     #[test]
     fn alias_value_word_munge() {
-        assert_parity(r###"alias nmap_fast="nmap -F -T5 --top-ports 300"; v=${aliases[nmap_fast]}; print "first-word=${v%% *}"; print "last-word=${v##* }""###);
+        assert_parity(
+            r###"alias nmap_fast="nmap -F -T5 --top-ports 300"; v=${aliases[nmap_fast]}; print "first-word=${v%% *}"; print "last-word=${v##* }""###,
+        );
     }
 }
 
@@ -1623,7 +1745,9 @@ mod omzp_postgres {
     /// OMZP::postgres:9 — alias from interpolated dir var; alias-referencing-alias.
     #[test]
     fn pg_alias_interp_chain() {
-        assert_parity(r###"PG=/opt/homebrew/var/postgres; alias startpost="pg_ctl -D $PG -l $PG/server.log start"; alias restartpost="stoppost && sleep 1 && startpost"; print "${aliases[startpost]}"; print "${aliases[restartpost]}""###);
+        assert_parity(
+            r###"PG=/opt/homebrew/var/postgres; alias startpost="pg_ctl -D $PG -l $PG/server.log start"; alias restartpost="stoppost && sleep 1 && startpost"; print "${aliases[startpost]}"; print "${aliases[restartpost]}""###,
+        );
     }
 }
 
@@ -1635,7 +1759,9 @@ mod omzp_rake {
     /// OMZP::rake:6 — `noglob` alias family incl. alias name containing a slash.
     #[test]
     fn noglob_alias_with_slash() {
-        assert_parity(r###"alias rake="noglob rake"; alias "bin/rake"="noglob bin/rake"; alias brake="noglob bundle exec rake"; for a in rake "bin/rake" brake; do print "$a => ${aliases[$a]}"; done"###);
+        assert_parity(
+            r###"alias rake="noglob rake"; alias "bin/rake"="noglob bin/rake"; alias brake="noglob bundle exec rake"; for a in rake "bin/rake" brake; do print "$a => ${aliases[$a]}"; done"###,
+        );
     }
 }
 
@@ -1647,13 +1773,17 @@ mod omzp_man {
     /// OMZP::man:25 — `${${(Az)BUFFER}[1]}` array-split-then-index nested expansion.
     #[test]
     fn az_split_then_index() {
-        assert_parity(r###"BUFFER="git commit --amend"; args=(${${(Az)BUFFER}[1]} ${${(Az)BUFFER}[2]}); print "cmd=${args[1]} sub=${args[2]}"; print "man-target=${args[1]}-${args[2]}""###);
+        assert_parity(
+            r###"BUFFER="git commit --amend"; args=(${${(Az)BUFFER}[1]} ${${(Az)BUFFER}[2]}); print "cmd=${args[1]} sub=${args[2]}"; print "man-target=${args[1]}-${args[2]}""###,
+        );
     }
 
     /// OMZP::man:20 — glob-equality guard `[[ "$BUFFER" = man\ * ]]`.
     #[test]
     fn glob_equality_guard() {
-        assert_parity(r###"for b in "man ls" "git log" "manatee x"; do if [[ "$b" = man\ * ]]; then print "$b -> already-man"; else print "$b -> wrap"; fi; done"###);
+        assert_parity(
+            r###"for b in "man ls" "git log" "manatee x"; do if [[ "$b" = man\ * ]]; then print "$b -> already-man"; else print "$b -> wrap"; fi; done"###,
+        );
     }
 }
 
@@ -1665,25 +1795,33 @@ mod omzp_colorize {
     /// OMZP::colorize:23 — `local -a` + ${arr[(Ie)val]} reverse-index membership.
     #[test]
     fn local_a_Ie_membership() {
-        assert_parity(r###"f(){ local -a tools; tools=(chroma pygmentize); for c in pygmentize awk; do if [[ ${tools[(Ie)$c]} -eq 0 ]]; then print "$c: not-in-list"; else print "$c: index ${tools[(Ie)$c]}"; fi; done; }; f"###);
+        assert_parity(
+            r###"f(){ local -a tools; tools=(chroma pygmentize); for c in pygmentize awk; do if [[ ${tools[(Ie)$c]} -eq 0 ]]; then print "$c: not-in-list"; else print "$c: index ${tools[(Ie)$c]}"; fi; done; }; f"###,
+        );
     }
 
     /// OMZP::colorize:40 — `[ -z "$VAR" ]` set-if-empty default.
     #[test]
     fn set_if_empty_default() {
-        assert_parity(r###"unset STYLE; if [ -z "$STYLE" ]; then STYLE=emacs; fi; print "style=$STYLE"; STYLE=monokai; if [ -z "$STYLE" ]; then STYLE=emacs; fi; print "style=$STYLE""###);
+        assert_parity(
+            r###"unset STYLE; if [ -z "$STYLE" ]; then STYLE=emacs; fi; print "style=$STYLE"; STYLE=monokai; if [ -z "$STYLE" ]; then STYLE=emacs; fi; print "style=$STYLE""###,
+        );
     }
 
     /// OMZP::colorize:57 — `for FNAME in "$@"` with case lexer dispatch.
     #[test]
     fn fname_case_lexer_dispatch() {
-        assert_parity(r###"f(){ local FNAME lexer; for FNAME in "$@"; do case $FNAME in (*.py) lexer=python;; (*.rs) lexer=rust;; (*) lexer=text;; esac; if [[ $lexer != text ]]; then print "$FNAME -> $lexer"; else print "$FNAME -> guess"; fi; done; }; f a.py b.rs c.unknown"###);
+        assert_parity(
+            r###"f(){ local FNAME lexer; for FNAME in "$@"; do case $FNAME in (*.py) lexer=python;; (*.rs) lexer=rust;; (*) lexer=text;; esac; if [[ $lexer != text ]]; then print "$FNAME -> $lexer"; else print "$FNAME -> guess"; fi; done; }; f a.py b.rs c.unknown"###,
+        );
     }
 
     /// OMZP::colorize:78 — nested function definition + local var capture.
     #[test]
     fn nested_function_local_capture() {
-        assert_parity(r###"outer(){ inner(){ print "inner sees LESS=$1"; }; local LESS="-R x"; inner "$LESS"; }; outer"###);
+        assert_parity(
+            r###"outer(){ inner(){ print "inner sees LESS=$1"; }; local LESS="-R x"; inner "$LESS"; }; outer"###,
+        );
     }
 }
 
@@ -1695,13 +1833,17 @@ mod omzp_gcloud {
     /// OMZP::gcloud:24 — iterate location array, [[ -d ]] guard + break (sandbox).
     #[test]
     fn location_dir_break() {
-        assert_parity(r###"d=$(mktemp -d); mkdir -p "$d/real"; locs=("$d/nope1" "$d/real" "$d/nope2"); for l in $locs; do if [[ -d "$l" ]]; then found=${l:t}; break; fi; done; print "found=$found"; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); mkdir -p "$d/real"; locs=("$d/nope1" "$d/real" "$d/nope2"); for l in $locs; do if [[ -d "$l" ]]; then found=${l:t}; break; fi; done; print "found=$found"; rm -rf "$d""###,
+        );
     }
 
     /// OMZP::gcloud:40 — `for x ( list )` paren-loop + [[ -f ]] + break (sandbox).
     #[test]
     fn paren_loop_file_break() {
-        assert_parity(r###"d=$(mktemp -d); print x > "$d/comp.inc"; for f ( "$d/missing.inc" "$d/comp.inc" ); do if [[ -f "$f" ]]; then print "using ${f:t}"; break; fi; done; rm -rf "$d""###);
+        assert_parity(
+            r###"d=$(mktemp -d); print x > "$d/comp.inc"; for f ( "$d/missing.inc" "$d/comp.inc" ); do if [[ -f "$f" ]]; then print "using ${f:t}"; break; fi; done; rm -rf "$d""###,
+        );
     }
 }
 
@@ -1713,7 +1855,9 @@ mod omzp_ngrok {
     /// OMZP::ngrok:2 — `(( ! $+functions[x] ))` existence guard.
     #[test]
     fn functions_existence_guard() {
-        assert_parity(r###"fake(){ :; }; if (( ! $+functions[fake] )); then print "no fake"; else print "have fake"; fi; if (( ! $+functions[nope] )); then print "no nope"; fi"###);
+        assert_parity(
+            r###"fake(){ :; }; if (( ! $+functions[fake] )); then print "no fake"; else print "have fake"; fi; if (( ! $+functions[nope] )); then print "no nope"; fi"###,
+        );
     }
 }
 
@@ -1725,12 +1869,16 @@ mod omzp_redis_cli {
     /// _redis-cli:8 — parse `cmd:description` entries via ${e%%:*} / ${e#*:}.
     #[test]
     fn parse_cmd_description() {
-        assert_parity(r###"a=("get:get the value of a key" "del:delete a key" "expire:set ttl, in seconds"); for e in $a; do k=${e%%:*}; d=${e#*:}; print "$k => $d"; done"###);
+        assert_parity(
+            r###"a=("get:get the value of a key" "del:delete a key" "expire:set ttl, in seconds"); for e in $a; do k=${e%%:*}; d=${e#*:}; print "$k => $d"; done"###,
+        );
     }
 
     /// _redis-cli:31 — prefix-glob filter `[[ $k == get* ]]` over parsed keys.
     #[test]
     fn prefix_glob_filter_keys() {
-        assert_parity(r###"a=("get:x" "getset:y" "getrange:z" "del:w" "set:v"); matched=(); for e in $a; do k=${e%%:*}; if [[ $k == get* ]]; then matched+=($k); fi; done; print "matches: $matched""###);
+        assert_parity(
+            r###"a=("get:x" "getset:y" "getrange:z" "del:w" "set:v"); matched=(); for e in $a; do k=${e%%:*}; if [[ $k == get* ]]; then matched+=($k); fi; done; print "matches: $matched""###,
+        );
     }
 }

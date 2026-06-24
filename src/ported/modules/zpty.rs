@@ -375,17 +375,12 @@ pub fn newptycmd(
                 // pty allocation.
                 let sync_byte: u8 = 0;
                 loop {
-                    let r = unsafe {
-                        libc::write(1, &sync_byte as *const u8 as *const _, 1)
-                    };
+                    let r = unsafe { libc::write(1, &sync_byte as *const u8 as *const _, 1) };
                     if r == 1 {
                         break;
                     }
                     let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                    if eno != libc::EWOULDBLOCK
-                        && eno != libc::EAGAIN
-                        && eno != libc::EINTR
-                    {
+                    if eno != libc::EWOULDBLOCK && eno != libc::EAGAIN && eno != libc::EINTR {
                         break;
                     }
                 }
@@ -443,17 +438,12 @@ pub fn newptycmd(
                 // child has confirmed its tty setup completed.
                 let mut sync_buf: u8 = 0;
                 loop {
-                    let r = unsafe {
-                        libc::read(master, &mut sync_buf as *mut u8 as *mut _, 1)
-                    };
+                    let r = unsafe { libc::read(master, &mut sync_buf as *mut u8 as *mut _, 1) };
                     if r == 1 {
                         break;
                     }
                     let eno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                    if eno != libc::EWOULDBLOCK
-                        && eno != libc::EAGAIN
-                        && eno != libc::EINTR
-                    {
+                    if eno != libc::EWOULDBLOCK && eno != libc::EAGAIN && eno != libc::EINTR {
                         break;
                     }
                 }
@@ -554,9 +544,9 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
         // c:538 — `if (kill(cmd->pid, 0) < 0)` — process gone.
         if unsafe { libc::kill(cmd.pid, 0) } < 0 {
             cmd.finished = true; // c:539 cmd->fin = 1
-            // c:540 — `zclose(cmd->fd);`. Was raw libc::close; same
-            // FDT_INTERNAL stale-marker leak as the deleteptycmd fix
-            // immediately above (both teardown paths must use zclose).
+                                 // c:540 — `zclose(cmd->fd);`. Was raw libc::close; same
+                                 // FDT_INTERNAL stale-marker leak as the deleteptycmd fix
+                                 // immediately above (both teardown paths must use zclose).
             crate::ported::utils::zclose(cmd.master_fd);
         }
         return;
@@ -583,13 +573,7 @@ pub fn checkptycmd(cmd: &mut ptycmd) {
 /// nblock-EWOULDBLOCK-stash path at c:682-694 falls through to
 /// the standard exit (still correct return value, just slower
 /// next-call because the unmatched prefix isn't carried).
-pub fn ptyread(
-    nam: &str,
-    cmd: &mut ptycmd,
-    args: &[&str],
-    noblock: bool,
-    mustmatch: bool,
-) -> i32 {
+pub fn ptyread(nam: &str, cmd: &mut ptycmd, args: &[&str], noblock: bool, mustmatch: bool) -> i32 {
     // c:550
     let mut used: usize = 0;
     let mut seen: bool = false;
@@ -606,7 +590,15 @@ pub fn ptyread(
         }
         let p = args[1];
         // c:565 — `patcompile(p, PAT_ZDUP, NULL)` — PAT_ZDUP = 0x100 per zsh.h.
-        match crate::ported::pattern::patcompile(&{ let mut __pat_tok = (p).to_string(); crate::ported::glob::tokenize(&mut __pat_tok); __pat_tok }, 0x100, None) {
+        match crate::ported::pattern::patcompile(
+            &{
+                let mut __pat_tok = (p).to_string();
+                crate::ported::glob::tokenize(&mut __pat_tok);
+                __pat_tok
+            },
+            0x100,
+            None,
+        ) {
             Some(pp) => prog = Some(pp),
             None => {
                 // c:566
@@ -690,8 +682,8 @@ pub fn ptyread(
                 used += 1;
             }
             seen = true; // c:647
-            // c:648-658 — when buf grows and no setparam target, flush
-            // to stdout and reset; else grow the buffer.
+                         // c:648-658 — when buf grows and no setparam target, flush
+                         // to stdout and reset; else grow the buffer.
             if used >= 255 && setparam_target.is_none() {
                 let mut flush = std::mem::take(&mut buf);
                 let len = crate::ported::utils::unmetafy(&mut flush);
@@ -864,8 +856,8 @@ pub fn ptywrite(cmd: &mut ptycmd, args: &[&str], nonl: i32) -> i32 {
         // c:745
         // c:746 — `char sp = ' ', *tmp;` + `int len;`
         let sp = b' '; // c:746
-        // c:749 — `while (*args)` — iterate argv with peek-ahead for
-        // the inter-arg space write at c:751.
+                       // c:749 — `while (*args)` — iterate argv with peek-ahead for
+                       // the inter-arg space write at c:751.
         for (i, a) in args.iter().enumerate() {
             // c:750 — `unmetafy((tmp = dupstring(*args)), &len);`
             let tmp = crate::ported::utils::unmeta(a);
@@ -1204,8 +1196,7 @@ pub fn enables_(m: *const module, enables: &mut Option<Vec<i32>>) -> i32 {
 pub fn boot_(m: *const module) -> i32 {
     // c:918
     // c:920 — `ptycmds = NULL;` (zero the global registry).
-    *ptycmds().lock().unwrap_or_else(|e| e.into_inner()) =
-        HashMap::<String, ptycmd>::new();
+    *ptycmds().lock().unwrap_or_else(|e| e.into_inner()) = HashMap::<String, ptycmd>::new();
     // c:922 — `addhookfunc("exit", ptyhook);` — register the
     // shell-exit teardown callback so deleteallptycmds runs even
     // when the user `exit`s without a prior `zpty -d`.

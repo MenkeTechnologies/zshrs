@@ -66,13 +66,13 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     let readonly = OPT_ISSET(ops, b'r');
     if readonly {
         read_write |= 1; // GDBM_READER
-        // c:127 — `pmflags |= PM_READONLY;` — propagate to the tied
-        // wrapper so any later setsparam/gdbmsetfn through this param
-        // surfaces as "read-only variable" instead of silently failing
-        // at the gdbm_store layer. Prior port computed `_pmflags`
-        // unused and let writes through to a DB opened in GDBM_READER
-        // mode, which gdbm rejected with GDBM_READER_CANT_STORE — a
-        // silent error from the user's perspective.
+                         // c:127 — `pmflags |= PM_READONLY;` — propagate to the tied
+                         // wrapper so any later setsparam/gdbmsetfn through this param
+                         // surfaces as "read-only variable" instead of silently failing
+                         // at the gdbm_store layer. Prior port computed `_pmflags`
+                         // unused and let writes through to a DB opened in GDBM_READER
+                         // mode, which gdbm rejected with GDBM_READER_CANT_STORE — a
+                         // silent error from the user's perspective.
     } else {
         read_write |= 2; // GDBM_WRCREAT
     }
@@ -207,10 +207,7 @@ pub fn bin_ztie(nam: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     //     pre-exec close.
     let dbfd = tied.db.fd();
     if dbfd >= 0 {
-        crate::ported::utils::addmodulefd(
-            dbfd,
-            crate::ported::zsh_h::FDT_INTERNAL,
-        );
+        crate::ported::utils::addmodulefd(dbfd, crate::ported::zsh_h::FDT_INTERNAL);
     }
 
     {
@@ -418,7 +415,7 @@ pub fn gdbmgetfn(param_name: &str, key: &str) -> String {
     // one. The shell-side key arrives metafied; decode before the
     // lookup.
     let (umkey, _umlen) = unmetafy_zalloc(key); // c:305
-    // c:312 — `gdbm_exists(dbf, key)` then `gdbm_fetch(dbf, key)`
+                                                // c:312 — `gdbm_exists(dbf, key)` then `gdbm_fetch(dbf, key)`
     match tied.get(&umkey) {
         // c:326 — `pm->u.str = metafy(content.dptr, content.dsize,
         //          META_DUP);` — fetched raw bytes are re-encoded to

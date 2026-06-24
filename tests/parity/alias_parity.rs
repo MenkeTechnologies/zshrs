@@ -249,6 +249,8 @@ mod definition_replacement {
     /// both shells print the redefined body.
     #[test]
     fn alias_redefinition_replaces_body() {
-        assert_parity(r#"alias zr_alias_t='echo first'; alias zr_alias_t='echo second'; eval zr_alias_t"#);
+        assert_parity(
+            r#"alias zr_alias_t='echo first'; alias zr_alias_t='echo second'; eval zr_alias_t"#,
+        );
     }
 }
