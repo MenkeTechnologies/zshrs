@@ -1,4 +1,5 @@
-//! DAP server for zshrs — `zshrs --dap HOST:PORT`.
+//! DAP server for zshrs — `zshrs --dap [HOST:PORT]` (TCP connect-back, or stdio
+//! when no address is given).
 //!
 //! Mirrors strykelang's DAP architecture (`strykelang/dap.rs`):
 //! connect TCP → spawn reader thread → wait for `launch` → run the
@@ -81,8 +82,9 @@ pub struct DapShared {
     cv: Condvar,
     /// `seq` field.
     seq: AtomicU64,
-    /// `writer` field.
-    writer: Mutex<TcpStream>,
+    /// `writer` field — the DAP output sink (a TCP socket in connect-back mode,
+    /// stdout in stdio mode).
+    writer: Mutex<Box<dyn Write + Send>>,
     /// `configuration_done` field.
     pub configuration_done: AtomicBool,
     /// `disconnected` field.
@@ -93,7 +95,7 @@ pub struct DapShared {
 }
 
 impl DapShared {
-    fn new(writer: TcpStream) -> Arc<Self> {
+    fn new(writer: Box<dyn Write + Send>) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(DapSharedInner {
                 pending_action: None,
@@ -299,14 +301,17 @@ pub fn check_line(line: u32) {
 
 // ── Public entry point ──────────────────────────────────────────────────
 
-/// Connect to the IntelliJ-side DAP client at `addr` (e.g.
-/// `127.0.0.1:55123`) and serve the DAP protocol until the client
-/// disconnects.
+/// Serve the DAP protocol until the client disconnects.
 ///
-/// Called from `bins/zshrs.rs` when `--dap HOST:PORT` is detected.
+/// `addr` selects the transport (called from `bins/zshrs.rs` on `--dap`):
+///   * `Some("127.0.0.1:55123")` — **TCP connect-back**: dial the IDE's DAP
+///     listener (the path JetBrains uses; stdout stays free for the script).
+///   * `None` — **stdio**: DAP over stdin/stdout, for clients that spawn the
+///     adapter as an executable (e.g. VS Code). Unusable under IntelliJ, whose
+///     OSProcessHandler reads stdout and would steal DAP bytes.
 ///
 /// Stryke-mirror architecture:
-///   1. TCP-connect to the IDE-side server.
+///   1. Connect the transport (TCP socket or stdin/stdout).
 ///   2. Spawn reader thread to handle `initialize`, `setBreakpoints`,
 ///      `launch`, `continue`, etc. Each `launch` request goes through
 ///      a oneshot channel back to the main thread.
@@ -317,35 +322,54 @@ pub fn check_line(line: u32) {
 ///      The executor blocks inside `check_line → pause()` whenever a
 ///      breakpoint hits; the reader thread sends `continue` to resume.
 ///   6. After execution: emit `exited` + `terminated`, drop globals.
-pub fn run_dap(addr: &str) -> i32 {
+pub fn run_dap(addr: Option<&str>) -> i32 {
     tracing::info!(
         target: "zshrs::dap",
         pid = std::process::id(),
-        %addr,
+        mode = if addr.is_some() { "tcp" } else { "stdio" },
         "starting --dap",
     );
-    let stream = match TcpStream::connect(addr) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(target: "zshrs::dap", %addr, %e, "tcp connect failed");
-            eprintln!("zshrs: --dap: connect {} failed: {}", addr, e);
-            return 1;
-        }
-    };
-    if let Err(e) = stream.set_nodelay(true) {
-        tracing::warn!(target: "zshrs::dap", %e, "TCP_NODELAY failed (non-fatal)");
-    }
-    let reader_stream = match stream.try_clone() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(target: "zshrs::dap", %e, "tcp clone failed");
-            eprintln!("zshrs: --dap: clone socket: {}", e);
-            return 1;
-        }
-    };
-    tracing::info!(target: "zshrs::dap", %addr, "tcp connected");
 
-    let shared = DapShared::new(stream);
+    // Two transports. Both run the identical DAP server below — only the
+    // reader/writer differ.
+    let (reader, writer): (Box<dyn Read + Send>, Box<dyn Write + Send>) = match addr {
+        // TCP connect-back: dial the IDE's DAP listener (the path JetBrains
+        // uses). stdin/stdout are left free so the script's own output reaches
+        // the console.
+        Some(addr) => {
+            let stream = match TcpStream::connect(addr) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(target: "zshrs::dap", %addr, %e, "tcp connect failed");
+                    eprintln!("zshrs: --dap: connect {} failed: {}", addr, e);
+                    return 1;
+                }
+            };
+            if let Err(e) = stream.set_nodelay(true) {
+                tracing::warn!(target: "zshrs::dap", %e, "TCP_NODELAY failed (non-fatal)");
+            }
+            let reader_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(target: "zshrs::dap", %e, "tcp clone failed");
+                    eprintln!("zshrs: --dap: clone socket: {}", e);
+                    return 1;
+                }
+            };
+            tracing::info!(target: "zshrs::dap", %addr, "tcp connected");
+            (Box::new(reader_stream), Box::new(stream))
+        }
+        // Stdio mode: DAP traffic over stdin/stdout. For clients that spawn the
+        // adapter as an executable and talk over its pipes (e.g. VS Code's
+        // DebugAdapterExecutable). NOTE: unusable under IntelliJ, whose
+        // OSProcessHandler reads stdout and would steal DAP bytes — use TCP there.
+        None => {
+            tracing::info!(target: "zshrs::dap", "stdio mode");
+            (Box::new(io::stdin()), Box::new(io::stdout()))
+        }
+    };
+
+    let shared = DapShared::new(writer);
     let bp_state = Arc::new(Mutex::new(BreakpointState::default()));
 
     // Reader thread: parses DAP requests + dispatches. Sends a
@@ -354,7 +378,7 @@ pub fn run_dap(addr: &str) -> i32 {
     let shared_reader = shared.clone();
     let bp_reader = bp_state.clone();
     let _reader = thread::spawn(move || {
-        let mut br = BufReader::new(reader_stream);
+        let mut br = BufReader::new(reader);
         loop {
             let msg = match read_message(&mut br) {
                 Ok(Some(m)) => m,

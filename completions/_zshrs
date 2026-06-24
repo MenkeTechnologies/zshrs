@@ -68,7 +68,7 @@ _arguments -S -s : \
   '--docs[render the LSP hover card for NAME]:name:->docnames' \
   '--color[ANSI color in --docs output]:mode:(auto always never)' \
   '--lsp[run the in-process LSP server over stdio]' \
-  '--dap[run the in-process DAP debugger]:host\:port' \
+  '--dap[run the in-process DAP debugger (TCP connect-back; stdio if no addr)]::host\:port' \
   '(-)1:script file:_files' \
   '*::script arguments:->args' -- && return 0
 
