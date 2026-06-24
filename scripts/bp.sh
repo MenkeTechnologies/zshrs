@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# bp — bump version, commit, tag, push, publish all 4 workspace crates.
+# bp — bump version, commit, tag, push, publish.
 #
 # Usage:  scripts/bp.sh <NEW-VERSION>
 # Example: scripts/bp.sh 0.10.8
 #
-# Touches exactly one file (root Cargo.toml). The workspace.package
-# version + the [workspace.dependencies] block both get the new version
-# in one sed pass. All four members (parse, compsys, daemon, root)
-# inherit via `version.workspace = true` and `xxx.workspace = true`.
+# Bumps the version in:
+#   - root Cargo.toml: [workspace.package].version + [workspace.dependencies]
+#     (members inherit via `version.workspace = true` / `xxx.workspace = true`);
+#   - the docs build-lines (docs/index.html, docs/reference.html) and the
+#     man .TH lines (man/man1/zshrs.1, zshrsall.1) — REQUIRED so the meta-repo
+#     version-sync gates (docs build-line + man .TH must match Cargo) stay green.
 #
-# Publish order is dependency-driven:
-# (zshrs-parse absorbed into runtime; no separate publish)
-#   2. compsys      (no internal deps)
-#   3. zshrs-daemon
-#   4. zshrs        (depends on all three)
-#
-# Each `cargo publish` waits a few seconds for the previous to land on
-# crates.io before the next one resolves it.
+# Publishes zshrs-daemon then zshrs (dependency order; zshrs depends on the
+# daemon). Crucially it publishes from a CLEAN git worktree of the new tag, NOT
+# the live working tree — this repo is edited by many concurrent sessions, so the
+# working tree is usually dirty, and `cargo publish` packages the working
+# directory (which would refuse on a dirty tree, or bake unrelated WIP into the
+# published crate permanently).
 
 set -euo pipefail
 
@@ -89,6 +89,21 @@ if grep -E 'version *= *"' Cargo.toml | grep -v "\"$NEW\"" | grep -v '\.workspac
     echo "warning: some version literals didn't update — review Cargo.toml" >&2
 fi
 
+# Bump the version stamped into the docs build-lines + man pages, so the
+# meta-repo version-sync gates stay green. The docs carry a `v` prefix
+# (`zshrs vX.Y.Z`) so the digit isn't on a word boundary — match `v` explicitly.
+# `\Q…\E` quotes the dots in $OLD.
+echo "→ bumping docs build-lines + man .TH  ($OLD → $NEW)"
+for f in docs/index.html docs/reference.html; do
+    [[ -f "$f" ]] && perl -pi -e "s/zshrs v\Q$OLD\E/zshrs v$NEW/g" "$f"
+done
+TODAY=$(date +%Y-%m-%d)
+for f in man/man1/zshrs.1 man/man1/zshrsall.1; do
+    [[ -f "$f" ]] || continue
+    perl -pi -e "s/\"zshrs \Q$OLD\E\"/\"zshrs $NEW\"/g" "$f"          # .TH version
+    perl -pi -e "s/(^\.TH \S+ 1 )\"[0-9-]+\"/\${1}\"$TODAY\"/" "$f"   # .TH date
+done
+
 # Build + lex parity gate before tagging anything.
 echo "→ cargo build (sanity check)"
 cargo build --quiet
@@ -97,25 +112,38 @@ cargo build --quiet
 echo "→ cargo test --test parity corpus_lexer_parity (sanity check)"
 cargo test --quiet --test parity corpus_lexer_parity > /dev/null
 
-# Stage, commit, tag, push.
-git add Cargo.toml Cargo.lock 2>/dev/null || true
+# Stage every bumped file (docs/ is gitignored here, so force-add the already
+# tracked docs files), commit, tag, push the commit + the new tag. We push only
+# the new tag, not `--tags` (which also pushes every stale local tag and fails
+# if any conflicts with the remote).
+git add Cargo.toml Cargo.lock man/man1/zshrs.1 man/man1/zshrsall.1 2>/dev/null || true
+git add -f docs/index.html docs/reference.html 2>/dev/null || true
 git commit -m "bump v$NEW"
 git tag "v$NEW"
 git push
-git push --tags
+git push origin "v$NEW"
 
-# Publish in dependency order, waiting a few seconds between each so the
-# next resolve sees the previous on crates.io.
+# Publish from a CLEAN worktree of the new tag (see header). --no-verify skips
+# cargo's redundant cold re-compile: the `cargo build` sanity gate above already
+# proved the workspace builds, and the package is that same source minus the
+# excluded tests/docs. cargo itself waits for each crate to index before
+# returning, so zshrs resolves the just-published zshrs-daemon.
+echo "→ publishing from a clean worktree of v$NEW"
+WORKTREE="$(mktemp -d)/zshrs-publish"
+git worktree add --detach "$WORKTREE" "v$NEW" >/dev/null
+cleanup() {
+    git worktree remove --force "$WORKTREE" 2>/dev/null || true
+    git worktree prune 2>/dev/null || true
+}
+trap cleanup EXIT
+
 publish() {
-    echo "→ cargo publish -p $1"
-    cargo publish -p "$1"
-    echo "→ sleeping 8s for crates.io to index $1@$NEW"
-    sleep 8
+    echo "→ cargo publish -p $1 --no-verify"
+    ( cd "$WORKTREE" && cargo publish -p "$1" --no-verify )
 }
 
-# zshrs-parse + compsys absorbed into runtime — no longer published
-# separately. Only zshrs-daemon and zshrs remain as standalone crates.
+# zshrs-parse + compsys absorbed into runtime — no longer published separately.
 publish zshrs-daemon
 publish zshrs
 
-echo "✓ bumped to v$NEW and published all crates"
+echo "✓ bumped to v$NEW, pushed, and published to crates.io"
