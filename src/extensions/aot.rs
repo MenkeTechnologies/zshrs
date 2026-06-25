@@ -308,6 +308,135 @@ pub fn build(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, Strin
     Ok(out_path.to_path_buf())
 }
 
+// ───────────────────────── Native AOT (`zbuild --native`) ──────────────────
+//
+// Unlike the source-trailer build above (which embeds the script text and
+// re-runs it interpreted at startup), the native path compiles the script to a
+// fusevm chunk, lowers that to native machine code via `fusevm::aot`
+// (Cranelift `ObjectModule` → relocatable `.o`), and links the object against
+// the zsh runtime staticlib (`libzsh.a`) into a standalone executable. The
+// script's bytecode runs as native code with no interpreter dispatch loop;
+// command execution, expansion, and cmdsubst still go through the embedded
+// `ShellExecutor` (the shell runtime is linked in).
+
+/// Frontend runtime hook invoked by `fusevm::aot::fusevm_aot_run_embedded` at
+/// startup of a native AOT binary. Stands up a leaked-`'static` `ShellExecutor`,
+/// seeds positional parameters from `argv`, installs it as the thread's
+/// `CURRENT_EXECUTOR`, and registers the zsh builtins on the run VM — so host
+/// calls from the native chunk reach a live shell exactly as the interpreter's
+/// `run_chunk` arranges. The executor lives for the process (an AOT binary runs
+/// one program and exits), so the install is intentionally permanent.
+///
+/// # Safety
+/// `vm` is the live run VM passed by the fusevm runtime; borrowed only here.
+#[no_mangle]
+pub extern "C" fn fusevm_aot_register_builtins(vm: *mut fusevm::VM) {
+    // SAFETY: the fusevm runtime hands us the live run VM for this call.
+    let vm = unsafe { &mut *vm };
+    let exec: &'static mut crate::vm_helper::ShellExecutor =
+        Box::leak(Box::new(crate::vm_helper::ShellExecutor::new()));
+    // Positional params $1.. come from argv after the program name.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    exec.set_pparams(args);
+    let last = exec.last_status();
+    crate::fusevm_bridge::register_builtins(vm);
+    vm.last_status = last;
+    // Install permanently: forget the RAII guard so CURRENT_EXECUTOR stays set
+    // for the whole native run (the process is one-shot).
+    std::mem::forget(crate::fusevm_bridge::ExecutorContext::enter(exec));
+}
+
+/// Compile zsh `source` to a fusevm chunk via the normal parse + compile path.
+fn compile_source_to_chunk(source: &str) -> Result<fusevm::Chunk, String> {
+    let program = crate::vm_helper::parse_isolated(source);
+    let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+    if chunk.ops.is_empty() {
+        return Err("zbuild --native: script compiled to an empty chunk".to_string());
+    }
+    Ok(chunk)
+}
+
+/// Locate the zsh runtime staticlib to link against. `ZSHRS_AOT_RUNTIME_LIB`
+/// overrides; otherwise look for `libzsh.a` beside the running executable
+/// (the dev `target/<profile>/` layout).
+fn runtime_staticlib() -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("ZSHRS_AOT_RUNTIME_LIB") {
+        return Ok(PathBuf::from(p));
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if let Some(dir) = exe.parent() {
+        let cand = dir.join("libzsh.a");
+        if cand.exists() {
+            return Ok(cand);
+        }
+    }
+    Err("could not locate libzsh.a (set ZSHRS_AOT_RUNTIME_LIB)".to_string())
+}
+
+/// `zbuild --native --in A.zsh [--in B.zsh] --out OUT`: AOT-compile the inputs
+/// to native machine code and link a standalone executable. Multiple inputs are
+/// concatenated in order into one program, matching the source-trailer build.
+pub fn build_native(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, String> {
+    if script_paths.is_empty() {
+        return Err("zbuild --native: at least one --in PATH required".to_string());
+    }
+    let mut source = String::new();
+    for p in script_paths {
+        let s = fs::read_to_string(p)
+            .map_err(|e| format!("zbuild --native: cannot read {}: {}", p.display(), e))?;
+        source.push_str(&s);
+        if !source.ends_with('\n') {
+            source.push('\n');
+        }
+    }
+    let chunk = compile_source_to_chunk(&source)?;
+
+    let runtime_lib = runtime_staticlib()?;
+    if !runtime_lib.exists() {
+        return Err(format!(
+            "zbuild --native: runtime staticlib not found at {}",
+            runtime_lib.display()
+        ));
+    }
+
+    let obj = out_path.with_extension("o");
+    fusevm::aot::compile_object(&chunk, &obj).map_err(|e| format!("zbuild --native: {}", e))?;
+
+    let stub = out_path.with_extension("aot_main.c");
+    fs::write(
+        &stub,
+        b"extern long fusevm_aot_run_embedded(void);\nint main(void){return (int)fusevm_aot_run_embedded();}\n" as &[u8],
+    )
+    .map_err(|e| format!("zbuild --native: write entry stub: {}", e))?;
+
+    let mut cmd = std::process::Command::new("cc");
+    cmd.arg(&stub).arg(&obj).arg(&runtime_lib);
+    // zsh's terminfo/termcap modules need the system terminal library.
+    cmd.arg("-lncurses");
+    if cfg!(target_os = "macos") {
+        // Frameworks pulled by zsh's transitive deps: chrono/iana-time-zone
+        // (CoreFoundation), notify/FSEvents (CoreServices), and TLS/keychain
+        // and network-config crates (Security, SystemConfiguration).
+        for fw in ["CoreFoundation", "CoreServices", "Security", "SystemConfiguration"] {
+            cmd.arg("-framework").arg(fw);
+        }
+    }
+    cmd.arg("-o").arg(out_path);
+    let status = cmd
+        .status()
+        .map_err(|e| format!("zbuild --native: invoking cc: {}", e))?;
+    let _ = fs::remove_file(&stub);
+    let _ = fs::remove_file(&obj);
+    if !status.success() {
+        return Err(format!(
+            "zbuild --native: link failed (cc exit {:?})",
+            status.code()
+        ));
+    }
+    set_executable(out_path);
+    Ok(out_path.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
