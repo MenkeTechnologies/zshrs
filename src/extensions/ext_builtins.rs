@@ -5377,10 +5377,14 @@ impl ShellExecutor {
     pub(crate) fn builtin_zbuild(&self, args: &[String]) -> i32 {
         let mut inputs: Vec<std::path::PathBuf> = Vec::new();
         let mut output: Option<String> = None;
+        let mut native = false;
         let mut i = 0;
         while i < args.len() {
             let arg = &args[i];
             match arg.as_str() {
+                "--native" | "-n" => {
+                    native = true;
+                }
                 "--in" | "-i" | "--input" => {
                     // Consume every non-flag token following --in
                     // until we hit the next `-`-prefixed token (or
@@ -5429,6 +5433,8 @@ impl ShellExecutor {
                     println!("Options:");
                     println!("  --in / -i PATHS...  script sources (1+, required)");
                     println!("  --out / -o PATH     output binary (required)");
+                    println!("  --native / -n       AOT-compile to native machine code");
+                    println!("                      (Cranelift object linked standalone)");
                     return 0;
                 }
                 _ => {
@@ -5449,6 +5455,18 @@ impl ShellExecutor {
                 return 1;
             }
         };
+        if native {
+            return match crate::aot::build_native(&inputs, std::path::Path::new(&out_path)) {
+                Ok(p) => {
+                    eprintln!("zbuild: wrote native binary {}", p.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("zshrs:zbuild:1: {}", e);
+                    1
+                }
+            };
+        }
         match crate::aot::build(&inputs, std::path::Path::new(&out_path)) {
             Ok(p) => {
                 eprintln!(
