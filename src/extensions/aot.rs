@@ -417,7 +417,12 @@ pub fn build_native(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf
         // Frameworks pulled by zsh's transitive deps: chrono/iana-time-zone
         // (CoreFoundation), notify/FSEvents (CoreServices), and TLS/keychain
         // and network-config crates (Security, SystemConfiguration).
-        for fw in ["CoreFoundation", "CoreServices", "Security", "SystemConfiguration"] {
+        for fw in [
+            "CoreFoundation",
+            "CoreServices",
+            "Security",
+            "SystemConfiguration",
+        ] {
             cmd.arg("-framework").arg(fw);
         }
     }
