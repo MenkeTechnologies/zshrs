@@ -1523,13 +1523,55 @@ mod man_options {
         );
     }
 
-    /// GLOB_ASSIGN.
+    /// GLOB_ASSIGN — scalar assignment `v=pattern` globs the RHS and
+    /// recreates the param as array (>1 match) or scalar (≤1 match).
     #[test]
-    #[ignore = "zshrs gap: GLOB_ASSIGN does not glob the RHS of v=x* into an array (v stays the literal pattern)"]
     fn globassign() {
         assert_parity(
             r###"setopt globassign; d=$(mktemp -d); cd "$d"; touch x1 x2; v=x*; print -r -- "${#v} ${v[1]}"; cd /; rm -rf "$d""###,
         );
+    }
+
+    /// GLOB_ASSIGN sub-behaviors: type is `array` for multi-match,
+    /// `scalar` for a single match; no-match errors "no matches found"
+    /// (with the literal pattern, not token bytes); off → literal scalar.
+    #[test]
+    fn globassign_shapes_and_nomatch() {
+        // multi-match → array
+        assert_parity(
+            r###"setopt globassign; d=$(mktemp -d); cd "$d"; touch xa xb xc; v=x*; print -r -- "${(t)v}"; cd /; rm -rf "$d""###,
+        );
+        // single match → scalar
+        assert_parity(
+            r###"setopt globassign; d=$(mktemp -d); cd "$d"; touch only1; v=only*; print -r -- "${(t)v}/$v"; cd /; rm -rf "$d""###,
+        );
+        // no match → "no matches found: <literal pattern>" + nonzero status
+        assert_parity(r###"setopt globassign; v=zznomatch_qq*; print -r -- "rc=$?""###);
+        // option off → literal scalar, no globbing
+        assert_parity(
+            r###"d=$(mktemp -d); cd "$d"; touch xa xb; v=x*; print -r -- "${(t)v}/$v"; cd /; rm -rf "$d""###,
+        );
+        // a non-glob scalar RHS is unaffected even with globassign on
+        assert_parity(r###"setopt globassign; v=hello; print -r -- "${(t)v}/$v""###);
+    }
+
+    /// GLOB_ASSIGN no-match interacts with NULL_GLOB / CSH_NULL_GLOB the
+    /// same way command-position globbing does (globlist's failure
+    /// handling, c:Src/glob.c:1872-1888): NULL_GLOB → empty scalar (word
+    /// dropped, no error); CSH_NULL_GLOB → csh-style "no match"; neither
+    /// → "no matches found". A matching pattern is unaffected by either.
+    #[test]
+    fn globassign_nullglob_cshnullglob() {
+        // NULL_GLOB + no match → empty scalar, no error
+        assert_parity(
+            r###"setopt globassign nullglob; v=zznomatch_qq*; print -r -- "[${(t)v}/$v] rc=$?""###,
+        );
+        // NULL_GLOB + match → still globs to array
+        assert_parity(
+            r###"setopt globassign nullglob; d=$(mktemp -d); cd "$d"; touch xa xb; v=x*; print -r -- "${(t)v}/$v"; cd /; rm -rf "$d""###,
+        );
+        // CSH_NULL_GLOB + no match → "no match" + nonzero status
+        assert_parity(r###"setopt globassign cshnullglob; v=zznomatch_qq*; print -r -- "rc=$?""###);
     }
 
     /// RC_QUOTES.

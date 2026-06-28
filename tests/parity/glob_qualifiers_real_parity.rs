@@ -294,3 +294,78 @@ mod link_count_qualifier {
         assert_parity_sorted(d.path(), "print -l *(/l2:t)");
     }
 }
+
+/// `(n)` standalone numeric-sort qualifier — distinct from the `o`/`O`
+/// sort KEY `n` (= GS_NAME, lexical). zsh/Src/glob.c:1575-1577
+/// (`case 'n': gf_numsort = !(sense & 1)`): `(n)` makes the name
+/// comparison numeric so `f2` sorts before `f10`; `(^n)` overrides the
+/// global NUMERIC_GLOB_SORT option back to lexical. Order is significant,
+/// so these compare stdout verbatim (no re-sort).
+mod numeric_sort_qualifier {
+    use super::*;
+
+    fn setup_numeric_dir() -> tempfile::TempDir {
+        let d = tempfile::tempdir().expect("tempdir");
+        for name in ["f1", "f2", "f3", "f10", "f20", "f100"] {
+            std::fs::write(d.path().join(name), b"").unwrap();
+        }
+        d
+    }
+
+    fn assert_order(d: &Path, s: &str) {
+        if !zsh_available() {
+            return;
+        }
+        let z = run_zsh_in(d, s);
+        let r = run_zshrs_in(d, s);
+        assert_eq!(
+            z.stdout, r.stdout,
+            "order divergence on:\n{s}\n--- zsh ---\n{}\n--- zshrs ---\n{}",
+            z.stdout, r.stdout
+        );
+    }
+
+    /// `*(n)` → numeric order: f1 f2 f3 f10 f20 f100.
+    #[test]
+    fn n_qualifier_numeric_order() {
+        let d = setup_numeric_dir();
+        assert_order(d.path(), "print -l *(n)");
+    }
+
+    /// `f<->(n)` — numeric sort with a numeric-range pattern.
+    #[test]
+    fn n_qualifier_with_numeric_range_pattern() {
+        let d = setup_numeric_dir();
+        assert_order(d.path(), "print -l f<->(n)");
+    }
+
+    /// `(on)` is the sort KEY n (lexical by name), NOT numeric —
+    /// regression guard so the standalone-vs-key distinction stays.
+    #[test]
+    fn on_sort_key_is_lexical_not_numeric() {
+        let d = setup_numeric_dir();
+        assert_order(d.path(), "print -l *(on)");
+    }
+
+    /// Global NUMERIC_GLOB_SORT makes the default name sort numeric.
+    #[test]
+    fn global_numericglobsort_option() {
+        let d = setup_numeric_dir();
+        assert_order(d.path(), "setopt numericglobsort; print -l *");
+    }
+
+    /// `(^n)` overrides the global option back to lexical.
+    #[test]
+    #[allow(non_snake_case)]
+    fn caret_n_overrides_global_to_lexical() {
+        let d = setup_numeric_dir();
+        assert_order(d.path(), "setopt numericglobsort; print -l *(^n)");
+    }
+
+    /// `(n)` forces numeric even when the global option is off.
+    #[test]
+    fn n_qualifier_forces_numeric_without_global() {
+        let d = setup_numeric_dir();
+        assert_order(d.path(), "unsetopt numericglobsort; print -l *(n)");
+    }
+}

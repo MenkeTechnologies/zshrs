@@ -1051,3 +1051,64 @@ mod subscript_flag_bound_slices {
         assert_parity(r#"a=(b x b y b); print -l "${a[(r)b,(R)b]}""#);
     }
 }
+
+/// `${arr:|other}` (set difference) and `${arr:*other}` (set
+/// intersection) have a context-dependent shape that zsh distinguishes:
+///
+/// * Array context (unquoted, `(@)` flag, or `[@]`/`[*]` subscript):
+///   the operator filters element-by-element.
+/// * Scalar context (inside double quotes with none of the above):
+///   subst.c:3539/3555-3568 — zsh first collapses the LHS array to its
+///   sepjoin'd scalar, then membership-tests that WHOLE joined string
+///   against `other`, blanking it (exclude: iff present, intersect: iff
+///   absent). The result is therefore the original joined array unless
+///   the joined string is itself a literal element of `other`.
+///
+/// zshrs previously always took the array-filter path, diverging from
+/// zsh in the quoted scalar case. These pin the corrected behavior.
+mod set_ops_scalar_vs_array {
+    use super::*;
+
+    #[test]
+    fn exclude_scalar_context_returns_joined_array() {
+        // partial overlap: joined "a b c" is not an element of (b) → unchanged
+        assert_parity(r#"a=(a b c); b=(b); print "[${a:|b}]""#);
+        // full overlap: joined "a b" is not an element of (a b) → unchanged
+        assert_parity(r#"a=(a b); b=(a b); print "[${a:|b}]""#);
+        // joined string IS a literal element of other → blanked
+        assert_parity(r#"a=(a b); b=("a b" x); print "[${a:|b}]""#);
+        // other unset → exclude is a no-op (joined kept)
+        assert_parity(r#"a=(a b c); unset b; print "[${a:|b}]""#);
+    }
+
+    #[test]
+    fn intersect_scalar_context_blanks_unless_joined_present() {
+        // joined "1 2 3" not in (2) → blanked
+        assert_parity(r#"x=(1 2 3); y=(2); print "[${x:*y}]""#);
+        // joined "1 2 3" is a literal element of other → kept
+        assert_parity(r#"x=(1 2 3); y=("1 2 3"); print "[${x:*y}]""#);
+        // other unset → intersection with nothing is nothing
+        assert_parity(r#"x=(1 2 3); unset y; print "[${x:*y}]""#);
+    }
+
+    #[test]
+    fn exclude_array_context_filters_per_element() {
+        // unquoted → per-element filter
+        assert_parity(r#"a=(a b c); b=(b); print "[" ${a:|b} "]""#);
+        // (@) flag forces array context even when quoted
+        assert_parity(r#"a=(a b c); b=(b); print "[${(@)a:|b}]""#);
+        // [@] subscript forces array context even when quoted
+        assert_parity(r#"a=(a b c); b=(b); print "[${a[@]:|b}]""#);
+        // assignment context is array
+        assert_parity(r#"a=(a b); b=(a b); c=(${a:|b}); print $#c"#);
+        // for-loop word context is array
+        assert_parity(r#"a=(x y z); b=(y); for e in ${a:|b}; do print -n "$e."; done; print"#);
+    }
+
+    #[test]
+    fn intersect_array_context_filters_per_element() {
+        assert_parity(r#"x=(1 2 3); y=(2); print "[" ${x:*y} "]""#);
+        assert_parity(r#"x=(1 2 3); y=(2); print "[${(@)x:*y}]""#);
+        assert_parity(r#"x=(1 1 2 3 3); y=(1 3); print "[" ${x:*y} "]""#);
+    }
+}

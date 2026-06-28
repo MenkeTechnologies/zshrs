@@ -449,3 +449,58 @@ mod zero_length_quantifier_replace {
         assert_parity(r#"setopt extendedglob; v=abc; echo "[${v//*/X}]""#);
     }
 }
+
+/// `(S)` substring-mode strip combined with the `(#m)` whole-match and
+/// `(#b)` backreference flags. These require EXTENDED_GLOB for the
+/// `(#...)` glob-flag syntax; with it off, `(#m)` is literal text and no
+/// match/strip happens (also pinned). The `(S)` flag floats the pattern
+/// as a substring instead of anchoring it to the head/tail, and `%%`/`##`
+/// select longest, `%`/`#` shortest.
+mod S_substring_match_flag_refs {
+    use super::*;
+
+    /// `${(S)v%%(#m)M*H}` strips the longest floating substring matching
+    /// `M*H` (case-sensitive → only "MATCH", not spanning to lowercase
+    /// "h" in "here") and sets $MATCH to it.
+    #[test]
+    fn s_longest_substring_strip_sets_match() {
+        assert_parity(
+            r#"setopt extendedglob; v="and look for a MATCH in here"; r=${(S)v%%(#m)M*H}; print "[$r] M=$MATCH""#,
+        );
+    }
+
+    /// Without EXTENDED_GLOB, `(#m)` is literal — no strip, $MATCH empty.
+    #[test]
+    fn pound_m_literal_without_extendedglob() {
+        assert_parity(
+            r#"v="and look for a MATCH in here"; r=${(S)v%%(#m)M*H}; print "[$r] M=$MATCH""#,
+        );
+    }
+
+    /// `(#m)` in a global substitution exposes $MATCH/$MBEGIN/$MEND per
+    /// replacement (1-based positions).
+    #[test]
+    fn pound_m_global_subst_position_refs() {
+        assert_parity(
+            r#"setopt extendedglob; v="this is a string"; print ${v//(#m)s/$MATCH-$MBEGIN-$MEND}"#,
+        );
+    }
+
+    /// Plain `(S)%%` (no match flag) still strips the longest floating
+    /// substring, case-sensitively.
+    #[test]
+    fn s_plain_longest_and_shortest() {
+        assert_parity(r#"v="abc XYZ def xyz"; print ${(S)v%%X*Z}"#);
+        assert_parity(r#"v="aXbXc"; print ${(S)v%X*X}"#);
+        assert_parity(r#"v="aMxHbMyH"; print ${(S)v##M*H}"#);
+        assert_parity(r#"v="aMxHbMyH"; print ${(S)v#M*H}"#);
+    }
+
+    /// `(#b)` backreferences populate $match[] on a `[[ == ]]` test.
+    #[test]
+    fn pound_b_backrefs_in_match_array() {
+        assert_parity(
+            r#"setopt extendedglob; v="key=val"; [[ $v == (#b)(*)=(*) ]] && print "$match[1]/$match[2]""#,
+        );
+    }
+}
