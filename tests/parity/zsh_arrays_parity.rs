@@ -1112,3 +1112,69 @@ mod set_ops_scalar_vs_array {
         assert_parity(r#"x=(1 1 2 3 3); y=(1 3); print "[" ${x:*y} "]""#);
     }
 }
+
+/// Empty array elements survive a QUOTED scalar join (`"$a"` / `"${a}"`)
+/// but are dropped by UNQUOTED word-splitting — matching zsh. The
+/// compiler-direct `"$var"` read compiles to a GET_VAR with no
+/// EXPAND_TEXT wrapper (so runtime `in_dq_context` is 0); the fix routes
+/// quoted reads to GET_VAR_DQ which forces the DQ sepjoin keeping empty
+/// elements. c:Src/subst.c:184-187 (uremnode unquoted-empty drop) +
+/// c:1759 (sepjoin DQ).
+mod empty_element_quoting {
+    use super::*;
+
+    #[test]
+    fn quoted_join_keeps_empty_elements() {
+        // interior empty → consecutive separators
+        assert_parity(r#"a=(1 "" 3); print "[$a]""#);
+        assert_parity(r#"a=(1 "" 3); print "[${a}]""#);
+        // concatenated with literals
+        assert_parity(r#"a=(1 "" 3); print "[x${a}y]""#);
+        // joined length counts the empty (1+sp+sp+3 = "1  3")
+        assert_parity(r#"a=(1 "" 3); x="$a"; print ${#x}"#);
+        // two interior empties
+        assert_parity(r#"a=(1 "" "" 4); print "[$a]""#);
+        // leading / trailing empty
+        assert_parity(r#"a=("" 2 3); print "[$a]""#);
+        assert_parity(r#"a=(1 2 ""); print "[$a]""#);
+        // custom IFS first char is used for the join, empties preserved
+        assert_parity(r#"IFS=,; a=(1 "" 3); print "$a""#);
+        // sparse array (a[5]=X fills 2..4 with empties)
+        assert_parity(r#"a=(1); a[5]=X; print "[$a]""#);
+    }
+
+    #[test]
+    fn unquoted_splat_drops_empty_elements() {
+        // unquoted word-splitting drops empties (2 words, not 3)
+        assert_parity(r#"a=(1 "" 3); print -l $a"#);
+        assert_parity(r#"a=(1 "" 3); print -l ${a}"#);
+        // for-loop iterates over the 2 non-empty words
+        assert_parity(r#"a=(1 "" 3); for w in $a; do print "<$w>"; done"#);
+    }
+
+    #[test]
+    fn scalar_reads_unaffected() {
+        // quoted scalar keeps its (possibly empty) value as one word
+        assert_parity(r#"x=hi; print "[$x]"; print "[${x}]""#);
+        assert_parity(r#"x=""; print "[$x]"; print "[${x}]""#);
+        // unquoted empty scalar is dropped (0 words)
+        assert_parity(r#"x=""; print -l $x; print END"#);
+    }
+
+    #[test]
+    fn assoc_quoted_join_keeps_empty_values() {
+        assert_parity(r#"typeset -A h=(a 1 b "" c 3); print "[$h]""#);
+    }
+
+    /// A QUOTED array read is ONE word (`set -- "$a"` → $# == 1), not a
+    /// per-element splat. The fix changed quoted reads from Value::Array
+    /// (which pop_args splatted) to a joined Value::str.
+    #[test]
+    fn quoted_array_read_is_single_word() {
+        assert_parity(r#"a=(1 2 3); set -- "$a"; print "$# [$1]""#);
+        assert_parity(r#"a=(1 2 3); set -- "${a}"; print "$# [$1]""#);
+        assert_parity(r#"a=(a b c); f(){ print $# }; f "$a""#);
+        // `[@]` still splats per-element even when quoted
+        assert_parity(r#"a=(1 2 3); set -- "${a[@]}"; print $#"#);
+    }
+}
