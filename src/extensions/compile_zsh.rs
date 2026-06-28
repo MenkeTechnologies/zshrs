@@ -4202,8 +4202,19 @@ impl ZshCompiler {
                 // produced a single joined arg and lost the
                 // word-split. BUILTIN_ARRAY_ALL returns
                 // `Value::Array` which the VM splices into argv.
+                // QUOTED `"$name"`: force DQ semantics so an array's
+                // empty elements are preserved (these compile to a direct
+                // GET_VAR with no EXPAND_TEXT wrapper, so the runtime
+                // in_dq_context is 0 and plain GET_VAR would word-elide
+                // the empties). c:Src/subst.c:184-187 + c:1759 sepjoin:
+                // `a=(1 "" 3); "$a"` → `1  3`. Detect quoting via dq-depth
+                // OR raw token DQ-wrapping (same dual check as `$@`/`$*`).
+                let in_dq =
+                    self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
                 let opcode = if matches!(name, "argv" | "@" | "*") {
                     crate::vm_helper::BUILTIN_ARRAY_ALL
+                } else if in_dq {
+                    crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
                     crate::vm_helper::BUILTIN_GET_VAR
                 };
@@ -4512,8 +4523,20 @@ impl ZshCompiler {
             if let Some(name) = braced_var_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+                // QUOTED `"${name}"` forces DQ semantics so an array's
+                // empty elements survive (compiler-direct read, runtime
+                // in_dq_context==0). Detect quoting the same way the
+                // `$@`/`$*` arm does: the recursive dq-depth OR the raw
+                // token wrapped in DQ markers (`\u{9e}…\u{9e}`) — the
+                // brace form arrives 9e-wrapped with dq_depth==0.
+                let in_dq =
+                    self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                let bid = if in_dq {
+                    crate::vm_helper::BUILTIN_GET_VAR_DQ
+                } else {
+                    crate::vm_helper::BUILTIN_GET_VAR
+                };
+                self.builder.emit(Op::CallBuiltin(bid, 1), 0);
                 return;
             }
         }

@@ -4327,7 +4327,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // Shell variable get/set — routes through executor.variables so nested
     // VMs (function calls) and tree-walker callers see the same storage.
-    vm.register_builtin(BUILTIN_GET_VAR, |vm, argc| {
+    // GET_VAR / GET_VAR_DQ share one body via `get_var_impl`; the only
+    // difference is `force_dq`, which the compiler sets for QUOTED simple
+    // reads (`"$name"`) so an array's empty elements are preserved (the
+    // `in_dq_context` runtime flag is 0 for these compiler-direct reads).
+    fn get_var_impl(vm: &mut fusevm::VM, argc: u8, force_dq: bool) -> Value {
         let args = pop_args(vm, argc);
         let name = args.into_iter().next().unwrap_or_default();
         let live_status = vm.last_status;
@@ -4434,7 +4438,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // is one word.
         let arr_assoc_data = with_executor(|exec| {
             sync_status(exec);
-            let in_dq = exec.in_dq_context > 0;
+            let in_dq = force_dq || exec.in_dq_context > 0;
             // KSH_ARRAYS: bare `$arr` returns ONLY arr[0] (zero-
             // based first-element-only semantics). Direct port of
             // Src/params.c getstrvalue's KSH_ARRAYS gate which
@@ -4520,7 +4524,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     .map(|t| t.contains_key(&name))
                     .unwrap_or(false)
                 || env::var(&name).is_ok();
-            (v, exec.in_dq_context > 0, known)
+            (v, force_dq || exec.in_dq_context > 0, known)
         });
         // c:Src/subst.c:1689 — NO_UNSET / nounset: reading an unset
         // parameter fires "parameter not set" diagnostic and aborts
@@ -4566,7 +4570,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         Value::str(val)
-    });
+    }
+    vm.register_builtin(BUILTIN_GET_VAR, |vm, argc| get_var_impl(vm, argc, false));
+    vm.register_builtin(BUILTIN_GET_VAR_DQ, |vm, argc| get_var_impl(vm, argc, true));
 
     // `name+=val` (no parens) — runtime dispatch:
     //   - if `name` is in `arrays` → push `val` as new element
@@ -8690,6 +8696,16 @@ fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
 /// `getsparam` (Src/params.c:3076) via paramtab + env walk so nested
 /// VMs (function calls) see the same storage.
 pub const BUILTIN_GET_VAR: u16 = 283;
+
+/// Like `BUILTIN_GET_VAR` but forces double-quoted (DQ) semantics on
+/// the read regardless of the runtime `in_dq_context`. The compiler
+/// emits this for a QUOTED simple-var read (`"$name"`) — those compile
+/// to a direct GET_VAR with no EXPAND_TEXT wrapper, so `in_dq_context`
+/// is 0 and the plain GET_VAR would wrongly word-elide an array's empty
+/// elements (`a=(1 "" 3); "$a"` must keep the empty → `1  3`, not
+/// `1 3`). With force_dq the array joins via sepjoin keeping empties and
+/// a scalar is returned verbatim (no empty-drop, no SH_WORD_SPLIT).
+pub const BUILTIN_GET_VAR_DQ: u16 = 639;
 
 /// Builtin ID for `name=value` assignments — pops [name, value] and
 /// routes through canonical `setsparam` (Src/params.c:3350).
