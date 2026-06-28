@@ -4761,11 +4761,62 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
                 }
             } else {
+                // c:Src/exec.c:2554-2567 — GLOB_ASSIGN. When the
+                // `globassign` option is on and the scalar RHS is a glob
+                // pattern, glob it and recreate the parameter as a scalar
+                // (≤1 match) or array (>1) — csh-style assignment. The
+                // bridge hands `value` UNTOKENIZED, so re-tokenize
+                // (shtokenize) before haswilds/globlist; zsh's wordcode
+                // value arrives pre-tokenized via `htok`. The
+                // `isset(GLOBASSIGN)` gate is first and cheap (option off
+                // by default), so the common path is unchanged.
+                let mut globbed = false;
+                if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBASSIGN) {
+                    let mut tv = value.clone();
+                    crate::ported::glob::shtokenize(&mut tv);
+                    if crate::ported::pattern::haswilds(&tv) {
+                        // Committed to the glob path: never fall back to
+                        // assigning the literal pattern (zsh errors on
+                        // no-match instead).
+                        globbed = true;
+                        // globlist tokenizes its input internally (for
+                        // haswilds + glob_path) and prints the ORIGINAL
+                        // string verbatim in its "no matches found" error,
+                        // so feed it the UNtokenized value — passing the
+                        // tokenized form would leak the Star/Quest token
+                        // bytes into the error message.
+                        let mut ll: crate::ported::linklist::LinkList<String> = Default::default();
+                        ll.push_back(value.clone());
+                        crate::ported::subst::globlist(&mut ll, 0); // c:2556
+                        if crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+                            == 0
+                        {
+                            let matches: Vec<String> = ll
+                                .nodes
+                                .iter()
+                                .map(|s| crate::ported::lex::untokenize(s).to_string())
+                                .collect();
+                            crate::ported::params::unsetparam(&name); // c:2562
+                            if matches.len() <= 1 {
+                                let v = matches.into_iter().next().unwrap_or_default();
+                                assign_failed =
+                                    crate::ported::params::setsparam(&name, &v).is_none();
+                            } else {
+                                crate::ported::params::setaparam(&name, matches);
+                            }
+                        }
+                        // errflag set → globlist already reported
+                        // "no matches found"; leave the param unassigned
+                        // to match zsh's abort.
+                    }
+                }
                 // c:Src/exec.c addvars — a NULL return from
                 // assignsparam (e.g. nameref resolving out of scope,
                 // createparam refusal at c:1108-1118) fails the
                 // assignment with status 1.
-                assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
+                if !globbed {
+                    assign_failed = crate::ported::params::setsparam(&name, &value).is_none();
+                }
             }
             // PM_EXPORTED / allexport env mirror — read AFTER setsparam
             // so the flag bit reflects any GSU setfn side-effects.

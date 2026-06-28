@@ -3584,6 +3584,16 @@ pub struct qualifier_set {
     /// match walk completes (the optimization gain is the same in
     /// the typical short-glob case). Bug #41 in docs/BUGS.md.
     pub short_circuit: Option<i32>,
+    /// `(n)` qualifier — per-glob numeric sort. Direct port of
+    /// zsh/Src/glob.c:1575-1577 (`case 'n': gf_numsort = !(sense & 1)`).
+    /// Distinct from the `o`/`O` sort KEY `n` (= GS_NAME, lexical):
+    /// standalone `(n)` makes the name comparison NUMERIC (so `*(n)`
+    /// orders `f2` before `f10`), OR'd with the global NUMERIC_GLOB_SORT
+    /// option at sort time (glob.c:947/983 `gf_numsort ?
+    /// SORTIT_NUMERICALLY : 0`). `None` = not specified (fall back to
+    /// the global option); `Some(true)` = `(n)`; `Some(false)` = `(^n)`
+    /// which OVERRIDES the global option to force lexical.
+    pub numsort: Option<bool>,
 }
 
 /// Enter a glob scope: snapshot options into TLS if no outer scope
@@ -4420,7 +4430,10 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // Per-glob nullglob: empty result on no-match, no error.
             'N' => qs.nullglob = !negated,
             'D' => qs.globdots = !negated,
-            'n' => { /* numsort handled elsewhere */ }
+            // c:1575-1577 — `case 'n': gf_numsort = !(sense & 1)`.
+            // Standalone `(n)` enables numeric sort for this glob (the
+            // `^n` toggle disables it). Consumed in sort_matches.
+            'n' => qs.numsort = Some(!negated),
             // (M) / (T) — set per-qualifier-set flags. glob.c:1557-1566:
             //   case 'M': gf_markdirs = !(sense & 1);  break;
             //   case 'T': gf_listtypes = !(sense & 1); break;
@@ -5129,7 +5142,14 @@ fn sort_matches(state: &mut globdata) {
         return;
     }
 
-    let numeric = glob_isset(NUMERICGLOBSORT);
+    // c:1258/1575 — gf_numsort starts at the global NUMERIC_GLOB_SORT
+    // option, then a per-glob `(n)`/`(^n)` qualifier OVERRIDES it
+    // absolutely (so `(^n)` forces lexical even when the option is on).
+    let numeric = state
+        .qualifiers
+        .as_ref()
+        .and_then(|q| q.numsort)
+        .unwrap_or_else(|| glob_isset(NUMERICGLOBSORT));
     state
         .matches
         .sort_by(|a, b| gmatchcmp(a, b, &specs, numeric));

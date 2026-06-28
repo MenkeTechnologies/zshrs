@@ -1344,69 +1344,83 @@ pub fn globlist(list: &mut LinkList, flags: i32) {
         if expanded.is_empty() {
             // c:Src/glob.c:1872-1888 — `Deal with failures to match
             // depending on options`. C body verbatim:
+            //   if (matchct)
+            //       badcshglob |= 2;
             //   else if (!gf_nullglob) {
             //       if (isset(CSHNULLGLOB)) {           c:1874
             //           badcshglob |= 1;
             //       } else if (isset(NOMATCH)) {        c:1876
-            //           zerr("no matches found: %s",    c:1877
-            //                ostr);
-            //           zfree(matchbuf, 0);             c:1878
-            //           restore_globstate(saved);       c:1879
+            //           zerr("no matches found: %s", ostr);  c:1877
             //           return;                         c:1880
             //       } else {                            c:1882
-            //           untokenize(matchptr->name =     c:1884
-            //               dupstring(ostr));
-            //           matchptr++;                     c:1885
-            //           matchct = 1;                    c:1886
+            //           treat as ordinary string        c:1884-1886
             //       }
             //   }
-            // Parity bug #13: previously this arm always took the
-            // c:1882-1886 `treat as literal` branch unconditionally.
-            let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
-            let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
-                                                                         // c:Src/glob.c:1232 — `if (!haswilds(str))` test that
-                                                                         // bypasses zglob entirely. We mirror it here so plain
-                                                                         // literals like `echo foo` don't trip NOMATCH.
-                                                                         // haswilds scans TOKENIZED strings; `data` is untokenized
-                                                                         // at this point, so tokenize a local copy first
-                                                                         // (c:Src/glob.c:3548), as C does for runtime-built
-                                                                         // strings (compcore.c:2231).
+            // globlist drives glob via the Vec convenience `glob_path`,
+            // which (unlike in-place zglob at glob.rs:1497-1573) does NOT
+            // do the badcshglob/nullglob accounting — so replicate the
+            // FULL zglob failure logic here. The whole block is gated on
+            // `!gf_nullglob`: under NULL_GLOB the failed word is dropped
+            // (matchct stays 0, the word is removed from the list).
+            // c:1232 — a word with no glob tokens is never a glob failure;
+            // haswilds scans TOKENIZED strings, so tokenize a local copy
+            // (data is untokenized here).
             let has_glob_chars = {
                 let mut data_tok = data.clone();
                 crate::ported::glob::tokenize(&mut data_tok);
                 crate::ported::pattern::haswilds(&data_tok)
             };
-            if has_glob_chars && !nullglob && !csh_nullglob && isset(crate::ported::zsh_h::NOMATCH)
-            // c:1876
-            {
-                crate::ported::utils::zerr(&format!("no matches found: {}", data)); // c:1877
-                crate::ported::utils::errflag.fetch_or(
-                    crate::ported::zsh_h::ERRFLAG_ERROR,
-                    std::sync::atomic::Ordering::Relaxed,
-                ); // c:1877 (zerr side-effect)
-                   // c:1880 `return` — drop the unmatched token from the list.
-                list.delete_node(node_idx);
-                continue;
+            if has_glob_chars {
+                let nullglob = isset(crate::ported::zsh_h::NULLGLOB); // c:1873 !gf_nullglob
+                let csh_nullglob = isset(crate::ported::zsh_h::CSHNULLGLOB); // c:1874
+                if nullglob {
+                    // c:1872 — under NULL_GLOB the failed word is dropped.
+                    list.delete_node(node_idx);
+                    continue;
+                }
+                if csh_nullglob {
+                    // c:1874-1875 — `badcshglob |= 1;` then drop the word;
+                    // the terminal check (subst.rs:1423) emits the csh
+                    // `no match` when NO word on the line matched.
+                    crate::ported::glob::BADCSHGLOB
+                        .fetch_or(1, std::sync::atomic::Ordering::Relaxed);
+                    list.delete_node(node_idx);
+                    continue;
+                }
+                if isset(crate::ported::zsh_h::NOMATCH) {
+                    // c:1876-1880 — hard error; drop the unmatched word.
+                    crate::ported::utils::zerr(&format!("no matches found: {}", data)); // c:1877
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::zsh_h::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    list.delete_node(node_idx); // c:1880 return → word dropped
+                    continue;
+                }
+                // c:1882-1886 — `treat as an ordinary string`: leave the
+                // literal node in place and advance.
             }
-            // c:1882-1886 — `treat as an ordinary string`. The
-            // matchptr++ bookkeeping in C maps to leaving the node
-            // alone and advancing the index.
-            node_idx += 1;
-        } else if expanded.len() == 1 {
-            // c:N/A
-            list.setdata(node_idx, expanded.into_iter().next().unwrap());
             node_idx += 1;
         } else {
-            // Replace the single node with N expanded nodes.
-            list.delete_node(node_idx);
-            for (i, p) in expanded.iter().enumerate() {
-                if i == 0 {
-                    list.insert_at(node_idx, p.clone());
-                } else {
-                    list.insertlinknode(node_idx + i - 1, p.clone());
+            // c:1872 — `badcshglob |= 2;` (at least one expansion matched),
+            // so the terminal CSHNULLGLOB diagnostic stays silent when any
+            // word on the line matched.
+            crate::ported::glob::BADCSHGLOB.fetch_or(2, std::sync::atomic::Ordering::Relaxed);
+            if expanded.len() == 1 {
+                list.setdata(node_idx, expanded.into_iter().next().unwrap());
+                node_idx += 1;
+            } else {
+                // Replace the single node with N expanded nodes.
+                list.delete_node(node_idx);
+                for (i, p) in expanded.iter().enumerate() {
+                    if i == 0 {
+                        list.insert_at(node_idx, p.clone());
+                    } else {
+                        list.insertlinknode(node_idx + i - 1, p.clone());
+                    }
                 }
+                node_idx += expanded.len(); // advance past all
             }
-            node_idx += expanded.len(); // advance past all
         }
     }
     // c:506-509 — `if (noerrs) badcshglob = 0; else if (badcshglob == 1)
@@ -5397,6 +5411,28 @@ pub fn paramsubst(
                 // c:2741
                 var_name = sv.trim().to_string(); // c:2741
                 subexp_value = None; // c:2741 (consumed)
+            } else if let Some(sub) = subscript.clone() {
+                // c:Src/subst.c:2800 — the FIRST fetchvalue resolves the
+                // operand reference INCLUDING its subscript (`(P)arr[1]` →
+                // arr[1]="foo") BEFORE the (P) dereference. The subscript
+                // binds to the NAMED parameter, not to the deref result.
+                // Resolve `${name[sub]}` via singsub, then deref that name
+                // with no remaining subscript. Without this, `(P)arr[1]`
+                // deref'd arr→"foo"→"bar" and then char-subscripted the
+                // result to "b"; zsh yields "bar".
+                let opref = format!("${{{}[{}]}}", var_name, sub); // c:2800
+                let resolved = singsub(&opref); // c:2800
+                                                // c:Src/subst.c:2800 — the second fetchvalue parses the
+                                                // resolved string as a parameter name via `itype_end`,
+                                                // which stops at the first non-identifier char. A slice
+                                                // operand (`(P)arr[1,2]` → "v1 v2") therefore derefs only
+                                                // the FIRST name ("v1"); embedded subscripts (`"foo[2]"`,
+                                                // no whitespace) flow through to the bracket-parse below.
+                var_name = match resolved.find(char::is_whitespace) {
+                    Some(i) => resolved[..i].to_string(),
+                    None => resolved,
+                }; // c:2800
+                subscript = None; // c:2806 (consumed by the first fetch)
             } else {
                 // c:2741
                 let target = vars_get(&var_name) // c:2741
@@ -10817,17 +10853,41 @@ pub fn paramsubst(
                 let other_name = rhs.trim(); // c:3543
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
-                let kept: Vec<String> = arr
-                    .into_iter() // c:3540
-                    .filter(|s| !other_set.contains(s)) // c:3548
-                    .collect();
-                value = kept.join(" ");
-                split_parts = Some(kept); // c:3540 (auto-splat)
-                                          // c:3548 SUB_DIFFERENCE returns array shape; mark
-                                          // isarr=1 so the auto_splat block at c:4245 fires
-                                          // even though `rest` is non-empty (the operator
-                                          // consumed it).
-                isarr = 1;
+                // c:Src/subst.c:3539 — the array filter only runs when
+                // `isarr` (the `!vunset && isarr` gate). In DQ scalar
+                // context (no `(@)`/`[@]`/`[*]`, nojoin!=2) zsh takes the
+                // `else` arm at c:3555-3568: the array is already collapsed
+                // to the sepjoin'd scalar `val`, and the operator does a
+                // single membership test of that WHOLE string, blanking it
+                // iff present (exclude). This is why `"${a:|b}"` returns the
+                // original joined array unless the joined string itself is a
+                // literal element of `b`.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                let is_at_var = matches!(var_name.as_str(), "@");
+                let scalar_ctx = qt && !is_at_subscript && !is_at_var && nojoin != 2;
+                if scalar_ctx {
+                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
+                                                                            // c:3565-3567 exclude — blank iff joined IS a member.
+                    value = if other_set.contains(&joined) {
+                        String::new()
+                    } else {
+                        joined
+                    };
+                    split_parts = None;
+                    isarr = 0;
+                } else {
+                    let kept: Vec<String> = arr
+                        .into_iter() // c:3540
+                        .filter(|s| !other_set.contains(s)) // c:3548
+                        .collect();
+                    value = kept.join(" ");
+                    split_parts = Some(kept); // c:3540 (auto-splat)
+                                              // c:3548 SUB_DIFFERENCE returns array shape; mark
+                                              // isarr=1 so the auto_splat block at c:4245 fires
+                                              // even though `rest` is non-empty (the operator
+                                              // consumed it).
+                    isarr = 1;
+                }
             } else if let Some(rhs) = r.strip_prefix(":*") {
                 // c:3540 (intersect)
                 // ${arr:*other} — array set-intersection — KEEP
@@ -10844,13 +10904,31 @@ pub fn paramsubst(
                 let other_name = rhs.trim(); // c:3543
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
-                let kept: Vec<String> = arr
-                    .into_iter() // c:3540
-                    .filter(|s| other_set.contains(s)) // c:3548
-                    .collect();
-                value = kept.join(" ");
-                split_parts = Some(kept); // c:3540 (auto-splat)
-                isarr = 1; // c:3548 SUB_INTERSECT returns array shape
+                // c:Src/subst.c:3539/3566 — DQ scalar context (see the `:|`
+                // arm) collapses to the sepjoin'd scalar and intersect-
+                // blanks it iff that whole joined string is NOT a member.
+                let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                let is_at_var = matches!(var_name.as_str(), "@");
+                let scalar_ctx = qt && !is_at_subscript && !is_at_var && nojoin != 2;
+                if scalar_ctx {
+                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
+                                                                            // c:3565-3567 intersect — blank iff joined is NOT a member.
+                    value = if other_set.contains(&joined) {
+                        joined
+                    } else {
+                        String::new()
+                    };
+                    split_parts = None;
+                    isarr = 0;
+                } else {
+                    let kept: Vec<String> = arr
+                        .into_iter() // c:3540
+                        .filter(|s| other_set.contains(s)) // c:3548
+                        .collect();
+                    value = kept.join(" ");
+                    split_parts = Some(kept); // c:3540 (auto-splat)
+                    isarr = 1; // c:3548 SUB_INTERSECT returns array shape
+                }
             } else if let Some(rhs) = r.strip_prefix(":^^") {
                 // c:Src/subst.c:3456-3520 SUB_ZIP_LONG — `${a:^^b}`.
                 // In DQ context (`"${a:^^b}"`), zsh collapses the FIRST

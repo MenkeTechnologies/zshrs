@@ -441,6 +441,54 @@ mod special_flags {
         assert_parity("TARGET=value; REF=TARGET; echo ${(P)REF}");
     }
 
+    /// `${(P)name[sub]}` — the subscript binds to the NAMED parameter and
+    /// is resolved BEFORE the (P) dereference (subst.c:2800: the first
+    /// fetchvalue processes `name[sub]`, then aspar refetches the result
+    /// as a parameter name). zshrs previously deref'd `name` first and
+    /// then char-subscripted the result.
+    #[test]
+    fn p_indirect_array_subscript_resolves_before_deref() {
+        // arr[1]="foo" → (P) → $foo
+        assert_parity("foo=bar; arr=(foo); print ${(P)arr[1]}");
+        // arr[2]="a2" → (P) → $a2
+        assert_parity("a1=x a2=y; arr=(a1 a2); print ${(P)arr[2]}");
+        // negative index
+        assert_parity("a1=x a2=y; arr=(a1 a2); print ${(P)arr[-1]}");
+        // quoted context
+        assert_parity(r#"foo=bar; arr=(foo); print "${(P)arr[1]}""#);
+        // combined with a case-mod flag: (P) then (U)
+        assert_parity("foo=bar; arr=(foo); print ${(PU)arr[1]}");
+    }
+
+    /// Scalar operand `${(P)scalar[N]}` char-subscripts the scalar FIRST,
+    /// then derefs that single char as a name. Discriminator: n="ab",
+    /// n[1]="a" → $a ("AVAL"); the old deref-first bug yielded ${ab}[1]
+    /// = "A".
+    #[test]
+    fn p_indirect_scalar_char_subscript_before_deref() {
+        assert_parity("a=AVAL b=BVAL ab=ABVAL; n=ab; print ${(P)n[1]}");
+        assert_parity("a=AVAL b=BVAL ab=ABVAL; n=ab; print ${(P)n[2]}");
+        assert_parity(r#"a=AVAL b=BVAL ab=ABVAL; n=ab; print "[${(P)n[1]}]""#);
+        // deref target unset (unquoted) → empty
+        assert_parity("foo=bar; n=foo; print ${(P)n[1]}");
+        // assoc key operand: h[k]="foo" → (P) → $foo
+        assert_parity("foo=bar; typeset -A h=(k foo); print ${(P)h[k]}");
+    }
+
+    /// A multi-word slice operand derefs only the FIRST resolved name
+    /// (subst.c:2800 itype_end stops at whitespace); an element whose
+    /// value itself carries a subscript (`"foo2[2]"`) flows through to
+    /// the embedded-bracket dereference.
+    #[test]
+    fn p_indirect_slice_and_embedded_subscript_edges() {
+        // slice "v1 v2" → name "v1" → $v1
+        assert_parity("v1=A v2=B; arr=(v1 v2); print ${(P)arr[1,2]}");
+        // element value "foo2[2]" → deref foo2[2]
+        assert_parity(r#"foo2=(x y z); arr=("foo2[2]"); print ${(P)arr[1]}"#);
+        // spacey element "hello world" → name "hello" → $hello
+        assert_parity(r#"arr=("hello world"); hello=H; print "[${(P)arr[1]}]""#);
+    }
+
     #[test]
     fn split_on_colon_scalar() {
         assert_parity(r#"S=a:b:c:d; print -l "${(@s/:/)S}""#);
