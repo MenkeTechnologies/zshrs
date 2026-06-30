@@ -1058,6 +1058,9 @@ pub fn bufswap() {
     NMW_IND.with(|ind| ind.set(1)); // c:967 — nmw_ind = 1
 }
 /// `zrefresh` — see implementation.
+// The full-repaint path early-returns on purpose (the minimal-update diff
+// machinery below is intentionally preserved WIP and unreachable for now).
+#[allow(unreachable_code)]
 pub fn zrefresh() {
     // c:975
     // c:975 — full repaint pipeline. C writes every byte through
