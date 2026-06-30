@@ -84,7 +84,7 @@ path = "tests/parity/main.rs"
 ctrlc = "3"
 atty = "0.2"
 zshrs-daemon = { workspace = true, optional = true }
-fusevm = { version = "0.14.2", features = ["jit-disk-cache", "aot"] }
+fusevm = { version = "0.14.4", features = ["jit-disk-cache", "aot"] }
 regex = "1.11"
 glob = "0.3"
 libc = "0.2"
