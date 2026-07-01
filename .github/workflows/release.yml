@@ -335,15 +335,58 @@ jobs:
             printf 'end\n'
           } > tap/Formula/zshrs-all.rb
 
+      - name: Update zshrs-daemon formula
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          SHA_ARM_MACOS: ${{ steps.sha.outputs.all_aarch64_apple_darwin }}
+          SHA_X86_MACOS: ${{ steps.sha.outputs.all_x86_64_apple_darwin }}
+          SHA_X86_LINUX: ${{ steps.sha.outputs.all_x86_64_unknown_linux_gnu }}
+          SHA_ARM_LINUX: ${{ steps.sha.outputs.all_aarch64_unknown_linux_gnu }}
+        run: |
+          set -eu
+          V="${VERSION#v}"
+          BASE="https://github.com/MenkeTechnologies/zshrs/releases/download/v${V}"
+          # daemon-only formula reuses the zshrs-all tarball (which already
+          # bundles zshrs-daemon + zd) and installs just those two — no
+          # dedicated tarball needed. Same all_ SHA keys as zshrs-all.
+          emit() { local guard="$1" arch="$2" sha="$3"; [ -n "$sha" ] || return 0; printf '    %s do\n      url "%s/zshrs-all-v%s-%s.tar.gz"\n      sha256 "%s"\n    end\n' "$guard" "$BASE" "$V" "$arch" "$sha"; }
+          mac_blocks=$( { emit on_arm aarch64-apple-darwin "$SHA_ARM_MACOS"; emit on_intel x86_64-apple-darwin "$SHA_X86_MACOS"; } )
+          linux_blocks=$( { emit on_intel x86_64-unknown-linux-gnu "$SHA_X86_LINUX"; emit on_arm aarch64-unknown-linux-gnu "$SHA_ARM_LINUX"; } )
+          {
+            printf 'class ZshrsDaemon < Formula\n'
+            printf '  desc "zshrs daemon + zd client only — for users of other shells (bash/fish/zsh)"\n'
+            printf '  homepage "https://github.com/MenkeTechnologies/zshrs"\n'
+            printf '  license "MIT"\n'
+            printf '  conflicts_with "zshrs-all", because: "both install zd and zshrs-daemon"\n'
+            printf '  conflicts_with "zshrs", because: "both install zd"\n'
+            printf '  version "%s"\n\n' "$V"
+            if [ -n "$mac_blocks" ]; then
+              printf '  on_macos do\n%s\n  end\n\n' "$mac_blocks"
+            fi
+            if [ -n "$linux_blocks" ]; then
+              printf '  on_linux do\n%s\n  end\n\n' "$linux_blocks"
+            fi
+            printf '  def install\n'
+            printf '    bin.install "zshrs-daemon"\n'
+            printf '    bin.install "zd"\n'
+            printf '  end\n\n'
+            printf '  test do\n'
+            printf '    assert_match "zshrs-daemon #{version}", shell_output("#{bin}/zshrs-daemon --version")\n'
+            printf '    assert_match "zd #{version}", shell_output("#{bin}/zd --version")\n'
+            printf '  end\n'
+            printf 'end\n'
+          } > tap/Formula/zshrs-daemon.rb
+
       - name: Push formula update
         run: |
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/zshrs.rb Formula/zshrs-all.rb
+          git add Formula/zshrs.rb Formula/zshrs-all.rb Formula/zshrs-daemon.rb
           if git diff --cached --quiet; then
             echo "no changes — formulas already up to date"
             exit 0
           fi
-          git commit -m "zshrs: bump zshrs + zshrs-all to ${{ github.ref_name }}"
+          git commit -m "zshrs: bump zshrs + zshrs-all + zshrs-daemon to ${{ github.ref_name }}"
           git push
