@@ -298,27 +298,60 @@ pub fn shingetchar() -> i32 {
 pub fn shingetline() -> String {
     // c:267
     let mut result = String::new();
+    // Inline metafy of one raw byte (Src/utils.c:4856 metafy + Src/zsh.h Meta
+    // protocol): reserved IMETA bytes (0x00, 0x83-0x9b) become `Meta` +
+    // (byte ^ 32); every other byte is literal.
+    let push_byte = |result: &mut String, byte: u32| {
+        let c = char::from_u32(byte).unwrap_or('\0');
+        if imeta(c) {
+            result.push(Meta as char);
+            result.push(char::from_u32(byte ^ 32).unwrap_or(c));
+        } else {
+            result.push(c);
+        }
+    };
     loop {
-        match shingetchar() {
+        let b0 = match shingetchar() {
             -1 => return result,
-            ch_i32 => {
-                let c = char::from_u32(ch_i32 as u32).unwrap_or('\0');
-                if c == '\n' {
-                    result.push('\n');
-                    return result;
-                }
-                if imeta(c) {
-                    // Inline metafy XOR per Src/utils.c:4856 metafy()
-                    // and Src/zsh.h Meta protocol — c ^ 32 maps the
-                    // 5 reserved bytes (0x00, 0x83-0x9b) to printable
-                    // form for the SHIN buffer.
-                    result.push(Meta as char);
-                    result.push(char::from_u32((c as u32) ^ 32).unwrap_or(c));
-                } else {
-                    result.push(c);
+            b => b as u32,
+        };
+        if b0 == '\n' as u32 {
+            result.push('\n');
+            return result;
+        }
+        // A UTF-8 multibyte lead byte (0xC2..=0xF4): read its continuation
+        // bytes and decode the sequence to ONE Unicode char. C keeps raw
+        // metafied bytes here and decodes UTF-8 later; the Rust port is
+        // Unicode-`String`-based, and the ZLE input path (ZLELINE = Vec<char>)
+        // already yields Unicode — decoding here makes the non-ZLE (piped /
+        // script) line use the same representation the lexer and output
+        // expect (prior byte-per-char storage double-encoded on output).
+        if (0xc2..=0xf4).contains(&b0) {
+            let extra = if b0 < 0xe0 {
+                1
+            } else if b0 < 0xf0 {
+                2
+            } else {
+                3
+            };
+            let mut bytes = vec![b0 as u8];
+            for _ in 0..extra {
+                match shingetchar() {
+                    -1 => break,
+                    cb => bytes.push(cb as u8),
                 }
             }
+            if let Ok(s) = std::str::from_utf8(&bytes) {
+                result.push_str(s);
+            } else {
+                // Malformed sequence — metafy each collected byte literally.
+                for &b in &bytes {
+                    push_byte(&mut result, b as u32);
+                }
+            }
+            continue;
         }
+        push_byte(&mut result, b0);
     }
 }
 
