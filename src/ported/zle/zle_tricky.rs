@@ -709,11 +709,19 @@ pub fn docomplete(lst: i32) -> i32 {
     // completion.
     thread_local! { static ACTIVE: std::cell::Cell<bool> =
     const { std::cell::Cell::new(false) }; }
-    if ACTIVE.with(|c| c.get()) {
+    // c:606 — `if (active && !comprecursive)`. `comprecursive` (set by the
+    // menu recursive-completion arms) temporarily permits re-entry.
+    if ACTIVE.with(|c| c.get())
+        && crate::ported::zle::complist::COMPRECURSIVE
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 0
+    {
         zwarn("completion cannot be used recursively (yet)");
         return 1;
     }
     ACTIVE.with(|c| c.set(true));
+    // c:611 — `comprecursive = 0;`
+    crate::ported::zle::complist::COMPRECURSIVE.store(0, std::sync::atomic::Ordering::Relaxed);
 
     // c:621 — `runhookdef(BEFORECOMPLETEHOOK, &lst)`. Canonical
     // dispatch via `gethookdef + runhookdef`; null check matches

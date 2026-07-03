@@ -9733,8 +9733,35 @@ pub fn getppid() -> i32 {
 /// non-EMACS callers (zbeep, dollar-quote — they keep unknown
 /// `\<char>` as literal `\<char>`). Pass `GETKEYS_PRINT` to get
 /// the print/echo behavior (drop backslash on unknown).
-pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
+/// `getkeystring` with the C `how` parameter AND the
+/// `GETKEY_UPDATE_OFFSET` cursor-offset out-param (Src/utils.c:6915).
+///
+/// Port of `getkeystring(char *s, int *len, int how, int *misc)` from
+/// `Src/utils.c:6915`, specifically its `GETKEY_UPDATE_OFFSET` path.
+/// When `how` sets `GETKEY_UPDATE_OFFSET` and `misc` is `Some`, `*misc`
+/// is the C `*misc` completion offset — a byte index into `s` — and is
+/// updated as escapes positioned before the cursor collapse:
+///   - `-1` per collapsed `\<char>` escape whose backslash precedes the
+///     cursor, `s - sstart < *misc` (c:6987); undone if the backslash is
+///     kept literal in the default (non-EMACS) arm (c:7181-7183);
+///   - additional `-6` for `\u`, `-10` (`-4`+`-6`) for `\U` (c:7073-7084),
+///     then `+N` for the N output bytes emitted (c:7123-7124).
+/// Octal/hex escapes get only the base `-1`, matching C's own incomplete
+/// `/* HERE: GETKEY_UPDATE_OFFSET? */` handling (c:7155).
+///
+/// The offset is a byte index. For ASCII `$'...'` content (one byte per
+/// char) it matches the C metafied-byte semantics exactly; the byte-vs-
+/// char divergence for non-ASCII content is the pre-existing shared-cursor
+/// limitation documented on `set_comp_sep` (compcore.rs), not new here.
+///
+/// Callers with no offset to track pass `misc = None`.
+pub fn getkeystring_with(
+    s: &str,
+    how: u32,
+    mut misc: Option<&mut i32>,
+) -> (String, usize) {
     // c:utils.c:6915
+    let update_off = (how & crate::ported::zsh_h::GETKEY_UPDATE_OFFSET as u32) != 0;
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     let mut consumed = 0;
@@ -9743,6 +9770,21 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
         if c != '\\' {
             result.push(c);
             continue;
+        }
+        // c is a backslash; record its byte start offset for
+        // GETKEY_UPDATE_OFFSET (`s - sstart` in C).
+        let bs_off = consumed - c.len_utf8();
+        // c:utils.c:6987 — base offset decrement for a collapsed `\<char>`
+        // escape whose backslash precedes the cursor. C gates on
+        // `*s == '\\' && s[1]`, so a following char must exist (peek).
+        let mut miscadded = false;
+        if update_off && chars.peek().is_some() {
+            if let Some(m) = misc.as_deref_mut() {
+                if (bs_off as i32) < *m {
+                    *m -= 1;
+                    miscadded = true;
+                }
+            }
         }
         match chars.next() {
             Some('n') => {
@@ -9831,6 +9873,15 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
             // instead of 'A'.
             Some('u') => {
                 consumed += 1;
+                // c:utils.c:7077-7084 — extra `-6` when the escape precedes
+                // the cursor (checked at the 'u', i.e. offset bs_off+1).
+                if update_off {
+                    if let Some(m) = misc.as_deref_mut() {
+                        if ((bs_off + 1) as i32) < *m {
+                            *m -= 6;
+                        }
+                    }
+                }
                 let mut hex = String::new();
                 for _ in 0..4 {
                     if let Some(&c) = chars.peek() {
@@ -9845,11 +9896,29 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                 if let Ok(val) = u32::from_str_radix(&hex, 16) {
                     if let Some(ch) = char::from_u32(val) {
                         result.push(ch);
+                        // c:utils.c:7123-7124 — add one per output byte,
+                        // checked at the last consumed input byte.
+                        if update_off {
+                            if let Some(m) = misc.as_deref_mut() {
+                                if ((consumed - 1) as i32) < *m {
+                                    *m += ch.len_utf8() as i32;
+                                }
+                            }
+                        }
                     }
                 }
             }
             Some('U') => {
                 consumed += 1;
+                // c:utils.c:7073-7084 — `\U` extra `-4` (c:7073) then the
+                // shared `\u` `-6` (c:7077), both gated at offset bs_off+1.
+                if update_off {
+                    if let Some(m) = misc.as_deref_mut() {
+                        if ((bs_off + 1) as i32) < *m {
+                            *m -= 10;
+                        }
+                    }
+                }
                 let mut hex = String::new();
                 for _ in 0..8 {
                     if let Some(&c) = chars.peek() {
@@ -9864,6 +9933,14 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                 if let Ok(val) = u32::from_str_radix(&hex, 16) {
                     if let Some(ch) = char::from_u32(val) {
                         result.push(ch);
+                        // c:utils.c:7123-7124 — add one per output byte.
+                        if update_off {
+                            if let Some(m) = misc.as_deref_mut() {
+                                if ((consumed - 1) as i32) < *m {
+                                    *m += ch.len_utf8() as i32;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -9945,6 +10022,14 @@ pub fn getkeystring_with(s: &str, how: u32) -> (String, usize) {
                     break;
                 }
                 if (how & GETKEY_EMACS) == 0 {
+                    // c:utils.c:7181-7183 — backslash kept literal (no EMACS),
+                    // so the string does not collapse here: undo the base
+                    // GETKEY_UPDATE_OFFSET decrement applied above.
+                    if miscadded {
+                        if let Some(m) = misc.as_deref_mut() {
+                            *m += 1;
+                        }
+                    }
                     result.push('\\');
                 }
                 result.push(c);

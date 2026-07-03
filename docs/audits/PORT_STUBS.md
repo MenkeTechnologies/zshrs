@@ -1,6 +1,6 @@
 # PORT_STUBS — stubs detected in src/ported/
 
-Generated: 2026-07-03T08:10:16.908154+00:00
+Generated: 2026-07-03T15:24:24.386122+00:00
 
 ## Method
 
@@ -16,7 +16,7 @@ Regenerate via:
 python3 scripts/gen_port_stubs.py
 ```
 
-## Summary: 69 stubs across 32 files
+## Summary: 68 stubs across 32 files
 
 | File | Stubs | Worst (Rust / C lines) |
 |---|---|---|
@@ -25,10 +25,10 @@ python3 scripts/gen_port_stubs.py
 | `src/ported/utils.rs` | 6 | `mb_metacharlenconv_r` (5 / 32) |
 | `src/ported/module.rs` | 3 | `load_and_bind` (1 / 20) |
 | `src/ported/modules/zutil.rs` | 3 | `newzstyletable` (1 / 15) |
-| `src/ported/zle/compcore.rs` | 3 | `set_comp_sep` (9 / 321) |
 | `src/ported/zle/zle_keymap.rs` | 3 | `newkeytab` (1 / 15) |
 | `src/ported/compat.rs` | 2 | `zgettime_monotonic_if_available` (23 / 404) |
 | `src/ported/parse.rs` | 2 | `par_subsh` (6 / 34) |
+| `src/ported/zle/compcore.rs` | 2 | `freematches` (6 / 26) |
 | `src/ported/zle/compctl.rs` | 2 | `createcompctltable` (4 / 14) |
 | `src/ported/zle/complete.rs` | 2 | `set_compstate` (3 / 26) |
 | `src/ported/zle/zle_params.rs` | 2 | `get_cursor` (1 / 11) |
@@ -112,14 +112,6 @@ python3 scripts/gen_port_stubs.py
 | 166 | `freestylenode` | 2 | 10 | 20% |
 | 792 | `setstypat` | 15 | 58 | 25% |
 
-### `src/ported/zle/compcore.rs` — 3 stubs
-
-| Rust line | fn | rust body | C body | ratio |
-|---|---|---|---|---|
-| 1493 | `set_comp_sep` | 9 | 321 | 2% |
-| 3342 | `freematches` | 6 | 26 | 23% |
-| 559 | `callcompfunc` | 103 | 345 | 29% |
-
 ### `src/ported/zle/zle_keymap.rs` — 3 stubs
 
 | Rust line | fn | rust body | C body | ratio |
@@ -141,6 +133,13 @@ python3 scripts/gen_port_stubs.py
 |---|---|---|---|---|
 | 2224 | `par_subsh` | 6 | 34 | 17% |
 | 4772 | `load_dump_file` | 12 | 47 | 25% |
+
+### `src/ported/zle/compcore.rs` — 2 stubs
+
+| Rust line | fn | rust body | C body | ratio |
+|---|---|---|---|---|
+| 3872 | `freematches` | 6 | 26 | 23% |
+| 559 | `callcompfunc` | 103 | 345 | 29% |
 
 ### `src/ported/zle/compctl.rs` — 2 stubs
 
@@ -282,5 +281,5 @@ python3 scripts/gen_port_stubs.py
 
 | Rust line | fn | rust body | C body | ratio |
 |---|---|---|---|---|
-| 1983 | `pfxlen` | 4 | 38 | 10% |
+| 1991 | `pfxlen` | 4 | 38 | 10% |
 

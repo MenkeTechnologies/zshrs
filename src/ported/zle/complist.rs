@@ -3729,13 +3729,23 @@ pub fn domenuselect() -> i32 {
         } else if name == "accept-and-infer-next-history"
             || (mode == 1 && (name == "self-insert" || name == "self-insert-unmeta"))
         {
-            // c:2492-2660 (of the ladder) — recursive interactive/infer
-            // completion. BLOCKED: needs the un-ported `comprecursive`
-            // global plus a re-entrant `menucomplete()` cycle with
-            // metafied-line bookkeeping (`iforcemenu`, saveline/we fixups)
-            // whose contract can't be verified without a build. Accept the
-            // key as a no-op step rather than emit a half-applied
-            // completion (see STOP-report).
+            // c:2732-2820 — recursive interactive / accept-and-infer
+            // completion. This arm sets `comprecursive = 1` (c:2735, now
+            // ported as `COMPRECURSIVE` above) and then calls
+            // `menucomplete(zlenoargs)` (c:2778) as a *nested* completion.
+            // Blocked on one out-of-scope piece: the nested `menucomplete`
+            // routes through `docomplete`, whose recursion guard
+            // (zle_tricky.rs:712) tests only the thread-local `ACTIVE`
+            // flag and does not consult `comprecursive`. The C guard is
+            // `if (active && !comprecursive)` (zle_tricky.c:606), so the
+            // nested call is only admitted when `comprecursive` is set.
+            // Honouring it requires editing `docomplete` in zle_tricky.rs,
+            // outside this file's scope. (`domenuselect` also has no
+            // `menu_start`-hook caller in Rust yet, so this arm is currently
+            // unreachable regardless.) Accept the key as a no-op step
+            // rather than delete the line and fire a nested completion the
+            // guard will reject — which would fall into the "no matches"
+            // branch and trash the display.
             continue;
         } else if name == "accept-and-hold" || name == "accept-and-menu-complete" {
             // c:2688-2731
@@ -3801,7 +3811,8 @@ pub fn domenuselect() -> i32 {
             });
             crate::ported::zle::compresult::accept_last(); // c:2720
             handleundo();
-            do_menucmp0(); // c:2723 (comprecursive flag not ported — skipped)
+            COMPRECURSIVE.store(1, Ordering::SeqCst); // c:2861
+            do_menucmp0(); // c:2862 `do_menucmp(0)`
             MSELECT.store(cur_gnum(), Ordering::SeqCst);
 
             // c:2726-2739 — relocate the cursor onto the new selection.
@@ -4076,7 +4087,8 @@ pub fn domenuselect() -> i32 {
                 );
             } else {
                 mode = 0;
-                do_menucmp0();
+                COMPRECURSIVE.store(1, Ordering::SeqCst); // c:3294
+                do_menucmp0(); // c:3295 `do_menucmp(0)`
                 MSELECT.store(cur_gnum(), Ordering::SeqCst);
                 setwish = 1;
                 MLINE.store(-1, Ordering::SeqCst);
@@ -4085,11 +4097,12 @@ pub fn domenuselect() -> i32 {
         } else if name == "reverse-menu-complete" {
             // c:3154-3163
             mode = 0;
+            COMPRECURSIVE.store(1, Ordering::SeqCst); // c:3304
             crate::ported::zle::compcore::ZMULT.store(
                 -crate::ported::zle::compcore::ZMULT.load(Ordering::SeqCst),
                 Ordering::SeqCst,
             );
-            do_menucmp0();
+            do_menucmp0(); // c:3306 `do_menucmp(0)`
             MSELECT.store(cur_gnum(), Ordering::SeqCst);
             setwish = 1;
             MLINE.store(-1, Ordering::SeqCst);
@@ -4891,6 +4904,14 @@ pub const LC_FOLLOW_SYMLINKS: i32 = 0x0001; // c:251
 // statics in single-threaded compilation units.)
 // =====================================================================
 
+/// Port of `mod_export int comprecursive` from `zle_tricky.c:169`
+/// ("!= 0 if recursive calls to completion are (temporarily) allowed").
+/// Set at the accept-and-menu-complete / menu-complete / reverse-menu-
+/// complete / accept-and-infer arms below so a nested completion call is
+/// not rejected by `docomplete`'s recursion guard (`active && !comprecursive`,
+/// zle_tricky.c:606). Reset to 0 at the top of `docomplete` (zle_tricky.c:611)
+/// and in `zle_main` (zle_main.c:2259).
+pub static COMPRECURSIVE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // zle_tricky.c:169
 /// Port of `static int noselect` from `complist.c:52`. Suppress the
 /// menu-select cursor highlight when set.
 pub static NOSELECT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:52

@@ -9667,7 +9667,7 @@ pub fn bin_print(
         let _ = crate::ported::utils::getkey_truncated_take();
         let mut new_args: Vec<String> = Vec::with_capacity(processed_args.len());
         for a in processed_args.iter() {
-            let (s, _) = getkeystring_with(a, escape_how);
+            let (s, _) = getkeystring_with(a, escape_how, None);
             new_args.push(s);
             if crate::ported::utils::getkey_truncated_take() {
                 // c:utils.c:7045 — `\c` truncated; drop remaining
@@ -15219,7 +15219,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
     // truncation marker. Route through `_with(GETKEYS_PRINTF_FMT)`
     // to match C exactly. `_with` takes a u32 `how` mask; the
     // canonical i32 const lives in `zsh_h` (Src/zsh.h:3180-3181).
-    let (fmt, _) = getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32); // c:builtin.c:4711
+    let (fmt, _) = getkeystring_with(fmt, crate::ported::zsh_h::GETKEYS_PRINTF_FMT as u32, None); // c:builtin.c:4711
                                                                                             // c:Src/builtin.c:4696/5382/5527 — a `\c` in the FORMAT (or, below, in
                                                                                             // a `%b` arg) sets `fmttrunc`, which (a) truncates output here and
                                                                                             // (b) stops the format-reuse loop entirely (no reapplication over the
@@ -15538,7 +15538,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 Some('b') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     let (s, _) =
-                        getkeystring_with(&a, crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32);
+                        getkeystring_with(&a, crate::ported::zsh_h::GETKEYS_PRINTF_ARG as u32, None);
                     // c:5380-5383 — a `\c` inside the `%b` arg truncates:
                     // emit the expansion up to `\c`, then stop the whole
                     // printf (no rest-of-format, no reuse). getkeystring_with
