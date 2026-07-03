@@ -2285,93 +2285,242 @@ pub fn bld_parts(
 /// Direct port of `static int bld_line(Cmatcher mp, ZLE_STRING_T line,
 ///                                     char *mword, char *word,
 ///                                     int wlen, int sfx)`
-/// from `Src/Zle/compmatch.c:1736-1992`. Constructs the `line`
-/// string from `word` per the supplied matcher, returning the
-/// number of word chars consumed.
+/// from `Src/Zle/compmatch.c:1734-1992`. Builds all possible line
+/// patterns for `mp` and tests whether they match `word`, returning
+/// the number of word chars matched (0 on failure). On success the
+/// synthesized line chars are written into `line`.
 ///
-/// Handles all four lpat tp arms directly:
-///   - CPAT_CHAR  : emit the pattern's literal char (c:1824)
-///   - CPAT_ANY   : emit the corresponding word char (c:1826)
-///   - CPAT_EQUIV : consume mword via wpat (c:1792-1817), look up
-///                  the line equivalent via `pattern_match_equivalence`
-///   - CPAT_CCLASS/NCLASS : validate via `pattern_match1`, emit word char
+/// Faithful two-pass implementation (matching the C):
 ///
-/// The C body additionally builds a `genpatarr` and runs
-/// `pattern_match_restrict` against the bmatchers chain — that's an
-/// optimisation pass for the multi-matcher case which Rust skips by
-/// emitting the validated char directly. Behaviourally identical for
-/// the single-matcher / CPAT_CHAR-only cases that cover daily use.
+/// Pass 1 (c:1772-1846) — build `genpatarr`, a per-line-char array of
+/// `Cpattern`. For each `mp->line` entry: if it is a `CPAT_EQUIV` and
+/// `mp->word` + `mword` are still available, consume one `mword` char,
+/// query the word pattern via `pattern_match1`, and if that yields a
+/// word-side equivalence index resolve the concrete line char via
+/// `pattern_match_equivalence` (which tracks the PP_LOWER/PP_UPPER
+/// case crossings, compmatch.rs:1825), storing it as a `CPAT_CHAR`.
+/// Otherwise the line pattern is copied verbatim (char / class / any).
+/// A `CHR_INVALID` equivalence resolution aborts with 0.
+///
+/// Pass 2 (c:1847-1988) — walk `genpatarr` against `wordchars`. Where
+/// `pattern_match1` accepts the word char directly, emit the fixed
+/// `CPAT_CHAR` value (or, for a generic pattern, the word char). Where
+/// it does not, fall back to the `bmatchers` chain and let
+/// `pattern_match_restrict` deduce the line chars (the "nightmare"
+/// multi-matcher case). `sfx` builds both strings from the end.
 pub fn bld_line(
-    mp: &Cmatcher, // c:1736
+    mp: &Cmatcher, // c:1734
     line: &mut Vec<char>,
     mword: &str,
     word: &str,
     wlen: i32,
-    _sfx: i32,
+    sfx: i32,
 ) -> i32 {
-    // c:1772 — walk mp->line, emitting a char per pattern entry based
-    // on its tp:
-    //   - CPAT_CHAR : the literal char from the pattern
-    //   - CPAT_ANY  : the corresponding char from `word`
-    //   - CPAT_CCLASS/NCLASS/EQUIV : the corresponding word char if
-    //     pattern_match1 accepts it (validate-then-emit). EQUIV uses the
-    //     word char as the "equivalent" instead of resolving the
-    //     line-side equivalent via `pattern_match_equivalence`.
-    //     NOTE (corrected): this is NOT a substrate gap —
-    //     `pattern_match_equivalence` is complete (it tracks `lmtp` and
-    //     resolves the PP_LOWER/PP_UPPER case crossings, compmatch.rs:1897).
-    //     The blocker is the ENGINE CALLER: the live caller at
-    //     compmatch.rs:2438 passes an empty `mword` ("CPAT_CHAR-only
-    //     path"), so the EQUIV branch's `*mword` guard never fires. The
-    //     full C two-pass `genpatarr` resolution (c:1772-1875) is
-    //     deferred until the completion-matcher chain that produces EQUIV
-    //     patterns + a non-empty `mword` is itself ported.
-    let _ = mword;
-    let word_chars: Vec<char> = word.chars().collect();
-    let mut consumed: i32 = 0;
-    let mut lpat = mp.line.as_deref();
-    while let Some(p) = lpat {
-        if consumed >= wlen {
-            break;
+    let sfx = sfx != 0;
+
+    // c:1745-1762 — convert `word` to an array of (wide) chars so we
+    // can index it from either end.
+    let wordchars: Vec<u32> = word.chars().map(|c| c as u32).collect();
+    let wlen0 = wlen.max(0) as usize;
+
+    // Links a slice of genpatarr entries into a throwaway Cpattern
+    // chain, so `pattern_match_restrict` can walk it via `->next`
+    // (c:1841-1845 links curgenpat->next = curgenpat+1).
+    fn link_chain(entries: &[Cpattern]) -> Option<Box<Cpattern>> {
+        let mut head: Option<Box<Cpattern>> = None;
+        for e in entries.iter().rev() {
+            let mut node = e.clone();
+            node.next = head.take();
+            head = Some(Box::new(node));
         }
-        let widx = consumed as usize;
-        match p.tp {
-            x if x == CPAT_CHAR => {
-                // c:1798
-                if let Some(ch) = char::from_u32(p.chr) {
-                    line.push(ch);
-                    consumed += 1;
-                }
+        head
+    }
+
+    // --- Pass 1: build genpatarr (c:1772-1846). ---
+    let mword_chars: Vec<u32> = mword.chars().map(|c| c as u32).collect();
+    let mut mword_idx = 0usize;
+    let mut wpat = mp.word.as_deref();
+    let mut lpat = mp.line.as_deref();
+    let mut genpatarr: Vec<Cpattern> = Vec::with_capacity(mp.llen.max(0) as usize);
+    while let Some(lp) = lpat {
+        // c:1780-1799 — resolve the word side of an equivalence.
+        let mut wind: u32 = 0;
+        let mut wmtp: i32 = 0;
+        let mut wchr: u32 = 0;
+        if lp.tp == CPAT_EQUIV && wpat.is_some() && mword_idx < mword_chars.len() {
+            wchr = mword_chars[mword_idx];
+            mword_idx += 1;
+            let wp = wpat.unwrap();
+            wind = pattern_match1(wp, wchr, &mut wmtp); // c:1794
+            wpat = wp.next.as_deref(); // c:1795
+        }
+
+        let mut gp = Cpattern::default();
+        if wind != 0 {
+            // c:1800-1822 — successful word-side equivalence; find the
+            // line equivalent and pin it as a concrete char.
+            let lchr = pattern_match_equivalence(lp, wind, wmtp, wchr); // c:1817
+            if lchr == u32::MAX {
+                return 0; // c:1820 — no equivalent, give up
             }
-            x if x == CPAT_ANY => {
-                // c:1810
-                if let Some(&wch) = word_chars.get(widx) {
-                    line.push(wch);
-                    consumed += 1;
-                }
+            gp.tp = CPAT_CHAR; // c:1826
+            gp.chr = lchr; // c:1827
+        } else {
+            // c:1828-1846 — copy the line pattern verbatim.
+            gp.tp = lp.tp; // c:1834
+            if lp.tp == CPAT_CHAR {
+                gp.chr = lp.chr; // c:1836
+            } else if lp.tp != CPAT_ANY {
+                gp.str = lp.str.clone(); // c:1843 (shared/copied class)
             }
-            x if x == CPAT_CCLASS || x == CPAT_NCLASS || x == CPAT_EQUIV => {
-                // c:1820
-                if let Some(&wch) = word_chars.get(widx) {
-                    // c:1830 — pattern_match1(p, wc, &mt) validates.
-                    let mut mt = 0i32;
-                    if pattern_match1(p, wch as u32, &mut mt) != 0 {
-                        line.push(wch);
-                        consumed += 1;
+        }
+        genpatarr.push(gp);
+        lpat = lp.next.as_deref();
+    }
+
+    // --- Pass 2: match wordchars against genpatarr (c:1847-1988). ---
+    let llen0 = mp.llen.max(0) as usize;
+    let mut line_buf: Vec<char> = vec!['\0'; llen0];
+    let mut llen_rem: i32 = mp.llen; // c:1855
+    let mut wlen_rem: i32 = wlen;
+    let mut rl: i32 = 0; // c:1856
+
+    // Cursors into line_buf / wordchars / genpatarr (c:1858-1874).
+    let mut line_pos: usize = if sfx { llen0 } else { 0 };
+    let mut word_pos: usize = if sfx { wlen0 } else { 0 };
+    let mut gp_pos: usize = if sfx { llen0 } else { 0 };
+
+    // Snapshot the global bmatchers chain for the fallback loop.
+    let bm = crate::ported::zle::compcore::bmatchers
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+
+    while llen_rem > 0 && wlen_rem > 0 {
+        // c:1877-1885 — pick the char/pattern under inspection.
+        let (wp_idx, gp_idx) = if sfx {
+            (word_pos - 1, gp_pos - 1)
+        } else {
+            (word_pos, gp_pos)
+        };
+        // `.get`-guarded: callers may pass a byte length as `wlen`
+        // that exceeds the char count on multibyte input.
+        let wc = *wordchars.get(wp_idx).unwrap_or(&0);
+
+        let mut wmtp: i32 = 0;
+        if gp_idx < genpatarr.len() && pattern_match1(&genpatarr[gp_idx], wc, &mut wmtp) != 0 {
+            // c:1890-1920 — direct match. Keep the fixed char for a
+            // CPAT_CHAR genpat, else keep the word char.
+            let lchr = if genpatarr[gp_idx].tp == CPAT_CHAR {
+                genpatarr[gp_idx].chr
+            } else {
+                wc
+            };
+            let lch = char::from_u32(lchr).unwrap_or('\0');
+            if sfx {
+                line_pos -= 1; // c:1908 *--line = lchr
+                line_buf[line_pos] = lch;
+            } else {
+                line_buf[line_pos] = lch; // c:1910 *line++ = lchr
+                line_pos += 1;
+            }
+            llen_rem -= 1; // c:1912
+            wlen_rem -= 1; // c:1913
+            rl += 1; // c:1914
+
+            if sfx {
+                word_pos = wp_idx; // c:1917
+                gp_pos = gp_idx; // c:1918
+            } else {
+                if llen_rem > 0 {
+                    gp_pos += 1; // c:1920
+                }
+                word_pos += 1; // c:1921
+            }
+        } else {
+            // c:1925-1978 — nightmare case: dispatch to the pattern
+            // matchers in bmatchers via pattern_match_restrict.
+            let mut matched = false;
+            let mut ms = bm.as_deref();
+            while let Some(node) = ms {
+                let bmp = &*node.matcher; // c:1932 mp = ms->matcher
+                if bmp.flags == 0
+                    && bmp.wlen <= wlen_rem
+                    && bmp.llen <= llen_rem
+                    && bmp.wlen >= 0
+                    && bmp.llen >= 0
+                {
+                    // c:1943-1949 — position the sub-window.
+                    let (lp_idx, wp2_idx, gp2_idx) = if sfx {
+                        (
+                            line_pos - bmp.llen as usize,
+                            word_pos - bmp.wlen as usize,
+                            gp_pos - bmp.llen as usize,
+                        )
                     } else {
-                        // Validation failed — bail so caller knows the
-                        // synthesis is incomplete.
+                        (line_pos, word_pos, gp_pos)
+                    };
+
+                    // c:1951 — wsclen = wlen - (wp - wordchars).
+                    let wsclen = wlen_rem - wp2_idx as i32;
+                    let start = wp2_idx;
+                    let end = if wsclen <= 0 {
+                        start
+                    } else {
+                        (start + wsclen as usize).min(wordchars.len())
+                    };
+                    let wsc = &wordchars[start.min(end)..end];
+
+                    let pr_end = (gp2_idx + bmp.llen as usize).min(genpatarr.len());
+                    let prestrict = link_chain(&genpatarr[gp2_idx.min(pr_end)..pr_end]);
+
+                    let mut tmp_line: Vec<char> = Vec::new();
+                    if pattern_match_restrict(
+                        bmp.line.as_deref(),
+                        bmp.word.as_deref(),
+                        wsc,
+                        prestrict.as_deref(),
+                        &mut tmp_line,
+                    ) != 0
+                    {
+                        // c:1958-1978 — matched: copy deduced line chars
+                        // into place and advance all cursors.
+                        for (k, ch) in tmp_line.iter().enumerate() {
+                            if lp_idx + k < line_buf.len() {
+                                line_buf[lp_idx + k] = *ch;
+                            }
+                        }
+                        if sfx {
+                            line_pos = lp_idx; // c:1965
+                            word_pos = wp2_idx; // c:1966
+                            gp_pos = gp2_idx; // c:1967
+                        } else {
+                            line_pos += bmp.llen as usize; // c:1969
+                            word_pos += bmp.wlen as usize; // c:1970
+                            gp_pos += bmp.llen as usize; // c:1971
+                        }
+                        llen_rem -= bmp.llen; // c:1973
+                        wlen_rem -= bmp.wlen; // c:1974
+                        rl += bmp.wlen; // c:1975
+                        matched = true;
                         break;
                     }
-                } else {
-                    break;
                 }
+                ms = node.next.as_deref();
             }
-            _ => break,
+            if !matched {
+                return 0; // c:1983 — didn't match, give up
+            }
         }
-        lpat = p.next.as_deref();
     }
-    consumed // c:1991
+
+    if llen_rem == 0 {
+        // c:1986 — whole line built; commit and return matched length.
+        line.extend(line_buf.iter().copied());
+        return rl; // c:1987
+    }
+    0 // c:1990
 }
 
 /// Port of `static char *join_strs(int la, char *sa, int lb, char *sb)`
@@ -2446,7 +2595,7 @@ pub fn join_strs(mut la: i32, sa: &str, mut lb: i32, sb: &str) -> Option<String>
                         let bl = bld_line(
                             mp,
                             &mut line,
-                            "", // mword — unused in our CPAT_CHAR-only path
+                            "", // mword empty here; bld_line runs its equivalence pass as a no-op (c:2103 passes "")
                             if t == 1 { b_slice } else { a_slice },
                             if t == 1 { lb } else { la },
                             0,
@@ -4328,17 +4477,22 @@ mod tests {
     }
 
     /// c:1736-1991 — bld_line with a CPAT_CHAR pattern emits the
-    /// pattern's literal char. wlen=1.
+    /// pattern's literal char. The word char must satisfy the pattern:
+    /// pattern_match1 for CPAT_CHAR is `p->u.chr == c` (c:1289, exact),
+    /// so the word must start with 'x' for the match to fire. wlen=1.
     #[test]
     fn bld_line_cpat_char_emits_literal() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         let m = Cmatcher {
             line: Some(Box::new(cpat_char('x' as u32))),
+            // llen == line-pattern count (C compmatch.c:157 `r->llen = ll`);
+            // bld_line sizes genpatarr / the build loop to mp->llen (c:1855).
+            llen: 1,
             ..Default::default()
         };
         let mut line: Vec<char> = Vec::new();
-        let n = bld_line(&m, &mut line, "", "abc", 1, 0);
+        let n = bld_line(&m, &mut line, "", "x", 1, 0);
         assert_eq!(n, 1);
         assert_eq!(line, vec!['x']);
     }
@@ -4354,6 +4508,9 @@ mod tests {
                 tp: CPAT_ANY,
                 ..Default::default()
             })),
+            // llen == line-pattern count (C compmatch.c:157); bld_line's
+            // build loop runs for mp->llen chars (c:1855).
+            llen: 1,
             ..Default::default()
         };
         let mut line: Vec<char> = Vec::new();

@@ -3091,27 +3091,130 @@ pub fn setblock_stdin() -> i32 {
     changed as i32
 }
 
-/// Read poll - check for pending input
-/// Port from zsh/Src/utils.c read_poll() lines 2643-2730
-/// Poll an fd with timeout, returning whether it's readable.
-/// Port of the `poll(2)` wrapper Src/utils.c uses for
-/// `read -t` timeout handling.
-pub fn read_poll(fd: i32, timeout_us: i64) -> bool {
+/// Port of `int read_poll(int fd, int *readchar, int polltty, zlong microseconds)`
+/// from `Src/utils.c:2645-2738`.
+///
+/// Check whether input is pending on `fd` within `timeout_us`
+/// microseconds. Faithful port of all three C paths:
+/// 1. The `polltty` non-canonical-tty path (VMIN/VTIME termios
+///    setup so a raw tty can be polled — c:2665-2696).
+/// 2. The `HAVE_SELECT` wait (c:2697-2705). Rust uses `poll(2)`
+///    as the idiom substitution for `select(2)`; `poll` return
+///    semantics are mapped onto C's `ret` so the `ret < 0`
+///    error-fallback still triggers.
+/// 3. The final `setblock_fd` + non-blocking `read` fallback that
+///    captures a byte when `select`/`poll` errored (c:2718-2729).
+///
+/// `readchar` is C's `int *readchar` out-param: when a byte is
+/// actually consumed during the poll it is written through
+/// `readchar` (so `read -t -k` on a raw tty gets the byte). `polltty`
+/// is C's `int polltty` truthiness. Returns C's `(ret > 0)`.
+///
+/// WARNING: param order differs from C — Rust=(fd, readchar,
+/// polltty, timeout_us) vs C=(fd, readchar, polltty, microseconds);
+/// C's `microseconds` is `timeout_us` here.
+pub fn read_poll(fd: i32, readchar: &mut i32, polltty: bool, timeout_us: i64) -> bool {
     // c:2645
     #[cfg(unix)]
     {
-        let mut fds = [libc::pollfd {
-            fd: fd as RawFd,
-            events: libc::POLLIN,
-            revents: 0,
-        }];
-        let timeout_ms = (timeout_us / 1000) as i32;
-        let result = unsafe { libc::poll(fds.as_mut_ptr(), 1, timeout_ms) };
-        result > 0 && (fds[0].revents & libc::POLLIN) != 0
+        let mut ret: i32 = -1; // c:2647
+        let mut mode: libc::c_long = -1; // c:2648
+        // C reassigns the `polltty` param; hold it as the VMIN-derived int.
+        let mut polltty: i32 = polltty as i32; // c:2645
+        let mut ti: Option<libc::termios> = None; // c:2659 `struct ttyinfo ti;`
+
+        // c:2662-2663 — `if (fd < 0 || (polltty && !isatty(fd))) polltty = 0;`
+        if fd < 0 || (polltty != 0 && unsafe { libc::isatty(fd) } == 0) {
+            polltty = 0; // no tty to poll
+        }
+
+        // c:2665-2696 — HAS_TIO && !__CYGWIN__: non-canonical VMIN poll setup.
+        if polltty != 0 && fd >= 0 {
+            // c:2686 — `gettyinfo(&ti);` (operates on global SHTTY, as in C).
+            if let Some(mut t) = gettyinfo() {
+                // c:2687 — `if ((polltty = ti.tio.c_cc[VMIN]))`
+                polltty = t.c_cc[libc::VMIN] as i32;
+                if polltty != 0 {
+                    t.c_cc[libc::VMIN] = 0; // c:2688
+                    // c:2690 — termios timeout is 10ths of a second.
+                    t.c_cc[libc::VTIME] = (timeout_us / 100_000) as libc::cc_t; // c:2690
+                    settyinfo(&t); // c:2691
+                }
+                ti = Some(t);
+            } else {
+                // gettyinfo failed (SHTTY closed) — nothing to poll via VMIN.
+                polltty = 0;
+            }
+        }
+
+        // c:2697-2705 — HAVE_SELECT wait, using poll(2) as the select(2) idiom.
+        let timeout_ms = (timeout_us / 1000) as i32; // c:2698-2699 (expire_tv)
+        if fd > -1 {
+            // c:2701-2703
+            let mut fds = [libc::pollfd {
+                fd: fd as RawFd,
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            let raw = unsafe { libc::poll(fds.as_mut_ptr(), 1, timeout_ms) };
+            ret = if raw > 0 {
+                // Map poll revents onto select's "fd is readable" ret>0.
+                if (fds[0].revents & libc::POLLIN) != 0 {
+                    1
+                } else {
+                    0
+                }
+            } else {
+                raw // 0 = timeout, -1 = error (triggers fallback below)
+            };
+        } else {
+            // c:2705 — `select(0, NULL, NULL, NULL, &expire_tv)`: pure sleep.
+            ret = unsafe { libc::poll(std::ptr::null_mut(), 0, timeout_ms) };
+        }
+
+        // c:2718 — `if (fd >= 0 && ret < 0 && !errflag)`
+        if fd >= 0 && ret < 0 && errflag.load(Ordering::Relaxed) == 0 {
+            // c:2723 — final attempt: non-blocking read of a single char.
+            // `(polltty || setblock_fd(0, fd, &mode))`
+            let can_read = if polltty != 0 {
+                true // polltty short-circuits setblock_fd; mode stays -1
+            } else {
+                let (changed, m) = setblock_fd(false, fd); // c:2723
+                mode = m; // C writes *modep unconditionally
+                changed
+            };
+            if can_read {
+                let mut c: u8 = 0;
+                let n = unsafe {
+                    libc::read(fd, &mut c as *mut u8 as *mut libc::c_void, 1)
+                };
+                if n > 0 {
+                    *readchar = c as i32; // c:2724
+                    ret = 1; // c:2725
+                }
+            }
+            // c:2727-2728 — `if (mode != -1) fcntl(fd, F_SETFL, mode);`
+            if mode != -1 {
+                unsafe {
+                    libc::fcntl(fd, libc::F_SETFL, mode);
+                }
+            }
+        }
+
+        // c:2730-2736 — HAS_TIO: restore canonical VMIN=1 / VTIME=0.
+        if polltty != 0 {
+            if let Some(mut t) = ti {
+                t.c_cc[libc::VMIN] = 1; // c:2732
+                t.c_cc[libc::VTIME] = 0; // c:2733
+                settyinfo(&t); // c:2734
+            }
+        }
+
+        ret > 0 // c:2737
     }
     #[cfg(not(unix))]
     {
-        let _ = (fd, timeout_us);
+        let _ = (fd, readchar, polltty, timeout_us);
         false
     }
 }
@@ -7435,7 +7538,12 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
     if s.is_empty() {
         return if quote_type == QT_NONE {
             String::new()
-        } else if quote_type == QT_BACKSLASH || quote_type == QT_BACKSLASH_SHOWNULL {
+        } else if quote_type == QT_BACKSLASH {
+            // c:6194 `if (!*s && shownull)` — shownull is 0 for plain
+            // QT_BACKSLASH, so an empty string produces NO quotes.
+            String::new()
+        } else if quote_type == QT_BACKSLASH_SHOWNULL {
+            // c:6165 sets shownull=1, so empty → '' (c:6194 adds the pair).
             "''".to_string()
         } else if quote_type == QT_SINGLE || quote_type == QT_SINGLE_OPTIONAL {
             "''".to_string()
@@ -13879,9 +13987,10 @@ mod tests {
 
     /// QT_BACKSLASH on empty → "''" (single-quote pair).
     #[test]
-    fn quotestring_qt_backslash_empty_yields_empty_single_quotes() {
+    fn quotestring_qt_backslash_empty_yields_empty() {
         let _g = crate::test_util::global_state_lock();
-        assert_eq!(quotestring("", QT_BACKSLASH), "''");
+        // c:6194 — shownull is 0 for plain QT_BACKSLASH, so empty → "".
+        assert_eq!(quotestring("", QT_BACKSLASH), "");
     }
 
     /// QT_BACKSLASH_SHOWNULL on empty → "''" too.

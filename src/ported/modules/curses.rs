@@ -1311,8 +1311,11 @@ pub(crate) fn zccmd_scroll(nam: &str, args: &[String]) -> i32 {
 /// from stdin into VAR. With KEYVAR, also recognise keypad / arrow /
 /// function keys — the Rust port parses the common CSI sequences
 /// (`\e[A`/`\e[B`/`\e[C`/`\e[D` for arrows, `\e[1~`/`\e[2~`/etc.).
-/// Mouse decoding (KEY_MOUSE → MOUSEVAR array) requires xterm
-/// SGR-mouse mode parsing — pending the mouse infrastructure port.
+/// With a fourth MOUSEVAR arg, `read_key_sequence` decodes the xterm
+/// SGR-1006 mouse report (`\e[<b;x;yM|m`) — and the legacy X10 form
+/// (`\e[Mbxy`) — into a synthesized `KEY_MOUSE` code + a pending
+/// `Mevent`, which this branch maps to the MOUSEVAR array exactly as
+/// C does via `getmouse` / `zcurses_mouse_map` (c:1209-1263).
 /// WARNING: param names don't match C — Rust=(args) vs C=(nam, args)
 pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
     if !zcurses_validate_window(args[0].as_str(), ZCURSES_USED) {
@@ -1324,6 +1327,36 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
     }
     // C: keypad(w->win, args.len() >= 3 ? TRUE : FALSE);
     let want_keypad = args.len() >= 3;
+
+    // c:1108-1131 — mousemask() setup. Pure-Rust curses has no
+    // libncurses, so "enabling mouse mode" means (a) flipping the
+    // ZCF_MOUSE_ACTIVE state read_key_sequence's decoder gates on and
+    // (b) asking the terminal to emit xterm mouse reports via DECSET
+    // 1000 (X10) + 1006 (SGR) — the native analog of what ncurses'
+    // mousemask() drives through terminfo. `nargs >= 4` == a MOUSEVAR
+    // was supplied.
+    if args.len() >= 4 {
+        let mut flags = flags_lock().lock().unwrap();
+        // c:1110-1111 — (re)arm when inactive or the mask changed.
+        if *flags & ZCF_MOUSE_ACTIVE == 0 || *flags & ZCF_MOUSE_MASK_CHANGED != 0 {
+            *flags = (*flags & !ZCF_MOUSE_MASK_CHANGED) | ZCF_MOUSE_ACTIVE; // c:1116-1117
+            drop(flags);
+            let mut out = io::stdout();
+            let _ = write!(out, "\x1b[?1000h\x1b[?1006h");
+            let _ = out.flush();
+        }
+    } else {
+        // c:1125-1130 — no MOUSEVAR: disable mouse mode if it was on.
+        let mut flags = flags_lock().lock().unwrap();
+        if *flags & ZCF_MOUSE_ACTIVE != 0 {
+            *flags &= !ZCF_MOUSE_ACTIVE; // c:1128
+            drop(flags);
+            let mut out = io::stdout();
+            let _ = write!(out, "\x1b[?1006l\x1b[?1000l");
+            let _ = out.flush();
+        }
+    }
+
     let timeout = windows_lock()
         .lock()
         .unwrap()
@@ -1334,33 +1367,91 @@ pub(crate) fn zccmd_input(nam: &str, args: &[String]) -> i32 {
         Some(pair) => pair,
         None => return 1,
     };
+    // c:1200-1204 — store the character string into VAR (default REPLY).
     let var = args.get(1).map(|v| v.as_str()).unwrap_or("REPLY");
     setsparam(var, &key_str);
+
     if want_keypad {
-        if let Some(name) = args.get(2) {
-            let code_str = if key_code > 0 {
-                keypad_name(key_code).unwrap_or_else(|| key_code.to_string())
-            } else {
-                String::new()
-            };
-            setsparam(name, &code_str);
-        }
-        if args.len() >= 4 {
-            // c:1247-1248 — `if (keypadnum != KEY_MOUSE && nargs >= 4)
-            //               return !setaparam(args[3], mkarray(NULL));`
-            // Non-mouse reads clear the MOUSEVAR to an EMPTY ARRAY —
-            // mkarray(NULL) is a one-NULL-terminator char**, i.e. zero
-            // elements. Prior port set a scalar "" via setsparam,
-            // which (a) made `${(t)mousevar}` report scalar where zsh
-            // reports array and (b) broke `$mousevar[1]`-style empty
-            // checks. The KEY_MOUSE event-decode branch (c:1162-1216)
-            // stays deferred pending xterm SGR-mouse decoding.
-            if let Some(mvar) = args.get(3) {
-                setaparam(mvar, Vec::<String>::new()); // c:1248
+        // c:1206 — nargs >= 3.
+        if key_code > 0 {
+            // c:1207 — a keypad / mouse code, not a plain character.
+            if args.len() >= 4 && key_code == KEY_MOUSE {
+                // c:1209-1263 — KEY_MOUSE branch.
+                if let Some(kv) = args.get(2) {
+                    setsparam(kv, "MOUSE"); // c:1215
+                }
+                let mvar = &args[3];
+                // c:1217 — getmouse(): pull the pending decoded event.
+                match PENDING_MOUSE.lock().unwrap().take() {
+                    None => {
+                        // c:1224 — nothing queued: empty array, success.
+                        setaparam(mvar, Vec::<String>::new());
+                    }
+                    Some(m) => {
+                        // c:1226-1234 — id, x, y, z leading fields.
+                        let mut margs: Vec<String> = vec![
+                            m.id.to_string(),
+                            m.x.to_string(),
+                            m.y.to_string(),
+                            m.z.to_string(),
+                        ];
+                        // c:1240-1255 — one "<EVENT><button>" token per
+                        // matching bstate bit.
+                        for me in ZCURSES_MOUSE_MAP {
+                            if m.bstate & me.event != 0 {
+                                if let Some(&(name, _)) = ZCURSES_MOUSE_EVENT_LIST
+                                    .iter()
+                                    .find(|&&(_, num)| num == me.what)
+                                {
+                                    margs.push(format!("{}{}", name, me.button));
+                                }
+                            }
+                        }
+                        // c:1256-1261 — modifier tokens.
+                        if m.bstate & BUTTON_SHIFT != 0 {
+                            margs.push("SHIFT".to_string());
+                        }
+                        if m.bstate & BUTTON_CTRL != 0 {
+                            margs.push("CTRL".to_string());
+                        }
+                        if m.bstate & BUTTON_ALT != 0 {
+                            margs.push("ALT".to_string());
+                        }
+                        setaparam(mvar, margs); // c:1262
+                    }
+                }
+            } else if let Some(kv) = args.get(2) {
+                // c:1264-1284 — non-mouse keypad code.
+                if key_code >= KEY_F0 && key_code < KEY_F0 + 64 {
+                    // c:1276-1281 — function keys aren't in keypad_names;
+                    // F1.. print "Fn", KEY_F0 itself prints its raw number.
+                    let fbuf = if key_code > KEY_F0 {
+                        format!("F{}", key_code - KEY_F0)
+                    } else {
+                        key_code.to_string()
+                    };
+                    setsparam(kv, &fbuf); // c:1283
+                } else if let Some(name) = keypad_name(key_code) {
+                    // c:1269-1274 — named key: set KEYVAR and return
+                    // WITHOUT clearing MOUSEVAR (C's early `return 0`).
+                    setsparam(kv, &name);
+                    return 0;
+                } else {
+                    // c:1280 — unrecognized number: print it raw.
+                    setsparam(kv, &key_code.to_string()); // c:1283
+                }
             }
+        } else if let Some(kv) = args.get(2) {
+            // c:1288-1290 — plain character: KEYVAR := "".
+            setsparam(kv, "");
         }
     }
-    0
+    // c:1294-1295 — a non-mouse read with a MOUSEVAR clears it to an
+    // EMPTY ARRAY (mkarray(NULL)). Named keys already returned above.
+    if key_code != KEY_MOUSE && args.len() >= 4 {
+        setaparam(&args[3], Vec::<String>::new());
+    }
+    0 // c:1297
 }
 
 // =====================================================================
@@ -1394,9 +1485,11 @@ pub(crate) fn zccmd_timeout(nam: &str, args: &[String]) -> i32 {
 /// Port of `zccmd_mouse(const char *nam, char **args)` from `Src/Modules/curses.c:1294`.
 ///
 /// `mouse [+motion|-motion|delay N]...`: toggle the mouse mode.
-/// Without libncurses calling `mouseinterval()` / `mousemask()`,
-/// the Rust port records the mask + delay into module statics for
-/// when an xterm-SGR-mouse decoder lands.
+/// Without libncurses calling `mouseinterval()` / `mousemask()`, the
+/// Rust port records the mask + delay into module statics; the
+/// ZCF_MOUSE_MASK_CHANGED flag it sets makes the next `zcurses input`
+/// re-arm the terminal, and `read_key_sequence` consults the mask when
+/// decoding xterm SGR / X10 mouse reports.
 /// WARNING: param names don't match C — Rust=(args) vs C=(nam, args)
 pub(crate) fn zccmd_mouse(nam: &str, args: &[String]) -> i32 {
     let mut idx = 0usize;
@@ -1800,6 +1893,149 @@ pub const ZCME_CLICKED: i32 = 2; // c:149
 pub const ZCME_DOUBLE_CLICKED: i32 = 3; // c:150
 /// `ZCME_TRIPLE_CLICKED` constant.
 pub const ZCME_TRIPLE_CLICKED: i32 = 4; // c:151
+
+/// `KEY_MOUSE` libncurses keycode (`curses.h`: `#define KEY_MOUSE 0631`).
+/// Synthesized by `read_key_sequence` when it decodes an xterm mouse
+/// report, then consumed by `zccmd_input`'s mouse branch (c:1209).
+pub const KEY_MOUSE: i32 = 0o631;
+
+// ncurses mouse-event bit masks (`curses.h` BUTTONn_* /
+// BUTTON_SHIFT/CTRL/ALT). Layout follows NCURSES_MOUSE_VERSION 2:
+//   NCURSES_MOUSE_MASK(b, m) = m << ((b - 1) * 5)
+// with event bases NCURSES_BUTTON_RELEASED=001, _PRESSED=002,
+// _CLICKED=004, _DOUBLE_CLICKED=010, _TRIPLE_CLICKED=020 and the
+// SHIFT/CTRL/ALT/REPORT modifiers in the button-6 slot (shift 25).
+// This is consistent with the already-defined
+// `REPORT_MOUSE_POSITION = 010 << 25 = 1 << 28`. The names + bit
+// positions match curses.h so the `ZCURSES_MOUSE_MAP` table below is
+// reviewable side-by-side against `zcurses_mouse_map[]` (c:169).
+/// `BUTTON1_RELEASED` (curses.h).
+pub const BUTTON1_RELEASED: u64 = 0o1 << 0;
+/// `BUTTON1_PRESSED` (curses.h).
+pub const BUTTON1_PRESSED: u64 = 0o2 << 0;
+/// `BUTTON1_CLICKED` (curses.h).
+pub const BUTTON1_CLICKED: u64 = 0o4 << 0;
+/// `BUTTON1_DOUBLE_CLICKED` (curses.h).
+pub const BUTTON1_DOUBLE_CLICKED: u64 = 0o10 << 0;
+/// `BUTTON1_TRIPLE_CLICKED` (curses.h).
+pub const BUTTON1_TRIPLE_CLICKED: u64 = 0o20 << 0;
+/// `BUTTON2_RELEASED` (curses.h).
+pub const BUTTON2_RELEASED: u64 = 0o1 << 5;
+/// `BUTTON2_PRESSED` (curses.h).
+pub const BUTTON2_PRESSED: u64 = 0o2 << 5;
+/// `BUTTON2_CLICKED` (curses.h).
+pub const BUTTON2_CLICKED: u64 = 0o4 << 5;
+/// `BUTTON2_DOUBLE_CLICKED` (curses.h).
+pub const BUTTON2_DOUBLE_CLICKED: u64 = 0o10 << 5;
+/// `BUTTON2_TRIPLE_CLICKED` (curses.h).
+pub const BUTTON2_TRIPLE_CLICKED: u64 = 0o20 << 5;
+/// `BUTTON3_RELEASED` (curses.h).
+pub const BUTTON3_RELEASED: u64 = 0o1 << 10;
+/// `BUTTON3_PRESSED` (curses.h).
+pub const BUTTON3_PRESSED: u64 = 0o2 << 10;
+/// `BUTTON3_CLICKED` (curses.h).
+pub const BUTTON3_CLICKED: u64 = 0o4 << 10;
+/// `BUTTON3_DOUBLE_CLICKED` (curses.h).
+pub const BUTTON3_DOUBLE_CLICKED: u64 = 0o10 << 10;
+/// `BUTTON3_TRIPLE_CLICKED` (curses.h).
+pub const BUTTON3_TRIPLE_CLICKED: u64 = 0o20 << 10;
+/// `BUTTON4_RELEASED` (curses.h).
+pub const BUTTON4_RELEASED: u64 = 0o1 << 15;
+/// `BUTTON4_PRESSED` (curses.h).
+pub const BUTTON4_PRESSED: u64 = 0o2 << 15;
+/// `BUTTON4_CLICKED` (curses.h).
+pub const BUTTON4_CLICKED: u64 = 0o4 << 15;
+/// `BUTTON4_DOUBLE_CLICKED` (curses.h).
+pub const BUTTON4_DOUBLE_CLICKED: u64 = 0o10 << 15;
+/// `BUTTON4_TRIPLE_CLICKED` (curses.h).
+pub const BUTTON4_TRIPLE_CLICKED: u64 = 0o20 << 15;
+/// `BUTTON5_RELEASED` (curses.h).
+pub const BUTTON5_RELEASED: u64 = 0o1 << 20;
+/// `BUTTON5_PRESSED` (curses.h).
+pub const BUTTON5_PRESSED: u64 = 0o2 << 20;
+/// `BUTTON5_CLICKED` (curses.h).
+pub const BUTTON5_CLICKED: u64 = 0o4 << 20;
+/// `BUTTON5_DOUBLE_CLICKED` (curses.h).
+pub const BUTTON5_DOUBLE_CLICKED: u64 = 0o10 << 20;
+/// `BUTTON5_TRIPLE_CLICKED` (curses.h).
+pub const BUTTON5_TRIPLE_CLICKED: u64 = 0o20 << 20;
+/// `BUTTON_CTRL` (curses.h) — control modifier bit.
+pub const BUTTON_CTRL: u64 = 0o1 << 25;
+/// `BUTTON_SHIFT` (curses.h) — shift modifier bit.
+pub const BUTTON_SHIFT: u64 = 0o2 << 25;
+/// `BUTTON_ALT` (curses.h) — alt/meta modifier bit.
+pub const BUTTON_ALT: u64 = 0o4 << 25;
+
+/// Port of `static const struct zcurses_mouse_event zcurses_mouse_map[]`
+/// from `Src/Modules/curses.c:169`. Maps each ncurses button bit to a
+/// `(button-number, event-kind)` pair for the decode loop at c:1240.
+static ZCURSES_MOUSE_MAP: &[zcurses_mouse_event] = &[
+    zcurses_mouse_event { button: 1, what: ZCME_PRESSED, event: BUTTON1_PRESSED }, // c:170
+    zcurses_mouse_event { button: 1, what: ZCME_RELEASED, event: BUTTON1_RELEASED }, // c:171
+    zcurses_mouse_event { button: 1, what: ZCME_CLICKED, event: BUTTON1_CLICKED }, // c:172
+    zcurses_mouse_event { button: 1, what: ZCME_DOUBLE_CLICKED, event: BUTTON1_DOUBLE_CLICKED }, // c:173
+    zcurses_mouse_event { button: 1, what: ZCME_TRIPLE_CLICKED, event: BUTTON1_TRIPLE_CLICKED }, // c:174
+    zcurses_mouse_event { button: 2, what: ZCME_PRESSED, event: BUTTON2_PRESSED }, // c:176
+    zcurses_mouse_event { button: 2, what: ZCME_RELEASED, event: BUTTON2_RELEASED }, // c:177
+    zcurses_mouse_event { button: 2, what: ZCME_CLICKED, event: BUTTON2_CLICKED }, // c:178
+    zcurses_mouse_event { button: 2, what: ZCME_DOUBLE_CLICKED, event: BUTTON2_DOUBLE_CLICKED }, // c:179
+    zcurses_mouse_event { button: 2, what: ZCME_TRIPLE_CLICKED, event: BUTTON2_TRIPLE_CLICKED }, // c:180
+    zcurses_mouse_event { button: 3, what: ZCME_PRESSED, event: BUTTON3_PRESSED }, // c:182
+    zcurses_mouse_event { button: 3, what: ZCME_RELEASED, event: BUTTON3_RELEASED }, // c:183
+    zcurses_mouse_event { button: 3, what: ZCME_CLICKED, event: BUTTON3_CLICKED }, // c:184
+    zcurses_mouse_event { button: 3, what: ZCME_DOUBLE_CLICKED, event: BUTTON3_DOUBLE_CLICKED }, // c:185
+    zcurses_mouse_event { button: 3, what: ZCME_TRIPLE_CLICKED, event: BUTTON3_TRIPLE_CLICKED }, // c:186
+    zcurses_mouse_event { button: 4, what: ZCME_PRESSED, event: BUTTON4_PRESSED }, // c:188
+    zcurses_mouse_event { button: 4, what: ZCME_RELEASED, event: BUTTON4_RELEASED }, // c:189
+    zcurses_mouse_event { button: 4, what: ZCME_CLICKED, event: BUTTON4_CLICKED }, // c:190
+    zcurses_mouse_event { button: 4, what: ZCME_DOUBLE_CLICKED, event: BUTTON4_DOUBLE_CLICKED }, // c:191
+    zcurses_mouse_event { button: 4, what: ZCME_TRIPLE_CLICKED, event: BUTTON4_TRIPLE_CLICKED }, // c:192
+    // c:194-201 — button 5 (guarded by `#ifdef BUTTON5_PRESSED` in C;
+    // present here since the version-2 layout always defines it).
+    zcurses_mouse_event { button: 5, what: ZCME_PRESSED, event: BUTTON5_PRESSED }, // c:196
+    zcurses_mouse_event { button: 5, what: ZCME_RELEASED, event: BUTTON5_RELEASED }, // c:197
+    zcurses_mouse_event { button: 5, what: ZCME_CLICKED, event: BUTTON5_CLICKED }, // c:198
+    zcurses_mouse_event { button: 5, what: ZCME_DOUBLE_CLICKED, event: BUTTON5_DOUBLE_CLICKED }, // c:199
+    zcurses_mouse_event { button: 5, what: ZCME_TRIPLE_CLICKED, event: BUTTON5_TRIPLE_CLICKED }, // c:200
+];
+
+/// Port of `static const struct zcurses_namenumberpair
+/// zcurses_mouse_event_list[]` from `Src/Modules/curses.c:154`.
+static ZCURSES_MOUSE_EVENT_LIST: &[(&str, i32)] = &[
+    ("PRESSED", ZCME_PRESSED),               // c:155
+    ("RELEASED", ZCME_RELEASED),             // c:156
+    ("CLICKED", ZCME_CLICKED),               // c:157
+    ("DOUBLE_CLICKED", ZCME_DOUBLE_CLICKED), // c:158
+    ("TRIPLE_CLICKED", ZCME_TRIPLE_CLICKED), // c:159
+];
+
+/// ncurses `MEVENT` (`curses.h`) — one decoded mouse report, holding
+/// the fields `zccmd_input` reads at c:1227-1234 and the `bstate` it
+/// tests at c:1240-1261. `id`/`z` are unused by the terminal decoder
+/// (kept for MEVENT parity); `x`/`y` are 0-based screen coordinates,
+/// as ncurses' `getmouse()` returns them.
+#[derive(Debug, Clone, Copy)]
+pub struct Mevent {
+    /// Device id (`MEVENT.id`); always 0 for the terminal decoder.
+    pub id: i32,
+    /// 0-based column (`MEVENT.x`).
+    pub x: i32,
+    /// 0-based row (`MEVENT.y`).
+    pub y: i32,
+    /// Unused scroll axis (`MEVENT.z`).
+    pub z: i32,
+    /// Button + modifier state bits (`MEVENT.bstate`).
+    pub bstate: u64,
+}
+
+/// Pending decoded mouse event — the terminal-decoder analog of
+/// ncurses' internal `getmouse()` FIFO. `read_key_sequence` stores an
+/// event here when it synthesizes `KEY_MOUSE`; `zccmd_input`'s mouse
+/// branch (c:1217 `getmouse`) takes it back out. Single slot: "we only
+/// expect one event" (c:1236). Accessed inline (no accessor fn) to keep
+/// the port a data extension, not a new function.
+#[allow(non_upper_case_globals)]
+static PENDING_MOUSE: Mutex<Option<Mevent>> = Mutex::new(None);
 
 // =====================================================================
 // Port of `static const struct zcurses_namenumberpair
@@ -2205,7 +2441,9 @@ pub(crate) fn colorpair_get_or_alloc(spec: &str) -> i32 {
 // libncurses's `wget_wch(w->win, &wi)` / `wgetch(w->win, ...)`.
 // Without libncurses linked, the Rust port reads raw bytes from
 // stdin (cbreak set by `zccmd_init`) and parses CSI / SS3 sequences
-// for arrow + function-key codes. Returns `(string, keycode)`.
+// for arrow + function-key codes, plus xterm SGR-1006 / legacy X10
+// mouse reports (decoded into a `KEY_MOUSE` code + pending `Mevent`
+// when ZCF_MOUSE_ACTIVE is armed). Returns `(string, keycode)`.
 // `keycode == 0` means a regular character; non-zero means a
 // keypad code.
 /// WARNING: NOT IN CURSES.C — Rust-side TTY key-sequence reader; C uses `wgetch()` from libncurses
@@ -2220,26 +2458,165 @@ fn read_key_sequence(want_keypad: bool, _timeout_ms: i32) -> Option<(String, i32
         }
         let c = buf[0];
         if c == 0x1b && want_keypad {
-            // CSI / SS3 prefix — read up to a few more bytes.
+            // ESC introduces a CSI / SS3 / mouse sequence. Read the
+            // introducer byte, then dispatch.
             let mut seq = vec![c];
-            for _ in 0..6 {
-                let mut next = [0u8; 1];
-                if io::stdin().read(&mut next).ok()? == 0 {
-                    break;
+            let mut nb = [0u8; 1];
+            if io::stdin().read(&mut nb).ok()? == 0 {
+                return Some(((c as char).to_string(), 0));
+            }
+            seq.push(nb[0]);
+            // c:1108-1131 mousemask gate: only decode mouse reports when
+            // `zcurses input` armed mouse mode (ZCF_MOUSE_ACTIVE).
+            let mouse_active = *flags_lock().lock().unwrap() & ZCF_MOUSE_ACTIVE != 0;
+            if seq[1] == b'[' {
+                if io::stdin().read(&mut nb).ok()? == 0 {
+                    return Some(((c as char).to_string(), 0));
                 }
-                seq.push(next[0]);
-                // Final byte for CSI is in 0x40..=0x7E; for ESC O
-                // (SS3) it's a single trailing letter.
-                if seq.len() >= 3 && (seq[2] >= 0x40 && seq[2] <= 0x7e) {
-                    break;
+                seq.push(nb[0]);
+                if mouse_active && seq[2] == b'<' {
+                    // xterm SGR-1006 mouse: ESC [ < b ; x ; y (M|m).
+                    // The read_key_sequence half of the KEY_MOUSE decode
+                    // (c:1162-1216): synthesize KEY_MOUSE + pending Mevent.
+                    let mut params: Vec<u8> = Vec::new();
+                    let mut final_ch = 0u8;
+                    for _ in 0..32 {
+                        if io::stdin().read(&mut nb).ok()? == 0 {
+                            break;
+                        }
+                        if nb[0] == b'M' || nb[0] == b'm' {
+                            final_ch = nb[0];
+                            break;
+                        }
+                        params.push(nb[0]);
+                    }
+                    let text = String::from_utf8_lossy(&params);
+                    let mut fields = text.split(';');
+                    let b: i64 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(-1);
+                    let sx: i64 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let sy: i64 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    if b >= 0 && (final_ch == b'M' || final_ch == b'm') {
+                        // xterm button field: low 2 bits = button, +4 shift,
+                        // +8 alt/meta, +16 ctrl, +32 motion, +64 wheel.
+                        // Final 'M' = press, 'm' = release.
+                        let released = final_ch == b'm';
+                        let low = (b & 3) as i32;
+                        let wheel = b & 64 != 0;
+                        let motion = b & 32 != 0;
+                        let button = if wheel {
+                            4 + low
+                        } else if low == 3 {
+                            0 // motion with no button held
+                        } else {
+                            low + 1
+                        };
+                        let mut bstate: u64 = 0;
+                        if button >= 1 && button <= 5 {
+                            // NCURSES_MOUSE_MASK(button, base) = base << ((button-1)*5)
+                            let base: u64 = if released { 0o1 } else { 0o2 };
+                            bstate |= base << (((button - 1) * 5) as u64);
+                        }
+                        if motion {
+                            bstate |= REPORT_MOUSE_POSITION as u64;
+                        }
+                        if b & 4 != 0 {
+                            bstate |= BUTTON_SHIFT;
+                        }
+                        if b & 8 != 0 {
+                            bstate |= BUTTON_ALT;
+                        }
+                        if b & 16 != 0 {
+                            bstate |= BUTTON_CTRL;
+                        }
+                        // ncurses getmouse() reports 0-based coords.
+                        *PENDING_MOUSE.lock().unwrap() = Some(Mevent {
+                            id: 0,
+                            x: (sx - 1) as i32,
+                            y: (sy - 1) as i32,
+                            z: 0,
+                            bstate,
+                        });
+                        return Some((String::new(), KEY_MOUSE));
+                    }
+                    return Some(((c as char).to_string(), 0));
+                } else if mouse_active && seq[2] == b'M' {
+                    // Legacy X10 mouse: ESC [ M cb cx cy (three bytes,
+                    // each offset by +32).
+                    let mut raw = [0u8; 3];
+                    let mut got = 0usize;
+                    while got < 3 {
+                        if io::stdin().read(&mut nb).ok()? == 0 {
+                            break;
+                        }
+                        raw[got] = nb[0];
+                        got += 1;
+                    }
+                    if got == 3 {
+                        let b = raw[0] as i64 - 32;
+                        let sx = raw[1] as i64 - 32;
+                        let sy = raw[2] as i64 - 32;
+                        let low = (b & 3) as i32;
+                        let wheel = b & 64 != 0;
+                        let (button, released) = if wheel {
+                            (4 + low, false)
+                        } else if low == 3 {
+                            (1, true) // X10 release: button not reported
+                        } else {
+                            (low + 1, false)
+                        };
+                        let mut bstate: u64 = 0;
+                        if button >= 1 && button <= 5 {
+                            let base: u64 = if released { 0o1 } else { 0o2 };
+                            bstate |= base << (((button - 1) * 5) as u64);
+                        }
+                        if b & 4 != 0 {
+                            bstate |= BUTTON_SHIFT;
+                        }
+                        if b & 8 != 0 {
+                            bstate |= BUTTON_ALT;
+                        }
+                        if b & 16 != 0 {
+                            bstate |= BUTTON_CTRL;
+                        }
+                        *PENDING_MOUSE.lock().unwrap() = Some(Mevent {
+                            id: 0,
+                            x: (sx - 1) as i32,
+                            y: (sy - 1) as i32,
+                            z: 0,
+                            bstate,
+                        });
+                        return Some((String::new(), KEY_MOUSE));
+                    }
+                    return Some(((c as char).to_string(), 0));
+                } else {
+                    // Ordinary CSI: read remaining bytes up to a final
+                    // byte in 0x40..=0x7e, then map via csi_to_keypad.
+                    if !(seq[2] >= 0x40 && seq[2] <= 0x7e) {
+                        for _ in 0..6 {
+                            if io::stdin().read(&mut nb).ok()? == 0 {
+                                break;
+                            }
+                            seq.push(nb[0]);
+                            if nb[0] >= 0x40 && nb[0] <= 0x7e {
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(code) = csi_to_keypad(&seq) {
+                        return Some((String::new(), code));
+                    }
                 }
-                if seq.len() >= 4 && seq[seq.len() - 1] >= 0x40 && seq[seq.len() - 1] <= 0x7e {
-                    break;
+            } else if seq[1] == b'O' {
+                // SS3: ESC O <final> (arrows / F1-F4).
+                if io::stdin().read(&mut nb).ok()? == 0 {
+                    return Some(((c as char).to_string(), 0));
+                }
+                seq.push(nb[0]);
+                if let Some(code) = csi_to_keypad(&seq) {
+                    return Some((String::new(), code));
                 }
             }
-            if let Some(code) = csi_to_keypad(&seq) {
-                return Some((String::new(), code));
-            }
+            return Some(((c as char).to_string(), 0));
         }
         Some(((c as char).to_string(), 0))
     }

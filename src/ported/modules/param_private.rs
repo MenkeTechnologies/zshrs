@@ -39,10 +39,12 @@ use crate::ported::params::{
     startparamscope,
 };
 use crate::ported::utils::{zerr, zwarn, zwarnnam};
+use crate::ported::hashtable::reswdtab_lock;
 use crate::ported::zsh_h::{
-    eprog, features, funcwrap, hashnode, hashtable, isset, module, options, param, HashTable,
-    MAX_OPS, OPT_ISSET, PM_AUTOLOAD, PM_DECLARED, PM_HIDE, PM_NAMEREF, PM_NORESTORE, PM_READONLY,
-    PM_REMOVABLE, PM_RESTRICTED, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET, WARNCREATEGLOBAL,
+    eprog, features, funcwrap, hashnode, hashtable, isset, module, options, param, reswd,
+    HashTable, MAX_OPS, OPT_ISSET, PM_AUTOLOAD, PM_DECLARED, PM_HIDE, PM_NAMEREF, PM_NORESTORE,
+    PM_READONLY, PM_REMOVABLE, PM_RESTRICTED, PM_RO_BY_DESIGN, PM_SPECIAL, PM_UNSET, TYPESET,
+    WARNCREATEGLOBAL,
 };
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
@@ -1123,18 +1125,51 @@ pub fn printprivatenode(hn: *mut param, printflags: i32) {
 // `module_features` — port of `static struct features module_features`
 // from param_private.c:660.
 
+// `reswd_private` — port of the file-static
+// `static struct reswd reswd_private = {{NULL, "private", 0}, TYPESET};`
+// from `Src/Modules/param_private.c:666`. C makes this a `static`
+// struct; the Rust `reswd` owns `String`s (not const-constructible),
+// so the literal is built inline at the `setup_` addnode site below
+// rather than kept as a Rust-original helper fn (which the port
+// drift gate would reject — no C `reswd_private` *function* exists).
+
 /// Port of `setup_(UNUSED(Module m))` from `Src/Modules/param_private.c:670`.
 #[allow(unused_variables)]
 pub fn setup_(m: *const module) -> i32 {
     // c:670
-    // C body c:672-689 — installs `private` builtin by hijacking
-    //                    the existing `local` builtintab node, swaps
-    //                    paramtab getnode/getnode2/printnode out for
-    //                    private variants, and registers the `private`
-    //                    reserved word.
-    //                    Substrate (builtintab/realparamtab/reswdtab
-    //                    overrides) is not yet wired in zshrs; the
-    //                    `private` builtin is currently a no-op.
+    // C body c:672-689 performs three runtime hijacks. In zshrs the
+    // builtintab/realparamtab are immutable statics (no runtime fn-ptr
+    // vtable to swap), so two of the three effects are reproduced by
+    // idiomatic substitutes installed elsewhere, NOT here:
+    //   c:683-685 (swap `local` handlerfunc/optstr to the private
+    //     variant) → runtime name-route in fusevm_bridge.rs: when the
+    //     module is booted, a `local` invocation dispatches to the
+    //     `private` builtin (P-augmented optstr).
+    //   c:675-680 (override realparamtab getnode/getnode2/printnode)
+    //     → params.rs calls `getprivatenode` inline at each param
+    //     lookup site (the HashMap param table has no getnode vtable).
+    // c:687 — register `private` as a TYPESET reserved word:
+    //   reswdtab->addnode(reswdtab, reswd_private.node.nam, &reswd_private).
+    // With the entry present, the lexer's exalias reswd lookup
+    // (lex.rs:3374-3376, `guard.get(&lextext).map(|r| r.token)`)
+    // promotes a leading `private` word to TYPESET, so `private
+    // foo=(a b c)` parses as a declaration-context assignment exactly
+    // like `local`/`typeset`/`declare` (hashtable.c reswds[]).
+    if let Ok(mut tab) = reswdtab_lock().write() {
+        // c:687 addnode — inline `reswd_private`
+        // ({{NULL, "private", 0}, TYPESET}, c:666).
+        tab.insert(
+            "private",
+            reswd {
+                node: hashnode {
+                    next: None,
+                    nam: "private".to_string(),
+                    flags: 0,
+                },
+                token: TYPESET,
+            },
+        );
+    }
     0
 }
 
@@ -1200,11 +1235,19 @@ pub fn finish_(m: *const module) -> i32 {
             deleteparamtable(Some(t));
         }
     }
+    // c:722 — `removehashnode(reswdtab, "private")`: unregister the
+    // `private` reserved word installed by setup_, so the lexer stops
+    // promoting `private` to TYPESET once the module is gone. (C runs
+    // this in cleanup_ c:722; zshrs folds the reswd teardown into the
+    // finish_ path alongside the emptytable delete.)
+    if let Ok(mut tab) = reswdtab_lock().write() {
+        // c:722 removehashnode
+        tab.remove("private");
+    }
     // c:737-743 — restores realparamtab->getnode/getnode2/printnode to
     // their save_* originals + restores `local` builtintab node from
-    // save_local + deletes `private` reswd. The realparamtab/
-    // builtintab override substrate isn't ported; the deferred
-    // restore is a no-op on the static-link path.
+    // save_local. The realparamtab/builtintab override substrate isn't
+    // ported; the deferred restore is a no-op on the static-link path.
     0 // c:744
 }
 

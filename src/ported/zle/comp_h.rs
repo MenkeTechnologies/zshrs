@@ -673,6 +673,18 @@ pub struct Menuinfo {
     pub group: Option<Box<Cmgroup>>, // c:285
     /// Match currently inserted.
     pub cur: Option<Box<Cmatch>>, // c:286
+    /// Index of `group` within the `amatches` Vec. C models `group` as
+    /// a live `Cmgroup` pointer into the amatches linked list; the Rust
+    /// store is a `Vec<Cmgroup>`, so the pointer is carried as this
+    /// index. Meaningful whenever `group` is `Some`.
+    pub group_idx: i32,
+    /// Index of `cur` within `amatches[group_idx].matches`. C models
+    /// `cur` as a `Cmatch *` pointing into the group's NUL-terminated
+    /// `matches` array, and advances it with pointer arithmetic
+    /// (`++minfo.cur`, `m--`). The Rust store is `Vec<Cmatch>`, so the
+    /// pointer offset (`cur - group->matches`) is carried as this index.
+    /// Meaningful whenever `cur` is `Some`.
+    pub cur_idx: i32,
     /// Begin on line.
     pub pos: i32, // c:287
     /// Length of inserted string.

@@ -98,7 +98,7 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     } else {
         instring as u8 as char
     };
-    if let Ok(mut g) = compqstack.get_or_init(|| Mutex::new(String::new())).lock() {
+    if let Ok(mut g) = COMPQSTACK.get_or_init(|| Mutex::new(String::new())).lock() {
         *g = head_q.to_string(); // c:305-306
     }
 
@@ -270,38 +270,10 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
         // c:379
     } else if useline.load(Ordering::Relaxed) == 2 && nm > 1 {
         // c:380
-        // c:381 — `do_allmatches(1)`. Inlined: build flat match list
-        // from `amatches` and dispatch to compresult::do_allmatches.
-        {
-            let groups = amatches
-                .get_or_init(|| Mutex::new(Vec::new()))
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
-            let mut all: Vec<String> = Vec::new();
-            for g in groups {
-                for m in g.matches {
-                    if let Some(s) = m.str {
-                        all.push(s);
-                    }
-                }
-            }
-            let buf = ZLEMETALINE
-                .get_or_init(|| Mutex::new(String::new()))
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
-            let cs = ZLEMETACS.load(Ordering::Relaxed) as usize;
-            let wb = WB.load(Ordering::Relaxed) as usize;
-            let we = WE.load(Ordering::Relaxed) as usize;
-            let (new_buf, new_cs) =
-                crate::ported::zle::compresult::do_allmatches(&buf, cs, wb, we, &all, " ");
-            if let Ok(mut g) = ZLEMETALINE.get_or_init(|| Mutex::new(String::new())).lock() {
-                *g = new_buf;
-                ZLEMETALL.store(g.len() as i32, Ordering::Relaxed);
-            }
-            ZLEMETACS.store(new_cs as i32, Ordering::Relaxed);
-        }
+        // c:381 — `do_allmatches(1)`. Faithful minfo-driven insertion:
+        // iterates `amatches`, chaining do_single/accept_last against
+        // the shared ZLEMETALINE buffer (see compresult::do_allmatches).
+        crate::ported::zle::compresult::do_allmatches(1);
         if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None;
         } // c:383
@@ -1499,12 +1471,62 @@ pub fn comp_quoting_string(stype: i32) -> &'static str {
 /// word splitting it on the IFS, then resubmits the right slice
 /// as the new completion target.
 ///
-/// Body shell ports the top-level state save/restore from c:1458-
-/// 1490, with the inner lex-save/replay/restore block stubbed as
-/// `lexsave`/`lexrestore` until `lex.c` substrate lands.
+/// Inputs are now published/correct: `wb`/`we`/`offs` are written by
+/// `get_comp_string` (WB/WE/OFFS shared statics) and `compqstack` by
+/// `callcompfunc`'s c:305 reset (deduped to `complete::COMPQSTACK`).
+///
+/// The mid-body driver (c:1490-1893) remains a stub. The lexer/quote
+/// substrate it needs exists (`ctxtlex`, `inpush`/`strinbeg`,
+/// `rembslash`/`remsquote`/`multiquote`, `getkeystring`), but a
+/// faithful port is BLOCKED on a VERIFIED upstream unit inconsistency
+/// in the input/lexer layer, not merely a local representation choice:
+///
+/// The C body does dense single-metafied-byte-index arithmetic across
+/// the token-null markers (`inull` walk c:1774-1804, `chuck(p--)`,
+/// `s[swb-1-sqq+dq]` indexing c:1830, `p[soffs] != 'x'` c:1739),
+/// assuming each `Snull`/`Dnull`/`Bnull` and each Meta-escape occupies
+/// a fixed number of buffer units and that `wb`/`we`/`zlemetacs`/`offs`
+/// are all offsets into ONE consistent buffer. That invariant does not
+/// hold in this port:
+///   - `ingetc` (input.rs:355-357) steps the input buffer by **char**
+///     (`buf.chars().nth(pos)`, `inbufpos += 1`/char, `inbufct -= 1`/char)
+///     and skips token-marker bytes via `itok` (input.rs:366-368);
+///   - but `inbufct` is initialised to the **byte** length of the
+///     pushed string (input.rs:540/555/709) and `zlemetall` is a byte
+///     length (`meta_snap.len()`, zle_tricky.rs:1196);
+///   - `wordbeg = inbufct` (lex.rs:1104) and `gotword` computes
+///     `nwb = zlemetall - wordbeg`, `nwe = zlemetall + 1 - inbufct`
+///     (lex.rs:3013-3024) — so `wb`/`we` mix byte lengths with a
+///     char-stepped counter;
+///   - `zlemetacs` from `metafy_line`/`zlelineasstring` is a byte
+///     offset (zle_utils.rs:178-191).
+/// For pure-ASCII words byte==char and the machinery works (that is
+/// why the sibling `get_comp_string`, which uses char-index arithmetic
+/// at zle_tricky.rs:1524/1540 over byte-offset `wb`/`zlemetacs`, passes
+/// its ASCII tests). But `set_comp_sep` exists precisely to process
+/// QUOTED words — where the lexer injects `Snull`/`Dnull` markers — and
+/// non-ASCII completion words become Meta-escapes; in both cases byte
+/// and char counts diverge and the incoming `wb`/`we`/`zlemetacs` are
+/// in no single consistent unit. Building a local single-byte `Vec<u8>`
+/// (the intended fix) can normalise the STRING content but cannot
+/// recover a clean offset from a mixed-unit INPUT offset.
+///
+/// UPSTREAM FIX REQUIRED before this can be ported faithfully: make the
+/// input/lexer cursor model unit-consistent — either (a) commit the
+/// metaline + input stack to a single-byte-metafied model end to end
+/// (`ingetc` reads bytes, `inbufct`/`inbufpos`/`wordbeg`/`zlemetall`/
+/// `zlemetacs` all count single metafied bytes; markers stored as one
+/// byte 0x9d/0x9e/0x9f, not `char.encode_utf8`), or (b) commit it to a
+/// consistently char-indexed model (`inbufct` = `.chars().count()`,
+/// `zlemetall` = char count, `metafy_line` publishes a char-offset
+/// `zlemetacs`). Until one of those is chosen and applied to the shared
+/// substrate, porting the marker-dense arithmetic here would be an
+/// unverifiable guess into a compat-floor path. This is the SAME blocker
+/// as the unported `get_comp_string` quote-form tail (c:1709-2218) and
+/// the `sep_comp_string` lex approximation (compctl.rs).
 pub fn set_comp_sep() -> i32 {
-    // c:1460
-    let (_s, _lip, _lp) = comp_str(false); // c:1460
+    // c:1460 — comp_str(&lip, &lp, 1): untok = 1 (untokenize).
+    let (_s, _lip, _lp) = comp_str(true); // c:1460
     let owe = WE.load(Ordering::Relaxed); // c:1473 owb, owe
     let owb = WB.load(Ordering::Relaxed);
     let _ooffs = OFFS.load(Ordering::Relaxed);
@@ -1513,12 +1535,10 @@ pub fn set_comp_sep() -> i32 {
 
     // c:1490-1893 — the big driver: replay lexer over `s`, finding
     // IFS-separated tokens, narrowing s to the cursor-containing
-    // slice, then updating wb/we/offs accordingly. The
-    // ~400-line lex-replay walk + token-narrow + qp/qs split lives
-    // outside this stub — its entry would be `lex.rs::ctxtlex` with
-    // `LEXFLAGS_ZLE` set; the body here keeps the save/restore
-    // bracket so any caller running `compset -q` doesn't corrupt
-    // global state.
+    // slice, then updating wb/we/offs accordingly. BLOCKED on the
+    // token-marker byte-model decision documented above; the body
+    // here keeps the save/restore bracket so any caller running
+    // `compset -q` doesn't corrupt global state.
 
     // c:1934 — lexrestore().
     lexrestore(lex_saved); // c:1934
@@ -3419,9 +3439,12 @@ pub static compfunc: OnceLock<Mutex<Option<String>>> = OnceLock::new(); // zle_t
 /// `$compstate[pattern_match]` — when non-empty + non-"\0" enables
 /// pattern-aware matching for parameter-name completion.
 pub static comppatmatch: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-/// Port of `mod_export char *compqstack` from `Src/Zle/compcore.c`.
-/// Quoting-state stack (1 char per nesting level).
-pub static compqstack: OnceLock<Mutex<String>> = OnceLock::new();
+// `compqstack` (C: complete.c `mod_export char *compqstack`) is deduped
+// to the single canonical `complete::COMPQSTACK`, imported at the top of
+// this module. The former compcore-local `compqstack` static was an
+// orphan: the c:305 reset wrote it while `multiquote` (c:1065) read the
+// imported COMPQSTACK, so the reset never reached its reader — a real
+// bug now fixed by pointing both at COMPQSTACK.
 // =====================================================================
 // File-scope globals — `Src/Zle/compcore.c:36-279`.
 // =====================================================================
@@ -3751,7 +3774,7 @@ pub const IN_ENV_LW: i32 = 5; // lex.h
 /// Reads ZLEMETALINE, decodes via the canonical stringaszleline
 /// (handles incs adjustment + unmetafy + UTF-8 decode), populates
 /// ZLELINE / ZLELL / ZLECS, clears ZLEMETALINE/ZLEMETALL.
-fn unmetafy_line() {
+pub fn unmetafy_line() {
     // zle_tricky.c:995
     let meta = ZLEMETALINE
         .get_or_init(|| Mutex::new(String::new()))
@@ -3797,7 +3820,7 @@ fn unmetafy_line() {
 /// Reads ZLELINE, encodes via the canonical zlelineasstring (handles
 /// wcrtomb + metafy expansion), populates ZLEMETALINE / ZLEMETALL /
 /// ZLEMETACS, clears ZLELINE/ZLELL.
-fn metafy_line() {
+pub fn metafy_line() {
     // zle_tricky.c:978
     let raw_vec: Vec<char> = ZLELINE
         .get_or_init(|| Mutex::new(String::new()))

@@ -363,41 +363,85 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
 /// `char *promptexpand(char *s, int ns, const char *marker,
 ///                     char *rs, char *Rs);`
 ///
-/// `ns` flags the "non-special" mode (skip processing of `%E` /
-/// `%{...%}`); `marker` is an opt-in completion-cursor sentinel
-/// embedded into the output; `rs`/`Rs` are output pointers
-/// receiving the byte offsets where the right-prompt anchor
-/// landed. Rust returns the four values as a tuple
-/// `(expanded, rs_offset, cap_rs_offset)`.
-/// WARNING: param names don't match C — Rust=(_ns, _marker) vs C=(s, ns, marker, rs, Rs)
+/// `ns` (non-special): when 0, Inpar/Outpar/Nularg width-ignore
+/// markers are chucked from the result (c:236-247); when non-zero
+/// (ZLE render path) they are kept for cursor-width accounting.
+/// `marker` (Rust `_marker`) is an opt-in completion-cursor sentinel
+/// wrapped in Inpar/Outpar and prepended to the output when the
+/// prompt source is non-empty (c:226-230). C's `rs`/`Rs` are NOT
+/// offset out-params — they are INPUT strings for the `%r`/`%R`
+/// escapes of the spelling-correction prompt (c:218-219, 881-888),
+/// unported here and unrepresented in this signature. The two
+/// trailing tuple slots have no C counterpart and are always None
+/// (see body). Rust returns `(expanded, None, None)`.
+/// WARNING: signature diverges from C — Rust=(s, ns, _marker) drops
+/// C's rs/Rs input params; the two Option<usize> outputs are Rust-only
+/// dead slots retained for caller-arity compatibility, not C outparams.
 pub fn promptexpand(
     // c:182
     s: &str,
     ns: i32,
     _marker: Option<&str>,
 ) -> (String, Option<usize>, Option<usize>) {
-    // c:189-190 init_term lazy-load — lives in expand_prompt (the
-    // shared Rust entry; bin_print -P / PS1 / PS4 call it directly).
-    let mut expanded = expand_prompt(s);
+    // c:189-190 init_term lazy-load, c:192-212 PROMPTSUBST, c:214-222
+    // buf_vars init, c:231 putpromptchar — all live in expand_prompt
+    // (the shared Rust entry; bin_print -P / PS1 / PS4 call it directly).
+    // expand_prompt returns the already-unmetafied buffer with C's
+    // Inpar/Outpar translated to readline RL_PROMPT_*_IGNORE bytes
+    // (\x01/\x02) and Nularg (%G glitch) still embedded.
+    let body = expand_prompt(s);
+    // c:226-230 — `if (marker && *s) { *bp++ = Inpar; strucpy(marker);
+    // *bp++ = Outpar; }`. C inserts the completion-cursor marker,
+    // wrapped in Inpar/Outpar, at the FRONT of the buffer before
+    // putpromptchar appends the expanded prompt. Since expand_prompt
+    // already ran putpromptchar and translated Inpar/Outpar to
+    // \x01/\x02, we prepend the marker region in the same translated
+    // byte space (\x01 + marker + \x02) so it is consistent with the
+    // rest of the buffer and is stripped together with every other
+    // Inpar/Outpar on the ns==0 chuck below (c:241-243). The `*s`
+    // guard is C's "prompt source non-empty" check; we approximate it
+    // on the raw `s` (exact when PROMPTSUBST is unset — when set, C
+    // checks the post-singsub string, which expand_prompt does not
+    // surface). No current caller passes a marker (all pass None), so
+    // this path is the faithful port of the C branch for the day a
+    // caller does.
+    let mut expanded = match _marker {
+        Some(m) if !s.is_empty() => {
+            let mut out = String::with_capacity(2 + m.len() + body.len());
+            out.push('\x01'); // c:227 Inpar (translated form)
+            out.push_str(m); // c:228 strucpy(&bp, marker)
+            out.push('\x02'); // c:229 Outpar (translated form)
+            out.push_str(&body);
+            out
+        }
+        _ => body,
+    };
     // c:236-247 — `if (!ns) { ... chuck(Inpar/Outpar/Nularg); }`. When
     // ns==0 the marker bytes that toggle non-spacing (width-ignored)
-    // spans must be removed entirely; only the ZLE-render path (ns!=0)
-    // keeps them for cursor-width accounting. The Rust expander emits
-    // readline RL_PROMPT_*_IGNORE bytes (\x01/\x02) in place of
-    // canonical Inpar/Outpar, plus Nularg for the %G glitch — strip all
-    // three. Without this, `${(%)var}` of a `%{...%}`-wrapped string
-    // leaks ^A/^B into the result (breaks every OMZ theme using
-    // %{$fg[...]%}). `print -P` does the same strip at its own site.
+    // spans must be removed entirely (including the marker region's own
+    // Inpar/Outpar prepended above); only the ZLE-render path (ns!=0)
+    // keeps them for cursor-width accounting. Without this, `${(%)var}`
+    // of a `%{...%}`-wrapped string leaks ^A/^B into the result (breaks
+    // every OMZ theme using %{$fg[...]%}). `print -P` does the same
+    // strip at its own site.
     if ns == 0 {
         expanded.retain(|c| c != '\x01' && c != '\x02' && c != Nularg);
     }
-    // C: `*rs = bv.bp - bv.buf` at `%E` / `%>` markers. Rust
-    // expander loses that metadata, so a second pass on `s` is the
-    // closest approximation. Source-offset → expanded-offset is
-    // 1:1 except where expansion lengthens.
-    let rs_offset = s.find("%E").or_else(|| s.find("%E)")); // c:Src/prompt.c:257
-    let cap_rs_offset = s.find("%>>"); // c:Src/prompt.c:257
-    (expanded, rs_offset, cap_rs_offset)
+    // rs/Rs: NOT byte offsets. In this C spec (Src/prompt.c:182) `rs`
+    // and `Rs` are INPUT strings assigned to `bv->rstring` /
+    // `bv->Rstring` (c:218-219) and emitted verbatim by the `%r` / `%R`
+    // escapes (c:881-888) — used only by the spelling-correction prompt
+    // (utils.c:3278 `promptexpand(sprompt, 0, NULL, best, guess)`).
+    // promptexpand itself writes NO offset out-param: the `bp - bv->buf`
+    // expressions in C (prompt.c:995/1281/1320) are LOCAL truncation-
+    // width bookkeeping inside prompttrunc, never returned. The two
+    // trailing tuple slots therefore have no C counterpart to compute
+    // and are reported as None (the prior `s.find("%E")` values were a
+    // fabrication with no basis in the spec and were ignored by every
+    // caller). Faithfully wiring %r/%R would require threading rstring/
+    // Rstring into expand_prompt + putpromptchar, which is outside the
+    // "edit only promptexpand" scope of this change.
+    (expanded, None, None)
 }
 
 /// Escape text attributes back to a `%`-prefixed prompt string.
@@ -3216,26 +3260,188 @@ pub fn match_colour(cursor: Option<&mut usize>, spec: &str, is_fg: bool, colour:
     on | ((colour as zattr) << shft) // c:2018
 }
 
-/// Match a highlight specification, returning attrs + mask.
-/// Port of `match_highlight(const char *teststr, zattr *on_var, zattr *setmask, int *layer)` from Src/prompt.c:2031 — the
-/// mask records which fields were explicitly set so callers can
-/// merge against a default. Both values are canonical `zattr`
-/// bitfields (c:Src/zsh.h:2685); the mask carries the same
-/// attribute / TXT*COLOUR bits as `attrs` but zeroes out the
-/// actual colour indices so callers can detect "this bit was
-/// set vs default" by mask-and against `TXT_ATTR_*_MASK`.
+/// Match a set of highlights in `spec`, returning `(on_var, mask)`.
+/// Port of `const char *match_highlight(const char *teststr, zattr *on_var,
+/// zattr *setmask, int *layer)` from `Src/prompt.c:2031`.
+///
+/// Scans a SPACE-or-`,`-delimited run of highlight directives — `hl=`,
+/// `fg=`, `bg=`, `layer=`, `opacity=`, plus the `highlights[]` attribute
+/// names (`reset`/`bold`/`faint`/`standout`/`underline`/`italic`) with an
+/// optional `no` prefix — accumulating the attribute bits into `*on_var`
+/// and the "which fields were explicitly set" bitmask into `*setmask`. C
+/// returns the first unconsumed character; Rust returns `(on_var, mask)`.
+///
+/// SIGNATURE NOTE: the return is pinned to `(zattr, zattr)` = `(*on_var,
+/// *setmask)` by the type-pin test `match_highlight_returns_tuple_type`.
+/// C's `int *layer` out-param and the unconsumed-remainder return are not
+/// exposed — no Rust caller consumes either, and the pinned test forbids
+/// widening the signature. The `layer=` directive is still parsed and
+/// consumed (so following directives scan correctly), but the decoded layer
+/// value is discarded.
+///
+/// SUBSTRATE NOTE: `hl=NAME` resolves a named group from the
+/// `.zle.hlgroups` hash parameter (C `parsehighlight`, `Src/prompt.c:285`),
+/// which is unported. This mirrors C's default-environment path (hash
+/// absent → `*atr = TXT_ERROR`): the token is consumed up to the next `,`
+/// but `on_var` is left unchanged. Wire the resolver here once
+/// `.zle.hlgroups` lands.
 /// WARNING: param names don't match C — Rust=(spec) vs C=(teststr, on_var, setmask, layer)
 pub fn match_highlight(spec: &str) -> (zattr, zattr) {
-    let attrs = parsehighlight(spec);
-    let mut mask: zattr = 0;
-    mask |= attrs & (TXTBOLDFACE | TXTUNDERLINE | TXTSTANDOUT); // c:2031
-    if attrs & TXTFGCOLOUR != 0 {
-        mask |= TXTFGCOLOUR;
-    } // c:2031
-    if attrs & TXTBGCOLOUR != 0 {
-        mask |= TXTBGCOLOUR;
-    } // c:2031
-    (attrs, mask)
+    // c:2031
+    use crate::ported::utils::zstrtol;
+    use crate::ported::zsh_h::{TXTFAINT, TXTITALIC};
+
+    // c:1896-1904 — highlights[] table: (name, mask_on, mask_off).
+    const HIGHLIGHTS: &[(&str, zattr, zattr)] = &[
+        ("reset", 0, TXT_ATTR_ALL),       // c:1897
+        ("bold", TXTBOLDFACE, TXTFAINT),  // c:1898
+        ("faint", TXTFAINT, TXTBOLDFACE), // c:1899
+        ("standout", TXTSTANDOUT, 0),     // c:1900
+        ("underline", TXTUNDERLINE, 0),   // c:1901
+        ("italic", TXTITALIC, 0),         // c:1902
+    ];
+
+    let bytes = spec.as_bytes();
+    let mut pos: usize = 0; // teststr cursor (byte offset)
+    let mut on_var: zattr = 0; // c:2036 — *on_var = 0
+    let mut mask: zattr = 0; // c:2034
+    let mut found = true; // c:2033
+
+    // c:2037 — while (found && *teststr)
+    while found && pos < bytes.len() {
+        found = false; // c:2041
+        let rest = &spec[pos..];
+
+        if rest.starts_with("hl=") {
+            // c:2042-2047 — named highlight group (.zle.hlgroups resolver).
+            pos += 3; // c:2043
+            // c:2044 — parsehighlight up to ','. No .zle.hlgroups substrate:
+            // mirror C's hash-absent path (*atr = TXT_ERROR), consuming to
+            // the endchar without touching on_var (c:2045-2046 skipped).
+            let seg = &spec[pos..];
+            pos += seg.find(',').unwrap_or(seg.len());
+            found = true; // c:2047
+        } else if rest.starts_with("fg=") || rest.starts_with("bg=") {
+            let is_fg = bytes[pos] == b'f'; // c:2049
+            pos += 3; // c:2051
+            let atr = match_colour(Some(&mut pos), spec, is_fg, 0); // c:2052
+            // c:2053-2056
+            match bytes.get(pos).copied() {
+                Some(b',') => pos += 1,
+                Some(c) if c != b' ' => break,
+                _ => {}
+            }
+            found = true; // c:2057
+            if atr != TXT_ERROR {
+                // c:2059
+                // c:2060 — clear old fg/bg field before OR-ing the new colour.
+                on_var &= if is_fg {
+                    !TXT_ATTR_FG_MASK
+                } else {
+                    !TXT_ATTR_BG_MASK
+                };
+                on_var |= atr; // c:2061
+                mask |= if is_fg { TXTFGCOLOUR } else { TXTBGCOLOUR }; // c:2062
+            }
+        } else if rest.starts_with("layer=") {
+            // c:2064-2071 — layer directive. C guards on `layer != NULL`; the
+            // Rust sig carries no layer out-param, so we always parse+consume
+            // it (matching the layer!=NULL callers) and discard the value.
+            pos += 6; // c:2065
+            let seg = &spec[pos..];
+            let (val, tail) = zstrtol(seg, 10); // c:2066
+            pos += seg.len() - tail.len();
+            // c:2066 — C writes `(int) val` to *layer. The Rust sig has no
+            // layer out-param (see doc note); bind & discard the value.
+            let _layer = val as i32;
+            // c:2067-2070
+            match bytes.get(pos).copied() {
+                Some(b',') => pos += 1,
+                Some(c) if c != b' ' => break,
+                _ => {}
+            }
+            found = true; // c:2071
+        } else if rest.starts_with("opacity=") {
+            // c:2072-2094
+            pos += 8; // c:2073
+            let seg = &spec[pos..];
+            let (o1, tail) = zstrtol(seg, 10); // c:2074
+            pos += seg.len() - tail.len();
+            if (o1 as u64) > 100 {
+                break;
+            } // c:2075-2076 (zulong compare)
+            if bytes.get(pos) == Some(&b'%') {
+                pos += 1;
+            } // c:2077-2078
+            // c:2079-2080 — invert sense (0 => fully opaque) into fg field.
+            mask |= (100 - o1 as zattr) << TXT_ATTR_FG_COL_SHIFT;
+            let mut o_bg = o1; // c:2074 opacity retained for bg when no '/'
+            if bytes.get(pos) == Some(&b'/') {
+                // c:2081
+                pos += 1; // c:2082
+                let seg = &spec[pos..];
+                let (o2, tail) = zstrtol(seg, 10); // c:2083
+                pos += seg.len() - tail.len();
+                if (o2 as u64) > 100 {
+                    break;
+                } // c:2084-2085
+                if bytes.get(pos) == Some(&b'%') {
+                    pos += 1;
+                } // c:2086-2087
+                o_bg = o2;
+            }
+            mask |= (100 - o_bg as zattr) << TXT_ATTR_BG_COL_SHIFT; // c:2089
+            // c:2090-2093
+            match bytes.get(pos).copied() {
+                Some(b',') => pos += 1,
+                Some(c) if c != b' ' => break,
+                _ => {}
+            }
+            found = true; // c:2094
+        } else {
+            // c:2095-2120 — highlights[] table with optional `no` prefix.
+            let mut turn_off = false; // c:2096
+            let mut i = 0;
+            while !found && i < HIGHLIGHTS.len() {
+                // c:2097
+                let (name, mask_on, mask_off) = HIGHLIGHTS[i];
+                if spec[pos..].starts_with(name) {
+                    // c:2098
+                    let mut vp = pos + name.len(); // c:2099 — val = teststr + strlen(name)
+                    // c:2101-2104
+                    match bytes.get(vp).copied() {
+                        Some(b',') => vp += 1,
+                        Some(c) if c != b' ' => break, // c:2104 — break the hl loop
+                        _ => {}
+                    }
+                    if turn_off {
+                        // c:2106-2107
+                        on_var &= !mask_on & !mask_off;
+                    } else {
+                        // c:2108-2110
+                        on_var |= mask_on;
+                        on_var &= !mask_off;
+                    }
+                    mask |= mask_on | mask_off; // c:2112
+                    pos = vp; // c:2113 — teststr = val
+                    found = true; // c:2114
+                }
+                // c:2116-2119 — delayed to the end of the first iteration
+                // ("noclear" isn't valid): only when hl == highlights[0].
+                if i == 0 {
+                    if spec[pos..].starts_with("no") {
+                        turn_off = true; // c:2118
+                        pos += 2; // c:2119
+                    } else {
+                        turn_off = false;
+                    }
+                }
+                i += 1;
+            }
+        }
+    }
+    // c:2123-2126 — *setmask = mask; C returns the unconsumed teststr ptr.
+    (on_var, mask)
 }
 
 /// Build the ANSI SGR escape for an indexed colour (e.g. `\x1b[31m`).

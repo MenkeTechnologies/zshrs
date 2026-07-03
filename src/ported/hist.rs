@@ -2160,6 +2160,7 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
             let mut ring = hist_ring.lock().unwrap();
             ring.insert(0, he);
             histlinect.fetch_add(1, SeqCst);
+            drop(ring); // release ring: addhistnode re-locks hist_ring (non-reentrant)
             if (newflags & HIST_TMPSTORE) == 0 {
                 // c:1625
                 // addhistnode(histtab, he->node.nam, he) — hashtable wiring c:1626
@@ -3645,92 +3646,398 @@ pub fn flockhistfile(path: &str) -> i32 {
 }
 
 /// Port of `void savehistfile(char *fn, int err, int writeflags)` from Src/hist.c:2922.
-/// Rust idiom replacement: `fs::write` + `resolve_histfile` covers
-/// the C `fopen`+`fwrite`+`fclose` ladder with the `err` arg folded
-/// into the Result-bubbling; HFILE_APPEND/HFILE_USE_OPTIONS flag
-/// handling lives on the caller's writeflags decision.
-pub fn savehistfile(fn_path: Option<&str>, _writeflags: i32) {
+///
+/// The public Rust signature omits the C `err` argument; its value is
+/// recovered from the write flags. Every silent (`err == 0`) C call
+/// site also sets `HFILE_FAST` (the incremental / share saves at
+/// c:1193 and c:1639), while every loud (`err == 1`) site — shell exit
+/// (c:3961), `fc -W` / `fc -A` (c:1511/1517) and the trim recursion
+/// (c:3121) — leaves `HFILE_FAST` clear. So `err == !(writeflags &
+/// HFILE_FAST)` reproduces the C value at all call sites without
+/// changing the signature seen by callers.
+pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
     // c:2922
-    // c:2931-2934 — `if (!interact || savehistsiz <= 0 || !hist_ring
+    use crate::ported::zsh_h::{
+        APPENDHISTORY, EXTENDEDHISTORY, GETHIST_DOWNWARD, HFILE_APPEND, HFILE_NO_REWRITE,
+        HFILE_SKIPDUPS, HFILE_SKIPFOREIGN, HFILE_SKIPOLD, HISTSAVEBYCOPY, HISTSAVENODUPS,
+    };
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let mut writeflags = writeflags;
+    // c:2927 — zlong xcurhist = curhist - !!(histactive & HA_ACTIVE);
+    let xcurhist = curhist.load(SeqCst)
+        - if (histactive.load(SeqCst) & HA_ACTIVE) != 0 {
+            1
+        } else {
+            0
+        };
+    // c:2928 — int extended_history = isset(EXTENDEDHISTORY);
+    let mut extended_history = isset(EXTENDEDHISTORY);
+    // Recovered C `err` (see fn doc): silent when HFILE_FAST is set.
+    let mut err = writeflags & HFILE_FAST as i32 == 0;
+
+    // c:2931-2933 — `if (!interact || savehistsiz <= 0 || !hist_ring
     //                || (!fn && !(fn = getsparam("HISTFILE")))) return;`
     //
-    // Two early-return gates the previous Rust port missed:
-    //   1. `!interact` — non-interactive shells must not write
-    //      history. A script that has accumulated commands
-    //      shouldn't pollute the interactive user's HISTFILE.
-    //   2. `savehistsiz <= 0` — when SAVEHIST=0 (or negative),
-    //      history saving is explicitly disabled. The previous
-    //      port wrote an EMPTY file (cap=0 → no entries),
-    //      truncating the user's existing history.
-    // c:Src/hist.c:2932 — `!interact` gate. C zsh ALWAYS blocks the
-    // save path in non-interactive mode regardless of `fn` — the C
-    // body is `if (!interact || …) return;`. Honour that exactly so
-    // non-interactive scripts can't pollute the user's HISTFILE even
-    // by passing an explicit path. The previous Rust divergence
-    // (allow explicit `fc -W path`) broke the test pin at
-    // hist.rs:5388 (`!interact must skip write; original content
-    // preserved`) and is a Rule-A violation against the C source.
+    // `!interact` is test-pinned (non-interactive shells must never
+    // write the user's HISTFILE). The explicit-path accommodation lets
+    // `fc -W path` still create/write the file in contexts where
+    // SAVEHIST is unset (e.g. `zsh -fc`) or the ring is empty.
     if !isset(INTERACTIVE) {
         return;
     }
     let explicit_path = fn_path.is_some();
-    let cap = savehistsiz.load(SeqCst); // c:2932 savehistsiz
-                                        // For explicit fc -W path in -c mode, fall back to histsiz when
-                                        // savehistsiz isn't configured so the entries actually get
-                                        // written. Default histsiz is also 0 in -fc, so use the live
-                                        // ring length as the upper bound when both are unset.
-    let cap = if cap <= 0 && explicit_path {
-        // Use live ring length as the upper bound. Even when the
-        // ring is empty we still want to create the destination
-        // file (empty) so subsequent `fc -R` round-trips through
-        // a known path.
-        let live = hist_ring.lock().map(|r| r.len() as i64).unwrap_or(0);
-        live.max(0)
-    } else if cap <= 0 {
-        return;
-    } else {
-        cap
-    };
+    let savehistsiz_v = savehistsiz.load(SeqCst); // c:2932 savehistsiz
+    if savehistsiz_v <= 0 && !explicit_path {
+        return; // c:2932 savehistsiz <= 0
+    }
+    if ring_len() == 0 && !explicit_path {
+        return; // c:2931 !hist_ring
+    }
     let path: String = match fn_path {
-        // c:2933 fn / HISTFILE
+        // c:2932 fn / getsparam("HISTFILE")
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
             Some(p) => p,
             None => return,
         },
     };
-    // c:2937 — `if ((ret = lockhistfile(fn, 1)))`. Hard lock failure
-    // (ret != 2) must bail before truncating — otherwise we'd race
-    // another zsh that holds the write lock and we'd both blow the
-    // file away. ret=2 means "couldn't lock but proceed anyway".
-    let lock_ret = lockhistfile(Some(&path), 1);
-    if lock_ret != 0 && lock_ret != 2 {
-        crate::ported::utils::zerr(&format!(
-            "locking failed for {}: {}",
-            path,
-            std::io::Error::last_os_error()
-        ));
-        return;
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&path)
-    {
-        let cap = cap as usize;
-        let ring = hist_ring.lock().unwrap();
-        let mut count = 0;
-        for entry in ring.iter().rev() {
-            if count >= cap {
+
+    // c:2934-2951 — pick the first entry to write and take the lock.
+    let he: Option<i64>;
+    if writeflags & HFILE_FAST as i32 != 0 {
+        // c:2935 — he = gethistent(lasthist.next_write_ev, GETHIST_DOWNWARD);
+        let start_ev = lasthist.lock().unwrap().next_write_ev;
+        let mut cur = gethistent(start_ev, GETHIST_DOWNWARD);
+        // c:2936-2939 — advance past entries already written (HIST_OLD).
+        while let Some(h) = cur {
+            let flags = ring_get(h).map(|e| e.node.flags).unwrap_or(0);
+            if flags & HIST_OLD as i32 == 0 {
                 break;
             }
-            let dur = entry.ftim.saturating_sub(entry.stim);
-            let _ = writeln!(file, ": {}:{};{}", entry.stim, dur, entry.node.nam);
-            count += 1;
+            lasthist.lock().unwrap().next_write_ev = h + 1; // c:2937
+            cur = down_histent(h); // c:2938
+        }
+        he = cur;
+        // c:2940 — if (!he || lockhistfile(fn, 0)) return;
+        if he.is_none() || lockhistfile(Some(&path), 0) != 0 {
+            return;
+        }
+        // c:2942-2943 — too many lines already: drop to a full rewrite.
+        if histfile_linect.load(SeqCst) > savehistsiz_v + savehistsiz_v / 5 {
+            writeflags &= !(HFILE_FAST as i32);
+        }
+    } else {
+        // c:2946-2949 — if (lockhistfile(fn, 1)) { zerr(...); return; }
+        // (ret == 2 means "couldn't lock but proceed anyway".)
+        let lret = lockhistfile(Some(&path), 1);
+        if lret != 0 && lret != 2 {
+            crate::ported::utils::zerr(&format!(
+                "locking failed for {}: {}",
+                path,
+                std::io::Error::last_os_error()
+            ));
+            return;
+        }
+        he = ring_oldest(); // c:2950 he = hist_ring->down;
+    }
+
+    // c:2952-2962 — HFILE_USE_OPTIONS derives append/skip flags from options.
+    if writeflags & HFILE_USE_OPTIONS as i32 != 0 {
+        if isset(APPENDHISTORY)
+            || isset(INCAPPENDHISTORY)
+            || isset(INCAPPENDHISTORYTIME)
+            || isset(SHAREHISTORY)
+        {
+            writeflags |= (HFILE_APPEND | HFILE_SKIPOLD) as i32; // c:2955
+        } else {
+            histfile_linect.store(0, SeqCst); // c:2957
+        }
+        if isset(HISTSAVENODUPS) {
+            writeflags |= HFILE_SKIPDUPS as i32; // c:2959
+        }
+        if isset(SHAREHISTORY) {
+            extended_history = true; // c:2961
         }
     }
-    unlockhistfile(&path);
+
+    // c:2963-3016 — open the destination: append, plain truncate, or
+    // HISTSAVEBYCOPY (write `<fn>.new` then rename over `fn`).
+    let umpath = crate::ported::utils::unmeta(&path);
+    let append_mode = writeflags & HFILE_APPEND as i32 != 0;
+    let mut tmpfile: Option<String> = None;
+    let out: Option<std::fs::File> = if append_mode {
+        // c:2964-2967 — open(fn, O_CREAT|O_WRONLY|O_APPEND, 0600)
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&umpath)
+            .ok()
+    } else if !isset(HISTSAVEBYCOPY) {
+        // c:2968-2971 — open(fn, O_CREAT|O_WRONLY|O_TRUNC, 0600)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&umpath)
+            .ok()
+    } else {
+        // c:2972-3015 — safe write through a sibling `.new` file.
+        let tf = format!("{}.new", umpath); // c:2973 bicat(fn, ".new")
+        // c:2974 — unlink(tmpfile); tolerate ENOENT.
+        let unlink_ok = match std::fs::remove_file(&tf) {
+            Ok(()) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+        if !unlink_ok {
+            None // c:2975 out = NULL;
+        } else {
+            let old_meta = std::fs::metadata(&umpath).ok(); // c:2978 stat(fn)
+            let euid = unsafe { libc::geteuid() };
+            // c:2981-2985 — rewriting must not change ownership (root exempt).
+            let owner_change = old_meta
+                .as_ref()
+                .map(|m| euid != 0 && m.uid() != euid)
+                .unwrap_or(false);
+            if owner_change {
+                // c:2986-2996 — skip; report only when err is set.
+                if err {
+                    if isset(APPENDHISTORY)
+                        || isset(INCAPPENDHISTORY)
+                        || isset(INCAPPENDHISTORYTIME)
+                        || isset(SHAREHISTORY)
+                    {
+                        crate::ported::utils::zerr(&format!(
+                            "rewriting {} would change its ownership -- skipped",
+                            path
+                        ));
+                    } else {
+                        crate::ported::utils::zerr(&format!(
+                            "rewriting {} would change its ownership -- history not saved",
+                            path
+                        ));
+                    }
+                    err = false; // c:2994 err = 0; — don't also report below.
+                }
+                None
+            } else {
+                // c:2998 — open(tmpfile, O_CREAT|O_WRONLY|O_EXCL, 0600)
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&tf)
+                {
+                    Ok(f) => {
+                        // c:3007-3013 — match the original owner and mode.
+                        if let Some(ref m) = old_meta {
+                            let fd = f.as_raw_fd();
+                            unsafe {
+                                let _ = libc::fchown(fd, m.uid(), m.gid()); // c:3010
+                                let _ = libc::fchmod(fd, m.mode() as libc::mode_t); // c:3012
+                            }
+                        }
+                        tmpfile = Some(tf);
+                        Some(f)
+                    }
+                    Err(_) => None, // c:3003 out = NULL;
+                }
+            }
+        }
+    };
+
+    let mut ret: i32 = 0;
+    if let Some(mut out) = out {
+        crate::ported::mem::pushheap(); // c:3021
+
+        // c:3018-3027 — compile the $HISTORY_IGNORE pattern once.
+        let histpat = crate::ported::params::getsparam("HISTORY_IGNORE").and_then(|hi| {
+            let mut s = crate::ported::string::dupstring(&hi); // c:3024 dupstring
+            crate::ported::glob::tokenize(&mut s); // c:3024 tokenize
+            crate::ported::glob::remnulargs(&mut s); // c:3025 remnulargs
+            crate::ported::pattern::patcompile(&s, 0, None) // c:3026 patcompile
+        });
+
+        // Running file offset for lasthist.fpos (ftell parity). Append
+        // continues from the current size; truncate/copy start at 0.
+        let mut fpos: i64 = if append_mode {
+            std::fs::metadata(&umpath)
+                .map(|m| m.len() as i64)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let mut start: Option<String> = None;
+
+        // c:3030 — for (; he && he->histnum <= xcurhist; he = down_histent(he))
+        let mut cur = he;
+        while let Some(h) = cur {
+            let entry = match ring_get(h) {
+                Some(e) => e,
+                None => break,
+            };
+            if entry.histnum > xcurhist {
+                break; // c:3030
+            }
+            let flags = entry.node.flags;
+            // c:3033-3036 — skip dup/foreign/tmpstore per the write flags.
+            if (writeflags & HFILE_SKIPDUPS as i32 != 0 && flags & HIST_DUP as i32 != 0)
+                || (writeflags & HFILE_SKIPFOREIGN as i32 != 0
+                    && flags & HIST_FOREIGN as i32 != 0)
+                || flags & HIST_TMPSTORE as i32 != 0
+            {
+                cur = down_histent(h);
+                continue;
+            }
+            // c:3037-3040 — skip entries matching $HISTORY_IGNORE.
+            if let Some(ref pat) = histpat {
+                if crate::ported::pattern::pattry(
+                    pat,
+                    &crate::ported::utils::metafy(&entry.node.nam),
+                ) {
+                    cur = down_histent(h);
+                    continue;
+                }
+            }
+            // c:3041-3047 — HFILE_SKIPOLD: skip old/nowrite, else mark old.
+            if writeflags & HFILE_SKIPOLD as i32 != 0 {
+                if flags & (HIST_OLD | HIST_NOWRITE) as i32 != 0 {
+                    cur = down_histent(h);
+                    continue;
+                }
+                if let Ok(mut ring) = hist_ring.lock() {
+                    if let Some(e) = ring.iter_mut().find(|e| e.histnum == h) {
+                        e.node.flags |= HIST_OLD as i32; // c:3044
+                    }
+                }
+                if writeflags & HFILE_USE_OPTIONS as i32 != 0 {
+                    lasthist.lock().unwrap().next_write_ev = entry.histnum + 1; // c:3046
+                }
+            }
+            // c:3048-3052 — record write bookkeeping under USE_OPTIONS.
+            if writeflags & HFILE_USE_OPTIONS as i32 != 0 {
+                let mut lh = lasthist.lock().unwrap();
+                lh.fpos = fpos; // c:3049 lasthist.fpos = ftell(out)
+                lh.stim = entry.stim; // c:3050
+                drop(lh);
+                histfile_linect.fetch_add(1, SeqCst); // c:3051
+            }
+
+            // c:3053-3073 — emit the command text with escaping.
+            start = Some(entry.node.nam.clone()); // c:3053 start = he->node.nam
+            let text = entry.node.nam.as_bytes();
+            let mut buf: Vec<u8> = Vec::with_capacity(text.len() + 24);
+            if extended_history {
+                // c:3054-3056 — ": %ld:%ld;" prefix (only in extended mode).
+                let dur = if entry.ftim != 0 {
+                    entry.ftim - entry.stim
+                } else {
+                    0
+                };
+                let _ = write!(buf, ": {}:{};", entry.stim, dur);
+            } else if text.first() == Some(&b':') {
+                buf.push(b'\\'); // c:3057-3058 escape a leading ':'
+            }
+            // c:3060-3067 — escape embedded newlines; track trailing '\'.
+            let mut end_backslashes = false;
+            for &c in text {
+                if c == b'\n' {
+                    buf.push(b'\\'); // c:3062
+                }
+                end_backslashes = c == b'\\' || (end_backslashes && c == b' '); // c:3064
+                buf.push(c); // c:3065
+            }
+            if end_backslashes {
+                buf.push(b' '); // c:3070-3071
+            }
+            buf.push(b'\n'); // c:3072
+            if out.write_all(&buf).is_err() {
+                ret = -1; // c:3065/3072 — fputc returned < 0.
+                break;
+            }
+            fpos += buf.len() as i64;
+            cur = down_histent(h);
+        }
+
+        // c:3075-3085 — final size/mtime + last-written text (USE_OPTIONS).
+        if ret >= 0 && start.is_some() && writeflags & HFILE_USE_OPTIONS as i32 != 0 {
+            let _ = out.flush(); // c:3077 fflush(out)
+            if let Ok(md) = out.metadata() {
+                let mut lh = lasthist.lock().unwrap();
+                lh.fsiz = md.len() as i64; // c:3079
+                lh.mtim = md.mtime(); // c:3080
+            }
+            lasthist.lock().unwrap().text = start.clone(); // c:3082-3083
+        }
+
+        // c:3086 — fclose(out).
+        drop(out);
+
+        if ret >= 0 {
+            if let Some(ref tf) = tmpfile {
+                // c:3089-3103 — rename the temp copy over the real file.
+                if std::fs::rename(tf, &umpath).is_err() {
+                    crate::ported::utils::zerr(&format!(
+                        "can't rename {}.new to $HISTFILE",
+                        path
+                    ));
+                    ret = -1; // c:3092
+                    err = false; // c:3093 err = 0;
+                }
+            }
+
+            // c:3106-3125 — SKIPOLD (and not FAST/NO_REWRITE): re-read the
+            // just-written file capped to savehistsiz, then rewrite it
+            // trimmed. This enforces SAVEHIST on the append/share paths.
+            if ret >= 0
+                && writeflags & HFILE_SKIPOLD as i32 != 0
+                && writeflags & (HFILE_FAST | HFILE_NO_REWRITE) as i32 == 0
+            {
+                let remember_histactive = histactive.load(SeqCst); // c:3108
+                histactive.store(0, SeqCst); // c:3111
+                pushhiststack(None, savehistsiz_v, savehistsiz_v, -1); // c:3113
+                if isset(HISTSAVENODUPS) {
+                    hist_ignore_all_dups.store(1, SeqCst); // c:3115
+                }
+                readhistfile(Some(&path), if err { 1 } else { 0 }, 0); // c:3116
+                hist_ignore_all_dups
+                    .store(if isset(HISTIGNOREALLDUPS) { 1 } else { 0 }, SeqCst); // c:3117
+                if errflag.load(SeqCst) & ERRFLAG_INT != 0 {
+                    ret = -1; // c:3119
+                } else if histlinect.load(SeqCst) != 0 {
+                    savehistfile(Some(&path), 0); // c:3121
+                }
+                pophiststack(); // c:3123
+                histactive.store(remember_histactive, SeqCst); // c:3124
+            }
+        }
+
+        crate::ported::mem::popheap(); // c:3128
+    } else {
+        ret = -1; // c:3130
+    }
+
+    // c:3132-3137 — report a write failure on stderr when err is set.
+    if ret < 0 && err {
+        if tmpfile.is_some() {
+            crate::ported::utils::zerr(&format!(
+                "failed to write history file {}.new: {}",
+                path,
+                std::io::Error::last_os_error()
+            ));
+        } else {
+            crate::ported::utils::zerr(&format!(
+                "failed to write history file {}: {}",
+                path,
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    // c:3138-3139 — free(tmpfile): the owned String drops automatically.
+
+    unlockhistfile(&path); // c:3141
 }
 
 /// Port of `int lockhistct` from Src/hist.c. Re-entrant lock counter.

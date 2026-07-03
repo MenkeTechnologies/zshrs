@@ -7861,101 +7861,553 @@ pub fn execpline2(
 }
 
 /// Port of `execpline(Estate state, wordcode slcode, int how, int last1)`
-/// from `Src/exec.c:1668-1942`. Walks the WC_PIPE chain, sets up
-/// pipes/fork between stages, handles Z_TIMED / Z_ASYNC.
+/// from `Src/exec.c:1724-2041`. Full faithful port: allocates a job-table
+/// entry via `initjob`, sets up coproc mpipes, drives the whole
+/// (multi-stage) pipeline through `execpline2` (which performs the real
+/// per-stage mpipe/fork/exec), then either spawns the job asynchronously
+/// (`Z_ASYNC` -> `spawnjob`/`deletejob`) or waits synchronously
+/// (`waitjobs`), including the `list_pipe` stop/continue fork machinery
+/// (SUBJOB/SUPERJOB linkage) that re-forks the shell to keep an
+/// interactively-suspended right-hand pipeline stage running.
 ///
-/// The full body needs: pipe(), fork(), execcmd_exec per-stage, job-
-/// table installation, wait-status reaping. Until those primitives
-/// land in faithfully-ported form, the structural shape is preserved
-/// here: walk the WC_PIPE chain, exec each cmd inline (the inlined
-/// match is the same dispatch C's exec.c:2901-3700 uses), propagate
-/// LASTVAL through stages. Single-cmd pipelines work end-to-end;
-/// multi-stage pipelines fall back to sequential execution (status
-/// of last stage) until pipe + fork land.
+/// Divergences from C, each forced by the Rust substrate and cited
+/// inline at the point of use:
+///   * `initjob` never returns -1 (the `Vec`-backed jobtab grows on
+///     demand), so C's `initjob() == -1` table-full bailout (c:1756-1760)
+///     is unreachable and omitted.
+///   * `errbrk_saved` / `prev_errflag` / `prev_breaks` (jobs.c:128
+///     globals) are only *read* here; their setter lives in the
+///     not-yet-ported jobs.c reaping path, so they stay 0 and the
+///     `if (errbrk_saved)` restore (c:1998-2003) is a faithful no-op.
 pub fn execpline(state: &mut estate, slcode: wordcode, how: i32, last1: i32) -> i32 {
-    use crate::ported::zsh_h::{WC_SUBLIST_FLAGS, WC_SUBLIST_NOT, Z_TIMED};
-    let slflags = WC_SUBLIST_FLAGS(slcode); // c:1673
-                                            // c:1677-1680 — `if (wc_code(code) != WC_PIPE && !(how & Z_TIMED))
-                                            //                  return lastval = (slflags & WC_SUBLIST_NOT) != 0;
-                                            //                else if (slflags & WC_SUBLIST_NOT) last1 = 0;`
-    if state.pc >= state.prog.prog.len() || wc_code(state.prog.prog[state.pc]) != WC_PIPE {
-        if (how & Z_TIMED as i32) == 0 {
-            let ret = if (slflags & WC_SUBLIST_NOT) != 0 {
-                1
-            } else {
-                0
-            };
-            LASTVAL.store(ret, Ordering::Relaxed);
-            return ret;
+    use crate::ported::builtin::{BREAKS, LOOPS, RETFLAG};
+    use crate::ported::init::zleentry;
+    use crate::ported::jobs::stat as jst;
+    use crate::ported::jobs::{
+        addproc, clearoldjobtab, deletejob, hasprocs, initjob, makerunning, pipecleanfilelist,
+        printjob, spawnjob, waitjobs, CURJOB, LASTVAL2, PREVJOB,
+    };
+    use crate::ported::modules::clone::{coprocin, coprocout};
+    use crate::ported::signals::killjb;
+    use crate::ported::signals_h::{
+        queue_signal_level, queue_signals, restore_queue_signals, unqueue_signals,
+    };
+    use crate::ported::utils::read_loop;
+    use crate::ported::zsh_h::{
+        jobbing, INTERACTIVE, LONGLISTJOBS, STAT_SUBJOB_ORPHANED, WC_PIPE, WC_PIPE_END,
+        WC_PIPE_TYPE, WC_SUBLIST_COPROC, WC_SUBLIST_FLAGS, WC_SUBLIST_NOT, ZLE_CMD_TRASH, Z_ASYNC,
+        Z_DISOWN, Z_TIMED,
+    };
+
+    // c:1731 — `static int lastwj, lpforked;` (persist across calls).
+    static LASTWJ: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static LPFORKED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    // c:465 (exec.c) — `static struct timespec list_pipe_start;`. Used as
+    // the addproc bgtime for the re-forked super-job leader (c:1841).
+    static LIST_PIPE_START: std::sync::Mutex<Option<std::time::Instant>> =
+        std::sync::Mutex::new(None);
+    // c:128 (jobs.c) — `int prev_errflag, prev_breaks, errbrk_saved;`. The
+    // setter is in the not-yet-ported reaping path, so these stay 0 here.
+    static ERRBRK_SAVED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static PREV_ERRFLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static PREV_BREAKS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+    let jt = JOBTAB.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    // Read/write the shared thisjob slot.
+    let thisjob_set = |v: i32| {
+        if let Some(m) = THISJOB.get() {
+            *m.lock().unwrap() = v;
         }
+    };
+    let thisjob_get = || THISJOB.get().map(|m| *m.lock().unwrap()).unwrap_or(-1);
+
+    let old_simple_pline = simple_pline.load(Ordering::Relaxed); // c:1728
+    let mut slflags = WC_SUBLIST_FLAGS(slcode); // c:1729
+    let code = state.prog.prog[state.pc]; // c:1730 `wordcode code = *state->pc++;`
+    state.pc += 1;
+
+    // c:1733-1736 — non-pipe, non-timed sublist short-circuits with the
+    // negated-empty status.
+    if wc_code(code) != WC_PIPE && (how & Z_TIMED) == 0 {
+        let r = i32::from((slflags & WC_SUBLIST_NOT) != 0);
+        LASTVAL.store(r, Ordering::Relaxed);
+        return r;
     }
     let mut last1 = last1;
     if (slflags & WC_SUBLIST_NOT) != 0 {
-        last1 = 0; // c:1680
+        last1 = 0; // c:1736
     }
-    let mut code = state.prog.prog[state.pc];
-    state.pc += 1;
-    let mut last_status: i32 = 0;
-    use crate::ported::zsh_h::{WC_PIPE_END, WC_PIPE_TYPE};
-    let _ = how;
-    let _ = last1;
-    // c:1700-1940 — main WC_PIPE loop. Each iter: exec one cmd, advance.
-    loop {
-        // c:2901-3700 — execcmd_exec dispatch tail inlined: match the
-        // WC_* tag at state.pc and dispatch to the matching execX.
-        // Same dispatch as `execfuncs[]` (exec.c:5499).
-        use crate::ported::zsh_h::{
-            WC_ARITH, WC_CASE, WC_COND, WC_CURSH, WC_FOR, WC_FUNCDEF, WC_IF, WC_REPEAT, WC_SELECT,
-            WC_SIMPLE, WC_SUBSH, WC_TIMED, WC_TRY, WC_WHILE,
-        };
-        let s = if state.pc < state.prog.prog.len() {
-            let inner = state.prog.prog[state.pc];
-            match wc_code(inner) {
-                WC_SIMPLE => execsimple(state),
-                WC_SUBSH | WC_CURSH => execcursh(state, 0),
-                WC_FOR => execfor(state, 0),
-                WC_SELECT => execselect(state, 0),
-                WC_CASE => execcase(state, 0),
-                WC_IF => execif(state, 0),
-                WC_WHILE => execwhile(state, 0),
-                WC_REPEAT => execrepeat(state, 0),
-                WC_FUNCDEF => execfuncdef(state, None),
-                WC_TIMED => exectime(state, 0),
-                WC_COND => execcond(state, 0),
-                WC_ARITH => execarith(state, 0),
-                WC_TRY => exectry(state, 0),
-                _ => {
-                    state.pc += 1;
-                    0
+    let mut how = how;
+
+    queue_signals(); // c:1744
+
+    let pj = thisjob_get(); // c:1746 — `pj = thisjob;`
+    let mut ipipe: [i32; 2] = [0, 0]; // c:1747
+    let mut opipe: [i32; 2] = [0, 0];
+    child_block(); // c:1748
+
+    // c:1755 — `thisjob = newjob = initjob();` (Rust jobtab grows on
+    // demand, so initjob never fails; the -1 bailout is unreachable).
+    let newjob = {
+        let mut g = jt.lock().unwrap();
+        initjob(&mut g)
+    };
+    thisjob_set(newjob as i32);
+    if (how & Z_TIMED) != 0 {
+        // c:1760-1761
+        let mut g = jt.lock().unwrap();
+        g[newjob].stat |= jst::TIMED;
+    }
+
+    if (slflags & WC_SUBLIST_COPROC) != 0 {
+        // c:1763-1782
+        how = Z_ASYNC; // c:1764
+        if coprocin.load(Ordering::Relaxed) >= 0 {
+            zclose(coprocin.load(Ordering::Relaxed)); // c:1766
+            zclose(coprocout.load(Ordering::Relaxed)); // c:1767
+        }
+        if mpipe(&mut ipipe) < 0 {
+            // c:1769-1771
+            coprocin.store(-1, Ordering::Relaxed);
+            coprocout.store(-1, Ordering::Relaxed);
+            slflags &= !WC_SUBLIST_COPROC;
+        } else if mpipe(&mut opipe) < 0 {
+            // c:1772-1776
+            unsafe {
+                libc::close(ipipe[0]);
+                libc::close(ipipe[1]);
+            }
+            coprocin.store(-1, Ordering::Relaxed);
+            coprocout.store(-1, Ordering::Relaxed);
+            slflags &= !WC_SUBLIST_COPROC;
+        } else {
+            // c:1777-1781
+            coprocin.store(ipipe[0], Ordering::Relaxed);
+            coprocout.store(opipe[1], Ordering::Relaxed);
+            fdtable_set(ipipe[0], FDT_UNUSED);
+            fdtable_set(opipe[1], FDT_UNUSED);
+        }
+    }
+
+    // c:1788-1793 — `if (!pline_level++) { ... }`.
+    let prev_pline = pline_level.fetch_add(1, Ordering::Relaxed);
+    if prev_pline == 0 {
+        list_pipe_pid.store(0, Ordering::Relaxed); // c:1789
+        nowait.store(0, Ordering::Relaxed); // c:1790
+        simple_pline.store(
+            i32::from(WC_PIPE_TYPE(code) == WC_PIPE_END),
+            Ordering::Relaxed,
+        ); // c:1791
+        list_pipe_job.store(newjob as i32, Ordering::Relaxed); // c:1792
+    }
+    LASTWJ.store(0, Ordering::Relaxed); // c:1794
+    LPFORKED.store(0, Ordering::Relaxed);
+    execpline2(state, code, how, opipe[0], ipipe[1], last1); // c:1795
+    pline_level.fetch_sub(1, Ordering::Relaxed); // c:1796
+
+    if (how & Z_ASYNC) != 0 {
+        // c:1797-1818
+        clearoldjobtab(); // c:1798
+        LASTWJ.store(newjob as i32, Ordering::Relaxed); // c:1799
+
+        if thisjob_get() == list_pipe_job.load(Ordering::Relaxed) {
+            list_pipe_job.store(0, Ordering::Relaxed); // c:1801-1802
+        }
+        {
+            let mut g = jt.lock().unwrap();
+            let tj = thisjob_get();
+            if tj >= 0 {
+                g[tj as usize].stat |= jst::NOSTTY; // c:1803
+            }
+        }
+        if (slflags & WC_SUBLIST_COPROC) != 0 {
+            zclose(ipipe[1]); // c:1805
+            zclose(opipe[0]); // c:1806
+        }
+        if (how & Z_DISOWN) != 0 {
+            // c:1808-1812
+            let tj = thisjob_get();
+            if tj >= 0 {
+                let mut g = jt.lock().unwrap();
+                pipecleanfilelist(&mut g[tj as usize], false); // c:1809
+                deletejob(&mut g[tj as usize], true); // c:1810
+            }
+            thisjob_set(-1); // c:1811
+        } else {
+            spawnjob(); // c:1814 (locks JOBTAB internally — no guard held)
+        }
+        child_unblock(); // c:1815
+        unqueue_signals(); // c:1816
+        LASTVAL.store(0, Ordering::Relaxed); // c:1818 `return lastval = 0;`
+        return 0;
+    }
+
+    // c:1819-2033 — synchronous branch.
+    if newjob as i32 != LASTWJ.load(Ordering::Relaxed) {
+        // c:1820
+        let mut jn_idx = newjob; // `Job jn = jobtab + newjob;`
+
+        // c:1824-1825 — a list_pipe sub-shell child exits here.
+        if newjob as i32 == list_pipe_job.load(Ordering::Relaxed)
+            && list_pipe_child.load(Ordering::Relaxed) != 0
+        {
+            unsafe { libc::_exit(0) };
+        }
+
+        LASTWJ.store(newjob as i32, Ordering::Relaxed); // c:1826
+        thisjob_set(newjob as i32);
+
+        // c:1828-1830 — suppress the job announcement in nested pipes.
+        {
+            let mut g = jt.lock().unwrap();
+            let noprint = list_pipe.load(Ordering::Relaxed) != 0
+                || (pline_level.load(Ordering::Relaxed) != 0
+                    && (how & Z_TIMED) == 0
+                    && (g[jn_idx].stat & jst::NOSTTY) == 0);
+            if noprint {
+                g[jn_idx].stat |= jst::NOPRINT;
+            }
+        }
+
+        if nowait.load(Ordering::Relaxed) != 0 {
+            // c:1832-1882
+            if pline_level.load(Ordering::Relaxed) == 0 {
+                // c:1833-1875
+                *CURJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap() =
+                    newjob as i32; // c:1836
+                // c:1838 — DPUTS(!list_pipe_pid, "invalid list_pipe_pid").
+                // c:1840-1841 — record the re-forked leader in the super-job.
+                {
+                    let txt = LIST_PIPE_TEXT
+                        .lock()
+                        .map(|s| s.clone())
+                        .unwrap_or_default();
+                    let bgt = *LIST_PIPE_START.lock().unwrap();
+                    let mut g = jt.lock().unwrap();
+                    addproc(
+                        &mut g[jn_idx],
+                        list_pipe_pid.load(Ordering::Relaxed),
+                        &txt,
+                        false,
+                        bgt,
+                        -1,
+                        -1,
+                    );
+                }
+                {
+                    let mut g = jt.lock().unwrap();
+                    // c:1845 — `if (!jn->procs->next || lpforked == 2)`.
+                    if g[jn_idx].procs.len() <= 1 || LPFORKED.load(Ordering::Relaxed) == 2 {
+                        g[jn_idx].gleader = list_pipe_pid.load(Ordering::Relaxed); // c:1845
+                        g[jn_idx].stat |= jst::SUBLEADER; // c:1847
+                        // c:1852-1861 — adopt any orphaned subjob; we
+                        // become its super-job.
+                        for jobsub in 1..g.len() {
+                            if (g[jobsub].stat & STAT_SUBJOB_ORPHANED) != 0 {
+                                g[jn_idx].other = jobsub as i32; // c:1855
+                                g[jn_idx].stat |= jst::SUPERJOB; // c:1856
+                                g[jobsub].stat &= !STAT_SUBJOB_ORPHANED; // c:1857
+                                g[jobsub].other = list_pipe_pid.load(Ordering::Relaxed); // c:1858
+                            }
+                        }
+                    }
+                    // c:1863-1869 — copy a stopped proc status from the
+                    // subjob onto our last proc.
+                    let other = g[jn_idx].other as usize;
+                    let stopped = if other < g.len() {
+                        g[other].procs.iter().find(|p| p.is_stopped()).map(|p| p.status)
+                    } else {
+                        None
+                    };
+                    if let Some(st) = stopped {
+                        if let Some(last) = g[jn_idx].procs.last_mut() {
+                            last.status = st;
+                        }
+                    }
+                    // c:1870-1872
+                    g[jn_idx].stat &= !(jst::DONE | jst::NOPRINT);
+                    g[jn_idx].stat |=
+                        jst::STOPPED | jst::CHANGED | jst::LOCKED | jst::INUSE;
+                }
+                // c:1875 — printjob(jn, !!isset(LONGLISTJOBS), 1).
+                {
+                    let g = jt.lock().unwrap();
+                    let cur = *CURJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
+                    let prev = *PREVJOB.get_or_init(|| std::sync::Mutex::new(-1)).lock().unwrap();
+                    let s = printjob(
+                        &g[jn_idx],
+                        jn_idx,
+                        i32::from(isset(LONGLISTJOBS)),
+                        if cur >= 0 { Some(cur as usize) } else { None },
+                        if prev >= 0 { Some(prev as usize) } else { None },
+                    );
+                    if !s.is_empty() {
+                        eprintln!("{}", s);
+                    }
+                }
+            } else if newjob as i32 != list_pipe_job.load(Ordering::Relaxed) {
+                let mut g = jt.lock().unwrap();
+                deletejob(&mut g[jn_idx], false); // c:1878
+            } else {
+                LASTWJ.store(-1, Ordering::Relaxed); // c:1879
+            }
+        }
+
+        ERRBRK_SAVED.store(0, Ordering::Relaxed); // c:1883
+        // c:1884-2015 — `for (; !nowait;)` wait / continue-fork loop.
+        loop {
+            if nowait.load(Ordering::Relaxed) != 0 {
+                break;
+            }
+            if list_pipe_child.load(Ordering::Relaxed) != 0 {
+                // c:1886-1887
+                let mut g = jt.lock().unwrap();
+                g[jn_idx].stat |= jst::NOPRINT;
+                makerunning(&mut g, jn_idx);
+            }
+            // c:1889-1894 — wait unless the job is LOCKED.
+            let locked = {
+                let g = jt.lock().unwrap();
+                (g[jn_idx].stat & jst::LOCKED) != 0
+            };
+            let updated;
+            if !locked {
+                let tj = thisjob_get();
+                {
+                    let mut g = jt.lock().unwrap();
+                    updated = hasprocs(&g, tj as usize); // c:1890
+                    waitjobs(&mut g, tj as usize); // c:1891
+                }
+                child_block(); // c:1892
+            } else {
+                updated = false; // c:1894
+            }
+            // c:1895-1902 — nudge the signal queue when the LHS job is
+            // still running but we saw no update.
+            let lpj = list_pipe_job.load(Ordering::Relaxed);
+            let nudge = !updated
+                && lpj != 0
+                && {
+                    let g = jt.lock().unwrap();
+                    (lpj as usize) < g.len()
+                        && hasprocs(&g, lpj as usize)
+                        && (g[lpj as usize].stat & jst::STOPPED) == 0
+                };
+            if nudge {
+                let q = queue_signal_level();
+                child_unblock();
+                child_block();
+                dont_queue_signals();
+                restore_queue_signals(q);
+            }
+            // c:1903-1907 — forward a fatal signal from a done child.
+            let jn_done = {
+                let g = jt.lock().unwrap();
+                (g[jn_idx].stat & jst::DONE) != 0
+            };
+            if list_pipe_child.load(Ordering::Relaxed) != 0
+                && jn_done
+                && (LASTVAL2.load(Ordering::Relaxed) & 0o200) != 0
+            {
+                unsafe {
+                    libc::killpg(
+                        mypgrp.load(Ordering::Relaxed),
+                        LASTVAL2.load(Ordering::Relaxed) & !0o200,
+                    );
                 }
             }
-        } else {
-            0
+            // c:1908-1921 — a pipeline with the shell running the RHS was
+            // stopped; fork to let it continue.
+            let stop_fork = list_pipe_child.load(Ordering::Relaxed) == 0
+                && LPFORKED.load(Ordering::Relaxed) == 0
+                && subsh.load(Ordering::Relaxed) == 0
+                && jobbing()
+                && (list_pipe.load(Ordering::Relaxed) != 0
+                    || last1 != 0
+                    || pline_level.load(Ordering::Relaxed) != 0)
+                && {
+                    let g = jt.lock().unwrap();
+                    (g[jn_idx].stat & jst::STOPPED) != 0
+                        || (lpj != 0
+                            && pline_level.load(Ordering::Relaxed) != 0
+                            && (lpj as usize) < g.len()
+                            && (g[lpj as usize].stat & jst::STOPPED) != 0)
+                };
+            if stop_fork {
+                let mut synch: [i32; 2] = [0, 0]; // c:1913
+                let mut bgtime = ZshTimespec {
+                    tv_sec: 0,
+                    tv_nsec: 0,
+                };
+                let mut pid: libc::pid_t = 0;
+                let pipe_failed = unsafe { libc::pipe(synch.as_mut_ptr()) } < 0; // c:1922
+                if !pipe_failed {
+                    pid = zfork(Some(&mut bgtime)); // c:1922
+                }
+                if pipe_failed || pid == -1 {
+                    // c:1923-1935 — failure: can't suspend, resume the job.
+                    if pid < 0 {
+                        unsafe {
+                            libc::close(synch[0]);
+                            libc::close(synch[1]);
+                        }
+                    } else {
+                        zerr(&format!("pipe failed: {}", std::io::Error::last_os_error()));
+                        // c:1926
+                    }
+                    let _ = zleentry(ZLE_CMD_TRASH); // c:1929
+                    eprintln!("zsh: job can't be suspended"); // c:1930
+                    {
+                        let mut g = jt.lock().unwrap();
+                        makerunning(&mut g, jn_idx); // c:1932
+                    }
+                    killjb(jn_idx, libc::SIGCONT); // c:1933
+                    thisjob_set(newjob as i32); // c:1934
+                } else if pid != 0 {
+                    // c:1936-1973 — parent: job control lives here.
+                    let gl = {
+                        let g = jt.lock().unwrap();
+                        g.get(lpj as usize).map(|j| j.gleader).unwrap_or(0)
+                    };
+                    LPFORKED.store(
+                        if unsafe { libc::killpg(gl, 0) } == -1 { 2 } else { 1 },
+                        Ordering::Relaxed,
+                    ); // c:1951-1952
+                    list_pipe_pid.store(pid, Ordering::Relaxed); // c:1953
+                    *LIST_PIPE_START.lock().unwrap() = Some(std::time::Instant::now()); // c:1954
+                    nowait.store(1, Ordering::Relaxed); // c:1955
+                    errflag.fetch_or(ERRFLAG_ERROR, Ordering::Relaxed); // c:1956
+                    BREAKS.store(LOOPS.load(Ordering::SeqCst), Ordering::SeqCst); // c:1957
+                    unsafe { libc::close(synch[1]) }; // c:1958
+                    let mut dummy = [0u8; 1];
+                    let _ = read_loop(synch[0], &mut dummy); // c:1959
+                    unsafe { libc::close(synch[0]) }; // c:1960
+                    // c:1962-1970 — link super/sub jobs if we're still live.
+                    let jn_done2 = {
+                        let g = jt.lock().unwrap();
+                        (g[jn_idx].stat & jst::DONE) != 0
+                    };
+                    if !jn_done2 {
+                        let mut g = jt.lock().unwrap();
+                        g[lpj as usize].other = newjob as i32; // c:1964
+                        g[lpj as usize].stat |= jst::SUPERJOB; // c:1965
+                        g[jn_idx].stat |= jst::SUBJOB | jst::NOPRINT; // c:1966
+                        g[jn_idx].other = list_pipe_pid.load(Ordering::Relaxed); // c:1967
+                        if hasprocs(&g, lpj as usize) {
+                            g[jn_idx].gleader = g[lpj as usize].gleader; // c:1968-1969
+                        }
+                    }
+                    // c:1971-1972 — stop the LHS group so the whole pipe
+                    // suspends together.
+                    let (do_kill, gl2) = {
+                        let g = jt.lock().unwrap();
+                        (
+                            (list_pipe.load(Ordering::Relaxed) != 0 || last1 != 0)
+                                && hasprocs(&g, lpj as usize),
+                            g.get(lpj as usize).map(|j| j.gleader).unwrap_or(0),
+                        )
+                    };
+                    if do_kill {
+                        unsafe { libc::killpg(gl2, libc::SIGSTOP) };
+                    }
+                    break; // c:1973
+                } else {
+                    // c:1975-2004 — child: become our own group, stop, then
+                    // continue as the RHS sub-shell.
+                    unsafe { libc::close(synch[0]) }; // c:1976
+                    entersubsh(esub::ASYNC, None); // c:1977
+                    let mypid = unsafe { libc::getpid() };
+                    mypgrp.store(mypid, Ordering::Relaxed);
+                    unsafe { libc::setpgid(0, mypid) }; // c:1992 setpgrp
+                    unsafe { libc::close(synch[1]) }; // c:1993
+                    unsafe { libc::kill(mypid, libc::SIGSTOP) }; // c:1994
+                    list_pipe.store(0, Ordering::Relaxed); // c:1995
+                    list_pipe_child.store(1, Ordering::Relaxed); // c:1996
+                    dosetopt(INTERACTIVE, 0, 0); // c:1997 `opts[INTERACTIVE] = 0`
+                    if ERRBRK_SAVED.load(Ordering::Relaxed) != 0 {
+                        // c:1998-2003 — restore saved break/errflag state.
+                        errflag.store(
+                            PREV_ERRFLAG.load(Ordering::Relaxed)
+                                | (errflag.load(Ordering::Relaxed) & ERRFLAG_INT),
+                            Ordering::Relaxed,
+                        );
+                        BREAKS.store(PREV_BREAKS.load(Ordering::Relaxed), Ordering::SeqCst);
+                    }
+                    break;
+                }
+            } else if subsh.load(Ordering::Relaxed) != 0 && {
+                let g = jt.lock().unwrap();
+                (g[jn_idx].stat & jst::STOPPED) != 0
+            } {
+                // c:2008-2012
+                if thisjob_get() == newjob as i32 {
+                    let mut g = jt.lock().unwrap();
+                    makerunning(&mut g, jn_idx);
+                } else {
+                    thisjob_set(newjob as i32);
+                }
+            } else {
+                break; // c:2015
+            }
+        }
+
+        child_unblock(); // c:2017
+        unqueue_signals(); // c:2018
+
+        // c:2020-2026 — a signal-killed list_pipe: drop this job and
+        // forward the signal to the enclosing job's group.
+        let lastval_now = LASTVAL.load(Ordering::Relaxed);
+        let drop_and_signal = list_pipe.load(Ordering::Relaxed) != 0
+            && (lastval_now & 0o200) != 0
+            && pj >= 0
+            && {
+                let g = jt.lock().unwrap();
+                (g[jn_idx].stat & jst::INUSE) == 0 || (g[jn_idx].stat & jst::DONE) != 0
+            };
+        if drop_and_signal {
+            {
+                let mut g = jt.lock().unwrap();
+                deletejob(&mut g[jn_idx], false); // c:2022
+            }
+            jn_idx = pj as usize; // c:2023 `jn = jobtab + pj;`
+            let gl = {
+                let g = jt.lock().unwrap();
+                g[jn_idx].gleader
+            };
+            if gl != 0 {
+                killjb(jn_idx, lastval_now & !0o200); // c:2025
+            }
+        }
+        // c:2027-2030 — final cleanup deletejob for a done/child job.
+        let final_delete = list_pipe_child.load(Ordering::Relaxed) != 0 || {
+            let g = jt.lock().unwrap();
+            (g[jn_idx].stat & jst::DONE) != 0
+                && (list_pipe.load(Ordering::Relaxed) != 0
+                    || (pline_level.load(Ordering::Relaxed) != 0
+                        && (g[jn_idx].stat & jst::SUBJOB) == 0))
         };
-        last_status = s;
-        // c:1885-1893 — last pipe stage check.
-        if WC_PIPE_TYPE(code) == WC_PIPE_END {
-            break;
+        if final_delete {
+            let mut g = jt.lock().unwrap();
+            deletejob(&mut g[jn_idx], false); // c:2030
         }
-        // c:1897-1900 — fetch next WC_PIPE header for the next stage.
-        if state.pc >= state.prog.prog.len() {
-            break;
-        }
-        let next_code = state.prog.prog[state.pc];
-        if wc_code(next_code) != WC_PIPE {
-            break;
-        }
-        state.pc += 1;
-        code = next_code;
-        // Multi-stage pipe() + fork() per cmd is now ported via
-        // `execpline2` (c:1991-2040). Callers wanting full pipeline
-        // isolation route through that path; this inline dispatch
-        // serves the single-process simple-command tree-walker used
-        // by the fusevm bytecode shim, which does its own
-        // pipe/fork via `OpPipeCreate`/`OpFork` ops.
+        thisjob_set(pj); // c:2031
+    } else {
+        unqueue_signals(); // c:2034
     }
-    LASTVAL.store(last_status, Ordering::Relaxed);
-    last_status
+
+    // c:2035-2036 — apply `!` negation to the pipeline status.
+    if (slflags & WC_SUBLIST_NOT) != 0
+        && errflag.load(Ordering::Relaxed) == 0
+        && RETFLAG.load(Ordering::SeqCst) == 0
+    {
+        let lv = LASTVAL.load(Ordering::Relaxed);
+        LASTVAL.store(i32::from(lv == 0), Ordering::Relaxed);
+    }
+
+    if pline_level.load(Ordering::Relaxed) == 0 {
+        simple_pline.store(old_simple_pline, Ordering::Relaxed); // c:2039
+    }
+    LASTVAL.load(Ordering::Relaxed) // c:2040 `return lastval;`
 }
 
 // `execcmd_exec`'s wordcode dispatch tail from Src/exec.c:2901-3700 is

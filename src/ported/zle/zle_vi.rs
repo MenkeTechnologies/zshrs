@@ -254,32 +254,232 @@ pub fn vigetkey() -> i32 {
 }
 
 /// Direct port of `int getvirange(int wf)` from
-/// `Src/Zle/zle_vi.c:172`. Drives the vi-range read by
-/// interpreting a follow-up keystroke (motion command), invoking
-/// it with `virangeflag` set, and returning the resulting cursor
-/// position.
+/// `Src/Zle/zle_vi.c:172`. Drives the vi-range read: selects the
+/// operator-pending (`viopp`) keymap, reads the follow-up motion
+/// keystroke via [`getkeycmd`](crate::ported::zle::zle_keymap::getkeycmd),
+/// executes it with `virangeflag` set (so the motion lands at the
+/// range end), validates that the motion did not modify the line or
+/// change history, orders the range, and returns the far endpoint.
+/// `zlecs` is left at the near endpoint. Returns `-1` on any error
+/// (aborted motion, non-movement command, empty range, empty file).
 ///
-/// **Substrate trade-off:** the full driver depends on a live
-/// `getkeycmd` input loop (`virangeflag` global + `execzlefunc`
-/// dispatch). In compcore-call-context ported we don't have a live
-/// key reader — the Rust port returns the current `ZLECS.load(std::sync::atomic::Ordering::SeqCst)`
-/// which is the C "no-motion fallback" (motion never consumed
-/// anything, range is empty). Live ZLE widget dispatch reads keys
-/// against the ZLE file-scope statics directly.
+/// The line-wise-repeat branch (`k2 == bindk`, i.e. `dd`/`cc`/`yy`)
+/// reuses [`dovilinerange`]; see its port for the count-handling
+/// limitation.
 pub fn getvirange(wf: i32) -> i32 {
     // c:172
-    // c:186-187 — set the virangeflag / wordflag globals so the
-    // movement-cmd dispatch (read by zle_word / zle_move) knows to
-    // place cursor at the END of the range rather than where the
-    // motion would normally land. The interactive `getkeycmd()`
-    // read at c:208 is substrate-deferred (needs live ZLE input);
-    // we set the flags and return the current cursor — caller's
-    // motion fn picks them up via WORDFLAG/VIRANGEFLAG loads.
-    VIRANGEFLAG.store(1, Ordering::Relaxed); // c:186
-    WORDFLAG.store(wf, Ordering::Relaxed); // c:187
-                                           // c:188 — `mark = -1` (cleared; usize::MAX represents "no mark").
-    MARK.store(usize::MAX, Ordering::Relaxed);
-    ZLECS.load(SeqCst) as i32 // c:299
+    // Helpers to map the C `int mark` (-1 == "no mark") onto the
+    // Rust `AtomicUsize` MARK where `usize::MAX` is the -1 sentinel.
+    let load_mark = || -> i32 {
+        let m = MARK.load(SeqCst);
+        if m == usize::MAX {
+            -1
+        } else {
+            m as i32
+        }
+    };
+    let store_mark = |v: i32| {
+        MARK.store(if v < 0 { usize::MAX } else { v as usize }, SeqCst);
+    };
+
+    // c:174-177 — `int pos = zlecs, mpos = mark, ret = 0; int visual
+    // = region_active; int mult1 = zmult, hist1 = histline;`.
+    let mut pos: i32 = ZLECS.load(SeqCst) as i32; // c:174
+    let mpos: i32 = load_mark(); // c:174
+    let mut ret: i32 = 0; // c:174
+    let visual: i32 = REGION_ACTIVE.load(SeqCst) as i32; // c:175 region_active
+    let mult1 = crate::ported::zle::compcore::ZMULT.load(SeqCst); // c:176 zmult
+    let hist1 = histline.load(SeqCst); // c:176 histline
+
+    if visual != 0 {
+        // c:179
+        if ZLELL.load(SeqCst) == 0 {
+            // c:180 `if (!zlell) return -1;`
+            return -1; // c:181
+        }
+        pos = load_mark(); // c:182 `pos = mark;`
+        VILINERANGE.store(if visual == 2 { 1 } else { 0 }, SeqCst); // c:183
+        REGION_ACTIVE.store(0, SeqCst); // c:184 `region_active = 0;`
+    } else {
+        // c:185
+        VIRANGEFLAG.store(1, SeqCst); // c:186 `virangeflag = 1;`
+        WORDFLAG.store(wf, SeqCst); // c:187 `wordflag = wf;`
+        store_mark(-1); // c:188 `mark = -1;`
+        crate::ported::zle::termquery::cursor_form(); // c:189
+        // c:190-192 — use the operator-pending keymap if one exists.
+        if let Some(km) = crate::ported::zle::zle_keymap::openkeymap("viopp") {
+            // c:191
+            crate::ported::zle::zle_keymap::selectlocalmap(Some(km)); // c:192
+        }
+        // c:205 — `zmod.flags &= ~MOD_TMULT;`
+        {
+            let mut zm = ZMOD.lock().unwrap();
+            zm.flags &= !MOD_TMULT;
+        }
+        // c:206-224 — read + execute the motion command.
+        loop {
+            // c:206 do
+            VILINERANGE.store(0, SeqCst); // c:207 `vilinerange = 0;`
+            PREFIXFLAG.store(0, SeqCst); // c:208 `prefixflag = 0;`
+            // c:209-210 — `if (!(k2 = getkeycmd()) || (k2->flags &
+            // DISABLED) || k2 == Th(z_sendbreak))`.
+            let k2 = match crate::ported::zle::zle_keymap::getkeycmd() {
+                None => {
+                    // c:211-214 — abort.
+                    WORDFLAG.store(0, SeqCst);
+                    VIRANGEFLAG.store(0, SeqCst);
+                    store_mark(mpos);
+                    return -1; // c:214
+                }
+                Some(t)
+                    if (t.flags & crate::ported::zsh_h::DISABLED) != 0 || t.nam == "send-break" =>
+                {
+                    WORDFLAG.store(0, SeqCst); // c:212
+                    VIRANGEFLAG.store(0, SeqCst); // c:213
+                    store_mark(mpos); // c:213 `mark = mpos;`
+                    return -1; // c:214
+                }
+                Some(t) => t,
+            };
+            // c:220 — `(k2 == bindk) ? dovilinerange() : execzlefunc(...)`.
+            // The bindk comparison must happen BEFORE execzlefunc runs
+            // (execzlefunc with setbindk=1 overwrites bindk).
+            let is_bindk = BINDK
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|t| t.nam.clone())
+                == Some(k2.nam.clone());
+            if is_bindk {
+                // c:220 `dovilinerange()` — line-oriented repeat of the
+                // operator key (dd/cc/yy). The Rust `dovilinerange`
+                // returns the whole-line [bol,end) range for the current
+                // line; here we honor the C post-conditions so the final
+                // whole-line expansion below yields the target line(s).
+                let _range = dovilinerange();
+                VILINERANGE.store(1, SeqCst); // c:330 `vilinerange = 1;`
+                VIRANGEFLAG.store(2, SeqCst); // c:332 `virangeflag = 2;`
+                // Rust dovilinerange has no failure return; ret stays 0.
+            } else if execzlefunc(&k2.nam, &[], 1, 0) != 0 {
+                // c:220 `execzlefunc(k2, zlenoargs, 1, 0)`
+                ret = -1; // c:221
+            }
+            if VIINREPEAT.load(SeqCst) != 0 {
+                // c:222 `if (viinrepeat)`
+                crate::ported::zle::compcore::ZMULT.store(mult1, SeqCst); // c:223 `zmult = mult1;`
+            } else {
+                // c:224
+                let tmult = ZMOD.lock().unwrap().tmult;
+                let zm = mult1 * tmult; // c:225 `zmult = mult1 * zmod.tmult;`
+                crate::ported::zle::compcore::ZMULT.store(zm, SeqCst);
+                if VICHGFLAG.load(SeqCst) == 2 {
+                    // c:226 `if (vichgflag == 2)`
+                    CURVICHG.lock().unwrap().mod_.mult = zm; // c:227
+                }
+            }
+            // c:229 `} while(prefixflag && !ret);`
+            if !(PREFIXFLAG.load(SeqCst) != 0 && ret == 0) {
+                break;
+            }
+        }
+        WORDFLAG.store(0, SeqCst); // c:230 `wordflag = 0;`
+        crate::ported::zle::zle_keymap::selectlocalmap(None); // c:231 `selectlocalmap(NULL);`
+
+        // c:235-244 — reject the case where the command modified the
+        // line or selected a different history line (non-movement cmd).
+        let ll = ZLELL.load(SeqCst);
+        let modified = histline.load(SeqCst) != hist1
+            || ll != LASTLL.load(SeqCst)
+            || {
+                let z = ZLELINE.lock().unwrap();
+                let last = LASTLINE.lock().unwrap();
+                z.get(..ll) != last.get(..ll)
+            };
+        if modified {
+            // c:236
+            histline.store(hist1, SeqCst); // c:237 `histline = hist1;`
+            // c:238 — `ZS_memcpy(zleline, lastline, zlell = lastll);`
+            let lastll = LASTLL.load(SeqCst);
+            {
+                let last = LASTLINE.lock().unwrap();
+                let mut z = ZLELINE.lock().unwrap();
+                *z = last[..lastll].to_vec();
+            }
+            ZLELL.store(lastll, SeqCst);
+            ZLECS.store(pos as usize, SeqCst); // c:240 `zlecs = pos;`
+            store_mark(mpos); // c:241 `mark = mpos;`
+            VIRANGEFLAG.store(0, SeqCst); // c:242 `virangeflag = 0;`
+            return -1; // c:243
+        }
+
+        // c:248-254 — can't handle an empty file; if the motion failed
+        // or didn't move, it is an error.
+        let ll = ZLELL.load(SeqCst);
+        let cs_now = ZLECS.load(SeqCst) as i32;
+        let mark_now = load_mark();
+        if ll == 0
+            || (cs_now == pos
+                && (mark_now == -1 || mark_now == cs_now)
+                && VIRANGEFLAG.load(SeqCst) != 2)
+            || ret == -1
+        {
+            // c:249-250
+            store_mark(mpos); // c:251 `mark = mpos;`
+            VIRANGEFLAG.store(0, SeqCst); // c:252 `virangeflag = 0;`
+            return -1; // c:253
+        }
+        VIRANGEFLAG.store(0, SeqCst); // c:255 `virangeflag = 0;`
+
+        // c:259-260 — if the mark has moved, use the mark.
+        if mark_now != -1 {
+            pos = mark_now; // c:260 `pos = mark;`
+        }
+    }
+    store_mark(mpos); // c:262 `mark = mpos;`
+
+    // c:267-271 — get the range the right way round: zlecs at the
+    // start, pos (return value) at the end.
+    let mut cs = ZLECS.load(SeqCst) as i32;
+    if cs > pos {
+        // c:268
+        std::mem::swap(&mut cs, &mut pos); // c:269-270
+    }
+    ZLECS.store(cs as usize, SeqCst);
+
+    // c:274-275 — visual selection needs to include an extra position.
+    if visual == 1 && (pos as usize) < ZLELL.load(SeqCst) {
+        let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+        if invicmdmode(&kn) {
+            // c:275 `INCPOS(pos);`
+            let mut p = pos as usize;
+            incpos(&mut p);
+            pos = p as i32;
+        }
+    }
+
+    // c:283-284 — was it a line-oriented move? MOD_LINE forces it;
+    // MOD_CHAR forces character-wise.
+    let zmod_flags = ZMOD.lock().unwrap().flags;
+    let vlr = (zmod_flags & MOD_LINE) != 0
+        || (VILINERANGE.load(SeqCst) != 0 && (zmod_flags & MOD_CHAR) == 0);
+    VILINERANGE.store(if vlr { 1 } else { 0 }, SeqCst); // c:283
+    if vlr {
+        // c:285 — encompass entire lines.
+        let newcs = findbol() as i32; // c:286 `int newcs = findbol();`
+        LASTCOL.store(ZLECS.load(SeqCst) as i32 - newcs, SeqCst); // c:287 `lastcol = zlecs - newcs;`
+        ZLECS.store(pos as usize, SeqCst); // c:288 `zlecs = pos;`
+        pos = findeol() as i32; // c:289 `pos = findeol();`
+        ZLECS.store(newcs as usize, SeqCst); // c:290 `zlecs = newcs;`
+    } else if visual == 0 {
+        // c:291 — character-wise: don't include a trailing newline.
+        let mut prev = pos as usize; // c:293 `int prev = pos;`
+        decpos(&mut prev); // c:294 `DECPOS(prev);`
+        if ZLELINE.lock().unwrap().get(prev) == Some(&'\n') {
+            // c:295
+            pos = prev as i32; // c:296 `pos = prev;`
+        }
+    }
+    pos // c:298 `return pos;`
 }
 
 /// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302.
