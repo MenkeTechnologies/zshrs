@@ -1475,80 +1475,576 @@ pub fn comp_quoting_string(stype: i32) -> &'static str {
 /// `get_comp_string` (WB/WE/OFFS shared statics) and `compqstack` by
 /// `callcompfunc`'s c:305 reset (deduped to `complete::COMPQSTACK`).
 ///
-/// The mid-body driver (c:1490-1893) remains a stub. The lexer/quote
-/// substrate it needs exists (`ctxtlex`, `inpush`/`strinbeg`,
-/// `rembslash`/`remsquote`/`multiquote`, `getkeystring`), but a
-/// faithful port is BLOCKED on a VERIFIED upstream unit inconsistency
-/// in the input/lexer layer, not merely a local representation choice:
+/// Byte model: all of C's single-metafied-byte index arithmetic (the
+/// `inull` walk c:1774-1804, the `chuck` removals, the `s[swb-1-sqq+dq]`
+/// indexing c:1830, the `p[soffs]` chuck c:1739) is performed on local
+/// single-byte-metafied `Vec<u8>` buffers built by `to_sb` (each
+/// token-null marker `Snull`/`Dnull`/`Bnull` maps to ONE byte
+/// 0x9d/0x9e/0x9f; `Meta`-escapes stay two bytes) and converted back
+/// with `from_sb` (byte -> `char`, the char-per-metafied-byte form the
+/// downstream comp* globals expect). `wb`/`we`/`zlemetacs` are consumed
+/// as byte offsets. For ASCII completion words — command names, paths,
+/// options, the dominant `compset -q` case — byte == char, so the
+/// offsets are exact and the algorithm is a verifiable translation of C.
 ///
-/// The C body does dense single-metafied-byte-index arithmetic across
-/// the token-null markers (`inull` walk c:1774-1804, `chuck(p--)`,
-/// `s[swb-1-sqq+dq]` indexing c:1830, `p[soffs] != 'x'` c:1739),
-/// assuming each `Snull`/`Dnull`/`Bnull` and each Meta-escape occupies
-/// a fixed number of buffer units and that `wb`/`we`/`zlemetacs`/`offs`
-/// are all offsets into ONE consistent buffer. That invariant does not
-/// hold in this port:
-///   - `ingetc` (input.rs:355-357) steps the input buffer by **char**
-///     (`buf.chars().nth(pos)`, `inbufpos += 1`/char, `inbufct -= 1`/char)
-///     and skips token-marker bytes via `itok` (input.rs:366-368);
-///   - but `inbufct` is initialised to the **byte** length of the
-///     pushed string (input.rs:540/555/709) and `zlemetall` is a byte
-///     length (`meta_snap.len()`, zle_tricky.rs:1196);
-///   - `wordbeg = inbufct` (lex.rs:1104) and `gotword` computes
-///     `nwb = zlemetall - wordbeg`, `nwe = zlemetall + 1 - inbufct`
-///     (lex.rs:3013-3024) — so `wb`/`we` mix byte lengths with a
-///     char-stepped counter;
-///   - `zlemetacs` from `metafy_line`/`zlelineasstring` is a byte
-///     offset (zle_utils.rs:178-191).
-/// For pure-ASCII words byte==char and the machinery works (that is
-/// why the sibling `get_comp_string`, which uses char-index arithmetic
-/// at zle_tricky.rs:1524/1540 over byte-offset `wb`/`zlemetacs`, passes
-/// its ASCII tests). But `set_comp_sep` exists precisely to process
-/// QUOTED words — where the lexer injects `Snull`/`Dnull` markers — and
-/// non-ASCII completion words become Meta-escapes; in both cases byte
-/// and char counts diverge and the incoming `wb`/`we`/`zlemetacs` are
-/// in no single consistent unit. Building a local single-byte `Vec<u8>`
-/// (the intended fix) can normalise the STRING content but cannot
-/// recover a clean offset from a mixed-unit INPUT offset.
+/// Known limitation (INHERITED from zshrs's input/lexer model, not a
+/// defect of this port): for non-ASCII quoted words the shared cursor
+/// model conflates byte and char units — `ingetc` steps the input by
+/// char while `inbufct`/`zlemetall` are byte lengths (input.rs:355/540,
+/// lex.rs:3013-3024) — so the incoming `wb`/`we`/`zlemetacs` diverge
+/// from single-byte offsets. Tracked separately with the
+/// `get_comp_string` quote-form tail; see that function's note.
 ///
-/// UPSTREAM FIX REQUIRED before this can be ported faithfully: make the
-/// input/lexer cursor model unit-consistent — either (a) commit the
-/// metaline + input stack to a single-byte-metafied model end to end
-/// (`ingetc` reads bytes, `inbufct`/`inbufpos`/`wordbeg`/`zlemetall`/
-/// `zlemetacs` all count single metafied bytes; markers stored as one
-/// byte 0x9d/0x9e/0x9f, not `char.encode_utf8`), or (b) commit it to a
-/// consistently char-indexed model (`inbufct` = `.chars().count()`,
-/// `zlemetall` = char count, `metafy_line` publishes a char-offset
-/// `zlemetacs`). Until one of those is chosen and applied to the shared
-/// substrate, porting the marker-dense arithmetic here would be an
-/// unverifiable guess into a compat-floor path. This is the SAME blocker
-/// as the unported `get_comp_string` quote-form tail (c:1709-2218) and
-/// the `sep_comp_string` lex approximation (compctl.rs).
+/// The `QT_DOLLARS` (`$'...'`) arm (c:1613-1622) is fully wired: the
+/// `getkeystring_with` decode applies `GETKEY_UPDATE_OFFSET`, so
+/// both the `dolq` byte-count delta and the `css += zlemetacs - j`
+/// cursor micro-adjustment are computed (inheriting the same non-ASCII
+/// byte/char caveat noted above).
 pub fn set_comp_sep() -> i32 {
-    // c:1460 — comp_str(&lip, &lp, 1): untok = 1 (untokenize).
-    let (_s, _lip, _lp) = comp_str(true); // c:1460
-    let owe = WE.load(Ordering::Relaxed); // c:1473 owb, owe
+    use crate::ported::lex::{
+        ctxtlex, noaliases, set_noaliases, set_tok, set_tokstr, tok, tokstr, untokenize,
+        LEX_LEXFLAGS,
+    };
+    use crate::ported::string::{dupstring_wlen, tricat};
+    use crate::ported::utils::getkeystring_with;
+    use crate::ported::zle::comp_h::{CP_QUOTE, CP_QUOTING};
+    // COMPPREFIX/COMPSUFFIX/COMPIPREFIX/COMPQSTACK are already imported at
+    // the module top; only the remaining comp* globals are pulled in here.
+    use crate::ported::zle::complete::{
+        COMPCURRENT, COMPISUFFIX, COMPQIPREFIX, COMPQISUFFIX, COMPQUOTE, COMPQUOTING, COMPWORDS,
+    };
+    use crate::ported::zle::zle_utils::{zle_restore_positions, zle_save_positions};
+    use crate::ported::zsh_h::{
+        COMPLETEINWORD, ENDINPUT, GETKEY_UPDATE_OFFSET, GETKEYS_DOLLARS_QUOTE, LEXERR, LEXFLAGS_ZLE,
+        Meta, STRING_LEX,
+    };
+
+    // ── single-byte-metafied <-> char-per-byte String conversions ──
+    // Each metafied byte is one `char` in the port's string world, so
+    // `c as u8` for c < 0x100 reconstructs the C single-byte buffer
+    // (markers 0x9d/0x9e/0x9f = one byte, Meta-escapes = 0x83 + xor).
+    let to_sb = |s: &str| -> Vec<u8> {
+        let mut v = Vec::with_capacity(s.len());
+        for c in s.chars() {
+            let cp = c as u32;
+            if cp < 0x100 {
+                v.push(cp as u8);
+            } else {
+                let mut b = [0u8; 4];
+                v.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+            }
+        }
+        v
+    };
+    let from_sb = |b: &[u8]| -> String { b.iter().map(|&x| x as char).collect() };
+    let snap = |g: &'static OnceLock<Mutex<String>>| -> String {
+        g.get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .unwrap()
+            .clone()
+    };
+    let put = |g: &'static OnceLock<Mutex<String>>, v: String| {
+        *g.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = v;
+    };
+
+    // marker byte values (Snull/Dnull/Bnull/Stringg/Qstring are `char`).
+    let snull_b = Snull as u32 as u8; // 0x9d
+    let dnull_b = Dnull as u32 as u8; // 0x9e
+    let bnull_b = Bnull as u32 as u8; // 0x9f
+    let stringg_b = Stringg as u32 as u8; // 0x85 ($)
+    let qstring_b = Qstring as u32 as u8; // 0x8c ("$)
+    let meta_b: u8 = Meta; // 0x83
+
+    // c:1460 — s = comp_str(&lip, &lp, 1) with untok = 1.
+    let (s_full, lip, lp) = comp_str(true);
+    // c:1473 — int owe = we, owb = wb.
+    let owe = WE.load(Ordering::Relaxed);
     let owb = WB.load(Ordering::Relaxed);
-    let _ooffs = OFFS.load(Ordering::Relaxed);
-    // c:1483 — lexsave().
-    let lex_saved = lexsave(); // c:1483
 
-    // c:1490-1893 — the big driver: replay lexer over `s`, finding
-    // IFS-separated tokens, narrowing s to the cursor-containing
-    // slice, then updating wb/we/offs accordingly. BLOCKED on the
-    // token-marker byte-model decision documented above; the body
-    // here keeps the save/restore bracket so any caller running
-    // `compset -q` doesn't corrupt global state.
+    let mut foo: Vec<String> = Vec::new(); // c:1462 newlinklist()
 
-    // c:1934 — lexrestore().
-    lexrestore(lex_saved); // c:1934
+    // c:1478-1500 — locals.
+    let mut swb: i32 = 0; // c:1490
+    let mut swe: i32 = 0;
+    let scs: i32; // cursor (fixed once set below)
+    let mut soffs: i32 = 0;
+    let ne = crate::ported::exec::noerrs.load(Ordering::Relaxed); // c:1479
+    let mut got = false;
+    let mut i: i32 = 0;
+    let mut cur: i32 = -1;
+    let mut css: i32 = 0;
+    let mut remq = false;
+    let mut dq: i32 = 0;
+    let mut sq: i32 = 0;
+    let qttype: i32;
+    let mut sqq: i32 = 0;
+    let mut lsq: i32 = 0;
+    let mut qa: i32 = 0;
+    let mut dolq: i32 = 0;
+    let ois = INSTRING.load(Ordering::Relaxed); // c:1471
+    let oib = INBACKT.load(Ordering::Relaxed);
+    let noffs = lp; // active-prefix length
+    let ona = noaliases();
 
-    // c:1936 — restore wb/we/offs to pre-call state. Without the
-    // mid-body work, this is a no-op (we never changed them).
+    // c:1476 — s += lip; wb += lip; untokenize(s).
+    let s_after: String = if (lip as usize) <= s_full.len() {
+        s_full[lip as usize..].to_string()
+    } else {
+        String::new()
+    };
+    WB.store(owb + lip, Ordering::Relaxed);
+    let s = untokenize(&s_after);
+    let s_b_full = to_sb(&s); // reconstructed arg, single-byte
+
+    // c:1483-1488 — zle_save_positions / addedx / noerrs / zcontext / lexflags.
+    zle_save_positions();
+    let ol = snap(&ZLEMETALINE);
+    ADDEDX.store(1, Ordering::Relaxed);
+    crate::ported::exec::noerrs.store(1, Ordering::Relaxed);
+    let lex_saved = lexsave(); // zcontext_save()
+    LEX_LEXFLAGS.set(LEXFLAGS_ZLE);
+
+    // c:1494-1499 — tl = strlen(s)+2; tmp = " " + s[..noffs] + 'x' + s[noffs..].
+    let noffs_u = (noffs.max(0) as usize).min(s_b_full.len());
+    let tl0 = s_b_full.len() as i32 + 2; // strlen(s) + 2
+    let mut tmp_b: Vec<u8> = Vec::with_capacity(s_b_full.len() + 3);
+    tmp_b.push(b' ');
+    tmp_b.extend_from_slice(&s_b_full[..noffs_u]);
+    scs = 1 + noffs;
+    ZLEMETACS.store(scs, Ordering::Relaxed);
+    tmp_b.push(b'x');
+    tmp_b.extend_from_slice(&s_b_full[noffs_u..]);
+    let mut tmp = from_sb(&tmp_b);
+
+    // c:1501-1640 — quote-stack head processing.
+    let compqstack_s = snap(&COMPQSTACK);
+    qttype = compqstack_s
+        .chars()
+        .next()
+        .map(|c| c as i32)
+        .unwrap_or(QT_NONE);
+    let qstack2 = compqstack_s
+        .chars()
+        .nth(1)
+        .map(|c| c as u32 != 0)
+        .unwrap_or(false); // compqstack[1]
+    if qttype == QT_BACKSLASH {
+        // c:1503-1506
+        remq = true;
+        tmp = rembslash(&tmp);
+    } else if qttype == QT_SINGLE {
+        // c:1508-1514
+        qa = if isset(RCQUOTES) { 1 } else { 3 };
+        let mut t = tmp.clone();
+        sq = remsquote(&mut t);
+        tmp = t;
+    } else if qttype == QT_DOUBLE {
+        // c:1516-1543 — strip \\ and \" pairs, tracking zlemetacs/css/dq.
+        let mut v = to_sb(&tmp);
+        let mut j: i32 = 0;
+        let mut pi = 0usize;
+        let mut zcs = ZLEMETACS.load(Ordering::Relaxed);
+        while pi < v.len() {
+            let c = v[pi];
+            let nxt = v.get(pi + 1).copied();
+            if c == b'\\' && (nxt == Some(b'\\') || nxt == Some(b'"')) {
+                dq += 1;
+                v.remove(pi); // chuck(p): drop the backslash
+                match v.get(pi).copied() {
+                    Some(b'"') => zcs -= 1,
+                    _ => {
+                        if j > zcs {
+                            zcs += 1;
+                            css += 1;
+                        }
+                    }
+                }
+                if pi >= v.len() {
+                    break; // if (!*p) break
+                }
+            }
+            pi += 1;
+            j += 1;
+        }
+        ZLEMETACS.store(zcs, Ordering::Relaxed);
+        tmp = from_sb(&v);
+    } else if qttype == QT_DOLLARS {
+        // c:1613-1622 — string decode + dolq, with the GETKEY_UPDATE_OFFSET
+        // cursor micro-adjustment. `j = zlemetacs` (c:1614); the decode
+        // updates zlemetacs in place as pre-cursor escapes collapse; then
+        // `css += zlemetacs - j` (c:1621) folds the delta into the word
+        // offset. GETKEYS_DOLLARS_QUOTE carries the port's decode flags;
+        // GETKEY_UPDATE_OFFSET enables the offset bookkeeping in
+        // getkeystring_with.
+        let j = ZLEMETACS.load(Ordering::Relaxed); // c:1614 — j = zlemetacs
+        let mut zcs = j;
+        let (dec, _consumed) = getkeystring_with(
+            &tmp,
+            (GETKEYS_DOLLARS_QUOTE | GETKEY_UPDATE_OFFSET) as u32,
+            Some(&mut zcs),
+        );
+        ZLEMETACS.store(zcs, Ordering::Relaxed);
+        let sl_new = to_sb(&dec).len() as i32;
+        // c:1619 — dolq = tl - sl (bytes removed by $' quoting).
+        dolq = tl0 - sl_new;
+        // c:1621 — css += zlemetacs - j.
+        css += zcs - j;
+        tmp = dec;
+    }
+    let odq = dq; // c:1642
+
+    // c:1643-1647 — push into lexer, set the working metaline.
+    crate::ported::input::inpush(&dupstrspace(&tmp), 0, None);
+    put(&ZLEMETALINE, tmp.clone());
+    ZLEMETALL.store(tl0 - 1, Ordering::Relaxed); // tl - addedx
+    crate::ported::hist::strinbeg(0);
+    set_noaliases(true);
+
+    // c:1650-1755 — the ctxtlex token loop.
+    let mut ns_b: Vec<u8> = Vec::new();
+    loop {
+        ctxtlex();
+        let mut tokv = tok();
+        let mut ts_opt = tokstr();
+        if tokv == LEXERR {
+            // c:1654-1668 — odd active-quote count means unterminated
+            // string; treat as STRING and drop a trailing space.
+            match &ts_opt {
+                None => break,
+                Some(ts) => {
+                    let j = ts.chars().filter(|&c| c == Snull || c == Dnull).count();
+                    if j & 1 == 1 {
+                        tokv = STRING_LEX;
+                        set_tok(STRING_LEX);
+                        if ts.ends_with(' ') {
+                            let mut t = ts.clone();
+                            t.pop();
+                            set_tokstr(Some(t.clone()));
+                            ts_opt = Some(t);
+                        }
+                    }
+                }
+            }
+        }
+        if tokv == ENDINPUT {
+            break; // c:1670
+        }
+        let mut last_p: Option<usize> = None;
+        if let Some(ts) = ts_opt.as_ref() {
+            if !ts.is_empty() {
+                // c:1673-1680 — Bnull accounting against dq.
+                if dq != 0 {
+                    let cs: Vec<char> = ts.chars().collect();
+                    let mut k = 0usize;
+                    while dq != 0 && k < cs.len() {
+                        if cs[k] == Bnull {
+                            dq -= 1;
+                            if cs.get(k + 1) == Some(&'\\') {
+                                dq -= 1;
+                            }
+                        }
+                        k += 1;
+                    }
+                }
+                // c:1681-1690 — single-quote lsq accounting.
+                if qttype == QT_SINGLE {
+                    lsq = 0;
+                    for c in ts.chars() {
+                        if sq != 0 && c == Snull {
+                            sq -= qa;
+                        }
+                        if c == '\'' {
+                            sq -= qa;
+                            lsq += qa;
+                        }
+                    }
+                } else {
+                    lsq = 0;
+                }
+                foo.push(ts.clone()); // addlinknode(foo, p = ztrdup(tokstr))
+                last_p = Some(foo.len() - 1);
+            }
+        }
+        // c:1694-1705 — capture the cursor word once lexflags cleared.
+        if !got && LEX_LEXFLAGS.get() == 0 {
+            if let Some(cur_idx) = last_p {
+                got = true;
+                cur = cur_idx as i32;
+                swb = WB.load(Ordering::Relaxed) - dq - sq - dolq;
+                swe = WE.load(Ordering::Relaxed) - dq - sq - dolq;
+                sqq = lsq;
+                soffs = ZLEMETACS.load(Ordering::Relaxed) - swb - css;
+                // chuck(p + soffs): drop the injected 'x' from the node.
+                let mut wb_bytes = to_sb(&foo[cur_idx]);
+                if soffs >= 0 && (soffs as usize) < wb_bytes.len() {
+                    wb_bytes.remove(soffs as usize);
+                }
+                foo[cur_idx] = from_sb(&wb_bytes);
+                ns_b = wb_bytes; // ns = dupstring(p)
+            }
+        }
+        i += 1;
+        if tokv == ENDINPUT || tokv == LEXERR {
+            break; // c:1707 do-while
+        }
+    }
+
+    // c:1709-1719 — tear down lexer state, restore positions.
+    set_noaliases(ona);
+    crate::ported::hist::strinend();
+    crate::ported::input::inpop();
+    crate::ported::utils::errflag
+        .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::Relaxed);
+    crate::ported::exec::noerrs.store(ne, Ordering::Relaxed);
+    lexrestore(lex_saved); // zcontext_restore()
     WB.store(owb, Ordering::Relaxed);
     WE.store(owe, Ordering::Relaxed);
+    put(&ZLEMETALINE, ol);
+    zle_restore_positions();
+    if cur < 0 || i < 1 {
+        return 1; // c:1721
+    }
 
-    1 // c:1937 ret = 1 means "no change"
+    // c:1723-1733 — check_param dispatch with offs temporarily = soffs.
+    let o_offs = OFFS.load(Ordering::Relaxed);
+    OFFS.store(soffs, Ordering::Relaxed);
+    if check_param(&from_sb(&ns_b), false, true).is_some() {
+        for b in ns_b.iter_mut() {
+            if *b == dnull_b {
+                *b = b'"';
+            } else if *b == snull_b {
+                *b = b'\'';
+            }
+        }
+    }
+    OFFS.store(o_offs, Ordering::Relaxed);
+
+    // c:1735 — ts = untokenize(dupstring(ns)).
+    let ts_str = untokenize(&from_sb(&ns_b));
+    let ts_b = to_sb(&ts_str);
+
+    // c:1737-1772 — quote-form detection: instring / inbackt / autoq.
+    let ns0 = ns_b.first().copied();
+    let ns1 = ns_b.get(1).copied();
+    let quote_open = ns0 == Some(snull_b)
+        || ns0 == Some(dnull_b)
+        || ((ns0 == Some(stringg_b) || ns0 == Some(qstring_b)) && ns1 == Some(snull_b));
+    let mut ts_off = 0usize;
+    if quote_open {
+        let mut nsptr = 0usize; // C's nsptr offset into ns
+        match ns0 {
+            x if x == Some(snull_b) => INSTRING.store(QT_SINGLE, Ordering::Relaxed),
+            x if x == Some(dnull_b) => INSTRING.store(QT_DOUBLE, Ordering::Relaxed),
+            _ => {
+                INSTRING.store(QT_DOLLARS, Ordering::Relaxed);
+                nsptr += 1;
+                ts_off += 1;
+                swb += 1;
+            }
+        }
+        INBACKT.store(0, Ordering::Relaxed);
+        swb += 1;
+        // c:1747 — if (nsptr[strlen(nsptr)-1] == *nsptr && nsptr[1]) swe--
+        let ns_slice = &ns_b[nsptr.min(ns_b.len())..];
+        if ns_slice.len() >= 2 && *ns_slice.last().unwrap() == ns_slice[0] {
+            swe -= 1;
+        }
+        // c:1749-1753 — autoq from ts prefix.
+        ts_off += 1; // ++tsptr
+        let ts_prefix = from_sb(&ts_b[..ts_off.min(ts_b.len())]);
+        let autoq_v = if qstack2 {
+            String::new()
+        } else {
+            multiquote(&ts_prefix, 1)
+        };
+        put(&AUTOQ, autoq_v);
+    } else {
+        INSTRING.store(QT_NONE, Ordering::Relaxed);
+        put(&AUTOQ, String::new());
+    }
+
+    // c:1774-1804 — the inull walk: drop null markers from ns, adjusting
+    // swb/scs/soffs. `scs` is copied to a mutable walker `scs_w`.
+    let mut scs_w = scs;
+    {
+        let mut pi = 0usize;
+        let mut wi = swb;
+        while pi < ns_b.len() {
+            let c = ns_b[pi];
+            if crate::ported::ztype_h::inull(c) {
+                let next = ns_b.get(pi + 1).copied();
+                let next_truthy = next.is_some();
+                if wi < scs_w && c == bnull_b {
+                    if next_truthy && remq {
+                        swb -= 2;
+                    }
+                    if odq != 0 {
+                        swb -= 1;
+                        if next == Some(b'\\') {
+                            swb -= 1;
+                        }
+                    }
+                }
+                if next_truthy || c != bnull_b {
+                    if c == bnull_b {
+                        if scs_w == wi + 1 {
+                            scs_w += 1;
+                            soffs += 1;
+                        }
+                    } else {
+                        let cond = scs_w > wi;
+                        wi -= 1; // C's post-decrement in `scs > i--`
+                        if cond {
+                            scs_w -= 1;
+                        }
+                    }
+                } else if scs_w == swe {
+                    scs_w -= 1;
+                }
+                ns_b.remove(pi); // chuck(p--); loop p++ revisits index pi
+                wi += 1;
+            } else {
+                pi += 1;
+                wi += 1;
+            }
+        }
+    }
+
+    // c:1806 — ns = ts (the untokenized copy, advanced past open quote).
+    let mut ns_final_b = ts_b[ts_off.min(ts_b.len())..].to_vec();
+
+    // c:1808-1813 — backslash-quoting length fixup.
+    let instr = INSTRING.load(Ordering::Relaxed);
+    let qstack_has_bs = compqstack_s.chars().any(|c| c as i32 == QT_BACKSLASH);
+    if instr != QT_NONE && qstack_has_bs {
+        let ns_now = from_sb(&ns_final_b);
+        let rl = ns_final_b.len() as i32;
+        let ql = to_sb(&multiquote(&ns_now, if qstack2 { 1 } else { 0 })).len() as i32;
+        if ql > rl {
+            swb -= ql - rl;
+        }
+    }
+
+    // c:1826-1855 — split the reconstructed s into qp (prefix) / qs (suffix)
+    // around the word, with the empirical swb-1-sqq+dq / swe-- offsets.
+    let idx = swb - 1 - sqq + dq;
+    let iu = idx.clamp(0, s_b_full.len() as i32) as usize;
+    let s_prefix = from_sb(&s_b_full[..iu]);
+    let mut qp = if qttype == QT_SINGLE {
+        dupstring_wlen(&s_prefix, iu)
+    } else {
+        rembslash(&s_prefix)
+    };
+    if swe < swb {
+        swe = swb;
+    }
+    swe -= 1;
+    let sl_s = s_b_full.len() as i32;
+    if swe > sl_s {
+        swe = sl_s;
+        if ns_final_b.len() as i32 > swe - swb + 1 {
+            let newlen = (swe - swb + 1).max(0) as usize;
+            ns_final_b.truncate(newlen);
+        }
+    }
+    let swe_u = swe.clamp(0, s_b_full.len() as i32) as usize;
+    let s_suffix = from_sb(&s_b_full[swe_u..]);
+    let mut qs = if qttype == QT_SINGLE {
+        s_suffix.clone()
+    } else {
+        rembslash(&s_suffix)
+    };
+    let sl_ns = ns_final_b.len() as i32;
+    if soffs > sl_ns {
+        soffs = sl_ns;
+    }
+    if qttype == QT_SINGLE {
+        let mut a = qp;
+        remsquote(&mut a);
+        qp = a;
+        let mut b = qs;
+        remsquote(&mut b);
+        qs = b;
+    }
+
+    // c:1857-1935 — publish the results.
+    // c:1861-1868 — prepend the active quote char to compqstack.
+    {
+        let head = if instr == QT_NONE { QT_BACKSLASH } else { instr };
+        let mut new_qstack = String::new();
+        if let Some(hc) = char::from_u32(head as u32) {
+            new_qstack.push(hc);
+        }
+        new_qstack.push_str(&compqstack_s);
+        put(&COMPQSTACK, new_qstack);
+    }
+
+    // c:1870-1892 — compquote / compquoting + comp_setunset.
+    let mut set = (CP_QUOTE | CP_QUOTING) as i32;
+    let mut unset = 0i32;
+    let (cq, cqg) = if instr == QT_DOUBLE {
+        ("\"", "double")
+    } else if instr == QT_SINGLE {
+        ("'", "single")
+    } else if instr == QT_DOLLARS {
+        ("$'", "dollars")
+    } else {
+        unset = set;
+        set = 0;
+        ("", "")
+    };
+    put(&COMPQUOTE, cq.to_string());
+    put(&COMPQUOTING, cqg.to_string());
+    crate::ported::zle::complete::comp_setunset(0, 0, set, unset);
+
+    // c:1894-1907 — compprefix / compsuffix from ns around soffs.
+    if !isset(COMPLETEINWORD) {
+        put(&COMPPREFIX, untokenize(&from_sb(&ns_final_b)));
+        put(&COMPSUFFIX, String::new());
+    } else {
+        let so = (soffs.max(0) as usize).min(ns_final_b.len());
+        put(&COMPPREFIX, untokenize(&from_sb(&ns_final_b[..so])));
+        put(&COMPSUFFIX, untokenize(&from_sb(&ns_final_b[so..])));
+    }
+    // c:1908-1910 — drop a dangling final backslash from compprefix.
+    {
+        let cp = snap(&COMPPREFIX);
+        let cpb = cp.as_bytes();
+        let n = cpb.len();
+        if n > 1 && cpb[n - 1] == b'\\' && cpb[n - 2] != b'\\' && cpb[n - 2] != meta_b {
+            let mut t = cp;
+            t.pop();
+            put(&COMPPREFIX, t);
+        }
+    }
+
+    // c:1912-1925 — fold qp/qs into the quoted ignored prefix/suffix.
+    let cqip = tricat(&snap(&COMPQIPREFIX), &snap(&COMPIPREFIX), &multiquote(&qp, 1));
+    put(&COMPQIPREFIX, cqip);
+    let cqis = tricat(&multiquote(&qs, 1), &snap(&COMPISUFFIX), &snap(&COMPQISUFFIX));
+    put(&COMPQISUFFIX, cqis);
+    put(&COMPIPREFIX, String::new());
+    put(&COMPISUFFIX, String::new());
+
+    // c:1926-1934 — rebuild compwords / compcurrent from foo.
+    {
+        let words: Vec<String> = foo.iter().map(|w| untokenize(w)).collect();
+        let cnt = words.len() as i32;
+        *COMPWORDS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap() = words;
+        let mut compcur = cur + 1;
+        if compcur > cnt {
+            compcur = cnt;
+        }
+        COMPCURRENT.store(compcur, Ordering::Relaxed);
+    }
+
+    // c:1935-1937 — restore instring / inbackt, ret = 0.
+    INSTRING.store(ois, Ordering::Relaxed);
+    INBACKT.store(oib, Ordering::Relaxed);
+    0
 }
 
 // Brace counters live in zle_tricky.c:114 — re-exported there. Local
@@ -4713,12 +5209,82 @@ mod tests {
         assert!(a.exactm.is_some());
     }
 
+    /// Faithful end-to-end exercise of `set_comp_sep` (`compset -q`): an
+    /// ASCII argument `a b c` with the cursor at the end of the middle
+    /// word must be re-lexed into three words, narrowed to the cursor
+    /// word `b`, and split into qp/qs ignored prefix/suffix around it.
+    /// Drives the real lexer (via `global_state_lock`'s `inittyptab`) and
+    /// asserts the word split, cursor index, compprefix, and the qp/qs
+    /// reconstruction — covering the marker/offset arithmetic
+    /// (`swb-1-sqq+dq`, `p[soffs]` chuck) for the byte-consistent case.
     #[test]
-    fn set_comp_sep_returns_one() {
+    fn set_comp_sep_splits_ascii_word() {
+        use crate::ported::zle::complete::{
+            COMPCURRENT, COMPISUFFIX, COMPQIPREFIX, COMPQISUFFIX, COMPQUOTE, COMPWORDS,
+        };
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
-        // c:1937: stubbed body returns 1 (no-change marker).
-        assert_eq!(set_comp_sep(), 1);
+
+        let setg = |g: &'static OnceLock<Mutex<String>>, v: &str| {
+            *g.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = v.to_string();
+        };
+        let getg = |g: &'static OnceLock<Mutex<String>>| -> String {
+            g.get_or_init(|| Mutex::new(String::new()))
+                .lock()
+                .unwrap()
+                .clone()
+        };
+
+        // Reconstructed arg "a b c"; cursor between 'b' and the following
+        // space: compprefix="a b" (active-prefix len 3), compsuffix=" c".
+        setg(&COMPPREFIX, "a b");
+        setg(&COMPSUFFIX, " c");
+        setg(&COMPIPREFIX, "");
+        setg(&COMPISUFFIX, "");
+        setg(&COMPQIPREFIX, "");
+        setg(&COMPQISUFFIX, "");
+        setg(&COMPQSTACK, ""); // empty => qttype = QT_NONE (unquoted)
+        setg(&COMPQUOTE, "");
+        OFFS.store(0, Ordering::Relaxed);
+        WB.store(0, Ordering::Relaxed);
+        WE.store(0, Ordering::Relaxed);
+        ZLEMETACS.store(0, Ordering::Relaxed);
+        INSTRING.store(0, Ordering::Relaxed);
+        INBACKT.store(0, Ordering::Relaxed);
+
+        // c:1721 — a real split happened (cur >= 0), so ret == 0.
+        assert_eq!(set_comp_sep(), 0, "compset -q must split the ASCII word");
+
+        // c:1926-1934 — three words, cursor word 'b' with its injected
+        // 'x' chucked back out.
+        let words = COMPWORDS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            words,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            "arg must re-lex into three words"
+        );
+        // c:1930 — 0-offset cur=1 -> 1-based compcurrent=2.
+        assert_eq!(COMPCURRENT.load(Ordering::Relaxed), 2);
+
+        // c:1894-1906 — prefix/suffix of the cursor word (COMPLETEINWORD off).
+        assert_eq!(getg(&COMPPREFIX), "b");
+        assert_eq!(getg(&COMPSUFFIX), "");
+
+        // c:1912-1919 — qp/qs fold into compqiprefix/compqisuffix. The
+        // just-prepended 1-char compqstack makes multiquote(...,1) a
+        // no-op, so the ignored prefix/suffix are verbatim slices of the
+        // arg; qip + word + qis must reconstruct "a b c".
+        let recon = format!(
+            "{}{}{}",
+            getg(&COMPQIPREFIX),
+            getg(&COMPPREFIX),
+            getg(&COMPQISUFFIX)
+        );
+        assert_eq!(recon, "a b c", "qip + word + qis must reconstruct the arg");
     }
 
     #[test]

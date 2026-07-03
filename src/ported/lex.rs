@@ -4147,6 +4147,13 @@ pub(crate) fn hgetc() -> Option<char> {
         // `zshlex_raw_back()` call in hungetc removed the prior
         // record, so this restores it.
         zshlex_raw_add(c);
+        // c:input.c:327 — re-reading the un-gotten char consumes it like
+        // any other read (C's ingetc `inbufct--`). Mirror it so the
+        // hungetc(+1)/reread(-1) pair stays balanced; scoped to
+        // LEXFLAGS_ZLE for the same reason as the hungetc restore.
+        if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+            crate::ported::input::inbufct.with(|ct| ct.set(ct.get() - 1));
+        }
         return Some(c);
     }
 
@@ -4253,6 +4260,24 @@ fn hungetc(c: char) {
     // the un-gotten char isn't double-counted in lexbuf_raw on
     // re-read. hgetc will re-add it next time it's pulled.
     zshlex_raw_back();
+    // c:input.c:558-559 — `inbufptr--; inbufct++;`. C's ungetc pushes the
+    // char back into inbuf AND restores `inbufct`, so a read-then-unget
+    // leaves `inbufct` counting the char as un-consumed. `gotword`
+    // (c:lex.c:1884) reads that restored count via
+    // `nwe = zlemetall + 1 - inbufct` to place the completion word END.
+    // The Rust bridge ungets via LEX_UNGET_BUF (not inbuf) and so never
+    // restored `inbufct`; a word-terminating char read-then-ungotten
+    // then left `inbufct` one low, inflating `we`/`swe` by one and
+    // dropping the leading separator of a `compset -q` ignored suffix.
+    // Scoped to LEXFLAGS_ZLE: only the completion lexer (set_comp_sep /
+    // get_comp_string, fed entirely through inpush -> inbuf) reads
+    // `inbufct` for word positions; normal parsing may read the
+    // Rust-only LEX_INPUT window where `inbufct` isn't tracked, so it
+    // must not be perturbed. Paired with the matching `inbufct--` on the
+    // unget re-read in hgetc so the count stays balanced.
+    if LEX_LEXFLAGS.get() & LEXFLAGS_ZLE != 0 {
+        crate::ported::input::inbufct.with(|ct| ct.set(ct.get() + 1));
+    }
 }
 
 /// Peek at next character without consuming

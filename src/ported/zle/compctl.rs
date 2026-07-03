@@ -3048,8 +3048,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
     use crate::ported::zle::compcore::{ZLEMETACS as CS_G, ZLEMETALINE as LINE_G};
     use std::sync::atomic::Ordering;
     // C: c:2810-2813 — save state to restore on exit
-    let owe = WE.with(|c| c.get());
-    let owb = WB.with(|c| c.get());
+    let owe = crate::ported::zle::compcore::WE.load(std::sync::atomic::Ordering::Relaxed);
+    let owb = crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed);
     let ocs = CS_G.load(Ordering::Relaxed);
     let oll = *ZLEMETALL.lock().unwrap();
     let ois = *INSTRING.lock().unwrap();
@@ -3170,8 +3170,8 @@ pub(crate) fn sep_comp_string(ss: &str, s: &str, noffs: i32) -> i32 {
 
     *NOALIASES.lock().unwrap() = ona;
     *NOERRS.lock().unwrap() = ne;
-    WB.with(|c| c.set(owb));
-    WE.with(|c| c.set(owe));
+    crate::ported::zle::compcore::WB.store(owb, std::sync::atomic::Ordering::Relaxed);
+    crate::ported::zle::compcore::WE.store(owe, std::sync::atomic::Ordering::Relaxed);
     CS_G.store(ocs, Ordering::Relaxed);
     *LINE_G.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = ol;
     *ZLEMETALL.lock().unwrap() = oll;
@@ -3551,7 +3551,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         if let Ok(mut g) = cell.lock() {
             *g = ip;
         }
-        WB.with(|c| c.set(c.get() + compadd));
+        crate::ported::zle::compcore::WB
+            .fetch_add(compadd, std::sync::atomic::Ordering::Relaxed);
         s = s[ca..].to_string();
         offs -= compadd;
         if offs < 0 {
@@ -3730,7 +3731,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         // separate, un-authorized change — see report).
         let cs_eq_wb = crate::ported::zle::compcore::ZLEMETACS
             .load(std::sync::atomic::Ordering::Relaxed)
-            == WB.with(|c| c.get());
+            == crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed);
         let s1_is_start = s1.is_none() || s1 == Some(0);
         let start_cond = s1_is_start || ic != '\0';
         let mut fpre_s = if start_cond && (s_first != Some(b'/') || cs_eq_wb) {
@@ -4149,8 +4150,10 @@ pub(crate) fn setup_() -> i32 {
 
 // `we` / `wb` — word end / begin positions (1-based byte offsets
 // into zlemetaline). Port of `int wb, we;` at Src/Zle/zle_tricky.c.
-thread_local! { static WE: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
-thread_local! { static WB: std::cell::Cell<i32> = const { std::cell::Cell::new(0) }; }
+// WB/WE deduped to the canonical `compcore::{WB, WE}` (lex.c:120); the
+// former private thread_local shadows were removed so the `cs == wb`
+// comparison and the sep_comp_string save/restore see the same globals
+// the lexer writes.
 
 // `zlemetacs` — cursor position (byte offset). Deduped: reads/writes the
 // canonical `compcore::ZLEMETACS` (lex.c:104) instead of a private
@@ -5190,10 +5193,10 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Pre-set zle_tricky.c globals; sep_comp_string must restore them
         // on exit (C compctl.c:2810-2813 save / 2941-2950 restore).
-        use crate::ported::zle::compcore::{ZLEMETACS as CS_G, ZLEMETALINE as LINE_G};
+        use crate::ported::zle::compcore::{WB, WE, ZLEMETACS as CS_G, ZLEMETALINE as LINE_G};
         use std::sync::atomic::Ordering;
-        WE.with(|c| c.set(42));
-        WB.with(|c| c.set(7));
+        WE.store(42, Ordering::Relaxed);
+        WB.store(7, Ordering::Relaxed);
         CS_G.store(11, Ordering::Relaxed);
         *ZLEMETALL.lock().unwrap() = 99;
         *INSTRING.lock().unwrap() = QT_DOUBLE;
@@ -5205,8 +5208,8 @@ mod tests {
 
         let _ = sep_comp_string("", "x", 0);
 
-        assert_eq!(WE.with(|c| c.get()), 42);
-        assert_eq!(WB.with(|c| c.get()), 7);
+        assert_eq!(WE.load(Ordering::Relaxed), 42);
+        assert_eq!(WB.load(Ordering::Relaxed), 7);
         assert_eq!(CS_G.load(Ordering::Relaxed), 11);
         assert_eq!(*ZLEMETALL.lock().unwrap(), 99);
         assert_eq!(*INSTRING.lock().unwrap(), QT_DOUBLE);

@@ -6830,6 +6830,7 @@ pub fn paramsubst(
                                                 (crate::ported::zsh_h::GETKEY_OCTAL_ESC
                                                     | crate::ported::zsh_h::GETKEY_EMACS)
                                                     as u32,
+                                                None,
                                             )
                                             .0;
                                         }
