@@ -351,8 +351,12 @@ pub fn ingetc() -> Option<char> {
     loop {
         let pos = inbufpos.with(|p| p.get());
         let buf = inbuf.with(|b| b.borrow().clone());
-        if pos < buf.len() {
-            let c = buf.chars().nth(pos)?;
+        // c:326 — C's `inbufptr` is a byte pointer; the Rust port keeps
+        // `inbufpos` a CHAR index into the `inbuf` String. Buffer-end is
+        // "no char at pos": the old `pos < buf.len()` compared a char index
+        // against the BYTE length, truncating multibyte `inbuf` content
+        // (eval / here-strings / cmdsubst / completion) at the first such char.
+        if let Some(c) = buf.chars().nth(pos) {
             inbufpos.with(|p| p.set(pos + 1));
             inbufct.with(|c| c.set(c.get().saturating_sub(1)));
 
@@ -534,7 +538,7 @@ pub fn inputline() -> i32 {
         let _ = io::stderr().flush(); // c:436 fflush(stderr)
     }
     // c:498-500 — install the line as the live input buffer.
-    let len = line.len() as i32; // c:500 inbufleft = strlen(ingetcline)
+    let len = line.chars().count() as i32; // c:500 inbufleft (char count — inbufpos/inbufct are char-based)
     inbuf.with(|b| *b.borrow_mut() = line);
     inbufpos.with(|p| p.set(0)); // c:499 inbufptr = inbuf
     inbufct.with(|c| c.set(len)); // c:501 inbufct = inbufleft
@@ -550,7 +554,7 @@ pub fn inputsetline(str: &str, flags: i32) {
     // c:510
     inbuf.with(|b| *b.borrow_mut() = str.to_string());
     inbufpos.with(|p| p.set(0));
-    let len = str.len() as i32;
+    let len = str.chars().count() as i32; // char count — inbufct is char-based
     if (flags & INP_CONT) != 0 {
         inbufct.with(|c| c.set(c.get() + len));
     } else {
@@ -706,7 +710,7 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
         }
     }
 
-    let new_len = inbuf.with(|b| b.borrow().len()) as i32;
+    let new_len = inbuf.with(|b| b.borrow().chars().count()) as i32; // char count — inbufct is char-based
     if (combined & INP_CONT) != 0 {
         inbufct.with(|c| c.set(c.get() + new_len));
     } else {
@@ -780,8 +784,8 @@ pub fn inpoptop() {
         inbufpos.with(|p| p.set(entry.bufpos));
         inbufflags.with(|f| f.set(entry.flags));
         let remaining = inbuf
-            .with(|b| b.borrow().len())
-            .saturating_sub(entry.bufpos) as i32;
+            .with(|b| b.borrow().chars().count())
+            .saturating_sub(entry.bufpos) as i32; // char count (bufpos is a char index)
         inbufct.with(|c| c.set(remaining));
     }
 }
