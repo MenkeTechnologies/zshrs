@@ -753,46 +753,153 @@ pub fn clprintfmt(p: &str, ml: i32) -> i32 {
 }
 
 /// Port of `int clnicezputs(int do_colors, char *s, int ml)` from
-/// `Src/Zle/complist.c:715`. Emits the bytes of `s` to the
-/// shell-output fd with optional per-char colorization. The full C
-/// body (c:717-790) walks every byte applying meta-decoding,
-/// `itok` skipping, multibyte → nice-character expansion, and per-
-/// match LS_COLORS lookups via `doiscol`. Rust port handles the
-/// meta-decode + itok-skip pieces faithfully and writes bytes
-/// directly; LS_COLORS colorization stays gated on do_colors but
-/// only emits the post-decoded string without per-char color cycling
-/// until the mcolors substrate is wired.
-#[allow(unused_variables)]
-pub fn clnicezputs(do_colors: i32, s: &str, ml: i32) -> i32 {
-    // c:715
-    let _ = do_colors;
-    // c:717-735 — meta-decode loop matches the C `niceztrlen`/
-    //              `nicezputs` pair. We do the same demeta-+-itok-skip
-    //              pass `compzputs` uses, then write the decoded bytes.
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == 0x83 {
-            // c:741 Meta byte
-            i += 1;
-            if i < bytes.len() {
-                out.push(bytes[i] ^ 32);
-            }
-        } else if (0x80..0xa0).contains(&c) { // c:744 itok skip
-             // pass — pseudo-token, not real output
-        } else {
-            out.push(c);
-        }
-        i += 1;
-    }
-    if out.is_empty() {
-        return 0;
-    }
+/// `Src/Zle/complist.c:715` (the `MULTIBYTE_SUPPORT` branch, c:720-836).
+///
+/// Local version of `nicezputs()` with in-string colouring and
+/// scrolling. Faithful port of the C pipeline:
+///   1. c:741-744 — `ztrdup` + `untokenize` + `unmetafy` the input into
+///      the raw byte string (`ums`/`uptr`, length `umlen`). Rust uses
+///      [`untokenize`] then [`unmetafy_str`].
+///   2. c:746-747 — `if (do_colors) initiscol();`.
+///   3. c:750-834 — decode each character (`mbrtowc` → wide char; an
+///      invalid/incomplete byte sequence maps to the `MB_INVALID`/eol
+///      path and is prettified via [`nicechar`], a valid wide char via
+///      [`wcs_nicechar`]). For every input byte consumed, when coloring,
+///      call [`doiscol`]. Then walk the nice representation emitting each
+///      character while tracking the output column, honoring the
+///      screen-full early-return (`ml == mlend - 1 && col == columns - 1`)
+///      and the wrap/scroll handling (`if (col > columns) { ml++; if
+///      (mscroll && !--mrestlines && (ask = asklistscroll(ml))) return
+///      ask; col -= columns; ... }`).
+///
+/// Column accounting note: the C code walks the *metafied* representation
+/// byte-by-byte, demeta-ing as it goes and distinguishing single-width
+/// ASCII-prefix bytes (`col++`) from the trailing wide-character bytes
+/// (`col += width` once). Rust's [`nicechar`]/[`wcs_nicechar`] return a
+/// display-ready native-UTF-8 string with no `Meta` bytes, so we advance
+/// the column per *character*: ASCII characters contribute 1 column, the
+/// single wide character contributes [`zwcwidth`]. The per-character total
+/// equals the C per-byte total and the wrap/screen-full checks fire at the
+/// same output positions.
+pub fn clnicezputs(do_colors: i32, s: &str, ml_in: i32) -> i32 {
+    use crate::ported::lex::untokenize;
+    use crate::ported::utils::{nicechar, unmetafy_str, wcs_nicechar, zwcwidth};
+
+    // c:717 — `int i = 0, col = 0, ask, oml = ml;`
+    let oml = ml_in;
+    let mut ml = ml_in;
+    let mut col: i32 = 0;
+    let mut i: i32 = 0; // doiscol position (input byte index)
+
+    let zterm_columns = adjustcolumns() as i32;
+    let mlend = MLEND.load(Ordering::SeqCst);
+    let mscroll = MSCROLL.load(Ordering::SeqCst) != 0;
+
     let fd = SHTTY.load(Ordering::Relaxed);
     let out_fd = if fd >= 0 { fd } else { 1 };
-    let _ = write_loop(out_fd, &out);
+
+    // c:741-744 — `ums = ztrdup(s); untokenize(ums);
+    //              uptr = unmetafy(ums, &umlen); umleft = umlen;`
+    let ums = untokenize(s);
+    let ubytes = unmetafy_str(&ums);
+
+    // c:746-747 — `if (do_colors) initiscol();`
+    if do_colors != 0 {
+        initiscol();
+    }
+    // c:749 — `mb_charinit();` — no-op in Rust (native UTF-8).
+
+    // c:750 — `while (umleft > 0)`.
+    let mut idx = 0usize;
+    while idx < ubytes.len() {
+        // c:751-776 — decode the next character. A valid UTF-8 sequence
+        //             is the `default:` (wcs_nicechar) path; an invalid
+        //             or incomplete lead byte is the MB_INVALID/eol path
+        //             (nicechar of the raw byte, one byte consumed).
+        let b0 = ubytes[idx];
+        let seq_len = if b0 < 0x80 {
+            1
+        } else if b0 >> 5 == 0b110 {
+            2
+        } else if b0 >> 4 == 0b1110 {
+            3
+        } else if b0 >> 3 == 0b11110 {
+            4
+        } else {
+            0 // invalid lead byte
+        };
+        let (rep, cnt): (String, usize) = if seq_len >= 1 && idx + seq_len <= ubytes.len() {
+            match std::str::from_utf8(&ubytes[idx..idx + seq_len]) {
+                Ok(cs) => {
+                    // c:768-775 — valid wide char (case 0 for '\0' also
+                    //             lands here with cnt = 1). wcs_nicechar
+                    //             prettifies; width tracked per-char below.
+                    let cc = cs.chars().next().unwrap();
+                    (wcs_nicechar(cc, None, None), seq_len)
+                }
+                // c:757-767 — MB_INVALID: nicechar of the single byte.
+                Err(_) => (nicechar(b0 as char), 1),
+            }
+        } else {
+            // c:754-767 — MB_INCOMPLETE (eol) / invalid lead byte.
+            (nicechar(b0 as char), 1)
+        };
+
+        idx += cnt;
+
+        // c:780-788 — `if (do_colors) while (cnt--) doiscol(i++);`
+        if do_colors != 0 {
+            for _ in 0..cnt {
+                doiscol(i);
+                i += 1;
+            }
+        }
+
+        // c:795-833 — loop over characters in the nice representation.
+        let mut buf = [0u8; 4];
+        for ch in rep.chars() {
+            // c:799-803 — is the screen full?
+            if ml == mlend - 1 && col == zterm_columns - 1 {
+                MLPRINTED.store(ml - oml, Ordering::SeqCst);
+                return 0;
+            }
+            // c:806/811 — `putc(nc, shout);`.
+            let _ = write_loop(out_fd, ch.encode_utf8(&mut buf).as_bytes());
+            // c:807-816 — ASCII characters are single-width; the single
+            //             wide character contributes its display width.
+            col += if (ch as u32) < 0x80 {
+                1
+            } else {
+                zwcwidth(ch) as i32
+            };
+            // c:822-832 — wrap / scroll handling.
+            if col > zterm_columns {
+                ml += 1;
+                // c:824 — `if (mscroll && !--mrestlines &&
+                //           (ask = asklistscroll(ml)))`.
+                if mscroll {
+                    let rest = MRESTLINES.fetch_sub(1, Ordering::SeqCst) - 1;
+                    if rest == 0 {
+                        let ask = asklistscroll(ml);
+                        if ask != 0 {
+                            // c:825-827
+                            MLPRINTED.store(ml - oml, Ordering::SeqCst);
+                            return ask;
+                        }
+                    }
+                }
+                // c:829 — `col -= zterm_columns;`
+                col -= zterm_columns;
+                // c:830-831 — `if (do_colors) fputs(" \010", shout);`
+                if do_colors != 0 {
+                    let _ = write_loop(out_fd, b" \x08");
+                }
+            }
+        }
+    }
+
+    // c:874 — `mlprinted = ml - oml;` / c:875 — `return 0;`
+    MLPRINTED.store(ml - oml, Ordering::SeqCst);
     0
 }
 
@@ -2973,72 +3080,1594 @@ pub fn domenuselect() -> i32 {
         crate::ported::zle::zle_keymap::selectlocalmap(Some(mskeymap)); // c:2470
     }
 
-    let mut acc = 0i32; // c:2392
-    let mut broken = 0i32; // c:2393
+    let _ = &saved_localmap; // C selectlocalmap(NULL) on exit, not a restore.
 
-    // c:2485 — `for (;;) { ... }`. Minimal main loop covering the
-    // exit dispatches: empty/sendbreak → break, acceptline → acc=1.
-    // mtab/mgtab-driven navigation (up/down/forward/backward) requires
-    // the Cmatch matrix substrate that isn't ported yet — those keys
-    // fall through the loop unhandled and exit via the wildcard arm.
-    loop {
-        // c:2586 — `zrefresh()` repaints the menu list each turn.
-        complistmatches(); // c:2486-2585 (display update)
-
-        // c:2629 — `cmd = getkeycmd();`
-        let cmd = crate::ported::zle::zle_keymap::getkeycmd();
-
-        // c:2643-2646 — empty / sendbreak → bell + break.
-        let name = match &cmd {
+    // c:2465-2467 — MENUPROMPT status line + mhasstat flag.
+    {
+        // `mstatus = dupstring(getsparam("MENUPROMPT"))`: unset → NULL (no
+        // status); set-but-empty → the default prompt; else the value.
+        let mstatus = match getsparam("MENUPROMPT") {
             None => String::new(),
-            Some(t) => t.nam.clone(),
+            Some(s) if s.is_empty() => "%SScrolling active: current selection at %p%s".to_string(),
+            Some(s) => s,
         };
-        if name.is_empty() || name == "send-break" {
-            crate::ported::utils::zbeep(); // c:2644
-            broken = 1;
-            break; // c:2646
-        }
-        // c:2653 — `acceptline` / `acceptsearch` → acc=1, break.
-        if name == "accept-line" || name == "accept-search" {
-            // c:2654-2657 — accept inside search mode just exits search.
-            if mode == 2 || mode == 3 {
-                // MM_FSEARCH | MM_BSEARCH
-                mode = 0; // c:2655
-                continue; // c:2656
-            }
-            acc = 1; // c:2658
-            break; // c:2659
-        }
-        // c:2738 (etc.) — undo widget. Without mtab navigation
-        // there's nothing to undo, so treat as exit.
-        if name == "undo" {
-            break;
-        }
-        // c:3460 — anything else: walk did not handle this key. C
-        // dispatches via the giant `else if` ladder. Without the
-        // mtab/mgtab matrices the navigation keys are no-ops; exit
-        // so the user sees the cursor change come back.
-        broken = 1;
-        break;
+        MHASSTAT.store(if mstatus.is_empty() { 0 } else { 1 }, Ordering::SeqCst); // c:2467
+        *MSTATUS.lock().unwrap() = mstatus;
     }
-
-    // c:3469-3475 — restore localmap on exit.
-    crate::ported::zle::zle_keymap::selectlocalmap(saved_localmap);
-
+    // c:2464 — leave the signal-queued region the entry (c:2406) opened.
     unqueue_signals();
 
-    // c:3477-3478 — `return (broken == 2 ? 3 : ((dat && !broken) ?
-    //                 (acc ? 1 : 2) : (!noselect ^ acc)));`. Without
-    // `dat` parameter wired through, treat as if `dat == NULL`:
-    // `return !noselect ^ acc`. `noselect` is 1 by default until a
-    // selection happens (set above).
-    let _ = (oe, step, mode, status);
+    // ===== c:2385-2396 loop-local state =====
+    let mut acc = 0i32; // c:2392
+    let mut broken = 0i32; // c:2393
+    let mut wishcol = 0i32; // c:2392
+    let mut setwish = 0i32; // c:2392
+    let mut wasnext = 0i32; // c:2392
+    let mut lbeg = 0i32; // c:2393
+    let mut first = 1i32; // c:2393
+    let mut nolist = 0i32; // c:2394
+    let pl = NLNCT.load(Ordering::SeqCst); // c:2393
+    let mut do_last_key = 0i32; // c:2391
+    let mut modeline: Option<String> = None; // c:2396
+    let mut modecs = 0i32; // c:2394
+    let mut modell = 0i32; // c:2394
+    let mut modelen = 0i32; // c:2394
+    let mut lastsearch: Option<String> = None; // c:2386 static lastsearch
+    let mut p: i32 = 0; // C `Cmatch **p` — linear index into mtab
+    let mut cmd: Option<crate::ported::zle::zle_thingy::Thingy> = None; // c:2389
+    let mut goto_getk = false; // emulates C's `goto getk` (skip redraw+p-setup)
+    let mut i_flag = 0i32; // c:2392 `i` — first-non-empty sentinel
+
+    // c:2159 `struct menustack`: the ported `menustack` type (this file)
+    // omits the `struct menuinfo info` snapshot and the amatches/pmatches/
+    // lastmatches/lastlmatches group lists that C keeps in the same struct.
+    // Rather than mutate that struct, the extra state rides alongside in a
+    // local frame so push/pop restore stays faithful.
+    struct MFrame {
+        line: String,                                           // c:2161
+        cs: i32,                                                // c:2165
+        mline: i32,                                             // c:2165
+        mlbeg: i32,                                             // c:2165
+        info: crate::ported::zle::comp_h::Menuinfo,             // c:2167 struct menuinfo info
+        amatches: Option<Vec<Cmgroup>>,                         // c:2168
+        pmatches: Option<Vec<Cmgroup>>,                         // c:2168
+        lastmatches: Option<Vec<Cmgroup>>,                      // c:2168
+        lastlmatches: Option<Cmgroup>,                          // c:2168
+        nolist: i32,                                            // c:2165
+        acc: i32,                                               // c:2165
+        brbeg: Option<Box<crate::ported::zle::comp_h::Brinfo>>, // c:2162
+        brend: Option<Box<crate::ported::zle::comp_h::Brinfo>>, // c:2163
+        nbrbeg: i32,                                            // c:2164
+        nbrend: i32,                                            // c:2164
+        nmatches: i32,                                          // c:2165
+        origline: String,                                       // c:2172
+        origcs: i32,                                            // c:2173
+        origll: i32,                                            // c:2173
+        status: String,                                         // c:2180
+        mode: i32,                                              // c:2181
+    }
+    let mut u: Vec<MFrame> = Vec::new(); // c:2389 `Menustack u = NULL;`
+
+    // Movement dispatch tokens — C reaches the equivalent code via gotos
+    // (down:/up:/right:/left:/top:/bottom:); Rust models the cross-arm
+    // jumps with a small state machine driven by this enum.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Move {
+        Down,
+        Up,
+        Right,
+        Left,
+        Top,
+        Bottom,
+        FwdWord,
+        BwdWord,
+        BlankFwd,
+        BlankBwd,
+        BegLine,
+        EndLine,
+    }
+
+    // ---- mtab/mgtab cell accessors -------------------------------------
+    // C works with `Cmatch **p` pointer arithmetic + the MMARK low-bit tag.
+    // The Rust mtab stores cloned `Cmatch` values (no tag), so the mark is
+    // reconstructed from adjacency: a real-match cell whose in-row left
+    // neighbour shares its `gnum` is a continuation (== `mmarked`). A
+    // `mtmark(NULL)` separator cell is stored as `None`, which the callers
+    // treat exactly like C's `!*p`.
+    let cell = |i: i32| -> Option<Cmatch> {
+        if i < 0 {
+            return None;
+        }
+        MTAB.lock().unwrap().get(i as usize).cloned().flatten()
+    };
+    let gcell = |i: i32| -> Option<Cmgroup> {
+        if i < 0 {
+            return None;
+        }
+        MGTAB.lock().unwrap().get(i as usize).cloned().flatten()
+    };
+    // Combined `!*p || mmarked(*p)` skip predicate used across navigation.
+    let skipcell = |i: i32| -> bool {
+        if i < 0 {
+            return true; // !*p
+        }
+        let mc = MCOLS.load(Ordering::SeqCst);
+        let t = MTAB.lock().unwrap();
+        match t.get(i as usize).cloned().flatten() {
+            None => true, // !*p (real NULL or mtmark(NULL) separator)
+            Some(a) => {
+                if mc > 0 && i % mc != 0 {
+                    if let Some(b) = t.get((i - 1) as usize).cloned().flatten() {
+                        return a.gnum == b.gnum; // mmarked(*p)
+                    }
+                }
+                false
+            }
+        }
+    };
+    // `*a == *b` pointer-equality, resolved by unique match `gnum`.
+    let same = |a: i32, b: i32| -> bool {
+        match (cell(a), cell(b)) {
+            (Some(x), Some(y)) => x.gnum == y.gnum,
+            _ => false,
+        }
+    };
+    // Direct port of `adjust_mcol(int wish, Cmatch ***tabp, Cmgroup **grp)`
+    // (complist.c:2127) — inlined so the mtab-walking body runs (the
+    // module-level adjust_mcol is a clamp-only stub). Mutates `mcol` and
+    // returns `(new_p, ret)` where ret==1 means "row is empty".
+    let adjust_mcol = |wish: i32, pin: i32| -> (i32, i32) {
+        let mc = MCOLS.load(Ordering::SeqCst);
+        let mcol = MCOL.load(Ordering::SeqCst);
+        let base = pin - mcol; // matchtab -= mcol
+        let mut pp = wish;
+        while pp >= 0 && skipcell(base + pp) {
+            pp -= 1;
+        } // c:2133
+        let mut n = wish;
+        while n < mc && skipcell(base + n) {
+            n += 1;
+        } // c:2134
+        if n == mc {
+            n = -1;
+        } // c:2135-2136
+        let c;
+        if pp < 0 {
+            // c:2138
+            if n < 0 {
+                return (pin, 1);
+            } // c:2139-2140
+            c = n; // c:2141
+        } else if n < 0 {
+            c = pp; // c:2143
+        } else {
+            c = if (mcol - pp) < (n - mcol) { pp } else { n }; // c:2145
+        }
+        MCOL.store(c, Ordering::SeqCst); // c:2151
+        (base + c, 0) // c:2147 *tabp = matchtab + c
+    };
+    // minfo.cur->gnum helper.
+    let cur_gnum = || -> i32 {
+        MINFO
+            .get()
+            .and_then(|g| g.lock().ok())
+            .and_then(|g| g.cur.as_ref().map(|c| c.gnum))
+            .unwrap_or(-1)
+    };
+    // Direct port of `do_menucmp(0)` (compresult.c:1253): step the menu
+    // cursor `zmult` times through the amatches arrays via `valid_match`,
+    // then re-insert with `do_single`.
+    let do_menucmp0 = || {
+        let mut zm = crate::ported::zle::compcore::ZMULT.load(Ordering::SeqCst);
+        while zm != 0 {
+            let ci = MINFO
+                .get()
+                .and_then(|g| g.lock().ok())
+                .map(|g| g.cur_idx)
+                .unwrap_or(0);
+            let m = crate::ported::zle::compresult::valid_match(ci, 1);
+            if let (Some(mm), Some(lk)) = (m, MINFO.get()) {
+                if let Ok(mut mi) = lk.lock() {
+                    mi.cur = Some(Box::new(mm)); // minfo.cur = valid_match(...)
+                }
+            }
+            zm -= (if 0 < zm { 1 } else { 0 }) - (if zm < 0 { 1 } else { 0 });
+        }
+        let cur = MINFO
+            .get()
+            .and_then(|g| g.lock().ok())
+            .and_then(|g| g.cur.as_ref().map(|c| (**c).clone()));
+        if let Some(c) = cur {
+            crate::ported::zle::compresult::do_single(&c); // do_single(*minfo.cur)
+        }
+    };
+    // Direct port of `msearch(Cmatch **ptr, char *ins, int back, int rep,
+    // int *wrapp)` (complist.c:2302), inlined so the `ins`/`back`/`rep`
+    // parameters that the module-level `msearch()` stub drops are honoured.
+    // Returns `(Some(index)|None, wrap)`.
+    let msearch_fn = |pin: i32, ins: Option<&str>, back: bool, rep0: bool| -> (Option<i32>, i32) {
+        let mc = MCOLS.load(Ordering::SeqCst);
+        let mut x = MCOL.load(Ordering::SeqCst); // c:2305
+        let mut y = MLINE.load(Ordering::SeqCst);
+        let mut wrap = 0i32;
+        let owrap = MSEARCHSTATE.load(Ordering::SeqCst) & MS_WRAPPED; // c:2306
+                                                                      // c:2308 msearchpush(ptr, back).
+        {
+            let mut st = MSEARCHSTACK.lock().unwrap();
+            st.push(menusearch {
+                str: MSEARCHSTR.lock().unwrap().clone(),
+                line: MLINE.load(Ordering::SeqCst),
+                col: MCOL.load(Ordering::SeqCst),
+                back: if back { 1 } else { 0 },
+                state: MSEARCHSTATE.load(Ordering::SeqCst),
+                ptr: pin.max(0) as usize,
+            });
+        }
+        if let Some(s) = ins {
+            MSEARCHSTR.lock().unwrap().push_str(s); // c:2310 dyncat
+        }
+        let nlines = listdat
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.nlines))
+            .unwrap_or(0);
+        let (mut ex, mut ey) = if back {
+            (mc - 1, -1) // c:2312-2313
+        } else {
+            (0, nlines) // c:2315-2316
+        };
+        let mut pp = pin; // c:2318 p = mtab + mline*mcols + mcol
+        let mut l_gnum: Option<i32> = None;
+        let mut rep = rep0;
+        if rep {
+            l_gnum = cell(pp).map(|c| c.gnum); // c:2320
+        }
+        let needle = MSEARCHSTR.lock().unwrap().clone();
+        loop {
+            // c:2323-2333
+            if !rep {
+                if let Some(m) = cell(pp) {
+                    if l_gnum != Some(m.gnum) {
+                        l_gnum = Some(m.gnum);
+                        let hay = m
+                            .disp
+                            .as_deref()
+                            .unwrap_or_else(|| m.str.as_deref().unwrap_or(""));
+                        if hay.contains(needle.as_str()) {
+                            MCOL.store(x, Ordering::SeqCst); // c:2328
+                            MLINE.store(y, Ordering::SeqCst); // c:2329
+                            return (Some(pp), wrap); // c:2331
+                        }
+                    }
+                }
+            }
+            rep = false; // c:2336
+            if back {
+                // c:2338-2342
+                pp -= 1;
+                x -= 1;
+                if x < 0 {
+                    x = mc - 1;
+                    y -= 1;
+                }
+            } else {
+                // c:2343-2348
+                pp += 1;
+                x += 1;
+                if x == mc {
+                    x = 0;
+                    y += 1;
+                }
+            }
+            if x == ex && y == ey {
+                // c:2350
+                if back {
+                    x = mc - 1;
+                    y = nlines - 1;
+                    pp = y * mc + x; // c:2352-2354
+                } else {
+                    x = 0;
+                    y = 0;
+                    pp = 0; // c:2356-2357
+                }
+                ex = MCOL.load(Ordering::SeqCst); // c:2359
+                ey = MLINE.load(Ordering::SeqCst); // c:2360
+                if wrap != 0 || (x == ex && y == ey) {
+                    // c:2362
+                    MSEARCHSTATE.store(MS_FAILED | owrap, Ordering::SeqCst); // c:2363
+                    break;
+                }
+                MSEARCHSTATE.fetch_or(MS_WRAPPED, Ordering::SeqCst); // c:2367
+                wrap = 1; // c:2368
+            }
+        }
+        (None, wrap) // c:2372
+    };
+
+    NOSELECT.store(1, Ordering::SeqCst); // c:2471 `noselect = 1;`
+
+    // c:2472-2481 — skip dummy / already-accepted matches before entering.
+    loop {
+        let cur = MINFO
+            .get()
+            .and_then(|g| g.lock().ok())
+            .and_then(|g| g.cur.as_ref().map(|c| (**c).clone()));
+        let (prebr, postbr) = MINFO
+            .get()
+            .and_then(|g| g.lock().ok())
+            .map(|g| (g.prebr.clone(), g.postbr.clone()))
+            .unwrap_or((None, None));
+        let need = match cur {
+            Some(c) => {
+                let ma = crate::ported::zle::compcore::menuacc.load(Ordering::SeqCst);
+                (ma != 0
+                    && !crate::ported::zle::compresult::hasbrpsfx(
+                        &c,
+                        prebr.as_deref(),
+                        postbr.as_deref(),
+                    ))
+                    || (c.flags & crate::ported::zle::comp_h::CMF_DUMMY) != 0
+                    || ((c.flags & (CMF_NOLIST | crate::ported::zle::comp_h::CMF_MULT)) != 0
+                        && c.str.as_deref().map_or(true, |s| s.is_empty()))
+            }
+            None => false,
+        };
+        if !need {
+            break;
+        }
+        do_menucmp0(); // c:2481
+    }
+
+    // c:2483-2488 — initial selection + geometry.
+    MSELECT.store(cur_gnum(), Ordering::SeqCst); // c:2483
+    MLINE.store(0, Ordering::SeqCst); // c:2484
+    MLINES.store(999999, Ordering::SeqCst); // c:2485
+    MLBEG.store(0, Ordering::SeqCst); // c:2486
+    MOLBEG.store(-42, Ordering::SeqCst); // c:2487
+    MTAB_BEEN_REALLOCATED.store(0, Ordering::SeqCst); // c:2488
+
+    // c:2489 — `for (;;) { ... }`.
+    loop {
+        if !goto_getk {
+            // c:2492-2503 — mline<0 or reallocated: re-scan mtab for the
+            // selected match's row/col.
+            if MLINE.load(Ordering::SeqCst) < 0 || MTAB_BEEN_REALLOCATED.load(Ordering::SeqCst) != 0
+            {
+                let mcols = MCOLS.load(Ordering::SeqCst);
+                let mlines = MLINES.load(Ordering::SeqCst);
+                let msel = MSELECT.load(Ordering::SeqCst);
+                let mut idx = 0i32;
+                let mut found_y = mlines;
+                'yl: for y in 0..mlines {
+                    let mut xx = mcols;
+                    while xx > 0 {
+                        if !skipcell(idx) {
+                            if let Some(c) = cell(idx) {
+                                if c.gnum == msel {
+                                    MCOL.store(mcols - xx, Ordering::SeqCst); // c:2500
+                                    found_y = y;
+                                    break 'yl;
+                                }
+                            }
+                        }
+                        xx -= 1;
+                        idx += 1;
+                    }
+                }
+                if found_y < mlines {
+                    MLINE.store(found_y, Ordering::SeqCst); // c:2505
+                }
+            }
+            MTAB_BEEN_REALLOCATED.store(0, Ordering::SeqCst); // c:2507
+
+            // c:2510-2516 — scroll the window up until mline is visible.
+            while MLINE.load(Ordering::SeqCst) < MLBEG.load(Ordering::SeqCst) {
+                let nb = MLBEG.load(Ordering::SeqCst) - step;
+                MLBEG.store(nb, Ordering::SeqCst); // mlbeg -= step
+                if nb < 0 {
+                    MLBEG.store(0, Ordering::SeqCst);
+                    if MLINE.load(Ordering::SeqCst) < 0 {
+                        break;
+                    }
+                }
+            }
+
+            // c:2518-2528 — back mlbeg up onto a non-empty row.
+            if MLBEG.load(Ordering::SeqCst) != 0 && lbeg != MLBEG.load(Ordering::SeqCst) {
+                let cols = MCOLS.load(Ordering::SeqCst);
+                let mut base = (MLBEG.load(Ordering::SeqCst) - 1) * cols;
+                while MLBEG.load(Ordering::SeqCst) != 0 {
+                    let mut c = cols;
+                    let mut q = base;
+                    while c > 0 {
+                        if !skipcell(q) {
+                            break;
+                        }
+                        q += 1;
+                        c -= 1;
+                    }
+                    if c != 0 {
+                        break;
+                    }
+                    base -= cols;
+                    MLBEG.store(MLBEG.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                }
+            }
+
+            // c:2530-2532 — scroll down until mline fits in the window.
+            let zterm_lines = adjustlines() as i32;
+            let space = zterm_lines - pl - MHASSTAT.load(Ordering::SeqCst);
+            if space > 0 {
+                while MLINE.load(Ordering::SeqCst) >= MLBEG.load(Ordering::SeqCst) + space {
+                    let nb = MLBEG.load(Ordering::SeqCst) + step;
+                    MLBEG.store(nb, Ordering::SeqCst);
+                    if nb + space > MLINES.load(Ordering::SeqCst) {
+                        MLBEG.store(MLINES.load(Ordering::SeqCst) - space, Ordering::SeqCst);
+                    }
+                }
+            }
+
+            // c:2534-2547 — advance mlbeg forward onto a non-empty row.
+            if lbeg != MLBEG.load(Ordering::SeqCst) {
+                let cols = MCOLS.load(Ordering::SeqCst);
+                let mut base = MLBEG.load(Ordering::SeqCst) * cols;
+                while MLBEG.load(Ordering::SeqCst) < MLINES.load(Ordering::SeqCst) {
+                    let mut c = cols;
+                    let mut q = base;
+                    while c > 0 {
+                        if cell(q).is_some() {
+                            break;
+                        }
+                        q += 1;
+                        c -= 1;
+                    }
+                    if c != 0 {
+                        break;
+                    }
+                    base += cols;
+                    MLBEG.store(MLBEG.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                }
+            }
+            lbeg = MLBEG.load(Ordering::SeqCst); // c:2548
+
+            crate::ported::zle::compcore::onlyexpl.store(0, Ordering::SeqCst); // c:2549
+            SHOWINGLIST.store(-2, Ordering::SeqCst); // c:2550
+
+            // c:2551 — first-time bell.
+            if first != 0
+                && LISTSHOWN.load(Ordering::SeqCst) == 0
+                && isset(crate::ported::zsh_h::LISTBEEP)
+            {
+                crate::ported::utils::zbeep();
+            }
+            // c:2560-2566 — capture the pre-menu line for interactive mode.
+            if first != 0 {
+                modeline = Some(
+                    ZLEMETALINE
+                        .get()
+                        .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                        .unwrap_or_default(),
+                );
+                modecs = ZLEMETACS.load(Ordering::SeqCst);
+                modell = ZLEMETALL.load(Ordering::SeqCst);
+                modelen = MINFO
+                    .get()
+                    .and_then(|g| g.lock().ok())
+                    .map(|g| g.len)
+                    .unwrap_or(0);
+            }
+            first = 0; // c:2567
+
+            // c:2568-2584 — status line for interactive / isearch modes.
+            if mode == 1 {
+                *STATUSLINE.lock().unwrap() = Some(status.clone());
+            } else if mode != 0 {
+                let st = MSEARCHSTATE.load(Ordering::SeqCst);
+                let failed = if st & MS_FAILED != 0 { "failed " } else { "" };
+                let wrapped = if st & MS_WRAPPED != 0 { "wrapped " } else { "" };
+                let dir = if mode == 2 { "" } else { " backward" };
+                status = format!(
+                    "{}{}isearch{}: {}",
+                    failed,
+                    wrapped,
+                    dir,
+                    MSEARCHSTR.lock().unwrap()
+                );
+                *STATUSLINE.lock().unwrap() = Some(status.clone());
+            } else {
+                *STATUSLINE.lock().unwrap() = None;
+            }
+
+            // c:2585-2589 — refresh (this fills mtab/mgtab + mmtabp).
+            if NOSELECT.load(Ordering::SeqCst) < 0 {
+                SHOWINGLIST.store(0, Ordering::SeqCst);
+                CLEARLIST.store(0, Ordering::SeqCst);
+                CLEARFLAG.store(1, Ordering::SeqCst);
+            }
+            complistmatches(); // c:2589 zrefresh()
+            *STATUSLINE.lock().unwrap() = None; // c:2590
+
+            INSELECT.store(1, Ordering::SeqCst); // c:2591
+            SELECTED.store(1, Ordering::SeqCst); // c:2592
+
+            // c:2593-2600 — nothing selectable.
+            let nosel = NOSELECT.load(Ordering::SeqCst);
+            if nosel != 0 {
+                if nosel < 0 {
+                    NOSELECT.store(0, Ordering::SeqCst); // c:2596
+                    goto_getk = true; // goto getk
+                    continue;
+                }
+                broken = 1; // c:2598
+                break; // c:2599
+            }
+
+            // c:2601-2608 — first-run: bail if the whole matrix is empty.
+            if i_flag == 0 {
+                let total = MCOLS.load(Ordering::SeqCst) * MLINES.load(Ordering::SeqCst);
+                let mut k = total;
+                let mut any = false;
+                while k > 0 {
+                    k -= 1;
+                    if cell(k).is_some() {
+                        any = true;
+                        break;
+                    }
+                }
+                if !any {
+                    break; // c:2606
+                }
+                i_flag = 1;
+            }
+
+            // c:2610-2618 — current cell + wishcol tracking.
+            p = MMTABP.load(Ordering::SeqCst) as i32; // c:2610 p = mmtabp
+            if let Some(c) = cell(p) {
+                let g = gcell(p);
+                if let Ok(mut mi) = MINFO
+                    .get_or_init(|| {
+                        std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+                    })
+                    .lock()
+                {
+                    mi.cur = Some(Box::new(c)); // c:2615 minfo.cur = *p
+                    mi.group = g.map(Box::new); // c:2616 minfo.group = *pg
+                }
+            }
+            let cg = cur_gnum();
+            if setwish != 0 {
+                wishcol = MCOL.load(Ordering::SeqCst); // c:2619
+            } else if MCOL.load(Ordering::SeqCst) > wishcol {
+                // c:2620 — `while (mcol > 0 && p[-1] == minfo.cur)`
+                while MCOL.load(Ordering::SeqCst) > 0 && cell(p - 1).map_or(false, |c| c.gnum == cg)
+                {
+                    MCOL.store(MCOL.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                    p -= 1;
+                }
+            } else if MCOL.load(Ordering::SeqCst) < wishcol {
+                // c:2621 — `while (mcol < mcols-1 && p[1] == minfo.cur)`
+                while MCOL.load(Ordering::SeqCst) < MCOLS.load(Ordering::SeqCst) - 1
+                    && cell(p + 1).map_or(false, |c| c.gnum == cg)
+                {
+                    MCOL.store(MCOL.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    p += 1;
+                }
+            }
+            setwish = 0;
+            wasnext = 0; // c:2622
+        }
+        goto_getk = false;
+
+        // c:2626-2637 — getk: read one command.
+        if do_last_key == 0 {
+            crate::ported::zle::compcore::ZMULT.store(1, Ordering::SeqCst); // c:2627
+            cmd = crate::ported::zle::zle_keymap::getkeycmd(); // c:2628
+                                                               // c:2629-2633 — swallow the interrupt flag (best-effort).
+            if MTAB_BEEN_REALLOCATED.load(Ordering::SeqCst) != 0 {
+                do_last_key = 1; // c:2635
+                continue;
+            }
+        }
+        do_last_key = 0; // c:2637
+        let was_inter = mode == 1; // c:2639
+        let name = cmd.as_ref().map(|t| t.nam.clone()).unwrap_or_default();
+
+        let mut movement: Option<Move> = None;
+        let mut wrap = 0i32;
+
+        // ===== dispatch ladder (c:2641-3452) =====
+        if name.is_empty() || name == "send-break" {
+            // c:2643-2647
+            crate::ported::utils::zbeep();
+            MOLBEG.store(-1, Ordering::SeqCst);
+            broken = 1;
+            break;
+        } else if nolist != 0
+            && name != "undo"
+            && (mode == 0
+                || (name != "backward-delete-char"
+                    && name != "self-insert"
+                    && name != "self-insert-unmeta"))
+        {
+            // c:2648-2652
+            crate::ported::zle::zle_keymap::ungetkeycmd();
+            break;
+        } else if name == "accept-line" || name == "accept-search" {
+            // c:2653-2660
+            if mode == 2 || mode == 3 {
+                mode = 0;
+                continue;
+            }
+            acc = 1;
+            break;
+        } else if name == "vi-insert" {
+            // c:2661-2687
+            if mode == 1 {
+                mode = 0; // exit interactive — fall through to do_single.
+            } else {
+                mode = 1;
+                let origline = ORIGLINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default();
+                let l = origline.len() as i32;
+                ZLEMETACS.store(0, Ordering::SeqCst);
+                foredel(ZLEMETALL.load(Ordering::SeqCst), 0);
+                spaceinline(l);
+                if let Some(m) = ZLEMETALINE.get() {
+                    if let Ok(mut g) = m.lock() {
+                        if g.len() >= l as usize {
+                            g.replace_range(..l as usize, &origline);
+                        } else {
+                            *g = origline.clone();
+                        }
+                    }
+                }
+                ZLEMETACS.store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
+                let _ = setmstatus(&mut status, "", 0, 0, None, None, None);
+                continue;
+            }
+        } else if name == "accept-and-infer-next-history"
+            || (mode == 1 && (name == "self-insert" || name == "self-insert-unmeta"))
+        {
+            // c:2492-2660 (of the ladder) — recursive interactive/infer
+            // completion. BLOCKED: needs the un-ported `comprecursive`
+            // global plus a re-entrant `menucomplete()` cycle with
+            // metafied-line bookkeeping (`iforcemenu`, saveline/we fixups)
+            // whose contract can't be verified without a build. Accept the
+            // key as a no-op step rather than emit a half-applied
+            // completion (see STOP-report).
+            continue;
+        } else if name == "accept-and-hold" || name == "accept-and-menu-complete" {
+            // c:2688-2731
+            if mode == 1 {
+                let cur = MINFO
+                    .get()
+                    .and_then(|g| g.lock().ok())
+                    .and_then(|g| g.cur.as_ref().map(|c| (**c).clone()));
+                if let Some(lk) = MINFO.get() {
+                    if let Ok(mut mi) = lk.lock() {
+                        mi.cur = None;
+                    }
+                }
+                if let Some(c) = &cur {
+                    crate::ported::zle::compresult::do_single(c);
+                }
+                if let (Some(lk), Some(c)) = (MINFO.get(), cur) {
+                    if let Ok(mut mi) = lk.lock() {
+                        mi.cur = Some(Box::new(c));
+                    }
+                }
+            }
+            mode = 0;
+            let info = MINFO
+                .get()
+                .and_then(|g| g.lock().ok())
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            u.push(MFrame {
+                line: ZLEMETALINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default(),
+                cs: ZLEMETACS.load(Ordering::SeqCst),
+                mline: MLINE.load(Ordering::SeqCst),
+                mlbeg: MLBEG.load(Ordering::SeqCst),
+                info,
+                amatches: None, // c:2701 s->amatches = ... = NULL
+                pmatches: None,
+                lastmatches: None,
+                lastlmatches: None,
+                nolist,
+                acc: crate::ported::zle::compcore::menuacc.load(Ordering::SeqCst),
+                brbeg: crate::ported::zle::compcore::BRBEG
+                    .get()
+                    .and_then(|m| m.lock().ok())
+                    .and_then(|g| g.clone()),
+                brend: crate::ported::zle::compcore::BREND
+                    .get()
+                    .and_then(|m| m.lock().ok())
+                    .and_then(|g| g.clone()),
+                nbrbeg: NBRBEG.load(Ordering::SeqCst),
+                nbrend: NBREND.load(Ordering::SeqCst),
+                nmatches: crate::ported::zle::compcore::nmatches.load(Ordering::SeqCst),
+                origline: ORIGLINE
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default(),
+                origcs: ORIGCS.load(Ordering::SeqCst),
+                origll: ORIGLL.load(Ordering::SeqCst),
+                status: status.clone(),
+                mode,
+            });
+            crate::ported::zle::compresult::accept_last(); // c:2720
+            handleundo();
+            do_menucmp0(); // c:2723 (comprecursive flag not ported — skipped)
+            MSELECT.store(cur_gnum(), Ordering::SeqCst);
+
+            // c:2726-2739 — relocate the cursor onto the new selection.
+            p -= MCOL.load(Ordering::SeqCst);
+            MCOL.store(0, Ordering::SeqCst);
+            let ol = MLINE.load(Ordering::SeqCst);
+            let cg = cur_gnum();
+            loop {
+                MCOL.store(0, Ordering::SeqCst);
+                let mcols = MCOLS.load(Ordering::SeqCst);
+                let mut found = false;
+                while MCOL.load(Ordering::SeqCst) < mcols {
+                    if cell(p).map_or(false, |c| c.gnum == cg) {
+                        found = true;
+                        break;
+                    }
+                    MCOL.store(MCOL.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    p += 1;
+                }
+                if found {
+                    break;
+                }
+                MLINE.store(MLINE.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                if MLINE.load(Ordering::SeqCst) == MLINES.load(Ordering::SeqCst) {
+                    MLINE.store(0, Ordering::SeqCst);
+                    p -= MLINES.load(Ordering::SeqCst) * mcols;
+                }
+                if MLINE.load(Ordering::SeqCst) == ol {
+                    break;
+                }
+            }
+            if !cell(p).map_or(false, |c| c.gnum == cg) {
+                // c:2740-2745
+                NOSELECT.store(1, Ordering::SeqCst);
+                CLEARLIST.store(1, Ordering::SeqCst);
+                LISTSHOWN.store(1, Ordering::SeqCst);
+                crate::ported::zle::compcore::onlyexpl.store(0, Ordering::SeqCst);
+                complistmatches();
+                break;
+            }
+            setwish = 1; // c:2746
+            continue;
+        } else if name == "undo" || (mode == 1 && name == "backward-delete-char") {
+            // c:2747-2790
+            let frame = match u.pop() {
+                Some(f) => f,
+                None => break, // c:2751
+            };
+            handleundo();
+            ZLEMETACS.store(0, Ordering::SeqCst);
+            foredel(ZLEMETALL.load(Ordering::SeqCst), 0);
+            let l = frame.line.len() as i32;
+            spaceinline(l);
+            if let Some(m) = ZLEMETALINE.get() {
+                if let Ok(mut g) = m.lock() {
+                    if g.len() >= l as usize {
+                        g.replace_range(..l as usize, &frame.line);
+                    } else {
+                        *g = frame.line.clone();
+                    }
+                }
+            }
+            ZLEMETACS.store(frame.cs, Ordering::SeqCst);
+            crate::ported::zle::compcore::menuacc.store(frame.acc, Ordering::SeqCst);
+            if let Ok(mut mi) = MINFO
+                .get_or_init(|| {
+                    std::sync::Mutex::new(crate::ported::zle::comp_h::Menuinfo::default())
+                })
+                .lock()
+            {
+                *mi = frame.info.clone(); // c:2762 memcpy(&minfo, &u->info, ...)
+            }
+            MLINE.store(frame.mline, Ordering::SeqCst);
+            MLBEG.store(frame.mlbeg, Ordering::SeqCst);
+            // c:2775-2782 — restore the saved match arrays when present.
+            if let Some(am) = frame.amatches {
+                if let Some(m) = crate::ported::zle::compcore::amatches.get() {
+                    *m.lock().unwrap() = am;
+                }
+                if let (Some(pm), Some(m)) =
+                    (frame.pmatches, crate::ported::zle::compcore::pmatches.get())
+                {
+                    *m.lock().unwrap() = pm;
+                }
+                if let (Some(lm), Some(m)) = (
+                    frame.lastmatches,
+                    crate::ported::zle::compcore::lastmatches.get(),
+                ) {
+                    *m.lock().unwrap() = lm;
+                }
+                if let Some(m) = crate::ported::zle::compcore::lastlmatches.get() {
+                    *m.lock().unwrap() = frame.lastlmatches;
+                }
+                crate::ported::zle::compcore::nmatches.store(frame.nmatches, Ordering::SeqCst);
+                crate::ported::zle::compcore::hasoldlist.store(1, Ordering::SeqCst);
+                VALIDLIST.store(1, Ordering::SeqCst);
+            }
+            // c:2783-2788 — brace-info restore.
+            if let Some(m) = crate::ported::zle::compcore::BRBEG.get() {
+                *m.lock().unwrap() = frame.brbeg;
+            }
+            if let Some(m) = crate::ported::zle::compcore::BREND.get() {
+                *m.lock().unwrap() = frame.brend;
+            }
+            NBRBEG.store(frame.nbrbeg, Ordering::SeqCst);
+            NBREND.store(frame.nbrend, Ordering::SeqCst);
+            if let Some(m) = ORIGLINE.get() {
+                *m.lock().unwrap() = frame.origline.clone();
+            }
+            ORIGCS.store(frame.origcs, Ordering::SeqCst);
+            ORIGLL.store(frame.origll, Ordering::SeqCst);
+            status = frame.status.clone();
+            mode = frame.mode;
+            nolist = frame.nolist;
+
+            CLEARLIST.store(1, Ordering::SeqCst); // c:2792
+            setwish = 1;
+            if let Some(m) = listdat.get() {
+                if let Ok(mut g) = m.lock() {
+                    g.valid = 0;
+                }
+            }
+            MOLBEG.store(-42, Ordering::SeqCst);
+
+            if nolist != 0 {
+                // c:2797-2805 — nolist: just repaint + re-read a key.
+                if mode == 1 {
+                    *STATUSLINE.lock().unwrap() = Some(status.clone());
+                } else {
+                    *STATUSLINE.lock().unwrap() = None;
+                }
+                zrefresh();
+                *STATUSLINE.lock().unwrap() = None;
+                goto_getk = true;
+                continue;
+            }
+            if mode != 0 {
+                continue; // c:2807
+            }
+            // c:2747..fall-through — re-insert minfo.cur (C aims p at it).
+            let cur = MINFO
+                .get()
+                .and_then(|g| g.lock().ok())
+                .and_then(|g| g.cur.as_ref().map(|c| (**c).clone()));
+            if let Some(c) = cur {
+                crate::ported::zle::compresult::do_single(&c);
+                MSELECT.store(c.gnum, Ordering::SeqCst);
+            }
+            continue;
+        } else if name == "redisplay" {
+            // c:2808-2812
+            redisplay();
+            MOLBEG.store(-42, Ordering::SeqCst);
+            continue;
+        } else if name == "clear-screen" {
+            // c:2813-2817
+            clearscreen();
+            MOLBEG.store(-42, Ordering::SeqCst);
+            continue;
+        } else if name == "down-history"
+            || name == "down-line-or-history"
+            || name == "down-line-or-search"
+            || name == "vi-down-line-or-history"
+        {
+            // c:2818-2848
+            mode = 0;
+            wrap = 0;
+            movement = Some(Move::Down);
+        } else if name == "up-history"
+            || name == "up-line-or-history"
+            || name == "up-line-or-search"
+            || name == "vi-up-line-or-history"
+        {
+            // c:2849-2884
+            mode = 0;
+            wrap = 0;
+            movement = Some(Move::Up);
+        } else if name == "emacs-forward-word"
+            || name == "vi-forward-word"
+            || name == "vi-forward-word-end"
+            || name == "forward-word"
+        {
+            // c:2885-2913
+            mode = 0;
+            movement = Some(Move::FwdWord);
+        } else if name == "emacs-backward-word"
+            || name == "vi-backward-word"
+            || name == "backward-word"
+        {
+            // c:2914-2942
+            mode = 0;
+            movement = Some(Move::BwdWord);
+        } else if name == "beginning-of-history" {
+            // c:2943-2963
+            mode = 0;
+            movement = Some(Move::Top);
+        } else if name == "end-of-history" {
+            // c:2964-2984
+            mode = 0;
+            movement = Some(Move::Bottom);
+        } else if name == "forward-char" || name == "vi-forward-char" {
+            // c:2985-3011
+            mode = 0;
+            wrap = 0;
+            movement = Some(Move::Right);
+        } else if name == "backward-char" || name == "vi-backward-char" {
+            // c:3012-3046
+            mode = 0;
+            wrap = 0;
+            movement = Some(Move::Left);
+        } else if name == "beginning-of-buffer-or-history"
+            || name == "beginning-of-line"
+            || name == "beginning-of-line-hist"
+            || name == "vi-beginning-of-line"
+        {
+            // c:3047-3058
+            mode = 0;
+            movement = Some(Move::BegLine);
+        } else if name == "end-of-buffer-or-history"
+            || name == "end-of-line"
+            || name == "end-of-line-hist"
+            || name == "vi-end-of-line"
+        {
+            // c:3059-3070
+            mode = 0;
+            movement = Some(Move::EndLine);
+        } else if name == "vi-forward-blank-word" || name == "vi-forward-blank-word-end" {
+            // c:3071-3089
+            mode = 0;
+            movement = Some(Move::BlankFwd);
+        } else if name == "vi-backward-blank-word" {
+            // c:3090-3108
+            mode = 0;
+            movement = Some(Move::BlankBwd);
+        } else if name == "complete-word"
+            || name == "expand-or-complete"
+            || name == "expand-or-complete-prefix"
+            || name == "menu-complete"
+            || name == "menu-expand-or-complete"
+            || name == "menu-select"
+        {
+            // c:3109-3153
+            if mode == 1 {
+                // Interactive: undo the inserted completion, keep the typed text.
+                let ml = modeline.clone().unwrap_or_default();
+                if let Some(m) = ORIGLINE.get() {
+                    *m.lock().unwrap() = ml.clone();
+                }
+                ORIGCS.store(modecs, Ordering::SeqCst);
+                ORIGLL.store(modell, Ordering::SeqCst);
+                ZLEMETACS.store(0, Ordering::SeqCst);
+                foredel(ZLEMETALL.load(Ordering::SeqCst), 0);
+                spaceinline(modell);
+                if let Some(m) = ZLEMETALINE.get() {
+                    if let Ok(mut g) = m.lock() {
+                        if g.len() >= modell as usize {
+                            g.replace_range(..modell as usize, &ml);
+                        } else {
+                            *g = ml.clone();
+                        }
+                    }
+                }
+                ZLEMETACS.store(modecs, Ordering::SeqCst);
+                if let Some(lk) = MINFO.get() {
+                    if let Ok(mut mi) = lk.lock() {
+                        mi.len = modelen;
+                    }
+                }
+                crate::ported::zle::compcore::WE.store(
+                    crate::ported::zle::compcore::WB.load(Ordering::SeqCst) + modelen,
+                    Ordering::SeqCst,
+                );
+            } else {
+                mode = 0;
+                do_menucmp0();
+                MSELECT.store(cur_gnum(), Ordering::SeqCst);
+                setwish = 1;
+                MLINE.store(-1, Ordering::SeqCst);
+            }
+            continue;
+        } else if name == "reverse-menu-complete" {
+            // c:3154-3163
+            mode = 0;
+            crate::ported::zle::compcore::ZMULT.store(
+                -crate::ported::zle::compcore::ZMULT.load(Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
+            do_menucmp0();
+            MSELECT.store(cur_gnum(), Ordering::SeqCst);
+            setwish = 1;
+            MLINE.store(-1, Ordering::SeqCst);
+            continue;
+        } else if name == "history-incremental-search-forward"
+            || name == "history-incremental-search-backward"
+            || ((mode == 2 || mode == 3)
+                && (name == "self-insert"
+                    || name == "self-insert-unmeta"
+                    || name == "bracketed-paste"))
+        {
+            // c:3164-3260 — incremental search in the menu.
+            let op = p;
+            let was = mode == 2 || mode == 3;
+            let ins =
+                name == "self-insert" || name == "self-insert-unmeta" || name == "bracketed-paste";
+            let back = name == "history-incremental-search-backward";
+            loop {
+                let mut toins: Option<String> = None;
+                if was {
+                    p += wishcol - MCOL.load(Ordering::SeqCst);
+                    MCOL.store(wishcol, Ordering::SeqCst);
+                }
+                if !ins {
+                    if was {
+                        let empty = MSEARCHSTR.lock().unwrap().is_empty();
+                        if empty {
+                            if let Some(ls) = lastsearch.clone() {
+                                if back == (mode == 3) {
+                                    *MSEARCHSTR.lock().unwrap() = ls;
+                                    mode = 0;
+                                }
+                            }
+                        }
+                    } else {
+                        *MSEARCHSTR.lock().unwrap() = String::new();
+                        MSEARCHSTACK.lock().unwrap().clear();
+                        MSEARCHSTATE.store(MS_OK, Ordering::SeqCst);
+                    }
+                } else {
+                    if name == "self-insert-unmeta" {
+                        fixunmeta();
+                    }
+                    if name == "bracketed-paste" {
+                        toins = Some(bracketedstring());
+                    } else {
+                        let lc = crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst);
+                        toins = Some(((lc as u8) as char).to_string());
+                    }
+                }
+                let (np, wrapf) = msearch_fn(
+                    p,
+                    toins.as_deref(),
+                    if ins { mode == 3 } else { back },
+                    was && !ins,
+                );
+                if !ins {
+                    mode = if back { 3 } else { 2 };
+                }
+                if !MSEARCHSTR.lock().unwrap().is_empty() {
+                    lastsearch = Some(MSEARCHSTR.lock().unwrap().clone());
+                }
+                if let Some(npi) = np {
+                    wishcol = MCOL.load(Ordering::SeqCst);
+                    p = npi;
+                }
+                let (np2, _) = adjust_mcol(wishcol, p);
+                p = np2;
+                let cont = (back || name == "history-incremental-search-forward")
+                    && np.is_some()
+                    && wrapf == 0
+                    && was
+                    && same(p, op);
+                if !cont {
+                    break;
+                }
+            }
+            // falls through to do_single at the bottom.
+        } else if (mode == 2 || mode == 3) && name == "backward-delete-char" {
+            // c:3261-3271 — pop one search step.
+            let mut back = 1i32;
+            let mut ptr: Option<i32> = None;
+            {
+                let mut st = MSEARCHSTACK.lock().unwrap();
+                let info = st
+                    .last()
+                    .map(|s| (s.str.clone(), s.line, s.col, s.state, s.back, s.ptr));
+                match info {
+                    Some((str_, line, col, state, bk, pr)) => {
+                        *MSEARCHSTR.lock().unwrap() = str_;
+                        MLINE.store(line, Ordering::SeqCst);
+                        MCOL.store(col, Ordering::SeqCst);
+                        MSEARCHSTATE.store(state, Ordering::SeqCst);
+                        if st.len() > 1 {
+                            st.pop();
+                        }
+                        back = bk;
+                        ptr = Some(pr as i32);
+                    }
+                    None => {
+                        back = 1;
+                        ptr = None;
+                    }
+                }
+            }
+            mode = if back != 0 { 3 } else { 2 };
+            wishcol = MCOL.load(Ordering::SeqCst);
+            if let Some(pi) = ptr {
+                p = pi;
+                let (np, _) = adjust_mcol(wishcol, p);
+                p = np;
+            }
+            // falls through to do_single at the bottom.
+        } else if name == "undefined-key" {
+            // c:3272-3275
+            mode = 0;
+            continue;
+        } else {
+            // c:3276-3285 — unrecognised widget: push it back and exit.
+            crate::ported::zle::zle_keymap::ungetkeycmd();
+            let ncomp = cmd
+                .as_ref()
+                .and_then(|t| t.widget.as_ref())
+                .map(|w| (w.flags & crate::ported::zle::zle_h::WIDGET_NCOMP) != 0)
+                .unwrap_or(false);
+            if ncomp {
+                acc = 0;
+                broken = 2;
+            } else {
+                acc = 1;
+            }
+            break;
+        }
+
+        // ===== movement resolution (the goto down/up/right/left/top/bottom
+        //       state machine) + bottom-of-loop do_single (c:3286-3452) =====
+        if let Some(mv0) = movement {
+            let mut mv = mv0;
+            'nav: loop {
+                match mv {
+                    Move::Down => {
+                        // c:2822-2846
+                        let omline = MLINE.load(Ordering::SeqCst);
+                        let op = p;
+                        loop {
+                            if MLINE.load(Ordering::SeqCst) == MLINES.load(Ordering::SeqCst) - 1 {
+                                if wrap & 2 != 0 {
+                                    MLINE.store(omline, Ordering::SeqCst);
+                                    p = op;
+                                    break;
+                                }
+                                p -= MLINE.load(Ordering::SeqCst) * MCOLS.load(Ordering::SeqCst);
+                                MLINE.store(0, Ordering::SeqCst);
+                                wrap |= 1;
+                            } else {
+                                MLINE.store(MLINE.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                                p += MCOLS.load(Ordering::SeqCst);
+                            }
+                            let (np, r) = adjust_mcol(wishcol, p);
+                            p = np;
+                            if r != 0 {
+                                continue;
+                            }
+                            if skipcell(p) {
+                                continue;
+                            }
+                            break;
+                        }
+                        if wrap == 1 {
+                            mv = Move::Right;
+                            continue 'nav;
+                        }
+                        break 'nav;
+                    }
+                    Move::Up => {
+                        // c:2853-2882
+                        let omline = MLINE.load(Ordering::SeqCst);
+                        let op = p;
+                        loop {
+                            if MLINE.load(Ordering::SeqCst) == 0 {
+                                if wrap & 2 != 0 {
+                                    MLINE.store(omline, Ordering::SeqCst);
+                                    p = op;
+                                    break;
+                                }
+                                MLINE.store(MLINES.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p += MLINE.load(Ordering::SeqCst) * MCOLS.load(Ordering::SeqCst);
+                                wrap |= 1;
+                            } else {
+                                MLINE.store(MLINE.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p -= MCOLS.load(Ordering::SeqCst);
+                            }
+                            let (np, r) = adjust_mcol(wishcol, p);
+                            p = np;
+                            if r != 0 {
+                                continue;
+                            }
+                            if skipcell(p) {
+                                continue;
+                            }
+                            break;
+                        }
+                        if wrap == 1 {
+                            if MCOL.load(Ordering::SeqCst) == wishcol {
+                                mv = Move::Left;
+                                continue 'nav;
+                            }
+                            wishcol = MCOL.load(Ordering::SeqCst);
+                        }
+                        break 'nav;
+                    }
+                    Move::Right => {
+                        // c:2989-3010
+                        let omcol = MCOL.load(Ordering::SeqCst);
+                        let op = p;
+                        loop {
+                            if MCOL.load(Ordering::SeqCst) == MCOLS.load(Ordering::SeqCst) - 1 {
+                                if wrap & 1 != 0 {
+                                    p = op;
+                                    MCOL.store(omcol, Ordering::SeqCst);
+                                    break;
+                                }
+                                p -= MCOL.load(Ordering::SeqCst);
+                                MCOL.store(0, Ordering::SeqCst);
+                                wrap |= 2;
+                            } else {
+                                MCOL.store(MCOL.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                                p += 1;
+                            }
+                            if skipcell(p) {
+                                continue;
+                            }
+                            if MCOL.load(Ordering::SeqCst) != omcol && same(p, op) {
+                                continue;
+                            }
+                            break;
+                        }
+                        wishcol = MCOL.load(Ordering::SeqCst);
+                        if wrap == 2 {
+                            mv = Move::Down;
+                            continue 'nav;
+                        }
+                        break 'nav;
+                    }
+                    Move::Left => {
+                        // c:3016-3045
+                        let omcol = MCOL.load(Ordering::SeqCst);
+                        let op = p;
+                        loop {
+                            if MCOL.load(Ordering::SeqCst) == 0 {
+                                if wrap & 1 != 0 {
+                                    p = op;
+                                    MCOL.store(omcol, Ordering::SeqCst);
+                                    break;
+                                }
+                                MCOL.store(MCOLS.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p += MCOL.load(Ordering::SeqCst);
+                                wrap |= 2;
+                            } else {
+                                MCOL.store(MCOL.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p -= 1;
+                            }
+                            if skipcell(p) {
+                                continue;
+                            }
+                            if MCOL.load(Ordering::SeqCst) != omcol && same(p, op) {
+                                continue;
+                            }
+                            break;
+                        }
+                        wishcol = MCOL.load(Ordering::SeqCst);
+                        if wrap == 2 {
+                            p += MCOLS.load(Ordering::SeqCst) - 1 - MCOL.load(Ordering::SeqCst);
+                            MCOL.store(MCOLS.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                            wishcol = MCOLS.load(Ordering::SeqCst) - 1;
+                            let (np, _) = adjust_mcol(wishcol, p);
+                            p = np;
+                            mv = Move::Up;
+                            continue 'nav;
+                        }
+                        break 'nav;
+                    }
+                    Move::Top => {
+                        // c:2947-2962
+                        let mut ll = MLINE.load(Ordering::SeqCst);
+                        let mut lp = p;
+                        while MLINE.load(Ordering::SeqCst) != 0 {
+                            MLINE.store(MLINE.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                            p -= MCOLS.load(Ordering::SeqCst);
+                            let (np, r) = adjust_mcol(wishcol, p);
+                            p = np;
+                            if r != 0 {
+                                continue;
+                            }
+                            if !skipcell(p) {
+                                lp = p;
+                                ll = MLINE.load(Ordering::SeqCst);
+                            }
+                        }
+                        MLINE.store(ll, Ordering::SeqCst);
+                        p = lp;
+                        break 'nav;
+                    }
+                    Move::Bottom => {
+                        // c:2968-2983
+                        let mut ll = MLINE.load(Ordering::SeqCst);
+                        let mut lp = p;
+                        while MLINE.load(Ordering::SeqCst) < MLINES.load(Ordering::SeqCst) - 1 {
+                            MLINE.store(MLINE.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                            p += MCOLS.load(Ordering::SeqCst);
+                            let (np, r) = adjust_mcol(wishcol, p);
+                            p = np;
+                            if r != 0 {
+                                continue;
+                            }
+                            if !skipcell(p) {
+                                lp = p;
+                                ll = MLINE.load(Ordering::SeqCst);
+                            }
+                        }
+                        MLINE.store(ll, Ordering::SeqCst);
+                        p = lp;
+                        break 'nav;
+                    }
+                    Move::FwdWord => {
+                        // c:2889-2912
+                        let zl = adjustlines() as i32;
+                        let oi = zl - pl - 1;
+                        let mut ic = oi;
+                        let mut ll = 0i32;
+                        let mut lp: Option<i32> = None;
+                        if MLINE.load(Ordering::SeqCst) == MLINES.load(Ordering::SeqCst) - 1 {
+                            mv = Move::Top;
+                            continue 'nav;
+                        }
+                        let mut goto_top = false;
+                        while ic > 0 {
+                            if MLINE.load(Ordering::SeqCst) == MLINES.load(Ordering::SeqCst) - 1 {
+                                if ic != oi && lp.is_some() {
+                                    break;
+                                }
+                                goto_top = true;
+                                break;
+                            } else {
+                                MLINE.store(MLINE.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                                p += MCOLS.load(Ordering::SeqCst);
+                            }
+                            let (np, r) = adjust_mcol(wishcol, p);
+                            p = np;
+                            if r != 0 {
+                                continue;
+                            }
+                            if !skipcell(p) {
+                                ic -= 1;
+                                lp = Some(p);
+                                ll = MLINE.load(Ordering::SeqCst);
+                            }
+                        }
+                        if goto_top {
+                            mv = Move::Top;
+                            continue 'nav;
+                        }
+                        if let Some(x) = lp {
+                            p = x;
+                        }
+                        MLINE.store(ll, Ordering::SeqCst);
+                        break 'nav;
+                    }
+                    Move::BwdWord => {
+                        // c:2918-2941
+                        let zl = adjustlines() as i32;
+                        let oi = zl - pl - 1;
+                        let mut ic = oi;
+                        let mut ll = 0i32;
+                        let mut lp: Option<i32> = None;
+                        if MLINE.load(Ordering::SeqCst) == 0 {
+                            mv = Move::Bottom;
+                            continue 'nav;
+                        }
+                        let mut goto_bottom = false;
+                        while ic > 0 {
+                            if MLINE.load(Ordering::SeqCst) == 0 {
+                                if ic != oi && lp.is_some() {
+                                    break;
+                                }
+                                goto_bottom = true;
+                                break;
+                            } else {
+                                MLINE.store(MLINE.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p -= MCOLS.load(Ordering::SeqCst);
+                            }
+                            let (np, r) = adjust_mcol(wishcol, p);
+                            p = np;
+                            if r != 0 {
+                                continue;
+                            }
+                            // c:2936 — C's `*p || !mmarked(*p)` is always
+                            // true; the step is taken unconditionally.
+                            ic -= 1;
+                            lp = Some(p);
+                            ll = MLINE.load(Ordering::SeqCst);
+                        }
+                        if goto_bottom {
+                            mv = Move::Bottom;
+                            continue 'nav;
+                        }
+                        if let Some(x) = lp {
+                            p = x;
+                        }
+                        MLINE.store(ll, Ordering::SeqCst);
+                        break 'nav;
+                    }
+                    Move::BlankFwd => {
+                        // c:3075-3088
+                        let g0 = gcell(p).map(|x| x.num);
+                        let ol = MLINE.load(Ordering::SeqCst);
+                        loop {
+                            if MLINE.load(Ordering::SeqCst) == MLINES.load(Ordering::SeqCst) - 1 {
+                                p -= MLINE.load(Ordering::SeqCst) * MCOLS.load(Ordering::SeqCst);
+                                MLINE.store(0, Ordering::SeqCst);
+                            } else {
+                                MLINE.store(MLINE.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                                p += MCOLS.load(Ordering::SeqCst);
+                            }
+                            let (np, _) = adjust_mcol(wishcol, p);
+                            p = np;
+                            let grp_eq = gcell(p).map(|x| x.num) == g0;
+                            if ol != MLINE.load(Ordering::SeqCst) && (grp_eq || skipcell(p)) {
+                                continue;
+                            }
+                            break;
+                        }
+                        break 'nav;
+                    }
+                    Move::BlankBwd => {
+                        // c:3094-3107
+                        let g0 = gcell(p).map(|x| x.num);
+                        let ol = MLINE.load(Ordering::SeqCst);
+                        loop {
+                            if MLINE.load(Ordering::SeqCst) == 0 {
+                                MLINE.store(MLINES.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p += MLINE.load(Ordering::SeqCst) * MCOLS.load(Ordering::SeqCst);
+                            } else {
+                                MLINE.store(MLINE.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                                p -= MCOLS.load(Ordering::SeqCst);
+                            }
+                            let (np, _) = adjust_mcol(wishcol, p);
+                            p = np;
+                            let grp_eq = gcell(p).map(|x| x.num) == g0;
+                            if ol != MLINE.load(Ordering::SeqCst) && (grp_eq || skipcell(p)) {
+                                continue;
+                            }
+                            break;
+                        }
+                        break 'nav;
+                    }
+                    Move::BegLine => {
+                        // c:3051-3057
+                        p -= MCOL.load(Ordering::SeqCst);
+                        MCOL.store(0, Ordering::SeqCst);
+                        while skipcell(p) {
+                            MCOL.store(MCOL.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                            p += 1;
+                        }
+                        wishcol = 0;
+                        break 'nav;
+                    }
+                    Move::EndLine => {
+                        // c:3063-3069
+                        p += MCOLS.load(Ordering::SeqCst) - MCOL.load(Ordering::SeqCst) - 1;
+                        MCOL.store(MCOLS.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                        while skipcell(p) {
+                            MCOL.store(MCOL.load(Ordering::SeqCst) - 1, Ordering::SeqCst);
+                            p -= 1;
+                        }
+                        wishcol = MCOLS.load(Ordering::SeqCst) - 1;
+                        break 'nav;
+                    }
+                }
+            }
+        }
+
+        // c:3448-3451 — bottom of the for-loop: re-insert the new pick.
+        if was_inter {
+            if let Some(lk) = MINFO.get() {
+                if let Ok(mut mi) = lk.lock() {
+                    mi.cur = None;
+                }
+            }
+        }
+        if let Some(c) = cell(p) {
+            crate::ported::zle::compresult::do_single(&c); // c:3450
+            MSELECT.store(c.gnum, Ordering::SeqCst); // c:3451
+        }
+    }
+
+    // ===== c:3453-3517 exit =====
+    // c:3453-3456 — free the menu stack. Rust drops the frames here.
+    u.clear();
+    crate::ported::zle::zle_keymap::selectlocalmap(None); // c:3458
+    MSELECT.store(-1, Ordering::SeqCst); // c:3459
+    MLASTCOLS.store(-1, Ordering::SeqCst);
+    MLASTLINES.store(-1, Ordering::SeqCst);
+    *MSTATUS.lock().unwrap() = String::new(); // c:3460
+    INSELECT.store(0, Ordering::SeqCst); // c:3461
+    MHASSTAT.store(0, Ordering::SeqCst);
+    if nolist != 0 {
+        // c:3462-3463
+        CLEARLIST.store(1, Ordering::SeqCst);
+        LISTSHOWN.store(1, Ordering::SeqCst);
+    }
+    let validlist = VALIDLIST.load(Ordering::SeqCst);
+    let cur = MINFO
+        .get()
+        .and_then(|g| g.lock().ok())
+        .and_then(|g| g.cur.as_ref().map(|c| (**c).clone()));
+    if acc != 0 && validlist != 0 && cur.is_some() {
+        // c:3464-3472
+        MENUCMP.store(0, Ordering::SeqCst);
+        LASTAMBIG.store(0, Ordering::SeqCst);
+        crate::ported::zle::compcore::hasoldlist.store(0, Ordering::SeqCst);
+        if mode == 1 {
+            if let Some(lk) = MINFO.get() {
+                if let Ok(mut mi) = lk.lock() {
+                    mi.cur = None;
+                }
+            }
+        }
+        if let Some(c) = &cur {
+            crate::ported::zle::compresult::do_single(c);
+        }
+    }
+    if wasnext != 0 || broken != 0 {
+        // c:3473-3484
+        MENUCMP.store(1, Ordering::SeqCst);
+        SHOWINGLIST.store(
+            if validlist != 0 && nolist == 0 { -2 } else { 0 },
+            Ordering::SeqCst,
+        );
+        if let Some(lk) = MINFO.get() {
+            if let Ok(mut mi) = lk.lock() {
+                mi.asked = 0;
+            }
+        }
+        if NOSELECT.load(Ordering::SeqCst) == 0 {
+            let nos = NOSELECT.load(Ordering::SeqCst);
+            zrefresh();
+            NOSELECT.store(nos, Ordering::SeqCst);
+        }
+    }
+    if NOSELECT.load(Ordering::SeqCst) == 0 {
+        // c:3485-3512 (dat == NULL → the `!dat` branch is taken).
+        MLBEG.store(-1, Ordering::SeqCst);
+        SHOWINGLIST.store(
+            if validlist != 0 && nolist == 0 { -2 } else { 0 },
+            Ordering::SeqCst,
+        );
+        crate::ported::zle::compcore::onlyexpl.store(oe, Ordering::SeqCst);
+        if acc != 0 && LISTSHOWN.load(Ordering::SeqCst) != 0 {
+            CLEARLIST.store(1, Ordering::SeqCst);
+            LISTSHOWN.store(1, Ordering::SeqCst);
+            SHOWINGLIST.store(1, Ordering::SeqCst);
+        } else if crate::ported::zle::compcore::smatches.load(Ordering::SeqCst) == 0 {
+            CLEARLIST.store(1, Ordering::SeqCst);
+            LISTSHOWN.store(1, Ordering::SeqCst);
+        }
+        zrefresh();
+    }
+    MLBEG.store(-1, Ordering::SeqCst); // c:3513
+
+    let _ = step;
+    // c:3517 — `return (broken == 2 ? 3 : ((dat && !broken) ? ... :
+    //          (!noselect ^ acc)))`. dat is NULL in the direct-call port,
+    //          so the tail reduces to `!noselect ^ acc`.
     if broken == 2 {
         3
-    } else if acc != 0 {
-        1
     } else {
-        2
+        ((NOSELECT.load(Ordering::SeqCst) == 0) as i32) ^ acc
     }
 }
 

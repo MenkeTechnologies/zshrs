@@ -1410,36 +1410,706 @@ pub const NORM_PROMPT_POS: usize = BAD_TEXT_LEN + 1; // c:1074
 /// string starts (after "XXX-i-search: ").
 pub const FIRST_SEARCH_CHAR: usize = NORM_PROMPT_POS + 14; // c:1075
 
-/// Port of `doisearch(char **args, int dir, int pattern)` from Src/Zle/zle_hist.c:1082.
-/// WARNING: param names don't match C — Rust=(zle, dir) vs C=(args, dir, pattern)
+/// Upper bound on the incremental-search buffer, mirroring the C
+/// `PATH_MAX` guard at `Src/Zle/zle_hist.c:1686` (`if (sbptr == PATH_MAX)`).
+const ISEARCH_SBUF_MAX: usize = 4096;
+
+/// Port of `doisearch(char **args, int dir, int pattern)` from
+/// Src/Zle/zle_hist.c:1082. This is the non-pattern path (`pattern == 0`);
+/// the four widget entry points all funnel through `doisearch(dir)`, so
+/// the `patcompile`/`getmatchlist` glob branch (C c:1236-1363) is not
+/// exercised. Everything else — the incremental key-by-key loop
+/// (`getkeycmd` per keystroke), `sbuf` mutation, per-key statusline
+/// repaint, `nomatch`/`skip_line`/`skip_pos` state, the `isrch_spot`
+/// backtrack stack, direction reversal, repeat-search, delete-char,
+/// bracketed-paste, and accept/abort exit dispatch — is ported here.
+///
+/// The Rust history model is the `history()` singleton (`entries` Vec +
+/// `cursor` index). The C `histline`/`he->histnum` is modeled as an
+/// entries index `hl`, with `hl == entries.len()` denoting the live
+/// editing buffer (C's `curline` sentinel). `pos`/`end_pos` are byte
+/// offsets into the entry text (matching `zlinefind`/`zlinecmp`, which
+/// operate on bytes); the visible cursor `ZLECS` is a char index, so
+/// byte→char conversion happens at every line-set point.
+/// WARNING: param names don't match C — Rust=(dir) vs C=(args, dir, pattern)
 pub fn doisearch(dir: i32) -> i32 {
     // c:1082
-    // C body c:1090-1730 — full incremental-search loop reads keys
-    //                      via getkeycmd, mutates sbuf, repaints
-    //                      status via tracing. Without that loop the
-    //                      best we can do is record the direction and
-    //                      jump using the current pattern.
-    ISEARCH_ACTIVE.store(1, Ordering::SeqCst);
-    let pat = history().lock().unwrap().search_pattern.clone();
-    let r = if pat.is_empty() {
-        0
-    } else if dir < 0 {
-        if history().lock().unwrap().search_backward(&pat).is_some() {
-            0
+    let mut dir = dir;
+
+    // c:1200 — `selectlocalmap(isearch_keymap);` — the "isearch" keymap
+    // is linked at init (zle_keymap.rs c:1464-1465).
+    crate::ported::zle::zle_keymap::selectlocalmap(crate::ported::zle::zle_keymap::openkeymap(
+        "isearch",
+    ));
+
+    // c:1202 — `clearlist = 1;`
+    CLEARLIST.store(1, Ordering::SeqCst);
+
+    // c:1215-1216 — save the current keymap, switch to "main" so the
+    // isearch keymap's fallback resolves normal self-insert/etc.
+    let okeymap = crate::ported::zle::zle_keymap::curkeymapname().clone();
+    crate::ported::zle::zle_keymap::selectkeymap("main", 1);
+
+    // c:1218-1219 — `metafy_line(); remember_edits();`. There is no
+    // metafication in the char-vec model, but the edit-snapshot still
+    // applies.
+    {
+        let mut h = history().lock().unwrap();
+        remember_edits(&mut h);
+    }
+
+    // Snapshot the history lines and the live editing line. Entries do
+    // not change during a search, so a snapshot faithfully backs the
+    // repeated `quietgethist(hl)`/`GETZLETEXT` fetches in the C loop.
+    let entries: Vec<String> = history()
+        .lock()
+        .unwrap()
+        .entries
+        .iter()
+        .map(|e| e.line.clone())
+        .collect();
+    let entries_len = entries.len();
+    let live_line: String = ZLELINE.lock().unwrap().iter().collect();
+
+    // `zt` for a given history index (C `GETZLETEXT(he)`).
+    let get_zt = |hl: usize| -> String {
+        if hl < entries_len {
+            entries[hl].clone()
         } else {
-            1
-        }
-    } else {
-        if history().lock().unwrap().search_forward(&pat).is_some() {
-            0
-        } else {
-            1
+            live_line.clone()
         }
     };
+    // byte offset → char count (for setting the char-indexed ZLECS).
+    let bcc = |s: &str, b: usize| -> usize { s.char_indices().take_while(|(i, _)| *i < b).count() };
+    // Replace the visible editing line with entry `hl`, char cursor `cc`.
+    // Also track `history().cursor = hl` to mirror C's `histline = hl`, so
+    // that a post-search accept/navigation resolves the matched entry.
+    let set_line = |hl: usize, cc: usize| {
+        let text = get_zt(hl);
+        let mut zl = ZLELINE.lock().unwrap();
+        zl.clear();
+        zl.extend(text.chars());
+        ZLELL.store(zl.len(), Ordering::SeqCst);
+        let n = zl.len();
+        drop(zl);
+        ZLECS.store(cc.min(n), Ordering::SeqCst);
+        history().lock().unwrap().cursor = hl;
+    };
+
+    // c:1101/1108/1114/1121/1147/1152/1160/1166/1173/1175/1195 — state.
+    let mut sbuf = String::new(); // the search string (C sbuf)
+    let mut sbptr: usize; // byte length of sbuf (kept == sbuf.len())
+    let mut top_spot: usize = 0;
+    let mut nomatch: i32 = 0;
+    let mut skip_line = false;
+    let mut skip_pos = false;
+    let odir = dir; // c:1114
+    let sens: i32 = if ZMOD.lock().unwrap().mult == 1 { 3 } else { 1 }; // c:1114
+    let mut hl: usize = {
+        let h = history().lock().unwrap();
+        h.cursor.min(h.entries.len())
+    };
+    let mut pos: usize = {
+        // c:1221 — `pat_pos = pos = zlemetacs;` (byte offset of ZLECS).
+        let cs = ZLECS.load(Ordering::SeqCst);
+        let b = live_line
+            .char_indices()
+            .nth(cs)
+            .map(|(i, _)| i)
+            .unwrap_or(live_line.len());
+        let zt = get_zt(hl);
+        let mut p = b.min(zt.len());
+        while p > 0 && !zt.is_char_boundary(p) {
+            p -= 1;
+        }
+        p
+    };
+    let mut pat_hl = hl; // c:1147
+    let mut pat_pos = pos; // c:1147
+    let mut dup_ok = false; // c:1160
+    let mut end_pos: usize = 0; // c:1166
+    let mut feep = false; // c:1173
+    let mut nosearch = false; // c:1175
+    let mut exitfn: Option<fn() -> i32> = None; // c:1191
+    let mut aborted = false; // c:1195
+
+    'outer: loop {
+        // c:1222
+        // c:1224-1225 — record current values in the not-yet-committed
+        // slot so a failed search can back up here.
+        sbptr = sbuf.len();
+        set_isrch_spot(
+            top_spot,
+            hl as i32,
+            pos as i32,
+            pat_hl as i32,
+            pat_pos as i32,
+            end_pos as i32,
+            ZLECS.load(Ordering::SeqCst) as i32,
+            sbptr as i32,
+            dir,
+            nomatch,
+        );
+
+        let anchored = sbuf.as_bytes().first() == Some(&b'^');
+
+        if sbptr == 1 && anchored {
+            // c:1226-1229 — lone "^": anchor, no search, cursor to col 0.
+            ZLECS.store(0, Ordering::SeqCst);
+            nomatch = 0;
+        } else if sbptr > 0 {
+            // c:1230
+            let mut t: Option<usize> = None; // c:1232 matched offset
+            let last_line = get_zt(hl); // c:1233
+            let mut zt = last_line.clone();
+
+            // c:1287 — `while ((!pattern || patprog) && !nosearch)`.
+            // Non-pattern path: `!pattern` is always true.
+            while !nosearch {
+                // c:1365 — else-branch (no compiled pattern).
+                if skip_pos {
+                    // c:1373
+                    if dir < 0 {
+                        // c:1374
+                        if pos == 0 {
+                            skip_line = true; // c:1376
+                        } else {
+                            // c:1378 — `backwardmetafiedchar` — prev boundary.
+                            pos = zt[..pos]
+                                .char_indices()
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                        }
+                    } else if !anchored {
+                        // c:1381
+                        if pos >= zt.len().saturating_sub(1) {
+                            skip_line = true; // c:1383
+                        } else {
+                            // c:1385 — `pos += 1`, advanced to a char boundary.
+                            let mut np = pos + 1;
+                            while np < zt.len() && !zt.is_char_boundary(np) {
+                                np += 1;
+                            }
+                            pos = np;
+                        }
+                    } else {
+                        skip_line = true; // c:1387
+                    }
+                    skip_pos = false; // c:1388
+                }
+                // c:1394 — search within the current line unless skipping.
+                if !skip_line {
+                    if anchored {
+                        // c:1395-1397 — anchored prefix compare.
+                        if zlinecmp(&zt, &sbuf[1..]) < sens {
+                            t = Some(0);
+                        }
+                    } else {
+                        // c:1399 — `t = zlinefind(zt, pos, sbuf, dir, sens)`.
+                        let p = pos.min(zt.len());
+                        t = zlinefind(&zt, p, &sbuf, dir, sens);
+                    }
+                    if let Some(tb) = t {
+                        // c:1401 — `end_pos = (t-zt)+sbptr - (sbuf[0]=='^')`.
+                        end_pos = tb + sbptr - if anchored { 1 } else { 0 };
+                    }
+                }
+                if let Some(tb) = t {
+                    // c:1404-1406 — matched in this line.
+                    pos = tb;
+                    break;
+                }
+                // c:1412 — move through history to try again.
+                let can_move = (ZLEREADFLAGS.load(Ordering::SeqCst) & ZLRF_HISTORY) != 0;
+                let n = hl as i32 + dir;
+                let moved = if can_move && n >= 0 && n <= entries_len as i32 {
+                    Some(n as usize)
+                } else {
+                    None
+                };
+                match moved {
+                    None => {
+                        // c:1413-1431 — exhausted: restore the backtrack spot.
+                        if top_spot > 0 {
+                            // c:1414-1416 — pop a nomatch spot of equal length.
+                            if let Some(s) = get_isrch_spot(top_spot - 1) {
+                                if sbptr as i32 == s.6 && s.8 != 0 {
+                                    top_spot -= 1;
+                                }
+                            }
+                        }
+                        if let Some(s) = get_isrch_spot(top_spot) {
+                            // c:1417-1419 — restore hl/pos/…/sbptr/dir/nomatch.
+                            hl = s.0 as usize;
+                            pos = s.1 as usize;
+                            pat_hl = s.2 as usize;
+                            pat_pos = s.3 as usize;
+                            end_pos = s.4 as usize;
+                            let cs = s.5 as usize;
+                            sbptr = s.6 as usize;
+                            dir = s.7;
+                            nomatch = s.8;
+                            sbuf.truncate(sbptr);
+                            ZLECS.store(cs, Ordering::SeqCst);
+                        }
+                        if nomatch != 1 {
+                            // c:1420-1423
+                            feep = true;
+                            nomatch = 1;
+                        }
+                        zt = get_zt(hl); // c:1424-1425
+                        skip_line = false; // c:1426
+                        break; // c:1431
+                    }
+                    Some(nh) => {
+                        // c:1433-1441 — advance to the next line.
+                        hl = nh;
+                        zt = get_zt(hl);
+                        pos = if dir == 1 { 0 } else { zt.len() }; // c:1435
+                        skip_line = if dup_ok {
+                            false
+                        } else {
+                            zt == last_line // c:1441 (`!strcmp(zt, last_line)`)
+                        };
+                    }
+                }
+            }
+            dup_ok = false; // c:1443
+            if t.is_some() || (nosearch && nomatch == 0) {
+                // c:1449-1457 — commit the matched line.
+                let bc = if dir == 1 { end_pos } else { pos };
+                let cc = bcc(&get_zt(hl), bc);
+                set_line(hl, cc);
+                nomatch = 0;
+            }
+        } else {
+            // c:1458-1462 — empty search string.
+            top_spot = 0;
+            nomatch = 0;
+        }
+        nosearch = false; // c:1463
+        if feep {
+            // c:1464-1467
+            handlefeep();
+            feep = false;
+        }
+
+        // c:1470-1499 — highlight range for `$ISEARCHMATCH_*`.
+        let anchored = sbuf.as_bytes().first() == Some(&b'^');
+        if nomatch == 0 && sbptr > 0 && (sbptr > 1 || !anchored) {
+            let zt = get_zt(hl);
+            ISEARCH_STARTPOS.store(bcc(&zt, pos) as i32, Ordering::SeqCst);
+            ISEARCH_ENDPOS.store(bcc(&zt, end_pos) as i32, Ordering::SeqCst);
+            ISEARCH_ACTIVE.store(1, Ordering::SeqCst);
+        } else {
+            ISEARCH_ACTIVE.store(0, Ordering::SeqCst);
+        }
+
+        // c:1500-1503 (`ref:`) — repaint, then read a command. Commands
+        // that only redraw (clear-screen/redisplay/vi-cmd-mode) loop here
+        // without re-searching.
+        let mut ins_char: Option<char> = None;
+        'refl: loop {
+            let dirstr = if dir == 1 { "fwd" } else { "bck" };
+            let body = format!("{}-i-search: {}_", dirstr, sbuf);
+            let status = match nomatch {
+                2 => format!("invalid {}", body),
+                1 => format!("failing {}", body),
+                _ => body,
+            };
+            *STATUSLINE.lock().unwrap() = Some(status);
+            zrefresh();
+
+            let cmd = crate::ported::zle::zle_keymap::getkeycmd();
+            let name = cmd.as_ref().map(|c| c.nam.as_str());
+            match name {
+                // c:1504-1516 — EOF or send-break: abort, restore spot 0.
+                None | Some("send-break") => {
+                    aborted = true;
+                    {
+                        let m =
+                            PREVIOUS_ABORTED_SEARCH.get_or_init(|| std::sync::Mutex::new(String::new()));
+                        *m.lock().unwrap() = sbuf[..sbuf.len().min(sbptr)].to_string();
+                    }
+                    if let Some(s) = get_isrch_spot(0) {
+                        hl = s.0 as usize;
+                        let cs = s.5 as usize;
+                        dir = s.7;
+                        nomatch = s.8;
+                        set_line(hl, cs);
+                    }
+                    break 'outer;
+                }
+                Some("clear-screen") => {
+                    // c:1517-1519
+                    clearscreen();
+                    continue 'refl;
+                }
+                Some("redisplay") => {
+                    // c:1520-1522
+                    redisplay();
+                    continue 'refl;
+                }
+                Some("vi-cmd-mode") => {
+                    // c:1523-1526
+                    let in_vicmd = *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd";
+                    let target = if in_vicmd { "main" } else { "vicmd" };
+                    if crate::ported::zle::zle_keymap::selectkeymap(target, 0) != 0 {
+                        handlefeep();
+                    }
+                    continue 'refl;
+                }
+                // c:1527-1569 — backward-delete family: pop backtrack spots.
+                Some(
+                    "vi-backward-delete-char"
+                    | "backward-delete-char"
+                    | "vi-backward-kill-word"
+                    | "backward-kill-word"
+                    | "backward-delete-word",
+                ) => {
+                    let only_one =
+                        name == Some("vi-backward-delete-char") || name == Some("backward-delete-char");
+                    let old_sbptr = sbptr;
+                    if top_spot > 0 {
+                        loop {
+                            // c:1536-1542 — `get_isrch_spot(--top_spot, …)`.
+                            top_spot -= 1;
+                            if let Some(s) = get_isrch_spot(top_spot) {
+                                hl = s.0 as usize;
+                                pos = s.1 as usize;
+                                pat_hl = s.2 as usize;
+                                pat_pos = s.3 as usize;
+                                end_pos = s.4 as usize;
+                                let cs = s.5 as usize;
+                                sbptr = s.6 as usize;
+                                dir = s.7;
+                                nomatch = s.8;
+                                ZLECS.store(cs, Ordering::SeqCst);
+                                sbuf.truncate(sbptr);
+                            }
+                            if only_one || top_spot == 0 || old_sbptr != sbptr {
+                                break;
+                            }
+                        }
+                        nosearch = true; // c:1545
+                        skip_pos = false; // c:1546
+                    } else {
+                        feep = true; // c:1548
+                    }
+                    if nomatch != 0 {
+                        // c:1549-1554
+                        skip_pos = true;
+                    }
+                    // c:1562-1566 — re-set the line where we won't reach
+                    // the usual line-setting path.
+                    let anchored = sbuf.as_bytes().first() == Some(&b'^');
+                    if nomatch != 0 || sbptr == 0 || (sbptr == 1 && anchored) {
+                        let cs = ZLECS.load(Ordering::SeqCst);
+                        set_line(hl, cs);
+                    }
+                    // c:1569 — `continue`; any `feep` set above is handled
+                    // at the top of the next iteration (c:1464).
+                    continue 'outer;
+                }
+                Some("accept-and-hold") => {
+                    // c:1570-1572
+                    exitfn = Some(acceptandhold);
+                    break 'outer;
+                }
+                Some("accept-and-infer-next-history") => {
+                    // c:1573-1575
+                    exitfn = Some(acceptandinfernexthistory);
+                    break 'outer;
+                }
+                Some("accept-line-and-down-history") => {
+                    // c:1576-1578
+                    exitfn = Some(acceptlineanddownhistory);
+                    break 'outer;
+                }
+                Some("accept-line") => {
+                    // c:1579-1581
+                    exitfn = Some(acceptline);
+                    break 'outer;
+                }
+                // c:1582-1630 — direction change / repeat search (`rpt:`).
+                Some(
+                    "history-incremental-search-backward"
+                    | "history-incremental-pattern-search-backward",
+                ) => {
+                    pat_hl = hl;
+                    pat_pos = pos;
+                    set_isrch_spot(
+                        top_spot,
+                        hl as i32,
+                        pos as i32,
+                        pat_hl as i32,
+                        pat_pos as i32,
+                        end_pos as i32,
+                        ZLECS.load(Ordering::SeqCst) as i32,
+                        sbuf.len() as i32,
+                        dir,
+                        nomatch,
+                    );
+                    top_spot += 1;
+                    if dir != -1 {
+                        dir = -1; // c:1589
+                    } else {
+                        skip_pos = true; // c:1591
+                    }
+                    // c:1620-1627 — reload previous search when sbuf empty and same dir.
+                    if sbuf.is_empty() && dir == odir {
+                        let prev = PREVIOUS_SEARCH
+                            .get_or_init(|| std::sync::Mutex::new(String::new()))
+                            .lock()
+                            .unwrap()
+                            .clone();
+                        if !prev.is_empty() {
+                            sbuf = prev;
+                        }
+                    }
+                    continue 'outer;
+                }
+                Some(
+                    "history-incremental-search-forward"
+                    | "history-incremental-pattern-search-forward",
+                ) => {
+                    pat_hl = hl;
+                    pat_pos = pos;
+                    set_isrch_spot(
+                        top_spot,
+                        hl as i32,
+                        pos as i32,
+                        pat_hl as i32,
+                        pat_pos as i32,
+                        end_pos as i32,
+                        ZLECS.load(Ordering::SeqCst) as i32,
+                        sbuf.len() as i32,
+                        dir,
+                        nomatch,
+                    );
+                    top_spot += 1;
+                    if dir != 1 {
+                        dir = 1; // c:1600
+                    } else {
+                        skip_pos = true; // c:1602
+                    }
+                    // c:1620-1627 — reload previous search when sbuf empty and same dir.
+                    if sbuf.is_empty() && dir == odir {
+                        let prev = PREVIOUS_SEARCH
+                            .get_or_init(|| std::sync::Mutex::new(String::new()))
+                            .lock()
+                            .unwrap()
+                            .clone();
+                        if !prev.is_empty() {
+                            sbuf = prev;
+                        }
+                    }
+                    continue 'outer;
+                }
+                Some("vi-rev-repeat-search") => {
+                    // c:1604-1611
+                    pat_hl = hl;
+                    pat_pos = pos;
+                    set_isrch_spot(
+                        top_spot,
+                        hl as i32,
+                        pos as i32,
+                        pat_hl as i32,
+                        pat_pos as i32,
+                        end_pos as i32,
+                        ZLECS.load(Ordering::SeqCst) as i32,
+                        sbuf.len() as i32,
+                        dir,
+                        nomatch,
+                    );
+                    top_spot += 1;
+                    dir = -odir;
+                    skip_pos = true;
+                    // c:1620-1627 — reload previous search when sbuf empty and same dir.
+                    if sbuf.is_empty() && dir == odir {
+                        let prev = PREVIOUS_SEARCH
+                            .get_or_init(|| std::sync::Mutex::new(String::new()))
+                            .lock()
+                            .unwrap()
+                            .clone();
+                        if !prev.is_empty() {
+                            sbuf = prev;
+                        }
+                    }
+                    continue 'outer;
+                }
+                Some("vi-repeat-search") => {
+                    // c:1612-1630
+                    pat_hl = hl;
+                    pat_pos = pos;
+                    set_isrch_spot(
+                        top_spot,
+                        hl as i32,
+                        pos as i32,
+                        pat_hl as i32,
+                        pat_pos as i32,
+                        end_pos as i32,
+                        ZLECS.load(Ordering::SeqCst) as i32,
+                        sbuf.len() as i32,
+                        dir,
+                        nomatch,
+                    );
+                    top_spot += 1;
+                    dir = odir;
+                    skip_pos = true;
+                    // c:1620-1627 — reload previous search when sbuf empty and same dir.
+                    if sbuf.is_empty() && dir == odir {
+                        let prev = PREVIOUS_SEARCH
+                            .get_or_init(|| std::sync::Mutex::new(String::new()))
+                            .lock()
+                            .unwrap()
+                            .clone();
+                        if !prev.is_empty() {
+                            sbuf = prev;
+                        }
+                    }
+                    continue 'outer;
+                }
+                // c:1631-1641 — quoted insert: read one raw char.
+                Some("vi-quoted-insert") | Some("quoted-insert") => {
+                    if name == Some("vi-quoted-insert") {
+                        // c:1633-1636 — show a caret while waiting.
+                        let dirstr = if dir == 1 { "fwd" } else { "bck" };
+                        *STATUSLINE.lock().unwrap() =
+                            Some(format!("{}-i-search: {}^_", dirstr, sbuf));
+                        zrefresh();
+                    }
+                    match getfullchar(false) {
+                        None => {
+                            feep = true; // c:1639
+                            break 'refl;
+                        }
+                        Some(c) => {
+                            ins_char = Some(c); // c:1641 goto ins
+                            break 'refl;
+                        }
+                    }
+                }
+                // c:1642-1657 — bracketed paste.
+                Some("bracketed-paste") => {
+                    let paste = bracketedstring();
+                    set_isrch_spot(
+                        top_spot,
+                        hl as i32,
+                        pos as i32,
+                        pat_hl as i32,
+                        pat_pos as i32,
+                        end_pos as i32,
+                        ZLECS.load(Ordering::SeqCst) as i32,
+                        sbuf.len() as i32,
+                        dir,
+                        nomatch,
+                    );
+                    top_spot += 1;
+                    sbuf.push_str(&paste);
+                    continue 'outer;
+                }
+                Some("accept-search") => {
+                    // c:1658-1659
+                    break 'outer;
+                }
+                // c:1660-1708 — self-insert family, else abort.
+                Some("self-insert-unmeta") => {
+                    // c:1661-1662
+                    fixunmeta();
+                    let v = LASTCHAR_WIDE.load(Ordering::SeqCst);
+                    ins_char = Some(char::from_u32(v as u32).unwrap_or('\u{FFFD}'));
+                    break 'refl;
+                }
+                Some("magic-space") => {
+                    // c:1663-1664
+                    fixmagicspace();
+                    let v = LASTCHAR_WIDE.load(Ordering::SeqCst);
+                    ins_char = Some(char::from_u32(v as u32).unwrap_or('\u{FFFD}'));
+                    break 'refl;
+                }
+                Some("self-insert") => {
+                    // c:1665-1674 — validate a wide char, feep on bad byte.
+                    if LASTCHAR_WIDE_VALID.load(Ordering::SeqCst) == 0
+                        && getrestchar(crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst)) == -1
+                    {
+                        handlefeep();
+                        continue 'refl;
+                    }
+                    let v = LASTCHAR_WIDE.load(Ordering::SeqCst);
+                    ins_char = Some(char::from_u32(v as u32).unwrap_or('\u{FFFD}'));
+                    break 'refl;
+                }
+                _ => {
+                    // c:1675-1683 — unrecognized: push back and exit.
+                    crate::ported::zle::zle_keymap::ungetkeycmd();
+                    break 'outer;
+                }
+            }
+        }
+
+        // c:1685-1708 (`ins:`) — commit the pending self-insert char.
+        if let Some(ch) = ins_char {
+            if sbuf.len() >= ISEARCH_SBUF_MAX {
+                // c:1686-1688
+                feep = true;
+            } else {
+                set_isrch_spot(
+                    top_spot,
+                    hl as i32,
+                    pos as i32,
+                    pat_hl as i32,
+                    pat_pos as i32,
+                    end_pos as i32,
+                    ZLECS.load(Ordering::SeqCst) as i32,
+                    sbuf.len() as i32,
+                    dir,
+                    nomatch,
+                );
+                top_spot += 1;
+                sbuf.push(ch); // c:1705 zlecharasstring(LASTFULLCHAR, …)
+            }
+        }
+        if feep {
+            // c:1709-1711
+            handlefeep();
+            feep = false;
+        }
+    }
+
+    // c:1713-1716 — remember the accepted search string.
+    if !sbuf.is_empty() {
+        let m = PREVIOUS_SEARCH.get_or_init(|| std::sync::Mutex::new(String::new()));
+        *m.lock().unwrap() = sbuf.clone();
+        history().lock().unwrap().search_pattern = sbuf.clone();
+        history().lock().unwrap().search_backward = odir < 0;
+    }
+    // c:1717 — `statusline = NULL;`
+    *STATUSLINE.lock().unwrap() = None;
+    // c:1720 — `redrawhook();`
+    redrawhook();
+    // c:1721-1722 — run the deferred accept widget after search cleanup.
+    if let Some(f) = exitfn {
+        f();
+    }
+    // c:1723 — restore the pre-search keymap.
+    crate::ported::zle::zle_keymap::selectkeymap(&okeymap, 1);
+    // c:1728 — `isearch_active = 0;`
     ISEARCH_ACTIVE.store(0, Ordering::SeqCst);
-    r
+    // c:1736 — `selectlocalmap(NULL);`
+    crate::ported::zle::zle_keymap::selectlocalmap(None);
+    // c:1738 — `return aborted ? 3 : nomatch;`
+    if aborted {
+        3
+    } else {
+        nomatch
+    }
 }
 
+/// Port of the `rpt:` tail in `doisearch` (Src/Zle/zle_hist.c:1619-1628):
+/// when the search buffer is empty and the direction matches the original,
+/// reload the previous accepted search string.
 /// Port of `infernexthist(Histent he, UNUSED(char **args))` from Src/Zle/zle_hist.c:1741.
 /// WARNING: param names don't match C — Rust=(zle) vs C=(he, args)
 pub fn infernexthist() -> i32 {
@@ -1529,18 +2199,172 @@ pub fn vifetchhistory() -> i32 {
     0
 }
 
-/// Port of `getvisrchstr()` from Src/Zle/zle_hist.c:1814.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
+/// Port of `static char *visrchstr` from `Src/Zle/zle_hist.c:1810` —
+/// the last vi search string. Set by `getvisrchstr` on commit.
+pub static VISRCHSTR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Port of `static char *vipenultsrchstr` from `Src/Zle/zle_hist.c:1810`
+/// — the penultimate vi search string, used as the fallback when the
+/// user accepts an empty minibuffer.
+pub static VIPENULTSRCHSTR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Port of `static int visrchsense` from `Src/Zle/zle_hist.c:1811` —
+/// +1 for `/` (forward), -1 for `?` (backward). Set by the caller
+/// (`vi-history-search-forward`/`-backward`) before `getvisrchstr`.
+pub static VISRCHSENSE: AtomicI32 = AtomicI32::new(1);
+
+/// Port of `getvisrchstr()` from Src/Zle/zle_hist.c:1815. Reads a vi
+/// search string through the statusline minibuffer: draws `/`…`_` (or
+/// `?`…`_` when `VISRCHSENSE == -1`), then loops on `getkeycmd`,
+/// handling accept (accept-line / vi-cmd-mode), backward-delete-char,
+/// backward-kill-word, quoted-insert, magic-space and self-insert. On
+/// an empty accept it falls back to `vipenultsrchstr`. The committed
+/// string is mirrored onto `history().search_pattern` (+ direction) so
+/// the existing `vi-history-search-*`/`vi-repeat-search` widgets keep
+/// working unchanged.
+/// WARNING: param names don't match C — Rust=() vs C=()
 pub fn getvisrchstr() -> i32 {
-    // c:1814
-    // C body (c:1814-1900): read a search string into vipenult buffer
-    //                      via the minibuffer. Stash on history.search_pattern.
-    let snap: String = ZLELINE.lock().unwrap().iter().collect();
-    if snap.is_empty() {
-        return 0;
+    // c:1815
+    // c:1820 — `okeymap = ztrdup(curkeymapname);`
+    let okeymap = crate::ported::zle::zle_keymap::curkeymapname().clone();
+
+    // c:1822-1830 — rotate visrchstr → vipenultsrchstr.
+    *VIPENULTSRCHSTR.lock().unwrap() = None;
+    if let Some(s) = VISRCHSTR.lock().unwrap().take() {
+        *VIPENULTSRCHSTR.lock().unwrap() = Some(s);
     }
-    history().lock().unwrap().search_pattern = snap;
-    1
+
+    // c:1831 — `clearlist = 1;`
+    CLEARLIST.store(1, Ordering::SeqCst);
+
+    let sense = VISRCHSENSE.load(Ordering::SeqCst);
+    // c:1833 — `sbuf[0] = (visrchsense == -1) ? '?' : '/';`. sbuf[0] is
+    // the fixed sense sigil; the search string is everything after it.
+    let mut sbuf = String::from(if sense == -1 { '?' } else { '/' });
+    // c:1834 — `selectkeymap("main", 1);`
+    crate::ported::zle::zle_keymap::selectkeymap("main", 1);
+
+    let mut ret = 0;
+    let mut feep = false;
+    // c:1835 — `while (sptr)`. sptr>0 the whole time; accept sets it 0.
+    'outer: loop {
+        // c:1836-1838 — draw `sbuf` with a trailing cursor placeholder.
+        *STATUSLINE.lock().unwrap() = Some(format!("{}_", sbuf));
+        zrefresh();
+
+        let cmd = crate::ported::zle::zle_keymap::getkeycmd();
+        let mut name = cmd.as_ref().map(|c| c.nam.as_str());
+        match name {
+            // c:1839-1842 — EOF / send-break: abort with no result.
+            None | Some("send-break") => {
+                ret = 0;
+                break 'outer;
+            }
+            _ => {}
+        }
+        // c:1843-1846 — magic-space: expand, then treat as self-insert.
+        if name == Some("magic-space") {
+            fixmagicspace();
+            name = Some("self-insert");
+        }
+        match name {
+            Some("redisplay") => {
+                // c:1847-1848
+                redisplay();
+            }
+            Some("clear-screen") => {
+                // c:1849-1850
+                clearscreen();
+            }
+            Some("accept-line") | Some("vi-cmd-mode") => {
+                // c:1851-1860 — commit `sbuf[1..]`; empty → vipenult.
+                let s: String = sbuf.chars().skip(1).collect();
+                if s.is_empty() {
+                    *VISRCHSTR.lock().unwrap() = VIPENULTSRCHSTR.lock().unwrap().clone();
+                } else {
+                    *VISRCHSTR.lock().unwrap() = Some(s);
+                }
+                ret = 1;
+                break 'outer;
+            }
+            Some("backward-delete-char") | Some("vi-backward-delete-char") => {
+                // c:1861-1863 — delete one char, never the sense sigil.
+                if sbuf.chars().count() > 1 {
+                    sbuf.pop();
+                }
+            }
+            Some("backward-kill-word") | Some("vi-backward-kill-word") => {
+                // c:1864-1895 — kill back over trailing blanks then one
+                // ident run (or one non-ident run), stopping at index 1.
+                let ident = |c: char| c.is_alphanumeric() || c == '_';
+                let mut chars: Vec<char> = sbuf.chars().collect();
+                while chars.len() > 1 && chars.last().is_some_and(|c| c.is_whitespace()) {
+                    chars.pop();
+                }
+                if chars.len() > 1 {
+                    let last_ident = ident(*chars.last().unwrap());
+                    while chars.len() > 1 {
+                        let c = *chars.last().unwrap();
+                        if last_ident {
+                            if !ident(c) {
+                                break;
+                            }
+                        } else if ident(c) || c.is_whitespace() {
+                            break;
+                        }
+                        chars.pop();
+                    }
+                }
+                sbuf = chars.into_iter().collect();
+            }
+            Some("vi-quoted-insert") | Some("quoted-insert") => {
+                // c:1896-1904
+                if name == Some("vi-quoted-insert") {
+                    *STATUSLINE.lock().unwrap() = Some(format!("{}^", sbuf));
+                    zrefresh();
+                }
+                match getfullchar(false) {
+                    None => feep = true, // c:1902
+                    Some(c) => sbuf.push(c),
+                }
+            }
+            Some("self-insert-unmeta") | Some("self-insert") => {
+                // c:1905-1925
+                if name == Some("self-insert-unmeta") {
+                    fixunmeta();
+                } else if LASTCHAR_WIDE_VALID.load(Ordering::SeqCst) == 0
+                    && getrestchar(crate::ported::zle::compcore::LASTCHAR.load(Ordering::SeqCst)) == -1
+                {
+                    handlefeep();
+                    continue 'outer;
+                }
+                let v = LASTCHAR_WIDE.load(Ordering::SeqCst);
+                sbuf.push(char::from_u32(v as u32).unwrap_or('\u{FFFD}'));
+            }
+            _ => {
+                // c:1926-1927
+                feep = true;
+            }
+        }
+        if feep {
+            // c:1929-1931
+            handlefeep();
+            feep = false;
+        }
+    }
+
+    // c:1933-1935 — tear down the minibuffer and restore the keymap.
+    *STATUSLINE.lock().unwrap() = None;
+    crate::ported::zle::zle_keymap::selectkeymap(&okeymap, 1);
+
+    // Mirror the committed string onto the singleton history state so the
+    // existing vi search widgets (which read `search_pattern`) resolve it.
+    if ret == 1 {
+        if let Some(s) = VISRCHSTR.lock().unwrap().clone() {
+            let mut h = history().lock().unwrap();
+            h.search_pattern = s;
+            h.search_backward = sense == -1;
+        }
+    }
+    ret // c:1936
 }
 
 /// Port of `vihistorysearchforward(char **args)` from Src/Zle/zle_hist.c:1940.

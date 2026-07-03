@@ -1796,7 +1796,7 @@ pub fn get_unambig(pm: *mut param) -> String {
         .lock()
         .ok()
         .and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
-        .map(|l| compresult::cline_str(Some(l.as_ref())))
+        .map(|l| compresult::cline_str(Some(l), 0, None, None).unwrap_or_default())
         .filter(|s| !s.is_empty())
     {
         return s;
@@ -2089,7 +2089,7 @@ pub fn get_unambig_pos(pm: *mut param) -> String {
         .lock()
         .ok()
         .and_then(|g| g.as_ref().and_then(|a| a.line.clone()))
-        .map(|l| compresult::cline_str(Some(l.as_ref())))
+        .map(|l| compresult::cline_str(Some(l), 0, None, None).unwrap_or_default())
         .filter(|s| !s.is_empty())
     {
         return format!("{}", s.chars().count());

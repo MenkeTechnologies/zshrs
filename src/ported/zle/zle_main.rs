@@ -61,17 +61,23 @@ use crate::ported::zle::{
 /// blocking reads), captures VEOF as `eofchar` for the empty-line
 /// EOF detection in zlecore (zle_main.c:1139), and disables TAB3
 /// output mapping plus VQUIT/VSUSP/VDSUSP so the keymap can rebind
-/// those control chars. Our Rust port covers the daily-driver
-/// subset: ICANON+ECHO off, VMIN/VTIME, and eofchar capture from
+/// those control chars. Our Rust port covers ICANON+ECHO+FLUSHO
+/// off, VMIN/VTIME, eofchar capture from VEOF, IXON flow-control
 // set up terminal                                                       // c:210
-/// VEOF. The flow-control + TAB3 + IXON disables and the
-/// fetchttyinfo/attachtty save state remain on the host side.
+/// disable, output TAB expansion disable (TAB3/OXTABS/XTABS), and
+/// VQUIT/VDISCARD/VSUSP/VDSUSP/VSWTCH/VLNEXT/VSTART/VSTOP disables.
+/// Only the fetchttyinfo/attachtty save state stays on the host side.
 pub fn zsetterm() -> io::Result<()> {
     // c:210
     let mut termios = termios::Termios::from_fd(TTYFD.load(SeqCst))?;
 
     // c:240 — disable canonical + echo + flusho.
     termios.c_lflag &= !(termios::ICANON | termios::ECHO);
+    // c:241-244 — `| FLUSHO` (guarded by `#ifdef FLUSHO`). Clear the
+    // "output being flushed" bit so queued terminal output isn't
+    // discarded out from under zle. FLUSHO lives in libc, not the
+    // termios crate; route through libc directly.
+    termios.c_lflag &= !(libc::FLUSHO as libc::tcflag_t);
 
     // c:280 — capture VEOF before VMIN/VTIME overrides it. zlecore at
     // c:1139 compares lastchar against EOFCHAR for the empty-line EOF
@@ -86,6 +92,20 @@ pub fn zsetterm() -> io::Result<()> {
     // etc.; route through libc directly.
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::FLOWCONTROL) {
         termios.c_iflag &= !(libc::IXON as libc::tcflag_t);
+    }
+
+    // c:245-255 — disable kernel output TAB expansion so a literal
+    // \t written to the tty is NOT expanded to spaces behind zle's
+    // back (which corrupts column tracking in the refresh code). C's
+    // `#ifdef TAB3 ... #else #ifdef OXTABS ... #else #ifdef XTABS`
+    // ladder: Linux exposes TAB3 (== XTABS), macOS/BSD expose OXTABS.
+    #[cfg(target_os = "linux")]
+    {
+        termios.c_oflag &= !(libc::TAB3 as libc::tcflag_t);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        termios.c_oflag &= !(libc::OXTABS as libc::tcflag_t);
     }
 
     // c:256-258 — `ti.tio.c_oflag |= ONLCR;` translate \n to \r\n on
@@ -105,6 +125,25 @@ pub fn zsetterm() -> io::Result<()> {
     termios.c_cc[libc::VQUIT] = vdisable;
     termios.c_cc[libc::VDISCARD] = vdisable;
     termios.c_cc[libc::VSUSP] = vdisable;
+    // c:266-268 — `#ifdef VDSUSP ti.tio.c_cc[VDSUSP] =` — the BSD/macOS
+    // delayed-suspend char (^Y). Absent on Linux.
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    {
+        termios.c_cc[libc::VDSUSP] = vdisable;
+    }
+    // c:269-271 — `#ifdef VSWTCH ti.tio.c_cc[VSWTCH] =` — the Linux
+    // switch-shell-layer char; libc exposes it as VSWTC. Absent on macOS.
+    #[cfg(target_os = "linux")]
+    {
+        termios.c_cc[libc::VSWTC] = vdisable;
+    }
     termios.c_cc[libc::VLNEXT] = vdisable;
     // c:276-278 — when nflowcontrol, also disable VSTART/VSTOP (^Q/^S).
     if !crate::ported::zsh_h::isset(crate::ported::zsh_h::FLOWCONTROL) {
@@ -500,6 +539,27 @@ pub fn getbyte(do_keytmout: bool) -> Option<u8> {
     } else {
         b
     };
+
+    // c:947-955 — `curvichg.buf` is raw bytes, not wide characters, so
+    // the byte just read is recorded here while a vi change (`.`) is
+    // being tracked (`vichgflag` set). C grows the buffer by doubling
+    // `bufsz` when full, then `curvichg.buf[curvichg.bufptr++] = ret`.
+    // The append uses the post-swap byte, matching C's `ret`/`lastchar`.
+    if VICHGFLAG.load(SeqCst) != 0 {
+        let mut cur = CURVICHG.lock().unwrap();
+        if cur.bufptr == cur.bufsz {
+            cur.bufsz *= 2; // c:953 — realloc(buf, bufsz *= 2)
+        }
+        // c:954 — `buf[bufptr++] = ret`. bufptr tracks the in-use size;
+        // startvichange keeps buf.len() == bufptr, so this appends.
+        let idx = cur.bufptr as usize;
+        if idx < cur.buf.len() {
+            cur.buf[idx] = b;
+        } else {
+            cur.buf.push(b);
+        }
+        cur.bufptr += 1;
+    }
 
     LASTCHAR.store((b as i32) as i32, SeqCst);
     Some(b)
@@ -1266,14 +1326,14 @@ pub fn bin_vared(
 /// widget name via `showmsg`.
 ///
 /// Delegates to the live-substrate implementation at
-/// `describe_key_briefly()` (snake-cased Rust name) which reads
-/// the key via getfullchar and emits the binding name via
-/// display_msg. This C-name-parity entry stays so widget-dispatch
-/// callers can find it.
+/// `describe_key_briefly()` (snake-cased Rust name) which reads the
+/// full key sequence via `getkeymapcmd`, drives the status-line
+/// prompt, and emits the binding name via `showmsg`. This C-name-parity
+/// entry stays so widget-dispatch callers can find it; it forwards the
+/// delegate's exit code (0 success, 1 on the C early-exit paths).
 pub fn describekeybriefly() -> i32 {
     // c:1892
-    describe_key_briefly(); // c:1929 — real-substrate entry.
-    0
+    describe_key_briefly() // c:1929 — real-substrate entry.
 }
 
 /// Port of `MAXFOUND` from `Src/Zle/zle_main.c:1925`.
@@ -2566,25 +2626,108 @@ pub fn abort_line() {
 // `localkeymap` globals directly inside the bindkey paths.
 
 /// Describe key briefly
-/// Port of describekeybriefly(UNUSED(char **args)) from zle_main.c
-pub fn describe_key_briefly() {
-    if let Some(c) = getfullchar(false) {
-        let thingy = if c as u32 > 255 {
-            None
-        } else {
-            let km = LOCALKEYMAP
-                .lock()
-                .unwrap()
-                .clone()
-                .or_else(|| curkeymap.lock().unwrap().clone());
-            km.and_then(|k| k.first[c as usize].clone())
-        };
-        if let Some(thingy) = thingy {
-            display_msg(&format!("{} is bound to {}", c, thingy.nam));
-        } else {
-            display_msg(&format!("{} is not bound", c));
+/// Direct port of `int describekeybriefly(UNUSED(char **args))` from
+/// `Src/Zle/zle_main.c:1892`. Reads a full key SEQUENCE through the
+/// current keymap (not a single byte), then reports the binding on the
+/// status line via `showmsg`:
+///
+/// ```c
+/// if (statusline) return 1;
+/// clearlist = 1;
+/// statusline = "Describe key briefly: _";
+/// start_edit(); zrefresh();
+/// if (invicmdmode() && region_active && (km = openkeymap("visual")))
+///     selectlocalmap(km);
+/// seq = getkeymapcmd(curkeymap, &func, &str);
+/// selectlocalmap(NULL); end_edit(); statusline = NULL;
+/// if(!*seq) return 1;
+/// msg = bindztrdup(seq); msg = appstr(msg, " is ");
+/// if (!func) is = bindztrdup(str); else is = nicedup(func->nam, 0);
+/// msg = appstr(msg, is); showmsg(msg); return 0;
+/// ```
+///
+/// Substrate mapping:
+///   * `statusline` → [`STATUSLINE`]; `clearlist` → `zle_refresh::CLEARLIST`.
+///   * `start_edit`/`end_edit` → `termquery::{start_edit, end_edit}`.
+///   * `getkeymapcmd(curkeymap, &func, &str)` → `zle_keymap::getkeymapcmd`,
+///     which returns `(func, seq, str)` as a tuple. The C call passes
+///     `curkeymap` and reads `localkeymap` internally; the Rust
+///     `getkeymapcmd` takes one keymap, so the effective map is resolved
+///     the same way `get_key_cmd` does — `LOCALKEYMAP.or(curkeymap)` —
+///     which honours the visual-mode `selectlocalmap` override below.
+///   * C `func == NULL` (a `bindkey -s` send-string binding) is modelled
+///     per the sibling `getkeycmd` convention (zle_keymap.rs:2687) as a
+///     Thingy whose `nam` is empty; that branch uses `bindztrdup(str)`.
+///
+/// Returns 0 on success, 1 on the two early-exit paths (status line
+/// already in use / empty sequence). Note `getkeymapcmd` collapses an
+/// *unbound* sequence into `None` (it only records bound Thingies),
+/// whereas C would print "<seq> is undefined-key"; that distinction
+/// lives in the shared `getkeymapcmd` substrate, not here.
+pub fn describe_key_briefly() -> i32 {
+    use crate::ported::utils::nicedup;
+    use crate::ported::zle::zle_h::invicmdmode;
+    use crate::ported::zle::zle_keymap::{getkeymapcmd, selectlocalmap};
+    use crate::ported::zle::zle_refresh::{zrefresh, CLEARLIST};
+    use crate::ported::zle::zle_utils::{bindztrdup, showmsg};
+
+    // c:1898-1899 — `if (statusline) return 1;` — refuse to re-enter
+    // while another status-line prompt is already displayed.
+    if STATUSLINE.lock().unwrap().is_some() {
+        return 1;
+    }
+    // c:1900-1901 — arm the completion-list clear and post the prompt.
+    CLEARLIST.store(1, SeqCst);
+    *STATUSLINE.lock().unwrap() = Some("Describe key briefly: _".to_string());
+    // c:1902-1903 — emit terminal `enter` sequences, then paint.
+    let _ = crate::ported::zle::termquery::start_edit();
+    zrefresh();
+
+    // c:1904-1905 — in vi command mode with an active region, resolve the
+    // key through the `visual` keymap if one is defined.
+    if invicmdmode(&curkeymapname()) && REGION_ACTIVE.load(SeqCst) != 0 {
+        if let Some(km) = openkeymap("visual") {
+            selectlocalmap(Some(km));
         }
     }
+
+    // c:1906 — `seq = getkeymapcmd(curkeymap, &func, &str);`. The
+    // effective keymap mirrors get_key_cmd's `LOCALKEYMAP.or(curkeymap)`.
+    let effective = {
+        let local = LOCALKEYMAP.lock().unwrap().clone();
+        let cur = curkeymap.lock().unwrap().clone();
+        local.or(cur)
+    };
+    let resolved = effective.and_then(|km| getkeymapcmd(&km));
+
+    // c:1907-1909 — drop the visual override, emit `leave` sequences,
+    // clear the status line.
+    selectlocalmap(None);
+    let _ = crate::ported::zle::termquery::end_edit();
+    *STATUSLINE.lock().unwrap() = None;
+
+    // c:1910-1911 — `if(!*seq) return 1;` — nothing was read/matched.
+    let (func, seq, str) = match resolved {
+        Some(r) => r,
+        None => return 1,
+    };
+    if seq.is_empty() {
+        return 1;
+    }
+
+    // c:1912-1918 — `msg = bindztrdup(seq)` + " is " + binding target.
+    let mut msg = bindztrdup(&seq); // c:1912
+    msg.push_str(" is "); // c:1913
+    let is = if func.nam.is_empty() {
+        // c:1914-1915 — `if (!func) is = bindztrdup(str);` — send-string.
+        bindztrdup(str.as_deref().unwrap_or("").as_bytes())
+    } else {
+        // c:1917 — `is = nicedup(func->nam, 0);` — bound widget name.
+        nicedup(&func.nam, 0)
+    };
+    msg.push_str(&is); // c:1918
+    showmsg(&msg); // c:1920
+    0 // c:1922
 }
 
 /// Execute an immortal (built-in) function

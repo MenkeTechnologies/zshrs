@@ -20,7 +20,7 @@
 use crate::compat::zgetcwd;
 use crate::hist::{hashchar, hist_ring};
 use crate::jobs::getsigidx;
-use crate::ported::hist::{histlinect, histremovedups};
+use crate::ported::hist::{hist_ignore_all_dups, histlinect, histremovedups, up_histent};
 use crate::ported::pattern::{patcompile, pattry};
 use crate::ported::signals::removetrap;
 use crate::ported::utils::scriptfilename_get;
@@ -34,7 +34,8 @@ use crate::text::{getpermtext, zoutputtab};
 use crate::utils::{nicezputs, quotedzputs, xsymlink, zputs, ztrcmp, zwarn};
 use crate::zsh_h::{
     cmdnam, hashnode, hashtable, reswd, shfunc, ALIAS_GLOBAL, ALIAS_SUFFIX, DISABLED, EF_RUN,
-    HASHED, HIST_DUP, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED, PM_LOADDIR, PM_TAGGED,
+    HASHED, HIST_DUP, HIST_FOREIGN, HIST_MAKEUNIQUE, HIST_TMPSTORE, PM_CUR_FPATH, PM_KSHSTORED,
+    PM_LOADDIR, PM_TAGGED,
     PM_TAGGED_LOCAL, PM_UNALIASED, PM_UNDEFINED, PM_ZSHSTORED, PRINT_LIST, PRINT_NAMEONLY,
     PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF, PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE,
     PRINT_WHENCE_WORD, ZSIG_FUNC,
@@ -691,6 +692,28 @@ impl reswd_table {
     /// `iter` — see implementation.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &reswd)> {
         self.table.iter()
+    }
+    /// Port of `addhashnode(HashTable ht, char *nam, void *nodeptr)`
+    /// from `Src/hashtable.c:157`. C stores `nodeptr` under `nam` and
+    /// frees any node it displaces (`ht->freenode(oldnode)`, c:161).
+    /// Here the map replaces the entry and the displaced `reswd` is
+    /// dropped, matching C's freenode semantics. Runtime companion to
+    /// the seed-only `new()`; param_private's `setup_` uses it to
+    /// register `private` as a TYPESET reserved word at module boot
+    /// (param_private.c:687 `reswdtab->addnode(reswdtab, ...)`).
+    pub fn insert(&mut self, name: &str, rw: reswd) {
+        // c:157 addhashnode → c:159 addhashnode2 sets hn->nam = nam
+        self.table.insert(name.to_string(), rw);
+    }
+    /// Port of `removehashnode(HashTable ht, const char *nam)` from
+    /// `Src/hashtable.c:275`. Unlinks the node keyed by `nam` and
+    /// returns it (C returns the removed `HashNode`, or NULL when the
+    /// key is absent — c:283). param_private's teardown uses it to
+    /// unregister the `private` reserved word (param_private.c:722
+    /// `removehashnode(reswdtab, "private")`).
+    pub fn remove(&mut self, name: &str) -> Option<reswd> {
+        // c:275
+        self.table.remove(name)
     }
 }
 
@@ -2648,21 +2671,113 @@ pub fn histstrcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering
 /// C body:
 /// ```c
 /// HashNode oldnode = addhashnode2(ht, nam, nodeptr);
-/// if (oldnode && oldnode != nodeptr) {
-///     // mark dup, optionally free old
-/// }
+/// Histent he = (Histent)nodeptr;
+/// if (oldnode && oldnode != (HashNode)nodeptr) {
+///     if (he->node.flags & HIST_MAKEUNIQUE
+///      || (he->node.flags & HIST_FOREIGN && (Histent)oldnode == he->up)) {
+///         (void) addhashnode2(ht, oldnode->nam, oldnode); /* restore hash */
+///         he->node.flags |= HIST_DUP;
+///         he->node.flags &= ~HIST_MAKEUNIQUE;
+///     } else {
+///         oldnode->flags |= HIST_DUP;
+///         if (hist_ignore_all_dups)
+///             freehistnode(oldnode); /* Remove the old dup */
+///     }
+/// } else
+///     he->node.flags &= ~HIST_MAKEUNIQUE;
 /// ```
 ///
-/// Inserts a history entry, returning the displaced event ID
-/// (Some) if a duplicate command-text was already present.
-/// Rust idiom replacement: `HashMap::insert` returns the displaced
-/// value directly — equivalent of the C dup-check + bucket-swap.
+/// The Rust `histtab` is keyed by command text → event id, so
+/// `addhashnode2` maps to `HashMap::insert` (returns the displaced
+/// event). The new node `he` and the displaced `oldnode` are located
+/// in `hist_ring` by their `histnum`; their `node.flags` are the same
+/// `HIST_*` fields the C node carries.
+///
+/// NOTE: the caller must NOT hold the `hist_ring` lock across this
+/// call — `addhistnode` re-locks the ring to read/mutate node flags.
 /// WARNING: param names don't match C — Rust=(nam, event_id) vs C=(ht, nam, nodeptr)
 pub fn addhistnode(nam: &str, event_id: i32) -> Option<i32> {
-    histtab_lock()
+    // c:1429 — `HashNode oldnode = addhashnode2(ht, nam, nodeptr);`
+    let oldnode = histtab_lock()
         .write()
         .expect("histtab poisoned")
-        .insert(nam.to_string(), event_id)
+        .insert(nam.to_string(), event_id);
+
+    // c:1431 — `if (oldnode && oldnode != (HashNode)nodeptr)`
+    if let Some(old_event) = oldnode {
+        if old_event != event_id {
+            // `he->node.flags` — flags of the newly inserted node. C reads
+            // `he->node.flags` directly off the pointer; the Rust ring is a
+            // `Vec` keyed by `histnum`, so locate the entry by event id.
+            let he_flags = hist_ring
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|h| h.histnum == event_id as i64)
+                .map(|h| h.node.flags)
+                .unwrap_or(0);
+            // c:1433 — `(Histent)oldnode == he->up` (the entry directly
+            // above `he` in the ring is the one being displaced).
+            let up_is_old = up_histent(event_id as i64) == Some(old_event as i64);
+            if (he_flags & HIST_MAKEUNIQUE as i32) != 0
+                || ((he_flags & HIST_FOREIGN as i32) != 0 && up_is_old)
+            {
+                // c:1434 — `addhashnode2(ht, oldnode->nam, oldnode);`
+                // Restore the hash so `nam` maps back to the old event
+                // (same command text, so the key is unchanged).
+                histtab_lock()
+                    .write()
+                    .expect("histtab poisoned")
+                    .insert(nam.to_string(), old_event);
+                // c:1435-1436 — mark `he` a dup, clear make-unique.
+                if let Some(h) = hist_ring
+                    .lock()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|h| h.histnum == event_id as i64)
+                {
+                    h.node.flags = (h.node.flags | HIST_DUP as i32) & !(HIST_MAKEUNIQUE as i32);
+                }
+            } else {
+                // c:1439 — `oldnode->flags |= HIST_DUP;`
+                if let Some(h) = hist_ring
+                    .lock()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|h| h.histnum == old_event as i64)
+                {
+                    h.node.flags |= HIST_DUP as i32;
+                }
+                // c:1440-1441 — `if (hist_ignore_all_dups) freehistnode(oldnode);`
+                // C's `freehistnode` == `freehistdata(oldnode, 1); zfree(oldnode)`;
+                // the ported `freehistdata(idx, 1)` unlinks the old node from
+                // the ring (the Rust equivalent of `zfree`) and — because the
+                // node is now HIST_DUP-flagged — skips removing the hash entry
+                // that already points at the new node (c:1466 guard).
+                if hist_ignore_all_dups.load(Ordering::SeqCst) != 0 {
+                    let idx = hist_ring
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .position(|h| h.histnum == old_event as i64);
+                    if let Some(idx) = idx {
+                        freehistdata(idx, 1);
+                    }
+                }
+            }
+            return oldnode;
+        }
+    }
+    // c:1445 — `he->node.flags &= ~HIST_MAKEUNIQUE;`
+    if let Some(h) = hist_ring
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|h| h.histnum == event_id as i64)
+    {
+        h.node.flags &= !(HIST_MAKEUNIQUE as i32);
+    }
+    oldnode
 }
 
 /// Port of `freehistnode(HashNode nodeptr)` from `Src/hashtable.c:1450`.

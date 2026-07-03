@@ -7511,36 +7511,157 @@ pub fn cfp_bld_pats(
     ret // c:4731
 }
 
-/// Port of `cfp_add_sdirs(LinkList final, LinkList orig, char *skipped, char *sdirs, char **fake)` from Src/Zle/computil.c:4735.
-/// WARNING: param names don't match C — Rust=(final_list, orig, sdirs, fake) vs C=(final, orig, skipped, sdirs, fake)
+/// Direct port of `static LinkList cfp_add_sdirs(LinkList final,
+///                                                LinkList orig, char *skipped,
+///                                                char *sdirs, char **fake)`
+/// from `Src/Zle/computil.c:4762-4854`. Two effects:
+///   1. When `sdirs` is enabled (and GLOBDOTS is set or the compprefix
+///      begins with `.`), append `skipped + ".."` (and, for the boolean
+///      forms, `skipped + "."`) to every `orig` node.
+///   2. Expand each `fake` entry of the form `pattern:repl1 repl2 ...`:
+///      for every `orig` node whose name matches `pattern` (or names the
+///      same file by dev/ino), append `node + skipped + repl` for each
+///      whitespace-separated replacement.
+/// C returns `final`; Rust mutates `final_list` in place.
 pub fn cfp_add_sdirs(
     final_list: &mut Vec<String>,
-    orig: &[String], // c:4735
-    _skipped: &str,
+    orig: &[String], // c:4762 (params: final, orig, skipped, sdirs, fake)
+    skipped: &str,
     sdirs: &str,
     fake: &[String],
 ) {
-    // C body c:4738-4767: if sdirs ∈ {"yes","true","on","1","..","../"}
-    //                     and GLOBDOTS or compprefix starts with `.`,
-    //                     prepend "." (or "..") to final.
+    let compprefix = COMPPREFIX
+        .get()
+        .and_then(|m| m.lock().ok().map(|s| s.clone()))
+        .unwrap_or_default();
+
+    // c:4766-4774 — decide whether/what dot-dirs to add.
     let mut add = 0;
-    if !sdirs.is_empty() {
-        // c:4740
+    // c:4768 — only when GLOBDOTS set or compprefix starts with `.`.
+    if !sdirs.is_empty() && (isset(GLOBDOTS) || compprefix.starts_with('.')) {
         match sdirs {
-            "yes" | "true" | "on" | "1" => add = 2, // c:4741
-            ".." => add = 1,                        // c:4744
+            "yes" | "true" | "on" | "1" => add = 2, // c:4769-4771
+            ".." => add = 1,                        // c:4772-4773
             _ => {}
         }
     }
-    if add > 0 {
-        for f in fake {
-            final_list.push(f.clone());
-        }
-        for o in orig {
-            if !final_list.contains(o) {
-                final_list.push(o.clone());
+    // c:4775-4787 — append `skipped + ".."` (and `skipped + "."` for the
+    // boolean forms) to each orig node via dyncat.
+    if add != 0 {
+        let s1 = format!("{}..", skipped); // c:4777 dyncat(skipped, "..")
+        let s2 = if add == 2 {
+            Some(format!("{}.", skipped)) // c:4778 dyncat(skipped, ".")
+        } else {
+            None
+        };
+        for m in orig {
+            // c:4781 — C skips NULL node data; Rust nodes are always present.
+            final_list.push(format!("{}{}", m, s1)); // c:4782 dyncat(m, s1)
+            if let Some(ref s2) = s2 {
+                final_list.push(format!("{}{}", m, s2)); // c:4784 dyncat(m, s2)
             }
         }
+    }
+
+    // c:4788-4852 — expand `fake` entries of form `pattern:repl1 repl2 ...`.
+    for entry in fake {
+        // c:4795-4796 — f = dupstring(*fake).
+        let bytes = entry.as_bytes();
+        // c:4797-4808 — copy the pattern up to the first unescaped ':',
+        // stripping the backslash from any `\:` (other backslashes are left
+        // for tokenization to strip).
+        let mut pat: Vec<u8> = Vec::new();
+        let mut p = 0usize;
+        let mut colon = false;
+        while p < bytes.len() {
+            let c = bytes[p];
+            if c == b':' {
+                colon = true; // c:4798-4799
+                break;
+            } else if c == b'\\' && p + 1 < bytes.len() && bytes[p + 1] == b':' {
+                p += 1; // c:4800-4806 strip quoted-colon backslash
+            }
+            pat.push(bytes[p]);
+            p += 1;
+        }
+        // c:4809 — entries without a colon carry no replacement list.
+        if !colon {
+            continue;
+        }
+        // c:4810 — step past the colon.
+        p += 1;
+        // c:4811-4812 — nothing after the colon: skip.
+        if p >= bytes.len() {
+            continue;
+        }
+        let rest = &bytes[p..];
+
+        // c:4814-4818 — compile the pattern (tokenize/patcompile/untokenize).
+        // PAT_STATIC protects the shared static buffer, hence queue_signals.
+        crate::ported::signals_h::queue_signals();
+        let pat_str = String::from_utf8_lossy(&pat).into_owned();
+        let mut tok = pat_str.clone();
+        tokenize(&mut tok);
+        let pprog: Option<Patprog> =
+            patcompile(&tok, crate::ported::zsh_h::PAT_STATIC, None::<&mut String>);
+        // C untokenizes `f` back to the original text for the strcmp fallback
+        // below; `pat_str` already holds that original text.
+
+        // c:4819-4847 — for each matching orig node, split the replacement
+        // list on blanks (stripping backslash escapes) and append
+        // `node + skipped + repl`.
+        //
+        // NOTE: C consumes the replacement cursor `p` destructively inside
+        // the first matching node's inner loop (c:4825 `while (*p)`), so only
+        // the FIRST matching node emits replacements; later matching nodes hit
+        // an already-exhausted `p` and emit nothing. Faithful port: emit for
+        // the first match, then stop.
+        for m in orig {
+            // c:4820-4821 — pattern match (or literal compare if compile failed).
+            let name_match = match &pprog {
+                Some(prog) => pattry(prog, m),
+                None => pat_str == *m,
+            };
+            // c:4822-4824 — else same file by dev/ino (empty node → ".").
+            let matched = name_match || {
+                let mpath = if m.is_empty() { "." } else { m.as_str() };
+                match (ztat(&pat_str, true), ztat(mpath, true)) {
+                    (Some(a), Some(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+                    _ => false,
+                }
+            };
+            if matched {
+                // c:4825-4845 — walk the whitespace-separated replacements.
+                let mut q = 0usize;
+                while q < rest.len() {
+                    // c:4826-4827 — skip leading blanks.
+                    while q < rest.len() && inblank(rest[q]) {
+                        q += 1;
+                    }
+                    if q >= rest.len() {
+                        break; // c:4828-4829
+                    }
+                    // c:4830-4836 — collect one token, stripping `\`-escapes.
+                    let mut token: Vec<u8> = Vec::new();
+                    while q < rest.len() {
+                        let rc = rest[q];
+                        if inblank(rc) {
+                            break; // c:4831-4832
+                        } else if rc == b'\\' && q + 1 < rest.len() {
+                            q += 1; // c:4833-4834
+                        }
+                        token.push(rest[q]);
+                        q += 1;
+                    }
+                    // c:4839-4843 — a = m + skipped + token.
+                    let tstr = String::from_utf8_lossy(&token).into_owned();
+                    final_list.push(format!("{}{}{}", m, skipped, tstr));
+                }
+                // c:4825 — `p` is now exhausted; no later node can emit.
+                break;
+            }
+        }
+        crate::ported::signals_h::unqueue_signals();
     }
 }
 

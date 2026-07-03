@@ -1047,61 +1047,658 @@ pub fn has_real_token(s: &str) -> bool {
 }
 
 /// Port of `get_comp_string()` from Src/Zle/zle_tricky.c:1087 — the
-/// "lasciate ogni speranza" function. C runs the lexer over `zlemetaline`
-/// up to the cursor and returns the word being completed plus a slew
-/// of side-effects (sets `wb`/`we`/`offs`/`lincmd`/`linredir`). Without
-/// the lexer substrate we extract the whitespace-delimited token under
-/// the cursor as a best-effort, set `WB`/`WE` to its bounds, and set
-/// `LINCMD` via a command-position heuristic (start-of-line or first
-/// word after a command terminator).
+/// "lasciate ogni speranza" function. Runs the real context lexer
+/// (`ctxtlex`) over the metafied line up to the cursor, storing each
+/// word in `clwords`, and returns the word being completed together
+/// with its side-effects (`WB`/`WE`/`OFFS`/`LINCMD`, plus
+/// `INSTRING`/`INBACKT`/`INWHAT`/`INSUBSCR`).
+///
+/// This ports c:1117–1708 — the setup, the `ctxtlex()` token loop
+/// (quote-state scan, redirection tracking, `incmdpos`/`inredir`
+/// command-position logic, the `gotword`-driven cursor-word capture,
+/// and the `clwords` accumulation), the post-loop word resolution
+/// (empty line / STRING / TYPESET / ENVSTRING), the `parbegin`
+/// command-substitution restart, and the `offs = zlemetacs - wb`
+/// prefix/suffix split.
+///
+/// NOT YET PORTED (return the raw lexer-extracted word untokenized;
+/// see get_comp_string report):
+///   - c:1482–1706 IN_MATH / array-subscript word extraction —
+///     returns None for that context.
+///   - c:1709–1926 quote-form cleanup (`qipre`/`qisuf`/`autoq` have
+///     no writable shared globals; `getkeystring` lacks the `how`
+///     arg for the `$'...'` path).
+///   - c:1931–2218 IGNOREBRACES brace-expansion tail (`origword`
+///     global absent).
+///
+/// PRECONDITION: the caller must have populated compcore's
+/// `ZLEMETALINE`/`ZLEMETACS`/`ZLEMETALL` (C does this via
+/// `metafy_line()` in `docomplete` before calling). There are no
+/// callers wired yet.
 /// WARNING: param names don't match C — Rust=(zle) vs C=()
 pub fn get_comp_string() -> Option<String> {
     // c:1087
-    let snap: String = ZLELINE.lock().unwrap().iter().collect();
-    let cs = ZLECS.load(Ordering::SeqCst).min(snap.len());
-    let bytes = snap.as_bytes();
-    let mut start = cs;
-    while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
-        start -= 1;
-    }
-    let mut end = cs;
-    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
-        end += 1;
-    }
-    if start == end {
-        return None;
-    }
-
-    // c:1109 — `wb`/`we` track the word bounds (start/end of the
-    // currently-completing word). The C source sets them as byte
-    // offsets into zlemetaline.
-    WB.store(start as i32, Ordering::SeqCst);
-    WE.store(end as i32, Ordering::SeqCst);
-
-    // Command-position heuristic for `lincmd` (C `c:139` global, set
-    // throughout `get_comp_string` at c:1238/c:1419 based on lexer
-    // state: incmdpos/inalmore/dquote/etc.). Pre-lexer substrate, we
-    // approximate: scan backwards from `start`, skipping whitespace.
-    // The word is in command position iff the previous non-blank byte
-    // is one of zsh's command terminators or we hit start-of-line.
-    let mut p = start;
-    while p > 0 && bytes[p - 1].is_ascii_whitespace() {
-        p -= 1;
-    }
-    let in_cmdpos = if p == 0 {
-        true
-    } else {
-        let prev = bytes[p - 1];
-        // c:1238 — `incmdpos` is set after `;`, `\n`, `&`, `|` (incl.
-        // `&&` / `||` since both end in `|` / `&`), `(`, `{`, and the
-        // implicit start-of-block tokens `do`/`then`/`else`/etc.
-        // The single-char terminators cover the bytecode-level case;
-        // reserved words need lexer state we don't yet have.
-        matches!(prev, b';' | b'\n' | b'&' | b'|' | b'(' | b'{')
+    use crate::ported::context::{zcontext_restore, zcontext_save};
+    use crate::ported::lex::{
+        ctxtlex, incmdpos, incond, inredir, noaliases, set_incmdpos, set_intypeset, set_noaliases,
+        set_tok, set_tokstr, tok, tokstr, untokenize, IS_REDIROP, LEX_LEXFLAGS, LEX_PARBEGIN,
+        LEX_PAREND, LEX_WORDBEG,
     };
-    LINCMD.store(in_cmdpos as i32, Ordering::SeqCst);
+    use crate::ported::string::{dupstring, ztrdup};
+    use crate::ported::zle::compcore::{BRBEG, BREND, INWHAT, OFFS};
+    use crate::ported::zsh_h::{
+        isset, lextok, AMPER, AMPERBANG, BARAMP, BAR_TOK, CASE, COMPLETEALIASES, DAMPER, DBAR,
+        DINPAR, DOLOOP, ENDINPUT, ENVARRAY, ENVSTRING, FOR, FOREACH, INPAR_TOK, IN_COND, IN_ENV,
+        IN_MATH, IN_NOTHING, IN_PAR, LEXERR, LEXFLAGS_ZLE, Inbrack, Meta, Outbrack, NULLTOK,
+        OUTPAR_TOK, RCQUOTES, REPEAT, SELECT, SEPER, STRING_LEX, TYPESET,
+    };
+    use crate::ported::ztype_h::INAMESPC;
 
-    Some(snap[start..end].to_string())
+    let snull = crate::ported::zle::compctl::Snull;
+    let dnull = crate::ported::zle::compctl::Dnull;
+    let bnull = crate::ported::zle::compctl::Bnull;
+
+    // c:1091 — `int ona = noaliases;` (save for restore at exit).
+    let ona = noaliases();
+
+    // c:1117 METACHECK() — the metafied line must already be present.
+    let meta_snap: String = match ZLEMETALINE.get() {
+        Some(m) => m.lock().unwrap().clone(),
+        None => return None,
+    };
+    let zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
+
+    // c:1119-1130 — reset brace-info state. `rdstrs` recording
+    // (c:1245-1250, c:1396-1398) is omitted (no writable shared list).
+    if let Some(b) = BRBEG.get() {
+        *b.lock().unwrap() = None;
+    }
+    if let Some(b) = BREND.get() {
+        *b.lock().unwrap() = None;
+    }
+    NBRBEG.store(0, Ordering::SeqCst); // c:1122
+    NBREND.store(0, Ordering::SeqCst);
+
+    // c:1134 — signal the lexer whether to expand aliases.
+    set_noaliases(isset(COMPLETEALIASES));
+
+    // c:1136-1151 — is the cursor inside a `string' (backtick/quote)?
+    {
+        let (mut i, mut j, mut k) = (0i32, 0i32, 0i32);
+        let ub = meta_snap.as_bytes();
+        let cs = (zlemetacs.max(0) as usize).min(ub.len());
+        let mut u = 0usize;
+        while u < cs {
+            let c = ub[u];
+            if c == b'`' && (k & 1) == 0 {
+                i += 1;
+            } else if c == b'"' && (k & 1) == 0 && (i & 1) == 0 {
+                j += 1;
+            } else if c == b'\'' && (j & 1) == 0 {
+                k += 1;
+            } else if c == b'\\' && u + 1 < ub.len() && (k & 1) == 0 {
+                u += 1; // c:1148 skip the escaped char
+            }
+            u += 1;
+        }
+        INBACKT.store(i & 1, Ordering::SeqCst); // c:1150
+    }
+    INSTRING.store(QT_NONE as i32, Ordering::SeqCst); // c:1151
+
+    // c:1152 — addx(&tmp): inject a dummy `x` at the cursor so the
+    // lexer has a word to lock onto. The shared `addx` (this file:839)
+    // mutates ZLELINE, not ZLEMETALINE, so it cannot serve this lexer
+    // path; the gate from c:922-946 is ported inline onto the metaline.
+    let mut zml: String = meta_snap.clone();
+    let addedx: i32;
+    {
+        let bytes = zml.as_bytes().to_vec();
+        let cs = (zlemetacs.max(0) as usize).min(bytes.len());
+        let ll = bytes.len();
+        let ch_at = bytes.get(cs).copied();
+        let prev_at = if cs > 0 { bytes.get(cs - 1).copied() } else { None };
+        let comppref = COMPPREF.load(Ordering::SeqCst) != 0;
+        let instr = INSTRING.load(Ordering::SeqCst);
+        let is_iblank = matches!(ch_at, Some(b' ' | b'\t'));
+        let is_blank_unescaped = is_iblank && (cs == 0 || prev_at != Some(b'\\'));
+        let cs_at_end = ch_at.is_none() || cs >= ll;
+        let is_newline = ch_at == Some(b'\n');
+        let is_separator =
+            matches!(ch_at, Some(b')' | b'`' | b'}' | b';' | b'|' | b'&' | b'>' | b'<'));
+        let is_instring_quote = instr != QT_NONE as i32 && matches!(ch_at, Some(b'"' | b'\''));
+        let addspace = comppref && ch_at.is_some() && !matches!(ch_at, Some(b' ' | b'\t'));
+        if cs_at_end
+            || is_newline
+            || is_blank_unescaped
+            || is_separator
+            || is_instring_quote
+            || addspace
+        {
+            let mut nb = Vec::with_capacity(ll + 2);
+            nb.extend_from_slice(&bytes[..cs]);
+            nb.push(b'x'); // c:944
+            if addspace {
+                nb.push(b' '); // c:945
+            }
+            nb.extend_from_slice(&bytes[cs..]);
+            zml = String::from_utf8_lossy(&nb).into_owned();
+            addedx = if addspace { 2 } else { 1 }; // c:947
+        } else {
+            addedx = 0; // c:949
+        }
+    }
+    ADDEDX.store(addedx, Ordering::SeqCst);
+    // Publish the injected line + original length so the lexer + gotword
+    // (which read compcore's ZLEMETALL/ADDEDX/ZLEMETACS) see it.
+    if let Some(m) = ZLEMETALINE.get() {
+        *m.lock().unwrap() = zml.clone();
+    }
+    let zlemetall = meta_snap.len() as i32; // length excluding the injected x
+    ZLEMETALL.store(zlemetall, Ordering::SeqCst);
+
+    // c:1154 — pushheap() (matching popheap deferred to caller, c:662).
+    crate::ported::mem::pushheap();
+
+    // ==================================================================
+    // start: label (c:1156). Wrapped in a loop so the two `goto start`
+    // restarts (c:1478 parbegin cmdsubst, c:1555 tmp cmdsubst) become
+    // `continue 's_restart`.
+    // ==================================================================
+    let mut linptr = zml.clone();
+    let mut t0: lextok;
+    // Locals that survive the loop for post-loop resolution. clwords /
+    // cmdstr / varname have no writable shared globals in the Rust port,
+    // so they stay local (reported).
+    let mut clwords: Vec<String> = Vec::new(); // c:1416
+    let mut clwpos: i32; // c:1168
+    let mut clwnum: i32;
+    let mut cp: i32 = 0; // c:1173 saved lincmd
+    let mut rd: i32 = 0; // c:1173 saved linredir
+    let mut ia: i32 = 0; // c:1173 linarr snapshot
+    let mut varq: i32; // c:1090
+    let mut cmdstr: Option<String>; // c:1162
+    let mut varname: Option<String>; // c:1165
+    let mut zlemetacs_qsub: i32; // c:1106
+    let mut tt: Option<String>; // c:1114 cursor-word capture
+
+    's_restart: loop {
+        INWHAT.store(IN_NOTHING, Ordering::SeqCst); // c:1157
+        LEX_PARBEGIN.set(-1); // c:1159
+        LEX_PAREND.set(-1);
+        LINCMD.store(incmdpos() as i32, Ordering::SeqCst); // c:1160
+        let mut linredir: i32 = inredir() as i32; // c:1161 (local; no shared global)
+        cmdstr = None; // c:1162-1163
+        let mut cmdtok: lextok = NULLTOK; // c:1164
+        varname = None; // c:1165-1166
+        INSUBSCR.store(0, Ordering::SeqCst); // c:1167
+        clwpos = -1; // c:1168
+        zcontext_save(); // c:1169
+        LEX_LEXFLAGS.set(LEXFLAGS_ZLE); // c:1170
+        crate::ported::input::inpush(&dupstrspace(&linptr), 0, None); // c:1171
+        crate::ported::hist::strinbeg(0); // c:1172
+
+        // c:1173 — per-command accumulators.
+        let mut wordpos: i32 = 0;
+        let mut ins: i32 = 0;
+        let mut oins: i32 = 0; // prior-iteration ins (c:1203); init 0
+        let mut linarr: i32 = 0;
+        let mut parct: i32 = 0;
+        let mut redirpos: i32 = 0;
+        WB.store(zlemetacs, Ordering::SeqCst); // c:1174 we = wb = zlemetacs
+        WE.store(zlemetacs, Ordering::SeqCst);
+        let mut tt0: lextok = NULLTOK; // c:1175
+        clwords.clear();
+        tt = None;
+        varq = 0;
+        zlemetacs_qsub = 0;
+
+        // c:1185 — the token loop.
+        loop {
+            let mut qsub: i32 = 0; // c:1186
+            let mut noword: i32 = 0;
+
+            // c:1197 — linredir = (inredir && !ins)
+            linredir = (inredir() && ins == 0) as i32;
+            // c:1198-1202 — lincmd command-position determination.
+            let lincmd_val = (!inredir()
+                && ((incmdpos() && ins == 0 && incond() == 0)
+                    || (oins == 2 && wordpos == 2)
+                    || (ins == 3 && wordpos == 1)
+                    || (cmdtok == NULLTOK && incond() == 0))) as i32;
+            LINCMD.store(lincmd_val, Ordering::SeqCst);
+            oins = ins; // c:1203
+            if linarr != 0 {
+                set_incmdpos(false); // c:1205-1206
+            }
+            if cmdtok == TYPESET {
+                set_intypeset(linarr == 0); // c:1211-1212
+            }
+            ctxtlex(); // c:1213
+
+            // c:1215-1227 — LEXERR fixup: odd Snull/Dnull count means an
+            // unterminated quote; treat as STRING (or ENVSTRING).
+            let mut tokv = tok();
+            if tokv == LEXERR {
+                match tokstr() {
+                    None => break,
+                    Some(ts) => {
+                        let jcnt = ts.chars().filter(|&c| c == snull || c == dnull).count();
+                        if jcnt & 1 == 1 {
+                            if LINCMD.load(Ordering::SeqCst) != 0 && ts.contains('=') {
+                                varq = 1;
+                                tokv = ENVSTRING;
+                                set_tok(ENVSTRING);
+                            } else {
+                                tokv = STRING_LEX;
+                                set_tok(STRING_LEX);
+                            }
+                        }
+                    }
+                }
+            } else if tokv == ENVSTRING {
+                varq = 0; // c:1228-1229
+            }
+
+            // c:1230-1243 — array-assignment / paren nesting.
+            if tokv == ENVARRAY {
+                linarr = 1;
+                varname = tokstr().map(|s| ztrdup(&s));
+            } else if tokv == INPAR_TOK {
+                parct += 1;
+            } else if tokv == OUTPAR_TOK {
+                if parct != 0 {
+                    parct -= 1;
+                } else if linarr != 0 {
+                    linarr = 0;
+                    set_incmdpos(true);
+                }
+            }
+
+            // c:1244-1268 — redirection handling. rdstrs recording is
+            // omitted; the cursor-in-middle-of-redirection wb/we
+            // adjustment IS ported.
+            if inredir() && IS_REDIROP(tokv) {
+                if wordpos == redirpos {
+                    redirpos += 1;
+                }
+                let inbufct = crate::ported::input::inbufct.with(|c| c.get());
+                let wb = WB.load(Ordering::SeqCst);
+                let we = WE.load(Ordering::SeqCst);
+                let wordbeg = LEX_WORDBEG.get();
+                if zlemetacs < (zlemetall - inbufct) && zlemetacs >= wordbeg && wb == we {
+                    let new_we = zlemetall - (inbufct + addedx); // c:1257
+                    WE.store(new_we, Ordering::SeqCst);
+                    if addedx != 0 && new_we > wb {
+                        WB.store(wb + 1, Ordering::SeqCst); // c:1260 {param}> form
+                    } else {
+                        WB.store(zlemetacs, Ordering::SeqCst); // c:1264 2> form
+                    }
+                }
+            }
+            if tokv == DINPAR {
+                set_tokstr(None); // c:1269-1270
+            }
+
+            if tokv == ENDINPUT {
+                break; // c:1273
+            }
+
+            // c:1275-1309 — command separators.
+            let is_sep = (ins != 0 && (tokv == DOLOOP || tokv == SEPER))
+                || (ins == 2 && wordpos == 2)
+                || (ins == 3 && wordpos == 3)
+                || tokv == BAR_TOK
+                || tokv == AMPER
+                || tokv == BARAMP
+                || tokv == AMPERBANG
+                || ((tokv == DBAR || tokv == DAMPER) && incond() == 0)
+                || (tt.is_some() && incmdpos());
+            if is_sep {
+                if tt.is_some() {
+                    break; // c:1291-1292
+                }
+                if ins < 2 {
+                    noword = 1; // c:1304
+                }
+                wordpos = 0; // c:1307
+                redirpos = 0;
+                ins = 0;
+                tt0 = NULLTOK; // c:1308
+            }
+
+            // c:1310-1327 — token in command position: record cmdstr.
+            if LINCMD.load(Ordering::SeqCst) != 0
+                && (tokv == STRING_LEX
+                    || tokv == FOR
+                    || tokv == FOREACH
+                    || tokv == SELECT
+                    || tokv == REPEAT
+                    || tokv == CASE
+                    || tokv == TYPESET)
+            {
+                ins = if tokv == REPEAT {
+                    2
+                } else {
+                    (tokv != STRING_LEX && tokv != TYPESET) as i32
+                };
+                if let Some(ts) = tokstr() {
+                    let mut c = ztrdup(&untokenize(&ts));
+                    crate::ported::glob::remnulargs(&mut c);
+                    cmdstr = Some(c);
+                }
+                cmdtok = tokv;
+                if wordpos != redirpos && clwpos == -1 {
+                    wordpos = 0; // c:1327
+                    redirpos = 0;
+                }
+            } else if tokv == SEPER {
+                ins = (cmdtok != STRING_LEX && cmdtok != TYPESET) as i32; // c:1336
+            }
+
+            // c:1338-1394 — the lexer reached the cursor word (gotword
+            // cleared lexflags). Capture the token string as `tt`.
+            if LEX_LEXFLAGS.get() == 0 && tt0 == NULLTOK {
+                tt = tokstr().as_ref().map(|s| dupstring(s));
+                let wb = WB.load(Ordering::SeqCst);
+                let we = WE.load(Ordering::SeqCst);
+                // c:1352-1368 — count \-\n pairs (removed by the lexer).
+                {
+                    let ub = zml.as_bytes();
+                    let (mut i, mut j, mut k) = (0i32, 0i32, 0i32);
+                    let mut u = wb.max(0) as usize;
+                    let we_u = (we.max(0) as usize).min(ub.len());
+                    while u < we_u {
+                        let c = ub[u];
+                        if c == b'`' && (k & 1) == 0 {
+                            i += 1;
+                        } else if c == b'"' && (k & 1) == 0 && (i & 1) == 0 {
+                            j += 1;
+                        } else if c == b'\'' && (j & 1) == 0 {
+                            k += 1;
+                        } else if c == b'\\' && u + 1 < ub.len() && (k & 1) == 0 {
+                            if ub[u + 1] == b'\n' {
+                                qsub += 2; // c:1364
+                            }
+                            u += 1;
+                        }
+                        u += 1;
+                    }
+                }
+                // c:1373-1383 — RCQUOTES single-quote fixup.
+                if isset(RCQUOTES) {
+                    if let Some(ref ttv) = tt {
+                        let ttb = ttv.as_bytes();
+                        let e = (zlemetacs - wb - qsub).max(0) as usize;
+                        let mut idx = 0usize;
+                        while idx < ttb.len() {
+                            if ttv[idx..].starts_with(snull) {
+                                let mut pp = idx;
+                                while pp < ttb.len() && pp < e {
+                                    if ttb[pp] == b'\'' {
+                                        qsub += 1;
+                                    }
+                                    pp += 1;
+                                }
+                            }
+                            idx += 1;
+                        }
+                    }
+                }
+                // c:1385-1386 — remove the injected `x` from tt.
+                if addedx != 0 {
+                    if let Some(ref mut ttv) = tt {
+                        let at = (zlemetacs - wb - qsub).max(0) as usize;
+                        if at < ttv.len() && ttv.is_char_boundary(at) {
+                            ttv.remove(at);
+                        }
+                    }
+                }
+                tt0 = tokv; // c:1387
+                clwpos = wordpos; // c:1389
+                cp = LINCMD.load(Ordering::SeqCst); // c:1390
+                rd = linredir; // c:1391
+                ia = linarr; // c:1392
+                if INWHAT.load(Ordering::SeqCst) == IN_NOTHING && incond() != 0 {
+                    INWHAT.store(IN_COND, Ordering::SeqCst); // c:1394
+                }
+            } else if linredir != 0 {
+                // c:1395-1398 — rdstrs recording omitted; C `continue`.
+                // A do-while `continue` re-tests the loop condition, so
+                // honor the c:1446 end condition before continuing.
+                let lexflags_nz = LEX_LEXFLAGS.get() != 0;
+                let end = tokv == LEXERR
+                    || tokv == ENDINPUT
+                    || (tokv == SEPER && !(lexflags_nz && tt0 == NULLTOK));
+                if end {
+                    break;
+                }
+                continue;
+            }
+
+            // c:1400-1405 — inside a cond, canonicalize || and &&.
+            let mut cur_tokstr = tokstr();
+            if incond() != 0 {
+                if tokv == DBAR {
+                    cur_tokstr = Some("||".to_string());
+                } else if tokv == DAMPER {
+                    cur_tokstr = Some("&&".to_string());
+                }
+            }
+            // c:1406-1407 — skip empty tokens / suppressed words.
+            if cur_tokstr.is_none() || noword != 0 {
+                let lexflags_nz = LEX_LEXFLAGS.get() != 0;
+                let end = tokv == LEXERR
+                    || tokv == ENDINPUT
+                    || (tokv == SEPER && !(lexflags_nz && tt0 == NULLTOK));
+                if end {
+                    break;
+                }
+                continue;
+            }
+            let cur_tokstr_s = cur_tokstr.unwrap();
+            // c:1408-1410 — `repeat n do` hack.
+            if oins == 2 && wordpos == 0 && cur_tokstr_s == "do" {
+                ins = 3;
+            }
+            // c:1414-1430 — store the word in clwords[wordpos], trimming
+            // trailing spaces (unless Bnull/Meta-escaped).
+            let mut word = ztrdup(&cur_tokstr_s);
+            {
+                let meta = Meta as char;
+                loop {
+                    let chars: Vec<char> = word.chars().collect();
+                    let sl = chars.len();
+                    if sl == 0 || chars[sl - 1] != ' ' {
+                        break;
+                    }
+                    if sl >= 2 && (chars[sl - 2] == bnull || chars[sl - 2] == meta) {
+                        break;
+                    }
+                    word.pop();
+                }
+            }
+            while clwords.len() <= wordpos as usize {
+                clwords.push(String::new());
+            }
+            clwords[wordpos as usize] = word;
+            let sl = clwords[wordpos as usize].chars().count() as i32;
+            // c:1433-1445 — cursor word: remove injected `x`.
+            let prev_wordpos = wordpos;
+            wordpos += 1;
+            if clwpos == prev_wordpos && addedx != 0 {
+                let wb = WB.load(Ordering::SeqCst);
+                zlemetacs_qsub = zlemetacs - qsub;
+                let word_diff = zlemetacs_qsub - wb;
+                let chuck_at = if word_diff >= sl {
+                    sl - 1
+                } else if word_diff < 0 {
+                    0
+                } else {
+                    word_diff
+                };
+                let w = &mut clwords[prev_wordpos as usize];
+                if let Some((byte_at, _)) = w.char_indices().nth(chuck_at.max(0) as usize) {
+                    w.remove(byte_at);
+                }
+            }
+
+            // c:1446 — do-while loop condition.
+            let lexflags_nz = LEX_LEXFLAGS.get() != 0;
+            let end = tokv == LEXERR
+                || tokv == ENDINPUT
+                || (tokv == SEPER && !(lexflags_nz && tt0 == NULLTOK));
+            if end {
+                break;
+            }
+        }
+
+        // c:1449 — number of words collected.
+        clwnum = if tt.is_some() || wordpos == 0 {
+            wordpos
+        } else {
+            wordpos - 1
+        };
+        t0 = tt0; // c:1452
+        // c:1453-1459 — array-assignment overrides lincmd/linredir.
+        if ia != 0 {
+            LINCMD.store(0, Ordering::SeqCst);
+            linredir = 0;
+            INWHAT.store(IN_ENV, Ordering::SeqCst);
+        } else {
+            LINCMD.store(cp, Ordering::SeqCst);
+            linredir = rd;
+        }
+        crate::ported::hist::strinend(); // c:1460
+        crate::ported::input::inpop(); // c:1461
+        LEX_LEXFLAGS.set(0); // c:1462
+        crate::ported::utils::errflag
+            .fetch_and(!crate::ported::utils::ERRFLAG_ERROR, Ordering::SeqCst); // c:1463
+
+        // c:1464-1480 — parbegin command-substitution restart.
+        if LEX_PARBEGIN.get() != -1 {
+            let parend = LEX_PAREND.get();
+            let off = zlemetall + addedx - LEX_PARBEGIN.get() + 1;
+            let ub = zml.as_bytes();
+            let li = off as isize;
+            let is_dollar_dparen = li >= 3
+                && (li as usize) < ub.len()
+                && ub[li as usize] == b'('
+                && ub[(li - 1) as usize] == b'('
+                && ub[(li - 2) as usize] == b'$';
+            if !is_dollar_dparen {
+                if parend >= 0 {
+                    let new_ll = zlemetall - parend;
+                    if new_ll >= 0
+                        && (new_ll as usize) <= zml.len()
+                        && zml.is_char_boundary(new_ll as usize)
+                    {
+                        zml.truncate(new_ll as usize);
+                    }
+                }
+                zcontext_restore(); // c:1476
+                tt = None; // c:1477
+                linptr = zml.clone();
+                continue 's_restart; // c:1478 goto start
+            }
+        }
+
+        // c:1482-1541 — resolve `s` from the token kind.
+        let s: String;
+        if INWHAT.load(Ordering::SeqCst) == IN_MATH {
+            // c:1482-1483 — IN_MATH word extraction NOT YET PORTED.
+            set_noaliases(ona);
+            zcontext_restore();
+            return None;
+        } else if t0 == NULLTOK || t0 == ENDINPUT {
+            // c:1484-1489 — empty line.
+            s = String::new();
+            WB.store(zlemetacs, Ordering::SeqCst);
+            WE.store(zlemetacs, Ordering::SeqCst);
+            clwpos = clwnum;
+            t0 = STRING_LEX;
+        } else if t0 == STRING_LEX || t0 == TYPESET {
+            // c:1490-1494 — a simple string.
+            s = clwords
+                .get(clwpos.max(0) as usize)
+                .cloned()
+                .unwrap_or_default();
+        } else if t0 == ENVSTRING {
+            // c:1495-1541 — cursor inside a parameter assignment.
+            if varq != 0 {
+                tt = clwords.get(clwpos.max(0) as usize).cloned();
+            }
+            let ttv = tt.clone().unwrap_or_default();
+            // c:1503 — namespace ident end.
+            let ns_off = crate::ported::utils::itype_end(&ttv, INAMESPC, false).min(ttv.len());
+            varname = Some(ztrdup(&ttv[..ns_off])); // c:1506-1508
+            let mut soff = ns_off;
+            if ttv.as_bytes().get(soff) == Some(&b'+') {
+                soff += 1; // c:1509-1510
+            }
+            // c:1511-1512 — subscript / past-cursor => math context.
+            let mut rest: &str = &ttv[soff..];
+            let sp = crate::ported::utils::skipparens(Inbrack, Outbrack, &mut rest);
+            let after_paren_off = ttv.len() - rest.len();
+            let wb0 = WB.load(Ordering::SeqCst);
+            if sp > 0 || (after_paren_off as i32) > (zlemetacs_qsub - wb0) {
+                // c:1513-1519 — array subscript => IN_MATH (not ported).
+                set_noaliases(ona);
+                zcontext_restore();
+                return None;
+            } else if ttv.as_bytes().get(after_paren_off) == Some(&b'=') {
+                // c:1520-1539 — an `=`: split VAR=value.
+                let eqoff = after_paren_off;
+                if zlemetacs_qsub > wb0 + eqoff as i32 {
+                    // c:1521-1525 — cursor after `=`: complete the value.
+                    let val_off = (eqoff + 1).min(ttv.len());
+                    WB.store(wb0 + val_off as i32, Ordering::SeqCst);
+                    s = ztrdup(&ttv[val_off..]);
+                    INWHAT.store(IN_ENV, Ordering::SeqCst);
+                } else {
+                    // c:1526-1537 — cursor on the name: complete the param.
+                    let mut poff = eqoff;
+                    if poff > 0 && ttv.as_bytes()[poff - 1] == b'+' {
+                        poff -= 1;
+                    }
+                    INWHAT.store(IN_PAR, Ordering::SeqCst);
+                    s = ztrdup(&ttv[..poff]);
+                    WE.store(wb0 + poff as i32, Ordering::SeqCst);
+                }
+                t0 = STRING_LEX; // c:1538
+            } else {
+                s = ztrdup(&ttv);
+            }
+            LINCMD.store(1, Ordering::SeqCst); // c:1540
+        } else {
+            // c:1549-1560 — not a completable word. The tmp cmdsubst
+            // restart (c:1550-1556) needs the parbegin zlemetaline dup
+            // (c:1467-1468), which is omitted, so this always returns.
+            set_noaliases(ona);
+            zcontext_restore();
+            return None; // c:1559
+        }
+
+        // c:1542-1543 — clamp we to line length.
+        if WE.load(Ordering::SeqCst) > zlemetall {
+            WE.store(zlemetall, Ordering::SeqCst);
+        }
+
+        set_noaliases(ona); // c:1562
+
+        // c:1708 — offs = zlemetacs - wb (prefix/suffix split point).
+        let wb = WB.load(Ordering::SeqCst);
+        OFFS.store(zlemetacs - wb, Ordering::SeqCst);
+
+        // clwnum/cmdstr/varname/cp/rd/ia are computed for fidelity but
+        // have no wired downstream consumer (no shared globals).
+        let _ = (clwnum, &cmdstr, &varname, cp, rd, ia);
+
+        // c:2219 — zcontext_restore(); return s.
+        // NOTE: quote-form cleanup (c:1709-1926) + brace-expansion
+        // (c:1931-2218) not ported; return the lexer word untokenized.
+        zcontext_restore();
+        return Some(untokenize(&s));
+    }
 }
 
 /// Port of `int inststrlen(char *str, int move, int len)` from
@@ -1476,51 +2073,298 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
 }
 
 /// Port of `listlist(LinkList l)` from Src/Zle/zle_tricky.c:2602.
-/// Returns the number of terminal lines used to display `items`.
-/// `cols` is the terminal width.
+///
+/// This is used to print expansions. Returns `!num` (0 for a non-empty
+/// list, 1 for an empty list), matching the C `return !num;` at
+/// c:2795 — this is the value the `list-expand` widget propagates.
+///
+/// `cols` is the terminal width; a value of 0 is a sentinel meaning
+/// "resolve `zterm_columns` internally" (both callers pass 0), so the
+/// width is taken from `adjustcolumns()` (with C's 80-column fallback
+/// at c:1820).
+///
+/// **Scope note:** the C body's ZLE terminal-control machinery
+/// (`trashzle`, the `LISTMAX`/`getzlequery` "do you wish to see all…"
+/// prompt at c:2708-2738, and the `clearflag` cursor-restore at
+/// c:2783-2790) is not ported here — this entry prints the columnar
+/// list to the shell-out fd and terminates with a single newline
+/// (mirroring the non-`clearflag` `putc('\n')` at c:2790). The sort
+/// (c:2617) and the `LISTPACKED`/`LISTROWSFIRST` column-packing
+/// (c:2628-2696) plus the width-aware output loops (c:2741-2782)
+/// are ported faithfully.
+///
 /// WARNING: param names don't match C — Rust=(items, cols) vs C=(l)
 pub fn listlist(items: &[String], cols: usize) -> i32 {
     // c:2602
-    let num = items.len(); // c:2602
+    let num = items.len(); // c:2604 — countlinknodes(l)
     if num == 0 {
-        return 0;
+        // C would divide by zero at `(zterm_columns+2)/longest` with
+        // longest==0; guard and return the C tail value `!num` (== 1).
+        return 1; // c:2795 return !num
     }
-    // c:2613-2614 — copy LinkList to data[].
-    let mut lens: Vec<usize> = items.iter().map(|s| s.chars().count() + 2).collect(); // c:2615
-    let longest = *lens.iter().max().unwrap_or(&1); // c:2620
-    if longest >= cols {
-        // single column
-        return num as i32;
+    // c:2609 — VARARR(int, widths, zterm_columns). `cols == 0` sentinel
+    // => resolve zterm_columns from the terminal (C's global).
+    let zterm_columns: i32 = if cols > 0 {
+        cols as i32
+    } else {
+        let c = crate::ported::utils::adjustcolumns();
+        if c == 0 {
+            80
+        } else {
+            c as i32
+        } // c:1820 fallback
+    };
+
+    // c:2613-2615 — copy LinkList to data[].
+    let mut data: Vec<String> = items.to_vec();
+
+    // c:2617-2618 — strmetasort(data, SORTIT_IGNORING_BACKSLASHES |
+    //   (isset(NUMERICGLOBSORT) ? SORTIT_NUMERICALLY : 0), NULL).
+    let sort_flags = (crate::ported::zsh_h::SORTIT_IGNORING_BACKSLASHES as u32)
+        | if isset(crate::ported::zsh_h::NUMERICGLOBSORT) {
+            crate::ported::zsh_h::SORTIT_NUMERICALLY as u32
+        } else {
+            0
+        };
+    crate::ported::sort::strmetasort(&mut data, sort_flags, None);
+
+    // c:2620-2627 — per-entry nice widths (+2), longest/shortest/totl.
+    let mut lens: Vec<i32> = Vec::with_capacity(num);
+    let mut longest: i32 = 0; // c:2610
+    let mut shortest: i32 = zterm_columns; // c:2610
+    let mut totl: i32 = 0; // c:2610
+    for s in &data {
+        let len = crate::ported::utils::niceztrlen(s) as i32 + 2; // c:2621 ZMB_nicewidth(*p)+2
+        lens.push(len);
+        if len > longest {
+            longest = len;
+        } // c:2622-2623
+        if len < shortest {
+            shortest = len;
+        } // c:2624-2625
+        totl += len; // c:2626
     }
-    // c:2622-2640 — pack=0 path: ncols = max columns we can fit.
-    let ncols = (cols / longest).max(1);
-    let nlines = num.div_ceil(ncols); // c:2643
-                                      // c:2645-2680 — emit each row to the shell-out fd. C uses
-                                      //                `compzputs(item, ml); for (j=pad) compzputs(" ", ml);`
-                                      //                then newline. Rust writes the same visible bytes
-                                      //                directly to SHTTY (stdout fallback) instead of
-                                      //                routing through tracing.
-    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    let mut row = String::new();
-    for (i, s) in items.iter().enumerate() {
-        row.push_str(s);
-        let pad = longest - lens[i];
-        row.push_str(&" ".repeat(pad));
-        if (i + 1) % ncols == 0 {
-            let line = row.trim_end();
-            let _ = write_loop(out_fd, line.as_bytes());
-            let _ = write_loop(out_fd, b"\n");
-            row.clear();
+
+    // c:2609 — widths[zterm_columns].
+    let mut widths: Vec<i32> = vec![0; zterm_columns.max(1) as usize];
+    let num_i = num as i32;
+    let mut pack: i32 = 0; // c:2611
+    let mut ncols: i32; // c:2611
+    let mut nlines: i32; // c:2611
+
+    ncols = (zterm_columns + 2) / longest; // c:2628
+    if ncols != 0 {
+        // c:2629 — int tlines = 0, tcols = 0, ...
+        let mut tlines: i32 = 0;
+        let mut tcols: i32 = 0;
+
+        nlines = (num_i + ncols - 1) / ncols; // c:2631
+
+        if isset(crate::ported::zsh_h::LISTPACKED) {
+            // c:2633
+            if isset(crate::ported::zsh_h::LISTROWSFIRST) {
+                // c:2634
+                let mut maxlines: i32 = 0;
+                // c:2637-2638 — for (tcols = zterm_columns/shortest;
+                //               tcols > ncols; tcols--)
+                tcols = zterm_columns / shortest;
+                while tcols > ncols {
+                    // c:2639-2641 — inner init.
+                    let mut nth: i32 = 0;
+                    let mut first: i32 = 0;
+                    let mut maxlen: i32 = 0;
+                    let mut width: i32 = 0;
+                    let mut llines: i32 = 0;
+                    let mut tcol: i32 = 0;
+                    maxlines = 0;
+                    let mut count: i32 = num_i;
+                    // c:2642 — for (; count > 0; count--)
+                    while count > 0 {
+                        if nth % tcols == 0 {
+                            llines += 1;
+                        } // c:2643-2644
+                        if lens[nth as usize] > maxlen {
+                            maxlen = lens[nth as usize];
+                        } // c:2645-2646
+                        nth += tcols; // c:2647
+                        tlines += 1; // c:2648
+                        if nth >= num_i {
+                            // c:2649
+                            width += maxlen; // c:2650
+                            if width >= zterm_columns {
+                                break;
+                            } // c:2650-2651
+                            widths[tcol as usize] = maxlen; // c:2652
+                            tcol += 1;
+                            maxlen = 0; // c:2653
+                            first += 1;
+                            nth = first; // c:2654 nth = ++first
+                            if llines > maxlines {
+                                maxlines = llines;
+                            } // c:2655-2656
+                            llines = 0; // c:2657
+                        }
+                        count -= 1; // for-increment
+                    }
+                    if nth < num_i {
+                        // c:2660
+                        widths[tcol as usize] = maxlen; // c:2661
+                        width += maxlen; // c:2662
+                    }
+                    if count == 0 && width < zterm_columns {
+                        break;
+                    } // c:2664-2665
+                    tcols -= 1; // for-increment
+                }
+                if tcols > ncols {
+                    tlines = maxlines;
+                } // c:2667-2668
+            } else {
+                // c:2670-2671 — for (tlines = (totl+zterm_columns)/
+                //               zterm_columns; tlines < nlines; tlines++)
+                tlines = (totl + zterm_columns) / zterm_columns;
+                while tlines < nlines {
+                    // c:2672-2673 — inner init.
+                    let mut nth: i32 = 0;
+                    let mut tline: i32 = 0;
+                    let mut width: i32 = 0;
+                    let mut maxlen: i32 = 0;
+                    tcols = 0;
+                    // c:2674 — for (p = data; *p; nth++, p++)
+                    while (nth as usize) < num {
+                        if lens[nth as usize] > maxlen {
+                            maxlen = lens[nth as usize];
+                        } // c:2675-2676
+                        tline += 1; // c:2677 ++tline
+                        if tline == tlines {
+                            // c:2677
+                            width += maxlen; // c:2678
+                            if width >= zterm_columns {
+                                break;
+                            } // c:2678-2679
+                            widths[tcols as usize] = maxlen; // c:2680
+                            tcols += 1;
+                            maxlen = 0;
+                            tline = 0; // c:2681
+                        }
+                        nth += 1; // for-increment
+                    }
+                    if tline != 0 {
+                        // c:2684
+                        widths[tcols as usize] = maxlen; // c:2685
+                        tcols += 1;
+                        width += maxlen; // c:2686
+                    }
+                    if (nth as usize) == num && width < zterm_columns {
+                        break;
+                    } // c:2688-2689
+                    tlines += 1; // for-increment
+                }
+            }
+            // c:2692-2695 — pack = (tlines < nlines).
+            pack = if tlines < nlines { 1 } else { 0 };
+            if pack != 0 {
+                nlines = tlines;
+                ncols = tcols;
+            }
+        }
+    } else {
+        // c:2697-2701 — one item per line, wrapped by terminal width.
+        nlines = 0;
+        for s in &data {
+            nlines += 1 + (s.len() as i32) / zterm_columns; // c:2700
         }
     }
-    if !row.is_empty() {
-        let line = row.trim_end();
-        let _ = write_loop(out_fd, line.as_bytes());
-        let _ = write_loop(out_fd, b"\n");
+
+    // c:2703 — trashzle(): the ZLE terminal-restore machinery is out of
+    // scope here (see fn doc); we go straight to emitting the list.
+
+    // Emit the columnar list to the shell-out fd. C routes each entry
+    // through nicezputs(*p, shout); we accumulate the nice-formatted
+    // bytes + padding into a buffer and write it in one shot.
+    let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+    let out_fd = if fd >= 0 { fd } else { 1 };
+    let mut buf: Vec<u8> = Vec::new();
+
+    if ncols != 0 {
+        // c:2741
+        if isset(crate::ported::zsh_h::LISTROWSFIRST) {
+            // c:2742-2755 — row-major output.
+            let mut col: i32 = 1;
+            for i in 0..num {
+                crate::ported::utils::nicezputs(&data[i], &mut buf); // c:2745
+                if col == ncols {
+                    // c:2746
+                    col = 0; // c:2747
+                    if i + 1 < num {
+                        buf.push(b'\n');
+                    } // c:2748-2749 (p[1])
+                } else {
+                    // c:2751 — pad = (pack ? widths[col-1] : longest) - lens[i] + 2
+                    let pad = (if pack != 0 {
+                        widths[(col - 1) as usize]
+                    } else {
+                        longest
+                    }) - lens[i]
+                        + 2;
+                    for _ in 0..pad.max(0) {
+                        buf.push(b' ');
+                    } // c:2752-2753
+                }
+                col += 1; // for-increment
+            }
+        } else {
+            // c:2756-2774 — column-major output.
+            for line in 0..nlines {
+                // c:2760
+                let mut col: i32 = 1; // c:2762
+                let mut idx: i32 = line; // p = f = data + line
+                while (idx as usize) < num {
+                    // c:2762 (*p)
+                    crate::ported::utils::nicezputs(&data[idx as usize], &mut buf); // c:2763
+                    if col == ncols {
+                        break;
+                    } // c:2764-2765
+                    // c:2766 — pad = (pack ? widths[col-1] : longest) - lens[idx] + 2
+                    let pad = (if pack != 0 {
+                        widths[(col - 1) as usize]
+                    } else {
+                        longest
+                    }) - lens[idx as usize]
+                        + 2;
+                    for _ in 0..pad.max(0) {
+                        buf.push(b' ');
+                    } // c:2767-2768
+                    // c:2769 — for (i = nlines; i && *p; i--, p++, lenp++);
+                    // advance idx by up to nlines, stopping at end of data.
+                    let mut i = nlines;
+                    while i != 0 && (idx as usize) < num {
+                        idx += 1;
+                        i -= 1;
+                    }
+                    col += 1; // for-increment
+                }
+                if line + 1 < nlines {
+                    buf.push(b'\n');
+                } // c:2771-2772
+            }
+        }
+    } else {
+        // c:2775-2782 — one item per line.
+        for i in 0..num {
+            crate::ported::utils::nicezputs(&data[i], &mut buf); // c:2777
+            if i + 1 < num {
+                buf.push(b'\n');
+            } // c:2779-2780 (p[1])
+        }
     }
-    let _ = (lens.pop(),);
-    nlines as i32
+
+    // c:2790 — non-clearflag path terminates the list with a newline.
+    buf.push(b'\n');
+    let _ = write_loop(out_fd, &buf);
+
+    // c:2795 — return !num (num > 0 here, so 0).
+    0
 }
 
 /// Direct port of `int doexpandhist(char **args)` from
