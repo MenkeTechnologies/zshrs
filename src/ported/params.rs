@@ -3053,8 +3053,8 @@ pub(crate) fn getarg<'a>(
     // C params.c:1761-1797 — scalar word-mode arm. `(w)N` joins
     // the source string and re-splits by sep (whitespace by default
     // for `w`, "\n" for `f`). When `pat` is a numeric N, the Nth
-    // word is returned. Pattern-search variants on scalars share
-    // the c:1798-1980 char-search arm which is not yet ported.
+    // word is returned. Pattern-search variants on scalars use the
+    // c:1798-1980 char-search arm ported below.
     if let Some(s) = scalar {
         if flags.contains('w') || flags.contains('f') {
             if let Ok(n) = pat.parse::<i64>() {
@@ -3088,11 +3088,13 @@ pub(crate) fn getarg<'a>(
             }
         }
         // C params.c:1798-1980 — scalar char-search arm. `(i)/(I)/
-        // (r)/(R)` on a scalar runs a sliding-window glob match.
-        // (i)/(I) return the 1-based byte position of first/last
-        // match; (r)/(R) return the matched substring.
-        // Multibyte cursor outputs (prevcharlen/nextcharlen at
-        // c:1948-1971) are not yet ported; ASCII-only path here.
+        // (r)/(R)` on a scalar runs a sliding-window glob match over
+        // the CHARACTER array (`s_chars`), so positions are character-
+        // based — matching C's prevcharlen/nextcharlen cursor stepping
+        // (c:1948-1971) under MULTIBYTE. (i)/(I) return the 1-based
+        // char position of the first/last match; (r)/(R) return the
+        // char at the match. Verified against zsh: `s=ábc; ${s[(i)b]}`
+        // → 2 (char pos), not 3 (byte pos).
         let any_search = flags.contains('r')
             || flags.contains('R')
             || flags.contains('i')
