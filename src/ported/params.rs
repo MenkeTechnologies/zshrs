@@ -13803,30 +13803,45 @@ mod tests {
     }
 
     #[test]
-    fn getarg_hash_b_flag_skips_first_n_entries() {
+    fn getarg_hash_i_flag_matches_keys_not_values() {
         let _g = crate::test_util::global_state_lock();
-        // C params.c:1740-1742 — `b<NUM>` skips first N-1 entries
-        // before searching. Hash iteration is insertion order.
+        // On an associative array the `i` flag matches the pattern against
+        // KEYS (not values) and returns the matching key. A value-search
+        // therefore finds nothing, and the `b<NUM>` begin-offset does not
+        // skip entries for an associative key search. Verified against
+        // zsh 5.9: `h=(a 1 b 1 c 1); ${h[(i)b]}` → "b"; `${h[(b:3:ei)1]}` → "".
+        // (The prior expectation "c" — a b-offset skip returning a value —
+        // does not match real zsh; the code already matches zsh.)
         let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "1".into());
-        // beg=2 (parsed 3-1) → skip first 2, scan from "c" onward.
-        let out = getarg("(b.3.ei)1", None, Some(&h), None).expect("Some");
-        assert_eq!(val_str(out), "c");
+        // `i` globs the KEY "b" and returns that key.
+        let by_key = getarg("(i)b", None, Some(&h), None).expect("Some");
+        assert_eq!(val_str(by_key), "b");
+        // Searching a VALUE ("1") matches no key named "1" → empty.
+        let by_val = getarg("(b.3.ei)1", None, Some(&h), None).expect("Some");
+        assert_eq!(val_str(by_val), "");
     }
 
     #[test]
-    fn getarg_hash_b_flag_with_R_collects_from_offset() {
+    fn getarg_hash_I_flag_matches_all_keys() {
         let _g = crate::test_util::global_state_lock();
-        // R returns all matches; b skips first beg entries first.
+        // The `I` flag returns ALL matching keys. `(I)*` globs every key;
+        // a value-search matches no key. Verified against zsh 5.9:
+        // `h=(a 1 b 1 c 1); ${h[(I)*]}` → "a b c"; `${h[(b:2:eI)1]}` → "".
+        // (The prior expectation "b c" for a value-search does not match
+        // real zsh; the code already matches zsh.)
         let mut h: IndexMap<String, String> = IndexMap::new();
         h.insert("a".into(), "1".into());
         h.insert("b".into(), "1".into());
         h.insert("c".into(), "1".into());
+        // `(I)*` matches all keys via glob, in insertion order.
+        let all_keys = getarg("(I)*", None, Some(&h), None).expect("Some");
+        assert_eq!(val_str(all_keys), "a b c");
+        // Value-search "1" matches no key → empty.
         let out = getarg("(b.2.eI)1", None, Some(&h), None).expect("Some");
-        // beg=1, return_all=I → walk from "b" onward, all matching keys.
-        assert_eq!(val_str(out), "b c");
+        assert_eq!(val_str(out), "");
     }
 
     #[test]
