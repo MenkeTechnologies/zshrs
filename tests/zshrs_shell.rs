@@ -4035,6 +4035,25 @@ fn test_dq_suppresses_natural_sort() {
 }
 
 #[test]
+fn test_dq_suppresses_sort_on_assoc_kv() {
+    // The `(o)`/`(u)` sort suppression inside DQ must apply to assoc
+    // `(k)`/`(v)`/`(kv)` results too, not just plain arrays. In DQ the
+    // key/value array sepjoins to a scalar (C c:3034 clears isarr) so
+    // the c:4245 sort/unique block is gated out — the values/keys keep
+    // hash iteration order. The assoc `(k)/(v)` seed sets isarr AFTER
+    // the sepjoin transition, so the port re-applies it after the seed.
+    // Uses a single-key map so hash order is deterministic; a
+    // reverse-alpha two-key map proves the sort is really suppressed.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A m=(beta 2 alpha 1); v="${(vo)m}"; k="${(ko)m}"; print -r -- "[$v][$k]""#,
+    );
+    // Hash order for this insertion is (beta, alpha) in both zsh and
+    // zshrs; (o) would sort to (alpha, beta) / (1, 2) — suppression
+    // keeps the unsorted "2 1" / "beta alpha".
+    assert_eq!(output.trim(), "[2 1][beta alpha]", "got: {output:?}");
+}
+
+#[test]
 fn test_positional_slice_skip_offset() {
     // ${@:N:M} — N is "skip N positionals" (0-based, includes \$0
     // when N=0). Same shape as bash/zsh.
