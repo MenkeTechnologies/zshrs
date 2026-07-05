@@ -1258,6 +1258,15 @@ pub fn bin_set(
         }
         idx += 1; // c:668
     }
+    // c:Src/builtin.c:668 — `if (errflag) return 1;`. A bad / can't-change
+    // option (or `no such option`) reported via zerrnam set ERRFLAG_ERROR;
+    // `set -Z` must exit 1, not fall through to the (success) display path.
+    if (crate::ported::utils::errflag.load(std::sync::atomic::Ordering::Relaxed)
+        & crate::ported::utils::ERRFLAG_ERROR)
+        != 0
+    {
+        return 1;
+    }
     let _ = nam;
 
     // c:676 — `queue_signals();`
