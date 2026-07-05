@@ -9874,7 +9874,19 @@ pub fn getkeystring_with(
                 } else {
                     u8::from_str_radix(&hex, 16).unwrap_or(0)
                 };
-                result.push(val as char);
+                // c:Src/utils.c — `\xNN` is one raw BYTE, not a Unicode
+                // codepoint. Metafy high bytes (c:7289-7294 `if (imeta(c))
+                // { *p++ = Meta; *p++ = c ^ 32; }`) so the String stays
+                // valid UTF-8 and unmetafies back to the single raw byte on
+                // output. `push(val as char)` re-encoded 0xNN>=0x80 as two
+                // UTF-8 bytes (`\xff` → c3 bf instead of ff). Mirrors the
+                // getkeystring() hex arm.
+                if val < 0x80 {
+                    result.push(val as char);
+                } else {
+                    result.push('\u{83}');
+                    result.push(char::from(val ^ 32));
+                }
                 // c:utils.c:7172-7173 — under GETKEY_PRINTF_PERCENT
                 // a numeric escape producing `%` gets a second `%`.
                 if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0 && val == b'%'
@@ -9994,7 +10006,16 @@ pub fn getkeystring_with(
                 } else {
                     u8::from_str_radix(&oct, 8).unwrap_or(0)
                 };
-                result.push(val as char);
+                // c:Src/utils.c — octal escape is one raw BYTE; metafy high
+                // bytes (c:7289-7294) so `\0377` unmetafies to a single 0xff
+                // byte, not the UTF-8 pair c3 bf. Mirrors the getkeystring()
+                // hex arm.
+                if val < 0x80 {
+                    result.push(val as char);
+                } else {
+                    result.push('\u{83}');
+                    result.push(char::from(val ^ 32));
+                }
                 // c:utils.c:7172-7173 — same `%` doubling under
                 // GETKEY_PRINTF_PERCENT as the hex/octal arms.
                 if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0 && val == b'%' {
@@ -10017,7 +10038,16 @@ pub fn getkeystring_with(
                     }
                 }
                 if let Ok(val) = u8::from_str_radix(&oct, 8) {
-                    result.push(val as char);
+                    // c:Src/utils.c — octal escape is one raw BYTE; metafy
+                    // high bytes (c:7289-7294) so `\377` unmetafies to a
+                    // single 0xff byte, not the UTF-8 pair. Mirrors the
+                    // getkeystring() octal arm.
+                    if val < 0x80 {
+                        result.push(val as char);
+                    } else {
+                        result.push('\u{83}');
+                        result.push(char::from(val ^ 32));
+                    }
                     // c:utils.c:7172-7173 — `%` doubling under
                     // GETKEY_PRINTF_PERCENT (the printf format path).
                     if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
