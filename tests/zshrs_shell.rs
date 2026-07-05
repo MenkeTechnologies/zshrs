@@ -1305,6 +1305,29 @@ fn test_subscript_parity_redirect_error_all_arms() {
 }
 
 #[test]
+fn test_redirect_error_uses_strerror_for_all_errnos() {
+    // A failed-redirect open reports the errno's message (C's `%e` =
+    // strerror, first char lowercased) for ANY errno, not just the few
+    // that were hardcoded — the rest fell back to a generic
+    // "redirect failed". ENOTDIR (redirect through a file used as a
+    // directory) is portable + deterministic and was in the broken set.
+    let dir = tempdir_for_test();
+    let file = format!("{}/afile", dir);
+    std::fs::write(&file, b"hi").unwrap();
+    let (_, _, stderr) = run_zshrs_parity(&format!("echo x > {}/sub", file));
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_dir(&dir);
+    assert!(
+        stderr.contains("not a directory"),
+        "expected strerror(ENOTDIR), got: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("redirect failed"),
+        "should not use the generic fallback: {stderr:?}"
+    );
+}
+
+#[test]
 fn test_subscript_parity_redirect_error_skips_non_print_builtins() {
     // The redirect_failed flag now also gates cd, unset, test,
     // read, eval, set, builtin_builtin — not just print/echo.
