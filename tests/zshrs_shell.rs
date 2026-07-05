@@ -12688,3 +12688,32 @@ fn test_nameref_for_loop_rebinds_and_detects_self() {
     assert!(err.contains("invalid self reference"), "got: {err:?}");
     assert_ne!(st, 0);
 }
+
+#[test]
+fn test_scalar_substring_negative_length_past_start_errors() {
+    // ${scalar:OFFSET:NEG-LEN} where the resolved end (strlen+len) falls
+    // before OFFSET must abort with the C diagnostic, not clamp to "".
+    // C: Src/subst.c:3737-3740 zerr("substring expression: %d < %d",
+    // strlen+length, given_offset). Sibling of the array arm's #120 fix,
+    // which the scalar branch previously lacked (silent .max(0) clamp).
+    // "Hello, World" is 12 chars; ${s:2:-20} → end = 12 + (-20) = -8 < 2.
+    let (status, stdout, stderr) =
+        run_zshrs(r#"s="Hello, World"; print -r -- "[${s:2:-20}]""#);
+    assert!(
+        stderr.contains("substring expression: -8 < 2"),
+        "expected substring-expression abort, got stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert_ne!(status, 0);
+    // The unclamped given_offset must survive OFFSET > strlen:
+    // ${s:20:-5} → end = 12 + (-5) = 7 < given_offset 20 (not clamped to 12).
+    let (_st2, _out2, err2) = run_zshrs(r#"s="Hello, World"; print -r -- "${s:20:-5}""#);
+    assert!(
+        err2.contains("substring expression: 7 < 20"),
+        "expected unclamped given_offset in message, got: {err2:?}"
+    );
+    // A negative length that still lands after OFFSET is a normal slice,
+    // no error: ${s:7:-1} → "Worl".
+    let (st3, out3, _err3) = run_zshrs(r#"s="Hello, World"; print -r -- "${s:7:-1}""#);
+    assert_eq!(out3.trim(), "Worl");
+    assert_eq!(st3, 0);
+}
