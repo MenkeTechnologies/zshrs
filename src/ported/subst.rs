@@ -13923,6 +13923,24 @@ pub fn paramsubst(
         }
 
         let full = format!("{}{}{}", prefix, value, suffix); // c:1885
+                                                             // c:Src/subst.c:1885 — `if (qt && !*y) y = dupstring(nulstring);`.
+                                                             // A QUOTED expansion whose whole assembled result is empty must
+                                                             // emit the Nularg sentinel (`\u{a1}`) so prefork's empty-node
+                                                             // deletion (c:100 `else if (!(flags & PREFORK_SINGLE) && !keep)
+                                                             // uremnode`, ported at subst.rs:388-396) does NOT elide it;
+                                                             // remnulargs (c:170, subst.rs:327) converts the sentinel back to
+                                                             // a true empty afterward. Without this, a flag-form quoted-empty
+                                                             // scalar that routes through stringsubst→paramsubst as its own
+                                                             // node — e.g. `"X${(P)unset}Y"` / `"[${(P)emptyname}]"` — had the
+                                                             // node deleted and the ENTIRE surrounding word collapsed to
+                                                             // nothing. Plain `${unset}` doesn't hit this path (handled inline
+                                                             // upstream), so only the (P)/flag single-token-node forms were
+                                                             // affected. Guard on `full.is_empty()` mirrors C's `!*y` (the
+                                                             // FULL result incl. prefix/suffix, not just the value).
+        if qt && full.is_empty() {
+            let nul = crate::ported::zsh_h::Nularg.to_string();
+            return (nul.clone(), nul.chars().count(), vec![nul]);
+        }
         let new_pos_in_full = prefix.chars().count() + value.chars().count();
         return (full.clone(), new_pos_in_full, vec![full]);
     } // c:1885

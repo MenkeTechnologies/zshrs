@@ -5404,6 +5404,27 @@ fn test_param_flag_at_P_indirects_each_element() {
 }
 
 #[test]
+fn test_param_flag_P_empty_deref_keeps_word() {
+    // `${(P)name}` where the deref target is unset OR resolves to the
+    // empty name must expand to an EMPTY STRING, not null the whole
+    // surrounding word. The (P) form routes through
+    // stringsubst→paramsubst as its own token node; the empty scalar
+    // return previously came back as "" and prefork's empty-node
+    // deletion elided it, taking the surrounding literals with it
+    // (`X${(P)bar}Y` printed nothing). C emits the Nularg sentinel for
+    // a quoted-empty result (subst.c:1885 `if (qt && !*y) y =
+    // dupstring(nulstring)`) so prefork keeps the node; remnulargs
+    // restores the true empty. Verified against `/bin/zsh -f`:
+    //   unset bar → "X${(P)bar}Y"  → XY
+    //   zz=""     → "[${(P)zz}]"    → []
+    //   name=zz zz=hi → "${(P)name}end" → hiend
+    let (_, output, _) = run_zshrs(
+        r#"unset bar; print -r -- "X${(P)bar}Y"; zz=""; print -r -- "[${(P)zz}]"; name=zz; zz=hi; print -r -- "${(P)name}end""#,
+    );
+    assert_eq!(output, "XY\n[]\nhiend\n", "got: {output:?}");
+}
+
+#[test]
 fn test_typeset_f_zsh_format_one_stmt_per_line() {
     // zsh: each top-level statement on its own line, no trailing
     // semicolons, indented with TAB. Was preserving the input's
