@@ -4678,6 +4678,22 @@ fn test_param_flag_oi_case_insensitive_sort() {
 }
 
 #[test]
+fn test_param_flag_unique_with_eq_wordsplit() {
+    // `${(u)=s}` word-splits the scalar (`=`) THEN dedups (`u`). C runs
+    // the spbreak split (subst.c:3901) BEFORE the (u)/(o) unique+sort
+    // block (subst.c:4245); the port applied the sort/unique block first
+    // (when isarr was still 0) so the `=`-split words were never deduped.
+    // Verified against `/bin/zsh -f`:
+    //   s="c a b c a"; ${(u)=s}  -> c a b   (split, dedup, insertion order)
+    //   ${(ou)=s}                -> a b c   (split, dedup, sorted)
+    //   ${(onu)=n} n="3 1 2 1 3" -> 1 2 3   (split, dedup, numeric sort)
+    let (_, output, _) = run_zshrs(
+        r#"s="c a b c a"; print -r -- "${(u)=s}"; print -r -- "${(ou)=s}"; n="3 1 2 1 3"; print -r -- "${(onu)=n}""#,
+    );
+    assert_eq!(output, "c a b\na b c\n1 2 3\n", "got: {output:?}");
+}
+
+#[test]
 fn test_printf_g_uses_shortest_representation() {
     let (_, output, _) = run_zshrs(r#"printf "%g\n" 3.14"#);
     assert_eq!(output.trim(), "3.14", "%g 3.14: {output:?}");

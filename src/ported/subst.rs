@@ -12191,6 +12191,30 @@ pub fn paramsubst(
         // join-collapses-first behavior. `${(oj/-/)arr}` for
         // (charlie alpha bravo) returns "charlie-alpha-bravo" in zsh —
         // the o flag is a no-op because j collapsed shape first.
+        // c:Src/subst.c:3901-3921 — a pending `=`/spbreak force_split
+        // splits the scalar into words BEFORE the c:4245 unique/sort
+        // block (C runs the c:3901 split first). zshrs's force_split
+        // block lives later (line ~13560), so when `(u)`/`(o)`/etc. is
+        // ALSO requested the split hadn't happened yet and the c:4245
+        // gate below (`isarr != 0`) skipped — `${(u)=s}` left the
+        // word-split result un-deduped. Pre-apply the split here so the
+        // unique/sort block sees the array; the later force_split block
+        // then no-ops via its `split_parts.is_none()` guard. Only fires
+        // when sort/unique is requested, so plain `${=s}` is unaffected.
+        if force_split
+            && pf_flags & PREFORK_SINGLE == 0
+            && split_parts.is_none()
+            && isarr == 0
+            && (sortit != SORTIT_ANYOLDHOW || unique)
+        {
+            // c:3921 — `aval = sepsplit(val, spsep, 0, 1)`.
+            let parts: Vec<String> = crate::ported::utils::sepsplit(&value, None, false);
+            if !parts.is_empty() {
+                value = parts.join(" ");
+                split_parts = Some(parts);
+                isarr = if nojoin != 0 { 1 } else { 2 }; // c:3274
+            }
+        }
         if isarr != 0 && (sortit != SORTIT_ANYOLDHOW || unique) && sep.is_none() {
             // c:4245 + c:4290
             // Sort/unique source: prefer split_parts (any prior
