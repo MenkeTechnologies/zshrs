@@ -9399,6 +9399,10 @@ pub fn bin_print(
         } else {
             rest
         };
+        // c:5464 — reset the per-run `%d`/`%i` math-error flag; a bad
+        // math operand during formatting sets it (parse_int_arg) and turns
+        // the builtin's exit status into 1 without aborting output.
+        PRINTF_MATH_ERR.with(|c| c.set(false));
         // c:builtin.c:5430-5443 — printf returns 1 on unknown
         // directive after `zwarnnam(name, "%s: invalid directive",
         // start)`. The partial output produced before the bad
@@ -9486,7 +9490,13 @@ pub fn bin_print(
             let _ = lk.write_all(&crate::ported::utils::unmetafy_str(&out));
             let _ = lk.flush();
         }
-        return 0;
+        // c:5464 — a `%d`/`%i` math-operand error makes printf exit 1
+        // (output already emitted).
+        return if PRINTF_MATH_ERR.with(|c| c.get()) {
+            1
+        } else {
+            0
+        };
     }
 
     // c:4718-4741 — `-m PATTERN args...` glob-filter. First arg is
@@ -15653,10 +15663,20 @@ fn format_spec_str(spec: &str, s: &str) -> String {
 /// - Hex (`0x10`, `0X10`)
 /// - Single character prefix `'A'` or `"A"` → ASCII code
 /// - `BASE#NNN` radix literal
-/// On parse failure zsh emits a warning + returns 0; we mirror with
-/// silent-0 (the warning path needs the printf cmd name + format
-/// position threaded through, which the current refactor scope
-/// doesn't justify).
+///
+/// c:Src/builtin.c:5460-5464 — printf evaluates the `%d`/`%i` operand with
+/// `mathevali`, which zerr's a "bad math expression" diagnostic AND sets
+/// errflag on a parse error (`printf %d 12abc` → "operator expected at
+/// `abc'"). C then clears ERRFLAG_ERROR and sets the builtin's `ret = 1`,
+/// keeping the value at 0 but continuing to format the remaining args.
+/// zshrs's `mathevali` returns the message in `Err` instead of emitting, so
+/// surface it here (matching the `$((…))` path at subst.rs:2562), clear the
+/// error so following args still evaluate, and record the soft failure in
+/// `PRINTF_MATH_ERR` for bin_print to turn into exit status 1.
+thread_local! {
+    static PRINTF_MATH_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn parse_int_arg(s: &str) -> i64 {
     // c:Src/builtin.c bin_print c:5447 — character-constant check
     // operates on the RAW arg, not after trim. `*curarg == '\''`
@@ -15674,9 +15694,23 @@ fn parse_int_arg(s: &str) -> i64 {
     // magnitude 9223372036854775808 truncates to 18 digits exactly as
     // zsh, and INT64_MIN (-9223372036854775808) round-trips without the
     // manual `-parsed` negate that panicked on i64::MIN.
-    // c:5461-5464 — on a math error C zeroes the value and sets ret=1;
-    // map Err → 0 here.
-    crate::ported::math::mathevali(s.trim()).unwrap_or(0)
+    // c:5460-5464 — evaluate as math; on error emit the diagnostic (C's
+    // mathevali does this internally), zero the value, and flag ret=1.
+    match crate::ported::math::mathevali(s.trim()) {
+        Ok(n) => n,
+        Err(msg) => {
+            crate::ported::utils::zerr(&msg);
+            // c:5463 `errflag &= ~ERRFLAG_ERROR` — clear so the NEXT %d arg
+            // still evaluates (matheval bails on a pre-set errflag,
+            // math.rs:569); the soft failure is tracked separately.
+            crate::ported::utils::errflag.fetch_and(
+                !crate::ported::utils::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            PRINTF_MATH_ERR.with(|c| c.set(true)); // c:5464 ret = 1
+            0
+        }
+    }
 }
 
 fn format_spec_int(spec: &str, n: i64) -> String {
