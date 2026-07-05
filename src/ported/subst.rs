@@ -2974,24 +2974,18 @@ pub fn paramsubst(
                 let prev2 = if end > 1 { raw_chars[end - 2] } else { '\0' };
                 if ch == Inbrace {
                     depth += 1;
-                } else if ch == '{' {
-                    // A nested `${` opens depth. The `$` may be a literal
-                    // `$` OR the lexer's Stringg (\u{85}) / Qstring
-                    // (\u{8c}) token — the latter appears when the body
-                    // was lexed in a quoted-like context such as the
-                    // `$(( ${...${...}} ))` arithmetic form, where the
-                    // braces stay LITERAL `{`/`}` but the `$` is Qstring.
-                    // Matching only literal `$` here made the depth
-                    // tracker miss the inner `${`, so the outer matcher
-                    // closed on the FIRST `}` and truncated its body —
-                    // `$(( ${${:-5}} ))` reached matheval as `${:-5}`
-                    // (illegal char). Accept all three `$` forms.
-                    let dollar_preceded = (prev == '$' || prev == Stringg || prev == Qstring)
-                        && prev2 != '\\'
-                        && prev2 != Bnull;
-                    if dollar_preceded {
-                        depth += 1;
-                    }
+                } else if ch == '{' && prev != '\\' && prev != Bnull {
+                    // Any unescaped `{` opens a level that its matching `}`
+                    // (below) closes — this covers a nested `${…}` opener AND
+                    // a bare brace-expansion group inside the body, e.g. the
+                    // default of `${x:-{a,b}}`. Counting only `$`-preceded
+                    // `{` (the prior behavior) let the FIRST inner `}` close
+                    // the outer `${…}` too early: `${x:-{a,b}}` truncated to
+                    // `${x:-{a,b}` + a stray literal `}` (`set}`), and
+                    // `$(( ${${:-5}} ))` reached matheval as `${:-5}`. Bare
+                    // groups now balance symmetrically with the raw-`}` arm.
+                    let _ = (prev2, Stringg, Qstring);
+                    depth += 1;
                 } else if ch == Outbrace {
                     depth -= 1;
                     if depth == 0 {
