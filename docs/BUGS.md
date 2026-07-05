@@ -19,6 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
+## #642 — `functions` output omits the trailing space after a standalone assignment
+
+**Status:** `port-bug` — cosmetic; the reconstructed body re-parses
+identically (a trailing space before a newline is insignificant). Root cause
+is in the COMPILER, not the deparser.
+
+C's `taddassign` (Src/text.c:205/224) appends a space after every assignment
+value (`taddstr(val); taddchr(' ')`, and `taddstr(") ")` for arrays), and
+`taddassignlist` (text.c:213) for typeset args. So `functions`/`typeset -f`
+render a trailing space when the command is assignment(s) with NO following
+command word:
+
+```
+f() { x=1 }              zsh: «->x=1 »        zshrs: «->x=1»
+f() { a=(1 2 3) }        zsh: «->a=(1 2 3) »  zshrs: «->a=(1 2 3)»
+f() { local x=1 }        zsh: «->local x=1 »  zshrs: «->local x=1»
+f() { export PATH=/bin } zsh: «->export PATH=/bin »  zshrs: «…/bin»
+
+f() { VAR=x cmd arg }    zsh: «VAR=x cmd arg»  zshrs: «VAR=x cmd arg»  (MATCH)
+f() { echo a=b }         zsh: «echo a=b»       zshrs: «echo a=b»       (MATCH)
+```
+
+zshrs's `taddassign` (text.rs:124) DOES `tpush(' ')` — but it is never
+reached for these forms: the compiler emits a **WC_SIMPLE** node (the
+assignment as a plain command word) instead of C's **WC_ASSIGN** / **WC_TYPESET**
+node. The WC_SIMPLE deparse (taddlist) has no per-word trailing space, so the
+space is lost. Command-PREFIX assignments (`VAR=x cmd`) DO compile as
+WC_ASSIGN (the space renders as the word separator, hence they match), so the
+gap is specifically the assignment-only-no-command shape. Closing it needs the
+compiler to emit WC_ASSIGN/WC_TYPESET for standalone/typeset assignments —
+an architectural change touching compile + exec + deparse for a cosmetic
+trailing space. Deferred.
+
+---
+
 ## #641 — odd key/value count accepted silently in 3 assoc-assign paths
 
 **Status:** `port-bug` — the canonical assoc setfn `arrhashsetfn`
