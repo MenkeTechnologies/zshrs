@@ -30,7 +30,7 @@ use crate::ported::math::mathevali;
 use crate::ported::options::{optlookup, optlookupc};
 use crate::ported::params::{setaparam, setiparam, setsparam};
 use crate::ported::subst::singsub;
-use crate::ported::utils::{has_token, privasserted, unmeta, zwarnnam};
+use crate::ported::utils::{has_token, privasserted, unmeta, zwarn, zwarnnam};
 use crate::ported::zsh_h::{
     isset, unset, CASEGLOB, COND_EF, COND_EQ, COND_GE, COND_GT, COND_LE, COND_LT, COND_NE, COND_NT,
     COND_OT, COND_REGEX, COND_STRDEQ, COND_STREQ, COND_STRGTR, COND_STRLT, COND_STRNEQ,
@@ -293,7 +293,7 @@ pub fn evalcond(
                                 'n' => b2i(!arg.is_empty()),
                                 'z' => b2i(arg.is_empty()),
                                 'o' => {
-                                    let r = optison("test", &arg); // c:502
+                                    let r = optison(from_test, &arg); // c:502 (fromtest)
                                     if r != 3 {
                                         r
                                     } else if opts.contains_key(&arg) {
@@ -683,7 +683,7 @@ pub fn dolstat(s: &str) -> u32 {
 /// when unset, 3 (error) when the name is unrecognised. Routes
 /// through the canonical option table via `optlookup` /
 /// `optlookupc` (Src/options.c:684 / :721).
-pub fn optison(name: &str, s: &str) -> i32 {
+pub fn optison(name: Option<&str>, s: &str) -> i32 {
     // c:502
     let i: i32 = if s.len() == 1 {
         // c:502
@@ -697,7 +697,16 @@ pub fn optison(name: &str, s: &str) -> i32 {
             // c:511
             return 1; // c:512
         } else {
-            zwarnnam(name, &format!("no such option: {}", s)); // c:514
+            // c:514 `zwarnnam(name, "no such option: %s", s)` — `name` is
+            // C's `fromtest`: NULL for `[[ -o X ]]` (so the diagnostic has
+            // NO command-name prefix — `zsh:1: no such option: …`) and
+            // "test"/"[" only from the test/[ builtin. zshrs hardcoded
+            // "test", so `[[ -o bad ]]` wrongly printed `…:test:1:…`.
+            let msg = format!("no such option: {}", s);
+            match name {
+                Some(n) => zwarnnam(n, &msg),
+                None => zwarn(&msg),
+            }
             return 3; // c:515
         }
     } else if i < 0 {
@@ -1837,22 +1846,22 @@ mod tests {
         assert!(is_dir, "/ should have S_IFDIR; got mode=0o{mode:o}");
     }
 
-    /// `optison("test", "definitely_not_an_option")` returns nonzero.
+    /// `optison(Some("test"), "definitely_not_an_option")` returns nonzero.
     /// C: with POSIXBUILTINS off → 3 (with zwarnnam); with on → 1.
     /// Either way: nonzero.
     #[test]
     fn optison_unknown_option_returns_nonzero() {
         let _g = crate::test_util::global_state_lock();
-        let r = optison("test", "zshrs_definitely_not_an_option_xyz");
+        let r = optison(Some("test"), "zshrs_definitely_not_an_option_xyz");
         assert_ne!(r, 0, "unknown option → nonzero error (1 or 3)");
     }
 
-    /// `optison("test", "x")` for `set -x` — never panics, returns
+    /// `optison(Some("test"), "x")` for `set -x` — never panics, returns
     /// 0/1 based on current xtrace state.
     #[test]
     fn optison_single_char_xtrace_returns_zero_or_one() {
         let _g = crate::test_util::global_state_lock();
-        let r = optison("test", "x");
+        let r = optison(Some("test"), "x");
         assert!(r == 0 || r == 1, "single-char x must return 0/1; got {r}");
     }
 
@@ -2012,7 +2021,7 @@ mod tests {
     #[test]
     fn optison_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = optison("test", "x");
+        let _: i32 = optison(Some("test"), "x");
     }
 
     /// c:594 — `optison` is deterministic.
@@ -2020,10 +2029,10 @@ mod tests {
     fn optison_is_deterministic() {
         let _g = crate::test_util::global_state_lock();
         for s in ["x", "y", "v"] {
-            let first = optison("test", s);
+            let first = optison(Some("test"), s);
             for _ in 0..3 {
                 assert_eq!(
-                    optison("test", s),
+                    optison(Some("test"), s),
                     first,
                     "optison(test, {:?}) must be deterministic",
                     s
@@ -2142,7 +2151,7 @@ mod tests {
     #[test]
     fn optison_empty_name_no_panic() {
         let _g = crate::test_util::global_state_lock();
-        let _ = optison("", "");
+        let _ = optison(None, "");
     }
 
     /// c:653 — `cond_str` out-of-bounds num returns empty.
