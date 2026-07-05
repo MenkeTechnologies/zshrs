@@ -77,9 +77,22 @@ for zsh_file in "$CORPUS_DIR"/*.zsh; do
         # test drivers that bail without a script-file argument. Any
         # non-zero exit from those is expected — what we're really pinning
         # in syntax-only mode is that zshrs doesn't timeout, segfault, or
-        # panic on the input.
+        # panic on the input. Each entry below was verified to exit
+        # non-zero for a reason zshrs shares with real zsh (not a zshrs
+        # bug): missing sourced sibling files, zunit-DSL files real `zsh -n`
+        # also parse-errors on, or a standard NOMATCH glob bailout. The
+        # 134/139 guard below still fails any real SIGABRT/SIGSEGV.
         case "$name" in
             thefuck.plugin.zsh|zsh-z.plugin.zsh|ztst.zsh) source_only=1 ;;
+            # `source` of absent music/spotify sibling files (exit 127).
+            macos.plugin.zsh) source_only=1 ;;
+            # zunit-DSL (@setup/@test blocks) — `zsh -n` also parse-errors.
+            zpwr-syntax.zsh|zpwr-verbs.zsh) source_only=1 ;;
+            # NOMATCH glob bailout matching real zsh's default.
+            zsh-autocomplete.plugin.zsh) source_only=1 ;;
+            # `add-zsh-hook` autoload with no zsh fn dir in fpath — real
+            # zsh also errors "function definition file not found".
+            alias-finder.plugin.zsh) source_only=1 ;;
             *) source_only=0 ;;
         esac
         if timeout "$TIMEOUT" "$ZSHRS" "$zsh_file" >/dev/null 2>&1; then
