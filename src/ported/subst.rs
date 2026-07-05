@@ -8459,6 +8459,34 @@ pub fn paramsubst(
                 }
             }
         }
+        // c:Src/subst.c:3029-3034 — the `(k)`/`(v)`/`(@)` assoc seeds
+        // above set `isarr` AFTER the DQ-sepjoin transition at ~8371, so
+        // re-apply that transition here for the freshly-seeded array
+        // shape. In DQ (`qt`) a `(k)`/`(v)` key/value array collapses to
+        // a sepjoined scalar (`isarr=0`) exactly like a regular array,
+        // which gates OUT the c:4245 sort/unique block — `"${(vo)m}"`
+        // must keep hash order (sort suppressed in DQ) like `"${(o)arr}"`
+        // already does. `(@)` (nojoin != 0) keeps splat shape via the
+        // `isarr = -1` leg. List context (`qt == false`) leaves isarr
+        // positive so the sort still applies. `spsep` (an `(s::)` split)
+        // preserves per-word shape per the c:3317 `!spsep` guard. An `[@]`
+        // SUBSCRIPT (SCANPM_ISVAR_AT, c:2916) also keeps splat even in DQ
+        // — `"${(kv)m[@]}"` must splat each key/value — so it's excluded
+        // (the magic-assoc seed clobbered its `isarr=-1` to 1 above).
+        if isarr > 0
+            && subscript.as_deref() != Some("@")
+            && (magic_assoc_array.is_some() || (nojoin == 2 && subscript.is_none()))
+        {
+            if nojoin != 0 {
+                isarr = -1; // c:3030
+            } else if qt && spsep.is_none() {
+                // c:3032 — `val = sepjoin(aval, sep, 1)`.
+                if let Some(sp) = split_parts.as_ref() {
+                    value = crate::ported::utils::sepjoin(sp, sep.as_deref());
+                }
+                isarr = 0; // c:3034
+            }
+        }
         // c:Src/subst.c — `${assoc[(R)pat]}` / `${assoc[(I)pat]}` /
         // `${assoc[(K)pat]}` preserve ARRAY shape across the assoc
         // subscript MATCH path so consumers like
