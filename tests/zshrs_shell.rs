@@ -5714,6 +5714,23 @@ fn test_brace_unstepped_char_range_still_expands() {
 }
 
 #[test]
+fn test_param_default_with_inner_braces_balances_extent() {
+    // A brace-expansion group inside a `${...}` body (e.g. the default of
+    // `${x:-{a,b}}`) must be balanced when finding the closing `}`: the
+    // FIRST inner `}` used to close the `${...}` early, leaving a stray
+    // literal `}` (`${x:-{a,b}}` with x set printed `set}`). Verified vs
+    // /bin/zsh -f. (Brace-EXPANSION of a used default — `${xx:-{a,b}}` →
+    // `a b` — is a separate concern; here x is set so the default is
+    // ignored and only the extent matters.)
+    let (_, output, _) = run_zshrs(r#"x=set; print -r -- ${x:-{a,b}}"#);
+    assert_eq!(output.trim(), "set", "got: {output:?}");
+    // Nested `${${:-N}}` inside arithmetic must also balance the inner
+    // braces (else matheval saw a truncated `${:-7}`).
+    let (_, output, _) = run_zshrs(r#"print -r -- $(( ${${:-7}} + 1 ))"#);
+    assert_eq!(output.trim(), "8", "got: {output:?}");
+}
+
+#[test]
 fn test_arith_division_by_zero_prints_error() {
     // `$((10/0))` should print `zshrs:1: division by zero` on stderr
     // (matching zsh's `zsh:1: division by zero`). Regression: zshrs
