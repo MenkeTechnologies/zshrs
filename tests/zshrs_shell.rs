@@ -12881,3 +12881,30 @@ fn test_printf_numeric_operand_math_error_reported_and_exit_1() {
     assert_eq!(out4.trim(), "3");
     assert_eq!(st4, 0);
 }
+
+#[test]
+fn test_single_arg_test_is_nonempty_string_test() {
+    // c:Src/parse.c par_cond_1 — a `[ X ]` / `test X` with ONE argument is
+    // a non-empty-string test (implicit -n), whatever X looks like: a unary
+    // op, `!`, a binary op, or a paren all need more tokens to form an
+    // operator. True iff X is non-empty. zshrs treated a lone flag/operator
+    // token as an operator with a missing operand (exit 2 / diagnostic).
+    // Quote the shell-special tokens (<, >, (, )) so they reach `[` as
+    // arguments rather than redirections/subshells.
+    for tok in [
+        "-z", "-f", "-n", "!", "'<'", "'>'", "'('", "')'", "=", "x", "-abc",
+    ] {
+        let (st, _o, _e) = run_zshrs(&format!("[ {tok} ]"));
+        assert_eq!(st, 0, "[ {tok} ] must be true (non-empty), got exit {st}");
+    }
+    // Empty single arg is false.
+    let (st_empty, _o, _e) = run_zshrs(r#"[ "" ]"#);
+    assert_eq!(st_empty, 1);
+
+    // Regression: 2-/3-arg forms unaffected.
+    assert_eq!(run_zshrs(r#"[ -z "" ]"#).0, 0); // -z of empty → true
+    assert_eq!(run_zshrs(r#"[ -n x ]"#).0, 0);
+    assert_eq!(run_zshrs("[ 5 -gt 3 ]").0, 0);
+    assert_eq!(run_zshrs("[ 3 -gt 5 ]").0, 1);
+    assert_eq!(run_zshrs("[ a = a ]").0, 0);
+}

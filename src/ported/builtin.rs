@@ -12354,6 +12354,19 @@ pub fn bin_test(
         return 1; // c:7250
     }
 
+    // c:Src/parse.c par_cond / par_cond_1 — a SINGLE remaining token is
+    // always a NON-EMPTY-STRING test (implicit `-n`), no matter what it
+    // looks like: a unary op (`-z`/`-f`), `!`, a binary op (`<`/`>`/`=`),
+    // or a paren all need at least one more token to form an operator, and
+    // with one token there is none. So `[ -z ]` / `[ ! ]` / `[ ( ]` /
+    // `[ < ]` are true iff the token is non-empty; `[ "" ]` is false.
+    // Verified vs /opt/homebrew/bin/zsh 5.9. Handle it before the operator
+    // special-cases below, which otherwise (mis)treat the lone token as an
+    // operator with a missing operand.
+    if argv.len() == 1 {
+        return i32::from(argv[0].is_empty());
+    }
+
     // c:7257-7274 — XSI 3/4-arg parens + 4-arg `!` extension.
     let nargs = argv.len(); // c:7257
     if nargs == 3 || nargs == 4 {
