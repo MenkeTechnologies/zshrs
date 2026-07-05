@@ -3895,6 +3895,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // single literal pass-through to mirror nullglob-off default.
         let mut out: Vec<String> = Vec::with_capacity(inputs.len());
         for pattern in inputs {
+            // c:Src/subst.c — GLOB_SUBST subjects the value to the FULL
+            // filename-generation pipeline: `filesub` (tilde/`=` expansion)
+            // BEFORE globbing (prefork runs filesub then globlist). zshrs
+            // globbed but skipped filesub, so `${~x}` / `setopt globsubst`
+            // left `~/foo` un-expanded. filesubstr matches the Tilde TOKEN,
+            // so shtokenize the value first (`~`→Tilde, glob metas active),
+            // run filesub, then untokenize the surviving glob metas back to
+            // raw for expand_glob (which re-tokenizes internally).
+            let pattern = if pattern.contains('~') || pattern.contains('=') {
+                let mut tok = pattern.clone();
+                crate::ported::glob::shtokenize(&mut tok);
+                let fs = crate::ported::subst::filesub(&tok, 0);
+                crate::ported::lex::untokenize(&fs)
+            } else {
+                pattern
+            };
             let matches = with_executor(|exec| exec.expand_glob(&pattern));
             if matches.is_empty() {
                 // No match: keep the literal (like nullglob off).
@@ -9215,7 +9231,27 @@ fn glob_expand_word_value(raw: Value, skip_glob: bool) -> Value {
     }
     let mut out: Vec<String> = Vec::with_capacity(patterns.len());
     for pattern in &patterns {
-        let matches = with_executor(|exec| exec.expand_glob(pattern));
+        // c:Src/subst.c — filename generation runs `filesub` (tilde/`=`
+        // expansion) BEFORE globbing. A `~`/`=` reaching this word-glob op
+        // comes from `${~spec}` / GLOB_SUBST marking a substituted VALUE:
+        // literal and quoted `~` words are filesub'd (or skip glob) upstream
+        // and never arrive here. filesubstr matches the Tilde TOKEN, so
+        // shtokenize first (raw `~`->Tilde; already-Tilde `${~a[@]}` results
+        // pass through), run filesub, then untokenize surviving glob metas
+        // for expand_glob. Gated on `~`/`=` (raw or token) so ordinary
+        // substituted words skip the roundtrip. Fixes `${~x}` x="~/foo".
+        let filesubbed = if pattern.contains('~')
+            || pattern.contains('=')
+            || pattern.contains(crate::ported::zsh_h::Tilde)
+            || pattern.contains(crate::ported::zsh_h::Equals)
+        {
+            let mut tok = pattern.clone();
+            crate::ported::glob::shtokenize(&mut tok);
+            crate::ported::lex::untokenize(&crate::ported::subst::filesub(&tok, 0))
+        } else {
+            pattern.clone()
+        };
+        let matches = with_executor(|exec| exec.expand_glob(&filesubbed));
         if matches.is_empty() {
             // c:1872 nullglob — drop this word, don't emit a hole
             continue;
