@@ -19,6 +19,40 @@ CI green pending the underlying fix.
 
 ---
 
+## #645 — `${(z)}` doesn't split the `name=(…)` ENVARRAY parens
+
+**Status:** `port-bug` — the common `(z)` shell-tokenizations (quotes,
+`;`/`&&`/`||`/`|`, redirections, comments, `$'…'`, `((…))`) are correct; only
+the array-assignment ENVARRAY form at COMMAND START diverges.
+
+```
+s="a=(1 2 3)";  print -rl -- "${(z)s}"
+  zsh:   a=(  1  2  3  )        # ENVARRAY: `a=(` and `)` are their own tokens
+  zshrs: a=(1  2  3)            # parens glued to the values
+
+s="(a b c)";    print -rl -- "${(z)s}"    zsh: ( a b c )   zshrs: (a b c)
+
+s="local -a arr=(a b)"; print -rl -- "${(z)s}"
+  zsh:   local  -a  arr=(a b)   # NOT split: it's a typeset ARG, not command-start
+  zshrs: local  -a  arr=(a  b)  # zshrs splits the interior spaces
+```
+
+C's `bufferwords` (Src/hist.c:3385) drives the real lexer, which emits an
+`ENVARRAY` token for `name=(` ONLY at command-start position (so the parens
+become separate words and the elements are individual tokens), and keeps a
+`name=(…)` that appears as a later argument (after `local`/`-a`) glued. zshrs's
+`(z)` is a hand-rolled char tokenizer (subst.rs:12832) that handles the
+separator tokens but has no command-start ENVARRAY state, so it neither
+splits the command-start parens nor keeps the typeset-arg form intact.
+
+Faithful fix = route `(z)` through the real lexer (as C does) or add
+command-start + `IDENT=(` ENVARRAY recognition to the hand-rolled tokenizer
+(distinguishing it from a post-command `name=(…)` arg). Deferred: the `(z)`
+tokenizer is a delicate state machine (many prior fixes) and the ENVARRAY
+form is niche (mostly completion code parsing array assignments).
+
+---
+
 ## #644 — `${~x}` tilde expansion missing on an ASSIGNMENT RHS
 
 **Status:** `port-bug` — the command-argument (`echo ${~x}`), array
