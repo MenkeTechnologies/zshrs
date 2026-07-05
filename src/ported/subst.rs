@@ -3427,6 +3427,17 @@ pub fn paramsubst(
         // `*ta = getvaluearr(v)` at c:1726-1729 before paramsubst
         // proper resumes.
         let mut split_parts: Option<Vec<String>> = None; // c:3950
+        // c:Src/subst.c:3032 — set when the DQ qt-sepjoin transition
+        // (`val = sepjoin(aval, sep, 1); isarr = 0`) collapses an array
+        // to a scalar in double-quote context. C joins EXACTLY ONCE here,
+        // before the substitution operators (`:#`/`:*`/`:|`) run, so the
+        // operator tests/updates the joined scalar and there is no second
+        // join. zshrs's (j:STR:) arm at ~12569 otherwise re-fetches the
+        // ORIGINAL array and re-joins, clobbering an operator result (a
+        // filtered/intersected empty or scalar) with the raw joined array.
+        // The flag lets that arm know `value` already holds the final
+        // joined-and-operated scalar and must not be re-derived.
+        let mut dq_collapsed = false;
 
         // c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
         let mut plan9 = isset(RCEXPANDPARAM); // c:1663
@@ -8422,6 +8433,7 @@ pub fn paramsubst(
                     // c:3032
                 }
                 isarr = 0; // c:3034
+                dq_collapsed = true; // c:3032 (single-join marker)
             }
         }
         // `split_parts` (c:3950) moved to function-scope declaration
@@ -8480,6 +8492,7 @@ pub fn paramsubst(
                     value = crate::ported::utils::sepjoin(sp, sep.as_deref());
                 }
                 isarr = 0; // c:3034
+                dq_collapsed = true; // c:3032 (single-join marker)
             }
         }
         // c:Src/subst.c — `${assoc[(R)pat]}` / `${assoc[(I)pat]}` /
@@ -10890,8 +10903,10 @@ pub fn paramsubst(
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let scalar_ctx = qt && !is_at_subscript && !is_at_var && nojoin != 2;
                 if scalar_ctx {
-                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
-                                                                            // c:3565-3567 exclude — blank iff joined IS a member.
+                    // c:3032 — DQ sepjoin uses the (j:STR:) `sep`; test that
+                    // joined string for membership per C's c:3555.
+                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
+                                                                                      // c:3565-3567 exclude — blank iff joined IS a member.
                     value = if other_set.contains(&joined) {
                         String::new()
                     } else {
@@ -10935,8 +10950,11 @@ pub fn paramsubst(
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let scalar_ctx = qt && !is_at_subscript && !is_at_var && nojoin != 2;
                 if scalar_ctx {
-                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
-                                                                            // c:3565-3567 intersect — blank iff joined is NOT a member.
+                    // c:3032 — the DQ sepjoin uses the (j:STR:) `sep`
+                    // (default IFS when no (j)); test that joined string
+                    // for set membership exactly as C's c:3555 gethashnode2.
+                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
+                                                                                      // c:3565-3567 intersect — blank iff joined is NOT a member.
                     value = if other_set.contains(&joined) {
                         joined
                     } else {
@@ -12564,6 +12582,14 @@ pub fn paramsubst(
                 value = parts.join(sp); // c:3906
                 split_parts = None; // c:3906 (sepjoin collapses to scalar)
                 joined = true;
+            } else if dq_collapsed {
+                // c:Src/subst.c:3032 vs 3906 — the DQ qt-sepjoin already
+                // joined this array to `value` ONCE, before the operators
+                // ran, and a `:#`/`:*`/`:|` may have filtered/blanked that
+                // scalar. Re-fetching arrays_get/assoc_get here would undo
+                // the operator by rejoining the ORIGINAL array. C never
+                // reaches the c:3906 sepjoin in this path (it joined at
+                // c:3032), so leave `value` as the operator left it.
             } else if let Some(arr) = arrays_get(&var_name) {
                 // Bug #328: `${(j:SEP:)NAME[N,M]}` — when a slice
                 // subscript is present, sepjoin must operate on the

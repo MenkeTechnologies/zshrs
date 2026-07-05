@@ -12717,3 +12717,37 @@ fn test_scalar_substring_negative_length_past_start_errors() {
     assert_eq!(out3.trim(), "Worl");
     assert_eq!(st3, 0);
 }
+
+#[test]
+fn test_dq_join_flag_then_setop_filter_applies_to_scalar() {
+    // In DQ context a (j:STR:) join collapses the array to ONE scalar
+    // BEFORE :#/:*/:| run (C: Src/subst.c:3032 sepjoin, then the operator
+    // at c:3522/3540 takes the scalar path c:3555-3567). zshrs used to
+    // join early, run the operator, then a late (j) join re-fetched the
+    // ORIGINAL array and clobbered the operator result. Verify the
+    // operator now survives the late join.
+
+    // Intersection of the WHOLE joined scalar with c: "1 2 3 4 5" is not
+    // an element of c=(2 4 6) → empty.
+    let (_s, out, _e) =
+        run_zshrs(r#"b=(1 2 3 4 5); c=(2 4 6); print -r -- "[${(j: :)b:*c}]""#);
+    assert_eq!(out.trim(), "[]", "j-flag + :* intersect must test joined scalar");
+
+    // Filter :# on the joined scalar: "apple,banana,avocado" matches a* →
+    // dropped → empty.
+    let (_s2, out2, _e2) =
+        run_zshrs(r#"a=(apple banana avocado); print -r -- "[${(j:,:)a:#a*}]""#);
+    assert_eq!(out2.trim(), "[]", "j-flag + :# filter must test joined scalar");
+
+    // Kept case must preserve the (j) SEPARATOR, not fall back to a space
+    // join: b=(1 2 3) not in c=(9) → :| keeps the dash-joined scalar.
+    let (_s3, out3, _e3) =
+        run_zshrs(r#"b=(1 2 3); c=(9); print -r -- "[${(j:-:)b:|c}]""#);
+    assert_eq!(out3.trim(), "[1-2-3]", "kept :| result must keep the (j:-:) sep");
+
+    // Regression: [@] subscript keeps array shape → per-element set-op,
+    // then joined with the (j) sep.
+    let (_s4, out4, _e4) =
+        run_zshrs(r#"b=(1 2 3 4 5); c=(2 4 6); print -r -- "[${(j:-:)b[@]:*c}]""#);
+    assert_eq!(out4.trim(), "[2-4]", "[@] keeps per-element intersect");
+}
