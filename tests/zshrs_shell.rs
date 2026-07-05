@@ -12850,3 +12850,34 @@ fn test_unclosed_bracket_glob_is_bad_pattern_not_no_match() {
     let (_st4, _o4, err4) = run_zshrs("echo a[b]c");
     assert!(err4.contains("no matches found"), "closed bracket: {err4:?}");
 }
+
+#[test]
+fn test_printf_numeric_operand_math_error_reported_and_exit_1() {
+    // c:Src/builtin.c:5460-5464 — printf evaluates %d/%i operands with
+    // mathevali; a partial number with trailing junk (12abc, "12 34",
+    // 0x1G) is a "bad math expression", emitted to stderr with exit 1,
+    // value 0, and formatting CONTINUES for later args. zshrs previously
+    // swallowed the error (silent 0, exit 0).
+    let (st, out, err) = run_zshrs(r#"printf "%d\n" 12abc"#);
+    assert!(err.contains("bad math expression"), "err: {err:?}");
+    assert!(err.contains("operator expected"), "err: {err:?}");
+    assert_eq!(out.trim(), "0");
+    assert_eq!(st, 1);
+
+    // Later args still format after the error (per-arg errflag clear).
+    let (st2, out2, err2) = run_zshrs(r#"printf "[%d][%d][%d]\n" 12abc 5 99"#);
+    assert_eq!(out2.trim(), "[0][5][99]");
+    assert_eq!(st2, 1);
+    assert!(err2.contains("bad math expression"), "err2: {err2:?}");
+
+    // A bare identifier is an unset var (0), NOT an error.
+    let (st3, out3, err3) = run_zshrs(r#"printf "%d\n" abc"#);
+    assert_eq!(out3.trim(), "0");
+    assert_eq!(st3, 0);
+    assert!(!err3.contains("bad math"), "err3: {err3:?}");
+
+    // Valid math still evaluates with exit 0.
+    let (st4, out4, _e4) = run_zshrs(r#"printf "%d\n" 1+2"#);
+    assert_eq!(out4.trim(), "3");
+    assert_eq!(st4, 0);
+}
