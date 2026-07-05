@@ -19,6 +19,43 @@ CI green pending the underlying fix.
 
 ---
 
+## #641 — odd key/value count accepted silently in 3 assoc-assign paths
+
+**Status:** `port-bug` — the canonical assoc setfn `arrhashsetfn`
+(params.rs:8040) DOES enforce the check, and plain `h=(k v k)` / `set -A h
+k v k` / special-assoc (`options=(noglob)`) all error correctly. Three
+SECONDARY paths build the hash without routing through `arrhashsetfn`, so an
+odd element count is accepted with three different wrong results instead of
+the C diagnostic.
+
+C: `arrhashsetfn` (Src/params.c:4127) — `if (alen % 2) { zerr("bad set of
+key/value pairs for associative array"); return; }`. This is the assoc
+`setfn`, the single funnel every assoc whole-assign reaches in C.
+
+```
+typeset -A h=(a 1 b)          zsh: bad set…   zshrs: typeset -A h=( [a]=1 [b]='' )   # pads
+typeset -A h; h+=(k v odd)    zsh: bad set…   zshrs: typeset -A h=( [k]=v )          # drops
+: ${(AA)h::=k1 v1 k2}         zsh: bad set…   zshrs: typeset -A h=( )                # empties
+
+h=(k1 v1 k2)                  zsh: bad set…   zshrs: bad set…   (canonical path — OK)
+set -A h k1 v1 k2             zsh: bad set…   zshrs: bad set…   (OK)
+```
+
+The three bypass paths:
+1. **`typeset -A NAME=(…)`** — bin_typeset's paren-init builds assoc pairs
+   inline (padding the missing value with `''`) rather than calling
+   `sethparam`/`arrhashsetfn`.
+2. **`h+=(…)`** — the assoc-augment path merges pairs without the count gate.
+3. **`${(AA)NAME::=…}`** — the expansion-assign flag path in subst.rs.
+
+Fix = route all three through `arrhashsetfn` (or replicate its `alen % 2`
+gate at each site) so the odd-count rejection is uniform. The existing
+`assignaparam` gate (params.rs:6803) only fires for SPECIAL + KEY_VALUE
+assocs, so it doesn't cover these. Deferred: three separate delicate
+assignment sites, niche user-error input.
+
+---
+
 ## #640 — pure `(#e)` empty pattern doesn't match at end-of-string in substitution
 
 **Status:** `port-bug` — narrow residual of the #-anchor work. The leading-
