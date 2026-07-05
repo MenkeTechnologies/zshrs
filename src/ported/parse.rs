@@ -1319,7 +1319,16 @@ fn par_cmd() -> Option<ZshCommand> {
         // syntax errors like `{ echo a; } b c`. Mirror C's strict
         // post-compound terminator check. Bug #146 in docs/BUGS.md.
         if !matches!(inner, ZshCommand::Simple(_)) && tok() == STRING_LEX {
-            let bad = tokstr().unwrap_or_default();
+            // c:Src/parse.c:2738 — the error token is `zshlextext`, the
+            // human-readable source text, so quotes/sigils are shown
+            // verbatim (`"quoted"`, `'x'`, `$var`). zshrs's `tokstr()`
+            // still carries the inline quote MARKERS (Dnull/Snull/Stringg
+            // = `\u{9e}`/`\u{9d}`/`\u{85}`); emitting it raw printed the
+            // marker bytes and dropped the visible quotes. Untokenize to
+            // the display form: Dnull→`"`, Snull→`'`, Stringg→`$`, Bnull→`\`.
+            let bad = crate::ported::lex::untokenize_preserve_quotes(
+                &tokstr().unwrap_or_default(),
+            );
             zerr(&format!("parse error near `{}'", bad));
             // Reset state before returning so the outer loop's None
             // detection unwinds cleanly.
