@@ -11510,7 +11510,31 @@ pub fn paramsubst(
                         value = match len {
                             Some(l) if l >= 0 => dv.chars().skip(start).take(l as usize).collect(),
                             Some(l) => {
-                                let take = ((total - start as i64) + l).max(0) as usize;
+                                // c:Src/subst.c:3722-3741 — a negative length counts
+                                // from the string end: end = strlen + length. C's
+                                // scalar arm does `length -= offset` then, if still
+                                // negative, `length += strlen`; if the result is
+                                // STILL negative it aborts with
+                                // `zerr("substring expression: %d < %d",
+                                // length+given_offset, given_offset)` — i.e.
+                                // "END < OFFSET" where END = strlen+length and
+                                // OFFSET = the unclamped positive given_offset
+                                // (c:3720) — instead of yielding an empty string.
+                                // This is the scalar sibling of the array arm's #120
+                                // fix; the scalar path previously `.max(0)`-clamped
+                                // `take` and silently returned "".
+                                let given_offset =
+                                    if off < 0 { (total + off).max(0) } else { off }; // c:3720
+                                let end = total + l; // c:3730 strlen + (negative) length
+                                if end < given_offset {
+                                    // c:3737-3740
+                                    crate::ported::utils::zerr(&format!(
+                                        "substring expression: {} < {}",
+                                        end, given_offset
+                                    ));
+                                    return (String::new(), 0, Vec::new()); // c:3740
+                                }
+                                let take = (end - given_offset).max(0) as usize;
                                 dv.chars().skip(start).take(take).collect()
                             }
                             None => dv.chars().skip(start).collect(),
