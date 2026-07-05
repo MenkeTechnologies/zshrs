@@ -6755,15 +6755,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     target_fds.push(tfd);
                 }
                 Err(e) => {
-                    let msg = match e.kind() {
-                        std::io::ErrorKind::PermissionDenied => "permission denied",
-                        std::io::ErrorKind::NotFound => "no such file or directory",
-                        std::io::ErrorKind::IsADirectory => "is a directory",
-                        _ => "redirect failed",
-                    };
                     // c:Src/exec.c:3741 — `zwarn("%e: %s", errno, fname)`:
                     // zwarning supplies the `name:LINE:` prefix with the
-                    // REAL current lineno (the old eprintln hardcoded `:1:`).
+                    // REAL current lineno; redir_errno_msg builds the `%e`
+                    // errno message (was a hardcoded ErrorKind match that
+                    // showed generic "redirect failed" for EROFS/etc.).
+                    let msg = redir_errno_msg(&e);
                     crate::ported::utils::zwarn(&format!("{}: {}", msg, target));
                     // Close already-opened fds to avoid leaks.
                     for prev in &target_fds {
@@ -10838,6 +10835,37 @@ impl fusevm::ShellHost for ZshrsHost {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+/// Render a failed-redirect open error the way C's `zerrmsg` `%e` format
+/// code does (Src/utils.c): `strerror(errno)` with the first character
+/// lowercased, except `EIO` (kept capitalized) and `EINTR` (→ "interrupt").
+/// C's redirect open failures call `zwarn("%e: %s", errno, fname)`
+/// (Src/exec.c:3741); zshrs's `zwarning` takes a pre-built string, so the
+/// `%e` part is built here. Replaces the prior hardcoded `ErrorKind` match
+/// that fell back to a generic "redirect failed" for `EROFS`/`EACCES`/etc.
+fn redir_errno_msg(err: &std::io::Error) -> String {
+    let errno = match err.raw_os_error() {
+        Some(n) if n != 0 => n,
+        _ => return "redirect failed".to_string(),
+    };
+    if errno == libc::EINTR {
+        return "interrupt".to_string(); // c:zerrmsg %e — EINTR special-case
+    }
+    let cptr = unsafe { libc::strerror(errno) };
+    if cptr.is_null() {
+        return "redirect failed".to_string();
+    }
+    let msg = unsafe { std::ffi::CStr::from_ptr(cptr) }.to_string_lossy();
+    if errno == libc::EIO {
+        return msg.into_owned(); // c:zerrmsg %e — EIO keeps capitalization
+    }
+    // c:zerrmsg %e — `fputc(tulower(errmsg[0])); fputs(errmsg + 1)`.
+    let mut chars = msg.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => "redirect failed".to_string(),
+    }
+}
+
 // Host-routed shell ops: ShellExecutor methods invoked by ZshrsHost from the
 // fusevm VM. Not a port of Src/exec.c (see file-level docs above) — they're
 // the bridge between fusevm opcodes and ShellExecutor state.
@@ -10868,13 +10896,10 @@ impl ShellExecutor {
                 true
             }
             Err(e) => {
-                let msg = match e.kind() {
-                    std::io::ErrorKind::PermissionDenied => "permission denied",
-                    std::io::ErrorKind::NotFound => "no such file or directory",
-                    std::io::ErrorKind::IsADirectory => "is a directory",
-                    _ => "redirect failed",
-                };
-                // c:Src/exec.c:3741 — zwarn with real lineno prefix.
+                // c:Src/exec.c:3741 — zwarn("%e: %s", errno, fname) with the
+                // real lineno prefix; redir_errno_msg builds the `%e` errno
+                // message for all errnos (not just the few hardcoded before).
+                let msg = redir_errno_msg(&e);
                 crate::ported::utils::zwarn(&format!("{}: {}", msg, target));
                 *redirect_failed = true;
                 // The /dev/null sink keeps a failed scoped redirect
