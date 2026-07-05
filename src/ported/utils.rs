@@ -8254,20 +8254,29 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                         }
                     }
                 }
-                if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                    // c:Src/utils.c — `\xNN` is one raw BYTE; metafied
-                    // per c:7289-7294 (vm_helper::meta_encode_byte) so
-                    // the String stays valid UTF-8. Bug #127.
-                    {
-                        // c:Src/utils.c metafy byte-encode step:
-                        // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
-                        let b_ = val;
-                        if b_ < 0x80 {
-                            result.push(b_ as char);
-                        } else {
-                            result.push('\u{83}');
-                            result.push(char::from(b_ ^ 32));
-                        }
+                // c:Src/utils.c:7169-7170 — `\x` ALWAYS runs `*t++ =
+                // zstrtol(s+1, &s, 16)`, even with no hex digit. zstrtol
+                // over a non-hex byte parses zero digits and returns 0, so
+                // a NUL byte is emitted (the offending char is processed
+                // next). `$'\xg'` → NUL + 'g'; `$'\x'` → NUL. Previously
+                // `from_str_radix("")` errored and nothing was pushed.
+                let val: u8 = if hex.is_empty() {
+                    0 // c:7170 zstrtol on empty reads as 0
+                } else {
+                    u8::from_str_radix(&hex, 16).unwrap_or(0)
+                };
+                // c:Src/utils.c — `\xNN` is one raw BYTE; metafied
+                // per c:7289-7294 (vm_helper::meta_encode_byte) so
+                // the String stays valid UTF-8. Bug #127.
+                {
+                    // c:Src/utils.c metafy byte-encode step:
+                    // `if (imeta(c)) {{ *p++ = Meta; *p++ = c ^ 32; }}`
+                    let b_ = val;
+                    if b_ < 0x80 {
+                        result.push(b_ as char);
+                    } else {
+                        result.push('\u{83}');
+                        result.push(char::from(b_ ^ 32));
                     }
                 }
             }
@@ -9852,15 +9861,25 @@ pub fn getkeystring_with(
                         }
                     }
                 }
-                if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                    result.push(val as char);
-                    // c:utils.c:7172-7173 — under GETKEY_PRINTF_PERCENT
-                    // a numeric escape producing `%` gets a second `%`.
-                    if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
-                        && val == b'%'
-                    {
-                        result.push('%');
-                    }
+                // c:utils.c:7169-7170 — `\x` ALWAYS runs `*t++ =
+                // zstrtol(s+1, &s, 16)`, even with no hex digit. zstrtol
+                // over a non-hex byte parses zero digits and returns 0, so
+                // a NUL byte is emitted (and the offending char is left for
+                // the next iteration). Mirror the `\0`/octal arm below: an
+                // empty parse yields 0, not "drop the escape". `$'\xg'` →
+                // NUL + 'g'; `$'\x'` → NUL. Previously `from_str_radix("")`
+                // errored and nothing was pushed.
+                let val: u8 = if hex.is_empty() {
+                    0 // c:7170 zstrtol on empty reads as 0
+                } else {
+                    u8::from_str_radix(&hex, 16).unwrap_or(0)
+                };
+                result.push(val as char);
+                // c:utils.c:7172-7173 — under GETKEY_PRINTF_PERCENT
+                // a numeric escape producing `%` gets a second `%`.
+                if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0 && val == b'%'
+                {
+                    result.push('%');
                 }
             }
             // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex)

@@ -12751,3 +12751,30 @@ fn test_dq_join_flag_then_setop_filter_applies_to_scalar() {
         run_zshrs(r#"b=(1 2 3 4 5); c=(2 4 6); print -r -- "[${(j:-:)b[@]:*c}]""#);
     assert_eq!(out4.trim(), "[2-4]", "[@] keeps per-element intersect");
 }
+
+#[test]
+fn test_backslash_x_no_hex_digit_emits_nul_byte() {
+    // c:Src/utils.c:7169-7170 — `\x` in a print/printf/echo escape ALWAYS
+    // runs `zstrtol(s+1,&s,16)`; with no hex digit that reads 0, so a NUL
+    // byte is emitted and the offending char is processed literally.
+    // zshrs previously errored the empty from_str_radix and dropped the
+    // sequence entirely.
+    let (_s, out, _e) = run_zshrs(r#"print -rn -- $(print 'a\xgb' | od -An -tx1)"#);
+    // od hexdump of print's output must show the 00 (NUL) between 61 and 67.
+    assert!(
+        out.split_whitespace().collect::<Vec<_>>().windows(3)
+            .any(|w| w == ["61", "00", "67"]),
+        "print '\\xg' must emit a NUL byte (61 00 67 ...), got: {out:?}"
+    );
+
+    // printf %b takes the same getkeystring path.
+    let (_s2, out2, _e2) = run_zshrs(r#"printf '%b' 'X\xY' | od -An -tx1"#);
+    assert!(
+        out2.split_whitespace().any(|b| b == "00"),
+        "printf %b '\\xY' must emit a NUL byte, got: {out2:?}"
+    );
+
+    // A VALID two-hex \x is unaffected: \x41 == 'A'.
+    let (_s3, out3, _e3) = run_zshrs(r#"printf '%b' 'a\x41b'"#);
+    assert_eq!(out3, "aAb", "valid \\x41 still decodes to 'A'");
+}
