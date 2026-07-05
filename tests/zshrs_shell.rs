@@ -12801,3 +12801,26 @@ fn test_escape_high_byte_emits_single_raw_byte_not_utf8() {
     // Low byte unaffected: \x41 == 'A'.
     assert_eq!(hexdump(r#"printf '%b' 'a\x41b'"#), "61 41 62");
 }
+
+#[test]
+fn test_leading_end_anchor_is_positional_not_hoisted() {
+    // c:Src/pattern.c:1103-1109 — a LEADING `(#e)` is a positional
+    // end-of-string assertion (P_ISEND), not a whole-match glob flag. It
+    // must fail unless the current position is end-of-string, so `(#e)PAT`
+    // (anchor followed by more pattern) can never match. zshrs hoisted the
+    // leading `(#...)` group and dropped the assertion, so `(#e)r` matched
+    // as if the anchor were absent.
+    let m = |code: &str| run_zshrs(&format!("setopt extendedglob; {code}")).1;
+    // (#e) before a char: impossible -> no match, no replacement.
+    assert_eq!(m(r#"s="foo bar"; print -r -- ${s//(#e)r/END}"#).trim(), "foo bar");
+    assert_eq!(m(r#"s="rrr"; print -r -- ${s//(#e)r/END}"#).trim(), "rrr");
+    // [[ ]] whole-match: (#e)o against "o" must NOT match.
+    assert_eq!(m(r#"[[ o == (#e)o ]] && echo m || echo no"#).trim(), "no");
+    // Trailing (#e) still works (o at end).
+    assert_eq!(m(r#"[[ o == o(#e) ]] && echo m || echo no"#).trim(), "m");
+    // Regression: leading (#s) still enforced (o only at start).
+    assert_eq!(m(r#"s="foo bar"; print -r -- ${s//(#s)o/X}"#).trim(), "foo bar");
+    assert_eq!(m(r#"s="foo bar"; print -r -- ${s//(#s)f/X}"#).trim(), "Xoo bar");
+    // Regression: (#i)/(#m) flags still hoist and apply.
+    assert_eq!(m(r#"s="aXbXc"; print -r -- ${s//(#i)x/Y}"#).trim(), "aYbYc");
+}
