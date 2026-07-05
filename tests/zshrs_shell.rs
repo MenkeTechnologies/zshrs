@@ -3583,6 +3583,20 @@ fn test_zparseopts_dash_m_alias_redirects_to_canonical() {
 }
 
 #[test]
+fn test_zparseopts_dash_m_alias_arg_option_keeps_matched_name() {
+    // Same `-M` aliasing for an ARG-taking spec: `-long:=l` aliases
+    // `--long` to spec `l:` (array optl). The stored option name is the
+    // arg the user gave (`--long`), not the canonical `-l`; the combined
+    // `name arg` value therefore reads `--long =v`. C computes the value
+    // name from the matched desc before `d = map_opt_desc(d)`
+    // (zutil.c:1645/1648). Verified vs /bin/zsh -f.
+    let (_, output, _) = run_zshrs(
+        "zmodload zsh/zutil; set -- --long=v; zparseopts -M l:=optl -long:=l; echo \"[$optl]\"",
+    );
+    assert_eq!(output.trim(), "[--long =v]", "got: {output:?}");
+}
+
+#[test]
 fn test_zformat_width_padding() {
     // zformat `%-Ns` right-aligns (pads on left) and `%Ns` left-aligns
     // (pads on right) — opposite of printf, matches zsh observed.
