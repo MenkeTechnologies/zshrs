@@ -19,6 +19,37 @@ CI green pending the underlying fix.
 
 ---
 
+## #644 — `${~x}` tilde expansion missing on an ASSIGNMENT RHS
+
+**Status:** `port-bug` — the command-argument (`echo ${~x}`), array
+(`${~a}`), and `setopt globsubst` forms are FIXED (filesub now runs before
+the glob in the word-glob ops). Only the assignment RHS remains:
+
+```
+x="~/foo"; y=${~x}; echo "[$y]"    zsh: [/home/testu/foo]   zshrs: [~/foo]
+```
+
+Real zsh: the `${~}` flag forces filename generation on the value, so the
+tilde expands even when the result is assigned (zinit relies on this:
+`ZINIT[PLUGINS_DIR]=${~ZINIT[…]}`).
+
+**Why not patched at BUILTIN_SET_VAR (fusevm_bridge.rs:4694):** the scalar
+`${~x}` produces a RAW `~/foo` string (the Tilde MARKER is not propagated —
+unlike the array form, which is shtokenized). Every assignment reaches
+BUILTIN_SET_VAR as a raw string, so a value from `${~x}` (should expand) is
+indistinguishable from a quoted `y="~/foo"` (must NOT expand) — and under a
+global `setopt globsubst` a naive `filesub` there wrongly expands the quoted
+literal. The command-arg fix was safe only because literal/quoted `~` words
+never reach `glob_expand_word_value`; assignments have no such guarantee.
+
+Correct fix = make the scalar `${~x}` propagate the Tilde token in its
+result (as the array path and C do), so BUILTIN_SET_VAR's assignsparam →
+filesub sees the token and expands only the marked value. Deferred: a
+tokenization-propagation change in the scalar paramsubst path, with leak risk
+if the token reaches a display/`(V)` context un-expanded.
+
+---
+
 ## #643 — `test`/`[` POSIX argument-count edge cases diverge
 
 **Status:** `port-bug` — `bin_test` (builtin.rs:12331) is a hand-rolled pile
