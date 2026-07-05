@@ -12908,3 +12908,24 @@ fn test_single_arg_test_is_nonempty_string_test() {
     assert_eq!(run_zshrs("[ 3 -gt 5 ]").0, 1);
     assert_eq!(run_zshrs("[ a = a ]").0, 0);
 }
+
+#[test]
+fn test_parse_error_token_shows_quotes_and_sigils() {
+    // c:Src/parse.c:2738 — the "parse error near `X'" token is zshlextext,
+    // the human-readable SOURCE text, so quotes/sigils render verbatim.
+    // zshrs's tokstr() still carries inline quote MARKERS (Dnull/Snull/
+    // Stringg); emitting it raw printed marker bytes and dropped the
+    // visible quotes. It must untokenize to the display form.
+    for (src, tok) in [
+        (r#"a() {} "quoted""#, r#""quoted""#),
+        (r#"a() {} 'single'"#, r#"'single'"#),
+        (r#"a() {} $var"#, r#"$var"#),
+        (r#"a() {} unquoted"#, r#"unquoted"#),
+    ] {
+        let (_st, _o, err) = run_zshrs(src);
+        assert!(
+            err.contains(&format!("parse error near `{tok}'")),
+            "for {src:?} expected token `{tok}`, got: {err:?}"
+        );
+    }
+}
