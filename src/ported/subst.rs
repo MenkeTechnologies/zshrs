@@ -11382,9 +11382,17 @@ pub fn paramsubst(
                     // "length separator present AND length is empty"
                     // OR "no length separator AND offset is empty".
                     // Bug #126 in docs/BUGS.md.
+                    // c:Src/subst.c:3781-3792 — only a TRULY empty operand
+                    // is malformed. WHITESPACE is a valid (zero-valued) math
+                    // expression: `${s: }` / `${s:  }` → offset 0 (whole
+                    // string), `${s:0: }` → length 0 (empty), matching zsh.
+                    // Only `${s:}` / `${s::}` / `${s:1:}` (no chars at all
+                    // between the delimiters) error. A prior `.trim()` here
+                    // collapsed whitespace to empty and wrongly rejected the
+                    // space-offset forms.
                     let has_length_sep = parts.len() == 2;
-                    let length_empty = has_length_sep && parts[1].trim().is_empty();
-                    let bare_empty_no_sep = !has_length_sep && parts[0].trim().is_empty();
+                    let length_empty = has_length_sep && parts[1].is_empty();
+                    let bare_empty_no_sep = !has_length_sep && parts[0].is_empty();
                     if length_empty || bare_empty_no_sep {
                         zerr("unrecognized modifier");
                         errflag.fetch_or(

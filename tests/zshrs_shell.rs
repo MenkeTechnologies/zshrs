@@ -12929,3 +12929,31 @@ fn test_parse_error_token_shows_quotes_and_sigils() {
         );
     }
 }
+
+#[test]
+fn test_substring_whitespace_offset_is_zero_not_unrecognized_modifier() {
+    // c:Src/subst.c:3781-3792 — a whitespace operand after `:` is a valid
+    // zero-valued math expression, NOT a malformed/empty modifier. Only a
+    // TRULY empty operand (no chars between delimiters) errors. zshrs's
+    // `.trim().is_empty()` collapsed a space to empty and wrongly rejected
+    // `${s: }` / `${s:  }` with "unrecognized modifier".
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+    let errs = |code: &str| run_zshrs(code).2;
+
+    // Whitespace offset → 0 → whole string.
+    assert_eq!(out(r#"s=hello; print -r -- ${s: }"#), "hello");
+    assert_eq!(out(r#"s=hello; print -r -- ${s:  }"#), "hello");
+    // Whitespace offset + whitespace length → empty (0,0).
+    assert_eq!(out(r#"s=hello; print -r -- ${s: : }"#), "");
+    // Whitespace offset + numeric length.
+    assert_eq!(out(r#"s=hello; print -r -- ${s: :2}"#), "he");
+
+    // TRULY empty still errors (unchanged).
+    assert!(errs(r#"s=hello; print -r -- ${s:}"#).contains("unrecognized modifier"));
+    assert!(errs(r#"s=hello; print -r -- ${s::}"#).contains("unrecognized modifier"));
+    assert!(errs(r#"s=hello; print -r -- ${s:1:}"#).contains("unrecognized modifier"));
+
+    // Common idioms unaffected.
+    assert_eq!(out(r#"s=hello; print -r -- ${s: -3}"#), "llo");
+    assert_eq!(out(r#"s=hello; print -r -- ${s:2:3}"#), "llo");
+}
