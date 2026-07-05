@@ -3820,6 +3820,31 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
     };
     if let Some(complist) = parsecomplist(&parse_src) {
         scanner(state, Some(&complist), 0, false);
+    } else {
+        // c:Src/glob.c:1842-1854 — `q = parsepat(str); if (!q || errflag)`.
+        // This is the `!q` half: the pattern failed to COMPILE (e.g. an
+        // unclosed `[` character class — patcomppiece returns -1 at
+        // pattern.rs:1687). C then either treats the word as a literal
+        // string (when `unset(BADPATTERN)`) or aborts with
+        // `zerr("bad pattern: %s", ostr)`. zshrs previously dropped the
+        // `None` silently, so `echo abc[def` fell through to the
+        // no-matches / literal-under-NO_NOMATCH path instead of the
+        // compile diagnostic — and BADPATTERN was ignored entirely.
+        // (The `errflag` half — a diagnostic already emitted by the
+        // qualifier parser — is handled by the gate at glob.rs:3770.)
+        if !isset(crate::ported::zsh_h::BADPATTERN) {
+            // c:1846-1848 — treat as an ordinary literal string.
+            return vec![pattern.to_string()];
+        }
+        // c:1851-1852 — clear any stale error bit so zerr fires, then
+        // emit. utils::zerr re-sets ERRFLAG_ERROR, which zglob's gate at
+        // glob.rs:1541 reads to suppress the redundant "no matches found".
+        errflag.fetch_and(
+            !crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        zerr(&format!("bad pattern: {}", pattern));
+        return Vec::new();
     }
 
     // c:Src/glob.c — apply top-level `~B` exclusions to the full matched
