@@ -19,6 +19,36 @@ CI green pending the underlying fix.
 
 ---
 
+## #640 — pure `(#e)` empty pattern doesn't match at end-of-string in substitution
+
+**Status:** `port-bug` — narrow residual of the #-anchor work. The leading-
+`(#e)` mis-hoist is FIXED (a positional anchor is now emitted); this entry
+is the remaining zero-width-at-end case in the `${…//…}` driver.
+
+```
+s=abc; echo ${s//(#e)/END}   zsh: abcEND   zshrs: abc
+s=abc; echo ${s/(#e)/END}    zsh: abcEND   zshrs: abc
+
+s=abc; echo ${s//(#s)/START} zsh: STARTabc zshrs: STARTabc   (empty-at-START ok)
+s=abc; echo ${s/%/END}       zsh: abcEND   zshrs: abcEND      (% suffix ok)
+[[ "" == (#e) ]]             zsh: match    zshrs: match        (pattern ok)
+```
+
+The pattern side is correct — `(#e)` matches the empty string at the end
+(the `[[ ]]` case passes). The gap is in `igetmatch` (glob.rs:2491): the
+substring loops iterate `for start in 0..len` / `for end in (start+1)..=len`,
+so a zero-width match at `start == end == len` (the end sentinel) is never
+attempted. C's SUB_SUBSTR loop is `for (; t <= send; …)` (glob.c:3033) — the
+`<= send` includes the end position, and `set_pat_start(p, t-s)` lets a
+pure P_ISEND assertion fire there. Empty-at-START works (the reverse/anchor
+paths reach offset 0) and the `%`/`$`-suffix strip works via a separate
+end-anchored path, so only a pattern that reduces to JUST `(#e)` (or `(#e)`
++ zero-width) misses. Closing it needs the global/substr loops to attempt
+the `len` sentinel for zero-width matches without regressing the normal
+`end > start` substring scan — deferred as delicate loop-bound work.
+
+---
+
 ## #639 — `typeset -p` on `-l`/`-u` vars shows the FOLDED value, not the stored original
 
 **Status:** `port-bug` — observable ONLY via `typeset -p`; every value read
