@@ -19,6 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
+## #638 — `$'\x'` with no hex digit drops the escape instead of emitting NUL
+
+**Status:** `port-bug` — the `print`/`printf`/`echo -e` escape paths are
+FIXED (getkeystring / getkeystring_with, utils.rs); only the `$'…'` LEXER
+path still drops the byte.
+
+C's `\x` arm always runs `*t++ = zstrtol(s+1, &s, 16)` even with no
+following hex digit; zstrtol parses zero digits, returns 0, so a NUL byte
+is emitted and the offending char is processed literally (Src/utils.c:7169-
+7170):
+
+```
+print 'a\xgb'          zsh: 61 00 67 62   zshrs: 61 00 67 62   (FIXED)
+printf '%b' 'a\xgb'    zsh: 61 00 67 62   zshrs: 61 00 67 62   (FIXED)
+echo -e  'a\xgb'       zsh: 61 00 67 62   zshrs: 61 00 67 62   (FIXED)
+
+print -rn -- $'a\xgb'  zsh: 61 00 67 62   zshrs: 61 67 62      (still open)
+print -rn -- $'a\x'    zsh: 61 00         zshrs: 61            (still open)
+```
+
+**Fixed** (commit `\x escape with no hex digit emits a NUL byte`): the two
+`getkeystring` variants mirrored their sibling `\0`/octal arm — an empty
+`from_str_radix` parse yields 0 rather than `Err` (which dropped the push).
+
+**Still open — the `$'…'` lexer path:** `$'…'` decodes through a DIFFERENT
+route (`getkeystring_dollar_quote`, lex.rs:4528) during untokenize, and its
+output is RE-processed by a later decode pass. Patching gksdq's got==0 arm
+to emit NUL does not survive — the produced byte is consumed/dropped
+downstream, so a single-site fix in gksdq is not sufficient. The multi-pass
+`$'…'` decode needs mapping before this leg can be closed. Only the
+no-hex-digit case is affected; `$'\xff'` (high byte), `$'\x41'` (valid), and
+`$'\377'` (octal) all already match zsh.
+
+---
+
 ## #637 — `error in flags` echo prints reconstructed `${body}`, not the raw input buffer
 
 **Status:** `port-bug` — malformed-flag syntax error is raised correctly
