@@ -2819,15 +2819,28 @@ pub fn bin_zparseopts(
     //   c:1661-1681 — v->str: ZOF_OPT/ZOF_SAME/GNUL-with-arg options
     //             pre-combine into ONE element "-name[=]arg"; plain
     //             mandatory-arg options stay two-element (str NULL).
-    fn push_val(descs: &mut [Desc], idx: usize, arg: Option<String>, val_seq: &mut usize) {
+    // `name_idx` is the ORIGINALLY-MATCHED desc; `idx` is the (possibly
+    // alias-mapped) target whose array/flags receive the value. C computes
+    // `n = dyncat("-", d->name)` from the matched `d` BEFORE `d = map_opt_desc(d)`
+    // (c:1645/1648-1650), so under `-M` the stored option name is the arg
+    // the user actually gave (`--foo`), not the canonical spec (`-f`).
+    fn push_val(
+        descs: &mut [Desc],
+        name_idx: usize,
+        idx: usize,
+        arg: Option<String>,
+        val_seq: &mut usize,
+    ) {
         let dflags = descs[idx].flags;
-        let n = format!("-{}", descs[idx].name); // c:1645
+        let n = format!("-{}", descs[name_idx].name); // c:1645 (name from matched desc)
         let str_: Option<String> =
             if (dflags & ZOF_ARG) != 0 && (dflags & (ZOF_OPT | ZOF_SAME)) == 0 {
                 None // c:1661-1664 — two-element (name, arg) form
             } else if arg.is_some() || (dflags & ZOF_GNUL) != 0 {
-                // c:1665-1676 — combined "-name" + ["="] + arg
-                let mut s = n.clone();
+                // c:1665-1676 — combined "-name" + ["="] + arg. C builds
+                // this from the MAPPED d->name (after `d = map`), so under
+                // `-M` the combined form uses the canonical spec name.
+                let mut s = format!("-{}", descs[idx].name);
                 if (dflags & ZOF_GNUL) != 0 {
                     s.push('='); // c:1671-1672
                 }
@@ -3160,10 +3173,10 @@ pub fn bin_zparseopts(
                 if (dflags & ZOF_GNUL) != 0 && e.starts_with('=') {
                     // c:2031-2032 — `add_opt_val(d, ++e);`
                     let arg = e[1..].to_string();
-                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
+                    push_val(&mut descs, raw_idx, idx, Some(arg), &mut val_seq);
                 } else if !e.is_empty() {
                     // c:2038-2039 — `add_opt_val(d, e);`
-                    push_val(&mut descs, idx, Some(e.to_string()), &mut val_seq);
+                    push_val(&mut descs, raw_idx, idx, Some(e.to_string()), &mut val_seq);
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
                         && pi + 1 < params.len()
@@ -3176,14 +3189,14 @@ pub fn bin_zparseopts(
                     }
                     pi += 1;
                     let arg = params[pi].clone();
-                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
+                    push_val(&mut descs, raw_idx, idx, Some(arg), &mut val_seq);
                 } else {
                     // c:2055 — `add_opt_val(d, NULL);`
-                    push_val(&mut descs, idx, None, &mut val_seq);
+                    push_val(&mut descs, raw_idx, idx, None, &mut val_seq);
                 }
             } else {
                 // c:2058 — `add_opt_val(d, NULL);`
-                push_val(&mut descs, idx, None, &mut val_seq);
+                push_val(&mut descs, raw_idx, idx, None, &mut val_seq);
             }
             pi += 1;
             continue;
@@ -3217,7 +3230,7 @@ pub fn bin_zparseopts(
                 if ci + 1 < chars.len() {
                     // arg in same param: rest of chars — `add_opt_val(d, e)`
                     let arg: String = chars[ci + 1..].iter().collect();
-                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
+                    push_val(&mut descs, idx, idx, Some(arg), &mut val_seq);
                     break;
                 } else if (dflags & ZOF_OPT) == 0
                     || ((dflags & (ZOF_GNUL | ZOF_GNUS)) == 0
@@ -3230,14 +3243,14 @@ pub fn bin_zparseopts(
                     }
                     pi += 1;
                     let arg = params[pi].clone();
-                    push_val(&mut descs, idx, Some(arg), &mut val_seq);
+                    push_val(&mut descs, idx, idx, Some(arg), &mut val_seq);
                 } else {
                     // missing optional optarg — `add_opt_val(d, NULL)`
-                    push_val(&mut descs, idx, None, &mut val_seq);
+                    push_val(&mut descs, idx, idx, None, &mut val_seq);
                 }
             } else {
                 // boolean short opt — `add_opt_val(d, NULL)`
-                push_val(&mut descs, idx, None, &mut val_seq);
+                push_val(&mut descs, idx, idx, None, &mut val_seq);
             }
             ci += 1;
         }
