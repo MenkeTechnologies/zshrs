@@ -19,6 +19,43 @@ CI green pending the underlying fix.
 
 ---
 
+## #643 — `test`/`[` POSIX argument-count edge cases diverge
+
+**Status:** `port-bug` — `bin_test` (builtin.rs:12331) is a hand-rolled pile
+of `if argv.len() == N` special cases rather than a faithful port of C's
+`testlex` + `par_cond` recursive-descent (Src/parse.c:2409 / builtin.c:7231).
+The common forms work; several POSIX count-based rules are wrong:
+
+```
+[ -z ]                zsh: true   zshrs: false
+  # POSIX 1-arg rule: a single arg is a NON-EMPTY-STRING test; "-z" is
+  # non-empty → true. zshrs treats -z as a unary op with a missing operand.
+
+[ "(" = "(" ]         zsh: true   zshrs: [:1: argument expected (false)
+  # 3-arg `arg1 OP arg2` with a binary OP takes priority over paren grouping
+  # (builtin.c:7264-7265). The `(`/`)` are OPERANDS. zshrs's paren-balance
+  # walk (builtin.rs:12556) mis-fires; and even skipping it, the cond
+  # EVALUATOR still treats `(`/`)` as grouping in the binary compare (a
+  # naive skip made `[ ( = ) ]` wrongly true — needs both bin_test AND the
+  # evaluator fixed together, so reverted).
+
+[ 1 = 1 = 1 ]         zsh: "too many arguments" rc=2   zshrs: rc=2, NO message
+  # zshrs detects the arity error (correct rc) but emits no diagnostic.
+
+test 3 -eq 3 -a       zsh: rc=1 (false)   zshrs: "too many arguments" rc=2
+  # trailing `-a` with no right operand: zsh evaluates to false, zshrs errors.
+```
+
+Root cause is the special-case reimplementation missing the count-driven
+POSIX algorithm C runs in `par_cond`/`par_cond_1` (the 0/1/2/3/4-arg rules)
+plus the evaluator's paren-as-operand handling. Faithful fix = port
+`testlex` + `par_cond` properly (a recursive-descent condition parser) rather
+than extend the `argv.len() == N` ladder — deferred as a coordinated
+bin_test + cond-evaluator rewrite. Niche (real scripts don't write these
+shapes).
+
+---
+
 ## #642 — `functions` output omits the trailing space after a standalone assignment
 
 **Status:** `port-bug` — cosmetic; the reconstructed body re-parses
