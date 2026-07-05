@@ -12957,3 +12957,30 @@ fn test_substring_whitespace_offset_is_zero_not_unrecognized_modifier() {
     assert_eq!(out(r#"s=hello; print -r -- ${s: -3}"#), "llo");
     assert_eq!(out(r#"s=hello; print -r -- ${s:2:3}"#), "llo");
 }
+
+#[test]
+fn test_tilde_globsubst_expands_tilde_in_value() {
+    // c:Src/subst.c — ${~spec} / setopt globsubst subject a substituted
+    // VALUE to the full filename-generation pipeline: filesub (tilde/`=`)
+    // BEFORE globbing. zshrs globbed but skipped filesub, so a `~` in the
+    // value stayed literal. Uses a fixed HOME for determinism.
+    let run = |code: &str| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_zshrs"))
+            .args(["-f", "-c", code])
+            .env("HOME", "/home/testu")
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    // ${~x} flag — scalar and array.
+    assert_eq!(run(r#"x="~/foo"; echo ${~x}"#), "/home/testu/foo");
+    assert_eq!(run(r#"x="~"; echo ${~x}"#), "/home/testu");
+    assert_eq!(run(r#"a=(~/x ~/y); echo ${~a}"#), "/home/testu/x /home/testu/y");
+    // setopt globsubst option path.
+    assert_eq!(run(r#"setopt globsubst; x="~/foo"; echo $x"#), "/home/testu/foo");
+    // Quoted tilde stays literal even under globsubst.
+    assert_eq!(run(r#"setopt globsubst; echo "~/foo""#), "~/foo");
+    // A mid-string tilde and non-tilde values are untouched.
+    assert_eq!(run(r#"x="a~b"; echo ${~x}"#), "a~b");
+    assert_eq!(run(r#"x="plain"; echo ${~x}"#), "plain");
+}
