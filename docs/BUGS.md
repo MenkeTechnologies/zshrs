@@ -24,12 +24,14 @@ CI green pending the underlying fix.
 **Status:** `port-bug` — `bin_test` (builtin.rs:12331) is a hand-rolled pile
 of `if argv.len() == N` special cases rather than a faithful port of C's
 `testlex` + `par_cond` recursive-descent (Src/parse.c:2409 / builtin.c:7231).
-The common forms work; several POSIX count-based rules are wrong:
+The common forms work; several POSIX count-based rules were wrong. The
+**1-arg rule is now FIXED** (bin_test:12357 — a lone token is a non-empty
+test); the rest remain:
 
 ```
-[ -z ]                zsh: true   zshrs: false
+[ -z ]                zsh: true   zshrs: true   (FIXED)
   # POSIX 1-arg rule: a single arg is a NON-EMPTY-STRING test; "-z" is
-  # non-empty → true. zshrs treats -z as a unary op with a missing operand.
+  # non-empty → true, whatever the token looks like. `[ "" ]` → false.
 
 [ "(" = "(" ]         zsh: true   zshrs: [:1: argument expected (false)
   # 3-arg `arg1 OP arg2` with a binary OP takes priority over paren grouping
