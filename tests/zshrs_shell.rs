@@ -12824,3 +12824,29 @@ fn test_leading_end_anchor_is_positional_not_hoisted() {
     // Regression: (#i)/(#m) flags still hoist and apply.
     assert_eq!(m(r#"s="aXbXc"; print -r -- ${s//(#i)x/Y}"#).trim(), "aYbYc");
 }
+
+#[test]
+fn test_unclosed_bracket_glob_is_bad_pattern_not_no_match() {
+    // c:Src/glob.c:1842-1854 — a filename glob that fails to COMPILE (an
+    // unclosed `[` char class) is a "bad pattern", not "no matches found".
+    // With BADPATTERN set (default) it errors even under NO_NOMATCH; with
+    // `unsetopt badpattern` the word is passed through literally. zshrs
+    // dropped the compile failure silently and reported "no matches found".
+    let (st, _o, err) = run_zshrs("echo abc[def");
+    assert!(err.contains("bad pattern: abc[def"), "got: {err:?}");
+    assert!(!err.contains("no matches found"), "must not be no-match: {err:?}");
+    assert_ne!(st, 0);
+
+    // bad pattern overrides NO_NOMATCH (still an error, not literal).
+    let (_st2, _o2, err2) = run_zshrs("setopt nonomatch; echo abc[def");
+    assert!(err2.contains("bad pattern: abc[def"), "nonomatch: {err2:?}");
+
+    // unsetopt badpattern → the failed glob is a literal string.
+    let (st3, out3, _e3) = run_zshrs("unsetopt badpattern; echo abc[def");
+    assert_eq!(out3.trim(), "abc[def");
+    assert_eq!(st3, 0);
+
+    // A CLOSED bracket that matches nothing is still "no matches found".
+    let (_st4, _o4, err4) = run_zshrs("echo a[b]c");
+    assert!(err4.contains("no matches found"), "closed bracket: {err4:?}");
+}
