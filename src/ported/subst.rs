@@ -13974,8 +13974,11 @@ pub fn paramsubst(
             return (first, new_pos_in_full, nodes);
         }
 
-        let full = format!("{}{}{}", prefix, value, suffix); // c:1885
-                                                             // c:Src/subst.c:1885 — `if (qt && !*y) y = dupstring(nulstring);`.
+        let full = format!("{}{}{}", prefix, value, suffix); // c:4464 (strcatsub)
+                                                             // c:Src/subst.c:4444-4466 scalar branch — `if (qt && !*y) y =
+                                                             // dupstring(nulstring);` (c:4465-4466). (The adjacent `// c:1885`
+                                                             // markers in this block are a stale mis-citation predating this
+                                                             // fix; the real scalar-return code lives at c:4444+, not 1885.)
                                                              // A QUOTED expansion whose whole assembled result is empty must
                                                              // emit the Nularg sentinel (`\u{a1}`) so prefork's empty-node
                                                              // deletion (c:100 `else if (!(flags & PREFORK_SINGLE) && !keep)
