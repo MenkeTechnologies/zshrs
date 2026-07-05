@@ -19,6 +19,42 @@ CI green pending the underlying fix.
 
 ---
 
+## #639 — `typeset -p` on `-l`/`-u` vars shows the FOLDED value, not the stored original
+
+**Status:** `port-bug` — observable ONLY via `typeset -p`; every value read
+(echo, expansion, substring, compare, append, case, printf) already matches
+zsh because zshrs pre-folds and case-folding is idempotent.
+
+C stores the ORIGINAL (un-folded) value in the parameter and case-folds on
+READ — `getstrvalue` (Src/params.c:2505 `casemodify(s, CASMOD_LOWER/UPPER)`)
+and again when copying to the environment (`copyenvstr`, params.c:5439).
+zshrs folds at STORE time (setsparam, params.rs:4043), so the stored value
+IS the folded form and `typeset -p` prints that:
+
+```
+typeset -l lower=HELLO; typeset -p lower
+  zsh:   typeset -l lower=HELLO      # stored original; folds to "hello" on read
+  zshrs: typeset -l lower=hello      # stored folded
+
+typeset -u u=hello; u+=world; typeset -p u
+  zsh:   typeset -u u=helloworld     # original case preserved in storage
+  zshrs: typeset -u u=HELLOWORLD
+
+typeset -u u=hello; echo $u          # zsh HELLO, zshrs HELLO   (MATCHES — read folds)
+```
+
+**Why not patched:** the faithful model (store original, fold in the read
+funnel per c:2505) was attempted previously and reverted — `getstrvalue` is
+NOT the sole scalar-read path in zshrs; expansion goes through
+exec_getsparam/strgetfn which bypass it, so store-original made
+`print $lower` emit the UN-folded value. Switching would trade this single
+`typeset -p` divergence for broader unfolded-expansion divergences. The
+current fold-on-store keeps all value reads correct; only the `-p`
+introspection form (which wants the raw stored bytes) is wrong. Closing it
+needs every scalar-read path to fold, not just the store site — deferred.
+
+---
+
 ## #638 — `$'\x'` with no hex digit drops the escape instead of emitting NUL
 
 **Status:** `port-bug` — the `print`/`printf`/`echo -e` escape paths are
