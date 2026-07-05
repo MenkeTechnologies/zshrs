@@ -6055,6 +6055,28 @@ fn test_printf_invalid_directive_a() {
 }
 
 #[test]
+fn test_printf_thousands_grouping_flag_accepted() {
+    // `%'d` (the `'` thousands-grouping flag) must be ACCEPTED — zshrs
+    // previously errored `%': invalid directive`. The grouping itself is
+    // locale-dependent (localeconv thousands_sep), so this test is
+    // locale-agnostic: it asserts no error and that the digits (with any
+    // grouping separators stripped) are correct. Manual verification vs
+    // /bin/zsh -f under en_US.UTF-8 confirms `1,234,567`; under C locale
+    // both emit the ungrouped `1234567`.
+    let (_, out, stderr) = run_zshrs(r#"printf "%'d\n" 1234567"#);
+    assert!(
+        !stderr.contains("invalid directive"),
+        "should accept the ' flag, got: {stderr:?}"
+    );
+    let digits: String = out.chars().filter(|c| c.is_ascii_digit()).collect();
+    assert_eq!(digits, "1234567", "grouped/ungrouped digits: {out:?}");
+    // Precision with the flag zero-fills without grouping the fill
+    // (glibc `%'.8d` of 42 = `00000042`), locale-independent.
+    let (_, out2, _) = run_zshrs(r#"printf "%'.8d\n" 42"#);
+    assert_eq!(out2.trim(), "00000042", "precision zero-fill: {out2:?}");
+}
+
+#[test]
 fn test_declare_capital_F_no_args_lists_only_floats() {
     // `declare -F` (no args) lists only float-typed vars. With none
     // declared, output is empty. Regression: zshrs dumped all vars.

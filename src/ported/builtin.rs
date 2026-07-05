@@ -15303,7 +15303,13 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
             }
             loop {
                 match iter.peek() {
-                    Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0') => {
+                    // c:Src/builtin.c:4791+ — printf flag chars. The `'`
+                    // (thousands-grouping) flag is passed straight to libc
+                    // by C zsh; the Rust port groups the digit run itself
+                    // in format_spec_int/uint per localeconv. Accept it here
+                    // so it isn't mistaken for the conversion char (which
+                    // produced "%': invalid directive").
+                    Some(&c) if matches!(c, '-' | '+' | ' ' | '#' | '0' | '\'') => {
                         spec.push(c);
                         iter.next();
                     }
@@ -15686,6 +15692,49 @@ fn format_spec_int(spec: &str, n: i64) -> String {
     } else {
         digits
     };
+    // c:libc printf `'` (thousands-grouping) flag — C hands `'` to the
+    // system printf; the Rust port groups the digit run itself per the
+    // active locale's `thousands_sep` (localeconv, set from the env at
+    // init.rs:1709). Empty separator (C/POSIX locale) → no grouping,
+    // matching `printf "%'d" 1234567` = `1234567` under LC_ALL=C.
+    // Grouping is suppressed when an explicit precision is given: glibc
+    // does NOT group the precision zero-fill (`printf "%'.8d" 42` =
+    // `00000042`, not `00,000,042`), so gate on `prec.is_none()`. This
+    // matches glibc for every precision case where the value fits within
+    // the precision digit count (the normal use of `%'.Nd`); the rare
+    // degenerate combo of `'` + a precision SHORTER than a large value's
+    // own digit count (`%'.8d` of 1234567 → glibc `1,234,567`) still
+    // groups in glibc but is left ungrouped here — a documented edge.
+    // Inlined rather than shared with format_spec_uint because the
+    // port-purity gate forbids new fns under src/ported/.
+    let digits = if spec.contains('\'') && prec.is_none() {
+        let sep = unsafe {
+            let lc = libc::localeconv();
+            if lc.is_null() || (*lc).thousands_sep.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr((*lc).thousands_sep)
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        if sep.is_empty() {
+            digits
+        } else {
+            let chars: Vec<char> = digits.chars().collect();
+            let len = chars.len();
+            let mut grouped = String::with_capacity(len + len / 3 * sep.len());
+            for (i, ch) in chars.iter().enumerate() {
+                if i > 0 && (len - i) % 3 == 0 {
+                    grouped.push_str(&sep);
+                }
+                grouped.push(*ch);
+            }
+            grouped
+        }
+    } else {
+        digits
+    };
     let body = if n < 0 {
         format!("-{}", digits)
     } else if plus_flag {
@@ -15778,6 +15827,38 @@ fn format_spec_uint(spec: &str, n: u64) -> String {
     let body = match prec {
         Some(p) if digits.len() < p => format!("{}{}", "0".repeat(p - digits.len()), digits),
         _ => digits,
+    };
+    // c:libc printf `'` thousands-grouping flag (see format_spec_int for
+    // the rationale, the `prec.is_none()` gate, and the port-purity-gate
+    // note on the inlined copy). Unsigned bodies carry no sign, so the
+    // whole body groups.
+    let body = if spec.contains('\'') && prec.is_none() {
+        let sep = unsafe {
+            let lc = libc::localeconv();
+            if lc.is_null() || (*lc).thousands_sep.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr((*lc).thousands_sep)
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        if sep.is_empty() {
+            body
+        } else {
+            let chars: Vec<char> = body.chars().collect();
+            let len = chars.len();
+            let mut grouped = String::with_capacity(len + len / 3 * sep.len());
+            for (i, ch) in chars.iter().enumerate() {
+                if i > 0 && (len - i) % 3 == 0 {
+                    grouped.push_str(&sep);
+                }
+                grouped.push(*ch);
+            }
+            grouped
+        }
+    } else {
+        body
     };
     let pad = width.saturating_sub(body.chars().count());
     if pad == 0 {
@@ -15963,7 +16044,10 @@ fn parse_flags_width_prec(spec: &str) -> (bool, bool, usize, Option<usize>) {
     let bytes = s.as_bytes();
     let mut left_align = false;
     let mut zero_pad = false;
-    while i < bytes.len() && matches!(bytes[i], b'-' | b'+' | b' ' | b'#' | b'0') {
+    // `'` (thousands-grouping) is a flag char too — skip it here so a
+    // following width/precision (`%'12d`, `%'.8d`) is still parsed. The
+    // grouping itself is applied by the caller (format_spec_int/uint).
+    while i < bytes.len() && matches!(bytes[i], b'-' | b'+' | b' ' | b'#' | b'0' | b'\'') {
         match bytes[i] {
             b'-' => left_align = true,
             b'0' => zero_pad = true,
