@@ -19,6 +19,63 @@ CI green pending the underlying fix.
 
 ---
 
+## #637 — `error in flags` echo prints reconstructed `${body}`, not the raw input buffer
+
+**Status:** `port-bug` — malformed-flag syntax error is raised correctly
+with the correct 1-based position; only the *echoed input string* in the
+message diverges. Cosmetic, cold-path (syntax-error only).
+
+C's flagerr arm dumps the whole remaining input buffer from `$` to its
+NUL, untokenized:
+
+```c
+/* Src/subst.c:2519-2527 */
+char *str_copy_for_output = dupstring(*str + 1);   /* $ was NUL'd on entry */
+zlong offset = s - *str + 1;
+untokenize(str_copy_for_output);
+zerr("error in flags near position %z in '$%s'", offset, str_copy_for_output);
+```
+
+zshrs reconstructs `${<inner-body>}` at each of the 10 emit sites
+(subst.rs:3829/3896/3932/4034/4063/4081/4181/4206/4222/4364), passing
+`body.as_str()` — the parsed inner content only — into
+`"error in flags near position {} in '${{{}}}'"`. So trailing buffer
+bytes past the closing `}` are dropped:
+
+```
+e=x; print -r -- "${(s:::)e} and more"
+  zsh:   error in flags near position 7 in '${(s:::)e} and more"'
+  zshrs: error in flags near position 7 in '${(s:::)e}'
+
+e=x; foo=${(s:::)e}bar
+  zsh:   error in flags near position 7 in '${(s:::)e}bar'
+  zshrs: error in flags near position 7 in '${s:::e}'      # parens ALSO lost
+
+e=x; print -r -- ${(s:::)e}          # unquoted, word-bounded
+  zsh:   error in flags near position 7 in '${(s:::)e}'
+  zshrs: error in flags near position 7 in '${(s:::)e}'    # matches
+```
+
+Two sub-divergences:
+1. **Trailing bleed** — real zsh's `*str` runs to the buffer NUL, so it
+   echoes chars after `}` (`" and more"`, `bar`, the closing `"`). zshrs
+   stops at `}`.
+2. **Paren loss in assignment RHS** — `foo=${(s:::)e}bar` gives zshrs
+   `${s:::e}` (flag parens gone). Root cause is upstream: in the
+   assignment-RHS path the `(…)` flag block is stripped from the buffer
+   before `paramsubst` slices `body`, so `chars` itself lacks the parens
+   — the echo has nothing to print. Not fixable at the emit site.
+
+**Why not patched here:** byte-parity needs the raw metafied buffer
+(including the trailing `"` and the pre-strip parens) which zshrs does
+not retain at the error point; and the naive faithful echo
+(`untokenize(chars[start_pos+1..])`) would only partially match while
+adding an untokenize+alloc to the parameter-expansion path. Deferred as
+cosmetic. The functionally important parts — that the error fires and the
+`near position N` offset is correct — already match.
+
+---
+
 ## #636 — `$IFS` word-splitting — spacesplit FIXED; Nularg empty-field survival open
 
 **Status:** `port-bug` — spacesplit fakery FIXED 2026-06-14; non-ws-IFS
