@@ -328,6 +328,18 @@ impl style_table {
         })
     }
 
+    /// c:Src/Modules/zutil.c:768-779 — `bin_zstyle -g` retrieval. Unlike
+    /// `lookupstyle`/`get` (which `pattry`-match the CONTEXT against every
+    /// stored pattern), `-g` does an EXACT pattern-string compare
+    /// (`if (!strcmp(args[2], p->pat))`). So after `zstyle ':s:*' k v`,
+    /// `zstyle -g out ':s:sub' k` returns NOTHING (":s:sub" != ":s:*"),
+    /// whereas `zstyle -s ':s:sub' k out` matches and yields "v".
+    pub fn get_exact(&self, pattern: &str, style: &str) -> Option<&[String]> {
+        self.styles
+            .get(style)
+            .and_then(|pats| pats.iter().find(|p| p.pat == pattern).map(|p| p.vals.as_slice()))
+    }
+
     /// WARNING: NOT IN ZUTIL.C — method on the Rust-only `style_table`
     /// wrapper. Same best-pattern-match walk as `get`, but returns the
     /// matched entry's values AND whether it is an `-e` (eval) style, so
@@ -1351,6 +1363,9 @@ pub fn bin_zstyle(
             Ok(g) => g,
             Err(_) => return 1,
         };
+        // c:759 — `int ret = 1;`. Only the exact-pattern lookup can fail
+        // (return 1); the two listing branches always succeed (ret = 0).
+        let mut ret = 1;
         match (pat_arg, sty_arg) {
             (None, _) => {
                 // Collect distinct context patterns. c:788
@@ -1360,6 +1375,7 @@ pub fn bin_zstyle(
                         out.push(p);
                     }
                 }
+                ret = 0; // c:789
             }
             (Some(pat), None) => {
                 // Collect style names attached to context = pat. c:783
@@ -1369,17 +1385,23 @@ pub fn bin_zstyle(
                         out.push(s);
                     }
                 }
+                ret = 0; // c:784
             }
             (Some(pat), Some(sty)) => {
-                // Values at context=pat, style=sty. c:768-779
-                if let Some(v) = t.get(pat, sty) {
+                // c:768-779 — `-g` matches the pattern EXACTLY (strcmp),
+                // NOT via pattry: it retrieves the value stored for that
+                // precise pattern key, not the value a context would
+                // resolve to. Use get_exact, not get (pattry). c:770-777:
+                // ret stays 1 unless the exact pattern is found.
+                if let Some(v) = t.get_exact(pat, sty) {
                     out.extend(v.iter().cloned());
+                    ret = 0; // c:776
                 }
             }
         }
         drop(t);
         setaparam(pname, out); // c:792
-        return 0;
+        return ret; // c:793
     }
 
     // c:515-534 — add path: zstyle [-e] PATTERN STYLE [VALUES...]
