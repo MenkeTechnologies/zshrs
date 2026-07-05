@@ -708,6 +708,18 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         let rest = p[off..].to_string();
         drop(p);
         match patgetglobflags(&rest) {
+            Some((_bits, assert, _consumed)) if assert != 0 => {
+                // c:Src/pattern.c:1103-1109 — `(#s)`/`(#e)` set `*assertp`
+                // (P_ISSTART/P_ISEND), a POSITIONAL zero-width anchor, not a
+                // whole-match glob flag. Do NOT hoist/consume it here: leave
+                // it (and everything after) for the main compile loop
+                // (pattern.rs:1245) to emit as a positional node. Hoisting
+                // dropped the anchor, so a leading `(#e)PAT` matched as if
+                // the `(#e)` were absent — `[[ o == (#e)o ]]` wrongly matched
+                // and `${s//(#e)r/END}` wrongly replaced. `(#s)` was masked
+                // in `[[ ]]` only because that context is start-anchored.
+                break;
+            }
             Some((bits, _assert, consumed)) => {
                 hoisted_globflags |=
                     bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | GF_BACKREF | GF_MATCHREF);
