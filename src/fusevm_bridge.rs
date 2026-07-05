@@ -5503,15 +5503,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `OPTS_LIVE` via `opt_state_set`). Routing through the canonical
         // C port restores the single-store invariant: one `opts[]`,
         // shared between setopt/unsetopt and `[[ -o ]]`.
-        let r = crate::ported::cond::optison("test", &name); // c:cond.c:502
+        let r = crate::ported::cond::optison(None, &name); // c:cond.c:502 (fromtest=NULL for [[ -o ]])
         match r {
             0 => Value::Bool(true),  // c:cond.c:520 set
             1 => Value::Bool(false), // c:cond.c:518/520 unset
             _ => {
-                // c:cond.c:514 — unknown option: zwarnnam emitted by
-                // optison itself when POSIXBUILTINS is unset; mirror to
-                // stderr here for parity with the earlier diagnostic.
-                eprintln!("{}:1: no such option: {}", shname(), name);
+                // c:cond.c:514 — unknown option. optison already emitted the
+                // diagnostic (via zwarn, now that fromtest=NULL for
+                // `[[ -o ]]`); re-printing here double-emitted for
+                // `[[ ! -o bad ]]` / `[[ -o a || -o b ]]`.
                 Value::Bool(false)
             }
         }
@@ -5521,7 +5521,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Op::SetStatus. Mirrors zsh's `[[ -o invalid ]]` returning $?=3.
     vm.register_builtin(BUILTIN_OPTION_CHECK_TRISTATE, |vm, _argc| {
         let name = vm.pop().to_str();
-        let r = crate::ported::cond::optison("test", &name); // c:cond.c:502
+        let r = crate::ported::cond::optison(None, &name); // c:cond.c:502 (fromtest=NULL for [[ -o ]])
                                                              // optison itself prints the diagnostic via zwarnnam when r=3
                                                              // and POSIXBUILTINS is unset (the canonical path). Don't
                                                              // double-emit here. r is already 0/1/3.

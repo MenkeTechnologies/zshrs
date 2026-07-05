@@ -13009,3 +13009,26 @@ fn test_zstyle_g_uses_exact_pattern_not_context_match() {
     // Regression: exact keys are distinguished.
     assert_eq!(run(r#"zstyle ':a:b' s x; zstyle ':a:*' s y; zstyle -g o ':a:b' s; print -r -- "[$o]""#), "[x]");
 }
+
+#[test]
+fn test_cond_o_bad_option_diagnostic_has_no_command_name() {
+    // c:Src/cond.c:513 — `[[ -o BADOPT ]]` emits `zwarnnam(fromtest, ...)`
+    // with fromtest = NULL, so the diagnostic has NO command-name prefix
+    // (`<shell>:1: no such option: X`) and exit status 3. zshrs hardcoded
+    // "test", printing `<shell>:test:1:`, and double-emitted for
+    // negated/compound forms via a redundant eprintln.
+    let (st, _o, err) = run_zshrs("[[ -o keyword ]]");
+    assert!(err.contains("no such option: keyword"), "err: {err:?}");
+    assert!(!err.contains(":test:"), "must not attribute to test: {err:?}");
+    assert_eq!(st, 3);
+
+    // No double-emit on negated / compound forms.
+    let (_s2, _o2, err2) = run_zshrs("[[ ! -o badopt ]]");
+    assert_eq!(err2.matches("no such option").count(), 1, "double-emit: {err2:?}");
+    let (_s3, _o3, err3) = run_zshrs("[[ -o a1 || -o a2 ]]");
+    assert_eq!(err3.matches("no such option").count(), 2, "got: {err3:?}");
+
+    // A valid option still works (no diagnostic).
+    assert_eq!(run_zshrs("setopt extendedglob; [[ -o extendedglob ]]").0, 0);
+    assert_eq!(run_zshrs("[[ -o extendedglob ]]").0, 1);
+}
