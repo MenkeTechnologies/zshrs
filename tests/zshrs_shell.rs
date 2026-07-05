@@ -12984,3 +12984,28 @@ fn test_tilde_globsubst_expands_tilde_in_value() {
     assert_eq!(run(r#"x="a~b"; echo ${~x}"#), "a~b");
     assert_eq!(run(r#"x="plain"; echo ${~x}"#), "plain");
 }
+
+#[test]
+fn test_zstyle_g_uses_exact_pattern_not_context_match() {
+    // c:Src/Modules/zutil.c:768-779 — `zstyle -g` retrieves the value
+    // stored for the EXACT pattern string (strcmp), unlike -s/-a/-t/-b
+    // which pattry-match a CONTEXT. After `zstyle ':s:*' k v`, a `-g`
+    // query with ':s:sub' (which merely MATCHES the pattern) returns
+    // nothing with exit 1; a query with the exact ':s:*' returns v.
+    // zshrs's -g wrongly context-matched, returning v for ':s:sub'.
+    // Emit `rc=<zstyle exit> [<value>]` so we read zstyle's status (the
+    // trailing `print` would otherwise mask it in the process exit code).
+    let run = |code: &str| run_zshrs(code).1.trim().to_string();
+    // Exact pattern present → value + exit 0.
+    assert_eq!(run(r#"zstyle ':s:*' k v; zstyle -g o ':s:*' k; print -r -- "rc=$? [$o]""#), "rc=0 [v]");
+    // Matching-but-not-exact context → empty + exit 1.
+    assert_eq!(run(r#"zstyle ':s:*' k v; zstyle -g o ':s:sub' k; print -r -- "rc=$? [$o]""#), "rc=1 []");
+    // Exact literal context works.
+    assert_eq!(run(r#"zstyle ':s:x' k w; zstyle -g o ':s:x' k; print -r -- "rc=$? [$o]""#), "rc=0 [w]");
+    // Undefined → exit 1.
+    assert_eq!(run(r#"zstyle -g o ':none' k; print -r -- "rc=$? [$o]""#), "rc=1 []");
+    // Regression: -s still context-matches.
+    assert_eq!(run(r#"zstyle ':s:*' k v; zstyle -s ':s:sub' k o; print -r -- "[$o]""#), "[v]");
+    // Regression: exact keys are distinguished.
+    assert_eq!(run(r#"zstyle ':a:b' s x; zstyle ':a:*' s y; zstyle -g o ':a:b' s; print -r -- "[$o]""#), "[x]");
+}
