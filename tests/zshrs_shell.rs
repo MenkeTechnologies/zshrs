@@ -12778,3 +12778,26 @@ fn test_backslash_x_no_hex_digit_emits_nul_byte() {
     let (_s3, out3, _e3) = run_zshrs(r#"printf '%b' 'a\x41b'"#);
     assert_eq!(out3, "aAb", "valid \\x41 still decodes to 'A'");
 }
+
+#[test]
+fn test_escape_high_byte_emits_single_raw_byte_not_utf8() {
+    // c:Src/utils.c:7289-7294 — a `\xNN`/`\NNN` escape is one raw BYTE.
+    // High bytes (>= 0x80) must metafy so they unmetafy to the single raw
+    // byte on output, NOT re-encode as a 2-byte UTF-8 sequence. getkeystring_with
+    // (print/printf/echo path) previously did `push(val as char)`, turning
+    // \xff into c3 bf instead of ff.
+    let hexdump = |code: &str| -> String {
+        let (_s, out, _e) = run_zshrs(&format!("{code} | od -An -tx1"));
+        out.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    // \xff -> single 0xff byte (a=61, b=62 around it).
+    assert_eq!(hexdump(r#"printf '%b' 'a\xffb'"#), "61 ff 62");
+    // octal \377 (printf format path) -> single 0xff byte.
+    assert_eq!(hexdump(r#"printf 'a\377b'"#), "61 ff 62");
+    // echo -e high hex.
+    assert_eq!(hexdump(r#"echo -en 'a\xffb'"#), "61 ff 62");
+    // A genuine 2-byte UTF-8 sequence written as two escapes stays two bytes.
+    assert_eq!(hexdump(r#"printf 'a\xc3\xa9'"#), "61 c3 a9");
+    // Low byte unaffected: \x41 == 'A'.
+    assert_eq!(hexdump(r#"printf '%b' 'a\x41b'"#), "61 41 62");
+}
