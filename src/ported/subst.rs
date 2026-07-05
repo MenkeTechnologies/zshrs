@@ -12542,9 +12542,24 @@ pub fn paramsubst(
         }
 
         // (l:N::PRE:) / (r:N::POST:) padding — apply via dopadding.
-        // Per-element on arrays so each element gets padded
-        // independently. Direct port of subst.c flag-loop l/r
-        // interacting with isarr branch which pads aval per-element.
+        // c:4245 `if (isarr)` gates array vs scalar. In array (list)
+        // context each element is padded independently (c:4327/4377/
+        // 4396/4416/4455 pad `aval[i]`); in scalar context padding runs
+        // ONCE on the already-reduced `val` (c:4455 scalar branch). Do
+        // NOT re-fetch the source array here: the subscript/join already
+        // selected what padding must see.
+        //
+        // Bugs fixed: `${(r:6::-:)arr[1]}` padded every element of the
+        // source array instead of just element 1; `"${(r:6::-:)arr}"`
+        // and `${(j:_:r:6::-:)arr}` padded per-element instead of once
+        // on the joined scalar.
+        //
+        // Known limitation: a QUOTED range slice `"${(r:6::-:)arr[1,2]}"`
+        // should sepjoin-then-pad-once (c:3034 clears isarr, c:4444 pads
+        // val), but zshrs does not propagate `qt` to subscripted refs —
+        // the quoted range reaches here with the same state as the
+        // unquoted list form (`qt=false, isarr=0`, joined `value`), so
+        // it is padded per-element like the (common) unquoted list form.
         if prenum > 0 || postnum > 0 {
             // c:2319/2330
             let mul_default = " ".to_string(); // c:907 (def = " ")
@@ -12561,15 +12576,41 @@ pub fn paramsubst(
                     multi_width as i32, // c:2376 (m)
                 )
             };
+            // A non-splat subscript (`[N]`, `[N,M]`, `[key]`, `[(r)pat]`)
+            // reduced the array to the picked value(s) that now live in
+            // `value` — `@`/`*` keep whole-array shape and fall through
+            // to the isarr arm. Mirrors the case-conversion block's
+            // subscript handling (subst.rs `has_non_splat_subscript`).
+            let has_non_splat_subscript =
+                subscript.as_deref().map_or(false, |s| s != "@" && s != "*");
             if let Some(parts) = split_parts.clone() {
+                // c:4245 array branch — array shape already materialized.
                 let new_parts: Vec<String> = parts.iter().map(|s| pad_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            } else if has_non_splat_subscript {
+                // c:4327 — subscript-reduced slice lives in `value`
+                // (single element, or a whitespace-joined range slice).
+                // Pad each element; re-materialize split_parts for ranges
+                // so list-context rendering emits the padded elements.
+                let parts: Vec<String> = value.split_whitespace().map(|s| pad_one(s)).collect();
+                value = parts.join(" ");
+                if subscript.as_deref().map_or(false, |s| s.contains(',')) {
+                    split_parts = Some(parts);
+                }
+            } else if isarr != 0 {
+                // c:4245 array branch — whole-array reference (`${arr}`,
+                // `${arr[@]}`): pad each element of the source array.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| pad_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = pad_one(&value);
+                }
             } else {
+                // c:4444 scalar branch — plain scalar, DQ-joined array
+                // (c:3034), or (j:STR:) join (c:3907): pad the value once.
                 value = pad_one(&value);
             }
         }

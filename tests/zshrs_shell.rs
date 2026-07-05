@@ -795,6 +795,41 @@ fn test_subscript_parity_param_flag_array_join() {
 }
 
 #[test]
+fn test_subscript_parity_pad_flag_honors_subscript() {
+    // (l:N::pad:) / (r:N::pad:) padding must operate on the value the
+    // subscript SELECTED, not the whole source array. Before the fix
+    // the padding flag re-fetched the full array and padded every
+    // element, so `${(r:6::-:)arr[1]}` produced
+    // "foo--- Bar--- baz---" instead of just "foo---". Values verified
+    // against `/bin/zsh -f` (quoted `${...}` sepjoins the array to a
+    // scalar then pads once; unquoted list context pads each element):
+    //   "[${(r:6::-:)arr[1]}]"   -> [foo---]              (single element)
+    //   "[${(l:6::-:)arr[2]}]"   -> [---Bar]              (left pad, single)
+    //   "[${(r:6::-:)arr}]"      -> [foo Ba]              (quoted -> pad joined once)
+    //   ${(r:6::-:)arr}          -> foo--- Bar--- baz---  (list -> per element)
+    //   ${(r:6::-:)arr[1,2]}     -> foo--- Bar---         (list range -> per element)
+    //   "[${(j:_:r:6::-:)arr}]"  -> [foo_Ba]              ((j) join -> pad joined once)
+    let (_, output, _) = run_zshrs_parity(
+        r#"
+        arr=(foo Bar baz)
+        print -r -- "1:[${(r:6::-:)arr[1]}]"
+        print -r -- "2:[${(l:6::-:)arr[2]}]"
+        print -r -- "3:[${(r:6::-:)arr}]"
+        print -r -- "4:" ${(r:6::-:)arr}
+        print -r -- "5:" ${(r:6::-:)arr[1,2]}
+        print -r -- "6:[${(j:_:r:6::-:)arr}]"
+        "#,
+    );
+    let expected = "1:[foo---]\n\
+                    2:[---Bar]\n\
+                    3:[foo Ba]\n\
+                    4: foo--- Bar--- baz---\n\
+                    5: foo--- Bar---\n\
+                    6:[foo_Ba]";
+    assert_eq!(output.trim(), expected, "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_parity_length_of_indexed_element() {
     // ${#arr[N]} returns the length of the Nth ELEMENT, not the
     // array count. Verified empirically:
