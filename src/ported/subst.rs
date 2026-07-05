@@ -92,12 +92,13 @@ use crate::ported::zsh_h::{
     PM_LOWER, PM_NAMEREF, PM_READONLY, PM_RIGHT_B, PM_RIGHT_Z, PM_SPECIAL, PM_TAGGED, PM_TIED,
     PM_UNIQUE, PM_UPPER, PREFORK_ASSIGN, PREFORK_KEY_VALUE, PREFORK_NOSHWORDSPLIT,
     PREFORK_NO_UNTOK, PREFORK_SHWORDSPLIT, PREFORK_SINGLE, PREFORK_SPLIT, PREFORK_SUBEXP,
-    PREFORK_TYPESET, PUSHDMINUS, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_DOLLARS, QT_NONE,
-    QT_QUOTEDZPUTS, QT_SINGLE, QT_SINGLE_OPTIONAL, RCEXPANDPARAM, SCANPM_NONAMEREF,
-    SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SHWORDSPLIT, SORTIT_ANYOLDHOW,
-    SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY, SORTIT_NUMERICALLY_SIGNED,
-    SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND, SUB_END, SUB_GLOBAL,
-    SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START, SUB_SUBSTR,
+    PREFORK_TYPESET, PUSHDMINUS, QT_BACKSLASH, QT_BACKSLASH_PATTERN, QT_BACKSLASH_SHOWNULL,
+    QT_DOLLARS, QT_NONE, QT_QUOTEDZPUTS, QT_SINGLE, QT_SINGLE_OPTIONAL, RCEXPANDPARAM,
+    SCANPM_NONAMEREF, SCANPM_WANTKEYS, SCANPM_WANTVALS, SHFILEEXPANSION, SHWORDSPLIT,
+    SORTIT_ANYOLDHOW, SORTIT_BACKWARDS, SORTIT_IGNORING_CASE, SORTIT_NUMERICALLY,
+    SORTIT_NUMERICALLY_SIGNED, SORTIT_SOMEHOW, SUB_ALL, SUB_BIND, SUB_DOSUBST, SUB_EGLOB, SUB_EIND,
+    SUB_END, SUB_GLOBAL, SUB_LEN, SUB_LIST, SUB_LONG, SUB_MATCH, SUB_REST, SUB_RETFAIL, SUB_START,
+    SUB_SUBSTR,
 };
 use crate::zsh_h::{CASMOD_CAPS, CASMOD_LOWER, CASMOD_UPPER};
 use crate::DPUTS;
@@ -13393,7 +13394,19 @@ pub fn paramsubst(
                 // (q)/(qq)/(qqq)/(qqqq). quotetype starts at QT_NONE=0
                 // and is incremented per q: QT_BACKSLASH(1) /
                 // QT_SINGLE(2) / QT_DOUBLE(3) / QT_DOLLARS(4).
-                wrap_snull(quotestring(s, quotetype)) // c:4070
+                //
+                // c:Src/subst.c:4124 — plain q (quotetype == QT_BACKSLASH)
+                // quotes via QT_BACKSLASH_SHOWNULL, NOT plain QT_BACKSLASH:
+                // an empty value must render as `''` (so it survives
+                // word-splitting), e.g. `a=""; ${(q)a}` → `''`. The
+                // higher quotetypes (qq/qqq…) get their `''`/`""` from the
+                // surrounding quote wrap, so they keep their own quotetype.
+                let qt_effective = if quotetype == QT_BACKSLASH {
+                    QT_BACKSLASH_SHOWNULL
+                } else {
+                    quotetype
+                };
+                wrap_snull(quotestring(s, qt_effective)) // c:4070/4124
             } else {
                 // c:4034
                 s.to_string() // c:4034

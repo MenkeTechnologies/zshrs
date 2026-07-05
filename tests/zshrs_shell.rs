@@ -5488,9 +5488,10 @@ fn test_param_flag_P_empty_deref_keeps_word() {
     // return previously came back as "" and prefork's empty-node
     // deletion elided it, taking the surrounding literals with it
     // (`X${(P)bar}Y` printed nothing). C emits the Nularg sentinel for
-    // a quoted-empty result (subst.c:1885 `if (qt && !*y) y =
-    // dupstring(nulstring)`) so prefork keeps the node; remnulargs
-    // restores the true empty. Verified against `/bin/zsh -f`:
+    // a quoted-empty result (subst.c:4465 `if (qt && !*y) y =
+    // dupstring(nulstring)`, the scalar branch) so prefork keeps the
+    // node; remnulargs restores the true empty. Verified against
+    // `/bin/zsh -f`:
     //   unset bar → "X${(P)bar}Y"  → XY
     //   zz=""     → "[${(P)zz}]"    → []
     //   name=zz zz=hi → "${(P)name}end" → hiend
@@ -8043,6 +8044,18 @@ fn test_q_flag_empty_returns_quoted_empty() {
     // dropped by an unquoted consumer.
     let (_, output, _) = run_zshrs(r#"a=""; print "${(q)a}""#);
     assert_eq!(output.trim(), "''");
+}
+
+#[test]
+fn test_q_flag_empty_array_elements_survive_as_quoted_empty() {
+    // In list context `${(q)arr}` must quote empty elements as `''` so
+    // they survive word-splitting (not silently vanish). Plain `q`
+    // quotes via QT_BACKSLASH_SHOWNULL (subst.c:4124), which shows a
+    // NULL string as `''`; zshrs used plain QT_BACKSLASH (no shownull),
+    // so empty elements dropped. Verified vs `/bin/zsh -f`: arr=("" x "")
+    // → `''`, `x`, `''` (three words).
+    let (_, output, _) = run_zshrs(r#"arr=("" x ""); print -l -- ${(q)arr}"#);
+    assert_eq!(output, "''\nx\n''\n", "got: {output:?}");
 }
 
 #[test]
