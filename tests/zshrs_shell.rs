@@ -3943,6 +3943,24 @@ fn test_command_not_found_includes_line_number() {
 }
 
 #[test]
+fn test_error_line_number_is_actual_line_not_one() {
+    // Runtime error diagnostics (command-not-found, noclobber) must
+    // carry the ACTUAL line, not a hardcoded 1. C uses `zerr(...)`
+    // (exec.c:811) which threads the current lineno; the port's bridge
+    // eprintln sites hardcoded `:1:`. Both errors sit on line 3 here.
+    let (_, _, e1) = run_zshrs("print a\nprint b\nnonexistent_zzz_cmd");
+    assert!(
+        e1.contains(":3: command not found: nonexistent_zzz_cmd"),
+        "command-not-found line: {e1:?}"
+    );
+    let tf = format!("{}/zr_errline_nclob.out", tempdir_for_test());
+    std::fs::write(&tf, "x\n").unwrap();
+    let (_, _, e2) = run_zshrs(&format!("setopt noclobber\nprint p\necho z > {tf}"));
+    let _ = std::fs::remove_file(&tf);
+    assert!(e2.contains(":3: file exists:"), "noclobber line: {e2:?}");
+}
+
+#[test]
 fn test_noclobber_blocks_overwrite_and_sinks_output() {
     let _ = std::fs::remove_file("/tmp/zr_nclob_test.out");
     std::fs::write("/tmp/zr_nclob_test.out", "first\n").unwrap();

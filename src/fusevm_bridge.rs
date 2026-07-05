@@ -6698,7 +6698,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let clobber_empty_ok = opt_state_get("clobberempty").unwrap_or(false)
                         && target_meta.as_ref().map(|m| m.len() == 0).unwrap_or(false);
                     if noclobber && target_is_regular_file && !clobber_empty_ok {
-                        eprintln!("{}:1: file exists: {}", shname(), target);
+                        eprintln!(
+                            "{}:{}: file exists: {}",
+                            shname(),
+                            crate::ported::lex::lineno(),
+                            target
+                        );
                         for prev in &target_fds {
                             unsafe {
                                 libc::close(*prev);
@@ -11122,7 +11127,12 @@ impl ShellExecutor {
                 let clobber_empty_ok = opt_state_get("clobberempty").unwrap_or(false)
                     && target_meta.as_ref().map(|m| m.len() == 0).unwrap_or(false);
                 if noclobber && target_is_regular_file && !clobber_empty_ok {
-                    eprintln!("{}:1: file exists: {}", shname(), target);
+                    eprintln!(
+                        "{}:{}: file exists: {}",
+                        shname(),
+                        crate::ported::lex::lineno(),
+                        target
+                    );
                     self.set_last_status(1);
                     // c:Src/exec.c — set redirect_failed so the scope-end
                     // hook (`with_redirects_end` in this file) forces

@@ -2584,7 +2584,20 @@ impl ShellExecutor {
             if !path_set_and_nonempty {
                 let sn =
                     crate::ported::utils::scriptname_get().unwrap_or_else(|| "zshrs".to_string());
-                eprintln!("{}:1: command not found: {}", sn, cmd);
+                // c:Src/exec.c:811 `zerr("command not found: %s", arg0)`
+                // — the diagnostic carries the CURRENT line, not a
+                // hardcoded 1. `lineno()` is the same counter zwarning
+                // (utils.rs:179) uses and is live during VM execution
+                // (verified: read-only / div-by-zero errors already
+                // report the right line). Emitted directly (not via
+                // zerr) to avoid setting errflag — command-not-found is
+                // non-fatal and the script must continue.
+                eprintln!(
+                    "{}:{}: command not found: {}",
+                    sn,
+                    crate::ported::lex::lineno(),
+                    cmd
+                );
                 return Ok(127);
             }
         }
@@ -2655,9 +2668,19 @@ impl ShellExecutor {
                         // tried directly), not "command not found"
                         // (which implies PATH search).
                         if cmd.starts_with('/') {
-                            eprintln!("{}:1: no such file or directory: {}", sn, cmd);
+                            eprintln!(
+                                "{}:{}: no such file or directory: {}",
+                                sn,
+                                crate::ported::lex::lineno(),
+                                cmd
+                            );
                         } else {
-                            eprintln!("{}:1: command not found: {}", sn, cmd);
+                            eprintln!(
+                                "{}:{}: command not found: {}",
+                                sn,
+                                crate::ported::lex::lineno(),
+                                cmd
+                            );
                         }
                         Ok(127)
                     } else {
@@ -2702,16 +2725,31 @@ impl ShellExecutor {
                         // tried directly), not "command not found"
                         // (which implies PATH search).
                         if cmd.starts_with('/') {
-                            eprintln!("{}:1: no such file or directory: {}", sn, cmd);
+                            eprintln!(
+                                "{}:{}: no such file or directory: {}",
+                                sn,
+                                crate::ported::lex::lineno(),
+                                cmd
+                            );
                         } else {
-                            eprintln!("{}:1: command not found: {}", sn, cmd);
+                            eprintln!(
+                                "{}:{}: command not found: {}",
+                                sn,
+                                crate::ported::lex::lineno(),
+                                cmd
+                            );
                         }
                         Ok(127)
                     } else if e.kind() == io::ErrorKind::PermissionDenied {
                         // zsh: non-executable file → "permission denied"
                         // on stderr and exit 126 (POSIX "command found
                         // but not executable").
-                        eprintln!("{}:1: permission denied: {}", sn, cmd);
+                        eprintln!(
+                            "{}:{}: permission denied: {}",
+                            sn,
+                            crate::ported::lex::lineno(),
+                            cmd
+                        );
                         Ok(126)
                     } else {
                         Err(format!("{}: {}: {}", sn, cmd, e))
