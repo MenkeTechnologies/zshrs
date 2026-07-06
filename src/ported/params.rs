@@ -6174,6 +6174,37 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let cloned = pm.clone();
         drop(tab);
         unqueue_signals(); // c:3344
+                           // c:Src/params.c:2922 — `pm->gsu.a->setfn(pm, val)`. In C a
+                           // SUBSCRIPT assignment (`path[2]=x`) rebuilds the whole array
+                           // and hands it to the param's array setfn, so a tied
+                           // colon-array (path→PATH, fpath→FPATH, …) re-derives its
+                           // scalar/env side. zshrs's element path above wrote `u_arr`
+                           // directly and skipped the setfn, so `path[2]=/NEW` left
+                           // $PATH stale (`echo $PATH` showed the pre-edit value). Mirror
+                           // `arrsetfn`'s ename sync here. zshrs carries the tie via the
+                           // explicit colon-array name map (mirror of the scalar→array
+                           // cascade at params.rs:~6396); rejoin the array with `:` and
+                           // write the scalar side so `echo $PATH` sees the edit.
+        let base = name.split('[').next().unwrap_or(name);
+        let tied_scalar: Option<&str> = match base {
+            "path" => Some("PATH"),
+            "fpath" => Some("FPATH"),
+            "manpath" => Some("MANPATH"),
+            "cdpath" => Some("CDPATH"),
+            "psvar" => Some("PSVAR"),
+            "module_path" => Some("MODULE_PATH"),
+            "fignore" => Some("FIGNORE"),
+            "mailpath" => Some("MAILPATH"),
+            _ => None,
+        };
+        if let Some(scalar) = tied_scalar {
+            let joined = cloned
+                .u_arr
+                .as_deref()
+                .map(|a| a.join(":"))
+                .unwrap_or_default();
+            assignsparam(scalar, &joined, 0); // re-derives the scalar/env side
+        }
         return Some(cloned); // c:3345
     }
 
