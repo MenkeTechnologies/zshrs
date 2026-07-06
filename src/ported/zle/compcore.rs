@@ -416,6 +416,15 @@ pub fn before_complete(lst: &mut i32) -> i32 {
             // do_menucmp c:1258-1260 — just (re)show the list.
             SHOWINGLIST.store(-2, Ordering::Relaxed);
         } else {
+            // do_menucmp c:1263-1268 — `if (zlemetaline == NULL) metafy_line()`.
+            // before_complete runs before docomplete metafies the buffer, so
+            // do_single would otherwise edit a stale/unmetafied line and drop
+            // the command prefix (`cat alpha.txt` → `alpine.md`). Metafy the
+            // completion buffer (still holding the previous match's line) so
+            // do_single replaces only the word region tracked by minfo.
+            if ZLEMETALL.load(Ordering::Relaxed) == 0 {
+                metafy_line();
+            }
             // do_menucmp c:1270-1276 —
             //   while (zmult) { minfo.cur = valid_match(minfo.cur, 1);
             //                   zmult -= sign; }
@@ -3567,22 +3576,27 @@ pub fn matchcmp(a: &Cmatch, b: &Cmatch) -> std::cmp::Ordering {
             b.disp.clone().unwrap_or_default(),
         ) // c:3192
     };
-    let raw = sortdir
-        * if as_ == bs {
-            0
-        } else if as_ < bs {
-            -1
+    // c:3195-3197 — `sortdir * zstrcmp(as, bs, SORTIT_IGNORING_BACKSLASHES |
+    // ((isset(NUMERICGLOBSORT) || matchorder & CGF_NUMSORT) ?
+    //   SORTIT_NUMERICALLY : 0))`. zstrcmp routes through strcoll, so the
+    // ordering is the locale's collation (case-insensitive on the usual
+    // macOS/Linux locales) — matching zsh. The previous byte comparison
+    // sorted ASCII, putting every uppercase name (`README.md`) ahead of
+    // lowercase ones (`alpha.txt`), which diverged from zsh's completion
+    // order.
+    let numeric = crate::ported::zsh_h::isset(crate::ported::zsh_h::NUMERICGLOBSORT)
+        || (order & CGF_NUMSORT) != 0;
+    let flags = crate::ported::zsh_h::SORTIT_IGNORING_BACKSLASHES as u32
+        | if numeric {
+            crate::ported::zsh_h::SORTIT_NUMERICALLY as u32
         } else {
-            1
+            0
         };
-    if raw < 0 {
-        std::cmp::Ordering::Less
-    }
-    // c:3195
-    else if raw > 0 {
-        std::cmp::Ordering::Greater
+    let base = crate::ported::sort::zstrcmp(&as_, &bs, flags);
+    if sortdir < 0 {
+        base.reverse()
     } else {
-        std::cmp::Ordering::Equal
+        base
     }
 }
 
