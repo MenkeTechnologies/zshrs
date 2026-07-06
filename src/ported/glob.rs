@@ -4125,19 +4125,25 @@ pub fn parse_qualifiers(pattern: &str) -> (String, Option<qualifier_set>) {
         None => return (pattern.to_string(), None),
     };
 
-    // Check for (#q...) explicit qualifier syntax
+    // Check for (#q...) explicit qualifier syntax.
     let qual_str = &pattern[start + 1..pattern.len() - 1];
-    let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
-        (true, after)
-    } else if glob_isset(EXTENDEDGLOB) && qual_str.starts_with('#') {
-        // c:Src/glob.c:1192-1194 — `if (isset(EXTENDEDGLOB) &&
-        // !zpc_disables[ZPC_HASH] && s[1] == Pound) { if (s[2] !=
-        // 'q') return 0; ... }`. A trailing `(#X...)` where X is
-        // any extended-glob flag char EXCEPT `q` is NOT a glob
-        // qualifier — it's an inline pattern flag (e.g.
-        // `(#c1,2)`, `(#i)`, `(#a)`, `(#l)`, `(#s)`, `(#e)`,
-        // `(#m)`). Pass through to the pattern compiler.
-        return (pattern.to_string(), None);
+    // c:Src/glob.c:1192-1197 — `if (isset(EXTENDEDGLOB) &&
+    // !zpc_disables[ZPC_HASH] && s[1] == Pound) { if (s[2] != 'q')
+    // return 0; ret = 2; }`. The leading `#` inside `(...)` is ONLY
+    // special under EXTENDEDGLOB: `(#q...)` is the explicit glob
+    // qualifier, and `(#X...)` for any other X is an inline pattern flag
+    // (passed through). Without EXTENDEDGLOB the `#` is not special at
+    // all — the `(...)` is a bare qualifier group and a leading `#` is an
+    // (unknown) attribute char, so `*(#q.)` errors `unknown file
+    // attribute: #` rather than silently applying the `.` qualifier.
+    let (is_explicit, qual_content) = if glob_isset(EXTENDEDGLOB) && qual_str.starts_with('#') {
+        if let Some(after) = qual_str.strip_prefix("#q") {
+            (true, after) // c:1195 ret = 2 — explicit glob qualifier
+        } else {
+            // c:1194 `if (s[2] != 'q') return 0;` — inline pattern flag
+            // (`(#i)`, `(#c1,2)`, `(#a)`, `(#l)`, `(#s)`, `(#e)`, `(#m)`).
+            return (pattern.to_string(), None);
+        }
     } else if glob_isset(BAREGLOBQUAL) {
         (false, qual_str)
     } else {
