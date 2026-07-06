@@ -9687,6 +9687,41 @@ fn test_bindkey_d_resets_keymaps() {
 }
 
 #[test]
+fn test_bindkey_no_such_keymap_errors() {
+    // c:Src/Zle/zle_keymap.c:781/799/911/925 — bindkey keymap-selection
+    // errors go through zwarnnam, so they carry the `zshrs:bindkey:LINE:`
+    // prefix (not a bare `bindkey:`), and `-D`/`-A` on a missing keymap
+    // must actually report it (the prior port swallowed those diagnostics).
+    let err = |code: &str| run_zshrs(code).2.trim().to_string();
+
+    // -M on a nonexistent keymap: correct prefix + message.
+    let e = err(r#"bindkey -M nonexistentmap "^A""#);
+    assert!(e.starts_with("zshrs:bindkey:"), "prefix: {e:?}");
+    assert!(e.ends_with("no such keymap `nonexistentmap'"), "msg: {e:?}");
+
+    // Incompatible selection flags.
+    let e = err("bindkey -e -M foo");
+    assert!(
+        e.ends_with("incompatible keymap selection options"),
+        "got: {e:?}"
+    );
+
+    // -D on a missing keymap now reports it (was silent).
+    let (st, _, e) = run_zshrs("bindkey -D nonexistent");
+    assert_ne!(st, 0);
+    assert!(e.trim().ends_with("no such keymap `nonexistent'"), "got: {e:?}");
+
+    // -A with a missing SOURCE keymap reports it.
+    let (st, _, e) = run_zshrs("bindkey -A nonexistsrc newdst");
+    assert_ne!(st, 0);
+    assert!(e.trim().ends_with("no such keymap `nonexistsrc'"), "got: {e:?}");
+
+    // Valid -A / -D still succeed silently.
+    let (st, _, _) = run_zshrs("bindkey -N km1; bindkey -A emacs km2; bindkey -D km1");
+    assert_eq!(st, 0);
+}
+
+#[test]
 fn test_bindkey_send_string_single_char() {
     // c:Src/Zle/zle_keymap.c:566/614 — `bindkey -s KEY STR` binds a
     // send-string (macro). A SINGLE-character key's binding lives in the

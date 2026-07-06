@@ -1181,7 +1181,9 @@ pub fn bin_bindkey(
         return 1;
     }
     if nsel > 1 {
-        eprintln!("{}: incompatible keymap selection options", name);
+        // c:Src/Zle/zle_keymap.c:781 — zwarnnam so the message carries the
+        // canonical `zshrs:bindkey:LINE:` prefix, not a bare `bindkey:`.
+        crate::ported::utils::zwarnnam(name, "incompatible keymap selection options");
         return 1;
     }
 
@@ -1203,7 +1205,7 @@ pub fn bin_bindkey(
         let km = match openkeymap(&nm) {
             Some(k) => k,
             None => {
-                eprintln!("{}: no such keymap `{}'", name, nm);
+                crate::ported::utils::zwarnnam(name, &format!("no such keymap `{}'", nm)); // c:799
                 return 1;
             }
         };
@@ -1278,7 +1280,7 @@ pub fn bin_bindkey_lsmaps(
             };
             match kmn {
                 None => {
-                    eprintln!("{}: no such keymap: `{}'", name, a);
+                    crate::ported::utils::zwarnnam(name, &format!("no such keymap: `{}'", a)); // c:842
                     ret = 1;
                 }
                 Some(kmn) => {
@@ -1379,16 +1381,18 @@ pub fn bin_bindkey_delall(
 /// UNUSED(Keymap km), char **argv, UNUSED(Options ops),
 /// UNUSED(char func))` from Src/Zle/zle_keymap.c:902.
 pub fn bin_bindkey_del(
-    _name: &str,
+    name: &str,
     _kmname: Option<&str>,
     _km: Option<&Keymap>,
     argv: &[String],
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    // c:902
-    // C body (c:830-855): `do { unlinkkeymap(*argv, 0) } while(*++argv)`.
-    // Returns 1 on first failure, else 0.
+    // c:902-915 — `do { r = unlinkkeymap(*argv, 0);
+    //   if (r==1) zwarnnam(name, "keymap name `%s' is protected", *argv);
+    //   else if (r==2) zwarnnam(name, "no such keymap `%s'", *argv);
+    //   ret |= !!r; } while(*++argv)`. The previous port swallowed the
+    // per-keymap diagnostics (protected / no-such-keymap).
     if argv.is_empty() {
         return 1;
     }
@@ -1396,7 +1400,17 @@ pub fn bin_bindkey_del(
     for arg in argv {
         match unlinkkeymap(arg, 0) {
             0 => {}
-            _ => ret = 1,
+            1 => {
+                crate::ported::utils::zwarnnam(
+                    name,
+                    &format!("keymap name `{}' is protected", arg),
+                );
+                ret = 1;
+            }
+            _ => {
+                crate::ported::utils::zwarnnam(name, &format!("no such keymap `{}'", arg));
+                ret = 1;
+            }
         }
     }
     ret
@@ -1406,23 +1420,30 @@ pub fn bin_bindkey_del(
 /// Keymap km, char **argv, UNUSED(Options ops), UNUSED(char func))`
 /// from Src/Zle/zle_keymap.c:921.
 pub fn bin_bindkey_link(
-    _name: &str,
+    name: &str,
     _kmname: Option<&str>,
     _km: Option<&Keymap>,
     argv: &[String],
     _ops: &options,
     _func: i32,
 ) -> i32 {
-    // c:921
-    // C body (c:907-933): `km2 = openkeymap(argv[0]); if (!km2) return 1;
-    //                       linkkeymap(km2, argv[1], 0)`.
+    // c:921-933 — `km = openkeymap(argv[0]);
+    //   if (!km) { zwarnnam(name, "no such keymap `%s'", argv[0]); return 1; }
+    //   else if (linkkeymap(km, argv[1], 0)) {
+    //       zwarnnam(name, "keymap name `%s' is protected", argv[1]); return 1; }`.
+    // The previous port returned 1 silently on both failures.
     if argv.len() < 2 {
         return 1;
     }
     let Some(km) = openkeymap(&argv[0]) else {
+        crate::ported::utils::zwarnnam(name, &format!("no such keymap `{}'", argv[0])); // c:925
         return 1;
     };
     if linkkeymap(km, &argv[1], 0) != 0 {
+        crate::ported::utils::zwarnnam(
+            name,
+            &format!("keymap name `{}' is protected", argv[1]), // c:928
+        );
         return 1;
     }
     0
@@ -1734,7 +1755,7 @@ pub fn bin_bindkey_list(
         .map(|s| s.to_string())
         .unwrap_or_else(|| curkeymapname().clone());
     let Some(km) = openkeymap(&resolved_name) else {
-        eprintln!("{}: no such keymap `{}'", name, resolved_name);
+        crate::ported::utils::zwarnnam(name, &format!("no such keymap `{}'", resolved_name)); // c:911/925/949
         return 1;
     };
 

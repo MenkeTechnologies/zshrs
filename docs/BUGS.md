@@ -19,6 +19,35 @@ CI green pending the underlying fix.
 
 ---
 
+## #659 — `bindkey` keymap errors: wrong prefix + missing `-D`/`-A` diagnostics — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+bindkey -M nonexistentmap "^A"   # real: zsh:bindkey:1: no such keymap `…'
+bindkey -D nonexistent           # real errors; zshrs was silent
+bindkey -A nonexistsrc newdst    # real errors; zshrs was silent
+```
+
+**Observed (before):** `-M`/`-e -M`/`-r -M` printed a bare `bindkey: no such
+keymap …` (missing the `zshrs:bindkey:LINE:` prefix), and `-D`/`-A` on a
+missing keymap returned non-zero but printed no diagnostic.
+
+**Root cause:** the keymap-selection error sites used
+`eprintln!("{}: …", name)` instead of `zwarnnam(name, …)`, and
+`bin_bindkey_del` (`-D`) / `bin_bindkey_link` (`-A`) discarded the
+`unlinkkeymap`/`openkeymap` failure codes instead of reporting them.
+
+**Fix:** routed all four keymap-error sites through `zwarnnam` (canonical
+`zshrs:bindkey:LINE:` prefix, `Src/Zle/zle_keymap.c:781/799/842/911`); made
+`-D` report `keymap name … is protected` (unlink r==1) or `no such keymap`
+(r==2) per keymap (`c:907-913`), and `-A` report `no such keymap` for a
+missing source and `… is protected` for a protected target (`c:925/928`).
+
+---
+
 ## #658 — `bindkey -s` on a single-character key dropped the send-string — FIXED
 
 **Status:** `fixed`
