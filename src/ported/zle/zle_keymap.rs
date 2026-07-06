@@ -384,9 +384,12 @@ impl Keymap {
     /// `ungetbytes_unmeta` (zle_keymap.c:1784) so it gets re-resolved
     /// against the keymap.
     pub fn bind_str(&mut self, seq: &[u8], s: String) {
+        // c:Src/Zle/zle_keymap.c:566 — a single char's Key holds EITHER a func
+        // or a send-string. zshrs's `first[]` fast-path stores only the Thingy,
+        // so a single-char send-string lives in `multi[]` (below); clear the
+        // `first[]` slot so `keybind` falls through to the `multi[]` str.
         if seq.len() == 1 {
-            // Single char can't be send-string in first[] table
-            // Store in multi
+            self.first[seq[0] as usize] = None;
         }
 
         // Mark prefixes
@@ -754,6 +757,15 @@ pub fn bindkey(km: &mut Keymap, seq: &[u8], bind: Option<Thingy>, str: Option<St
         }
         (None, Some(s), _) => {
             // c:614-641 — send-string `bindkey -s` form.
+            // c:Src/Zle/zle_keymap.c:566 — a single char's Key holds EITHER a
+            // func or a send-string. zshrs's `first[]` fast-path stores only
+            // the Thingy, so a single-char send-string lives in `multi[]`
+            // below; clear the `first[]` slot so `keybind` (which checks
+            // `first[]` first for a single char) falls through to the
+            // `multi[]` str instead of returning the stale default binding.
+            if seq.len() == 1 {
+                km.first[seq[0] as usize] = None;
+            }
             for i in 1..seq.len() {
                 km.multi
                     .entry(seq[..i].to_vec())
@@ -1608,8 +1620,41 @@ pub fn bin_bindkey_bind(
 
         // c:1051 — `bindkey(km, seq, bind, str)`.
         if seq_bytes.len() == 1 {
-            // single-byte first[]
-            km.first[seq_bytes[0] as usize] = kb_value.bind.clone();
+            let c = seq_bytes[0] as usize;
+            let key = seq_bytes.to_vec();
+            if let Some(s) = kb_value.str {
+                // c:614 — single-char SEND-STRING (`bindkey -s "^X" str`).
+                // `first[]` holds only a Thingy, so keep the string in
+                // `multi[]` and clear `first[]` (keybind falls through to it).
+                // Preserve the prefixct if this char is also a prefix. The
+                // previous port stored only `kb_value.bind`, silently DROPPING
+                // the string.
+                km.first[c] = None;
+                km.multi
+                    .entry(key)
+                    .and_modify(|kb| kb.str = Some(s.clone()))
+                    .or_insert_with(|| KeyBinding {
+                        bind: None,
+                        str: Some(s.clone()),
+                        prefixct: 0,
+                    });
+            } else {
+                // c:600 — single-char Thingy / `-r` unbind → first[]. Also
+                // drop any stale send-string a prior `-s` left on `multi[]`
+                // for this char, and remove the node if it's now empty (not a
+                // prefix). Without this, `bindkey -s "^A" x; bindkey -r "^A"`
+                // still resolved `^A` to the stale string.
+                km.first[c] = kb_value.bind.clone();
+                let remove = if let Some(kb) = km.multi.get_mut(&key) {
+                    kb.str = None;
+                    kb.prefixct == 0 && kb.bind.is_none()
+                } else {
+                    false
+                };
+                if remove {
+                    km.multi.remove(&key);
+                }
+            }
         } else {
             km.multi.insert(seq_bytes.to_vec(), kb_value); // c:1054 hashtable
         }

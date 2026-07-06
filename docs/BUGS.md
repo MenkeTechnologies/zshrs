@@ -19,6 +19,35 @@ CI green pending the underlying fix.
 
 ---
 
+## #658 — `bindkey -s` on a single-character key dropped the send-string — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+bindkey -s "^X" "echo hi"; bindkey "^X"   # expect: "^X" "echo hi"
+```
+
+**Observed (before):** `"^X" undefined-key` — the macro was lost (multi-char
+keys like `^X^Y` / `foo` worked).
+
+**Root cause:** `bin_bindkey_bind` (zle_keymap.rs) stored a single-byte key's
+binding as `first[c] = kb_value.bind`, keeping only the Thingy and DISCARDING
+`kb_value.str`. zshrs's `first[]` fast-path table holds only a Thingy (C's
+`first[]` Key holds a func OR a send-string), so a single-char send-string had
+nowhere to live and `keybind` returned the stale default (`undefined-key`).
+
+**Fix:** for a single-char key, a send-string is now kept in `multi[]` with
+`first[c]` cleared, so `keybind`'s single-char branch falls through to it
+(preserving the `prefixct` when the char is also a prefix). Conversely a
+single-char Thingy/`-r` binding clears any stale `multi[]` send-string (and
+removes the node if it becomes empty), so `bindkey -s "^A" x; bindkey -r "^A"`
+correctly resolves `^A` to `undefined-key`. Multi-char send-strings and
+single-char widget bindings are unchanged.
+
+---
+
 ## #657 — `read -A` dropped empty fields around a non-whitespace IFS separator — FIXED
 
 **Status:** `fixed`

@@ -9687,6 +9687,32 @@ fn test_bindkey_d_resets_keymaps() {
 }
 
 #[test]
+fn test_bindkey_send_string_single_char() {
+    // c:Src/Zle/zle_keymap.c:566/614 — `bindkey -s KEY STR` binds a
+    // send-string (macro). A SINGLE-character key's binding lives in the
+    // Thingy-only `first[]` fast path, so the string is kept in `multi[]`
+    // with `first[]` cleared; the previous port stored only the (absent)
+    // Thingy for single bytes, silently dropping the string.
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    assert_eq!(out(r#"bindkey -s "^X" "echo hi"; bindkey "^X""#), r#""^X" "echo hi""#);
+    // -L round-trips the send-string form.
+    assert_eq!(out(r#"bindkey -s "^X" "cmd"; bindkey -L "^X""#), r#"bindkey -s "^X" "cmd""#);
+    // Re-binding a send-string overwrites; empty string is valid.
+    assert_eq!(out(r#"bindkey -s "^X" "one"; bindkey -s "^X" "two"; bindkey "^X""#), r#""^X" "two""#);
+    assert_eq!(out(r#"bindkey -s "^X" ""; bindkey "^X""#), r#""^X" """#);
+    // Multi-char send-string still works (unchanged path).
+    assert_eq!(out(r#"bindkey -s "^X^Y" "seq"; bindkey "^X^Y""#), r#""^X^Y" "seq""#);
+    // A later widget binding on the same char REPLACES the send-string.
+    assert_eq!(
+        out(r#"bindkey -s "^A" "x"; bindkey "^A" beginning-of-line; bindkey "^A""#),
+        r#""^A" beginning-of-line"#
+    );
+    // `-r` after `-s` fully unbinds (no stale send-string leaks).
+    assert_eq!(out(r#"bindkey -s "^A" "x"; bindkey -r "^A"; bindkey "^A""#), r#""^A" undefined-key"#);
+}
+
+#[test]
 fn test_history_empty_arg_event_not_found() {
     // zsh: `history ""` (empty positional) -> `fc:1: event not
     // found:` exit 1 (with empty trailing identifier). zshrs's
