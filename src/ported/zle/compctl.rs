@@ -3711,7 +3711,7 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     let mut rpre_s = if lpre_has_tok || first_lpre == Some(Tilde) || first_lpre == Some(Equals) {
         noreal = 0;
         getreal(tt)
-    } else if first_lpre == Some('~') || first_lpre == Some('=') {
+    } else if (first_lpre == Some('~') && lpre_s.contains('/')) || first_lpre == Some('=') {
         // get_comp_string returns the word untokenized, so a leading `~`/`=`
         // arrives as its literal byte rather than the Tilde/Equals token that
         // getreal's filesub/equalsubst needs to expand. Tokenize a COPY for
@@ -3719,6 +3719,11 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         // offset (the tokens are multi-byte in UTF-8) and corrupt fpre. rpre
         // becomes the expanded filesystem path (`~/f` → `$HOME/f`) used for
         // opendir, while lppre keeps the literal `~/` that stays on the line.
+        //
+        // Only a tilde with a `/` is a PATH to expand (`~/f`, `~user/f`). A
+        // bare `~` or `~user` (no slash) is a username-completion context in
+        // zsh (maketildelist), NOT an expansion — getreal-expanding it errors
+        // ("no such user") or wrongly replaces `~` with $HOME on the line.
         noreal = 0;
         let mut tok = tt.to_string();
         crate::ported::glob::tokenize(&mut tok);
