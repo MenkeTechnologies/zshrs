@@ -1189,6 +1189,23 @@ pub fn get_comp_string() -> Option<String> {
     };
     let zlemetacs = ZLEMETACS.load(Ordering::SeqCst);
 
+    // c:637-639 — `origline = ztrdup(zlemetaline); origcs = zlemetacs;
+    // origll = zlemetall;`. Snapshot the line BEFORE the addx/lexing so
+    // do_completion's no-match / error path can restore it via
+    // `inststr(origline)`. Without this ORIGLINE stayed empty, so a
+    // completion that found nothing (e.g. `ls -<Tab>` — no files start
+    // with `-`) deleted the whole line instead of leaving it intact.
+    {
+        if let Ok(mut g) = ORIGLINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = meta_snap.clone();
+        }
+        ORIGCS.store(zlemetacs, Ordering::SeqCst);
+        ORIGLL.store(meta_snap.len() as i32, Ordering::SeqCst);
+    }
+
     // c:1119-1130 — reset brace-info state. `rdstrs` recording
     // (c:1245-1250, c:1396-1398) is omitted (no writable shared list).
     if let Some(b) = BRBEG.get() {
