@@ -13032,3 +13032,24 @@ fn test_cond_o_bad_option_diagnostic_has_no_command_name() {
     assert_eq!(run_zshrs("setopt extendedglob; [[ -o extendedglob ]]").0, 0);
     assert_eq!(run_zshrs("[[ -o extendedglob ]]").0, 1);
 }
+
+#[test]
+fn test_tied_colon_array_element_assignment_syncs_scalar() {
+    // c:Src/params.c:2922 — a subscript assignment `path[N]=x` rebuilds the
+    // whole array and hands it to the param's array setfn, so a tied
+    // colon-array (path->PATH, fpath->FPATH, cdpath->CDPATH, …) re-derives
+    // its scalar side. zshrs wrote the array element directly and skipped
+    // the setfn, leaving $PATH stale after `path[2]=/NEW`.
+    let run = |code: &str| run_zshrs(code).1.trim().to_string();
+    assert_eq!(run("path=(/a /b /c); path[2]=/NEW; echo $PATH"), "/a:/NEW:/c");
+    assert_eq!(run("path=(/a /b /c); path[1]=/X; echo $PATH"), "/X:/b:/c");
+    assert_eq!(run("path=(/a /b /c); path[4]=/D; echo $PATH"), "/a:/b:/c:/D");
+    assert_eq!(run("path=(/a /b); path[-1]=/LAST; echo $PATH"), "/a:/LAST");
+    assert_eq!(run("fpath=(/f1 /f2); fpath[1]=/NEW; echo $FPATH"), "/NEW:/f2");
+    assert_eq!(run("cdpath=(/x /y); cdpath[2]=/Z; echo $CDPATH"), "/x:/Z");
+    // The array element itself is still updated, and the reverse tie holds.
+    assert_eq!(run(r#"path=(/a /b /c); path[2]=/NEW; echo "${path[2]}""#), "/NEW");
+    assert_eq!(run(r#"PATH=/x:/y; path[1]=/Z; echo "$PATH ${path[1]}""#), "/Z:/y /Z");
+    // A plain (untied) array element assignment is unaffected.
+    assert_eq!(run(r#"a=(1 2 3); a[2]=X; echo "${a[@]}""#), "1 X 3");
+}
