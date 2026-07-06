@@ -27,7 +27,8 @@ use crate::ported::params::{getsparam, paramtab, paramtab_hashed_storage, setapa
 use crate::ported::signals::{queue_signals, unqueue_signals};
 use crate::ported::zle::comp_h::{
     Aminfo, Brinfo, Cadata, Ccmakedat, Cexpl, Cline, Cmatch, Cmgroup, Cmlist, Menuinfo, CAF_ALL,
-    CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT, CAF_UNIQALL,
+    CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT, CAF_NUMSORT, CAF_QUOTE, CAF_REVSORT,
+    CAF_UNIQALL,
     CAF_UNIQCON, CGF_MATSORT, CGF_NOSORT, CGF_NUMSORT, CGF_REVSORT, CGF_UNIQALL, CGF_UNIQCON,
     CMF_DELETE, CMF_DISPLINE, CMF_FMULT, CMF_MULT, CMF_NOLIST, CMF_PACKED, CMF_PARBR, CMF_PARNEST,
     CMF_ROWS,
@@ -567,6 +568,27 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     let _osc = crate::ported::builtin::SFCONTEXT.load(Ordering::Relaxed); // c:555
 
     let _useglob = USEGLOB.load(Ordering::Relaxed); // c:579
+
+    // Publish the completion word split at the cursor into the
+    // `$PREFIX` / `$SUFFIX` params (+ empty ignored-prefix/suffix). In C
+    // these are gsu-bound to `compprefix`/`compsuffix`; the Rust ports
+    // have no gsu binding, so without this every completer reads
+    // `$PREFIX=''` — `_main_complete`'s `compset -P 1 '='` then matches
+    // the empty prefix and wrongly forces `$compstate[context]=equal`,
+    // and `_path_files` has no prefix to glob. Split at `OFFS`
+    // (zlemetacs - wb), the cursor offset within the word.
+    {
+        let scs: Vec<char> = s.chars().collect();
+        let off = (OFFS.load(Ordering::Relaxed).max(0) as usize).min(scs.len());
+        let pre: String = scs[..off].iter().collect();
+        let suf: String = scs[off..].iter().collect();
+        let _ = crate::ported::params::setsparam("PREFIX", &pre);
+        let _ = crate::ported::params::setsparam("SUFFIX", &suf);
+        let _ = crate::ported::params::setsparam("IPREFIX", "");
+        let _ = crate::ported::params::setsparam("ISUFFIX", "");
+        let _ = crate::ported::params::setsparam("QIPREFIX", "");
+        let _ = crate::ported::params::setsparam("QISUFFIX", "");
+    }
 
     // c:591-617 — context selection.
     let context = compcontext_for(s); // c:591-617
@@ -2163,31 +2185,22 @@ pub fn get_data_arr(name: &str, keys: bool) -> Option<Vec<String>> {
 
     queue_signals(); // c:2028
 
-    // c:2030-2034 — fetchvalue with SCANPM_MATCHMANY → scan the
-    //                hashed param's keys/values. We approximate by
-    //                routing keys/values directly out of the
-    //                hashed-storage map.
-    let is_hashed = match paramtab().read() {
-        Ok(t) => t
-            .get(name)
-            .map(|pm| PM_TYPE(pm.node.flags as u32) == PM_HASHED)
-            .unwrap_or(false),
-        Err(_) => false,
-    };
-
-    let result = if is_hashed {
-        paramtab_hashed_storage().lock().ok().and_then(|m| {
-            m.get(name).map(|map| {
-                if keys {
-                    map.keys().cloned().collect::<Vec<_>>()
-                } else {
-                    map.values().cloned().collect::<Vec<_>>()
-                }
-            })
-        })
+    // c:2030-2034 — `fetchvalue(&vbuf, &name, 1, (keys ? SCANPM_WANTKEYS
+    //   : SCANPM_WANTVALS) | SCANPM_MATCHMANY)` then `getarrvalue(v)`.
+    // Route through the same param accessors `${(k)name}` / `${(v)name}`
+    // / `${name}` use so SPECIAL magic hashes (`commands`, `builtins`,
+    // `functions`, `aliases`, `reswords`, …) resolve via their module
+    // scanfns — the raw `paramtab_hashed_storage` map is empty for those,
+    // which is why `compadd -k commands` previously added the literal
+    // word "commands" instead of every command name.
+    let result = if keys {
+        // SCANPM_WANTKEYS — assoc keys (gethkparam handles special hashes).
+        crate::ported::params::gethkparam(name)
     } else {
-        // c:2032 — non-hashed names return NULL.
-        None
+        // SCANPM_WANTVALS — plain-array elements, else assoc values.
+        crate::ported::params::getaparam(name)
+            .filter(|v| !v.is_empty())
+            .or_else(|| crate::ported::params::gethparam(name))
     };
 
     unqueue_signals(); // c:2041
@@ -2449,6 +2462,31 @@ pub fn addmatches(
         Vec::new()
     };
 
+    // zshrs bridge: in C the `compprefix`/`compsuffix`/`compiprefix`/
+    // `compisuffix` globals ARE `$PREFIX`/`$SUFFIX`/`$IPREFIX`/`$ISUFFIX`
+    // (the compparams are gsu-bound to them). The Rust compparams carry
+    // no gsu binding (`complete.rs` `gsu: 0`), so the compsys completers'
+    // writes to `$PREFIX` land in the param table while `compadd` reads
+    // the globals — leaving `lpre` empty and every candidate matching.
+    // During a live completion (`INCOMPFUNC`), refresh the globals from
+    // the params so `comp_match` filters against the prefix the completer
+    // actually set. Gated on INCOMPFUNC so direct-call unit tests that
+    // seed the globals aren't clobbered.
+    if INCOMPFUNC.load(Ordering::Relaxed) != 0 {
+        for (param, global) in [
+            ("PREFIX", &COMPPREFIX),
+            ("SUFFIX", &COMPSUFFIX),
+            ("IPREFIX", &COMPIPREFIX),
+            ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
+        ] {
+            if let Some(v) = getsparam(param) {
+                if let Ok(mut g) = global.get_or_init(|| Mutex::new(String::new())).lock() {
+                    *g = v;
+                }
+            }
+        }
+    }
+
     // c:2253-2300 — CAF_MATCH lipre/lisuf/lpre/lsuf assembly.
     let compiprefix_s = COMPIPREFIX
         .get_or_init(|| Mutex::new(String::new()))
@@ -2513,6 +2551,31 @@ pub fn addmatches(
     let doadd = dat.apar.is_none() && dat.opar.is_none() && dat.dpar.is_empty();
     let mut apar_list: Vec<String> = Vec::new();
     let mut opar_list: Vec<String> = Vec::new();
+
+    // c:2460-2476 + c:2582-2600 — CAF_ARRAYS expansion. `compadd -a
+    // NAME…` / `-k NAME…` pass PARAMETER names, not literal matches:
+    // the candidates are the values of the named arrays (or, with
+    // CAF_KEYS from `-k`, the keys of the named associative arrays).
+    // C weaves array-switching through the candidate loop via the
+    // `next_array` label; because every non-empty array's elements are
+    // consumed in order, the resulting candidate set is just the
+    // concatenation of `get_data_arr` over the names — so expand up
+    // front. Without this, `_command_names`' `compadd -k commands`
+    // adds the literal word "commands" instead of every command name.
+    let expanded_argv: Vec<String>;
+    let argv: &[String] = if (dat.aflags & CAF_ARRAYS) != 0 {
+        let keys = (dat.aflags & CAF_KEYS) != 0; // c:2468 CAF_KEYS
+        let mut acc: Vec<String> = Vec::new();
+        for name in argv {
+            if let Some(vals) = get_data_arr(name, keys) {
+                acc.extend(vals);
+            }
+        }
+        expanded_argv = acc;
+        &expanded_argv
+    } else {
+        argv
+    };
 
     // c:2482-2601 — main candidate loop.
     let mut added = 0i32;
@@ -3209,21 +3272,39 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {
         // c:3073
         let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON                    // c:3085
                  | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
-        let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
-        if let Ok(g) = cell.lock() {
-            for grp in g.iter() {
-                // c:3078
-                if grp.name.as_deref() == Some(name)                         // c:3084-3087
-                    && (grp.flags & mask) == flags
-                {
-                    let active = grp.clone(); // c:3088
-                    let mc = mgroup.get_or_init(|| Mutex::new(None));
-                    if let Ok(mut s) = mc.lock() {
-                        *s = Some(active);
-                    }
-                    return; // c:3095
-                }
+        // c:3078-3094 — reuse an existing group with the same name+flags.
+        let reused = {
+            let cell = amatches.get_or_init(|| Mutex::new(Vec::new()));
+            cell.lock().ok().and_then(|g| {
+                g.iter()
+                    .find(|grp| grp.name.as_deref() == Some(name) && (grp.flags & mask) == flags)
+                    .cloned() // c:3088
+            })
+        };
+        if let Some(active) = reused {
+            // c:3090-3093 — `expls = p->lexpls; matches = p->lmatches;
+            //   fmatches = p->lfmatches; allccs = p->lallccs;`. In C these
+            //   are pointer aliases into the reused group so appends keep
+            //   flowing into it. The Rust port keeps them as separate
+            //   Mutex globals, so restore their contents from the group;
+            //   `endcmgroup` flushes them back on close.
+            if let Ok(mut m) = expls.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                *m = active.lexpls.clone();
             }
+            if let Ok(mut m) = matches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                *m = active.lmatches.clone();
+            }
+            if let Ok(mut m) = fmatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                *m = active.lfmatches.clone();
+            }
+            if let Ok(mut m) = allccs.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                *m = active.lallccs.clone();
+            }
+            let mc = mgroup.get_or_init(|| Mutex::new(None));
+            if let Ok(mut s) = mc.lock() {
+                *s = Some(active);
+            }
+            return; // c:3095
         }
     }
     let mut grp = Cmgroup::default(); // c:3101
@@ -3258,11 +3339,67 @@ pub fn begcmgroup(n: Option<&str>, flags: i32) {
 /// Port of `mod_export void endcmgroup(char **ylist)` from
 /// compcore.c:3131.
 pub fn endcmgroup(ylist: Option<Vec<String>>) {
-    // c:3131
-    if let Ok(mut g) = mgroup.get_or_init(|| Mutex::new(None)).lock() {
-        if let Some(grp) = g.as_mut() {
-            grp.ylist = ylist.unwrap_or_default();
-        } // c:3140
+    // c:3131 — C is a one-liner (`mgroup->ylist = ylist`) because the
+    // file-scope `matches`/`fmatches`/`expls`/`allccs` LinkLists ARE this
+    // group's `l*` lists (aliased by begcmgroup). The Rust port keeps
+    // those as separate Mutex globals, so on close we flush them into the
+    // matching group inside `amatches` (identified by name+flags exactly
+    // as begcmgroup dedups). Without this the matches added between
+    // begcmgroup/endcmgroup never reach permmatches and `nmatches`
+    // stays 0.
+    let yl = ylist.unwrap_or_default();
+
+    // Snapshot the file-scope accumulators before touching amatches
+    // (distinct mutexes; snapshot-first keeps the lock scopes disjoint).
+    let m_snap = matches
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let fm_snap = fmatches
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ex_snap = expls
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ac_snap = allccs
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+
+    // Identify the current group and record ylist on the mgroup holder.
+    let (name, flags, new_) = {
+        let mc = mgroup.get_or_init(|| Mutex::new(None));
+        match mc.lock() {
+            Ok(mut g) => match g.as_mut() {
+                Some(grp) => {
+                    grp.ylist = yl.clone(); // c:3140
+                    (grp.name.clone(), grp.flags, grp.new_)
+                }
+                None => return,
+            },
+            Err(_) => return,
+        }
+    };
+
+    let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
+    if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+        if let Some(grp) = g
+            .iter_mut()
+            .find(|grp| grp.name == name && (grp.flags & mask) == (flags & mask))
+        {
+            grp.lmatches = m_snap;
+            grp.lfmatches = fm_snap;
+            grp.lexpls = ex_snap;
+            grp.lallccs = ac_snap;
+            grp.ylist = yl;
+            grp.new_ = new_;
+        }
     }
 }
 
@@ -4186,18 +4323,18 @@ fn do_single_first_match() {
         .find(|g| g.mcount > 0)
         .and_then(|g| g.matches.first().cloned());
     if let Some(m) = first {
+        // c:407 — `minfo.cur = NULL`.
         if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
             g.cur = None;
-        } // c:407
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
-            g.asked = 0;
-        } // c:408
-          // c:409 — `do_single(m)`. Inlined: drop the Cmatch payload onto
-          // MINFO.cur so the listing path picks it up (matches the C
-          // behavior of routing the single-match insert through minfo).
-        if let Ok(mut g) = MINFO.get_or_init(|| Mutex::new(Menuinfo::default())).lock() {
-            g.cur = Some(Box::new(m));
+            g.asked = 0; // c:408
         }
+        // c:409 — `do_single(m->matches[0])`. This is the actual
+        // single-match insert: it deletes the word between wb/we (incl.
+        // the addx placeholder) and inserts the completed string with
+        // its suffix. Previously this call was omitted (the match was
+        // merely stashed on minfo.cur), so a unique completion left the
+        // typed prefix + 'x' on the line instead of the completed word.
+        crate::ported::zle::compresult::do_single(&m);
     }
 }
 

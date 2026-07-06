@@ -693,42 +693,40 @@ pub fn default_dumpfile_path() -> PathBuf {
 /// it to `_main_complete` via `zle -C`. Returns the count of
 /// successful binds.
 pub fn install_standard_complete_widgets() -> usize {
+    // `zle` is a builtin, not a shell function, so it must be invoked
+    // through the builtin entry (`bin_zle_complete`) — NOT
+    // `dispatch_function_call`, which only resolves shell functions and
+    // silently returns None for a builtin name, leaving every widget
+    // unbound (the whole compsys engine then never fires on Tab).
+    let empty_ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
     let mut count = 0usize;
     for w in STANDARD_COMPLETE_WIDGETS {
-        let dot_w = format!(".{}", w);
-        if crate::ported::exec::dispatch_function_call(
-            "zle",
-            &[
-                "-C".to_string(),
-                w.to_string(),
-                dot_w,
-                "_main_complete".to_string(),
-            ],
-        )
-        .is_some()
-        {
+        // `zle -C <w> .<w> _main_complete` — args are post-flag:
+        // [target-thingy, base-comp-widget, completion-func].
+        let args = [
+            w.to_string(),
+            format!(".{}", w),
+            "_main_complete".to_string(),
+        ];
+        if crate::ported::zle::zle_thingy::bin_zle_complete("zle", &args, &empty_ops, 0) == 0 {
             count += 1;
         }
     }
-    // sh:560 — `zle -la menu-select && zle -C menu-select .menu-select _main_complete`
-    if crate::ported::exec::dispatch_function_call(
-        "zle",
-        &["-la".to_string(), "menu-select".to_string()],
-    )
-    .map(|rc| rc == 0)
-    .unwrap_or(false)
+    // sh:560 — `zle -C menu-select .menu-select _main_complete` (only
+    // succeeds when the `.menu-select` base widget exists, i.e.
+    // `zsh/complist` is loaded; bin_zle_complete returns 1 otherwise).
     {
-        if crate::ported::exec::dispatch_function_call(
-            "zle",
-            &[
-                "-C".to_string(),
-                "menu-select".to_string(),
-                ".menu-select".to_string(),
-                "_main_complete".to_string(),
-            ],
-        )
-        .is_some()
-        {
+        let args = [
+            "menu-select".to_string(),
+            ".menu-select".to_string(),
+            "_main_complete".to_string(),
+        ];
+        if crate::ported::zle::zle_thingy::bin_zle_complete("zle", &args, &empty_ops, 0) == 0 {
             count += 1;
         }
     }
@@ -1108,14 +1106,18 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
 
     result.files = all_files;
 
-    // sh:553-560 — rebind the 8 standard completion widgets +
-    //   conditional menu-select. No-op when no executor is wired
-    //   (unit-test environments); fully active under fusevm.
-    install_standard_complete_widgets();
-
-    // sh:562-569 — TAB rebind when `_expand` is in the completer
-    //   chain.
-    maybe_rebind_tab_for_expand();
+    // sh:553-569 — the standard completion-widget rebind (`zle -C
+    //   complete-word .complete-word _main_complete` × 8 + conditional
+    //   menu-select + TAB/_expand rebind) is NOT done here. `compinit`
+    //   ships this fpath scan to a worker-pool thread (see
+    //   `ext_builtins::builtin_compinit`), and ZLE keymaps/widgets live
+    //   on the main thread — a `zle -C` issued from a worker never
+    //   reaches the interactive keymap, so TAB stays bound to the
+    //   builtin `expand-or-complete` and `_main_complete` never fires.
+    //   The rebind is instead performed synchronously on the main
+    //   thread in `builtin_compinit`, where it belongs; it needs only
+    //   `_main_complete` (a Rust fn, always present), not the scan
+    //   results, so deferring it to the background is unnecessary.
 
     // Publish the result-side compdef state so downstream `getaparam(
     //   "_comps")` etc. queries reflect the scan. This is the new-

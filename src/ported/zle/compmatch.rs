@@ -933,10 +933,20 @@ pub fn match_str(
         out
     };
 
+    // c:591 `retry:` — the label sits AFTER the exact-char fast path, so
+    // C's `goto retry` (c:1029) re-runs the matcher loop WITHOUT re-doing
+    // the fast path. This one-shot flag reproduces that: when set, the
+    // next iteration skips the fast path and goes straight to the matcher
+    // loop. Without it the rewind below re-matches the same exact char
+    // forever (infinite loop on any word that shares a leading char with
+    // the prefix but then diverges, e.g. prefix "ec" vs "emulator").
+    let mut retry_skip_fastpath = false;
     'outer: while ll > 0 {
         // c:546
+        let do_fastpath = !retry_skip_fastpath;
+        retry_skip_fastpath = false;
         // c:569-590 — exact-char skip fast path.
-        if sfx == 0 && lw > 0 && (part == 0 || test != 0) {
+        if do_fastpath && sfx == 0 && lw > 0 && (part == 0 || test != 0) {
             let l_idx = (l_pos + ind) as usize;
             let w_idx = (w_pos + ind) as usize;
             if l_idx < l_bytes.len() && w_idx < w_bytes.len() {
@@ -1546,12 +1556,11 @@ pub fn match_str(
             w_pos -= add * wexact;
             exact = 0;
             wexact = 0;
-            // The retry would re-enter the matcher loop. Our outer 'while
-            // ll > 0' will continue and re-attempt the matcher loop with
-            // the rewound state. The C uses `goto retry` to skip the
-            // exact-skip block; we get the same effect by simply
-            // continuing — the exact-skip block won't fire again because
-            // the next iteration is at the same divergence point.
+            // c:1029 `goto retry` — re-enter the matcher loop but SKIP the
+            // exact-char fast path (else it re-matches the just-rewound
+            // char and loops forever). The flag makes the next iteration
+            // start at the matcher loop.
+            retry_skip_fastpath = true;
             continue 'outer;
         }
 

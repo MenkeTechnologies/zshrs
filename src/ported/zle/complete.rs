@@ -961,6 +961,12 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
     // pairs into the `Cadata` struct; per-flag dispatch ports the C
     // switch at c:621-820.
     let mut dat = crate::ported::zle::comp_h::Cadata::default();
+    // c:622 — `dat.aflags = CAF_MATCH`. compadd matches candidates
+    // against the word on the line by default (only `-U` clears it).
+    // Without this seed, addmatches takes the no-match branch and adds
+    // every candidate unfiltered — `compadd -k commands` would offer all
+    // 5000+ commands instead of just those matching the typed prefix.
+    dat.aflags = CAF_MATCH;
     dat.dummies = -1;
     let mut idx = 0usize;
     let take_arg = |argv: &[String], idx: &mut usize, arg: &str| -> Option<String> {
@@ -989,7 +995,7 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
         let c = arg.as_bytes()[1] as char;
         match c {
             'a' => dat.aflags |= CAF_ARRAYS,                   // c:626
-            'k' => dat.aflags |= CAF_KEYS,                     // c:632
+            'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS,        // c:657
             'l' => dat.flags |= CMF_NOLIST as i32,             // c:633
             'o' => dat.aflags |= CAF_NOSORT,                   // c:634 -o
             'Q' => dat.aflags |= CAF_QUOTE,                    // c:637
@@ -1511,24 +1517,42 @@ pub fn bin_compset(
             nb = 0;
         }
         CVT_PREPAT | CVT_SUFPAT => {
-            // c:1203
-            if let Some(s2) = sb_ref {
-                // c:1204
+            // c:1203-1206 — with a second arg, the FIRST is the count and
+            // the SECOND is the pattern: `na = atoi(sa); sa = sb;`.
+            if sb_ref.is_some() {
                 na = sa_ref.parse::<i32>().unwrap_or(0); // c:1205
-                let _ = s2; // c:1206 sa = sb
-                nb = 0;
-            } else {
-                nb = 0;
             }
+            nb = 0;
         }
         _ => {
             nb = 0;
         }
     }
     let _ = (na, nb);
-    // c:1218-1207 — `do_comp_vars(test, na, sa, nb, sb, 0)` dispatch.
-    // Deferred (do_comp_vars is the structural-shell port below).
-    do_comp_vars(test, na, sa_ref, nb, sb_ref.unwrap_or(""), 0) // c:1218
+    // c:1206 — for -P/-S with two args the pattern is `sb` (C reassigns
+    // `sa = sb`). Passing `sa` here (the count string, e.g. "1") made
+    // `compset -P 1 '='` test the prefix against pattern "1" instead of
+    // "=", so `_main_complete` wrongly set `$compstate[context]=equal`
+    // for ordinary words and every completion did command completion.
+    let pat = if (test == CVT_PREPAT || test == CVT_SUFPAT) && sb_ref.is_some() {
+        sb_ref.unwrap()
+    } else {
+        sa_ref
+    };
+    // c:1218 — `do_comp_vars(test, na, sa, nb, sb, 0)` dispatch.
+    // `do_comp_vars` returns 1 when it matched/modified and 0 otherwise
+    // (C-boolean). The `compset` BUILTIN, like every shell command,
+    // reports success as exit status 0 — and the compsys shell-function
+    // ports test it that way (`compset -P … && …` / `== 0`). Convert:
+    // match → 0 (success), no match → 1 (failure). Without this,
+    // `_main_complete`'s `compset -P 1 '=' == 0` fired on EVERY word
+    // (0 == no-match), forcing `$compstate[context]=equal` and command
+    // completion for every argument.
+    if do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 0) != 0 {
+        0
+    } else {
+        1
+    }
 }
 
 // =====================================================================
