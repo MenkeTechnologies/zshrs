@@ -470,6 +470,29 @@ fn test_nested_subscript_on_array_slice_indexes_subarray() {
 }
 
 #[test]
+fn test_nested_char_subscript_negative_index() {
+    // c:Src/params.c:1656+ — `${a[N][M]}` walks into element N's characters
+    // with subscript M. In an UNQUOTED subscript the lexer tokenizes `-` to
+    // the Dash token (\u{9b}), so a negative M (`${a[1][-1]}`) must be
+    // normalized before the numeric parse; previously it silently read as
+    // the parse default (+1) and returned the FIRST char instead of the last.
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    // Negative single char index → count from the end.
+    assert_eq!(out("a=(hello world); echo ${a[1][-1]}"), "o");
+    assert_eq!(out("a=(hello world); echo ${a[1][-2]}"), "l");
+    assert_eq!(out("a=(abc def); echo ${a[2][-1]}"), "f");
+    // Negative char slice.
+    assert_eq!(out("a=(hello world); echo ${a[1][-3,-1]}"), "llo");
+    assert_eq!(out("a=(hello); echo ${a[1][-2,-1]}"), "lo");
+    // Quoted (literal `-`) already worked — must stay correct.
+    assert_eq!(out(r#"a=(hello world); echo "${a[1][-1]}""#), "o");
+    // Positive char index/slice regressions.
+    assert_eq!(out("a=(hello world); echo ${a[1][2]}"), "e");
+    assert_eq!(out("a=(hello world); echo ${a[1][2,-1]}"), "ello");
+}
+
+#[test]
 fn test_scalar_slice() {
     let (_, output, _) = run_zshrs("str='hello world'; print ${str[1,5]}");
     assert_eq!(output.trim(), "hello", "got: {output:?}");

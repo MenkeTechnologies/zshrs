@@ -51,9 +51,11 @@ path (which re-joins `arrays_get`) emits the indexed result instead of
 re-deriving the first slice. Unquoted `-` arrives as the Dash token (`\u{9b}`);
 normalize it to `-` before the numeric parse so negative indices work.
 
-**Related (deferred, pre-existing):** `${a[N][-1]}` — a NEGATIVE char index on
-a single-element first subscript (`a[1]="hello"`, `[-1]`) returns the FIRST
-char (`h`) instead of the last (`o`). Separate char-index path, untouched here.
+**Follow-up (FIXED, #653b):** `${a[N][-1]}` — a NEGATIVE char index/slice on a
+single-element first subscript (`a[1]="hello"`, `${a[1][-1]}` → `h` not `o`,
+`${a[1][-3,-1]}` → `hello` not `llo`) had the same Dash-token cause. The `s2`
+Dash-normalization was hoisted to cover BOTH the array-slice path and the
+char-index path, so negative M in `${a[N][M]}` now counts from the end.
 
 ---
 
