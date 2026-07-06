@@ -21,7 +21,26 @@ CI green pending the underlying fix.
 
 ## #655 — word splitting drops empty fields for a non-whitespace IFS
 
-**Status:** `port-bug`
+**Status:** `fixed` for `${=var}` / `(${=var})`; the `setopt shwordsplit` path on
+a bare `$var` is a separate route (PREFORK_SHWORDSPLIT) and remains open.
+
+**FIX (`${=var}`):** `multsub`'s PREFORK_SPLIT loop (subst.rs) is now IWSEP-aware.
+An IFS char is a collapsing whitespace separator only when it is space/tab/newline
+(`Src/utils.c:4224-4228`); every other IFS char hard-delimits. The loop now (a)
+strips only leading IFS-whitespace, (b) absorbs only following IFS-whitespace after
+a separator (consecutive non-ws separators each delimit), and (c) emits a preserved
+empty field as the `Nularg` sentinel — mirroring `spacesplit`'s `nulstring` — so
+prefork's empty-node-delete pass keeps it and `remnulargs` restores the real empty
+string. Whitespace-IFS behavior is byte-for-byte unchanged (verified against the
+regression suite: 200 param/subst shell tests pass).
+
+**Still open:** `setopt shwordsplit; a=":a:b:"; set -- $a` → still 2 (want 4). That
+split routes through PREFORK_SHWORDSPLIT (not the PREFORK_SPLIT loop fixed here); the
+same IWSEP-aware treatment needs to reach that path.
+
+**Original report below.**
+
+**Status (original):** `port-bug`
 
 **Reproducer:**
 
