@@ -149,7 +149,12 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     set_compstate_str("pattern_insert", "menu"); // c:320
     forcelist.store(0, Ordering::Relaxed); // c:322
     haspattern.store(0, Ordering::Relaxed); // c:323
-    let _complistmax = env_iparam("LISTMAX"); // c:324
+    // c:324 — complistmax mirrors the LISTMAX parameter for every
+    // completion; asklist reads it to decide when to prompt "do you wish
+    // to see all N possibilities?". Leaving the static at 0 made large
+    // command lists (`l<Tab>`, 230 matches) dump without asking.
+    crate::ported::zle::complete::COMPLISTMAX
+        .store(env_iparam("LISTMAX") as i64, Ordering::Relaxed); // c:324
 
     set_compstate_str(
         // c:326
