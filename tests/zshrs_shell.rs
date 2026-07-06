@@ -4128,6 +4128,19 @@ fn test_read_dash_a_mixed_ifs_absorbs_whitespace_around_separator() {
     };
     assert_eq!(m(":a:b:"), "4");
     assert_eq!(m("a::b"), "3");
+
+    // The multi-var `read a b c` path uses the same absorption rule.
+    let v = |vars: &str, input: &str| {
+        let (_, out, _) = run_zshrs(&format!(
+            r#"IFS=" :" read {vars} <<< "{input}"; echo "[$a][$b][$c]""#
+        ));
+        out.trim().to_string()
+    };
+    assert_eq!(v("a b c", "x : y : z"), "[x][y][z]");
+    assert_eq!(v("a b", "p : q"), "[p][q][]");
+    // Pure non-ws multi-var preserves the leading/trailing empties.
+    let (_, out, _) = run_zshrs(r#"IFS=: read a b c <<< ":x:"; echo "[$a][$b][$c]""#);
+    assert_eq!(out.trim(), "[][x][]");
 }
 
 #[test]
