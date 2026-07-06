@@ -2816,6 +2816,32 @@ fn test_subst_modifier_chained_with_t() {
 }
 
 #[test]
+fn test_subst_word_modifier_substitutes_per_word_first_match() {
+    // c:Src/subst.c modify() — the `:w` word flag applies `:s` to EACH
+    // whitespace word ONCE (first match per word), NOT to the whole string.
+    // zshrs ran the whole-string substitution AND the per-word pass, so a
+    // single word got two replacements: `${p:ws/./-/}` on `a.b.c` gave
+    // `a-b-c` instead of `a-b.c`.
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    // One word, non-global → only the FIRST match is replaced.
+    assert_eq!(out("p=a.b.c; echo ${p:ws/./-/}"), "a-b.c");
+    assert_eq!(out("p=hello; echo ${p:ws/l/L/}"), "heLlo");
+    assert_eq!(out("p=a.b.c.d; echo ${p:ws/./_/}"), "a_b.c.d");
+
+    // Multiple words → first match in each word independently.
+    assert_eq!(out(r#"p="x.y a.b"; echo ${p:ws/./-/}"#), "x-y a-b");
+    assert_eq!(out(r#"p="one two one"; echo ${p:ws/one/X/}"#), "X two X");
+
+    // `:gws` — global within each word.
+    assert_eq!(out("p=a.b.c; echo ${p:gws/./-/}"), "a-b-c");
+
+    // Plain `:s` (no word flag) still first-match on the whole string.
+    assert_eq!(out("p=a.b.c; echo ${p:s/./-/}"), "a-b.c");
+    assert_eq!(out("p=a.b.c; echo ${p:gs/./-/}"), "a-b-c");
+}
+
+#[test]
 fn test_q_modifier_backslash_quote() {
     // zsh `:q` uses backslash escaping, not single-bslashquote wrapping.
     let (_, output, _) = run_zshrs("p='hi there'; echo ${p:q}");
