@@ -3785,13 +3785,51 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         FPL.with(|c| c.set(fpre_s.len() as i32));
         FSL.with(|c| c.set(fsuf_s.len() as i32));
 
+        // c:3310-3335 — lppre: the directory portion of the word as it was
+        // actually typed on the line (zlemetaline[wb..cs]), truncated after
+        // its last '/'. This is what keeps `/usr/` on the line when
+        // completing `/usr/b<Tab>` → `/usr/bin/`. With no slash it is empty
+        // unless the prefix itself carried one (sf1), in which case it falls
+        // back to ppre. (qipre/brace adjustments omitted — empty for `-f`.)
+        let meta = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let wb = crate::ported::zle::compcore::WB.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let we = crate::ported::zle::compcore::WE.load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let cs = crate::ported::zle::compcore::ZLEMETACS
+            .load(std::sync::atomic::Ordering::Relaxed) as usize;
+        let sf1 = !ppre_s.is_empty();
+        let lppre_s = if cs != wb && wb <= cs && cs <= meta.len() {
+            let word = &meta[wb..cs];
+            match word.rfind('/') {
+                Some(p) => word[..=p].to_string(), // c:3326-3328
+                None if !sf1 => String::new(),     // c:3329-3331
+                None => ppre_s.clone(),            // c:3332-3334
+            }
+        } else {
+            String::new()
+        };
+        // c:3340-3363 — lpsuf: directory portion of the suffix on the line.
+        let lpsuf_s = if cs != we && cs <= we && we <= meta.len() {
+            let tail = &meta[cs..we];
+            match tail.find('/') {
+                Some(p) => tail[p..].to_string(),
+                None if s2.is_some() => psuf_s.clone(), // sf2 fallback
+                None => String::new(),
+            }
+        } else {
+            String::new()
+        };
+
         PPRE.with(|r| *r.borrow_mut() = ppre_s);
         PSUF.with(|r| *r.borrow_mut() = psuf_s);
         FPRE.with(|r| *r.borrow_mut() = fpre_s);
         FSUF.with(|r| *r.borrow_mut() = fsuf_s);
         QFPRE.with(|r| *r.borrow_mut() = qfpre_s);
         QFSUF.with(|r| *r.borrow_mut() = qfsuf_s);
-        // LPPRE/LPSUF left empty — see the zlemetaline brace-memmove gap.
+        LPPRE.with(|r| *r.borrow_mut() = lppre_s);
+        LPSUF.with(|r| *r.borrow_mut() = lpsuf_s);
     }
     // ===================== end preamble =====================
 
@@ -3802,6 +3840,15 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     // c:3050 — ccont gets the mask2 continuation bits.
     CCONT.with(|c| c.set(c.get() | (cc.mask2 & (CC_CCCONT | CC_DEFCONT | CC_PATCONT))));
 
+    // c:3490-3491 — the file-generating arms all run with `prpre = ppre`,
+    // so directory-prefixed words (`cat /tmp/dir/f<Tab>`) open the typed
+    // directory rather than the cwd. When ppre is empty (no path prefix)
+    // C leaves prpre = "" → opendir("."); the Rust gen_matches_files
+    // treats a None PRPRE as ".", so leave it untouched in that case.
+    let saved_prpre = PRPRE.with(|r| r.borrow().clone());
+    if !ppre.is_empty() {
+        PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
+    }
     // c:3650 — CC_FILES regular files.
     if (cc.mask & CC_FILES) != 0 {
         ADDWHAT.with(|c| c.set(-5));
@@ -3841,6 +3888,8 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             }
         }
     }
+    // c:3540 — restore prpre after the file-generating arms.
+    PRPRE.with(|r| *r.borrow_mut() = saved_prpre);
     // CC_NAMED — c:3742
     if (cc.mask & CC_NAMED) != 0 {
         ADDWHAT.with(|c| c.set(-1));
