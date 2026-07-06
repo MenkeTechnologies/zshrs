@@ -4540,6 +4540,18 @@ pub fn setarrvalue(v: &mut value, val: Vec<String>) {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         arr.retain(|s| seen.insert(s.clone())); // c:2967
     }
+    // c:Src/params.c:2922 — a SUBSCRIPT-RANGE assignment (`path[i,j]=(…)`,
+    // `path[N]=(…)`, `path[i,j]=()`) reaches here (the whole-replace form
+    // returned early via arrsetfn above). For a tied colon-array the scalar
+    // side must re-derive, just like the single-element path in
+    // assignsparam; see TIED_COLON_ARRAYS. Snapshot after the splice.
+    let tie_sync: Option<(&'static str, String)> = TIED_COLON_ARRAYS
+        .iter()
+        .find(|(a, _)| *a == pm.node.nam)
+        .map(|(_, scalar)| (*scalar, pm.u_arr.as_deref().unwrap_or(&[]).join(":")));
+    if let Some((scalar, joined)) = tie_sync {
+        assignsparam(scalar, &joined, 0);
+    }
 }
 
 /// Retrieve integer parameter.
@@ -5274,6 +5286,24 @@ pub enum getarg_out<'a> {
 /// are documented but elided where unreachable from current
 /// callers — none of those code paths are exercised by zshrs's
 /// existing call sites.
+/// c:Src/params.c:395-422 — the IPDEF8 PM_TIED colon-array pairs. A
+/// SUBSCRIPT modification of the ARRAY side (`path[N]=x`, `path[i,j]=(…)`,
+/// `unset path[N]`) must re-derive the tied SCALAR side, exactly as C's
+/// array setfn does after setarrvalue rebuilds the array. zshrs lacks the
+/// per-name GSU vtable, so the subscript paths carry the tie explicitly via
+/// this const map (the mirror of the scalar→array cascade); each site joins
+/// the updated array with `:` and writes the scalar through assignsparam.
+pub(crate) const TIED_COLON_ARRAYS: &[(&str, &str)] = &[
+    ("path", "PATH"),
+    ("fpath", "FPATH"),
+    ("manpath", "MANPATH"),
+    ("cdpath", "CDPATH"),
+    ("psvar", "PSVAR"),
+    ("module_path", "MODULE_PATH"),
+    ("fignore", "FIGNORE"),
+    ("mailpath", "MAILPATH"),
+];
+
 pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // c:3203 `if (!isident(s)) { zerr; errflag |= ERRFLAG_ERROR; return NULL; }`
     if !isident(s) {
@@ -6185,25 +6215,13 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                            // explicit colon-array name map (mirror of the scalar→array
                            // cascade at params.rs:~6396); rejoin the array with `:` and
                            // write the scalar side so `echo $PATH` sees the edit.
+        // c:Src/params.c:2922 — a tied colon-array element assignment
+        // re-derives the scalar side (path→PATH etc.); see
+        // TIED_COLON_ARRAYS. The direct-u_arr element path above skipped it.
         let base = name.split('[').next().unwrap_or(name);
-        let tied_scalar: Option<&str> = match base {
-            "path" => Some("PATH"),
-            "fpath" => Some("FPATH"),
-            "manpath" => Some("MANPATH"),
-            "cdpath" => Some("CDPATH"),
-            "psvar" => Some("PSVAR"),
-            "module_path" => Some("MODULE_PATH"),
-            "fignore" => Some("FIGNORE"),
-            "mailpath" => Some("MAILPATH"),
-            _ => None,
-        };
-        if let Some(scalar) = tied_scalar {
-            let joined = cloned
-                .u_arr
-                .as_deref()
-                .map(|a| a.join(":"))
-                .unwrap_or_default();
-            assignsparam(scalar, &joined, 0); // re-derives the scalar/env side
+        if let Some((_, scalar)) = TIED_COLON_ARRAYS.iter().find(|(a, _)| *a == base) {
+            let joined = cloned.u_arr.as_deref().unwrap_or(&[]).join(":");
+            assignsparam(scalar, &joined, 0);
         }
         return Some(cloned); // c:3345
     }

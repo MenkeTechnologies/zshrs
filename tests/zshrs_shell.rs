@@ -13053,3 +13053,30 @@ fn test_tied_colon_array_element_assignment_syncs_scalar() {
     // A plain (untied) array element assignment is unaffected.
     assert_eq!(run(r#"a=(1 2 3); a[2]=X; echo "${a[@]}""#), "1 X 3");
 }
+
+#[test]
+fn test_tied_colon_array_slice_and_unset_sync_scalar() {
+    // c:Src/params.c:2922 — every SUBSCRIPT modification of a tied
+    // colon-array re-derives the scalar side, not just the single-element
+    // scalar form: range (setarrvalue), array-valued element, delete, and
+    // `unset name[...]`. zshrs synced only path[N]=scalar before.
+    let run = |code: &str| run_zshrs(code).1.trim().to_string();
+    // Range replace.
+    assert_eq!(run("path=(/a /b /c /d); path[2,3]=(/X /Y); echo $PATH"), "/a:/X:/Y:/d");
+    // Range shrink.
+    assert_eq!(run("path=(/a /b /c); path[2,3]=(/X); echo $PATH"), "/a:/X");
+    // Range to end (negative).
+    assert_eq!(run("path=(/a /b /c); path[2,-1]=(/Z); echo $PATH"), "/a:/Z");
+    // Element replaced with multiple.
+    assert_eq!(run("path=(/a /b /c); path[2]=(/X /Y); echo $PATH"), "/a:/X:/Y:/c");
+    // Range delete.
+    assert_eq!(run("path=(/a /b); path[2,3]=(); echo $PATH"), "/a");
+    // fpath slice.
+    assert_eq!(run("fpath=(/a /b /c); fpath[1,2]=(/N); echo $FPATH"), "/N:/c");
+    // unset element (element becomes empty, kept).
+    assert_eq!(run(r#"path=(/a /b /c /d); unset "path[2]"; echo "$PATH ${#path}""#), "/a::/c:/d 4");
+    // unset range.
+    assert_eq!(run(r#"path=(/a /b /c /d); unset "path[2,3]"; echo $PATH"#), "/a::/d");
+    // Plain untied array unaffected.
+    assert_eq!(run(r#"a=(1 2 3 4); a[2,3]=(X Y Z); echo "${a[@]}""#), "1 X Y Z 4");
+}
