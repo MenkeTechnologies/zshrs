@@ -1511,30 +1511,24 @@ pub fn bin_compset(
             nb = 0;
         }
         CVT_PREPAT | CVT_SUFPAT => {
-            // c:1203-1206 — with a second arg, the FIRST is the count and
-            // the SECOND is the pattern: `na = atoi(sa); sa = sb;`.
-            if sb_ref.is_some() {
+            // c:1203
+            if let Some(s2) = sb_ref {
+                // c:1204
                 na = sa_ref.parse::<i32>().unwrap_or(0); // c:1205
+                let _ = s2; // c:1206 sa = sb
+                nb = 0;
+            } else {
+                nb = 0;
             }
-            nb = 0;
         }
         _ => {
             nb = 0;
         }
     }
     let _ = (na, nb);
-    // c:1206 — for -P/-S with two args the pattern is `sb` (C reassigns
-    // `sa = sb`). Passing `sa` here (the count string, e.g. "1") made
-    // `compset -P 1 '='` test the prefix against pattern "1" instead of
-    // "=", so `_main_complete` wrongly set `$compstate[context]=equal`
-    // for ordinary words and every completion did command completion.
-    let pat = if (test == CVT_PREPAT || test == CVT_SUFPAT) && sb_ref.is_some() {
-        sb_ref.unwrap()
-    } else {
-        sa_ref
-    };
-    // c:1218 — `do_comp_vars(test, na, sa, nb, sb, 0)` dispatch.
-    do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 0)
+    // c:1218-1207 — `do_comp_vars(test, na, sa, nb, sb, 0)` dispatch.
+    // Deferred (do_comp_vars is the structural-shell port below).
+    do_comp_vars(test, na, sa_ref, nb, sb_ref.unwrap_or(""), 0) // c:1218
 }
 
 // =====================================================================

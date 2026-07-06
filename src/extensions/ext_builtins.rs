@@ -2122,20 +2122,6 @@ impl ShellExecutor {
         });
 
         self.compinit_pending = Some((rx, bg_start));
-
-        // Bind the standard completion widgets to `_main_complete` on
-        // the MAIN thread (sh:553-569). This must not run on the worker
-        // pool: `zle -C` mutates the interactive keymap/widget table,
-        // which is main-thread state. Without this, TAB stays bound to
-        // the builtin `expand-or-complete` → `makecomplist` finds
-        // `compfunc` empty → the Rust compsys engine (`_main_complete`)
-        // is never invoked and completion silently does nothing. The
-        // rebind needs only `_main_complete` (always present as a Rust
-        // port), not the background fpath-scan results, so it runs now
-        // rather than being deferred to `drain_compinit_bg`.
-        crate::compsys::ported::compinit::install_standard_complete_widgets();
-        crate::compsys::ported::compinit::maybe_rebind_tab_for_expand();
-
         0
     }
 
