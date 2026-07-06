@@ -739,9 +739,44 @@ pub fn docomplete(lst: i32) -> i32 {
     // c:992 `empty(h->funcs)`-and-no-`def` path returning 0.
     let mut lst_box = lst;
     let h_before = gethookdef("before_complete");
-    if !h_before.is_null() {
+    // c:621-624 — `if (runhookdef(BEFORECOMPLETEHOOK, &lst)) { return 0; }`.
+    // A non-zero return means the hook already handled this Tab — e.g. an
+    // active menu (before_complete advanced the menu cursor and inserted the
+    // next match). Short-circuit so do_completion doesn't restart completion
+    // from scratch (which re-inserted the first match and treated the
+    // inserted word as a fresh completion). When the hook table is empty
+    // (the `zsh -f` path doesn't register it) fall back to the canonical
+    // handler directly, mirroring docompletion's `complete`-hook fallback.
+    let bc_handled = if !h_before.is_null() {
         let lst_ptr = (&mut lst_box) as *mut i32 as *mut std::ffi::c_void;
-        crate::ported::module::runhookdef(h_before, lst_ptr);
+        crate::ported::module::runhookdef(h_before, lst_ptr) != 0
+    } else {
+        crate::ported::zle::compcore::before_complete(&mut lst_box) != 0
+    };
+    if bc_handled {
+        // before_complete handled this Tab (e.g. advanced an active menu and
+        // do_single'd the next match into the metafied buffer). Mirror the
+        // compend copy-back so the interactive editor buffer reflects the
+        // change, then return without restarting completion. Without this the
+        // metafied line held the new match but the editor kept redisplaying
+        // the previous one (menu never appeared to advance).
+        if crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) != 0 {
+            crate::ported::zle::compcore::unmetafy_line();
+        }
+        let comp_line: Vec<char> = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.chars().collect())
+            .unwrap_or_default();
+        let comp_ll = comp_line.len() as i32;
+        let comp_cs = crate::ported::zle::compcore::ZLECS.load(Ordering::SeqCst);
+        if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+            *g = comp_line;
+        }
+        crate::ported::zle::zle_main::ZLECS
+            .store(comp_cs.clamp(0, comp_ll) as usize, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(comp_ll as usize, Ordering::SeqCst);
+        return 0; // _active_guard resets ACTIVE on drop
     }
 
     // c:628 — `if (doexpandhist()) { active = 0; return 0; }`.

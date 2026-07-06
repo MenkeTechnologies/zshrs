@@ -1104,95 +1104,111 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
     // c:744
     // c:748 — `menucmp = menuacc = 0`.
     MENUCMP.store(0, Relaxed);
+    crate::ported::zle::compcore::menuacc.store(0, Relaxed);
     // c:763 — `lastambig = 1`.
     LASTAMBIG.store(1, Relaxed);
 
-    // c:774 — if `ainfo` is populated, walk ainfo->line via cline_str
-    // (compresult.c:535 path); else fall back to the LCP over the
-    // provided match strings.
-    let ainfo_line = crate::ported::zle::compcore::ainfo
-        .get_or_init(|| std::sync::Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
-    let prefix = if let Some(line) = ainfo_line {
-        // c:535 — render the unambiguous string (ins=0 → copy out).
-        cline_str(Some(line), 0, None, None).unwrap_or_default()
+    // c:765-773 — menu branch. When menu completion is active (MENU_COMPLETE
+    // → usemenu) and we are not being driven by the interactive menu-select
+    // widget (iforcemenu != -1), insert the first/next match via
+    // do_ambig_menu instead of the common-prefix insertion, then fall
+    // through to the listing tail. Without this, `setopt menucomplete` never
+    // inserted a match on an ambiguous Tab — the word just stayed put.
+    // (The C companion condition `haspattern && comppatinsert == "menu"`,
+    // used by GLOB_COMPLETE, is omitted: the glob/pattern path is not yet
+    // ported, so haspattern stays 0 and the term can never fire.)
+    let iforcemenu_top = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
+    let usemenu_top = crate::ported::zle::zle_tricky::USEMENU.load(Relaxed);
+    if iforcemenu_top != -1 && usemenu_top != 0 {
+        // c:773 — insert the first/next match; fall through to the tail.
+        let _ = do_ambig_menu();
     } else {
-        unambig_data(matches)
-    };
-    if prefix.is_empty() && matches.is_empty() {
-        return 0; // c:nomatch
-    }
-    // c:783-790 — buffer-edit: foredel the original word, inststr
-    // the unambig prefix, when WB/WE describe a valid range.
-    if !prefix.is_empty() {
-        let wb = crate::ported::zle::compcore::WB.load(Relaxed);
-        let we = crate::ported::zle::compcore::WE.load(Relaxed);
-        if we > wb && wb >= 0 {
-            let span = we - wb;
-            crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
-            // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on
-            // a metafied line; without it foredel takes the non-raw path
-            // and deletes nothing, so inststr below prepends the prefix
-            // to the still-present word (ambiguous `ec` → `ecec`).
-            foredel(span, CUT_RAW); // c:786
-            let _ = inststr(&prefix); // c:790
+        // c:774 — else if (ainfo) — if `ainfo` is populated, walk ainfo->line
+        // via cline_str (compresult.c:535 path); else fall back to the LCP
+        // over the provided match strings.
+        let ainfo_line = crate::ported::zle::compcore::ainfo
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|a| a.line.clone()));
+        let prefix = if let Some(line) = ainfo_line {
+            // c:535 — render the unambiguous string (ins=0 → copy out).
+            cline_str(Some(line), 0, None, None).unwrap_or_default()
+        } else {
+            unambig_data(matches)
+        };
+        if prefix.is_empty() && matches.is_empty() {
+            return 0; // c:843-844 — else return ret (no ainfo → nothing to do)
+        }
+        // c:783-790 — buffer-edit: foredel the original word, inststr
+        // the unambig prefix, when WB/WE describe a valid range.
+        if !prefix.is_empty() {
+            let wb = crate::ported::zle::compcore::WB.load(Relaxed);
+            let we = crate::ported::zle::compcore::WE.load(Relaxed);
+            if we > wb && wb >= 0 {
+                let span = we - wb;
+                crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
+                // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on
+                // a metafied line; without it foredel takes the non-raw path
+                // and deletes nothing, so inststr below prepends the prefix
+                // to the still-present word (ambiguous `ec` → `ecec`).
+                foredel(span, CUT_RAW); // c:786
+                let _ = inststr(&prefix); // c:790
+            }
+        }
+
+        // c:813 — `la = (zlemetall != origll || strncmp(origline,
+        // zlemetaline, zlemetall))` — did inserting the prefix change the line?
+        let origll = crate::ported::zle::zle_tricky::ORIGLL.load(Relaxed);
+        let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Relaxed);
+        let origline_s = crate::ported::zle::zle_tricky::ORIGLINE
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let metaline_s = crate::ported::zle::compcore::ZLEMETALINE
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let la = zlemetall != origll || {
+            let n = (zlemetall.max(0) as usize)
+                .min(origline_s.len())
+                .min(metaline_s.len());
+            origline_s.as_bytes()[..n] != metaline_s.as_bytes()[..n]
+        };
+        // c:832-842 — `if ((uselist == 3 || (!uselist && BASHAUTOLIST &&
+        // LISTAMBIGUOUS)) && la && iforcemenu != -1) { invalidatelist();
+        // lastambig = 0; clearlist = 1; return ret; }`. With LIST_AMBIGUOUS
+        // (`uselist == 3`, the `zsh -f` default) the list is shown only when
+        // the completion is fully ambiguous — i.e. inserting the prefix
+        // changed nothing. If it extended the word (`la`), don't list yet
+        // (`cat config<Tab>` → `config.` with no list; a second Tab lists).
+        let uselist_v = crate::ported::zle::compcore::uselist.load(Relaxed);
+        let iforcemenu_v = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
+        if (uselist_v == 3
+            || (uselist_v == 0
+                && isset(crate::ported::zsh_h::BASHAUTOLIST)
+                && isset(crate::ported::zsh_h::LISTAMBIGUOUS)))
+            && la
+            && iforcemenu_v != -1
+        {
+            crate::ported::zle::zle_h::invalidatelist();
+            crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Relaxed);
+            crate::ported::zle::zle_refresh::CLEARLIST.store(1, Relaxed);
+            return 0;
         }
     }
 
-    // c:`la = (zlemetall != origll || strncmp(origline, zlemetaline,
-    // zlemetall))` — did inserting the unambiguous prefix change the line?
-    let origll = crate::ported::zle::zle_tricky::ORIGLL.load(Relaxed);
-    let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Relaxed);
-    let origline_s = crate::ported::zle::zle_tricky::ORIGLINE
-        .get()
-        .and_then(|m| m.lock().ok())
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let metaline_s = crate::ported::zle::compcore::ZLEMETALINE
-        .get()
-        .and_then(|m| m.lock().ok())
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let la = zlemetall != origll || {
-        let n = (zlemetall.max(0) as usize)
-            .min(origline_s.len())
-            .min(metaline_s.len());
-        origline_s.as_bytes()[..n] != metaline_s.as_bytes()[..n]
-    };
-    // c:`if ((uselist == 3 || (!uselist && BASHAUTOLIST && LISTAMBIGUOUS))
-    //     && la && iforcemenu != -1) { invalidatelist(); lastambig = 0;
-    //     clearlist = 1; return ret; }`. With LIST_AMBIGUOUS (`uselist == 3`,
-    // the `zsh -f` default) the list is shown only when the completion is
-    // fully ambiguous — i.e. inserting the prefix changed nothing. If it
-    // extended the word (`la`), don't list yet (`cat config<Tab>` →
-    // `config.` with no list; a second Tab lists). Without this the port
-    // listed on every ambiguous Tab.
-    let uselist_v = crate::ported::zle::compcore::uselist.load(Relaxed);
-    let iforcemenu_v = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
-    if (uselist_v == 3
-        || (uselist_v == 0
-            && isset(crate::ported::zsh_h::BASHAUTOLIST)
-            && isset(crate::ported::zsh_h::LISTAMBIGUOUS)))
-        && la
-        && iforcemenu_v != -1
-    {
-        crate::ported::zle::zle_h::invalidatelist();
-        crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Relaxed);
-        crate::ported::zle::zle_refresh::CLEARLIST.store(1, Relaxed);
-        return 0;
-    }
-
-    // compresult.c do_ambiguous tail — decide whether the ambiguous match
-    // set needs a listing, and trigger it via `showinglist = -2`. The
-    // previous Rust port omitted this, so `showinglist` stayed 0 and
-    // do_completion's fallback set `onlyexpl = 3` (explanation-only mode),
-    // which makes calclist skip every real match — `l<Tab>` computed 257
-    // matches but displayed nothing.
+    // c:846-857 — tail: decide whether the ambiguous match set needs a
+    // listing and trigger it via `showinglist = -2`. Reached by both the
+    // menu branch and the common-prefix branch (C's fall-through). Without
+    // this the port left `showinglist` at 0 and do_completion's fallback set
+    // `onlyexpl = 3` (explanation-only mode), which makes calclist skip every
+    // real match — `l<Tab>` computed 257 matches but displayed nothing.
     let mut ret = 0;
     let oldlist_v = crate::ported::zle::compcore::oldlist.load(Relaxed);
-    // c:`if (isset(LISTBEEP) && !oldlist) ret = 1;`
+    // c:848 — `if (isset(LISTBEEP) && !oldlist) ret = 1;`
     if isset(crate::ported::zsh_h::LISTBEEP) && oldlist_v == 0 {
         ret = 1;
     }
@@ -1202,6 +1218,7 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
     let showinglist_v = SHOWINGLIST.load(Relaxed);
     let smatches_v = crate::ported::zle::compcore::smatches.load(Relaxed);
     let forcelist_v = crate::ported::zle::compcore::forcelist.load(Relaxed);
+    // c:851-855
     if uselist_v != 0
         && (usemenu_v != 2 || (listshown_v == 0 && oldlist_v == 0))
         && ((showinglist_v == 0 && (listshown_v == 0 || oldlist_v == 0))
