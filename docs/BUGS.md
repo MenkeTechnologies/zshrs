@@ -19,6 +19,38 @@ CI green pending the underlying fix.
 
 ---
 
+## #661 — `((EXPR))` command truncated a trailing `)` closing an inner subexpr — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+((x=(1+2))); echo $x      # expect 3
+((n=(3))); echo $n        # expect 3
+x=1; ((x && (y=5))); echo $y   # expect 5
+```
+
+**Observed (before):** `bad math expression: ')' expected` (the assignment
+still partially ran). Only the `((…))` COMMAND form failed — `$((…))`
+substitution and the spaced `(( … ))` form worked.
+
+**Root cause:** `compile_arith` (compile_zsh.rs) stripped the lexer's paren
+wrapper with `untoked.trim_start_matches('(').trim_end_matches(')')`. The
+`trim_end_matches(')')` removes a trailing `)` INDEPENDENTLY of any leading
+`(`, so `x=(1+2)` — whose final `)` closes the inner subexpression, not a
+wrapper — was truncated to `x=(1+2`, which the math parser rejected. The lexer
+(`cmd_or_math`) extracts the correct `x=(1+2)`; the damage was purely in the
+compiler's wrapper strip.
+
+**Fix:** strip only a BALANCED outer `( … )` wrapper — verify the leading `(`
+matches the trailing `)` (paren depth returns to 0 exactly at the end) before
+removing them, repeating for nested wrappers (`((expr))` → `(expr)` → `expr`).
+Subscripted (`((a[i]=v))`), compound (`((a[i]+=10))`), comma, and plain
+`((expr))` forms are unchanged.
+
+---
+
 ## #660 — `whence`/`type` reported a DISABLED builtin as a builtin — FIXED
 
 **Status:** `fixed`
