@@ -7474,6 +7474,63 @@ pub fn paramsubst(
         // the scalar result from the first subscript. zsh's
         // `${a[N][M]}` returns char M (1-based) of array element N.
         let raw_value: String = if let Some(s2) = second_subscript.as_deref() {
+            // c:Src/params.c getindex chain — when the FIRST subscript is an
+            // array SLICE (`[lo,hi]`, comma present) on an array, it yields a
+            // sub-array, and the SECOND subscript indexes/slices THAT
+            // sub-array element-wise — NOT the characters of the joined
+            // string. `${a[1,3][2]}` → element 2 of (one two three) = `two`;
+            // `${a[1,3][2,3]}` → sub-slice (two three). Only a single-element
+            // first subscript (`${a[N][M]}`) walks into the element's chars
+            // (handled below). Equivalent to `${${a[lo,hi]}[M]}`.
+            let first_slice = subscript.as_deref().filter(|s| s.contains(','));
+            if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
+                // c:Src/lex.c — in an UNQUOTED subscript the lexer tokenizes
+                // `-` to the Dash token (\u{9b}); quoted keeps a literal `-`.
+                // `${a[1,3][-1]}` arrives as `\u{9b}1`, so normalize before
+                // the numeric parse (else the negative index reads as +1).
+                let s1 = s1_raw.replace('\u{9b}', "-");
+                let s2 = s2.replace('\u{9b}', "-");
+                let s2 = s2.as_str();
+                let parse_idx = |t: &str, dflt: i64| -> i64 {
+                    t.trim()
+                        .parse()
+                        .ok()
+                        .or_else(|| crate::ported::math::mathevali(t.trim()).ok())
+                        .unwrap_or(dflt)
+                };
+                let (lo1_s, hi1_s) = s1.split_once(',').unwrap();
+                let lo1 = parse_idx(lo1_s, 1);
+                let hi1 = parse_idx(hi1_s, full.len() as i64);
+                let subarr = crate::ported::params::getarrvalue(&full, lo1, hi1);
+                if let Some((lo2_s, hi2_s)) = s2.split_once(',') {
+                    // Slice-of-slice → array result.
+                    let lo2 = parse_idx(lo2_s, 1);
+                    let hi2 = parse_idx(hi2_s, subarr.len() as i64);
+                    let out = crate::ported::params::getarrvalue(&subarr, lo2, hi2);
+                    isarr = if out.is_empty() { -1 } else { 1 };
+                    let joined = out.join(" ");
+                    split_parts = Some(out);
+                    joined
+                } else {
+                    // Single index → scalar element of the sub-array. Seed
+                    // split_parts so the unquoted array-output path
+                    // (subst.rs:8328, which re-joins arrays_get) emits this
+                    // one element instead of re-deriving the first slice.
+                    let k = parse_idx(s2, 1);
+                    let nl = subarr.len() as i64;
+                    let idx = if k < 0 { nl + k } else { k - 1 };
+                    if idx >= 0 && (idx as usize) < subarr.len() {
+                        let elem = subarr[idx as usize].clone();
+                        split_parts = Some(vec![elem.clone()]);
+                        isarr = 1;
+                        elem
+                    } else {
+                        split_parts = Some(Vec::new());
+                        isarr = -1;
+                        String::new()
+                    }
+                }
+            } else {
             // Slice form `M,P` or single index `M`. Negative indices
             // count from the end (per zsh's 1-based-from-1 / -1-from-
             // end convention).
@@ -7536,6 +7593,7 @@ pub fn paramsubst(
                 let i = resolve(k);
                 dv.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()
             }
+            } // close the array-slice-vs-scalar-element `else`
         } else {
             raw_value
         };

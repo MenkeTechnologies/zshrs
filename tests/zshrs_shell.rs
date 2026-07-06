@@ -437,6 +437,39 @@ fn test_array_slice_full() {
 }
 
 #[test]
+fn test_nested_subscript_on_array_slice_indexes_subarray() {
+    // c:Src/params.c getindex chain — a SECOND subscript after an array
+    // SLICE indexes/slices the sub-array element-wise (like `${${a[lo,hi]}[M]}`),
+    // NOT the characters of the joined string. Previously zshrs ignored the
+    // second subscript (unquoted) or char-indexed the joined slice (quoted).
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    // Single index into the slice → scalar element.
+    assert_eq!(out("a=(one two three four); echo ${a[1,3][2]}"), "two");
+    assert_eq!(out("a=(one two three four); echo ${a[2,-1][1]}"), "two");
+    // Negative index into the slice (unquoted `-` is the Dash token).
+    assert_eq!(out("a=(one two three four); echo ${a[1,3][-1]}"), "three");
+    assert_eq!(out("a=(one two three four); echo ${a[1,4][-2]}"), "three");
+    assert_eq!(out("a=(x y z w); echo ${a[-3,-1][1]}"), "y");
+    // Out-of-range second index → empty.
+    assert_eq!(out("a=(one two three four); echo ${a[1,3][5]}"), "");
+    // Slice-of-slice → sub-array.
+    assert_eq!(out("a=(one two three four); echo ${a[1,3][2,3]}"), "two three");
+    assert_eq!(out("a=(one two three four); echo ${a[1,3][2,10]}"), "two three");
+    // Quoted single index (char-index bug regression: must NOT char-index).
+    assert_eq!(out(r#"a=(one two three four); echo "${a[1,2][2]}""#), "two");
+    // Array context: the single-index result is one element.
+    assert_eq!(
+        out("a=(one two three four); b=(${a[1,3][2]}); echo \"$#b|$b[1]\""),
+        "1|two"
+    );
+    // Regression: single-element first subscript still char-indexes.
+    assert_eq!(out("a=(one two three); echo ${a[1][2]}"), "n");
+    // Regression: plain slice unchanged.
+    assert_eq!(out("a=(one two three); echo ${a[2,3]}"), "two three");
+}
+
+#[test]
 fn test_scalar_slice() {
     let (_, output, _) = run_zshrs("str='hello world'; print ${str[1,5]}");
     assert_eq!(output.trim(), "hello", "got: {output:?}");
