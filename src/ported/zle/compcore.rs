@@ -408,13 +408,49 @@ pub fn before_complete(lst: &mut i32) -> i32 {
     let menucmp_v = MENUCMP.load(Ordering::Relaxed);
 
     // c:471-474 — menu-completion shortcircuit (non-listing path).
+    // C: `do_menucmp(*lst); return 1;`. An active menu (minfo.cur set,
+    // menucmp on) means this Tab should step the menu cursor and insert the
+    // next match, NOT restart completion.
     if has_cur && menucmp_v != 0 && *lst != COMP_LIST_EXPAND {
-        // C: `do_menucmp(*lst); return 1;` — Rust signature takes a
-        // match list; the side-effect of advancing minfo lives in
-        // do_menucmp. The post-summary `do_menucmp` Rust port has a
-        // (&[String], cur, fwd) → (idx, &str) shape, which doesn't
-        // fit a void-context call. The salient signal here is the
-        // `return 1` short-circuit; preserve that.
+        if *lst == COMP_LIST_COMPLETE {
+            // do_menucmp c:1258-1260 — just (re)show the list.
+            SHOWINGLIST.store(-2, Ordering::Relaxed);
+        } else {
+            // do_menucmp c:1270-1276 —
+            //   while (zmult) { minfo.cur = valid_match(minfo.cur, 1);
+            //                   zmult -= sign; }
+            //   do_single(*minfo.cur);
+            // valid_match advances the menu cursor one valid match in the
+            // ZMULT direction, updating minfo.group_idx/cur_idx; do_single
+            // then replaces the previously-inserted match (tracked via
+            // minfo.pos/len/end) with the new one.
+            let mult = crate::ported::zle::zle_main::ZMOD
+                .lock()
+                .map(|g| g.mult)
+                .unwrap_or(1);
+            ZMULT.store(mult, Ordering::Relaxed);
+            let steps = mult.abs().max(1);
+            let mut mc = None;
+            for _ in 0..steps {
+                let cur_idx = MINFO
+                    .get()
+                    .and_then(|m| m.lock().ok())
+                    .map(|m| m.cur_idx)
+                    .unwrap_or(0);
+                mc = crate::ported::zle::compresult::valid_match(cur_idx, 1);
+            }
+            // c:1272 — minfo.cur = valid_match(...); set before do_single so
+            // the insertion state stays consistent with the advanced cursor.
+            if let Ok(mut mst) = MINFO
+                .get_or_init(|| Mutex::new(Menuinfo::default()))
+                .lock()
+            {
+                mst.cur = mc.clone().map(Box::new);
+            }
+            if let Some(ref m) = mc {
+                crate::ported::zle::compresult::do_single(m); // c:1276
+            }
+        }
         return 1; // c:473
     }
     // c:475-479 — menu-completion shortcircuit (listing path).
