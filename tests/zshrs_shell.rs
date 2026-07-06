@@ -6089,6 +6089,38 @@ fn test_unknown_modifier_capital_Z() {
 }
 
 #[test]
+fn test_flag_only_modifier_reports_first_char() {
+    // c:Src/subst.c:3785-3790 — a bare pre-flag (`g`/`w`/`W`/`f`/`F`) with
+    // NO following modifier letter is an error, and zsh names the FIRST
+    // char after the `:` (s[1]), not a bare message and not the last flag.
+    // zshrs previously emitted a bare "unrecognized modifier" here.
+    let modchar = |code: &str| -> String {
+        let (_, _, stderr) = run_zshrs(code);
+        stderr.trim().to_string()
+    };
+    // Single flag, no modifier → that flag char is named.
+    assert!(
+        modchar(r#"p=x; echo ${p:w}"#).ends_with("unrecognized modifier `w'"),
+        "got: {:?}",
+        modchar(r#"p=x; echo ${p:w}"#)
+    );
+    assert!(modchar(r#"p=x; echo ${p:g}"#).ends_with("unrecognized modifier `g'"));
+    assert!(modchar(r#"p=x; echo ${p:f}"#).ends_with("unrecognized modifier `f'"));
+    // Multiple flags → the FIRST char after the colon is named.
+    assert!(modchar(r#"p=x; echo ${p:gw}"#).ends_with("unrecognized modifier `g'"));
+    assert!(modchar(r#"p=x; echo ${p:wg}"#).ends_with("unrecognized modifier `w'"));
+    // A truly empty operand `${p:}` stays a BARE message (no char, c:3790).
+    let empty = modchar(r#"p=x; echo ${p:}"#);
+    assert!(
+        empty.ends_with("unrecognized modifier"),
+        "empty operand must be bare: {empty:?}"
+    );
+    // A flag followed by a VALID modifier is not an error (no regression).
+    let (_, out, _) = run_zshrs(r#"p=aXbXc; echo ${p:gs/X/-/}"#);
+    assert_eq!(out.trim(), "a-b-c");
+}
+
+#[test]
 fn test_arith_recursive_string_var_eval() {
     // zsh: `a="3+2"; $((a))` recursively evaluates the var's string
     // value as an arith expression → 5. Regression: zshrs returned 0
