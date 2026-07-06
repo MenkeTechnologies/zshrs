@@ -2539,6 +2539,23 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             // c:1115 — `return lastmathval`. The body's last arithmetic
             // evaluation (e.g. `(( REPLY = $1 + 2 ))`) is the function's value.
             return M_LASTMATHVAL.with(|c| c.get());
+        } else {
+            // c:Src/math.c:1110-1112 — the math function IS registered
+            // (MFF_USERFUNC via `functions -M`), but its implementing shell
+            // function doesn't exist: `zerr("no such function: %s", shfnam)`.
+            // This is distinct from the `unknown function` of an
+            // UN-registered math name (c:1131); zshrs previously fell
+            // through to that generic message.
+            crate::ported::utils::zerr(&format!("no such function: {}", impl_name)); // c:1112
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            return mnumber {
+                l: 0,
+                d: 0.0,
+                type_: MN_INTEGER,
+            };
         }
     } // close `if mathfunc_entry.is_some()`
 
