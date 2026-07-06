@@ -3573,6 +3573,52 @@ fn test_zparseopts_dash_d_removes_only_consumed() {
 }
 
 #[test]
+fn test_zparseopts_dash_v_source_array() {
+    // `-v NAME` (Src/Modules/zutil.c:1955, added post-5.9 in commit
+    // d051857e03) parses options FROM the array `$NAME` instead of the
+    // positional params, and `-D` writes the remaining elements back.
+    // c:1956-1958 aborts with "no such array" when NAME is not an array.
+    let sh = |code: &str| {
+        let (_, out, err) = run_zshrs(code);
+        (out, err)
+    };
+
+    // Parse from a populated source array.
+    let (out, _) = sh(
+        "zmodload zsh/zutil; src=(-a -b x); zparseopts -v src a=A b=B; print -r -- \"A=($A) B=($B)\"",
+    );
+    assert_eq!(out.trim(), "A=(-a) B=(-b)", "got: {out:?}");
+
+    // -D writes the unconsumed tail back to the source array.
+    let (out, _) = sh(
+        "zmodload zsh/zutil; src=(-a extra); zparseopts -D -v src a=A; print -r -- \"src=($src)\"",
+    );
+    assert_eq!(out.trim(), "src=(extra)", "got: {out:?}");
+
+    // A DECLARED-empty source is a valid non-NULL empty array — no error.
+    let (_, err) = sh("zmodload zsh/zutil; src=(); zparseopts -v src a=A; print -r -- ok");
+    assert!(
+        !err.contains("no such array"),
+        "declared-empty source must not error: {err:?}"
+    );
+
+    // An UNSET source name has no array to parse — c:1956 aborts.
+    let (_, err) =
+        sh("zmodload zsh/zutil; unset nope 2>/dev/null; zparseopts -v nope a=A; print -r -- x");
+    assert!(
+        err.contains("no such array: nope"),
+        "unset source must report no-such-array: {err:?}"
+    );
+
+    // A SCALAR-named source is not an array — same abort.
+    let (_, err) = sh("zmodload zsh/zutil; src=hello; zparseopts -v src a=A; print -r -- x");
+    assert!(
+        err.contains("no such array: src"),
+        "scalar source must report no-such-array: {err:?}"
+    );
+}
+
+#[test]
 fn test_zparseopts_dash_m_alias_redirects_to_canonical() {
     // `-M f=optf -foo=f` aliases `--foo` to the `f` spec; the actual
     // `--foo` arg lands in `optf`.

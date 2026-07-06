@@ -19,6 +19,37 @@ CI green pending the underlying fix.
 
 ---
 
+## #648 — `zparseopts -v NAME` didn't error on a missing source array — FIXED
+
+**Status:** `fixed`
+
+**Context (version discrepancy):** the C reference at `~/forkedRepos/zsh` is
+`5.9.0.3-test` (dev, Aug 2025); the `-v` (argv source) and `-G` (GNU-style)
+flags were added POST-5.9 in commit `d051857e03`. The installed differential
+oracle is zsh **5.9.1** (Apple), which predates both flags — so `zsh -f`
+treats `-v…`/`-G…` as option DESCRIPTIONS, while zshrs (faithfully porting the
+dev C source) treats them as flags. zshrs is intentionally AHEAD of 5.9.1
+here; e.g. `zparseopts -verbose=v` correctly reports "missing option
+descriptions" (dev-zsh: `-v` consumes `erbose=v` as the source name), NOT a
+zshrs bug — do not "fix" it back to the 5.9.1 behavior.
+
+**The actual bug:** zshrs's `-v NAME` source fetch used
+`array(&name).unwrap_or_default()` — an unset (or scalar) NAME silently became
+an empty source instead of aborting. C `Src/Modules/zutil.c:1955-1958`:
+`params = getaparam(paramsname); if (!params) { zwarnnam(nam, "no such array:
+%s", paramsname); return 1; }`.
+
+**Fix:** match on `exec::array(&name)` — `None` (name isn't an array param)
+now emits `zparseopts: no such array: NAME` and returns 1. A DECLARED-empty
+array (`src=()`) yields `Some(empty)` and is a valid non-NULL source (no
+error); the default `argv` source is unchanged.
+
+**Verified:** `src=(-a -b x); zparseopts -v src a=A b=B` → `A=(-a) B=(-b)`;
+`src=(); zparseopts -v src …` → rc 0; `unset nope; zparseopts -v nope …` →
+`no such array: nope` rc 1; scalar `src=hello` → same abort.
+
+---
+
 ## #647 — brace expansion inside a `${x:-word}` default doesn't fire
 
 **Status:** `port-bug`
