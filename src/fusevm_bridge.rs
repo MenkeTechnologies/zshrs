@@ -1951,26 +1951,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_COMPDEF, |vm, argc| {
         let args = pop_args(vm, argc);
-        // A compsys-defined `compdef` FUNCTION (autoload compinit →
-        // compinit defines compdef) wins over the extension builtin
-        // in every mode.
+        // ACTUALLY A ZSH FUNCTION: compdef is defined by `compinit`, it is
+        // never a builtin. Without the completion system set up it is
+        // command-not-found (127) in every mode — `zsh -f; compdef` prints
+        // "command not found: compdef". A user/compsys `compdef` FUNCTION
+        // (autoload compinit → compinit defines compdef) wins and runs the
+        // fast native impl; otherwise it's command-not-found. Previously the
+        // extension builtin ran in native mode (bare `compdef` → "I need
+        // arguments"), diverging from zsh.
         if let Some(s) = try_user_fn_override("compdef", &args) {
             return Value::Status(s);
         }
-        // c:zsh -f — compdef is a FUNCTION defined by compinit, not
-        // a builtin; without compinit it's command-not-found (127).
-        // openshift-aliases sources `<(oc completion zsh)` whose
-        // compdef calls must error exactly like the oracle. Same
-        // gate shape as BUILTIN_COMPGEN/BUILTIN_COMPLETE above.
-        if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("zsh:1: command not found: compdef");
-            return Value::Status(127);
+        if with_executor(|exec| exec.function_exists("compdef")) {
+            return Value::Status(with_executor(|exec| exec.builtin_compdef(&args)));
         }
-        Value::Status(with_executor(|exec| exec.builtin_compdef(&args)))
+        eprintln!("zsh:1: command not found: compdef");
+        Value::Status(127)
     });
 
     vm.register_builtin(BUILTIN_COMPINIT, |vm, argc| {
         let args = pop_args(vm, argc);
+        // ACTUALLY A ZSH FUNCTION: compinit is a contrib FUNCTION (autoloaded
+        // from $fpath), never a builtin. Without `autoload -Uz compinit` it is
+        // command-not-found
+        // (127) in every mode — `zsh -f; compinit` prints
+        // "command not found: compinit". zshrs previously ran its builtin
+        // unconditionally, so bare `compinit` succeeded. Gate on a compinit
+        // function entry existing (which `autoload -Uz compinit` creates);
+        // once the user has autoloaded/defined it, run zshrs's implementation.
+        if !with_executor(|exec| exec.function_exists("compinit")) {
+            eprintln!("zsh:1: command not found: compinit");
+            let _ = args;
+            return Value::Status(127);
+        }
         Value::Status(with_executor(|exec| exec.builtin_compinit(&args)))
     });
 
@@ -2050,6 +2063,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Prompt
     vm.register_builtin(BUILTIN_PROMPTINIT, |vm, argc| {
         let args = pop_args(vm, argc);
+        // ACTUALLY A ZSH FUNCTION: promptinit is a contrib FUNCTION
+        // (autoloaded from $fpath), never a builtin. Command-not-found until
+        // `autoload -Uz promptinit`; once autoloaded, run the native impl.
+        if !with_executor(|exec| exec.function_exists("promptinit")) {
+            eprintln!("zsh:1: command not found: promptinit");
+            let _ = args;
+            return Value::Status(127);
+        }
         Value::Status(crate::extensions::ext_builtins::promptinit(&args))
     });
 
@@ -10684,10 +10705,19 @@ impl fusevm::ShellHost for ZshrsHost {
             with_executor(|exec| exec.set_last_status(1));
             return Some(1);
         }
-        // zsh-bundled rename helpers + zcalc: short-circuit BEFORE the
-        // function/autoload lookup so the autoloaded zsh source (which
-        // can hang zshrs's parser on zsh-specific syntax) never runs.
-        // Native Rust impls live in builtin_zmv / builtin_zcalc.
+        // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln/zcalc are zsh autoload
+        // functions, NOT builtins. zshrs ships fast native impls, but they
+        // must behave like the zsh functions — command-not-found until
+        // `autoload -Uz <name>` creates a function entry. When autoloaded we
+        // run the native impl here (short-circuiting the fpath source, which
+        // can hang zshrs's parser on zsh-specific syntax); when NOT autoloaded
+        // we fall through (return None → resolution ends in command-not-found),
+        // matching `zsh -f; zmv` → "command not found: zmv".
+        if matches!(name, "zmv" | "zcp" | "zln" | "zcalc")
+            && !with_executor(|exec| exec.function_exists(name))
+        {
+            return None;
+        }
         match name {
             "zmv" => {
                 return Some(crate::extensions::ext_builtins::zmv(&args, "mv"));
@@ -11588,13 +11618,25 @@ impl ShellExecutor {
             "unalias" | "unhash" | "unfunction" => {
                 return dispatch_builtin(cmd.as_str(), rest_vec.clone());
             }
-            // zsh-bundled rename helpers — implemented natively in
-            // Rust so `autoload -U zmv` works without shipping the
-            // function source. (Without this, the autoload path hangs.)
-            "zmv" => return crate::extensions::ext_builtins::zmv(&rest_vec, "mv"),
-            "zcp" => return crate::extensions::ext_builtins::zmv(&rest_vec, "cp"),
-            "zln" => return crate::extensions::ext_builtins::zmv(&rest_vec, "ln"),
-            "zcalc" => return crate::extensions::ext_builtins::zcalc(&rest_vec),
+            // ACTUALLY A ZSH FUNCTION: zmv/zcp/zln/zcalc are zsh autoload
+            // functions — implemented natively in Rust so `autoload -Uz zmv`
+            // works without shipping the function source (and without the
+            // fpath source hanging the parser). The `function_exists` guard
+            // keeps them command-not-found until autoloaded, exactly like zsh;
+            // an un-guarded arm ran them for bare `zmv`, diverging from
+            // `zsh -f; zmv` → "command not found: zmv".
+            "zmv" if self.function_exists("zmv") => {
+                return crate::extensions::ext_builtins::zmv(&rest_vec, "mv")
+            }
+            "zcp" if self.function_exists("zcp") => {
+                return crate::extensions::ext_builtins::zmv(&rest_vec, "cp")
+            }
+            "zln" if self.function_exists("zln") => {
+                return crate::extensions::ext_builtins::zmv(&rest_vec, "ln")
+            }
+            "zcalc" if self.function_exists("zcalc") => {
+                return crate::extensions::ext_builtins::zcalc(&rest_vec)
+            }
             "zselect" => {
                 // Route through canonical dispatch_builtin which goes
                 // via execbuiltin → BUILTINS["zselect"] (zselect.c:272).
