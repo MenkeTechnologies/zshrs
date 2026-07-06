@@ -19,6 +19,43 @@ CI green pending the underlying fix.
 
 ---
 
+## #646 — `${(m)#name}` counted characters instead of display cells — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+s="日本語"; echo ${(m)#s}
+s="😀";    echo ${(m)#s}
+s="ｆｕｌｌ"; echo ${(m)#s}
+```
+
+**Observed:**
+
+| case            | real zsh | zshrs (before) |
+|-----------------|----------|----------------|
+| `日本語`        | `6`      | `3`            |
+| `😀`            | `2`      | `1`            |
+| `ｆｕｌｌ`       | `8`      | `4`            |
+
+The `(m)` flag makes `${#name}` count display CELLS (columns) rather
+than characters — wide CJK/fullwidth/emoji glyphs are 2 cells. Padding
+with `(m)` (`${(ml:8:)s}`) already worked; only the length operator
+ignored it.
+
+**C reference:** `Src/subst.c:2376` `case 'm': multi_width++;` →
+`Src/subst.c:3867` `len = MB_METASTRLEN2(val, multi_width)` (scalar) and
+`:3858` for the `(mc)` array-join width. `mb_metastrlenend(ptr, width, …)`
+adds `WCWIDTH(wc)` per char when `width != 0`.
+
+**Fix:** the scalar length path passed `width=false` unconditionally;
+now passes `multi_width != 0`. The array `getlen==2` (`(c)`) element sum
+switched from `.chars().count()` to `mb_metastrlenend(elem, multi_width != 0, …)`.
+Plain `${#name}` (no `(m)`) still counts characters.
+
+---
+
 ## #645 — `${(z)}` doesn't split the `name=(…)` ENVARRAY parens
 
 **Status:** `port-bug` — the common `(z)` shell-tokenizations (quotes,

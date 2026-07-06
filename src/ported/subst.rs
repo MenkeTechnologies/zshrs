@@ -7922,7 +7922,14 @@ pub fn paramsubst(
                         let sl = sep.as_deref().map(|s| s.chars().count()).unwrap_or(1); // c:3851
                         let mut len: i64 = -(sl as i64); // c:3857
                         for elem in &arr {
-                            len += (sl as i64) + (elem.chars().count() as i64); // c:3858
+                            // c:3858 — `MB_METASTRLEN2(*ctr, multi_width)`; the
+                            // `(m)` flag counts display cells per element.
+                            len += (sl as i64)
+                                + (crate::ported::utils::mb_metastrlenend(
+                                    elem,
+                                    multi_width != 0,
+                                    elem.len(),
+                                ) as i64); // c:3858
                         }
                         len.max(0) as usize
                     }
@@ -7990,13 +7997,17 @@ pub fn paramsubst(
                     let multibyte_on =
                         crate::ported::options::opt_state_get("multibyte").unwrap_or(true);
                     if utf8 && multibyte_on {
-                        // c:3879 — `len = MB_METASTRLEN2(val, multi_width)`.
+                        // c:3867 — `len = MB_METASTRLEN2(val, multi_width)`.
                         // MB_METASTRLEN demetafies then mbrtowc-counts, so
                         // `$'\xc3\xa9'` (metafied é) counts 1 char, not the
                         // 4 metafied bytes a plain char-count would see.
+                        // c:2376 — the `(m)` flag sets multi_width, switching
+                        // the count from characters to display CELLS, so
+                        // `${(m)#日本語}` returns 6 (3 wide chars × 2 cells),
+                        // not 3. width != 0 ⇔ multi_width set.
                         crate::ported::utils::mb_metastrlenend(
                             &raw_value_for_len,
-                            false,
+                            multi_width != 0,
                             raw_value_for_len.len(),
                         )
                     } else {

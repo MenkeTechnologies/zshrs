@@ -12959,6 +12959,42 @@ fn test_substring_whitespace_offset_is_zero_not_unrecognized_modifier() {
 }
 
 #[test]
+fn test_length_m_flag_counts_display_cells_not_chars() {
+    // c:Src/subst.c:2376 `case 'm': multi_width++;` + c:3867
+    // `len = MB_METASTRLEN2(val, multi_width)`. The `(m)` flag switches
+    // `${#name}` from a CHARACTER count to a display-CELL (column) count.
+    // Wide CJK/fullwidth glyphs occupy 2 cells; the plain `${#name}` count
+    // stays 1-per-char. zshrs's scalar length passed `width=false`
+    // unconditionally, ignoring `(m)`.
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    // Scalar: 3 wide chars → 6 cells.
+    assert_eq!(out(r#"s="日本語"; print -r -- ${(m)#s}"#), "6");
+    // Emoji → 2 cells.
+    assert_eq!(out(r#"s="😀"; print -r -- ${(m)#s}"#), "2");
+    // Fullwidth Latin → 2 cells each.
+    assert_eq!(out(r#"s="ｆｕｌｌ"; print -r -- ${(m)#s}"#), "8");
+    // Mixed narrow+wide: a(1)+日(2)+b(1) = 4.
+    assert_eq!(out(r#"s="a日b"; print -r -- ${(m)#s}"#), "4");
+    // Empty → 0.
+    assert_eq!(out(r#"s=""; print -r -- ${(m)#s}"#), "0");
+
+    // Plain `${#name}` (no (m)) stays a CHAR count — no regression.
+    assert_eq!(out(r#"s="日本語"; print -r -- ${#s}"#), "3");
+    assert_eq!(out(r#"s="héllo"; print -r -- ${#s}"#), "5");
+
+    // Modifier chain runs before length: strip suffix then count cells.
+    assert_eq!(out(r#"s="日本語ABC"; print -r -- ${(m)#s%ABC}"#), "6");
+
+    // (mc) array: joined-with-sep cell width. 日本(4)+café(4)+1 sep = 9.
+    assert_eq!(out(r#"a=(日本 café); print -r -- ${(mc)#a}"#), "9");
+    // (c) alone (no m) stays a char count: 日本(2)+café(4)+1 = 7.
+    assert_eq!(out(r#"a=(日本 café); print -r -- ${(c)#a}"#), "7");
+    // (m) on an array with getlen==1 is ELEMENT count, not width.
+    assert_eq!(out(r#"a=(日本 café); print -r -- ${(m)#a}"#), "2");
+}
+
+#[test]
 fn test_tilde_globsubst_expands_tilde_in_value() {
     // c:Src/subst.c — ${~spec} / setopt globsubst subject a substituted
     // VALUE to the full filename-generation pipeline: filesub (tilde/`=`)
