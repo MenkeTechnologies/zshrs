@@ -19,6 +19,54 @@ CI green pending the underlying fix.
 
 ---
 
+## #655 — word splitting drops empty fields for a non-whitespace IFS
+
+**Status:** `port-bug`
+
+**Reproducer:**
+
+```zsh
+IFS=:;  a=":a:b:"; set -- ${=a};  echo $#     # expect 4  (``, a, b, ``)
+IFS=:;  a="a::b";  set -- ${=a};  echo $#     # expect 3  (a, ``, b)
+IFS=,;  a="a,,b";  b=(${=a});     echo $#b    # expect 3
+setopt shwordsplit; IFS=:; a=":a:b:"; set -- $a; echo $#  # expect 4
+```
+
+**Observed:** zshrs collapses consecutive/leading/trailing separators and drops
+the empty fields (`$#` = 2 / 2 / 2 / 2 above).
+
+**Scope:** all IFS-driven word-splitting contexts — `${=var}`, `setopt
+shwordsplit` on `$var`, and unquoted array assignment `(${=var})`. A WHITESPACE
+IFS (space/tab/newline) correctly collapses runs and trims — only a
+NON-whitespace IFS char must preserve empty fields. `${(s.:.)}` is a separate
+rule (unquoted empty-word removal) and already matches.
+
+**Root cause:** these splits are routed through `multsub`'s PREFORK_SPLIT loop
+(subst.rs), whose separator test is `is_ifs_sep(c) = ifs.contains(c)` — it
+treats EVERY IFS char as whitespace-like: it strips leading separators
+(`x = ":a:b:"` → `"a:b:"`) and walks past ALL consecutive separators (collapse),
+with no IWSEP-vs-ISEP distinction. C avoids this: `${=}`/shwordsplit split in
+`paramsubst` via `sepsplit`→`spacesplit` (`Src/utils.c:3711`), which IS
+typtab-aware (IWSEP collapses, non-whitespace ISEP preserves empties via
+`nulstring`), and returns an ARRAY before `prefork`/`multsub` runs — so C's
+multsub (which also collapses, `Src/subst.c:583-595`) never re-splits it.
+
+zshrs has the correct `spacesplit` (utils.rs:4744, IWSEP-aware) AND a paramsubst
+`force_split`→`sepsplit` block (subst.rs:13739), but for a bare `${=var}` that
+block is not reached — the value returns to `multsub` as an unsplit scalar with
+PREFORK_SPLIT set, and multsub's collapsing loop splits it.
+
+**Fix options (both deferred — high regression risk in the hottest split path):**
+1. Route `${=var}`/shwordsplit through the paramsubst `sepsplit` block so an
+   IWSEP-aware array is returned before multsub (find why force_split@13739 is
+   unreached for the simple-var path).
+2. Make multsub's PREFORK_SPLIT loop IWSEP-aware (strip only leading IWSEP;
+   emit an empty field per non-whitespace ISEP; absorb only IWSEP after a
+   non-ws sep) — i.e. weave `spacesplit`'s skipwsep/isep_one/findsep logic into
+   the quote/paren/token-aware loop.
+
+---
+
 ## #654 — `(#q...)` glob qualifier accepted without `extendedglob` — FIXED
 
 **Status:** `fixed`
