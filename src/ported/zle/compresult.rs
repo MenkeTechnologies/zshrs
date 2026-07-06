@@ -1132,7 +1132,11 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
         if we > wb && wb >= 0 {
             let span = we - wb;
             crate::ported::zle::compcore::ZLEMETACS.store(wb, Relaxed); // c:785
-            foredel(span, 0); // c:787
+            // c:786 — `foredel(we - wb, CUT_RAW)`. CUT_RAW is REQUIRED on
+            // a metafied line; without it foredel takes the non-raw path
+            // and deletes nothing, so inststr below prepends the prefix
+            // to the still-present word (ambiguous `ec` → `ecec`).
+            foredel(span, CUT_RAW); // c:786
             let _ = inststr(&prefix); // c:790
         }
     }

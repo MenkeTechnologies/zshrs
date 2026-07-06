@@ -749,7 +749,19 @@ pub fn zlecore() {
         *LBINDK.lock().unwrap() = BINDK.lock().unwrap().take();
         *BINDK.lock().unwrap() = Some(thingy.clone());
 
-        if let Some(widget) = &thingy.widget {
+        // Keymaps store a cloned Thingy whose `.widget` is a snapshot
+        // taken when the key was bound. A later `zle -C` / `zle -N`
+        // rebind (e.g. compinit rebinding `expand-or-complete` to a
+        // completion widget) updates the thingytab entry but NOT the
+        // keymap's snapshot, so dispatch would keep running the stale
+        // builtin. Re-resolve the CURRENT widget from thingytab by name;
+        // fall back to the snapshot if the name is no longer in the table.
+        let current_widget = crate::ported::zle::zle_thingy::thingytab()
+            .lock()
+            .ok()
+            .and_then(|t| t.get(&thingy.nam).and_then(|th| th.widget.clone()))
+            .or_else(|| thingy.widget.clone());
+        if let Some(widget) = &current_widget {
             execute_widget(widget);
         } else {
             // The Thingy resolved but has no widget — matches the C
@@ -2515,6 +2527,16 @@ fn execute_widget(widget: &widget) {
     handleundo();
 
     match &widget.u {
+        // c:1481-1486 — a `zle -C` completion widget dispatches through
+        // `completecall`, which plants `compfunc` (`_main_complete`) so
+        // `makecomplist` runs the compsys engine instead of the compctl
+        // fallback. Without this arm the key loop silently no-ops every
+        // completion widget.
+        WidgetImpl::Comp { .. } => {
+            *COMPWIDGET.lock().unwrap() = Some(widget.clone());
+            let _ = crate::ported::zle::zle_tricky::completecall(&[]);
+            *COMPWIDGET.lock().unwrap() = None;
+        }
         WidgetImpl::Internal(f) => {
             let _ = f(&[]);
         }

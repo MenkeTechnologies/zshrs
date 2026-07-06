@@ -719,7 +719,18 @@ pub fn docomplete(lst: i32) -> i32 {
         zwarn("completion cannot be used recursively (yet)");
         return 1;
     }
+    // RAII reset: guarantees `ACTIVE` clears on EVERY exit path (normal
+    // return, early return, or panic). A completion that bails mid-way
+    // must never leave the flag latched, or every subsequent Tab reports
+    // "completion cannot be used recursively (yet)".
+    struct ActiveGuard;
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            ACTIVE.with(|c| c.set(false));
+        }
+    }
     ACTIVE.with(|c| c.set(true));
+    let _active_guard = ActiveGuard;
     // c:611 — `comprecursive = 0;`
     crate::ported::zle::complist::COMPRECURSIVE.store(0, std::sync::atomic::Ordering::Relaxed);
 
@@ -735,8 +746,35 @@ pub fn docomplete(lst: i32) -> i32 {
 
     // c:628 — `if (doexpandhist()) { active = 0; return 0; }`.
     if doexpandhist() != 0 {
-        ACTIVE.with(|c| c.set(false));
-        return 0;
+        return 0; // _active_guard resets ACTIVE on drop
+    }
+
+    // zshrs bridge: C keeps a single `zleline`; this port splits it into
+    // the interactive editor buffer (`zle_main::ZLELINE`, a Vec<char>
+    // that `self-insert` writes) and the completion engine's
+    // `compcore::ZLELINE`. Copy the editor buffer + cursor into the
+    // completion buffer, then metafy (c:636 `metafy_line()`), so
+    // `get_comp_string` / `makecomplist` operate on the real typed line
+    // instead of an empty buffer. Without this the whole compsys engine
+    // runs against `s=""` and produces zero matches.
+    {
+        let ed_line: String = crate::ported::zle::zle_main::ZLELINE
+            .lock()
+            .map(|g| g.iter().collect())
+            .unwrap_or_default();
+        let ed_cs = crate::ported::zle::zle_main::ZLECS.load(Ordering::SeqCst) as i32;
+        let ed_ll = ed_line.chars().count() as i32;
+        if let Ok(mut g) = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+        {
+            *g = ed_line;
+        }
+        crate::ported::zle::compcore::ZLECS.store(ed_cs, Ordering::SeqCst);
+        crate::ported::zle::compcore::ZLELL.store(ed_ll, Ordering::SeqCst);
+    }
+    if crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) == 0 {
+        crate::ported::zle::compcore::metafy_line();
     }
 
     // c:664-810 — `get_comp_string()` extracts the cursor word and
@@ -785,7 +823,18 @@ pub fn docomplete(lst: i32) -> i32 {
         ret = r;
     } else if COMP_ISEXPAND(lst) {
         // c:833-867 — expand-or-complete path.
-        let ol_before = line.clone(); // c:836 — snapshot of zlemetaline before expansion
+        // c:836 — `ol = dupstring(zlemetaline)`. Snapshot the METAFIED
+        // line: `doexpansion` may itself run `docompletion` (c:2302),
+        // which edits `zlemetaline` (ZLEMETALINE). C then skips its own
+        // c:865 docompletion when the line is unchanged. Snapshotting
+        // compcore::ZLELINE instead (which the inner completion never
+        // touches) made the guard always true → completion ran twice per
+        // Tab, corrupting the buffer.
+        let ol_before = crate::ported::zle::compcore::ZLEMETALINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         let ne = crate::ported::exec::noerrs.load(Ordering::SeqCst); // c:839
         crate::ported::exec::noerrs.store(1, Ordering::SeqCst); // c:840
         let mut ret_local = doexpansion(&s_word, lst, olst, lincmd); // c:841
@@ -794,7 +843,7 @@ pub fn docomplete(lst: i32) -> i32 {
 
         // c:847-868 — if expand-or-complete and buffer unchanged,
         // fall through to docompletion.
-        let after = crate::ported::zle::compcore::ZLELINE
+        let after = crate::ported::zle::compcore::ZLEMETALINE
             .get_or_init(|| Mutex::new(String::new()))
             .lock()
             .map(|g| g.clone())
@@ -824,8 +873,32 @@ pub fn docomplete(lst: i32) -> i32 {
         let dat_ptr = dat.as_mut_ptr() as *mut std::ffi::c_void;
         crate::ported::module::runhookdef(h_after, dat_ptr);
     }
-    ACTIVE.with(|c| c.set(false));
-    ret
+
+    // zshrs bridge (mirror of C compend's `unmetafy_line()`): flatten
+    // the completion buffer back to a plain line and copy it — with the
+    // cursor — into the interactive editor buffer so the completed /
+    // edited result is what the editor redisplays. Guard the unmetafy on
+    // ZLEMETALL because some completion paths already unmetafied.
+    if crate::ported::zle::compcore::ZLEMETALL.load(Ordering::SeqCst) != 0 {
+        crate::ported::zle::compcore::unmetafy_line();
+    }
+    {
+        let comp_line: Vec<char> = crate::ported::zle::compcore::ZLELINE
+            .get_or_init(|| Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.chars().collect())
+            .unwrap_or_default();
+        let comp_ll = comp_line.len() as i32;
+        let comp_cs = crate::ported::zle::compcore::ZLECS.load(Ordering::SeqCst);
+        if let Ok(mut g) = crate::ported::zle::zle_main::ZLELINE.lock() {
+            *g = comp_line;
+        }
+        crate::ported::zle::zle_main::ZLECS
+            .store(comp_cs.clamp(0, comp_ll) as usize, Ordering::SeqCst);
+        crate::ported::zle::zle_main::ZLELL.store(comp_ll as usize, Ordering::SeqCst);
+    }
+
+    ret // _active_guard resets ACTIVE on drop
 }
 
 /// Port of `addx(char **ptmp)` from Src/Zle/zle_tricky.c:922.
@@ -1697,9 +1770,64 @@ pub fn get_comp_string() -> Option<String> {
         let wb = WB.load(Ordering::SeqCst);
         OFFS.store(zlemetacs - wb, Ordering::SeqCst);
 
-        // clwnum/cmdstr/varname/cp/rd/ia are computed for fidelity but
-        // have no wired downstream consumer (no shared globals).
+        // Export the parsed command-line words + cursor position to the
+        // compsys-facing globals. In C these ARE `$words` / `$CURRENT`:
+        // the special params bind directly to `clwords` / `clwpos`. The
+        // Rust port keeps `$words`/`$CURRENT` in `COMPWORDS`/`COMPCURRENT`
+        // (complete.rs), so without this bridge every compsys completer
+        // (`_complete` → `_normal` → the per-command completer) sees
+        // `$words=()` / `$CURRENT=0` and can't tell the command from its
+        // arguments — it falls back to command completion for everything.
+        {
+            let ws: Vec<String> = clwords.iter().map(|w| untokenize(w)).collect();
+            let n = ws.len() as i32;
+            // clwpos is 0-based; `$CURRENT` is 1-based. clwpos == -1 means
+            // the cursor is past the last word (new trailing word).
+            let cur = if clwpos < 0 { n + 1 } else { clwpos + 1 }.max(1);
+            // Keep the internal statics in sync…
+            if let Ok(mut g) = crate::ported::zle::complete::COMPWORDS
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+            {
+                *g = ws.clone();
+            }
+            crate::ported::zle::complete::COMPCURRENT.store(cur, Ordering::SeqCst);
+            // …but the compsys shell/rust functions read `$words` /
+            // `$CURRENT` from the PARAM TABLE (getaparam/getsparam), and
+            // these compparams have no gsu binding to the statics
+            // (`var:0, gsu:0`). So publish them into paramtab directly, or
+            // `_normal` sees `$CURRENT` unset → treats every position as
+            // the command word and only ever offers command names.
+            crate::ported::params::setaparam("words", ws);
+            crate::ported::params::setsparam("CURRENT", &cur.to_string());
+        }
+
+        // cmdstr/varname/cp/rd/ia are computed for fidelity but have no
+        // wired downstream consumer (no shared globals).
         let _ = (clwnum, &cmdstr, &varname, cp, rd, ia);
+
+        // c:1385-1386 — `if (addedx && tt) chuck(...)`: remove the `x`
+        // (and optional space) injected above now that the lexer has
+        // consumed it. ZLEMETALL/WB/WE were already computed excluding the
+        // placeholder, so the line must lose it too — otherwise do_single/
+        // do_ambiguous delete [wb,we] (which excludes the `x`) and the
+        // placeholder leaks into the buffer (e.g. a unique completion of
+        // `zipgre` left `zipgrep x` on the line).
+        let addedx = ADDEDX.load(Ordering::SeqCst);
+        if addedx > 0 {
+            if let Some(m) = ZLEMETALINE.get() {
+                if let Ok(mut g) = m.lock() {
+                    let mut bytes = g.as_bytes().to_vec();
+                    let cs = (zlemetacs.max(0) as usize).min(bytes.len());
+                    let end = (cs + addedx as usize).min(bytes.len());
+                    if cs < end {
+                        bytes.drain(cs..end);
+                        *g = String::from_utf8_lossy(&bytes).into_owned();
+                    }
+                }
+            }
+            ADDEDX.store(0, Ordering::SeqCst);
+        }
 
         // c:2219 — zcontext_restore(); return s.
         // NOTE: quote-form cleanup (c:1709-1926) + brace-expansion
