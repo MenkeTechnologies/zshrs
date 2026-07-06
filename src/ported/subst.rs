@@ -1534,105 +1534,95 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
     // separators outside quotes/parens. On hit, NUL-terminate and
     // start a new linknode.
     if pf_flags & PREFORK_SPLIT != 0 {
-        // c:567
-        // Take ownership of the only node's chars; rebuild list.
+        // c:567 — split on IFS, faithfully mirroring `spacesplit`
+        // (Src/utils.c:3711): IFS chars come in two classes — IWSEP
+        // (space/tab/newline; the leading strip above already removed a
+        // leading run) which COLLAPSES runs, and non-whitespace ISEP which
+        // HARD-DELIMITS (empty fields preserved). Whitespace adjacent to a
+        // non-ws separator is ABSORBED into it, so `a : b` (IFS=" :") is 2
+        // fields, `a::b` (IFS=:) is 3, `:a:b:` is 4. Structure per
+        // spacesplit: consume the delimiter (one non-ws ISEP + surrounding
+        // whitespace) at the top of each iteration, then collect the field;
+        // a trailing non-ws separator therefore yields a trailing empty.
+        // Empty fields are emitted as the Nularg sentinel (spacesplit's
+        // `nulstring`) so prefork's empty-node-delete keeps them and
+        // remnulargs restores the real empty string.
         let chars: Vec<char> = x.chars().collect(); // c:565
         let mut nodes: Vec<String> = Vec::new(); // c:565
-        let mut cur = String::new(); // c:565
         let mut inq = false; // c:570 (bslashquote state)
         let mut inp = 0_i32; // c:570 (paren depth)
         let mut i = 0_usize; // c:572
-        while i < chars.len() {
-            // c:572
-            let c = chars[i]; // c:573
-                              // C: `if (*x == Dash) *x = '-';` — Dash token →
-                              // literal dash. Rust doesn't have this token here.
-                              // C: `if (itok((unsigned char) *x)) { rawc = *x; l = 1; }`
-                              // Tokens (META range \u{80}-\u{9F}) are single-byte and
-                              // can't be separators. Skip the IFS check for them.
-            let is_token = matches!(c as u32, 0x80..=0x9F); // c:577
-                                                            // Bnull/Bnullkeep arms (C lines 612-617): skip the next
-                                                            // char (parser-verified to exist). \u{99} = Bnull,
-                                                            // \u{9a} = Bnullkeep in our token table.
-            if c == '\u{99}' || c == '\u{9a}' {
-                // c:612
-                cur.push(c); // c:614
-                i += 1; // c:615
-                if i < chars.len() {
-                    // c:615
-                    cur.push(chars[i]); // c:616
-                    i += 1; // c:616
-                }
-                continue; // c:617
-            }
-            // Quote/paren state tracking (C lines 600-611).
-            //
-            // The previous Rust port had every token-byte literal in
-            // this block WRONG:
-            //   `\u{97}` was labeled Dnull → it's QUEST.
-            //   `\u{98}` was labeled Snull → it's TILDE.
-            //   `\u{83}` was labeled Tick  → it's META lead byte.
-            //   `\u{85}` was labeled Inpar → it's STRINGG ($).
-            //   `\u{86}` was labeled Outpar → it's HAT.
-            // Canonical values per `Src/zsh.h:159-194` (cross-checked
-            // via `crate::ported::zsh_h::{Snull, Dnull, Tick, Inpar,
-            // Outpar}` constants):
-            //   Snull  = 0x9d, Dnull  = 0x9e, Tick   = 0x93,
-            //   Inpar  = 0x88, Outpar = 0x8a.
-            match c {                                       // c:600
-                Dnull |               // c:602 (")
-                Snull |               // c:603 (')
-                Tick => { inq = !inq; } // c:604 (`)
-                Inpar => { inp += 1; }  // c:606
-                Outpar => { inp -= 1; } // c:608
-                _ => {}
-            }
-            // ISEP test (C line 581) — outside quotes/parens, char
-            // matches IFS, char is not a token.
-            if !inq && inp == 0 && !is_token && is_ifs_sep(c) {
-                // c:581 — split here. A WHITESPACE separator collapses a run
-                // and never yields an empty field; a NON-whitespace separator
-                // hard-delimits, so an empty field between two of them (or a
-                // leading/trailing one) is preserved.
-                let c_wsep = is_ifs_wsep(c);
-                if !c_wsep || !cur.is_empty() || nodes.is_empty() {
-                    // c:583 — a preserved EMPTY field (only between/around
-                    // non-whitespace separators) is emitted as the Nularg
-                    // sentinel — mirroring spacesplit's `nulstring` — so
-                    // prefork's empty-node-delete pass keeps it and
-                    // remnulargs restores the real empty string. A plain ""
-                    // here would be silently dropped downstream.
-                    let field = std::mem::take(&mut cur);
-                    if field.is_empty() && !c_wsep {
-                        nodes.push(Nularg.to_string());
-                    } else {
-                        nodes.push(field);
-                    }
-                }
-                i += 1; // c:584
-                // c:584-595 — absorb only following IFS-WHITESPACE. Consecutive
-                // non-whitespace separators are NOT skipped: each delimits an
-                // (empty) field on the next iteration.
-                while i < chars.len() && is_ifs_wsep(chars[i]) {
-                    i += 1; // c:594
-                }
-                if i >= chars.len() {
-                    // c:596-598 — a trailing NON-whitespace separator leaves a
-                    // final empty field (Nularg); a trailing whitespace run does not.
-                    if !c_wsep {
-                        nodes.push(Nularg.to_string());
-                    }
-                    ms_flags |= MULTSUB_WS_AT_END; // c:597
-                    break; // c:598
-                }
-                continue; // c:599
-            }
-            cur.push(c); // c:619
-            i += 1; // c:620
+        // Tokens (META range \u{80}-\u{9F}) are single-byte markers that can
+        // never be separators. c:577.
+        let is_tok = |c: char| matches!(c as u32, 0x80..=0x9F);
+        // A non-whitespace ISEP at an UNQUOTED position (loop top is always
+        // unquoted — findsep only breaks on unquoted separators).
+        let is_nonws_sep = |c: char| is_ifs_sep(c) && !is_ifs_wsep(c) && !is_tok(c);
+
+        // c:3732-3735 — a leading NON-whitespace separator (after the IWSEP
+        // strip above) yields an empty first field. It is consumed by the
+        // isep_one at the top of the first loop iteration.
+        if i < chars.len() && is_nonws_sep(chars[i]) {
+            nodes.push(Nularg.to_string());
         }
-        if !cur.is_empty() {
-            // c:622
-            nodes.push(cur); // c:622
+
+        while i < chars.len() {
+            // c:3737-3741 — isep_one: consume ONE non-whitespace separator if
+            // present, then absorb the following IFS-whitespace run. This is
+            // the "whitespace absorbed around a non-ws separator" rule.
+            if is_nonws_sep(chars[i]) {
+                i += 1;
+                while i < chars.len() && is_ifs_wsep(chars[i]) {
+                    i += 1;
+                }
+            }
+
+            // c:3746-3747 — findsep: collect the field up to the next
+            // UNQUOTED separator, tracking quote/paren/Bnull state.
+            let mut cur = String::new();
+            while i < chars.len() {
+                let c = chars[i];
+                // Bnull/Bnullkeep (c:612-617) — the marker + its escaped char
+                // are copied verbatim and never treated as separators.
+                if c == '\u{99}' || c == '\u{9a}' {
+                    cur.push(c);
+                    i += 1;
+                    if i < chars.len() {
+                        cur.push(chars[i]);
+                        i += 1;
+                    }
+                    continue;
+                }
+                // c:600-611 — quote/paren state. Snull=0x9d Dnull=0x9e
+                // Tick=0x93 Inpar=0x88 Outpar=0x8a.
+                match c {
+                    Dnull | Snull | Tick => inq = !inq,
+                    Inpar => inp += 1,
+                    Outpar => inp -= 1,
+                    _ => {}
+                }
+                // c:581 — stop at an unquoted, non-token IFS separator.
+                if !inq && inp == 0 && !is_tok(c) && is_ifs_sep(c) {
+                    break;
+                }
+                cur.push(c); // c:619
+                i += 1; // c:620
+            }
+            // c:3748-3753 — push the field; an empty one becomes Nularg.
+            if cur.is_empty() {
+                nodes.push(Nularg.to_string());
+            } else {
+                nodes.push(cur);
+            }
+            // c:3755 — skipwsep: absorb the IFS-whitespace run after the field
+            // (a trailing whitespace run adds no field; the loop then exits).
+            let ws_from = i;
+            while i < chars.len() && is_ifs_wsep(chars[i]) {
+                i += 1;
+            }
+            if i >= chars.len() && ws_from < i {
+                ms_flags |= MULTSUB_WS_AT_END; // c:597
+            }
         }
         // Rebuild the linklist with the split nodes.
         list = LinkList::default(); // c:622

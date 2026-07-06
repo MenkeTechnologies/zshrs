@@ -54,15 +54,25 @@ scanned, each filtered by the context. An invalid context pattern returns 1.
 **Status:** `fixed` for `${=var}` / `(${=var})`; the `setopt shwordsplit` path on
 a bare `$var` is a separate route (PREFORK_SHWORDSPLIT) and remains open.
 
-**FIX (`${=var}`):** `multsub`'s PREFORK_SPLIT loop (subst.rs) is now IWSEP-aware.
-An IFS char is a collapsing whitespace separator only when it is space/tab/newline
-(`Src/utils.c:4224-4228`); every other IFS char hard-delimits. The loop now (a)
-strips only leading IFS-whitespace, (b) absorbs only following IFS-whitespace after
-a separator (consecutive non-ws separators each delimit), and (c) emits a preserved
-empty field as the `Nularg` sentinel — mirroring `spacesplit`'s `nulstring` — so
-prefork's empty-node-delete pass keeps it and `remnulargs` restores the real empty
-string. Whitespace-IFS behavior is byte-for-byte unchanged (verified against the
-regression suite: 200 param/subst shell tests pass).
+**FIX (`${=var}`):** `multsub`'s PREFORK_SPLIT loop (subst.rs) was rewritten to
+follow `spacesplit` (`Src/utils.c:3711`) exactly. An IFS char is a collapsing
+whitespace separator only when it is space/tab/newline; every other IFS char
+hard-delimits, preserving empty fields. Per spacesplit the loop consumes the
+delimiter (one non-whitespace ISEP plus the whitespace ABSORBED around it) at the
+top of each iteration, then collects the field:
+
+- pure non-ws IFS preserves empties: `:a:b:` → 4, `a::b` → 3, `:::` → 4;
+- whitespace IFS collapses runs and trims: `  a  b  ` → 2;
+- MIXED IFS absorbs whitespace adjacent to a non-ws separator: `a : b` (IFS=" :")
+  → 2 (one delimiter), but `a :: b` → 3 (two separators keep the middle empty),
+  and a trailing non-ws separator still yields a trailing empty (`a :` → 2);
+- empty fields are emitted as the `Nularg` sentinel (spacesplit's `nulstring`) so
+  prefork's empty-node-delete keeps them and `remnulargs` restores the real empty;
+- quote/paren/Bnull awareness is preserved in the field-collection step.
+
+(An earlier partial hand-rolled version regressed the mixed-IFS whitespace-absorb
+case, e.g. `a : b` → 3; the spacesplit-faithful rewrite fixes it. Whitespace-IFS
+behavior is byte-for-byte unchanged; 200 param/subst shell tests pass.)
 
 **Still open:** `setopt shwordsplit; a=":a:b:"; set -- $a` → still 2 (want 4). That
 split routes through PREFORK_SHWORDSPLIT (not the PREFORK_SPLIT loop fixed here); the
