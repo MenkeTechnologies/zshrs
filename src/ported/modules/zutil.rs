@@ -494,7 +494,7 @@ impl style_table {
 /// C: `static void printstylenode(HashNode hn, int printflags)` — emit
 /// `zstyle -L` / basic-list output for one style entry.
 #[allow(non_snake_case)]
-pub fn printstylenode(hn: &hashnode, printflags: i32) {
+pub fn printstylenode(hn: &hashnode, printflags: i32, context_pat: Option<&str>) {
     // c:184
     // c:186-211 — Two distinct output formats based on `printflags`:
     //
@@ -525,16 +525,30 @@ pub fn printstylenode(hn: &hashnode, printflags: i32) {
         Some(p) => p,
         None => return,
     };
+    // c:196-197 — `zstyle_contprog`, the optional context-filter pattern
+    // supplied to `zstyle -L <context>`. Each stored style-pattern is kept
+    // only when it MATCHES this glob (so `zstyle -L :c1` lists just the
+    // entries whose pattern matches `:c1`). Compile once per node.
+    let cprog = context_pat.and_then(|c| {
+        let mut pat = c.to_string();
+        crate::ported::glob::tokenize(&mut pat);
+        patcompile(&pat, crate::ported::zsh_h::PAT_STATIC, None)
+    });
     if printflags == 1 {
         // c:190-193 — ZSLIST_BASIC header: the style name on its own line.
+        // Only emitted when at least one pattern will survive the filter,
+        // matching C (the header prints unconditionally, but the contprog
+        // filter path is only reached via the syntax listing; bare `zstyle`
+        // passes no context so every pattern survives here).
         let _ = writeln!(stdout, "{}", quotedzputs(&nam)); // c:191-192
     }
     for p in patterns {
-        // c:195
-        // c:196-197 — `if (zstyle_contprog && !pattry(zstyle_contprog, p->pat))
-        //              continue;` — contprog filter not modeled in the
-        // Rust port (the global zstyle_contprog is set by `zstyle -L
-        // <pattern>` when a context-filter pattern is supplied).
+        // c:196-197 — skip patterns that don't match the context filter.
+        if let Some(ref prog) = cprog {
+            if !pattry(prog, &p.pat) {
+                continue;
+            }
+        }
         let is_eval = p.eval.is_some();
         if printflags == 1 {
             // c:198-199 — `printf("%s  %s", eval ? "(eval)" : "      ", p->pat);`
@@ -1074,29 +1088,53 @@ pub fn bin_zstyle(
                 nam,
                 flags: 0,
             };
-            printstylenode(&hn, 1); // c:580-581 — ZSLIST_BASIC
+            printstylenode(&hn, 1, None); // c:580-581 — ZSLIST_BASIC
         }
         return 0; // c:585
     }
     if OPT_ISSET(ops, b'L') || OPT_ISSET(ops, b'l') {
-        // c:501-503 + c:580-581 — `zstyle -L`: list = ZSLIST_SYNTAX.
-        // Route through printstylenode for the same eval-aware emit as
-        // the bare-list arm. ZSLIST_SYNTAX = 2 per c:180 enum;
-        // printstylenode dispatches everything ≠ 1 as the re-feedable
-        // form, which is what we want here.
-        let names: Vec<String> = match zstyletab.lock() {
-            Ok(t) => t.styles.keys().cloned().collect(),
-            Err(_) => return 1,
+        // c:544-583 — `zstyle -L [context [stylename]]`: list = ZSLIST_SYNTAX,
+        // optionally filtered by a context pattern and/or an exact style name.
+        //   args[0] = context (glob matched against each stored pattern),
+        //   args[1] = stylename (only that style is listed; error if absent).
+        let context = args.first().map(|s| s.as_str()); // c:551/556 context
+        let stylename = args.get(1).map(|s| s.as_str()); // c:552 stylename
+        // c:562-570 — validate the context pattern up front (invalid → rc 1).
+        if let Some(c) = context {
+            let mut pat = c.to_string();
+            crate::ported::glob::tokenize(&mut pat);
+            if patcompile(&pat, crate::ported::zsh_h::PAT_STATIC, None).is_none() {
+                return 1;
+            }
+        }
+        // c:573-582 — a named style lists just that node (error if it does
+        // not exist); otherwise scan every style.
+        let names: Vec<String> = if let Some(sn) = stylename {
+            let exists = zstyletab
+                .lock()
+                .map(|t| t.styles.contains_key(sn))
+                .unwrap_or(false);
+            if !exists {
+                return 1; // c:575-577 — `if (!s) return 1;`
+            }
+            vec![sn.to_string()]
+        } else {
+            match zstyletab.lock() {
+                Ok(t) => {
+                    let mut v: Vec<String> = t.styles.keys().cloned().collect();
+                    v.sort();
+                    v
+                }
+                Err(_) => return 1,
+            }
         };
-        let mut sorted = names;
-        sorted.sort();
-        for nam in sorted {
+        for nam in names {
             let hn = hashnode {
                 next: None,
                 nam,
                 flags: 0,
             };
-            printstylenode(&hn, 2); // c:501 — ZSLIST_SYNTAX
+            printstylenode(&hn, 2, context); // c:501 — ZSLIST_SYNTAX
         }
         return 0; // c:585
     }

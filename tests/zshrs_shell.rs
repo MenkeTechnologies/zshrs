@@ -3843,6 +3843,38 @@ fn test_zstyle_dash_l_uses_pattern_first_format() {
 }
 
 #[test]
+fn test_zstyle_dash_l_filters_by_context_and_style() {
+    // c:Src/Modules/zutil.c:544-583 — `zstyle -L [context [style]]` filters:
+    // the context arg is a glob matched against each stored style-pattern,
+    // and an optional style name restricts to that exact style (rc 1 if the
+    // style name doesn't exist). zshrs previously ignored both args.
+    const SETUP: &str =
+        "zmodload zsh/zutil; zstyle ':c1' x 1; zstyle ':c1' y 2; zstyle ':c2' x 3; ";
+    let out = |extra: &str| run_zshrs(&format!("{SETUP}{extra}")).1.trim().to_string();
+
+    // Context filter — exact and wildcard.
+    assert_eq!(out("zstyle -L ':c1'"), "zstyle :c1 x 1\nzstyle :c1 y 2");
+    assert_eq!(out("zstyle -L ':c2'"), "zstyle :c2 x 3");
+    assert_eq!(out("zstyle -L ':nomatch'"), "");
+    // Context + style name.
+    assert_eq!(out("zstyle -L ':c1' x"), "zstyle :c1 x 1");
+    assert_eq!(out("zstyle -L ':c1' y"), "zstyle :c1 y 2");
+    // `*` context, style filter keeps only that style across contexts.
+    assert_eq!(out("zstyle -L '*' x"), "zstyle :c1 x 1\nzstyle :c2 x 3");
+    // No args → everything.
+    assert_eq!(
+        out("zstyle -L"),
+        "zstyle :c1 x 1\nzstyle :c2 x 3\nzstyle :c1 y 2"
+    );
+    // Non-existent style name → rc 1.
+    let rc = run_zshrs(&format!("{SETUP}zstyle -L ':c1' nostyle; echo rc=$?"))
+        .1
+        .trim()
+        .to_string();
+    assert!(rc.ends_with("rc=1"), "got: {rc:?}");
+}
+
+#[test]
 fn test_zsh_param_q_flag_backslash_only() {
     // `(q)` per zshexpn(1) = backslash-escape shell-specials, no
     // surrounding quotes. Prior bug emitted `'hi'` (qq behaviour).
