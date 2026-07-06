@@ -2075,38 +2075,66 @@ impl ShellExecutor {
             let mut all_entries: std::collections::HashMap<String, Vec<u8>> =
                 std::collections::HashMap::with_capacity(result.files.len());
 
-            for file in &result.files {
-                if let Some(ref body) = file.body {
-                    // Mirror Src/init.c errflag save/clear/check around parse.
-                    let saved_errflag = errflag.load(Ordering::Relaxed);
-                    errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
-                    crate::ported::parse::parse_init(body);
-                    let program = crate::ported::parse::parse();
-                    let parse_failed = (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
-                    errflag.store(saved_errflag, Ordering::Relaxed);
-                    if parse_failed || program.lists.is_empty() {
-                        parse_fail += 1;
-                        continue;
+            // Speculative bytecode pre-warm — OFF by default.
+            //
+            // This loop parses every discovered function body via parse() on
+            // this worker thread, concurrently with the interactive main
+            // thread. parse()/the lexer touch process-global shell state that
+            // is not thread-safe (option flags, error/xtrace state, …), so a
+            // body the parser can't yet accept — or simply the race with the
+            // main thread's line lexing — corrupts the interactive shell:
+            // `compinit` left the prompt spewing the xtrace prefix and stuck
+            // in PS2 (reported as "ls -<Tab> = crash"). Disabling this loop
+            // makes `compinit` clean; confirmed by bisection.
+            //
+            // The pre-warm is a perf optimization, not correctness: function
+            // bodies are parsed lazily on first autoload regardless. And until
+            // the compsys function tree actually loads (fpath seeding +
+            // compinit bootstrap are separate open gaps), the cached bytecode
+            // isn't consumed anyway. Gate it behind an explicit opt-in so the
+            // default interactive shell can never be corrupted by it; re-enable
+            // once parse() is made thread-safe (thread-local option/error state)
+            // or the scan is serialized against the main lexer.
+            if std::env::var_os("ZSHRS_COMPINIT_PREWARM").is_some() {
+                // noerrs=1 keeps zerr silent (still sets errflag for the
+                // parse_failed check) so a bad body doesn't print; the state
+                // race above is why this stays opt-in even so.
+                let saved_noerrs = {
+                    let mut g = crate::ported::utils::noerrs_lock().lock().unwrap();
+                    let s = *g;
+                    *g = 1;
+                    s
+                };
+                for file in &result.files {
+                    if let Some(ref body) = file.body {
+                        // Mirror Src/init.c errflag save/clear/check around parse.
+                        let saved_errflag = errflag.load(Ordering::Relaxed);
+                        errflag.fetch_and(!ERRFLAG_ERROR, Ordering::Relaxed);
+                        crate::ported::parse::parse_init(body);
+                        let program = crate::ported::parse::parse();
+                        let parse_failed =
+                            (errflag.load(Ordering::Relaxed) & ERRFLAG_ERROR) != 0;
+                        errflag.store(saved_errflag, Ordering::Relaxed);
+                        if parse_failed || program.lists.is_empty() {
+                            parse_fail += 1;
+                            continue;
+                        }
+                        let target = &program;
+                        let _ = &file.name;
+                        let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                        if let Ok(blob) = bincode::serialize(&chunk) {
+                            all_entries.insert(file.name.clone(), blob);
+                            parse_ok += 1;
+                        }
+                    } else {
+                        no_body += 1;
                     }
-                    // ksh-style file (`name() { body }`) — compile only
-                    // the inner body so the chunk runs the function on
-                    // call instead of re-registering it.
-                    // ksh_autoload_body stub (deleted with old exec.c)
-                    // returned `Some(program)` unchanged.
-                    let target = &program;
-                    let _ = &file.name;
-                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                    if let Ok(blob) = bincode::serialize(&chunk) {
-                        all_entries.insert(file.name.clone(), blob);
-                        parse_ok += 1;
-                    }
-                } else {
-                    no_body += 1;
                 }
-            }
-            // Whole-shard replace — one read+write covers all entries.
-            if let Err(e) = crate::autoload_cache::try_replace_all(all_entries) {
-                tracing::warn!(error = %e, "compinit: rkyv replace_all failed");
+                *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
+                // Whole-shard replace — one read+write covers all entries.
+                if let Err(e) = crate::autoload_cache::try_replace_all(all_entries) {
+                    tracing::warn!(error = %e, "compinit: rkyv replace_all failed");
+                }
             }
 
             tracing::info!(
