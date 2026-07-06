@@ -13080,3 +13080,31 @@ fn test_tied_colon_array_slice_and_unset_sync_scalar() {
     // Plain untied array unaffected.
     assert_eq!(run(r#"a=(1 2 3 4); a[2,3]=(X Y Z); echo "${a[@]}""#), "1 X Y Z 4");
 }
+
+#[test]
+fn test_math_userfunc_missing_shfunc_is_no_such_function() {
+    // c:Src/math.c:1110-1112 — a `functions -M` math function whose
+    // implementing SHELL function doesn't exist errors "no such function:
+    // <shfnam>", distinct from the "unknown function: <n>" of an
+    // UN-registered math name (math.c:1131). zshrs used the latter for both.
+    let err = |code: &str| run_zshrs(code).2;
+    // Registered but shell fn missing -> "no such function".
+    assert!(
+        err(r#"functions -M nonexist; echo $(( nonexist(1) ))"#).contains("no such function: nonexist"),
+        "registered+missing must be 'no such function'"
+    );
+    // The 4th arg names a DIFFERENT impl; the diagnostic uses it.
+    assert!(
+        err(r#"functions -M foo 1 1 _missing_impl; echo $(( foo(1) ))"#)
+            .contains("no such function: _missing_impl"),
+        "impl-name form"
+    );
+    // Not registered at all -> "unknown function".
+    assert!(
+        err(r#"echo $(( totally_unregistered(1) ))"#).contains("unknown function: totally_unregistered"),
+        "unregistered must be 'unknown function'"
+    );
+    // A working math function is unaffected.
+    let (_s, out, _e) = run_zshrs(r#"cube() { (( REPLY = $1 ** 3 )) }; functions -M cube 1 1; echo $(( cube(4) ))"#);
+    assert_eq!(out.trim(), "64");
+}
