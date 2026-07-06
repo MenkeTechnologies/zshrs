@@ -7474,6 +7474,14 @@ pub fn paramsubst(
         // the scalar result from the first subscript. zsh's
         // `${a[N][M]}` returns char M (1-based) of array element N.
         let raw_value: String = if let Some(s2) = second_subscript.as_deref() {
+            // c:Src/lex.c — in an UNQUOTED subscript the lexer tokenizes `-`
+            // to the Dash token (\u{9b}); quoted keeps a literal `-`. So
+            // `${a[1][-1]}` / `${a[1,3][-1]}` arrive with `\u{9b}` in place of
+            // `-`. Normalize once here so BOTH the array-slice path and the
+            // char-index path below parse negative indices correctly (else a
+            // negative index silently reads as its numeric-parse default).
+            let s2_norm = s2.replace('\u{9b}', "-");
+            let s2 = s2_norm.as_str();
             // c:Src/params.c getindex chain — when the FIRST subscript is an
             // array SLICE (`[lo,hi]`, comma present) on an array, it yields a
             // sub-array, and the SECOND subscript indexes/slices THAT
@@ -7484,13 +7492,8 @@ pub fn paramsubst(
             // (handled below). Equivalent to `${${a[lo,hi]}[M]}`.
             let first_slice = subscript.as_deref().filter(|s| s.contains(','));
             if let (Some(s1_raw), Some(full)) = (first_slice, arrays_get(&var_name)) {
-                // c:Src/lex.c — in an UNQUOTED subscript the lexer tokenizes
-                // `-` to the Dash token (\u{9b}); quoted keeps a literal `-`.
-                // `${a[1,3][-1]}` arrives as `\u{9b}1`, so normalize before
-                // the numeric parse (else the negative index reads as +1).
+                // s1 (the first subscript) can carry the Dash token too.
                 let s1 = s1_raw.replace('\u{9b}', "-");
-                let s2 = s2.replace('\u{9b}', "-");
-                let s2 = s2.as_str();
                 let parse_idx = |t: &str, dflt: i64| -> i64 {
                     t.trim()
                         .parse()
