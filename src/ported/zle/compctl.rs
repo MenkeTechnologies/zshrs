@@ -3796,6 +3796,9 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     // ===================== end preamble =====================
 
     let s: &str = &s;
+    // Path prefix/suffix computed in the preamble (c:3304-3308).
+    let ppre = PPRE.with(|r| r.borrow().clone());
+    let psuf = PSUF.with(|r| r.borrow().clone());
     // c:3050 — ccont gets the mask2 continuation bits.
     CCONT.with(|c| c.set(c.get() | (cc.mask2 & (CC_CCCONT | CC_DEFCONT | CC_PATCONT))));
 
@@ -3809,33 +3812,81 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         ADDWHAT.with(|c| c.set(-5));
         gen_matches_files(true, false, false);
     }
-    // CC_COMMPATH — c:3499-3518. Command-path completion. In the common
-    // bare-command case (no typed path prefix) the candidates are the
-    // executables reachable through $path: walk each directory in $path,
-    // point `prpre` at it, and add its directories + executables via
-    // `gen_matches_files(1, 1, 0)`. This is what makes `l<Tab>` offer the
-    // commands in `zsh -f` (cc_compos carries CC_COMMPATH).
+    // CC_COMMPATH — c:3500-3519. File-side of command completion. With a
+    // typed path prefix (`/usr/bin/tr<Tab>`, sf1) add that directory's
+    // directories+executables; with no prefix, add the cwd's executables
+    // only when the cwd is itself reachable through $path (an empty or
+    // "." element). The bulk of the command names (everything reachable
+    // via $path) comes from the cmdnamtab dump below, NOT from a $path
+    // walk here — those matches are added with addwhat=-3 so they carry
+    // no file-type marker, matching `zsh -f`.
     if (cc.mask & CC_COMMPATH) != 0 {
         ADDWHAT.with(|c| c.set(-5));
-        let opre = PRPRE.with(|r| r.borrow().clone());
-        // c:3509 — the elements of $path; empty / "." means the cwd.
-        let path = crate::ported::params::getaparam("path").unwrap_or_default();
-        for dir in &path {
-            let d = if dir.is_empty() { "." } else { dir.as_str() };
-            let d = if d.ends_with('/') {
-                d.to_string()
-            } else {
-                format!("{}/", d)
-            };
-            PRPRE.with(|r| *r.borrow_mut() = Some(d));
-            gen_matches_files(true, true, false); // c:3504
+        let sf1 = !ppre.is_empty(); // path prefix present (slash in word)
+        if sf1 {
+            // c:3505 — directories + executables under the typed prefix.
+            let save = PRPRE.with(|r| r.borrow().clone());
+            PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
+            gen_matches_files(true, true, false);
+            PRPRE.with(|r| *r.borrow_mut() = save);
+        } else {
+            // c:3509-3518 — cwd only if "." (or "") is in $path.
+            let path = crate::ported::params::getaparam("path").unwrap_or_default();
+            let cwd_in_path = path.iter().any(|p| p.is_empty() || p == ".");
+            if cwd_in_path {
+                let save = PRPRE.with(|r| r.borrow().clone());
+                PRPRE.with(|r| *r.borrow_mut() = Some("./".to_string()));
+                gen_matches_files(true, true, false); // c:3516
+                PRPRE.with(|r| *r.borrow_mut() = save);
+            }
         }
-        PRPRE.with(|r| *r.borrow_mut() = opre);
     }
     // CC_NAMED — c:3742
     if (cc.mask & CC_NAMED) != 0 {
         ADDWHAT.with(|c| c.set(-1));
         maketildelist();
+    }
+
+    // c:3648-3661 — command completion: add alias names, reserved words,
+    // shell functions, builtins and external command names (cmdnamtab).
+    // Gated on no leading `~`/`=` (ic), no path prefix and no path suffix.
+    // All dumped with addwhat=-3 so the matches carry no file-type marker.
+    if ic == '\0' && (cc.mask & CC_COMMPATH) != 0 && ppre.is_empty() && psuf.is_empty() {
+        // c:3651 — regular + global aliases.
+        let aliases: Vec<String> = crate::ported::hashtable::aliastab_lock()
+            .read()
+            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        dumphashtable(aliases, -3);
+        // c:3652 — reserved words.
+        let reswds: Vec<String> = crate::ported::hashtable::reswdtab_lock()
+            .read()
+            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        dumphashtable(reswds, -3);
+        // c:3653 — shell functions.
+        let funcs: Vec<String> = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        dumphashtable(funcs, -3);
+        // c:3654 — builtins.
+        let builtins: Vec<String> = crate::ported::builtin::BUILTINS
+            .iter()
+            .map(|b| b.node.nam.clone())
+            .collect();
+        dumphashtable(builtins, -3);
+        // c:3655-3657 — external commands; HASHLISTALL (default on) bulk-
+        // hashes $path first so every reachable command is offered.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
+            let path = crate::ported::params::getaparam("path").unwrap_or_default();
+            crate::ported::hashtable::fillcmdnamtable(&path);
+        }
+        let cmds: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
+            .read()
+            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        dumphashtable(cmds, -3);
     }
 
     // c:3668 — oaw = addwhat = (cc->mask & CC_QUOTEFLAG) ? -2 : CC_QUOTEFLAG.
