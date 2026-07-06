@@ -3574,10 +3574,14 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                 let mut ap = 0usize;
                 while ap < rp.len() {
                     // c:3274 for ap;*ap;ap++
-                    if ap != cp {
-                        rp.swap(ap, cp);
-                    } // c:3275 *cp++ = *ap
-                    cp += 1;
+                    // Scan the run of duplicates FIRST, using the element at
+                    // `ap` (C keeps `*ap` stable — `*cp++ = *ap` copies, it
+                    // does not move). Doing `rp.swap(ap, cp)` before this scan
+                    // (the old code) overwrote `rp[ap]` with a stale slot once
+                    // any earlier removal made `cp < ap`, so `rp[ap].str ==
+                    // rp[bp+1].str` compared the wrong element and same-string
+                    // duplicates (e.g. `libpng-config` from several $path dirs)
+                    // were never collapsed.
                     let mut bp = ap;
                     while bp + 1 < rp.len() && matcheq(&rp[ap], &rp[bp + 1]) {
                         bp += 1;
@@ -3592,11 +3596,17 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                         rp[bp + 1].flags |= CMF_MULT; // c:3284
                         dup = 1; // c:3285
                         bp += 1;
+                        n -= 1; // same-string duplicate is dropped too
                     }
                     if dup != 0 {
                         // c:3287
                         rp[ap].flags |= CMF_FMULT; // c:3288
                     }
+                    // c:3275 `*cp++ = *ap` — keep the first of the run at `cp`.
+                    if ap != cp {
+                        rp.swap(ap, cp);
+                    }
+                    cp += 1;
                     ap = bp + 1; // c:3279 ap = bp; ap++
                 }
                 rp.truncate(cp); // c:3291 *cp = NULL
