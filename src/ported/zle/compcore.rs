@@ -3085,15 +3085,21 @@ pub fn add_match_data(
     use crate::ported::zle::comp_h::CMF_FILE;
     if (flags & CMF_FILE) != 0 && !orig.is_empty() && !orig.ends_with('/') {
         let pb = format!("{}{}", cm.prpre.as_deref().unwrap_or("./"), orig);
-        // c:2960 — ztat follow-symlink for mode.
+        // c:2960-2963 — `ztat(pb, &buf, 1); cm->mode = buf.st_mode;
+        //   if ((cm->modec = file_type(buf.st_mode)) == ' ') cm->modec = 0;`
         if let Some(meta) = ztat(&pb, false) {
             use std::os::unix::fs::MetadataExt;
             cm.mode = meta.mode();
+            let c = crate::ported::glob::file_type(cm.mode); // c:2962
+            cm.modec = if c == ' ' { '\0' } else { c }; // c:2963
         }
-        // c:2965 — ztat without symlink-follow for fmode.
+        // c:2965-2968 — same via lstat for fmode/fmodec (the marker shown
+        // when LC_FOLLOW_SYMLINKS is off — `@` on a symlink itself).
         if let Some(meta) = ztat(&pb, true) {
             use std::os::unix::fs::MetadataExt;
             cm.fmode = meta.mode();
+            let c = crate::ported::glob::file_type(cm.fmode); // c:2967
+            cm.fmodec = if c == ' ' { '\0' } else { c }; // c:2968
         }
     }
 

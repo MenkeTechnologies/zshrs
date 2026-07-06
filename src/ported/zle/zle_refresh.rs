@@ -1273,8 +1273,26 @@ pub fn zrefresh() {
     // `l<Tab>` completion computed its matches but nothing was ever shown.
     if SHOWINGLIST.load(Ordering::Relaxed) == -2 {
         INLIST.store(1, Ordering::Relaxed);
+        // Drop to a fresh line below the command line before printing the
+        // list. C positions the cursor with trashzle's `moveto`, which
+        // needs the video-buffer bookkeeping the simple full-repaint path
+        // above doesn't maintain — so the list was drawn at the command-
+        // line cursor column and the recursive repaint's `\r\x1b[K` then
+        // erased it (single-row lists like `echo a<Tab>` vanished; taller
+        // ones lost their bottom row).
+        let _ = write_loop(out_fd, b"\r\n");
         crate::ported::zle::zle_h::listmatches();
         INLIST.store(0, Ordering::Relaxed);
+        // Return to the command-line row so the recursive repaint redraws
+        // it in place and leaves the listing intact below.
+        let nlines = crate::ported::zle::compcore::listdat
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|g| g.nlines)
+            .unwrap_or(0);
+        if nlines > 0 {
+            let _ = write_loop(out_fd, format!("\x1b[{}A\r", nlines).as_bytes());
+        }
         if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
             zrefresh();
         }
