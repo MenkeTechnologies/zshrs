@@ -2225,6 +2225,10 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
         Ok(e) => e,
         Err(_) => return,
     };
+    // A leading `.` in the file prefix (`cat .h<Tab>`) means the user
+    // explicitly asked for dotfiles, so don't hide them — matches zsh,
+    // which only suppresses dotfiles when the prefix doesn't start with `.`.
+    let dot_prefix = FPRE.with(|r| r.borrow().starts_with('.'));
     for entry in entries.flatten() {
         let name = match entry.file_name().into_string() {
             Ok(n) => n,
@@ -2234,8 +2238,8 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
         if !all && (name == "." || name == "..") {
             continue;
         }
-        // Hidden-file rule: leading `.` requires `all`.
-        if !all && name.starts_with('.') {
+        // Hidden-file rule: leading `.` requires `all` or a dot-prefixed word.
+        if !all && !dot_prefix && name.starts_with('.') {
             continue;
         }
         let meta = match entry.metadata() {
