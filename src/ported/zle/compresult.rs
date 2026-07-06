@@ -1140,6 +1140,50 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
             let _ = inststr(&prefix); // c:790
         }
     }
+
+    // c:`la = (zlemetall != origll || strncmp(origline, zlemetaline,
+    // zlemetall))` — did inserting the unambiguous prefix change the line?
+    let origll = crate::ported::zle::zle_tricky::ORIGLL.load(Relaxed);
+    let zlemetall = crate::ported::zle::compcore::ZLEMETALL.load(Relaxed);
+    let origline_s = crate::ported::zle::zle_tricky::ORIGLINE
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let metaline_s = crate::ported::zle::compcore::ZLEMETALINE
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let la = zlemetall != origll || {
+        let n = (zlemetall.max(0) as usize)
+            .min(origline_s.len())
+            .min(metaline_s.len());
+        origline_s.as_bytes()[..n] != metaline_s.as_bytes()[..n]
+    };
+    // c:`if ((uselist == 3 || (!uselist && BASHAUTOLIST && LISTAMBIGUOUS))
+    //     && la && iforcemenu != -1) { invalidatelist(); lastambig = 0;
+    //     clearlist = 1; return ret; }`. With LIST_AMBIGUOUS (`uselist == 3`,
+    // the `zsh -f` default) the list is shown only when the completion is
+    // fully ambiguous — i.e. inserting the prefix changed nothing. If it
+    // extended the word (`la`), don't list yet (`cat config<Tab>` →
+    // `config.` with no list; a second Tab lists). Without this the port
+    // listed on every ambiguous Tab.
+    let uselist_v = crate::ported::zle::compcore::uselist.load(Relaxed);
+    let iforcemenu_v = crate::ported::zle::compcore::iforcemenu.load(Relaxed);
+    if (uselist_v == 3
+        || (uselist_v == 0
+            && isset(crate::ported::zsh_h::BASHAUTOLIST)
+            && isset(crate::ported::zsh_h::LISTAMBIGUOUS)))
+        && la
+        && iforcemenu_v != -1
+    {
+        crate::ported::zle::zle_h::invalidatelist();
+        crate::ported::zle::zle_tricky::LASTAMBIG.store(0, Relaxed);
+        crate::ported::zle::zle_refresh::CLEARLIST.store(1, Relaxed);
+        return 0;
+    }
+
     // compresult.c do_ambiguous tail — decide whether the ambiguous match
     // set needs a listing, and trigger it via `showinglist = -2`. The
     // previous Rust port omitted this, so `showinglist` stayed 0 and
