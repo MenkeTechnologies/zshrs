@@ -19,6 +19,45 @@ CI green pending the underlying fix.
 
 ---
 
+## #649 — glob `o`/`O` sort: equal-key tie-break made deterministic — FIXED
+
+**Status:** `fixed` (determinism guarantee, not a `zsh -f` parity change)
+
+**Symptom:** `*(oL)` / `*(OL)` (and any `o<key>`/`O<key>`) on matches whose
+primary sort key TIES — e.g. several 0-byte files under size sort — ordered
+the tied files by REVERSE name in zshrs.
+
+**Why zsh can't be matched here:** `gmatchcmp` (`Src/glob.c:936`) returns 0
+when every key ties; the final order is then whatever the libc `qsort` does
+with all-equal elements (`glob.c:1976`). That is NOT a portable contract:
+
+| files (all 0-byte)        | macOS `zsh -f` `*(oL)` |
+|---------------------------|------------------------|
+| apple banana mango zebra  | `apple banana mango zebra` (looks like name order) |
+| a b d                     | `d a b` (NOT name order) |
+
+macOS/BSD `qsort` is non-stable, so the tie order is input-dependent and
+arbitrary; glibc's order depends on readdir sequence. The apparent
+"name-ascending" case is coincidental. No deterministic implementation can
+reproduce it across platforms.
+
+**Fix:** zshrs is cross-architecture and must be deterministic, so
+`sort_matches` (glob.rs) now appends an explicit `GS_NAME` final tie-breaker
+(unless the sort list already ends in `GS_NAME`). Equal-key matches order by
+name ascending, identically on every platform. `GS_DESC` on the primary key
+does not reverse the tie-breaker (`*(OL)` → `big mid a b d`). The primary sort
+itself is unchanged and still matches `zsh -f` for distinct keys.
+
+This is an intentional determinism guarantee; the parity test is zshrs-only
+(`test_glob_sort_equal_key_tiebreak_is_deterministic_name_order`), NOT a
+`run_zshrs_parity` assertion, because real zsh's equal-key order is
+implementation-defined.
+
+**Related (unfixed):** `*.txt(#q.)` without `extendedglob` — real zsh errors
+`unknown file attribute: #`, zshrs accepts `#q` as a no-op. Niche; deferred.
+
+---
+
 ## #648 — `zparseopts -v NAME` didn't error on a missing source array — FIXED
 
 **Status:** `fixed`

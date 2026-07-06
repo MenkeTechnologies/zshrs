@@ -5150,7 +5150,7 @@ fn sort_matches(state: &mut globdata) {
     // glob.c falls back to GS_NAME (or GS_NONE under shortcircuit).
     // Mirror that here so a qualifier set carrying ONLY non-sort
     // qualifiers (`Lk+0`, etc.) still sorts alphabetically.
-    let specs: Vec<i32> = state
+    let mut specs: Vec<i32> = state
         .qualifiers
         .as_ref()
         .map(|q| {
@@ -5165,6 +5165,22 @@ fn sort_matches(state: &mut globdata) {
     // GS_NONE marker — caller wants no sort at all.
     if specs.iter().any(|&tp| (tp & GS_NONE) != 0) {
         return;
+    }
+
+    // c:936 gmatchcmp returns 0 when every sort key ties. In C the final
+    // order of equal-key matches is then whatever the libc `qsort` does with
+    // all-equal elements (glob.c:1976) — NON-stable on macOS/BSD (arbitrary,
+    // input-dependent: `*(oL)` on three 0-byte files a/b/d prints `d a b`),
+    // and on glibc it depends on readdir order. So zsh has NO portable,
+    // defined tie-break here. zshrs is a cross-architecture shell and must be
+    // DETERMINISTIC, so we impose an explicit GS_NAME final tie-breaker:
+    // equal-key matches order by name ascending, identical on every platform.
+    // This is an intentional determinism guarantee, NOT a bug-for-bug match of
+    // zsh's qsort-defined order (which can't be reproduced portably). Skip
+    // when the last key is already GS_NAME (the no-qualifier default, or an
+    // explicit trailing `on`) so we don't double-compare.
+    if specs.last().map_or(true, |&last| (last & !GS_DESC) != GS_NAME) {
+        specs.push(GS_NAME); // deterministic name-ascending tie-break
     }
 
     // c:1258/1575 — gf_numsort starts at the global NUMERIC_GLOB_SORT
