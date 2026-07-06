@@ -70,7 +70,7 @@ use crate::ported::sort::strmetasort;
 use crate::ported::utils::{
     argzero, errflag, fprintdir, getkeystring, getkeystring_with, getshfunc, gettempfile, lchdir,
     print_if_link, printprompt4, quotedzputs, scriptname_get, set_argzero, zerr, zerrnam, zwarn,
-    zwarnnam, GETKEYS_ECHO, GETKEYS_PRINT,
+    zwarnnam, GETKEYS_BINDKEY, GETKEYS_ECHO, GETKEYS_PRINT,
 };
 #[allow(unused_imports)]
 use crate::ported::vm_helper::{self, format_int_in_base, BUILTIN_NAMES};
@@ -9663,8 +9663,8 @@ pub fn bin_print(
     //     `(!-e && (-R || -r || -E))` → unmetafy only, NO escape
     //     interpretation (raw passthrough).
     //   - Otherwise pick `escape_how` per c:4754-4760:
-    //       `-b`                            → GETKEYS_BINDKEY (skip — `-b`
-    //                                          isn't wired in this port)
+    //       `-b`                            → GETKEYS_BINDKEY (bindkey
+    //                                          escapes: `\C-`/`\M-`/`^X`)
     //       func != BIN_ECHO && !`-e`       → GETKEYS_PRINT (with EMACS:
     //                                          unknown `\<c>` → `<c>`)
     //       else (BIN_ECHO or `-e`)         → GETKEYS_ECHO (preserves
@@ -9687,7 +9687,11 @@ pub fn bin_print(
         || (bsd_echo_active && !dash_e);
     let mut backslash_c_truncated = false;
     if !suppress_escapes || dash_e {
-        let escape_how: u32 = if !echo_mode && !dash_e {
+        // c:builtin.c:4754-4760 — `-b` (bindkey escapes) takes precedence,
+        // then GETKEYS_PRINT for print (EMACS), else GETKEYS_ECHO.
+        let escape_how: u32 = if OPT_ISSET(ops, b'b') {
+            GETKEYS_BINDKEY // c:4755
+        } else if !echo_mode && !dash_e {
             GETKEYS_PRINT // c:4758
         } else {
             GETKEYS_ECHO // c:4760
