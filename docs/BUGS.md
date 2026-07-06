@@ -19,6 +19,44 @@ CI green pending the underlying fix.
 
 ---
 
+## #653 — nested subscript on an array slice `${a[1,3][2]}` ignored the 2nd subscript — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+a=(one two three four)
+echo ${a[1,3][2]}      # expect two   (element 2 of the slice)
+echo ${a[1,3][-1]}     # expect three
+echo ${a[1,3][2,3]}    # expect two three
+echo "${a[1,2][2]}"    # expect two
+```
+
+**Observed (before):** unquoted forms ignored the second subscript and printed
+the whole slice (`one two three`); the quoted form char-indexed the JOINED
+slice (`"${a[1,2][2]}"` → `n`, the 2nd char of `one two`).
+
+**Root cause:** the second-subscript handler (subst.rs, `${a[N][M]}`) only did
+CHARACTER indexing on the scalar first result — correct when the first
+subscript is a single element, but for an array SLICE the first result is a
+sub-array and the second subscript must index/slice THAT sub-array element-wise
+(`${a[1,3][2]}` ≡ `${${a[1,3]}[2]}`).
+
+**Fix:** when the first subscript contains a `,` (slice) and the name is an
+array, re-derive the sub-array via `getarrvalue(full, lo1, hi1)` and apply the
+second subscript to it — a single index yields a scalar element, a `lo,hi`
+yields a sub-slice. Seed `split_parts`/`isarr` so the unquoted array-output
+path (which re-joins `arrays_get`) emits the indexed result instead of
+re-deriving the first slice. Unquoted `-` arrives as the Dash token (`\u{9b}`);
+normalize it to `-` before the numeric parse so negative indices work.
+
+**Related (deferred, pre-existing):** `${a[N][-1]}` — a NEGATIVE char index on
+a single-element first subscript (`a[1]="hello"`, `[-1]`) returns the FIRST
+char (`h`) instead of the last (`o`). Separate char-index path, untouched here.
+
+---
+
 ## #652 — `:w` word modifier applied `:s` twice (whole-string + per-word) — FIXED
 
 **Status:** `fixed`
