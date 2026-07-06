@@ -2799,6 +2799,42 @@ fn test_glob_qualifier_path_dot() {
     assert_eq!(output.trim(), "/etc/hosts", "got: {output:?}");
 }
 
+#[test]
+fn test_explicit_glob_qualifier_requires_extendedglob() {
+    // c:Src/glob.c:1192-1197 — the `(#q...)` explicit glob-qualifier form is
+    // recognized ONLY under EXTENDEDGLOB. Without it, the `#` inside `(...)`
+    // is an (unknown) attribute char, so `*(#q.)` errors "unknown file
+    // attribute: #" rather than silently applying the `.` qualifier.
+    let dir = tempdir_for_test();
+    std::fs::write(format!("{}/a.txt", dir), b"").unwrap();
+    std::fs::write(format!("{}/c.log", dir), b"").unwrap();
+    std::fs::create_dir(format!("{}/sub", dir)).unwrap();
+
+    // No extendedglob → error naming the `#` attribute.
+    let (_, _, err) = run_zshrs(&format!("cd {} && echo *(#q.)", dir));
+    assert!(
+        err.contains("unknown file attribute: #"),
+        "expected unknown-attribute error without extendedglob: {err:?}"
+    );
+
+    // With extendedglob → the explicit qualifier applies (regular files).
+    let (_, out, _) = run_zshrs(&format!(
+        "cd {} && setopt extendedglob && print -l *(#q.) | sort",
+        dir
+    ));
+    assert_eq!(out.trim(), "a.txt\nc.log", "got: {out:?}");
+
+    // Inline pattern flag `(#i)` still passes through under extendedglob.
+    let (_, out, _) = run_zshrs("setopt extendedglob; [[ abc == (#i)ABC ]] && echo ci");
+    assert_eq!(out.trim(), "ci");
+
+    // Plain bareglobqual `(.)` unaffected (no `#`).
+    let (_, out, _) = run_zshrs(&format!("cd {} && print -l *(.) | sort", dir));
+    assert_eq!(out.trim(), "a.txt\nc.log", "got: {out:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---------------------------------------------------------------------------
 // Recursive glob `**/` (dirs-only) and `**/*` (files+dirs)
 // ---------------------------------------------------------------------------

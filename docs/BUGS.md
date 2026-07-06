@@ -19,6 +19,34 @@ CI green pending the underlying fix.
 
 ---
 
+## #654 — `(#q...)` glob qualifier accepted without `extendedglob` — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+echo *.txt(#q.)     # extendedglob OFF
+```
+
+**Observed:** zshrs silently applied the `.` qualifier (listed regular `.txt`
+files); real zsh errors `unknown file attribute: #`.
+
+**Root cause:** the qualifier parser (glob.rs) matched a leading `#q`
+UNCONDITIONALLY as the explicit-qualifier form. C (`Src/glob.c:1192-1197`) gates
+the whole `(#...)` interpretation on `isset(EXTENDEDGLOB)`: `(#q...)` is the
+explicit glob qualifier and `(#X...)` (X≠q) is an inline pattern flag ONLY under
+EXTENDEDGLOB. Without it the `#` is not special — `(...)` is a bare qualifier
+group and the leading `#` is an unknown attribute char.
+
+**Fix:** gate the `#`-inside-`(...)` handling on `glob_isset(EXTENDEDGLOB)`. With
+extendedglob: `#q` → explicit qualifier, other `#X` → pass through (inline flag).
+Without it: fall through to the bareglobqual parser, which reports
+`unknown file attribute: #`. Inline flags (`(#i)`, `(#c1,2)`, …) and plain
+bareglobqual qualifiers (`(.)`, `(/)`, `(om)`) are unaffected.
+
+---
+
 ## #653 — nested subscript on an array slice `${a[1,3][2]}` ignored the 2nd subscript — FIXED
 
 **Status:** `fixed`
@@ -202,8 +230,8 @@ This is an intentional determinism guarantee; the parity test is zshrs-only
 `run_zshrs_parity` assertion, because real zsh's equal-key order is
 implementation-defined.
 
-**Related (unfixed):** `*.txt(#q.)` without `extendedglob` — real zsh errors
-`unknown file attribute: #`, zshrs accepts `#q` as a no-op. Niche; deferred.
+**Related (FIXED in #654):** `*.txt(#q.)` without `extendedglob` now errors
+`unknown file attribute: #` like real zsh (was: silently applied the qualifier).
 
 ---
 
