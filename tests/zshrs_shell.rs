@@ -2148,6 +2148,33 @@ fn test_s_flag_splits_each_array_element() {
     assert_eq!(output.trim(), "a\nb\nc\nd", "got: {output:?}");
 }
 
+#[test]
+fn test_force_split_preserves_empty_fields_for_nonwhitespace_ifs() {
+    // c:Src/utils.c:4224-4228 + spacesplit — a NON-whitespace IFS char
+    // hard-delimits, so `${=var}` preserves empty fields (leading, trailing,
+    // and between consecutive separators); a whitespace IFS collapses runs
+    // and trims. multsub's PREFORK_SPLIT loop previously treated every IFS
+    // char as whitespace-like, dropping the empties.
+    let f = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    // Non-whitespace IFS → empties preserved.
+    assert_eq!(f(r#"IFS=:; a=":a:b:"; set -- ${=a}; echo "$#|$1|$2|$3|$4""#), "4||a|b|");
+    assert_eq!(f(r#"IFS=:; a="a::b"; set -- ${=a}; echo "$#|$1|$2|$3""#), "3|a||b");
+    assert_eq!(f(r#"IFS=:; a=":::"; set -- ${=a}; echo $#"#), "4");
+    assert_eq!(f(r#"IFS=,; a="a,,b"; b=(${=a}); echo $#b"#), "3");
+    // Mixed IFS: non-ws `:` preserves, whitespace collapses.
+    assert_eq!(f(r#"IFS=" :"; a="a::b"; set -- ${=a}; echo $#"#), "3");
+    assert_eq!(f(r#"IFS=" :"; a="a  b"; set -- ${=a}; echo $#"#), "2");
+
+    // Whitespace IFS → runs collapse, leading/trailing trimmed (no regression).
+    assert_eq!(f(r#"IFS=" "; a="  a  b  "; set -- ${=a}; echo $#"#), "2");
+    assert_eq!(f(r#"a="one two three"; set -- ${=a}; echo $#"#), "3");
+    assert_eq!(f(r#"IFS=:; a=""; set -- ${=a}; echo $#"#), "0");
+
+    // Quoted → no splitting at all.
+    assert_eq!(f(r#"IFS=:; a=":a:b:"; echo "${a}""#), ":a:b:");
+}
+
 // ---------------------------------------------------------------------------
 // Param flag with [@] subscript: ${(kv)m[@]}, ${(o)arr[@]}, etc.
 // ---------------------------------------------------------------------------

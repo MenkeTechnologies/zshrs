@@ -1505,10 +1505,20 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
         // c:556
         ifs.contains(c) // c:556
     };
+    // c:Src/utils.c:4224-4228 — an IFS char is IWSEP (collapsing whitespace
+    // separator) only when it is `inblank` (space/tab/newline); every other
+    // IFS char is a plain ISEP that hard-delimits and PRESERVES empty fields.
+    // `${=:a:b:}` with IFS=: → 4 fields (``, a, b, ``), whereas a whitespace
+    // IFS collapses runs and trims leading/trailing.
+    let is_ifs_wsep = |c: char| -> bool {
+        ifs.contains(c) && matches!(c, ' ' | '\t' | '\n')
+    };
 
     if pf_flags & PREFORK_SPLIT != 0 {
-        // c:553
-        let leading: usize = x.chars().take_while(|&c| is_ifs_sep(c)).count(); // c:556
+        // c:553-562 — skip only leading IFS-WHITESPACE (a leading
+        // non-whitespace separator produces a real empty first field,
+        // handled by the split loop below).
+        let leading: usize = x.chars().take_while(|&c| is_ifs_wsep(c)).count(); // c:556
         if leading > 0 {
             // c:557
             ms_flags |= MULTSUB_WS_AT_START; // c:561
@@ -1580,20 +1590,38 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
             // ISEP test (C line 581) — outside quotes/parens, char
             // matches IFS, char is not a token.
             if !inq && inp == 0 && !is_token && is_ifs_sep(c) {
-                // c:581
-                // Split here; NUL-terminate cur, walk past trailing
-                // separators (C lines 583-595).
-                if !cur.is_empty() || nodes.is_empty() {
-                    // c:583
-                    nodes.push(std::mem::take(&mut cur)); // c:583
+                // c:581 — split here. A WHITESPACE separator collapses a run
+                // and never yields an empty field; a NON-whitespace separator
+                // hard-delimits, so an empty field between two of them (or a
+                // leading/trailing one) is preserved.
+                let c_wsep = is_ifs_wsep(c);
+                if !c_wsep || !cur.is_empty() || nodes.is_empty() {
+                    // c:583 — a preserved EMPTY field (only between/around
+                    // non-whitespace separators) is emitted as the Nularg
+                    // sentinel — mirroring spacesplit's `nulstring` — so
+                    // prefork's empty-node-delete pass keeps it and
+                    // remnulargs restores the real empty string. A plain ""
+                    // here would be silently dropped downstream.
+                    let field = std::mem::take(&mut cur);
+                    if field.is_empty() && !c_wsep {
+                        nodes.push(Nularg.to_string());
+                    } else {
+                        nodes.push(field);
+                    }
                 }
                 i += 1; // c:584
-                while i < chars.len() && is_ifs_sep(chars[i]) {
-                    // c:584-595
+                // c:584-595 — absorb only following IFS-WHITESPACE. Consecutive
+                // non-whitespace separators are NOT skipped: each delimits an
+                // (empty) field on the next iteration.
+                while i < chars.len() && is_ifs_wsep(chars[i]) {
                     i += 1; // c:594
                 }
                 if i >= chars.len() {
-                    // c:596
+                    // c:596-598 — a trailing NON-whitespace separator leaves a
+                    // final empty field (Nularg); a trailing whitespace run does not.
+                    if !c_wsep {
+                        nodes.push(Nularg.to_string());
+                    }
                     ms_flags |= MULTSUB_WS_AT_END; // c:597
                     break; // c:598
                 }
