@@ -3063,21 +3063,69 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 ml += 1;
             }
 
-            for m in &g.matches {
-                // c:2087
-                let visible = showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0;
-                if !visible {
-                    continue;
+            // c:2093-2113 — CGF_HASDL: matches flagged CMF_DISPLINE render
+            // on their own full row, one per line, before the grid.
+            if (g.flags & CGF_HASDL) != 0 {
+                for m in g.matches.iter() {
+                    if m.disp.is_some()
+                        && (m.flags & CMF_DISPLINE) != 0
+                        && (showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0)
+                    {
+                        if pnl != 0 {
+                            let _ = write_loop(out_fd, b"\n");
+                            ml += 1;
+                        }
+                        let _ = iprintm(Some(g), Some(m), 0, ml, 1, 0);
+                        pnl = 1;
+                    }
                 }
-                // c:2095-2098 — DISPLINE = full-row.
-                let _ = iprintm(Some(g), Some(m), 0, 0, 1, 0);
-                if (m.flags & CMF_DISPLINE) == 0 {
+                if pnl != 0 {
                     let _ = write_loop(out_fd, b"\n");
+                    ml += 1;
+                    pnl = 0;
                 }
-                ml += 1;
             }
-            // Force CGF_ROWS layout hint into effect.
-            let _ = CGF_ROWS;
+
+            // c:2114-2160 — column grid for the remaining matches. calclist
+            // computed g.cols (columns), g.lins (rows), g.width / g.widths
+            // (per-column widths). Fill column-major (index r + c*lins) by
+            // default, row-major (r*cols + c) when CGF_ROWS is set. iprintm
+            // pads each non-final cell to its column width; trailing empty
+            // cells (index past the match count) are skipped.
+            let visible: Vec<&crate::ported::zle::comp_h::Cmatch> = g
+                .matches
+                .iter()
+                .filter(|m| (m.flags & CMF_DISPLINE) == 0)
+                .filter(|m| showall != 0 || (m.flags & (CMF_HIDE | CMF_NOLIST)) == 0)
+                .collect();
+            let n = visible.len();
+            if n > 0 {
+                let cols = g.cols.max(1);
+                let lins = g.lins.max(1);
+                let rows_major = (g.flags & CGF_ROWS) != 0;
+                for row in 0..lins {
+                    for col in 0..cols {
+                        let idx = if rows_major {
+                            row * cols + col
+                        } else {
+                            row + col * lins
+                        };
+                        let lastc = if col == cols - 1 { 1 } else { 0 };
+                        let wid = if g.widths.is_empty() {
+                            g.width
+                        } else {
+                            g.widths.get(col as usize).copied().unwrap_or(g.width)
+                        };
+                        if idx >= 0 && (idx as usize) < n {
+                            let _ = iprintm(Some(g), Some(visible[idx as usize]), col, ml, lastc, wid);
+                        }
+                    }
+                    ml += 1;
+                    if row < lins - 1 {
+                        let _ = write_loop(out_fd, b"\n");
+                    }
+                }
+            }
         }
         pnl = 1;
     }
