@@ -2166,6 +2166,15 @@ fn test_force_split_preserves_empty_fields_for_nonwhitespace_ifs() {
     assert_eq!(f(r#"IFS=" :"; a="a::b"; set -- ${=a}; echo $#"#), "3");
     assert_eq!(f(r#"IFS=" :"; a="a  b"; set -- ${=a}; echo $#"#), "2");
 
+    // Mixed IFS: whitespace ADJACENT to a non-ws separator is absorbed into
+    // it (spacesplit isep_one + skipwsep), so `a : b` is ONE delimiter → 2
+    // fields, but two non-ws separators (even ws-padded) keep the empty.
+    assert_eq!(f(r#"IFS=" :"; a="a : b"; set -- ${=a}; echo $#"#), "2");
+    assert_eq!(f(r#"IFS=" :"; a="a  :  b"; set -- ${=a}; echo $#"#), "2");
+    assert_eq!(f(r#"IFS=" :"; a="a :"; set -- ${=a}; echo $#"#), "2"); // trailing empty
+    assert_eq!(f(r#"IFS=" :"; a="a :: b"; set -- ${=a}; echo $#"#), "3");
+    assert_eq!(f(r#"IFS=" :"; a="x : y : z"; set -- ${=a}; echo $#"#), "3");
+
     // Whitespace IFS → runs collapse, leading/trailing trimmed (no regression).
     assert_eq!(f(r#"IFS=" "; a="  a  b  "; set -- ${=a}; echo $#"#), "2");
     assert_eq!(f(r#"a="one two three"; set -- ${=a}; echo $#"#), "3");
