@@ -19,6 +19,36 @@ CI green pending the underlying fix.
 
 ---
 
+## #656 — `zstyle -L context [style]` ignored its filter arguments — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+zstyle ':c1' x 1; zstyle ':c1' y 2; zstyle ':c2' x 3
+zstyle -L ':c1'       # expect only the :c1 entries
+zstyle -L '*' x       # expect only the x style across contexts
+zstyle -L ':nomatch'  # expect nothing
+```
+
+**Observed (before):** `zstyle -L` always listed every style, ignoring the
+context/style arguments.
+
+**Root cause:** the `-L` list path scanned all styles and called
+`printstylenode` without the context filter — the `zstyle_contprog` filter
+(`Src/Modules/zutil.c:196-197`, `if (zstyle_contprog && !pattry(...)) continue;`)
+was explicitly "not modeled in the Rust port," and the `stylename` argument
+(`zutil.c:552/573-577`) was unread.
+
+**Fix:** `printstylenode` gained a `context_pat` parameter; it compiles the
+context glob and skips stored patterns that don't `pattry`-match it. The `-L`
+path now parses `args[0]` (context) and `args[1]` (style name): a named style
+lists just that node (rc 1 if it doesn't exist), otherwise all styles are
+scanned, each filtered by the context. An invalid context pattern returns 1.
+
+---
+
 ## #655 — word splitting drops empty fields for a non-whitespace IFS
 
 **Status:** `fixed` for `${=var}` / `(${=var})`; the `setopt shwordsplit` path on
