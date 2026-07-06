@@ -4556,6 +4556,31 @@ fn test_type_unknown_format_matches_zsh() {
 }
 
 #[test]
+fn test_disabled_builtin_falls_through_in_whence() {
+    // c:Src/builtin.c:4123 — `builtintab->getnode` skips a DISABLED builtin,
+    // so `type`/`whence` don't report a disabled builtin as a builtin; they
+    // fall through to the external command. zshrs still reported "builtin".
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    // Enabled: reported as a builtin.
+    assert_eq!(out("whence -w echo"), "echo: builtin");
+    // Disabled: falls through to the external command.
+    assert_eq!(out("disable echo; whence -w echo"), "echo: command");
+    assert_eq!(out("disable echo; type -w echo"), "echo: command");
+    assert!(
+        out("disable echo; type echo").ends_with("/echo"),
+        "type should show the external path"
+    );
+    // `type -a` no longer lists the disabled builtin (external only).
+    assert!(
+        !out("disable echo; type -a echo").contains("shell builtin"),
+        "disabled builtin must not appear in -a"
+    );
+    // Re-enabling restores the builtin.
+    assert_eq!(out("disable echo; enable echo; whence -w echo"), "echo: builtin");
+}
+
+#[test]
 fn test_echo_default_interprets_escapes() {
     // zsh's default (no -e flag) interprets \n, \t, \b, etc. unless
     // setopt bsd_echo is set.

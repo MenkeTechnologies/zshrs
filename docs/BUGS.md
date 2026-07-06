@@ -19,6 +19,34 @@ CI green pending the underlying fix.
 
 ---
 
+## #660 — `whence`/`type` reported a DISABLED builtin as a builtin — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+disable echo
+type echo          # expect: echo is /bin/echo
+whence -w echo     # expect: echo: command
+```
+
+**Observed (before):** `echo is a shell builtin` / `echo: builtin` — the
+`disable`d state was ignored, so the builtin shadowed the external command.
+
+**Root cause:** `bin_whence`'s builtin lookup found the entry in the static
+`BUILTINS` table without consulting the `BUILTINS_DISABLED` set. C's
+`builtintab->getnode` returns NULL for a builtin carrying the `DISABLED` flag
+(`Src/builtin.c:4123`), so a disabled builtin is invisible to `whence`/`type`
+and the search falls through to the hashed / `$PATH` external command.
+
+**Fix:** skip the builtin entry when the name is in `BUILTINS_DISABLED`, so
+`type`/`whence`/`whence -w`/`command -v`/`type -a` all fall through to the
+external command for a disabled builtin. Re-enabling (`enable NAME`) restores
+it; enabled builtins are unaffected.
+
+---
+
 ## #659 — `bindkey` keymap errors: wrong prefix + missing `-D`/`-A` diagnostics — FIXED
 
 **Status:** `fixed`

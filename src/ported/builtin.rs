@@ -8249,14 +8249,23 @@ pub fn bin_whence(
                 || is_ztcp_gated
                 || is_zftp_gated
                 || is_system_gated;
-            let builtin_node: Option<*mut hashnode> = if is_files_gated || is_module_bound_gated {
-                None
-            } else {
-                BUILTINS
-                    .iter()
-                    .find(|b| b.node.nam == *arg)
-                    .map(|b| &b.node as *const hashnode as *mut hashnode)
-            };
+            // c:Src/builtin.c:4123 — `builtintab->getnode(name)` returns NULL
+            // for a builtin carrying the DISABLED flag (set by `disable NAME`),
+            // so whence/type do NOT report a disabled builtin as a builtin and
+            // instead fall through to the hashed/PATH external command.
+            let is_disabled_builtin = BUILTINS_DISABLED
+                .lock()
+                .map(|s| s.contains(arg.as_str()))
+                .unwrap_or(false);
+            let builtin_node: Option<*mut hashnode> =
+                if is_files_gated || is_module_bound_gated || is_disabled_builtin {
+                    None
+                } else {
+                    BUILTINS
+                        .iter()
+                        .find(|b| b.node.nam == *arg)
+                        .map(|b| &b.node as *const hashnode as *mut hashnode)
+                };
             if let Some(hn) = builtin_node {
                 printbuiltinnode(hn, printflags); // c:4124
                 informed = 1; // c:4125
