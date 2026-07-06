@@ -7593,6 +7593,16 @@ pub fn bin_unset(
                         }
                         // Other negative values: no-op (zsh behavior).
                     }
+                    // c:Src/params.c:2922 — a subscript unset of a tied
+                    // colon-array (`unset path[2]`) re-derives the scalar
+                    // side, just like the assignment paths in params.rs.
+                    if let Some((_, scalar)) = crate::ported::params::TIED_COLON_ARRAYS
+                        .iter()
+                        .find(|(a, _)| *a == nm)
+                    {
+                        let cur = crate::ported::exec::array(nm).unwrap_or_default();
+                        crate::ported::params::assignsparam(scalar, &cur.join(":"), 0);
+                    }
                 }
             }
             None => {
