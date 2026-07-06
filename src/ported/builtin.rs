@@ -12104,6 +12104,14 @@ pub fn bin_read(
         // trailing whitespace and hits the delimiter with an empty buf
         // and gotnl=1, so c:6929 `(*buf || first || gotnl)` adds a
         // trailing empty element. `read -A arr <<< "a b "` → (a b "").
+        // c:Src/utils.c:3711 spacesplit — a whitespace-IFS char collapses a
+        // run, and whitespace ADJACENT to a non-whitespace IFS separator is
+        // absorbed into it (so `a : b` with IFS=" :" is ONE delimiter → 2
+        // fields), while consecutive non-whitespace separators each delimit
+        // (`a :: b` → 3, empty preserved). A non-whitespace separator also
+        // absorbs its own trailing whitespace.
+        let is_ws_ifs = |c: char| is_ifs(c) && c.is_whitespace();
+        let is_nonws_ifs = |c: char| is_ifs(c) && !c.is_whitespace();
         let mut parts: Vec<String> = Vec::new();
         let mut field = String::new();
         let mut chars = trimmed.chars().peekable();
@@ -12111,14 +12119,23 @@ pub fn bin_read(
             if is_ifs(c) {
                 parts.push(std::mem::take(&mut field));
                 if c.is_whitespace() {
-                    // Coalesce consecutive whitespace-IFS into one
-                    // delimiter (zsh-style).
-                    while let Some(&n) = chars.peek() {
-                        if is_ifs(n) && n.is_whitespace() {
+                    // Coalesce the whitespace-IFS run.
+                    while chars.peek().copied().is_some_and(is_ws_ifs) {
+                        chars.next();
+                    }
+                    // If that run is followed by a non-whitespace separator,
+                    // it belongs to the SAME delimiter — consume it and its
+                    // trailing whitespace so no empty field appears.
+                    if chars.peek().copied().is_some_and(is_nonws_ifs) {
+                        chars.next();
+                        while chars.peek().copied().is_some_and(is_ws_ifs) {
                             chars.next();
-                        } else {
-                            break;
                         }
+                    }
+                } else {
+                    // Non-whitespace separator: absorb its trailing whitespace.
+                    while chars.peek().copied().is_some_and(is_ws_ifs) {
+                        chars.next();
                     }
                 }
             } else {
