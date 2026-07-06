@@ -3628,19 +3628,44 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         ic_char
     };
 
-    // c:3168-3174 — parameter-name completion redirect. `s` is advanced
-    // past the `$…` context; the flag-walk's cc_dummy switch is a
-    // documented gap (see header).
-    if incompfunc == 0 {
+    // c:3160-3167 — parameter-name completion redirect. When check_param
+    // detects a `$…` context it advances `s` past the `$`, decrements offs
+    // (inside check_param, via OFFS), and swaps the active compctl to
+    // cc_dummy with mask CC_PARAMS | CC_ENVVARS so the flag-walk below
+    // dumps parameter names. Without the swap, `echo $HOM<Tab>` fell
+    // through to cc_default (CC_FILES) and produced nothing.
+    let param_cc: Option<Arc<Compctl>> = if incompfunc == 0 {
+        let saved_wb = crate::ported::zle::compcore::WB.load(Ordering::Relaxed);
         crate::ported::zle::compcore::OFFS.store(offs, Ordering::Relaxed);
         if let Some(p) = check_param(&s, true, false) {
             let mut p = p.min(s.len());
             while p > 0 && !s.is_char_boundary(p) {
                 p -= 1;
             }
-            s = s[p..].to_string();
+            s = s[p..].to_string(); // c:3162 — s = p
+            offs = crate::ported::zle::compcore::OFFS.load(Ordering::Relaxed);
+            // check_param advances wb past the `$` sigil (the `$` becomes the
+            // ignored prefix `ipre`). add_match_data still splices ipre into
+            // every match's line cline (Src/Zle/compcore.c:2827), so the
+            // inserted string carries the `$`. In the compsys path callcompfunc
+            // resets `wb = parwb` (c:739) to re-anchor at the `$`; the compctl
+            // path has no such reset, so do it here — otherwise the on-line `$`
+            // plus the cline's `$` doubled (`$HOM<Tab>` → `$$HOME`). Keep wb at
+            // the sigil so the ambiguous-insert region covers it.
+            crate::ported::zle::compcore::WB.store(saved_wb, Ordering::Relaxed);
+            // c:3164-3166 — cc = &cc_dummy; mask = CC_PARAMS | CC_ENVVARS.
+            Some(Arc::new(Compctl {
+                refc: 10000,
+                mask: CC_PARAMS | CC_ENVVARS,
+                ..Default::default()
+            }))
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
+    let cc: &Arc<Compctl> = param_cc.as_ref().unwrap_or(cc);
 
     // c:3177-3183 — CC_DELETE blanks the word entirely.
     if (cc.mask & CC_DELETE) != 0 {

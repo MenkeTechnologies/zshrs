@@ -1032,14 +1032,21 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
     let mut qstring = false; // c:1115
     let mut p: usize = offs_v.min(bytes.len().saturating_sub(1)); // c:1140 p = s + offs
 
+    // get_comp_string returns the word untokenized, so the `$` sigil
+    // arrives as a literal 0x24 rather than the String token C scans for.
+    // Treat the literal `$` as equivalent to the String token here so
+    // `$VAR<Tab>` parameter completion fires; the len_utf8-based cursor
+    // math below already handles the 1-byte literal vs 2-byte token.
+    let is_str = |c: char| c == Stringg || c == '$';
+
     // c:1140-1162 — scan backward for `String` or `Qstring`.
     loop {
         if p < bytes.len() {
             let ch = char_at(bytes, p);
-            if ch == Stringg || ch == Qstring {
+            if is_str(ch) || ch == Qstring {
                 // c:1141
                 let next = char_at(bytes, p + ch.len_utf8());
-                let snull_next = ch == Stringg && next == Snull; // c:1151
+                let snull_next = is_str(ch) && next == Snull; // c:1151
                 let qstr_quot = ch == Qstring && next == '\''; // c:1152
                 if p < offs_v && !snull_next && !qstr_quot {
                     found = true; // c:1154
@@ -1060,7 +1067,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
         while p > 0 {
             let prev = prev_char_index(bytes, p);
             let pc = char_at(bytes, prev);
-            if pc == Stringg || pc == Qstring {
+            if is_str(pc) || pc == Qstring {
                 p = prev;
             } else {
                 break;
@@ -1078,7 +1085,7 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
                 break;
             }
             let c2 = char_at(bytes, n2);
-            if (c1 == Stringg || c1 == Qstring) && (c2 == Stringg || c2 == Qstring) {
+            if (is_str(c1) || c1 == Qstring) && (is_str(c2) || c2 == Qstring) {
                 p = n2;
             } else {
                 break;
