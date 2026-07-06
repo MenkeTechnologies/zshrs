@@ -2296,6 +2296,21 @@ pub(crate) fn makecomplistglobal(os: &str, incmd: bool, _lst: i32, flags: i32) -
     const CFN_FIRST: i32 = 1;
     const CFN_DEFAULT: i32 = 2;
 
+    // Seed CMDSTR (the command whose argument is being completed) from the
+    // parsed command line. C sets `cmdstr` in get_comp_string; the Rust
+    // port keeps it thread-local in this module and only makecomplistctl
+    // (the `compcall` driver) set it, so the ccmakehookfn → makecomplistcmd
+    // path saw it as None and bailed at `None => return ret` before ever
+    // reaching cc_default — argument/file completion (`ls <Tab>`) produced
+    // no matches. For command position (incmd) there is no outer command
+    // context, so leave it None (makecomplistcmd uses cc_compos there).
+    if !incmd {
+        let cmd_word = crate::ported::zle::complete::COMPWORDS
+            .get()
+            .and_then(|m| m.lock().ok())
+            .and_then(|g| g.first().cloned());
+        CMDSTR.with(|r| *r.borrow_mut() = cmd_word);
+    }
     let lw = crate::ported::zle::compcore::linwhat.load(Ordering::Relaxed);
     let in_env = lw == crate::ported::zle::compcore::IN_ENV_LW; // c:2409
     let in_math = lw == crate::ported::zle::compcore::IN_MATH_LW; // c:2415
