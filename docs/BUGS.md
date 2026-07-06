@@ -40,12 +40,14 @@ and the trailing whitespace after a non-ws separator, were each treated as
 their own delimiters, producing spurious empty fields. (`read -A` already
 handled PURE non-whitespace IFS correctly.)
 
-**Fix:** applied the `spacesplit` (`Src/utils.c:3711`) absorption rule to
-read's loop — a whitespace-IFS run absorbs a following non-ws separator (and
-its trailing whitespace) into one delimiter, and a non-ws separator absorbs
-its own trailing whitespace. Pure non-ws (`:a:b:` → 4) and pure whitespace
-(collapse/trim) behavior is unchanged. This is the same rule the `${=var}`
-split now uses (#655); the `setopt shwordsplit $var` path still needs it.
+**Fix:** applied the `spacesplit` (`Src/utils.c:3711`) absorption rule to BOTH
+read split paths — `read -A arr` (`x : y : z` → 3) and multi-var `read a b c`
+(`x : y : z` → `x`, `y`, `z`, not `x`, ``, `y : z`). A whitespace-IFS run
+absorbs a following non-ws separator (and its trailing whitespace) into one
+delimiter, and a non-ws separator absorbs its own trailing whitespace. Pure
+non-ws (`:a:b:` → 4) and pure whitespace (collapse/trim) behavior is unchanged.
+This is the same rule the `${=var}` split now uses (#655); the `setopt
+shwordsplit $var` path still needs it.
 
 ---
 

@@ -12201,17 +12201,28 @@ pub fn bin_read(
                 match remaining.find(is_ifs) {
                     Some(idx) => {
                         let field = remaining[..idx].to_string();
-                        // Skip the IFS char + any leading
-                        // whitespace-IFS that follows (zsh-style
-                        // whitespace coalescing).
-                        let rest = &remaining[idx
-                            + remaining[idx..]
-                                .chars()
-                                .next()
-                                .map(|c| c.len_utf8())
-                                .unwrap_or(1)..];
-                        let rest =
-                            rest.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
+                        // c:Src/utils.c:3711 spacesplit — skip the whole
+                        // delimiter. The separator char plus the IFS-whitespace
+                        // ABSORBED around it form one delimiter: a whitespace
+                        // separator coalesces its run AND a following non-ws
+                        // separator (with that one's trailing whitespace); a
+                        // non-ws separator absorbs its own trailing whitespace.
+                        // So `x : y : z` (IFS=" :") reads as x, y, z — not
+                        // x, "", "y : z".
+                        let sep = remaining[idx..].chars().next().unwrap();
+                        let is_ws = |c: char| is_ifs(c) && c.is_whitespace();
+                        let after = &remaining[idx + sep.len_utf8()..];
+                        let rest: &str = if sep.is_whitespace() {
+                            let r = after.trim_start_matches(is_ws);
+                            match r.chars().next() {
+                                Some(nc) if is_ifs(nc) && !nc.is_whitespace() => {
+                                    r[nc.len_utf8()..].trim_start_matches(is_ws)
+                                }
+                                _ => r,
+                            }
+                        } else {
+                            after.trim_start_matches(is_ws)
+                        };
                         setsparam(var, &field);
                         remaining = rest.to_string();
                     }
