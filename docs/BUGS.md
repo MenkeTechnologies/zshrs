@@ -19,6 +19,35 @@ CI green pending the underlying fix.
 
 ---
 
+## #652 — `:w` word modifier applied `:s` twice (whole-string + per-word) — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+p=a.b.c;   echo ${p:ws/./-/}     # expect a-b.c  (first `.` of the one word)
+p=hello;   echo ${p:ws/l/L/}     # expect heLlo  (first `l`)
+p=a.b.c.d; echo ${p:ws/./_/}     # expect a_b.c.d
+```
+
+**Observed (before):** `a-b-c` / `heLLo` / `a_b_c.d` — one extra replacement.
+
+**Root cause:** the `:s` modifier arm (subst.rs) always runs its whole-string
+substitution loop (which also records `hsubl`/`hsubr` for a later `:&`), and
+THEN, when the `:w`/`:W` word flag is set, a second `if wall` block splits into
+words and substitutes again — so a single-word value got the whole-string
+first-match PLUS the per-word first-match. For multi-word input it happened to
+look right (each pass hit a different word), hiding the bug.
+
+**Fix:** capture the pre-substitution value before the whole-string loop; when
+`wall` is set, the per-word block restarts from that original so the two passes
+don't compound. C's `modify()` applies the substitution per word once under the
+word flag, not to the whole string first. `:gws` (global-per-word), plain `:s`,
+and `:gs` are unaffected.
+
+---
+
 ## #651 — flag-only modifier `${p:w}` gave a bare error, not `` `w' `` — FIXED
 
 **Status:** `fixed`
@@ -50,11 +79,12 @@ via `` unrecognized modifier `%c' ``.
 no-modifier-letter branch, report `` `<char>' `` when that char exists (C:3788)
 and stay bare only for a truly empty operand `${p:}` (C:3790).
 
-**Related (deferred):** `${p:W.,.}` — `:W` should take its word separator via
-`get_strarg` (next char is the delimiter, like `:s`), so `:W.,.` means "W, sep
-`,`" and then errors `` `W' ``. zshrs only recognizes the colon-delimited
-`:W:sep:` form, so `:W.,.` mis-parses `.` as the modifier and errors `` `.' ``.
-Niche; separate from this fix.
+**Related (deferred):** in `${p:W...}` the `:W` (uppercase) word-separator
+modifier is NOT accepted by the installed zsh 5.9.1 — every `${p:W…}` reports
+`` unrecognized modifier `W' `` (the first char after `:`), even the
+`:Ws.sep.s/…/…/` form. zshrs instead mis-parses it (e.g. `${p:W.,.}` →
+`` `.' ``, `${p:Ws.-.s/b/X/}` → garbage). Correct zshrs behavior is to error
+`` `W' `` like real zsh. Lowercase `:w` IS valid (see #652). Niche; deferred.
 
 ---
 

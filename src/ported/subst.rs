@@ -15654,6 +15654,16 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                     hay.find(eff_pat.as_str()).map(|s| (s, s + eff_pat.len()))
                 }
             };
+            // c:Src/subst.c modify() — under the `:w`/`:W` word flag the
+            // substitution is applied PER WORD by the `if wall` block below,
+            // NOT to the whole string. Capture the pre-substitution value so
+            // that block starts from the original: the whole-string loop that
+            // follows always runs (it records hsubl/hsubr for a later `:&`),
+            // but its `result` mutation must not compound with the per-word
+            // pass — `${p:ws/./-/}` on `a.b.c` is `a-b.c` (first `.` of the
+            // one word), not `a-b-c` (the whole-string first `.` PLUS the
+            // per-word first `.`).
+            let __wall_pre_subst: Option<String> = if wall { Some(result.clone()) } else { None };
             // c:Src/subst.c modify() — `f`/`F N` repeat-until-no-change
             // wrapper around the regular substitution. When neither flag
             // is set, __limit=1 ⇒ the body runs once and breaks.
@@ -15806,7 +15816,11 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                                                               // rejoins. Pull through the same code path :& uses
                                                               // below by deferring to a shared `apply_subst` closure.
             if wall {
-                // c:4665
+                // c:4665 — restart from the pre-substitution value so the
+                // per-word pass doesn't compound with the whole-string loop.
+                if let Some(orig) = __wall_pre_subst {
+                    result = orig;
+                }
                 let separator = sep.as_deref().unwrap_or(" "); // c:4665
                 let words: Vec<&str> = result.split(separator).collect(); // c:4665
                 let modified: Vec<String> = words
