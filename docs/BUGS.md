@@ -19,6 +19,45 @@ CI green pending the underlying fix.
 
 ---
 
+## #651 — flag-only modifier `${p:w}` gave a bare error, not `` `w' `` — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+p=x; echo ${p:w}     # bare pre-flag, no modifier letter
+p=x; echo ${p:gw}    # two flags, no modifier
+```
+
+**Observed:**
+
+| case        | real zsh                         | zshrs (before)              |
+|-------------|----------------------------------|-----------------------------|
+| `${p:w}`    | `` unrecognized modifier `w' ``  | `unrecognized modifier` (bare) |
+| `${p:g}`    | `` `g' ``                        | bare                        |
+| `${p:gw}`   | `` `g' `` (first char)           | bare                        |
+| `${p:wg}`   | `` `w' ``                        | bare                        |
+
+**Root cause:** the pre-flag loop (`g`/`w`/`W`/`f`/`F`) in the modifier parser
+(subst.rs) consumed the flag chars, then found no modifier letter and emitted a
+BARE `unrecognized modifier`. C's `modify()` (`Src/subst.c:4712`) resets its
+position when only flags were consumed and returns; the caller
+(`Src/subst.c:3785-3790`) then reports `s[1]` — the FIRST char after the `:` —
+via `` unrecognized modifier `%c' ``.
+
+**Fix:** capture the first char after the `:` before the flag loop; in the
+no-modifier-letter branch, report `` `<char>' `` when that char exists (C:3788)
+and stay bare only for a truly empty operand `${p:}` (C:3790).
+
+**Related (deferred):** `${p:W.,.}` — `:W` should take its word separator via
+`get_strarg` (next char is the delimiter, like `:s`), so `:W.,.` means "W, sep
+`,`" and then errors `` `W' ``. zshrs only recognizes the colon-delimited
+`:W:sep:` form, so `:W.,.` mis-parses `.` as the modifier and errors `` `.' ``.
+Niche; separate from this fix.
+
+---
+
 ## #650 — `print -b` / `print` didn't process `\C-`/`\M-`/`^X` key escapes — FIXED
 
 **Status:** `fixed`

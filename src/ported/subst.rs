@@ -15358,6 +15358,12 @@ pub fn modify(s: &str, modifiers: &str) -> String {
     while chars.peek() == Some(&':') {
         // c:4531
         chars.next(); // consume ':'                        // c:4531
+        // c:Src/subst.c:3788 — `s[1]`, the first char after this `:`.
+        // When modify() consumes only flag chars (g/w/W/f/F) and finds no
+        // modifier letter, it resets and returns, and the caller reports
+        // THIS char in `unrecognized modifier `%c'` — not the last-consumed
+        // flag and not a bare message.
+        let first_after_colon = chars.peek().copied();
 
         let mut gbal = false; // c:4531
         let mut wall = false; // c:4531
@@ -15443,7 +15449,15 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // exited the modify loop, so `${a:W}` returned the
                 // value unchanged with rc=0.
                 if any_flag_consumed {
-                    zerr("unrecognized modifier"); // c:3790
+                    // c:Src/subst.c:3785-3790 — modify() consumed only flag
+                    // chars with no modifier letter → resets + returns; the
+                    // caller reports the first char after the `:` (s[1]).
+                    match first_after_colon {
+                        Some(fc) => {
+                            zerr(&format!("unrecognized modifier `{}'", fc)) // c:3788
+                        }
+                        None => zerr("unrecognized modifier"), // c:3790
+                    }
                     errflag_set_error();
                 }
                 break;
