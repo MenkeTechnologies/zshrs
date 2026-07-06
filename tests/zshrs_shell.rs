@@ -4201,6 +4201,30 @@ fn test_substring_with_arith_offset() {
 }
 
 #[test]
+fn test_double_paren_command_nested_paren_assignment() {
+    // c:Src/exec.c WC_ARITH — the `((EXPR))` command form must not truncate a
+    // trailing `)` that closes an INNER subexpression. The compiler's
+    // wrapper-strip used `trim_end_matches(')')`, so `((x=(1+2)))` had its
+    // final `)` stripped to `x=(1+2` → "bad math expression: ')' expected".
+    // Only a BALANCED outer wrapper should be removed.
+    let out = |code: &str| run_zshrs(code).1.trim().to_string();
+
+    assert_eq!(out("((x=(1+2))); echo $x"), "3");
+    assert_eq!(out("((n=(3))); echo $n"), "3");
+    assert_eq!(out(r#"((a=(b=3))); echo "$a $b""#), "3 3");
+    assert_eq!(out("x=1; ((x && (y=5))); echo $y"), "5");
+    assert_eq!(out("((1 && (y=5))); echo $y"), "5");
+    assert_eq!(out("((2 * (3 + (k=4)))); echo $k"), "4");
+    // Regressions: wrapped/subscripted/plain/compound `(( ))` still work.
+    assert_eq!(out("(( ((v=7)) )); echo $v"), "7");
+    assert_eq!(out("a=(1 2 3); ((a[2]=99)); echo $a[2]"), "99");
+    assert_eq!(out("a=(1 2); ((a[1]+=10)); echo $a[1]"), "11");
+    assert_eq!(out(r#"(( x = 2, y = 3 )); echo "$x $y""#), "2 3");
+    assert_eq!(out("((x=5)); echo $x"), "5");
+    assert_eq!(out("(( 0 )); echo $?"), "1");
+}
+
+#[test]
 fn test_substring_with_var_offset_and_length() {
     let (_, output, _) = run_zshrs(r#"s=abcdef; n=2; m=3; echo "${s:$n:$m}""#);
     assert_eq!(output.trim(), "cde", "got: {output:?}");

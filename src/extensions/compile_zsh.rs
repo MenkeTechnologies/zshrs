@@ -8255,13 +8255,40 @@ impl ZshCompiler {
         // and use the runtime arith eval that we taught about
         // subscripted-array writes.
         let untoked = crate::lex::untokenize(expr);
-        // Strip leading/trailing `(` and `)` from the lexer's wrapper —
-        // `(( a[i]=v ))` arrives here with parens still attached.
-        let inner_arith_owned = untoked
-            .trim_start_matches('(')
-            .trim_end_matches(')')
-            .trim()
-            .to_string();
+        // Strip a BALANCED outer `( ... )` wrapper the lexer sometimes leaves
+        // attached — but ONLY when the leading `(` matches the trailing `)`.
+        // The old `trim_start_matches('(').trim_end_matches(')')` stripped a
+        // trailing `)` INDEPENDENTLY of any leading `(`, so `x=(1+2)` (whose
+        // final `)` closes the inner subexpression, not a wrapper) was
+        // truncated to `x=(1+2` → "bad math expression: ')' expected". Strip
+        // balanced wrappers repeatedly (`((expr))` → `(expr)` → `expr`).
+        let mut inner_arith_owned = untoked.trim().to_string();
+        loop {
+            let s = inner_arith_owned.as_str();
+            if s.len() >= 2 && s.starts_with('(') && s.ends_with(')') {
+                let inner = &s[1..s.len() - 1];
+                let mut depth = 0i32;
+                let mut balanced = true;
+                for c in inner.chars() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth < 0 {
+                                balanced = false;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if balanced && depth == 0 {
+                    inner_arith_owned = inner.trim().to_string();
+                    continue;
+                }
+            }
+            break;
+        }
         let inner_arith = inner_arith_owned.as_str();
         if subscripted_arith_assign_check(inner_arith)
             || subscripted_arith_compound_check(inner_arith)
