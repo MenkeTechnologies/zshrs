@@ -458,6 +458,21 @@ pub fn ingetc() -> Option<char> {
         // nonzero (and sets lexstop) at EOF. The lexer accumulates each
         // returned char into its token buffer via `add()`, so input
         // arriving through this path produces correct token text.
+        // c:339 — `if (!inbufct && (strin || errflag)) { lexstop; break; }`.
+        // We have drained the current input buffer (the char loop above
+        // fell through) and there is no INP_CONT buffer to pop. When we
+        // are reading from a pushed STRING (`strin` — e.g. the completion
+        // lexer in get_comp_string, `eval`, cmdsubst bodies), we must NOT
+        // fall through to `inputline()`, which reads fresh SHIN and, in an
+        // interactive shell, prompts PS2. C's guard also tests `!inbufct`;
+        // the Rust `inbufct` accounting can lag by one across the metafied
+        // completion buffer, so gate on the drained-buffer state we are
+        // already in instead. Without this, `l<Tab>` (whose lexer buffer
+        // drains mid-token) dropped the shell into a PS2 continuation.
+        if strin.with(|s| s.get()) != 0 {
+            lexstop.with(|c| c.set(true));
+            return None;
+        }
         if inputline() != 0 {
             return None; // c:356 break → EOF
         }

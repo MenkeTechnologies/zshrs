@@ -1063,6 +1063,13 @@ pub fn bufswap() {
 #[allow(unreachable_code)]
 pub fn zrefresh() {
     // c:975
+    // c:999-1000 — `if (inlist) return;`. `listmatches()` (called at the
+    // end of this fn to draw a pending completion list) itself calls
+    // `trashzle()` → `zrefresh()`; the guard breaks that recursion so the
+    // inner refresh is a no-op while the list is being printed.
+    if INLIST.load(Ordering::Relaxed) != 0 {
+        return;
+    }
     // c:975 — full repaint pipeline. C writes every byte through
     //          `tputs(..., putshout)` / `fputs(..., shout)`. Rust
     //          collects the rendered escape stream into a String
@@ -1255,6 +1262,26 @@ pub fn zrefresh() {
     // ("restore this write_loop and skip the refreshline loop"). Returning
     // here keeps the broken diff machinery from ever writing to the tty.
     let _ = write_loop(out_fd, handle.as_bytes());
+
+    // c:1706-1719 — draw a pending completion list. `do_completion` sets
+    // `showinglist = -2` when the matches must be listed below the command
+    // line. Flush the command-line paint first (above), then run
+    // `listmatches()` (→ ilistmatches → printlist) to print the grid, and
+    // recurse once to repaint the command line beneath it. The `INLIST`
+    // guard at the top of `zrefresh` stops `listmatches`'s internal
+    // `trashzle → zrefresh` from recursing. Without this the 257-match
+    // `l<Tab>` completion computed its matches but nothing was ever shown.
+    if SHOWINGLIST.load(Ordering::Relaxed) == -2 {
+        INLIST.store(1, Ordering::Relaxed);
+        crate::ported::zle::zle_h::listmatches();
+        INLIST.store(0, Ordering::Relaxed);
+        if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
+            zrefresh();
+        }
+    }
+    if SHOWINGLIST.load(Ordering::Relaxed) == -1 {
+        SHOWINGLIST.store(NLNCT.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
     return;
 
     // c:1739 — the build records the cursor's video position (nvln/nvcs) as it
@@ -4739,6 +4766,11 @@ pub static VLN: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new
 /// Non-zero when a completion-listing is currently displayed below
 /// the prompt; refreshes need to redraw it on next paint.
 pub static SHOWINGLIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:165
+
+/// Port of `static int inlist` from `Src/Zle/zle_refresh.c:977`. Set
+/// while `zrefresh` is printing a completion list via `listmatches()`
+/// so the nested `trashzle → zrefresh` recursion becomes a no-op.
+pub static INLIST: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:977
 
 /// Port of `mod_export int listshown` from `Src/Zle/zle_refresh.c:171`.
 /// Number of completion-listing lines actually shown last refresh —
