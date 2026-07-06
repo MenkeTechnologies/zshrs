@@ -19,6 +19,46 @@ CI green pending the underlying fix.
 
 ---
 
+## #650 — `print -b` / `print` didn't process `\C-`/`\M-`/`^X` key escapes — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+print -b "\C-a"    # expect byte 0x01
+print -b "\M-a"    # expect 0xe1
+print -b "^A"      # expect 0x01 (caret form)
+print "\C-a"       # expect 0x01 (plain print has EMACS too)
+```
+
+**Observed (before):** zshrs emitted the literal bytes `C-a` / `M-a` / `^A`.
+
+**Root cause:** `print`'s escape path (`getkeystring_with`, utils.rs) never
+implemented the bindkey-style `\C-` (control) / `\M-` (meta) / `^X` (caret)
+escapes. C selects the flag set at `Src/builtin.c:4754-4760`:
+
+| context           | flags                                      | `\C-`/`\M-` | `^X` |
+|-------------------|--------------------------------------------|:-----------:|:----:|
+| `print -b`        | `GETKEYS_BINDKEY` (OCTAL\|EMACS\|CTRL)     | yes | yes |
+| `print` / `print -e`? no — plain `print` | `GETKEYS_PRINT` (has EMACS)  | yes | no  |
+| `echo` / `print -e` | `GETKEYS_ECHO` (no EMACS)                | no  | no  |
+
+`getkeystring` (utils.rs) and `getkeystring_dollar_quote` (lex.rs) already had
+the handler — only `getkeystring_with` (print's path) lacked it, so `$'\C-a'`
+worked but `print "\C-a"` did not, and `-b` fell through to `GETKEYS_PRINT`.
+
+**Fix:** ported the `\C`/`\M` arm into `getkeystring_with` (gated on
+`GETKEY_EMACS`, with optional `-` separator, chained `\C`/`\M`, nested base
+escapes) plus a `^X` caret handler (gated on `GETKEY_CTRL`); added the
+`GETKEYS_BINDKEY` const; wired `print -b` → `GETKEYS_BINDKEY` at the
+`escape_how` dispatch. Masks per `Src/utils.c:7261-7275`: control `& 0x9f`
+(`\C-?` → 0x7f), meta `| 0x80`, high bytes metafied. Verified across control /
+meta / compose (`\M-\C-a` → 0x81) / caret / mid-string, and that `echo` and
+plain `print "^A"` stay literal.
+
+---
+
 ## #649 — glob `o`/`O` sort: equal-key tie-break made deterministic — FIXED
 
 **Status:** `fixed` (determinism guarantee, not a `zsh -f` parity change)

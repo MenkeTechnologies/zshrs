@@ -12531,6 +12531,54 @@ fn test_ansi_c_hex_escape_emits_raw_byte() {
 }
 
 #[test]
+fn test_print_bindkey_control_meta_escapes() {
+    // c:Src/builtin.c:4754 + Src/utils.c:7029-7052/7261-7275 —
+    // `\C-X` / `\M-X` bindkey-style key escapes. Under GETKEY_EMACS
+    // (plain `print` AND `print -b`) the `\C-`/`\M-` backslash forms are
+    // processed: control clears bits 5-6 (`\C-a` → 0x01, `\C-?` → 0x7f),
+    // meta sets the high bit (`\M-a` → 0xe1), and they compose
+    // (`\M-\C-a` → 0x81). getkeystring_with (print's path) previously
+    // lacked this and emitted literal `C-a`.
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C-a""#);
+    assert_eq!(b, b"\x01\n", "got: {b:x?}");
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C-x""#);
+    assert_eq!(b, b"\x18\n", "got: {b:x?}");
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C-A""#);
+    assert_eq!(b, b"\x01\n", "got: {b:x?}"); // case-insensitive
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C-[""#);
+    assert_eq!(b, b"\x1b\n", "got: {b:x?}"); // ^[ == ESC
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C-m""#);
+    assert_eq!(b, b"\x0d\n", "got: {b:x?}"); // ^M == CR
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C- ""#);
+    assert_eq!(b, b"\x00\n", "got: {b:x?}"); // ^Space == NUL
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\C-?""#);
+    assert_eq!(b, b"\x7f\n", "got: {b:x?}"); // ^? == DEL
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\M-a""#);
+    assert_eq!(b, b"\xe1\n", "got: {b:x?}"); // meta sets high bit
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "\M-\C-a""#);
+    assert_eq!(b, b"\x81\n", "got: {b:x?}"); // meta + control compose
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "a\C-mb""#);
+    assert_eq!(b, b"a\x0db\n", "got: {b:x?}"); // mid-string
+
+    // `^X` caret notation is bindkey-only (GETKEY_CTRL) — needs `-b`.
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "^A""#);
+    assert_eq!(b, b"\x01\n", "got: {b:x?}");
+    let (_, b) = run_zshrs_parity_bytes(r#"print -b "^?""#);
+    assert_eq!(b, b"\x7f\n", "got: {b:x?}");
+
+    // Plain `print` (GETKEYS_PRINT: has EMACS) processes the backslash
+    // forms too, but NOT the caret form (no GETKEY_CTRL).
+    let (_, b) = run_zshrs_parity_bytes(r#"print "\C-a""#);
+    assert_eq!(b, b"\x01\n", "got: {b:x?}");
+    let (_, b) = run_zshrs_parity_bytes(r#"print "^A""#);
+    assert_eq!(b, b"^A\n", "caret stays literal without -b: {b:x?}");
+
+    // `echo` (GETKEYS_ECHO: no EMACS) keeps `\C-a` fully literal.
+    let (_, b) = run_zshrs_parity_bytes(r#"echo "\C-a""#);
+    assert_eq!(b, b"\\C-a\n", "got: {b:x?}");
+}
+
+#[test]
 fn test_ansi_c_hex_escape_segment_concat_and_printf() {
     // Concatenated quoted segments take the lexer/untokenize path
     // (getkeystring_dollar_quote), not the compile-time fast path —

@@ -9315,6 +9315,13 @@ pub const GETKEYS_PRINT: u32 = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_BACKSLAS
 /// or when `-e` is set; otherwise GETKEYS_PRINT.
 pub const GETKEYS_ECHO: u32 = GETKEY_BACKSLASH_C; // c:zsh.h:3178
 
+/// `GETKEYS_BINDKEY = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_CTRL`
+/// per Src/zsh.h:3187 — the flag set `print -b` uses. Like GETKEYS_PRINT
+/// it has EMACS (so `\C-`/`\M-` backslash escapes are processed and
+/// unknown `\<c>` collapses to `<c>`) but adds GETKEY_CTRL (enabling the
+/// `^X` caret notation) and drops GETKEY_BACKSLASH_C (no `\c` truncation).
+pub const GETKEYS_BINDKEY: u32 = GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_CTRL; // c:zsh.h:3187
+
 /// Static `int ep` from Src/utils.c:4775 — sticky flag suppressing the
 /// `can't set tty pgrp` warning after the first failure.
 static ATTACHTTY_EP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0); // c:4775
@@ -9776,6 +9783,37 @@ pub fn getkeystring_with(
     let mut consumed = 0;
     while let Some(c) = chars.next() {
         consumed += c.len_utf8();
+        // c:utils.c:7194 — `^X` caret notation. A bare `^` (not a backslash
+        // escape) followed by any char applies the control mask to it, but
+        // ONLY under GETKEY_CTRL — i.e. `print -b` / bindkey. Plain print
+        // (GETKEYS_PRINT, no GETKEY_CTRL) keeps `^A` literal.
+        if c == '^' && (how & GETKEY_CTRL) != 0 {
+            if let Some(base) = chars.next() {
+                consumed += base.len_utf8();
+                let mut byte = base as u32;
+                // c:7261-7267 — `^?` → 0x7f (DEL), else clear bits 5-6.
+                if byte == '?' as u32 {
+                    byte = 0x7f;
+                } else if byte <= 0xff {
+                    byte &= 0x9f;
+                }
+                if byte <= 0xff {
+                    let b_ = byte as u8;
+                    if b_ < 0x80 {
+                        result.push(b_ as char);
+                    } else {
+                        result.push('\u{83}');
+                        result.push(char::from(b_ ^ 32));
+                    }
+                } else if let Some(ch) = char::from_u32(byte) {
+                    result.push(ch);
+                }
+                continue;
+            }
+            // c:7194 `s[1]` guard — a trailing `^` with no char is literal.
+            result.push(c);
+            continue;
+        }
         if c != '\\' {
             result.push(c);
             continue;
@@ -10054,6 +10092,135 @@ pub fn getkeystring_with(
                         && val == b'%'
                     {
                         result.push('%');
+                    }
+                }
+            }
+            // c:utils.c:7029-7052 + c:7255-7275 — `\C` / `\M` set the
+            // control / meta modifiers (bindkey-style key escapes), an
+            // optional `-` separator, then the next base char (possibly
+            // through chained `\C`/`\M`) gets the mask applied:
+            // control → `& 0x9f` (or `\C-?` → 0x7f), meta → `| 0x80`.
+            // Gated on GETKEY_EMACS (c:7031/7043 `if (how & GETKEY_EMACS)`):
+            // print / print -b / $'…' have it, echo does not (so echo keeps
+            // `\C-a` literal via the default arm). Mirrors the same handler
+            // already present in `getkeystring` (utils.rs) and
+            // `getkeystring_dollar_quote` (lex.rs); print's `getkeystring_with`
+            // path lacked it, so `print "\C-a"` emitted literal `C-a`.
+            Some(mod_letter @ ('C' | 'M')) if (how & GETKEY_EMACS) != 0 => {
+                consumed += 1;
+                let mut control = mod_letter == 'C';
+                let mut meta = mod_letter == 'M';
+                // Consume optional `-` separator + chained `\C`/`\M`.
+                loop {
+                    if chars.peek() == Some(&'-') {
+                        chars.next();
+                        consumed += 1;
+                        continue;
+                    }
+                    let mut iter_clone = chars.clone();
+                    if iter_clone.next() == Some('\\') {
+                        if let Some(nx) = iter_clone.next() {
+                            if nx == 'C' || nx == 'M' {
+                                chars.next(); // consume '\'
+                                chars.next(); // consume C/M
+                                consumed += 2;
+                                if nx == 'C' {
+                                    control = true;
+                                } else {
+                                    meta = true;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    break;
+                }
+                // Read one base character (allowing nested simple escapes).
+                let base: Option<char> = if chars.peek() == Some(&'\\') {
+                    chars.next();
+                    consumed += 1;
+                    match chars.next() {
+                        Some('n') => {
+                            consumed += 1;
+                            Some('\n')
+                        }
+                        Some('t') => {
+                            consumed += 1;
+                            Some('\t')
+                        }
+                        Some('r') => {
+                            consumed += 1;
+                            Some('\r')
+                        }
+                        Some('a') => {
+                            consumed += 1;
+                            Some('\x07')
+                        }
+                        Some('b') => {
+                            consumed += 1;
+                            Some('\x08')
+                        }
+                        Some('e') | Some('E') => {
+                            consumed += 1;
+                            Some('\x1b')
+                        }
+                        Some('f') => {
+                            consumed += 1;
+                            Some('\x0c')
+                        }
+                        Some('v') => {
+                            consumed += 1;
+                            Some('\x0b')
+                        }
+                        Some('\\') => {
+                            consumed += 1;
+                            Some('\\')
+                        }
+                        Some('\'') => {
+                            consumed += 1;
+                            Some('\'')
+                        }
+                        Some('"') => {
+                            consumed += 1;
+                            Some('"')
+                        }
+                        Some(other) => {
+                            consumed += 1;
+                            Some(other)
+                        }
+                        None => None,
+                    }
+                } else {
+                    chars.next().inspect(|c| {
+                        consumed += c.len_utf8();
+                    })
+                };
+                if let Some(ch) = base {
+                    let mut byte = ch as u32;
+                    // c:7261-7267 — control mask (`\C-?` → 0x7f, else & 0x9f).
+                    if control {
+                        if byte == '?' as u32 {
+                            byte = 0x7f;
+                        } else {
+                            byte &= 0x9f;
+                        }
+                    }
+                    // c:7268-7271 — meta sets the high bit.
+                    if meta {
+                        byte |= 0x80;
+                    }
+                    // c:7289-7294 — a masked byte >= 0x80 is metafied so it
+                    // unmetafies back to the single raw byte on output.
+                    if byte <= 0xff {
+                        let b_ = byte as u8;
+                        if b_ < 0x80 {
+                            result.push(b_ as char);
+                        } else {
+                            result.push('\u{83}');
+                            result.push(char::from(b_ ^ 32));
+                        }
+                    } else if let Some(c) = char::from_u32(byte) {
+                        result.push(c);
                     }
                 }
             }
