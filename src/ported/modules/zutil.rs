@@ -3094,11 +3094,26 @@ pub fn bin_zparseopts(
     }
 
     // Phase 3: source params (c:1955-1959).
+    // c:1955 — `params = getaparam(paramsname ? paramsname : "argv")`.
+    // c:1956-1958 — `if (!params) { zwarnnam(nam, "no such array: %s",
+    // paramsname); return 1; }`. A `-v NAME` whose NAME is unset (or is a
+    // scalar, not an array) has no source to parse — getaparam returns NULL
+    // and zparseopts aborts. The default source is `argv` (positional
+    // params), which always exists. A DECLARED-empty array (`src=()`) is a
+    // valid non-NULL empty source and must NOT error; exec::array returns
+    // Some(empty) for it and None only when the name isn't an array param.
     let params_src = paramsname.clone().unwrap_or_else(|| "argv".to_string());
     let mut params: Vec<String> = if params_src == "argv" {
         crate::ported::exec::pparams()
     } else {
-        crate::ported::exec::array(&params_src).unwrap_or_default()
+        match crate::ported::exec::array(&params_src) {
+            Some(a) => a, // c:1955 non-NULL source
+            None => {
+                // c:1956-1957
+                zwarnnam(nam, &format!("no such array: {}", params_src));
+                return 1;
+            }
+        }
     };
 
     // Phase 4: walk params (c:1961-2060).
