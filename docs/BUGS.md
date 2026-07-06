@@ -19,6 +19,85 @@ CI green pending the underlying fix.
 
 ---
 
+## #647 — brace expansion inside a `${x:-word}` default doesn't fire
+
+**Status:** `port-bug`
+
+**Reproducer:**
+
+```zsh
+echo ${x:-{a,b}}        # x unset
+echo ${x:-{1..3}}
+y=hi; echo ${x:-$y{a,b}}
+echo ${x:={a,b}}
+x=1; echo ${x:+{a,b}}
+```
+
+**Observed:**
+
+| case                    | real zsh    | zshrs     |
+|-------------------------|-------------|-----------|
+| `${x:-{a,b}}`           | `a b`       | `{a,b}`   |
+| `${x:-{1..3}}`          | `1 2 3`     | `{1..3}`  |
+| `${x:-$y{a,b}}` (y=hi)  | `hia hib`   | `hi{a,b}` |
+| `${x:={a,b}}`           | `a b`       | `{a,b}`   |
+| `${x:+{a,b}}` (x set)   | `a b`       | `{a,b}`   |
+
+**Scope:** affects ONLY the value-producing operators — `:-` `-` `:+` `+`
+`:=` `=` `::=`. Strip (`#`/`%`), replace (`/`), filter (`:#`), and error
+(`:?`) operands are pattern/message text and are NOT brace-expanded by real
+zsh either (`${x#{a,b}}` → `abc`), so they are correctly untouched.
+
+**Must NOT expand (these already match real zsh — a fix must preserve them):**
+
+```zsh
+v="{a,b}"; echo ${x:-$v}          # {a,b}  (value braces, not source)
+echo ${x:-$(echo "{a,b}")}        # {a,b}  (cmdsub output)
+echo ${x:-"{a,b}"}                # {a,b}  (inner double-quoted)
+echo ${x:-'{a,b}'}                # {a,b}  (inner single-quoted)
+echo "${x:-{a,b}}"                # {a,b}  (outer-quoted, qt=true)
+echo ${x:-a,b}                    # a,b    (bare comma, no brace group)
+```
+
+**Root cause (verified by instrumenting lex.rs + subst.rs):**
+
+The C lexer tokenizes an unquoted `{`/`,`/`}` that literally appears in the
+operand to `Inbrace`/`Comma`/`Outbrace` during normal command lexing
+(`Src/lex.c:1137` `LX2_INBRACE`, `:1394` `LX2_COMMA` fires when
+`bct > in_brace_param`), and `case '-'`/`Dash` (`Src/subst.c:3202`) copies the
+operand with `val = dupstring(s)` + `multsub()` — no `untokenize` — so those
+tokens survive to prefork's brace-expansion pass (`Src/subst.c:170`
+`while (hasbraces(...)) xpandbraces(...)`). `hasbraces` keys on the TOKEN
+bytes, so `{a,b}` expands but a variable value's literal `{a,b}` does not.
+
+zshrs's lexer ALSO emits the correct tokens (probe on `${x:-{a,b}}` showed
+`Inbrace` + `Comma` TOKEN + `Outbrace`, `bct=2 > in_brace_param=1`). BUT
+zshrs untokenizes `${…}` bodies during compile — a deliberate choice so the
+subst scanner reads a single encoding (see the `paramsubst` entry comment
+about dropping the "hybrid scanner"). paramsubst then re-tokenizes only the
+OUTER `${}` structure (`subst.rs` entry block), so the inner brace-expansion
+tokens are permanently literal by the time the `:-` arm runs
+(`value = singsub(default)`; `default` bytes = raw `{a,b}`).
+
+**Why a localized arm fix fails:** the `Dnull`/`Snull` quote markers that the
+lexer places around `"{a,b}"` / `'{a,b}'` (present at paramsubst ENTRY) are
+STRIPPED by the operator scan before the `:-` arm — `${x:-{a,b}}`,
+`${x:-"{a,b}"}`, and `${x:-'{a,b}'}` all arrive as identical bare
+`{a,b}`. Re-tokenizing at the arm would wrongly expand the inner-quoted forms
+(a regression in the opposite direction). Only `Bnull` (escape) survives.
+
+**Fix paths (both non-trivial, deferred):**
+1. Keep words tokenized through compile like zsh and make the subst scanner
+   token-aware — reverts the "single-encoding" design; broad blast radius.
+2. Tokenize the operand at paramsubst ENTRY (where `Dnull`/`Snull` markers
+   still exist), scoped to the value-producing operators only, with brace-depth
+   tracking (`,`→`Comma` only at depth > 1 so subscripts `[1,2]` and flag
+   separators stay literal) and quote/`$…`-span skipping. Runs at the entry of
+   the hottest substitution function — needs exhaustive regression coverage
+   before shipping.
+
+---
+
 ## #646 — `${(m)#name}` counted characters instead of display cells — FIXED
 
 **Status:** `fixed`
