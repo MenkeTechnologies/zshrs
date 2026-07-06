@@ -1516,6 +1516,16 @@ impl modulestab {
                 "zsh/watch" => {
                     crate::ported::modules::watch::boot_(std::ptr::null());
                 }
+                // c:Src/Zle/compctl.c:4016 setup_ — seed the hardwired
+                // default compctls (cc_compos/cc_default/cc_first) the
+                // bare shell uses for command/file completion. Runs here
+                // at module registration (before any rc file), so it
+                // never clobbers a user's later `compctl` definitions.
+                // Without it CC_COMPOS is unset and `l<Tab>` in `zsh -f`
+                // produced no matches.
+                "zsh/compctl" => {
+                    crate::ported::zle::compctl::setup_();
+                }
                 _ => {}
             }
         }
@@ -3448,6 +3458,7 @@ pub fn setup_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/zpty" => crate::ported::modules::zpty::setup_(std::ptr::null()),
         "zsh/zselect" => crate::ported::modules::zselect::setup_(std::ptr::null()),
         "zsh/zutil" => crate::ported::modules::zutil::setup_(std::ptr::null()),
+        "zsh/compctl" => crate::ported::zle::compctl::setup_(),
         _ => 0,
     }
 }
