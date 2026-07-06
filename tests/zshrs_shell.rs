@@ -7076,6 +7076,53 @@ fn test_glob_sort_locale_aware() {
 }
 
 #[test]
+fn test_glob_sort_equal_key_tiebreak_is_deterministic_name_order() {
+    // A `o`/`O` sort qualifier whose primary key TIES across matches (e.g.
+    // several 0-byte files under `*(oL)`) has no portable order in zsh — the
+    // libc qsort resolves equal-key elements arbitrarily (non-stable on
+    // macOS/BSD, readdir-dependent on glibc). zshrs is cross-architecture and
+    // guarantees a DETERMINISTIC name-ascending tie-break instead. This is a
+    // zshrs contract, deliberately NOT a `zsh -f` parity assertion (real zsh's
+    // order for equal keys is implementation-defined and unmatchable). The
+    // primary sort itself (size order) still matches zsh; see
+    // test_glob_qualifier_size_uses_lstat_for_symlinks for that.
+    let dir = tempdir_for_test();
+    // Three equal-size (0-byte) files in non-alphabetical creation order,
+    // plus two distinct sizes to pin the primary key.
+    for name in ["d.txt", "b.txt", "a.txt"] {
+        std::fs::write(format!("{}/{}", dir, name), b"").unwrap();
+    }
+    std::fs::write(format!("{}/mid.txt", dir), vec![0u8; 10]).unwrap();
+    std::fs::write(format!("{}/big.txt", dir), vec![0u8; 100]).unwrap();
+
+    // Ascending size: the three 0-byte files come first in NAME order
+    // (a,b,d) regardless of creation order, then mid (10), then big (100).
+    let (_, out, _) = run_zshrs(&format!("cd {} && echo *(oL)", dir));
+    assert_eq!(
+        out.trim(),
+        "a.txt b.txt d.txt mid.txt big.txt",
+        "equal-size files must tie-break by name ascending: {out:?}"
+    );
+
+    // Descending size reverses the PRIMARY key (big, mid, then the ties),
+    // but the equal-key tie-break stays name-ascending (a,b,d) — the
+    // GS_DESC flag applies only to the size comparison, not the GS_NAME
+    // tie-breaker appended after it.
+    let (_, out, _) = run_zshrs(&format!("cd {} && echo *(OL)", dir));
+    assert_eq!(
+        out.trim(),
+        "big.txt mid.txt a.txt b.txt d.txt",
+        "descending size keeps name-ascending tie-break: {out:?}"
+    );
+
+    // Repeatability: identical output across runs (no qsort nondeterminism).
+    let (_, out2, _) = run_zshrs(&format!("cd {} && echo *(oL)", dir));
+    assert_eq!(out2.trim(), "a.txt b.txt d.txt mid.txt big.txt");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_typeset_integer_base_output() {
     // `typeset -i N name=value` displays in base N as `N#DIGITS`.
     let (_, output, _) = run_zshrs("typeset -i 16 a=255; echo $a");
