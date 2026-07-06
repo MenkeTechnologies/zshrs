@@ -2242,21 +2242,26 @@ pub(crate) fn gen_matches_files(dirs: bool, execs: bool, all: bool) {
             Ok(m) => m,
             Err(_) => continue,
         };
-        if dirs && !meta.is_dir() {
+        // Type filter per (dirs, execs): `dirs` keeps directories,
+        // `execs` keeps executables, and when BOTH are set (the
+        // CC_COMMPATH `$path` walk, c:3504 `gen_matches_files(1,1,0)`)
+        // keep either. Neither set → keep every visible entry (plain
+        // file completion). The previous code applied the two filters in
+        // series, so the combined dirs+execs case kept nothing (a file
+        // is never both a dir and a non-dir).
+        let is_dir = meta.is_dir();
+        #[cfg(unix)]
+        let is_exec = !is_dir && (meta.permissions().mode() & 0o111 != 0);
+        #[cfg(not(unix))]
+        let is_exec = false;
+        let keep = match (dirs, execs) {
+            (false, false) => true,
+            (true, false) => is_dir,
+            (false, true) => is_exec,
+            (true, true) => is_dir || is_exec,
+        };
+        if !keep {
             continue;
-        }
-        if execs {
-            #[cfg(unix)]
-            {
-                let mode = meta.permissions().mode();
-                if mode & 0o111 == 0 || meta.is_dir() {
-                    continue;
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                continue;
-            }
         }
         addmatch(&name, None);
     }
@@ -3785,6 +3790,29 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         ADDWHAT.with(|c| c.set(-5));
         gen_matches_files(true, false, false);
     }
+    // CC_COMMPATH — c:3499-3518. Command-path completion. In the common
+    // bare-command case (no typed path prefix) the candidates are the
+    // executables reachable through $path: walk each directory in $path,
+    // point `prpre` at it, and add its directories + executables via
+    // `gen_matches_files(1, 1, 0)`. This is what makes `l<Tab>` offer the
+    // commands in `zsh -f` (cc_compos carries CC_COMMPATH).
+    if (cc.mask & CC_COMMPATH) != 0 {
+        ADDWHAT.with(|c| c.set(-5));
+        let opre = PRPRE.with(|r| r.borrow().clone());
+        // c:3509 — the elements of $path; empty / "." means the cwd.
+        let path = crate::ported::params::getaparam("path").unwrap_or_default();
+        for dir in &path {
+            let d = if dir.is_empty() { "." } else { dir.as_str() };
+            let d = if d.ends_with('/') {
+                d.to_string()
+            } else {
+                format!("{}/", d)
+            };
+            PRPRE.with(|r| *r.borrow_mut() = Some(d));
+            gen_matches_files(true, true, false); // c:3504
+        }
+        PRPRE.with(|r| *r.borrow_mut() = opre);
+    }
     // CC_NAMED — c:3742
     if (cc.mask & CC_NAMED) != 0 {
         ADDWHAT.with(|c| c.set(-1));
@@ -4139,6 +4167,7 @@ pub(crate) fn setup_() -> i32 {
     *LASTCCUSED.lock().unwrap() = Vec::new(); // c:4034
     0
 }
+
 
 // =================================================================
 // zle_tricky.c state required by sep_comp_string and the
