@@ -1534,7 +1534,19 @@ pub fn bin_compset(
         sa_ref
     };
     // c:1218 — `do_comp_vars(test, na, sa, nb, sb, 0)` dispatch.
-    do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 0)
+    // `do_comp_vars` returns 1 when it matched/modified and 0 otherwise
+    // (C-boolean). The `compset` BUILTIN, like every shell command,
+    // reports success as exit status 0 — and the compsys shell-function
+    // ports test it that way (`compset -P … && …` / `== 0`). Convert:
+    // match → 0 (success), no match → 1 (failure). Without this,
+    // `_main_complete`'s `compset -P 1 '=' == 0` fired on EVERY word
+    // (0 == no-match), forcing `$compstate[context]=equal` and command
+    // completion for every argument.
+    if do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 0) != 0 {
+        0
+    } else {
+        1
+    }
 }
 
 // =====================================================================
