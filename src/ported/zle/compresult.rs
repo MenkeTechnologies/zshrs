@@ -1140,11 +1140,33 @@ pub fn do_ambiguous(matches: &[String]) -> i32 {
             let _ = inststr(&prefix); // c:790
         }
     }
-    if !prefix.is_empty() {
-        1
-    } else {
-        0
+    // compresult.c do_ambiguous tail — decide whether the ambiguous match
+    // set needs a listing, and trigger it via `showinglist = -2`. The
+    // previous Rust port omitted this, so `showinglist` stayed 0 and
+    // do_completion's fallback set `onlyexpl = 3` (explanation-only mode),
+    // which makes calclist skip every real match — `l<Tab>` computed 257
+    // matches but displayed nothing.
+    let mut ret = 0;
+    let oldlist_v = crate::ported::zle::compcore::oldlist.load(Relaxed);
+    // c:`if (isset(LISTBEEP) && !oldlist) ret = 1;`
+    if isset(crate::ported::zsh_h::LISTBEEP) && oldlist_v == 0 {
+        ret = 1;
     }
+    let uselist_v = crate::ported::zle::compcore::uselist.load(Relaxed);
+    let usemenu_v = crate::ported::zle::zle_tricky::USEMENU.load(Relaxed);
+    let listshown_v = LISTSHOWN.load(Relaxed);
+    let showinglist_v = SHOWINGLIST.load(Relaxed);
+    let smatches_v = crate::ported::zle::compcore::smatches.load(Relaxed);
+    let forcelist_v = crate::ported::zle::compcore::forcelist.load(Relaxed);
+    if uselist_v != 0
+        && (usemenu_v != 2 || (listshown_v == 0 && oldlist_v == 0))
+        && ((showinglist_v == 0 && (listshown_v == 0 || oldlist_v == 0))
+            || (usemenu_v == 3 && oldlist_v == 0))
+        && (smatches_v >= 2 || forcelist_v != 0)
+    {
+        SHOWINGLIST.store(-2, Relaxed);
+    }
+    ret
 }
 
 /// Port of `ztat(char *nam, struct stat *buf, int ls)` from `Src/Zle/compresult.c:869`.
