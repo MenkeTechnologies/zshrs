@@ -19,6 +19,36 @@ CI green pending the underlying fix.
 
 ---
 
+## #657 — `read -A` dropped empty fields around a non-whitespace IFS separator — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+IFS=" :" read -A a <<< "a : b"; echo ${#a}   # expect 2
+IFS=" :" read -A a <<< "a :: b"; echo ${#a}  # expect 3
+```
+
+**Observed (before):** `a : b` → 4 (treated space and colon as two
+delimiters, plus an empty between).
+
+**Root cause:** `read -A`'s IFS split (builtin.rs) coalesced whitespace-IFS
+runs but did not apply zsh's whitespace-absorption rule around a
+non-whitespace separator — a whitespace run followed by a non-ws separator,
+and the trailing whitespace after a non-ws separator, were each treated as
+their own delimiters, producing spurious empty fields. (`read -A` already
+handled PURE non-whitespace IFS correctly.)
+
+**Fix:** applied the `spacesplit` (`Src/utils.c:3711`) absorption rule to
+read's loop — a whitespace-IFS run absorbs a following non-ws separator (and
+its trailing whitespace) into one delimiter, and a non-ws separator absorbs
+its own trailing whitespace. Pure non-ws (`:a:b:` → 4) and pure whitespace
+(collapse/trim) behavior is unchanged. This is the same rule the `${=var}`
+split now uses (#655); the `setopt shwordsplit $var` path still needs it.
+
+---
+
 ## #656 — `zstyle -L context [style]` ignored its filter arguments — FIXED
 
 **Status:** `fixed`

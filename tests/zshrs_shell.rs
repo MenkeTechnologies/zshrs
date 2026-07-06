@@ -4107,6 +4107,30 @@ fn test_read_dash_a_default_ifs_collapses_whitespace() {
 }
 
 #[test]
+fn test_read_dash_a_mixed_ifs_absorbs_whitespace_around_separator() {
+    // c:Src/utils.c:3711 spacesplit — with a MIXED IFS (whitespace + a
+    // non-whitespace separator), whitespace ADJACENT to the non-ws
+    // separator is absorbed into it, so `a : b` (IFS=" :") is one delimiter
+    // → 2 fields; two non-ws separators keep the middle empty (`a :: b` → 3).
+    // read -A previously treated the space and colon as two delimiters (4).
+    let n = |input: &str| {
+        let (_, out, _) = run_zshrs(&format!(r#"IFS=" :" read -A arr <<< "{input}"; echo ${{#arr}}"#));
+        out.trim().to_string()
+    };
+    assert_eq!(n("a : b"), "2");
+    assert_eq!(n("a  :  b"), "2");
+    assert_eq!(n("x : y : z"), "3");
+    assert_eq!(n("a :: b"), "3");
+    // Pure non-ws separators still preserve empties (unchanged).
+    let m = |input: &str| {
+        let (_, out, _) = run_zshrs(&format!(r#"IFS=: read -A arr <<< "{input}"; echo ${{#arr}}"#));
+        out.trim().to_string()
+    };
+    assert_eq!(m(":a:b:"), "4");
+    assert_eq!(m("a::b"), "3");
+}
+
+#[test]
 fn test_tilde_unknown_user_errors() {
     let (status, _, stderr) = run_zshrs("echo ~nonexistent_user_zrs");
     assert_ne!(status, 0, "should exit non-zero");
