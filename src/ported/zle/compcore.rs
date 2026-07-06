@@ -568,27 +568,6 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
 
     let _useglob = USEGLOB.load(Ordering::Relaxed); // c:579
 
-    // Publish the completion word split at the cursor into the
-    // `$PREFIX` / `$SUFFIX` params (+ empty ignored-prefix/suffix). In C
-    // these are gsu-bound to `compprefix`/`compsuffix`; the Rust ports
-    // have no gsu binding, so without this every completer reads
-    // `$PREFIX=''` — `_main_complete`'s `compset -P 1 '='` then matches
-    // the empty prefix and wrongly forces `$compstate[context]=equal`,
-    // and `_path_files` has no prefix to glob. Split at `OFFS`
-    // (zlemetacs - wb), the cursor offset within the word.
-    {
-        let scs: Vec<char> = s.chars().collect();
-        let off = (OFFS.load(Ordering::Relaxed).max(0) as usize).min(scs.len());
-        let pre: String = scs[..off].iter().collect();
-        let suf: String = scs[off..].iter().collect();
-        let _ = crate::ported::params::setsparam("PREFIX", &pre);
-        let _ = crate::ported::params::setsparam("SUFFIX", &suf);
-        let _ = crate::ported::params::setsparam("IPREFIX", "");
-        let _ = crate::ported::params::setsparam("ISUFFIX", "");
-        let _ = crate::ported::params::setsparam("QIPREFIX", "");
-        let _ = crate::ported::params::setsparam("QISUFFIX", "");
-    }
-
     // c:591-617 — context selection.
     let context = compcontext_for(s); // c:591-617
     set_compstate_str("context", &context); // c:619
