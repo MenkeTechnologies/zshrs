@@ -3270,8 +3270,23 @@ pub fn ilistmatches() -> i32 {
         LISTSHOWN.store(0, Relaxed);
         return 0;
     }
+    // c:2292 — `if (asklist()) return 0;`. Gate long listings behind the
+    // "do you wish to see all N possibilities?" query (LISTMAX). asklist
+    // itself resets showinglist/listshown when the user declines, so the
+    // recursion in zrefresh terminates on that path too.
+    if asklist() != 0 {
+        return 0;
+    }
     // c:2295 — printlist(0, iprintm, 0).
     let _ = printlist(0, 0);
+    // c:2172/2180 — printlist marks the list drawn (`showinglist = -1;
+    // listshown = 1`). The Rust printlist doesn't set these, so do it here:
+    // without it `showinglist` stays -2 and zrefresh's post-list recursive
+    // refresh re-enters listmatches forever → stack overflow → SIGSEGV.
+    // zrefresh converts the -1 to `nlnct` so the next paint is a plain
+    // command-line redraw beneath the list.
+    SHOWINGLIST.store(-1, Relaxed);
+    LISTSHOWN.store(1, Relaxed);
     0 // c:2297
 }
 
