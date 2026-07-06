@@ -3092,15 +3092,18 @@ pub fn add_match_data(
         let pb = format!("{}{}", cm.prpre.as_deref().unwrap_or("./"), orig);
         // c:2960-2963 — `ztat(pb, &buf, 1); cm->mode = buf.st_mode;
         //   if ((cm->modec = file_type(buf.st_mode)) == ' ') cm->modec = 0;`
-        if let Some(meta) = ztat(&pb, false) {
+        // The `1` is ztat's ls flag → lstat, so modec is the type of the
+        // link itself (`@` for a symlink). This is the marker printlist
+        // shows, so it must come from lstat, not stat.
+        if let Some(meta) = ztat(&pb, true) {
             use std::os::unix::fs::MetadataExt;
             cm.mode = meta.mode();
             let c = crate::ported::glob::file_type(cm.mode); // c:2962
             cm.modec = if c == ' ' { '\0' } else { c }; // c:2963
         }
-        // c:2965-2968 — same via lstat for fmode/fmodec (the marker shown
-        // when LC_FOLLOW_SYMLINKS is off — `@` on a symlink itself).
-        if let Some(meta) = ztat(&pb, true) {
+        // c:2965-2968 — `ztat(pb, &buf, 0)` → stat, so fmode/fmodec is the
+        // type of the symlink target (the marker used when following links).
+        if let Some(meta) = ztat(&pb, false) {
             use std::os::unix::fs::MetadataExt;
             cm.fmode = meta.mode();
             let c = crate::ported::glob::file_type(cm.fmode); // c:2967
