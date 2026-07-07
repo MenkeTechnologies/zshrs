@@ -1366,7 +1366,13 @@ pub fn get_comp_string() -> Option<String> {
         INSUBSCR.store(0, Ordering::SeqCst); // c:1167
         clwpos = -1; // c:1168
         zcontext_save(); // c:1169
-        LEX_LEXFLAGS.set(LEXFLAGS_ZLE); // c:1170
+        // c:1170 — `lexflags = LEXFLAGS_ZLE`. ACTIVE is OR'd in so the lexer
+        // TOLERATES an unterminated quote/backtick/brace at the cursor (the
+        // word being completed): the `!(lexflags & LEXFLAGS_ACTIVE)` guards on
+        // the unmatched → LEXERR / zerr paths (lex.c:1320/1344/1383/1445) then
+        // keep the partial word a usable STRING instead of aborting the
+        // completion with "unmatched \"".
+        LEX_LEXFLAGS.set(LEXFLAGS_ZLE | crate::ported::zsh_h::LEXFLAGS_ACTIVE);
         crate::ported::input::inpush(&dupstrspace(&linptr), 0, None); // c:1171
         crate::ported::hist::strinbeg(0); // c:1172
 
