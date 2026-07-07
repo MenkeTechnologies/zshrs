@@ -5222,10 +5222,23 @@ pub fn paramsubst(
                 // syntax error. C's getindex catches this via `if (s !=
                 // tbrack) s = *pptr` + reject at the caller; zsh's
                 // paramsubst surfaces it as "bad substitution". Bug #408.
-                {
+                //
+                // c:Src/params.c:1513-1516 — getarg's scan loop terminates on
+                // a comma ONLY when the parameter is NOT a hash:
+                //   `(c != Outbrack && (ishash || c != ',')) || i || inpar`
+                // For a hash (assoc array), commas are ordinary key bytes and
+                // never split the subscript — `${assoc[a,b,c]}` keys on the
+                // literal 6-char string `a,b,c`, returning empty (no error).
+                // Only numeric arrays treat `,` as the `start,end` range
+                // separator, where a third top-level comma is the syntax error.
+                // So gate this check on "target is not a hash"; otherwise a
+                // `${_comps[$1]}` (compdef line 163) whose `$1` expanded to a
+                // comma-bearing value tripped a false "bad substitution",
+                // breaking compsys.
+                if !assoc_contains(&var_name) {
                     let mut depth = 0i32;
                     let mut commas = 0usize;
-                    for ch in expanded.chars() {
+                    for ch in raw_sub.chars() {
                         match ch {
                             '(' | '[' | '{' => depth += 1,
                             ')' | ']' | '}' => depth -= 1,
@@ -5714,6 +5727,47 @@ pub fn paramsubst(
             };
             if let Some(v) = partab_plain_key {
                 v
+            } else if !sub.trim_start().starts_with('(')
+                && sub != "@"
+                && sub != "*"
+                && assoc_contains(&var_name)
+            {
+                // Fast single-key assoc read. A plain `${assoc[key]}`
+                // (no subscript flags, not `@`/`*`) needs exactly one
+                // value — NOT the whole-map clone + hash-bucket reorder
+                // that assoc_get performs. Those O(n) rebuilds per
+                // lookup made compinit O(n²) across its 1836 growing-map
+                // compdef registrations and hung startup. Flagged /
+                // enumeration subscripts still fall to assoc_get below.
+                // c:Src/params.c:1492-1494 — `(k)` (WANTKEYS without
+                // WANTVALS) returns the KEY when present, else empty;
+                // otherwise the VALUE (c:1591 + subst.c:2922/2926).
+                let want_key =
+                    (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0;
+                // Inline single-key read: lock the hashed store, clone
+                // just the one value — no whole-map clone or hash-bucket
+                // reorder. c:Src/params.c:570-575 nameref deref first.
+                let resolved =
+                    match crate::ported::params::resolve_nameref_name(&var_name, None) {
+                        crate::ported::params::nameref_resolution::Target { name: t_, .. } => {
+                            t_
+                        }
+                        _ => var_name.clone(),
+                    };
+                let v = paramtab_hashed_storage()
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.get(resolved.as_str()).and_then(|m| m.get(sub).cloned()));
+                match v {
+                    Some(val) => {
+                        if want_key {
+                            sub.to_string()
+                        } else {
+                            val
+                        }
+                    }
+                    None => String::new(),
+                }
             } else if let Some(map) = assoc_get(&var_name) {
                 // c:2926 (assoc lookup)
                 // c:Src/params.c — `${assoc[@]}` and `${assoc[*]}`
@@ -5874,11 +5928,30 @@ pub fn paramsubst(
                         } else {
                             v.as_str()
                         };
-                        // c:Src/params.c — k/K (key-match path) is
-                        // exact-only, no glob; r/R use patcompile; i/I
-                        // use patcompile against the KEY (key_glob).
-                        let matched = if exact || (match_against_key && !key_glob) {
+                        // c:Src/params.c — matching direction depends on the flag:
+                        //   (k)/(K): the KEY is the pattern, matched AGAINST the
+                        //            subscript string (reverse). `p[c*]=fn;
+                        //            ${p[(K)cat]}` → `fn` because key `c*` matches
+                        //            `cat`. The compsys pattern-key tables
+                        //            (_patcomps/_postpatcomps) depend on this; a
+                        //            prior exact `key == subscript` compare never
+                        //            matched a glob key, so compdef's
+                        //            `${_patcomps[(K)$svc]…}` always came up empty.
+                        //   (r)/(R)/(i)/(I): the SUBSCRIPT is the pattern, matched
+                        //            against `hay` (value for r/R, key for i/I).
+                        let matched = if exact {
                             hay == pat.as_str()
+                        } else if match_against_key && !key_glob {
+                            patcompile(
+                                &{
+                                    let mut __key_tok = hay.to_string();
+                                    crate::ported::glob::tokenize(&mut __key_tok);
+                                    __key_tok
+                                },
+                                PAT_HEAPDUP as i32,
+                                None,
+                            )
+                            .map_or(false, |__p| pattry(&__p, pat.as_str()))
                         } else {
                             patcompile(
                                 &{
@@ -6944,7 +7017,17 @@ pub fn paramsubst(
                             let mut chars = body.chars();
                             while let Some(c) = chars.next() {
                                 match c {
-                                    'I' | 'R' | 'i' | 'r' | 'e' => flags.push(c),
+                                    // c:Src/params.c getarg — on a SCALAR/unset
+                                    // value the key-search flags (k)/(K) behave
+                                    // exactly like the value-search (r)/(R): a
+                                    // scalar has no keys, so zsh searches the
+                                    // string content. `s=foo; ${s[(K)o]}` → "o".
+                                    // Without k/K here they hit `_ => return
+                                    // None` and the whole `(K)pat` fell through
+                                    // to mathevali → "bad math expression" (which
+                                    // broke compdef's `${_patcomps[(K)$svc][1]}`
+                                    // lookups on an unset/absent key).
+                                    'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'e' => flags.push(c),
                                     'n' | 'b' => {
                                         let delim = chars.next()?;
                                         let mut numstr = String::new();
@@ -6986,7 +7069,7 @@ pub fn paramsubst(
                             if p.contains(',') {
                                 return None;
                             }
-                            if flags.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r')) {
+                            if flags.chars().any(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K')) {
                                 Some((flags, num, beg, p))
                             } else {
                                 None
@@ -6994,7 +7077,9 @@ pub fn paramsubst(
                         })(sub)
                     {
                         let return_index = flags.contains('I') || flags.contains('i');
-                        let want_last = flags.contains('I') || flags.contains('R');
+                        // (K) requests ALL matches like (R); (k) the first like (r).
+                        let want_last =
+                            flags.contains('I') || flags.contains('R') || flags.contains('K');
                         let exact = flags.contains('e'); // c:1419 e — literal compare, no glob
                         let nth = num.unwrap_or(1).max(1) as usize; // c:1432 (n.N.)
                                                                     // c:Src/params.c — `(b.N.)` is a 1-based begin offset;

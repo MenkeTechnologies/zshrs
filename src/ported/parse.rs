@@ -1645,13 +1645,12 @@ fn par_case() -> Option<ZshCommand> {
     zshlex();
 
     let mut arms = Vec::new();
-    const MAX_ARMS: usize = 10_000;
 
     loop {
-        if arms.len() > MAX_ARMS {
-            zerr("par_case: too many arms");
-            break;
-        }
+        // No arm-count cap: zsh `case` statements have no limit, and compsys
+        // dispatchers (`_describe`, `_git`, generated `_arguments` bodies) emit
+        // huge case bodies. The loop terminates on `esac` / EOF below; a former
+        // 10_000-arm cap silently truncated (and errored on) larger ones.
 
         // Set incasepat BEFORE skipping separators so lexer knows we're in case pattern context
         // This affects how [ and | are lexed
@@ -2864,12 +2863,29 @@ pub fn par_nl_wordlist() -> Vec<String> {
     out
 }
 
-/// `COND_SEP()` macro from `Src/parse.c:2433`. True when the current
-/// token is a separator usable inside `[[ … ]]` (newline / semi /
-/// `&`). C uses it to skip optional whitespace between cond terms.
+/// `COND_SEP()` macro from `Src/parse.c:2405`:
+///   `(tok == SEPER && condlex != testlex && *zshlextext != ';')`
+/// A newline (but NOT a `;`) between cond terms inside `[[ … ]]` is
+/// skippable whitespace; a `;` is a parse error (`[[ a ; ]]`).
+///
+/// zshrs has two lexer modes feeding the two cond parsers:
+///   - wordcode path (autoload / parse_string): LEXFLAGS_NEWLINE off,
+///     so a newline is FOLDED to SEPER (lex.rs:265). C's `[[ a &&\n b ]]`
+///     lands here; matching only NEWLIN missed it → "condition
+///     expected" (broke every multi-line `&&`/`||` cond in compinit and
+///     the compsys completers).
+///   - AST path (`-c`, source): LEXFLAGS_NEWLINE on, newline stays
+///     NEWLIN (unfolded).
+/// `;` ALWAYS folds to SEPER (lex.rs:265, unconditional for SEMI) with
+/// LEX_ISNEWLIN==0, so gating the SEPER arm on LEX_ISNEWLIN!=0
+/// reproduces C's `*zshlextext != ';'` exclusion in both modes.
 #[inline]
 pub fn COND_SEP() -> bool {
-    matches!(tok(), NEWLIN | SEMI | AMPER)
+    match tok() {
+        NEWLIN => true,
+        SEPER => crate::ported::lex::LEX_ISNEWLIN.with(|c| c.get()) != 0,
+        _ => false,
+    }
 }
 
 /// Parse [[ ... ]] conditional
@@ -2992,12 +3008,20 @@ pub fn par_cond_2() -> i32 {
         return par_cond_2();
     }
     if tok() == INPAR_TOK {
-        // c:2533 — `[[ (cond) ]]`
+        // c:2533 — `[[ (cond) ]]`. Recurse into the WORDCODE cond OR-chain
+        // `par_cond_top` (C's `par_cond`, parse.c:2409). The bare `par_cond`
+        // in this crate is the AST `[[ ]]` parser — it opens with
+        // `zshlex(); // skip [[`, so calling it here consumed the FIRST term
+        // of the group (e.g. the `-z` in `[[ ( -z x ) ]]`) as if it were the
+        // `[[`, then failed. Every parenthesised sub-condition parsed via
+        // parse_string (autoload's function-body parse, `.zcompdump`, etc.)
+        // hit `parse error`, which broke compinit/compaudit and thus all of
+        // compsys.
         condlex();
         while COND_SEP() {
             condlex();
         }
-        let r = par_cond();
+        let r = par_cond_top();
         while COND_SEP() {
             condlex();
         }
@@ -3007,7 +3031,7 @@ pub fn par_cond_2() -> i32 {
             return 0;
         }
         condlex();
-        return r.map_or(0, |_| 1);
+        return r;
     }
     let s1 = tokstr().unwrap_or_default();
     // c:2549 — `dble = (s1 && IS_DASH(*s1) && (!n_testargs ||
@@ -8903,14 +8927,15 @@ fn parse_assign() -> Option<ZshAssign> {
         let mut elements = Vec::new();
         zshlex(); // skip past token
 
-        let mut arr_iters = 0;
-        const MAX_ARRAY_ELEMENTS: usize = 10_000;
+        // c:Src/parse.c:2043 par_nl_wordlist — read array elements until the
+        // token is no longer a word/separator (the closing `)` ends it). zsh
+        // imposes NO element-count limit; arrays grow dynamically. A former
+        // `MAX_ARRAY_ELEMENTS = 10_000` cap here silently truncated (and
+        // errored on) any larger literal — which broke loading `.zcompdump`
+        // (`_comps`/`_lastcomp` hold tens of thousands of entries with
+        // zsh-more-completions) and any big generated array. The loop
+        // terminates on the closing paren via zshlex advancing each pass.
         while matches!(tok(), STRING_LEX | SEPER | NEWLIN) {
-            arr_iters += 1;
-            if arr_iters > MAX_ARRAY_ELEMENTS {
-                zerr("array assignment exceeded maximum elements");
-                break;
-            }
             if tok() == STRING_LEX {
                 let _ts_s = crate::ported::lex::tokstr();
                 if let Some(s) = _ts_s.as_deref() {

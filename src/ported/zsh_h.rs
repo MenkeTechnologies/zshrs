@@ -3969,8 +3969,20 @@ pub fn islogin() -> bool {
 }
 
 /// Helper: convert option constant to its name for lookup.
+///
+/// Cached O(1) number→name lookup. The canonical match below has ~185
+/// arms of `x if x == CONST` guards, which the compiler lowers to a
+/// LINEAR comparison chain (guards defeat jump-table lowering). It used
+/// to run per call; `optno_by_name` calls it in a `1..OPT_SIZE` loop,
+/// so a single `optlookup`/`isset` was O(OPT_SIZE²). That dominated
+/// startup — compinit issues ~600k isset() calls and effectively hung.
+/// Building the table once (closure, not a new fn) makes every later
+/// `opt_name` a single vector index.
 pub fn opt_name(opt: i32) -> &'static str {
-    match opt {
+    static OPT_NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    let table = OPT_NAMES.get_or_init(|| {
+        let build = |opt: i32| -> &'static str {
+            match opt {
         x if x == ALIASFUNCDEF => "aliasfuncdef",
         x if x == ALLEXPORT => "allexport",
         x if x == ALWAYSLASTPROMPT => "alwayslastprompt",
@@ -4161,7 +4173,11 @@ pub fn opt_name(opt: i32) -> &'static str {
         // address the same slot.
         x if x == VIMODE => "vi",
         _ => "",
-    }
+            }
+        };
+        (0..OPT_SIZE).map(build).collect()
+    });
+    table.get(opt as usize).copied().unwrap_or("")
 }
 
 // =============================================================================
