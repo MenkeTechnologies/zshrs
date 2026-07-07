@@ -2266,6 +2266,12 @@ impl ShellExecutor {
         }
         // Autoload prelude (same as dispatch_function_call's).
         if !self.functions_compiled.contains_key(name) {
+            // On-demand $fpath autoload for `_`-prefixed compsys helpers that
+            // compinit didn't register as autoload stubs — see the fuller
+            // note in dispatch_function_call.
+            if name.starts_with('_') && crate::ported::utils::getshfunc(name).is_none() {
+                let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
+            }
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
@@ -2338,6 +2344,20 @@ impl ShellExecutor {
         // Autoload prelude skipped when a Rust port wins — no upstream
         // shell function to load.
         if direct_rust_fn.is_none() && !self.functions_compiled.contains_key(name) {
+            // compinit bulk-loads $_comps from the dump/cache but (unlike
+            // zsh's `compdef -na`, which `autoload -rUz`s every completer)
+            // does NOT register the completer functions as autoload stubs.
+            // So a shell completer WITHOUT a Rust port (e.g. `_cat`, or the
+            // helpers it calls: `_pick_variant`, `_arguments`…) had no
+            // shfunctab entry — getshfunc returned None, nothing compiled,
+            // dispatch returned None, and the command's completion silently
+            // produced nothing. Register `_`-prefixed helpers from $fpath on
+            // demand (mirrors a fresh `autoload -Uz NAME`) so getshfunc finds
+            // the stub below and loadautofn reads the file. Gated to `_`
+            // names so ordinary commands still fall through to PATH.
+            if name.starts_with('_') && crate::ported::utils::getshfunc(name).is_none() {
+                let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
+            }
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
