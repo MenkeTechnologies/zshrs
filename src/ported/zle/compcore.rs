@@ -3258,11 +3258,14 @@ pub fn add_match_data(
         crate::ported::zle::complete::COMPIGNORED.fetch_add(1, Ordering::Relaxed);
     }
 
-    // c:3015-3016 — dolastprompt reset when complastprompt empty.
-    let complastprompt_v = crate::ported::zle::complete::COMPLASTPREFIX
-        .get()
-        .and_then(|m| m.lock().ok().map(|g| g.clone()))
-        .unwrap_or_default();
+    // c:3015-3016 — `if (!*complastprompt) dolastprompt = 0;`. Read the
+    // `complastprompt` value (the "last_prompt" compstate, set at c:326 to
+    // "yes"/"" from ALWAYS_LAST_PROMPT) — NOT `complastprefix`, a different
+    // variable the previous port read by mistake. With that bug dolastprompt
+    // was cleared on every completion, so `clearflag` stayed 0 and `trashzle`
+    // never emitted TCCLEAREOD: an on-screen completion list was left
+    // stranded when the command was accepted.
+    let complastprompt_v = get_compstate_str("last_prompt").unwrap_or_default();
     if complastprompt_v.is_empty() {
         dolastprompt.store(0, Ordering::Relaxed);
     }
@@ -4118,7 +4121,12 @@ pub fn freematches(g: Vec<Cmgroup>, cm: i32) {
 /// Port of `mod_export int lastend` from `Src/Zle/compcore.c:276`.
 /// Byte position in the metafied line where the most-recent
 /// completion insertion ended.
-pub static LASTEND: AtomicI32 = AtomicI32::new(0); // compcore.c:276
+///
+/// Re-export alias of [`lastend`] — C has ONE `lastend` (compcore.c:276).
+/// Two atomics existed: `compresult` wrote the lowercase `lastend`, while
+/// `complist`'s menu-list positioning read this uppercase `LASTEND`, which was
+/// never stored (always 0) — so menu-selection column math used a stale zero.
+pub use self::lastend as LASTEND;
 
 /// Port of `mod_export int wb` from `Src/lex.c:120`. Word-begin
 /// position in the metafied line for the currently-completing word.
