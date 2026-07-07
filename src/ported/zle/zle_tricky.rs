@@ -1756,10 +1756,13 @@ pub fn get_comp_string() -> Option<String> {
                 .cloned()
                 .unwrap_or_default();
         } else if t0 == ENVSTRING {
-            // c:1495-1541 — cursor inside a parameter assignment.
-            if varq != 0 {
-                tt = clwords.get(clwpos.max(0) as usize).cloned();
-            }
+            // c:1495-1541 — cursor inside a parameter assignment. C refreshes
+            // `tt` from clwords[clwpos] only when varq, relying on the lexer's
+            // tokstr otherwise; the Rust port's un-refreshed `tt` is stale
+            // (it kept the placeholder `x` and had already dropped a char),
+            // while clwords[clwpos] is the correctly-chucked word. Always use
+            // clwords[clwpos] so `x=gam<Tab>` sees the real value.
+            tt = clwords.get(clwpos.max(0) as usize).cloned();
             let ttv = tt.clone().unwrap_or_default();
             // c:1503 — namespace ident end.
             let ns_off = crate::ported::utils::itype_end(&ttv, INAMESPC, false).min(ttv.len());
