@@ -1249,58 +1249,18 @@ pub fn zrefresh() {
     //          fallback). Replaces the prior `stdout.lock()`
     //          fake that wrote refresh output to stdout instead
     //          of the controlling tty.
-    let fd = SHTTY.load(Ordering::Relaxed);
-    let out_fd = if fd >= 0 { fd } else { 1 };
-    // ---- OUTPUT: full single-line repaint --------------------------------
-    // The NBUF/OBUF diff + refreshline path below mis-positions the cursor
-    // (it emits a per-character CR + cursor-up that scrambles the line), so
-    // the interactive editor was unusable once ZLE was wired into the input
-    // loop. Until that diff path is correct, drive the display from the
-    // full-repaint string built above: `\r\x1b[K` clears the line, then the
-    // prompt + buffer (+ optional rprompt) are written and a single
-    // `\r\x1b[<col>C` places the cursor. This is the documented revert
-    // ("restore this write_loop and skip the refreshline loop"). Returning
-    // here keeps the broken diff machinery from ever writing to the tty.
-    let _ = write_loop(out_fd, handle.as_bytes());
-
-    // c:1706-1719 — draw a pending completion list. `do_completion` sets
-    // `showinglist = -2` when the matches must be listed below the command
-    // line. Flush the command-line paint first (above), then run
-    // `listmatches()` (→ ilistmatches → printlist) to print the grid, and
-    // recurse once to repaint the command line beneath it. The `INLIST`
-    // guard at the top of `zrefresh` stops `listmatches`'s internal
-    // `trashzle → zrefresh` from recursing. Without this the 257-match
-    // `l<Tab>` completion computed its matches but nothing was ever shown.
-    if SHOWINGLIST.load(Ordering::Relaxed) == -2 {
-        INLIST.store(1, Ordering::Relaxed);
-        // Drop to a fresh line below the command line before printing the
-        // list. C positions the cursor with trashzle's `moveto`, which
-        // needs the video-buffer bookkeeping the simple full-repaint path
-        // above doesn't maintain — so the list was drawn at the command-
-        // line cursor column and the recursive repaint's `\r\x1b[K` then
-        // erased it (single-row lists like `echo a<Tab>` vanished; taller
-        // ones lost their bottom row).
-        let _ = write_loop(out_fd, b"\r\n");
-        crate::ported::zle::zle_h::listmatches();
-        INLIST.store(0, Ordering::Relaxed);
-        // Return to the command-line row so the recursive repaint redraws
-        // it in place and leaves the listing intact below.
-        let nlines = crate::ported::zle::compcore::listdat
-            .get()
-            .and_then(|m| m.lock().ok())
-            .map(|g| g.nlines)
-            .unwrap_or(0);
-        if nlines > 0 {
-            let _ = write_loop(out_fd, format!("\x1b[{}A\r", nlines).as_bytes());
-        }
-        if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
-            zrefresh();
-        }
-    }
-    if SHOWINGLIST.load(Ordering::Relaxed) == -1 {
-        SHOWINGLIST.store(NLNCT.load(Ordering::Relaxed), Ordering::Relaxed);
-    }
-    return;
+    // ---- OUTPUT: NBUF/OBUF incremental diff (c:1614-1718) ----------------
+    // The full-repaint `handle` string built above is intentionally NOT
+    // written to the tty. The minimal-update path below — build NBUF, diff
+    // each line against OBUF via `refreshline`, then `moveto` to the edit
+    // position — is the live renderer, so zshrs emits the same byte-for-byte
+    // incremental terminal updates as zsh's `zrefresh` (a plain keystroke is
+    // a single echoed char, a unique completion is just the inserted suffix,
+    // not a `\r\x1b[K` + full reprint). `showinglist`/`listmatches` runs at
+    // the END of this function (c:1706), after the diff loop and `moveto`
+    // have positioned the cursor and populated the video buffers that
+    // `listmatches`' `trashzle → moveto` depends on.
+    let _ = &handle;
 
     // c:1739 — the build records the cursor's video position (nvln/nvcs) as it
     // lays cells; captured out of the build block for the final moveto. Init
@@ -1506,6 +1466,20 @@ pub fn zrefresh() {
         // Editable line with tab/control expansion (c:1248-1398). Each
         // line char's overlay attr is applied to the cell(s) it produces.
         let cursor_idx = ZLECS.load(Ordering::SeqCst);
+        // c:396 / c:1242 — the `special` highlight, applied to specially
+        // displayed cells (control chars shown as `^X`, meta bytes as `<hex>`).
+        // C mixes `special_attr` into those cells' attr (`all_attr =
+        // mixattrs(special_attr, special_mask, base_attr)`); it defaults to
+        // TXTSTANDOUT when `$zle_highlight` has no `special:` entry (c:395-396).
+        // Without this, control characters echoed unhighlighted (`^A` instead
+        // of `\x1b[7m^A\x1b[27m`).
+        let special_zattr: zattr = highlight()
+            .lock()
+            .unwrap()
+            .category_attrs
+            .get(&HighlightCategory::Special)
+            .map(|ta| to_zattr(ta))
+            .unwrap_or(crate::ported::zsh_h::TXTSTANDOUT);
         // c:1297-1320 — combining marks absorbed into the preceding base char's
         // cluster cell are skipped in subsequent iterations (the for-loop can't
         // advance `i` like C's `t += ichars`, so count them down here).
@@ -1550,8 +1524,11 @@ pub fn zrefresh() {
                     break;
                 }
             } else if (ch as u32) < 0x20 || ch as u32 == 0x7f {
-                // c:1340-1356 — control char as `^X` / `^?`.
-                if emit(&mut rpms, '^', atr) {
+                // c:1340-1356 — control char as `^X` / `^?`. Both cells carry
+                // the `special` highlight mixed over the base attr (c:1348
+                // `rpms.s->atr = all_attr`).
+                let catr = atr | special_zattr;
+                if emit(&mut rpms, '^', catr) {
                     break;
                 }
                 let c2 = if ((ch as u32) & !0x80u32) > 31 {
@@ -1559,7 +1536,7 @@ pub fn zrefresh() {
                 } else {
                     char::from_u32((ch as u32) | 0x40).unwrap_or('?')
                 };
-                if emit(&mut rpms, c2, atr) {
+                if emit(&mut rpms, c2, catr) {
                     break;
                 }
             } else {
@@ -2072,9 +2049,71 @@ pub fn zrefresh() {
     // refreshline diffs each new line against it and emits the minimal
     // terminal updates, then we move the cursor to its editing position.
     let nlnct = NLNCT.load(Ordering::SeqCst);
+    // c:1125-1174 — reset-frame handling. trashzle()/reexpandprompt/history
+    // widgets/clearscreen set resetneeded when a NEW prompt is coming or the
+    // display was trashed; zleread arms it before the first paint of each
+    // line. On such a frame, home the video cursor and clear OBUF so
+    // refreshline redraws the whole prompt+line from column 0 (the real
+    // cursor sits at col 0 of a fresh row after the prior accept's trailing
+    // CRLF, or at shell startup). On a NORMAL frame (typing / completing)
+    // resetneeded is 0 and VCS/VLN carry from the previous frame's final
+    // moveto — so refreshline's moveto is a no-op at the diff point and only
+    // the changed bytes are emitted, byte-for-byte matching zsh's refresh.
+    // Only RESETNEEDED (clearscreen / reexpandprompt / zleread's first-paint
+    // arming) is consumed here. The separate ZLE_RESET_NEEDED flag is NOT a
+    // faithful `resetneeded`: nearly every editing widget in zle_misc/
+    // zle_utils sets it while porting C's `CCRIGHT()` — which is
+    // `alignmultiwordright(&zlecs, 1)`, a multibyte cursor-alignment no-op,
+    // not a full-redraw request. Consuming it would force a whole-line
+    // repaint on every keystroke (the exact full-repaint behaviour this
+    // path replaces). zlecore already calls zrefresh after each widget, so
+    // ordinary edits redraw incrementally via the OBUF diff without any
+    // reset.
+    let reset_frame = RESETNEEDED.swap(0, Ordering::SeqCst) != 0;
+    if reset_frame {
+        VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
+        VLN.store(0, Ordering::SeqCst);
+        OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame
+        OLNCT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst); // c:1144 no right-prompt on screen
+        // c:789 (resetvideo) — clear trashedzle so the NEXT trashzle (e.g.
+        // asklist's "drop the cursor below the prompt" before a completion
+        // list) passes its `!trashedzle` gate and actually parks below the
+        // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
+        // resetneeded here is where trashedzle gets cleared again, matching C.
+        TRASHEDZLE.store(0, Ordering::Relaxed);
+        // Home the real cursor to column 0 before re-emitting the prompt.
+        // On the first paint of a line this is a fresh row (a no-op CR); on
+        // the post-list repaint (the recursive zrefresh after listmatches) it
+        // guarantees the prompt redraws at the start of the row below the
+        // printed grid rather than wherever the list left the cursor.
+        {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, b"\r");
+        }
+        // c:1158-1159 — `zputs(lpromptbuf, shout)`: print the expanded left
+        // prompt so it is physically on screen. refreshline's prompt-skip
+        // (c:1862) then draws only the content after column lpromptw and never
+        // emits the prompt cells itself (it assumes the prompt is already
+        // displayed). Without this the reset frame left lpromptw blank columns
+        // where the prompt should be. VCS is advanced to lpromptw so the video
+        // cursor stays in sync with the real cursor (which the raw prompt emit
+        // moved but does not track); C leaves vcs at 0 and relies on its
+        // moveto, but zshrs' singmoveto emits a RELATIVE cursor-right, so a
+        // stale vcs=0 would double-offset the first content moveto.
+        if !prompt.is_empty() {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, prompt.as_bytes());
+            // c:1163 — the prompt's literal escapes leave the terminal in
+            // pmpt_attr; publish it so refreshline's first content attr-diff
+            // starts from the right SGR state.
+            crate::ported::prompt::treplaceattrs(PROMPT_ATTR.load(Ordering::SeqCst));
+            VCS.store(LPROMPTW.load(Ordering::SeqCst), Ordering::SeqCst);
+        }
+    }
     let olnct = OLNCT.load(Ordering::SeqCst);
-    VCS.store(0, Ordering::SeqCst); // start from the home position
-    VLN.store(0, Ordering::SeqCst);
     let saved_cleareol = CLEAREOL.load(Ordering::SeqCst);
     // c:1174 — `clearf = clearflag`: snapshot the clear flag for the loop.
     let clearf = CLEARFLAG.load(Ordering::SeqCst) != 0;
@@ -2227,6 +2266,35 @@ pub fn zrefresh() {
         }
         CLEAREOL.store(0, Ordering::SeqCst);
     }
+    // After the diff loop the terminal's SGR is whatever the last written
+    // cell used. If that is a non-default attribute — e.g. the bold
+    // completion-suffix highlight sitting at the cursor — emit a display-only
+    // reset now, as zsh does, so the attribute doesn't bleed into later output
+    // and the frame's bytes match (`\x1b[1m \x1b[0m`). This does NOT clear the
+    // tracked current-attr, so when the next frame rewrites that same cell at
+    // the default attr it re-emits the reset (matching zsh's `\x08\x1b[0m …`
+    // when the suffix is committed on the following keystroke). An ordinary
+    // frame that already ended at the default attr emits nothing.
+    {
+        let saved = *crate::ported::prompt::current_attrs_lock()
+            .lock()
+            .expect("current_attrs poisoned");
+        if saved != 0 {
+            // Emit the same attribute-off diff zsh would — specific caps
+            // (`\x1b[27m` standout, `\x1b[24m` underline, `\x1b[0m` bold), not
+            // a blanket reset — so a frame that ends on a highlighted cell (a
+            // trailing `^X` control char, the bold completion suffix) leaves
+            // the terminal clean and the tracked attr synced for the next
+            // frame's diff.
+            crate::ported::prompt::treplaceattrs(0);
+            let sgr = crate::ported::prompt::applytextattributes(0);
+            if !sgr.is_empty() {
+                let fd = SHTTY.load(Ordering::Relaxed);
+                let out_fd = if fd >= 0 { fd } else { 1 };
+                let _ = write_loop(out_fd, sgr.as_bytes());
+            }
+        }
+    }
     // c:1741 — `moveto(rpms.nvln, rpms.nvcs)`: cursor to the edit position
     // using the video coords the build tracked as it laid cells. This is
     // exact under hard newlines, tab/control expansion, and vertical scroll —
@@ -2253,6 +2321,47 @@ pub fn zrefresh() {
     // the only `moveto(ovln, ...)` at c:1092 uses a same-named block local —
     // so it is dead write-only state.)
     ONUMSCROLLS.store(NUMSCROLLS.load(Ordering::SeqCst), Ordering::SeqCst);
+
+    // c:1706-1718 — if a completion list must be shown (do_completion set
+    // `showinglist = -2`) or part of an on-screen list was overwritten
+    // (`showinglist > 0 && < nlnct`), print the grid via `listmatches` and
+    // repaint the command line beneath it with a recursive `zrefresh`. The
+    // `INLIST` guard at the top of this fn stops `listmatches`' internal
+    // `trashzle → zrefresh` from recursing; the explicit recursion here
+    // (c:1715) is a full repaint that redraws the command line under the
+    // list. Runs after the diff loop + `moveto` so the video buffers and
+    // `vcs`/`vln` cursor state `listmatches` moves from are current.
+    let showinglist = SHOWINGLIST.load(Ordering::Relaxed);
+    let nlnct_final = NLNCT.load(Ordering::SeqCst);
+    if showinglist == -2 || (showinglist > 0 && showinglist < nlnct_final) {
+        INLIST.store(1, Ordering::Relaxed);
+        crate::ported::zle::zle_h::listmatches();
+        INLIST.store(0, Ordering::Relaxed);
+        // listmatches (→ asklist → trashzle → printlist) dropped the cursor
+        // below the command line and printed `listdat.nlines` grid rows with
+        // raw putc, which does NOT track the video cursor (vln/vcs). Move the
+        // REAL cursor back up onto the command-line row so the recursive
+        // reset-frame zrefresh (armed by trashzle's resetneeded) repaints the
+        // command line in place and leaves the grid intact below it. Without
+        // this the repaint lands on the last grid row and overwrites it.
+        let nlines = crate::ported::zle::compcore::listdat
+            .get()
+            .and_then(|m| m.lock().ok())
+            .map(|g| g.nlines)
+            .unwrap_or(0);
+        if nlines > 0 {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, format!("\x1b[{}A", nlines).as_bytes());
+        }
+        if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
+            zrefresh();
+        }
+    }
+    // c:1717-1718 — `if (showinglist == -1) showinglist = nlnct;`
+    if SHOWINGLIST.load(Ordering::Relaxed) == -1 {
+        SHOWINGLIST.store(nlnct_final, Ordering::Relaxed);
+    }
 }
 
 impl HighlightManager {
@@ -3515,11 +3624,11 @@ pub fn clearscreen() -> i32 {
                                           // (Now wired — reexpandprompt is ported in zle_main; it was previously
                                           // deferred as "prompt subsystem".)
     crate::ported::zle::zle_main::reexpandprompt(); // c:2429
-                                                    // zshrs's ZLE loop doesn't consume resetneeded yet (the c:1125 block is
-                                                    // blocked on zsetterm/lpromptbuf/trashedzle), so drive the redraw directly
-                                                    // here for the same visible effect that honouring resetneeded would give.
-    zrefresh();
-    0 // c:2430
+    // c:2430 — return 0. C does NOT redraw here: it leaves `resetneeded` set
+    // and the zlecore loop's next zrefresh honours it (homing the video
+    // cursor and clearing OBUF for a full repaint). Calling zrefresh here
+    // would consume `resetneeded` before that redraw and diverge from C.
+    0
 }
 
 /// Direct port of `int redisplay(UNUSED(char **args))` from
@@ -3546,9 +3655,8 @@ pub fn redisplay() -> i32 {
     tc_upcurs(lprompth - 1); // c:2439
     RESETNEEDED.store(1, Ordering::SeqCst); // c:2440 resetneeded = 1
     CLEARFLAG.store(0, Ordering::SeqCst); // c:2441 clearflag = 0
-                                          // c:2442 return 0. zshrs's ZLE loop doesn't honour resetneeded yet, so
-                                          // trigger the redraw directly for the same visible effect.
-    zrefresh();
+    // c:2442 — return 0. C does NOT redraw here; the zlecore loop's next
+    // zrefresh honours `resetneeded` for the full repaint.
     0
 }
 
@@ -4316,6 +4424,30 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
         let end = region.end.min(buf_len);
         for slot in attrs.iter_mut().take(end).skip(start) {
             *slot = Some(region.attr);
+        }
+    }
+    // c:1069-1075 — active completion suffix. A removable suffix (e.g. the
+    // space auto-added after a unique completion) is highlighted over
+    // `[zlecs - suffixlen, zlecs]` so the user can see the part the next
+    // keystroke will overwrite. Applied last (C's suffix is the top layer,
+    // c:349 layer 10). Default attr is bold (c:402 TXTBOLDFACE); the user may
+    // override it via `$zle_highlight`'s `suffix:` entry.
+    let suffix_len = crate::ported::zle::zle_misc::suffixlen.load(Ordering::SeqCst);
+    if suffix_len > 0 {
+        let suffix_attr = highlight()
+            .lock()
+            .unwrap()
+            .category_attrs
+            .get(&HighlightCategory::Suffix)
+            .copied()
+            .unwrap_or(TextAttr {
+                bold: true,
+                ..TextAttr::default()
+            });
+        let cs = ZLECS.load(Ordering::SeqCst).min(buf_len);
+        let start = cs.saturating_sub(suffix_len as usize);
+        for slot in attrs.iter_mut().take(cs).skip(start) {
+            *slot = Some(suffix_attr);
         }
     }
     attrs

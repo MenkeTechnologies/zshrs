@@ -2045,7 +2045,12 @@ pub fn set_last_line() {
 /// Handle a feep (beep/error)
 /// Port of handlefeep(UNUSED(char **args)) from zle_utils.c
 pub fn handle_feep() {
-    print!("\x07"); // Bell
+    // Faithful bell: route through zbeep (utils.c:4105) so the `\x07` is
+    // written to SHTTY via write_loop, gated on the BEEP option and honouring
+    // $ZBEEP. The previous `print!("\x07")` went to Rust's buffered stdout,
+    // which is the wrong destination for ZLE and stayed unflushed (no newline)
+    // so the bell never reached the terminal on an ambiguous / no-match Tab.
+    crate::ported::utils::zbeep();
 }
 
 /// Add text to line at position

@@ -1792,13 +1792,24 @@ fn setemulate_opts_lock() -> &'static std::sync::Mutex<std::collections::HashMap
 /// names to `name`. Serves both `opt_name(idx) → name` and the
 /// reverse via this walk.
 fn optno_by_name(name: &str) -> Option<i32> {
-    for idx in 1..OPT_SIZE {
-        let n = opt_name(idx);
-        if !n.is_empty() && n == name {
-            return Some(idx);
+    // O(1) cached reverse map (name→optno), built once. Was a linear
+    // `1..OPT_SIZE` scan; called per `optlookup`/`opt_state_get`/`isset`,
+    // it made every option check O(OPT_SIZE) and dominated compinit
+    // startup (~600k isset calls). The table is immutable (option
+    // NUMBERS never change at runtime), so a OnceLock is safe.
+    static REV: std::sync::OnceLock<std::collections::HashMap<&'static str, i32>> =
+        std::sync::OnceLock::new();
+    let m = REV.get_or_init(|| {
+        let mut h = std::collections::HashMap::with_capacity(OPT_SIZE as usize);
+        for idx in 1..OPT_SIZE {
+            let n = opt_name(idx);
+            if !n.is_empty() {
+                h.insert(n, idx);
+            }
         }
-    }
-    None
+        h
+    });
+    m.get(name).copied()
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Read the live
