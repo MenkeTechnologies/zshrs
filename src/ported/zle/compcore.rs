@@ -4460,17 +4460,23 @@ fn goto_compend(ret: i32) -> i32 {
 // violated Rule C (every decl in its mirroring C file). Callers in
 // this module now route through the canonical ported.
 /// `IN_NOTHING_LW` constant.
-pub const IN_NOTHING_LW: i32 = 0; // lex.h
+// These MUST match the raw IN_* enum in zsh_h (Src/zsh.h:2322-2332), which is
+// the single encoding C uses for both `inwhat` and `linwhat`. `linwhat` is
+// copied verbatim from `INWHAT` (makecomplist c:960), so a divergent ordering
+// here made makecomplistglobal's `linwhat == IN_ENV_LW` never match after an
+// assignment (`x=<Tab>`): INWHAT held IN_ENV=4 while IN_ENV_LW was 5, so
+// value/assignment completion silently did nothing.
+pub const IN_NOTHING_LW: i32 = 0; // = IN_NOTHING (zsh.h:2322)
 /// `IN_CMD_LW` constant.
-pub const IN_CMD_LW: i32 = 1; // lex.h
-/// `IN_COND_LW` constant.
-pub const IN_COND_LW: i32 = 2; // lex.h
+pub const IN_CMD_LW: i32 = 1; // = IN_CMD (zsh.h:2324)
 /// `IN_MATH_LW` constant.
-pub const IN_MATH_LW: i32 = 3; // lex.h
-/// `IN_PAR_LW` constant.
-pub const IN_PAR_LW: i32 = 4; // lex.h
+pub const IN_MATH_LW: i32 = 2; // = IN_MATH (zsh.h:2326)
+/// `IN_COND_LW` constant.
+pub const IN_COND_LW: i32 = 3; // = IN_COND (zsh.h:2328)
 /// `IN_ENV_LW` constant.
-pub const IN_ENV_LW: i32 = 5; // lex.h
+pub const IN_ENV_LW: i32 = 4; // = IN_ENV (zsh.h:2330)
+/// `IN_PAR_LW` constant.
+pub const IN_PAR_LW: i32 = 5; // = IN_PAR (zsh.h:2332)
                               // `origline_stub` / `origcs_stub` deleted — Rust-only 1-line
                               // accessors for the `ORIGLINE` / `ORIGCS` globals (ports of C
                               // `origline` / `origcs` at zle_tricky.c:75 etc.). C reads these
