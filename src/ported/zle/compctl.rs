@@ -1593,17 +1593,31 @@ pub(crate) fn cccleanuphookfn(_dat: ()) -> i32 {
 /// calls `addmatch` for each `~name`.
 pub(crate) fn maketildelist() {
     // c:2055
-    // c:2058 — filltable. Our `hashnameddir::nameddirtab` is populated
-    // by the runtime when named directories are declared via `hash -d`.
+    // c:2058 — `nameddirtab->filltable(nameddirtab)` adds every username
+    // from the passwd database (getpwent) to the named-dir table, so bare
+    // `~<Tab>` offers `~user` for all users plus any `hash -d` named dirs.
+    crate::ported::hashnameddir::fillnameddirtable();
+    // c:2060 — scanhashtable(nameddirtab, 0, (addwhat==-1) ? 0 : ND_USERNAME,
+    // …): with addwhat==-1 (bare `~` / CC_NAMED) include named dirs AND
+    // usernames; otherwise restrict to usernames.
+    let only_users = ADDWHAT.with(|c| c.get()) != -1;
+    let uname_bit = crate::ported::zsh_h::ND_USERNAME as i32;
     let entries: Vec<String> = crate::ported::hashnameddir::nameddirtab()
         .lock()
         .ok()
-        .map(|t| t.keys().cloned().collect())
+        .map(|t| {
+            t.iter()
+                .filter(|(_, nd)| !only_users || (nd.node.flags & uname_bit) != 0)
+                .map(|(n, _)| n.clone())
+                .collect()
+        })
         .unwrap_or_default();
-    // c:2060 — scanhashtable callback `addhnmatch` (compctl.c:2092)
-    // prefixes the name with `~`.
+    // c:2060 — scanhashtable callback `addhnmatch` (compctl.c:2092) adds the
+    // bare name; the leading `~` comes from the caller's `ipre = "~"` (c:3404),
+    // so the name matches the file prefix (`~roo` → fpre `roo` → `root`) and
+    // the `~` is re-attached on insertion.
     for name in entries {
-        addmatch(&format!("~{}", name), None);
+        addmatch(&name, None);
     }
 }
 
@@ -3620,12 +3634,19 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
         }
     }
 
-    // c:3163-3165 — leading `~`/`=` special char.
+    // c:3163-3165 — leading `~`/`=` special char. get_comp_string returns
+    // the word untokenized, so `~`/`=` arrive as their literal bytes rather
+    // than the Tilde/Equals tokens C tests here; normalize the literals to
+    // the tokens so the ic==Tilde (username) / ic==Equals (command) arms fire.
     let ic_char = s.chars().next().unwrap_or('\0');
-    let mut ic = if incompfunc != 0 || (ic_char != Tilde && ic_char != Equals) {
+    let mut ic = if incompfunc != 0 {
         '\0'
+    } else if ic_char == Tilde || ic_char == '~' {
+        Tilde
+    } else if ic_char == Equals || ic_char == '=' {
+        Equals
     } else {
-        ic_char
+        '\0'
     };
 
     // c:3160-3167 — parameter-name completion redirect. When check_param
@@ -3891,6 +3912,66 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
     if !ppre.is_empty() {
         PRPRE.with(|r| *r.borrow_mut() = Some(ppre.clone()));
     }
+    // c:3399-3417 — after a leading `~`/`=` (no `/`), the normal file arms
+    // are replaced: `~` completes usernames + named dirs (maketildelist),
+    // `=` completes command names + regular aliases (equals expansion). Only
+    // the plain-file `else` runs gen_matches_files.
+    // c:3296 — the whole `~`/`=`/file dispatch only applies when this cc does
+    // file/dir/command/glob completion. Without this guard the tilde/equals
+    // arms fired for cc_first (mask=0, run before cc_default) where fpre is
+    // empty, so every username matched and `~roo` collapsed to `~`.
+    let has_file_mask =
+        (cc.mask & (CC_FILES | CC_DIRS | CC_COMMPATH)) != 0 || cc.glob.is_some();
+    if ic == Tilde && has_file_mask {
+        // c:3401-3406 — usernames + named directories. `ipre = "~"` so each
+        // bare name matches the file prefix and gets the `~` back on insert.
+        ADDWHAT.with(|c| c.set(-1)); // c:3397
+        let oi = crate::ported::zle::compcore::ipre
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if let Ok(mut g) = crate::ported::zle::compcore::ipre
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+        {
+            *g = format!("~{}", oi); // c:3404 — dyncat("~", ipre)
+        }
+        maketildelist();
+        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+            *g = oi; // c:3406 — restore
+        }
+    } else if ic == Equals && has_file_mask {
+        // c:3407-3417 — command names (cmdnamtab, addwhat -7) + regular
+        // aliases (addwhat -2). `ipre = "="` (c:3412) so the `=` is kept on
+        // the line (`=tru` → `=truncate`).
+        ADDWHAT.with(|c| c.set(-7));
+        let oi = crate::ported::zle::compcore::ipre
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+            *g = format!("={}", oi); // c:3412 — dyncat("=", ipre)
+        }
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::HASHLISTALL) {
+            let path = crate::ported::params::getaparam("path").unwrap_or_default();
+            crate::ported::hashtable::fillcmdnamtable(&path);
+        }
+        let cmds: Vec<String> = crate::ported::hashtable::cmdnamtab_lock()
+            .read()
+            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        dumphashtable(cmds, -7);
+        let aliases: Vec<String> = crate::ported::hashtable::aliastab_lock()
+            .read()
+            .map(|tab| tab.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        dumphashtable(aliases, -2);
+        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+            *g = oi; // c:3417 — restore
+        }
+    } else {
     // c:3650 — CC_FILES regular files.
     if (cc.mask & CC_FILES) != 0 {
         ADDWHAT.with(|c| c.set(-5));
@@ -3930,12 +4011,26 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             }
         }
     }
+    } // end `else` (plain-file arms; the `~`/`=` cases handled above)
     // c:3540 — restore prpre after the file-generating arms.
     PRPRE.with(|r| *r.borrow_mut() = saved_prpre);
-    // CC_NAMED — c:3742
+    // CC_NAMED — c:3664 `dumphashtable(nameddirtab, addwhat)`. maketildelist
+    // now emits bare names (the `~` comes from ipre), so set ipre = "~" here
+    // too, matching the tilde arm above.
     if (cc.mask & CC_NAMED) != 0 {
         ADDWHAT.with(|c| c.set(-1));
+        let oi = crate::ported::zle::compcore::ipre
+            .get_or_init(|| std::sync::Mutex::new(String::new()))
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+            *g = format!("~{}", oi);
+        }
         maketildelist();
+        if let Ok(mut g) = crate::ported::zle::compcore::ipre.get().unwrap().lock() {
+            *g = oi;
+        }
     }
 
     // c:3648-3661 — command completion: add alias names, reserved words,
