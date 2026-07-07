@@ -1755,7 +1755,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                         None => {
                                             LEX_LEXSTOP.set(true);
                                             unmatched = '\'';
-                                            peek = LEXERR;
+                                            // c:1320 — LEXERR only when not ZLE/bufferwords.
+                                            if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
+                                                peek = LEXERR;
+                                            }
                                             break;
                                         }
                                     }
@@ -1764,7 +1767,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                                 None => {
                                     LEX_LEXSTOP.set(true);
                                     unmatched = '\'';
-                                    peek = LEXERR;
+                                    // c:1320 — LEXERR only when not ZLE/bufferwords.
+                                    if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
+                                        peek = LEXERR;
+                                    }
                                     break;
                                 }
                             }
@@ -2297,7 +2303,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         None => {
                             LEX_LEXSTOP.set(true);
                             unmatched = '`';
+                            // c:1383 — LEXERR only when not ZLE/bufferwords.
+                            if LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE != 0 { /* tolerate */ } else {
                             peek = LEXERR;
+                            }
                             break;
                         }
                     }
