@@ -31,7 +31,7 @@
 //! ```
 
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::params::{getaparam, getsparam, setsparam};
+use crate::ported::params::{getsparam, setsparam};
 
 /// Helper: assoc lookup in flat key/value layout.
 /// sh:26 — zsh `(K)pat` key-pattern match. Uses the real
@@ -53,11 +53,36 @@ fn pattern_match(pat: &str, s: &str) -> bool {
     }
 }
 
+/// Single-key read of an associative array (`$assoc[key]`).
+///
+/// `_comps` / `_services` / `_patcomps` are PM_HASHED assocs.
+/// `getaparam` only returns PM_ARRAY params (it yields `None` for a
+/// hash — c:Src/params.c:3108 `PM_TYPE(...) == PM_ARRAY`), so the prior
+/// `getaparam(name).chunks(2)` layout was always empty: `$_comps[cat]`
+/// came back "" and `_dispatch` never `eval`'d the command's completer,
+/// so compsys produced no matches. Read the hash backing directly, the
+/// same store `_subscript` / `is_assoc_param` use.
 fn assoc_get(name: &str, key: &str) -> Option<String> {
-    let arr = getaparam(name)?;
-    arr.chunks(2)
-        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned())
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()?
+        .get(name)?
+        .get(key)
+        .cloned()
+}
+
+/// Flatten an assoc into `[k, v, k, v, …]` in insertion order, for the
+/// `${(@)_patcomps[(K)$str]}` / `_postpatcomps` pattern-dispatch walks.
+/// Same PM_HASHED-vs-getaparam issue as `assoc_get`.
+fn assoc_flat(name: &str) -> Vec<String> {
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()
+        .and_then(|t| {
+            t.get(name)
+                .map(|h| h.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect())
+        })
+        .unwrap_or_default()
 }
 
 /// `_dispatch` — central context dispatcher. `-s` skips the
@@ -106,7 +131,7 @@ pub fn _dispatch(args: &[String]) -> i32 {
             }
             let service = assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
             let _ = setsparam("service", &service);
-            let patcomps = getaparam("_patcomps").unwrap_or_default();
+            let patcomps = assoc_flat("_patcomps");
             for i in patcomps.chunks(2) {
                 if let (Some(pat), Some(action)) = (i.first(), i.get(1)) {
                     // sh:26 — `(K)$str` matches the key (a zsh pattern)
@@ -182,7 +207,7 @@ pub fn _dispatch(args: &[String]) -> i32 {
             }
             let service = assoc_get("_services", str_arg).unwrap_or_else(|| str_arg.clone());
             let _ = setsparam("service", &service);
-            let pp = getaparam("_postpatcomps").unwrap_or_default();
+            let pp = assoc_flat("_postpatcomps");
             for i in pp.chunks(2) {
                 if i.first()
                     .map(|k| pattern_match(k, str_arg))
@@ -247,5 +272,33 @@ mod tests {
         let _ = _dispatch(&["-s".to_string(), "mycmd".to_string()]);
         // After return, curcontext is restored to its pre-call value.
         assert_eq!(getsparam("curcontext").as_deref(), Some("a:b:c:d"));
+    }
+
+    #[test]
+    fn assoc_get_reads_hashed_assoc_not_getaparam() {
+        // Regression: `_comps`/`_services` are PM_HASHED assocs. The old
+        // `getaparam(name).chunks(2)` layout returned `None` for a hash,
+        // so `$_comps[cat]` came back "" and `_dispatch` never eval'd the
+        // command completer — compsys produced zero matches. assoc_get
+        // must read the hash backing.
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::sethparam(
+            "_comps",
+            vec![
+                "cat".to_string(),
+                "_cat".to_string(),
+                "ls".to_string(),
+                "_ls".to_string(),
+            ],
+        );
+        assert_eq!(assoc_get("_comps", "cat").as_deref(), Some("_cat"));
+        assert_eq!(assoc_get("_comps", "ls").as_deref(), Some("_ls"));
+        assert_eq!(assoc_get("_comps", "nope"), None);
+        // getaparam still returns None for the hash — proves the bug the
+        // fix routes around.
+        assert!(crate::ported::params::getaparam("_comps").is_none());
+        // assoc_flat exposes the [k,v,…] pairs the pattern walks need.
+        let flat = assoc_flat("_comps");
+        assert!(flat.windows(2).any(|w| w == ["cat", "_cat"]));
     }
 }
