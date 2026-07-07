@@ -968,23 +968,16 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         // here matching the C source (zle_refresh.c:2366/2377,
         // zle_misc.c:533). Will redirect to canonical ported once
         // the inner-scope wrapping is unwound.
-        "clear-screen" => Some(|_| {
-            // Port of `clearscreen(char **args)` from
-            // `Src/Zle/zle_refresh.c:2366`. C: `tcout(TCHOMEDOWN);
-            // tcout(TCCLEAREOD); resetneeded = 1;`. The two termcap
-            // sequences are H (home cursor) + J (clear to end). Write
-            // to SHTTY (stdout fallback) instead of stdout.
-            use std::sync::atomic::Ordering;
-            let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
-            let out = if fd >= 0 { fd } else { 1 };
-            let _ = crate::ported::utils::write_loop(out, b"\x1b[H\x1b[2J");
-            ZLE_RESET_NEEDED.store(1, Ordering::SeqCst);
-            0
-        }),
-        "redisplay" => Some(|_| {
-            ZLE_RESET_NEEDED.store(1, std::sync::atomic::Ordering::SeqCst);
-            0
-        }),
+        // Dispatch to the canonical ported widgets. The previous inline
+        // stubs wrote `\x1b[H\x1b[2J` directly and set ZLE_RESET_NEEDED — but
+        // zrefresh consumes the refresh-owned RESETNEEDED, not that
+        // CCRIGHT-aliased flag, so the loop's post-widget zrefresh saw no
+        // reset frame and never redrew the prompt+line: Ctrl-L cleared the
+        // screen and left it blank. `clearscreen()`/`redisplay()` set the real
+        // RESETNEEDED (and clearscreen reexpands the prompt), so the redraw
+        // fires.
+        "clear-screen" => Some(|_| crate::ported::zle::zle_refresh::clearscreen()),
+        "redisplay" => Some(|_| crate::ported::zle::zle_refresh::redisplay()),
         "yank" => Some(|_| {
             let ring = KILLRING.lock().unwrap();
             let text = match ring.front() {

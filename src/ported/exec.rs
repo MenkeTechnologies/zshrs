@@ -202,8 +202,13 @@ pub static zsh_subshell: std::sync::atomic::AtomicI32 = // c:67 (Src/init.c)
 /// Port of `mod_export volatile int retflag;` from `Src/exec.c:165`.
 /// Set by `bin_return` to unwind the function-call stack. Cleared
 /// by `runshfunc` on entry, checked by `execlist`'s main loop.
-pub static retflag: std::sync::atomic::AtomicI32 = // c:165 (Src/exec.c)
-    std::sync::atomic::AtomicI32::new(0);
+///
+/// Re-export alias of the canonical [`crate::ported::builtin::RETFLAG`] — C
+/// has ONE `retflag` (exec.c:165). All return-flow logic (execlist, the
+/// `return` builtin, signals) uses `RETFLAG`; this lowercase twin was never
+/// stored, so `zpty`/`system` module read-loops that check `exec::retflag`
+/// saw a permanent 0 and never aborted on a pending `return`.
+pub use crate::ported::builtin::RETFLAG as retflag; // c:165 (Src/exec.c)
 
 /// Port of `pid_t cmdoutpid;` from `Src/exec.c:215`. Pid of the most
 /// recent `$(cmd)` command-substitution child. Used by exit-status

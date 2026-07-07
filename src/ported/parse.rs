@@ -746,6 +746,22 @@ pub fn parse_event(endtok: lextok) -> Option<ZshProgram> {
     if tok() == ENDINPUT {
         return None; // EOF — loop() terminates.
     }
+    // parse.c:639-643 — skip leading command separators; a SEPER on a fresh
+    // newline at the top level (endtok == ENDINPUT) is an EMPTY command — the
+    // bare-Enter case — so return None WITHOUT pulling another input line.
+    // Missing this, `parse_program_until` treated the trailing newline as an
+    // incomplete list and read a continuation line, so every empty Enter (and
+    // the line after it) rendered the PS2 `>` prompt instead of PS1.
+    while tok() == SEPER {
+        if isnewlin() > 0 {
+            clear_hdocs();
+            return None;
+        }
+        zshlex();
+    }
+    if tok() == ENDINPUT {
+        return None;
+    }
     // single_event = TRUE: one logical command line per parse_event, the
     // faithful port of C par_event's endtok==ENDINPUT top-level mode
     // (parse.c:635). loop() reads+executes ONE event at a time so `-v`/`-x`
