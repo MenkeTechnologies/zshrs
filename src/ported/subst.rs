@@ -4461,7 +4461,19 @@ pub fn paramsubst(
                 // path where the lexer tokenizes `-` to Dash.
                 let next_is_name_start = match next {
                     Some(ch) if ch.is_ascii_alphanumeric() => true,
-                    Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '!' | '$' | '-' | '0') => true,
+                    // c:Src/subst.c getlen lookahead — zsh accepts these
+                    // single-char specials as length targets but NOT `!`
+                    // (`${#!}` is bad substitution: `#` becomes the `$#`
+                    // param and the stray `!` fails the operator gate).
+                    Some(ch) if matches!(ch, '_' | '@' | '*' | '?' | '$' | '-' | '0') => true,
+                    // Tokenized single-char specials: the lexer rewrites
+                    // unquoted `*`→Star(\u{87}), `?`→Quest(\u{97}),
+                    // `-`→Dash(\u{9b}) inside `${…}`. Accept them as
+                    // name-starts so `${#*}` / `${#?}` / `${#-}` take the
+                    // length-op arm identically to their quoted
+                    // (untokenized) forms. `!`→Bang(\u{9c}) is excluded to
+                    // match zsh's rejection of `${#!}`.
+                    Some('\u{87}') | Some('\u{97}') | Some('\u{9b}') => true,
                     Some(':') if matches!(after_next, Some('-') | Some('\u{9b}')) => true,
                     Some(ch) if ch == STRING || ch == Qstring || ch == Stringg => {
                         // `${#${...}}` — Stringg/Qstring + `{`/`(` is a
@@ -6847,7 +6859,14 @@ pub fn paramsubst(
                 magic_val
             } else {
                 // Scalar with subscript — char-index access.
-                let scalar = vars_get(&var_name).unwrap_or_default();
+                // c:Src/params.c getvalue — an UNSET scalar yields NULL,
+                // so a pattern subscript (`${foo[(i)pat]}`) on it expands
+                // empty (getindex never runs). A SET-but-empty value ("")
+                // DOES run getindex. Capture set-ness to distinguish the
+                // two in the `(i)`/`(I)` no-match arm below.
+                let scalar_opt = vars_get(&var_name);
+                let scalar_is_set = scalar_opt.is_some();
+                let scalar = scalar_opt.unwrap_or_default();
                 // c:Src/params.c — `[@]` / `[*]` on a SCALAR is the
                 // whole-value-as-one-element case; zsh returns the
                 // scalar verbatim. The scalar+`[@]` path must surface
@@ -7163,9 +7182,18 @@ pub fn paramsubst(
                                 s_chars.get(s).map(|c| c.to_string()).unwrap_or_default()
                             }
                             (None, true) => {
-                                // (i) returns len+1, (I) returns 0 on no match.
                                 // Direct port of Src/params.c getindex.
-                                if flags.contains('i') {
+                                // Unset param → NULL value → whole `${foo[(i)pat]}`
+                                // expands empty (getindex never runs), so both
+                                // (i)/(I) yield "". A SET-but-empty value ("")
+                                // hits the `if (!*s) return 0` empty guard
+                                // (c:1630) → 0 for both. A non-empty no-match
+                                // returns len+1 for (i), 0 for (I).
+                                if !scalar_is_set {
+                                    String::new()
+                                } else if n == 0 {
+                                    "0".to_string()
+                                } else if flags.contains('i') {
                                     (n + 1).to_string()
                                 } else {
                                     "0".to_string()
@@ -11647,9 +11675,29 @@ pub fn paramsubst(
                         } else {
                             off.min(n)
                         } as usize; // c:715
-                        let len = parts
-                            .get(1) // c:715
-                            .map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0)); // c:715
+                        // c:Src/subst.c:3786 — substring LENGTH is a math
+                        // expression; a parse failure is fatal (see the
+                        // scalar arm below). Surface it instead of the
+                        // prior `.unwrap_or(0)` swallow.
+                        let len = match parts.get(1) {
+                            // c:715
+                            None => None,
+                            Some(s) => match crate::ported::math::mathevali(&singsub(s)) {
+                                Ok(n) => Some(n),
+                                Err(e) => {
+                                    if e.starts_with("bad math expression") {
+                                        crate::ported::utils::zerr(&e);
+                                    } else {
+                                        crate::ported::utils::zerr(&format!(
+                                            "bad math expression: {}",
+                                            e
+                                        ));
+                                    }
+                                    errflag_set_error();
+                                    return (String::new(), 0, Vec::new());
+                                }
+                            },
+                        };
                                                                                                 // c:Src/subst.c:3683-3690 — negative length is
                                                                                                 // first adjusted by `length += alen - offset`,
                                                                                                 // then if still negative, `zerr("substring
@@ -11705,9 +11753,31 @@ pub fn paramsubst(
                         } else {
                             off.min(total)
                         } as usize;
-                        let len = parts
-                            .get(1)
-                            .map(|s| crate::ported::math::mathevali(&singsub(s)).unwrap_or(0));
+                        // c:Src/subst.c:3786 — the substring LENGTH is a
+                        // math expression; a parse failure is fatal (zsh
+                        // emits "bad math expression: …" and aborts, rc=1).
+                        // `.unwrap_or(0)` silently swallowed it, so
+                        // `${x::?err}` returned "" instead of erroring.
+                        // Surface it like the array-subscript mathevali
+                        // path at subst.rs:6407.
+                        let len = match parts.get(1) {
+                            None => None,
+                            Some(s) => match crate::ported::math::mathevali(&singsub(s)) {
+                                Ok(n) => Some(n),
+                                Err(e) => {
+                                    if e.starts_with("bad math expression") {
+                                        crate::ported::utils::zerr(&e);
+                                    } else {
+                                        crate::ported::utils::zerr(&format!(
+                                            "bad math expression: {}",
+                                            e
+                                        ));
+                                    }
+                                    errflag_set_error();
+                                    return (String::new(), 0, Vec::new());
+                                }
+                            },
+                        };
                         value = match len {
                             Some(l) if l >= 0 => dv.chars().skip(start).take(l as usize).collect(),
                             Some(l) => {
@@ -13493,12 +13563,36 @@ pub fn paramsubst(
             }
         }
 
-        // (X) error on unset/empty — emit error if value is empty.
-        // Port of subst.c:2264 (quoteerr=1).
-        if quoteerr && value.is_empty() && !is_set {
-            // c:2264
-            zerr(&format!("{}: parameter not set or null", var_name)); // c:N/A
-            errflag_set_error();
+        // c:Src/subst.c:1689 — under NO_UNSET (`setopt nounset` /
+        // `set -u`), expanding an unset parameter aborts with
+        // "<name>: parameter not set". The simple `$VAR` read is gated
+        // in fusevm_bridge; the flag/operator paramsubst path
+        // (`${(F)VAR}`, `${(X)VAR}`, `${VAR#p}`, …) is gated HERE.
+        //
+        // The default/alternate/assign operators (`-`, `:-`, `+`, `:+`,
+        // `=`, `:=`) supply a value for the unset case, and `?`/`:?`
+        // raise their own diagnostic above — all skip the nounset abort.
+        // Every other tail (empty = plain flag read, plus `#`/`%`/`/`/
+        // `:#`/`:/` modifiers) fires it. This is INDEPENDENT of `(X)`:
+        // the `(X)` flag (quoteerr) only controls whether Q/e/# and
+        // pattern PARSE errors are reported, never whether an unset
+        // parameter errors — the previous `quoteerr`-keyed block here
+        // fired a spurious (and misnamed) error for `${(X)VAR}` with
+        // nounset OFF and is removed.
+        if !is_set && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET) {
+            let tail = rest.strip_prefix(':').unwrap_or(rest.as_str());
+            let op_handles_unset =
+                matches!(tail.chars().next(), Some('-') | Some('+') | Some('=') | Some('?'));
+            if !op_handles_unset {
+                zerr(&format!("{}: parameter not set", var_name)); // c:1689
+                errflag_set_error();
+                // Nounset is fatal (non-interactive shell exits) — same
+                // ERRFLAG_HARD abort semantics as the `:?` operator.
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_HARD,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
         }
 
         // (V) visible — render non-printable chars per zsh's
