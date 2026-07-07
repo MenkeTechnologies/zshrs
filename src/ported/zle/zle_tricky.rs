@@ -1778,24 +1778,35 @@ pub fn get_comp_string() -> Option<String> {
                 set_noaliases(ona);
                 zcontext_restore();
                 return None;
-            } else if ttv.as_bytes().get(after_paren_off) == Some(&b'=') {
-                // c:1520-1539 — an `=`: split VAR=value.
-                let eqoff = after_paren_off;
-                if zlemetacs_qsub > wb0 + eqoff as i32 {
+            } else if {
+                let c = ttv[after_paren_off..].chars().next();
+                c == Some('=') || c == Some(crate::ported::zsh_h::Equals)
+            } {
+                // c:1520-1539 — an `=`: split VAR=value. The lexer emits the
+                // assignment `=` as the Equals token (a 2-byte UTF-8 char in
+                // this port, single byte in C), so compare the CHAR and count
+                // in chars: the token is one char just like the literal `=`
+                // on the metaline, so char offsets map straight to metaline
+                // byte offsets (varname + `=` are ASCII).
+                let eq_ch = ttv[after_paren_off..].chars().next().unwrap();
+                let eq_len = eq_ch.len_utf8();
+                let val_boff = (after_paren_off + eq_len).min(ttv.len());
+                let eq_char_pos = ttv[..after_paren_off].chars().count() as i32; // `=` position
+                if zlemetacs_qsub > wb0 + eq_char_pos {
                     // c:1521-1525 — cursor after `=`: complete the value.
-                    let val_off = (eqoff + 1).min(ttv.len());
-                    WB.store(wb0 + val_off as i32, Ordering::SeqCst);
-                    s = ztrdup(&ttv[val_off..]);
+                    let val_char_pos = ttv[..val_boff].chars().count() as i32;
+                    WB.store(wb0 + val_char_pos, Ordering::SeqCst);
+                    s = ztrdup(&ttv[val_boff..]);
                     INWHAT.store(IN_ENV, Ordering::SeqCst);
                 } else {
                     // c:1526-1537 — cursor on the name: complete the param.
-                    let mut poff = eqoff;
+                    let mut poff = after_paren_off;
                     if poff > 0 && ttv.as_bytes()[poff - 1] == b'+' {
                         poff -= 1;
                     }
                     INWHAT.store(IN_PAR, Ordering::SeqCst);
                     s = ztrdup(&ttv[..poff]);
-                    WE.store(wb0 + poff as i32, Ordering::SeqCst);
+                    WE.store(wb0 + ttv[..poff].chars().count() as i32, Ordering::SeqCst);
                 }
                 t0 = STRING_LEX; // c:1538
             } else {
