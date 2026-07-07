@@ -1155,17 +1155,26 @@ pub fn check_param(s: &str, set: bool, test: bool) -> Option<usize> {
     let mut br: i32 = 1; // c:1182
     let mut nest: i32 = 0; // c:1182
 
-    if char_at(bytes, b) == Inbrace {
+    // get_comp_string returns the word untokenized, so `${…}` arrives with a
+    // literal `{`/`}` rather than the Inbrace/Outbrace tokens C matches here;
+    // accept either so `${PA<Tab>` is recognized as a braced parameter.
+    let brace_ch = char_at(bytes, b);
+    if brace_ch == Inbrace || brace_ch == '{' {
+        let (ib, ob) = if brace_ch == '{' {
+            ('{', '}')
+        } else {
+            (Inbrace, Outbrace)
+        };
         // c:1184
         // c:1188 — `if (!skipparens(Inbrace, Outbrace, &tb) && tb - s <= offs) return NULL;`
         let mut tb: &str = &s[b..];
-        let bal = crate::ported::utils::skipparens(Inbrace, Outbrace, &mut tb);
+        let bal = crate::ported::utils::skipparens(ib, ob, &mut tb);
         let tb_after = s.len() - tb.len();
         if bal == 0 && tb_after <= offs_v {
             return None; // c:1189
         }
 
-        b += Inbrace.len_utf8(); // c:1192 b++
+        b += brace_ch.len_utf8(); // c:1192 b++
         br += 1;
         // c:1193-1203 — skip leading `(...)` flag group. C has a
         // ternary `qstring ? skipparens('(',')',&b) : skipparens(Inpar,Outpar,&b)`
