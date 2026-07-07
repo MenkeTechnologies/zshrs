@@ -2430,8 +2430,10 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     }
 
     // c:1447-1453 — `zerr("closing brace expected");` when in_brace_param
-    // is still open at end of token.
-    if in_brace_param > 0 {
+    // is still open at end of token. Suppressed while actively lexing for ZLE
+    // completion (LEXFLAGS_ACTIVE): `echo ${PA<Tab>` is an open brace at the
+    // cursor, not a syntax error — zsh completes it to `${PATH}`.
+    if in_brace_param > 0 && LEX_LEXFLAGS.get() & LEXFLAGS_ACTIVE == 0 {
         zerr("closing brace expected");
     }
     // c:1453-1469 — `} else if (unset(IGNOREBRACES) && !sub &&
