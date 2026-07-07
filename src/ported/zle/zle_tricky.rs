@@ -2087,9 +2087,18 @@ pub fn doexpansion(s: &str, lst: i32, olst: i32, explincmd: i32) -> i32 {
                 .map(|exp| exp == first_item)
                 .unwrap_or(false);
         if no_change || tilde_only {
-            // c:2300-2304 — recurse into docompletion if asked.
+            // c:2300-2304 — recurse into docompletion if asked. Capture its
+            // return as doexpansion's result: C reaches the same outcome via a
+            // POINTER identity no-change test (`peekfirst(vl) == (void *) ss`)
+            // that this port approximates by string value, so the caller's
+            // buffer-changed branch otherwise kept doexpansion's stale
+            // `ret = 1` even after a successful unique completion — ringing a
+            // spurious bell. do_completion returns 0 for a unique match and 1
+            // for no-match / ambiguous (LISTBEEP), so propagating it makes the
+            // widget return (and thus zlecore's handlefeep) beep only when zsh
+            // does.
             if lst == COMP_EXPAND_COMPLETE {
-                docompletion(s, COMP_COMPLETE, explincmd);
+                ret = docompletion(s, COMP_COMPLETE, explincmd);
             }
             return ret;
         }

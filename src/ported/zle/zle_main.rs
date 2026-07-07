@@ -761,12 +761,14 @@ pub fn zlecore() {
             .ok()
             .and_then(|t| t.get(&thingy.nam).and_then(|th| th.widget.clone()))
             .or_else(|| thingy.widget.clone());
+        // c:1151-1152 — `if (execzlefunc(bindk, ...)) handlefeep();`. Ring
+        // the bell when the widget returns non-zero (e.g. an ambiguous
+        // completion with LISTBEEP), or when the Thingy has no widget at all.
         if let Some(widget) = &current_widget {
-            execute_widget(widget);
+            if execute_widget(widget) != 0 {
+                handle_feep();
+            }
         } else {
-            // The Thingy resolved but has no widget — matches the C
-            // `handlefeep` call at zle_main.c:1152 when execzlefunc
-            // returns failure.
             handle_feep();
         }
 
@@ -888,22 +890,37 @@ pub fn zleread(
     // not the raw `%m%# ` template) and the buffer/cursor are positioned.
     // The previous manual `write_loop(SHTTY, lprompt)` drew the raw,
     // unexpanded template until the first keypress triggered a refresh.
+    // c:1337-1338 — `zleactive = 1; resetneeded = 1;`. zleactive marks ZLE
+    // as running so widgets/trashzle/signal handlers act on the live line;
+    // it was previously never set in the live path (only in tests), which
+    // silently disabled trashzle's `zleactive && !trashedzle` gate — so a
+    // completion list never parked the cursor below the command line.
+    // resetneeded arms the first frame to home the video cursor and draw the
+    // whole prompt+line from column 0 (a fresh line — the previous command's
+    // accept emitted a trailing CRLF; the incremental refresh otherwise
+    // carries VCS/VLN across frames within a single line edit).
+    zleactive.store(1, SeqCst);
+    crate::ported::zle::zle_refresh::RESETNEEDED.store(1, SeqCst);
     zrefresh();
 
     // Enter core loop
     zlecore();
 
-    // c:1380 — `trashzle()` after the loop moves the cursor below the
-    // edited line so the accepted command's own output starts on a fresh
-    // line. Without it `pwd` printed as `pwd/Users/...` (output glued to
-    // the command). zrefresh left the cursor at the end of the line; emit
-    // CR+LF to drop to the next row.
-    {
-        use std::sync::atomic::Ordering;
-        let fd = SHTTY.load(Ordering::Relaxed);
-        let out = if fd >= 0 { fd } else { 1 };
-        let _ = write_loop(out, b"\r\n");
-    }
+    // c:1380 — `trashzle()` after the loop parks the cursor below the edited
+    // line so the accepted command's output starts on a fresh row, AND — when
+    // a completion list is on screen — clears it (moveto(nlnct,0) followed by
+    // TCCLEAREOD while clearflag is set). The previous manual `\r\n` only
+    // dropped one row, so a shown list was left stranded and the command
+    // output overwrote just its first row, leaving trailing entries on screen.
+    // Must run while `zleactive` is still 1 — trashzle's `zleactive &&
+    // !trashedzle` gate — matching C's order (c:1380 trashzle, c:1383
+    // zleactive = 0).
+    trashzle();
+
+    // c:1383 — `zleactive = zlereadflags = lastlistlen = zlecontext = 0;`.
+    // ZLE is no longer editing; clear zleactive so a later trashzle (e.g.
+    // from output/precmd) doesn't try to redraw an inactive line.
+    zleactive.store(0, SeqCst);
 
     // c:1335 — `zlecallhook("zle-line-finish", NULL)` — runs user's
     // zle-line-finish widget after the line is accepted so cleanup
@@ -1633,7 +1650,14 @@ pub fn trashzle() {
         // directly (unbuffered), so no fflush analog is needed.
 
         // c:2091 — `resetneeded = 1;`. Mark for full redraw on the
-        // next zlecore iteration.
+        // next zlecore iteration. Set the REAL refresh-owned RESETNEEDED
+        // (which zrefresh consumes to home the video cursor, clear OBUF,
+        // clear trashedzle, and re-emit the prompt) — this is what lets the
+        // recursive post-listmatches zrefresh redraw the command line BELOW
+        // the completion grid, and clears trashedzle so the next asklist
+        // trashzle can park below the line again. ZLE_RESET_NEEDED is also
+        // set for the `zle -R`/reset-prompt param readers that watch it.
+        crate::ported::zle::zle_refresh::RESETNEEDED.store(1, SeqCst);
         ZLE_RESET_NEEDED.store(1, SeqCst);
 
         // c:2092-2093 — `if (!(zlereadflags & ZLRF_NOSETTY))
@@ -2516,7 +2540,7 @@ pub fn get_key_cmd() -> Option<Thingy> {
 ///   * `handleundo()` snapshot pre-call + `mkundoent()` capture
 ///     post-call (zle_main.c calls `handleundo()` from the zlecore
 ///     loop after each widget).
-fn execute_widget(widget: &widget) {
+fn execute_widget(widget: &widget) -> i32 {
     // Reset sticky column unless the widget keeps it.
     if (widget.flags & ZLE_LASTCOL) == 0 {
         LASTCOL.store(-1, SeqCst);
@@ -2526,7 +2550,10 @@ fn execute_widget(widget: &widget) {
     // Port of setlastline()/handleundo() framing in zle_main.c:1161.
     handleundo();
 
-    match &widget.u {
+    // c:1151 — the widget's return value propagates to zlecore, which rings
+    // the bell (handlefeep) when it is non-zero. e.g. an ambiguous completion
+    // returns 1 (LISTBEEP) and must beep; the value was previously discarded.
+    let ret = match &widget.u {
         // c:1481-1486 — a `zle -C` completion widget dispatches through
         // `completecall`, which plants `compfunc` (`_main_complete`) so
         // `makecomplist` runs the compsys engine instead of the compctl
@@ -2534,12 +2561,11 @@ fn execute_widget(widget: &widget) {
         // completion widget.
         WidgetImpl::Comp { .. } => {
             *COMPWIDGET.lock().unwrap() = Some(widget.clone());
-            let _ = crate::ported::zle::zle_tricky::completecall(&[]);
+            let r = crate::ported::zle::zle_tricky::completecall(&[]);
             *COMPWIDGET.lock().unwrap() = None;
+            r
         }
-        WidgetImpl::Internal(f) => {
-            let _ = f(&[]);
-        }
+        WidgetImpl::Internal(f) => f(&[]),
         WidgetImpl::UserFunc(name) => {
             // User-defined widget (`zle -N name shell-fn`): the C
             // source dispatches via execzlefunc() at zle_main.c:1502
@@ -2550,10 +2576,10 @@ fn execute_widget(widget: &widget) {
             // so widget side-effects (BUFFER/CURSOR/etc.) land on
             // the live ZLE state synchronously rather than waiting
             // for a host drain pass.
-            let _ = execzlefunc(name, &[], 0, 0);
+            execzlefunc(name, &[], 0, 0)
         }
-        _ => {}
-    }
+        _ => 0,
+    };
 
     // Update lastcmd for yank-pop / next-widget chains, unless the
     // widget is NOTCOMMAND (digit-arg, prefix, etc.) — zle_main.c:1497.
@@ -2564,6 +2590,8 @@ fn execute_widget(widget: &widget) {
     // Capture the change (if any) into the undo stack. undo/redo widgets
     // call mkundoent themselves, so a no-op diff here is harmless.
     mkundoent();
+
+    ret
 }
 
 /// Self-insert character (internal, used by zlecore)

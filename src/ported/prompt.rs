@@ -4240,7 +4240,7 @@ fn color_name(c: Color) -> String {
 /// globals (Src/prompt.c file-statics, around line 1640). Used
 /// by [`applytextattributes`] to compute the SGR diff between
 /// the last-flushed and the pending attribute state.
-fn current_attrs_lock() -> &'static std::sync::Mutex<zattr> {
+pub fn current_attrs_lock() -> &'static std::sync::Mutex<zattr> {
     static CUR: std::sync::OnceLock<std::sync::Mutex<zattr>> = std::sync::OnceLock::new();
     CUR.get_or_init(|| std::sync::Mutex::new(0 as zattr))
 }

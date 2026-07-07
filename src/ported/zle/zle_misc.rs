@@ -1674,10 +1674,28 @@ pub fn addsuffixstring(tp: i32, flags: i32, chars: &str, lensuf: i32) {
 /// unset.
 pub fn makesuffix(n: i32) {
     // c:1598
-    // c:1642 — `suffixchars = getsparam_u("ZLE_REMOVE_SUFFIX_CHARS")`.
+    // c:1602-1603 — `suffixchars = getsparam_u("ZLE_REMOVE_SUFFIX_CHARS")`.
     let suffix_chars = crate::ported::params::getsparam("ZLE_REMOVE_SUFFIX_CHARS")
-        .unwrap_or_else(|| " \t\n;&|".to_string()); // c:1644 default
-    addsuffixstring(0, 0, &suffix_chars, n); // c:1647
+        .unwrap_or_else(|| " \t\n;&|".to_string()); // default
+    addsuffixstring(crate::ported::zle::zle_h::SUFTYP_POSSTR, 0, &suffix_chars, n); // c:1605
+    // c:1607-1609 — ZLE_SPACE_SUFFIX_CHARS added second so it takes precedence.
+    if let Some(space_chars) = crate::ported::params::getsparam("ZLE_SPACE_SUFFIX_CHARS") {
+        if !space_chars.is_empty() {
+            addsuffixstring(
+                crate::ported::zle::zle_h::SUFTYP_POSSTR,
+                crate::ported::zle::zle_h::SUFFLAGS_SPACE,
+                &space_chars,
+                n,
+            );
+        }
+    }
+    // c:1611-1612 — record the active suffix length + no-insert-remove flag.
+    // Without this the auto-added completion suffix (e.g. the space after a
+    // unique match) was never a tracked removable suffix: `suffixlen` stayed
+    // 0, so the suffix region highlight (bold) was never applied and the
+    // suffix was not auto-stripped by the next delimiter keystroke.
+    suffixlen.store(n, std::sync::atomic::Ordering::Relaxed);
+    suffixnoinsrem.store(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Port of `makeparamsuffix(int br, int n)` from Src/Zle/zle_misc.c:1623.
@@ -1906,21 +1924,24 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
         }
     }
 
-    // c:1788-1795 — if sl > 0 && !keep, drop `sl` chars before ZLECS.
+    // c:1788-1795 — if sl > 0 && !keep, drop `sl` chars before the cursor
+    // from the LIVE editor line. `doinsert` — the sole keep==0 caller — is
+    // about to insert into the interactive ZLE buffer (zle_main::ZLELINE, a
+    // Vec<char>), so the removable suffix must be stripped from that same
+    // buffer, not the compcore metafied completion line. Dropping from the
+    // wrong buffer left the completion suffix in place, so typing a
+    // suffix-removal char (space, `;`, `&`, …) produced a doubled character.
     if sl > 0 && keep == 0 {
-        let cs = ZLECS_C.load(Ordering::Relaxed) as usize;
+        let cs = ZLECS.load(SeqCst);
         let drop_n = (sl as usize).min(cs);
         let new_cs = cs - drop_n;
-        if let Ok(mut g) = ZLELINE_C
-            .get_or_init(|| std::sync::Mutex::new(String::new()))
-            .lock()
-        {
-            if new_cs <= g.len() && drop_n <= cs {
+        if let Ok(mut g) = ZLELINE.lock() {
+            if cs <= g.len() {
                 g.drain(new_cs..cs);
             }
-            ZLELL_C.store(g.len() as i32, Ordering::Relaxed);
+            ZLELL.store(g.len(), SeqCst);
         }
-        ZLECS_C.store(new_cs as i32, Ordering::Relaxed);
+        ZLECS.store(new_cs, SeqCst);
     }
 
     // c:1796 — clear suffix list.
@@ -1944,7 +1965,15 @@ pub static DONE: AtomicI32 = AtomicI32::new(0); // c:79
 
 /// Port of `mod_export int suffixlen` from `Src/Zle/zle_misc.c:1553`.
 /// Length of the currently active, auto-removable suffix.
-pub static SUFFIXLEN: AtomicI32 = AtomicI32::new(0); // c:1553
+///
+/// Re-export alias of the lowercase [`suffixlen`] static — C has ONE
+/// `suffixlen`. Two separate atomics existed (`makesuffix` set lowercase and
+/// the refresh suffix-highlight read it; `fixsuffix`/`iremovesuffix` and the
+/// `$SUFFIXLEN` ZLE param used uppercase), so the completion suffix was never
+/// cleared on the next keystroke — the bold highlight lingered onto the newly
+/// typed character. Aliasing collapses them to one atomic so set and clear
+/// hit the same state.
+pub use self::suffixlen as SUFFIXLEN;
 
 /// Port of `struct suffixset *suffixlist` from `Src/Zle/zle_misc.c`.
 /// Stack of registered auto-removable suffixes.
