@@ -951,3 +951,22 @@ fn bug638_autoload_full_path_names_by_basename() {
     // Function named by BASENAME (not the full path), and it loads + runs.
     assert_eq!(out, "myfunc\nloaded-body\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #641 — adjacent expansions: empty ${(M)…:#}${x} kept literal
+// Fix: src/ported/subst.rs::paramsubst (expand raw-expansion suffix)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug641_adjacent_expansion_after_empty_flag_strip() {
+    let (_ec, out, _e) = run_zshrs(
+        "x=HI; print -rn -- ${(M)0:#1}${x}; print; \
+         typeset -A ICE=(); \
+         [[ -n ${(M)${+ICE[wait]}:#1}${ICE[load]}${ICE[unload]} ]] && print T || print F",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // ${x} expands to HI (not left literal), and the empty concat → F.
+    assert_eq!(out, "HI\nF\n");
+}
