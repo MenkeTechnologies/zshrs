@@ -83,11 +83,16 @@ pub fn evalcond(
     if args.is_empty() {
         return 1;
     }
-    let toks: Vec<&str> = args
-        .iter()
-        .filter(|s| !matches!(**s, "[" | "]" | "[[" | "]]"))
-        .copied()
-        .collect();
+    // Operands reach evalcond WITHOUT their structural delimiters: the `[`
+    // builtin pops its trailing `]` in bin_test (builtin.rs c:7246) and the
+    // `[[ … ]]` dispatch passes only operands/operators. So every `[`/`]`
+    // still present here is a LITERAL operand — e.g. `[[ -n '[' ]]`, or
+    // autopair's `[[ -n $rchar ]]` where `$rchar` is `]`/`)`. A blanket
+    // `filter(… != "[" | "]" | …)` silently deleted those operands, so
+    // `[[ -n '[' ]]` saw `-n` with no argument and returned false — which
+    // broke real plugins (autopair binds the wrong close-pair key). Keep
+    // every token; delimiter stripping is the caller's job, not ours.
+    let toks: Vec<&str> = args.iter().copied().collect();
     if toks.is_empty() {
         return 1;
     }

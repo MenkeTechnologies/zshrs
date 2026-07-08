@@ -849,3 +849,48 @@ fn bug635_reading_keymaps_still_lists_full_default_set() {
         "bare ${{keymaps}} read still yields the full default keymap set"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #636 — `[[ -n '[' ]]` conditional with a `[`/`]` operand
+// Fix: src/ported/cond.rs::evalcond (dropped the bracket pre-filter)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug636_conditional_n_with_bracket_operand() {
+    // A literal `[` or `]` is a non-empty string, so `-n` is true and
+    // `-z` is false — in `[[ ]]`, `[ ]`, and `test` alike.
+    let (_ec, out, _e) = run_zshrs(
+        "[[ -n '[' ]] && print aT || print aF; \
+         [[ -n ']' ]] && print bT || print bF; \
+         [[ -z '[' ]] && print cT || print cF; \
+         [ -n '[' ] && print dT || print dF; \
+         test -n ']' && print eT || print eF",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "aT\nbT\ncF\ndT\neT\n");
+}
+
+#[test]
+fn bug636_autopair_pair_lookup_and_binding() {
+    // End-to-end: autopair's `_ap-get-pair` uses `[[ -n $1 ]]` + an assoc
+    // keyed on `[`/`]`; the close-pair key `]` must bind to autopair-close.
+    // (Skips cleanly if the plugin isn't installed.)
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let ap = format!(
+        "{home}/.zinit/plugins/hlissner---zsh-autopair/autopair.plugin.zsh"
+    );
+    if !std::path::Path::new(&ap).exists() {
+        eprintln!("skip: autopair not installed");
+        return;
+    }
+    let (_ec, out, _e) = run_zshrs(&format!("source {ap} 2>/dev/null; bindkey ']'"));
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "\"]\" autopair-close\n", "] must bind to autopair-close");
+}

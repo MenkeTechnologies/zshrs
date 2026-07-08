@@ -49,7 +49,11 @@ fn zsh_available() -> bool {
 /// every non-volatile parameter (value + type + flags), the read-only
 /// special arrays plugins consult, function names, aliases, and the set
 /// options. Host/process-volatile names are skipped so two processes agree.
-const DUMP: &str = r####"
+/// Just the `zpwr__dump_state` function DEFINITION (no trailing call), so
+/// the staged/cumulative harness can define it once and invoke it after
+/// every stage. `DUMP` = this + a single call, preserving the one-shot
+/// behaviour existing callers rely on.
+const DUMP_FN: &str = r####"
 zpwr__dump_state() {
   emulate -L zsh
   setopt no_nomatch extended_glob
@@ -124,8 +128,12 @@ zpwr__dump_state() {
   print -r -- '@@@ TRAPS'
   trap 2>/dev/null | sort
 }
-zpwr__dump_state
 "####;
+
+/// One-shot dump: define the function and call it once (existing callers).
+fn dump_script() -> String {
+    format!("{DUMP_FN}\nzpwr__dump_state\n")
+}
 
 /// Run `cmd` with args, killing it after `secs` so a hung shell (a real
 /// finding for a config fragment) reports instead of blocking the suite.
@@ -172,7 +180,8 @@ fn run_with_timeout(cmd: &str, args: &[&str], secs: u64) -> Option<String> {
 }
 
 fn dump_in_zsh(fragment: &str) -> String {
-    let script = format!("{fragment}\n{DUMP}");
+    let d = dump_script();
+    let script = format!("{fragment}\n{d}");
     let o = Command::new(zsh_path())
         .args(["-fc", &script])
         .output()
@@ -180,7 +189,8 @@ fn dump_in_zsh(fragment: &str) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 fn dump_in_zshrs(fragment: &str) -> String {
-    let script = format!("{fragment}\n{DUMP}");
+    let d = dump_script();
+    let script = format!("{fragment}\n{d}");
     // `-f` (NO_RCS) to match `run_zsh`'s `zsh -fc` — otherwise the two
     // shells start from different option defaults (rcs/globalrcs) and every
     // OPTIONS diff is a harness artifact rather than a real bug.
@@ -485,7 +495,8 @@ fn assert_real_config_parity(rel_path: &str, known_open: &[&str]) {
         eprintln!("skip: {path} not installed");
         return;
     }
-    let script = format!("source {path} 2>/dev/null\n{DUMP}");
+    let d = dump_script();
+    let script = format!("source {path} 2>/dev/null\n{d}");
     let z = run_with_timeout(zsh_path(), &["-fc", &script], 45)
         .unwrap_or_else(|| panic!("zsh itself timed out sourcing {path}"));
     let bin = zshrs_bin();
@@ -588,4 +599,193 @@ fn real_p10k_internal() {
 #[test]
 fn real_zpwr_aliases_functions() {
     assert_real_config_parity(".zpwr/env/.shell_aliases_functions.sh", &[]);
+}
+
+
+// ═══════════════════ staged / cumulative real-config chain ═══════════════════
+//
+// The single-file tests above each source ONE config in isolation with a
+// pristine `-f` shell. But a real startup is a CHAIN: the plugin manager
+// sources its core, THEN dozens of plugins load *on top of* the state that
+// core left behind — reading its assoc arrays, appending to its hook and
+// widget tables, binding keys into keymaps a prior stage created. The bugs
+// that only bite in production live in that accumulated intermediate state,
+// not in any file read cold.
+//
+// This harness sources an ordered list of REAL, already-installed files in a
+// SINGLE shell, cumulatively, and dumps the full accumulated state after each
+// stage. zsh and zshrs are diffed stage-by-stage, so a divergence is pinned
+// to the exact stage (plugin) that introduced it — and, crucially, the dump
+// after stage N carries everything stages 1..N built, so a plugin that
+// silently misbehaves *because* an earlier stage left zshrs in a subtly wrong
+// state is caught here where the isolated tests pass.
+
+/// A single stage in a cumulative chain: a label for reporting and a shell
+/// snippet (typically `source <plugin entry>`) run on top of all prior stages.
+struct Stage {
+    label: &'static str,
+    /// Path relative to `$HOME`; the stage is skipped (whole chain skipped)
+    /// if it doesn't exist, so the test degrades cleanly off this machine.
+    rel_path: &'static str,
+}
+
+/// Build the cumulative script: define the dump fn once, then for each stage
+/// `source` it and re-dump under a `@@@@STAGE <label>` marker.
+fn chain_script(home: &str, stages: &[Stage]) -> String {
+    let mut s = String::from(DUMP_FN);
+    s.push('\n');
+    for st in stages {
+        s.push_str(&format!(
+            "source {home}/{path} 2>/dev/null\nprint -r -- '@@@@STAGE {label}'\nzpwr__dump_state\n",
+            path = st.rel_path,
+            label = st.label,
+        ));
+    }
+    s
+}
+
+/// Split a chain dump into `(stage_label, per-stage dump text)` in order.
+fn split_stages(dump: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in dump.lines() {
+        if let Some(label) = line.strip_prefix("@@@@STAGE ") {
+            out.push((label.to_string(), String::new()));
+        } else if let Some(last) = out.last_mut() {
+            last.1.push_str(line);
+            last.1.push('\n');
+        }
+    }
+    out
+}
+
+/// Source a real cumulative chain in both shells and diff the accumulated
+/// state after EACH stage against the stage's known-open baseline. Skips if
+/// any stage's file is missing. `known_open` maps a stage label to its
+/// documented (HOME/anon-normalized) divergence lines; a stage absent from
+/// the map must be byte-clean.
+fn assert_chain_parity(stages: &[Stage], known_open: &[(&str, &[&str])]) {
+    use std::collections::{BTreeSet, HashMap};
+    if !zsh_available() {
+        return;
+    }
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    for st in stages {
+        let p = format!("{home}/{}", st.rel_path);
+        if !std::path::Path::new(&p).exists() {
+            eprintln!("skip chain: stage {} file {p} not installed", st.label);
+            return;
+        }
+    }
+    let script = chain_script(&home, stages);
+    // Chains source many plugins; give them generous headroom over the
+    // single-file 45s budget.
+    let z = run_with_timeout(zsh_path(), &["-fc", &script], 90)
+        .unwrap_or_else(|| panic!("zsh itself timed out running the config chain"));
+    let bin = zshrs_bin();
+    let r = match run_with_timeout(bin.to_str().unwrap(), &["-f", "--zsh", "-c", &script], 90) {
+        Some(s) => s,
+        None => panic!(
+            "zshrs HUNG running the config chain (never returned) — a real finding: \
+             some stage triggers an unbounded loop / block zsh handles"
+        ),
+    };
+    let zst = split_stages(&normalize_volatile_numbers(&z));
+    let rst = split_stages(&normalize_volatile_numbers(&r));
+    let known: HashMap<&str, &[&str]> = known_open.iter().copied().collect();
+    let mut failures: Vec<String> = Vec::new();
+    for (i, st) in stages.iter().enumerate() {
+        let zd = zst.get(i).map(|(_, d)| d.as_str()).unwrap_or("");
+        let rd = rst.get(i).map(|(_, d)| d.as_str()).unwrap_or("");
+        let divs = divergences_between(zd, rd);
+        let actual: BTreeSet<String> =
+            divs.iter().map(|l| normalize_for_baseline(l, &home)).collect();
+        let expected: BTreeSet<String> = known
+            .get(st.label)
+            .map(|v| v.iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+        let regressions: Vec<&String> = actual.difference(&expected).collect();
+        let fixed: Vec<&String> = expected.difference(&actual).collect();
+        if !regressions.is_empty() || !fixed.is_empty() {
+            let mut m = format!("── stage [{}] ({})\n", st.label, st.rel_path);
+            if !regressions.is_empty() {
+                m.push_str("  NEW divergences (regression):\n");
+                for l in &regressions {
+                    m.push_str(&format!("    {l}\n"));
+                }
+            }
+            if !fixed.is_empty() {
+                m.push_str("  known-open divergences that DISAPPEARED (tighten baseline):\n");
+                for l in &fixed {
+                    m.push_str(&format!("    {l}\n"));
+                }
+            }
+            failures.push(m);
+        }
+    }
+    if !failures.is_empty() {
+        panic!(
+            "cumulative config-chain parity diverged at {} stage(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+/// The real zpwr plugin set, loaded on top of zinit's core exactly as the
+/// live `.zshrc` does. Each stage sources an actual installed plugin's entry
+/// file; the dump after it carries zinit's ICE/hook/registration state PLUS
+/// every earlier plugin's aliases, functions, widgets, and keybindings. This
+/// is the "actual configs with all this intermediate state" case: a plugin
+/// that reads or extends zinit's accumulated state is validated against zsh
+/// with that exact state present, not in a vacuum.
+#[test]
+fn real_plugin_chain_on_zinit() {
+    assert_chain_parity(
+        &[
+            Stage { label: "zinit", rel_path: ".zinit/bin/zinit.zsh" },
+            Stage {
+                label: "kubectl-aliases",
+                rel_path: ".zinit/plugins/MenkeTechnologies---kubectl-aliases/kubectl-aliases.plugin.zsh",
+            },
+            Stage {
+                label: "docker-aliases",
+                rel_path: ".zinit/plugins/MenkeTechnologies---zsh-docker-aliases/docker-aliases.plugin.zsh",
+            },
+            Stage {
+                label: "git-acp",
+                rel_path: ".zinit/plugins/MenkeTechnologies---zsh-git-acp/zsh-git-acp.plugin.zsh",
+            },
+            Stage {
+                label: "autopair",
+                rel_path: ".zinit/plugins/hlissner---zsh-autopair/autopair.plugin.zsh",
+            },
+        ],
+        // zinit's own known-open divergences (see real_zinit_core) carry
+        // through every later stage's cumulative dump, so each stage from
+        // zinit onward inherits the same baseline.
+        &{
+            const ZINIT_OPEN: &[&str] = &[
+                "[PARAMETERS] only in zsh  : typeset -g -Ar sysparams",
+                "[PARAMETERS] only in zshrs: typeset -g -Ah sysparams",
+                "[PARAMETERS] only in zsh  : typeset -g -ar epochtime",
+                "[PARAMETERS] only in zshrs: typeset -g -ahr epochtime",
+                "[PARAMETERS] only in zsh  : typeset -g -ar errnos",
+                "[PARAMETERS] only in zshrs: typeset -g -ah errnos",
+                "[PARAMETERS] only in zsh  : typeset -g -a zsh_loaded_plugins=( %$HOME/.zinit/bin )",
+                "[PARAMETERS] only in zshrs: typeset -g -a zsh_loaded_plugins=(  )",
+                "[FUNCTIONS] only in zsh  : zi-browse-symbol",
+                "[FUNCTIONS] only in zshrs: _zshrs_anon_N",
+            ];
+            [
+                ("zinit", ZINIT_OPEN),
+                ("kubectl-aliases", ZINIT_OPEN),
+                ("docker-aliases", ZINIT_OPEN),
+                ("git-acp", ZINIT_OPEN),
+                ("autopair", ZINIT_OPEN),
+            ]
+        },
+    );
 }
