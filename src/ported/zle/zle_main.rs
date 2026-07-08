@@ -365,36 +365,44 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     let have_timeout = timeout.tp != ztmouttp::ZTM_NONE;
     let shtty = io::stdin().as_raw_fd();
 
-    // c:531-577 — snapshot the watched fds (a `zle -F` handler may delete
-    // one mid-loop) as (fd, func, widget) tuples.
-    let watches: Vec<(i32, String, i32)> = WATCH_FDS
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|w| (w.fd, w.func.clone(), w.widget))
-        .collect();
-    let nwatch = watches.len();
+    // c:531-577 — poll SHTTY together with any `zle -F` watched fds,
+    // dispatching their handlers as they fire. Replaces a busy-wait sleep
+    // loop with a real poll(2).
+    let initial_nwatch = WATCH_FDS.lock().map(|t| t.len()).unwrap_or(0);
 
-    // c:532 — `if (nwatch || tmout.tp != ZTM_NONE)`: poll SHTTY together
-    // with the watched fds, dispatching `zle -F` handlers as they fire.
-    // This replaces the previous busy-wait sleep loop with a real poll(2).
-    if nwatch > 0 || have_timeout {
-        // c:565-577 — pollfd array: SHTTY first, then each watch fd.
-        let mut fds: Vec<libc::pollfd> = Vec::with_capacity(1 + nwatch);
-        fds.push(libc::pollfd {
-            fd: shtty,
-            events: libc::POLLIN,
-            revents: 0,
-        });
-        for w in &watches {
+    // c:532 — `if (nwatch || tmout.tp != ZTM_NONE)`.
+    if initial_nwatch > 0 || have_timeout {
+        let ready = libc::POLLIN | libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+        loop {
+            // Re-snapshot WATCH_FDS on EVERY pass. A fired `zle -F` handler
+            // may add, remove, or CLOSE a watched fd: zinit's
+            // @zinit-scheduler runs `zle -F $fd; exec {fd}<&-`, removing its
+            // handler and closing the fd. Polling a STALE snapshot would then
+            // see the now-closed fd as POLLNVAL and re-fire the handler, which
+            // does `zle -F` on an fd that is no longer watched → the
+            // "No handler installed for fd N" warning (and a spurious re-run
+            // of the scheduler). Rebuilding each pass reflects the handler's
+            // mutations to the same WATCH_FDS the poll set is derived from.
+            let watches: Vec<(i32, String, i32)> = WATCH_FDS
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|w| (w.fd, w.func.clone(), w.widget))
+                .collect();
+            // c:565-577 — pollfd array: SHTTY first, then each watch fd.
+            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(1 + watches.len());
             fds.push(libc::pollfd {
-                fd: w.0,
+                fd: shtty,
                 events: libc::POLLIN,
                 revents: 0,
             });
-        }
-        let ready = libc::POLLIN | libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
-        loop {
+            for w in &watches {
+                fds.push(libc::pollfd {
+                    fd: w.0,
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            }
             // c:579-583 — poll timeout in ms (-1 = block forever).
             let poll_timeout: libc::c_int = if have_timeout {
                 (timeout.exp100ths * 10) as libc::c_int
