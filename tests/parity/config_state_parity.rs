@@ -610,7 +610,6 @@ fn real_zinit_core() {
             "[PARAMETERS] only in zsh  : typeset -g -a zsh_loaded_plugins=( %$HOME/.zinit/bin )",
             "[PARAMETERS] only in zshrs: typeset -g -a zsh_loaded_plugins=(  )",
             "[FUNCTIONS] only in zsh  : zi-browse-symbol",
-            "[FUNCTIONS] only in zshrs: _zshrs_anon_N",
         ],
     );
 }
@@ -815,7 +814,6 @@ fn real_plugin_chain_on_zinit() {
                 "[PARAMETERS] only in zsh  : typeset -g -a zsh_loaded_plugins=( %$HOME/.zinit/bin )",
                 "[PARAMETERS] only in zshrs: typeset -g -a zsh_loaded_plugins=(  )",
                 "[FUNCTIONS] only in zsh  : zi-browse-symbol",
-                "[FUNCTIONS] only in zshrs: _zshrs_anon_N",
             ];
             [
                 ("zinit", ZINIT_OPEN),
@@ -915,8 +913,12 @@ fn real_all_installed_plugins_final_state() {
     // process, so collapse it in the DUMPS (before the diff) — otherwise
     // every wrapper lands in a separate only-zsh / only-zshrs bucket and
     // never cancels. Volatile PIDs are handled the same way.
-    let zn = collapse_fsh_token(&normalize_volatile_numbers(&z));
-    let rn = collapse_fsh_token(&normalize_volatile_numbers(&r));
+    // collapse_fsh_token FIRST (on the raw text): normalize_volatile_numbers
+    // would otherwise mangle a 4-digit session id (`s1200` → `s<N>`) before
+    // the `-s<d>-r<d>-` pattern can match, so one shell's token collapses and
+    // the other's doesn't, and the wrappers never cancel.
+    let zn = normalize_volatile_numbers(&collapse_fsh_token(&z));
+    let rn = normalize_volatile_numbers(&collapse_fsh_token(&r));
     let divs = divergences_between(&zn, &rn);
     let actual: BTreeSet<String> = divs
         .iter()
