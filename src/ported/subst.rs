@@ -14015,6 +14015,23 @@ pub fn paramsubst(
             // c:1885
             String::new() // c:1885
         }; // c:1885
+        // The suffix (text after this `${…}`) rides along with only the OUTER
+        // brace tokenized at entry — a trailing RAW `${…}` / `$name` there is
+        // invisible to the caller's re-scan, and the compiled single-call
+        // caller never re-scans at all. When a caller hands paramsubst a word
+        // holding MULTIPLE adjacent expansions (`${(M)0:#1}${x}`) the second
+        // one lands in this suffix untouched and was emitted literally. Fully
+        // expand a suffix that still carries an expansion here (guarded on `$`
+        // so literal suffixes are untouched) so nothing leaks out unexpanded.
+        // This broke zinit's turbo test
+        // `[[ -n ${(M)${+ICE[wait]}:#1}${ICE[load]}… ]]` (the literal
+        // `${ICE[load]}` made it non-empty → every plugin wrongly deferred to
+        // the async scheduler and never loaded).
+        let suffix = if suffix.contains('$') {
+            singsub(&suffix)
+        } else {
+            suffix
+        };
 
         // Post-processing splat — port of subst.c:3900-4470
         // multi-node return path. When (@) flag is set on an array
