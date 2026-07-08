@@ -112,6 +112,10 @@ pub mod opts_cache;
 /// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
 #[path = "extensions/vm_pool.rs"]
 pub mod vm_pool;
+/// `subexp_cleanup` submodule — RAII eviction of `__subexp_arr_*`
+/// paramtab scratch temps created during array sub-expression expansion.
+#[path = "extensions/subexp_cleanup.rs"]
+pub mod subexp_cleanup;
 /// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;

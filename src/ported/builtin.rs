@@ -4298,9 +4298,17 @@ pub fn bin_typeset(
         // Install the array side first (matching C c:2980 "Do it
         // first because we need the address"). Build a plain
         // PM_ARRAY|PM_TIED param.
+        // c:Src/builtin.c:2986-2999 — the array side is created with
+        // `(on | PM_ARRAY) & ~PM_EXPORTED` and the scalar side with the full
+        // `on`. So `export -T FOO foo` / `readonly -T` carry those attribute
+        // flags onto the pair (the array is NOT export-flagged; the scalar
+        // is). Previously both were hardcoded to `…|PM_TIED`, so `export -T`
+        // left FOO unexported — `${(t)FOO}` read `scalar-tied` and
+        // `typeset -p FOO` printed `typeset -T` instead of `export -T`.
+        let tie_attr: u32 = on & (PM_EXPORTED | PM_READONLY);
         let mut apm = param::default();
         apm.node.nam = aname.to_string();
-        apm.node.flags = (PM_ARRAY | PM_TIED) as i32;
+        apm.node.flags = ((PM_ARRAY | PM_TIED) | (tie_attr & !PM_EXPORTED)) as i32;
         apm.u_arr = Some(init_arr.clone());
         apm.ename = Some(sname.to_string());
         apm.level = locallevel.load(Relaxed) as i32;
@@ -4317,7 +4325,7 @@ pub fn bin_typeset(
         // through paramtab to apm.u_arr.
         let mut spm = param::default();
         spm.node.nam = sname.to_string();
-        spm.node.flags = (PM_SCALAR | PM_TIED) as i32;
+        spm.node.flags = ((PM_SCALAR | PM_TIED) | tie_attr) as i32; // c:2999 scalar carries full `on`
         spm.ename = Some(aname.to_string());
         spm.u_str = Some(init_arr.join(&joinsep));
         spm.u_tied = Some(Box::new(tdp));

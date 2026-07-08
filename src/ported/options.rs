@@ -298,9 +298,22 @@ pub fn emulate(mode: &str, fully: bool) {
         }
     }
     if new_emu == EMULATE_ZSH {
-        // c:46 — `opts[optno] = defset(...)` walk for zsh defaults.
+        // c:Src/options.c:508-518 setemulate — `emulate` resets an option
+        // to its emulation default ONLY when the option is OPT_EMULATE, or
+        // (for a FULLY emulation) when it is not OPT_SPECIAL. Startup /
+        // non-emulation options (rcs, hashdirs, login, privileged, …) are
+        // OPT_ALL WITHOUT OPT_EMULATE, so `emulate -L zsh` MUST preserve
+        // them — e.g. `zsh -f` (RCS off) then `emulate -L zsh` keeps RCS
+        // off. Without this filter the blanket defset walk clobbered them
+        // back on, which every `emulate -L zsh` in a p10k/zpwr function
+        // silently did — flipping rcs/hashdirs mid-config.
         for name in ZSH_OPTIONS_SET.iter() {
-            opt_state_set(name, defset(name, EMULATE_ZSH));
+            let flags = optns_flags(name);
+            let is_emulate = (flags & OPT_EMULATE) != 0;
+            let is_special = (flags & OPT_SPECIAL) != 0;
+            if is_emulate || (fully && !is_special) {
+                opt_state_set(name, defset(name, EMULATE_ZSH));
+            }
         }
     }
 }

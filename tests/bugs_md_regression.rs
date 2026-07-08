@@ -682,3 +682,111 @@ fn bug490_valid_fd_dup_still_works() {
     assert_eq!(ec, 0, "valid fd 1 dup must succeed");
     assert_eq!(stdout, "x\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #631 — `(( a[i]++ ))` command exit status from element value
+// Fix: src/extensions/compile_zsh.rs::compile_arith (subscripted branch)
+// C ref: Src/exec.c:5267 `return (val.u.l == 0)`
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug631_assoc_postincr_unset_key_is_false() {
+    // Post-increment value is the OLD value (0 for an unset key), so the
+    // `(( ))` command exits 1 (false). This is the exact shape zinit's
+    // `(( ZINIT[SOURCED]++ )) && return` reload-guard depends on.
+    let (ec, out, _e) =
+        run_zshrs("typeset -gA H; (( H[K]++ )) && echo RETURNED || echo CONTINUE; echo st=$?");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(ec, 0);
+    assert_eq!(out, "CONTINUE\nst=0\n", "old value 0 → status 1 → && skips");
+}
+
+#[test]
+fn bug631_assoc_postincr_nonzero_key_is_true() {
+    let (_ec, out, _e) =
+        run_zshrs("typeset -gA H; H[K]=5; (( H[K]++ )); echo st=$?; echo v=${H[K]}");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "st=0\nv=6\n", "old value 5 (non-zero) → status 0, one increment");
+}
+
+#[test]
+fn bug631_array_postincr_and_assign_zero() {
+    // `(( a[3]++ ))` on an unset slot → status 1; `(( a[3]=0 ))` → status 1.
+    let (_ec, out, _e) = run_zshrs(
+        "typeset -ga A; (( A[3]++ )); echo p=$?; (( A[3]=0 )); echo z=$?; (( A[3]=42 )); echo n=$?",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "p=1\nz=1\nn=0\n", "value 0 → status 1, value 42 → status 0");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #632 — `export -T` / `readonly -T` attribute on tied scalar
+// Fix: src/ported/builtin.rs tied-param creation
+// C ref: Src/builtin.c:2986-2999
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug632_export_tied_scalar_is_exported() {
+    let (_ec, out, _e) = run_zshrs("export -T FOO foo; echo ${(t)FOO}");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "scalar-tied-export\n");
+}
+
+#[test]
+fn bug632_export_tied_typeset_p_prints_export() {
+    let (_ec, out, _e) = run_zshrs("export -T FOO foo=(a b); typeset -p FOO");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "export -T FOO foo=( a b )\n");
+}
+
+#[test]
+fn bug632_readonly_tied_scalar_is_readonly_not_exported() {
+    // The array side must NOT carry PM_EXPORTED; readonly -T carries
+    // readonly onto both, export onto neither.
+    let (_ec, out, _e) = run_zshrs("readonly -T BAR bar; echo ${(t)BAR}");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "scalar-readonly-tied\n");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #633 — `__subexp_arr_*` scratch temp must not leak to paramtab
+// Fix: src/extensions/subexp_cleanup.rs (RAII SubexpTempGuard)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug633_array_subexp_temp_does_not_leak() {
+    // The value must still be correct, and no `__subexp_arr_N` may remain
+    // visible in `typeset -p` afterward.
+    let (_ec, out, _e) = run_zshrs(
+        "x=${(s: :)$(echo a b c)}; print -r -- \"$x\"; \
+         typeset -p 2>/dev/null | grep -c '^typeset -a __subexp_arr'",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "a b c\n0\n", "value correct AND zero leaked temps");
+}
+
+#[test]
+fn bug633_nested_array_subexp_temp_does_not_leak() {
+    let (_ec, out, _e) = run_zshrs(
+        "foo='a b c'; y=${${(s: :)foo}[2]}; print -r -- \"$y\"; \
+         typeset -p 2>/dev/null | grep -c '^typeset -a __subexp_arr'",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "b\n0\n");
+}

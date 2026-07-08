@@ -68,6 +68,10 @@ zpwr__dump_state() {
     saliases functions dis_functions parameters options modules
     jobstates jobdirs jobtexts historywords dirstack history widgets
     termcap terminfo usergroups watch WATCH zsh_scheduled_events
+    # zsh/parameter-module autoload stubs: zsh keeps them PM_UNSET
+    # (`typeset -p` skips them) until the module is accessed; their
+    # VALUES are compared in the SPECIAL_ARRAYS section below instead.
+    reswords patchars keymaps zle_bracketed_paste
     OSTYPE MACHTYPE VENDOR CPUTYPE HOST HOSTNAME LOGCHECK WATCHFMT
     ZSHRS_VERSION ZSH_VERSION ZSH_PATCHLEVEL ZSH_NAME
     __CF_USER_TEXT_ENCODING PWD OLDPWD PATH path fpath FPATH cdpath
@@ -81,9 +85,15 @@ zpwr__dump_state() {
     typeset -p -- $k 2>/dev/null
   done
   print -r -- '@@@ SPECIAL_ARRAYS'
-  for k in reswords patchars keymaps zle_bracketed_paste; do
-    print -r -- "${k}=(${(j: :)${(qq)${(P)k}}})"
-  done
+  # One element per line: these are read-only SETS whose ORDER is hash-order
+  # and not meaningful. The section diff is set-based, so per-line membership
+  # comparison is order-independent (and avoids the `(o)`+`(j)` flag quirk).
+  # (zle_bracketed_paste omitted: ZLE-init state, only populated in an
+  # interactive session, empty in both shells non-interactively.)
+  local e
+  for e in ${(o)reswords}; do print -r -- "reswords[]=$e"; done
+  for e in ${(o)patchars}; do print -r -- "patchars[]=$e"; done
+  for e in ${(o)keymaps}; do print -r -- "keymaps[]=$e"; done
   print -r -- '@@@ FUNCTIONS'
   print -rl -- ${(ok)functions:#zpwr__dump_state}
   print -r -- '@@@ ALIASES'
@@ -96,6 +106,50 @@ zpwr__dump_state() {
 zpwr__dump_state
 "####;
 
+/// Run `cmd` with args, killing it after `secs` so a hung shell (a real
+/// finding for a config fragment) reports instead of blocking the suite.
+/// Returns stdout, or `None` if it timed out.
+fn run_with_timeout(cmd: &str, args: &[&str], secs: u64) -> Option<String> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .env_remove("ZSHRS_CACHE")
+        .spawn()
+        .expect("spawn");
+    let mut out = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        let _ = tx.send(s);
+    });
+    let id = child.id();
+    let killer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(secs));
+        // SIGKILL by pid if still alive; harmless if already gone.
+        unsafe {
+            libc::kill(id as libc::pid_t, libc::SIGKILL);
+        }
+    });
+    let status = child.wait().ok();
+    let stdout = rx.recv_timeout(Duration::from_secs(1)).ok();
+    let _ = reader.join();
+    let _ = killer.join();
+    // If the process was killed by our timeout, treat as timeout.
+    let killed = status
+        .and_then(|s| s.code().is_none().then_some(()))
+        .is_some();
+    if killed {
+        None
+    } else {
+        stdout
+    }
+}
+
 fn dump_in_zsh(fragment: &str) -> String {
     let script = format!("{fragment}\n{DUMP}");
     let o = Command::new(zsh_path())
@@ -106,8 +160,11 @@ fn dump_in_zsh(fragment: &str) -> String {
 }
 fn dump_in_zshrs(fragment: &str) -> String {
     let script = format!("{fragment}\n{DUMP}");
+    // `-f` (NO_RCS) to match `run_zsh`'s `zsh -fc` — otherwise the two
+    // shells start from different option defaults (rcs/globalrcs) and every
+    // OPTIONS diff is a harness artifact rather than a real bug.
     let o = Command::new(zshrs_bin())
-        .args(["--zsh", "-c", &script])
+        .args(["-f", "--zsh", "-c", &script])
         .env_remove("ZSHRS_CACHE")
         .output()
         .expect("zshrs");
@@ -127,6 +184,31 @@ fn sections(dump: &str) -> Vec<(String, Vec<String>)> {
         }
     }
     out
+}
+
+/// Diff two dumps section-wise (set-based). Shared by the synthetic-fragment
+/// and real-config paths.
+fn divergences_between(z: &str, r: &str) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let zs = sections(z);
+    let rs = sections(r);
+    let mut report = Vec::new();
+    for (name, zlines) in &zs {
+        let rlines = rs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default();
+        let zset: BTreeSet<&String> = zlines.iter().collect();
+        let rset: BTreeSet<&String> = rlines.iter().collect();
+        for only_zsh in zset.difference(&rset) {
+            report.push(format!("[{name}] only in zsh  : {only_zsh}"));
+        }
+        for only_zshrs in rset.difference(&zset) {
+            report.push(format!("[{name}] only in zshrs: {only_zshrs}"));
+        }
+    }
+    report
 }
 
 /// Collect every accumulated-state divergence (lines present in exactly one
@@ -252,3 +334,104 @@ fn nested_functions_local_options() {
     );
 }
 
+
+// ═══════════════════ real-config corpus ═══════════════════
+//
+// The synthetic fragments above prove the mechanism; these feed it the
+// ACTUAL config files installed on this machine (zinit, powerlevel10k,
+// zpwr). Sourcing a real file builds the dense accumulated state — hundreds
+// of functions, the plugin-manager's associative arrays, hook arrays,
+// module special params — that only shows divergences in aggregate. These
+// are DISCOVERY tests: they run against the developer's real installation
+// and skip cleanly on a machine (e.g. CI) where the file isn't present.
+
+/// Collapse runs of >=4 digits to `<N>` so process-volatile values — temp
+/// files named with `$$` (`.temp50093-tommy`), epoch timestamps, socket
+/// names — compare equal across two processes. Short numbers are preserved.
+/// Applied only to the real-config path (real configs bake the PID into
+/// dozens of paths); the synthetic corpus stays exact.
+fn normalize_volatile_numbers(dump: &str) -> String {
+    let mut out = String::with_capacity(dump.len());
+    let mut buf = String::new();
+    for ch in dump.chars() {
+        if ch.is_ascii_digit() {
+            buf.push(ch);
+        } else {
+            if buf.len() >= 4 {
+                out.push_str("<N>");
+            } else {
+                out.push_str(&buf);
+            }
+            buf.clear();
+            out.push(ch);
+        }
+    }
+    if buf.len() >= 4 {
+        out.push_str("<N>");
+    } else {
+        out.push_str(&buf);
+    }
+    out
+}
+
+/// Source a real config file (relative to $HOME) through both shells and
+/// assert identical accumulated state. Skips if the file isn't installed;
+/// reports (rather than hangs) if zshrs never returns from sourcing it.
+fn assert_real_config_parity(rel_path: &str) {
+    if !zsh_available() {
+        return;
+    }
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let path = format!("{home}/{rel_path}");
+    if !std::path::Path::new(&path).exists() {
+        eprintln!("skip: {path} not installed");
+        return;
+    }
+    let script = format!("source {path} 2>/dev/null\n{DUMP}");
+    let z = run_with_timeout(zsh_path(), &["-fc", &script], 45)
+        .unwrap_or_else(|| panic!("zsh itself timed out sourcing {path}"));
+    let bin = zshrs_bin();
+    let r = match run_with_timeout(bin.to_str().unwrap(), &["-f", "--zsh", "-c", &script], 45) {
+        Some(s) => s,
+        None => panic!(
+            "zshrs HUNG sourcing {path} (never returned) — a real finding: \
+             the config triggers an unbounded loop / block that zsh handles"
+        ),
+    };
+    let divs = divergences_between(&normalize_volatile_numbers(&z), &normalize_volatile_numbers(&r));
+    if !divs.is_empty() {
+        panic!(
+            "{} accumulated-state divergence(s) after sourcing real config {path}:\n{}",
+            divs.len(),
+            divs.join("\n")
+        );
+    }
+}
+
+/// zinit core — defines the whole plugin-manager function set + `ZINIT`
+/// assoc + registers its `@zinit-scheduler` precmd hook.
+#[test]
+fn real_zinit_core() {
+    assert_real_config_parity(".zinit/bin/zinit.zsh");
+}
+
+/// powerlevel10k icons table — pure data/param population.
+#[test]
+fn real_p10k_icons() {
+    assert_real_config_parity(".zinit/plugins/romkatv---powerlevel10k/internal/icons.zsh");
+}
+
+/// powerlevel10k core internals — the ~500 `_p9k_*` functions.
+#[test]
+fn real_p10k_internal() {
+    assert_real_config_parity(".zinit/plugins/romkatv---powerlevel10k/internal/p10k.zsh");
+}
+
+/// zpwr aliases/functions env file.
+#[test]
+fn real_zpwr_aliases_functions() {
+    assert_real_config_parity(".zpwr/env/.shell_aliases_functions.sh");
+}
