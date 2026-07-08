@@ -1073,7 +1073,7 @@ pub fn bin_bindkey(
     // default_bindings() re-locks keymapnamtab.)
     if keymapnamtab()
         .lock()
-        .map(|t| t.is_empty())
+        .map(|t| !t.contains_key("main"))
         .unwrap_or(false)
     {
         default_bindings();

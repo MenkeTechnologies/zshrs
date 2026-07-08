@@ -4793,6 +4793,20 @@ pub fn boot_() -> i32 {
     //  the dispatchers in compcore.rs call them directly. Skipping the
     //  registration so the static-link dispatch keeps working.
 
+    // zshrs lazily creates the standard keymaps (main/emacs/viins/…) on
+    // the first bindkey / `${keymaps}` access. In C, complist loads AFTER
+    // zle init, so those already exist; here `zmodload zsh/complist` may be
+    // the first keymap touch. Ensure the defaults exist BEFORE adding
+    // menuselect/listscroll, so `zmodload zsh/complist` yields the full
+    // keymap set (otherwise the emptiness-gated lazy init would be blocked
+    // by the menuselect/listscroll entries we're about to add).
+    if crate::ported::zle::zle_keymap::keymapnamtab()
+        .lock()
+        .map(|t| !t.contains_key("main"))
+        .unwrap_or(false)
+    {
+        crate::ported::zle::zle_keymap::default_bindings();
+    }
     // c:3580 — install default menuselect/listscroll keymaps.
     menuselect_bindings();
     0 // c:3581
