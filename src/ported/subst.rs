@@ -3621,6 +3621,12 @@ pub fn paramsubst(
         //     semantic.
         let mut subexp_array_temp: Option<String> = None;
         let mut subexp_arr_parts: Option<Vec<String>> = None;
+        // Evicts any `__subexp_arr_*` scratch temp this paramsubst call
+        // stashes in the global paramtab (line ~4853) when the call
+        // returns — on every path. C keeps the subexp array in the local
+        // Value struct, so nothing leaks into `typeset -p`; this guard
+        // restores that invariant for the zshrs paramtab-scratch design.
+        let mut subexp_temp_guard = crate::subexp_cleanup::SubexpTempGuard::new();
         // c:Src/subst.c — when the inner sub-expression is `(P)NAME`
         // (the `(P)` indirect flag referencing a parameter NAME) and that
         // name resolves to an ASSOCIATIVE array, the `(P)` acts as a
@@ -4850,6 +4856,11 @@ pub fn paramsubst(
                     // table for var-lookup compat with the existing
                     // paramsubst splat/subscript code.
                     arrays_insert(temp.clone(), arr_parts.clone());
+                    // Register for paramtab eviction when this paramsubst
+                    // call returns — otherwise the scratch temp leaks into
+                    // user-visible state (Bug: `__subexp_arr_N` showing up
+                    // in `typeset -p` after any `${(s: :)$(cmd)}`).
+                    subexp_temp_guard.track(temp.clone());
                     subexp_array_temp = Some(temp.clone());
                     subexp_arr_parts = Some(arr_parts);
                     temp
@@ -16866,10 +16877,25 @@ fn arrays_contains(name: &str) -> bool {
     ) {
         return true;
     }
-    // c:Src/Zle/zleparameter.c:132 — `keymaps` PM_ARRAY backed by
-    // keymapsgetfn. Mirror in the "exists" check so `${keymaps[@]}`
-    // / `${(@)keymaps}` / `${#keymaps}` see the array shape. Bug #383.
-    if name == "keymaps" {
+    // c:Src/Modules/parameter.c:2239-2291 — every PM_ARRAY magic param
+    // (keymaps, reswords, patchars, historywords, …) is array-shaped and
+    // must report so here, mirroring the value fetch in `arrays_get` which
+    // routes the SAME PARTAB_ARRAY table. Without this only `keymaps` was
+    // hard-coded, so `${(o)reswords}` / `${(P)k}` (k=reswords) / any bare
+    // parameter FLAG on `reswords`/`patchars` left isarr=0 → the value was
+    // treated as a scalar and the flag pass produced empty. Subscripted /
+    // `${#…}` / `${(@)…}` reads happened to work via other arms; the bare
+    // flag read did not. c:2291 marks these PM_ARRAY|PM_READONLY.
+    if let Some(entry) = crate::ported::modules::parameter::PARTAB_ARRAY
+        .iter()
+        .find(|e| e.name == name)
+    {
+        if let Some(modname) = entry.module {
+            return crate::ported::module::MODULESTAB
+                .lock()
+                .map(|t| t.is_loaded(modname))
+                .unwrap_or(false);
+        }
         return true;
     }
     // c:Src/params.c:425-434 — tied-array IPDEF9 lowercase partners

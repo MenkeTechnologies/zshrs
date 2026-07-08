@@ -11042,9 +11042,16 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                     } else {
                         print!(" ");
                     }
-                    // c:6292-6299 — `[key]=value` form per the
-                    // unconditional PRINT_KV_PAIR pass at c:6109.
-                    print!("[{}]={}", k, quotedzputs(v));
+                    // c:6299-6303 — `[key]=value` form per the
+                    // unconditional PRINT_KV_PAIR pass at c:6109. Both the
+                    // KEY and the VALUE go through quotedzputs: C emits
+                    // `putchar('['); quotedzputs(node.nam); printf("]=");
+                    // printparamvalue(...)`. The key MUST be quoted so
+                    // special-character keys (`[#]`, `[$]`, `[*]`, `[a b]`)
+                    // round-trip through `eval "$(typeset -p h)"` — p10k's
+                    // `_p9k_must_init` rebuilds parameter signatures exactly
+                    // this way, so an unquoted `[#]=…` reparsed wrong.
+                    print!("[{}]={}", quotedzputs(k), quotedzputs(v));
                 }
             }
         }

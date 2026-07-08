@@ -8302,11 +8302,40 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_EVAL, 1), 0);
-            self.builder.emit(Op::Pop, 0);
-            // Status is 0 (truthy assignment) per zsh — `((a[i]=42))` is
-            // success unless rhs is 0.
+            // c:Src/exec.c:5267 — `(( expr ))` status is `val == 0` (0 if
+            // non-zero, 1 if zero), NOT a hardcoded success. This matters
+            // for the read-then-modify forms: the value of `(( a[i]++ ))` /
+            // `(( a[i]-- ))` is the OLD element value, so an unset/zero slot
+            // must yield status 1 (false). The bare assign `(( a[i]=v ))` is
+            // likewise false when v is 0. zinit.zsh depends on this exact
+            // semantics: `(( ZINIT[SOURCED]++ )) && return` must NOT return
+            // on the first source (old value 0 → status 1 → `&&` short-
+            // circuits). Previously this branch discarded the result and
+            // forced status 0, so zinit saw a "success", believed it was
+            // already sourced, and returned early — skipping its aliases
+            // (zi/zpl/zplg/zini), `add-zsh-hook` autoload, and the rest of
+            // the file. Derive the status from the value, same as the
+            // scalar `needs_eval` path below.
+            let zero_const = self.builder.add_constant(Value::str("0"));
+            self.builder.emit(Op::LoadConst(zero_const), 0);
+            self.builder.emit(Op::StrEq, 0);
+            let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
             self.builder.emit(Op::LoadInt(0), 0);
             self.builder.emit(Op::SetStatus, 0);
+            let end_jump = self.builder.emit(Op::Jump(0), 0);
+            let true_target = self.builder.current_pos();
+            self.builder.patch_jump(true_jump, true_target);
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            let after_status = self.builder.current_pos();
+            self.builder.patch_jump(end_jump, after_status);
+            // Errflag-aware finish — overrides status to 2 if a math error
+            // fired, clearing errflag so the next statement still runs.
+            self.builder.emit(
+                Op::CallBuiltin(crate::vm_helper::BUILTIN_ARITH_CMD_FINISH, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
             self.emit_cmd_pop();
             return;
         }
