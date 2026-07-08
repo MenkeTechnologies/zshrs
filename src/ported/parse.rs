@@ -7357,6 +7357,14 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
 
         // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
+            if std::env::var("ZSHRS_ALWAYSDBG").is_ok() {
+                eprintln!(
+                    "ALWAYSDBG: 'always' body over-ran `}}` — got tok={} tokstr={:?} script={:?}",
+                    tok(),
+                    tokstr(),
+                    crate::ported::utils::scriptname_get()
+                );
+            }
             zerr("par_subsh: 'always' block missing `}`");
             return;
         }
