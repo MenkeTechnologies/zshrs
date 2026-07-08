@@ -3936,7 +3936,10 @@ pub type OptIndex = u8; // c:2556
 /// Returns true if option is set.
 #[inline]
 pub fn isset(opt: i32) -> bool {
-    crate::ported::options::opt_state_get(&opt_name(opt)).unwrap_or(false)
+    // c:Src/zsh.h:2557 `#define isset(X) (opts[X])` — a single array load.
+    // Backed by the extensions::opts_cache fast path (one relaxed atomic
+    // load) instead of the old name→num→name + RwLock + String-hash path.
+    crate::opts_cache::is_set(opt)
 }
 
 // #define unset(X) (!opts[X])                                              // c:2560
