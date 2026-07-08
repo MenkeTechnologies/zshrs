@@ -10888,6 +10888,30 @@ impl fusevm::ShellHost for ZshrsHost {
         // call-site keeps scope-mgmt invariants in one place.
         let status = with_executor(|exec| exec.dispatch_function_call(&fn_name, &args));
 
+        // Anonymous functions (`() { … } args`, compiled by
+        // parse_anon_funcdef as `_zshrs_anon_N` / `_zshrs_anon_kw_N`)
+        // execute exactly ONCE and must not persist. zsh runs the body and
+        // frees the function, so `${functions}` / `typeset -f` never show
+        // it. Remove every trace right after the single invocation —
+        // AFTER `status` is captured, so the body's exit code is preserved
+        // ($? — calling `unfunction` here would reset it to 0 instead).
+        // Without this, real plugins that use `() { … }` (fzf-tab, zinit,
+        // p10k, …) leaked dozens of `_zshrs_anon_N` into `$functions`,
+        // diverging from zsh's function table on every such config.
+        if fn_name.starts_with("_zshrs_anon_") {
+            // `${functions}` / `typeset -f` enumerate the canonical
+            // `shfunctab` (via scanpmfunctions); the bytecode call path
+            // also keeps the body in the executor's compiled-fn maps. Clear
+            // BOTH so no trace of the one-shot anon survives.
+            crate::ported::hashtable::removeshfuncnode(&fn_name);
+            with_executor(|exec| {
+                exec.functions_compiled.remove(&fn_name);
+                exec.function_source.remove(&fn_name);
+                exec.function_line_base.remove(&fn_name);
+                exec.function_def_file.remove(&fn_name);
+            });
+        }
+
         // $_ post-body — last call-arg or function name. Mirrors the
         // C `setunderscore` invocation after the body returns.
         with_executor(|exec| {

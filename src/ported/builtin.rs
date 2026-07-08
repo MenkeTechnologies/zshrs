@@ -6512,8 +6512,14 @@ pub fn add_autoload_function(
         shf_ref.filename = new_slot;
         // c:3298-3299 — `shf->node.flags |= PM_LOADDIR | PM_ABSPATH_USED;`
         shf_ref.node.flags |= (PM_LOADDIR | PM_ABSPATH_USED) as i32; // c:3298
-                                                                     // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);`
-        let _ = nam;
+        // c:3300 — `shfunctab->addnode(shfunctab, ztrdup(nam), shf);` — the
+        // node is keyed on the BASENAME (`nam`), not the full path. zshrs's
+        // addnode keys on `shf.node.nam`, so rename the node before adding;
+        // otherwise `autoload -Uz /dir/.hist.format` registered a function
+        // literally named `/dir/.hist.format` (plugins that autoload by full
+        // path — zsh-hist's `autoload -Uz $fdir/.hist.*` — diverged from
+        // zsh, which names it `.hist.format`).
+        shf_ref.node.nam = nam;
         if let Ok(mut t) = shfunctab_lock().write() {
             t.addnode(shf); // c:3300
         }

@@ -447,7 +447,11 @@ fn normalize_volatile_numbers(dump: &str) -> String {
 /// `_zshrs_anon_N` (the exact number shifts as unrelated code changes how
 /// many anon functions a source pass creates).
 fn normalize_for_baseline(line: &str, home: &str) -> String {
-    let with_home = line.replace(home, "$HOME");
+    // fast-syntax-highlighting wraps every widget under a `$RANDOM`-seeded
+    // session token `-s<NNN>-r<NNN>-` (e.g. `_zsh_highlight_widget_orig-
+    // s000-r656-accept-line`). Both shells produce the wrapper; only the
+    // random suffix differs. Collapse it so the wrappers compare equal.
+    let with_home = collapse_fsh_token(&line.replace(home, "$HOME"));
     // Collapse the digits in every `_zshrs_anon_<digits>` to a single `N`.
     // Single left-to-right rebuild — no in-place mutation that could
     // re-match its own output.
@@ -467,6 +471,40 @@ fn normalize_for_baseline(line: &str, home: &str) -> String {
         rest = &rest[digits_end..];
     }
     out.push_str(rest);
+    out
+}
+
+/// Collapse fast-syntax-highlighting's `$RANDOM` session token `-s<d>-r<d>-`
+/// to `-sN-rN-` so its widget wrappers compare equal across two processes.
+fn collapse_fsh_token(s: &str) -> String {
+    // Find `-s<digits>-r<digits>-` runs and replace with `-sN-rN-`.
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // try to match `-s` <digits> `-r` <digits> `-`
+        if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b's' {
+            let mut j = i + 2;
+            let ds = j;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > ds && j + 1 < bytes.len() && bytes[j] == b'-' && bytes[j + 1] == b'r' {
+                let mut k = j + 2;
+                let dr = k;
+                while k < bytes.len() && bytes[k].is_ascii_digit() {
+                    k += 1;
+                }
+                if k > dr && k < bytes.len() && bytes[k] == b'-' {
+                    out.push_str("-sN-rN-");
+                    i = k + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
     out
 }
 
@@ -788,4 +826,137 @@ fn real_plugin_chain_on_zinit() {
             ]
         },
     );
+}
+
+
+// ═══════════════ ALL installed plugins — final accumulated state ═══════════════
+//
+// The per-stage chain above pins divergences to a plugin but is capped at a
+// handful of stages. This test DISCOVERS every `*.plugin.zsh` installed under
+// ~/.zinit/plugins and sources them ALL on top of zinit in one shell, then
+// diffs the final accumulated FUNCTION / ALIAS / WIDGET name sets against a
+// documented known-open baseline. It is the broadest "actual config with all
+// this intermediate state" check: ~45 real plugins layered together, exactly
+// as the live .zshrc loads them. Focuses on the name sets plugins BUILD
+// (not the full `typeset -p`, which bakes in machine-specific param values).
+
+/// Discover installed plugin entry files (`<dir>/<*.plugin.zsh>`), sorted.
+fn discover_plugin_entries(home: &str) -> Vec<String> {
+    let root = format!("{home}/.zinit/plugins");
+    let mut entries: Vec<String> = Vec::new();
+    let Ok(dirs) = std::fs::read_dir(&root) else {
+        return entries;
+    };
+    let mut dirs: Vec<_> = dirs.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    dirs.sort();
+    for d in dirs {
+        if !d.is_dir() {
+            continue;
+        }
+        // First `*.plugin.zsh` in the dir (skip `.zwc` compiled copies).
+        if let Ok(files) = std::fs::read_dir(&d) {
+            let mut cands: Vec<String> = files
+                .filter_map(|f| f.ok())
+                .map(|f| f.path())
+                .filter(|p| {
+                    p.to_str()
+                        .map(|s| s.ends_with(".plugin.zsh"))
+                        .unwrap_or(false)
+                })
+                .filter_map(|p| p.to_str().map(String::from))
+                .collect();
+            cands.sort();
+            if let Some(first) = cands.into_iter().next() {
+                entries.push(first);
+            }
+        }
+    }
+    entries
+}
+
+#[test]
+fn real_all_installed_plugins_final_state() {
+    use std::collections::BTreeSet;
+    if !zsh_available() {
+        return;
+    }
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let zinit = format!("{home}/.zinit/bin/zinit.zsh");
+    if !std::path::Path::new(&zinit).exists() {
+        eprintln!("skip: zinit not installed");
+        return;
+    }
+    let entries = discover_plugin_entries(&home);
+    if entries.len() < 5 {
+        eprintln!("skip: only {} plugins installed", entries.len());
+        return;
+    }
+    // Build: source zinit + every plugin, then print name sets tagged.
+    let mut script = format!("source {zinit} 2>/dev/null\n");
+    for e in &entries {
+        script.push_str(&format!("source {e} 2>/dev/null\n"));
+    }
+    script.push_str(
+        "print -r -- '@@@ FUNCTIONS'; print -rl -- ${(ok)functions}\n\
+         print -r -- '@@@ ALIASES'; alias | sort\n\
+         print -r -- '@@@ WIDGETS'; zle -lL 2>/dev/null | sort\n",
+    );
+    let z = run_with_timeout(zsh_path(), &["-fc", &script], 120)
+        .unwrap_or_else(|| panic!("zsh itself timed out sourcing all plugins"));
+    let bin = zshrs_bin();
+    let r = match run_with_timeout(bin.to_str().unwrap(), &["-f", "--zsh", "-c", &script], 120) {
+        Some(s) => s,
+        None => panic!("zshrs HUNG sourcing all {} plugins", entries.len()),
+    };
+    // fast-syntax-highlighting's `$RANDOM` widget-wrapper token differs per
+    // process, so collapse it in the DUMPS (before the diff) — otherwise
+    // every wrapper lands in a separate only-zsh / only-zshrs bucket and
+    // never cancels. Volatile PIDs are handled the same way.
+    let zn = collapse_fsh_token(&normalize_volatile_numbers(&z));
+    let rn = collapse_fsh_token(&normalize_volatile_numbers(&r));
+    let divs = divergences_between(&zn, &rn);
+    let actual: BTreeSet<String> = divs
+        .iter()
+        .map(|l| normalize_for_baseline(l, &home))
+        .collect();
+    // Known-open, all deep plugin-internal conditionals (see docs/BUGS.md):
+    //   zi-browse-symbol — zinit's `for %…` self-load (not executed).
+    //   -fast-highlight-string-process — fsh conditional definition.
+    //   -zui_std_* — zui defines a different std-fn set (branch divergence).
+    let known: BTreeSet<String> = [
+        "[FUNCTIONS] only in zsh  : zi-browse-symbol",
+        "[FUNCTIONS] only in zsh  : -fast-highlight-string-process",
+        "[FUNCTIONS] only in zsh  : -zui_std_cleanup",
+        "[FUNCTIONS] only in zsh  : -zui_std_init",
+        "[FUNCTIONS] only in zshrs: -zui_std_fly_array_refresh",
+        "[FUNCTIONS] only in zshrs: -zui_std_fly_mod_regen",
+        "[FUNCTIONS] only in zshrs: -zui_std_fly_mod_regen_ext",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let regressions: Vec<&String> = actual.difference(&known).collect();
+    let fixed: Vec<&String> = known.difference(&actual).collect();
+    if !regressions.is_empty() || !fixed.is_empty() {
+        let mut msg = format!(
+            "all-plugins ({} sourced) final-state diverged from baseline:\n",
+            entries.len()
+        );
+        if !regressions.is_empty() {
+            msg.push_str("\nNEW divergences (regression — investigate/fix):\n");
+            for l in &regressions {
+                msg.push_str(&format!("  {l}\n"));
+            }
+        }
+        if !fixed.is_empty() {
+            msg.push_str("\nknown-open that DISAPPEARED (tighten baseline):\n");
+            for l in &fixed {
+                msg.push_str(&format!("  {l}\n"));
+            }
+        }
+        panic!("{msg}");
+    }
 }

@@ -894,3 +894,60 @@ fn bug636_autopair_pair_lookup_and_binding() {
     }
     assert_eq!(out, "\"]\" autopair-close\n", "] must bind to autopair-close");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #637 — anonymous functions must not persist in $functions
+// Fix: src/fusevm_bridge.rs::call_function (post-invoke anon removal)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug637_anonymous_function_does_not_persist() {
+    let (_ec, out, _e) = run_zshrs(
+        "before=${#functions}; () { : }; () { echo hi } arg >/dev/null; \
+         print $before ${#functions}",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // Both anon calls leave the function count exactly where it started.
+    assert_eq!(out, "0 0\n");
+}
+
+#[test]
+fn bug637_anonymous_function_preserves_exit_status() {
+    // Removing the anon function must NOT clobber the body's $?.
+    let (_ec, out, _e) =
+        run_zshrs("() { return 3 }; print $?; () { false }; print $?");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "3\n1\n");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #638 — `autoload -Uz /dir/name` names the function by basename
+// Fix: src/ported/builtin.rs::add_autoload_function
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug638_autoload_full_path_names_by_basename() {
+    use std::io::Write;
+    // Create a function file in a temp dir and autoload it by full path.
+    let dir = std::env::temp_dir().join(format!("zshrs_bug638_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let fpath = dir.join("myfunc");
+    if let Ok(mut f) = std::fs::File::create(&fpath) {
+        let _ = f.write_all(b"print loaded-body\n");
+    }
+    let (_ec, out, _e) = run_zshrs(&format!(
+        "autoload -Uz {} 2>/dev/null; \
+         print -rl -- ${{(M)${{(ok)functions}}:#*myfunc*}}; myfunc",
+        fpath.display()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // Function named by BASENAME (not the full path), and it loads + runs.
+    assert_eq!(out, "myfunc\nloaded-body\n");
+}
