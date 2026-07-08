@@ -989,19 +989,25 @@ pub fn scanlistwidgets(list: i32) -> i32 {
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
     for (name, fn_name) in &entries {
+        // c:Src/Zle/zle_thingy.c:533 — `if (list)`: a NON-zero list mode
+        // (`-L`, list==1) prints the re-definable `zle -N name [fn]` form;
+        // the abbreviated `name (fn)` form is the `else` (plain `-l`,
+        // list==0) branch. These two were previously swapped, so `zle -lL`
+        // emitted the abbreviated form and plain `zle -l` emitted the
+        // `zle -N` form — the exact inverse of zsh.
         if list != 0 {
-            // c:539 — abbreviated `name (fn)` when distinct.
-            if &fn_name != &name {
-                let _ = writeln!(handle, "{} ({})", name, fn_name);
-            } else {
-                let _ = writeln!(handle, "{}", name);
-            }
-        } else {
             // c:534 — re-definable `zle -N name [fn]` form.
             if &fn_name != &name {
                 let _ = writeln!(handle, "zle -N {} {}", name, fn_name);
             } else {
                 let _ = writeln!(handle, "zle -N {}", name);
+            }
+        } else {
+            // c:539 — abbreviated `name (fn)` when distinct.
+            if &fn_name != &name {
+                let _ = writeln!(handle, "{} ({})", name, fn_name);
+            } else {
+                let _ = writeln!(handle, "{}", name);
             }
         }
     }

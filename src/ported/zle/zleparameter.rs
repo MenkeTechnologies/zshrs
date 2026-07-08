@@ -207,10 +207,22 @@ pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // `${keymaps}` / `${(@k)keymaps}` read populates the standard
     // 9 keymaps. Idempotent — default_bindings is a no-op when
     // keymapnamtab already has entries. Bug #383.
-    static KEYMAPS_PARAM_INIT: std::sync::Once = std::sync::Once::new();
-    KEYMAPS_PARAM_INIT.call_once(|| {
+    // Gate on emptiness, NOT a `Once`. `default_bindings()` rebuilds every
+    // keymap from scratch and overwrites keymapnamtab — destructive, not
+    // idempotent. A prior `bindkey` runs its own lazy init and may have
+    // added user bindings; a blind second `default_bindings()` here would
+    // discard them. So only init when nothing has populated keymapnamtab
+    // yet — reading `${keymaps}` must never clobber keybindings a config set
+    // before the read. (Found via the config-state parity harness: the
+    // dump's `${(o)keymaps}` was wiping earlier `bindkey` state. Shared with
+    // the bindkey-side gate in zle_keymap.rs.)
+    if crate::ported::zle::zle_keymap::keymapnamtab()
+        .lock()
+        .map(|t| t.is_empty())
+        .unwrap_or(false)
+    {
         crate::ported::zle::zle_keymap::default_bindings();
-    });
+    }
     let mut names: Vec<String> = crate::ported::zle::zle_keymap::keymapnamtab()
         .lock()
         .map(|t| t.keys().cloned().collect())
