@@ -1077,12 +1077,36 @@ pub fn getfunction(_ht: *mut HashTable, name: &str, dis: i32) -> Option<Param> {
                     // deparser to recover the line breaks. On a parse failure
                     // (should not happen — it parsed at definition time) fall
                     // back to the raw single-line text.
-                    match crate::ported::exec::parse_string(text, 0) {
-                        Some(prog) => format!(
-                            "\t{}",
-                            crate::ported::text::getpermtext(Box::new(prog), None, 1)
-                        ),
-                        None => format!("\t{}", text),
+                    //
+                    // Memoize: the deparse of a given body TEXT is
+                    // deterministic, and whole-assoc consumers ($functions
+                    // enumerations, e.g. zinit's `.zinit-diff-functions`)
+                    // call this per key, repeatedly, across a plugin load.
+                    // Re-parsing + re-deparsing every function body on every
+                    // read made a p10k load take seconds. Cache keyed by the
+                    // raw body text (self-invalidating: a redefinition
+                    // changes the text → new key). C never pays this because
+                    // it keeps the compiled Eprog and deparses on demand.
+                    thread_local! {
+                        static FN_DEPARSE_CACHE: std::cell::RefCell<
+                            std::collections::HashMap<String, String>,
+                        > = std::cell::RefCell::new(std::collections::HashMap::new());
+                    }
+                    if let Some(hit) =
+                        FN_DEPARSE_CACHE.with(|c| c.borrow().get(text).cloned())
+                    {
+                        hit
+                    } else {
+                        let out = match crate::ported::exec::parse_string(text, 0) {
+                            Some(prog) => format!(
+                                "\t{}",
+                                crate::ported::text::getpermtext(Box::new(prog), None, 1)
+                            ),
+                            None => format!("\t{}", text),
+                        };
+                        FN_DEPARSE_CACHE
+                            .with(|c| c.borrow_mut().insert(text.to_string(), out.clone()));
+                        out
                     }
                 }
             };

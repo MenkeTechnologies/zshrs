@@ -193,7 +193,7 @@ pub struct SubshellSnapshot {
     /// `arrays` / `assoc_arrays` leaks the subshell's writes to the
     /// parent via paramtab (e.g. `x=outer; (x=inner); echo $x` returned
     /// `inner` because paramsubst reads through paramtab).
-    pub paramtab: HashMap<String, crate::ported::zsh_h::Param>,
+    pub paramtab: crate::fast_hash::FastMap<String, crate::ported::zsh_h::Param>,
     /// `paramtab_hashed_storage` field.
     pub paramtab_hashed_storage: HashMap<String, IndexMap<String, String>>,
     /// `positional_params` field.
@@ -2023,8 +2023,7 @@ impl ShellExecutor {
             return Ok(self.last_status());
         }
         crate::fusevm_disasm::maybe_print_stdout(label, &chunk);
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
+        let mut vm = crate::vm_pool::acquire(chunk);
         // Seed vm.last_status with the executor's current LASTVAL so
         // sub-VMs (EXIT trap bodies, eval, source) see the inherited
         // `$?` from the caller's last command — matching C zsh where
@@ -2293,8 +2292,18 @@ impl ShellExecutor {
         let chunk = self.functions_compiled.get(name).cloned()?;
         let seed_status = self.last_status();
         let _ = args; // fusevm body reads $1..$N from PPARAMS
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
+        // Reuse a VM from the per-thread pool instead of building one from
+        // scratch every call. `register_builtins` installs ~hundreds of
+        // fn-pointer handlers into the VM's builtin_table; the table is
+        // identical for every VM, so re-running it per function call was
+        // pure waste (~130 profile samples in a tight call loop, the #2 hot
+        // spot after option lookups). `VM::reset(chunk)` clears execution
+        // state but PRESERVES builtin_table / host / JIT wiring, so a
+        // recycled VM is call-ready without re-registration. Fresh VMs pay
+        // the registration once. Nested calls simply check out additional
+        // VMs; the pool grows to the max call depth. Re-entrant and
+        // panic-safe: the VM is returned on the normal path below.
+        let mut vm = crate::vm_pool::acquire(chunk);
         vm.last_status = seed_status;
         let _ = vm.run();
         Some(vm.last_status)
@@ -2537,8 +2546,7 @@ impl ShellExecutor {
                 ),
                 chunk,
             );
-            let mut vm = fusevm::VM::new(chunk.clone());
-            register_builtins(&mut vm);
+            let mut vm = crate::vm_pool::acquire(chunk.clone());
             vm.last_status = seed_status;
             let _ = vm.run();
             vm.last_status

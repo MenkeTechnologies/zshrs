@@ -1854,18 +1854,36 @@ pub fn opt_state_get(name: &str) -> Option<bool> {
 /// into the process-wide option store.
 pub fn opt_state_set(name: &str, value: bool) {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    // Skip no-op writes: `doshfunc` sets `printexitvalue=false` and restores
+    // the whole option set on EVERY function call, almost always to values
+    // that are already current. Detecting the no-op keeps the isset()
+    // fast-path cache warm across calls instead of invalidating it per call.
+    if let Ok(g) = m.read() {
+        if g.get(name) == Some(&value) {
+            return;
+        }
+    }
     if let Ok(mut g) = m.write() {
         g.insert(name.to_string(), value);
     }
+    // Only the changed option's slot needs to drop; every other option's
+    // cached value is still valid.
+    crate::opts_cache::invalidate_one(optlookup(name));
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Remove an entry
 /// from the process-wide option store (`!= isset(opt)`).
 pub fn opt_state_unset(name: &str) {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    if let Ok(g) = m.read() {
+        if !g.contains_key(name) {
+            return;
+        }
+    }
     if let Ok(mut g) = m.write() {
         g.remove(name);
     }
+    crate::opts_cache::invalidate_one(optlookup(name));
 }
 
 /// !!! RUST-ONLY HELPER — see WARNING block above. Snapshot the
@@ -1881,7 +1899,28 @@ pub fn opt_state_snapshot() -> std::collections::HashMap<String, bool> {
 pub fn opt_state_restore(snap: std::collections::HashMap<String, bool>) {
     let m = OPTS_LIVE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
     if let Ok(mut g) = m.write() {
+        // Invalidate only the slots that actually differ between the
+        // outgoing map and the restored snapshot. `doshfunc` restores the
+        // full option set on every function return; when the body changed
+        // nothing (the common case) the diff is empty and the isset() cache
+        // stays entirely warm. Names present in exactly one side, or with a
+        // different value, are the only ones whose cached read must drop.
+        let mut changed: Vec<i32> = Vec::new();
+        for (k, v) in g.iter() {
+            if snap.get(k) != Some(v) {
+                changed.push(optlookup(k));
+            }
+        }
+        for (k, v) in snap.iter() {
+            if g.get(k) != Some(v) {
+                changed.push(optlookup(k));
+            }
+        }
         *g = snap;
+        drop(g);
+        for optno in changed {
+            crate::opts_cache::invalidate_one(optno);
+        }
     }
 }
 

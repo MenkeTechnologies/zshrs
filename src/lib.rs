@@ -103,6 +103,15 @@ pub mod daemon_presence;
 /// `overlay_snapshot` submodule.
 #[path = "extensions/overlay_snapshot.rs"]
 pub mod overlay_snapshot;
+/// `fast_hash` submodule — dependency-free FxHash for internal name tables.
+#[path = "extensions/fast_hash.rs"]
+pub mod fast_hash;
+/// `opts_cache` submodule — fast-path `isset()` option-state cache.
+#[path = "extensions/opts_cache.rs"]
+pub mod opts_cache;
+/// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
+#[path = "extensions/vm_pool.rs"]
+pub mod vm_pool;
 /// `script_cache` submodule.
 #[path = "extensions/script_cache.rs"]
 pub mod script_cache;

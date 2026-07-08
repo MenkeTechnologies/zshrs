@@ -1610,7 +1610,7 @@ pub fn createparamtable() {
 
     // Helper closure (single definition; mirrors the C
     // `paramtab->addnode(paramtab, ztrdup(name), ip)` site).
-    let add_special = |ip: &special_paramdef, tab: &mut HashMap<String, Param>| {
+    let add_special = |ip: &special_paramdef, tab: &mut crate::fast_hash::FastMap<String, Param>| {
         // c:840 — `paramdef->gsu` selects which gsu_scalar vtable the
         // new param gets. C uses the per-IPDEF macro's BR(...) field;
         // since the Rust special_paramdef doesn't carry a gsu slot
@@ -6601,8 +6601,8 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 // callbacks, intrusive `next` chain, scope-stacked iterators) is
 // not yet wired; until it is, the typed map is the operative
 // storage.
-static PARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> = OnceLock::new();
-static REALPARAMTAB_INNER: OnceLock<RwLock<HashMap<String, Param>>> = OnceLock::new();
+static PARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> = OnceLock::new();
+static REALPARAMTAB_INNER: OnceLock<RwLock<crate::fast_hash::FastMap<String, Param>>> = OnceLock::new();
 
 /// Array parameter assignment (no subscript).
 ///
@@ -12992,15 +12992,15 @@ fn foundparam_lock() -> &'static Mutex<Option<String>> {
 /// Mirrors C's `paramtab->...` dereference by handing back the
 /// inner RwLock; callers `.read()` for lookups and `.write()` for
 /// mutation, operating on the `HashMap<String, Param>` directly.
-pub fn paramtab() -> &'static RwLock<HashMap<String, Param>> {
-    PARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
+pub fn paramtab() -> &'static RwLock<crate::fast_hash::FastMap<String, Param>> {
+    PARAMTAB_INNER.get_or_init(|| RwLock::new(crate::fast_hash::FastMap::default()))
 }
 
 /// Accessor for the global `realparamtab` (Src/params.c:515).
 /// Same role as `paramtab` for the not-currently-redirected case;
 /// the alias-flip during assoc-array iteration isn't modelled yet.
-pub fn realparamtab() -> &'static RwLock<HashMap<String, Param>> {
-    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(HashMap::new()))
+pub fn realparamtab() -> &'static RwLock<crate::fast_hash::FastMap<String, Param>> {
+    REALPARAMTAB_INNER.get_or_init(|| RwLock::new(crate::fast_hash::FastMap::default()))
 }
 
 fn scanprog_lock() -> &'static Mutex<Option<String>> {

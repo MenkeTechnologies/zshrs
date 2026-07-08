@@ -907,6 +907,7 @@ arrays_get
 arrays_contains
 arrays_insert
 assoc_get
+assoc_keys
 assoc_contains
 exec_assignaparam
 exec_sethparam

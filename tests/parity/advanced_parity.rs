@@ -489,6 +489,46 @@ mod assocs {
     fn assoc_element_assign() {
         assert_parity(r#"typeset -A m; m[foo]=bar; echo "${m[foo]}""#);
     }
+
+    /// Empty assoc `(kv)`/`(k)`/`(v)` splat under `[@]` must yield ZERO
+    /// words (not one empty word). zinit's `zinit()` opens with
+    /// `ICE=( "${(kv)ZINIT_ICES[@]}" )` on an empty ZINIT_ICES; an odd
+    /// word count triggered "bad set of key/value pairs for associative
+    /// array", breaking every zinit invocation.
+    #[test]
+    fn assoc_kv_empty_at_splat() {
+        assert_parity(r#"typeset -A m; x=( "${(kv)m[@]}" ); echo "${#x}""#);
+    }
+
+    #[test]
+    fn assoc_k_empty_at_splat() {
+        assert_parity(r#"typeset -A m; x=( "${(k)m[@]}" ); echo "${#x}""#);
+    }
+
+    #[test]
+    fn assoc_v_empty_at_splat() {
+        assert_parity(r#"typeset -A m; x=( "${(v)m[@]}" ); echo "${#x}""#);
+    }
+
+    /// `[*]` joins-via-IFS → a single (empty) word even when empty.
+    #[test]
+    fn assoc_kv_empty_star_splat() {
+        assert_parity(r#"typeset -A m; x=( "${(kv)m[*]}" ); echo "${#x}""#);
+    }
+
+    /// An empty splat followed by a real word must keep exactly that word.
+    #[test]
+    fn assoc_kv_empty_at_splat_with_tail() {
+        assert_parity(r#"typeset -A m; x=( "${(kv)m[@]}" tail ); echo "${#x}:${x[1]}""#);
+    }
+
+    /// The exact zinit assignment pattern.
+    #[test]
+    fn assoc_kv_zinit_ice_pattern() {
+        assert_parity(
+            r#"typeset -A ZINIT_ICES; local -A ICE; ICE=( "${(kv)ZINIT_ICES[@]}" ); echo "ok ${#ICE}""#,
+        );
+    }
 }
 
 // ───────────────────────── string ops ─────────────────────────

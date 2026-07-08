@@ -8318,8 +8318,13 @@ pub fn paramsubst(
             // path the value-build below walks (assoc + magic-assoc
             // tables + PARTAB fallback) and pick the FIRST non-empty
             // key list as the array shape.
-            magic_assoc_array = assoc_get(&var_name)
-                .map(|m| m.keys().cloned().collect::<Vec<String>>())
+            // c:Src/subst.c — keys-only read. Use assoc_keys (NOT
+            // assoc_get) so a magic assoc's per-key getfn never runs;
+            // ${(k)functions} must not deparse every function body. The
+            // aliases/functions/commands arms below stay as a fallback for
+            // paths assoc_keys doesn't cover, but assoc_keys already routes
+            // magic assocs through their scanfn in the canonical order.
+            magic_assoc_array = assoc_keys(&var_name)
                 .or_else(|| match var_name.as_str() {
                     "aliases" => aliastab_lock().read().ok().map(|t| {
                         let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
@@ -8336,12 +8341,7 @@ pub fn paramsubst(
                         names.sort();
                         names
                     }),
-                    _ => assoc_get(&var_name)
-                        .map(|m_| m_.keys().cloned().collect::<Vec<String>>())
-                        .map(|mut keys| {
-                            keys.sort();
-                            keys
-                        }),
+                    _ => None,
                 })
                 // c:Src/subst.c — on an indexed array, `(k)` is a no-
                 // op and returns the array's values (zsh quirk; verified
@@ -8349,8 +8349,8 @@ pub fn paramsubst(
                 // and magic-assoc lookups above already failed; fall
                 // back to the array's values via array_get.
                 .or_else(|| crate::ported::exec::array(&var_name));
-            value = assoc_get(&var_name) // c:2247
-                .map(|m| m.keys().cloned().collect::<Vec<_>>().join(" ")) // c:2247
+            value = assoc_keys(&var_name) // c:2247
+                .map(|k| k.join(" ")) // c:2247
                 .or_else(|| {
                     // Indexed-array fallback for (k) — see comment on
                     // magic_assoc_array above. Return joined values.
@@ -8651,6 +8651,25 @@ pub fn paramsubst(
             if !keys.is_empty() {
                 split_parts = Some(keys.clone());
                 isarr = 1;
+            } else if is_at_splat_sub {
+                // c:Src/subst.c:2916 — an EMPTY `(k)/(v)/(kv)` enumeration
+                // under an `[@]`/`[*]` splat must keep ARRAY shape so the
+                // c:4245 auto-splat block (gated on `isarr != 0`) fires and
+                // emits ZERO words — exactly like plain `"${S[@]}"` on an
+                // empty assoc (which reaches the isarr=-1 seed at ~8537).
+                // Without this the flag path leaves isarr=0, so the empty
+                // scalar `value=""` leaks a single empty word. That broke
+                // zinit's `ICE=( "${(kv)ZINIT_ICES[@]}" )` on an empty
+                // ZINIT_ICES with "bad set of key/value pairs for
+                // associative array" (odd word count). Mirror the
+                // `[@]`→isarr=-1 / `[*]`→isarr=1 (DQ-collapse) split so the
+                // splat block re-fetches the (empty) assoc and yields nothing.
+                split_parts = Some(Vec::new());
+                isarr = if matches!(subscript.as_deref(), Some("@")) {
+                    -1
+                } else {
+                    1
+                };
             }
         }
         // c:Src/subst.c — `${(@)assoc}` (no (k)/(v) flags, just (@))
@@ -13015,10 +13034,25 @@ pub fn paramsubst(
                 let new_parts: Vec<String> = parts.iter().map(|s| singsub(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| singsub(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
+            } else if isarr != 0 {
+                // Whole-array reference: eval each element. A single-slot
+                // subscript (`a[3]`) clears isarr and already selected the
+                // element into `value`, so DON'T re-fetch the whole array —
+                // `${(e)a[3]}` must eval just element 3. This mirrors the
+                // `(#)` evalchar arm above; without the `isarr` guard the
+                // arm re-fetched + re-`singsub`'d the ENTIRE array on every
+                // subscripted `(e)` read, turning a self-referential element
+                // (p10k's `${(e)_p9k_t[$i]}` prompt-length templates, where
+                // one ruler element expands to `${(e)_p9k_t[...]}` again)
+                // into unbounded recursion → stack overflow at interactive
+                // prompt time. zsh evals only the picked element and stops.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| singsub(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = singsub(&value);
+                }
             } else {
                 value = singsub(&value); // c:2268
             }
@@ -14165,6 +14199,18 @@ pub fn paramsubst(
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
                 arr.clone() // c:3960 (real array splat)
+            } else if let Some(keys) = (if (hkeys & SCANPM_WANTKEYS) != 0
+                && (hvals & SCANPM_WANTVALS) == 0
+            {
+                // c:3955 (k-flag splat) — keys ONLY. Route through
+                // assoc_keys so a magic assoc's per-key getfn never runs:
+                // `${(qk)functions[@]}` (zinit's diff) must not deparse
+                // every function body.
+                assoc_keys(&var_name)
+            } else {
+                None
+            }) {
+                keys
             } else if let Some(map) = assoc_get(&var_name) {
                 if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) != 0 {
                     // c:3955 (kv splat — interleaved)
@@ -17006,6 +17052,83 @@ fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
         out.insert(k, v);
     }
     Some(out)
+}
+
+/// Keys-only sibling of [`assoc_get`]: returns just the key list in the
+/// SAME visit order `assoc_get` would produce, but NEVER invokes a magic
+/// assoc's per-key `getfn`. This matters for `${(k)functions}` (and any
+/// keys-only read of a PM_HASHED special): the full [`assoc_get`] path
+/// materializes every value, and for `$functions` each value is a
+/// getpermtext deparse of the function body — so a bare key read parsed +
+/// deparsed all ~hundreds of function bodies, once per read. zinit's
+/// `.zinit-diff-functions` does `${(qk)functions[@]}` twice per plugin
+/// load, which made a p10k load spend seconds re-deparsing bodies (and
+/// spewing spurious parse warnings). c:Src/subst.c drives keys-only reads
+/// through the scanfn with SCANPM_WANTKEYS and never calls the getfn.
+fn assoc_keys(name: &str) -> Option<Vec<String>> {
+    let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
+    if let Some(m) = paramtab_hashed_storage()
+        .lock()
+        .ok()
+        .and_then(|s| s.get(resolved.as_str()).cloned())
+    {
+        // Same hash-bucket reorder as assoc_get (see there for the C
+        // provenance), but collect only keys.
+        let keys: Vec<String> = m.keys().cloned().collect();
+        let mut hsize = 17usize;
+        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); hsize];
+        let mut ct = 0usize;
+        for (i, k) in keys.iter().enumerate() {
+            let hv = (crate::ported::hashtable::hasher(k) as usize) % hsize;
+            buckets[hv].insert(0, i);
+            ct += 1;
+            if ct >= hsize * 2 {
+                let new_size = hsize * 4;
+                let old = std::mem::replace(&mut buckets, vec![Vec::new(); new_size]);
+                hsize = new_size;
+                ct = 0;
+                for chain in old {
+                    for idx in chain {
+                        let hv = (crate::ported::hashtable::hasher(&keys[idx]) as usize) % hsize;
+                        buckets[hv].insert(0, idx);
+                        ct += 1;
+                    }
+                }
+            }
+        }
+        let mut out: Vec<String> = Vec::with_capacity(keys.len());
+        for chain in &buckets {
+            for &i in chain {
+                out.push(keys[i].clone());
+            }
+        }
+        return Some(out);
+    }
+    let entry = crate::ported::modules::parameter::PARTAB
+        .iter()
+        .find(|e| e.name == resolved.as_str())?;
+    if let Some(modname) = entry.module {
+        if !crate::ported::module::MODULESTAB
+            .lock()
+            .map(|t| t.is_loaded(modname))
+            .unwrap_or(false)
+        {
+            return None;
+        }
+    }
+    thread_local! {
+        static ASSOC_KEYS_SCAN: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    fn assoc_keys_scan_cb(node: &crate::ported::zsh_h::HashNode, _flags: i32) {
+        ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().push(node.nam.clone()));
+    }
+    ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().clear());
+    (entry.scanfn)(std::ptr::null_mut(), Some(assoc_keys_scan_cb), 0);
+    Some(ASSOC_KEYS_SCAN.with(|k| k.borrow().clone()))
 }
 
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.
