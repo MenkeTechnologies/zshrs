@@ -638,6 +638,31 @@ fn real_zpwr_aliases_functions() {
     assert_real_config_parity(".zpwr/env/.shell_aliases_functions.sh", &[]);
 }
 
+/// zpwr's core library (~30 KB, ~49 functions) — the big function library
+/// the live `.zshrc` sources via `$ZPWR_LIB`. Real, dense function-defining
+/// config; sources cleanly with no `$ZPWR`-set requirement at definition
+/// time. Verified byte-clean under the standard dump.
+#[test]
+fn real_zpwr_lib() {
+    assert_real_config_parity(".zpwr/scripts/lib.sh", &[]);
+}
+
+/// zpwr's main env file (`$ZPWR_ENV_FILE`, ~52 functions) — sourced by the
+/// live `.zshrc` before the plugin manager. Its inner `source $ZPWR_LIB` /
+/// `source $ZPWR_RE_ENV_FILE` calls live inside a function only `.zshrc`
+/// invokes, so a cold source just defines the env's function set.
+#[test]
+fn real_zpwr_env() {
+    assert_real_config_parity(".zpwr/env/.zpwr_env.sh", &[]);
+}
+
+/// zpwr's re-entrant env file (`$ZPWR_RE_ENV_FILE`) — the second file the
+/// live `.zshrc` env chain sources.
+#[test]
+fn real_zpwr_re_env() {
+    assert_real_config_parity(".zpwr/env/.zpwr_re_env.sh", &[]);
+}
+
 
 // ═══════════════════ staged / cumulative real-config chain ═══════════════════
 //
