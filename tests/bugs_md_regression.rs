@@ -790,3 +790,62 @@ fn bug633_nested_array_subexp_temp_does_not_leak() {
     }
     assert_eq!(out, "b\n0\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #634 — `zle -l` vs `zle -lL` list forms (were swapped)
+// Fix: src/ported/zle/zle_thingy.rs::scanlistwidgets
+// C ref: Src/Zle/zle_thingy.c:533
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug634_zle_lL_emits_redefinable_form() {
+    // -lL is the re-definable `zle -N name [fn]` form.
+    let (_ec, out, _e) = run_zshrs("zle -N wa; zle -N wb mybody; zle -lL");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "zle -N wa\nzle -N wb mybody\n");
+}
+
+#[test]
+fn bug634_zle_l_emits_abbreviated_form() {
+    // plain -l is the abbreviated `name (fn)` form.
+    let (_ec, out, _e) = run_zshrs("zle -N wa; zle -N wb mybody; zle -l");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "wa\nwb (mybody)\n");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #635 — reading `${keymaps}` must not wipe keybindings
+// Fix: zle_keymap.rs + zleparameter.rs lazy-init gate on emptiness
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug635_reading_keymaps_preserves_bindings() {
+    // A prior `bindkey` initialises the keymaps; reading ${keymaps}
+    // afterward must NOT re-run the destructive default_bindings().
+    let (_ec, out, _e) = run_zshrs(
+        "bindkey '^Xa' beep; print -l ${(o)keymaps} >/dev/null; \
+         bindkey -L | grep -c '\\^Xa'",
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out, "1\n", "the ^Xa binding must survive the ${{keymaps}} read");
+}
+
+#[test]
+fn bug635_reading_keymaps_still_lists_full_default_set() {
+    // No #383 regression: a bare ${keymaps} read (no prior bindkey) still
+    // lazily populates the standard nine keymaps.
+    let (_ec, out, _e) = run_zshrs("print -l ${(o)keymaps}");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(
+        out, ".safe\ncommand\nemacs\nisearch\nmain\nvicmd\nviins\nviopp\nvisual\n",
+        "bare ${{keymaps}} read still yields the full default keymap set"
+    );
+}

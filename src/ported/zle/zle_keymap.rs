@@ -1060,12 +1060,24 @@ pub fn bin_bindkey(
     // zshrs in script (non-interactive) mode doesn't autoload zsh/zle,
     // so the keymaps are never populated. /etc/zshrc bindkey calls
     // then fail with `no such keymap 'main'`. Auto-init on first
-    // bindkey call — idempotent because default_bindings is a no-op
-    // after the keymaps already exist.
-    static KEYMAPS_INIT: std::sync::Once = std::sync::Once::new();
-    KEYMAPS_INIT.call_once(|| {
+    // bindkey call.
+    //
+    // Gate on `keymapnamtab` being EMPTY — not a `Once`. `default_bindings()`
+    // is destructive: it rebuilds all keymaps from fresh Keymap structs and
+    // overwrites keymapnamtab. A SEPARATE lazy-init path (`${keymaps}` reads,
+    // zleparameter.rs::keymapsgetfn) has its own trigger, so two independent
+    // `Once`s let the second caller rebuild the keymaps and wipe bindings the
+    // first caller had already added (`bindkey X; ${keymaps}` lost X). A
+    // shared emptiness gate makes whichever path runs first do the one-time
+    // init and every later caller skip it. (Lock released before the call —
+    // default_bindings() re-locks keymapnamtab.)
+    if keymapnamtab()
+        .lock()
+        .map(|t| t.is_empty())
+        .unwrap_or(false)
+    {
         default_bindings();
-    });
+    }
 
     // c:751-759 — opns[] dispatch table. Each entry: (flag-char,
     // selp, min, max, sub-handler kind). selp=1 means -e/-v/-a/-M
