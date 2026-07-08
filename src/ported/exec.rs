@@ -617,7 +617,22 @@ pub fn loadautofn(
     // c:5070 — `path = getfpfunc(name, &dir_path, NULL, 0)`.
     let mut dir_path: Option<String> = None;
     let mut dump_hit: Option<(eprog, i32)> = None;
-    let path = match getfpfunc(&name, &mut dir_path, None, 0, &mut dump_hit) {
+    // A function autoloaded by ABSOLUTE PATH (`autoload -Uz /dir/name`) — or
+    // one already resolved via `autoload -r` — caches its directory in
+    // `shf.filename` with PM_LOADDIR set. Load-on-call must search THAT dir
+    // (`shf.filename/name`), not walk `$fpath` (which won't contain it).
+    // Without this, `autoload -Uz $fdir/.hist.*` (zsh-hist) named the
+    // functions correctly but every call died with "definition file not
+    // found". Mirrors C loadautofn's PM_LOADDIR spec-path branch.
+    let loaddir_spec: Option<Vec<String>> = {
+        let s = unsafe { &*shf };
+        if (s.node.flags as u32 & PM_LOADDIR) != 0 {
+            s.filename.clone().map(|d| vec![d])
+        } else {
+            None
+        }
+    };
+    let path = match getfpfunc(&name, &mut dir_path, loaddir_spec.as_deref(), 0, &mut dump_hit) {
         Some(p) => p,
         None => {
             // c:Src/exec.c:5713-5719 — file not found path. C:
