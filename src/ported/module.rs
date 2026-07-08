@@ -3622,6 +3622,12 @@ pub fn boot_module(_table: &mut modulestab, name: &str) -> i32 {
         "zsh/attr" => crate::ported::modules::attr::boot_(std::ptr::null()),
         "zsh/cap" => crate::ported::modules::cap::boot_(std::ptr::null()),
         "zsh/clone" => crate::ported::modules::clone::boot_(std::ptr::null()),
+        // c:Src/Zle/complist.c:3566 boot_ — installs the `menuselect` and
+        // `listscroll` keymaps (via menuselect_bindings). Without this,
+        // `zmodload zsh/complist` was a no-op and every `bindkey -M
+        // menuselect …` (zpwr's completion-menu keybindings) errored
+        // "no such keymap `menuselect'".
+        "zsh/complist" => crate::ported::zle::complist::boot_(),
         "zsh/curses" => crate::ported::modules::curses::boot_(std::ptr::null()),
         "zsh/datetime" => crate::ported::modules::datetime::boot_(std::ptr::null()),
         "zsh/db/gdbm" => crate::ported::modules::db_gdbm::boot_(std::ptr::null()),

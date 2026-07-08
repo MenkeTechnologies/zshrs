@@ -218,7 +218,7 @@ pub fn keymapsgetfn(_pm: *mut crate::ported::zsh_h::param) -> Vec<String> {
     // the bindkey-side gate in zle_keymap.rs.)
     if crate::ported::zle::zle_keymap::keymapnamtab()
         .lock()
-        .map(|t| t.is_empty())
+        .map(|t| !t.contains_key("main"))
         .unwrap_or(false)
     {
         crate::ported::zle::zle_keymap::default_bindings();
