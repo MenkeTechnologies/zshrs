@@ -7278,6 +7278,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Bool(false)
     });
     vm.register_builtin(BUILTIN_COND_STATUS_FROM_BOOL, |vm, _argc| {
+        // `${~pat}` / `${(P)~pat}` inside a `[[ … ]]` operand flips
+        // GLOB_SUBST on via the tilde carrier so the pattern match sees
+        // active metacharacters. In C that flag is prefork-scoped and
+        // gone once the operand is consumed; zshrs restores it at the
+        // next command-dispatch boundary, but a bare `[[ … ]]` has no
+        // trailing assignment to trigger that — so globsubst leaked ON
+        // into the NEXT command's word expansion, filename-generating a
+        // scalar value it should not (p10k `_p9k_set_prompt`: line 45
+        // `[[ … != ${(P)~disabled} ]]` leaked into line 46's
+        // `local val=$arr[idx]`, whose glob-char-laden value then hit
+        // "no matches found" and aborted the whole prompt build →
+        // garbled 25-line prompt / interactive hang). Consume the
+        // carrier here: this builtin ends EVERY `[[ … ]]`, and runs
+        // after the operands (and their pattern match) are done.
+        consume_tilde_globsubst_carrier();
         let ok = vm.pop().to_int() != 0;
         let bad = COND_BAD_PATTERN.with(|c| {
             let b = c.get();

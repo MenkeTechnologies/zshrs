@@ -3072,11 +3072,22 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
         // promptexpand) skipped the `s = 0` flag flip and counted
         // the escape bytes as visible width. Multi-line prompts
         // with `%{...%}` wrap at wrong columns.
-        if c == Inpar {
-            // c:1179 Inpar
+        if c == Inpar || c == '\u{1}' {
+            // c:1179 Inpar. `expand_prompt` (this file, c:4088-4102)
+            // translates the canonical Inpar (0x88) that putpromptchar
+            // emits into the readline RL_PROMPT_START_IGNORE byte
+            // (0x01) for the ZLE prompt buffer, so the PRODUCTION
+            // caller (zle_refresh::zrefresh countprompt(&lpromptbuf,…))
+            // sees 0x01, never 0x88. The direct-canonical unit test
+            // feeds 0x88. Recognize BOTH so the `%{...%}` non-printing
+            // span is zero-width whichever byte convention arrives —
+            // without this, every escape byte inside p10k's `%{…%}`
+            // spans is counted as visible width, inflating lprompth to
+            // ~screen-height and driving zrefresh into an endless
+            // redraw (the interactive "hang").
             visible = false; // c:1180 s = 0
-        } else if c == Outpar {
-            // c:1181 Outpar
+        } else if c == Outpar || c == '\u{2}' {
+            // c:1181 Outpar / RL_PROMPT_END_IGNORE (0x02) — see Inpar.
             visible = true; // c:1182 s = 1
         } else if c == Nularg {
             // c:1183 Nularg
@@ -4574,6 +4585,35 @@ mod tests {
             "c:1183-1184 — Nularg counts as 1 visible column; got w={w}"
         );
     }
+
+    /// Regression pin for the interactive-hang root cause: the PRODUCTION
+    /// prompt buffer that `expand_prompt` hands to `zle_refresh::zrefresh`
+    /// carries the readline RL_PROMPT_*_IGNORE markers (0x01/0x02), NOT the
+    /// canonical Inpar/Outpar bytes. `countprompt` MUST treat those spans as
+    /// zero-width; otherwise every escape byte inside a `%{...%}` span counts
+    /// as visible width, inflating the prompt height to ~screen size and
+    /// wedging zrefresh in an endless redraw. Uses the real `expand_prompt`
+    /// output so the two functions stay coupled.
+    #[test]
+    fn countprompt_zero_width_for_rl_ignore_markers_from_expand_prompt() {
+        let _g = crate::test_util::global_state_lock();
+        // `%{...%}` → `\x01...\x02`; visible text `ab` + `cd` = 4 columns.
+        let expanded = expand_prompt("ab%{\x1b[31m%}cd");
+        assert!(
+            expanded.as_bytes().contains(&0x01) && expanded.as_bytes().contains(&0x02),
+            "expand_prompt must emit RL_PROMPT_*_IGNORE markers; got {expanded:?}"
+        );
+        let mut w = 0i32;
+        let mut h = 0i32;
+        countprompt(&expanded, &mut w, &mut h, 0);
+        assert_eq!(
+            w, 4,
+            "the `%{{...%}}` escape span must be zero-width; got w={w} \
+             (marker-convention mismatch re-inflates prompt width → hang)"
+        );
+        assert_eq!(h, 1, "a single-line prompt must count as height 1; got h={h}");
+    }
+
 
     /// c:134 — `promptpath` with `tilde=false` MUST NOT substitute ~
     /// even when `home` is a prefix. Pin the inverse branch so a
