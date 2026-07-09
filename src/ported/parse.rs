@@ -2457,6 +2457,13 @@ fn par_funcdef() -> Option<ZshCommand> {
         let body_source = input_slice(body_start, body_end)
             .map(|s| {
                 let t = s.trim();
+                // Strip the statement SEPARATOR that followed the funcdef
+                // `}` FIRST — for `name() { body }; next` the slice ends in
+                // `};`, so stripping the brace before the `;` left the `}`
+                // stranded (`${functions[name]}` → `body }`, then re-parsed
+                // to a `parse error near '}'`). Order: trailing separators →
+                // closing brace → the body's own last-statement separator.
+                let t = t.trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace());
                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
                 let t = t
                     .trim_end_matches(|c: char| c == ';' || c == '\n')
@@ -8604,13 +8611,27 @@ fn parse_program_until(end_tokens: Option<&[lextok]>, single_event: bool) -> Zsh
                         // at OUTBRACE_TOK. Explicit end-token avoids
                         // the top-level stray-`}` arm. Bug #167/#168.
                         let body = parse_program_until(Some(&[OUTBRACE_TOK]), false);
-                        let body_end = if tok() == OUTBRACE_TOK {
-                            pos().saturating_sub(1)
-                        } else {
-                            pos()
-                        };
+                        // Bug #642 family: slice THROUGH pos() so the funcdef
+                        // `}` is always inside the slice, then strip that
+                        // single trailing brace (+ the `;`/`\n` separator
+                        // before it). The prior `pos()-1` form left the `}`
+                        // in `body_source` for the inline `name() { body }`
+                        // shape (this arm) — so `${functions[name]}` returned
+                        // `body }` and `.zinit-diff-functions`'
+                        // `${(qk)functions[@]}` re-parsed it into a
+                        // `parse error near '}'` on every function. Match the
+                        // canonical strip used by the other two funcdef arms
+                        // (parse.rs:2457 / 9528).
+                        let body_end = pos();
                         let body_source = input_slice(body_start, body_end)
-                            .map(|s| s.trim().to_string())
+                            .map(|s| {
+                                let t = s.trim();
+                                let t = t.strip_suffix('}').unwrap_or(t).trim_end();
+                                let t = t
+                                    .trim_end_matches(|c: char| c == ';' || c == '\n')
+                                    .trim_end();
+                                t.to_string()
+                            })
                             .filter(|s| !s.is_empty());
                         if tok() == OUTBRACE_TOK {
                             zshlex();
@@ -9533,6 +9554,13 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                 // (`;`/`\n`) that preceded it — C zsh's getpermtext emits
                 // each command without the trailing `;`/`\n`.
                 let t = s.trim();
+                // Strip the statement SEPARATOR that followed the funcdef
+                // `}` FIRST — for `name() { body }; next` the slice ends in
+                // `};`, so stripping the brace before the `;` left the `}`
+                // stranded (`${functions[name]}` → `body }`, then re-parsed
+                // to a `parse error near '}'`). Order: trailing separators →
+                // closing brace → the body's own last-statement separator.
+                let t = t.trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace());
                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
                 let t = t
                     .trim_end_matches(|c: char| c == ';' || c == '\n')

@@ -6653,6 +6653,20 @@ pub fn paramsubst(
                         let e = e_raw.max(0) as usize;
                         if s < arr_clone.len() && s < e {
                             let slice = &arr_clone[s..e.min(arr_clone.len())];
+                            // Preserve ARRAY SHAPE of the slice so `(q)`/`(qq)`
+                            // per-element quoting and `(@)` splat operate on the
+                            // sliced ELEMENTS, not the joined scalar. Without
+                            // split_parts the quote block (subst.rs:13781) fell
+                            // to its whole-scalar/no-op arm and dropped the
+                            // quoting: `${(@qq)arr[lo,hi]}` came out unquoted —
+                            // p10k `_p9k_declare` does
+                            // `eval "typeset -ga …=(${(@qq)*[4,-1]})"`, so the
+                            // unquoted `service_account:*` glob-expanded and
+                            // aborted the whole prompt build (garbled prompt /
+                            // startup hang). Matches the slice-of-slice arm
+                            // (subst.rs:7657) which already seeds split_parts.
+                            split_parts = Some(slice.to_vec());
+                            isarr = if slice.is_empty() { -1 } else { 1 };
                             // c:Src/subst.c:3032 — `val = sepjoin(aval,
                             // sep, 1)`. Quoted array range `"${a[1,2]}"`
                             // joins by IFS[0]. The range arm yields
@@ -7776,9 +7790,23 @@ pub fn paramsubst(
             let is_flag_form = sub.trim_start().starts_with('(');
             used_subexp
                 || (is_flag_form && !raw_value.is_empty())
-                || assoc_get(&var_name)
-                    .map(|m| m.contains_key(sub))
-                    .unwrap_or(false)
+                // Skip the whole-map `assoc_get` for magic assocs
+                // (functions/parameters/commands/aliases/…): materializing
+                // one of those enumerates the ENTIRE backing hash table (and
+                // for `functions` reconstructs every body via getpermtext),
+                // so `${+functions[key]}` was O(N) — p10k's `_p9k_get_icon`
+                // / `_p9k_param` call `(( ${+functions[…]} ))` /
+                // `(( ${+parameters[…]} ))` thousands of times, giving O(n²)
+                // over the user's 49k functions → precmd took minutes (the
+                // startup hang). PARTAB membership is a tiny fixed-size scan;
+                // magic assocs fall through to the single-key getfn path
+                // below (O(1)). Regular user assocs still use assoc_get.
+                || (crate::ported::modules::parameter::PARTAB
+                    .iter()
+                    .all(|e_| e_.name != var_name.as_str())
+                    && assoc_get(&var_name)
+                        .map(|m| m.contains_key(sub))
+                        .unwrap_or(false))
                 || arrays_get(&var_name)
                     .as_ref()
                     .map(|a| {

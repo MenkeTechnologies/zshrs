@@ -2105,7 +2105,13 @@ pub fn zrefresh() {
         if !prompt.is_empty() {
             let fd = SHTTY.load(Ordering::Relaxed);
             let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, prompt.as_bytes());
+            // c:1158-1159 `zputs(lpromptbuf, shout)` skips the itok marker
+            // bytes (Src/utils.c:5272-5274) so they never reach the tty.
+            // expand_prompt leaves them as the RL_PROMPT_*_IGNORE bytes
+            // (0x01/0x02); strip them here so the raw write doesn't corrupt
+            // the render.
+            let emit: String = prompt.chars().filter(|&c| c != '\u{1}' && c != '\u{2}').collect();
+            let _ = write_loop(out_fd, emit.as_bytes());
             // c:1163 — the prompt's literal escapes leave the terminal in
             // pmpt_attr; publish it so refreshline's first content attr-diff
             // starts from the right SGR state.
@@ -2230,8 +2236,14 @@ pub fn zrefresh() {
             crate::ported::prompt::treplaceattrs(PMPT_ATTR.load(Ordering::SeqCst));
             let mut out = crate::ported::prompt::applytextattributes(0);
             // c:1719 — `zputs(rpromptbuf, shout)`: the expanded right prompt
-            // (already carries its own SGR escapes).
-            out.push_str(&crate::ported::zle::zle_main::rprompt());
+            // (already carries its own SGR escapes). zputs skips the itok
+            // marker bytes (Src/utils.c:5272-5274); strip RL_PROMPT_*_IGNORE
+            // (0x01/0x02) so they don't reach the terminal.
+            out.extend(
+                crate::ported::zle::zle_main::rprompt()
+                    .chars()
+                    .filter(|&c| c != '\u{1}' && c != '\u{2}'),
+            );
             {
                 let fd = SHTTY.load(Ordering::Relaxed);
                 let _ = write_loop(if fd >= 0 { fd } else { 1 }, out.as_bytes());
@@ -3400,7 +3412,14 @@ pub fn tc_rightcurs(count: usize) {
                 zwcputc(&zr_cr); // c:2298 — zputc(&zr_cr)
             }
             tc_upcurs(LPROMPTH.load(Ordering::SeqCst) - 1); // c:2299
-            let _ = write_loop(out_fd, lpromptbuf.as_bytes()); // c:2300 — zputs(lpromptbuf, shout)
+            // c:2300 — `zputs(lpromptbuf, shout)` skips itok marker bytes
+            // (Src/utils.c:5272-5274); strip RL_PROMPT_*_IGNORE (0x01/0x02)
+            // before the raw write.
+            let emit: String = lpromptbuf
+                .chars()
+                .filter(|&c| c != '\u{1}' && c != '\u{2}')
+                .collect();
+            let _ = write_loop(out_fd, emit.as_bytes()); // c:2300 — zputs(lpromptbuf, shout)
             if LPROMPTWOF.load(Ordering::SeqCst) == winw {
                 // c:2301-2302 — works with both hasam and !hasam.
                 let _ = write_loop(out_fd, b"\n");
