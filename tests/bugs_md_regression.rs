@@ -1128,3 +1128,49 @@ fn bug644_large_case_body_parses_in_linear_time() {
         "large case body parse took {elapsed:?} — ingetc O(n²) regressed?"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #649 — for-loop variable alias-expanded, breaking the parse
+// Fix: src/ported/parse.rs::par_for (noaliases/nocorrect guard)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug649_for_loop_variable_not_alias_expanded() {
+    // The user's zpwr config sets `alias i='if [[ … ]]; then … fi'`.
+    // When fzf's completion.zsh (`for i in {0..${#args[@]}}; do …`) is
+    // parsed with that alias active, the loop VARIABLE `i` must NOT be
+    // alias-expanded. It regressed because par_for read the variable in
+    // command position, so exalias expanded `i` → `if`, and par_for saw
+    // IF instead of the STRING name → "expected variable name in for".
+    // `eval` reproduces the sourced-file timing (alias set BEFORE parse).
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = "alias i='if [[ x ]]; then y; fi'\n\
+                  eval 'g() { for i in {0..2}; do print -n \"v$i\"; done }'\n\
+                  g";
+    let (ec, out, err) = run_zshrs(script);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert!(
+        !err.contains("expected variable name in for"),
+        "loop variable was alias-expanded: {err:?}"
+    );
+    assert_eq!(out.trim(), "v0v1v2", "for-loop body ran (stderr={err:?})");
+}
+
+#[test]
+fn bug649_arith_for_and_for_paren_still_work() {
+    // The fix must not regress the paren-form loops (an earlier
+    // incmdpos=0 approach did): arith-for `for (( ))` and the short
+    // for-paren `for x (list)` both rely on inherited command position.
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec1, out1, err1) = run_zshrs("for (( i=0; i<3; i++ )); do print -n n$i; done; print \"\"");
+    assert_eq!(ec1, 0, "arith-for exit 0 (stderr={err1:?})");
+    assert_eq!(out1.trim(), "n0n1n2", "arith-for (stderr={err1:?})");
+
+    let (ec2, out2, err2) = run_zshrs("for x (p q r); do print -n $x; done; print \"\"");
+    assert_eq!(ec2, 0, "for-paren exit 0 (stderr={err2:?})");
+    assert_eq!(out2.trim(), "pqr", "for-paren (stderr={err2:?})");
+}

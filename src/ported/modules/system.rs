@@ -567,8 +567,14 @@ pub fn bin_sysopen(
         } // c:410
     }
 
-    // c:412 — `fdtable[moved_fd] = FDT_EXTERNAL;` (zshrs's fdtable
-    // manager owns this; not yet wired — no-op for now).
+    // c:412 — `fdtable[moved_fd] = FDT_EXTERNAL;`. movefd/redup marks
+    // the lifted fd FDT_INTERNAL (shell-owned); sysopen hands the fd to
+    // the USER (via `sysopen -u fd`), so re-mark it FDT_EXTERNAL. Without
+    // this a later `exec {fd}<&-` (p10k's `_p9k_worker_stop` /
+    // gitstatus `gitstatus_stop_p9k_`) was rejected with "file
+    // descriptor N used by shell, not closed", killing gitstatus init.
+    // Bug #648.
+    crate::ported::utils::fdtable_set(moved_fd, crate::ported::zsh_h::FDT_EXTERNAL);
 
     // c:413-418 — `if (explicit == -1) { setiparam(fdvar, moved_fd); ... }`
     if explicit == -1 {

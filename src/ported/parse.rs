@@ -1405,14 +1405,24 @@ fn par_for() -> Option<ZshCommand> {
     // i=0; i<3; i++ ))` lexed as a single `((arith))` expression
     // and parse_for_cstyle's second zshlex got an empty/wrong tok.
     //
-    // The companion C statement `incmdpos = 0;` at c:1094 isn't
-    // mirrored here: zshrs's parser doesn't otherwise touch
-    // LEX_INCMDPOS at this boundary, and forcing it false breaks
-    // the SELECT case where downstream tokenization relied on the
-    // inherited state. The C parser maintains incmdpos inline at
-    // every grammar transition (parse.c:617, :791, :1072, :1145,
-    // :1154, :1161, ...); without porting those companion sites a
-    // single explicit reset here is more harmful than helpful.
+    // Guard the loop-variable read against alias expansion and
+    // spell-correction. C uses `incmdpos = 0` for the first name
+    // (c:1094) plus `noaliases = nocorrect = 1` for the rest
+    // (c:1123), restoring them at c:1137. We guard the WHOLE name
+    // read with `noaliases`/`nocorrect` (the actual anti-alias
+    // mechanism) and leave `incmdpos` untouched: without this, a
+    // user `alias i='if [[ … ]]; then … fi'` (real zpwr config,
+    // set by zpwrBindAliasesZshLate) makes `for i in {0..$#}`
+    // expand the loop variable `i` into `if`, so par_for's next
+    // token is IF instead of the STRING name and it dies with
+    // "expected variable name in for". Forcing incmdpos=0 here
+    // (as C does) instead regresses the `(`/`((`/`do` detection
+    // for for-paren, arith-for and the loop body, which this
+    // parser recovers from the inherited command position.
+    let saved_noaliases = noaliases();
+    let saved_nocorrect = nocorrect();
+    set_noaliases(true);
+    set_nocorrect(1);
     set_infor(if tok() == FOR { 2 } else { 0 }); // c:1095
     zshlex(); // c:1096
 
@@ -1421,6 +1431,8 @@ fn par_for() -> Option<ZshCommand> {
         // c:1110-1111 — close out infor / cmdpos after parse_for_cstyle
         // has consumed the init/cond/step triple. Done inside the
         // helper itself so we honour the C ordering.
+        set_noaliases(saved_noaliases);
+        set_nocorrect(saved_nocorrect);
         return parse_for_cstyle();
     }
 
@@ -1447,6 +1459,11 @@ fn par_for() -> Option<ZshCommand> {
         names.push(v);
         zshlex();
     }
+    // c:1137-1138 — restore alias / spell-correct state now the
+    // name list is fully read (the `in`/`(` list that follows must
+    // lex with the caller's normal settings).
+    set_noaliases(saved_noaliases);
+    set_nocorrect(saved_nocorrect);
     if names.is_empty() {
         zerr("expected variable name in for");
         return None;
