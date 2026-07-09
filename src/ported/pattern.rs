@@ -545,6 +545,22 @@ pub fn patcompstart() {
 /// the input cursor at end of parse — used by `bin_zregexparse` to
 /// detect partial-parse cases.
 pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> Option<Patprog> {
+    // Global compiled-pattern cache (crate::pat_cache, a zshrs-only opt —
+    // see that module for the safety/key/threading rationale). Skipped when
+    // `endexp` is requested: that out-param is a compile side effect the
+    // cache can't reproduce. The check runs BEFORE the compile mutex so a
+    // hit never serialises on the compiler.
+    let cacheable = endexp.is_none();
+    if cacheable {
+        if let Some(hit) = crate::pat_cache::get(exp, inflags) {
+            return Some(hit);
+        }
+    }
+    // Capture the ORIGINAL pattern text for the cache-store key: `exp` is
+    // shadowed below by the decoded form, and the option state that feeds
+    // the fingerprint is unchanged between here and the store (patcompstart
+    // only reads options), so get/put keys match.
+    let exp_orig: String = if cacheable { exp.to_string() } else { String::new() };
     // Hold the compile mutex for the entire body — `patcompstart`
     // resets every file-scope static (`Src/pattern.c:267-281`) and the
     // emit/parse helpers mutate them in sequence. C is single-threaded
@@ -799,7 +815,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 crate::ported::glob::tokenize(&mut rem);
                 *end = rem;
             }
-            return Some(Box::new((
+            let prog: Patprog = Box::new((
                 patprog {
                     startoff: 0,
                     size: mlen,
@@ -812,7 +828,11 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                     patstartch: patstartch_lead, // c:1610
                 },
                 literal,
-            )));
+            ));
+            if cacheable {
+                crate::pat_cache::put(&exp_orig, inflags, &prog);
+            }
+            return Some(prog);
         }
     }
 
@@ -838,7 +858,7 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
         *end = rem;
     }
 
-    Some(Box::new((
+    let prog: Patprog = Box::new((
         patprog {
             startoff: 0,
             size: code.len() as i64,
@@ -858,7 +878,11 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
             patstartch: patstartch_lead, // c:1610
         },
         code,
-    )))
+    ));
+    if cacheable {
+        crate::pat_cache::put(&exp_orig, inflags, &prog);
+    }
+    Some(prog)
 }
 
 /// Port of `patcompswitch(int paren, int *flagp)` from `Src/pattern.c:765`.
