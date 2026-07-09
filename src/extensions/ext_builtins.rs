@@ -117,6 +117,17 @@ pub const EXT_BUILTIN_NAMES: &[&str] = &[
     "ztest_skip",
 ];
 
+/// Body of the `compdef` shell-function stub that `compinit` installs so
+/// `${+functions[compdef]}` is true (zinit's "compinit has loaded" probe)
+/// and `compdef` calls resolve to a function rather than command-not-found.
+/// The `BUILTIN_COMPDEF` opcode handler recognises this exact body and
+/// routes to the fast native `builtin_compdef`; a genuine user/compsys
+/// `compdef` function (any other body) still takes precedence. In real zsh
+/// `compdef` is a shell function defined inside `compinit`; zshrs's native
+/// `compinit` implements the scan in Rust and never sourced that function,
+/// which left `compdef` undefined and broke zinit's compdef-replay.
+pub(crate) const NATIVE_COMPDEF_MARKER: &str = ": zshrs-native-compdef-stub";
+
 use crate::parse::Redirect;
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::vm_helper::ShellExecutor;
@@ -1900,6 +1911,24 @@ impl ShellExecutor {
                     return 1;
                 }
             }
+        }
+
+        // Install the `compdef` function stub SYNCHRONOUSLY (before the
+        // native scan is shipped to the worker pool, which returns
+        // immediately). zsh's `compinit` defines `compdef` as a shell
+        // function; zshrs does the scan in Rust and never installed it,
+        // so `${+functions[compdef]}` stayed 0 and zinit's compdef-replay
+        // aborted with "compinit function hasn't been loaded" while direct
+        // `compdef` calls hit command-not-found. Only install our stub when
+        // no real compdef function already exists (don't clobber a user or
+        // --zsh fpath definition); the marker body routes to the fast
+        // native impl in the BUILTIN_COMPDEF handler.
+        if !self.function_exists("compdef") {
+            crate::ported::modules::parameter::setfunction(
+                "compdef",
+                NATIVE_COMPDEF_MARKER.to_string(),
+                0,
+            );
         }
 
         // ZSH COMPAT MODE: Use traditional zsh algorithm (fpath scan, .zcompdump, no SQLite)

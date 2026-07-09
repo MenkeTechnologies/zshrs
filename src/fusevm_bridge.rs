@@ -144,6 +144,31 @@ thread_local! {
     /// (e.g. `tee >(wc) $(print x)` — print must not close tee's
     /// fd). Mirrors C's per-job filelist ownership.
     static PSUB_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
+    /// Forked `<(cmd)`/`>(cmd)` child pids awaiting reap. Drained
+    /// non-blockingly (WNOHANG) by note_psub_child so proc-sub children
+    /// don't accumulate as zombies across a shell session.
+    static PSUB_CHILDREN: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record a proc-sub child pid and best-effort reap any already-exited
+/// proc-sub children (WNOHANG). Non-blocking: still-running children
+/// stay parked and get reaped on a later call.
+pub(crate) fn note_psub_child(pid: i32) {
+    if pid <= 0 {
+        return;
+    }
+    PSUB_CHILDREN.with(|v| {
+        let mut v = v.borrow_mut();
+        v.push(pid);
+        v.retain(|&p| {
+            let mut status = 0;
+            // WNOHANG: reap if exited, else keep parked.
+            let r = unsafe { libc::waitpid(p, &mut status, libc::WNOHANG) };
+            // r == p → reaped; r == 0 → still running (keep); r < 0 →
+            // already gone/not ours (drop).
+            r == 0
+        });
+    });
 }
 
 /// Port of `fputs(s, xtrerr)` / `fprintf(xtrerr, "%s", s)` (Src/exec.c):
@@ -1959,6 +1984,20 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // fast native impl; otherwise it's command-not-found. Previously the
         // extension builtin ran in native mode (bare `compdef` → "I need
         // arguments"), diverging from zsh.
+        // compinit installs a `compdef` function stub (see
+        // NATIVE_COMPDEF_MARKER) purely so `${+functions[compdef]}` is
+        // true; route that exact body to the fast native impl instead of
+        // dispatching the stub. A genuine user/compsys compdef function
+        // (any other body) still wins via try_user_fn_override below.
+        let is_native_stub = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| t.get("compdef").and_then(|shf| shf.body.clone()))
+            .map(|b| b.trim() == crate::extensions::ext_builtins::NATIVE_COMPDEF_MARKER)
+            .unwrap_or(false);
+        if is_native_stub {
+            return Value::Status(with_executor(|exec| exec.builtin_compdef(&args)));
+        }
         if let Some(s) = try_user_fn_override("compdef", &args) {
             return Value::Status(s);
         }
@@ -5916,6 +5955,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::Array(out)
             }
             (Value::Array(la), rhs_scalar) => {
+                // An EMPTY array contributes nothing to a concatenated
+                // word — the surrounding scalar text survives. zsh:
+                // `x${^a}y` (a=()) / `x${(P)scalar-empty}y` → "xy", NOT
+                // a dropped word. Without this, a `(P)` indirect to an
+                // unset/empty scalar (which nodes_to_value collapses to
+                // Value::Array([]) for standalone-removal semantics)
+                // cartesian-dropped the whole word — p10k's
+                // `typeset -g _$2=${(P)2}` then arrived as a bare
+                // `typeset` and dumped every parameter (~217× → 19 MB
+                // terminal flood → startup hang).
+                if la.is_empty() {
+                    return rhs_scalar;
+                }
                 let r = rhs_scalar.as_str_cow();
                 let out: Vec<Value> = la
                     .into_iter()
@@ -5930,6 +5982,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::Array(out)
             }
             (lhs_scalar, Value::Array(ra)) => {
+                // Symmetric empty-array-contributes-nothing rule; see
+                // the (Array, scalar) arm above.
+                if ra.is_empty() {
+                    return lhs_scalar;
+                }
                 let l = lhs_scalar.as_str_cow();
                 let out: Vec<Value> = ra
                     .into_iter()
@@ -6013,6 +6070,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::Array(out)
             }
             (Value::Array(la), rhs_scalar) => {
+                // An EMPTY array contributes nothing to a concatenated
+                // word — the surrounding scalar text survives. zsh:
+                // `x${^a}y` (a=()) / `x${(P)scalar-empty}y` → "xy", NOT
+                // a dropped word. Without this, a `(P)` indirect to an
+                // unset/empty scalar (which nodes_to_value collapses to
+                // Value::Array([]) for standalone-removal semantics)
+                // cartesian-dropped the whole word — p10k's
+                // `typeset -g _$2=${(P)2}` then arrived as a bare
+                // `typeset` and dumped every parameter (~217× → 19 MB
+                // terminal flood → startup hang).
+                if la.is_empty() {
+                    return rhs_scalar;
+                }
                 let r = rhs_scalar.as_str_cow();
                 let out: Vec<Value> = la
                     .into_iter()
@@ -6027,6 +6097,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 Value::Array(out)
             }
             (lhs_scalar, Value::Array(ra)) => {
+                // Symmetric empty-array-contributes-nothing rule; see
+                // the (Array, scalar) arm above.
+                if ra.is_empty() {
+                    return lhs_scalar;
+                }
                 let l = lhs_scalar.as_str_cow();
                 let out: Vec<Value> = ra
                     .into_iter()
@@ -9817,7 +9892,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 let _ = std::io::stdout().flush();
                 unsafe { libc::_exit(0) };
             }
-            _ => {
+            child_pid => {
                 // Parent: close write end, keep read end open under
                 // the same fd value so `/dev/fd/N` resolves to the
                 // pipe's read side. NOTE: FD_CLOEXEC must STAY clear
@@ -9828,6 +9903,24 @@ impl fusevm::ShellHost for ZshrsHost {
                 unsafe {
                     libc::close(write_end);
                 }
+                // Park read_end for close-after-consuming-command,
+                // exactly like process_sub_out does for its write_end
+                // (c:Src/exec.c addfilelist(NULL, fd) → deletefilelist).
+                // WITHOUT this the parent's read_end stayed open for
+                // the whole shell lifetime: p10k's async worker /
+                // realtime clock do `exec {fd}< <(cmd)` on every prompt,
+                // so each keystroke/redraw leaked a pipe fd until the
+                // ~256-fd limit was hit and the shell locked up
+                // (107 leaked pipes + 107 unreaped children observed).
+                let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
+                PSUB_PENDING_FDS.with(|v| v.borrow_mut().push((depth, read_end)));
+                // Reap the forked child so it doesn't linger as a
+                // zombie. `<(cmd)` children are fire-and-forget (their
+                // output flows through the pipe); C reaps them via the
+                // job machinery. A non-blocking reap here is scheduled;
+                // do a best-effort WNOHANG now and the rest drain on
+                // subsequent proc-subs / prompt cycles.
+                crate::fusevm_bridge::note_psub_child(child_pid);
             }
         }
         format!("/dev/fd/{}", read_end)

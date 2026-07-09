@@ -1174,3 +1174,165 @@ fn bug649_arith_for_and_for_paren_still_work() {
     assert_eq!(ec2, 0, "for-paren exit 0 (stderr={err2:?})");
     assert_eq!(out2.trim(), "pqr", "for-paren (stderr={err2:?})");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #650 — compinit never installed a `compdef` function
+// Fix: ext_builtins::builtin_compinit installs a compdef stub;
+//      fusevm_bridge BUILTIN_COMPDEF routes it to native builtin_compdef
+// ════════════════════════════════════════════════════════════════════
+
+// The compdef fix lives on the NATIVE compinit path (default mode); the
+// shared `run_zshrs` uses `--zsh`, which runs the slow fpath shell
+// compinit. Run these in default mode with an empty fpath (no scan).
+fn run_zshrs_native(script: &str) -> (i32, String, String) {
+    let bin = match zshrs_bin() {
+        Some(b) => b,
+        None => return (0, String::new(), String::new()),
+    };
+    let out = Command::new(&bin)
+        .args(["-c", script])
+        .env_remove("ZDOTDIR")
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {bin:?}: {e}"));
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn bug650_compinit_defines_compdef_function() {
+    // zsh's `compinit` defines `compdef` as a shell function; zshrs does
+    // the scan natively and never installed it, so `${+functions[compdef]}`
+    // stayed 0. zinit's `.zinit-compdef-replay` checks exactly that and
+    // aborts with "compinit function hasn't been loaded, cannot do compdef
+    // replay", and direct `compdef` calls hit "command not found: compdef".
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = "fpath=()\n\
+                  autoload -Uz compinit\n\
+                  compinit -u -D 2>/dev/null\n\
+                  print \"exists=${+functions[compdef]}\"\n\
+                  compdef _pip pip\n\
+                  print \"rc=$?\"";
+    let (ec, out, err) = run_zshrs_native(script);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert!(out.contains("exists=1"), "compdef function must exist: {out:?}");
+    assert!(out.contains("rc=0"), "compdef call must succeed: {out:?}");
+    assert!(
+        !err.contains("command not found: compdef"),
+        "compdef must not be command-not-found: {err:?}"
+    );
+}
+
+#[test]
+fn bug650_user_compdef_override_still_wins() {
+    // The stub must not shadow a genuine user/compsys compdef function.
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let script = "fpath=()\n\
+                  autoload -Uz compinit\n\
+                  compinit -u -D 2>/dev/null\n\
+                  compdef() { print \"USER:$*\"; }\n\
+                  compdef _x y";
+    let (ec, out, _err) = run_zshrs_native(script);
+    assert_eq!(ec, 0);
+    assert_eq!(out.trim(), "USER:_x y", "user compdef override must win: {out:?}");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #651 — ${(P)<empty>} in a concatenated word dropped the word
+// Fix: fusevm_bridge CONCAT_DISTRIBUTE(_FORCED) — empty array in a
+//      concat contributes nothing (keeps surrounding literals)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug651_p_flag_empty_keeps_surrounding_literals() {
+    // `(P)` is compiled as a distribute expansion (CONCAT_DISTRIBUTE_FORCED);
+    // when it indirects to an unset/empty SCALAR the value collapses to an
+    // empty array, and the forced cartesian dropped the WHOLE word (incl.
+    // literals): `x${(P)ZZ}y` → "" instead of zsh's "xy". p10k's
+    // `typeset -g _$2=${(P)2}` then arrived as a bare `typeset`, dumping
+    // every parameter ~217× (19 MB terminal flood → startup hang).
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, out, err) = run_zshrs_native(
+        "unset ZZ\n\
+         print -r -- \"A:x${(P)ZZ}y\"\n\
+         E=; T=E; print -r -- \"B:x${(P)T}y\"\n\
+         b=(one two); bn=b; print -r -- \"C:x${(P)bn}y\"\n\
+         s=(a ${(P)ZZ} b); print -r -- \"D:$#s\"\n\
+         a=(); print -r -- \"E:x${^a}y\"",
+    );
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert!(out.contains("A:xy"), "empty (P) keeps literals: {out:?}");
+    assert!(out.contains("B:xy"), "set-empty (P) keeps literals: {out:?}");
+    assert!(out.contains("C:xone twoy"), "quoted array (P) joins: {out:?}");
+    assert!(out.contains("D:2"), "standalone (P) still removed: {out:?}");
+    assert!(out.contains("E:xy"), "empty array concat keeps literals: {out:?}");
+}
+
+#[test]
+fn bug651_p_flag_empty_typeset_does_not_dump_params() {
+    // The concrete hang trigger: typeset -g _NAME=${(P)unset} must assign
+    // (empty) NOT dump every parameter.
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, out, err) =
+        run_zshrs_native("unset ZZ; typeset -g _f=${(P)ZZ}; print \"got=${+parameters[_f]}\"");
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert!(out.contains("got=1"), "_f assigned empty: {out:?}");
+    // A full param dump has hundreds of lines; a clean run has one.
+    assert!(out.lines().count() < 20, "no param dump: {} lines", out.lines().count());
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #652 — `<(cmd)` process substitution leaked a pipe fd (+child)
+// Fix: fusevm_bridge::process_sub_in registers read_end in
+//      PSUB_PENDING_FDS and reaps the child (note_psub_child)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug652_process_substitution_does_not_leak_fds() {
+    // `process_sub_in` kept the pipe read_end open for the whole shell
+    // lifetime (never registered for close-after-command) and never
+    // reaped the forked child. p10k's async worker / realtime clock run
+    // `exec {fd}< <(cmd)` on every prompt, so each keystroke/redraw
+    // leaked a pipe fd until the ~256-fd limit → the interactive shell
+    // locked up (107 leaked pipes + 107 zombies observed live).
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // 100 proc-subs, each explicitly closed. fd count must stay FLAT
+    // (zsh: constant). The pre-fix port grew ~1 fd per proc-sub.
+    let script = "for i in {1..100}; do exec {fd}< <(print hi); read l <&$fd; exec {fd}<&-; done\n\
+                  print \"fds=$(ls /dev/fd | wc -l)\"";
+    let (ec, out, err) = run_zshrs_native(script);
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    let fds: usize = out
+        .split_once("fds=")
+        .and_then(|(_, r)| r.trim().split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9999);
+    // A leak would put this in the hundreds; a healthy shell keeps a
+    // small constant handful.
+    assert!(fds < 30, "process-sub fd leak: {fds} fds open after 100 proc-subs ({out:?})");
+}
+
+#[test]
+fn bug652_process_substitution_still_works() {
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let (ec, out, err) = run_zshrs_native(
+        "diff <(print -l a b c) <(print -l a b c) && print SAME\ncat <(print hello)",
+    );
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    assert!(out.contains("SAME"), "diff of identical proc-subs: {out:?}");
+    assert!(out.contains("hello"), "cat proc-sub: {out:?}");
+}
