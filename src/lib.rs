@@ -109,6 +109,9 @@ pub mod fast_hash;
 /// `opts_cache` submodule — fast-path `isset()` option-state cache.
 #[path = "extensions/opts_cache.rs"]
 pub mod opts_cache;
+/// `pat_cache` submodule — global compiled-pattern cache (Rust-only opt).
+#[path = "extensions/pat_cache.rs"]
+pub mod pat_cache;
 /// `vm_pool` submodule — per-thread pool of recyclable fusevm VMs.
 #[path = "extensions/vm_pool.rs"]
 pub mod vm_pool;
