@@ -960,6 +960,19 @@ fn main() {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
+
+    // The shell runs on the main thread (keeping all signal/job-control
+    // semantics intact). Deep function recursion needs a large stack —
+    // each zshrs call frame is heavy (fusevm executor state, closures,
+    // parse buffers) and real configs (p10k/zinit precmd hooks) nest
+    // deeply per call, so on the default 8 MB main-thread stack a deep
+    // (or runaway) recursion overflowed and SEGFAULTed before the
+    // FUNCNEST guard could fire. Rather than move the shell onto a
+    // spawned thread (which breaks async-signal/trap delivery — signals
+    // race to worker threads), the main-thread stack itself is enlarged
+    // at link time via `-stack_size` (see build.rs). That lets recursion
+    // up to FUNCNEST (default 500) complete and lets the guard turn true
+    // runaways into a zsh-matching error instead of a crash.
     zshrs_main();
 }
 

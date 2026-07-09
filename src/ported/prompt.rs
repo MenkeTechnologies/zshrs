@@ -771,16 +771,63 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                             test = 1;
                         }
                     }
-                    // c:458-465 — `l`: line/column position test. C
-                    // calls `countprompt` to set `t0` then
-                    // `if (t0 >= arg) test = 1;`. zshrs's prompt
-                    // expansion runs offline (not bound to a terminal
-                    // column), so t0 is effectively 0; arg ≤ 0
-                    // satisfies the comparison and the common
-                    // `%(l.X.Y)` (no arg) form gets test=1 — matching
-                    // zsh when the line is not column-restricted.
+                    // c:458-465 — `l`: current-column test. C calls
+                    // `countprompt` to set `t0` = the display column
+                    // reached so far, then `if (t0 >= arg) test = 1;`.
+                    // The previous port hardcoded t0=0 (`0 >= arg`), so
+                    // every `%N(l.…)` with N>0 took the FALSE branch.
+                    // p10k's `_p9k_prompt_length` binary-searches the
+                    // rendered prompt width on exactly this test (with
+                    // COLUMNS=1024): `(( ${${(%):-$1%$m(l.x.y)}[-1]} = m ))`
+                    // — with t0 pinned to 0 the search never advances,
+                    // the `while (( y > x + 1 ))` loop's assignment
+                    // errors (`bad math expression`), and precmd spins.
+                    // Compute t0 = display columns of the output emitted
+                    // before this `%(l…)` — bv.buf[..bp] — skipping ANSI
+                    // escape sequences and `%{…%}`/readline (\x01..\x02)
+                    // zero-width spans, one column per UTF-8 char.
                     b'l' => {
-                        if 0 >= arg {
+                        let end = bv.bp.min(bv.buf.len());
+                        let slice = &bv.buf[..end];
+                        let mut t0: i32 = 0;
+                        let mut i = 0usize;
+                        while i < slice.len() {
+                            let b = slice[i];
+                            if b == 0x1b {
+                                // ESC — skip a CSI (`ESC [ … letter`) span.
+                                i += 1;
+                                if i < slice.len() && slice[i] == b'[' {
+                                    i += 1;
+                                    while i < slice.len()
+                                        && !slice[i].is_ascii_alphabetic()
+                                    {
+                                        i += 1;
+                                    }
+                                    if i < slice.len() {
+                                        i += 1;
+                                    }
+                                }
+                                continue;
+                            }
+                            if b == 0x01 {
+                                // readline "ignore width" span → skip to 0x02.
+                                i += 1;
+                                while i < slice.len() && slice[i] != 0x02 {
+                                    i += 1;
+                                }
+                                if i < slice.len() {
+                                    i += 1;
+                                }
+                                continue;
+                            }
+                            // One display column per UTF-8 scalar (byte that
+                            // is not a continuation byte 0x80..=0xBF).
+                            if b < 0x80 || b >= 0xC0 {
+                                t0 += 1;
+                            }
+                            i += 1;
+                        }
+                        if t0 >= arg {
                             test = 1;
                         }
                     }

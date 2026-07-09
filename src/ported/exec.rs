@@ -5637,6 +5637,42 @@ pub fn doshfunc(
     let fname = dupstring(&name); // c:5829
     let _ = fname; // c:5829 (kept for parity)
 
+    // c:6000-6004 — FUNCNEST guard. C:
+    //   if (zsh_funcnest >= 0 && funcstack && funcstacksz >= zsh_funcnest) {
+    //       zerr("maximum nested function level reached; increase FUNCNEST?");
+    //       goto undoshfunc;
+    //   }
+    // This was previously stubbed out on the assumption that the zshrs
+    // fusevm "doesn't recurse via real stack frames" — but it DOES:
+    // dispatch_function_call -> doshfunc -> dispatch_function_call -> …
+    // nests real native frames, so an accidental infinite recursion
+    // (e.g. a self-referential hook, a wrapped function that re-invokes
+    // itself, a zle widget cycle) overflowed the OS stack and
+    // SEGFAULTED instead of producing zsh's graceful error. Check at
+    // entry — before queue_signals / inc_locallevel / the funcsave
+    // snapshot — so the early return needs no unwinding. FUNCNEST < 0
+    // means "unlimited" (zsh's `zsh_funcnest >= 0` gate). Depth is the
+    // count of already-active frames on FUNCSTACK; the 501st nested
+    // call (depth == 500) trips it, matching C's `>=` on the default
+    // FUNCNEST=500.
+    let funcnest = crate::ported::params::getiparam("FUNCNEST");
+    if funcnest >= 0 {
+        // Count only real function frames (FS_FUNC) — the raw FUNCSTACK
+        // Vec also carries FS_EVAL/FS_SOURCE/anon frames, which inflate
+        // the depth several× and would falsely trip on legitimately deep
+        // (but finite) recursion. FS_FUNC-only matches zsh's nesting
+        // depth (`${#funcstack}`) and its funcnest accounting.
+        let depth = crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .map(|s| s.iter().filter(|f| f.tp == FS_FUNC).count())
+            .unwrap_or(0) as i64;
+        if depth >= funcnest {
+            zerr("maximum nested function level reached; increase FUNCNEST?");
+            crate::ported::builtin::LASTVAL.store(1, std::sync::atomic::Ordering::Relaxed);
+            return 1;
+        }
+    }
+
     // c:5835 — `queue_signals();` Lots of memory + global-state changes.
     queue_signals();
 
