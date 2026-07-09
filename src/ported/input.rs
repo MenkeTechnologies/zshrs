@@ -105,6 +105,21 @@ thread_local! {
     #[allow(non_upper_case_globals)]
     static inbufpos: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 
+    /// Byte-offset cache for `inbuf`/`inbufpos`. `inbufpos` is a CHAR
+    /// index; naively resolving it with `inbuf.chars().nth(pos)` is
+    /// O(pos), making a sequential scan of an N-char buffer O(N²) (a
+    /// 31 KB p10k function body took tens of seconds to parse). This
+    /// caches the byte offset of char index `INBUF_BYTE_POS`; a
+    /// sequential read (`pos == INBUF_BYTE_POS`) resolves in O(1).
+    /// Self-healing: on any mismatch (buffer swap, pushback reposition)
+    /// the offset is recomputed once via `char_indices().nth(pos)`.
+    /// `(0, 0)` is always valid — every `inbufpos` reset sets pos 0,
+    /// whose byte offset is 0 in any buffer.
+    #[allow(non_upper_case_globals)]
+    static inbuf_byte_char: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[allow(non_upper_case_globals)]
+    static inbuf_byte_off: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
     /// Input stack — port of `static struct instacks *instack` from
     /// `Src/input.c:114`. The instacktop pointer in C maps to the
     /// Vec's length here.
@@ -383,14 +398,38 @@ pub fn ingetc() -> Option<char> {
 
     loop {
         let pos = inbufpos.with(|p| p.get());
-        let buf = inbuf.with(|b| b.borrow().clone());
         // c:326 — C's `inbufptr` is a byte pointer; the Rust port keeps
         // `inbufpos` a CHAR index into the `inbuf` String. Buffer-end is
         // "no char at pos": the old `pos < buf.len()` compared a char index
         // against the BYTE length, truncating multibyte `inbuf` content
         // (eval / here-strings / cmdsubst / completion) at the first such char.
-        if let Some(c) = buf.chars().nth(pos) {
+        //
+        // O(1) resolution via the byte-offset cache instead of the old
+        // `inbuf.clone()` + `chars().nth(pos)` (both O(n) per char →
+        // O(n²) per buffer; a 31 KB `case` body took tens of seconds).
+        let byte_off = if inbuf_byte_char.with(|c| c.get()) == pos {
+            inbuf_byte_off.with(|o| o.get())
+        } else {
+            // Cache miss (buffer swap / pushback reposition): recompute
+            // this char's byte offset once, then resume O(1) advance.
+            inbuf.with(|b| {
+                b.borrow()
+                    .char_indices()
+                    .nth(pos)
+                    .map(|(off, _)| off)
+                    .unwrap_or_else(|| b.borrow().len())
+            })
+        };
+        // Extract the char + its UTF-8 width in a single borrow (no clone).
+        let ch = inbuf.with(|b| {
+            let s = b.borrow();
+            s.get(byte_off..).and_then(|rest| rest.chars().next())
+        });
+        if let Some(c) = ch {
             inbufpos.with(|p| p.set(pos + 1));
+            // Advance the byte cache in lockstep (O(1) next read).
+            inbuf_byte_char.with(|cc| cc.set(pos + 1));
+            inbuf_byte_off.with(|o| o.set(byte_off + c.len_utf8()));
             inbufct.with(|c| c.set(c.get().saturating_sub(1)));
 
             // c:328 — `if (itok(lastc = (unsigned char) *inbufptr++)) continue;`

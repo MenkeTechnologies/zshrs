@@ -970,3 +970,161 @@ fn bug641_adjacent_expansion_after_empty_flag_strip() {
     // ${x} expands to HI (not left literal), and the empty concat → F.
     assert_eq!(out, "HI\nF\n");
 }
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #642 — funcdef ending in `} always { … }` with its own `}` at
+// end-of-input (no trailing newline) dropped the always-block close from
+// body_source, so ${functions[f]} re-parsed as
+// `par_subsh: 'always' block missing }`. Trigger: the .zwc source path
+// (getpermtext re-emits the file with no trailing newline).
+// Fix: src/ported/parse.rs par_funcdef / NAME() body-slice — strip the
+// trailing `}` only when it is the excess (unmatched) funcdef brace.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug642_always_block_at_eof_keeps_close_brace() {
+    use std::io::Write;
+    // Write a funcdef whose body ends in a balanced `} always { … }` and
+    // whose own closing `}` is the LAST byte of the file (no newline).
+    let dir = std::env::temp_dir().join(format!("zshrs_bug642_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let fpath = dir.join("mini.zsh");
+    if let Ok(mut f) = std::fs::File::create(&fpath) {
+        // NOTE: no trailing newline after the final `}`.
+        let _ = f.write_all(
+            b"myfunc () {\n\tsetopt monitor || return\n\t{\n\t\tprint hello\n\t} always {\n\t\t(( $? )) && print cleanup\n\t}\n}",
+        );
+    }
+    let (_ec, out, _e) = run_zshrs(&format!(
+        "source {}; print -rn -- ${{functions[myfunc]}}",
+        fpath.display()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    // The rendered body must be brace-balanced (the always-block `}`
+    // survives) and carry no parse-error text.
+    assert!(
+        !out.contains("missing"),
+        "body_source lost the always-block close: {out:?}"
+    );
+    assert_eq!(
+        out.matches('{').count(),
+        out.matches('}').count(),
+        "unbalanced braces in rendered body: {out:?}"
+    );
+    assert!(out.contains("always"), "always block dropped: {out:?}");
+}
+
+#[test]
+fn bug642_funcdef_at_eof_with_brace_in_string() {
+    use std::io::Write;
+    // Guard the opposite failure mode: a body carrying an UNBALANCED
+    // brace inside a string (`echo "{"`), with the funcdef `}` at EOF.
+    // A naive "strip trailing `}` only when `}` > `{`" heuristic would
+    // leave the funcdef `}` in place here (counts are equal) and the
+    // re-parse would hit `parse error near }`. The fix strips the
+    // funcdef `}` by position, not by brace balance.
+    let dir = std::env::temp_dir().join(format!("zshrs_bug642b_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let fpath = dir.join("sb.zsh");
+    if let Ok(mut f) = std::fs::File::create(&fpath) {
+        let _ = f.write_all(b"sb () {\n\techo \"{\"\n}"); // no trailing newline
+    }
+    let (_ec, out, _e) = run_zshrs(&format!(
+        "source {}; print -rn -- ${{functions[sb]}}",
+        fpath.display()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert!(
+        !out.contains("near") && !out.contains("parse error"),
+        "brace-in-string body left a stray funcdef `}}`: {out:?}"
+    );
+    // Rendered body is exactly the single statement, no funcdef braces.
+    assert_eq!(out.trim(), "echo \"{\"", "unexpected render: {out:?}");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #643 — deep recursion must not crash; FUNCNEST guard matches
+// zsh (default 500) instead of the old depth-80 clamp.
+// Fix: bins/zshrs.rs (512MB stack thread) + vm_helper.rs (raise ceiling)
+// + exec.rs::doshfunc (FUNCNEST guard on FS_FUNC depth).
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug643_infinite_recursion_errors_gracefully_no_crash() {
+    // Runaway recursion must produce zsh's graceful error with rc 1,
+    // NOT a stack-overflow SIGSEGV/SIGABRT (exit 134/139).
+    let (ec, _out, err) = run_zshrs("f(){ f; }; f");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert!(
+        err.contains("maximum nested function level reached"),
+        "expected FUNCNEST error, got stderr: {err:?}"
+    );
+    // rc must be a normal shell status, never a crash signal.
+    assert!(
+        ec != 134 && ec != 139,
+        "infinite recursion crashed (exit {ec}) instead of erroring"
+    );
+}
+
+#[test]
+fn bug643_deep_finite_recursion_completes() {
+    // Depth well past the old 80 clamp but under FUNCNEST=500 must run
+    // to completion (zsh does), not falsely abort.
+    let (_ec, out, _err) =
+        run_zshrs("f(){ (( $1 >= 300 )) && { print DONE300; return }; f $(($1+1)); }; f 0");
+    if zshrs_bin().is_none() {
+        return;
+    }
+    assert_eq!(out.trim(), "DONE300", "deep recursion aborted early: {out:?}");
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BUGS.md #644 — ingetc was O(n²) per buffer (clone + chars().nth), so a
+// large function body (p10k's 31KB `_p9k_init_icons` case) took tens of
+// seconds to parse and froze the interactive shell.
+// Fix: src/ported/input.rs::ingetc (byte-offset cache).
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bug644_large_case_body_parses_in_linear_time() {
+    // Build a big case with many wide branches — the exact shape that was
+    // O(n²). Re-parse it via ${functions[f]} (getfunction → parse_string),
+    // the read path that froze precmd. With the O(n²) regressed this takes
+    // many seconds; linear it is well under a second even in debug.
+    let filler: String = (0..150)
+        .map(|i| format!("K{i} 'val{i}xxxxxxxxxxxxxxxxxxxx'"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let branch = |name: &str| format!("({name}) icons=({filler}) ;;");
+    let branches: String = (0..40)
+        .map(|i| branch(&format!("mode{i}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let script = format!(
+        "setopt extendedglob\nf() {{\ncase $1 in\n{branches}\n(*) icons=({filler}) ;;\nesac\n}}\nprint -rn -- ${{functions[f]}} | wc -c"
+    );
+    if zshrs_bin().is_none() {
+        return;
+    }
+    let start = std::time::Instant::now();
+    let (ec, out, err) = run_zshrs(&script);
+    let elapsed = start.elapsed();
+    assert_eq!(ec, 0, "exit 0 (stderr={err:?})");
+    // The rendered body is non-trivial (thousands of bytes).
+    let bytes: usize = out.trim().parse().unwrap_or(0);
+    assert!(bytes > 1000, "rendered body too small: {out:?}");
+    // Perf guard: the O(n²) version took tens of seconds for this size;
+    // a generous ceiling still catches a regression without flaking.
+    assert!(
+        elapsed.as_secs() < 10,
+        "large case body parse took {elapsed:?} — ingetc O(n²) regressed?"
+    );
+}

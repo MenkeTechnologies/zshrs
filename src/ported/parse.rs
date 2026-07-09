@@ -2431,17 +2431,14 @@ fn par_funcdef() -> Option<ZshCommand> {
             zerr("parse error: expected `}'");
             return None;
         }
-        let body_end = pos().saturating_sub(1);
+        // See the matching `NAME ()` arm below and Bug #642: slice
+        // through pos() so the funcdef `}` is always inside the slice
+        // (at EOF `pos()-1` excluded it), then strip that single trailing
+        // brace — so a body ending in a balanced `} always { ... }` keeps
+        // its close on the `.zwc` round-trip.
+        let body_end = pos();
         let body_source = input_slice(body_start, body_end)
             .map(|s| {
-                // Lexer's pos() may have advanced past `}` AND skipped
-                // trailing whitespace/newlines before returning the
-                // OUTBRACE_TOK to us, so the slice up to `pos - 1`
-                // includes the `}` and any preceding whitespace.
-                // Strip the trailing `}` and any preceding structural
-                // separator (`;`, `\n`) — C zsh's getpermtext walks
-                // the wordcode list and emits each command WITHOUT
-                // the trailing `;`/`\n` that lives in the input.
                 let t = s.trim();
                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
                 let t = t
@@ -7357,14 +7354,6 @@ pub fn par_subsh_wordcode(cmplx: &mut i32, zsh_construct: i32) {
 
         // c:1655-1656 — `if (tok != OUTBRACE) YYERRORV(oecused);`
         if tok() != OUTBRACE_TOK {
-            if std::env::var("ZSHRS_ALWAYSDBG").is_ok() {
-                eprintln!(
-                    "ALWAYSDBG: 'always' body over-ran `}}` — got tok={} tokstr={:?} script={:?}",
-                    tok(),
-                    tokstr(),
-                    crate::ported::utils::scriptname_get()
-                );
-            }
             zerr("par_subsh: 'always' block missing `}`");
             return;
         }
@@ -9508,17 +9497,24 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
             zerr("parse error: expected `}'");
             return None;
         }
-        let body_end = pos().saturating_sub(1);
+        // Slice THROUGH pos() (not `pos()-1`). pos() sits just past the
+        // funcdef `}` and any trailing whitespace/newline the lexer
+        // consumed, so `[body_start, pos())` always contains the funcdef
+        // `}`. Using `pos()-1` landed ON the `}` at end-of-input (no
+        // trailing separator) and thus EXCLUDED it, so the subsequent
+        // `strip_suffix('}')` chopped a legitimate inner `}` instead —
+        // corrupting any body ending in a balanced `} always { ... }`
+        // into `par_subsh: 'always' block missing }` on the `.zwc`
+        // source path (getpermtext re-emits the file with no trailing
+        // newline, so the last funcdef `}` sits at EOF). Bug #642.
+        let body_end = pos();
         let body_source = input_slice(body_start, body_end)
             .map(|s| {
-                // Lexer's pos() may have advanced past `}` AND skipped
-                // trailing whitespace/newlines before returning the
-                // OUTBRACE_TOK to us, so the slice up to `pos - 1`
-                // includes the `}` and any preceding whitespace.
-                // Strip the trailing `}` and any preceding structural
-                // separator (`;`, `\n`) — C zsh's getpermtext walks
-                // the wordcode list and emits each command WITHOUT
-                // the trailing `;`/`\n` that lives in the input.
+                // The slice now always ends with the funcdef `}` (plus
+                // optional trailing whitespace). Trim, strip that single
+                // closing brace, then drop the structural separator
+                // (`;`/`\n`) that preceded it — C zsh's getpermtext emits
+                // each command without the trailing `;`/`\n`.
                 let t = s.trim();
                 let t = t.strip_suffix('}').unwrap_or(t).trim_end();
                 let t = t

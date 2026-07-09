@@ -62,6 +62,24 @@ fn main() {
     #[cfg(target_os = "linux")]
     println!("cargo:rustc-link-lib=tinfo");
 
+    // Enlarge the MAIN-thread stack (binaries only). zshrs runs the
+    // whole shell on the main thread to keep signal/job-control
+    // semantics intact — but its per-call frames are heavy (fusevm
+    // executor state, closures, parse buffers) and real configs
+    // (p10k/zinit precmd hooks) nest deeply, so on the default 8 MB
+    // main-thread stack a deep or runaway recursion overflowed and
+    // SEGFAULTed before the FUNCNEST guard (exec.rs::doshfunc, default
+    // 500) could fire its graceful error. macOS honors the Mach-O
+    // `-stack_size` load command for the main thread; 256 MB comfortably
+    // fits FUNCNEST-deep recursion (pages are committed on demand, so
+    // idle RSS is unaffected). `rustc-link-arg-bins` scopes this to the
+    // shipped binaries — the Rust test harness runs each test on its own
+    // (RUST_MIN_STACK-sized) thread and drives zshrs as a subprocess, so
+    // it is unaffected. Bug #643. (Linux governs the main-thread stack
+    // via RLIMIT_STACK/ulimit, not a link flag, so this is macOS-only.)
+    #[cfg(target_os = "macos")]
+    println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x10000000");
+
     let ported_root = manifest_dir.join("src/ported");
     let c_index_path = manifest_dir.join("tests/data/zsh_c_fn_names.txt");
     let allowlist_path = manifest_dir.join("tests/data/fake_fn_allowlist.txt");

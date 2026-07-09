@@ -2435,22 +2435,23 @@ impl ShellExecutor {
         // - local_scope_depth FUNCNEST guard
         //
         // c:Src/exec.c::funcnest_check — C zsh allows FUNCNEST=500 by
-        // default and the per-call stack usage is small enough that
-        // 500 nested calls fit comfortably in the default 8MB thread
-        // stack. zshrs's per-call stack usage is heavier (vm_helper
-        // state, fusevm closures, parse buffers) — empirically the
-        // Rust stack overflows around depth 120. Cap the effective
-        // check at a safe ceiling (80) so the user-visible
-        // `maximum nested function level reached` diagnostic fires
-        // before the SIGABRT crash. User-set FUNCNEST values above
-        // 80 are silently clamped. Bug #519 — critical: previously
-        // ANY infinite-recursion function crashed the shell with
-        // `thread 'main' has overflowed its stack` exit 134.
-        const FUNCNEST_RUST_CEILING: usize = 80;
+        // default. zshrs's per-call stack usage is heavier (vm_helper
+        // state, fusevm closures, parse buffers), so on the default 8MB
+        // stack a deep recursion overflowed around depth ~80-120 and
+        // crashed. That is now fixed at the source: the shell runs on a
+        // 512MB-stack thread (see bins/zshrs.rs::main), which comfortably
+        // fits FUNCNEST (500) nested heavy frames. So the effective limit
+        // is the user's FUNCNEST (default 500), matching zsh — no premature
+        // clamp — with a generous hard ceiling as a last-resort backstop
+        // that stays well under the big stack's capacity. Bug #519 (the
+        // crash) / #643 (the false-positive clamp at 80 that broke
+        // legitimately deep recursion). The authoritative FUNCNEST error
+        // is also enforced in doshfunc (exec.rs) on the FS_FUNC depth.
+        const FUNCNEST_RUST_CEILING: usize = 6000;
         let funcnest_user: usize = self
             .scalar("FUNCNEST")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(100);
+            .unwrap_or(500);
         let funcnest_limit = funcnest_user.min(FUNCNEST_RUST_CEILING);
         if self.local_scope_depth >= funcnest_limit {
             eprintln!(

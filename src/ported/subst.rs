@@ -14017,17 +14017,27 @@ pub fn paramsubst(
         }; // c:1885
         // The suffix (text after this `${…}`) rides along with only the OUTER
         // brace tokenized at entry — a trailing RAW `${…}` / `$name` there is
-        // invisible to the caller's re-scan, and the compiled single-call
-        // caller never re-scans at all. When a caller hands paramsubst a word
-        // holding MULTIPLE adjacent expansions (`${(M)0:#1}${x}`) the second
-        // one lands in this suffix untouched and was emitted literally. Fully
-        // expand a suffix that still carries an expansion here (guarded on `$`
-        // so literal suffixes are untouched) so nothing leaks out unexpanded.
+        // invisible to a caller that does NOT re-scan. The compiled single-call
+        // caller never re-scans, so when it hands paramsubst a word holding
+        // MULTIPLE adjacent expansions (`${(M)0:#1}${x}`) the second one lands
+        // in this suffix untouched and was emitted literally. Fully expand the
+        // suffix here in that case (guarded on `$`) so nothing leaks out.
         // This broke zinit's turbo test
         // `[[ -n ${(M)${+ICE[wait]}:#1}${ICE[load]}… ]]` (the literal
-        // `${ICE[load]}` made it non-empty → every plugin wrongly deferred to
-        // the async scheduler and never loaded).
-        let suffix = if suffix.contains('$') {
+        // `${ICE[load]}` made it non-empty → every plugin wrongly deferred).
+        //
+        // BUT the RECURSIVE `stringsubst` caller (subst.rs:1065) DOES re-scan:
+        // it resumes scanning the returned word from `new_pos`, so it will
+        // expand the suffix's `${…}` itself. Re-expanding it here as well is
+        // both redundant AND recursive — for a word with N adjacent expansions
+        // (p10k's prompt-param init word has ~200 `${POWERLEVEL9K_*-default}`)
+        // it re-`singsub`s the entire remaining suffix at EVERY expansion,
+        // giving O(N²)+ recursion that hangs the shell. So only expand the
+        // suffix when we are NOT nested inside stringsubst — i.e. the caller
+        // won't re-scan. `IN_PARAMSUBST_NEST` is bumped by stringsubst around
+        // its paramsubst call (subst.rs:1064), so `== 0` means the non-
+        // re-scanning (compiled/direct) path where #641's fix is needed.
+        let suffix = if suffix.contains('$') && IN_PARAMSUBST_NEST.with(|c| c.get()) == 0 {
             singsub(&suffix)
         } else {
             suffix
