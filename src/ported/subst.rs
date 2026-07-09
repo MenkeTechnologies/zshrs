@@ -15028,7 +15028,7 @@ pub fn paramsubst(
                     nodes.push(s); // c:3950
                 } // c:3950
                 let first = nodes.first().cloned().unwrap_or_default(); // c:3950
-                return (first, prefix.len(), nodes); // c:3950
+                return (first, prefix.chars().count(), nodes); // c:3950
             } // c:3950
         } // c:3950
 
@@ -15036,7 +15036,14 @@ pub fn paramsubst(
         let suffix: String = chars[pos..].iter().collect(); // c:1625
         let result = format!("{}{}{}", prefix, value, suffix); // c:1625
         result_nodes.push(result.clone()); // c:1625
-        return (result, prefix.len() + value.len(), result_nodes); // c:1625
+        // Resume position is a CHAR index into the reconstructed word
+        // (the caller, stringsubst, indexes `chars[pos]`). Byte lengths
+        // (`prefix.len() + value.len()`) skipped past the next `$` when
+        // the value held a multibyte char (e.g. `${:-$1$1}` with `$1`
+        // holding a box-drawing `─`), leaving the following expansion
+        // literal — which broke p10k's `_p9k_prompt_length` (`bad math
+        // expression`) and hung the prompt. Bug #647.
+        return (result, prefix.chars().count() + value.chars().count(), result_nodes); // c:1625
     } // c:1625
 
     // c:Src/subst.c:2596-2602 — `$~` / `$~~` GLOB_SUBST flag prefix
@@ -15089,7 +15096,7 @@ pub fn paramsubst(
             let suffix: String = chars[new_pos..].iter().collect();
             let result = format!("{}{}", prefix, suffix);
             result_nodes.push(result.clone());
-            return (result, prefix.len(), result_nodes);
+            return (result, prefix.chars().count(), result_nodes);
         }
         // Re-enter paramsubst at the new position by SLICING out
         // the consumed `~` chars (so the dispatch sees `$X` at the
@@ -15117,7 +15124,7 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.len() + value.len(), result_nodes) // c:1625
+            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
         } // c:1625
         c if c == '$' || c == Stringg => {
             // c:1625
@@ -15131,7 +15138,7 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.len() + value.len(), result_nodes) // c:1625
+            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
         } // c:1625
         c if c == '#' || c == Pound => {
             // c:1625
@@ -15214,7 +15221,7 @@ pub fn paramsubst(
             let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.len() + value.len(), result_nodes) // c:1625
+            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
         } // c:1625
         '*' | '@' => {
             // c:1625
@@ -15352,7 +15359,7 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.len() + value.len(), result_nodes) // c:1625
+            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
         } // c:1625
         '0'..='9' => {
             // c:1625
@@ -15394,7 +15401,7 @@ pub fn paramsubst(
             let suffix: String = chars[nx..].iter().collect(); // c:1625
             let result = format!("{}{}{}", prefix, value, suffix); // c:1625
             result_nodes.push(result.clone()); // c:1625
-            (result, prefix.len() + value.len(), result_nodes) // c:1625
+            (result, prefix.chars().count() + value.chars().count(), result_nodes) // c:1625
         } // c:1625
         // c:Src/subst.c — `$-:MOD`, `$!:MOD`. Routes through
         // exec_getsparam which dispatches to lookup_special_var
@@ -15414,7 +15421,7 @@ pub fn paramsubst(
             let suffix: String = chars[after_pos..].iter().collect();
             let result = format!("{}{}{}", prefix, value, suffix);
             result_nodes.push(result.clone());
-            (result, prefix.len() + value.len(), result_nodes)
+            (result, prefix.chars().count() + value.chars().count(), result_nodes)
         }
         _ => {
             // c:1625
