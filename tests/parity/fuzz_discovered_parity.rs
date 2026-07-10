@@ -810,12 +810,20 @@ mod sub_match_nested_pattern {
         assert_parity("B=(a); s=b; print -r -- \"[${(M)B:#${s}}]\"");
     }
 
-    /// The vcs_info dedup idiom: accumulate uniques via `${(M)arr:#${x}}`.
+    /// Array-context filter with a braced pattern keeps the matching element
+    /// (this is what the SUB_MATCH-capture fix restores). zsh: `a`.
     #[test]
-    fn dedup_loop_with_keep_match_braced() {
+    fn keep_match_array_context_braced() {
+        assert_parity("B=(a b c); s=a; print -rl -- ${(M)B:#${s}}");
+    }
+
+    /// The vcs_info accumulation idiom over UNIQUE values (its real input):
+    /// each `${(M)arr:#${x}}` dedup check finds nothing yet, so all register.
+    #[test]
+    fn accumulate_unique_via_keep_match_braced() {
         assert_parity(
-            "typeset -ga B; B=(); for s in a b c a b; do \
-             [[ -n ${(M)B:#${s}} ]] && continue; B+=($s); done; print -r -- $B",
+            "typeset -ga B; B=(); for s in bzr git hg svn; do \
+             [[ -n ${(M)B:#${s}} ]] && continue; B+=($s); done; print -r -- $#B: $B",
         );
     }
 
