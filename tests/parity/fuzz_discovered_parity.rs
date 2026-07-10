@@ -767,12 +767,14 @@ mod raw_subscript_param_expansion {
 mod glob_subst_prefix {
     use super::*;
 
-    /// Build a fixture dir and glob `$d/$~pat` — must match under the prefix.
+    /// Build a fixture dir and glob `$d/$~pat` under a relative prefix (a
+    /// subdir), so the compared output is deterministic (no absolute temp
+    /// path). The prefix `sub/` must survive into the glob.
     #[test]
     fn tilde_glob_flag_with_prefix() {
         assert_parity(
-            "t=$(mktemp -d); touch $t/foo.txt $t/bar.txt; d=$t pat='*.txt'; \
-             print -rl -- $d/$~pat | sort; cd /; rm -rf $t",
+            "t=$(mktemp -d); cd $t; mkdir sub; touch sub/foo.txt sub/bar.txt; \
+             pfx=sub pat='*.txt'; print -rl -- $pfx/$~pat | sort; cd /; rm -rf $t",
         );
     }
 
