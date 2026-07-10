@@ -14475,7 +14475,17 @@ pub fn paramsubst(
             }
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {
-                let s = if parts.len() == 1 {
+                let s = if plan9 || parts.len() == 1 {
+                    // c:Src/subst.c:3960-3985 — RC_EXPAND_PARAM / `${^arr}`
+                    // plan9 CROSS-PRODUCT: EVERY element gets BOTH the prefix
+                    // and the suffix, so `$dir/$~pat` and `x${^arr}y` expand to
+                    // `dir1/pat dir2/pat …` / `xay xby xcy`. The splat path
+                    // (below) instead puts the prefix on the FIRST element and
+                    // the suffix on the LAST only (`x$@y` → `xa b cy`). Without
+                    // the plan9 arm here, only the last distributed element
+                    // carried the suffix — `${^fpath}/VCS_INFO_get_data_*~*(…)`
+                    // globbed only the last fpath dir (vcs_info "unknown
+                    // backend git"), and every no-match dir kept its bare path.
                     format!("{}{}{}", prefix, emit_part(part), suffix)
                 } else if i == 0 {
                     format!("{}{}", prefix, emit_part(part))
@@ -14502,7 +14512,15 @@ pub fn paramsubst(
             // reports the suffix offset within the LAST node.
             let last_value_chars = parts
                 .last()
-                .map(|p| emit_part(p).chars().count())
+                .map(|p| {
+                    // The multi-node contract points new_pos at the suffix
+                    // offset within the LAST node. In plan9 mode the last node
+                    // is `prefix + emit_part(last) + suffix`, so the suffix
+                    // starts AFTER the prefix too (splat mode's last node has
+                    // no prefix).
+                    let pfx = if plan9 { prefix.chars().count() } else { 0 };
+                    pfx + emit_part(p).chars().count()
+                })
                 .unwrap_or(0);
             let pre_retain_len = nodes.len();
             if !qt && nodes.len() > 1 {
