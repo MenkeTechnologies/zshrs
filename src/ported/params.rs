@@ -6031,10 +6031,30 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         // and would deadlock against a held write lock. Associative arrays use
         // the raw string key instead, so only pre-evaluate for non-hashed.
         let is_hashed = {
-            let tab = paramtab().read().unwrap();
-            tab.get(name)
-                .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
-                .unwrap_or(false)
+            let flagged = {
+                let tab = paramtab().read().unwrap();
+                tab.get(name)
+                    .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
+                    .unwrap_or(false)
+            };
+            // c:Src/Zle/complete.c — special associative parameters (notably
+            // `$compstate`, populated during completion via set_compstate_str)
+            // keep their values in the parallel `paramtab_hashed_storage()`
+            // store rather than a wired PM_HASHED paramtab node (complete.rs
+            // defers that). A subscript WRITE like `compstate[insert]=menu`
+            // from a completion widget must still take the associative path so
+            // the string key `insert` is NOT arithmetic-evaluated to 0 (which
+            // then errored `assignment to invalid subscript range`). Recognise
+            // any hash-storage-backed name as hashed. Outside completion the
+            // store has no `compstate` entry, so the write still errors — which
+            // matches zsh (`compstate` only exists during completion). This
+            // repairs a regression introduced when the undeclared-subscript
+            // auto-vivify was removed.
+            flagged
+                || paramtab_hashed_storage()
+                    .lock()
+                    .map(|s| s.contains_key(name))
+                    .unwrap_or(false)
         };
         let resolved_idx: i64 = if is_hashed {
             0 // unused for hashed params
@@ -6045,16 +6065,24 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let mut tab = paramtab().write().unwrap();
         let exists = tab.contains_key(name); // c:3212
         if !exists {
-            // c:3213 `createparam(t, PM_ARRAY); created = 1;`
+            // c:3213 `createparam(t, PM_ARRAY); created = 1;` — but when the
+            // name is a hash-storage-backed associative (e.g. `$compstate`),
+            // create it PM_HASHED so the dispatch below routes to the assoc
+            // element store instead of the numeric-subscript array path.
+            let (create_flags, create_arr) = if is_hashed {
+                (PM_HASHED as i32, None)
+            } else {
+                (PM_ARRAY as i32, Some(Vec::new()))
+            };
             let pm: Param = Box::new(param {
                 node: hashnode {
                     next: None,
                     nam: name.to_string(),
-                    flags: PM_ARRAY as i32,
+                    flags: create_flags,
                 },
                 u_data: 0,
                 u_tied: None,
-                u_arr: Some(Vec::new()),
+                u_arr: create_arr,
                 u_str: None,
                 u_val: 0,
                 u_dval: 0.0,
@@ -14113,6 +14141,50 @@ mod tests {
            // Cleanup so other tests don't see leaked param.
         let _ = paramtab().write().unwrap().remove(name); // c:3819
         opt_state_set("exec", saved_exec); // c:2697
+    }
+
+    /// Regression: a subscript WRITE to a hash-storage-backed special assoc
+    /// (`$compstate`, populated during completion via set_compstate_str) with a
+    /// STRING key must succeed, not error "assignment to invalid subscript
+    /// range". After the undeclared-subscript auto-vivify was removed, the
+    /// completion system's `compstate[insert]=menu` writes started arithmetic-
+    /// evaluating the `insert` key to 0 and failing — flooding real shells with
+    /// errors on every completion. The fix recognises any name present in
+    /// paramtab_hashed_storage() as associative. A name NOT in that store still
+    /// errors (matches zsh: `compstate` only exists during completion).
+    #[test]
+    fn subscript_write_to_hash_backed_special_assoc_succeeds() {
+        let _g = crate::test_util::global_state_lock();
+        let saved_exec = opt_state_get("exec").unwrap_or(false);
+        opt_state_set("exec", true);
+        // Simulate the completion setup that populates $compstate before the
+        // user completer widget runs (compcore::callcompfunc → set_compstate_str).
+        paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .entry("compstate".to_string())
+            .or_default();
+        // User completer write: `compstate[insert]=menu`.
+        let ok = assignsparam("compstate[insert]", "menu", 0);
+        assert!(ok.is_some(), "compstate[insert]=menu must succeed, got error");
+        assert_eq!(
+            paramtab_hashed_storage()
+                .lock()
+                .unwrap()
+                .get("compstate")
+                .and_then(|m| m.get("insert"))
+                .map(String::as_str),
+            Some("menu"),
+        );
+        // Negative: a name with NO hash-storage backing and a non-numeric key
+        // still errors (returns None) — the undeclared-subscript guard holds.
+        let bad = assignsparam("zshrs_no_such_assoc[k1]", "bb", 0);
+        assert!(bad.is_none(), "undeclared non-numeric subscript must still error");
+        // Cleanup.
+        let _ = paramtab_hashed_storage().lock().unwrap().remove("compstate");
+        let _ = paramtab().write().unwrap().remove("compstate");
+        let _ = paramtab().write().unwrap().remove("zshrs_no_such_assoc");
+        opt_state_set("exec", saved_exec);
     }
 
     /// c:3076 — getsparam on a non-existent param returns None.

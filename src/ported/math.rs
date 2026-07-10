@@ -3709,9 +3709,21 @@ pub(crate) fn bop(tk: i32) {
         mv.val
     };
 
-    let tst = !((val.type_ == MN_INTEGER && val.l == 0)
-        || (val.type_ == MN_FLOAT && val.d == 0.0)
-        || val.type_ == MN_UNSET);
+    // c:Src/math.c:1461 — `tst = (spval->type & MN_FLOAT) ? (zlong)spval->u.d
+    // : spval->u.l;`. A FLOAT operand is TRUNCATED to integer for the
+    // short-circuit truth test (`(zlong)0.5` == 0 → falsy), NOT compared
+    // against 0.0. zsh's `&&`/`||` therefore treat a fractional float like
+    // 0.5 as false. The prior `val.d == 0.0` test made 0.5 spuriously TRUE,
+    // so `0.5 || (2+3)` short-circuited on the truthy 0.5 and set noeval for
+    // the RHS; a COMPOUND RHS under noeval collapses to a dummy 0, and the
+    // `||` operator then combined truncated-0 with that 0 → wrong result 0
+    // (zsh evaluates the RHS and yields 1). A bare-literal RHS masked the
+    // bug because its value survives noeval.
+    let tst = if val.type_ & MN_FLOAT != 0 {
+        (val.d as i64) != 0
+    } else {
+        val.l != 0
+    };
     match tk {
         DAND | DANDEQ if !tst => {
             m_noeval_inc();

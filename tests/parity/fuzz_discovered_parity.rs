@@ -530,3 +530,172 @@ mod bare_assoc_join_order {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// L. Logical `&&` / `||` truncate a FLOAT operand for the truth test.
+//
+// zsh's short-circuit prologue (math.c:1461 `bop`) computes the truth of an
+// operand as `(spval->type & MN_FLOAT) ? (zlong)spval->u.d : spval->u.l` — a
+// float is CAST to integer, so `0.5` → 0 → falsy (unlike `!0.5`/`0.5?:` which
+// use raw float truth). The Rust port compared the float against 0.0, making
+// `0.5` truthy; `0.5 || (2+3)` then short-circuited and set noeval on the RHS,
+// and a COMPOUND RHS under noeval collapses to 0 → wrong result 0.
+// FIXED: bop truncates a float to i64 before the truth test (math.rs).
+// ─────────────────────────────────────────────────────────────────────
+mod logical_float_truncation {
+    use super::*;
+
+    /// `0.5` truncates to 0 (falsy), so `||` MUST evaluate the compound RHS.
+    /// zsh: `1`.  zshrs formerly short-circuited and printed `0`.
+    #[test]
+    fn or_float_lhs_evaluates_compound_rhs() {
+        assert_parity("print -r -- $(( 0.5 || (2+3) ))");
+    }
+
+    /// A float whose truncation is nonzero (`2.5` → 2) still short-circuits;
+    /// an exact-zero float (`0.0`) evaluates the RHS. Both already agreed —
+    /// pinned so the fix can't over-correct.
+    #[test]
+    fn or_float_truncation_boundaries() {
+        assert_parity("print -r -- $(( 0.5 || 0 )):$(( 2.5 || (2+3) )):$(( 0.0 || (2+3) ))");
+    }
+
+    /// `&&` uses the same truncated truth: `0.5` → 0 → short-circuit false.
+    #[test]
+    fn and_float_lhs_truncates() {
+        assert_parity("print -r -- $(( 0.5 && (2+3) )):$(( 1.9 && (1+1) ))");
+    }
+
+    /// The full nested-ternary reproducer the fuzzer surfaced (`(-16)**-7` is a
+    /// tiny nonzero float that truncates to 0 inside the `||`).  zsh: `1`.
+    #[test]
+    fn nested_ternary_float_power_or() {
+        assert_parity(
+            "neg=-7; print -r -- \"$(( (((16#56) && (16#e5)) ? ((neg) || (16#fd)) : 7) \
+             ? (((-16) ** (neg)) || (2#110 ^ 0x81 + 1)) : 0 ))\"",
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// N. nounset error inside a `[[ … ]]` operand preserves the cond result.
+//
+// Under `setopt NO_UNSET`, referencing an unset parameter (or an out-of-range
+// array subscript) raises a "parameter not set" zerr that sets errflag. In a
+// REGULAR command that aborts the command with status 1 (both shells agree).
+// But inside `[[ … ]]`, zsh's evalcond (c:Src/cond.c:196-208 cond_subst →
+// singsub, then c:254 matheval/test) NEVER checks errflag — the operand
+// expands to empty, the test still evaluates (`-z ""` → true), and the `[[ ]]`
+// returns 0. The errflag then aborts only the FOLLOWING commands; the shell's
+// exit status is the conditional's own result (0), not a forced 1.
+//
+// zshrs diverged: its nounset sites call set_last_status(1) on the executor
+// (extra to C — subst.c:1689 raises the zerr but never touches lastval), and
+// the cond's Op::SetStatus updated only vm.last_status, so the executor lastval
+// that BUILTIN_ERREXIT_CHECK reads stayed at the nounset site's transient 1.
+// FIXED (fusevm_bridge.rs BUILTIN_COND_STATUS_FROM_BOOL): the conditional now
+// syncs its result to the executor's lastval before the abort check, mirroring
+// c:Src/exec.c:5216 `lastval = evalcond(...)`. Regular commands still yield 1
+// via their own command-abort path (no cond runs), so the fix is cond-scoped.
+// ─────────────────────────────────────────────────────────────────────
+mod nounset_in_conditional {
+    use super::*;
+
+    /// `-z` of the empty out-of-range subscript is true → cond 0; errflag
+    /// aborts nothing after it.  zsh: exit 0. zshrs formerly forced 1.
+    #[test]
+    fn zbracket_out_of_range_subscript_preserves_cond_status() {
+        assert_parity("arr=(x1 x2 y3); setopt NO_UNSET; [[ -z ${arr[99]} ]]; print done");
+    }
+
+    /// `-n` of the empty operand is false → cond 1. Pins that the sync uses
+    /// the real cond result, not a blanket 0.
+    #[test]
+    fn zbracket_nounset_false_cond_is_one() {
+        assert_parity("arr=(x1 x2 y3); setopt NO_UNSET; [[ -n ${arr[99]} ]]; print done");
+    }
+
+    /// A bare unset scalar in `[[ ]]` behaves the same; `== ""` → true → 0.
+    #[test]
+    fn zbracket_unset_scalar_streq_empty() {
+        assert_parity("setopt NO_UNSET; [[ ${UNSET} == \"\" ]]; echo AFTER");
+    }
+
+    /// A REGULAR command with an unset operand under NO_UNSET still aborts
+    /// with status 1 (the fix is cond-scoped, not a global nounset change).
+    #[test]
+    fn regular_command_unset_still_aborts_one() {
+        assert_parity("setopt NO_UNSET; print $UNSET; echo AFTER");
+    }
+
+    /// `${arr[@]}` on a genuinely UNSET array under NO_UNSET is a "parameter
+    /// not set" error (exit 1), like `$arr` / `${arr[*]}` / `${arr[1]}`. The
+    /// `[@]` splat path (BUILTIN_ARRAY_ALL) formerly returned an empty array
+    /// silently (exit 0). FIXED: the truly-unset branch now fires the nounset
+    /// zerr (c:Src/subst.c:3480-3485). Found by the nested-state fuzzer.
+    #[test]
+    fn unset_array_at_splat_errors() {
+        assert_parity("setopt NO_UNSET; print -r -- \"${arr[@]}\"");
+    }
+
+    /// A DECLARED-but-empty array is set, so `${arr[@]}` splats to nothing
+    /// WITHOUT erroring even under NO_UNSET — pin so the fix can't over-fire.
+    #[test]
+    fn declared_empty_array_at_splat_no_error() {
+        assert_parity("setopt NO_UNSET; typeset -a arr; print -r -- \"${arr[@]}\"; echo AFTER");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// K3. KSH_ARRAYS: a bare `${(flags)arr}` collapses to element 1 before flags.
+//
+// Under `setopt KSH_ARRAYS`, a bare array reference with NO explicit `[@]`/`[*]`
+// subscript is element 1 only — the same collapse `$arr` and `${#arr}` already
+// do. A parameter-flag transform therefore operates on that SINGLE element:
+//   ${(j:-:)parts}  → `a`   (join of one element, not `a-b-c`)
+//   ${(o)parts}     → `a`   (sort of one element, not `a b c`)
+//   ${(U)parts}     → `A`   (upcase of one element, not `A B C`)
+// An explicit subscript (`${(j:-:)parts[@]}`) opts back into the whole array
+// and already works, as do the flag-less `$parts` / `${#parts}` forms. zshrs
+// applies the flag to the FULL array because the (j)/(o)/(U) join/sort/case
+// path fetches the array independently of the KSHARRAYS bare-name collapse
+// (the collapse point mirroring the ksh_bare_assoc arm in subst.rs did not
+// intercept this active join path). Found by the nested-state fuzzer under a
+// `setopt KSH_ARRAYS` prefix. Baselined in .github/fuzz-baseline/stateful.txt.
+// ─────────────────────────────────────────────────────────────────────
+mod ksh_arrays_bare_flag_collapse {
+    use super::*;
+
+    /// zsh: `a` (join of the single element-1 collapse). zshrs: `a-b-c`.
+    #[test]
+    #[ignore = "zshrs gap: KSH_ARRAYS bare ${(j)arr} joins full array; zsh collapses to element 1"]
+    fn join_flag_collapses_to_first_element() {
+        assert_parity("setopt KSH_ARRAYS; parts=(a b c); print -r -- ${(j:-:)parts}");
+    }
+
+    /// The explicit-subscript form already works — pin so a fix can't regress.
+    #[test]
+    fn explicit_at_subscript_keeps_full_array() {
+        assert_parity("setopt KSH_ARRAYS; parts=(a b c); print -r -- ${(j:-:)parts[@]}");
+    }
+
+    /// KSH_ARRAYS + RC_EXPAND_PARAM: a bare `$acc` is still element 1 (a
+    /// scalar), so RC_EXPAND_PARAM has a single value — `p1`, not the whole
+    /// array. FIXED: the rc_expand whole-array shortcut in get_var_impl is
+    /// gated on !KSHARRAYS so the element-1 collapse still applies. Found by
+    /// the nested-state fuzzer (nested loops accumulating into `acc`).
+    #[test]
+    fn rc_expand_param_respects_ksh_collapse() {
+        assert_parity(
+            "setopt KSH_ARRAYS RC_EXPAND_PARAM; acc=(); \
+             for a in p q; do for b in 1 2; do acc+=($a$b); done; done; print -r -- $acc",
+        );
+    }
+
+    /// RC_EXPAND_PARAM without KSH_ARRAYS still distributes element-wise —
+    /// pin so the KSH gate doesn't disable the option in the common case.
+    #[test]
+    fn rc_expand_param_still_distributes_without_ksh() {
+        assert_parity("setopt RC_EXPAND_PARAM; a=(1 2 3); print -r -- pre${a}post");
+    }
+}

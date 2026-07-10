@@ -4221,6 +4221,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // sh_word_split option or explicit `${(s.,.)scalar}`.
                     let val = exec.get_variable(&name);
                     if val.is_empty() && !exec.has_scalar(&name) && env::var(&name).is_err() {
+                        // c:Src/subst.c:3480-3485 — `${arr[@]}` on a genuinely
+                        // UNSET parameter under NO_UNSET is a "parameter not set"
+                        // error (vunset > 0 && unset(UNSET)), exactly like the
+                        // scalar `$arr`, the `${arr[*]}` splat, and `${arr[1]}`
+                        // — all of which already fire it via GET_VAR. The `[@]`
+                        // splat path returned an empty array silently, so
+                        // `setopt NO_UNSET; print "${arr[@]}"` exited 0 where zsh
+                        // exits 1. A DECLARED-but-empty array (`arr=()`) resolves
+                        // to `Some(vec![])` above and never reaches here, so it
+                        // still splats to nothing without erroring — matching zsh.
+                        if opt_state_get("nounset").unwrap_or(false) {
+                            crate::ported::utils::zerr(&format!("{}: parameter not set", name));
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            exec.set_last_status(1);
+                        }
                         Value::Array(vec![])
                     } else if opt_state_get("shwordsplit").unwrap_or(false) {
                         // bash-compat: under setopt sh_word_split, do
@@ -4494,7 +4512,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
         let rc_expand = with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
-        if rc_expand {
+        // c:Src/subst.c — under KSHARRAYS a bare `$name` (no [@]/[*] subscript;
+        // this GET_VAR path only handles the bare form) is element 1 ONLY — a
+        // scalar. RC_EXPAND_PARAM then has a single value to distribute, so
+        // `$acc` → "p1", NOT the whole array. Skip the whole-array rc_expand
+        // shortcut when KSHARRAYS is set and fall through to the normal path,
+        // which applies the element-1 collapse. Without this gate,
+        // `setopt KSH_ARRAYS rc_expand_param; print -r -- $acc` splatted every
+        // element while zsh prints just "p1".
+        let ksh_arrays = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS);
+        if rc_expand && !ksh_arrays {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
                 exec.array(&name)
@@ -7366,7 +7393,21 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.set_last_status(2));
             return Value::Int(2); // c:Src/cond.c:316 `return 2;`
         }
-        Value::Int(if ok { 0 } else { 1 })
+        let status: i32 = if ok { 0 } else { 1 };
+        // c:Src/exec.c:5216 — `lastval = evalcond(...)`: the conditional's
+        // result IS the command's lastval, and c:Src/cond.c's evalcond
+        // never inspects errflag while evaluating. So when a `[[ … ]]`
+        // operand raised errflag (e.g. a nounset "parameter not set" zerr
+        // on `${arr[99]}` under NO_UNSET), zsh STILL completes the test and
+        // exits with the cond result; the errflag only aborts the FOLLOWING
+        // commands. Sync the result to the executor's live lastval HERE —
+        // the nounset site left it at a transient 1, and the next
+        // BUILTIN_ERREXIT_CHECK reads the executor (not vm.last_status), so
+        // without this sync `setopt NO_UNSET; [[ -z ${arr[99]} ]]` exited 1
+        // instead of 0. The Op::SetStatus that follows sets vm.last_status;
+        // this keeps the executor coherent with it before the abort check.
+        with_executor(|exec| exec.set_last_status(status));
+        Value::Int(status as i64)
     });
     vm.register_builtin(BUILTIN_USE_CMDOUTVAL_RESET, |_vm, _argc| {
         crate::ported::exec::use_cmdoutval.store(0, std::sync::atomic::Ordering::Relaxed);

@@ -149,7 +149,9 @@ const PREAMBLE: &str = concat!(
     "path=/usr/local/bin/zsh; ",
     "spaces='  x y  '; ",
     "a=(one two three four five); ",
+    "b=(two four six eight); ",
     "nums=(3 1 4 1 5 9 2 6); ",
+    "lines=$'aa\\nbb\\ncc'; ",
     "typeset -A m; m=(k1 v1 k2 v2 k3 v3); ",
     "ptr=path; ",
     "typeset -F fl=3.5; ",
@@ -322,13 +324,45 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
     }
 }
 
+/// Array set operations and pattern filters — deterministic surface that the
+/// scalar/array/assoc generators don't reach: `:|` (difference), `:*`
+/// (intersection), `:#pat` / `(M):#pat` (element filter). Uses PREAMBLE arrays
+/// `a` and `b` (which share `two`/`four`) so the results are non-trivial.
+fn gen_setops(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..8) {
+        0 => "${a:|b}".to_string(),              // elements of a not in b
+        1 => "${a:*b}".to_string(),              // intersection of a and b
+        2 => "\"${(@)a:|b}\"".to_string(),
+        3 => "${a:#t*}".to_string(),             // drop elements matching t*
+        4 => "${(M)a:#*e}".to_string(),          // keep elements matching *e
+        5 => "${nums:#[13]}".to_string(),        // drop bare 1 / 3
+        6 => "\"${(j:,:)${a:|b}}\"".to_string(), // join the difference
+        _ => "${#${a:#*e*}}".to_string(),        // count after filter
+    }
+}
+
+/// `(f)` newline splitting and the quote-style flags (`qq`/`qqq`/`qqqq`/`q-`).
+/// `lines` is a 3-line scalar; `spaces` has leading/trailing/embedded spaces.
+fn gen_quoteflags(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..8) {
+        0 => "\"${(f)lines}\"".to_string(),
+        1 => "${#${(f)lines}}".to_string(),          // element count after split
+        2 => "\"${(j:|:)${(f)lines}}\"".to_string(), // split then re-join
+        3 => "\"${(qq)spaces}\"".to_string(),        // single-quote style
+        4 => "\"${(q-)spaces}\"".to_string(),        // minimal quoting
+        5 => "\"${(qqqq)s}\"".to_string(),           // $'...' style
+        6 => "\"${(Ff)lines}\"".to_string(),         // join-with-newline of split
+        _ => "\"${(@f)lines}\"".to_string(),
+    }
+}
+
 /// Generate the raw expression list for a seed (before script assembly).
 fn gen_parts(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let n = rng.gen_range(1..=3);
     let mut parts: Vec<String> = Vec::with_capacity(n);
     for _ in 0..n {
-        let expr = match rng.gen_range(0..10) {
+        let expr = match rng.gen_range(0..12) {
             0 => gen_scalar_pe(&mut rng),
             1 => gen_array_pe(&mut rng),
             2 => gen_assoc_pe(&mut rng),
@@ -337,7 +371,9 @@ fn gen_parts(seed: u64) -> Vec<String> {
             5 => gen_split(&mut rng),
             6 => gen_modchain(&mut rng),
             7 => gen_nested(&mut rng),
-            8 => gen_scalar_pe(&mut rng),
+            8 => gen_setops(&mut rng),
+            9 => gen_quoteflags(&mut rng),
+            10 => gen_scalar_pe(&mut rng),
             _ => gen_array_pe(&mut rng),
         };
         parts.push(expr);
@@ -424,11 +460,44 @@ fn gen_mutation(rng: &mut StdRng) -> String {
     }
 }
 
+/// A conditional / pattern-match probe: `[[ ]]` tests and `case`, printing the
+/// branch taken or `$?` so the output is deterministic. Exercises the pattern
+/// matcher (glob patterns, character classes, `<a-b>` ranges, alternation) and
+/// the numeric/string test operators — surface the PE/arith generators miss.
+/// The extended-glob variants (`(abc)#`) only match when a prior mutation ran
+/// `setopt EXTENDED_GLOB`, so they probe the option-dependent matcher path too.
+fn gen_cond(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..14) {
+        0 => "[[ $v == a* ]]; print -r -- $?".to_string(),
+        1 => "[[ $v == *b* ]]; print -r -- $?".to_string(),
+        2 => "[[ abc == a?c ]]; print -r -- $?".to_string(),
+        3 => "[[ $v != x* ]]; print -r -- $?".to_string(),
+        4 => "[[ -z ${arr[99]} ]]; print -r -- $?".to_string(),
+        5 => format!(
+            "[[ {} -gt {} ]]; print -r -- $?",
+            rng.gen_range(0..10),
+            rng.gen_range(0..10)
+        ),
+        6 => "case $v in (a*) print A;; (*) print B;; esac".to_string(),
+        7 => "case ${arr[1]} in (x[0-9]) print X;; (*) print O;; esac".to_string(),
+        8 => "[[ foobar == f*r && $v == a* ]]; print -r -- $?".to_string(),
+        9 => "[[ hello == (hel*|wor*) ]]; print -r -- $?".to_string(),
+        10 => "[[ 12345 == <1-99999> ]]; print -r -- $?".to_string(),
+        11 => "[[ file.txt == *.(txt|md) ]]; print -r -- $?".to_string(),
+        12 => "[[ aXb == a[[:upper:]]b ]]; print -r -- $?".to_string(),
+        _ => "[[ abcabc == (abc)# ]]; print -r -- $?".to_string(),
+    }
+}
+
 /// An observation statement — always emits to stdout, deterministically.
 /// `${(t)var}` is weighted in because it reports a parameter's full type +
 /// attribute set (e.g. `integer-local`, `array-unique`, `scalar-readonly`),
 /// which is the most direct probe of whether typeset state was modelled right.
 fn gen_observation(rng: &mut StdRng) -> String {
+    // 1-in-5: conditional / pattern-match probe (state-sensitive matcher path).
+    if rng.gen_bool(0.20) {
+        return gen_cond(rng);
+    }
     // 1-in-4: unquoted list probe to exercise word-splitting under options.
     if rng.gen_bool(0.25) {
         let u = pick(rng, &["$v", "${arr[@]}", "$*", "$@", "$uv"]);
@@ -457,6 +526,57 @@ fn gen_observation(rng: &mut StdRng) -> String {
     format!("print -r -- {probe}")
 }
 
+/// A NESTED-SCOPE statement: functions with `local`/`typeset -g`, subshells,
+/// nested loops that accumulate state, and anonymous functions. These probe
+/// the hardest state-dependent behaviour — scope save/restore, global leakage,
+/// and subshell isolation — where a construct's output depends on which frame
+/// created/modified a parameter. Every form prints deterministically so the
+/// differential comparison is exact.
+fn gen_nested_scope(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..16) {
+        // local shadows an outer scalar, restored on function return
+        0 => "sc=outer; f() { local sc=inner; print -r -- $sc }; f; print -r -- $sc".to_string(),
+        // nested functions: inner local must not leak to the middle frame
+        1 => "g() { local x=2; print -r -- $x }; f() { local x=1; g; print -r -- $x }; f".to_string(),
+        // typeset -g from inside a function creates/updates a GLOBAL
+        2 => "unset gv; f() { typeset -g gv=fromfunc }; f; print -r -- ${gv-UNSET}".to_string(),
+        // local array shadows outer array
+        3 => "ar=(o1 o2); f() { local ar=(i1 i2 i3); print -r -- ${#ar} }; f; print -r -- ${#ar}"
+            .to_string(),
+        // subshell mutation is isolated from the parent
+        4 => "arr=(x1 x2 y3); ( arr+=(z); print -r -- ${#arr} ); print -r -- ${#arr}".to_string(),
+        // nested for-loops accumulating into an array
+        5 => "acc=(); for a in p q; do for b in 1 2; do acc+=($a$b); done; done; print -r -- $acc"
+            .to_string(),
+        // anonymous function scope — `local` inside does not leak
+        6 => "v=keep; () { local v=temp; print -r -- $v }; print -r -- $v".to_string(),
+        // while-loop with arithmetic state
+        7 => "i=0; s=0; while (( i < 4 )); do (( s += i )); (( i++ )); done; print -r -- $s"
+            .to_string(),
+        // function-local integer attribute
+        8 => "f() { integer n=6*7; print -r -- $n }; f; print -r -- ${n-UNSET}".to_string(),
+        // nested command substitution reading loop-built state
+        9 => "parts=(a b c); joined=${(j:-:)parts}; print -r -- $joined".to_string(),
+        // local -A assoc inside function
+        10 => "f() { local -A m2=(a 1 b 2); print -r -- ${(kvo)m2} }; f".to_string(),
+        // case inside a function driven by a parameter
+        11 => "classify() { case $1 in ([0-9]) print digit;; ([a-z]) print lower;; (*) print other;; esac }; classify 5; classify q; classify %"
+            .to_string(),
+        // recursive countdown via a function
+        12 => "cnt() { (( $1 <= 0 )) && return; print -rn -- $1; cnt $(( $1 - 1 )) }; cnt 3; print"
+            .to_string(),
+        // nested subshell with its own option scope: extendedglob set inside
+        // the subshell must not leak to the parent's match after it exits
+        13 => "( setopt extendedglob; [[ abcabc == (abc)# ]]; print -r -- in=$? ); [[ abcabc == (abc)# ]]; print -r -- out=$?"
+            .to_string(),
+        // append inside a for-loop over an assoc's ordered keys
+        14 => "typeset -A h=(k1 1 k2 2 k3 3); out=(); for k in ${(ok)h}; do out+=($k=$h[$k]); done; print -r -- $out"
+            .to_string(),
+        // param scope: function modifies a global array element by index
+        _ => "arr=(a b c); f() { arr[2]=MODIFIED }; f; print -r -- $arr".to_string(),
+    }
+}
+
 /// Base state every stateful program starts from. Kept as separate statements
 /// so minimization can drop whichever anchors a divergence doesn't depend on.
 fn base_state() -> Vec<String> {
@@ -469,11 +589,19 @@ fn base_state() -> Vec<String> {
 }
 
 /// Build a stateful program: base state, then mutation/observation steps.
+/// A fraction of steps are NESTED-SCOPE constructs (functions / subshells /
+/// nested loops) so state-dependent gaps that only manifest across a scope
+/// boundary get exercised — the "nested state" the fuzzer exists to find.
 fn gen_program(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = base_state();
-    let steps = rng.gen_range(3..=8);
+    let steps = rng.gen_range(4..=12);
     for _ in 0..steps {
+        // 1-in-4 step is a self-contained nested-scope probe.
+        if rng.gen_bool(0.25) {
+            stmts.push(gen_nested_scope(&mut rng));
+            continue;
+        }
         if rng.gen_bool(0.6) {
             stmts.push(gen_mutation(&mut rng));
         }
@@ -505,6 +633,14 @@ fn diverges(script: &str, bin: &Path, timeout: Duration) -> bool {
         return false;
     }
     let r = run_zshrs(script, bin, timeout);
+    // Infra failures are NOT parity gaps: -999 = spawn failed (binary missing
+    // — e.g. a concurrent `cargo build` deleted it mid-run), -998 = wait error,
+    // timed_out = pathological. Treating any of these as a divergence floods
+    // the report with false positives (every probe "diverges" because zshrs
+    // produced no output). Skip them.
+    if r.exit == -999 || r.exit == -998 || r.timed_out || z.exit == -999 || z.exit == -998 {
+        return false;
+    }
     z.stdout != r.stdout || z.exit != r.exit
 }
 
