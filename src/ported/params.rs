@@ -6037,20 +6037,23 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
                     .unwrap_or(false)
             };
-            // c:Src/Zle/complete.c — special associative parameters (notably
-            // `$compstate`, populated during completion via set_compstate_str)
-            // keep their values in the parallel `paramtab_hashed_storage()`
-            // store rather than a wired PM_HASHED paramtab node (complete.rs
-            // defers that). A subscript WRITE like `compstate[insert]=menu`
-            // from a completion widget must still take the associative path so
+            // c:Src/Zle/complete.c — `$compstate` is a special ASSOCIATIVE
+            // parameter of the completion system. zshrs does not wire it as a
+            // real PM_HASHED paramtab node (complete.rs:1682 defers that); its
+            // values live in the parallel `paramtab_hashed_storage()` store fed
+            // by set_compstate_str. A subscript WRITE like `compstate[insert]=
+            // menu` from a completion widget must take the ASSOCIATIVE path so
             // the string key `insert` is NOT arithmetic-evaluated to 0 (which
-            // then errored `assignment to invalid subscript range`). Recognise
-            // any hash-storage-backed name as hashed. Outside completion the
-            // store has no `compstate` entry, so the write still errors — which
-            // matches zsh (`compstate` only exists during completion). This
-            // repairs a regression introduced when the undeclared-subscript
-            // auto-vivify was removed.
+            // then errored `assignment to invalid subscript range` — flooding
+            // every tab-completion). Recognise it as hashed whenever the name
+            // is a known special assoc OR already has hash-storage backing.
+            // Removing the undeclared-subscript auto-vivify (correct for user
+            // params like `as[k1]=`) regressed this because compstate relied on
+            // that vivify; a truly-undeclared user param still errors.
+            // `$compstate` is the completion system's special assoc (the only
+            // special assoc user completers write with string keys).
             flagged
+                || name == "compstate"
                 || paramtab_hashed_storage()
                     .lock()
                     .map(|s| s.contains_key(name))
