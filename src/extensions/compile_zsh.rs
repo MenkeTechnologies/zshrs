@@ -4444,7 +4444,12 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
-                if do_glob {
+                // Only glob standalone when this `$~name` IS the whole word.
+                // As a sub-segment of a larger word (`$dir/$~pat`,
+                // word_seg_depth > 0), globbing here in isolation would drop
+                // the surrounding literal/expansion parts — the parent word's
+                // assembled-scalar glob (driven by needs_glob) owns it.
+                if do_glob && self.word_seg_depth == 0 {
                     self.builder
                         .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
                 }
@@ -4605,7 +4610,14 @@ impl ZshCompiler {
                     // the literal `*zz`. Array-literal ELEMENTS do
                     // glob (`a=(${~P})` → matches), so gate on the
                     // scalar-assign depth only.
-                    if self.dq_context_depth == 0 && self.scalar_assign_depth == 0 {
+                    // As a sub-segment of a larger word (`$dir/${~pat}`,
+                    // word_seg_depth > 0) the parent word's assembled-scalar
+                    // glob owns filename generation — globbing this segment in
+                    // isolation would drop the surrounding parts.
+                    if self.dq_context_depth == 0
+                        && self.scalar_assign_depth == 0
+                        && self.word_seg_depth == 0
+                    {
                         self.builder
                             .emit(Op::CallBuiltin(self.glob_expand_builtin(), 0), 0);
                     }
@@ -5830,6 +5842,27 @@ impl ZshCompiler {
                 //     "bad pattern: (" (zsh-autopair init, zpwr).
                 let mut needs_glob = false;
                 let mut needs_brace = false;
+                // c:Src/subst.c:2596 `case '~': globsubst = 2` — a `$~name` /
+                // `${~name}` segment promotes its VALUE's glob metachars to a
+                // pattern, so the WHOLE assembled word must be filename-
+                // generated (`$dir/$~pat` globs `$dir/<pat>`), not just the
+                // flagged segment in isolation. The sub-segment fast paths skip
+                // their own per-segment glob when word_seg_depth > 0, so flag
+                // the word here. `$~~` / `${~~` toggle globsubst OFF (no flag).
+                for seg in &segs {
+                    if let WordSegment::Expansion(e) = seg {
+                        let u = crate::lex::untokenize(e);
+                        let is_gs = u
+                            .strip_prefix("$~")
+                            .or_else(|| u.strip_prefix("${~"))
+                            .map(|r| !r.starts_with('~'))
+                            .unwrap_or(false);
+                        if is_gs {
+                            needs_glob = true;
+                            break;
+                        }
+                    }
+                }
                 {
                     let mut in_sq = false;
                     let mut in_dq = false;
