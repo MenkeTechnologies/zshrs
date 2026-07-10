@@ -4076,9 +4076,18 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                     pm.width = len as i32;
                 }
             } else {
-                // Subscript splice.
+                // Subscript splice (c:Src/params.c:2748+ assignstrvalue). In C
+                // `v->start`/`v->end` are BYTE offsets into the metafied string
+                // (getindex already converted the character subscript to a byte
+                // offset via MB_METACHARLEN). zshrs's subscript resolution
+                // instead yields CHARACTER positions, so operate on the char
+                // sequence throughout — otherwise a multibyte scalar value
+                // (e.g. a Powerline glyph U+E0B0, 3 bytes) panics when the byte
+                // slice `z[..start]` lands inside a codepoint. p10k's
+                // `_p9k_get_icon` hit exactly this (crashing the shell).
                 let z = strgetfn(pm);
-                let zlen = z.len() as i32;
+                let z_chars: Vec<char> = z.chars().collect();
+                let zlen = z_chars.len() as i32;
                 let mut start = v.start;
                 let mut end = v.end;
                 if (v.valflags & VALFLAG_INV) != 0 && !isset(KSHARRAYS) {
@@ -4108,15 +4117,15 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 } else if end > zlen {
                     end = zlen;
                 }
-                let vlen = v_str.len() as i32;
-                let newsize = start + vlen + (zlen - end);
-                let s = start as usize;
-                let e = end as usize;
-                let mut x = String::with_capacity(newsize as usize);
-                x.push_str(&z[..s.min(z.len())]);
+                // Slice by CHARACTER index into z_chars (never a raw byte
+                // slice of z, which would split a multibyte codepoint).
+                let s = (start.max(0) as usize).min(z_chars.len());
+                let e = (end.max(0) as usize).min(z_chars.len());
+                let mut x = String::with_capacity(z.len() + v_str.len());
+                x.extend(z_chars[..s].iter());
                 x.push_str(&v_str);
-                if e <= z.len() {
-                    x.push_str(&z[e..]);
+                if e <= z_chars.len() {
+                    x.extend(z_chars[e..].iter());
                 }
                 strsetfn(pm, x);
                 if (pm.node.flags as u32 & PM_HASHELEM) == 0
@@ -6062,8 +6071,21 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         let resolved_idx: i64 = if is_hashed {
             0 // unused for hashed params
         } else {
-            key.parse::<i64>()
-                .unwrap_or_else(|_| crate::ported::math::mathevalarg(&key))
+            key.parse::<i64>().unwrap_or_else(|_| {
+                // c:Src/params.c:2058 getarg → c:1585-1593 — a subscript that
+                // is not a plain literal is parameter-expanded (singsub) BEFORE
+                // arithmetic evaluation. When assignsparam is reached with a
+                // raw, UNEXPANDED subscript — e.g. `setsparam("pgid[$#pgid+1]",
+                // …)` from the sysread/read builtins, whose target string the
+                // command compiler never pre-expanded — `$#pgid` / `$n` /
+                // `${#a}` must be resolved here, or mathevalarg sees a literal
+                // `$` and yields 0 → "invalid subscript range" (gitstatus's
+                // `_gitstatus_daemon_p9k_` hit this on every prompt). The
+                // shell-level `a[$n+1]=v` form already arrives expanded, so its
+                // numeric key takes the parse fast-path above and skips this.
+                let expanded = crate::ported::subst::singsub(&key);
+                crate::ported::math::mathevalarg(&expanded)
+            })
         };
         let mut tab = paramtab().write().unwrap();
         let exists = tab.contains_key(name); // c:3212

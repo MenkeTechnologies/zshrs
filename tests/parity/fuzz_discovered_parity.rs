@@ -699,3 +699,56 @@ mod ksh_arrays_bare_flag_collapse {
         assert_parity("setopt RC_EXPAND_PARAM; a=(1 2 3); print -r -- pre${a}post");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// S1. Scalar subscript splice on a MULTIBYTE value must not panic.
+//
+// `a[i]=X` on a scalar splices at CHARACTER position i (c:params.c:2748+). The
+// Rust port byte-sliced the value string at the char index, panicking (shell
+// crash) when a multibyte codepoint straddled the offset — p10k's
+// `_p9k_get_icon` hit it on the Powerline glyph U+E0B0. FIXED: the splice
+// operates on the char sequence. (Real p10k crash, not fuzzer-found.)
+// ─────────────────────────────────────────────────────────────────────
+mod scalar_splice_multibyte {
+    use super::*;
+
+    #[test]
+    fn splice_into_multibyte_scalar_no_panic() {
+        assert_parity("a=$'\\ue0b0'; a[1]=X; print -r -- $a");
+    }
+
+    #[test]
+    fn splice_replaces_correct_multibyte_char() {
+        assert_parity("a=\u{3b1}\u{3b2}\u{3b3}\u{3b4}; a[2,3]=XY; print -r -- $a");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// S2. A RAW subscript passed to setsparam (read/sysread target) must be
+// parameter-expanded before arithmetic evaluation.
+//
+// `read 'a[$#a+1]'` / `sysread 'pgid[$#pgid+1]'` hand assignsparam a raw,
+// unexpanded subscript string (the command compiler never pre-expands the
+// target). C's getarg singsub's it (c:params.c:2058/1592) before arith; the
+// Rust port ran mathevalarg on the literal `$#a+1`, which yielded 0 →
+// "assignment to invalid subscript range". gitstatus's daemon-pid read loop
+// hit this on every prompt. FIXED: singsub the subscript first.
+// ─────────────────────────────────────────────────────────────────────
+mod raw_subscript_param_expansion {
+    use super::*;
+
+    /// The exact gitstatus idiom: grow a scalar one char at a time via
+    /// `read` into `p[$#p+1]`.  zsh: `abc`.  zshrs: errored on the first read.
+    #[test]
+    fn read_into_growing_scalar_subscript() {
+        assert_parity(
+            "p=; for c in a b c; do print -n $c | IFS= read -r 'p[$#p+1]'; done; print -r -- $p",
+        );
+    }
+
+    /// A plain `$n` subscript and a `${#a}` form both expand.
+    #[test]
+    fn read_into_var_subscript() {
+        assert_parity("a=xx n=1; print Y | IFS= read -r 'a[$n+1]'; print -r -- $a");
+    }
+}
