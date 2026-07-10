@@ -1,0 +1,4 @@
+# parity-fuzz --mode expr baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode expr --count N --verify 3  (copy NEW-signature lines).
+print -r -- "${(L#P)t}"

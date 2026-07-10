@@ -8370,7 +8370,27 @@ pub fn paramsubst(
         // (`${(k)h[@]}` = keys, NOT raw splat-of-values). Bug #592.
         let is_at_splat_sub = matches!(subscript.as_deref(), Some("@") | Some("*"));
         let has_subscript_for_kvflag = subscript.is_some() && !is_at_splat_sub;
-        if !has_subscript_for_kvflag
+        // c:Src/params.c:2293-2296 — under KSHARRAYS a bare `$assoc` (no
+        // subscript) is a SCALAR: the hash-bucket-first value. Any
+        // (k)/(v)/(o)/(kv) flag then operates on that single scalar and
+        // becomes a no-op (`${(ko)as}` → the first value, not the keys).
+        // KSHARRAYS scalarization wins even over `(@)` (`${(@k)as}` → the
+        // first value too), so no splat exclusion. Scalarize here so it wins
+        // over the whole-assoc key/value fold below.
+        let ksh_bare_assoc = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+            && subscript.is_none()
+            && assoc_contains(&var_name);
+        if ksh_bare_assoc {
+            value = assoc_get(&var_name)
+                .and_then(|m| m.values().next().cloned())
+                .unwrap_or_default();
+            // The result is a single SCALAR — clear any array shape so a
+            // trailing `(@)`/`(*)` splat emits just this one value
+            // (`"${(@k)as}"` under KSHARRAYS → `v1`, not the key list).
+            isarr = 0;
+            magic_assoc_array = None;
+            split_parts = None;
+        } else if !has_subscript_for_kvflag
             && (hkeys & SCANPM_WANTKEYS) != 0
             && (hvals & SCANPM_WANTVALS) != 0
         {
@@ -13118,11 +13138,10 @@ pub fn paramsubst(
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
             } else if isarr != 0 {
-                // Whole-array reference: eval each element. A single-slot
+                // Whole-array reference with an explicit `[@]`/`[*]` splat:
+                // eval each element (`${(#)a[@]}` → "A B C"). A single-slot
                 // subscript (`a[3]`) clears isarr and already selected the
-                // element into `value`, so DON'T re-fetch the whole array
-                // — `${(#)a[3]}` must eval just element 3. C operates on
-                // the already-subscripted aval/val, never re-fetches.
+                // element into `value`, so DON'T re-fetch the whole array.
                 if let Some(arr) = arrays_get(&var_name) {
                     let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
                     value = new_arr.join(" ");
@@ -13132,6 +13151,16 @@ pub fn paramsubst(
                 }
             } else {
                 value = eval_one(&value);
+                // c:Src/subst.c — `(#)` on a bare whole ARRAY (isarr not yet
+                // set, no subscript) collapses it to this single evaluated
+                // scalar. Record it in split_parts so a FOLLOWING flag (e.g.
+                // `(q)`/`(V)`) uses this value instead of RE-FETCHING the raw
+                // array by name (which discards the `(#)` result): `${(#q)arr}`
+                // must quote the collapsed value (`''`), not the raw array.
+                // Scalars need no marker — arrays_get is None so no re-fetch.
+                if subscript.is_none() && arrays_get(&var_name).is_some() {
+                    split_parts = Some(vec![value.clone()]);
+                }
             }
             // c:3833 — restore noerrs + errflag (keep only INT).
             *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
@@ -14997,15 +15026,20 @@ pub fn paramsubst(
                 .unwrap_or_default()
         } else {
             // c:1625
-            // No subscript: route through the canonical getsparam
-            // funnel (GSU + variables + env + array-join), then
-            // fall through to assoc-values for `$assoc` bare reads.
-            // Same single-funnel pattern as subst.rs:2120.
-            exec_getsparam(&var_name)
-                .or_else(|| {
-                    assoc_get(&var_name).map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
-                })
-                .unwrap_or_default() // c:1625
+            // No subscript. A bare `$assoc` joins its VALUES in zsh
+            // hash-BUCKET order — the same order `(v)`/`(k)` enumerate
+            // (assoc_get rebuilds zsh's bucket layout). exec_getsparam
+            // returns the assoc's values in the internal store order, which
+            // differs (`as=(zebra 9 apple 1 mango 5)` → `1 5 9` instead of
+            // `9 1 5`), so check assoc FIRST and use the bucket-ordered join.
+            // Scalars/arrays route through the canonical getsparam funnel.
+            if assoc_contains(&var_name) {
+                assoc_get(&var_name)
+                    .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                    .unwrap_or_default()
+            } else {
+                exec_getsparam(&var_name).unwrap_or_default()
+            } // c:1625
         }; // c:1625
 
         // c:Src/subst.c:1820 — bare `$NAME:MOD` and `$NAME[SUB]:MOD`
@@ -17125,7 +17159,7 @@ fn arrays_insert(name: String, value: Vec<String>) {
 
 /// Read an associative array parameter from the parallel
 /// `paramtab_hashed_storage` (PM_HASHED values).
-fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
+pub(crate) fn assoc_get(name: &str) -> Option<indexmap::IndexMap<String, String>> {
     // c:Src/params.c:570-575 — nameref deref before the read.
     let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
         crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
