@@ -8912,6 +8912,17 @@ pub fn paramsubst(
                 // (GLOBSUBST-gated, c:1669). Same contract as the
                 // strip/replace arms below; `:#` rides the same
                 // `case '#'` + singsub + getmatch C path.
+                // Capture SUB_MATCH ((M) flag) BEFORE singsub'ing the pattern.
+                // A braced inner `${…}` in the pattern (`${(M)arr:#${var}}`)
+                // recurses through paramsubst, which resets the SHARED sub_flags
+                // (SUB_MATCH) — so reading it AFTER singsub loses the (M)
+                // disposition and the filter drops-matching instead of keeping
+                // it (`${(M)B:#${s}}` wrongly returned the non-matching elements,
+                // breaking vcs_info_setsys's backend dedup). An unbraced `$var`
+                // pattern didn't recurse, which is why it worked. See
+                // parity_ignore_fix_patterns: "shared SUB_FLAGS clobber by
+                // nested paramsubst". c:2171 SUB_MATCH.
+                let invert = (sub_flags_get() & 0x0008) != 0;
                 let p = literalize_spliced_metas(&singsub(&pretokenize_src_pat(pat))); // c:3540
                                                                                        // c:Src/glob.c:2674-2677 — patcompile failure → "bad
                                                                                        // pattern" diagnostic. Sibling of #605/#606. Bug #607.
@@ -8931,8 +8942,6 @@ pub fn paramsubst(
                     errflag_set_error();
                     return (String::new(), new_pos, vec![]);
                 }
-                let cur_sub_flags = sub_flags_get(); // c:2171
-                let invert = (cur_sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
                 sub_flags_set(0); // c:2169 (consume)
                                   // Direct port of subst.c:3422 `if (!vunset && isarr)` —
                                   // the array iteration only fires when `isarr` is set.

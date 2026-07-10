@@ -787,3 +787,41 @@ mod glob_subst_prefix {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// F1. `${(M)arr:#${var}}` — the (M) keep-matching flag survives a BRACED
+// nested expansion in the filter pattern.
+//
+// The `:#pat` filter singsub's its pattern; a braced `${var}` there recurses
+// through paramsubst, which resets the SHARED sub_flags — clobbering SUB_MATCH
+// if it's read AFTER the singsub. So `${(M)B:#${s}}` dropped the (M) inversion
+// and returned the NON-matching elements. An unbraced `$s` didn't recurse, so
+// it worked. This broke vcs_info_setsys's backend dedup (`${(M)VCS_INFO_backends
+// :#${sys}}`) so only 1 of 12 backends registered → "unknown backend git".
+// FIXED: SUB_MATCH is captured before the pattern singsub (subst.rs).
+// ─────────────────────────────────────────────────────────────────────
+mod sub_match_nested_pattern {
+    use super::*;
+
+    /// zsh: `` (empty — `a` doesn't match `b`, (M) keeps only matching).
+    /// zshrs formerly returned `a` (dropped the (M) inversion).
+    #[test]
+    fn keep_match_flag_with_braced_pattern() {
+        assert_parity("B=(a); s=b; print -r -- \"[${(M)B:#${s}}]\"");
+    }
+
+    /// The vcs_info dedup idiom: accumulate uniques via `${(M)arr:#${x}}`.
+    #[test]
+    fn dedup_loop_with_keep_match_braced() {
+        assert_parity(
+            "typeset -ga B; B=(); for s in a b c a b; do \
+             [[ -n ${(M)B:#${s}} ]] && continue; B+=($s); done; print -r -- $B",
+        );
+    }
+
+    /// Plain-pattern (M):# and drop-mode :# both still work — pin the split.
+    #[test]
+    fn keep_and_drop_plain_patterns() {
+        assert_parity("a=(one two three); print -r -- ${(M)a:#t*}:${a:#t*}");
+    }
+}
