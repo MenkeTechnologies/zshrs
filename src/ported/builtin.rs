@@ -15420,7 +15420,16 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
             // spec walk before reaching the conversion char.
             if iter.peek() == Some(&'*') {
                 iter.next(); // c:4796 — consume the `*` marker
-                let w: i64 = args.get(arg_i).and_then(|s| s.parse().ok()).unwrap_or(0);
+                // c:Src/builtin.c:5240-5247 — the `*` width arg is
+                // MATH-EVALUATED (`width = (int)mathevali(metafy(*argp,
+                // …))`), not a plain integer parse: `0x1f`→31, ` 4`→4,
+                // `'A`→65, `2+3`→5. parse_int_arg is the shared
+                // getnum→mathevali path (same one the %d/%i arm uses),
+                // and on a math error it zeroes the value and flags
+                // ret=1 (c:5243 `errflag → ret = 1`). Previously the
+                // plain `str::parse` silently yielded 0 for any non-
+                // decimal width arg.
+                let w: i64 = args.get(arg_i).map(|s| parse_int_arg(s)).unwrap_or(0);
                 arg_i += 1;
                 spec.push_str(&w.to_string());
             } else {
@@ -15434,15 +15443,35 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 }
             }
             if iter.peek() == Some(&'.') {
-                spec.push('.');
-                iter.next();
+                iter.next(); // consume the `.`
                 // `.` precision: also accepts `*` per c:4796 same as width.
                 if iter.peek() == Some(&'*') {
                     iter.next();
-                    let p: i64 = args.get(arg_i).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    arg_i += 1;
-                    spec.push_str(&p.to_string());
+                    // c:Src/builtin.c:5275-5288 — the `*` precision arg is
+                    // math-evaluated identically to the `*` width arg
+                    // (`prec = (int)mathevali(metafy(*argp, …))`, error →
+                    // ret=1) — BUT only when the arg actually EXISTS
+                    // (c:5275 `if (*argp)`). If args have run out, `prec`
+                    // stays at its -1 init (c:5178) and NO precision is
+                    // emitted (c:5288 `if (prec >= 0) *d++ = '.', *d++ =
+                    // '*'`). A negative result is unset the same way.
+                    // Unlike width (init 0), a MISSING `*` precision must
+                    // leave the conversion at default precision, not force
+                    // `.0`: `printf '%.*d' ` prints `0` (default), not the
+                    // truncated-to-empty `%.0d`. Previously `unwrap_or(0)`
+                    // forced `.0` and dropped the digit.
+                    if let Some(a) = args.get(arg_i) {
+                        let p = parse_int_arg(a);
+                        arg_i += 1;
+                        if p >= 0 {
+                            spec.push('.');
+                            spec.push_str(&p.to_string());
+                        }
+                    }
                 } else {
+                    // Literal precision: `.` then optional digits (an empty
+                    // digit run is precision 0, c:5283-5287 `else prec = 0`).
+                    spec.push('.');
                     while let Some(&c) = iter.peek() {
                         if c.is_ascii_digit() {
                             spec.push(c);
@@ -15583,7 +15612,23 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                             a.parse::<f64>().unwrap_or_else(|_| match matheval(&a) {
                                 Ok(m) if m.type_ == crate::ported::math::MN_FLOAT => m.d,
                                 Ok(m) => m.l as f64,
-                                Err(_) => 0.0,
+                                // c:Src/builtin.c:5488 — a math-eval failure on
+                                // a FLOAT operand is a SOFT error, same as the
+                                // integer path: emit the diagnostic, clear the
+                                // errflag so later args still evaluate, and flag
+                                // ret=1. The float arm previously swallowed it,
+                                // so `printf '%g' '%d'` exited 0 where zsh exits
+                                // 1. (Empty/missing args math-eval to Ok(0), so
+                                // they do NOT trip this.)
+                                Err(msg) => {
+                                    crate::ported::utils::zerr(&msg);
+                                    crate::ported::utils::errflag.fetch_and(
+                                        !crate::ported::utils::ERRFLAG_ERROR,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    PRINTF_MATH_ERR.with(|c| c.set(true));
+                                    0.0
+                                }
                             })
                         };
                     // c:Src/builtin.c printf %g/%G uses libc snprintf

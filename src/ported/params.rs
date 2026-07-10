@@ -6499,6 +6499,66 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
             crate::ported::hashtable::emptycmdnamtable();
         }
     }
+    // c:Src/params.c colonarrsetfn (the REVERSE of the split-cascade above) —
+    // a SCALAR assignment to a tied colon-ARRAY name (`path=/x`) coerces to a
+    // 1-element array and must re-derive its tied env SCALAR (PATH). The array
+    // assign (`path=(...)`, params.rs:4548) and element assign
+    // (`path[2]=x`, :6230) already sync; the plain scalar-assign path did not,
+    // so `path=/x; echo $PATH` left PATH stale while `typeset -T` ties worked.
+    let tied_scalar: Option<&str> = TIED_COLON_ARRAYS
+        .iter()
+        .find(|(arr, _)| *arr == name)
+        .map(|(_, sc)| *sc);
+    if let Some(sc) = tied_scalar {
+        // The freshly stored value joined with ':' (a scalar assign is a
+        // 1-element array → just the value).
+        let joined = {
+            let tab = paramtab().read().unwrap();
+            tab.get(name)
+                .map(|p| match p.u_arr.as_deref() {
+                    Some(a) => a.join(":"),
+                    None => p.u_str.clone().unwrap_or_default(),
+                })
+                .unwrap_or_else(|| val.to_string())
+        };
+        if let Ok(mut tab) = paramtab().write() {
+            let entry = tab.entry(sc.to_string()).or_insert_with(|| {
+                Box::new(param {
+                    node: hashnode {
+                        next: None,
+                        nam: sc.to_string(),
+                        flags: (PM_SCALAR | PM_SPECIAL) as i32,
+                    },
+                    u_data: 0,
+                    u_tied: None,
+                    u_arr: None,
+                    u_str: None,
+                    u_val: 0,
+                    u_dval: 0.0,
+                    u_hash: None,
+                    gsu_s: None,
+                    gsu_i: None,
+                    gsu_f: None,
+                    gsu_a: None,
+                    gsu_h: None,
+                    base: 0,
+                    width: 0,
+                    env: None,
+                    ename: None,
+                    old: None,
+                    level: 0,
+                })
+            });
+            entry.u_str = Some(joined.clone());
+            entry.u_arr = None;
+        }
+        // Keep the process environment in sync so command resolution and
+        // child processes see the new PATH/FPATH/etc.
+        std::env::set_var(sc, &joined);
+        if sc == "PATH" {
+            crate::ported::hashtable::emptycmdnamtable();
+        }
+    }
     // c:Src/params.c — `{ "PROMPT", PM_SCALAR|PM_ALIAS, &ps1, ... }` and the
     // matching `{ "PS1", PM_SCALAR, &ps1, ... }` share the same backing
     // pointer; assigning to PROMPT updates the byte that PS1 reads (and

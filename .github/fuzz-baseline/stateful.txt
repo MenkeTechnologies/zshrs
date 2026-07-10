@@ -1,0 +1,9 @@
+# parity-fuzz --mode stateful baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode stateful --count N --verify 3  (copy NEW-signature lines).
+#
+# EMPTY: the typeset-arith-error-exit (X) class that formerly populated this
+# file is fixed (dispatch_builtin preserves the prior status on a soft math
+# error in a BINF_ASSIGN builtin — see tests/parity/fuzz_discovered_parity.rs
+# mod typeset_arith_error_exit). A clean 9000-case --verify 3 run reproduces
+# zero divergences, so any stateful divergence now fails CI as a regression.

@@ -850,6 +850,39 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
         with_executor(|exec| exec.set_last_status(1));
         return 1;
     }
+    // c:Src/exec.c:4162-4295 — assignment-builtin (BINF_ASSIGN family:
+    // typeset / declare / local / export / readonly / integer / float /
+    // private) whose `name=value` postassign arg raised errflag while
+    // its RHS was preforked (PREFORK_ASSIGN, c:4239-4245) — the classic
+    // case is a math error in `typeset -F fv=$((1/0))`. The postassign
+    // loop `break`s on errflag (c:4243) and then `if (!errflag)
+    // execbuiltin(...)` (c:4287) SKIPS the builtin entirely, so `lastval`
+    // is left UNCHANGED from before the command (0 fresh, 1 after
+    // `false`). This differs from a PLAIN assignment `x=$((1/0))`, which
+    // goes through execsimple c:1375 `lv = errflag ? errflag : cmdoutval`
+    // → 1, and from a NON-assign builtin `print $((1/0))`, whose main
+    // args-prefork errflag lands on c:3760 `lastval = 1`. Only the
+    // assignment-BUILTIN postassign path preserves the prior status.
+    // Mirror it here: the fusevm reg_passthru dispatch still calls us
+    // with errflag set (unlike C's pre-invoke gate), so consume that
+    // state and return the prior LASTVAL instead of running the builtin.
+    {
+        use std::sync::atomic::Ordering;
+        let live = crate::ported::utils::errflag.load(Ordering::Relaxed);
+        let ef = live & crate::ported::zsh_h::ERRFLAG_ERROR;
+        let hard = live & crate::ported::zsh_h::ERRFLAG_HARD;
+        // Only the SOFT recoverable error (math failure like `$((1/0))`,
+        // ERRFLAG_ERROR without ERRFLAG_HARD) preserves the prior status
+        // per c:4287. A HARD error (`${var?msg}`, which c:Src/subst.c
+        // OR's ERRFLAG_HARD onto errflag) is a script-abort that yields
+        // status 1 regardless of the prior status — leave that to the
+        // normal dispatch/abort path below (which returns 1 and keeps
+        // ERRFLAG_HARD set for the downstream errexit gate).
+        if ef != 0 && hard == 0 && builtin_is_assign_family(name) {
+            // c:4287 — execbuiltin skipped; lastval unchanged.
+            return crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+        }
+    }
     if let Some(status) = try_user_fn_override(name, &args) {
         // c:Src/jobs.c:1748 waitonejob — canonical single-command
         // pipestats update via the no-procs else-branch.
@@ -951,6 +984,19 @@ fn builtin_is_pspecial(name: &str) -> bool {
     crate::ported::builtin::createbuiltintable()
         .get(name)
         .map(|b| (b.node.flags as u32 & crate::ported::zsh_h::BINF_PSPECIAL) != 0)
+        .unwrap_or(false)
+}
+
+/// c:Src/zsh.h:1486 BINF_ASSIGN — the assignment-builtin family
+/// (typeset / declare / local / export / readonly / integer / float /
+/// private). Their `name=value` args are handled as postassigns
+/// (c:Src/exec.c:4162-4295), whose errflag-abort skips execbuiltin and
+/// preserves the prior `lastval`. Read the flag straight from the
+/// builtin table (same pattern as `builtin_is_pspecial`).
+fn builtin_is_assign_family(name: &str) -> bool {
+    crate::ported::builtin::createbuiltintable()
+        .get(name)
+        .map(|b| (b.node.flags as u32 & crate::ported::zsh_h::BINF_ASSIGN) != 0)
         .unwrap_or(false)
 }
 
@@ -4526,11 +4572,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 return Some((arr.clone(), in_dq));
             }
-            if let Some(map) = exec.assoc(&name) {
-                let mut keys: Vec<&String> = map.keys().collect();
-                keys.sort();
-                let values: Vec<String> =
-                    keys.iter().filter_map(|k| map.get(*k).cloned()).collect();
+            if exec.assoc(&name).is_some() {
+                // c:Src/hashtable.c scanhashtable — a bare `$assoc` joins its
+                // VALUES in zsh hash-BUCKET order (the same order `(k)`/`(v)`
+                // enumerate), NOT sorted or insertion order. `assoc_get`
+                // rebuilds zsh's bucket layout; use it so `$as` matches
+                // `${(v)as}` (`as=(zebra 9 apple 1)` → `9 1`, not the
+                // alphabetical `1 9`). Under KSHARRAYS the bare form collapses
+                // to the bucket-FIRST value (`9`), matching zsh.
+                let values: Vec<String> = crate::ported::subst::assoc_get(&name)
+                    .map(|m| m.values().cloned().collect())
+                    .unwrap_or_default();
                 if ksh_arrays {
                     return Some((vec![values.into_iter().next().unwrap_or_default()], in_dq));
                 }

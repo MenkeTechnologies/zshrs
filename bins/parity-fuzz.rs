@@ -633,6 +633,78 @@ fn gen_printf(seed: u64) -> Vec<String> {
     vec![format!("printf '{fmt_q}|\\n' {}", args.join(" "))]
 }
 
+// ---------------------------------------------------------------------------
+// here-doc / here-string generator
+//
+// Exercises delimiter quoting (`EOF` vs `'EOF'` vs `"EOF"` — controls whether
+// the body is expanded), `<<` vs `<<-` (leading-tab strip), and parameter /
+// command / arithmetic expansion inside the body. Deterministic: the body only
+// references the fixed PREAMBLE vars and side-effect-free command subs.
+// ---------------------------------------------------------------------------
+
+/// Body fragments that probe expansion inside a here-document.
+const HD_FRAGS: &[&str] = &[
+    "plain text",
+    "$s",
+    "${s}",
+    "${s:u}",
+    "${(U)s}",
+    "${nums}",
+    "${(j:-:)nums}",
+    "$(echo cmd)",
+    "$((3 + 4))",
+    "${undef:-def}",
+    "tab\tinside",
+    "back\\slash",
+    "dollar \\$s",
+    "quote \\` tick",
+    "brace ${a[2]}",
+    "$s and $n",
+];
+
+fn gen_heredoc(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // A heredoc-specific preamble: the shared PREAMBLE sets `path=…`, which is
+    // a special array tied to PATH in zsh — a scalar assignment clobbers PATH
+    // and `cat` vanishes (exit 127). Use the same vars minus `path`/`ptr`, so
+    // the external `cat` that reads the here-doc still resolves.
+    let preamble = "s=Hello_World; t='a,b,c,d'; empty=''; n=42; neg=-7; \
+                    spaces='  x y  '; a=(one two three four five); \
+                    nums=(3 1 4 1 5 9 2 6); typeset -A m; m=(k1 v1 k2 v2 k3 v3);"
+        .to_string();
+
+    // 1-in-4: a here-STRING (`<<< word`) instead of a here-doc.
+    if rng.gen_bool(0.25) {
+        let frag = pick(&mut rng, HD_FRAGS);
+        let stmt = match rng.gen_range(0..3) {
+            0 => format!("cat <<< \"{frag}\""),
+            1 => format!("cat <<< '{frag}'"),
+            _ => format!("cat <<< {}", frag.split_whitespace().next().unwrap_or(frag)),
+        };
+        return vec![preamble, stmt];
+    }
+
+    // here-doc: choose delimiter quoting and the `<<`/`<<-` operator.
+    let (op, indent) = if rng.gen_bool(0.4) {
+        ("<<-", "\t") // `<<-` strips leading TABS from body + terminator
+    } else {
+        ("<<", "")
+    };
+    let delim = match rng.gen_range(0..3) {
+        0 => "EOF".to_string(),      // unquoted → body is expanded
+        1 => "'EOF'".to_string(),    // single-quoted → body is literal
+        _ => "\"EOF\"".to_string(),  // double-quoted → body is literal
+    };
+    let nlines = rng.gen_range(1..=3);
+    let mut lines = String::new();
+    for _ in 0..nlines {
+        let frag = pick(&mut rng, HD_FRAGS);
+        lines.push_str(&format!("{indent}{frag}\n"));
+    }
+    // The closing delimiter is the bare word (EOF), tab-indented only for `<<-`.
+    vec![preamble, format!("cat {op}{delim}\n{lines}{indent}EOF")]
+}
+
 /// Create (idempotently) the glob fixture directory and return its path. Files
 /// have deliberately distinct sizes and staggered mtimes so size/mtime ordering
 /// qualifiers produce a single deterministic order.
@@ -712,6 +784,7 @@ enum Mode {
     Expr,
     Glob,
     Printf,
+    Heredoc,
 }
 
 struct Args {
@@ -723,6 +796,8 @@ struct Args {
     max_report: usize,
     jobs: usize,
     mode: Mode,
+    verify: usize,
+    baseline: Option<PathBuf>,
 }
 
 /// Generate the statement list for a seed in the selected mode.
@@ -732,6 +807,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Expr => expr_program(seed),
         Mode::Glob => gen_glob(seed),
         Mode::Printf => gen_printf(seed),
+        Mode::Heredoc => gen_heredoc(seed),
     }
 }
 
@@ -742,6 +818,8 @@ fn parse_args() -> Args {
     let mut timeout_ms = 5000u64;
     let mut max_report = 200usize;
     let mut mode = Mode::Stateful;
+    let mut verify = 1usize;
+    let mut baseline: Option<PathBuf> = None;
     let mut jobs = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
@@ -794,24 +872,44 @@ fn parse_args() -> Args {
                     Some("stateful") => mode = Mode::Stateful,
                     Some("glob") => mode = Mode::Glob,
                     Some("printf") => mode = Mode::Printf,
+                    Some("heredoc") => mode = Mode::Heredoc,
                     _ => {}
                 }
             }
             "--expr" => mode = Mode::Expr,
             "--glob" => mode = Mode::Glob,
             "--printf" => mode = Mode::Printf,
+            "--heredoc" => mode = Mode::Heredoc,
+            "--verify" => {
+                i += 1;
+                verify = argv
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .filter(|&k| k >= 1)
+                    .unwrap_or(verify);
+            }
+            "--baseline" => {
+                i += 1;
+                baseline = argv.get(i).map(PathBuf::from);
+            }
             "--help" | "-h" => {
                 eprintln!(
                     "parity-fuzz — differential zsh/zshrs parity fuzzer\n\
                      \n\
                      --count N        number of cases (default 2000)\n\
                      --seed N         base seed; case i uses seed+i (default 1)\n\
-                     --mode M         'stateful' (default), 'expr', 'glob', or 'printf'\n\
+                     --mode M         'stateful' (default), 'expr', 'glob', 'printf', or 'heredoc'\n\
                      --once           run a single case (seed) and print both outputs\n\
                      --timeout-ms N   per-shell wall-clock timeout (default 5000)\n\
                      --out PATH       divergence corpus file\n\
                      --max-report N   stop after N divergences (default 200)\n\
                      --jobs N         parallel workers (default = CPU count)\n\
+                     --verify K       require K consecutive divergences to report\n\
+                                      a case (default 1; use 3 on CI to reject\n\
+                                      load-contention flakiness)\n\
+                     --baseline FILE  allowlist of known-gap signatures; only a\n\
+                                      NEW divergence (not in FILE) fails the run\n\
+                                      (exit 1). Prints new-signature lines to add.\n\
                      \n\
                      stateful mode builds a sequence of setopt/typeset/IFS/scope\n\
                      mutations interleaved with probes; glob mode runs generated\n\
@@ -833,6 +931,48 @@ fn parse_args() -> Args {
         max_report,
         jobs,
         mode,
+        verify,
+        baseline,
+    }
+}
+
+/// Normalize a minimal reproducer program to a stable gap-class signature:
+/// mask numeric literals, base numbers, hex, and the fixed vocabulary words so
+/// that many instances of the same gap collapse to one signature. Used by the
+/// --baseline allowlist so known gaps don't fail CI but new ones do.
+fn signature(program: &str) -> String {
+    // Take the last non-empty line (the culprit probe), drop the preamble.
+    let body = program
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .next_back()
+        .unwrap_or("")
+        .to_string();
+    let mut s = body;
+    // Order matters: hex/base before bare digits.
+    for (pat, rep) in [
+        (r"0x[0-9a-fA-F]+", "HEX"),
+        (r"\b[0-9]+#[0-9a-zA-Z]+", "BASE"),
+        (r"\b[0-9]+\b", "N"),
+    ] {
+        s = regex_lite_replace(&s, pat, rep);
+    }
+    for w in [
+        "Hello_World", "alpha", "beta", "gamma", "delta", "foo", "bar", "x1", "x2", "y3", "aa",
+        "bb", "one", "two", "three", "four", "five", "k1", "k2", "k3", "v1", "v2", "v3",
+    ] {
+        s = s.replace(w, "W");
+    }
+    s
+}
+
+/// Tiny regex replace via the std-free `regex`-like fallback: the binary
+/// already depends on `regex`, so use it.
+fn regex_lite_replace(s: &str, pat: &str, rep: &str) -> String {
+    match regex::Regex::new(pat) {
+        Ok(re) => re.replace_all(s, rep).into_owned(),
+        Err(_) => s.to_string(),
     }
 }
 
@@ -867,6 +1007,7 @@ fn main() {
                 Mode::Expr => "expr",
                 Mode::Glob => "glob",
                 Mode::Printf => "printf",
+                Mode::Heredoc => "heredoc",
             }
         );
         let (show, z, r) = if diverged && stmts.len() > 1 {
@@ -928,6 +1069,21 @@ fn main() {
                         let mscript = build_program(&minimal);
                         let mz = run_zsh(&mscript, timeout);
                         let mr = run_zshrs(&mscript, &bin, timeout);
+                        // Re-verify: a REAL gap diverges every time; a transient
+                        // (empty output from resource pressure under heavy
+                        // parallelism) won't reproduce. Require `verify`
+                        // consecutive divergences or discard as flaky. This is
+                        // what makes a CI fuzz run non-flaky.
+                        let mut confirmed = mz.stdout != mr.stdout || mz.exit != mr.exit;
+                        for _ in 1..args.verify.max(1) {
+                            if !confirmed {
+                                break;
+                            }
+                            confirmed = diverges(&mscript, &bin, timeout);
+                        }
+                        if !confirmed {
+                            continue; // flaky/transient — not a real gap
+                        }
                         let rec = format!(
                             "==== seed {seed} ====\n\
                              program:\n  {}\n\
@@ -968,13 +1124,50 @@ fn main() {
     let divergences: Vec<String> = divergences.into_iter().map(|(_, r)| r).collect();
 
     let elapsed = start.elapsed();
+
+    // Extract each record's program body and normalize to a gap-class signature.
+    let sig_of = |rec: &str| -> String {
+        let prog = rec
+            .split("program:\n")
+            .nth(1)
+            .and_then(|s| s.split("\nzsh   :").next())
+            .unwrap_or(rec);
+        signature(prog)
+    };
+
+    // Apply the --baseline allowlist: a divergence whose signature is in the
+    // baseline is a KNOWN gap (allowed); anything else is NEW → fails the run.
+    let allowed: std::collections::HashSet<String> = match &args.baseline {
+        Some(bp) => std::fs::read_to_string(bp)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect(),
+        None => std::collections::HashSet::new(),
+    };
+    let mut new_records: Vec<&String> = Vec::new();
+    let mut new_sigs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut known = 0usize;
+    for rec in &divergences {
+        let sig = sig_of(rec);
+        if args.baseline.is_some() && allowed.contains(&sig) {
+            known += 1;
+        } else {
+            new_records.push(rec);
+            new_sigs.insert(sig);
+        }
+    }
+
     println!(
         "\nfuzzed {checked} cases in {:.1}s ({:.0}/s)\n\
-         divergences : {}\n\
+         divergences : {} ({} known / {} new)\n\
          timeouts    : {}",
         elapsed.as_secs_f64(),
         checked as f64 / elapsed.as_secs_f64().max(0.001),
         divergences.len(),
+        known,
+        new_records.len(),
         timeouts,
     );
 
@@ -982,20 +1175,28 @@ fn main() {
         if let Some(parent) = args.out_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        match std::fs::File::create(&args.out_path) {
-            Ok(mut f) => {
-                for d in &divergences {
-                    let _ = writeln!(f, "{d}");
-                }
-                println!("wrote {} divergences to {}", divergences.len(), args.out_path.display());
+        if let Ok(mut f) = std::fs::File::create(&args.out_path) {
+            for d in &divergences {
+                let _ = writeln!(f, "{d}");
             }
-            Err(e) => eprintln!("could not write {}: {e}", args.out_path.display()),
+            println!("wrote {} divergences to {}", divergences.len(), args.out_path.display());
         }
-        // Print the first few inline for immediate triage.
-        println!("\n--- first {} divergence(s) ---", divergences.len().min(5));
-        for d in divergences.iter().take(5) {
+    }
+
+    // With a baseline, only NEW (non-allowlisted) divergences fail the run.
+    // Without a baseline, any divergence fails (interactive/triage use).
+    if !new_records.is_empty() {
+        println!("\n--- {} NEW gap signature(s) (add to baseline once triaged) ---", new_sigs.len());
+        for s in &new_sigs {
+            println!("{s}");
+        }
+        println!("\n--- first {} new divergence record(s) ---", new_records.len().min(5));
+        for d in new_records.iter().take(5) {
             println!("{d}");
         }
         std::process::exit(1);
+    }
+    if known > 0 {
+        println!("all {known} divergences are known (in baseline) — OK");
     }
 }

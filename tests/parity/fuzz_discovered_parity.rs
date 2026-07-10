@@ -211,6 +211,17 @@ mod quote_flag_formatting {
     fn visible_quote_empty() {
         assert_parity("empty=''; print -r -- ${(Vq)empty}");
     }
+
+    /// `(#)` on a bare array collapses it to one evaluated scalar (a
+    /// non-numeric join → empty); a FOLLOWING flag must use that collapsed
+    /// value, not re-fetch the raw array. zsh `${(#q)arr}` → `''`. FIXED:
+    /// the `(#)` evalchar branch stashes the collapsed value in split_parts so
+    /// `(q)`/`(V)` don't re-fetch. Bare-array-with-flag was the class behind
+    /// several `${(#q…)path}` expr-fuzz divergences.
+    #[test]
+    fn charcode_flag_on_array_then_quote() {
+        assert_parity("arr=(/a /b); print -r -- ${(#q)arr}; print -r -- ${(#qV)arr}");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -268,12 +279,17 @@ mod ksh_arrays_length {
         assert_parity("setopt KSH_ARRAYS; arr+=(beta); print -r -- ${#arr}");
     }
 
-    /// KSH_ARRAYS also changes assoc scalar access: `${(ko)as}` → the first
-    /// value. zsh: `v1`.  zshrs: `k1 k2`.
+    /// KSH_ARRAYS also changes assoc scalar access: a bare `$assoc` (even with
+    /// (k)/(v)/(o)/(kv) flags) is a SCALAR — the bucket-first value — and the
+    /// flags no-op on it. zsh `${(ko)as}` → `v1`. FIXED: paramsubst scalarizes
+    /// a bare KSHARRAYS assoc before the whole-assoc key/value fold
+    /// (params.c:2293-2296).
     #[test]
-    #[ignore = "zshrs gap: KSH_ARRAYS ${(ko)assoc} scalar access diverges"]
     fn assoc_scalar_access() {
-        assert_parity("typeset -A as; as=(k1 v1 k2 v2); setopt KSH_ARRAYS; print -r -- ${(ko)as}");
+        assert_parity(
+            "typeset -A as; as=(k1 v1 k2 v2); setopt KSH_ARRAYS; \
+             print -r -- ${(ko)as}; print -r -- ${(v)as}; print -r -- ${(o)as}",
+        );
     }
 }
 
@@ -296,24 +312,49 @@ mod nounset_length {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// X. Arithmetic-error exit code inside a typeset assignment
+// X. Arithmetic-error exit code inside an assignment-builtin
 //
-// A math error in the RHS of a `typeset`/`integer`/`float`/`local` assignment
-// PRESERVES the prior exit status in zsh (exec.c:4287-4294 skips execbuiltin
-// when errflag is set, leaving lastval unchanged) — so a fresh shell exits 0,
-// but `false; typeset -i x=$(( 1/0 ))` exits 1. zshrs forces exit 1. This is a
-// core-exec exit-status subtlety (it varies by command type: `print $((1/0))`
-// exits 1 on both, `/bin/echo $((1/0))` diverges the other way), not a local
-// typeset fix — left pinned rather than reworking exit-status propagation.
+// A SOFT math error (`$((1/0))`, ERRFLAG_ERROR without ERRFLAG_HARD) in the RHS
+// of an assignment-BUILTIN (`typeset`/`declare`/`local`/`export`/`readonly`/
+// `integer`/`float`/`private`) PRESERVES the prior exit status in zsh: the
+// postassign prefork (exec.c:4239-4245) breaks on errflag and exec.c:4287
+// `if (!errflag) execbuiltin(...)` skips the builtin, leaving lastval unchanged.
+// So a fresh shell exits 0 but `false; typeset -i x=$((1/0))` exits 1. This is
+// distinct from a PLAIN assignment `x=$((1/0))` (execsimple c:1375 → 1) and from
+// a NON-assign builtin `print $((1/0))` (main args-prefork c:3760 → 1), both of
+// which stay 1 on both shells.
+// FIXED: dispatch_builtin (fusevm_bridge.rs) now returns the prior LASTVAL when
+// errflag is a soft ERRFLAG_ERROR on a BINF_ASSIGN builtin. A HARD error
+// (`${var?msg}`) still aborts with status 1 (falls through the gate).
 // ─────────────────────────────────────────────────────────────────────
 mod typeset_arith_error_exit {
     use super::*;
 
-    /// zsh: exit 0 (prior status preserved).  zshrs: exit 1.
+    /// Fresh shell — prior status 0 is preserved when the assignment-builtin's
+    /// math RHS errors and the builtin is skipped.  zsh: exit 0.
     #[test]
-    #[ignore = "zshrs gap: typeset -i x=$((1/0)) exits 1; zsh preserves prior status (0)"]
-    fn integer_assign_divzero_exit() {
+    fn integer_assign_divzero_exit_fresh() {
         assert_parity("typeset -i x=$(( 1/0 )); print ok");
+    }
+
+    /// After `false` — prior status 1 is preserved (not reset to 0).  zsh: exit 1.
+    #[test]
+    fn integer_assign_divzero_exit_after_false() {
+        assert_parity("false; typeset -i x=$(( 1/0 )); print ok");
+    }
+
+    /// A PLAIN assignment (no builtin) still exits 1 — the preserve-prior rule
+    /// is specific to assignment-builtins.  zsh: exit 1.
+    #[test]
+    fn plain_assign_divzero_exit() {
+        assert_parity("x=$(( 1/0 )); print ok");
+    }
+
+    /// A HARD `${var?msg}` error in a typeset RHS aborts with status 1 even on a
+    /// fresh shell — it is not preserve-prior.  zsh: exit 1.
+    #[test]
+    fn typeset_hard_paramerr_exit() {
+        assert_parity("unset UNSETV; typeset v=${UNSETV?boom}; print ok");
     }
 }
 
@@ -391,5 +432,101 @@ mod printf_format {
     #[test]
     fn hash_flag_forces_decimal_point() {
         assert_parity("printf '%#.0f|%#.0e|%#.0g\\n' 5 5 5");
+    }
+
+    /// A math-eval failure on a FLOAT operand is a soft error → exit 1 (like
+    /// the integer path). zsh `printf '%g' '%d'` → exit 1; zshrs swallowed it
+    /// (exit 0). FIXED: the float arm now flags PRINTF_MATH_ERR. Undefined
+    /// vars (`abc`→0) and empty/missing args stay exit 0.
+    #[test]
+    fn float_math_error_exit() {
+        assert_parity("printf '%g\\n' '%d'");
+    }
+
+    /// A dynamic field width via `*` reads its argument through the SAME
+    /// math evaluator as a `%d` operand (builtin.c:5241
+    /// `width = (int)mathevali(...)`), not a plain decimal parse. So a hex
+    /// width arg `0x1f` is 31, a leading-space `' 4'` is 4, and `2+3` is 5.
+    /// zshrs previously used `str::parse`, silently yielding width 0 for any
+    /// non-decimal arg. FIXED: the `*` width path now calls parse_int_arg.
+    #[test]
+    fn star_width_math_evaluated() {
+        assert_parity("printf '%*d|%-*d|%*d|\\n' 0x1f 5 0x4 5 2+3 5");
+    }
+
+    /// The `*` PRECISION arg is math-evaluated identically (builtin.c:5276).
+    /// `%.*d` with a hex precision `0x3` zero-pads to 3 digits.
+    #[test]
+    fn star_precision_math_evaluated() {
+        assert_parity("printf '%.*d|%.*f|\\n' 0x3 5 0x2 3.14159");
+    }
+
+    /// A MISSING or negative `*` precision arg leaves precision UNSET, not 0
+    /// (builtin.c:5178 `prec = -1`, c:5288 `if (prec >= 0)` gates emission —
+    /// unlike width whose init is 0). When args run out mid-format the `%d`
+    /// keeps default precision and prints `0`; zshrs formerly forced `.0`
+    /// and truncated it to empty. FIXED: the `*` precision is emitted only
+    /// when its arg exists and is non-negative.
+    #[test]
+    fn star_precision_missing_arg_unset() {
+        assert_parity("printf '] %+x%-0.*d|\\n' '12'");
+    }
+
+    /// Same rule via format recycling: a negative `*` precision (`-18`) on
+    /// the second cycle is unset, so `%#g` of 0 keeps default precision.
+    #[test]
+    fn star_precision_negative_unset() {
+        assert_parity("printf '->%-#.*g%0b|\\n' 'cafe' 'hello' '%d' -18");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// T. Built-in colon-tied special vars (path/fpath/cdpath) — scalar assign.
+//
+// A SCALAR assignment to a colon-array-tied special var must coerce to a
+// 1-element array and sync the tied env var. Array assignment (`path=(...)`)
+// and a user `typeset -T` tie both sync correctly; only the built-in special
+// vars drop a scalar assignment. Found via the --mode heredoc preamble.
+// ─────────────────────────────────────────────────────────────────────
+mod special_var_scalar_tie {
+    use super::*;
+
+    /// zsh: `PATH=/aa/bb`. FIXED: a scalar assign to a tied colon-array name
+    /// now re-derives its tied env scalar (colonarrsetfn reverse cascade,
+    /// params.rs) — mirroring the array-assign and element-assign syncs.
+    #[test]
+    fn path_scalar_assign_syncs_env() {
+        assert_parity("PATH=/orig; path=/aa/bb; print -r -- $PATH");
+    }
+
+    /// Same tie now works for fpath/cdpath.
+    #[test]
+    fn fpath_cdpath_scalar_assign_syncs_env() {
+        assert_parity("FPATH=/o; fpath=/aa; print -r -- $FPATH; CDPATH=/o; cdpath=/bb; print -r -- $CDPATH");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// H. Bare associative-array value-join order
+//
+// `$assoc` (no subscript) joins its VALUES in zsh hash-BUCKET order — the
+// same order `(k)`/`(v)` enumerate. The fusevm GET_VAR fast path sorted the
+// keys alphabetically, so `$as` diverged from `${(v)as}` for any key set
+// whose bucket order isn't alphabetical.
+// ─────────────────────────────────────────────────────────────────────
+mod bare_assoc_join_order {
+    use super::*;
+
+    /// zsh: `9 1 5` (bucket order, == `${(v)as}`). zshrs sorted → `1 5 9`.
+    /// FIXED: GET_VAR now uses the bucket-ordered `assoc_get`, so `$as`
+    /// matches `${(v)as}`. Under KSH_ARRAYS the bare form is the bucket-FIRST
+    /// value (`9`), also fixed by the same change.
+    #[test]
+    fn bare_assoc_uses_bucket_order() {
+        assert_parity(
+            "typeset -A as; as=(zebra 9 apple 1 mango 5); \
+             print -r -- $as; print -r -- ${(v)as}; \
+             setopt KSH_ARRAYS; print -r -- $as",
+        );
     }
 }
