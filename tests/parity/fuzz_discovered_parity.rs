@@ -752,3 +752,36 @@ mod raw_subscript_param_expansion {
         assert_parity("a=xx n=1; print Y | IFS= read -r 'a[$n+1]'; print -r -- $a");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// G2. `$~pat` / `${~pat}` with a literal PREFIX must glob the whole word.
+//
+// The `~` flag promotes a value's glob metachars to a pattern (c:subst.c:2596
+// `globsubst = 2`). With a prefix in the same word (`$dir/$~pat`), the WHOLE
+// assembled word `$dir/<pat>` is filename-generated. zshrs globbed only the
+// `$~pat` segment in isolation (in the CWD), dropping the `$dir/` prefix →
+// wrong matches / "no matches found". p10k's `_p9k_glob`
+// (`$dir/$~2(...N:t)`) and zinit relied on this. FIXED: the sub-segment
+// fast paths defer to the parent word's assembled-scalar glob.
+// ─────────────────────────────────────────────────────────────────────
+mod glob_subst_prefix {
+    use super::*;
+
+    /// Build a fixture dir and glob `$d/$~pat` — must match under the prefix.
+    #[test]
+    fn tilde_glob_flag_with_prefix() {
+        assert_parity(
+            "t=$(mktemp -d); touch $t/foo.txt $t/bar.txt; d=$t pat='*.txt'; \
+             print -rl -- $d/$~pat | sort; cd /; rm -rf $t",
+        );
+    }
+
+    /// The exact p10k `_p9k_glob` idiom: `eval` + `$dir/$~pat(N:t)`.
+    #[test]
+    fn p9k_glob_eval_idiom() {
+        assert_parity(
+            "t=$(mktemp -d); touch $t/a.md $t/b.md; d=$t pat='*.md'; \
+             eval 'f=($d/$~pat(N:t))'; print -rl -- $f | sort; cd /; rm -rf $t",
+        );
+    }
+}
