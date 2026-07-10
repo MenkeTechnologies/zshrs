@@ -2,8 +2,23 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode stateful --count N --verify 3  (copy NEW-signature lines).
 #
-# EMPTY: the typeset-arith-error-exit (X) class that formerly populated this
-# file is fixed (dispatch_builtin preserves the prior status on a soft math
-# error in a BINF_ASSIGN builtin — see tests/parity/fuzz_discovered_parity.rs
-# mod typeset_arith_error_exit). A clean 9000-case --verify 3 run reproduces
-# zero divergences, so any stateful divergence now fails CI as a regression.
+# The typeset-arith-error-exit (X) class is fixed (dispatch_builtin preserves
+# the prior status on a soft math error in a BINF_ASSIGN builtin — see
+# tests/parity/fuzz_discovered_parity.rs mod typeset_arith_error_exit).
+#
+# FIXED: nounset error inside a `[[ … ]]` operand now preserves the cond result
+# (BUILTIN_COND_STATUS_FROM_BOOL syncs the conditional's lastval to the executor
+# before ERREXIT_CHECK — see mod nounset_in_conditional).
+#
+# KNOWN-OPEN: after a prior `(( … ))`, the exit code of a following nounset
+# error is context-dependent in zsh (2 vs the bare 1) whereas zshrs always
+# yields 1 — a separate (non-conditional) facet of zsh's nuanced nounset
+# exit-status propagation, still deferred.
+print -r -- "${(t)iv}"
+#
+# KNOWN-OPEN: under `setopt KSH_ARRAYS`, a bare `${(flags)arr}` (no [@]/[*])
+# is element 1 only, so a j/o/O/u/U/L flag operates on that single element
+# (`${(j:-:)parts}` → `a`, not `a-b-c`). zshrs applies the flag to the full
+# array — the flag/join path fetches the array independently of the KSHARRAYS
+# bare-name collapse. Pinned #[ignore] in mod ksh_arrays_bare_flag_collapse.
+parts=(a b c); joined=${(j:-:)parts}; print -r -- $joined
