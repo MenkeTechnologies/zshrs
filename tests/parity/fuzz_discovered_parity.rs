@@ -316,3 +316,80 @@ mod typeset_arith_error_exit {
         assert_parity("typeset -i x=$(( 1/0 )); print ok");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// G. Glob-qualifier gaps (found by the fuzzer's --mode glob fixture runs).
+//
+// Each test builds its own temp fixture so it is self-contained and runs in
+// headless CI. Both shells glob the same tree; the divergence is ordering.
+// ─────────────────────────────────────────────────────────────────────
+mod glob_ordering {
+    use super::*;
+
+    /// Recursive `**/*` must yield a single lexicographically-sorted path list.
+    /// zsh: `d`, `d/z`, `e`, `m`.  zshrs: `d`, `e`, `m`, `d/z` — it sorts each
+    /// recursion level separately and appends the recursed matches instead of
+    /// merge-sorting the whole result.
+    /// FIXED: `gmatchcmp` GS_NAME now strips the `./` CurDir prefix that the
+    /// scanner puts on depth-0 matches (glob.rs), so the single combined sort
+    /// keys on the same bare-relative path it emits (matching C's dyncat name,
+    /// glob.c:424/1977). `**/*` now yields one full-path-sorted list.
+    #[test]
+    fn globstar_full_path_sort() {
+        assert_parity(
+            "setopt extendedglob; t=$(mktemp -d); cd $t; mkdir d; touch d/z e m; \
+             print -rl -- **/*; cd /; rm -rf $t",
+        );
+    }
+
+    // NOTE: the fuzzer also surfaced an `(oL)` size-order tie-break divergence
+    // (equal-size regular file vs symlink), but it only manifests with a fuller
+    // fileset and did not reduce to a stable minimal reproducer, so it is not
+    // pinned here — pinning a passing case would be a misleading `#[ignore]`.
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// P. printf format engine (found by the fuzzer's --mode printf).
+// ─────────────────────────────────────────────────────────────────────
+mod printf_format {
+    use super::*;
+
+    /// A `%` directive carrying any flag/width/precision is an "invalid
+    /// directive" in zsh (exit 1); zshrs printed `%`, exit 0. FIXED
+    /// (builtin.c:5414-5419): only a bare `%%` (spec == "%") prints `%`.
+    #[test]
+    fn percent_with_modifier_is_invalid() {
+        assert_parity("printf '%5%\\n'");
+    }
+
+    /// Precision on `%x`/`%o`/`%X`/`%u` is a minimum digit count (zero-pad).
+    /// zsh `%.3x` of 10 → `00a`; zshrs ignored precision. FIXED in
+    /// format_spec_radix/uint.
+    #[test]
+    fn precision_on_radix_conversions() {
+        assert_parity("printf '%.3x|%.4o|%.5X\\n' 10 8 255");
+    }
+
+    /// A zero value with precision 0 yields NO digits. zsh `%.0d` of 0 → ``;
+    /// zshrs printed `0`. FIXED across format_spec_int/uint/radix.
+    #[test]
+    fn zero_value_precision_zero_empty() {
+        assert_parity("printf '[%.0d][%.0x][%.0o]\\n' 0 0 0");
+    }
+
+    /// `%q` of a MISSING argument: zsh outputs nothing (NULL curarg →
+    /// nullstr). FIXED (builtin.c:5387): a missing arg is no longer coerced to
+    /// an empty string and quoted as `''`; a present empty arg still quotes.
+    #[test]
+    fn quote_missing_arg() {
+        assert_parity("printf '[%q]\\n'; printf '%q %q\\n' one");
+    }
+
+    /// The `#` flag forces a decimal point on a float conversion even when
+    /// precision 0 leaves no fractional digits. zsh `%#.0f` 5 → `5.`, `%#.0e`
+    /// → `5.e+00`; zshrs dropped the point. FIXED in format_spec_float_conv.
+    #[test]
+    fn hash_flag_forces_decimal_point() {
+        assert_parity("printf '%#.0f|%#.0e|%#.0g\\n' 5 5 5");
+    }
+}

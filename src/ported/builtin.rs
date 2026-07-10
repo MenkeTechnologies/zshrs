@@ -15476,6 +15476,16 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 arg_i = p;
             }
             match iter.next() {
+                // c:Src/builtin.c:5414-5419 — a bare `%%` prints `%`, but a
+                // `%` directive carrying any flag / width / precision / `*` is
+                // an "invalid directive": zsh handles doubled `%%` in the
+                // literal scan and only reaches the conversion switch (which
+                // has no `%` case → default) once modifiers intervened. Here a
+                // plain `%%` arrives with `spec == "%"`; anything else means
+                // modifiers were consumed.
+                Some('%') if spec != "%" => {
+                    return Err((out, format!("{spec}%: invalid directive")));
+                }
                 Some('%') => out.push('%'),
                 Some('s') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
@@ -15614,11 +15624,18 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 // unreadable in zsh-syntax debuggers expecting the
                 // backslash form.
                 Some('q') => {
-                    let a = args.get(arg_i).cloned().unwrap_or_default();
-                    let quoted = crate::ported::utils::quotestring(
-                        &a,
-                        crate::ported::zsh_h::QT_BACKSLASH_SHOWNULL,
-                    );
+                    // c:Src/builtin.c:5387-5391 — `stringval = curarg ?
+                    // quotestring(...) : &nullstr`. A MISSING argument (curarg
+                    // == NULL) is the empty nullstr and is NOT quoted, so
+                    // `printf '%q'` prints nothing — not `''`. A PRESENT arg,
+                    // even an empty string, IS quoted (→ `''`).
+                    let quoted = match args.get(arg_i) {
+                        Some(a) => crate::ported::utils::quotestring(
+                            a,
+                            crate::ported::zsh_h::QT_BACKSLASH_SHOWNULL,
+                        ),
+                        None => String::new(),
+                    };
                     // c:Src/builtin.c:5405-5407 — `%q` sets `*d = 's'`
                     // and runs the quoted value through the normal string
                     // output (`print_val`), so width/precision/flags from
@@ -15803,9 +15820,12 @@ fn format_spec_int(spec: &str, n: i64) -> String {
     let space_flag = spec.contains(' ') && !plus_flag;
     let digits = n.unsigned_abs().to_string();
     // c:libc printf %d precision = minimum number of digits;
-    // zero-pad the body up to that count BEFORE the sign + width.
+    // zero-pad the body up to that count BEFORE the sign + width. Converting
+    // a zero value with precision 0 yields NO digits (`printf '%.0d' 0` → "").
     let digits = if let Some(p) = prec {
-        if digits.len() < p {
+        if p == 0 && n == 0 {
+            String::new()
+        } else if digits.len() < p {
             format!("{}{}", "0".repeat(p - digits.len()), digits)
         } else {
             digits
@@ -15891,14 +15911,31 @@ fn format_spec_int(spec: &str, n: i64) -> String {
 /// printf %x / %X / %o with full flag support: `#` prefix, zero pad,
 /// width, left-align. Matches libc printf semantics.
 fn format_spec_radix(spec: &str, n: u64, conv: char) -> String {
-    let (left_align, zero_pad_flag, width, _prec) = parse_flags_width_prec(spec);
-    let zero_pad = zero_pad_flag && !left_align;
+    let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
+    // c:libc printf — when a precision is given the `0` flag is ignored;
+    // precision controls the digit zero-fill instead.
+    let zero_pad = zero_pad_flag && !left_align && prec.is_none();
     let hash_flag = spec.contains('#');
     let body = match conv {
         'x' => format!("{:x}", n),
         'X' => format!("{:X}", n),
         'o' => format!("{:o}", n),
         _ => n.to_string(),
+    };
+    // c:libc printf %o/%u/%x/%X — precision is the MINIMUM number of digits;
+    // zero-pad the body up to it BEFORE the `#` prefix and width. Converting
+    // a zero value with precision 0 yields NO digits.
+    let body = if let Some(p) = prec {
+        let len = body.chars().count();
+        if p == 0 && n == 0 {
+            String::new()
+        } else if len < p {
+            format!("{}{}", "0".repeat(p - len), body)
+        } else {
+            body
+        }
+    } else {
+        body
     };
     // c:Src/builtin.c — `#` flag: prefix with `0x`/`0X` for hex (only
     // when value non-zero), `0` for octal (always, even zero, which
@@ -15944,8 +15981,10 @@ fn format_spec_uint(spec: &str, n: u64) -> String {
     // libc: with an explicit precision the `0` flag is ignored.
     let zero_pad = zero_pad_flag && !left_align && prec.is_none();
     let digits = n.to_string();
-    // Precision = minimum number of digits (zero-fill the body).
+    // Precision = minimum number of digits (zero-fill the body). A zero value
+    // with precision 0 yields NO digits (c:libc printf).
     let body = match prec {
+        Some(0) if n == 0 => String::new(),
         Some(p) if digits.len() < p => format!("{}{}", "0".repeat(p - digits.len()), digits),
         _ => digits,
     };
@@ -16105,6 +16144,18 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
             }
         }
         _ => format!("{}", n),
+    };
+    // c:libc printf `#` flag on a float conversion forces a decimal point to
+    // appear even when precision 0 leaves no fractional digits: `%#.0f` 5 →
+    // "5.", `%#.0e` 5 → "5.e+00", `%#.0g` 5 → "5.". (The %g/%G arm above also
+    // uses `#` to suppress trailing-zero stripping.)
+    let body = if spec.contains('#') && !body.contains('.') {
+        match body.find(|c| c == 'e' || c == 'E') {
+            Some(ep) => format!("{}.{}", &body[..ep], &body[ep..]),
+            None => format!("{body}."),
+        }
+    } else {
+        body
     };
     // c:libc printf flags `+` and ` ` — a non-negative float value gets
     // a forced leading `+` (with `+`) or a blank (with ` `); `+`
