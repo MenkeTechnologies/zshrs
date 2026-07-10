@@ -5499,6 +5499,22 @@ pub fn paramsubst(
                     .or_else(|| arrays_get(&var_name).map(|a| a.join(" "))) // c:2741
                     .unwrap_or_default(); // c:2741
                 var_name = target; // c:2741
+                // c:params.c:2216 — fetchvalue reparses the operand as a
+                // parameter EXPRESSION via itype_end: only the leading
+                // identifier is used and trailing non-identifier text is
+                // discarded. So `${(P)t}` with t="a,b,c" derefs param `a`.
+                // A `name[sub]` value keeps its bracket for the subscript
+                // parser below; only bracket-free trailing junk is trimmed.
+                if !var_name.contains('[') {
+                    let n = var_name
+                        .as_bytes()
+                        .iter()
+                        .take_while(|&&b| b.is_ascii_alphanumeric() || b == b'_')
+                        .count();
+                    if n > 0 && n < var_name.len() {
+                        var_name.truncate(n);
+                    }
+                }
             } // c:2741
 
             // c:Src/subst.c — when the indirect name carries a
@@ -8031,10 +8047,68 @@ pub fn paramsubst(
             // `${#h[(I)pat]}` counts MATCHED elements, not the chars of
             // the joined scalar (was 7 for "baz bar" instead of 2).
             let flagged_array_subscript = isarr != 0 && split_parts.is_some();
-            let is_array_source =
-                ((arrays_contains(&var_name) || assoc_contains(&var_name) || magic_keys.is_some())
+            // c:Src/subst.c:3480-3483 — NO_UNSET: the length of an unset
+            // parameter aborts like a plain `$var` reference. This length
+            // block returns before the general nounset guard downstream, so
+            // replicate the check here. A default/alt modifier (`-`/`+`/`:-`/
+            // `:+`) supplies a value and suppresses the error.
+            {
+                let r = rest.as_str();
+                let has_default_op = r.starts_with('-')
+                    || r.starts_with('+')
+                    || r.starts_with(":-")
+                    || r.starts_with(":+");
+                let var_unset = subscript.is_none()
+                    && magic_keys.is_none()
+                    && !vars_contains(&var_name)
+                    && !arrays_contains(&var_name)
+                    && !assoc_contains(&var_name);
+                if var_unset
+                    && !has_default_op
+                    && !crate::ported::zsh_h::isset(crate::ported::zsh_h::UNSET)
+                {
+                    zerr(&format!("{}: parameter not set", var_name)); // c:3483
+                    errflag_set_error();
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::zsh_h::ERRFLAG_HARD,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return (String::new(), start_pos, vec![String::new()]);
+                }
+            }
+            // c:Src/subst.c:3860-3878 + params.c:1616 — under KSHARRAYS a bare
+            // array name is a scalar (element 1), so `${#arr}` is the STRING
+            // LENGTH of the first element, not the array count. raw_value is
+            // already element 1 (the KSHARRAYS-aware fetch), so forcing the
+            // scalar branch (is_array_source=false) yields the right length.
+            // c:Src/subst.c:3860-3878 + params.c:1616 — under KSHARRAYS a bare
+            // array name is a scalar (element 1), so `${#arr}` is the STRING
+            // LENGTH of the first element, not the array count. An explicit
+            // `[@]`/`[*]` selector keeps array shape (subscript present), so
+            // `${#arr[@]}` still counts — the compiler now preserves that
+            // subscript (compile_zsh.rs `${#…}` parse) so the two forms are
+            // distinguishable here.
+            let ksh_scalar_array = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                && subscript.is_none()
+                && !flagged_array_subscript
+                && magic_keys.is_none()
+                && arrays_contains(&var_name);
+            // The scalar length branch counts `raw_value_for_len`, which for a
+            // bare array name is the space-joined array; under KSHARRAYS the
+            // length source is element 1 alone, so override it.
+            let raw_value_for_len: String = if ksh_scalar_array {
+                arrays_get(&var_name)
+                    .and_then(|a| a.into_iter().next())
+                    .unwrap_or_default()
+            } else {
+                raw_value_for_len
+            };
+            let is_array_source = !ksh_scalar_array
+                && (((arrays_contains(&var_name)
+                    || assoc_contains(&var_name)
+                    || magic_keys.is_some())
                     && !single_slot_subscript)
-                    || flagged_array_subscript;
+                    || flagged_array_subscript);
             let n: usize = if is_array_source {
                 // c:3849 if (isarr)
                 if getlen == 1 {
@@ -13947,7 +14021,15 @@ pub fn paramsubst(
                 let mut out = String::with_capacity(s.len());
                 for ch in s.chars() {
                     let code = ch as u32;
-                    if (0x20..=0x7e).contains(&code) {
+                    if code == 0x9d {
+                        // Internal Snull marker injected by the (q) flag's
+                        // wrap_snull around a quoted region. It is NOT user
+                        // content and must pass through untouched so the
+                        // downstream Snull stripper can remove it; rendering
+                        // it here as `\M-^]` leaked literal markers to output
+                        // (`${(Vq)empty}` → `\M-^]''\M-^]` instead of `''`).
+                        out.push(ch);
+                    } else if (0x20..=0x7e).contains(&code) {
                         out.push(ch);
                     } else if code == 0x7f {
                         out.push('^');

@@ -51,6 +51,7 @@ mod extended_glob_parity;
 mod fd_redirect_parity;
 mod function_parity;
 mod functions_hashtable_parity;
+mod fuzz_discovered_parity;
 mod getopts_deep_parity;
 mod glob_numeric_parity;
 mod glob_parity;

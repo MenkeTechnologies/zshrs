@@ -3357,12 +3357,28 @@ pub(crate) fn op(what: i32) {
                 }
 
                 POWER | POWEREQ => {
-                    let bi = (if b.type_ == MN_FLOAT { b.d as i64 } else { b.l });
-                    if !is_float && bi >= 0 {
+                    // c:1335 — POWER '**'
+                    let mut a = a;
+                    let mut b = b;
+                    let mut cf = is_float; // c.type == MN_FLOAT
+                    // c:1337 — integer base with a negative integer exponent
+                    // "produces a real result, so cast to real." The cast of a
+                    // to float MUST happen before the zero check below: notzero
+                    // never faults on a float zero, so the all-integer
+                    // `0 ** -n` becomes pow(0.0,-n)=Inf rather than an error.
+                    if !cf && b.l < 0 {
+                        a = mnumber { l: 0, d: a.l as f64, type_: MN_FLOAT }; // c:1340
+                        b = mnumber { l: 0, d: b.l as f64, type_: MN_FLOAT }; // c:1341
+                        cf = true; // c:1339 (a.type = b.type = c.type = MN_FLOAT)
+                    }
+                    if !cf {
+                        // c:1344 — for (c.u.l = 1; b.u.l--; c.u.l *= a.u.l)
+                        let base = a.l;
+                        let mut e = b.l;
                         let mut result = 1i64;
-                        let base = (if a.type_ == MN_FLOAT { a.d as i64 } else { a.l });
-                        for _ in 0..bi {
+                        while e > 0 {
                             result = result.wrapping_mul(base);
+                            e -= 1;
                         }
                         mnumber {
                             l: result,
@@ -3372,17 +3388,23 @@ pub(crate) fn op(what: i32) {
                     } else {
                         let af = (if a.type_ == MN_FLOAT { a.d } else { a.l as f64 });
                         let bf = (if b.type_ == MN_FLOAT { b.d } else { b.l as f64 });
-                        if bf <= 0.0 && af == 0.0 {
+                        // c:1346 — `if (b.u.d <= 0 && !notzero(a)) return;`
+                        // notzero faults (division by zero) only on an INTEGER
+                        // zero, so a base that was cast to float above slips
+                        // through and yields Inf; a genuine integer-zero base
+                        // (e.g. `0 ** -4.0`, no cast) still errors.
+                        if bf <= 0.0 && !notzero(a) {
                             m_error_set("division by zero".to_string());
                             return;
                         }
+                        // c:1348 — (-num ** b) with non-integer b is imaginary
                         if af < 0.0 && bf != bf.trunc() {
                             m_error_set("imaginary power".to_string());
                             return;
                         }
                         mnumber {
                             l: 0,
-                            d: af.powf(bf),
+                            d: af.powf(bf), // c:1356
                             type_: MN_FLOAT,
                         }
                     }

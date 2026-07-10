@@ -4733,6 +4733,19 @@ impl ZshCompiler {
                         crate::vm_helper::BUILTIN_ARRAY_ALL
                     };
                     self.builder.emit(Op::CallBuiltin(bid, 0), 0);
+                    // c:Src/subst.c:184-188 — an UNQUOTED array splat drops
+                    // empty words (`uremnode`). The `[@]` subscript only sets
+                    // splat-vs-join shape (SCANPM_ISVAR_AT), not empty removal,
+                    // so `arr=(a '' b); print -l -- ${arr[@]}` → 2 lines. This
+                    // fast-path emitted ARRAY_ALL but skipped the drop that the
+                    // $@/$*/$argv splat path appends; mirror it here. Quoted
+                    // `"${arr[@]}"` (dq_for_splice) keeps empties via nulstring.
+                    if bid == crate::vm_helper::BUILTIN_ARRAY_ALL && !dq_for_splice {
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                            0,
+                        );
+                    }
                     return;
                 }
             }
@@ -5950,7 +5963,19 @@ impl ZshCompiler {
                         0,
                     );
                 }
-                if needs_glob && !parent_is_dq {
+                if needs_glob
+                    && !parent_is_dq
+                    // Assignment-builtin (typeset/export/…) and scalar
+                    // assignment values are NOT filename-generated — zsh's
+                    // scalar postassign path never calls globlist
+                    // (Src/exec.c:4246-4249 "No globassign for typeset
+                    // arguments"). Mirror the default-word gate above so a
+                    // value that combines a param expansion with a literal
+                    // glob metachar (`typeset -i lv=$x*2` → `lv=6*2`) isn't
+                    // globbed after expansion.
+                    && self.assign_builtin_arg_depth == 0
+                    && self.scalar_assign_depth == 0
+                {
                     // Glob-expand the assembled scalar at runtime. The
                     // builtin pops a Value::Str, runs expand_glob, and
                     // pushes Value::Array (or single-elem when no match).
@@ -10454,12 +10479,14 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // dispatched at runtime by ParamModifierKind::Length.
     if first == b'#' && bytes.len() > 1 {
         let rest = &inner[1..];
-        // Identifier OR identifier with `[@]`/`[*]` suffix (zsh:
-        // `${#arr[@]}` == `${#arr}` for arrays/assocs).
-        let body = rest
-            .strip_suffix("[@]")
-            .or_else(|| rest.strip_suffix("[*]"))
-            .unwrap_or(rest);
+        // Keep any `[@]`/`[*]` subscript in the name (do NOT strip it): under
+        // KSHARRAYS `${#arr}` (bare) is the strlen of element 1 while
+        // `${#arr[@]}` stays the element count, so the subscript must survive
+        // to the runtime paramsubst length code to tell them apart. Without
+        // KSHARRAYS both still count, since paramsubst treats `[@]` as an
+        // array-shape selector. (Previously `[@]`/`[*]` were stripped, which
+        // collapsed the two forms and lost the KSHARRAYS distinction.)
+        let body = rest;
         // `${#name:-default}` etc. → fall through to the bridge so the
         // default is applied first and the length is taken on the
         // post-default result. The bridge correctly distinguishes
