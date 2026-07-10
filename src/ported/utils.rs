@@ -7615,6 +7615,18 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                 // control bytes.
                 result.push_str("$'");
                 match c {
+                    // c:utils.c:6096-6104 — NUL emits the 2-char `\0`,
+                    // widening to `\000` ONLY when the following byte is an
+                    // octal digit (0-7), so the escape can't swallow it.
+                    // A lone NUL is `$'\0'`, not `$'\000'`.
+                    '\0' => {
+                        result.push_str("\\0");
+                        if let Some(nxt) = s.chars().nth(i + 1) {
+                            if ('0'..='7').contains(&nxt) {
+                                result.push_str("00");
+                            }
+                        }
+                    }
                     '\t' => result.push_str("\\t"),
                     '\r' => result.push_str("\\r"),
                     '\x07' => result.push_str("\\a"),

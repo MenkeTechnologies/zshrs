@@ -6025,6 +6025,23 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
 
     // Subscripted path (c:3210-3231).
     if let Some(key) = subscript {
+        // c:params.c:1601 (getarg) — a non-hashed parameter's subscript is an
+        // ARITHMETIC expression. Resolve it to a numeric index HERE, before
+        // the paramtab write lock below, because mathevalarg reads parameters
+        // and would deadlock against a held write lock. Associative arrays use
+        // the raw string key instead, so only pre-evaluate for non-hashed.
+        let is_hashed = {
+            let tab = paramtab().read().unwrap();
+            tab.get(name)
+                .map(|pm| (pm.node.flags as u32 & PM_HASHED) != 0)
+                .unwrap_or(false)
+        };
+        let resolved_idx: i64 = if is_hashed {
+            0 // unused for hashed params
+        } else {
+            key.parse::<i64>()
+                .unwrap_or_else(|_| crate::ported::math::mathevalarg(&key))
+        };
         let mut tab = paramtab().write().unwrap();
         let exists = tab.contains_key(name); // c:3212
         if !exists {
@@ -6079,7 +6096,11 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 .entry(name.to_string())
                 .or_default()
                 .insert(key.to_string(), val.to_string());
-        } else if let Ok(idx) = key.parse::<i64>() {
+        } else {
+            // Non-hashed param: subscript already arithmetic-resolved above
+            // (c:params.c:1601). zsh never auto-creates an assoc here, so
+            // `as[k1]=bb` on undeclared `as` uses idx 0 → invalid range.
+            let idx = resolved_idx;
             // c:Src/params.c:2748-2789 — PM_SCALAR + numeric subscript
             // SPLICES the value into the scalar's char string
             // (`a=hello; a[2]=X` → `hXllo`). Only PM_ARRAY does
@@ -6187,19 +6208,6 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 }
                 pm.u_str = None;
             }
-        } else {
-            // String subscript on a non-hashed name → auto-vivify
-            // as PM_HASHED (mirrors C `createparam(s, PM_HASHED)`
-            // fallback when getvalue returns NULL).
-            pm.node.flags = (pm.node.flags & !(PM_TYPE(u32::MAX) as i32)) | PM_HASHED as i32;
-            pm.u_arr = None;
-            pm.u_str = None;
-            let mut map: IndexMap<String, String> = IndexMap::new();
-            map.insert(key.to_string(), val.to_string());
-            paramtab_hashed_storage()
-                .lock()
-                .unwrap()
-                .insert(name.to_string(), map);
         }
         let cloned = pm.clone();
         drop(tab);

@@ -72,6 +72,16 @@ required-features = ["zd"]
 name = "bench-autoload"
 path = "bins/bench-autoload.rs"
 
+# Differential parity fuzzer: generates thousands of grammar-driven shell
+# snippets and diffs `zsh -fc` vs `zshrs --zsh -f -c` to surface parity gaps in
+# bulk. Feature-gated so `rand`-driven fuzz code stays out of the default build.
+#   cargo build --features parity-fuzz --bin parity-fuzz
+#   ./target/debug/parity-fuzz --count 5000
+[[bin]]
+name = "parity-fuzz"
+path = "bins/parity-fuzz.rs"
+required-features = ["parity-fuzz"]
+
 # Aggregated parity suite — every tests/parity/*_parity.rs is a module of
 # tests/parity/main.rs, so the whole suite builds/runs as one binary:
 #   cargo test --test parity            (run all)
@@ -155,6 +165,10 @@ recorder = ["daemon"]
 # `cargo install --bin zd --features zd` (Cargo's required-features
 # mechanism enforces the gate).
 zd = ["dep:ureq", "dep:base64"]
+# `parity-fuzz` — differential zsh/zshrs fuzzer binary. OFF by default so the
+# fuzz driver never compiles into the shipping shell. `rand` is already a
+# non-optional dep, so this is a pure build gate (required-features on the bin).
+parity-fuzz = []
 profiling = []
 flamegraph = ["tracing-flame"]
 # `zsh-debug` — enables DPUTS / DPUTS1 / DPUTS2 debug-assertion macros
