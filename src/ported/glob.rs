@@ -1140,11 +1140,22 @@ pub fn gmatchcmp(
             // lexicographic order zsh produces. Verified vs
             // /opt/homebrew/bin/zsh: `echo /tmp/rg/**/*` → `f sub sub/g`
             // (sorted by full path, not basename).
-            let a_full = a.path.to_string_lossy();
-            let b_full = b.path.to_string_lossy();
+            let a_cow = a.path.to_string_lossy();
+            let b_cow = b.path.to_string_lossy();
+            // c:Src/glob.c:424 — C stores bare-relative match names
+            // (`dyncat(pathbuf, news)`, no "./"), so its single qsort at
+            // c:1977 sorts the exact strings it emits. The Rust scanner joins
+            // depth-0 matches against base "." (glob.rs:527 + :584), giving a
+            // leading "./" that deeper matches lack and that `glob_emit_path`
+            // strips at emit. Since '.' (0x2E) sorts before any letter, that
+            // stray prefix clustered every top-level entry ahead of any nested
+            // path (`**/*` → `d e m d/z` instead of `d d/z e m`). Strip it here
+            // so the sort key matches the emit key.
+            let a_full = a_cow.strip_prefix("./").unwrap_or(&a_cow);
+            let b_full = b_cow.strip_prefix("./").unwrap_or(&b_cow);
             zstrcmp(
-                &a_full,
-                &b_full,
+                a_full,
+                b_full,
                 if numeric_sort {
                     crate::zsh_h::SORTIT_NUMERICALLY as u32
                 } else {

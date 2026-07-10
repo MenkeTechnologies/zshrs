@@ -110,15 +110,26 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
     }
 }
 
+// Glob mode runs every generated pattern from a fixed fixture directory so
+// filename generation has a known, deterministic fileset to match. Set once at
+// startup; the runners below cd into it. None in the other modes.
+static FIXTURE_CWD: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 fn run_zsh(script: &str, timeout: Duration) -> RunOut {
     let mut cmd = Command::new(zsh_path());
     cmd.args(["-f", "-c", script]);
+    if let Some(dir) = FIXTURE_CWD.get() {
+        cmd.current_dir(dir);
+    }
     run_with_timeout(cmd, timeout)
 }
 
 fn run_zshrs(script: &str, bin: &Path, timeout: Duration) -> RunOut {
     let mut cmd = Command::new(bin);
     cmd.args(["--zsh", "-f", "-c", script]).env_remove("ZSHRS_CACHE");
+    if let Some(dir) = FIXTURE_CWD.get() {
+        cmd.current_dir(dir);
+    }
     run_with_timeout(cmd, timeout)
 }
 
@@ -524,8 +535,184 @@ fn minimize(stmts: Vec<String>, bin: &Path, timeout: Duration) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Glob-qualifier generator
+//
+// Every pattern runs from a fixed fixture directory (setup_glob_fixture) with a
+// known fileset: distinct sizes and mtimes so ordering qualifiers ((oL) size,
+// (om) mtime, (on) name) are deterministic across both shells. Only stable
+// order keys are used — never (oa)/(oc) (atime/ctime drift) or a bare no-sort.
+// ---------------------------------------------------------------------------
+
+const GLOB_BASE: &[&str] = &[
+    "*", "*.txt", "*.log", "*.md", "[a-d]*", "?", "??*", "<->", "**/*", "*.??",
+    "[[:alpha:]]*", "d*", "*.*", "[^.]*",
+];
+
+const GLOB_QUAL: &[&str] = &[
+    "", "(.)", "(/)", "(@)", "(*)", "(.N)", "(on)", "(On)", "(oL)", "(OL)", "(om)", "(Om)",
+    "(.on)", "(/on)", "(N)", "(D)", "(.D)", "(^/)", "(r)", "(x)", "(w)", "([1])", "([1,2])",
+    "(om[1])", "(.oL[1,2])", "(*N)", "(@N)", "(.^@)", "(-.)",
+];
+
+/// One or two glob-pattern print statements, prefixed with `setopt extendedglob`
+/// so `<->` numeric ranges and `^` negation parse.
+fn gen_glob(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let n = rng.gen_range(1..=2);
+    let mut stmts = vec!["setopt extendedglob".to_string()];
+    for _ in 0..n {
+        let base = pick(&mut rng, GLOB_BASE);
+        let qual = pick(&mut rng, GLOB_QUAL);
+        // print -rl -- one match per line; unquoted so filename generation runs.
+        stmts.push(format!("print -rl -- {base}{qual}"));
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// printf generator
+//
+// Deterministic, self-contained (no filesystem, no time): exercises format
+// specifiers, flags, width/precision (including `*` from args), the zsh-
+// specific %b/%q conversions, and argument recycling (a format is reused when
+// more args than specifiers are supplied).
+// ---------------------------------------------------------------------------
+
+const PF_CONV: &[&str] = &[
+    "d", "i", "o", "u", "x", "X", "e", "E", "f", "g", "G", "s", "c", "b", "q", "%",
+];
+const PF_FLAGS: &[&str] = &["", "-", "+", " ", "#", "0", "-0", "+ ", "0#", "-#"];
+const PF_STR_ARGS: &[&str] = &[
+    "abc", "hello", "", "12", "3.14", "-5", "a b", "x\\\\ty", "it_s", "star", "%d", "cafe",
+    "0x1f", "007", "1e3",
+];
+
+/// One printf statement: a format string of 1-3 specifiers (with optional
+/// literal separators) plus 0-5 arguments.
+fn gen_printf(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let nspec = rng.gen_range(1..=3);
+    let mut fmt = String::new();
+    for _ in 0..nspec {
+        if rng.gen_bool(0.4) {
+            fmt.push_str(pick(&mut rng, &["x", "-", "[", "] ", ":", "->"]));
+        }
+        fmt.push('%');
+        fmt.push_str(pick(&mut rng, PF_FLAGS));
+        // width: literal or `*` (consumes an arg)
+        if rng.gen_bool(0.5) {
+            if rng.gen_bool(0.25) {
+                fmt.push('*');
+            } else {
+                fmt.push_str(&rng.gen_range(0..12).to_string());
+            }
+        }
+        // precision
+        if rng.gen_bool(0.4) {
+            fmt.push('.');
+            if rng.gen_bool(0.25) {
+                fmt.push('*');
+            } else {
+                fmt.push_str(&rng.gen_range(0..8).to_string());
+            }
+        }
+        fmt.push_str(pick(&mut rng, PF_CONV));
+    }
+    let nargs = rng.gen_range(0..=5);
+    let mut args: Vec<String> = Vec::with_capacity(nargs);
+    for _ in 0..nargs {
+        if rng.gen_bool(0.5) {
+            args.push(rng.gen_range(-20..40).to_string());
+        } else {
+            // single-quote string args; the pool has no quotes to escape.
+            args.push(format!("'{}'", pick(&mut rng, PF_STR_ARGS)));
+        }
+    }
+    // A trailing `|` marks end-of-output so trailing-space diffs are visible.
+    let fmt_q = fmt.replace('\'', "'\\''");
+    vec![format!("printf '{fmt_q}|\\n' {}", args.join(" "))]
+}
+
+/// Create (idempotently) the glob fixture directory and return its path. Files
+/// have deliberately distinct sizes and staggered mtimes so size/mtime ordering
+/// qualifiers produce a single deterministic order.
+fn setup_glob_fixture() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-fuzz")
+        .join("glob-fixture");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    std::fs::create_dir_all(dir.join("dir1")).unwrap();
+    std::fs::create_dir_all(dir.join("dir2")).unwrap();
+
+    // (name, size, mtime-offset-seconds). Sizes all distinct; mtimes all distinct.
+    let files: &[(&str, usize, i64)] = &[
+        ("a.txt", 5, 100),
+        ("bb.log", 50, 300),
+        ("ccc.txt", 200, 200),
+        ("d.md", 1, 400),
+        (".hidden", 2, 500),
+        ("empty", 0, 600),
+        ("123", 7, 700),
+        ("45", 8, 800),
+        ("dir1/nested.txt", 3, 900),
+    ];
+    let base_epoch: i64 = 1_600_000_000; // fixed anchor — no wall-clock reads
+    for (name, size, off) in files {
+        let p = dir.join(name);
+        std::fs::write(&p, "x".repeat(*size)).unwrap();
+        set_mtime(&p, base_epoch + off);
+    }
+    // Executable file for the (*) qualifier.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join("exec.sh");
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        set_mtime(&p, base_epoch + 50);
+    }
+    // Symlink for the (@) qualifier. Deliberately DANGLING with a target-name
+    // length (42) that collides with no file size above: a valid symlink stats
+    // to its target's size and would tie with that file, and equal sort keys
+    // are qsort-UNSTABLE in zsh (undefined order) — a false positive, not a
+    // gap. A dangling link uses lstat (size = target-string length), giving it
+    // a unique, deterministic size so (oL)/(OL) ordering stays well-defined.
+    let link = dir.join("link");
+    let _ = std::fs::remove_file(&link);
+    let dangling_target = "x".repeat(42);
+    let _ = std::os::unix::fs::symlink(&dangling_target, &link);
+    // Stagger directory mtimes too.
+    set_mtime(&dir.join("dir1"), base_epoch + 1000);
+    set_mtime(&dir.join("dir2"), base_epoch + 1100);
+    dir
+}
+
+/// Set both atime and mtime of `path` to a fixed epoch second.
+fn set_mtime(path: &Path, secs: i64) {
+    let t = libc::timeval {
+        tv_sec: secs as libc::time_t,
+        tv_usec: 0,
+    };
+    let times = [t, t];
+    if let Ok(c) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
+        unsafe {
+            libc::utimes(c.as_ptr(), times.as_ptr());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Stateful,
+    Expr,
+    Glob,
+    Printf,
+}
 
 struct Args {
     count: u64,
@@ -535,15 +722,16 @@ struct Args {
     out_path: PathBuf,
     max_report: usize,
     jobs: usize,
-    stateful: bool,
+    mode: Mode,
 }
 
 /// Generate the statement list for a seed in the selected mode.
-fn gen_case(seed: u64, stateful: bool) -> Vec<String> {
-    if stateful {
-        gen_program(seed)
-    } else {
-        expr_program(seed)
+fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
+    match mode {
+        Mode::Stateful => gen_program(seed),
+        Mode::Expr => expr_program(seed),
+        Mode::Glob => gen_glob(seed),
+        Mode::Printf => gen_printf(seed),
     }
 }
 
@@ -553,7 +741,7 @@ fn parse_args() -> Args {
     let mut once = false;
     let mut timeout_ms = 5000u64;
     let mut max_report = 200usize;
-    let mut stateful = true;
+    let mut mode = Mode::Stateful;
     let mut jobs = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
@@ -602,19 +790,23 @@ fn parse_args() -> Args {
             "--mode" | "-m" => {
                 i += 1;
                 match argv.get(i).map(|s| s.as_str()) {
-                    Some("expr") => stateful = false,
-                    Some("stateful") => stateful = true,
+                    Some("expr") => mode = Mode::Expr,
+                    Some("stateful") => mode = Mode::Stateful,
+                    Some("glob") => mode = Mode::Glob,
+                    Some("printf") => mode = Mode::Printf,
                     _ => {}
                 }
             }
-            "--expr" => stateful = false,
+            "--expr" => mode = Mode::Expr,
+            "--glob" => mode = Mode::Glob,
+            "--printf" => mode = Mode::Printf,
             "--help" | "-h" => {
                 eprintln!(
                     "parity-fuzz — differential zsh/zshrs parity fuzzer\n\
                      \n\
                      --count N        number of cases (default 2000)\n\
                      --seed N         base seed; case i uses seed+i (default 1)\n\
-                     --mode M         'stateful' (default) or 'expr'\n\
+                     --mode M         'stateful' (default), 'expr', 'glob', or 'printf'\n\
                      --once           run a single case (seed) and print both outputs\n\
                      --timeout-ms N   per-shell wall-clock timeout (default 5000)\n\
                      --out PATH       divergence corpus file\n\
@@ -622,8 +814,9 @@ fn parse_args() -> Args {
                      --jobs N         parallel workers (default = CPU count)\n\
                      \n\
                      stateful mode builds a sequence of setopt/typeset/IFS/scope\n\
-                     mutations interleaved with probes, then delta-debugs each\n\
-                     divergence to the minimal state + observation that repros."
+                     mutations interleaved with probes; glob mode runs generated\n\
+                     glob-qualifier patterns from a fixed fixture directory. Each\n\
+                     divergence is delta-debugged to a minimal reproducer."
                 );
                 std::process::exit(0);
             }
@@ -639,7 +832,7 @@ fn parse_args() -> Args {
         out_path,
         max_report,
         jobs,
-        stateful,
+        mode,
     }
 }
 
@@ -653,15 +846,29 @@ fn main() {
         std::process::exit(2);
     }
 
+    // Glob mode needs a fixture directory that every generated pattern globs.
+    if args.mode == Mode::Glob {
+        let dir = setup_glob_fixture();
+        FIXTURE_CWD.set(dir).ok();
+    }
+
     // --once: replay a single seed, minimize if it diverges, dump both sides.
     if args.once {
-        let stmts = gen_case(args.base_seed, args.stateful);
+        let stmts = gen_case(args.base_seed, args.mode);
         let script = build_program(&stmts);
         let z = run_zsh(&script, timeout);
         let r = run_zshrs(&script, &bin, timeout);
         let diverged = !z.timed_out && (z.stdout != r.stdout || z.exit != r.exit);
         println!("seed   : {}", args.base_seed);
-        println!("mode   : {}", if args.stateful { "stateful" } else { "expr" });
+        println!(
+            "mode   : {}",
+            match args.mode {
+                Mode::Stateful => "stateful",
+                Mode::Expr => "expr",
+                Mode::Glob => "glob",
+                Mode::Printf => "printf",
+            }
+        );
         let (show, z, r) = if diverged && stmts.len() > 1 {
             let m = minimize(stmts, &bin, timeout);
             let ms = build_program(&m);
@@ -706,7 +913,7 @@ fn main() {
                         break;
                     }
                     let seed = args.base_seed.wrapping_add(idx);
-                    let stmts = gen_case(seed, args.stateful);
+                    let stmts = gen_case(seed, args.mode);
                     let script = build_program(&stmts);
                     let z = run_zsh(&script, timeout);
                     let r = run_zshrs(&script, &bin, timeout);
