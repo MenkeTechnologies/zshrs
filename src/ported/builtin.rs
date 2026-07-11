@@ -15398,6 +15398,13 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     spec.push_str(&digits);
                 }
             }
+            // A precision `*` with NO matching arg emits nothing into `spec`
+            // (default precision), so the `%`-conversion invalid-directive
+            // check below can't see it. Track it separately: `printf '%.*%'`
+            // (no arg) is still an invalid directive in zsh (the format
+            // carried a precision), exit 1. Src/builtin.c reaches the switch
+            // with a non-`%%` `d` buffer regardless of the runtime arg.
+            let mut saw_prec_star = false;
             loop {
                 match iter.peek() {
                     // c:Src/builtin.c:4791+ — printf flag chars. The `'`
@@ -15447,6 +15454,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 // `.` precision: also accepts `*` per c:4796 same as width.
                 if iter.peek() == Some(&'*') {
                     iter.next();
+                    saw_prec_star = true;
                     // c:Src/builtin.c:5275-5288 — the `*` precision arg is
                     // math-evaluated identically to the `*` width arg
                     // (`prec = (int)mathevali(metafy(*argp, …))`, error →
@@ -15512,8 +15520,9 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 // has no `%` case → default) once modifiers intervened. Here a
                 // plain `%%` arrives with `spec == "%"`; anything else means
                 // modifiers were consumed.
-                Some('%') if spec != "%" => {
-                    return Err((out, format!("{spec}%: invalid directive")));
+                Some('%') if spec != "%" || saw_prec_star => {
+                    let disp = if saw_prec_star && spec == "%" { "%.*" } else { spec.as_str() };
+                    return Err((out, format!("{disp}%: invalid directive")));
                 }
                 Some('%') => out.push('%'),
                 Some('s') => {
