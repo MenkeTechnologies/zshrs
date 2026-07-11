@@ -5807,6 +5807,28 @@ pub fn paramsubst(
                     }
                     None => String::new(),
                 }
+            } else if (hkeys & SCANPM_WANTKEYS) != 0
+                && (hvals & SCANPM_WANTVALS) == 0
+                && (sub == "@" || sub == "*")
+            {
+                // c:Src/params.c:1492 — `(k)` on `${assoc[@]}` / `[*]`
+                // wants the KEYS. Routing through assoc_get (the arm
+                // below) would first materialize the ENTIRE backing map —
+                // for `functions` that reconstructs every function BODY via
+                // getpermtext — only for those values to be discarded and
+                // replaced by keys in the (k) flag arm downstream.
+                // Enumerate keys directly through assoc_keys (keys-only
+                // scanfn; no per-key getfn), so `${(k)functions[@]}` /
+                // `${(qk)functions[@]}` never deparse a body. This is the
+                // path zinit's per-plugin `.zinit-diff-functions` snapshots
+                // hammer — the body reconstruction here made interactive
+                // startup on a multi-thousand-function environment read as
+                // a hang. `(kv)` (WANTVALS set) still falls through to the
+                // value-materializing arm below, as it genuinely needs the
+                // values.
+                assoc_keys(&var_name)
+                    .map(|k| k.join(" "))
+                    .unwrap_or_default()
             } else if let Some(map) = assoc_get(&var_name) {
                 // c:2926 (assoc lookup)
                 // c:Src/params.c — `${assoc[@]}` and `${assoc[*]}`
@@ -7625,7 +7647,33 @@ pub fn paramsubst(
             // exactly one location.
             exec_getsparam(&var_name)
                 .or_else(|| {
-                    assoc_get(&var_name).map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                    // Skip the whole-map assoc_get for magic assocs
+                    // (functions/parameters/commands/aliases/…). Building
+                    // this scalar raw_value from one materializes the
+                    // ENTIRE backing table — and for `functions`
+                    // reconstructs every body via getpermtext — just to
+                    // join the values into a string that a bare `$assoc`
+                    // never uses in zsh anyway (`echo $functions` is
+                    // empty). This raw_value is only the scalar fallback;
+                    // the (k)/(v)/(kv)/subscript arms below fetch keys or
+                    // values through their own paths (keys-only for `(k)`).
+                    // Every FLAGGED read (`${(qk)functions[@]}`, etc.) was
+                    // paying this full O(N) body reconstruction here before
+                    // the flag arm even ran, so zinit's per-plugin
+                    // `.zinit-diff-functions` snapshots over a
+                    // multi-thousand-function environment read as an
+                    // interactive-startup hang. PARTAB membership is a tiny
+                    // fixed scan; magic assocs fall through to empty (zsh
+                    // parity). Regular user assocs still resolve here.
+                    if crate::ported::modules::parameter::PARTAB
+                        .iter()
+                        .any(|e_| e_.name == var_name.as_str())
+                    {
+                        None
+                    } else {
+                        assoc_get(&var_name)
+                            .map(|m| m.values().cloned().collect::<Vec<_>>().join(" "))
+                    }
                 })
                 .or_else(|| {
                     if is_special_name {
@@ -8482,68 +8530,27 @@ pub fn paramsubst(
                 // and magic-assoc lookups above already failed; fall
                 // back to the array's values via array_get.
                 .or_else(|| crate::ported::exec::array(&var_name));
-            value = assoc_keys(&var_name) // c:2247
-                .map(|k| k.join(" ")) // c:2247
-                .or_else(|| {
-                    // Indexed-array fallback for (k) — see comment on
-                    // magic_assoc_array above. Return joined values.
-                    crate::ported::exec::array(&var_name).map(|a| a.join(" "))
-                })
-                .or_else(|| {
-                    // c:2247
-                    // c:2247 — magic-assoc {aliases,functions,commands}
-                    // are backed by the canonical global HashTables in
-                    // hashtable.rs (mirrors C's `mod_export HashTable
-                    // aliastab` at hashtable.c:1186 and `shfunctab` at
-                    // hashtable.c:808). `commands` is `cmdnamtab`
-                    // (hashtable.c:594).
-                    match var_name.as_str() {
-                        // c:2247
-                        "aliases" => aliastab_lock().read().ok().map(|t| {
-                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
-                            names.sort();
-                            names.join(" ")
-                        }),
-                        "functions" | "dis_functions" => shfunctab_lock().read().ok().map(|t| {
-                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
-                            names.sort();
-                            names.join(" ")
-                        }),
-                        "commands" => cmdnamtab_lock().read().ok().map(|t| {
-                            let mut names: Vec<String> = t.iter().map(|(k, _)| k.clone()).collect();
-                            names.sort();
-                            names.join(" ")
-                        }),
-                        // c:Src/Modules/parameter.c — generic PARTAB
-                        // magic-assoc fallback (parameters/builtins/
-                        // options/modules/reswords/nameddirs/...) via
-                        // the canonical scanfn dispatch. Without this,
-                        // `${(k)parameters}` returned empty.
-                        //
-                        // Sort alphabetically for deterministic output:
-                        // zsh emits in its own hash-iteration order
-                        // which depends on the C hashtable bucketing
-                        // algorithm — not reproducible from Rust's
-                        // HashMap. Alphabetical-sort gives stable,
-                        // human-readable output even if the order
-                        // differs from zsh's specific hash. Most
-                        // consumers (`zinit ls $functions`, plugin
-                        // sanity checks) don't care about hash order.
-                        _ => assoc_get(&var_name)
-                            .map(|m_| m_.keys().cloned().collect::<Vec<String>>())
-                            .map(|mut keys| {
-                                keys.sort();
-                                keys.join(" ")
-                            }),
-                    } // c:2247
-                }) // c:2247
-                // c:Src/subst.c — `(k)`/`(v)` on a plain SCALAR (no
-                // keys/values structure) are no-ops and return the
-                // scalar's value: `x=hello; ${(k)x}` → `hello`. The
-                // assoc/array/magic-assoc lookups above all yield None
-                // for a scalar, so fall back to the resolved scalar
-                // value (raw_value) instead of empty — matching the
-                // no-flag `else` arm below.
+            // c:2247 — derive the scalar-join value from the key list
+            // ALREADY computed into magic_assoc_array above instead of
+            // re-scanning the table a second time. The prior code called
+            // assoc_keys(&var_name) (which routes magic assocs through
+            // their scanfn — cloning every name) a SECOND time here just
+            // to join it, doubling the cost of every `${(k)functions}` /
+            // `${(k)parameters}` read. zinit's per-plugin `.zinit-diff-*`
+            // snapshots hammer this on a multi-thousand-function
+            // environment, so the redundant scan turned interactive
+            // startup into an apparent hang. magic_assoc_array's fallback
+            // chain (assoc_keys → {aliases,functions,commands} → indexed
+            // array) already covers every source the old value chain
+            // walked: assoc_keys enumerates both paramtab_hashed_storage
+            // and every PARTAB magic assoc, so the old generic assoc_get
+            // fallback was unreachable. `(k)`/`(v)` on a plain scalar is a
+            // no-op returning the scalar value (`x=hello; ${(k)x}` →
+            // `hello`), so fall back to raw_value when there is no
+            // keys/values structure.
+            value = magic_assoc_array
+                .as_ref()
+                .map(|v| v.join(" ")) // c:2247
                 .unwrap_or_else(|| raw_value.clone());
         } else if !has_subscript_for_kvflag && (hvals & SCANPM_WANTVALS) != 0 {
             // c:2256 — (v) flag: values as array, with magic-assoc
@@ -17338,6 +17345,35 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
         }
         return Some(out);
     }
+    // Fast direct read for `functions`/`dis_functions`, bypassing the
+    // scanfn indirection below. The generic PARTAB path boxes a
+    // hashnode per entry and clones the name through the ScanFunc
+    // callback ABI (collect → box → callback-clone → final-clone ≈ 3
+    // clones + 1 alloc per name). This is zinit's `.zinit-diff-functions`
+    // hot path — `${(qk)functions[@]}` runs once per plugin over a
+    // multi-thousand-function environment, so those per-element
+    // allocations dominated interactive startup and made it read as a
+    // hang. Reading shfunctab directly is one clone per name. Mirrors
+    // scanfunctions' DISABLED filter (parameter.c:470) and its unsorted
+    // shfunctab iteration order exactly, so the result is identical to
+    // routing through the scanfn.
+    if resolved == "functions" || resolved == "dis_functions" {
+        let dis = resolved == "dis_functions";
+        if let Ok(g) = shfunctab_lock().read() {
+            return Some(
+                g.iter()
+                    .filter_map(|(n, shf)| {
+                        let is_disabled = (shf.node.flags & DISABLED) != 0; // c:470
+                        if dis == is_disabled {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            );
+        }
+    }
     let entry = crate::ported::modules::parameter::PARTAB
         .iter()
         .find(|e| e.name == resolved.as_str())?;
@@ -17359,7 +17395,11 @@ fn assoc_keys(name: &str) -> Option<Vec<String>> {
     }
     ASSOC_KEYS_SCAN.with(|k| k.borrow_mut().clear());
     (entry.scanfn)(std::ptr::null_mut(), Some(assoc_keys_scan_cb), 0);
-    Some(ASSOC_KEYS_SCAN.with(|k| k.borrow().clone()))
+    // mem::take, not clone: the thread_local buffer is exclusively ours
+    // (cleared above, populated by the scan just now) so hand its
+    // storage straight out instead of cloning the whole Vec a final
+    // time.
+    Some(ASSOC_KEYS_SCAN.with(|k| std::mem::take(&mut *k.borrow_mut())))
 }
 
 /// True if `name` is an assoc-array in `paramtab_hashed_storage`.

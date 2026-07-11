@@ -1938,8 +1938,19 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
     // DPUTS(stophist != 2 && !(inbufflags & INP_ALIAS) && !chline,       c:1487
     //       "BUG: chline is NULL in hend()");
     crate::ported::signals::queue_signals(); // c:1489
-    if (histdone.load(SeqCst) & HISTFLAG_SETTY) != 0 { // c:1490
-         // settyinfo(&shttyinfo) — TTY-state singleton not ported.          // c:1491
+    if (histdone.load(SeqCst) & HISTFLAG_SETTY) != 0 {
+        // c:1491 settyinfo(&shttyinfo) — restore the cooked terminal
+        // baseline captured by zsetterm before ZLE went raw. The
+        // interactive read uses ZLRF_NOSETTY (input.c:418), so ZLE's own
+        // trashzle deliberately does NOT restore the tty; the restore is
+        // deferred to here, when the input line's history finalizes, right
+        // before the command executes. Without it the tty stayed in ZLE
+        // raw mode across command execution — `cat` never saw EOF on `^D`,
+        // interactive programs got raw single-byte input. shttyinfo now
+        // lands as utils::SHTTYINFO.
+        if let Some(ti) = crate::ported::utils::SHTTYINFO.lock().ok().and_then(|g| *g) {
+            crate::ported::utils::settyinfo(&ti);
+        }
     }
     let active = histactive.load(SeqCst);
     if (active & HA_NOINC) == 0 {
