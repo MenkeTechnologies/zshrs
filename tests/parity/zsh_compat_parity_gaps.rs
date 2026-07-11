@@ -185,6 +185,25 @@ mod context_and_state {
         ksh_arrays_off_flag_whole_array =>
             (r#"no ksh_arrays: ${(o)a} and ${(o)a[@]} both whole array"#,
              r#"a=(c a b); print -r -- "${(o)a}|${(o)a[@]}""#);
+        // (Q) unquote inside `"…"`: backslash is removed only before $ \ " `
+        // (lex.c:1501). Before any other char (`\t`, `\n`) the backslash stays
+        // LITERAL. zshrs stripped it unconditionally → `"a\tb"` gave `atb`.
+        q_unquote_dquote_keeps_literal_backslash =>
+            (r#"${(Q)} of a "…"-quoted value keeps \t/\n literal, strips \$ \" \\"#,
+             r#"x='"a\tb\nc\"d\$e\\f"'; print -r -- ${(Q)x}"#);
+        q_unquote_squote_keeps_all_backslash =>
+            (r#"${(Q)} of a '…'-quoted value keeps every backslash literal"#,
+             r#"x="'a\tb\nc'"; print -r -- ${(Q)x}"#);
+        q_unquote_bare_strips_backslash =>
+            (r#"${(Q)} of a bare (unquoted) value strips backslash before any char"#,
+             r#"x='a\tb\nc'; print -r -- ${(Q)x}"#);
+        // Flag order: `(#)` numeric→char conversion runs BEFORE case flags
+        // (U/L/C) — subst.c:3811 (evalchar) precedes subst.c:3948 (casmod). So
+        // `${(#U)x}` with x=97 is `#`→'a'→U→'A', not U→"97"→char→'a'. zshrs
+        // applied case first, yielding the lowercase char. Fuzz-discovered.
+        hash_flag_evalchar_before_case_mod =>
+            (r#"${(#U)97}->A ${(#C)97}->A ${(#L)65}->a: (#) char-conv precedes case"#,
+             r#"x=97; y=65; print -r -- "${(#U)x}|${(#C)x}|${(#L)y}""#);
     }
 }
 

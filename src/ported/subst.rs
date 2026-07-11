@@ -12641,6 +12641,64 @@ pub fn paramsubst(
             }
             out
         };
+        // (#) evalchar — interpret each value as a math expression
+        // and emit the char with that codepoint. Direct port of
+        // subst.c:1673 evalchar arm + substevalchar.
+        //
+        // c:Src/subst.c:3811 vs 3948 — evalchar runs BEFORE casmod (U/L/C)
+        // and before the sort block: `${(#U)x}` with x=97 is `#`→'a'→U→'A',
+        // NOT U→"97"→'a'. It is isarr-aware here exactly as it was when it
+        // ran later, so a quoted bare array (still a joined scalar at this
+        // point — casmod's split re-population has not run yet) char-evals
+        // the joined value (`"${(#U)arr}"` → math error → empty), while an
+        // explicit `[@]` splat evals per element.
+        if evalchar {
+            // c:1673
+            // c:3800-3833 — `int one = noerrs, oef = errflag; if
+            // (!quoteerr) noerrs = 1; … noerrs = one; errflag = oef |
+            // (errflag & ERRFLAG_INT);`. A math error inside `(#)`
+            // (e.g. `${(#)a}` where a joins to the non-numeric scalar
+            // "1 2 65") must yield empty WITHOUT printing or aborting
+            // the command. Suppress via noerrs and restore the error
+            // flags after, keeping only a pending interrupt.
+            let saved_errflag = errflag.load(Ordering::Relaxed);
+            let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap();
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
+            let eval_one = |s: &str| -> String { substevalchar(s.trim()).unwrap_or_default() };
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if isarr != 0 {
+                // Whole-array reference with an explicit `[@]`/`[*]` splat:
+                // eval each element (`${(#)a[@]}` → "A B C"). A single-slot
+                // subscript (`a[3]`) clears isarr and already selected the
+                // element into `value`, so DON'T re-fetch the whole array.
+                if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = eval_one(&value);
+                }
+            } else {
+                value = eval_one(&value);
+                // c:Src/subst.c — `(#)` on a bare whole ARRAY (isarr not yet
+                // set, no subscript) collapses it to this single evaluated
+                // scalar. Record it in split_parts so a FOLLOWING flag (e.g.
+                // `(q)`/`(V)`) uses this value instead of RE-FETCHING the raw
+                // array by name (which discards the `(#)` result): `${(#q)arr}`
+                // must quote the collapsed value (`''`), not the raw array.
+                // Scalars need no marker — arrays_get is None so no re-fetch.
+                if subscript.is_none() && arrays_get(&var_name).is_some() {
+                    split_parts = Some(vec![value.clone()]);
+                }
+            }
+            // c:3833 — restore noerrs + errflag (keep only INT).
+            *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
+            let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
+            errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
+        } // c:1673
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
@@ -13215,57 +13273,6 @@ pub fn paramsubst(
             }
         }
 
-        // (#) evalchar — interpret each value as a math expression
-        // and emit the char with that codepoint. Direct port of
-        // subst.c:1673 evalchar arm + substevalchar.
-        if evalchar {
-            // c:1673
-            // c:3800-3833 — `int one = noerrs, oef = errflag; if
-            // (!quoteerr) noerrs = 1; … noerrs = one; errflag = oef |
-            // (errflag & ERRFLAG_INT);`. A math error inside `(#)`
-            // (e.g. `${(#)a}` where a joins to the non-numeric scalar
-            // "1 2 65") must yield empty WITHOUT printing or aborting
-            // the command. Suppress via noerrs and restore the error
-            // flags after, keeping only a pending interrupt.
-            let saved_errflag = errflag.load(Ordering::Relaxed);
-            let saved_noerrs = *crate::ported::utils::noerrs_lock().lock().unwrap();
-            *crate::ported::utils::noerrs_lock().lock().unwrap() = 1;
-            let eval_one = |s: &str| -> String { substevalchar(s.trim()).unwrap_or_default() };
-            if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| eval_one(s)).collect();
-                value = new_parts.join(" ");
-                split_parts = Some(new_parts);
-            } else if isarr != 0 {
-                // Whole-array reference with an explicit `[@]`/`[*]` splat:
-                // eval each element (`${(#)a[@]}` → "A B C"). A single-slot
-                // subscript (`a[3]`) clears isarr and already selected the
-                // element into `value`, so DON'T re-fetch the whole array.
-                if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> = arr.iter().map(|s| eval_one(s)).collect();
-                    value = new_arr.join(" ");
-                    split_parts = Some(new_arr);
-                } else {
-                    value = eval_one(&value);
-                }
-            } else {
-                value = eval_one(&value);
-                // c:Src/subst.c — `(#)` on a bare whole ARRAY (isarr not yet
-                // set, no subscript) collapses it to this single evaluated
-                // scalar. Record it in split_parts so a FOLLOWING flag (e.g.
-                // `(q)`/`(V)`) uses this value instead of RE-FETCHING the raw
-                // array by name (which discards the `(#)` result): `${(#q)arr}`
-                // must quote the collapsed value (`''`), not the raw array.
-                // Scalars need no marker — arrays_get is None so no re-fetch.
-                if subscript.is_none() && arrays_get(&var_name).is_some() {
-                    split_parts = Some(vec![value.clone()]);
-                }
-            }
-            // c:3833 — restore noerrs + errflag (keep only INT).
-            *crate::ported::utils::noerrs_lock().lock().unwrap() = saved_noerrs;
-            let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
-            errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
-        } // c:1673
-
         // (e) eval — re-substitute the result. Per-element on arrays.
         // Direct port of subst.c:2268 eval bit which iterates aval.
         if eval {
@@ -13792,7 +13799,24 @@ pub fn paramsubst(
                         let mut k = i + 1;
                         while k < close {
                             if c == '"' && chars_v[k] == '\\' && k + 1 < close {
-                                out.push(chars_v[k + 1]);
+                                // c:Src/lex.c:1501-1512 — inside `"…"` the
+                                // backslash is removed ONLY before `$ \ " ``
+                                // (and `\<newline>` drops both, a line
+                                // continuation). Before any other char the
+                                // backslash stays LITERAL, so `"a\tb"` → `a\tb`,
+                                // not `atb`.
+                                let nxt = chars_v[k + 1];
+                                if matches!(nxt, '"' | '`' | '$' | '\\') {
+                                    out.push(nxt);
+                                    k += 2;
+                                    continue;
+                                }
+                                if nxt == '\n' {
+                                    k += 2;
+                                    continue;
+                                }
+                                out.push('\\');
+                                out.push(nxt);
                                 k += 2;
                                 continue;
                             }
