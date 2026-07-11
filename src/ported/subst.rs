@@ -5051,6 +5051,11 @@ pub fn paramsubst(
         // the subscript opener as Inbrack TOKEN since the lexer
         // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
+        // Persistent record that the reference carried an explicit `[@]`/`[*]`
+        // splat. `subscript` gets cleared by downstream fetch arms, so the
+        // KSHARRAYS bare→element-0 reductions (below) key off this flag to keep
+        // `${(o)a[@]}` (whole array) distinct from bare `${(o)a}` (element 0).
+        let mut was_at_star_splat = false;
         if idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack) {
             // c:2867
             idx += 1; // c:2867
@@ -5274,6 +5279,9 @@ pub fn paramsubst(
                         errflag_set_error();
                         return (String::new(), idx + 1, vec![]);
                     }
+                }
+                if matches!(expanded.as_str(), "@" | "*") {
+                    was_at_star_splat = true;
                 }
                 subscript = Some(expanded);
             }
@@ -8638,6 +8646,23 @@ pub fn paramsubst(
             if arrays_contains(&var_name) || assoc_contains(&var_name) {
                 isarr = 1;
             }
+            // c:Src/params.c fetchvalue — under KSHARRAYS a BARE array
+            // reference (no subscript, no `[@]`/`[*]` splat) is the FIRST
+            // element as a SCALAR, applied BEFORE any flag/modifier. So
+            // `${(o)a}` `${(u)a}` `${(U)a}` `${a:u}` `${(j:-:)a}` all fold just
+            // element 0. `${(o)a[@]}` keeps the whole array (was_at_star_splat).
+            if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                && subscript.is_none()
+                && !was_at_star_splat
+                && arrays_contains(&var_name)
+            {
+                let first = arrays_get(&var_name)
+                    .and_then(|a| a.into_iter().next())
+                    .unwrap_or_default();
+                value = first.clone();
+                isarr = 0;
+                split_parts = Some(vec![first]);
+            }
         } else {
             // c:N/A
             value = raw_value.clone();
@@ -8779,6 +8804,16 @@ pub fn paramsubst(
                     // leading-space → " " fallback, and IFS="" → "").
                     value = crate::ported::utils::sepjoin(sp, sep.as_deref()); // c:3032
                 } else if let Some(arr) = arrays_get(&var_name) {
+                    // KSHARRAYS bare array → join sees only element 0.
+                    let arr: Vec<String> =
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                            && subscript.is_none()
+                            && !was_at_star_splat
+                        {
+                            arr.into_iter().take(1).collect()
+                        } else {
+                            arr
+                        };
                     value = crate::ported::utils::sepjoin(&arr, sep.as_deref());
                 // c:3032
                 } else if let Some(m) = assoc_get(&var_name) {
@@ -11724,6 +11759,16 @@ pub fn paramsubst(
                         value = new_parts.join(" ");
                         split_parts = Some(new_parts);
                     } else if let Some(arr) = arrays_get(&var_name) {
+                        // KSHARRAYS bare array → modifier folds only element 0.
+                        let arr: Vec<String> =
+                            if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                                && subscript.is_none()
+                                && !was_at_star_splat
+                            {
+                                arr.into_iter().take(1).collect()
+                            } else {
+                                arr
+                            };
                         let new_arr: Vec<String> = arr.iter().map(|s| mod_one(s)).collect();
                         value = new_arr.join(" ");
                         split_parts = Some(new_arr);
@@ -12665,6 +12710,15 @@ pub fn paramsubst(
                 }
                 let _ = is_subexp_temp;
             } else if let Some(arr) = arrays_get(&var_name) {
+                // KSHARRAYS bare array → case modifier folds only element 0.
+                let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                    && subscript.is_none()
+                    && !was_at_star_splat
+                {
+                    arr.into_iter().take(1).collect()
+                } else {
+                    arr
+                };
                 let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
                 value = new_arr.join(" "); // c:3937
                 split_parts = Some(new_arr); // c:3937
@@ -12741,6 +12795,17 @@ pub fn paramsubst(
                 // c:4290
                 value.split_whitespace().map(String::from).collect() // c:4290 (fallback)
             }; // c:4290
+            // KSHARRAYS bare array → sort/unique fold only element 0.
+            let parts: Vec<String> = if split_parts.is_none()
+                && !was_at_star_splat
+                && crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                && subscript.is_none()
+                && arrays_contains(&var_name)
+            {
+                parts.into_iter().take(1).collect()
+            } else {
+                parts
+            };
             let mut sorted: Vec<String> = parts; // c:4290
             if unique {
                 // c:4253
@@ -13050,6 +13115,12 @@ pub fn paramsubst(
                     });
                 if let Some(slice) = slice_arr {
                     value = slice.join(sp); // c:3906 over aval (slice)
+                } else if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                    && subscript.is_none()
+                    && !was_at_star_splat
+                {
+                    // KSHARRAYS bare array → join sees only element 0.
+                    value = arr.into_iter().next().unwrap_or_default();
                 } else {
                     value = arr.join(sp); // c:3906
                 }

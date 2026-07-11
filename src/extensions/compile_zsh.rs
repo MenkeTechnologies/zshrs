@@ -10927,17 +10927,14 @@ fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
     }
     let close = close?;
     let flags = &inner[1..close];
-    let mut name = &inner[close + 1..];
-    // Strip `[@]` / `[*]` suffix — they reach the runtime handler via
-    // the bare-name lookup of arrays/assocs. The handler decides
-    // whether to splice/join based on context. zsh subst.c routes the
-    // name lookup the same way for `${(F)m}` and `${(F)m[@]}`.
-    if let Some(stripped) = name
-        .strip_suffix("[@]")
-        .or_else(|| name.strip_suffix("[*]"))
-    {
-        name = stripped;
-    }
+    let name = &inner[close + 1..];
+    // Do NOT strip a trailing `[@]` / `[*]` — a name with `[` fails the
+    // fast-path guard below (returns None), so `${(flags)a[@]}` falls through
+    // to the general EXPAND_TEXT path that passes the FULL `${(flags)a[@]}` text
+    // to paramsubst. This preserves the `[@]`/`[*]` splat so paramsubst can make
+    // the KSHARRAYS distinction (`${(o)a}` → elem 0, `${(o)a[@]}` → whole array);
+    // the previous strip collapsed both to `${(o)a}`, losing it. Non-KSHARRAYS
+    // behavior is unchanged (both forms splat/join the whole array).
     if name.is_empty()
         || name.contains('$')
         || name.contains('{')

@@ -172,6 +172,19 @@ mod context_and_state {
         printf_star_prec_still_works =>
             (r#"printf '%.*d' 3 42 -> '042'; no-arg -> default"#,
              r#"printf '%.*d|' 3 42; printf '%.*d|' 42"#);
+        // KSHARRAYS: a BARE array ref with a param flag/modifier folds only
+        // element 0 (`${(o)a}` → `${a[0]}`), but an explicit `[@]`/`[*]` splat
+        // keeps the whole array. The compiler used to strip `[@]` for flag-
+        // params (parse_zsh_flag), collapsing both to `${(o)a}`. Fuzz-discovered.
+        ksh_arrays_bare_flag_uses_element0 =>
+            (r#"setopt ksh_arrays; ${(o)a}/${(u)a}/${(U)a}/${(j)a}/${a:u} -> element 0"#,
+             r#"setopt ksh_arrays; a=(c a b); print -r -- ${(o)a} ${(u)a} ${(U)a} ${(j:-:)a} ${a:u}"#);
+        ksh_arrays_at_splat_keeps_whole =>
+            (r#"setopt ksh_arrays; ${(o)a[@]} keeps whole array"#,
+             r#"setopt ksh_arrays; a=(c a b); print -r -- "${(o)a[@]}|${(U)a[*]}|${(j:-:)a[@]}""#);
+        ksh_arrays_off_flag_whole_array =>
+            (r#"no ksh_arrays: ${(o)a} and ${(o)a[@]} both whole array"#,
+             r#"a=(c a b); print -r -- "${(o)a}|${(o)a[@]}""#);
     }
 }
 
