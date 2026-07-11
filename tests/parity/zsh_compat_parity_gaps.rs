@@ -119,6 +119,33 @@ mod context_and_state {
         plus_special_assoc_table_flags_match => (r#"$+commands … $+zsh_scheduled_events"#, r#"print $+commands $+functions $+aliases $+history $+terminfo $+parameters $+options $+builtins $+galiases $+dis_aliases $+dis_builtins $+usergroups $+widgets $+dis_functions $+dirstack $+functrace $+module_path $+patchars $+ZPFX $+pipestatus $+zsh_scheduled_events"#);
         builtins_table_element_count => (r#"${#builtins}"#, r#"print ${#builtins}"#);
         zsh_execution_string_set_under_dash_c => (r#"ZSH_EXECUTION_STRING"#, r#"print -r "$ZSH_EXECUTION_STRING""#);
+        // GLOB_ASSIGN: only a literal UNQUOTED glob pattern in the RHS is
+        // globbed (Src/exec.c:2554). A double-quoted value with a `*` is
+        // assigned verbatim — NOT globbed, NO "no match" error. Regression
+        // pin: zshrs used to re-tokenize the dequoted value and glob it,
+        // flooding startup (zpwr's `x="zstyle ':completion:*' ..."` lines)
+        // with `no match` under `setopt cshnullglob`.
+        glob_assign_double_quoted_value_not_globbed =>
+            (r#"setopt glob_assign; x="/no/such/dir/*""#,
+             r#"setopt glob_assign; x="/no/such/dir/*"; print -r -- "[$x]""#);
+        glob_assign_single_quoted_value_not_globbed =>
+            (r#"setopt glob_assign; x='/no/such/dir/*'"#,
+             r#"setopt glob_assign; x='/no/such/dir/*'; print -r -- "[$x]""#);
+        glob_assign_param_expansion_value_not_globbed =>
+            (r#"setopt glob_assign; foo=/no/such/*; x=$foo"#,
+             r#"setopt glob_assign; foo="/no/such/*"; x=$foo; print -r -- "[$x]""#);
+        glob_assign_cmdsubst_value_not_globbed =>
+            (r#"setopt glob_assign; x=$(...glob str...)"#,
+             r#"setopt glob_assign; x=$(print -r -- "/no/such/*"); print -r -- "[$x]""#);
+        glob_assign_cshnullglob_quoted_glob_no_error =>
+            (r#"cshnullglob quoted glob assign, then empty cmd"#,
+             r#"setopt glob_assign cshnullglob; x="zstyle ':completion:*' completer _foo"; : ; print done"#);
+        glob_assign_unquoted_literal_glob_expands =>
+            (r#"setopt glob_assign; x=$d/* (unquoted literal glob expands)"#,
+             r#"d=/tmp/zshrs_gatest_$$; mkdir -p $d; touch $d/aa $d/bb; setopt glob_assign; x=$d/*; print -r -- "${(o)x:t}"; rm -rf $d"#);
+        glob_assign_off_default_no_glob =>
+            (r#"x=/no/such/* with glob_assign OFF assigns literal"#,
+             r#"unsetopt glob_assign; setopt nonomatch; x=/no/such/*; print -r -- "[$x]""#);
     }
 }
 

@@ -319,6 +319,16 @@ thread_local! {
     /// `SESSION_EXECUTOR`; kept here so the context helper lives next to
     /// `ExecutorContext`/`CURRENT_EXECUTOR`.
     static SESSION_EXECUTOR_PTR: std::cell::Cell<Option<*mut ShellExecutor>> = const { std::cell::Cell::new(None) };
+    /// GLOB_ASSIGN eligibility carrier. Set true by BUILTIN_MARK_GLOB_ELIGIBLE
+    /// (emitted by the compiler ONLY when a scalar-assignment RHS carries an
+    /// UNQUOTED glob token — Star/Quest/Inbrack), read+cleared by the next
+    /// BUILTIN_SET_VAR. Matches C zsh's `GLOB_ASSIGN` (Src/exec.c:2554): only
+    /// a literal unquoted glob pattern in the wordcode is globbed; values from
+    /// `$param` / `$(cmd)` / quoted strings are NOT (verified against zsh).
+    /// The runtime SET_VAR value arrives untokenized (the compiler DQ-wraps to
+    /// suppress compile-time globbing), so quoting can no longer be recovered
+    /// from the value bytes — this flag carries the compile-time decision.
+    static SET_VAR_GLOB_ELIGIBLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Register the session executor pointer (called from
@@ -4830,6 +4840,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     //   - inline_env_stack (zsh `X=foo cmd` scoped env)
     //   - recorder emission (PFA-SMR)
     //   - vm.last_status propagation for `a=$(cmd)` exit-code chaining
+    // Sets the GLOB_ASSIGN-eligibility flag consumed by the NEXT BUILTIN_SET_VAR.
+    // Emitted only when a scalar-assign RHS had an unquoted glob token. Takes no
+    // args; its pushed return is discarded by a following Op::Pop.
+    vm.register_builtin(BUILTIN_MARK_GLOB_ELIGIBLE, |_vm, _argc| {
+        SET_VAR_GLOB_ELIGIBLE.with(|c| c.set(true));
+        fusevm::Value::Int(0)
+    });
     vm.register_builtin(BUILTIN_SET_VAR, |vm, argc| {
         // `${~spec}` carrier: an assignment statement is a word-
         // pipeline boundary too — restore the user's GLOB_SUBST
@@ -4932,7 +4949,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // `isset(GLOBASSIGN)` gate is first and cheap (option off
                 // by default), so the common path is unchanged.
                 let mut globbed = false;
-                if crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBASSIGN) {
+                // Only glob the RHS when the compiler flagged an UNQUOTED glob
+                // token in the literal wordcode (SET_VAR_GLOB_ELIGIBLE). zsh's
+                // GLOB_ASSIGN (Src/exec.c:2554) globs literal patterns only —
+                // `x="/tmp/*"`, `x='/tmp/*'`, `x=$param`, `x=$(cmd)` all assign
+                // verbatim. The value arrives here untokenized (DQ-wrapped by
+                // the compiler), so this compile-time flag is the only surviving
+                // signal of whether the pattern was quote-protected.
+                let glob_eligible = SET_VAR_GLOB_ELIGIBLE.with(|c| c.replace(false));
+                if glob_eligible && crate::ported::zsh_h::isset(crate::ported::zsh_h::GLOBASSIGN) {
                     let mut tv = value.clone();
                     crate::ported::glob::shtokenize(&mut tv);
                     if crate::ported::pattern::haswilds(&tv) {
@@ -8932,6 +8957,12 @@ pub const BUILTIN_GET_VAR_DQ: u16 = 639;
 /// Builtin ID for `name=value` assignments — pops [name, value] and
 /// routes through canonical `setsparam` (Src/params.c:3350).
 pub const BUILTIN_SET_VAR: u16 = 284;
+
+/// Builtin ID that sets the thread-local [`SET_VAR_GLOB_ELIGIBLE`] flag true.
+/// Emitted by the compiler immediately before a `BUILTIN_SET_VAR` whose scalar
+/// RHS carried an UNQUOTED glob token, so the runtime knows the RHS is a literal
+/// glob pattern eligible for GLOB_ASSIGN. Takes no stack args, pushes nothing.
+pub const BUILTIN_MARK_GLOB_ELIGIBLE: u16 = 640;
 
 /// Builtin ID for pipeline execution. Pops N sub-chunk indices from the stack;
 /// each index points into `vm.chunk.sub_chunks` (compiled stage bodies). Forks

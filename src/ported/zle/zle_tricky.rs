@@ -1566,20 +1566,28 @@ pub fn get_comp_string() -> Option<String> {
                 // c:1373-1383 — RCQUOTES single-quote fixup.
                 if isset(RCQUOTES) {
                     if let Some(ref ttv) = tt {
-                        let ttb = ttv.as_bytes();
+                        // c:1374 — `e = tt + zlemetacs - wb - qsub` (byte-offset
+                        // boundary into the meta string).
                         let e = (zlemetacs - wb - qsub).max(0) as usize;
-                        let mut idx = 0usize;
-                        while idx < ttb.len() {
-                            if ttv[idx..].starts_with(snull) {
-                                let mut pp = idx;
-                                while pp < ttb.len() && pp < e {
-                                    if ttb[pp] == b'\'' {
+                        // c:1375 — `for (tt1 = tt; *tt1; tt1++)`. Tokens like
+                        // Snull/Dash are multi-byte chars in the Rust meta
+                        // string, so step by chars — byte-stepping and slicing
+                        // (`ttv[idx..]`) inside a token panics on the char
+                        // boundary (e.g. `\u{9b}` Dash spans 2 bytes).
+                        for (idx, ch) in ttv.char_indices() {
+                            if ch == snull {
+                                // c:1376
+                                // c:1378-1380 — `for (p = tt1; *p && p < e; p++)
+                                //   if (*p == '\'') qsub++;`
+                                for (off, pc) in ttv[idx..].char_indices() {
+                                    if idx + off >= e {
+                                        break;
+                                    }
+                                    if pc == '\'' {
                                         qsub += 1;
                                     }
-                                    pp += 1;
                                 }
                             }
-                            idx += 1;
                         }
                     }
                 }
