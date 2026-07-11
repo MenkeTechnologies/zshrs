@@ -6254,15 +6254,26 @@ pub fn paramsubst(
                     // c:Src/params.c — `(b.N.)` is 1-based offset
                     // (start from the N-th element). Convert to
                     // 0-based for slicing.
-                    let start_offset = (beg.unwrap_or(1) - 1).max(0) as usize;
                     let mut found_idx: Option<usize> = None; // c:1500
                     let mut match_count: usize = 0;
                     let arr_len = arr.len();
-                    let iter_range: Box<dyn Iterator<Item = usize>> = if down {
-                        let lo = start_offset.min(arr_len);
-                        Box::new((lo..arr_len).rev())
+                    // c:Src/params.c:1443-1451 + 1500-1520 — `(b:N:)` begin
+                    // offset (1-based). Forward search `(r)`: default begin 1,
+                    // scan N..end UP. Reverse search `(R)`: default begin = the
+                    // LAST element, scan the begin element DOWN to the first.
+                    // Fuzz gap: `(Rb:2:)o*` on (one two three four five) → zsh
+                    // "one" (scans idx 2,1 downward, finds "one"); the previous
+                    // range `(start..end).rev()` scanned end..start reversed and
+                    // missed everything below the begin offset.
+                    let iter_range: Box<dyn Iterator<Item = usize>> = if arr_len == 0 {
+                        Box::new(std::iter::empty())
+                    } else if down {
+                        let start_idx = (beg.unwrap_or(arr_len as i64) - 1)
+                            .max(0)
+                            .min(arr_len as i64 - 1) as usize;
+                        Box::new((0..=start_idx).rev())
                     } else {
-                        let lo = start_offset.min(arr_len);
+                        let lo = ((beg.unwrap_or(1) - 1).max(0) as usize).min(arr_len);
                         Box::new(lo..arr_len)
                     };
                     for idx in iter_range {
