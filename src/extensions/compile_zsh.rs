@@ -3105,6 +3105,18 @@ impl ZshCompiler {
                         || s.contains('?') || s.contains('\u{97}') // Quest
                         || s.contains('[') || s.contains('\u{91}') // Inbrack
                         || s.contains('{') || s.contains('\u{8f}')); // Inbrace
+                // GLOB_ASSIGN eligibility: the RHS carries an UNQUOTED glob
+                // TOKEN (Star \u{87} / Quest \u{97} / Inbrack \u{91}). Quoted
+                // metas arrive as literal `*`/`?`/`[` (0x2a/0x3f/0x5b), so a
+                // token byte unambiguously means "unquoted glob pattern". This
+                // matches zsh: only literal unquoted patterns are globbed on
+                // assignment (Src/exec.c:2554); `x="/tmp/*"`, `x=$p`, `x=$(c)`
+                // are not. The DQ-wrap below untokenizes the value, so the
+                // runtime can't recover this — carry it via BUILTIN_MARK_GLOB_
+                // ELIGIBLE emitted just before SET_VAR.
+                let glob_eligible = s.contains('\u{87}')   // Star
+                    || s.contains('\u{97}')                 // Quest
+                    || s.contains('\u{91}'); // Inbrack
                 self.assign_context_depth += 1;
                 self.scalar_assign_depth += 1;
                 if needs_dq_wrap {
@@ -3136,6 +3148,16 @@ impl ZshCompiler {
                 } else {
                     crate::vm_helper::BUILTIN_SET_VAR
                 };
+                // Flag the upcoming SET_VAR as GLOB_ASSIGN-eligible when the
+                // RHS was a literal unquoted glob. Only for plain `=` (zsh does
+                // not glob-assign `+=`); the flag is read+cleared by SET_VAR.
+                if glob_eligible && !assign.append {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_MARK_GLOB_ELIGIBLE, 0),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                }
                 self.builder.emit(Op::CallBuiltin(bid, 2), 0);
                 // Propagate the assignment's status to $?. SET_VAR
                 // returns Value::Status(last_status read at call
