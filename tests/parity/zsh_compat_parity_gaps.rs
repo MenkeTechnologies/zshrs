@@ -146,6 +146,22 @@ mod context_and_state {
         glob_assign_off_default_no_glob =>
             (r#"x=/no/such/* with glob_assign OFF assigns literal"#,
              r#"unsetopt glob_assign; setopt nonomatch; x=/no/such/*; print -r -- "[$x]""#);
+        // printf `%c`/`%q` honor the `0` flag (zero-pad); `%s` does not
+        // (Src/builtin.c: %c/%q go through print_val, %s inline space-pads).
+        // Fuzz-discovered; was space-padding `%0Nc`/`%0Nq`.
+        printf_zero_flag_c_zero_pads =>
+            (r#"printf %04c x -> 000x"#, r#"printf '%04c|%09.1c|' x 007"#);
+        printf_zero_flag_q_zero_pads =>
+            (r#"printf %04q a -> 000a"#, r#"printf '%04q|%-04c|' a x"#);
+        printf_zero_flag_s_space_pads =>
+            (r#"printf %04s ab -> '  ab' (s NOT zero-padded)"#, r#"printf '%04s|%06.3s|' ab abcdef"#);
+        // printf `%e`/`%E`/`%g` high-precision must be EXACT (correctly-rounded),
+        // not the binary error from `n / 10^exp`. Fuzz-discovered:
+        // `%.27e 37` printed `3.7000…0177635683940e+01` instead of `…000e+01`.
+        printf_e_high_precision_exact =>
+            (r#"printf %.27e 37 -> exact trailing zeros"#, r#"printf '%.27e|%.31e|' 37 37"#);
+        printf_g_high_precision_exact =>
+            (r#"printf %.20g 37 -> exact"#, r#"printf '%.20g|%.3e|' 37 9.9999"#);
     }
 }
 
