@@ -356,13 +356,58 @@ fn gen_quoteflags(rng: &mut StdRng) -> String {
     }
 }
 
+/// Brace expansion — comma lists, numeric/alpha ranges, zero-pad, steps,
+/// cross-products, empty elements, nesting. Deterministic (no glob chars).
+fn gen_brace(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..14) {
+        0 => "{a,b,c}".to_string(),
+        1 => "pre{x,y,z}post".to_string(),
+        2 => "{1..5}".to_string(),
+        3 => "{5..1}".to_string(),        // descending
+        4 => "{01..05}".to_string(),      // zero-padded width
+        5 => "{a..e}".to_string(),        // alpha range
+        6 => "{e..a}".to_string(),        // descending alpha
+        7 => "{1..10..3}".to_string(),    // step
+        8 => "{10..1..2}".to_string(),    // descending step
+        9 => "{a,b}{1,2}".to_string(),    // cross-product
+        10 => "{a,,c}".to_string(),       // empty middle element
+        11 => "x{a,b{1,2},c}y".to_string(), // nested
+        12 => "{-3..3}".to_string(),      // negative range
+        _ => {
+            let lo = rng.gen_range(0..5);
+            let hi = rng.gen_range(lo..lo + 6);
+            format!("v{{{lo}..{hi}}}")
+        }
+    }
+}
+
+/// Subscript search/reverse/flag combos — `(i)/(I)/(r)/(R)/(e)/(n)/(w)/(b)`.
+fn gen_subflags(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..14) {
+        0 => "${a[(i)three]}".to_string(),   // index of first match (name)
+        1 => "${a[(I)t*]}".to_string(),      // index of last match
+        2 => "${a[(r)f*]}".to_string(),      // first matching value
+        3 => "${a[(R)f*]}".to_string(),      // last matching value
+        4 => "${a[(e)two]}".to_string(),     // exact-string subscript
+        5 => "${a[(ie)two]}".to_string(),    // index + exact
+        6 => "${nums[(r)5]}".to_string(),
+        7 => "${nums[(i)4]}".to_string(),
+        8 => "${a[(rb:2:)o*]}".to_string(),  // reverse search from offset 2
+        9 => "${a[(Rb:2:)o*]}".to_string(),
+        10 => "${a[(w)1]}".to_string(),      // word subscript
+        11 => "${(k)a[(r)two]}".to_string(),
+        12 => "\"${a[(R)*e]}\"".to_string(),
+        _ => "${a[(ne)1]}".to_string(),      // numeric + exact
+    }
+}
+
 /// Generate the raw expression list for a seed (before script assembly).
 fn gen_parts(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let n = rng.gen_range(1..=3);
     let mut parts: Vec<String> = Vec::with_capacity(n);
     for _ in 0..n {
-        let expr = match rng.gen_range(0..12) {
+        let expr = match rng.gen_range(0..15) {
             0 => gen_scalar_pe(&mut rng),
             1 => gen_array_pe(&mut rng),
             2 => gen_assoc_pe(&mut rng),
@@ -373,8 +418,11 @@ fn gen_parts(seed: u64) -> Vec<String> {
             7 => gen_nested(&mut rng),
             8 => gen_setops(&mut rng),
             9 => gen_quoteflags(&mut rng),
-            10 => gen_scalar_pe(&mut rng),
-            _ => gen_array_pe(&mut rng),
+            10 => gen_brace(&mut rng),
+            11 => gen_subflags(&mut rng),
+            12 => gen_scalar_pe(&mut rng),
+            13 => gen_array_pe(&mut rng),
+            _ => gen_subflags(&mut rng),
         };
         parts.push(expr);
     }
@@ -615,7 +663,15 @@ fn gen_program(seed: u64) -> Vec<String> {
 fn expr_program(seed: u64) -> Vec<String> {
     let mut stmts = vec![PREAMBLE.trim_end().to_string()];
     for p in gen_parts(seed) {
-        stmts.push(format!("print -r -- \"{p}\""));
+        // Brace expansion only happens UNQUOTED and on the command line, so
+        // a `{a,b}` part is emitted bare; everything else stays double-quoted
+        // (parameter expansion works inside quotes and avoids stray word-split
+        // / globbing). A bare brace part with no glob chars is deterministic.
+        if p.starts_with('{') || p.contains("}{") || (p.contains('{') && p.contains("..")) {
+            stmts.push(format!("print -r -- {p}"));
+        } else {
+            stmts.push(format!("print -r -- \"{p}\""));
+        }
     }
     stmts
 }
