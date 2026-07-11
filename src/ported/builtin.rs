@@ -15519,7 +15519,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                 Some('s') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     spec.push('s');
-                    out.push_str(&format_spec_str(&spec, &a));
+                    out.push_str(&format_spec_str(&spec, &a, false));
                     arg_i += 1;
                 }
                 Some('d') | Some('i') => {
@@ -15650,7 +15650,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     let ch_str = a.chars().next().unwrap_or('\0').to_string();
                     let mut cspec = spec.split('.').next().unwrap_or(spec.as_str()).to_string();
                     cspec.push('s');
-                    out.push_str(&format_spec_str(&cspec, &ch_str));
+                    out.push_str(&format_spec_str(&cspec, &ch_str, true));
                     arg_i += 1;
                 }
                 // c:builtin.c:5403-5409 %q — shell-quote the arg using
@@ -15686,7 +15686,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // output (`print_val`), so width/precision/flags from
                     // the spec apply (`printf "%-5q" a` → "a    ").
                     spec.push('s');
-                    out.push_str(&format_spec_str(&spec, &quoted));
+                    out.push_str(&format_spec_str(&spec, &quoted, true));
                     arg_i += 1;
                 }
                 // c:builtin.c:5332-5336 — `%b` uses GETKEYS_PRINTF_ARG
@@ -15714,7 +15714,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     // escape-expanded string. The previous port pushed the
                     // expansion raw, dropping width/precision.
                     spec.push('s');
-                    out.push_str(&format_spec_str(&spec, &s));
+                    out.push_str(&format_spec_str(&spec, &s, false));
                     arg_i += 1;
                     if arg_truncated {
                         fmttrunc = true; // c:5382
@@ -15782,8 +15782,13 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
 /// Apply a printf-style `%[-flag][width][.prec]s` spec to a string.
 /// Mirrors C `printf "%-10s" str` formatting; the Rust `format!` macro
 /// doesn't accept runtime-parsed specs so we hand-parse.
-fn format_spec_str(spec: &str, s: &str) -> String {
-    let (left_align, width, prec) = parse_width_prec(spec);
+fn format_spec_str(spec: &str, s: &str, honor_zero: bool) -> String {
+    // zsh's `%c` and `%q` route through `print_val`, which HONORS the `0` flag
+    // (`printf %04c x` → `000x`, `%04q a` → `000a`), so those callers pass
+    // honor_zero=true. `%s`/`%b` are handled inline with FORCED space padding
+    // (Src/builtin.c:5375 `fprintf(fout, "%*c", …, ' ')` → `%04s ab` = "  ab"),
+    // so they pass honor_zero=false.
+    let (left_align, zero_pad_flag, width, prec) = parse_flags_width_prec(spec);
     let truncated: &str = if let Some(p) = prec {
         let end: usize = s.chars().take(p).map(|c| c.len_utf8()).sum();
         &s[..end.min(s.len())]
@@ -15794,7 +15799,8 @@ fn format_spec_str(spec: &str, s: &str) -> String {
     if left_align {
         format!("{}{}", truncated, " ".repeat(pad))
     } else {
-        format!("{}{}", " ".repeat(pad), truncated)
+        let padch = if honor_zero && zero_pad_flag { '0' } else { ' ' };
+        format!("{}{}", padch.to_string().repeat(pad), truncated)
     }
 }
 
@@ -16122,20 +16128,20 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
             format!("{:.*}", p, n)
         }
         'e' | 'E' => {
-            // Rust's `{:e}` always uses lowercase `e` and doesn't pad
-            // exponent; libc uses 2-digit exponent and sign. Build it
-            // manually for parity.
+            // Use Rust's `{:.*e}` for the mantissa+exponent — it is EXACT
+            // (correctly-rounded, like libc snprintf). The previous port
+            // computed `mantissa = n / 10^exp` which lost precision: `37/10`
+            // is not exactly 3.7, so `%.27e 37` printed the binary error
+            // `3.70000…0177635683940e+01` instead of zsh's `3.7000…000e+01`.
+            // Rust emits `<mant>e<exp>` with lowercase `e` and no exponent
+            // padding/sign; reformat the exponent to libc's `e[+-]NN` (≥2 digits).
             let p = prec.unwrap_or(6);
-            let exp = if n == 0.0 {
-                0i32
-            } else {
-                n.abs().log10().floor() as i32
-            };
-            let mantissa = n / 10f64.powi(exp);
-            let body = format!("{:.*}", p, mantissa);
+            let raw = format!("{:.*e}", p, n);
+            let (mant, exp_s) = raw.split_once('e').unwrap_or((raw.as_str(), "0"));
+            let exp: i32 = exp_s.parse().unwrap_or(0);
             let e_char = if conv == 'E' { 'E' } else { 'e' };
             let exp_sign = if exp >= 0 { '+' } else { '-' };
-            format!("{}{}{}{:02}", body, e_char, exp_sign, exp.abs())
+            format!("{}{}{}{:02}", mant, e_char, exp_sign, exp.abs())
         }
         'g' | 'G' => {
             // c:libc printf %g: precision is # significant digits
@@ -16150,12 +16156,15 @@ fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
             };
             let use_e = exp < -4 || exp >= p_sig;
             let body = if use_e {
-                let mantissa = n / 10f64.powi(exp);
+                // Exact mantissa+exponent via Rust's `{:.*e}` (see the `%e`
+                // arm) — `n / 10^exp` lost precision.
                 let dec = (p_sig - 1).max(0) as usize;
-                let m = format!("{:.*}", dec, mantissa);
+                let raw = format!("{:.*e}", dec, n);
+                let (m, exp_s) = raw.split_once('e').unwrap_or((raw.as_str(), "0"));
+                let ex: i32 = exp_s.parse().unwrap_or(0);
                 let e_char = if conv == 'G' { 'E' } else { 'e' };
-                let exp_sign = if exp >= 0 { '+' } else { '-' };
-                format!("{}{}{}{:02}", m, e_char, exp_sign, exp.abs())
+                let exp_sign = if ex >= 0 { '+' } else { '-' };
+                format!("{}{}{}{:02}", m, e_char, exp_sign, ex.abs())
             } else {
                 // p_sig - 1 - exp digits after decimal point
                 let dec = (p_sig - 1 - exp).max(0) as usize;
