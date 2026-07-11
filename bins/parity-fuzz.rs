@@ -155,6 +155,14 @@ const PREAMBLE: &str = concat!(
     "typeset -A m; m=(k1 v1 k2 v2 k3 v3); ",
     "ptr=path; ",
     "typeset -F fl=3.5; ",
+    // Pre-quoted strings for the (Q) unquote generator: a mix of single-,
+    // double-, and backslash-quoting with escapes that are context-sensitive
+    // (`\t` stays literal inside `"…"` but is stripped bare). The literal
+    // backslash before `t`/`n` is the exact surface that exposed the (Q)
+    // double-quote unescape bug.
+    r#"qd='"a\tb\nc"'; "#,
+    r#"qs="'a b' c"; "#,
+    r#"qmix='"x y" \z '"'"'p q'"'"''; "#,
 );
 
 const SCALARS: &[&str] = &["s", "t", "empty", "path", "spaces"];
@@ -315,6 +323,18 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
     if *op == "/" || *op == "%" {
         return format!("({l}) {op} ((({r})) | 1)");
     }
+    // `&&`/`||` short-circuit: zsh math.c:1459 declares `int tst` and assigns it
+    // the 64-bit left operand (bop()), truncating to 32 bits for the truthiness
+    // test. So `L && <computed>` yields 0 whenever L's low 32 bits are zero (any
+    // multiple of 2^32, e.g. `16**9`): tst==0 spuriously sets noeval, the RHS is
+    // evaluated under noeval and op() pushes 0, and the full-precision DAND
+    // (math.c:1322) then ANDs against 0. zshrs computes it correctly and does NOT
+    // replicate the bug. Coerce both operands to 0/1 via `!= 0` (full-precision,
+    // math.c:1316) so the short-circuit test never sees a 2^32-multiple; the
+    // logical value is identical, keeping the corpus on defined semantics.
+    if *op == "&&" || *op == "||" {
+        return format!("(({l}) != 0) {op} (({r}) != 0)");
+    }
     match rng.gen_range(0..3) {
         0 => format!("({l}) {op} ({r})"),
         1 => format!(
@@ -347,7 +367,7 @@ fn gen_setops(rng: &mut StdRng) -> String {
 /// `(f)` newline splitting and the quote-style flags (`qq`/`qqq`/`qqqq`/`q-`).
 /// `lines` is a 3-line scalar; `spaces` has leading/trailing/embedded spaces.
 fn gen_quoteflags(rng: &mut StdRng) -> String {
-    match rng.gen_range(0..8) {
+    match rng.gen_range(0..14) {
         0 => "\"${(f)lines}\"".to_string(),
         1 => "${#${(f)lines}}".to_string(),          // element count after split
         2 => "\"${(j:|:)${(f)lines}}\"".to_string(), // split then re-join
@@ -355,6 +375,14 @@ fn gen_quoteflags(rng: &mut StdRng) -> String {
         4 => "\"${(q-)spaces}\"".to_string(),        // minimal quoting
         5 => "\"${(qqqq)s}\"".to_string(),           // $'...' style
         6 => "\"${(Ff)lines}\"".to_string(),         // join-with-newline of split
+        // (Q) unquote — strips ONE quoting level honoring context: `\t`
+        // stays literal inside `"…"`, drops bare. Round-trip (q then Q) too.
+        7 => "\"${(Q)qd}\"".to_string(),
+        8 => "\"${(Q)qs}\"".to_string(),
+        9 => "\"${(Q)qmix}\"".to_string(),
+        10 => "${#${(Q)qd}}".to_string(),            // length after unquote
+        11 => "\"${(Q)${(qq)spaces}}\"".to_string(), // q then Q round-trip
+        12 => "\"${(j:/:)${(Q)${(z)qmix}}}\"".to_string(), // z-split, unquote, re-join
         _ => "\"${(@f)lines}\"".to_string(),
     }
 }
