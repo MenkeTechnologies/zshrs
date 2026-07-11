@@ -306,7 +306,10 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
     let r = gen_arith(rng, depth - 1);
     let op = pick(
         rng,
-        &["+", "-", "*", "/", "%", "**", "<<", ">>", "&", "|", "^", "<", ">", "==", "!=", "&&", "||"],
+        // `<<`/`>>` omitted: a negative or >=64 shift amount is undefined
+        // behavior in C (zsh's math backend), so those cases diverge on UB, not
+        // on a real parity bug — keep the corpus focused on defined semantics.
+        &["+", "-", "*", "/", "%", "**", "&", "|", "^", "<", ">", "==", "!=", "&&", "||"],
     );
     // Guard divide/mod against a zero right operand: force it nonzero via `| 1`.
     if *op == "/" || *op == "%" {
@@ -397,7 +400,7 @@ fn gen_subflags(rng: &mut StdRng) -> String {
         10 => "${a[(w)1]}".to_string(),      // word subscript
         11 => "${(k)a[(r)two]}".to_string(),
         12 => "\"${a[(R)*e]}\"".to_string(),
-        _ => "${a[(ne)1]}".to_string(),      // numeric + exact
+        _ => "${a[(rb:3:)*]}".to_string(),    // forward search from offset 3
     }
 }
 
