@@ -162,6 +162,16 @@ mod context_and_state {
             (r#"printf %.27e 37 -> exact trailing zeros"#, r#"printf '%.27e|%.31e|' 37 37"#);
         printf_g_high_precision_exact =>
             (r#"printf %.20g 37 -> exact"#, r#"printf '%.20g|%.3e|' 37 9.9999"#);
+        // `%` conversion carrying a precision `*` is an invalid directive even
+        // when the `*` has no matching arg (zsh: exit 1, stop). zshrs used to
+        // print `%` and continue because the arg-less `*` emitted nothing.
+        // Fuzz-discovered.
+        printf_star_prec_percent_invalid_no_arg =>
+            (r#"printf '%-3e%.*%|' -> invalid directive, exit 1"#,
+             r#"printf '%-3e%.*%|'"#);
+        printf_star_prec_still_works =>
+            (r#"printf '%.*d' 3 42 -> '042'; no-arg -> default"#,
+             r#"printf '%.*d|' 3 42; printf '%.*d|' 42"#);
     }
 }
 
