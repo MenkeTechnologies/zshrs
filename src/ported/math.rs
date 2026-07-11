@@ -3372,13 +3372,28 @@ pub(crate) fn op(what: i32) {
                         cf = true; // c:1339 (a.type = b.type = c.type = MN_FLOAT)
                     }
                     if !cf {
-                        // c:1344 — for (c.u.l = 1; b.u.l--; c.u.l *= a.u.l)
+                        // c:1344 — for (c.u.l = 1; b.u.l--; c.u.l *= a.u.l).
+                        // zsh's naive O(e) loop times out on a pathological
+                        // exponent (`0 ** 4.6e9` loops billions of times).
+                        // zshrs computes the IDENTICAL value via
+                        // exponentiation-by-squaring in O(log e): multiplication
+                        // mod 2^64 is associative, so the wrapped product is
+                        // bit-identical to the repeated-multiply result for every
+                        // base/exponent (verified against zsh across overflow
+                        // cases). b.l is >= 0 here (negative exponents were cast
+                        // to float above).
                         let base = a.l;
                         let mut e = b.l;
                         let mut result = 1i64;
+                        let mut acc = base;
                         while e > 0 {
-                            result = result.wrapping_mul(base);
-                            e -= 1;
+                            if e & 1 == 1 {
+                                result = result.wrapping_mul(acc);
+                            }
+                            e >>= 1;
+                            if e > 0 {
+                                acc = acc.wrapping_mul(acc);
+                            }
                         }
                         mnumber {
                             l: result,
