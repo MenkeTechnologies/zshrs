@@ -10001,6 +10001,16 @@ impl fusevm::ShellHost for ZshrsHost {
                 unsafe { libc::_exit(0) };
             }
             child_pid => {
+                // c:Src/exec.c:5092 `procsubstpid = pid;` — record the
+                // forked child's PID so `${sysparams[procsubstpid]}`
+                // returns it (was reading the never-updated atomic, so it
+                // always came back 0). p10k's gitstatus daemon reads
+                // `sysparams[procsubstpid]` right after `sysopen <(cmd)`
+                // to track its worker PID; with 0 the daemon's self-check
+                // failed and gitstatus fell back to re-downloading
+                // gitstatusd — surfacing as "no prebuilt gitstatusd".
+                crate::ported::exec::procsubstpid
+                    .store(child_pid, std::sync::atomic::Ordering::Relaxed);
                 // Parent: close write end, keep read end open under
                 // the same fd value so `/dev/fd/N` resolves to the
                 // pipe's read side. NOTE: FD_CLOEXEC must STAY clear
@@ -10091,7 +10101,12 @@ impl fusevm::ShellHost for ZshrsHost {
                 let _ = vm.run();
                 unsafe { libc::_exit(0) };
             }
-            _ => {
+            child_pid => {
+                // c:Src/exec.c:5143 `procsubstpid = pid;` — same fix as
+                // the `<(cmd)` in-path above: record the forked child's
+                // PID for `${sysparams[procsubstpid]}` (was always 0).
+                crate::ported::exec::procsubstpid
+                    .store(child_pid, std::sync::atomic::Ordering::Relaxed);
                 // Parent: close the read end, keep the write end open
                 // under its fd value so `/dev/fd/N` resolves to the
                 // pipe's write side. FD_CLOEXEC must STAY clear —

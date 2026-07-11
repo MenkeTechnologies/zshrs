@@ -69,6 +69,16 @@ use crate::ported::zle::{
 /// Only the fetchttyinfo/attachtty save state stays on the host side.
 pub fn zsetterm() -> io::Result<()> {
     // c:210
+    // c:Src/init.c setupshttyinfo — `gettyinfo(&shttyinfo)` snapshots the
+    // cooked baseline BEFORE the first raw-mode switch so `trashzle()` can
+    // restore it around command execution (fixes `cat` + `^D` EOF being
+    // ignored because the tty stayed raw). Guarded to capture only once,
+    // while the terminal is still cooked.
+    if let Ok(mut g) = crate::ported::utils::SHTTYINFO.lock() {
+        if g.is_none() {
+            *g = crate::ported::utils::gettyinfo(); // c: gettyinfo(&shttyinfo)
+        }
+    }
     let mut termios = termios::Termios::from_fd(TTYFD.load(SeqCst))?;
 
     // c:240 — disable canonical + echo + flusho.
@@ -1670,14 +1680,20 @@ pub fn trashzle() {
 
         // c:2092-2093 — `if (!(zlereadflags & ZLRF_NOSETTY))
         //                  settyinfo(&shttyinfo);`
-        // Rust port: `shttyinfo` (the saved termios snapshot) is not
-        // ported as a Rust global yet — only `settyinfo()` exists
-        // (utils.rs:1964) and it takes a `&libc::termios`. Without
-        // the saved snapshot we cannot honestly restore arbitrary
-        // tty state. Documented gap — bucket-3 substrate-port for
-        // the tty-save side (init.c:setupshttyinfo) lands first.
+        // Restore the cooked terminal baseline captured by
+        // `save_shttyinfo_once()` (in zsetterm) so the accepted command
+        // executes with a normal tty: `^D` is EOF, `^C` is SIGINT, line
+        // editing works. Previously a no-op stub, which left the tty in
+        // ZLE raw mode across command execution — so `cat` never saw EOF
+        // on `^D`, and interactive programs got raw single-byte input.
         if (ZLEREADFLAGS.load(Ordering::Relaxed) & ZLRF_NOSETTY) == 0 {
-            // bucket-3 stub — no-op until shttyinfo lands
+            // c:2092 settyinfo(&shttyinfo) — restore the cooked baseline.
+            // Fires for non-NOSETTY ZLE reads (e.g. `vared`); the main
+            // interactive read sets ZLRF_NOSETTY and defers the restore to
+            // hend() (hist.rs) per input.c:418.
+            if let Some(ti) = crate::ported::utils::SHTTYINFO.lock().ok().and_then(|g| *g) {
+                crate::ported::utils::settyinfo(&ti);
+            }
         }
     }
 

@@ -770,9 +770,32 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // matcher consumes PURES sections via literal extraction (the
     // scanner), never `pattry`, so no PAT_PURES match path is needed.
     let pf_pre = patflags.load(Ordering::Relaxed);
+    // c:Src/pattern.c:644-704 — for a FILE glob a literal path component is
+    // emitted as a PAT_PURES section even under GF_IGNCASE (`setopt
+    // nocaseglob`): C compiles it, then converts the single P_EXACTLY back
+    // to PURES (c:664) while flagging the prog GF_IGNCASE (c:645). The net
+    // effect is that intermediate literal directory components descend by
+    // EXACT name (the scanner's PURES path stats the real path, glob.rs:436
+    // — case-insensitivity applies to the FINAL wildcard component, not to
+    // directory descent), so path splitting on `/` keeps working. zshrs's
+    // port only had the first PURES gate (c:586), which excludes GF_IGNCASE,
+    // so under nocaseglob every literal component (e.g. `tmp` in
+    // `/tmp/.../*.zsh`) fell to the general compiler and matched nothing —
+    // the whole path collapsed and `${(N)...}(DN)` globs returned empty.
+    // That is what made zinit's plugin-discovery globs empty on a shell with
+    // `caseglob` off → the `.zinit-load-plugin:source:110: no such file or
+    // directory: ./` startup flood. Take the PURES fast path here for file
+    // globs when the only extra glob flag is GF_IGNCASE; GF_IGNCASE stays on
+    // `hoisted_globflags` so the final wildcard component still matches
+    // case-insensitively.
+    let pures_extra_mask = if (pf_pre & PAT_FILE as i32) != 0 {
+        !(GF_MULTIBYTE | GF_IGNCASE)
+    } else {
+        !GF_MULTIBYTE
+    };
     if (pf_pre & PAT_FILE as i32) != 0
         && (pf_pre & PAT_ANY as i32) == 0
-        && (hoisted_globflags & !GF_MULTIBYTE) == 0
+        && (hoisted_globflags & pures_extra_mask) == 0
     {
         let off = patparse_off.load(Ordering::Relaxed);
         let p = patparse.lock().unwrap();

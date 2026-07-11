@@ -2017,6 +2017,18 @@ pub fn gettempfile(prefix: Option<&str>) -> Option<(i32, String)> {
 
 /// Port of `void gettyinfo(struct ttyinfo *ti)` from Src/utils.c:1746.
 ///
+/// The saved baseline terminal mode — C's `struct ttyinfo shttyinfo`
+/// (Src/init.c). Captured ONCE while the terminal is still in its
+/// original (cooked / canonical) mode, before ZLE ever puts it into
+/// raw mode via `zsetterm()`. `trashzle()` restores this baseline via
+/// `settyinfo(&shttyinfo)` so that external commands the user runs
+/// (`cat`, `less`, …) execute with a cooked terminal — where `^D` is
+/// EOF, `^C` is SIGINT, and line editing works. Without it the tty
+/// stayed in ZLE raw mode across command execution, so `cat` never
+/// saw EOF on `^D`.
+#[cfg(unix)]
+pub static SHTTYINFO: std::sync::Mutex<Option<libc::termios>> = std::sync::Mutex::new(None);
+
 /// Reads the current termios from the global `SHTTY`. Returns
 /// `None` when SHTTY is closed or the call fails (matching C's
 /// silent return when SHTTY == -1).
