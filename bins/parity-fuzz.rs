@@ -552,7 +552,13 @@ fn gen_mutation(rng: &mut StdRng) -> String {
 /// The extended-glob variants (`(abc)#`) only match when a prior mutation ran
 /// `setopt EXTENDED_GLOB`, so they probe the option-dependent matcher path too.
 fn gen_cond(rng: &mut StdRng) -> String {
-    match rng.gen_range(0..14) {
+    match rng.gen_range(0..17) {
+        // Case-mismatch matches: under `setopt nocaseglob` (a mutation option),
+        // conditional/case/`:#` pattern matching must stay case-SENSITIVE — only
+        // filename globbing goes case-insensitive. These pin that boundary.
+        14 => "[[ ABC == abc ]]; print -r -- $?".to_string(),
+        15 => "[[ ABC == a*c ]]; print -r -- $?".to_string(),
+        16 => "a=(ABC Abc); print -rl -- ${a:#a*c}".to_string(),
         0 => "[[ $v == a* ]]; print -r -- $?".to_string(),
         1 => "[[ $v == *b* ]]; print -r -- $?".to_string(),
         2 => "[[ abc == a?c ]]; print -r -- $?".to_string(),

@@ -9111,6 +9111,20 @@ pub fn paramsubst(
                         } else {
                             None
                         }
+                    })
+                    .map(|arr| {
+                        // KSHARRAYS bare array → the `:#` filter sees only
+                        // element 0 (params.c fetchvalue scalarizes a bare
+                        // ref). `${a[@]:#pat}` keeps the full array
+                        // (was_at_star_splat). See [[ksh-arrays-bare-flag-gap]].
+                        if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                            && subscript.is_none()
+                            && !was_at_star_splat
+                        {
+                            arr.into_iter().take(1).collect()
+                        } else {
+                            arr
+                        }
                     });
                 if let Some(arr) = source_arr {
                     let kept: Vec<String> = arr
@@ -11335,6 +11349,17 @@ pub fn paramsubst(
                     .filter(|a| !a.is_empty())
                     .or_else(|| split_parts.clone())
                     .unwrap_or_default();
+                // KSHARRAYS bare array → set-op LHS is element 0 only
+                // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps all.
+                let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                    && subscript.is_none()
+                    && !was_at_star_splat
+                    && arrays_contains(&var_name)
+                {
+                    arr.into_iter().take(1).collect()
+                } else {
+                    arr
+                };
                 let other_name = rhs.trim(); // c:3543
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
@@ -11388,6 +11413,17 @@ pub fn paramsubst(
                     .filter(|a| !a.is_empty())
                     .or_else(|| split_parts.clone())
                     .unwrap_or_default();
+                // KSHARRAYS bare array → set-op LHS is element 0 only
+                // (params.c fetchvalue scalarizes a bare ref); `[@]` keeps all.
+                let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
+                    && subscript.is_none()
+                    && !was_at_star_splat
+                    && arrays_contains(&var_name)
+                {
+                    arr.into_iter().take(1).collect()
+                } else {
+                    arr
+                };
                 let other_name = rhs.trim(); // c:3543
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
