@@ -14158,13 +14158,17 @@ pub fn paramsubst(
         // getkeystring decoding"). Per-element on arrays.
         if getkeys >= 0 {
             // c:3955 if (getkeys >= 0)
-            // GETKEY_EMACS / GETKEY_OCTAL_ESC / GETKEY_CTRL bits in
-            // `getkeys` are honored by getkeystring directly; passing
-            // `getkeys` through would require getkeystring_with(s,
-            // getkeys as u32) at c:6915 (utils.c). Default call here
-            // produces the same byte-string for the unsuffixed (g::)
-            // case (bare flag with no sub-letters).
-            let decode_one = |s: &str| -> String { getkeystring(s).0 };
+            // c:3976/3981 — `getkeystring(val, &len, getkeys, NULL)`. The
+            // GETKEY_EMACS / GETKEY_OCTAL_ESC / GETKEY_CTRL bits parsed from
+            // `(g:SUBFLAGS:)` MUST be threaded through: with the bare `(g::)`
+            // form getkeys == 0, so `\c` (gated on GETKEY_BACKSLASH_C, c:7064)
+            // and `\C`/`^X` (gated on GETKEY_EMACS/GETKEY_CTRL, c:7041/7194)
+            // all stay LITERAL. The previous simple `getkeystring()` call
+            // processed `\c`/`\C` unconditionally, so `${(g::)$'\cb'}` wrongly
+            // gave `^B` instead of the literal `\cb`.
+            let decode_one = |s: &str| -> String {
+                crate::ported::utils::getkeystring_with(s, getkeys as u32, None).0
+            };
             if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| decode_one(s)).collect();
                 value = new_parts.join(" ");

@@ -224,6 +224,14 @@ mod context_and_state {
         nocaseglob_does_not_affect_conditional_match =>
             (r#"setopt nocaseglob: [[ ABC == abc ]] and ${(ABC):#abc} stay case-sensitive"#,
              r#"setopt nocaseglob; a=(ABC); [[ ABC == a*c ]] && m=Y || m=N; print -r -- "$m|${a:#abc}|${(M)a:#a*c}""#);
+        // (g::) bare form uses getkeys==0: `\c` (GETKEY_BACKSLASH_C) and
+        // `\C`/`^X` (GETKEY_EMACS/GETKEY_CTRL) stay LITERAL; only standard
+        // escapes (\t \n) decode. The sub-flags (g:c:)/(g:e:)/(g:o:) enable the
+        // gated escapes. zshrs decoded `\c` unconditionally (used the flagless
+        // getkeystring), so ${(g::)$'\cb'} wrongly gave ^B.
+        g_flag_default_keeps_c_escape_literal =>
+            (r#"${(g::)$'\cb'} keeps \cb literal; ${(g::)$'a\tb'} decodes tab"#,
+             r#"c=$'\cb'; t=$'a\tb'; print -rn -- "${(g::)c}|${(g::)t}"; echo"#);
     }
 }
 
