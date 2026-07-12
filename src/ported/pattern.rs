@@ -580,7 +580,16 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
     // for the `(#…)` hoist loop) would otherwise drop that seed before the
     // prog's globflags are built — capture the case bits now so `pattry`
     // honors `setopt nocaseglob`.
-    let seeded_globflags = patglobflags.load(Ordering::Relaxed);
+    let mut seeded_globflags = patglobflags.load(Ordering::Relaxed);
+    // c:568-576 — `patcompile` RESETS patglobflags to `GF_MULTIBYTE`/0 for a
+    // NON-FILE pattern, DROPPING the nocaseglob-derived GF_IGNCASE that
+    // patcompstart seeded. `setopt nocaseglob` makes only FILENAME GLOBBING
+    // (PAT_FILE) case-insensitive; `[[ ]]`, `${arr:#pat}`, `case`, and `${p//pat}`
+    // stay case-SENSITIVE. Without this drop, `setopt nocaseglob; [[ ABC == abc ]]`
+    // wrongly matched and `${(ABC):#abc}` wrongly filtered. GF_MULTIBYTE stays.
+    if (inflags & PAT_FILE as i32) == 0 {
+        seeded_globflags &= !GF_IGNCASE;
+    }
     // === C-contract input decode (zpc_chars, Src/pattern.c:248) =====
     // C's patcompile consumes the LEXER'S tokenized encoding: glob
     // metachars arrive as token bytes (`Pound`..`Bang`, zsh.h:159-183
