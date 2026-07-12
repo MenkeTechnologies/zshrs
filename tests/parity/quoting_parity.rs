@@ -298,3 +298,64 @@ mod empty_and_space {
         assert_parity(r#"f() { echo $#; }; X="b c"; f a "$X" d"#);
     }
 }
+
+/// Single-quoted `${...[...]}` fragments concatenated with an unquoted
+/// expansion must stay LITERAL — the `${`, `[`, `]`, `}` inside single
+/// quotes are ordinary chars, so the result is string concatenation, NOT
+/// a live subscripted / flagged parameter substitution.
+///
+/// Regression: zshrs's `${NAME[KEY]}` / `${(flags)NAME[KEY]}` compile
+/// fast paths matched on `untokenize(s)`, which strips the single-quote
+/// (Snull) markers, so `'${foo['$((1+1))']}'` was misread as the live
+/// access `${foo[2]}` and evaluated at build time. powerlevel10k builds
+/// its deferred prompt from exactly this shape
+/// (`_p9k_prompt_prefix_left='${(e)_p9k_t['$idx']}'`,
+/// internal/p10k.zsh:8490) — evaluating it early dropped every prompt
+/// segment, rendering an empty prompt.
+mod sq_literal_brace_not_live {
+    use super::*;
+
+    /// Plain subscript split across single-quoted fragments stays literal.
+    #[test]
+    fn sq_subscript_stays_literal() {
+        assert_parity(r#"foo=(a b c d); x='${foo['$((1+1))']}'; print -r -- "$x""#);
+    }
+
+    /// `(e)`-flagged subscript split across single quotes stays literal.
+    #[test]
+    fn sq_eval_flag_subscript_stays_literal() {
+        assert_parity(r#"foo=(a b c d); x='${(e)foo['$((1+1))']}'; print -r -- "$x""#);
+    }
+
+    /// Literal (non-arith) middle fragment also stays literal.
+    #[test]
+    fn sq_literal_middle_stays_literal() {
+        assert_parity(r#"x='${(e)foo['X']}'; print -r -- "$x""#);
+    }
+
+    /// The p10k deferred-template shape: `${(e)arr[$#arr - k]}`.
+    #[test]
+    fn sq_p10k_deferred_template_shape() {
+        assert_parity(
+            r#"typeset -a t=(a b c d e f g); integer k=0; x='${(e)t['$(($#t - k))']}'; print -r -- "$x""#,
+        );
+    }
+
+    /// A genuinely LIVE unquoted subscript must still evaluate (no regression).
+    #[test]
+    fn live_subscript_still_evaluates() {
+        assert_parity(r#"foo=(p q r); k=2; print -r -- "${foo[$k]}""#);
+    }
+
+    /// A genuinely LIVE unquoted flagged subscript must still evaluate.
+    #[test]
+    fn live_flag_subscript_still_evaluates() {
+        assert_parity(r#"foo=(p q r); print -r -- "${(U)foo[1]}""#);
+    }
+
+    /// A genuinely LIVE assoc access must still evaluate.
+    #[test]
+    fn live_assoc_still_evaluates() {
+        assert_parity(r#"typeset -A m=(kk vv); print -r -- "${m[kk]}""#);
+    }
+}
