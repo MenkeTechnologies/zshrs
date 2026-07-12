@@ -218,6 +218,12 @@ mod context_and_state {
         combined_l_r_padding_splits_at_half =>
             (r#"${(l:5::-:r:8::+:)ab} -> ----ab+++++++ ; empty -> full l-fill+r-fill"#,
              r#"x=ab; e=''; print -r -- "${(l:5::-:r:8::+:)x}|${(l:6::.:r:4::_:)x}|${(l:10::-:r:5::+:)e}""#);
+        // nocaseglob affects only FILENAME globbing (PAT_FILE); pattern matching
+        // in [[ ]], case, ${arr:#pat}, ${s//pat} stays case-SENSITIVE. C resets
+        // patglobflags (dropping GF_IGNCASE) for non-file patterns (pattern.c:568).
+        nocaseglob_does_not_affect_conditional_match =>
+            (r#"setopt nocaseglob: [[ ABC == abc ]] and ${(ABC):#abc} stay case-sensitive"#,
+             r#"setopt nocaseglob; a=(ABC); [[ ABC == a*c ]] && m=Y || m=N; print -r -- "$m|${a:#abc}|${(M)a:#a*c}""#);
     }
 }
 
