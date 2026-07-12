@@ -2668,14 +2668,21 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
 /// Port of `subst_parse_str(char **sp, int single, int err)` from `Src/subst.c:1460`.
 pub fn subst_parse_str(sp: &str, single: bool, err: bool) -> Option<String> {
     // c:1460
-    // c:1460
-    let _ = err; // c:1466 (parsestr error path
-                 //         deferred — full C
-                 //         lexer reentry pending)
-                 // C: `*sp = sp = dupstring(*sp);` — duplicate so the caller'sp
-                 // original buffer is unaffected. Rust'sp String already owns;
-                 // we work on a local copy below.
-    let mut buf: String = sp.to_string(); // c:1465
+    // c:1465-1466 — `*sp = s = dupstring(*sp); if (!(err ? parsestr(&s) :
+    // parsestrnoerr(&s)))`. parsestr/parsestrnoerr RE-LEX the string, converting
+    // literal quotes (`"` → Dnull, `'` → Snull, `\` → Bnull) into the tokens the
+    // downstream expansion + quote-removal recognise. This was previously
+    // skipped ("approximated"), which left quotes literal in every `(e)`-eval'd
+    // string: `${(e)'${x:-"ab"}'}` gave `"ab"` instead of `ab`, and p10k's
+    // `${_p9k__lprompt::=""...}` prompt segments rendered as literal `""""""`.
+    let mut buf: String = match if err {
+        crate::ported::lex::parsestr(sp)
+    } else {
+        crate::ported::lex::parsestrnoerr(sp)
+    } {
+        Ok(parsed) => parsed, // c:1466 parse ok
+        Err(_) => return None, // c:1484 parse error → C returns 1
+    };
 
     // C: `if (!single) { … }` — the conversion only runs in the
     // non-SINGLE arm (when paramsubst-output may be subsequently
@@ -13618,8 +13625,27 @@ pub fn paramsubst(
         // Direct port of subst.c:2268 eval bit which iterates aval.
         if eval {
             // c:2268
+            // c:4346 — `if (eval && subst_parse_str(&x, (qt && !nojoin),
+            // quoteerr))`. Each element is re-lexed via subst_parse_str (which
+            // tokenizes its quotes) BEFORE singsub, so quote removal fires. The
+            // previous port called singsub on the RAW value, leaving literal
+            // quotes intact (`${(e)'${x:-"ab"}'}` → `"ab"`; p10k → `""""""`).
+            let single_e = qt && nojoin == 0;
+            let esub = |s: &str| -> String {
+                // A NUL byte (e.g. from a preceding `(#)` char-eval, `${(e#)x}`)
+                // must survive: parsestr re-lexes and treats NUL as a string
+                // terminator, dropping it. NUL-bearing input has no quotes to
+                // remove, so skip the re-lex and singsub the raw value.
+                if s.contains('\u{0}') {
+                    return singsub(s);
+                }
+                match subst_parse_str(s, single_e, quoteerr) {
+                    Some(parsed) => singsub(&parsed),
+                    None => singsub(s),
+                }
+            };
             if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| singsub(s)).collect();
+                let new_parts: Vec<String> = parts.iter().map(|s| esub(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);
             } else if isarr != 0 {
@@ -13635,14 +13661,14 @@ pub fn paramsubst(
                 // into unbounded recursion → stack overflow at interactive
                 // prompt time. zsh evals only the picked element and stops.
                 if let Some(arr) = arrays_get(&var_name) {
-                    let new_arr: Vec<String> = arr.iter().map(|s| singsub(s)).collect();
+                    let new_arr: Vec<String> = arr.iter().map(|s| esub(s)).collect();
                     value = new_arr.join(" ");
                     split_parts = Some(new_arr);
                 } else {
-                    value = singsub(&value);
+                    value = esub(&value);
                 }
             } else {
-                value = singsub(&value); // c:2268
+                value = esub(&value); // c:2268
             }
         }
 
