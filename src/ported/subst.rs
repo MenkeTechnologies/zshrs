@@ -13908,7 +13908,16 @@ pub fn paramsubst(
             }
             out
         };
-        if (mods & 2) != 0 {
+        // c:Src/subst.c:4041 (quotemod) precedes 4160 (mods/V): a positive
+        // `q` quote runs BEFORE the `(V)` visible mod. Since q-quoting always
+        // yields printable ASCII (`$'\t'`, `'…'`, backslash forms), nicechar on
+        // that result is a no-op — so for `(V#q)`/`(qV)` the correct output is
+        // the q-only form (`$'\0'`), NOT V re-escaping q's backslashes (`\^@`).
+        // zshrs's positive-q arm is applied AFTER this V arm (line ~14034), so
+        // skip V here when positive-q is set to reproduce C's q-then-V order.
+        // Negative `(Q)` (quotemod < 0, applied above at the Q arm before V) and
+        // bare `(V)` (quotemod == 0) still get V.
+        if (mods & 2) != 0 && quotemod <= 0 {
             // c:4157 if (mods & 2)
             if let Some(parts) = split_parts.clone() {
                 // c:4157
