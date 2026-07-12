@@ -11227,8 +11227,20 @@ impl ShellExecutor {
             Ok(file) => {
                 let new_fd = file.into_raw_fd();
                 unsafe {
-                    libc::dup2(new_fd, fd);
-                    libc::close(new_fd);
+                    // When the target fd was already closed (e.g. `exec 0<&-;
+                    // cmd < file`), open() returns the lowest free fd, which is
+                    // `fd` itself. Then `dup2(fd, fd)` is a no-op: closing new_fd
+                    // would CLOSE the fd we just opened, AND — since Rust's
+                    // File::open sets O_CLOEXEC and a no-op dup2 does NOT clear
+                    // it — an exec'd child would lose the descriptor. So in the
+                    // reuse case, keep the fd and clear its close-on-exec flag;
+                    // otherwise dup2 (which clears cloexec on the copy) + close.
+                    if new_fd != fd {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    } else {
+                        libc::fcntl(fd, libc::F_SETFD, 0);
+                    }
                 }
                 true
             }
@@ -11256,8 +11268,12 @@ impl ShellExecutor {
                     {
                         let new_fd = devnull.into_raw_fd();
                         unsafe {
-                            libc::dup2(new_fd, fd);
-                            libc::close(new_fd);
+                            if new_fd != fd {
+                                libc::dup2(new_fd, fd);
+                                libc::close(new_fd);
+                            } else {
+                                libc::fcntl(fd, libc::F_SETFD, 0);
+                            }
                         }
                     }
                 }
@@ -11587,8 +11603,15 @@ impl ShellExecutor {
                 {
                     let new_fd = file.into_raw_fd();
                     unsafe {
-                        libc::dup2(new_fd, fd);
-                        libc::close(new_fd);
+                        // See redir_open_or_fail: when the opened fd IS the
+                        // destination (target fd was closed), keep it and clear
+                        // O_CLOEXEC; else dup2 + close.
+                        if new_fd != fd {
+                            libc::dup2(new_fd, fd);
+                            libc::close(new_fd);
+                        } else {
+                            libc::fcntl(fd, libc::F_SETFD, 0);
+                        }
                     }
                 }
             }
