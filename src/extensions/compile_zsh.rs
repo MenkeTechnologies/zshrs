@@ -3771,6 +3771,24 @@ impl ZshCompiler {
         // `"\$..."` form via untokenize_preserve_quotes.
         let has_bnull = s.contains('\u{9f}');
 
+        // A word that BEGINS with a single-quote (Snull `\u{9d}`) marker has
+        // its leading `${` / `$name[` as LITERAL text: single quotes make
+        // `$`, `{`, `[` ordinary chars. `untokenize(s)` strips the Snull
+        // markers, so the `${…}` fast paths below (which pattern-match on the
+        // plain `untoked` string) would misread a quoted-literal
+        // `'${foo['…']}'` / `'${(e)arr['idx']}'` as a LIVE subscripted /
+        // flagged substitution and evaluate it. zsh keeps it literal — the
+        // whole word is just string concatenation of SQ-literal fragments and
+        // any unquoted `$((…))` / `$var` in between. p10k's deferred prompt
+        // templates (`_p9k_prompt_prefix_left='${(e)_p9k_t['$idx']}'`,
+        // internal/p10k.zsh:8490) hit exactly this shape; evaluating them at
+        // build time dropped every segment → an empty prompt. The static
+        // `braced_subscript_ref` path (below) already rejects this because it
+        // runs on `untokenize_preserve_quotes` (Snull→`'`, so the leading `'`
+        // fails its `${` prefix check); the plain-`untoked` fast paths need
+        // this explicit guard.
+        let sq_literal_opener = s.starts_with('\u{9d}');
+
         // Trigger detection. `$` / `` ` `` checks run on the
         // un-tokenized form because the lexer turns `$` into
         // `\u{85}` (META-$) in `s` — the literal-char check on
@@ -4853,7 +4871,7 @@ impl ZshCompiler {
         // fast path above except the key is computed instead of loaded
         // as a constant. Without this, the assoc-array case falls back
         // to a bridge path that doesn't perform the assoc lookup.
-        if !has_bnull {
+        if !has_bnull && !sq_literal_opener {
             if let Some((base, key)) = braced_subscript_dynamic_ref(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(base));
                 let key_const = self.builder.add_constant(Value::str(key));
@@ -4900,7 +4918,7 @@ impl ZshCompiler {
         // and the Qstring-preserving `untokenize_preserve_quotes`
         // ensures the `$` is tokenized as `\u{8c}` so stringsubst
         // sees Qstring and sets qt=true. This is the C path.
-        if !has_bnull && !flag_operand_quoted {
+        if !has_bnull && !flag_operand_quoted && !sq_literal_opener {
             if let Some((flags, name)) = parse_zsh_flag(&untoked) {
                 // DQ context: either the raw word is itself DQ-wrapped,
                 // OR we're recursing into an Expansion segment from a
@@ -4949,7 +4967,7 @@ impl ZshCompiler {
         // sentinel so BUILTIN_PARAM_FLAG treats the operand as a
         // pre-resolved scalar instead of doing a name lookup. Closes
         // the `${(f)mapfile[/path]}` and `${(s:,:)assoc[k]}` shapes.
-        if !has_bnull && !flag_operand_quoted {
+        if !has_bnull && !flag_operand_quoted && !sq_literal_opener {
             if let Some((flags, base, key)) = parse_zsh_flag_subscript(&untoked) {
                 // `(t)NAME[KEY]` — type-flag form. zsh's `(t)`
                 // evaluates the PARAMETER's type-string first (e.g.
