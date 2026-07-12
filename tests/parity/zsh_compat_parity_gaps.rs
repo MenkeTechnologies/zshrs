@@ -232,6 +232,15 @@ mod context_and_state {
         g_flag_default_keeps_c_escape_literal =>
             (r#"${(g::)$'\cb'} keeps \cb literal; ${(g::)$'a\tb'} decodes tab"#,
              r#"c=$'\cb'; t=$'a\tb'; print -rn -- "${(g::)c}|${(g::)t}"; echo"#);
+        // After `exec 0<&-` closes fd 0, a `< FILE` redirect must reopen it:
+        // open() returns fd 0 (lowest free), so `dup2(0,0)` is a no-op — the
+        // code must NOT close new_fd (would re-close the file) and MUST clear
+        // O_CLOEXEC (Rust's File::open sets it; a no-op dup2 doesn't clear it,
+        // so exec'd children would lose the fd). Fixes gitstatus/p10k daemon
+        // handshake hang (install read `< install.info` returned empty).
+        closed_fd0_read_redirect_reopens =>
+            (r#"exec 0<&-; then read < file (builtin) and head < file (external) see the file"#,
+             r#"exec 0<&-; read a < /etc/passwd; b=$(head -1 < /etc/passwd); print -r -- "$a|$b""#);
     }
 }
 
