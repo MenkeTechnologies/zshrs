@@ -210,6 +210,14 @@ mod context_and_state {
         v_and_q_flag_order_q_before_visible =>
             (r#"${(V#q)empty}->$'\0' and ${(#qV)9}->$'\t': q precedes V, V is no-op"#,
              r#"empty=''; nine=9; print -r -- "${(V#q)empty}|${(#qV)nine}|${(Vq)empty}""#);
+        // Combined (l) + (r) padding in one flag group: subst.c:949-1109 splits
+        // the value at width/2, left-pads the first half to the l-width and
+        // right-pads the second half to the r-width, then concatenates.
+        // `${(l:5::-:r:8::+:)ab}` → `----ab+++++++` (split "a"|"b"), NOT a
+        // sequential left-then-right on the whole string (`---ab+++`).
+        combined_l_r_padding_splits_at_half =>
+            (r#"${(l:5::-:r:8::+:)ab} -> ----ab+++++++ ; empty -> full l-fill+r-fill"#,
+             r#"x=ab; e=''; print -r -- "${(l:5::-:r:8::+:)x}|${(l:6::.:r:4::_:)x}|${(l:10::-:r:5::+:)e}""#);
     }
 }
 

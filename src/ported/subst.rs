@@ -2340,6 +2340,37 @@ pub fn dopadding(
         return s.to_string(); // c:893
     } // c:893
 
+    // c:949-1109 — pad on BOTH left and right. C's strategy: divide the value
+    // into two halves at width `ls/2`; the first half is left-padded to `prenum`
+    // (with preone/premul), the second half is right-padded to `postnum` (with
+    // postone/postmul), then the two are concatenated. The sequential
+    // left-then-right-on-the-result approach is WRONG: `${(l:5::-:r:8::+:)ab}`
+    // must be `----ab+++++++` (split "a"|"b"), not `---ab+++`. Recurse into the
+    // single-side logic below so the split point is the only new concept.
+    if prenum > 0 && postnum > 0 {
+        // c:956 — ls2 = ls / 2 (width of the first half).
+        let ls2 = len / 2; // c:956
+        let chars: Vec<char> = s.chars().collect();
+        let mut acc = 0usize;
+        let mut split_idx = 0usize;
+        // c:1042 — first half spans chars until cumulative width reaches ls2.
+        while split_idx < chars.len() && acc < ls2 {
+            acc += if multi_width <= 0 {
+                1
+            } else {
+                wcpadwidth(chars[split_idx], multi_width) as usize
+            };
+            split_idx += 1;
+        }
+        let first: String = chars[..split_idx].iter().collect();
+        let second: String = chars[split_idx..].iter().collect();
+        // c:945-1049 — first half: left pad to prenum (preone/premul).
+        let left = dopadding(&first, prenum, 0, preone, None, premul, "", multi_width);
+        // c:1051-1109 — second half: right pad to postnum (postone/postmul).
+        let right = dopadding(&second, 0, postnum, None, postone, "", postmul, multi_width);
+        return format!("{}{}", left, right);
+    }
+
     let mut result = String::new(); // c:893
 
     // Left padding

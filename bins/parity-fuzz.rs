@@ -216,13 +216,19 @@ fn gen_scalar_pe(rng: &mut StdRng) -> String {
 fn gen_padding(rng: &mut StdRng) -> String {
     let v = pick(rng, SCALARS);
     let w = rng.gen_range(1..10);
-    match rng.gen_range(0..6) {
+    let w2 = rng.gen_range(1..10);
+    match rng.gen_range(0..9) {
         0 => format!("${{(l:{w}:){v}}}"),
         1 => format!("${{(r:{w}:){v}}}"),
         2 => format!("${{(l:{w}::0:){v}}}"),
         3 => format!("${{(r:{w}::-:){v}}}"),
         4 => format!("${{(l:{w}::x::y:){v}}}"),
-        _ => format!("${{(r:{w}::.:){v}}}"),
+        5 => format!("${{(r:{w}::.:){v}}}"),
+        // combined l+r in one flag group: split value at len/2, left-pad the
+        // first half, right-pad the second half (subst.c:949-1109).
+        6 => format!("${{(l:{w}::-:r:{w2}::+:){v}}}"),
+        7 => format!("${{(r:{w}::>:l:{w2}::<:){v}}}"),
+        _ => format!("${{(l:{w}::AB:r:{w2}::CD:){v}}}"),
     }
 }
 
