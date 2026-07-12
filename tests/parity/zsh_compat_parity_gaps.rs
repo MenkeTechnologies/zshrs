@@ -204,6 +204,12 @@ mod context_and_state {
         hash_flag_evalchar_before_case_mod =>
             (r#"${(#U)97}->A ${(#C)97}->A ${(#L)65}->a: (#) char-conv precedes case"#,
              r#"x=97; y=65; print -r -- "${(#U)x}|${(#C)x}|${(#L)y}""#);
+        // Flag order: positive `q` quote runs BEFORE `(V)` visible (subst.c:4041
+        // vs 4160). q yields printable ASCII (`$'\t'`), so V (nicechar) on it is
+        // a no-op — `${(V#q)empty}` is `$'\0'`, not V re-escaping to `\^@`.
+        v_and_q_flag_order_q_before_visible =>
+            (r#"${(V#q)empty}->$'\0' and ${(#qV)9}->$'\t': q precedes V, V is no-op"#,
+             r#"empty=''; nine=9; print -r -- "${(V#q)empty}|${(#qV)nine}|${(Vq)empty}""#);
     }
 }
 
