@@ -11446,9 +11446,18 @@ pub fn bin_emulate(
                 // we don't recognize `--version` / `--help` / etc.,
                 // just route the inline NAME as a long-form option.
                 let name: String = bytes[j + 1..].iter().collect::<String>().replace('-', "_");
-                let canon = name.to_lowercase().replace('_', "");
-                crate::ported::options::opt_state_set(&canon, action);
-                optlist.push((canon, action)); // c:6308 optlist record
+                // Same optlookup+dosetopt fix as the `-o NAME` arm below:
+                // resolve the `no` negation prefix and run option side
+                // effects, instead of writing a bogus stripped-name slot.
+                let optno = crate::ported::options::optlookup(&name);
+                if optno == 0 {
+                    zwarnnam(nam, &format!("no such option: {}", name));
+                    return 1;
+                }
+                crate::ported::options::dosetopt(optno, if action { 1 } else { 0 }, 0);
+                let canon = crate::ported::zsh_h::opt_name(optno.abs()).to_string();
+                let effective_on = if optno < 0 { !action } else { action };
+                optlist.push((canon, effective_on)); // c:6308 optlist record
                 break;
             }
             if ch == 'o' || ch == 'O' {
@@ -11464,9 +11473,27 @@ pub fn bin_emulate(
                     consumed_next_arg = true;
                     argv[i + 1].clone()
                 };
-                let canon = name.to_lowercase().replace('_', "");
-                crate::ported::options::opt_state_set(&canon, action);
-                optlist.push((canon, action)); // c:6308 optlist record
+                // c:6314-6316 — `optno = optlookup(*argv); if (!optno)
+                // { WARN("no such option"); return 1; } dosetopt(optno,
+                // action, ...)`. optlookup resolves the `no`/`no_`
+                // negation prefix (returning a NEGATIVE optno) and
+                // dosetopt inverts it AND runs the side effects
+                // (inittyptab for MULTIBYTE/BANGHIST/SHINSTDIN). The
+                // previous `opt_state_set(lowercased_stripped, action)`
+                // wrote a bogus `nomultibyte` slot and never toggled the
+                // real MULTIBYTE option, so `emulate -o no_multi_byte`
+                // (p10k.zsh:1760) left MULTIBYTE ON — char- not
+                // byte-oriented length math — and every p10k prompt
+                // segment built empty.
+                let optno = crate::ported::options::optlookup(&name);
+                if optno == 0 {
+                    zwarnnam(nam, &format!("no such option: {}", name));
+                    return 1;
+                }
+                crate::ported::options::dosetopt(optno, if action { 1 } else { 0 }, 0);
+                let canon = crate::ported::zsh_h::opt_name(optno.abs()).to_string();
+                let effective_on = if optno < 0 { !action } else { action };
+                optlist.push((canon, effective_on)); // c:6308 optlist record
                 break; // c:505 — break out of char walk after `-o`
             }
             if ch == 'c' {
