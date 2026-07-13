@@ -5580,7 +5580,43 @@ impl ZshCompiler {
                             || after.starts_with('%')
                             || after.starts_with(":#");
                         if has_array_op {
-                            let body_const = self.builder.add_constant(Value::str(inner));
+                            // c:Src/subst.c:1759 — `ssub = (pf_flags &
+                            // PREFORK_SINGLE)`; a double-quoted expansion runs
+                            // in that scalar context, which sepjoins the array
+                            // and clears `isarr` (c:3901-3907). The sort/unique
+                            // block sits inside an `if (isarr)` gate (c:4245),
+                            // so `(o)`/`(O)`/`(n)`/`(u)`/`(q)` are NO-OPS inside
+                            // `"…"` — `"${(o)a}"` is not sorted.
+                            //
+                            // This arm compiles the NESTED `${${…}op}` shape.
+                            // It handed the body to BRIDGE_BRACE_ARRAY without
+                            // the Qstring (\u{8c}) DQ marker, so the bridge
+                            // never bumped `in_dq_context`, paramsubst ran with
+                            // qt=false, and the INNER expansion applied its
+                            // array flags: `"${${(o)a}//o/0}"` came out
+                            // `f0ur 0ne three tw0` where zsh gives
+                            // `0ne tw0 three f0ur`. Same marker the `:#`/zip
+                            // arms above already use.
+                            // `dq_context_depth` only counts DQ strings that
+                            // have literal parts around the expansion (`"[${…}]"`
+                            // compiles through the DQ-string splitter). A word
+                            // that is ENTIRELY one quoted expansion — `"${…}"` —
+                            // never bumps it; the lexer instead hands us the
+                            // token wrapped in Dnull (\u{9e}). Test both, the
+                            // same way the `:#` / zip arms above do, or the bare
+                            // form keeps running the operator per-element:
+                            // `"${${(u)a}%e}"` gave `on two thre four` instead of
+                            // zsh's `one two three four`.
+                            let in_dq = (s.len() >= 2
+                                && s.starts_with('\u{9e}')
+                                && s.ends_with('\u{9e}'))
+                                || self.dq_context_depth > 0;
+                            let body_text = if in_dq {
+                                format!("\u{8c}{}", inner)
+                            } else {
+                                inner.to_string()
+                            };
+                            let body_const = self.builder.add_constant(Value::str(&body_text));
                             self.builder.emit(Op::LoadConst(body_const), 0);
                             self.builder.emit(
                                 Op::CallBuiltin(crate::vm_helper::BUILTIN_BRIDGE_BRACE_ARRAY, 1),

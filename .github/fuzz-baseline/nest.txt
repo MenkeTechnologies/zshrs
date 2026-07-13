@@ -2,23 +2,32 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode nest --count N --verify 3  (copy NEW-signature lines).
 #
-# KNOWN GAP (one bug, many shapes): a DOUBLE-QUOTED nested expansion carrying an
-# outer operator keeps the INNER expansion's array-shape flags, where zsh drops
-# them. In zsh a scalar context (`ssub`, Src/subst.c:1759) sepjoins the array and
-# clears `isarr` (c:3901-3907), and the sort/unique block sits inside an
-# `if (isarr)` gate (c:4245) — so `(o)`/`(u)`/`(n)`/`(q)` are no-ops inside "…":
+# KNOWN GAP: inside `"…"`, a NESTED expansion still applies the INNER
+# expansion's array-shape flags, where zsh drops them.
+#
+# In zsh a scalar context (`ssub` = pf_flags & PREFORK_SINGLE, Src/subst.c:1759)
+# sepjoins the array and clears `isarr` (c:3901-3907), and the sort/unique block
+# sits inside an `if (isarr)` gate (c:4245) — so (o)/(O)/(n)/(u)/(q) are no-ops
+# in double quotes, even one level down:
 #
 #   a=(one two three four)
-#   print -r -- "[${(o)a}]"           -> [one two three four]   (both agree: NOT sorted)
-#   print -r -- "[${${(o)a}//o/0}]"   -> zsh:   [0ne tw0 three f0ur]   (inner (o) dropped)
-#                                       zshrs: [f0ur 0ne three tw0]   (inner (o) applied)
+#   print -r -- "[${(o)a}]"         -> [one two three four]   both agree (NOT sorted)
+#   print -r -- "[${${(o)a}//o/0}]" -> zsh:   [0ne tw0 three f0ur]   inner (o) dropped
+#                                     zshrs: [f0ur 0ne three tw0]   inner (o) applied
 #
-# zshrs honours the rule at ONE level (the qt/c:3034 path) but a nested inner is
-# evaluated by multsub in a fresh unquoted context, so it sorts and the outer
-# operator then runs over the sorted array. UNQUOTED forms already match.
-# Pre-existing; independent of the assoc / LF_ARRAY fixes in this commit.
-# Fix path: port the c:3901-3907 ssub arm and make the nested inner inherit the
-# outer's scalar context.
+# The OUTER half of this is now fixed: the nested-with-operator compile arm
+# passes the Qstring DQ marker, so paramsubst runs with qt=true and the outer
+# operator applies to the JOINED scalar (`"${${(u)a}%e}"` is correct now).
+# What remains is the INNER expansion: it is evaluated by multsub in a fresh
+# context and still applies its own flags.
+#
+# Fix path (attempted, reverted — needs more care): propagate PREFORK_SINGLE
+# into the nested multsub AND port the c:3901-3907 ssub collapse. The collapse
+# must NOT fire for a split-derived array — C's c:3903-3907 tests `isarr` BEFORE
+# the force_split block at c:3920-3927 creates it — or `"${(j:,:)${(f)$(…)}}"`
+# and `"${(U)${(s. .)s}[2]}"` break. A naive version regressed both.
+#
+# UNQUOTED forms all match.
   print -r -- "[${${(L)${(n)a}}//o/0}]"
   print -r -- "[${${(n)a}#*_}]"
   print -r -- "[${${(o)${(o)a}}//o/0}]"
@@ -38,7 +47,6 @@
 ==== seed 165 ====
 ==== seed 251 ====
 ==== seed 273 ====
-print -r -- "[${#${#s}}]"
 print -r -- "[${${(j:-:)${(O)a}}//o/N}]"
 print -r -- "[${${(j:-:)${(U)nums}}#*_}]"
 print -r -- "[${${(L)${(n)a}}//o/N}]"
