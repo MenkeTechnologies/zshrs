@@ -1074,6 +1074,17 @@ fn stringsubst(
                     ret_flags, // c:237
                 ); // c:237
                 IN_PARAMSUBST_NEST.with(|c| c.set(c.get() - 1)); // c:237 paramsub_nest--
+                                                                 // c:3929-3932 — apply the `isarr` paramsubst just computed to
+                                                                 // THIS list. C does it inside paramsubst (it holds `l`); the
+                                                                 // Rust port hands the bit back through PARAMSUBST_LF_ARRAY.
+                                                                 // multsub (c:633) reads LF_ARRAY to decide array-vs-scalar when
+                                                                 // the list has exactly one node, which is the whole reason a
+                                                                 // 1-element array (`q=(abcdef)`) must not read as a scalar.
+                if PARAMSUBST_LF_ARRAY.with(|c| c.get()) {
+                    list.flags |= LF_ARRAY; // c:3930
+                } else {
+                    list.flags &= !LF_ARRAY; // c:3932
+                }
                 if errflag_set() {
                     // c:237
                     return None; // c:237
@@ -4833,7 +4844,7 @@ pub fn paramsubst(
                 // `sub_flags` is a function-local int saved across
                 // the recursive `multsub` call at c:2681).
                 let saved_sub_flags = sub_flags_get();
-                let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
+let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
                 sub_flags_set(saved_sub_flags);
                 // c:Src/exec.c:4856-4871 readoutput — UNQUOTED `$(…)`
                 // output is IFS-word-split (`spacesplit(buf, 0, 1, 0)`,
@@ -9112,6 +9123,19 @@ pub fn paramsubst(
                             None
                         }
                     })
+                    .or_else(|| {
+                        // A bare assoc is an array of its VALUES (c:3433), so
+                        // `:#` filters those. `(k)`/`(v)` already land in
+                        // split_parts above; this is the no-flag case, which
+                        // otherwise fell to the scalar arm and matched the
+                        // JOINED values once — `${m:#vo1}` kept everything.
+                        if per_element_array && assoc_contains(&var_name) {
+                            assoc_get(&var_name)
+                                .map(|m| m.values().cloned().collect::<Vec<String>>())
+                        } else {
+                            None
+                        }
+                    })
                     .map(|arr| {
                         // KSHARRAYS bare array → the `:#` filter sees only
                         // element 0 (params.c fetchvalue scalarizes a bare
@@ -10069,7 +10093,30 @@ pub fn paramsubst(
                 let is_at_subscript = matches!(subscript.as_deref(), Some("@"));
                 let is_at_var = matches!(var_name.as_str(), "@");
                 let per_element = is_at_subscript || is_at_var || nojoin == 2 || !qt;
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_scalar_subscript) {
+                if let Some(arr) = arrays_get(&var_name)
+                    .or_else(|| {
+                        // c:3433 `getmatcharr(&aval, …)` — the array arm is
+                        // chosen on `isarr`, and a bare assoc IS an array (of
+                        // its values). `arrays_get` only knows plain arrays, so
+                        // an assoc fell through to the scalar `getmatch` arm and
+                        // the substitution ran once over the JOINED values:
+                        // `${m//o/0}` returned one word "v01 v02" instead of two
+                        // elements, and `${m#v}` stripped only the first.
+                        if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|_| !has_scalar_subscript)
+                {
                     if per_element {
                         let new_arr: Vec<String> = arr.iter().map(|e| replace_global(e)).collect();
                         value = new_arr.join(" "); // c:3870
@@ -10554,7 +10601,25 @@ pub fn paramsubst(
                         t != "@" && t != "*" && !t.contains(',')
                     })
                     .unwrap_or(false);
-                if let Some(arr) = arrays_get(&var_name).filter(|_| !has_subscript_one) {
+                if let Some(arr) = arrays_get(&var_name)
+                    // c:3433 getmatcharr — a bare assoc is an array of its
+                    // values, so a single-`/` replace applies per value.
+                    .or_else(|| {
+                        if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|_| !has_subscript_one)
+                {
                     // c:Src/subst.c:3870 — single-`/` array shapes:
                     //   `${a[@]/p/P}` / `${(@)a/p/P}` (array shape):
                     //       per-element, first match within each.
@@ -10774,7 +10839,27 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
+                if let Some(arr) = arrays_get(&var_name)
+                    // c:3433 getmatcharr — a bare assoc is an array of its
+                    // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
+                    // this the assoc fell to the scalar arm and stripped only
+                    // the joined string once (`${m#v}` → "o1 vo2").
+                    .or_else(|| {
+                        if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|_| per_element_array)
+                {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e, 1)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -10964,7 +11049,27 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
+                if let Some(arr) = arrays_get(&var_name)
+                    // c:3433 getmatcharr — a bare assoc is an array of its
+                    // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
+                    // this the assoc fell to the scalar arm and stripped only
+                    // the joined string once (`${m#v}` → "o1 vo2").
+                    .or_else(|| {
+                        if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|_| per_element_array)
+                {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -11159,7 +11264,27 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
+                if let Some(arr) = arrays_get(&var_name)
+                    // c:3433 getmatcharr — a bare assoc is an array of its
+                    // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
+                    // this the assoc fell to the scalar arm and stripped only
+                    // the joined string once (`${m#v}` → "o1 vo2").
+                    .or_else(|| {
+                        if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|_| per_element_array)
+                {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -11312,7 +11437,27 @@ pub fn paramsubst(
                         }
                     }
                 };
-                if let Some(arr) = arrays_get(&var_name).filter(|_| per_element_array) {
+                if let Some(arr) = arrays_get(&var_name)
+                    // c:3433 getmatcharr — a bare assoc is an array of its
+                    // values, so `#`/`##`/`%`/`%%` strip EACH value. Without
+                    // this the assoc fell to the scalar arm and stripped only
+                    // the joined string once (`${m#v}` → "o1 vo2").
+                    .or_else(|| {
+                        if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|_| per_element_array)
+                {
                     let new_arr: Vec<String> = arr.iter().map(|e| strip_one(e)).collect();
                     value = new_arr.join(" "); // c:3540
                     split_parts = Some(new_arr); // c:3540
@@ -12766,6 +12911,7 @@ pub fn paramsubst(
             let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
             errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
+
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
@@ -12834,7 +12980,27 @@ pub fn paramsubst(
                     split_parts = Some(parts);
                 }
                 let _ = is_subexp_temp;
-            } else if let Some(arr) = arrays_get(&var_name) {
+            } else if let Some(arr) = arrays_get(&var_name).or_else(|| {
+                // c:3939 `if (isarr)` — a bare assoc expands to its VALUE
+                // list, so `isarr` is true and C maps casemodify over each
+                // element (c:3945-3946). `arrays_get` only knows plain
+                // arrays, so without this the assoc fell through to the
+                // scalar arm below and `${(U)m}` case-folded the JOINED
+                // values into one word ("V1 V2") instead of two elements.
+                // Same source the `:#` arm already uses (line ~8229).
+                if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+            }) {
                 // KSHARRAYS bare array → case modifier folds only element 0.
                 let arr: Vec<String> = if crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
                     && subscript.is_none()
@@ -14148,8 +14314,27 @@ pub fn paramsubst(
                     value = quoted.clone();
                     split_parts = Some(vec![quoted]);
                 }
-            } else if let Some(arr) =
-                arrays_get(&var_name).filter(|_| subscript.is_none() || is_at_subscript_splat)
+            } else if let Some(arr) = arrays_get(&var_name)
+                .or_else(|| {
+                    // A bare assoc is an array of its values (c:3939 isarr),
+                    // so `(q)` quotes each value separately. Without this it
+                    // fell to the scalar arm and quoted the JOINED values,
+                    // turning `${(q)m}` into `v1\ v2` (one word) instead of
+                    // two quoted elements.
+                    if assoc_contains(&var_name) {
+                            // c:3433 — `aval` already holds whatever the (k)/(v)/(kv)
+                            // flags selected; only fall back to the raw VALUE list
+                            // when no flag picked one. Otherwise `${(k)m#k}` would
+                            // strip the values instead of the keys the (k) chose.
+                            split_parts.clone().or_else(|| {
+                                assoc_get(&var_name)
+                                    .map(|m| m.values().cloned().collect::<Vec<String>>())
+                            })
+                        } else {
+                            None
+                        }
+                })
+                .filter(|_| subscript.is_none() || is_at_subscript_splat)
             {
                 // c:Src/subst.c — re-fetch the WHOLE array by name only
                 // for the no-subscript and `[@]`/`[*]` splat forms. A
@@ -14447,6 +14632,9 @@ pub fn paramsubst(
             && sep.is_none()                                 // c:3906-3907 (j/F flag already sepjoin'd → scalar)
             && (arrays_contains(&var_name)         // c:3950
                 || split_parts.is_some()))); // c:3950 ((s::) made an array)
+        // c:3932 — `else l->list.flags &= ~LF_ARRAY;` (the non-array default;
+        // the array case overrides it below, once `parts` is known).
+        PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
         if (nojoin == 2) || auto_splat {
             // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
@@ -14675,6 +14863,29 @@ pub fn paramsubst(
                 let new_pos = prefix.chars().count() + joined.chars().count();
                 return (full.clone(), new_pos, vec![full]);
             }
+            // c:3929-3930 — `if (isarr) l->list.flags |= LF_ARRAY;`. C sets this
+            // on its own LinkList; the Rust port has no list here, so hand the
+            // bit to the caller (stringsubst), which owns one.
+            //
+            // The array-vs-scalar rule is NOT simply "did we splat". A forced
+            // SPLIT — `(s)`/`(f)` (spsep) or `${=x}` (spbreak) — first JOINS an
+            // array back down to a scalar (c:3906-3907 `val = sepjoin(aval…);
+            // isarr = 0;`) and then re-splits it, and c:3924 keeps the result
+            // SCALAR when the split yields exactly one element
+            // (`else if (!aval[1]) val = aval[0];`). Only 2+ elements set isarr
+            // (c:3927). A real array PARAM, by contrast, stays an array even at
+            // length 1 (c:3903) — which is the case that was broken.
+            //
+            // So `${#${(f)t}}` for t="a:b:c:d" counts CHARACTERS (one line, so
+            // scalar → 7), while `${#${q}}` for q=(abcdef) counts ELEMENTS (1).
+            // The single-element collapse is NOT conditional on `nojoin`: C's
+            // c:3924 `else if (!aval[1]) val = aval[0];` runs before the
+            // `isarr = nojoin ? 1 : 2` at c:3927 ever gets a chance, so even
+            // `(@f)` stays scalar when the split yields one field —
+            // `"${${(@f)$(echo hello)}[1]}"` is `h`, not `hello`.
+            let forced_split_to_one = (spsep.is_some() || force_split) && parts.len() == 1;
+            PARAMSUBST_LF_ARRAY.with(|c| c.set(!forced_split_to_one));
+
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {
                 let s = if plan9 || parts.len() == 1 {
@@ -17002,6 +17213,27 @@ fn errflag_set_error() {
 thread_local! {
     /// `IN_PARAMSUBST_NEST` static.
     pub static IN_PARAMSUBST_NEST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+
+    /// Carries C's `isarr` out of `paramsubst` so the caller can apply
+    /// `Src/subst.c:3929-3932`:
+    ///
+    /// ```c
+    /// if (isarr)
+    ///     l->list.flags |= LF_ARRAY;
+    /// else
+    ///     l->list.flags &= ~LF_ARRAY;
+    /// ```
+    ///
+    /// C's paramsubst holds the LinkList `l` and sets the flag on it
+    /// directly; the Rust port returns a tuple and never had the list, so
+    /// the flag was never set. That mattered only for a ONE-element array:
+    /// `multsub` treats a single node as a scalar unless LF_ARRAY says
+    /// otherwise (c:633, ported at subst.rs:1661), so `q=(abcdef)` made
+    /// `${#${q}}` count CHARACTERS (6) instead of elements (1), and
+    /// `${${q}[1]}` index characters (`a`) instead of elements (`abcdef`).
+    /// Two-or-more elements accidentally worked because `l > 1` alone
+    /// selects the array path.
+    pub static PARAMSUBST_LF_ARRAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 // =====================================================================

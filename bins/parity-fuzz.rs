@@ -1283,6 +1283,362 @@ fn gen_typeset(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// zutil generator
+//
+// `zsh/zutil` is the substrate compsys sits on: zstyle's most-specific-match
+// ordering, zparseopts' option grammar, zformat's field expansion. Bugs here
+// are invisible in isolation and catastrophic under a real completion system,
+// which is exactly the shape a fuzzer is good at.
+//
+// Deterministic: fixed contexts/patterns, and every lookup is printed with its
+// return status (a zstyle miss is a status, not just an empty value).
+// ---------------------------------------------------------------------------
+
+/// zstyle context patterns, ordered from broad to narrow so the generator can
+/// install several that all match one lookup and force the weight comparison.
+const ZS_PATS: &[&str] = &[
+    "*",
+    ":completion:*",
+    ":completion:*:default",
+    ":completion:*:*:cd:*",
+    ":completion:complete:*",
+    ":c*:*",
+    ":completion:complete:cd:*:*",
+    "*:cd:*",
+];
+
+/// Contexts to look up against the installed patterns.
+const ZS_CTX: &[&str] = &[
+    ":completion:complete:cd:0:default",
+    ":completion:complete:ls:0",
+    ":completion:default",
+    ":other:thing",
+    "",
+];
+
+fn gen_zutil(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["zmodload zsh/zutil".to_string()];
+
+    match rng.gen_range(0..3) {
+        // ---- zstyle: install N patterns, then look up. The answer depends
+        // entirely on setstypat's weight ordering (Src/Modules/zutil.c:344).
+        0 => {
+            let n = rng.gen_range(1..=4);
+            for i in 0..n {
+                let pat = pick(&mut rng, ZS_PATS);
+                stmts.push(format!("zstyle '{pat}' sty v{i}"));
+            }
+            for _ in 0..rng.gen_range(1..=3) {
+                let ctx = pick(&mut rng, ZS_CTX);
+                // -s (scalar), -a (array), -t (boolean test), -g (dump), and
+                // the raw lookup status all read the same table differently.
+                match rng.gen_range(0..4) {
+                    0 => stmts.push(format!(
+                        "zstyle -s '{ctx}' sty r; print -r -- \"s=[$r] rc=$?\""
+                    )),
+                    1 => stmts.push(format!(
+                        "zstyle -a '{ctx}' sty arr; print -r -- \"a=[${{arr[*]}}] rc=$?\""
+                    )),
+                    2 => stmts.push(format!(
+                        "zstyle -t '{ctx}' sty; print -r -- \"t=$?\""
+                    )),
+                    _ => stmts.push(format!(
+                        "zstyle -m '{ctx}' sty 'v*'; print -r -- \"m=$?\""
+                    )),
+                }
+            }
+            // -d deletes; a later lookup must miss.
+            if rng.gen_bool(0.3) {
+                let pat = pick(&mut rng, ZS_PATS);
+                stmts.push(format!("zstyle -d '{pat}' sty"));
+                let ctx = pick(&mut rng, ZS_CTX);
+                stmts.push(format!(
+                    "zstyle -s '{ctx}' sty r2; print -r -- \"after_del=[$r2] rc=$?\""
+                ));
+            }
+        }
+        // ---- zparseopts: option grammar (`:` takes an arg, `+` accumulates),
+        // -D (delete from argv), -E (keep going past non-options), -K (keep
+        // existing array values), -a vs =NAME output forms.
+        1 => {
+            let args: Vec<&str> = (0..rng.gen_range(1..=5))
+                .map(|_| {
+                    *pick(
+                        &mut rng,
+                        &[
+                            "-a", "-b", "val", "-ab", "-b", "x", "--", "-c", "plain", "-bval",
+                            "-a", "extra",
+                        ],
+                    )
+                })
+                .collect();
+            stmts.push(format!("set -- {}", args.join(" ")));
+
+            let mut flags = String::new();
+            if rng.gen_bool(0.5) {
+                flags.push_str("-D ");
+            }
+            if rng.gen_bool(0.4) {
+                flags.push_str("-E ");
+            }
+            let spec = pick(
+                &mut rng,
+                &[
+                    "a=A b:=B",
+                    "a+=A b:=B",
+                    "a=A b=B c=C",
+                    "a=A b::=B",
+                    "-a -b:",
+                ],
+            );
+            // `zparseopts` returns non-zero on an unrecognised option; print it.
+            stmts.push(format!("zparseopts {flags}{spec}; print -r -- \"rc=$?\""));
+            stmts.push(r#"print -r -- "A=(${A[*]}) B=(${B[*]}) C=(${C[*]})""#.to_string());
+            stmts.push(r#"print -r -- "argv=(${(j: :)@})""#.to_string());
+        }
+        // ---- zformat: %-field substitution, width/justification, and the
+        // ternary `%(c.true.false)` form.
+        _ => {
+            let fmt = pick(
+                &mut rng,
+                &[
+                    "%d-%s",
+                    "%10d|%-10s|",
+                    "%(d.yes.no)",
+                    "%d%%%s",
+                    "%-5d[%5s]",
+                    "%D%S",
+                    "%(x.T.F)-%d",
+                ],
+            );
+            let specs = pick(
+                &mut rng,
+                &[
+                    "d:1 s:two",
+                    "d:ab s:",
+                    "d: s:xyz",
+                    "d:long_value s:x",
+                    "x:1 d:2 s:3",
+                ],
+            );
+            stmts.push(format!("zformat -f out '{fmt}' {specs}"));
+            stmts.push(r#"print -r -- "[$out]""#.to_string());
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// func generator
+//
+// Function scoping is where a shell's parameter model shows its seams:
+// `local` shadowing and restore-on-return, `typeset -g` reaching past the
+// local scope, arrays/assocs declared local, `$0`/`$#`/`$@` inside a function,
+// nested calls, and what `return` leaves in `$?`.
+// ---------------------------------------------------------------------------
+
+fn gen_func(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["v=global; typeset -a arr=(g1 g2); typeset -A h=(k gv)".to_string()];
+
+    let body = match rng.gen_range(0..7) {
+        // local shadows, and the global is restored on return.
+        0 => "local v=inner; print -r -- \"in=$v\"".to_string(),
+        // typeset -g writes through the local scope to the global.
+        1 => "local v=inner; typeset -g v=clobbered; print -r -- \"in=$v\"".to_string(),
+        // local array shadowing.
+        2 => "local -a arr=(l1 l2 l3); print -r -- \"in=(${arr[*]}) n=${#arr}\"".to_string(),
+        // local assoc shadowing.
+        3 => "local -A h=(k lv j lw); print -r -- \"in=${h[k]},${h[j]}\"".to_string(),
+        // positional params + $# inside a function.
+        4 => "print -r -- \"n=$# args=($*) one=$1 last=${@[-1]}\"".to_string(),
+        // return propagates to $?; code after return must not run.
+        5 => "print -r -- before; return 3; print -r -- AFTER_RETURN".to_string(),
+        // nested call sees the caller's local (dynamic scoping).
+        _ => "local v=outer_local; inner_fn".to_string(),
+    };
+
+    stmts.push("inner_fn() { print -r -- \"nested_sees=$v\" }".to_string());
+    stmts.push(format!("f() {{ {body} }}"));
+
+    let call_args = pick(&mut rng, &["", "a", "a b", "a b c", "'x y' z"]);
+    stmts.push(format!("f {call_args}; print -r -- \"rc=$?\""));
+    // After the call the globals must be exactly as they were, unless
+    // `typeset -g` deliberately reached through.
+    stmts.push(r#"print -r -- "after v=$v arr=(${arr[*]}) h=${h[k]}""#.to_string());
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// redir generator
+//
+// Redirections, MULTIOS (zsh tees a duplicated fd rather than overwriting),
+// fd juggling (`exec {fd}>`, `>&-`), here-strings, and append-vs-truncate.
+//
+// Deterministic: everything writes into $PWD (the per-run fixture dir is not
+// used by this mode; files are created and read back inside the script itself,
+// then removed, so no state leaks between cases).
+// ---------------------------------------------------------------------------
+
+fn gen_redir(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // A unique dir per case keeps parallel workers from colliding, and the
+    // name is derived from the seed (not a PID/timestamp) so a replay of the
+    // same seed produces byte-identical output.
+    let mut stmts = vec![
+        format!("d=${{TMPDIR:-/tmp}}/pf_redir_{seed}"),
+        "command rm -rf $d; command mkdir -p $d; cd $d".to_string(),
+    ];
+
+    match rng.gen_range(0..6) {
+        // MULTIOS: two `>` on one command tee to BOTH files.
+        0 => {
+            stmts.push("setopt multios".to_string());
+            stmts.push("print -r -- teed > f1 > f2".to_string());
+            stmts.push("print -r -- \"f1=$(<f1) f2=$(<f2)\"".to_string());
+        }
+        // NO_MULTIOS: the last redirect wins, the first file is empty.
+        1 => {
+            stmts.push("unsetopt multios".to_string());
+            stmts.push("print -r -- once > f1 > f2".to_string());
+            stmts.push("print -r -- \"f1=[$(<f1)] f2=[$(<f2)]\"".to_string());
+        }
+        // Append vs truncate.
+        2 => {
+            stmts.push("print -r -- one > f".to_string());
+            let op = pick(&mut rng, &[">", ">>"]);
+            stmts.push(format!("print -r -- two {op} f"));
+            stmts.push("print -r -- \"f=($(<f))\"; wc -l < f".to_string());
+        }
+        // Named fd + close.
+        3 => {
+            stmts.push("exec {u}> f".to_string());
+            stmts.push("print -r -- viafd >&$u".to_string());
+            stmts.push("exec {u}>&-".to_string());
+            stmts.push("print -r -- \"f=$(<f)\"".to_string());
+        }
+        // Here-string / here-doc into a command, and stderr merging.
+        4 => {
+            let src = pick(
+                &mut rng,
+                &["<<< 'here string'", "<<< $'a\\nb'", "<<< \"\""],
+            );
+            stmts.push(format!("cat {src} > f"));
+            stmts.push("print -r -- \"lines=$(wc -l < f) body=[$(<f)]\"".to_string());
+        }
+        // stdout/stderr ordering and 2>&1 duplication.
+        _ => {
+            let form = pick(
+                &mut rng,
+                &[
+                    "{ print -r -- OUT; print -ru2 -- ERR; } > f 2>&1",
+                    "{ print -r -- OUT; print -ru2 -- ERR; } 2>&1 > f",
+                    "{ print -r -- OUT; print -ru2 -- ERR; } >f 2>f2",
+                ],
+            );
+            stmts.push(form.to_string());
+            stmts.push("print -r -- \"f=[$(<f)]\"".to_string());
+            stmts.push("[[ -e f2 ]] && print -r -- \"f2=[$(<f2)]\"".to_string());
+        }
+    }
+    stmts.push("cd /; command rm -rf $d".to_string());
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// nest generator
+//
+// The flat `expr` mode emits one expansion at a time. Real zsh code (and the
+// completion system especially) *composes* them: `${${(f)${(P)v}}[2]}`,
+// `${${x#a}%b}`, `${(j:,:)${(@s: :)str}}`. Composition is where the bugs were
+// in `pattern` mode too — an operator that is correct alone can still be wrong
+// about what it hands to the next one (word-vs-scalar, array-vs-string, when
+// the flags of the OUTER expansion apply).
+//
+// So: build the expansion RECURSIVELY. An inner node is itself a full
+// expansion, and the outer one applies flags / subscripts / substitutions to
+// whatever it produced.
+// ---------------------------------------------------------------------------
+
+/// Base variables the recursion bottoms out on. Kept in the nest preamble.
+const NEST_BASE: &str = concat!(
+    "s=Hello_World; ",
+    "t=a:b:c:d; ",
+    "path=/usr/local/bin/zsh; ",
+    "lines=$'aa\\nbb\\ncc'; ",
+    "a=(one two three four); ",
+    "nums=(3 1 4 1 5); ",
+    "typeset -A m; m=(k1 v1 k2 v2); ",
+    "ptr=s; ",
+    "empty=''; ",
+);
+
+/// Outer operators applied to an already-built inner expansion. Each is a
+/// (prefix, suffix) pair spliced around the inner text.
+fn nest_wrap(rng: &mut StdRng, inner: &str) -> String {
+    match rng.gen_range(0..14) {
+        // Flag-only wrappers — these are the ones whose array/scalar contract
+        // is easy to get wrong one level down.
+        0 => format!("${{(U){inner}}}"),
+        1 => format!("${{(L){inner}}}"),
+        2 => format!("${{(o){inner}}}"),
+        3 => format!("${{(O){inner}}}"),
+        4 => format!("${{(n){inner}}}"),
+        5 => format!("${{(u){inner}}}"),
+        6 => format!("${{(q){inner}}}"),
+        7 => format!("${{(j:-:){inner}}}"),
+        8 => format!("${{(s.:.){inner}}}"),
+        9 => format!("${{(f){inner}}}"),
+        // Length of the inner result.
+        10 => format!("${{#{inner}}}"),
+        // Substitution applied to the inner result.
+        11 => format!("${{{inner}//o/0}}"),
+        // Strip applied to the inner result.
+        12 => format!("${{{inner}#*_}}"),
+        // Subscript the inner result.
+        _ => {
+            let i = rng.gen_range(1..=3);
+            format!("${{{inner}[{i}]}}")
+        }
+    }
+}
+
+/// Build an expansion of the given depth. Depth 0 is a bare variable
+/// reference; each level up wraps the previous one.
+fn nest_build(rng: &mut StdRng, depth: u32) -> String {
+    if depth == 0 {
+        // A leaf is a plain name (the `${...}` is added by the wrapper), or a
+        // full expansion when it is also the whole thing.
+        let v = pick(rng, &["s", "t", "path", "lines", "a", "nums", "m", "empty"]);
+        return v.to_string();
+    }
+    let inner = nest_build(rng, depth - 1);
+    // At depth 1 the inner is a bare name, so the wrapper produces `${(U)s}`.
+    // Above that the inner is already a `${...}`, so the wrapper nests it:
+    // `${(o)${(U)s}}` — which is exactly the shape we want to exercise.
+    nest_wrap(rng, &inner)
+}
+
+fn gen_nest(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![NEST_BASE.trim_end().to_string()];
+    for _ in 0..rng.gen_range(2..=5) {
+        let depth = rng.gen_range(1..=3);
+        let e = nest_build(&mut rng, depth);
+        // Print both quoted (one word, joins with $IFS) and `-l` (one element
+        // per line) — the two disagree exactly when the array/scalar contract
+        // of a nested flag is wrong, which is the bug class this mode hunts.
+        if rng.gen_bool(0.5) {
+            stmts.push(format!("print -r -- \"[{e}]\""));
+        } else {
+            stmts.push(format!("print -rl -- {e}"));
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -1296,6 +1652,10 @@ enum Mode {
     Subscript,
     Pattern,
     Typeset,
+    Zutil,
+    Func,
+    Redir,
+    Nest,
 }
 
 struct Args {
@@ -1322,6 +1682,10 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Subscript => gen_subscript(seed),
         Mode::Pattern => gen_pattern(seed),
         Mode::Typeset => gen_typeset(seed),
+        Mode::Zutil => gen_zutil(seed),
+        Mode::Func => gen_func(seed),
+        Mode::Redir => gen_redir(seed),
+        Mode::Nest => gen_nest(seed),
     }
 }
 
@@ -1390,6 +1754,10 @@ fn parse_args() -> Args {
                     Some("subscript") => mode = Mode::Subscript,
                     Some("pattern") => mode = Mode::Pattern,
                     Some("typeset") => mode = Mode::Typeset,
+                    Some("zutil") => mode = Mode::Zutil,
+                    Some("func") => mode = Mode::Func,
+                    Some("redir") => mode = Mode::Redir,
+                    Some("nest") => mode = Mode::Nest,
                     _ => {}
                 }
             }
@@ -1400,6 +1768,10 @@ fn parse_args() -> Args {
             "--subscript" => mode = Mode::Subscript,
             "--pattern" => mode = Mode::Pattern,
             "--typeset" => mode = Mode::Typeset,
+            "--zutil" => mode = Mode::Zutil,
+            "--func" => mode = Mode::Func,
+            "--redir" => mode = Mode::Redir,
+            "--nest" => mode = Mode::Nest,
             "--verify" => {
                 i += 1;
                 verify = argv
@@ -1419,7 +1791,9 @@ fn parse_args() -> Args {
                      --count N        number of cases (default 2000)\n\
                      --seed N         base seed; case i uses seed+i (default 1)\n\
                      --mode M         'stateful' (default), 'expr', 'glob', 'printf',\n\
-                     'heredoc', 'subscript', 'pattern', or 'typeset'\n\
+;
+                     'heredoc', 'subscript', 'pattern', 'typeset',\n\
+                     'zutil', 'func', or 'redir'\n\
                      --once           run a single case (seed) and print both outputs\n\
                      --timeout-ms N   per-shell wall-clock timeout (default 5000)\n\
                      --out PATH       divergence corpus file\n\
@@ -1532,6 +1906,10 @@ fn main() {
                 Mode::Subscript => "subscript",
                 Mode::Pattern => "pattern",
                 Mode::Typeset => "typeset",
+                Mode::Zutil => "zutil",
+                Mode::Func => "func",
+                Mode::Redir => "redir",
+                Mode::Nest => "nest",
             }
         );
         let (show, z, r) = if diverged && stmts.len() > 1 {
