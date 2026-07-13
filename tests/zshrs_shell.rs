@@ -13863,3 +13863,89 @@ fn test_case_insensitive_flag_does_not_fold_brackets() {
         assert_eq!(out.trim(), want, "{code}");
     }
 }
+
+// ---------------------------------------------------------------------
+// Parameter-expansion shape gaps found by `parity-fuzz --mode nest`
+// (recursive `${(flags)${(flags)…}}` composition). Expectations are the
+// byte-exact behaviour of zsh 5.9.1.
+// ---------------------------------------------------------------------
+
+/// A bare associative array expands to its VALUE list, so C's `isarr` is set
+/// and every element-wise operator maps over the values (Src/subst.c:3939
+/// casmod, :3433 getmatcharr). zshrs sourced those arms from `arrays_get`,
+/// which only knows plain arrays, so an assoc fell through to the SCALAR arm
+/// and the operator ran once over the joined values.
+///
+/// zsh oracle (m=(k1 vo1 k2 vo2)):
+///   ${(U)m}   -> VO1 / VO2   (two elements, not one word "VO1 VO2")
+///   ${m//o/0} -> v01 / v02
+///   ${m#v}    -> o1  / o2    (each value stripped, not just the first)
+#[test]
+fn test_assoc_operators_map_over_values() {
+    let pre = "typeset -A m; m=(k1 vo1 k2 vo2);";
+    for (expr, want) in [
+        // case + quote flags
+        ("${(U)m}", "VO1\nVO2\n"),
+        ("${(L)m}", "vo1\nvo2\n"),
+        ("${(q)m}", "vo1\nvo2\n"),
+        // substitution + strip
+        ("${m//o/0}", "v01\nv02\n"),
+        ("${m/o/0}", "v01\nv02\n"),
+        ("${m#v}", "o1\no2\n"),
+        ("${m##v}", "o1\no2\n"),
+        ("${m%1}", "vo\nvo2\n"),
+        // the :# filter
+        ("${m:#vo1}", "vo2\n"),
+        // an explicit (k)/(v) flag selects the list the operator maps over,
+        // so `#k` must strip the KEYS, not fall back to the values.
+        ("${(k)m#k}", "1\n2\n"),
+        ("${(k)m//k/K}", "K1\nK2\n"),
+        ("${(v)m//o/0}", "v01\nv02\n"),
+    ] {
+        let (status, out, _e) = run_zshrs_parity(&format!("{pre} print -rl -- {expr}"));
+        assert_eq!(status, 0, "{expr}");
+        assert_eq!(out, want, "{expr}");
+    }
+}
+
+/// A one-element ARRAY stays an array through a nested expansion; a scalar
+/// does not. C decides this with LF_ARRAY: multsub treats a single-node list
+/// as a scalar UNLESS paramsubst flagged it (Src/subst.c:3929-3932, read at
+/// :633). The Rust paramsubst never set the flag, so a 1-element array read as
+/// a scalar once nested — `${#${q}}` counted CHARACTERS, `${${q}[1]}` indexed
+/// characters. Two-or-more elements accidentally worked (`l > 1` alone picks
+/// the array path).
+///
+/// The converse also has to hold: a forced SPLIT that yields exactly one
+/// element stays SCALAR (c:3924 `else if (!aval[1]) val = aval[0];`), so
+/// `${#${(f)t}}` counts characters even though `(f)` produced a list.
+///
+/// zsh oracle: q=(abcdef) -> ${#${q}} = 1, ${${q}[1]} = abcdef
+///             t=a:b:c:d  -> ${#${(f)t}} = 7   (one line, so scalar)
+#[test]
+fn test_nested_expansion_array_vs_scalar_shape() {
+    for (pre, expr, want) in [
+        // 1-element array: still an array when nested.
+        ("q=(abcdef);", "${#${q}}", "1"),
+        ("q=(abcdef);", "${${q}[1]}", "abcdef"),
+        ("q=(abcdef);", "${#${(U)q}}", "1"),
+        // multi-element arrays were always right; keep them pinned.
+        ("q=(aa bb);", "${#${q}}", "2"),
+        ("q=(aa bb cc);", "${#${q}}", "3"),
+        ("q=(aa bb);", "${${q}[2]}", "bb"),
+        // a real scalar stays a scalar: ${#} is a CHARACTER count.
+        ("s=abcdef;", "${#${s}}", "6"),
+        ("s=abcdef;", "${${s}[1]}", "a"),
+        // a forced split yielding ONE element collapses back to scalar.
+        ("t=a:b:c:d;", "${#${(f)t}}", "7"),
+        ("a=(one two three four);", "${#${(s.:.)a}}", "18"),
+        // …but a split yielding MANY stays an array.
+        ("t=a:b:c:d;", "${#${(s.:.)t}}", "4"),
+        // empty array
+        ("q=();", "${#${q}}", "0"),
+    ] {
+        let (status, out, _e) = run_zshrs_parity(&format!("{pre} print -r -- {expr}"));
+        assert_eq!(status, 0, "{pre} {expr}");
+        assert_eq!(out.trim(), want, "{pre} {expr}");
+    }
+}
