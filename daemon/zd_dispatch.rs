@@ -13,11 +13,16 @@
 //! mapping. The only thing that differs is the transport — passed in
 //! as `&mut dyn Transport`.
 
+use std::borrow::Cow;
+use std::io::IsTerminal;
+
 use serde_json::{json, Value};
 
 // House-style "full spectrum" help — ANSI-Shadow banner + status box +
 // `──`-ruled sections with `//` annotations, matching the temprs look.
-// No ANSI color (terminal-safe, pipe-safe). Version is injected at
+// This const is the plain text; `render_usage` layers on the temprs
+// color palette when the destination is a real terminal (piped/redirected
+// output stays plain, and `$NO_COLOR` disables it). Version is injected at
 // compile time via `env!` so it never drifts from Cargo.toml. Box and
 // divider lines are pinned to 57 visual columns; the `usage_house_help_*`
 // tests guard the alignment.
@@ -128,6 +133,101 @@ pub const USAGE: &str = concat!(
     " ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░\n",
 );
 
+// SGR codes for the colorized banner — same palette temprs uses.
+const C_CYAN: &str = "\x1b[36m";
+const C_MAGENTA: &str = "\x1b[35m";
+const C_RED: &str = "\x1b[31m";
+const C_YELLOW: &str = "\x1b[33m";
+const C_GREEN: &str = "\x1b[32m";
+const C_BOLD: &str = "\x1b[1m";
+const C_RESET: &str = "\x1b[0m";
+
+/// Color is on only for a real terminal with `$NO_COLOR` unset. `stdout`
+/// is the stream `--help` prints to; usage errors pass `stderr`.
+fn color_enabled(stream_is_tty: bool) -> bool {
+    stream_is_tty && std::env::var_os("NO_COLOR").is_none()
+}
+
+/// Render the house help. When `color`, apply the temprs palette:
+/// cyan→magenta→red gradient banner, cyan status box + `──` dividers,
+/// magenta `>>`/`<<` taglines, yellow `USAGE:`, bold leading token,
+/// green ` // ` annotations. Otherwise return `USAGE` verbatim.
+///
+/// Whole-line-colored classes (banner, box, divider, tagline, shade)
+/// skip token coloring so their embedded `//` stays the line color and
+/// the `http://` URL is never mistaken for an annotation.
+fn render_usage(color: bool) -> Cow<'static, str> {
+    if !color {
+        return Cow::Borrowed(USAGE);
+    }
+    let mut out = String::with_capacity(USAGE.len() * 2);
+    for (idx, line) in USAGE.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let whole = match idx {
+            0 | 1 => Some(C_CYAN),
+            2 | 3 => Some(C_MAGENTA),
+            4 | 5 => Some(C_RED),
+            _ if line.starts_with(" ┌") || line.starts_with(" │") || line.starts_with(" └") => {
+                Some(C_CYAN)
+            }
+            _ if trimmed.starts_with("── ") => Some(C_CYAN),
+            _ if line.starts_with(" ░") => Some(C_CYAN),
+            _ if trimmed.starts_with(">>") => Some(C_MAGENTA),
+            _ => None,
+        };
+        match whole {
+            Some(c) => {
+                out.push_str(c);
+                out.push_str(line);
+                out.push_str(C_RESET);
+            }
+            None if trimmed.starts_with("USAGE:") => {
+                // `  USAGE: zd [GLOBAL OPTS] ...`
+                let indent = &line[..line.len() - trimmed.len()];
+                let after = trimmed.strip_prefix("USAGE:").unwrap_or(trimmed);
+                out.push_str(indent);
+                out.push_str(C_YELLOW);
+                out.push_str("USAGE:");
+                out.push_str(C_RESET);
+                out.push_str(after);
+            }
+            None => out.push_str(&colorize_body_line(line)),
+        }
+        out.push('\n');
+    }
+    Cow::Owned(out)
+}
+
+/// Body-row coloring: bold the leading token on command/flag rows and
+/// paint every ` // ` marker green. The leading token is bolded only for
+/// flag rows (trimmed starts with `-`) or command rows (indented ≥ 4) —
+/// prose (2-space indent, e.g. the description and SYSTEM lines) keeps
+/// its plain weight. Blank and `//`-continuation lines get no bold.
+/// Greens ` // ` (space-slash-slash-space) only, so the `http://` in the
+/// --url row is left untouched.
+fn colorize_body_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() {
+        return line.to_string();
+    }
+    let indent_len = line.len() - trimmed.len();
+    let mut s = String::with_capacity(line.len() + 16);
+    s.push_str(&line[..indent_len]);
+
+    let bold_leading =
+        !trimmed.starts_with("//") && (trimmed.starts_with('-') || indent_len >= 4);
+    let rest = match trimmed.find(' ') {
+        Some(tok_end) if bold_leading => {
+            let (tok, tail) = trimmed.split_at(tok_end);
+            format!("{C_BOLD}{tok}{C_RESET}{tail}")
+        }
+        None if bold_leading => format!("{C_BOLD}{trimmed}{C_RESET}"),
+        _ => trimmed.to_string(),
+    };
+    s.push_str(&rest.replace(" // ", &format!(" {C_GREEN}//{C_RESET} ")));
+    s
+}
+
 /// Transport that backs op/get/sse calls. Implemented twice:
 /// `HttpTransport` in `bins/zd.rs` (ureq, talks to daemon's HTTP
 /// listener) and `SocketTransport` in `daemon/builtins.rs` (uses the
@@ -155,7 +255,7 @@ pub trait Transport {
 /// and version never require a running daemon.
 pub fn handle_no_transport(args: &[String]) -> Option<i32> {
     if args.is_empty() {
-        eprintln!("{USAGE}");
+        eprint!("{}", render_usage(color_enabled(std::io::stderr().is_terminal())));
         return Some(2);
     }
     let mut i = 0;
@@ -168,7 +268,7 @@ pub fn handle_no_transport(args: &[String]) -> Option<i32> {
                 i += 2;
             }
             "-h" | "--help" => {
-                print!("{USAGE}");
+                print!("{}", render_usage(color_enabled(std::io::stdout().is_terminal())));
                 return Some(0);
             }
             "--version" => {
@@ -255,7 +355,7 @@ pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
 fn usage_err(msg: &str) -> i32 {
     eprintln!("zd: {msg}");
     eprintln!();
-    eprintln!("{USAGE}");
+    eprint!("{}", render_usage(color_enabled(std::io::stderr().is_terminal())));
     2
 }
 
@@ -949,6 +1049,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Plain render is the const verbatim; colored render must be pure
+    /// decoration — stripping every SGR sequence has to reproduce the
+    /// plain help byte-for-byte, so color never drops or reflows content.
+    #[test]
+    fn render_usage_color_is_lossless() {
+        assert_eq!(render_usage(false), USAGE);
+        let colored = render_usage(true);
+        assert!(colored.contains('\x1b'), "colored render has no SGR codes");
+        let mut stripped = String::with_capacity(colored.len());
+        let mut chars = colored.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                // consume CSI `[ ... m`
+                for e in chars.by_ref() {
+                    if e == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                stripped.push(c);
+            }
+        }
+        assert_eq!(stripped, USAGE);
     }
 
     /// The compile-time version must land in both the banner tagline and
