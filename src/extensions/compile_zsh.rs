@@ -234,8 +234,32 @@ impl ZshCompiler {
     /// We pair the BUILTIN with a JumpIfTrue → return_patches pattern
     /// so the abort path drains cmd_stack and jumps; the no-abort
     /// path falls through.
+    /// Abort the enclosing scope on a *fatal* error (errflag), even where
+    /// the errexit check is suppressed.
+    ///
+    /// An `&&` / `||` chain consumes a non-zero status, so errexit and the
+    /// ZERR trap are correctly suppressed inside one. An errflag is not a
+    /// status: a `[[ ]]` bad pattern, a readonly reassignment, etc. abandon
+    /// the whole list in zsh. Without this, `[[ x = [a- ]] || touch f`
+    /// created `f` (zsh does not run the RHS at all), and the aborted RHS
+    /// then clobbered the cond's status 2 down to 1.
+    fn emit_fatal_abort_check(&mut self) {
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_FATAL_ABORT_CHECK, 0),
+            0,
+        );
+        let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
+        self.emit_cmd_stack_drain();
+        let j = self.builder.emit(Op::Jump(0), 0);
+        self.return_patches.push(j);
+        self.builder.patch_jump(skip, self.builder.current_pos());
+    }
+
     fn emit_errexit_check(&mut self) {
         if self.errexit_suppress_depth > 0 {
+            // Suppressed for errexit/ZERR — but a fatal errflag still ends
+            // the list, so keep that half of the check.
+            self.emit_fatal_abort_check();
             return;
         }
         self.builder.emit(

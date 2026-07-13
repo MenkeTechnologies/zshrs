@@ -1010,6 +1010,279 @@ fn set_mtime(path: &Path, secs: i64) {
 }
 
 // ---------------------------------------------------------------------------
+// subscript generator
+//
+// Array / assoc subscripting is a dense corner of zsh: search subscripts
+// (`(r)`, `(R)`, `(i)`, `(I)`), exact/reverse variants, `(n:N:)` "Nth match",
+// `(b:N:)` "start search at N", negative indices, and slices whose bounds run
+// off both ends of the array. Every form composes with the outer expansion
+// flags, and the out-of-range rules differ between element and slice syntax.
+//
+// Deterministic: fixed arrays, no globbing (subscript patterns never touch the
+// filesystem), assoc reads are always through a single key or an ordering flag.
+// ---------------------------------------------------------------------------
+
+const SUB_STATE: &str = concat!(
+    "a=(one two three four five); ",
+    "nums=(3 1 4 1 5 9 2 6); ",
+    "dup=(x y x y x); ",
+    "typeset -A m; m=(k1 v1 k2 v2 k3 v3); ",
+);
+
+/// Subscript patterns used by the search forms. Kept free of `/` and quoting
+/// metachars so they splice into `${a[(r)PAT]}` without further escaping.
+const SUB_PATS: &[&str] = &[
+    "t*", "*e", "one", "x", "y", "five", "z*", "[a-f]*", "?????", "*o*", "1", "5",
+];
+
+fn gen_subscript(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![SUB_STATE.trim_end().to_string()];
+    let n = rng.gen_range(2..=5);
+    for _ in 0..n {
+        let arr = pick(&mut rng, &["a", "nums", "dup"]);
+        let expr = match rng.gen_range(0..9) {
+            // Plain element, including out-of-range and negative indices.
+            0 => {
+                let i: i32 = rng.gen_range(-7..=7);
+                format!("${{{arr}[{i}]}}")
+            }
+            // Slice, with bounds that may invert or run off either end.
+            1 => {
+                let i: i32 = rng.gen_range(-7..=7);
+                let j: i32 = rng.gen_range(-7..=7);
+                format!("${{{arr}[{i},{j}]}}")
+            }
+            // Search subscripts: (r) value, (R) reverse value, (i) index,
+            // (I) reverse index. A no-match has a defined answer for each.
+            2 => {
+                let f = pick(&mut rng, &["r", "R", "i", "I"]);
+                let p = pick(&mut rng, SUB_PATS);
+                format!("${{{arr}[({f}){p}]}}")
+            }
+            // (e) forces the subscript to be an exact string, not a pattern.
+            3 => {
+                let p = pick(&mut rng, SUB_PATS);
+                format!("${{{arr}[(e){p}]}}")
+            }
+            // (n:N:) — the Nth match rather than the first.
+            4 => {
+                let k = rng.gen_range(1..=3);
+                let f = pick(&mut rng, &["r", "R", "i", "I"]);
+                let p = pick(&mut rng, SUB_PATS);
+                format!("${{{arr}[(n:{k}:{f}){p}]}}")
+            }
+            // (b:N:) — begin the search at offset N.
+            5 => {
+                let k = rng.gen_range(1..=4);
+                let p = pick(&mut rng, SUB_PATS);
+                format!("${{{arr}[(b:{k}:i){p}]}}")
+            }
+            // Search subscript composed with an outer flag.
+            6 => {
+                let of = pick(&mut rng, &["", "U", "L", "o", "O", "n", "#"]);
+                let f = pick(&mut rng, &["r", "R"]);
+                let p = pick(&mut rng, SUB_PATS);
+                if of.is_empty() {
+                    format!("${{{arr}[({f}){p}]}}")
+                } else {
+                    format!("${{({of}){arr}[({f}){p}]}}")
+                }
+            }
+            // Assoc: key lookup, and the (k)/(v) reverse-lookup forms.
+            7 => {
+                let which = rng.gen_range(0..4);
+                match which {
+                    0 => format!("${{m[{}]}}", pick(&mut rng, &["k1", "k2", "k3", "nokey"])),
+                    1 => format!("${{(k)m[(R){}]}}", pick(&mut rng, &["v1", "v2", "v9", "v*"])),
+                    2 => format!("${{(v)m[(I){}]}}", pick(&mut rng, &["k1", "k*", "z*"])),
+                    _ => "${(kv)m[(I)k*]}".to_string(),
+                }
+            }
+            // Count / length of a subscripted result.
+            _ => {
+                let p = pick(&mut rng, SUB_PATS);
+                let f = pick(&mut rng, &["r", "R", "i", "I"]);
+                format!("${{#{arr}[({f}){p}]}}")
+            }
+        };
+        // Quoted: keeps an empty/no-match result observable as an empty line
+        // instead of vanishing through word-splitting.
+        stmts.push(format!("print -r -- \"[{expr}]\""));
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// pattern generator
+//
+// `[[ x = pat ]]` / `case` matching under EXTENDED_GLOB. Exercises the pattern
+// compiler directly (no filesystem): closures (`#`, `##`), alternation,
+// negation (`^`), exclusion (`~`), numeric ranges (`<->`), character classes,
+// counted closures (`(#cN,M)`), case-insensitive `(#i)`, and the backreference
+// forms `(#b)` / `(#m)` whose side effects land in $match/$mbegin/$mend and
+// $MATCH/$MBEGIN/$MEND.
+//
+// Deterministic: the subject and pattern are fixed strings, and the match
+// result plus every backref variable is printed.
+// ---------------------------------------------------------------------------
+
+const PAT_SUBJECTS: &[&str] = &[
+    "abc123", "FooBar", "aaa", "", "a.b.c", "2024-01-31", "foo.tar.gz", "x_y-z", "999", "a",
+    "abcabc", "Hello_World",
+];
+
+/// Pattern fragments that compose into a whole pattern.
+const PAT_ATOMS: &[&str] = &[
+    "*",
+    "?",
+    "a",
+    "abc",
+    "[a-z]",
+    "[[:digit:]]",
+    "[[:alpha:]]",
+    "[^0-9]",
+    "(a|b|foo)",
+    "<1-100>",
+    "<->",
+    "[a-z]#",
+    "[a-z]##",
+    "(ab)#",
+    "(#c2,3)a",
+    ".",
+    "_",
+    "-",
+];
+
+fn gen_pattern(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["setopt extendedglob".to_string()];
+    let n = rng.gen_range(2..=5);
+    for _ in 0..n {
+        let subj = pick(&mut rng, PAT_SUBJECTS);
+
+        // Build the pattern body from 1-3 atoms.
+        let parts = rng.gen_range(1..=3);
+        let mut pat = String::new();
+        for _ in 0..parts {
+            pat.push_str(pick(&mut rng, PAT_ATOMS));
+        }
+
+        match rng.gen_range(0..6) {
+            // Plain match.
+            0 => stmts.push(format!(
+                "[[ \"{subj}\" = {pat} ]] && print -r -- Y || print -r -- N"
+            )),
+            // Case-insensitive.
+            1 => stmts.push(format!(
+                "[[ \"{subj}\" = (#i){pat} ]] && print -r -- Y || print -r -- N"
+            )),
+            // Negated pattern.
+            2 => stmts.push(format!(
+                "[[ \"{subj}\" = ^{pat} ]] && print -r -- Y || print -r -- N"
+            )),
+            // Exclusion: matches `pat` but not the second pattern.
+            3 => {
+                let ex = pick(&mut rng, PAT_ATOMS);
+                stmts.push(format!(
+                    "[[ \"{subj}\" = {pat}~{ex} ]] && print -r -- Y || print -r -- N"
+                ));
+            }
+            // (#m) — whole-match side effects.
+            4 => stmts.push(format!(
+                "if [[ \"{subj}\" = (#m){pat} ]]; then print -r -- \"M=$MATCH B=$MBEGIN E=$MEND\"; else print -r -- N; fi"
+            )),
+            // (#b) — group backreferences into $match/$mbegin/$mend.
+            _ => {
+                let inner = pick(&mut rng, PAT_ATOMS);
+                stmts.push(format!(
+                    "if [[ \"{subj}\" = (#b)({inner})* ]]; then print -r -- \"1=$match[1] b=$mbegin[1] e=$mend[1]\"; else print -r -- N; fi"
+                ));
+            }
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// typeset generator
+//
+// Parameter *attributes* rather than expansions: integer bases (`-i N` prints
+// as `base#digits`), float formats (`-F`/`-E` with precision), zero-padding
+// (`-Z`), left/right justification (`-L`/`-R` with a fill width), case forcing
+// (`-l`/`-u`), and how each survives a later arithmetic assignment or append.
+//
+// Deterministic: fixed values, and every result is printed inside brackets so
+// justification/padding whitespace is visible.
+// ---------------------------------------------------------------------------
+
+const TS_INT_VALS: &[&str] = &["0", "1", "7", "42", "255", "-7", "1000", "65535"];
+const TS_STR_VALS: &[&str] = &["ab", "AbC", "hello", "x", "", "MiXeD", "12"];
+const TS_FLT_VALS: &[&str] = &["0", "1.5", "3.14159", "-2.5", "100", "0.001"];
+
+fn gen_typeset(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    let n = rng.gen_range(2..=4);
+    for i in 0..n {
+        let v = format!("v{i}");
+        match rng.gen_range(0..6) {
+            // Integer with an output base: `typeset -i 16 x=255` -> `16#ff`.
+            0 => {
+                let base = pick(&mut rng, &["2", "8", "16", "36", "10"]);
+                let val = pick(&mut rng, TS_INT_VALS);
+                stmts.push(format!("typeset -i {base} {v}={val}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+                // An arithmetic update must keep the base attribute.
+                stmts.push(format!("(( {v} = {v} + 1 ))"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // Fixed-point float with precision.
+            1 => {
+                let prec = rng.gen_range(0..=6);
+                let val = pick(&mut rng, TS_FLT_VALS);
+                stmts.push(format!("typeset -F {prec} {v}={val}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // Scientific float with precision.
+            2 => {
+                let prec = rng.gen_range(0..=6);
+                let val = pick(&mut rng, TS_FLT_VALS);
+                stmts.push(format!("typeset -E {prec} {v}={val}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // Zero-padded to a width.
+            3 => {
+                let w = rng.gen_range(1..=8);
+                let val = pick(&mut rng, TS_INT_VALS);
+                stmts.push(format!("typeset -Z {w} {v}={val}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // Left / right justified to a width (padding is observable).
+            4 => {
+                let w = rng.gen_range(1..=8);
+                let just = pick(&mut rng, &["L", "R"]);
+                let val = pick(&mut rng, TS_STR_VALS);
+                stmts.push(format!("typeset -{just} {w} {v}={val}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // Case forcing, and whether it survives reassignment.
+            _ => {
+                let case = pick(&mut rng, &["l", "u"]);
+                let val = pick(&mut rng, TS_STR_VALS);
+                stmts.push(format!("typeset -{case} {v}={val}"));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+                stmts.push(format!("{v}={}", pick(&mut rng, TS_STR_VALS)));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+        }
+        // Type introspection must agree on the attribute set.
+        stmts.push(format!("print -r -- \"t=${{(t){v}}}\""));
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -1020,6 +1293,9 @@ enum Mode {
     Glob,
     Printf,
     Heredoc,
+    Subscript,
+    Pattern,
+    Typeset,
 }
 
 struct Args {
@@ -1043,6 +1319,9 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Glob => gen_glob(seed),
         Mode::Printf => gen_printf(seed),
         Mode::Heredoc => gen_heredoc(seed),
+        Mode::Subscript => gen_subscript(seed),
+        Mode::Pattern => gen_pattern(seed),
+        Mode::Typeset => gen_typeset(seed),
     }
 }
 
@@ -1108,6 +1387,9 @@ fn parse_args() -> Args {
                     Some("glob") => mode = Mode::Glob,
                     Some("printf") => mode = Mode::Printf,
                     Some("heredoc") => mode = Mode::Heredoc,
+                    Some("subscript") => mode = Mode::Subscript,
+                    Some("pattern") => mode = Mode::Pattern,
+                    Some("typeset") => mode = Mode::Typeset,
                     _ => {}
                 }
             }
@@ -1115,6 +1397,9 @@ fn parse_args() -> Args {
             "--glob" => mode = Mode::Glob,
             "--printf" => mode = Mode::Printf,
             "--heredoc" => mode = Mode::Heredoc,
+            "--subscript" => mode = Mode::Subscript,
+            "--pattern" => mode = Mode::Pattern,
+            "--typeset" => mode = Mode::Typeset,
             "--verify" => {
                 i += 1;
                 verify = argv
@@ -1133,7 +1418,8 @@ fn parse_args() -> Args {
                      \n\
                      --count N        number of cases (default 2000)\n\
                      --seed N         base seed; case i uses seed+i (default 1)\n\
-                     --mode M         'stateful' (default), 'expr', 'glob', 'printf', or 'heredoc'\n\
+                     --mode M         'stateful' (default), 'expr', 'glob', 'printf',\n\
+                     'heredoc', 'subscript', 'pattern', or 'typeset'\n\
                      --once           run a single case (seed) and print both outputs\n\
                      --timeout-ms N   per-shell wall-clock timeout (default 5000)\n\
                      --out PATH       divergence corpus file\n\
@@ -1243,6 +1529,9 @@ fn main() {
                 Mode::Glob => "glob",
                 Mode::Printf => "printf",
                 Mode::Heredoc => "heredoc",
+                Mode::Subscript => "subscript",
+                Mode::Pattern => "pattern",
+                Mode::Typeset => "typeset",
             }
         );
         let (show, z, r) = if diverged && stmts.len() > 1 {
