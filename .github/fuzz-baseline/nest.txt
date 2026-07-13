@@ -2,97 +2,47 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode nest --count N --verify 3  (copy NEW-signature lines).
 #
-# KNOWN GAP: inside `"…"`, a NESTED expansion still applies the INNER
-# expansion's array-shape flags, where zsh drops them.
+# KNOWN GAP: inside `"…"`, a nested expansion whose inner applies a SET OPERATOR
+# (`:|` difference, `:*` intersection) still evaluates the operator, where zsh
+# discards it along with the outer join:
 #
-# In zsh a scalar context (`ssub` = pf_flags & PREFORK_SINGLE, Src/subst.c:1759)
-# sepjoins the array and clears `isarr` (c:3901-3907), and the sort/unique block
-# sits inside an `if (isarr)` gate (c:4245) — so (o)/(O)/(n)/(u)/(q) are no-ops
-# in double quotes, even one level down:
+#   a=(one two three four); b=(two four six eight)
+#   print -r -- "${(j:,:)${a:|b}}"  -> zsh:   [one two three four]   (both dropped)
+#                                      zshrs: [one,three]
 #
-#   a=(one two three four)
-#   print -r -- "[${(o)a}]"         -> [one two three four]   both agree (NOT sorted)
-#   print -r -- "[${${(o)a}//o/0}]" -> zsh:   [0ne tw0 three f0ur]   inner (o) dropped
-#                                     zshrs: [f0ur 0ne three tw0]   inner (o) applied
+# Pre-existing (identical at HEAD before the DQ scalar-context work) and NOT the
+# same bug as the (o)/(q)/(U) inner-flag collapse, which is now fixed: a bare
+# array PARAM collapses to a scalar in DQ, while an array MANUFACTURED by a
+# split / set op / filter survives. zsh apparently drops the set op entirely in
+# this shape; that needs its own investigation against Src/subst.c:3456-3520.
 #
-# The OUTER half of this is now fixed: the nested-with-operator compile arm
-# passes the Qstring DQ marker, so paramsubst runs with qt=true and the outer
-# operator applies to the JOINED scalar (`"${${(u)a}%e}"` is correct now).
-# What remains is the INNER expansion: it is evaluated by multsub in a fresh
-# context and still applies its own flags.
-#
-# Fix path (attempted, reverted — needs more care): propagate PREFORK_SINGLE
-# into the nested multsub AND port the c:3901-3907 ssub collapse. The collapse
-# must NOT fire for a split-derived array — C's c:3903-3907 tests `isarr` BEFORE
-# the force_split block at c:3920-3927 creates it — or `"${(j:,:)${(f)$(…)}}"`
-# and `"${(U)${(s. .)s}[2]}"` break. A naive version regressed both.
-#
-# UNQUOTED forms all match.
-  print -r -- "[${${(L)${(n)a}}//o/0}]"
-  print -r -- "[${${(n)a}#*_}]"
-  print -r -- "[${${(o)${(o)a}}//o/0}]"
-  print -r -- "[${${(o)nums}//o/0}]"
-  print -r -- "[${${(q)nums}//o/0}]"
+# UNQUOTED forms match.
+  print -r -- "[${${#${(L)m}}//o/0}]"
+  print -r -- "[${${${(L)m}[2]}#*_}]"
+  print -r -- "[${${${(O)path}[2]}#*_}]"
+  print -r -- "[${${${(U)a}[2]}#*_}]"
+  print -r -- "[${${${(U)m}[2]}//o/0}]"
   s=Hello_World; t=a:b:c:d; path=/usr/local/bin/zsh; lines=$'aa\nbb\ncc'; a=(one two three four); nums=(3 1 4 1 5); typeset -A m; m=(k1 v1 k2 v2); ptr=s; empty='';
 --- first 5 new divergence record(s) ---
-[0ne tw0 three f0ur]
-[1 1 3 4 5]
-[3 1 4 1 5]
-[3\ 1\ 4\ 1\ 5]
-[f0ur 0ne three tw0]
-[four one three two]
-[one two three four]
-==== seed 13 ====
-==== seed 162 ====
-==== seed 165 ====
-==== seed 251 ====
-==== seed 273 ====
-print -r -- "[${${(j:-:)${(O)a}}//o/N}]"
-print -r -- "[${${(j:-:)${(U)nums}}#*_}]"
-print -r -- "[${${(L)${(n)a}}//o/N}]"
-print -r -- "[${${(n)${(o)a}}//o/N}]"
-print -r -- "[${${(n)${(q)a}}//o/N}]"
-print -r -- "[${${(n)${(U)a}}#*_}]"
-print -r -- "[${${(n)a}//o/N}]"
-print -r -- "[${${(n)a}#*_}]"
-print -r -- "[${${(n)nums}//o/N}]"
-print -r -- "[${${(n)nums}#*_}]"
-print -r -- "[${${(O)${(L)a}}#*_}]"
-print -r -- "[${${(O)${(n)a}}#*_}]"
-print -r -- "[${${(o)${(o)a}}//o/N}]"
-print -r -- "[${${(O)${(o)a}}//o/N}]"
-print -r -- "[${${(o)${(q)nums}}#*_}]"
-print -r -- "[${${(o)${(U)a}}#*_}]"
-print -r -- "[${${(o)${(U)nums}}#*_}]"
-print -r -- "[${${(O)${(U)nums}}#*_}]"
-print -r -- "[${${(o)a}//o/N}]"
-print -r -- "[${${(O)a}#*_}]"
-print -r -- "[${${(O)m}#*_}]"
-print -r -- "[${${(o)nums}//o/N}]"
-print -r -- "[${${(O)nums}//o/N}]"
-print -r -- "[${${(q)${(o)a}}#*_}]"
-print -r -- "[${${(q)${(o)m}}//o/N}]"
-print -r -- "[${${(q)a}//o/N}]"
-print -r -- "[${${(q)a}#*_}]"
-print -r -- "[${${(q)m}//o/N}]"
-print -r -- "[${${(q)nums}//o/N}]"
-print -r -- "[${${(s.:.)${(o)a}}#*_}]"
-print -r -- "[${${(s.:.)${(O)nums}}#*_}]"
-print -r -- "[${${(u)${(n)nums}}//o/N}]"
-print -r -- "[${${(u)${(O)a}}//o/N}]"
-print -r -- "[${${(u)${(o)nums}}//o/N}]"
-print -r -- "[${${(u)nums}#*_}]"
+[/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin]
+[1]
+[5]
+[N]
+[o]
+[TWO]
+[v2]
+[V2]
+==== seed 1105 ====
+==== seed 1470 ====
+==== seed 1716 ====
+==== seed 611 ====
+==== seed 815 ====
 print -r -- "[${${#${(L)m}}//o/N}]"
 print -r -- "[${${#${(q)nums}}//o/N}]"
 print -r -- "[${${#${m#*_}}#*_}]"
 print -r -- "[${${${(L)m}[N]}#*_}]"
 print -r -- "[${${${(n)nums}[N]}//o/N}]"
-print -r -- "[${${${(n)nums}//o/N}#*_}]"
-print -r -- "[${${${(O)m}#*_}#*_}]"
-print -r -- "[${${${(O)nums}#*_}#*_}]"
 print -r -- "[${${${(O)path}[N]}#*_}]"
-print -r -- "[${${${(q)a}#*_}//o/N}]"
-print -r -- "[${${${(q)nums}//o/N}#*_}]"
 print -r -- "[${${${(U)a}[N]}#*_}]"
 print -r -- "[${${${(U)m}[N]}//o/N}]"
 print -r -- "[${${${(U)path}[N]}#*_}]"
