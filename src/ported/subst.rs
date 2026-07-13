@@ -8860,7 +8860,28 @@ pub fn paramsubst(
             // split-from-scalar shape in DQ" signal — without the
             // !spsep guard, `"${(s. .)str}"` would sepjoin back to
             // scalar instead of splatting per-word.
-            if qt && isarr > 0 && spsep.is_none() {
+            // c:2798 `if (qt && !getlen && isarr > 0)`. Every `$` inside `"…"`
+            // lexes as Qstring, so C's INNER paramsubst sees qt=1 too and runs
+            // this same collapse one level down. The Rust bridge hands the nested
+            // body to multsub as a raw string with qt=false, so the DQ context is
+            // carried on SUBEXP_SCALAR_CTX instead.
+            //
+            // Being HERE — before the operator dispatch (c:3433) and before the
+            // sort/unique block (c:4245, gated on `isarr`) — is what makes the
+            // whole rule fall out:
+            //   * (o)/(O)/(n)/(u)/(q) become no-ops in DQ (isarr is 0 by the time
+            //     the sort block is reached);
+            //   * an inner SET OP sees the JOINED scalar, so
+            //     `"${(j:,:)${a:|b}}"` is `one two three four`, not `one,three`.
+            //
+            // `isarr > 0` (strictly positive, c:2798) is also what exempts every
+            // splat that keeps array shape in DQ, with no special-casing: `(@)`
+            // and bare `$@` arrive as -1 (c:2797 / SCANPM_ISVAR_AT) and a `[@]`
+            // subscript arrives as 0.
+            if (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0)
+                && isarr > 0
+                && spsep.is_none()
+            {
                 // c:3032 + c:3317 !spsep guard
                 // C: `val = sepjoin(aval, sep, 1);`. `sep` defaults
                 // to first IFS char when no (j) flag overrode it.
@@ -8912,6 +8933,15 @@ pub fn paramsubst(
                 }
                 isarr = 0; // c:3034
                 dq_collapsed = true; // c:3032 (single-join marker)
+                // NB: `split_parts` (C's `aval`) is deliberately LEFT INTACT.
+                // c:2799-2800 sets `val` and clears `isarr`, but C does NOT free
+                // `aval` — c:3406-3410 depends on it still being there:
+                //     if (aval && !isarr) quoted_array_with_offset = 1;
+                // which is what lets `"${arr:1:2}"` apply the offset as an ARRAY
+                // index before the join (the comment at c:1867 spells this out).
+                // Overwriting it with the joined scalar made that slice empty.
+                // Downstream arms discriminate on `dq_collapsed`, the way C
+                // discriminates on `isarr`.
             }
         }
         // `split_parts` (c:3950) moved to function-scope declaration
@@ -8990,6 +9020,15 @@ pub fn paramsubst(
                 }
                 isarr = 0; // c:3034
                 dq_collapsed = true; // c:3032 (single-join marker)
+                // NB: `split_parts` (C's `aval`) is deliberately LEFT INTACT.
+                // c:2799-2800 sets `val` and clears `isarr`, but C does NOT free
+                // `aval` — c:3406-3410 depends on it still being there:
+                //     if (aval && !isarr) quoted_array_with_offset = 1;
+                // which is what lets `"${arr:1:2}"` apply the offset as an ARRAY
+                // index before the join (the comment at c:1867 spells this out).
+                // Overwriting it with the joined scalar made that slice empty.
+                // Downstream arms discriminate on `dq_collapsed`, the way C
+                // discriminates on `isarr`.
             }
         }
         // c:Src/subst.c — `${assoc[(R)pat]}` / `${assoc[(I)pat]}` /
@@ -11566,7 +11605,14 @@ pub fn paramsubst(
                 // literal element of `b`.
                 let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let is_at_var = matches!(var_name.as_str(), "@");
-                let scalar_ctx = qt && !is_at_subscript && !is_at_var && nojoin != 2;
+                // c:3539 / c:3555 — the array filter only runs `if (isarr)`.
+                // Inside `"…"` the c:2798 collapse has already cleared isarr, so C
+                // takes the scalar arm: a single membership test of the JOINED
+                // string. `qt` alone misses a NESTED inner (the bridge passes the
+                // body as a raw string, so qt is false there); `dq_collapsed` is
+                // the same condition expressed as "the collapse has run".
+                let scalar_ctx =
+                    (qt || dq_collapsed) && !is_at_subscript && !is_at_var && nojoin != 2;
                 if scalar_ctx {
                     // c:3032 — DQ sepjoin uses the (j:STR:) `sep`; test that
                     // joined string for membership per C's c:3555.
@@ -11624,7 +11670,14 @@ pub fn paramsubst(
                 // blanks it iff that whole joined string is NOT a member.
                 let is_at_subscript = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let is_at_var = matches!(var_name.as_str(), "@");
-                let scalar_ctx = qt && !is_at_subscript && !is_at_var && nojoin != 2;
+                // c:3539 / c:3555 — the array filter only runs `if (isarr)`.
+                // Inside `"…"` the c:2798 collapse has already cleared isarr, so C
+                // takes the scalar arm: a single membership test of the JOINED
+                // string. `qt` alone misses a NESTED inner (the bridge passes the
+                // body as a raw string, so qt is false there); `dq_collapsed` is
+                // the same condition expressed as "the collapse has run".
+                let scalar_ctx =
+                    (qt || dq_collapsed) && !is_at_subscript && !is_at_var && nojoin != 2;
                 if scalar_ctx {
                     // c:3032 — the DQ sepjoin uses the (j:STR:) `sep`
                     // (default IFS when no (j)); test that joined string
@@ -12958,74 +13011,6 @@ pub fn paramsubst(
             let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
             errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
-
-        let mut ssub_collapsed = false;
-        // c:3903-3907 — `if (isarr) { if (nojoin == 0 || sep) {
-        //   val = sepjoin(aval, sep, 1); isarr = 0; } }` under a scalar context.
-        // Clearing isarr is what gates out the sort/unique block (c:4245).
-        //
-        // `spsep.is_none() && !force_split` follows from C's ORDER: this tests
-        // `isarr` as it stands BEFORE the force_split block at c:3920-3927, and
-        // THAT block is where a split flag ((s)/(f)/`${=x}`) manufactures its
-        // array (c:3927). So an array from a real PARAM collapses here, while an
-        // array born of a split survives — exactly what zsh does:
-        //     "${#${(o)a}}"         -> 18     (array param -> scalar)
-        //     "${#${(f)$(…)}}"      -> 3      (split array survives)
-        //     "${(j:,:)${(f)$(…)}}" -> a,b,c
-        //
-        // The `[@]` subscript is the OTHER exception: it is the splat that
-        // deliberately keeps array shape inside `"…"` (C tracks it as
-        // `SCANPM_ISVAR_AT` -> `isarr = -1`, and c:3903's
-        // `quoted_array_with_offset` arm keeps it). Collapsing it broke zinit's
-        // ice pack/unpack: `"${(j: :)${(qkv)ICE[@]}}"` quoted the JOINED string
-        // (`as\ program\ pick\ …`) instead of quoting each element and joining
-        // (`as program pick f\ a.zsh …`). `[*]` is NOT excepted — that one does
-        // join in DQ. The `(@)` flag is already excluded by `nojoin == 0`.
-        //
-        // `rest.is_empty()` generalises the split exception. Only a BARE array
-        // parameter (flags, but no operator) collapses. Any array MANUFACTURED
-        // by this expansion — a split, a set op, a filter — is created for the
-        // caller and survives, exactly as zsh does:
-        //     "${(j:-:)${(o)a}}"      -> one two three four   (bare param: collapsed,
-        //                                                      so (j) has nothing to join)
-        //     "${(j:,:)${a:|b}}"      -> one,three,five       (set-difference array survives)
-        //     "${(j:,:)${(f)$(…)}}"   -> a,b,c                (split array survives)
-        if SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0
-            // c:2798 `if (qt && !getlen && isarr > 0)` — strictly POSITIVE.
-            // c:2797 `if (nojoin) isarr = -1;`, and the `$@` / `[@]` shapes
-            // (SCANPM_ISVAR_AT) are -1 too. Those are the splats that keep array
-            // shape inside `"…"`, so `> 0` is what exempts them — zpwr's
-            // `"${${(Az)@}[1]//\"/}"` must still index an ELEMENT, and zinit's
-            // `"${(j: :)${(qkv)ICE[@]}}"` must quote each element.
-            && isarr > 0
-            && nojoin == 0
-            && sep.is_none()
-            && spsep.is_none()
-            && !force_split
-            && rest.is_empty()
-            // C reaches `isarr = -1` for a `[@]` subscript too (SCANPM_ISVAR_AT,
-            // c:3075), so `isarr > 0` alone exempts it there. zshrs only sets -1
-            // for the bare `$@` form, so `[@]` has to be named explicitly or
-            // zinit's `"${(j: :)${(qkv)ICE[@]}}"` quotes the JOINED string
-            // instead of each element. `[*]` is NOT exempt — that one does join.
-            && !matches!(subscript.as_deref(), Some("@"))
-        {
-            let parts = split_parts.clone().unwrap_or_else(|| vec![value.clone()]);
-            let joined = crate::ported::utils::sepjoin(&parts, None); // c:2799
-            value = joined.clone();
-            // The joined string stays the single element the downstream operator
-            // arms work on, so `(q)` quotes the JOINED scalar (spaces and all —
-            // `3\ 1\ 4\ 1\ 5`) instead of re-fetching the source array and
-            // quoting each token separately (which escapes nothing).
-            split_parts = Some(vec![joined]);
-            // c:2800 `isarr = 0;` — the result is a genuine SCALAR from here on.
-            // `ssub_collapsed` carries that to the auto-splat gate below: without
-            // it the 1-element list splats straight back out as an array, and
-            // `"${${(q)nums}[1]}"` indexed an ELEMENT where zsh indexes a
-            // CHARACTER of the joined string.
-            isarr = 0;
-            ssub_collapsed = true;
-        }
 
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
@@ -14434,7 +14419,14 @@ pub fn paramsubst(
             // path and produces `'a b c d e'` instead of `'a b' 'c'
             // 'd e'`. Bug #392.
             let is_at_subscript_splat = matches!(subscript.as_deref(), Some("@") | Some("*"));
-            let want_per_element = nojoin == 2 || !qt || is_at_subscript_splat;
+            // c:2800 — once the DQ collapse has run, `isarr` is 0 and C takes
+            // the SCALAR quoting path on `val`. zshrs's `!qt` disjunct below is a
+            // stand-in for that test, and it is wrong for a NESTED inner (qt is
+            // false there because the bridge passes the body as a raw string), so
+            // `"${${(q)nums}//o/0}"` quoted each token separately — escaping
+            // nothing — where zsh quotes the JOINED string (`3\ 1\ 4\ 1\ 5`).
+            let want_per_element =
+                !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat);
             // c:2237
             if let Some(parts) = split_parts.clone() {
                 if want_per_element {
@@ -14756,11 +14748,21 @@ pub fn paramsubst(
             isarr = 0;
         }
         let auto_splat = !wantt
-            && !ssub_collapsed              // c:2800 (isarr = 0 -> scalar result)
             && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
             || (!(nojoin == 2)                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
+            // c:2800 — the DQ collapse produced a SCALAR, so the bare-array splat
+            // must not fire. For a DIRECTLY quoted expansion `!qt` above already
+            // says that; a NESTED inner runs with qt=false, so say it explicitly
+            // or `"${${(q)nums}[1]}"` indexes an ELEMENT of a 1-element array
+            // where zsh indexes a CHARACTER of the joined string.
+            //
+            // This gates only THIS disjunct, not the whole expression: an
+            // operator AFTER the collapse can legitimately rebuild an array (C
+            // sets `isarr` back to 1), and that result still splats —
+            // `print -l "${a:^b}"` is two words, `1 2 3` and `x`.
+            && !dq_collapsed
             && pf_flags & PREFORK_SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)

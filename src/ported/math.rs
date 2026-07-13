@@ -496,14 +496,16 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
     ));
     m_prec_set(if m_c_precedences() { &C_PREC } else { &Z_PREC });
 
-    // c:Src/math.c:1485-1488 — `outputradix = outputunderscore = 0;`
-    // at the top of each eval so a `[#16]` from a prior `$((…))`
-    // doesn't leak into the next. The C body comment notes "maintain
-    // outputradix and outputunderscore across levels of evaluation"
-    // i.e. they DO persist across the levels-of-evaluation save/
-    // restore that `new()` performs (which is why this lives at the
-    // top of mathevall, NOT inside the save block).
-    reset_output_format();
+    // c:386/446 — `if (mlevel++)` … `if (--mlevel)` bracket the evaluator.
+    // The output radix is deliberately NOT reset here: C clears it only in
+    // `matheval` and only when `mlevel` is 0 (c:1486), i.e. exactly once per
+    // TOP-LEVEL expression. `mathevall` is re-entered for every nested
+    // evaluation — including the recursive re-eval of a scalar parameter whose
+    // value is itself a math expression (`j=8#62; $(( [#36] j ))`, getmathparam
+    // below) — so resetting here wiped the outer `[#36]` and printed base 10.
+    // That is what the C comment at c:1485 means by "maintain outputradix and
+    // outputunderscore across levels of evaluation".
+    let _mlevel = MathLevel::enter();
 
     // Skip leading whitespace and Nularg
     while let Some(c) = peek() {
@@ -1194,6 +1196,36 @@ thread_local! {
     /// `_` for readable hex/decimal output. Set by `[#N_M]` /
     /// `[##N_M]` / `[#_M]`. Read alongside outputradix.
     static M_OUTPUTUNDERSCORE: Cell<i32> = const { Cell::new(0) };          // c:583
+    /// `static int mlevel` (math.c:67) — count of `mathevall` frames
+    /// currently on the stack. C brackets the evaluator body with
+    /// `if (mlevel++)` (c:386) / `if (--mlevel)` (c:446), so mlevel is 0
+    /// exactly when no evaluation is in progress. `matheval` reads it to
+    /// decide whether the output radix is a fresh one (c:1486).
+    static M_LEVEL: Cell<i32> = const { Cell::new(0) };                     // c:67
+}
+
+/// RAII bracket for C's `mlevel++` (math.c:386) / `--mlevel` (math.c:446).
+///
+/// C can pair the increment and decrement by hand because `mathevall` has a
+/// single exit. The Rust evaluator returns `Result` from many points inside the
+/// parse loop, so the decrement rides on `Drop` — otherwise an `Err` path would
+/// leave `mlevel` permanently raised and every later `matheval` would skip its
+/// reset, treating an unrelated expression as a nested one.
+struct MathLevel;
+
+impl MathLevel {
+    /// c:386 — `if (mlevel++)`.
+    fn enter() -> Self {
+        M_LEVEL.with(|c| c.set(c.get() + 1));
+        MathLevel
+    }
+}
+
+impl Drop for MathLevel {
+    /// c:446 — `if (--mlevel)`.
+    fn drop(&mut self) {
+        M_LEVEL.with(|c| c.set(c.get() - 1));
+    }
 }
 
 /// `outputradix` accessor for subst.rs's `$((…))` formatter.
@@ -3799,6 +3831,17 @@ pub fn matheval(s: &str) -> Result<mnumber, String> {
     } else {
         s
     };
+    // c:1486-1487 — `if (!mlevel) outputradix = outputunderscore = 0;`
+    //
+    // Only a TOP-LEVEL evaluation starts from a clean radix. When `mlevel` is
+    // already nonzero this `matheval` is running underneath an in-flight one
+    // (a `functions -M` math function whose body runs `(( … ))`), and C leaves
+    // the radix alone so the outer `[#16]` still governs the printed result.
+    if M_LEVEL.with(|c| c.get()) == 0 {
+        // c:1486
+        reset_output_format(); // c:1487
+    }
+
     // c:1491-1495 — empty expression returns MN_INTEGER 0.
     if s.is_empty() {
         // c:1491

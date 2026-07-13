@@ -740,6 +740,11 @@ pub fn zlecore() {
         // We can only check this *after* reading a char, so the
         // detection lives below.
 
+        // c:1133 — `reselectkeymap();`. A widget (or a shell function it
+        // ran) may have relinked or deleted the keymap we're editing
+        // under; re-open it by name before every key read.
+        crate::ported::zle::zle_keymap::reselectkeymap();
+
         // Resolve the next bound widget via multi-byte keymap lookup.
         // Mirrors zle_main.c:1136 `bindk = getkeycmd();` — our
         // get_key_cmd walks the keymap trie reading bytes until it
@@ -862,6 +867,13 @@ pub fn zleread(
     MARK.store(0, SeqCst);
     DONE.store(0, SeqCst);
     EOFSENT.store(0, SeqCst); // c:1294 eofsent = 0 (cleared before zlecore)
+
+    // c:1294 — `selectkeymap("main", 1);`. Re-resolve `main` at the start
+    // of EVERY line edit: `curkeymap` caches the keymap the last edit ran
+    // under, so a `setopt vi` / `setopt emacs` / `bindkey -A … main`
+    // between lines (which relinks the name `main` to a different keymap)
+    // would otherwise never reach the key loop.
+    selectkeymap("main", 1);
 
     // Sync the ZLE history-navigation list from the LIVE command history
     // (hist.rs `curhist`/`quietgethist`). zle_goto_hist (up/down-line-or-
