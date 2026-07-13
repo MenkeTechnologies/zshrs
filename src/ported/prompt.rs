@@ -6,9 +6,10 @@
 //! the canonical C globals (paramtab, LASTVAL, curhist, JOBTAB, ...).
 
 use crate::ported::params::{paramtab, setaparam};
-use crate::ported::utils::{imeta_byte, strpfx};
+use crate::ported::utils::{imeta_byte, metafy, strpfx};
 use crate::ported::zsh_h::{
-    isset, zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, PROMPTBANG, PROMPTPERCENT,
+    isset, zattr, Inpar, Nularg, Outpar, COL_SEQ_BG, COL_SEQ_FG, GETKEYS_BINDKEY, PROMPTBANG,
+    PROMPTPERCENT,
     TERM_BAD, TERM_NOUP, TERM_UNKNOWN, TSC_PROMPT, TSC_RAW, TXTBGCOLOUR, TXTBOLDFACE, TXTFGCOLOUR,
     TXTSTANDOUT, TXTUNDERLINE, TXT_ATTR_ALL, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_MASK,
     TXT_ATTR_BG_COL_SHIFT, TXT_ATTR_BG_MASK, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_MASK,
@@ -2256,38 +2257,15 @@ pub fn tsetcap(cap: i32, flags: i32) -> String {
         }
         // 5.9.1 set_colour_attribute(txtattrs, COL_SEQ_FG/BG,
         // TSC_PROMPT) — Inpar/Outpar-wrapped for prompt mode
-        // (5.9.1 prompt.c is_prompt arm).
-        let mut emit_colour = |on_bit: u64, mask: u64, shift: u32, b24: u64, is_fg: bool| {
-            if cur & on_bit != 0 {
-                let raw = (cur & mask) >> shift;
-                let c = if cur & b24 != 0 {
-                    COLOR_24BIT | (raw as Color & 0x00ff_ffff)
-                } else {
-                    raw as Color
-                };
-                if flags == TSC_PROMPT {
-                    out.push(Inpar);
-                    out.push_str(&color_to_ansi(c, is_fg));
-                    out.push(Outpar);
-                } else {
-                    out.push_str(&color_to_ansi(c, is_fg));
-                }
-            }
-        };
-        emit_colour(
-            TXTFGCOLOUR,
-            TXT_ATTR_FG_COL_MASK,
-            TXT_ATTR_FG_COL_SHIFT,
-            TXT_ATTR_FG_24BIT,
-            true,
-        );
-        emit_colour(
-            TXTBGCOLOUR,
-            TXT_ATTR_BG_COL_MASK,
-            TXT_ATTR_BG_COL_SHIFT,
-            TXT_ATTR_BG_24BIT,
-            false,
-        );
+        // (5.9.1 prompt.c is_prompt arm). This is the dirty *re-apply*
+        // pass, so it only restores colours that are currently on; the
+        // `def` reset arm is not reachable from here.
+        if cur & TXTFGCOLOUR != 0 {
+            out.push_str(&set_colour_attribute(cur, COL_SEQ_FG, flags));
+        }
+        if cur & TXTBGCOLOUR != 0 {
+            out.push_str(&set_colour_attribute(cur, COL_SEQ_BG, flags));
+        }
     }
     out
 }
@@ -2716,19 +2694,22 @@ pub fn applytextattributes(flags: i32) -> String {
         bg_emit_color(new, &mut result);
     }
 
+    // c:1709-1712 — `if (change & TXT_ATTR_FG_MASK)
+    //                    set_colour_attribute(txtpendingattrs, COL_SEQ_FG, flags);`
+    // Both arms of a colour change go through set_colour_attribute: with
+    // the channel's TXT*COLOUR bit set it emits the colour, with the bit
+    // clear it emits the `.def` reset. Composing the reset (rather than
+    // hardcoding \e[39m / \e[49m) is what lets $zle_highlight's
+    // {fg,bg}_default_code / _start_code / _end_code override it.
+    //
+    // Flags are 0, not TSC_PROMPT: this function returns a raw escape
+    // diff and its callers do the single Inpar/Outpar wrap, so wrapping
+    // here too would double-bracket.
     if (old & TXT_ATTR_FG_MASK) != (new & TXT_ATTR_FG_MASK) && !attr_on {
-        if new & TXTFGCOLOUR != 0 {
-            fg_emit_color(new, &mut result);
-        } else {
-            result.push_str("\x1b[39m");
-        }
+        result.push_str(&set_colour_attribute(new, COL_SEQ_FG, 0));
     }
     if (old & TXT_ATTR_BG_MASK) != (new & TXT_ATTR_BG_MASK) && !attr_on {
-        if new & TXTBGCOLOUR != 0 {
-            bg_emit_color(new, &mut result);
-        } else {
-            result.push_str("\x1b[49m");
-        }
+        result.push_str(&set_colour_attribute(new, COL_SEQ_BG, 0));
     }
 
     let diff = result;
@@ -3621,28 +3602,80 @@ pub fn output_highlight(atr: zattr, mut mask: zattr) -> String {
     parts.join(",")
 }
 
-/// Compute the default-colour reset sequences.
-/// Port of `set_default_colour_sequences()` from Src/prompt.c:2341.
-pub fn set_default_colour_sequences() -> (String, String) {
-    // Default: use ANSI sequences
-    ("\x1b[0m".to_string(), "\x1b[0m".to_string())
+/// Port of `void set_default_colour_sequences(void)` from
+/// `Src/prompt.c:2341`. Restores `fg_bg_sequences` to the built-in
+/// `TC_COL_*` escapes, discarding any `$zle_highlight` overrides.
+///
+/// ```c
+/// void
+/// set_default_colour_sequences(void)
+/// {
+///     fg_bg_sequences[COL_SEQ_FG].start = ztrdup(TC_COL_FG_START);
+///     fg_bg_sequences[COL_SEQ_FG].end = ztrdup(TC_COL_FG_END);
+///     fg_bg_sequences[COL_SEQ_FG].def = ztrdup(TC_COL_FG_DEFAULT);
+///
+///     fg_bg_sequences[COL_SEQ_BG].start = ztrdup(TC_COL_BG_START);
+///     fg_bg_sequences[COL_SEQ_BG].end = ztrdup(TC_COL_BG_END);
+///     fg_bg_sequences[COL_SEQ_BG].def = ztrdup(TC_COL_BG_DEFAULT);
+/// }
+/// ```
+pub fn set_default_colour_sequences() {
+    // c:2341
+    let mut seqs = fg_bg_sequences.lock().unwrap();
+    seqs[COL_SEQ_FG as usize].start = TC_COL_FG_START.to_string(); // c:2343
+    seqs[COL_SEQ_FG as usize].end = TC_COL_FG_END.to_string(); // c:2344
+    seqs[COL_SEQ_FG as usize].def = TC_COL_FG_DEFAULT.to_string(); // c:2345
+
+    seqs[COL_SEQ_BG as usize].start = TC_COL_BG_START.to_string(); // c:2347
+    seqs[COL_SEQ_BG as usize].end = TC_COL_BG_END.to_string(); // c:2348
+    seqs[COL_SEQ_BG as usize].def = TC_COL_BG_DEFAULT.to_string(); // c:2349
 }
 
-/// Build a colour escape string from a specification.
-/// Port of `set_colour_code(char *str, char **var)` from Src/prompt.c:2353.
+/// Port of `static void set_colour_code(char *str, char **var)` from
+/// `Src/prompt.c:2353`. Decodes one `$zle_highlight` colour-code
+/// override (e.g. `fg_start_code:\e[38;5;`) into the literal escape
+/// bytes it denotes.
+///
+/// ```c
+/// static void
+/// set_colour_code(char *str, char **var)
+/// {
+///     char *keyseq;
+///     int len;
+///
+///     zsfree(*var);
+///     keyseq = getkeystring(str, &len, GETKEYS_BINDKEY, NULL);
+///     *var = metafy(keyseq, len, META_DUP);
+/// }
+/// ```
+///
+/// C assigns through `var`; the Rust callers assign the return value
+/// into the same `fg_bg_sequences` slot. `GETKEYS_BINDKEY` is what
+/// makes `\e` / `^[` / octal escapes expand here.
 /// WARNING: param names don't match C — Rust=(spec) vs C=(str, var)
-pub fn set_colour_code(spec: &str) -> Option<String> {
-    let mut cur = 0usize;
-    let attr = match_colour(Some(&mut cur), spec, true, 0);
-    if attr == TXT_ERROR {
-        return None;
-    }
-    // Decode back into an output escape — match_colour returns the
-    // packed zattr; we extract the colour index and re-emit via
-    // output_colour for the high-level callers that want a string.
-    let colour = ((attr & !TXTFGCOLOUR) >> TXT_ATTR_FG_COL_SHIFT) as u8;
-    Some(output_colour(colour, true))
+pub fn set_colour_code(spec: &str) -> String {
+    // c:2353
+    let (keyseq, _len) = crate::ported::utils::getkeystring_with(
+        spec,
+        GETKEYS_BINDKEY as u32, // c:2359
+        None,
+    );
+    metafy(&keyseq) // c:2360
 }
+
+/// Start of escape sequence for foreground colour.
+/// Port of `#define TC_COL_FG_START` from `Src/prompt.c:2306`.
+pub const TC_COL_FG_START: &str = "\x1b[3"; // c:2306
+/// End of escape sequence for foreground colour. (`Src/prompt.c:2308`)
+pub const TC_COL_FG_END: &str = "m"; // c:2308
+/// Code to reset foreground colour. (`Src/prompt.c:2310`)
+pub const TC_COL_FG_DEFAULT: &str = "9"; // c:2310
+/// Start of escape sequence for background colour. (`Src/prompt.c:2313`)
+pub const TC_COL_BG_START: &str = "\x1b[4"; // c:2313
+/// End of escape sequence for background colour. (`Src/prompt.c:2315`)
+pub const TC_COL_BG_END: &str = "m"; // c:2315
+/// Code to reset background colour. (`Src/prompt.c:2317`)
+pub const TC_COL_BG_DEFAULT: &str = "9"; // c:2317
 
 /// Port of `static struct colour_sequences { char *start; char *end;
 /// char *def; }` from Src/prompt.c:2319. Holds the active terminal
@@ -3661,19 +3694,28 @@ pub struct colour_sequences {
 
 /// Port of `static struct colour_sequences fg_bg_sequences[2]` from
 /// `Src/prompt.c:2324`.
-pub static fg_bg_sequences: std::sync::Mutex<[colour_sequences; 2]> = // c:2324
-    std::sync::Mutex::new([
-        colour_sequences {
-            start: String::new(),
-            end: String::new(),
-            def: String::new(),
-        },
-        colour_sequences {
-            start: String::new(),
-            end: String::new(),
-            def: String::new(),
-        },
-    ]);
+///
+/// C leaves these NULL until `setupvals()` calls
+/// `set_default_colour_sequences()` (`Src/init.c:1313`). Seeding the
+/// table with the same `TC_COL_*` values that call installs keeps the
+/// post-condition identical while making a pre-`setupvals` read (unit
+/// tests, `trashzle()` cursor moves) yield the defaults instead of an
+/// empty prefix that would compose a malformed escape.
+pub static fg_bg_sequences: std::sync::LazyLock<std::sync::Mutex<[colour_sequences; 2]>> = // c:2324
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new([
+            colour_sequences {
+                start: TC_COL_FG_START.to_string(),
+                end: TC_COL_FG_END.to_string(),
+                def: TC_COL_FG_DEFAULT.to_string(),
+            },
+            colour_sequences {
+                start: TC_COL_BG_START.to_string(),
+                end: TC_COL_BG_END.to_string(),
+                def: TC_COL_BG_DEFAULT.to_string(),
+            },
+        ])
+    });
 
 /// Port of `static char *colseq_buf` from `Src/prompt.c:2332`.
 /// We need a buffer for colour sequence composition. It may
@@ -3756,40 +3798,22 @@ pub fn allocate_colour_buffer() {
             // c:2377
             if strpfx("fg_start_code:", atr) {
                 // c:2378
-                if let Some(c) = set_colour_code(&atr[14..]) {
-                    // c:2379
-                    seqs[COL_SEQ_FG as usize].start = c;
-                }
+                seqs[COL_SEQ_FG as usize].start = set_colour_code(&atr[14..]); // c:2379
             } else if strpfx("fg_default_code:", atr) {
                 // c:2380
-                if let Some(c) = set_colour_code(&atr[16..]) {
-                    // c:2381
-                    seqs[COL_SEQ_FG as usize].def = c;
-                }
+                seqs[COL_SEQ_FG as usize].def = set_colour_code(&atr[16..]); // c:2381
             } else if strpfx("fg_end_code:", atr) {
                 // c:2382
-                if let Some(c) = set_colour_code(&atr[12..]) {
-                    // c:2383
-                    seqs[COL_SEQ_FG as usize].end = c;
-                }
+                seqs[COL_SEQ_FG as usize].end = set_colour_code(&atr[12..]); // c:2383
             } else if strpfx("bg_start_code:", atr) {
                 // c:2384
-                if let Some(c) = set_colour_code(&atr[14..]) {
-                    // c:2385
-                    seqs[COL_SEQ_BG as usize].start = c;
-                }
+                seqs[COL_SEQ_BG as usize].start = set_colour_code(&atr[14..]); // c:2385
             } else if strpfx("bg_default_code:", atr) {
                 // c:2386
-                if let Some(c) = set_colour_code(&atr[16..]) {
-                    // c:2387
-                    seqs[COL_SEQ_BG as usize].def = c;
-                }
+                seqs[COL_SEQ_BG as usize].def = set_colour_code(&atr[16..]); // c:2387
             } else if strpfx("bg_end_code:", atr) {
                 // c:2388
-                if let Some(c) = set_colour_code(&atr[12..]) {
-                    // c:2389
-                    seqs[COL_SEQ_BG as usize].end = c;
-                }
+                seqs[COL_SEQ_BG as usize].end = set_colour_code(&atr[12..]); // c:2389
             }
         }
     }
@@ -3826,13 +3850,149 @@ pub fn free_colour_buffer() {
     colseq_buf.lock().unwrap().clear(); // c:2424
 }
 
-/// Port of `set_colour_attribute(zattr atr, int fg_bg, int flags)`
-/// from Src/prompt.c:2440. Delegates to `color_to_ansi` which
-/// produces the indexed/256-color/truecolor escape.
-/// WARNING: param names don't match C — Rust=(color, is_fg) vs C=(atr, fg_bg, flags)
-pub fn set_colour_attribute(color: Color, is_fg: bool) -> String {
+/// Port of `set_colour_attribute(zattr atr, int fg_bg, int flags)` from
+/// `Src/prompt.c:2440`. Emits the escape that puts channel `fg_bg`
+/// (`COL_SEQ_FG` / `COL_SEQ_BG`) into the colour `atr` encodes —
+/// honouring the `$zle_highlight` `{fg,bg}_{start,default,end}_code`
+/// overrides held in [`fg_bg_sequences`].
+///
+/// A cleared `TXTFGCOLOUR` / `TXTBGCOLOUR` bit means "restore the
+/// terminal default" and emits the `.def` reset (C's `def` local,
+/// c:2450) — that is how a colour gets turned back off.
+///
+/// C writes through `tputs`/`bv->bp`; the Rust prompt layer is
+/// string-returning, so the composed escape comes back as a `String`
+/// (Inpar/Outpar-wrapped under `TSC_PROMPT`, c:2547-2556, so
+/// `countprompt` skips it when measuring visible width). `TSC_RAW`
+/// selects C's output channel (`putraw` vs `putshout`), a choice the
+/// caller owns here, so it does not affect the bytes produced.
+pub fn set_colour_attribute(atr: zattr, fg_bg: i32, flags: i32) -> String {
     // c:2440
-    color_to_ansi(color, is_fg)
+    let is_prompt = (flags & TSC_PROMPT) != 0; // c:2443
+    let is_fg = fg_bg == COL_SEQ_FG;
+
+    // c:2446-2457 — unpack this channel's colour, reset flag and 24-bit
+    // flag. `colour` is the raw 24-bit field: a palette index normally,
+    // packed `0xRRGGBB` when `use_truecolor`.
+    let (colour, def, use_truecolor) = if is_fg {
+        (
+            ((atr & TXT_ATTR_FG_COL_MASK) >> TXT_ATTR_FG_COL_SHIFT) as i32, // c:2448
+            (atr & TXTFGCOLOUR) == 0,                                       // c:2450
+            (atr & TXT_ATTR_FG_24BIT) != 0,                                 // c:2451
+        )
+    } else {
+        (
+            ((atr & TXT_ATTR_BG_COL_MASK) >> TXT_ATTR_BG_COL_SHIFT) as i32, // c:2453
+            (atr & TXTBGCOLOUR) == 0,                                       // c:2455
+            (atr & TXT_ATTR_BG_24BIT) != 0,                                 // c:2456
+        )
+    };
+
+    let (d_start, d_end, d_def) = if is_fg {
+        (TC_COL_FG_START, TC_COL_FG_END, TC_COL_FG_DEFAULT)
+    } else {
+        (TC_COL_BG_START, TC_COL_BG_END, TC_COL_BG_DEFAULT)
+    };
+
+    // c:2461-2468 — are the codes still the built-in ones, or has
+    // $zle_highlight overridden them? C compares `.def`/`.end` against
+    // the *FG* constants for both channels (c:2463, c:2465) because the
+    // in-fix and suffix are identical for FG and BG; comparing against
+    // this channel's own constants is the same test.
+    //
+    // Read BEFORE the allocate_colour_buffer() below, exactly as C does:
+    // that call is what loads the $zle_highlight overrides, so the first
+    // colour *set* of a session still sees the built-in codes and takes
+    // the termcap path. Preserving that order keeps the emission
+    // byte-identical to zsh.
+    let is_default_zle_highlight = {
+        let seqs = fg_bg_sequences.lock().unwrap();
+        let seq = &seqs[fg_bg as usize];
+        seq.start == d_start && seq.def == d_def && seq.end == d_end
+    };
+
+    // c:2478 — not a reset, not truecolor, stock codes: let the
+    // terminal's own colour capability render it. C emits
+    // `tgoto(tcstr[tc], colour, colour)`; `output_colour` is that
+    // capability's expansion on a modern 256-colour terminfo.
+    let body = if !def && !use_truecolor && is_default_zle_highlight {
+        if colour > 255 {
+            // c:2509-2510 — past 255 no escape can express it.
+            String::new()
+        } else {
+            output_colour(colour as u8, is_fg) // c:2492
+        }
+    } else {
+        // c:2513-2516 — the composition buffer doubles as the "have the
+        // $zle_highlight overrides been loaded yet?" latch. C allocates
+        // it here when a standalone call finds it NULL (its comment: "can
+        // happen when moving the cursor in trashzle()"); allocating is
+        // what pulls fg_bg_sequences out of $zle_highlight.
+        let do_free = colseq_buf.lock().unwrap().is_empty();
+        if do_free {
+            allocate_colour_buffer(); // c:2515
+        }
+
+        // c:2518-2545 — compose `.start` + body + `.end` by hand.
+        // Truecolor always uses the built-in start/end (c:2523, c:2543);
+        // the override only applies to the indexed and reset forms.
+        let seqs = fg_bg_sequences.lock().unwrap();
+        let seq = &seqs[fg_bg as usize];
+
+        let mut buf = String::new();
+        if use_truecolor {
+            buf.push_str(d_start); // c:2523
+        } else {
+            buf.push_str(&seq.start); // c:2525
+        }
+
+        if def {
+            if use_truecolor {
+                buf.push_str(d_def); // c:2530
+            } else {
+                buf.push_str(&seq.def); // c:2532
+            }
+        } else if use_truecolor {
+            // c:2536-2537 — `8;2;<r>;<g>;<b>`, completing `\e[3` into
+            // `\e[38;2;<r>;<g>;<b>m`.
+            buf.push_str(&format!(
+                "8;2;{};{};{}",
+                colour >> 16,
+                (colour >> 8) & 0xff,
+                colour & 0xff
+            ));
+        } else if colour > 7 && colour <= 255 {
+            // c:2538-2539 — bare index; well-formed only because the
+            // caller supplied a 256-colour `.start`
+            // (e.g. `fg_start_code:\e[38;5;`).
+            buf.push_str(&colour.to_string());
+        } else {
+            buf.push(char::from(b'0' + (colour as u8))); // c:2541
+        }
+
+        if use_truecolor {
+            buf.push_str(d_end); // c:2543
+        } else {
+            buf.push_str(&seq.end); // c:2545
+        }
+        drop(seqs);
+
+        if do_free {
+            free_colour_buffer(); // c:2560-2561
+        }
+        buf
+    };
+
+    // c:2547-2556 — prompt mode brackets the escape so it is not counted
+    // as visible width.
+    if is_prompt && !body.is_empty() {
+        let mut out = String::with_capacity(body.len() + 2);
+        out.push(Inpar); // c:2550
+        out.push_str(&body); // c:2552
+        out.push(Outpar); // c:2555
+        return out;
+    }
+    body
 }
 
 // `pub enum CmdState` + `impl CmdState { from_u8, name }` —
@@ -3959,13 +4119,32 @@ fn color_get_rgb(c: Color) -> Option<(u8, u8, u8)> {
     }
 }
 
+/// Emit the escape for an already-unpacked [`Color`] (palette index, or
+/// a `COLOR_24BIT`-tagged RGB triple) by re-packing it into the `zattr`
+/// that [`set_colour_attribute`] (`Src/prompt.c:2440`) takes. Routing
+/// through the port keeps the `$zle_highlight` colour-code overrides in
+/// force on every emit path.
+///
+/// Always a colour *set*, never a reset, so the channel's `TXT*COLOUR`
+/// bit is always on here (C's `def` is false). The reset form is reached
+/// by calling [`set_colour_attribute`] with that bit clear.
 fn color_to_ansi(c: Color, is_fg: bool) -> String {
-    if let Some((r, g, b)) = color_get_rgb(c) {
-        let lead = if is_fg { 38 } else { 48 };
-        format!("\x1b[{};2;{};{};{}m", lead, r, g, b)
+    let (on_bit, b24, shift) = if is_fg {
+        (TXTFGCOLOUR, TXT_ATTR_FG_24BIT, TXT_ATTR_FG_COL_SHIFT)
     } else {
-        output_colour(c as u8, is_fg)
+        (TXTBGCOLOUR, TXT_ATTR_BG_24BIT, TXT_ATTR_BG_COL_SHIFT)
+    };
+    let fg_bg = if is_fg { COL_SEQ_FG } else { COL_SEQ_BG };
+
+    let mut atr: zattr = on_bit;
+    if let Some((r, g, b)) = color_get_rgb(c) {
+        atr |= b24;
+        let packed = ((r as zattr) << 16) | ((g as zattr) << 8) | (b as zattr);
+        atr |= packed << shift;
+    } else {
+        atr |= (c as zattr) << shift;
     }
+    set_colour_attribute(atr, fg_bg, 0)
 }
 
 fn color_from_name(name: &str) -> Option<Color> {

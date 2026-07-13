@@ -1257,7 +1257,7 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
         }
     }
 
-    let _ = crate::ported::prompt::set_default_colour_sequences(); // c:1313
+    crate::ported::prompt::set_default_colour_sequences(); // c:1313
 
     // ZSH_EXEPATH                                                           // c:1315
     {
