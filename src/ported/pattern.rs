@@ -1059,20 +1059,30 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
     // the piece bytes, truncate, emit P_COUNT, then re-append.
     let mut last_piece_off: i64 = -1; // start offset of preceding piece
     let mut prev_chain_tail: i64 = -1; // tail of chain BEFORE preceding piece (-1 if piece was first)
+    // Flags the preceding patcomppiece reported. P_HSTART marks a piece that
+    // already had a closure applied (`a#`, `a##`, or an earlier `(#cN,M)`) —
+    // patcomppiece sets `*flagp = P_HSTART` on every such arm, mirroring C
+    // (c:1626/1629/1636/1640/1643). Used below to reject a stacked count.
+    let mut last_piece_flags: i32 = 0;
     *flagp = P_PURESTR;
 
     // c:951-952 — snapshot the segment-special set so we can do
     // `memchr(zpc_special, byte, ZPC_SEG_COUNT)`-equivalent lookups.
     // Only the first ZPC_SEG_COUNT slots (SLASH, NULL, BAR, OUTPAR,
     // TILDE) matter here.
-    let (sp_tilde, sp_seg_set) = {
+    let (sp_tilde, sp_seg_set, sp_inpar, sp_hash) = {
         let sp = zpc_special.lock().unwrap();
         let tilde = sp[ZPC_TILDE as usize];
         let mut set = [false; 256];
         for i in 0..(ZPC_SEG_COUNT as usize) {
             set[sp[i] as usize] = true;
         }
-        (tilde, set)
+        (
+            tilde,
+            set,
+            sp[ZPC_INPAR as usize],
+            sp[ZPC_HASH as usize], // c:1609
+        )
     };
 
     loop {
@@ -1123,9 +1133,19 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         // P_COUNT with bounds + inline operand following. Detected
         // BEFORE the generic patgetglobflags path because `c` is not
         // a flag char in that fn.
+        //
+        // c:1608-1610 — the `(` and `#` are compared against
+        // `zpc_special[ZPC_INPAR]` / `zpc_special[ZPC_HASH]`, NOT against
+        // literal bytes. That indirection is the whole EXTENDED_GLOB gate:
+        // patcompcharsset() rewrites `zpc_special[ZPC_HASH]` to Marker
+        // (c:482) when EXTENDED_GLOB is off, so a literal `#` can never
+        // equal it and `(#c...)` stops being a counted closure — it falls
+        // through and parses as an ordinary group. Testing `b'#'` directly
+        // applied the closure with EXTENDED_GLOB unset, so
+        // `[[ aaa = a(#c2,3) ]]` matched (zsh: no match).
         if off + 2 < bytes.len()
-            && bytes[off] == b'('
-            && bytes[off + 1] == b'#'
+            && bytes[off] == sp_inpar
+            && bytes[off + 1] == sp_hash
             && bytes[off + 2] == b'c'
         {
             let mut j = off + 3;
@@ -1172,6 +1192,35 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                     // P_COUNT carries [min, max] then operand bytes
                     // inline; matcher iterates outside. So we relocate
                     // the preceding piece into the operand slot.
+                    // c:1431-1436 — `case Star:` sets `kshchar = -1`, whose
+                    // only purpose is (per C's own comment) "a sign that we
+                    // can't have #'s". c:1620-1622 then rejects the pattern:
+                    //
+                    //     /* too much at once doesn't currently work */
+                    //     if (kshchar && (hash || count))
+                    //         return 0;
+                    //
+                    // So a count may not follow `*`, nor stack on a piece
+                    // that already carries a closure (`a#(#c2,3)`). zshrs
+                    // attaches the count to the preceding piece rather than
+                    // tracking kshchar, so the same rule is expressed by
+                    // looking at that piece's opcode. Without this, zshrs
+                    // silently accepted `*(#c2,3)` / `a#(#c2,3)`, which zsh
+                    // rejects as a bad pattern.
+                    if last_piece_off >= 0 {
+                        let prev_op = {
+                            let buf = patout.lock().unwrap();
+                            buf.get(last_piece_off as usize + I_OP)
+                                .copied()
+                                .unwrap_or(0)
+                        };
+                        // `*` is C's kshchar = -1 (its head node is P_STAR);
+                        // P_HSTART marks a piece that already closured, which
+                        // is what makes `a#(#c2,3)` / `a##(#c2,3)` bad too.
+                        if prev_op == P_STAR || (last_piece_flags & P_HSTART) != 0 {
+                            return -1; // c:1622 `return 0;`
+                        }
+                    }
                     if last_piece_off >= 0 {
                         let piece_start = last_piece_off as usize;
                         // Snapshot preceding piece (everything emitted
@@ -1239,9 +1288,12 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                             set_next(prev_chain_tail as usize, count_off);
                         }
                         last_tail = count_off;
-                        // Consumed — clear tracking.
+                        // Consumed — clear tracking. The resulting piece IS a
+                        // closure (C: `*flagp = P_HSTART`, c:1636), so a second
+                        // count stacked on it must be rejected.
                         last_piece_off = -1;
                         prev_chain_tail = -1;
+                        last_piece_flags = P_HSTART;
                         continue;
                     }
                     // No preceding piece — `(#cN,M)` is a POSTFIX
@@ -1250,18 +1302,17 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
                     // rejects the pattern. Bug #521: zshrs previously
                     // took a legacy PREFIX path (compile next piece as
                     // operand) which silently matched empty for `0,0`
-                    // and similar degenerate ranges. Match zsh by
-                    // returning the canonical "bad pattern" failure.
-                    crate::ported::utils::zerr(&format!(
-                        "bad pattern: (#c{},{})",
-                        min,
-                        if max == i64::MAX {
-                            String::new()
-                        } else {
-                            max.to_string()
-                        }
-                    ));
-                    return -1;
+                    // and similar degenerate ranges.
+                    //
+                    // Report nothing here: C's patcomppiece signals a bad
+                    // pattern by `return 0` alone (c:1600, c:1622) and the
+                    // CALLER prints the diagnostic with the pattern it was
+                    // given — `matchpat` zerrs "bad pattern: %s" with the
+                    // full pattern (glob.c:2522), and `[[ ]]` zwarnnams it
+                    // from cond.c:314. Emitting a message from inside the
+                    // compiler printed only the `(#cN,M)` fragment, losing
+                    // the rest of the pattern the user actually wrote.
+                    return -1; // c:1622 `return 0;`
                 }
             }
             // Malformed `(#c...)` — fall through to generic flag handler.
@@ -1381,6 +1432,7 @@ pub fn patcompbranch(flagp: &mut i32, paren: i32) -> i64 {
         last_tail = piece_tail;
         last_piece_off = piece;
         prev_chain_tail = prev_tail_before_piece;
+        last_piece_flags = piece_flags;
         *flagp &= piece_flags;
     }
 
@@ -4634,16 +4686,26 @@ fn patmatch(
                 s_off += advance;
             }
             P_ANYOF => {
-                // c:P_ANYOF arm
+                // c:2780-2800 — a bracket expression is matched by
+                // `patmatchrange` / `mb_patmatchrange` on the RAW input char.
+                // Neither consults `patglobflags`, so a bracket NEVER
+                // case-folds: only C's CHARMATCH macro (c:2671, used by
+                // P_EXACTLY) honours GF_IGNCASE / GF_LCMATCHUC.
+                //
+                // Passing glob_flags through here made `(#i)` fold ranges as
+                // well as literals, so `[[ FooBar = (#i)[a-z]## ]]` matched
+                // (zsh: no match) and `[[ F = (#i)[[:lower:]] ]]` matched
+                // (zsh: no match). Mask the case bits off for the set test.
                 let body = scan + I_BODY;
                 let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
                 let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
                 let max_errs = (glob_flags & 0xff) as i32;
+                let range_flags = glob_flags & !(GF_IGNCASE | GF_LCMATCHUC);
                 let has_match = s_off < input_bytes.len()
                     && set
                         .iter()
-                        .any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
+                        .any(|&c| charmatch(input_bytes[s_off], c, range_flags));
                 if !has_match {
                     // c:Src/pattern.c:3463-3505 — approximate-match fail
                     // handler. For non-P_EXACTLY opcodes, the ONLY
@@ -4667,12 +4729,15 @@ fn patmatch(
                 let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
                 let max_errs = (glob_flags & 0xff) as i32;
-                // c:2694 charmatch — same asymmetry as P_ANYOF; ANYBUT
-                // succeeds iff no set element charmatches the input.
+                // c:2781-2800 — the negated bracket shares P_ANYOF's matcher
+                // (`… ^ (P_OP(scan) == P_ANYOF)`), so it is equally
+                // case-BLIND: the case bits are masked off here too, or
+                // `(#i)[^a-z]` would negate a folded set.
+                let range_flags = glob_flags & !(GF_IGNCASE | GF_LCMATCHUC);
                 let has_match = s_off < input_bytes.len()
                     && !set
                         .iter()
-                        .any(|&c| charmatch(input_bytes[s_off], c, glob_flags));
+                        .any(|&c| charmatch(input_bytes[s_off], c, range_flags));
                 if !has_match {
                     if state.errsfound < max_errs && s_off < input_bytes.len() {
                         // c:3463 — omit-input approx path (same as P_ANYOF).
@@ -6040,16 +6105,45 @@ mod tests {
         crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
-    /// `(#i)[abc]` — case-insensitive bracket class.
+    /// `(#i)` does NOT reach inside a bracket expression.
+    ///
+    /// C matches a bracket with `patmatchrange` / `mb_patmatchrange`
+    /// (c:2780-2800), neither of which looks at `patglobflags` — only the
+    /// CHARMATCH macro (c:2671, used by P_EXACTLY) honours GF_IGNCASE. So
+    /// `(#i)` folds literal characters but leaves `[abc]` / `[a-z]` /
+    /// `[[:lower:]]` case-SENSITIVE.
+    ///
+    /// zsh 5.9.1 oracle (`zsh -fc 'setopt extendedglob; [[ X = (#i)PAT ]]'`):
+    ///   `[[ A = (#i)[abc] ]]` → no match
+    ///   `[[ b = (#i)[abc] ]]` → match
+    ///   `[[ A = (#i)[ABC] ]]` → match
+    ///   `[[ a = (#i)[ABC] ]]` → no match
+    ///
+    /// This test previously asserted that "A" matched `(#i)[abc]`, pinning
+    /// the folded-bracket bug rather than zsh's behaviour.
     #[test]
     fn case_insensitive_bracket() {
         let _g = crate::test_util::global_state_lock();
         let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
         crate::ported::options::opt_state_set("extendedglob", true);
+
         let prog = compile("(#i)[abc]");
-        assert!(pattry(&prog, "A"));
+        assert!(
+            !pattry(&prog, "A"),
+            "(#i) must not case-fold a bracket: zsh does not match A against [abc]"
+        );
         assert!(pattry(&prog, "b"));
         assert!(!pattry(&prog, "d"));
+
+        // The uppercase set is the mirror image: it matches "A", not "a".
+        let upper = compile("(#i)[ABC]");
+        assert!(pattry(&upper, "A"));
+        assert!(!pattry(&upper, "a"));
+
+        // …while a literal in the same pattern still folds (CHARMATCH).
+        let lit = compile("(#i)abc");
+        assert!(pattry(&lit, "ABC"));
+
         crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
@@ -6118,25 +6212,58 @@ mod tests {
 
     /// `x(#c3,5)` — counted repetition: match `x` 3 to 5 times.
     /// c:pattern.c:1606-1696 — POSTFIX `(#cN,M)` modifier on preceding piece.
+    ///
+    /// EXTENDED_GLOB must be on: `(#c…)` is gated behind
+    /// `zpc_special[ZPC_HASH]` (c:482), so with the option off the `#` is a
+    /// literal and this is an ordinary group. Verified against zsh 5.9.1:
+    /// `zsh -fc '[[ xxx = x(#c3) ]]'` does NOT match, but does under
+    /// `setopt extendedglob`.
     #[test]
     fn count_range_3_to_5() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("x(#c3,5)");
         assert!(!pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxx"));
         assert!(pattry(&prog, "xxxx"));
         assert!(pattry(&prog, "xxxxx"));
         assert!(!pattry(&prog, "xxxxxx"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     /// `x(#c3)` — exact count: `xxx` only.
     #[test]
     fn count_exact_3() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("x(#c3)");
         assert!(!pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxx"));
         assert!(!pattry(&prog, "xxxx"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
+    }
+
+    /// Without EXTENDED_GLOB, `(#cN,M)` is NOT a counted closure — the `#`
+    /// is a literal, so `x(#c3)` is `x` followed by a group matching the
+    /// literal text `#c3`. c:482 rewrites `zpc_special[ZPC_HASH]` to Marker
+    /// when the option is off, which is what makes the c:1609 test fail.
+    ///
+    /// zsh 5.9.1 oracle:
+    ///   `zsh -fc '[[ xxx = x(#c3) ]] && echo Y || echo N'` → N
+    ///   `zsh -fc 'setopt extendedglob; [[ xxx = x(#c3) ]] …'` → Y
+    #[test]
+    fn count_inert_without_extendedglob() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", false);
+        let prog = compile("x(#c3)");
+        assert!(
+            !pattry(&prog, "xxx"),
+            "(#c3) must not act as a counted closure with EXTENDED_GLOB off"
+        );
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     #[test]
@@ -6157,10 +6284,13 @@ mod tests {
     #[test]
     fn count_min_only() {
         let _g = crate::test_util::global_state_lock();
+        let saved = crate::ported::options::opt_state_get("extendedglob").unwrap_or(false);
+        crate::ported::options::opt_state_set("extendedglob", true);
         let prog = compile("x(#c2,)");
         assert!(!pattry(&prog, "x"));
         assert!(pattry(&prog, "xx"));
         assert!(pattry(&prog, "xxxxxxxx"));
+        crate::ported::options::opt_state_set("extendedglob", saved);
     }
 
     #[test]

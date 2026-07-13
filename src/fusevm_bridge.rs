@@ -7742,6 +7742,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         })
     });
 
+    // Fatal-only abort check emitted between the pipes of an `&&` / `||`
+    // chain, where the full errexit check is suppressed. Mirrors ONLY the
+    // errflag arm of BUILTIN_ERREXIT_CHECK below: an errflag abandons the
+    // list in zsh, and no connector can consume it.
+    vm.register_builtin(BUILTIN_FATAL_ABORT_CHECK, |vm, _argc| {
+        use std::sync::atomic::Ordering;
+        let errflag_set = (crate::ported::utils::errflag.load(Ordering::Relaxed)
+            & crate::ported::zsh_h::ERRFLAG_ERROR)
+            != 0;
+        if !errflag_set || isset(crate::ported::zsh_h::INTERACTIVE) {
+            return Value::Int(0);
+        }
+        // CONTINUE_ON_ERROR: clear and keep going, as the full check does.
+        if isset(crate::ported::zsh_h::CONTINUEONERROR) {
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+            return Value::Int(0);
+        }
+        // Abort the chain with the failing command's own status intact —
+        // a cond syntax error left lastval=2 (c:Src/exec.c:5216-5221), and
+        // that 2 is what zsh exits with. Reading the executor's live
+        // lastval (not forcing 1) is the same rule the full check uses.
+        vm.last_status = with_executor(|exec| exec.last_status());
+        Value::Int(1)
+    });
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
         // Returns Value::Int(1) when the caller should jump to the
         // current scope's return-patch landing (subshell-end / func-
@@ -9188,6 +9213,19 @@ pub const BUILTIN_IS_FIFO: u16 = 334;
 pub const BUILTIN_IS_SOCKET: u16 = 335;
 /// `BUILTIN_ERREXIT_CHECK` constant.
 pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
+/// Fatal-error-only abort check, for use INSIDE an `&&` / `||` chain.
+///
+/// A chain suppresses the errexit check (a non-zero status is "consumed"
+/// by the connector — `false && x` must not fire ERREXIT or the ZERR
+/// trap). But an errflag — a *fatal* error such as a `[[ ]]` bad pattern
+/// — is not a status the connector can consume: zsh abandons the whole
+/// list. Without this, zshrs ran the `||` right-hand side after the
+/// error (`[[ x = [a- ]] || touch f` created `f`; zsh does not) and the
+/// aborted builtin then overwrote the cond's status 2 with 1.
+///
+/// Same errflag arm as `BUILTIN_ERREXIT_CHECK`, with the errexit/ZERR
+/// half omitted.
+pub const BUILTIN_FATAL_ABORT_CHECK: u16 = 641;
 /// Post-`always`-arm checks for the canonical RETFLAG / BREAKS /
 /// CONTFLAG atomics that mark try-block escapes. Each returns
 /// Value::Int(1) when the corresponding atomic is set (and consumes

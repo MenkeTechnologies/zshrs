@@ -426,18 +426,64 @@ pub fn evalcond(
                     // extends the signature; read both flags here so
                     // `setopt nocaseglob` / `setopt extendedglob`
                     // actually affect `[[ str = pat ]]` dispatch.
-                    let strpat = |pat: &str, text: &str| -> bool {
+                    // c:Src/cond.c:312-317 — `[[ str = pat ]]` compiles the
+                    // pattern itself rather than delegating to matchpat():
+                    //
+                    //   if (!(pprog = patcompile(right, ...))) {
+                    //       zwarnnam(fromtest, "bad pattern: %s", right);
+                    //       return 2;
+                    //   }
+                    //   test = (pprog && pattry(pprog, left));
+                    //
+                    // A pattern that fails to compile is an ERROR (status 2
+                    // + the full pattern echoed), not a silent no-match
+                    // (status 1). `Err(())` carries that compile failure out
+                    // to the arms below, which is why this can't just return
+                    // a bool the way matchpat does.
+                    let strpat = |pat: &str, text: &str| -> Result<bool, ()> {
                         if posix {
-                            text == pat
-                        } else {
-                            let extended = isset(EXTENDEDGLOB);
-                            let case_sensitive = isset(CASEGLOB);
-                            matchpat(pat, text, extended, case_sensitive)
+                            return Ok(text == pat);
+                        }
+                        // Tokenize + PAT_HEAPDUP: the compile contract
+                        // matchpat uses (glob.rs:2070). Case sensitivity is
+                        // resolved inside patcompile, which drops GF_IGNCASE
+                        // for a non-PAT_FILE pattern, so `nocaseglob` stays
+                        // out of `[[ ]]`.
+                        let mut tok = pat.to_string();
+                        crate::ported::glob::tokenize(&mut tok);
+                        match crate::ported::pattern::patcompile(
+                            &tok,
+                            crate::ported::zsh_h::PAT_HEAPDUP,
+                            None,
+                        ) {
+                            // c:322 — `test = (pprog && pattry(pprog, left));`
+                            Some(p) => Ok(crate::ported::pattern::pattry(&p, text)),
+                            None => Err(()), // c:313
                         }
                     };
+                    // c:314-316 — report with the full right-hand pattern and
+                    // yield status 2.
+                    let badpat = |pat: &str| -> i32 {
+                        // c:314 — `zwarnnam(fromtest, "bad pattern: %s", right)`.
+                        // `test`/`[` pass their name; `[[ ]]` passes NULL, and a
+                        // NULL cmd makes C's zwarnnam degrade to the unprefixed
+                        // zerr form.
+                        let msg = format!("bad pattern: {}", pat);
+                        match from_test {
+                            Some(n) => crate::ported::utils::zwarnnam(n, &msg),
+                            None => crate::ported::utils::zerr(&msg),
+                        }
+                        2 // c:316
+                    };
                     return match code {
-                        c if c == COND_STREQ || c == COND_STRDEQ => b2i(strpat(&right, &left)),
-                        c if c == COND_STRNEQ => b2i(!strpat(&right, &left)),
+                        c if c == COND_STREQ || c == COND_STRDEQ => match strpat(&right, &left) {
+                            Ok(m) => b2i(m),
+                            Err(()) => badpat(&right),
+                        },
+                        c if c == COND_STRNEQ => match strpat(&right, &left) {
+                            Ok(m) => b2i(!m),
+                            Err(()) => badpat(&right),
+                        },
                         c if c == COND_STRLT => b2i(left.as_str() < right.as_str()),
                         c if c == COND_STRGTR => b2i(left.as_str() > right.as_str()),
                         c if c == COND_EQ => num_cmp(&left, &right, |a, b| a == b),

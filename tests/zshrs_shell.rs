@@ -13737,3 +13737,129 @@ fn test_prompt_colour_escapes_unaffected_without_zle_highlight() {
         assert_eq!(bytes, want, "{code} got: {bytes:x?}");
     }
 }
+
+// ---------------------------------------------------------------------
+// Pattern-compiler parity gaps found by `parity-fuzz --mode pattern`.
+// Every expectation below is the byte-exact behaviour of zsh 5.9.1
+// (`zsh -f -c …`), recorded per test.
+// ---------------------------------------------------------------------
+
+/// `(#cN,M)` is gated behind EXTENDED_GLOB. C neutralises the flag chars
+/// rather than testing the option at each use site: patcompcharsset sets
+/// `zpc_special[ZPC_HASH] = Marker` (Src/pattern.c:482) when the option is
+/// off, so the `(#c` test at c:1609 compares a literal `#` against Marker
+/// and fails. zshrs compared against `b'#'` directly, so the counted
+/// closure fired with EXTENDED_GLOB unset.
+///
+/// zsh oracle: `[[ aaa = a(#c2,3) ]]` → no match without `setopt
+/// extendedglob`, match with it.
+#[test]
+fn test_counted_closure_requires_extendedglob() {
+    let (_s, out, _e) = run_zshrs_parity("[[ aaa = a(#c2,3) ]] && echo Y || echo N");
+    assert_eq!(out.trim(), "N", "(#c) must be inert without EXTENDED_GLOB");
+
+    let (_s, out, _e) =
+        run_zshrs_parity("setopt extendedglob; [[ aaa = a(#c2,3) ]] && echo Y || echo N");
+    assert_eq!(out.trim(), "Y", "(#c) must apply under EXTENDED_GLOB");
+
+    // The closure's own bounds still work: exact, min-only, max-only, range.
+    for (code, want) in [
+        ("[[ aaa = a(#c3) ]]", "Y"),
+        ("[[ aa = a(#c3) ]]", "N"),
+        ("[[ aaaa = a(#c2,) ]]", "Y"),
+        ("[[ aa = a(#c,3) ]]", "Y"),
+        ("[[ aaaa = a(#c2,3) ]]", "N"),
+    ] {
+        let (_s, out, _e) =
+            run_zshrs_parity(&format!("setopt extendedglob; {code} && echo Y || echo N"));
+        assert_eq!(out.trim(), want, "{code}");
+    }
+}
+
+/// A count may not follow `*`, nor stack on a piece that already closured.
+/// C encodes this with `kshchar = -1` on the star arm (Src/pattern.c:1435,
+/// commented "a sign that we can't have #'s") and then rejects at c:1620:
+/// `if (kshchar && (hash || count)) return 0;`.
+///
+/// zsh oracle: each pattern below prints `bad pattern: <the whole pattern>`
+/// and the `[[ ]]` yields status 2.
+#[test]
+fn test_bad_counted_closure_is_status_2_with_full_pattern() {
+    for pat in [
+        "*(#c2,3)",
+        "a#(#c2,3)",
+        "a##(#c2,3)",
+        "a(#c2,3)(#c1,2)",
+        "(#c2,3)a",
+    ] {
+        let (status, _out, err) =
+            run_zshrs_parity(&format!("setopt extendedglob; [[ aaa = {pat} ]]"));
+        assert_eq!(status, 2, "bad pattern must exit 2, not a plain no-match: {pat}");
+        // The diagnostic carries the WHOLE pattern, not just the `(#c…)`
+        // fragment — C reports it from the caller (cond.c:314 / glob.c:2522),
+        // which is why the compiler itself must stay silent.
+        assert!(
+            err.contains(&format!("bad pattern: {pat}")),
+            "want full pattern in diagnostic for {pat}, got: {err}"
+        );
+    }
+}
+
+/// A cond syntax error is a FATAL error, not a status an `&&`/`||`
+/// connector can consume: zsh abandons the whole list. zshrs suppressed the
+/// abort check inside a chain (correct for errexit/ZERR, wrong for errflag),
+/// so it ran the `||` right-hand side and the aborted builtin then clobbered
+/// the cond's status 2 down to 1.
+///
+/// zsh oracle: `[[ x = [a- ]] || echo N` prints nothing and exits 2.
+#[test]
+fn test_bad_pattern_in_and_or_list_aborts_with_status_2() {
+    for code in [
+        "[[ x = [a- ]]",
+        "[[ x = [a- ]] && echo Y",
+        "[[ x = [a- ]] || echo N",
+        "[[ x = [a- ]] && echo Y || echo N",
+    ] {
+        let (status, out, _e) = run_zshrs_parity(code);
+        assert_eq!(status, 2, "fatal cond error must exit 2: {code}");
+        assert!(
+            out.is_empty(),
+            "the list must abort — no branch may run: {code} produced {out:?}"
+        );
+    }
+    // The connector still consumes ordinary non-zero statuses.
+    let (status, out, _e) = run_zshrs_parity("false || echo N; true && echo Y");
+    assert_eq!(status, 0);
+    assert_eq!(out, "N\nY\n");
+}
+
+/// `(#i)` folds literal characters but does NOT reach inside a bracket.
+/// C matches brackets with `patmatchrange`/`mb_patmatchrange`
+/// (Src/pattern.c:2780-2800), neither of which consults `patglobflags`;
+/// only the CHARMATCH macro (c:2671, used by P_EXACTLY) honours GF_IGNCASE.
+/// zshrs ran the bracket set through CHARMATCH, so `(#i)` case-folded ranges
+/// and POSIX classes too.
+///
+/// zsh oracle: `[[ F = (#i)[a-z] ]]` → no match; `[[ F = (#i)[A-Z] ]]` → match.
+#[test]
+fn test_case_insensitive_flag_does_not_fold_brackets() {
+    for (code, want) in [
+        // Brackets stay case-SENSITIVE under (#i).
+        ("[[ FooBar = (#i)[a-z]## ]]", "N"),
+        ("[[ foobar = (#i)[a-z]## ]]", "Y"),
+        ("[[ F = (#i)[a-z] ]]", "N"),
+        ("[[ F = (#i)[A-Z] ]]", "Y"),
+        ("[[ f = (#i)[A-Z] ]]", "N"),
+        ("[[ F = (#i)[[:lower:]] ]]", "N"),
+        ("[[ F = (#i)[^a-z] ]]", "Y"),
+        // …but a class spanning both cases still matches either.
+        ("[[ FooBar = (#i)[[:alpha:]]## ]]", "Y"),
+        // Literals DO fold — that is what (#i) is for.
+        ("[[ FooBar = (#i)foobar ]]", "Y"),
+        ("[[ FOOBAR = (#i)foobar ]]", "Y"),
+    ] {
+        let (_s, out, _e) =
+            run_zshrs_parity(&format!("setopt extendedglob; {code} && echo Y || echo N"));
+        assert_eq!(out.trim(), want, "{code}");
+    }
+}
