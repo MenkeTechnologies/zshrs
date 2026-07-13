@@ -14003,9 +14003,11 @@ fn test_dq_nested_expansion_operator_applies_to_joined_scalar() {
 ///   - the `[@]` subscript is the splat that deliberately keeps array shape in
 ///     DQ, so it is exempt (zinit's `"${(j: :)${(qkv)ICE[@]}}"` must quote each
 ///     element, not the joined string).
-///   - the context passes inward at the DQ boundary even through a subscript,
-///     but a DEEPER level that subscripts its inner BLOCKS it — that inner has
-///     to stay an array for `[N]` to index elements.
+///   - the collapse yields a genuine SCALAR (C's `isarr = 0`, c:2800), so a
+///     subscript on it indexes a CHARACTER, at EVERY depth. An earlier attempt
+///     read `"${${${(q)nums}[1]}#*_}"` -> `3` as "element 3" and added a rule
+///     blocking the context through a subscripting level; with nums=(33 11 44)
+///     zsh returns `3`, not `33`, so it is a character and no such rule exists.
 #[test]
 fn test_dq_nested_inner_flags_are_dropped() {
     let pre = "a=(one two three four); nums=(3 1 4 1 5);";
@@ -14022,8 +14024,9 @@ fn test_dq_nested_inner_flags_are_dropped() {
         // is a SCALAR, so [1] indexes a CHARACTER.
         (r#""${${(o)a}[1]}""#, "o"),
         (r#""${#${(o)a}}""#, "18"),
-        // But a DEEPER subscripting level blocks it: the (q) array survives and
-        // [1] indexes an ELEMENT.
+        // …at every depth: the innermost collapses too, so [1] is a CHARACTER of
+        // the joined string, NOT element 1. (nums=(33 11 44) below makes the two
+        // readings distinguishable; with nums=(3 …) they coincide.)
         (r#""${${${(q)nums}[1]}#*_}""#, "3"),
         // (@) is an explicit array request and is never collapsed.
         (r#""${(@o)a}""#, "four one three two"),
@@ -14032,6 +14035,11 @@ fn test_dq_nested_inner_flags_are_dropped() {
         assert_eq!(status, 0, "{expr}");
         assert_eq!(out.trim(), want, "{expr}");
     }
+
+    // The discriminating case: a CHARACTER, not an element.
+    let (_s, out, _e) =
+        run_zshrs_parity(r#"nums=(33 11 44); print -r -- "${${${(q)nums}[1]}#*_}""#);
+    assert_eq!(out.trim(), "3", "the collapsed inner is a scalar; [1] takes a CHARACTER");
 
     // Arrays MANUFACTURED by the inner survive the scalar context.
     let (_s, out, _e) =
