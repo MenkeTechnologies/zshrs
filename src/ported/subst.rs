@@ -4858,37 +4858,33 @@ pub fn paramsubst(
                 // (`"${(j:,:)${(f)$(…)}}"` is `a,b,c` in zsh). The collapse arm
                 // below reads this counter and fires only for array PARAMS.
                 //
-                // Propagation rule, derived from zsh:
-                //   - At the DQ boundary (qt) the context ALWAYS passes inward,
-                //     even when this level subscripts the inner:
-                //       "${${(o)a}[1]}"  -> `o`  (inner collapsed to a scalar, so
-                //                                 [1] indexes a CHARACTER)
-                //   - Below that it does NOT pass through a level that SUBSCRIPTS
-                //     its inner — that inner has to stay an array for `[N]` to
-                //     index ELEMENTS:
-                //       "${${${(q)nums}[1]}#*_}" -> `3`  (inner (q) array survives)
-                //   - It does pass through a level that only applies flags, which
-                //     is what makes the doubly-nested case work:
-                //       "${${(o)${(o)a}}//o/0}" -> `0ne tw0 three f0ur` (unsorted)
-                let subscripts_inner =
-                    matches!(body_chars.get(p).copied(), Some('[') | Some(Inbrack));
-                let saved_ctx = SUBEXP_SCALAR_CTX.with(|c| c.get());
-                let inner_ctx = if qt {
-                    // At the DQ boundary the context always passes inward.
-                    saved_ctx + 1
-                } else if saved_ctx > 0 && !subscripts_inner {
-                    saved_ctx // a flags-only level keeps passing it along
-                } else {
-                    // A level that SUBSCRIPTS its inner BLOCKS the context — that
-                    // inner must stay an array for `[N]` to index elements. Not
-                    // merely "don't increment": the counter is already non-zero
-                    // from the boundary above, so it has to be cleared and
-                    // restored.
-                    0
-                };
-                SUBEXP_SCALAR_CTX.with(|c| c.set(inner_ctx));
+                // c:2795-2801 — after the nested multsub, C collapses an
+                // array-valued expansion to a scalar whenever it is inside `"…"`:
+                //
+                //   if (isarr) {
+                //       if (nojoin) isarr = -1;
+                //       if (qt && !getlen && isarr > 0) {
+                //           val = sepjoin(aval, sep, 1);
+                //           isarr = 0;
+                //       }
+                //   }
+                //
+                // This runs BEFORE the sort/unique block (c:4245, gated on
+                // `isarr`), which is exactly why (o)/(O)/(n)/(u)/(q) are no-ops in
+                // double quotes. It applies at EVERY nesting level, because every
+                // `$` inside `"…"` lexes as Qstring, so the inner paramsubst also
+                // sees qt=1.
+                //
+                // The Rust bridge hands the nested body over as a raw string with
+                // qt=false, so carry the DQ context down on this counter instead.
+                let scalar_ctx = qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0;
+                if scalar_ctx {
+                    SUBEXP_SCALAR_CTX.with(|c| c.set(c.get() + 1));
+                }
                 let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
-                SUBEXP_SCALAR_CTX.with(|c| c.set(saved_ctx));
+                if scalar_ctx {
+                    SUBEXP_SCALAR_CTX.with(|c| c.set(c.get() - 1));
+                }
                 sub_flags_set(saved_sub_flags);
                 // c:Src/exec.c:4856-4871 readoutput — UNQUOTED `$(…)`
                 // output is IFS-word-split (`spacesplit(buf, 0, 1, 0)`,
@@ -12956,6 +12952,7 @@ pub fn paramsubst(
             errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
 
+        let mut ssub_collapsed = false;
         // c:3903-3907 — `if (isarr) { if (nojoin == 0 || sep) {
         //   val = sepjoin(aval, sep, 1); isarr = 0; } }` under a scalar context.
         // Clearing isarr is what gates out the sort/unique block (c:4245).
@@ -12987,19 +12984,40 @@ pub fn paramsubst(
         //     "${(j:,:)${a:|b}}"      -> one,three,five       (set-difference array survives)
         //     "${(j:,:)${(f)$(…)}}"   -> a,b,c                (split array survives)
         if SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0
-            && isarr != 0
+            // c:2798 `if (qt && !getlen && isarr > 0)` — strictly POSITIVE.
+            // c:2797 `if (nojoin) isarr = -1;`, and the `$@` / `[@]` shapes
+            // (SCANPM_ISVAR_AT) are -1 too. Those are the splats that keep array
+            // shape inside `"…"`, so `> 0` is what exempts them — zpwr's
+            // `"${${(Az)@}[1]//\"/}"` must still index an ELEMENT, and zinit's
+            // `"${(j: :)${(qkv)ICE[@]}}"` must quote each element.
+            && isarr > 0
             && nojoin == 0
             && sep.is_none()
             && spsep.is_none()
             && !force_split
             && rest.is_empty()
+            // C reaches `isarr = -1` for a `[@]` subscript too (SCANPM_ISVAR_AT,
+            // c:3075), so `isarr > 0` alone exempts it there. zshrs only sets -1
+            // for the bare `$@` form, so `[@]` has to be named explicitly or
+            // zinit's `"${(j: :)${(qkv)ICE[@]}}"` quotes the JOINED string
+            // instead of each element. `[*]` is NOT exempt — that one does join.
             && !matches!(subscript.as_deref(), Some("@"))
         {
             let parts = split_parts.clone().unwrap_or_else(|| vec![value.clone()]);
-            let joined = crate::ported::utils::sepjoin(&parts, None); // c:3906
+            let joined = crate::ported::utils::sepjoin(&parts, None); // c:2799
             value = joined.clone();
+            // The joined string stays the single element the downstream operator
+            // arms work on, so `(q)` quotes the JOINED scalar (spaces and all —
+            // `3\ 1\ 4\ 1\ 5`) instead of re-fetching the source array and
+            // quoting each token separately (which escapes nothing).
             split_parts = Some(vec![joined]);
-            isarr = 0; // c:3907
+            // c:2800 `isarr = 0;` — the result is a genuine SCALAR from here on.
+            // `ssub_collapsed` carries that to the auto-splat gate below: without
+            // it the 1-element list splats straight back out as an array, and
+            // `"${${(q)nums}[1]}"` indexed an ELEMENT where zsh indexes a
+            // CHARACTER of the joined string.
+            isarr = 0;
+            ssub_collapsed = true;
         }
 
         if casmod != CASMOD_NONE {
@@ -14712,6 +14730,7 @@ pub fn paramsubst(
             isarr = 0;
         }
         let auto_splat = !wantt
+            && !ssub_collapsed              // c:2800 (isarr = 0 -> scalar result)
             && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
             || (!(nojoin == 2)                                     // c:3950

@@ -2,50 +2,60 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode nest --count N --verify 3  (copy NEW-signature lines).
 #
-# KNOWN GAP: inside `"…"`, a nested expansion whose inner applies a SET OPERATOR
-# (`:|` difference, `:*` intersection) still evaluates the operator, where zsh
-# discards it along with the outer join:
+# KNOWN GAP: inside `"…"`, an inner SET OPERATOR (`:|` difference, `:*`
+# intersection) is still evaluated, where zsh has already collapsed the array to
+# a scalar before the operator ever runs:
 #
 #   a=(one two three four); b=(two four six eight)
-#   print -r -- "${(j:,:)${a:|b}}"  -> zsh:   [one two three four]   (both dropped)
-#                                      zshrs: [one,three]
+#   "${(j:,:)${a:|b}}"  -> zsh:   one two three four   (`:|` saw a SCALAR)
+#                          zshrs: one,three            (`:|` saw the array)
 #
-# Pre-existing (identical at HEAD before the DQ scalar-context work) and NOT the
-# same bug as the (o)/(q)/(U) inner-flag collapse, which is now fixed: a bare
-# array PARAM collapses to a scalar in DQ, while an array MANUFACTURED by a
-# split / set op / filter survives. zsh apparently drops the set op entirely in
-# this shape; that needs its own investigation against Src/subst.c:3456-3520.
+# ROOT CAUSE (now understood, from Src/subst.c:2795-2801 in zsh 5.9.1):
+#
+#     if (isarr) {
+#         if (nojoin) isarr = -1;
+#         if (qt && !getlen && isarr > 0) { val = sepjoin(aval, sep, 1); isarr = 0; }
+#     }
+#
+# C runs that collapse right after the nested multsub and BEFORE the operator
+# dispatch (c:3433) and the sort block (c:4245). zshrs's port of the same rule
+# fires in the right place for a DIRECTLY quoted expansion, but the nested-inner
+# collapse added for the flag fix sits LATER in paramsubst — after the set-op
+# arms — so `:|` still sees an array.
+#
+# Fix path: make the existing c:2798 site (subst.rs, `if qt && isarr > 0 &&
+# spsep.is_none()`) also fire when SUBEXP_SCALAR_CTX > 0, and drop the late
+# collapse. Attempted; the existing site is not reached for these shapes, so it
+# needs the value/isarr initialisation order sorted out first.
 #
 # UNQUOTED forms match.
-  print -r -- "[${${#${(L)m}}//o/0}]"
-  print -r -- "[${${${(L)m}[2]}#*_}]"
-  print -r -- "[${${${(O)path}[2]}#*_}]"
-  print -r -- "[${${${(U)a}[2]}#*_}]"
-  print -r -- "[${${${(U)m}[2]}//o/0}]"
+  print -r -- "[${(L)${(s.:.)${t[2]}}}]"
+  print -r -- "[${#${#s}}]"
+  print -r -- "[${${#${m#*_}}#*_}]"
+  print -r -- "[${${#${path#*_}}#*_}]"
+  print -r -- "[${${${nums#*_}[2]}//o/0}]"
+  print -rl -- ${(U)m}
   s=Hello_World; t=a:b:c:d; path=/usr/local/bin/zsh; lines=$'aa\nbb\ncc'; a=(one two three four); nums=(3 1 4 1 5); typeset -A m; m=(k1 v1 k2 v2); ptr=s; empty='';
 --- first 5 new divergence record(s) ---
-[/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin]
+[ ]
+[]
 [1]
+[1694]
+[2]
+[47]
 [5]
-[N]
-[o]
-[TWO]
-[v2]
-[V2]
-==== seed 1105 ====
-==== seed 1470 ====
-==== seed 1716 ====
-==== seed 611 ====
-==== seed 815 ====
-print -r -- "[${${#${(L)m}}//o/N}]"
-print -r -- "[${${#${(q)nums}}//o/N}]"
+==== seed 2253 ====
+==== seed 3288 ====
+==== seed 3349 ====
+==== seed 3352 ====
+==== seed 3839 ====
+print -r -- "[${(L)${(s.:.)${t[N]}}}]"
+print -r -- "[${#${#s}}]"
 print -r -- "[${${#${m#*_}}#*_}]"
-print -r -- "[${${${(L)m}[N]}#*_}]"
-print -r -- "[${${${(n)nums}[N]}//o/N}]"
-print -r -- "[${${${(O)path}[N]}#*_}]"
-print -r -- "[${${${(U)a}[N]}#*_}]"
-print -r -- "[${${${(U)m}[N]}//o/N}]"
-print -r -- "[${${${(U)path}[N]}#*_}]"
+print -r -- "[${${#${path#*_}}#*_}]"
+print -r -- "[${${${nums#*_}[N]}//o/N}]"
 program:
+V1
+V2
 zsh   : exit=0 timeout=false
 zshrs : exit=0 timeout=false
