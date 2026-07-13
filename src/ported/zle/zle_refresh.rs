@@ -434,33 +434,32 @@ pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
             .category_attrs
             .insert(HighlightCategory::Special, default_standout);
     }
+
+    // c:409 — take the shared colour-sequence composition buffer for the
+    // duration of the refresh. This is also what loads the
+    // `$zle_highlight` {fg,bg}_{start,default,end}_code overrides into
+    // `fg_bg_sequences` (`Src/prompt.c:2375-2393`), so it must run after
+    // the entries above have been parsed. `zle_free_highlight` drops it.
+    crate::ported::prompt::allocate_colour_buffer(); // c:409
 }
 
-/// Port of `zle_free_highlight()` from `Src/Zle/zle_refresh.c:415`.
+/// Direct port of `void zle_free_highlight(void)` from
+/// `Src/Zle/zle_refresh.c:415-418`.
 /// ```c
-/// void
-/// zle_free_highlight(void) {
+/// static void
+/// zle_free_highlight(void)
+/// {
 ///     free_colour_buffer();
 /// }
 /// ```
-/// Direct port of `void zle_free_highlight(void)` from
-/// `Src/Zle/zle_refresh.c:415-420`.
-/// ```c
-/// free_colour_buffer();
-/// ```
 ///
-/// C's `free_colour_buffer` frees the per-cell colour-attribute
-/// storage used by `region_highlight`. In the Rust port that
-/// storage is a `Vec<HighlightSpan>` inside the file-scope
-/// `HIGHLIGHT` static, dropped automatically by Vec::clear at the
-/// same invalidate points that fire the C free. No-op here is the
-/// correct cross-language equivalent for this fn shape (the
-/// caller doesn't reach into the highlight buffer from this entry
-/// point; the live tick clears its buffer directly).
-pub fn zle_free_highlight() { // c:415
-                              // Rust ownership handles the equivalent free; explicit clear
-                              // happens against the file-scope HIGHLIGHT static when
-                              // invalidate fires.
+/// Releases the refresh's claim on the shared colour-sequence
+/// composition buffer that [`zle_set_highlight`] took. The buffer is
+/// refcounted (`colseq_buf_allocs`, `Src/prompt.c:2337`), so this only
+/// drops it once the last holder is gone.
+pub fn zle_free_highlight() {
+    // c:415
+    crate::ported::prompt::free_colour_buffer(); // c:417
 }
 
 /// Direct port of `void tcoutclear(int cap)` from

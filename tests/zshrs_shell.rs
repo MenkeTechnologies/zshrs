@@ -13650,3 +13650,90 @@ fn test_math_userfunc_missing_shfunc_is_no_such_function() {
     let (_s, out, _e) = run_zshrs(r#"cube() { (( REPLY = $1 ** 3 )) }; functions -M cube 1 1; echo $(( cube(4) ))"#);
     assert_eq!(out.trim(), "64");
 }
+
+// ---------------------------------------------------------------------
+// $zle_highlight colour-code overrides (Src/prompt.c:2440
+// set_colour_attribute + c:2367 allocate_colour_buffer).
+//
+// zsh lets $zle_highlight replace the escape that carries a colour:
+// {fg,bg}_start_code (prefix), _default_code (the reset body) and
+// _end_code (suffix). set_colour_attribute composes
+// `start + <code> + end`, where <code> is the palette index, or the
+// `.def` body when the colour is being turned back OFF.
+//
+// Every expectation below is the byte-exact output of the real shell
+// (`/bin/zsh -f -c ... | od -c`), including the ordering quirk pinned in
+// the first test.
+// ---------------------------------------------------------------------
+
+#[test]
+fn test_zle_highlight_fg_start_code_overrides_colour_escape() {
+    // zsh oracle: `\e[31m x \e[99m`.
+    //
+    // The SET still emits the stock `\e[31m`, and only the RESET picks up
+    // the override. That is not a bug: fg_bg_sequences is populated by
+    // allocate_colour_buffer(), which set_colour_attribute only reaches
+    // AFTER its termcap fast-path (Src/prompt.c:2478-2515). The first
+    // colour set of a session therefore still sees the built-in codes.
+    // The reset skips that fast-path (def != 0) and composes
+    // `\e[9` + `9` + `m`. Pinning both halves keeps that order faithful.
+    let (status, bytes) = run_zshrs_parity_bytes(
+        r#"zle_highlight=(fg_start_code:$'\e[9' fg_default_code:'9' fg_end_code:'m'); print -Pn '%F{1}x%f'"#,
+    );
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"\x1b[31mx\x1b[99m", "got: {bytes:x?}");
+}
+
+#[test]
+fn test_zle_highlight_256_colour_start_code() {
+    // The documented way to drive a 256-colour terminal: a `\e[38;5;`
+    // prefix turns set_colour_attribute's bare "%d" index body
+    // (Src/prompt.c:2538-2539) into a well-formed escape.
+    // zsh oracle: `\e[32m y \e[38;5;39m`.
+    let (status, bytes) = run_zshrs_parity_bytes(
+        r#"zle_highlight=(fg_start_code:$'\e[38;5;' fg_default_code:'39' fg_end_code:'m'); print -Pn '%F{2}y%f'"#,
+    );
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"\x1b[32my\x1b[38;5;39m", "got: {bytes:x?}");
+}
+
+#[test]
+fn test_zle_highlight_bg_start_code_overrides_colour_escape() {
+    // Background channel reads its own COL_SEQ_BG slot.
+    // zsh oracle: `\e[43m z \e[109m`.
+    let (status, bytes) = run_zshrs_parity_bytes(
+        r#"zle_highlight=(bg_start_code:$'\e[10' bg_default_code:'9' bg_end_code:'m'); print -Pn '%K{3}z%k'"#,
+    );
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"\x1b[43mz\x1b[109m", "got: {bytes:x?}");
+}
+
+#[test]
+fn test_zle_highlight_fg_default_code_overrides_reset_body() {
+    // fg_default_code alone replaces just the reset body, so the reset
+    // becomes `\e[3` + `39;1` + `m`. This is the arm that a hardcoded
+    // `\e[39m` reset silently ignores.
+    // zsh oracle: `\e[35m q \e[339;1m`.
+    let (status, bytes) =
+        run_zshrs_parity_bytes(r#"zle_highlight=(fg_default_code:'39;1'); print -Pn '%F{5}q%f'"#);
+    assert_eq!(status, 0);
+    assert_eq!(bytes, b"\x1b[35mq\x1b[339;1m", "got: {bytes:x?}");
+}
+
+#[test]
+fn test_prompt_colour_escapes_unaffected_without_zle_highlight() {
+    // Regression net: with no override the emitted bytes must stay
+    // exactly what the stock shell produces — indexed, bright, 256-colour
+    // and 24-bit forms all take the built-in TC_COL_* codes.
+    for (code, want) in [
+        ("%F{1}x%f", &b"\x1b[31mx\x1b[39m"[..]),
+        ("%F{9}x%f", &b"\x1b[91mx\x1b[39m"[..]),
+        ("%F{200}x%f", &b"\x1b[38;5;200mx\x1b[39m"[..]),
+        ("%K{4}x%k", &b"\x1b[44mx\x1b[49m"[..]),
+        ("%F{#ff8800}x%f", &b"\x1b[38;2;255;136;0mx\x1b[39m"[..]),
+    ] {
+        let (status, bytes) = run_zshrs_parity_bytes(&format!("print -Pn '{code}'"));
+        assert_eq!(status, 0, "{code}");
+        assert_eq!(bytes, want, "{code} got: {bytes:x?}");
+    }
+}
