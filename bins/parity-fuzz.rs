@@ -1639,6 +1639,615 @@ fn gen_nest(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// arith generator
+//
+// `expr` mode embeds arithmetic only as `$(( ))` operands. The math evaluator
+// has a whole surface of its own that nothing reaches: the OUTPUT RADIX
+// specifiers (`[#16]` prints `16#ff`, `[##16]` prints bare `ff`), input base
+// literals (`16#ff`, `2#1010`, `0xff`), in-expression ASSIGNMENT operators
+// (`+=`, `**=`, `++`), the comma operator, and the integer/float type rules
+// (`7/2` is 3 but `7.0/2` is 3.5; `**` is right-associative and binds tighter
+// than unary minus, so `-2**2` is -4).
+//
+// Deterministic: fixed operands, no $RANDOM/time. Shift amounts are masked to
+// 0..63 — a negative or oversized shift is C-level UB in zsh's math backend, so
+// it would diverge on UB rather than on a real parity gap.
+// ---------------------------------------------------------------------------
+
+const AR_STATE: &str = "integer i=7; integer j=-3; float f=2.5; float g=0.5; integer big=1000000";
+
+/// A leaf operand: literal, variable, or a based/hex literal.
+fn ar_leaf(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..9) {
+        0 => rng.gen_range(-20..40).to_string(),
+        1 => "i".to_string(),
+        2 => "j".to_string(),
+        3 => "big".to_string(),
+        4 => format!("16#{:x}", rng.gen_range(1..255)),
+        5 => format!("2#{:b}", rng.gen_range(1..64)),
+        6 => format!("8#{:o}", rng.gen_range(1..64)),
+        7 => format!("0x{:x}", rng.gen_range(1..255)),
+        // 36#zz — the top of the supported input-base range.
+        _ => format!("36#{}", pick(rng, &["z", "zz", "10", "a9"])),
+    }
+}
+
+/// A float-typed leaf — forces the whole expression into float arithmetic,
+/// which has its own division/printing rules.
+fn ar_fleaf(rng: &mut StdRng) -> String {
+    match rng.gen_range(0..5) {
+        0 => "f".to_string(),
+        1 => "g".to_string(),
+        2 => format!("{}.{}", rng.gen_range(0..9), rng.gen_range(1..99)),
+        3 => format!("{}e{}", rng.gen_range(1..9), rng.gen_range(1..4)),
+        _ => format!("{}.0", rng.gen_range(1..20)),
+    }
+}
+
+/// An integer arithmetic expression, recursive with a depth cap.
+fn ar_expr(rng: &mut StdRng, depth: u32) -> String {
+    if depth == 0 || rng.gen_bool(0.3) {
+        return ar_leaf(rng);
+    }
+    let l = ar_expr(rng, depth - 1);
+    let r = ar_expr(rng, depth - 1);
+    match rng.gen_range(0..10) {
+        // Divide / modulo: force a nonzero divisor via `| 1`.
+        0 => {
+            let op = pick(rng, &["/", "%"]);
+            format!("({l}) {op} ((({r})) | 1)")
+        }
+        // Shift: mask the amount to 0..63 to stay inside defined behaviour.
+        1 => {
+            let op = pick(rng, &["<<", ">>"]);
+            format!("({l}) {op} ((({r})) & 63)")
+        }
+        // `**` is RIGHT-associative and binds tighter than unary minus.
+        // Cap the exponent so the result stays inside int64 (no UB overflow).
+        2 => format!("({l}) ** ((({r})) & 3)"),
+        // Unary forms: negation, bitwise complement, logical not.
+        3 => format!("{}({l})", pick(rng, &["-", "~", "!"])),
+        // Ternary, including a nested one in the true-branch.
+        4 => format!("(({l})) ? ({r}) : {}", rng.gen_range(0..9)),
+        // Comparison — the result is a 0/1 int.
+        5 => {
+            let op = pick(rng, &["<", ">", "<=", ">=", "==", "!="]);
+            format!("({l}) {op} ({r})")
+        }
+        // `&&`/`||`: coerce both sides to 0/1 first. zsh's math.c:1459 declares
+        // the short-circuit test as `int tst` and assigns it the 64-bit left
+        // operand, truncating to 32 bits — so `L && x` is spuriously 0 whenever
+        // L's low 32 bits are zero (any multiple of 2^32). zshrs computes it at
+        // full precision and does not replicate the bug; `!= 0` keeps the corpus
+        // on defined semantics without changing the logical value.
+        6 => {
+            let op = pick(rng, &["&&", "||"]);
+            format!("(({l}) != 0) {op} (({r}) != 0)")
+        }
+        7 => {
+            let op = pick(rng, &["+", "-", "*", "&", "|", "^"]);
+            format!("({l}) {op} ({r})")
+        }
+        // Comma operator: evaluate left for effect, yield right.
+        8 => format!("({l}), ({r})"),
+        _ => {
+            let op = pick(rng, &["+", "-", "*"]);
+            format!("{l} {op} {r}")
+        }
+    }
+}
+
+fn gen_arith_mode(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![AR_STATE.to_string()];
+    for _ in 0..rng.gen_range(2..=5) {
+        match rng.gen_range(0..8) {
+            // Plain integer expression.
+            0 => {
+                let e = ar_expr(&mut rng, 3);
+                stmts.push(format!("print -r -- \"$(( {e} ))\""));
+            }
+            // OUTPUT RADIX: `[#16]` keeps the `16#` prefix, `[##16]` strips it.
+            // The radix applies to the whole expression's printed form.
+            1 => {
+                let base = pick(&mut rng, &["2", "8", "16", "36", "10"]);
+                let hashes = if rng.gen_bool(0.5) { "#" } else { "##" };
+                let e = ar_expr(&mut rng, 2);
+                stmts.push(format!("print -r -- \"$(( [{hashes}{base}] {e} ))\""));
+            }
+            // Float expression — division does NOT truncate, and the printed
+            // precision is the parity question.
+            2 => {
+                let l = ar_fleaf(&mut rng);
+                let r = ar_fleaf(&mut rng);
+                let op = pick(&mut rng, &["+", "-", "*", "/"]);
+                stmts.push(format!("print -r -- \"$(( {l} {op} {r} ))\""));
+            }
+            // Mixed int/float: one float operand promotes the whole expression.
+            3 => {
+                let l = ar_leaf(&mut rng);
+                let r = ar_fleaf(&mut rng);
+                let op = pick(&mut rng, &["+", "*", "/", "-"]);
+                stmts.push(format!("print -r -- \"$(( {l} {op} {r} ))\""));
+            }
+            // In-expression ASSIGNMENT: the variable keeps the new value, and
+            // the expression yields it. `i` is `integer`, so a float RHS
+            // truncates on assignment — a distinct rule from plain evaluation.
+            4 => {
+                let op = pick(&mut rng, &["=", "+=", "-=", "*=", "|=", "&=", "^=", "**="]);
+                let v = pick(&mut rng, &["i", "j"]);
+                let e = ar_expr(&mut rng, 1);
+                // `**=` with a large/negative exponent is not meaningful; mask it.
+                let rhs = if *op == "**=" {
+                    format!("((({e})) & 3)")
+                } else {
+                    format!("({e})")
+                };
+                stmts.push(format!("print -r -- \"$(( {v} {op} {rhs} ))\""));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // Pre/post increment and decrement — the value yielded differs
+            // between the two forms, and the variable is mutated either way.
+            5 => {
+                let v = pick(&mut rng, &["i", "j"]);
+                let form = pick(&mut rng, &["++", "--"]);
+                let e = if rng.gen_bool(0.5) {
+                    format!("{v}{form}") // post: yields the OLD value
+                } else {
+                    format!("{form}{v}") // pre: yields the NEW value
+                };
+                stmts.push(format!("print -r -- \"$(( {e} ))\""));
+                stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // `(( ))` as a COMMAND: exit status is 0 iff the value is nonzero
+            // (inverted relative to C truthiness).
+            6 => {
+                let e = ar_expr(&mut rng, 2);
+                stmts.push(format!("(( {e} )); print -r -- \"rc=$?\""));
+            }
+            // Arithmetic in an array subscript and in a `for ((;;))` header —
+            // the same evaluator reached through two different callers.
+            _ => {
+                let e = ar_expr(&mut rng, 1);
+                stmts.push(format!(
+                    "arr=(a b c d e); print -r -- \"[${{arr[(({e}) % 5) + 1]}}]\""
+                ));
+            }
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// match generator
+//
+// The substring-match FLAGS on `${var#pat}` / `${var/pat/rep}`: `(S)` search
+// for the shortest match anywhere (not anchored), `(I:n:)` take the n'th match,
+// `(B)`/`(E)` report the match's begin/end offset instead of the text, `(M)`
+// yield the matched text itself, `(N)` yield the match LENGTH, and the `(#b)` /
+// `(#m)` backreference forms that expose `$match`/`$MATCH` inside a replacement.
+//
+// This is the machinery compsys leans on hardest and the generators above never
+// reach: `expr` only ever emits an unflagged `${v//o/0}`.
+//
+// Deterministic: fixed subjects, patterns without filesystem contact.
+// ---------------------------------------------------------------------------
+
+const MT_STATE: &str = "s=abcabcabc; p=/usr/local/bin/zsh; w='foo bar foo baz'; n=a1b2c3";
+
+/// (subject-var, pattern) pairs that actually match in interesting ways —
+/// several have MULTIPLE matches so (I:n:) / (S) have something to select.
+const MT_SUBJ: &[(&str, &str)] = &[
+    ("s", "abc"),
+    ("s", "a*c"),
+    ("s", "b"),
+    ("s", "*b"),
+    ("w", "foo"),
+    ("w", "ba?"),
+    ("w", "*o"),
+    ("p", "*/"),
+    ("p", "/*"),
+    ("p", "usr"),
+    ("n", "[0-9]"),
+    ("n", "[a-z]"),
+];
+
+fn gen_match(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["setopt extendedglob".to_string(), MT_STATE.to_string()];
+    for _ in 0..rng.gen_range(2..=5) {
+        let (v, pat) = *pick(&mut rng, MT_SUBJ);
+        let expr = match rng.gen_range(0..10) {
+            // Anchored strip with a report flag: (M) matched text, (B)/(E)
+            // offsets, (N) match length. Reported instead of the remainder.
+            0 => {
+                let f = pick(&mut rng, &["M", "B", "E", "N", "MB", "BE"]);
+                let op = pick(&mut rng, &["#", "##", "%", "%%"]);
+                format!("${{({f}){v}{op}{pat}}}")
+            }
+            // (S) — search anywhere, not anchored to the head/tail.
+            1 => {
+                let op = pick(&mut rng, &["#", "##", "%", "%%"]);
+                format!("${{(S){v}{op}{pat}}}")
+            }
+            // (S) combined with a report flag.
+            2 => {
+                let f = pick(&mut rng, &["M", "B", "E", "N"]);
+                let op = pick(&mut rng, &["#", "##"]);
+                format!("${{(S{f}){v}{op}{pat}}}")
+            }
+            // (I:n:) — select the n'th match rather than the first.
+            3 => {
+                let k = rng.gen_range(1..=3);
+                let f = pick(&mut rng, &["", "M", "B", "E"]);
+                format!("${{(SI:{k}:{f}){v}#{pat}}}")
+            }
+            // Substitution with the same flags: (S) shortest-anywhere replace.
+            4 => format!("${{{v}/{pat}/X}}"),
+            5 => format!("${{{v}//{pat}/X}}"),
+            // Anchored substitution: `/#` head-anchored, `/%` tail-anchored.
+            6 => {
+                let anch = pick(&mut rng, &["#", "%"]);
+                format!("${{{v}/{anch}{pat}/X}}")
+            }
+            // (#m) — the matched text is available as $MATCH inside the
+            // replacement, so the replacement can transform it.
+            7 => format!("${{{v}//(#m){pat}/[${{MATCH:u}}]}}"),
+            // (#b) — parenthesised groups land in $match[1..].
+            8 => format!("${{{v}//(#b)({pat})/<${{match[1]}}>}}"),
+            // Replacement referencing the match length, and an empty
+            // replacement (deletion).
+            _ => {
+                if rng.gen_bool(0.5) {
+                    format!("${{{v}//{pat}/}}")
+                } else {
+                    format!("${{(M){v}//{pat}/X}}")
+                }
+            }
+        };
+        stmts.push(format!("print -r -- \"[{expr}]\""));
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// regex generator
+//
+// `[[ str =~ ere ]]` is a separate matcher from zsh's glob patterns (POSIX ERE
+// via the system regex, not pattern.c), and it has SIDE EFFECTS the glob
+// matcher doesn't: `$MATCH` / `$match` / `$mbegin` / `$mend` on success — or,
+// under `setopt BASH_REMATCH`, the `$BASH_REMATCH` array instead. Nothing else
+// in the harness touches it.
+//
+// Deterministic: fixed subjects/patterns, and every backref variable is printed.
+// ---------------------------------------------------------------------------
+
+const RX_SUBJ: &[&str] = &[
+    "abc123", "2024-01-31", "foo.tar.gz", "Hello_World", "", "aaa", "a1b2", "x-y-z", "999",
+];
+
+const RX_PAT: &[&str] = &[
+    "^[a-z]+",
+    "[0-9]+$",
+    "^[a-z]+[0-9]+$",
+    "([a-z]+)([0-9]+)",
+    "([0-9]{4})-([0-9]{2})-([0-9]{2})",
+    "a{2,3}",
+    "(foo|bar)",
+    "^$",
+    ".",
+    "[[:upper:]]",
+    "z*",
+    "(a)(b)?",
+    "\\.",
+];
+
+fn gen_regex(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    // BASH_REMATCH re-routes the capture output into a different array with a
+    // different indexing convention ([0] = whole match) — both paths matter.
+    let bash_rematch = rng.gen_bool(0.3);
+    if bash_rematch {
+        stmts.push("setopt BASH_REMATCH".to_string());
+    }
+    for _ in 0..rng.gen_range(2..=4) {
+        let subj = pick(&mut rng, RX_SUBJ);
+        let pat = pick(&mut rng, RX_PAT);
+        stmts.push(format!(
+            "if [[ \"{subj}\" =~ {pat} ]]; then print -r -- \"rc=0\"; else print -r -- \"rc=$?\"; fi"
+        ));
+        if bash_rematch {
+            stmts.push(
+                r#"print -r -- "BR=(${(j:,:)BASH_REMATCH}) n=${#BASH_REMATCH}""#.to_string(),
+            );
+        } else {
+            stmts.push(
+                r#"print -r -- "M=[$MATCH] m=(${(j:,:)match}) b=(${(j:,:)mbegin}) e=(${(j:,:)mend})""#
+                    .to_string(),
+            );
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// builtin generator
+//
+// The builtins that produce output but aren't reachable from any other mode:
+// `print` flag matrix (-l/-r/-n/-N/-o/-O/-i/-m/-f/-P), `echo` escape handling,
+// `read` (-r/-A/-d/-k/-E/-e) fed from a here-string, `getopts` option parsing,
+// `let`, `eval`, `[[ -o opt ]]` option introspection, and `typeset -p` output.
+//
+// Deterministic: no tty reads (every `read` is fed from a here-string), no
+// filesystem, no time. `print -P` is restricted to prompt escapes with no
+// environment dependence (no %~, %M, %n, %T).
+// ---------------------------------------------------------------------------
+
+const BI_WORDS: &[&str] = &["delta", "alpha", "Charlie", "bravo", "echo2", "a b", "", "42"];
+
+fn gen_builtin(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+
+    match rng.gen_range(0..7) {
+        // ---- print: the flag matrix, over a fixed word list.
+        0 => {
+            let n = rng.gen_range(1..=4);
+            let words: Vec<String> = (0..n)
+                .map(|_| format!("'{}'", pick(&mut rng, BI_WORDS)))
+                .collect();
+            let flag = pick(
+                &mut rng,
+                &[
+                    "-r", "-l", "-rl", "-n", "-rn", "-N", "-o", "-O", "-oi", "-Oi", "-lo", "-ln",
+                ],
+            );
+            stmts.push(format!("print {flag} -- {}", words.join(" ")));
+            stmts.push("print -r -- END".to_string());
+        }
+        // ---- print -m: only the args matching a pattern are printed.
+        1 => {
+            let pat = pick(&mut rng, &["a*", "*a*", "[A-Z]*", "?", "*2"]);
+            stmts.push(format!(
+                "print -rlm -- '{pat}' alpha bravo Charlie delta a2 x; print -r -- END"
+            ));
+        }
+        // ---- echo: escape handling differs from print, and -e/-E flip it.
+        2 => {
+            let flag = pick(&mut rng, &["", "-n", "-e", "-E", "-ne"]);
+            let body = pick(
+                &mut rng,
+                &[
+                    r"a\tb",
+                    r"a\nb",
+                    r"x\\y",
+                    r"\e[1m",
+                    r"c\cd",
+                    r"\0101",
+                    r"no_escapes",
+                    r"a\x41b",
+                ],
+            );
+            stmts.push(format!("echo {flag} '{body}'; print -r -- END"));
+        }
+        // ---- read: fed from a here-string so it never blocks on a tty.
+        3 => {
+            let input = pick(
+                &mut rng,
+                &["one two three", "  lead and trail  ", "a:b:c", r"esc\ttab", "single"],
+            );
+            match rng.gen_range(0..5) {
+                // Plain read: splits on IFS, last var gets the remainder.
+                0 => {
+                    stmts.push(format!("read a b c <<< '{input}'"));
+                    stmts.push(r#"print -r -- "a=[$a] b=[$b] c=[$c]""#.to_string());
+                }
+                // -r: backslashes stay literal.
+                1 => {
+                    stmts.push(format!("read -r line <<< '{input}'"));
+                    stmts.push(r#"print -r -- "[$line]""#.to_string());
+                }
+                // -A: the whole line splits into an array.
+                2 => {
+                    stmts.push(format!("read -A arr <<< '{input}'"));
+                    stmts.push(r#"print -r -- "n=${#arr} [${(j:|:)arr}]""#.to_string());
+                }
+                // -d: a custom delimiter ends the read.
+                3 => {
+                    let d = pick(&mut rng, &[":", " ", "t"]);
+                    stmts.push(format!("read -d '{d}' x <<< '{input}'; print -r -- \"[$x] rc=$?\""));
+                }
+                // -k: read exactly N characters.
+                _ => {
+                    let k = rng.gen_range(1..=4);
+                    stmts.push(format!("read -k {k} x <<< '{input}'; print -r -- \"[$x]\""));
+                }
+            }
+            // A read past EOF must fail with a nonzero status and leave the
+            // variable empty — a distinct code path from a successful read.
+            stmts.push("read eofv < /dev/null; print -r -- \"eof_rc=$? [$eofv]\"".to_string());
+        }
+        // ---- getopts: the option-parsing loop, including a bad option and a
+        // missing required argument (both have defined, distinct behaviour).
+        4 => {
+            let args: Vec<&str> = (0..rng.gen_range(1..=4))
+                .map(|_| *pick(&mut rng, &["-a", "-b", "val", "-c", "-ab", "-bval", "--", "x", "-z"]))
+                .collect();
+            stmts.push(format!("set -- {}", args.join(" ")));
+            stmts.push(
+                "while getopts ab:c opt; do print -r -- \"opt=$opt arg=[$OPTARG]\"; done"
+                    .to_string(),
+            );
+            stmts.push(r#"print -r -- "rc=$? ind=$OPTIND rest=(${(j:,:)@[OPTIND,-1]})""#.to_string());
+        }
+        // ---- let / eval: arithmetic-as-command and re-parsed text.
+        5 => {
+            let e = ar_expr(&mut rng, 2);
+            stmts.push("integer i=7 j=-3 big=1000000".to_string());
+            stmts.push(format!("let \"x = {e}\"; print -r -- \"x=$x rc=$?\""));
+            let ev = pick(
+                &mut rng,
+                &[
+                    r#"eval 'print -r -- evaled'"#,
+                    r#"v=inner; eval 'print -r -- "$v"'"#,
+                    r#"eval 'a=(1 2 3)'; print -r -- "${#a}""#,
+                    r#"q="print -r -- fromvar"; eval $q"#,
+                    r#"eval 'exit 4'"#,
+                ],
+            );
+            stmts.push(format!("( {ev} ); print -r -- \"rc=$?\""));
+        }
+        // ---- option introspection: `[[ -o opt ]]` must track setopt state,
+        // including the `no`-prefixed spelling and the alias spellings.
+        _ => {
+            let opt = pick(
+                &mut rng,
+                &["extendedglob", "ksharrays", "shwordsplit", "nounset", "multios", "aliases"],
+            );
+            let set = rng.gen_bool(0.5);
+            stmts.push(format!("{}setopt {opt}", if set { "" } else { "un" }));
+            stmts.push(format!("[[ -o {opt} ]]; print -r -- \"o=$?\""));
+            stmts.push(format!("[[ -o no{opt} ]]; print -r -- \"no=$?\""));
+            // typeset -p round-trips a parameter's full declaration; the exact
+            // rendering (quoting, attribute order) is the parity question.
+            stmts.push("typeset -i tv=42; typeset -p tv".to_string());
+            stmts.push("typeset -a ta=(x 'a b'); typeset -p ta".to_string());
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// cmdsub generator
+//
+// Command substitution has rules that no other mode probes: ALL trailing
+// newlines are stripped (not just one), an unquoted result word-splits on $IFS
+// while a quoted one does not, `$(<file)` is a distinct (fork-free) code path
+// from `$(cat file)`, and a substitution's exit status only survives when it is
+// the whole command.
+//
+// Deterministic: a per-seed temp dir (name derived from the seed, not a
+// pid/timestamp), and the substituted commands are fixed built-ins.
+// ---------------------------------------------------------------------------
+
+fn gen_cmdsub(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![
+        format!("d=${{TMPDIR:-/tmp}}/pf_cs_{seed}"),
+        "command rm -rf $d; command mkdir -p $d; cd $d".to_string(),
+        "printf 'l1\\nl2\\nl3\\n' > f; printf 'trail\\n\\n\\n' > g; printf 'noeol' > h".to_string(),
+        "IFS=$' \\t\\n'".to_string(),
+    ];
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..12) {
+            // Trailing newlines are ALL stripped, quoted or not.
+            0 => r#"print -r -- "[$(printf 'a\n\n\n')]""#.to_string(),
+            // `$(<file)` — the fork-free read path.
+            1 => r#"print -r -- "[$(<f)]""#.to_string(),
+            2 => r#"print -r -- "[$(<g)]""#.to_string(),
+            // A file with no trailing newline.
+            3 => r#"print -r -- "[$(<h)]""#.to_string(),
+            // Quoted vs unquoted: the unquoted form word-splits.
+            4 => r#"print -rl -- $(<f); print -r -- END"#.to_string(),
+            5 => r#"print -rl -- "$(<f)"; print -r -- END"#.to_string(),
+            // Nested substitution.
+            6 => r#"print -r -- "[$(echo $(echo inner))]""#.to_string(),
+            // Backtick form must agree with `$( )`.
+            7 => "print -r -- \"[`echo tick`]\"".to_string(),
+            // Splitting under a custom IFS.
+            8 => {
+                let ifs = pick(&mut rng, &[":", ",", "x"]);
+                format!("(IFS={ifs}; print -rl -- $(print -r -- 'a{ifs}b{ifs}c'); print -r -- END)")
+            }
+            // Substitution feeding an array assignment.
+            9 => r#"arr=( $(<f) ); print -r -- "n=${#arr} [${(j:|:)arr}]""#.to_string(),
+            // Exit status of the substituted command propagates only when the
+            // substitution is the entire command.
+            10 => r#"$(exit 3); print -r -- "rc=$?"; x=$(exit 5); print -r -- "assign_rc=$?""#
+                .to_string(),
+            // Substitution inside arithmetic, and an expansion applied to the
+            // substitution's result.
+            _ => r#"print -r -- "[$(( $(print -r -- 3) + 4 ))] [${$(<f)[2]}] [${(U)$(<h)}]""#
+                .to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts.push("cd /; command rm -rf $d".to_string());
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// loop generator
+//
+// Control flow: `for` (list and C-style), `while`/`until`, `repeat`, the
+// `break N` / `continue N` multi-level forms, and the zsh `case` fallthrough
+// terminators `;&` (fall into the next branch unconditionally) and `;|` (retry
+// the remaining patterns). Every body prints, so the exact iteration order and
+// early-exit point are observable.
+// ---------------------------------------------------------------------------
+
+fn gen_loop(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["items=(p q r); nums=(1 2 3 4)".to_string()];
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..10) {
+            // Nested loops with a multi-level break: `break 2` leaves BOTH.
+            0 => {
+                let lvl = rng.gen_range(1..=2);
+                format!(
+                    "for x in $items; do for y in $nums; do (( y == 2 )) && break {lvl}; print -r -- \"$x$y\"; done; done; print -r -- END"
+                )
+            }
+            // Multi-level continue.
+            1 => {
+                let lvl = rng.gen_range(1..=2);
+                format!(
+                    "for x in $items; do for y in $nums; do (( y == 2 )) && continue {lvl}; print -r -- \"$x$y\"; done; done; print -r -- END"
+                )
+            }
+            // C-style for.
+            2 => {
+                let n = rng.gen_range(0..=4);
+                format!("for (( k = 0; k < {n}; k++ )); do print -r -- \"k=$k\"; done; print -r -- \"after=$k\"")
+            }
+            // while with an arithmetic condition.
+            3 => "i=0; while (( i < 3 )); do print -r -- \"w=$i\"; (( i++ )); done".to_string(),
+            // until — the inverted condition.
+            4 => "i=0; until (( i >= 3 )); do print -r -- \"u=$i\"; (( i++ )); done".to_string(),
+            // repeat N — a fixed count with no loop variable.
+            5 => {
+                let n = rng.gen_range(0..=4);
+                format!("repeat {n}; do print -r -- rep; done; print -r -- END")
+            }
+            // `;&` — unconditional fallthrough into the NEXT branch's body.
+            6 => {
+                let subj = pick(&mut rng, &["a", "b", "c", "z"]);
+                format!(
+                    "case {subj} in (a) print -r -- A ;& (b) print -r -- B ;& (c) print -r -- C ;; (*) print -r -- OTHER ;; esac"
+                )
+            }
+            // `;|` — re-test the REMAINING patterns after a match.
+            7 => {
+                let subj = pick(&mut rng, &["ab", "a", "b", "zz"]);
+                format!(
+                    "case {subj} in (a*) print -r -- A ;| (*b) print -r -- B ;| (??) print -r -- TWO ;; (*) print -r -- OTHER ;; esac"
+                )
+            }
+            // for over a parameter expansion, with the loop var leaking after.
+            8 => "for x in ${(o)items} ${nums[2,3]}; do print -rn -- \"$x.\"; done; print; print -r -- \"leak=$x\""
+                .to_string(),
+            // A loop whose body redefines the list it iterates: the list is
+            // snapshotted at loop entry.
+            _ => "l=(1 2 3); for e in $l; do l+=(x); print -rn -- \"$e\"; done; print; print -r -- \"n=${#l}\""
+                .to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -1656,6 +2265,12 @@ enum Mode {
     Func,
     Redir,
     Nest,
+    Arith,
+    Match,
+    Regex,
+    Builtin,
+    Cmdsub,
+    Loop,
 }
 
 struct Args {
@@ -1686,7 +2301,62 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Func => gen_func(seed),
         Mode::Redir => gen_redir(seed),
         Mode::Nest => gen_nest(seed),
+        Mode::Arith => gen_arith_mode(seed),
+        Mode::Match => gen_match(seed),
+        Mode::Regex => gen_regex(seed),
+        Mode::Builtin => gen_builtin(seed),
+        Mode::Cmdsub => gen_cmdsub(seed),
+        Mode::Loop => gen_loop(seed),
     }
+}
+
+/// Mode → the name accepted by `--mode` (and printed by `--once`).
+fn mode_name(m: Mode) -> &'static str {
+    match m {
+        Mode::Stateful => "stateful",
+        Mode::Expr => "expr",
+        Mode::Glob => "glob",
+        Mode::Printf => "printf",
+        Mode::Heredoc => "heredoc",
+        Mode::Subscript => "subscript",
+        Mode::Pattern => "pattern",
+        Mode::Typeset => "typeset",
+        Mode::Zutil => "zutil",
+        Mode::Func => "func",
+        Mode::Redir => "redir",
+        Mode::Nest => "nest",
+        Mode::Arith => "arith",
+        Mode::Match => "match",
+        Mode::Regex => "regex",
+        Mode::Builtin => "builtin",
+        Mode::Cmdsub => "cmdsub",
+        Mode::Loop => "loop",
+    }
+}
+
+/// Parse a `--mode` value. Returns None for an unknown name.
+fn mode_from_name(s: &str) -> Option<Mode> {
+    const ALL: &[Mode] = &[
+        Mode::Stateful,
+        Mode::Expr,
+        Mode::Glob,
+        Mode::Printf,
+        Mode::Heredoc,
+        Mode::Subscript,
+        Mode::Pattern,
+        Mode::Typeset,
+        Mode::Zutil,
+        Mode::Func,
+        Mode::Redir,
+        Mode::Nest,
+        Mode::Arith,
+        Mode::Match,
+        Mode::Regex,
+        Mode::Builtin,
+        Mode::Cmdsub,
+        Mode::Loop,
+    ];
+    ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
 
 fn parse_args() -> Args {
@@ -1745,33 +2415,18 @@ fn parse_args() -> Args {
             }
             "--mode" | "-m" => {
                 i += 1;
-                match argv.get(i).map(|s| s.as_str()) {
-                    Some("expr") => mode = Mode::Expr,
-                    Some("stateful") => mode = Mode::Stateful,
-                    Some("glob") => mode = Mode::Glob,
-                    Some("printf") => mode = Mode::Printf,
-                    Some("heredoc") => mode = Mode::Heredoc,
-                    Some("subscript") => mode = Mode::Subscript,
-                    Some("pattern") => mode = Mode::Pattern,
-                    Some("typeset") => mode = Mode::Typeset,
-                    Some("zutil") => mode = Mode::Zutil,
-                    Some("func") => mode = Mode::Func,
-                    Some("redir") => mode = Mode::Redir,
-                    Some("nest") => mode = Mode::Nest,
-                    _ => {}
+                match argv.get(i).and_then(|s| mode_from_name(s)) {
+                    Some(m) => mode = m,
+                    None => {
+                        eprintln!("unknown --mode '{}'", argv.get(i).map(|s| s.as_str()).unwrap_or(""));
+                        std::process::exit(2);
+                    }
                 }
             }
-            "--expr" => mode = Mode::Expr,
-            "--glob" => mode = Mode::Glob,
-            "--printf" => mode = Mode::Printf,
-            "--heredoc" => mode = Mode::Heredoc,
-            "--subscript" => mode = Mode::Subscript,
-            "--pattern" => mode = Mode::Pattern,
-            "--typeset" => mode = Mode::Typeset,
-            "--zutil" => mode = Mode::Zutil,
-            "--func" => mode = Mode::Func,
-            "--redir" => mode = Mode::Redir,
-            "--nest" => mode = Mode::Nest,
+            // `--<mode>` shorthand for every mode name (`--expr`, `--arith`, …).
+            a if a.starts_with("--") && mode_from_name(&a[2..]).is_some() => {
+                mode = mode_from_name(&a[2..]).unwrap();
+            }
             "--verify" => {
                 i += 1;
                 verify = argv
@@ -1790,10 +2445,10 @@ fn parse_args() -> Args {
                      \n\
                      --count N        number of cases (default 2000)\n\
                      --seed N         base seed; case i uses seed+i (default 1)\n\
-                     --mode M         'stateful' (default), 'expr', 'glob', 'printf',\n\
-;
-                     'heredoc', 'subscript', 'pattern', 'typeset',\n\
-                     'zutil', 'func', or 'redir'\n\
+                     --mode M         stateful (default), expr, glob, printf, heredoc,\n\
+                     subscript, pattern, typeset, zutil, func, redir,\n\
+                     nest, arith, match, regex, builtin, cmdsub, loop\n\
+                     (each also accepted as a `--<mode>` shorthand)\n\
                      --once           run a single case (seed) and print both outputs\n\
                      --timeout-ms N   per-shell wall-clock timeout (default 5000)\n\
                      --out PATH       divergence corpus file\n\
@@ -1895,23 +2550,7 @@ fn main() {
         let r = run_zshrs(&script, &bin, timeout);
         let diverged = !z.timed_out && (z.stdout != r.stdout || z.exit != r.exit);
         println!("seed   : {}", args.base_seed);
-        println!(
-            "mode   : {}",
-            match args.mode {
-                Mode::Stateful => "stateful",
-                Mode::Expr => "expr",
-                Mode::Glob => "glob",
-                Mode::Printf => "printf",
-                Mode::Heredoc => "heredoc",
-                Mode::Subscript => "subscript",
-                Mode::Pattern => "pattern",
-                Mode::Typeset => "typeset",
-                Mode::Zutil => "zutil",
-                Mode::Func => "func",
-                Mode::Redir => "redir",
-                Mode::Nest => "nest",
-            }
-        );
+        println!("mode   : {}", mode_name(args.mode));
         let (show, z, r) = if diverged && stmts.len() > 1 {
             let m = minimize(stmts, &bin, timeout);
             let ms = build_program(&m);

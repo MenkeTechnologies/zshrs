@@ -2469,8 +2469,18 @@ pub fn default_bindings() {
     // The check is `strstr(ed, "vi")` — substring match anywhere
     // in the env-var value. So `EDITOR=nvim`, `vim`, `vi` all
     // pick viins; `emacs`, `nano`, unset all pick emacs.
+    //
+    // An explicitly-set EMACSMODE loses to nothing: C reaches the same
+    // state through `dosetopt` → `zleentry(ZLE_CMD_SET_KEYMAP)` because
+    // zle is already loaded when `setopt emacs` runs. zshrs builds the
+    // keymaps lazily in non-interactive shells (first `bindkey` call),
+    // so default_bindings can run AFTER the option was set — the EDITOR
+    // sniff would then override the user's explicit `setopt emacs`.
+    // Honour both option bits before falling back to the env sniff.
     let pick_vi = if crate::ported::zsh_h::isset(crate::ported::zsh_h::VIMODE) {
         true
+    } else if crate::ported::zsh_h::isset(crate::ported::zsh_h::EMACSMODE) {
+        false
     } else {
         let visual_has_vi = std::env::var("VISUAL")
             .map(|v| v.contains("vi"))
@@ -2845,8 +2855,14 @@ pub fn zlesetkeymap(mode: i32) {
     // C body (c:1820-1825): `Keymap km = openkeymap(mode==VIMODE?
     //                       "viins":"emacs"); if (!km) return;
     //                       linkkeymap(km, "main", 0)`.
-    // VIMODE = 1 (per zsh's mode-flag enum).
-    let kmname = if mode == 1 { "viins" } else { "emacs" };
+    // `mode` is the OPTION index that dosetopt passed through
+    // zleentry(ZLE_CMD_SET_KEYMAP, optno) — VIMODE (zsh.h option
+    // number), not a 0/1 flag.
+    let kmname = if mode == crate::ported::zsh_h::VIMODE {
+        "viins"
+    } else {
+        "emacs"
+    };
     if let Some(km) = openkeymap(kmname) {
         linkkeymap(km, "main", 0);
     }

@@ -883,6 +883,22 @@ pub fn dosetopt(optno: i32, mut value: i32, force: i32) -> i32 {
     {
         if (idx == EMACSMODE || idx == VIMODE) && value != 0 {
             // c:859
+            // c:869-870 — `if (zle_load_state == 1)
+            //   zleentry(ZLE_CMD_SET_KEYMAP, optno);`. Re-link `main`
+            // to the keymap the option selects (viins for `setopt vi`,
+            // emacs for `setopt emacs`). ZLE is compiled in here, so
+            // the load-state guard collapses to a direct call;
+            // zlesetkeymap no-ops when the keymaps don't exist yet
+            // (openkeymap → None before default_bindings has run).
+            // Without this, `set -o emacs` / `set -o vi` flipped only
+            // the option bit and the live editor kept dispatching
+            // through whichever keymap startup picked — so e.g. `^P`
+            // stayed self-insert (viins) after `set -o emacs` instead
+            // of becoming up-line-or-history.
+            crate::ported::zle::zle_main::zle_main_entry(
+                crate::ported::zsh_h::ZLE_CMD_SET_KEYMAP, // c:870
+                &mut crate::ported::zle::zle_main::zle_main_entry_args::SetKeymap(idx),
+            );
             // c:870 — turn off the OTHER keymap option. Resolve
             // the canonical name via opt_name (matches the
             // storage key used by isset/opt_state_get/_set).
