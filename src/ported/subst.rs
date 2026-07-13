@@ -4844,7 +4844,51 @@ pub fn paramsubst(
                 // `sub_flags` is a function-local int saved across
                 // the recursive `multsub` call at c:2681).
                 let saved_sub_flags = sub_flags_get();
-let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
+                // c:3901-3907 — inside `"…"` an expansion runs in a SCALAR
+                // context (C's `ssub`, c:1759), which sepjoins its array and
+                // clears `isarr`; the sort/unique block then gates out (c:4245
+                // `if (isarr)`). That is why (o)/(O)/(n)/(u)/(q) are no-ops in
+                // double quotes — and it holds for a NESTED inner too, so
+                // `"${${(o)a}//o/0}"` is NOT sorted in zsh.
+                //
+                // Carried on its OWN counter rather than by adding
+                // PREFORK_SINGLE to the inner's pf_flags: that flag ALSO switches
+                // off the inner's auto-splat, which would collapse a
+                // split-DERIVED array as well — and those must survive
+                // (`"${(j:,:)${(f)$(…)}}"` is `a,b,c` in zsh). The collapse arm
+                // below reads this counter and fires only for array PARAMS.
+                //
+                // Propagation rule, derived from zsh:
+                //   - At the DQ boundary (qt) the context ALWAYS passes inward,
+                //     even when this level subscripts the inner:
+                //       "${${(o)a}[1]}"  -> `o`  (inner collapsed to a scalar, so
+                //                                 [1] indexes a CHARACTER)
+                //   - Below that it does NOT pass through a level that SUBSCRIPTS
+                //     its inner — that inner has to stay an array for `[N]` to
+                //     index ELEMENTS:
+                //       "${${${(q)nums}[1]}#*_}" -> `3`  (inner (q) array survives)
+                //   - It does pass through a level that only applies flags, which
+                //     is what makes the doubly-nested case work:
+                //       "${${(o)${(o)a}}//o/0}" -> `0ne tw0 three f0ur` (unsorted)
+                let subscripts_inner =
+                    matches!(body_chars.get(p).copied(), Some('[') | Some(Inbrack));
+                let saved_ctx = SUBEXP_SCALAR_CTX.with(|c| c.get());
+                let inner_ctx = if qt {
+                    // At the DQ boundary the context always passes inward.
+                    saved_ctx + 1
+                } else if saved_ctx > 0 && !subscripts_inner {
+                    saved_ctx // a flags-only level keeps passing it along
+                } else {
+                    // A level that SUBSCRIPTS its inner BLOCKS the context — that
+                    // inner must stay an array for `[N]` to index elements. Not
+                    // merely "don't increment": the counter is already non-zero
+                    // from the boundary above, so it has to be cleared and
+                    // restored.
+                    0
+                };
+                SUBEXP_SCALAR_CTX.with(|c| c.set(inner_ctx));
+                let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
+                SUBEXP_SCALAR_CTX.with(|c| c.set(saved_ctx));
                 sub_flags_set(saved_sub_flags);
                 // c:Src/exec.c:4856-4871 readoutput — UNQUOTED `$(…)`
                 // output is IFS-word-split (`spacesplit(buf, 0, 1, 0)`,
@@ -12912,6 +12956,52 @@ let (joined, arr_parts, isarr, _) = multsub(&inner, PREFORK_SUBEXP);
             errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
 
+        // c:3903-3907 — `if (isarr) { if (nojoin == 0 || sep) {
+        //   val = sepjoin(aval, sep, 1); isarr = 0; } }` under a scalar context.
+        // Clearing isarr is what gates out the sort/unique block (c:4245).
+        //
+        // `spsep.is_none() && !force_split` follows from C's ORDER: this tests
+        // `isarr` as it stands BEFORE the force_split block at c:3920-3927, and
+        // THAT block is where a split flag ((s)/(f)/`${=x}`) manufactures its
+        // array (c:3927). So an array from a real PARAM collapses here, while an
+        // array born of a split survives — exactly what zsh does:
+        //     "${#${(o)a}}"         -> 18     (array param -> scalar)
+        //     "${#${(f)$(…)}}"      -> 3      (split array survives)
+        //     "${(j:,:)${(f)$(…)}}" -> a,b,c
+        //
+        // The `[@]` subscript is the OTHER exception: it is the splat that
+        // deliberately keeps array shape inside `"…"` (C tracks it as
+        // `SCANPM_ISVAR_AT` -> `isarr = -1`, and c:3903's
+        // `quoted_array_with_offset` arm keeps it). Collapsing it broke zinit's
+        // ice pack/unpack: `"${(j: :)${(qkv)ICE[@]}}"` quoted the JOINED string
+        // (`as\ program\ pick\ …`) instead of quoting each element and joining
+        // (`as program pick f\ a.zsh …`). `[*]` is NOT excepted — that one does
+        // join in DQ. The `(@)` flag is already excluded by `nojoin == 0`.
+        //
+        // `rest.is_empty()` generalises the split exception. Only a BARE array
+        // parameter (flags, but no operator) collapses. Any array MANUFACTURED
+        // by this expansion — a split, a set op, a filter — is created for the
+        // caller and survives, exactly as zsh does:
+        //     "${(j:-:)${(o)a}}"      -> one two three four   (bare param: collapsed,
+        //                                                      so (j) has nothing to join)
+        //     "${(j:,:)${a:|b}}"      -> one,three,five       (set-difference array survives)
+        //     "${(j:,:)${(f)$(…)}}"   -> a,b,c                (split array survives)
+        if SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0
+            && isarr != 0
+            && nojoin == 0
+            && sep.is_none()
+            && spsep.is_none()
+            && !force_split
+            && rest.is_empty()
+            && !matches!(subscript.as_deref(), Some("@"))
+        {
+            let parts = split_parts.clone().unwrap_or_else(|| vec![value.clone()]);
+            let joined = crate::ported::utils::sepjoin(&parts, None); // c:3906
+            value = joined.clone();
+            split_parts = Some(vec![joined]);
+            isarr = 0; // c:3907
+        }
+
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)
             let transform = |s: &str| -> String {
@@ -17213,6 +17303,14 @@ fn errflag_set_error() {
 thread_local! {
     /// `IN_PARAMSUBST_NEST` static.
     pub static IN_PARAMSUBST_NEST: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+
+    /// Depth of nested subexpansions currently running in a SCALAR context —
+    /// C's `ssub` (`Src/subst.c:1759`) carried across the `multsub` boundary.
+    ///
+    /// Deliberately NOT `pf_flags & PREFORK_SINGLE`: that flag also disables the
+    /// inner's auto-splat, which would collapse a split-derived array too. Only
+    /// the array-PARAM collapse (c:3903-3907) should key off this.
+    pub static SUBEXP_SCALAR_CTX: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 
     /// Carries C's `isarr` out of `paramsubst` so the caller can apply
     /// `Src/subst.c:3929-3932`:

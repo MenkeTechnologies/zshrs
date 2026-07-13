@@ -13986,3 +13986,66 @@ fn test_dq_nested_expansion_operator_applies_to_joined_scalar() {
     let (_s, out, _e) = run_zshrs_parity("a=(one two three four); print -rl -- ${${(u)a}#o}");
     assert_eq!(out, "ne\ntwo\nthree\nfour\n");
 }
+
+/// Inside `"…"` an expansion runs in a SCALAR context — C's `ssub`
+/// (Src/subst.c:1759) — which sepjoins the array and clears `isarr`
+/// (c:3901-3907). The sort/unique block then gates out (c:4245 `if (isarr)`),
+/// which is why `(o)`/`(O)`/`(n)`/`(u)`/`(q)` are no-ops in double quotes. This
+/// holds for a NESTED inner too: `"${${(o)a}//o/0}"` is NOT sorted in zsh.
+///
+/// zshrs evaluated the inner in a fresh context, so it applied its flags and
+/// handed the sorted/quoted array to the outer operator.
+///
+/// Three things bound the collapse, each learned from a case it broke:
+///   - only a BARE array PARAM collapses. An array MANUFACTURED by the inner —
+///     a split (`(f)`/`(s)`), a set op, a filter — is produced FOR the caller
+///     and survives, or `"${(j:,:)${(f)$(…)}}"` stops being `a,b,c`.
+///   - the `[@]` subscript is the splat that deliberately keeps array shape in
+///     DQ, so it is exempt (zinit's `"${(j: :)${(qkv)ICE[@]}}"` must quote each
+///     element, not the joined string).
+///   - the context passes inward at the DQ boundary even through a subscript,
+///     but a DEEPER level that subscripts its inner BLOCKS it — that inner has
+///     to stay an array for `[N]` to index elements.
+#[test]
+fn test_dq_nested_inner_flags_are_dropped() {
+    let pre = "a=(one two three four); nums=(3 1 4 1 5);";
+    for (expr, want) in [
+        // A bare array param inside DQ collapses -> its flags are no-ops, and the
+        // OUTER operator sees the joined (unsorted) scalar.
+        (r#""${${(o)a}//o/0}""#, "0ne tw0 three f0ur"),
+        (r#""${${(o)a}#o}""#, "ne two three four"),
+        (r#""${${(q)nums}//o/0}""#, r"3\ 1\ 4\ 1\ 5"),
+        // …and it keeps collapsing through a flags-only level.
+        (r#""${${(o)${(o)a}}//o/0}""#, "0ne tw0 three f0ur"),
+        (r#""${${(L)${(n)a}}//o/0}""#, "0ne tw0 three f0ur"),
+        // The collapse is visible through a subscript at the boundary: the inner
+        // is a SCALAR, so [1] indexes a CHARACTER.
+        (r#""${${(o)a}[1]}""#, "o"),
+        (r#""${#${(o)a}}""#, "18"),
+        // But a DEEPER subscripting level blocks it: the (q) array survives and
+        // [1] indexes an ELEMENT.
+        (r#""${${${(q)nums}[1]}#*_}""#, "3"),
+        // (@) is an explicit array request and is never collapsed.
+        (r#""${(@o)a}""#, "four one three two"),
+    ] {
+        let (status, out, _e) = run_zshrs_parity(&format!("{pre} print -r -- {expr}"));
+        assert_eq!(status, 0, "{expr}");
+        assert_eq!(out.trim(), want, "{expr}");
+    }
+
+    // Arrays MANUFACTURED by the inner survive the scalar context.
+    let (_s, out, _e) =
+        run_zshrs_parity(r#"print -r -- "${(j:,:)${(f)$(printf "a\nb\nc")}}""#);
+    assert_eq!(out.trim(), "a,b,c", "split-derived array must survive");
+    let (_s, out, _e) = run_zshrs_parity(r#"s="x y z"; print -r -- "${(U)${(s. .)s}[2]}""#);
+    assert_eq!(out.trim(), "Y", "split-derived array must stay indexable");
+    // zinit ice pack: [@] keeps array shape, so (q) quotes each element.
+    let (_s, out, _e) = run_zshrs_parity(
+        r#"typeset -A ICE; ICE=(pick "f a.zsh" as program); print -r -- "${(j: :)${(qkv)ICE[@]}}""#,
+    );
+    assert_eq!(out.trim(), r"as program pick f\ a.zsh");
+
+    // UNQUOTED keeps array shape, so the inner's flags DO apply.
+    let (_s, out, _e) = run_zshrs_parity("a=(one two three four); print -rl -- ${${(o)a}//o/0}");
+    assert_eq!(out, "f0ur\n0ne\nthree\ntw0\n");
+}
