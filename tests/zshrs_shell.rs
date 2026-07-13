@@ -13949,3 +13949,40 @@ fn test_nested_expansion_array_vs_scalar_shape() {
         assert_eq!(out.trim(), want, "{pre} {expr}");
     }
 }
+
+/// Inside `"…"`, an expansion runs in a SCALAR context (C's `ssub`,
+/// Src/subst.c:1759 `ssub = (pf_flags & PREFORK_SINGLE)`), which sepjoins the
+/// array and clears `isarr` (c:3901-3907). So an outer operator on a NESTED
+/// expansion applies to the JOINED scalar, not to each element.
+///
+/// The compile arm for `${${…}op}` handed its body to BRIDGE_BRACE_ARRAY
+/// without the Qstring DQ marker, so the bridge never bumped `in_dq_context`,
+/// paramsubst ran with qt=false, and the operator ran PER-ELEMENT:
+/// `"${${(u)a}%e}"` came out `on two thre four` (an `e` stripped off each word)
+/// where zsh gives `one two three four` (nothing to strip off the joined
+/// string, which ends in `r`).
+///
+/// zsh oracle: a=(one two three four)
+///   "${${(u)a}%e}"  -> one two three four
+///   "${${(u)a}%r}"  -> one two three fou     (joined scalar loses its last char)
+#[test]
+fn test_dq_nested_expansion_operator_applies_to_joined_scalar() {
+    let pre = "a=(one two three four);";
+    for (expr, want) in [
+        // `%e` matches nothing at the end of the JOINED string -> unchanged.
+        (r#""${${(u)a}%e}""#, "one two three four"),
+        // `%r` DOES match the end of the joined string -> one char removed,
+        // which is only possible if the operator saw a scalar.
+        (r#""${${(u)a}%r}""#, "one two three fou"),
+        // Same contract for a prefix strip.
+        (r#""${${(u)a}#o}""#, "ne two three four"),
+    ] {
+        let (status, out, _e) = run_zshrs_parity(&format!("{pre} print -r -- {expr}"));
+        assert_eq!(status, 0, "{expr}");
+        assert_eq!(out.trim(), want, "{expr}");
+    }
+
+    // UNQUOTED keeps array shape, so the operator IS per-element.
+    let (_s, out, _e) = run_zshrs_parity("a=(one two three four); print -rl -- ${${(u)a}#o}");
+    assert_eq!(out, "ne\ntwo\nthree\nfour\n");
+}
