@@ -15,99 +15,118 @@
 
 use serde_json::{json, Value};
 
-pub const USAGE: &str = "\
-zd — client for zshrs-daemon. Builtin (in-process, no fork) when
-called from inside zshrs; standalone binary otherwise.
-
-USAGE
-    zd [GLOBAL OPTS] <COMMAND> [ARGS]
-
-GLOBAL OPTS
-    --url URL          override $DAEMON_URL (default http://127.0.0.1:7733)
-                       — only honored by the standalone-binary form;
-                       the builtin always uses the local Unix socket
-    --token TOKEN      override $DAEMON_TOKEN (binary only)
-    -h, --help         this message
-    --version          version + exit
-
-COMMANDS (top-level)
-    health                         GET /health
-    ops                            GET /ops
-    info                           daemon snapshot
-    ping [ECHO_ARGS...]            round-trip latency
-    metrics                        Prometheus-shaped metrics (JSON)
-    call OP [JSON_BODY]            generic op caller for anything not below
-
-CACHE
-    cache put NS KEY VALUE [--ttl SECS]
-    cache get NS KEY
-    cache del NS KEY
-    cache list NS [PREFIX]
-    cache stats [NS]
-
-JOB
-    job submit -- CMD [ARGS...]    submit cmd; prints job_id
-    job status ID
-    job output ID [--stderr]
-    job list [--state S] [--tag T] [--limit N]
-    job kill ID
-    job wait ID                    blocks until terminal
-
-LOCK
-    lock acquire NAME [--timeout SECS]
-    lock try NAME
-    lock release NAME TOKEN
-    lock list
-
-EVENT / WATCH
-    publish TOPIC JSON_DATA
-    events [PATTERN]               streams SSE — binary only
-    watch DIR [--recursive]        streams SSE — binary only
-
-DEFINITIONS (federated catalog)
-    defs query [--kind K] [--name N] [--prefix P] [--shell-id S] [--limit N]
-    defs kinds
-    defs emit --shell-id S --kind K --name N [--value V] [--file F] [--line L]
-    defs diff SHELL_A SHELL_B [KIND]
-
-SNAPSHOT
-    snapshot save TAG [--notes N]
-    snapshot list
-    snapshot load TAG
-    snapshot diff A B
-
-ARTIFACT
-    artifact put NAME VALUE | artifact put NAME --file PATH
-    artifact get NAME [-o OUT]     writes value to OUT (default stdout)
-    artifact list [PREFIX]
-    artifact gc [--max-age SECS] [--max-bytes N]
-
-SCHEDULE
-    schedule add CRON_EXPR -- CMD [ARGS...]
-    schedule add-once UNIX_SECS -- CMD [ARGS...]
-    schedule list
-    schedule remove ID
-
-EXPORT
-    export TARGET FORMAT           formats: sh|json|yaml|text|csv|sql|pdf|...
-    view TARGET [FORMAT]
-
-SNAPSHOT
-    snapshot save TAG [--notes N]  freeze canonical state under TAG
-    snapshot list                  enumerate saved tags
-    snapshot load TAG              restore canonical state from TAG
-    snapshot diff A B              show subsystem-by-subsystem diff
-
-CONFIG
-    config get KEY                 read a runtime knob
-    config set KEY VALUE           write/override a runtime knob
-    config list                    show every runtime override
-
-DIAGNOSTICS
-    doctor [--json]                health-report sweep (perms, db
-                                   integrity, shards, fsnotify,
-                                   pidlock, jobs, legacy litter)
-";
+// House-style "full spectrum" help — ANSI-Shadow banner + status box +
+// `──`-ruled sections with `//` annotations, matching the temprs look.
+// No ANSI color (terminal-safe, pipe-safe). Version is injected at
+// compile time via `env!` so it never drifts from Cargo.toml. Box and
+// divider lines are pinned to 57 visual columns; the `usage_house_help_*`
+// tests guard the alignment.
+pub const USAGE: &str = concat!(
+    " ███████╗██████╗\n",
+    " ╚══███╔╝██╔══██╗\n",
+    "   ███╔╝ ██║  ██║\n",
+    "  ███╔╝  ██║  ██║\n",
+    " ███████╗██████╔╝\n",
+    " ╚══════╝╚═════╝\n",
+    " ┌──────────────────────────────────────────────────────┐\n",
+    " │ STATUS: ONLINE   //   LINK: ████████░░               │\n",
+    " │ SUBSTRATE: zshrs-daemon   //   TRANSPORT: unix+http  │\n",
+    " └──────────────────────────────────────────────────────┘\n",
+    "  >> ZSHRS-DAEMON CLIENT // v",
+    env!("CARGO_PKG_VERSION"),
+    " // FULL SPECTRUM <<\n",
+    "\n",
+    "  Builtin (in-process, no fork) from inside zshrs; standalone HTTP\n",
+    "  binary otherwise. Same arg surface either way — only transport differs.\n",
+    "\n",
+    "  USAGE: zd [GLOBAL OPTS] <COMMAND> [ARGS]\n",
+    "\n",
+    "  ── GLOBAL ─────────────────────────────────────────────\n",
+    "      --url <URL>       // override $DAEMON_URL (default http://127.0.0.1:7733) — binary only\n",
+    "      --token <TOKEN>   // override $DAEMON_TOKEN — binary only\n",
+    "  -h, --help            // this message\n",
+    "      --version         // version + exit\n",
+    "\n",
+    "  ── CORE ───────────────────────────────────────────────\n",
+    "    health                        // GET /health\n",
+    "    ops                           // GET /ops\n",
+    "    info                          // daemon snapshot\n",
+    "    ping [ECHO_ARGS...]           // round-trip latency\n",
+    "    metrics                       // Prometheus-shaped metrics (JSON)\n",
+    "    call OP [JSON_BODY]           // generic op caller for anything not below\n",
+    "\n",
+    "  ── CACHE ──────────────────────────────────────────────\n",
+    "    cache put NS KEY VALUE [--ttl SECS]\n",
+    "    cache get NS KEY\n",
+    "    cache del NS KEY\n",
+    "    cache list NS [PREFIX]\n",
+    "    cache stats [NS]\n",
+    "\n",
+    "  ── JOB ────────────────────────────────────────────────\n",
+    "    job submit -- CMD [ARGS...]   // submit cmd; prints job_id\n",
+    "    job status ID\n",
+    "    job output ID [--stderr]\n",
+    "    job list [--state S] [--tag T] [--limit N]\n",
+    "    job kill ID\n",
+    "    job wait ID                   // blocks until terminal\n",
+    "\n",
+    "  ── LOCK ───────────────────────────────────────────────\n",
+    "    lock acquire NAME [--timeout SECS]\n",
+    "    lock try NAME\n",
+    "    lock release NAME TOKEN\n",
+    "    lock list\n",
+    "\n",
+    "  ── EVENT / WATCH ──────────────────────────────────────\n",
+    "    publish TOPIC JSON_DATA\n",
+    "    events [PATTERN]              // streams SSE — binary only\n",
+    "    watch DIR [--recursive]      // streams SSE — binary only\n",
+    "\n",
+    "  ── DEFINITIONS ────────────────────────────────────────\n",
+    "    defs query [--kind K] [--name N] [--prefix P] [--shell-id S] [--limit N]\n",
+    "    defs kinds\n",
+    "    defs emit --shell-id S --kind K --name N [--value V] [--file F] [--line L]\n",
+    "    defs diff SHELL_A SHELL_B [KIND]\n",
+    "\n",
+    "  ── SNAPSHOT ───────────────────────────────────────────\n",
+    "    snapshot save TAG [--notes N] // freeze canonical state under TAG\n",
+    "    snapshot list                 // enumerate saved tags\n",
+    "    snapshot load TAG             // restore canonical state from TAG\n",
+    "    snapshot diff A B             // subsystem-by-subsystem diff\n",
+    "\n",
+    "  ── ARTIFACT ───────────────────────────────────────────\n",
+    "    artifact put NAME VALUE | artifact put NAME --file PATH\n",
+    "    artifact get NAME [-o OUT]    // writes value to OUT (default stdout)\n",
+    "    artifact list [PREFIX]\n",
+    "    artifact gc [--max-age SECS] [--max-bytes N]\n",
+    "\n",
+    "  ── SCHEDULE ───────────────────────────────────────────\n",
+    "    schedule add CRON_EXPR -- CMD [ARGS...]\n",
+    "    schedule add-once UNIX_SECS -- CMD [ARGS...]\n",
+    "    schedule list\n",
+    "    schedule remove ID\n",
+    "\n",
+    "  ── EXPORT / VIEW ──────────────────────────────────────\n",
+    "    export TARGET FORMAT          // sh|json|yaml|text|csv|sql|pdf|...\n",
+    "    view TARGET [FORMAT]\n",
+    "\n",
+    "  ── CONFIG ─────────────────────────────────────────────\n",
+    "    config get KEY                // read a runtime knob\n",
+    "    config set KEY VALUE          // write/override a runtime knob\n",
+    "    config list                   // show every runtime override\n",
+    "\n",
+    "  ── DIAGNOSTICS ────────────────────────────────────────\n",
+    "    doctor [--json]               // health-report sweep (perms, db\n",
+    "                                  // integrity, shards, fsnotify,\n",
+    "                                  // pidlock, jobs, legacy litter)\n",
+    "\n",
+    "  ── SYSTEM ─────────────────────────────────────────────\n",
+    "  v",
+    env!("CARGO_PKG_VERSION"),
+    "  //  zshrs-daemon client  //  transport: unix socket + http\n",
+    "  Every op maps 1:1 to  POST /op/<NAME>  against the daemon.\n",
+    "  >>> ONE SOCKET. EVERY SHELL. OWN YOUR DAEMON. <<<\n",
+    " ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░\n",
+);
 
 /// Transport that backs op/get/sse calls. Implemented twice:
 /// `HttpTransport` in `bins/zd.rs` (ureq, talks to daemon's HTTP
@@ -124,41 +143,67 @@ pub trait Transport {
     fn sse(&mut self, path: &str) -> Result<String, String>;
 }
 
-/// Top-level dispatcher. Parses global flags, routes to the right
-/// `cmd_*` handler, prints the result. Returns process-exit-style
-/// status: 0 = success, 1 = transport/protocol error, 2 = usage error.
-pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
+/// Answer the arg shapes that need no daemon transport: empty args
+/// (usage error → 2), `-h`/`--help` (print USAGE → 0), `--version`
+/// (print version → 0), a `--url`/`--token` missing its value, and
+/// global-flags-with-no-command. Returns `Some(exit_code)` when handled,
+/// `None` when the args carry a real command that must go through a
+/// transport.
+///
+/// Shared by the standalone binary (via `dispatch`) and the in-process
+/// builtin, which calls it *before* its daemon-alive pre-flight so help
+/// and version never require a running daemon.
+pub fn handle_no_transport(args: &[String]) -> Option<i32> {
     if args.is_empty() {
         eprintln!("{USAGE}");
-        return 2;
+        return Some(2);
     }
-
-    // Strip global flags. Anything starting with `-` before the first
-    // bare word is a global flag. The transport itself owns --url /
-    // --token at construction time; we just consume them here for
-    // arg-position-correctness and ignore the values.
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--url" | "--token" => {
                 if i + 1 >= args.len() {
-                    return usage_err(&format!("{} requires an argument", &args[i]));
+                    return Some(usage_err(&format!("{} requires an argument", &args[i])));
                 }
                 i += 2;
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
-                return 0;
+                return Some(0);
             }
             "--version" => {
                 println!("zd {}", env!("CARGO_PKG_VERSION"));
-                return 0;
+                return Some(0);
             }
-            _ => break,
+            // A real command — needs a transport, so hand back to dispatch.
+            _ => return None,
         }
     }
-    if i >= args.len() {
-        return usage_err("missing command");
+    // Consumed only global flags, never reached a command.
+    Some(usage_err("missing command"))
+}
+
+/// Top-level dispatcher. Parses global flags, routes to the right
+/// `cmd_*` handler, prints the result. Returns process-exit-style
+/// status: 0 = success, 1 = transport/protocol error, 2 = usage error.
+pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
+    // Everything that never touches the daemon (empty args, -h/--help,
+    // --version, and the pure-usage errors) is answered here first. The
+    // in-process builtin calls the same helper *before* its daemon
+    // pre-flight so `zd --help` / `zd --version` behave identically to
+    // the binary even when the daemon is down.
+    if let Some(code) = handle_no_transport(args) {
+        return code;
+    }
+
+    // Past the short-circuit there is a real command. Re-skip the global
+    // flags (transport already owns --url / --token by value) to find it.
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--url" | "--token" => i += 2,
+            _ => break,
+        }
     }
 
     let rest: Vec<String> = args[i + 1..].to_vec();
@@ -881,5 +926,37 @@ mod tests {
         let enc = base64_encode(&input);
         let dec = base64_decode(&enc).unwrap();
         assert_eq!(dec, input);
+    }
+
+    /// The house-style banner box and every `── SECTION ──` divider must
+    /// be pinned to the same visual width (57 columns) or the layout
+    /// looks broken. Width is measured in `char`s, not bytes — box-drawing
+    /// glyphs are multibyte. Guards against a future section name change
+    /// that forgets to re-fill the trailing dashes.
+    #[test]
+    fn usage_house_help_lines_are_57_columns() {
+        const W: usize = 57;
+        for line in USAGE.lines() {
+            let is_box = line.starts_with(" ┌") || line.starts_with(" └");
+            let is_bar = line.starts_with(" │");
+            let is_rule = line.trim_start().starts_with("── ");
+            let is_shade = line.starts_with(" ░");
+            if is_box || is_bar || is_rule || is_shade {
+                assert_eq!(
+                    line.chars().count(),
+                    W,
+                    "misaligned house-help line (expected {W} cols): {line:?}"
+                );
+            }
+        }
+    }
+
+    /// The compile-time version must land in both the banner tagline and
+    /// the SYSTEM footer — proves the `env!` injection wired through.
+    #[test]
+    fn usage_house_help_embeds_version() {
+        let ver = env!("CARGO_PKG_VERSION");
+        assert!(USAGE.contains(&format!("CLIENT // v{ver} // FULL SPECTRUM")));
+        assert_eq!(USAGE.matches(&format!("v{ver}")).count(), 2);
     }
 }

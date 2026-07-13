@@ -2143,7 +2143,18 @@ fn zwhere(args: &[String]) -> i32 {
 /// binary form — long-lived stream pumps don't fit the request-
 /// response shape of a builtin.
 fn zd(args: &[String]) -> i32 {
-    use super::zd_dispatch::{dispatch, Transport};
+    use super::zd_dispatch::{dispatch, handle_no_transport, Transport};
+
+    // Skip argv[0] ("zd") so we see the same shape as the binary's
+    // `argv.skip(1)`.
+    let rest: &[String] = if args.is_empty() { args } else { &args[1..] };
+
+    // Help / version / usage errors never touch the daemon — answer them
+    // with the exact same USAGE the binary prints, before the alive
+    // pre-flight, so `zd --help` works even when the daemon is down.
+    if let Some(code) = handle_no_transport(rest) {
+        return code;
+    }
 
     // Pre-flight: daemon must be alive. Same friendly message as
     // `zwhere` so the surface is consistent across daemon-only
@@ -2174,10 +2185,6 @@ fn zd(args: &[String]) -> i32 {
             return 1;
         }
     };
-
-    // Skip argv[0] ("zd") so dispatch sees the same shape as the
-    // binary's `argv.skip(1)`.
-    let rest: &[String] = if args.is_empty() { args } else { &args[1..] };
 
     struct SocketTransport<'a> {
         client: &'a mut Client,
