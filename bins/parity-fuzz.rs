@@ -4401,6 +4401,108 @@ fn gen_anonfn(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// printv generator
+//
+// The `print` builtin's OUTPUT-shaping flags, which zsh piles onto one command:
+// -v assigns to a parameter instead of stdout, -f is a printf format, -l is
+// one-per-line, -c/-C lay out in columns, -a fills across (with -C), -o/-O sort,
+// -N nul-separates, -r is raw, -R BSD-echo-compatible, -n suppresses the
+// newline, -s pushes to history (skipped — stateful), -D/-P do directory /
+// prompt expansion. Combinations are where the ordering rules bite.
+// C: Src/builtin.c bin_print().
+// ---------------------------------------------------------------------------
+
+fn gen_printv(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..18) {
+            // -v: assign the joined args to a scalar.
+            0 => "print -v x -- one two three; print -r -- \"[$x]\"".to_string(),
+            1 => "print -v x hi; print -r -- \"[$x]\"".to_string(),
+            // -v with -l joins on newline into the scalar.
+            2 => "print -v x -l a b c; print -r -- \"[$x]\"".to_string(),
+            // printf -v.
+            3 => "printf -v y '%s=%d' k 7; print -r -- \"[$y]\"".to_string(),
+            4 => "printf -v y '%05.2f' 3.14159; print -r -- \"[$y]\"".to_string(),
+            // -f format string with cycling over extra args.
+            5 => "print -f '%s\\n' a b c".to_string(),
+            6 => "print -f '[%d]' 1 2 3; print".to_string(),
+            // -l one per line.
+            7 => "print -l a b c".to_string(),
+            // -o / -O sort ascending / descending.
+            8 => "print -o banana apple cherry".to_string(),
+            9 => "print -O 3 1 2 10".to_string(),
+            // -n suppress newline; -r raw.
+            10 => "print -n a; print -n b; print".to_string(),
+            11 => "print -r -- 'a\\tb'".to_string(),
+            // -N nul-separated (piped through tr for a visible form).
+            12 => "print -N a b c | tr '\\0' ','; print -r -- END".to_string(),
+            // -c column layout (fixed width so it's deterministic).
+            13 => "print -c a b c d e f".to_string(),
+            // -m: only args matching a pattern.
+            14 => "print -m 'a*' apple banana avocado cherry".to_string(),
+            // -s to history is stateful — instead test -u to an fd.
+            15 => "print -u 1 -- fd1".to_string(),
+            // -f with width/precision and a string.
+            16 => "print -f '%-6s|%6s|\\n' ab cd".to_string(),
+            // -v accumulates nothing extra: empty args → empty scalar.
+            _ => "print -v x; print -r -- \"e=${#x}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// globanchor generator
+//
+// The extended-glob PATTERN features the `pattern` mode does not reach: the
+// `(#s)` / `(#e)` string-start / string-end anchors, the `(#cN,M)` counted
+// closure, case flags `(#i)` / `(#l)`, and the exclusion `x~y` ("x but not y")
+// / negation `^x` operators. Exercised through `[[ = ]]` and `${var//…}` so the
+// output is a deterministic match verdict or substitution, never a filename.
+// C: Src/pattern.c (PAT_START/PAT_END, the (#…) flag parser).
+// ---------------------------------------------------------------------------
+
+fn gen_globanchor(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let subj = ["abc", "aaa", "abab", "xyz", "a1b2", "AbC", "", "hello"];
+    let s = pick(&mut rng, &subj);
+    let mut stmts = vec!["setopt extendedglob".to_string()];
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..16) {
+            // (#s) start anchor inside a larger pattern.
+            0 => format!("[[ '{s}' = (#s)a* ]] && print -r -- Y || print -r -- N"),
+            1 => format!("[[ '{s}' = *(#e) ]] && print -r -- Y || print -r -- N"),
+            // Anchors in a substitution: (#s) only matches at the very start.
+            2 => format!("v='{s}'; print -r -- \"${{v//(#s)a/X}}\""),
+            3 => format!("v='{s}'; print -r -- \"${{v//a(#e)/X}}\""),
+            // Counted closures (#cN,M).
+            4 => format!("[[ '{s}' = a(#c2,3) ]] && print -r -- Y || print -r -- N"),
+            5 => format!("[[ '{s}' = (a(#c1,2))* ]] && print -r -- Y || print -r -- N"),
+            6 => format!("[[ '{s}' = [a-z](#c3) ]] && print -r -- Y || print -r -- N"),
+            // Case-insensitive / lowering flags.
+            7 => format!("[[ '{s}' = (#i)ABC ]] && print -r -- Y || print -r -- N"),
+            8 => format!("v='{s}'; print -r -- \"${{v//(#i)a/X}}\""),
+            // Exclusion `x~y`: matches x but not y.
+            9 => format!("[[ '{s}' = [a-z]##~xyz ]] && print -r -- Y || print -r -- N"),
+            10 => format!("[[ '{s}' = ??? ~ x* ]] && print -r -- Y || print -r -- N"),
+            // Negation `^x`.
+            11 => format!("[[ '{s}' = ^*b* ]] && print -r -- Y || print -r -- N"),
+            12 => format!("[[ '{s}' = ^abc ]] && print -r -- Y || print -r -- N"),
+            // `#`/`##` closures (one-or-more / zero-or-more).
+            13 => format!("[[ '{s}' = a#b#c# ]] && print -r -- Y || print -r -- N"),
+            14 => format!("v='{s}'; print -r -- \"${{v//[a-z]##/<&>}}\""),
+            // Combining an anchor with a class.
+            _ => format!("[[ '{s}' = (#s)[a-z]##(#e) ]] && print -r -- Y || print -r -- N"),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4456,6 +4558,8 @@ enum Mode {
     Casesel,
     Default,
     Anonfn,
+    Printv,
+    Globanchor,
 }
 
 struct Args {
@@ -4524,6 +4628,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Casesel => gen_casesel(seed),
         Mode::Default => gen_default(seed),
         Mode::Anonfn => gen_anonfn(seed),
+        Mode::Printv => gen_printv(seed),
+        Mode::Globanchor => gen_globanchor(seed),
     }
 }
 
@@ -4580,6 +4686,8 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Casesel => "casesel",
         Mode::Default => "default",
         Mode::Anonfn => "anonfn",
+        Mode::Printv => "printv",
+        Mode::Globanchor => "globanchor",
     }
 }
 
@@ -4636,6 +4744,8 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Casesel,
         Mode::Default,
         Mode::Anonfn,
+        Mode::Printv,
+        Mode::Globanchor,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -4737,7 +4847,7 @@ fn parse_args() -> Args {
                      paramod, procsub, alias, autoload, stat, errexit,\n\
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
-                     casesel, default, anonfn\n\
+                     casesel, default, anonfn, printv, globanchor\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

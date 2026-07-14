@@ -475,6 +475,14 @@ jobs:
         run: ./target/debug/parity-fuzz --mode default --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/default.txt --out target/parity-fuzz/ci-default.txt
       - name: Fuzz — anonfn
         run: ./target/debug/parity-fuzz --mode anonfn --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/anonfn.txt --out target/parity-fuzz/ci-anonfn.txt
+      # printv / globanchor cover the print builtin's output-shaping flags
+      # (-v/-f/-l/-c/-C/-o/-O/-N and their combinations) and the extended-glob
+      # pattern anchors the `pattern` mode doesn't reach ((#s)/(#e)/(#cN,M)/
+      # (#i), exclusion `x~y`, negation `^x`). Both clean.
+      - name: Fuzz — printv
+        run: ./target/debug/parity-fuzz --mode printv --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/printv.txt --out target/parity-fuzz/ci-printv.txt
+      - name: Fuzz — globanchor
+        run: ./target/debug/parity-fuzz --mode globanchor --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/globanchor.txt --out target/parity-fuzz/ci-globanchor.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking

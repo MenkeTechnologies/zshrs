@@ -9995,7 +9995,20 @@ pub fn bin_print(
         return 0;
     }
     if let Some(ref v) = dest_var {
-        setsparam(v, &body);
+        // c:Src/builtin.c:544-546 — the trailing separator is part of the
+        // captured `-v` value too: it is written to the same stream and read
+        // back into `buf`. It is suppressed only when `-n`, a `\c` escape
+        // (`nnl`), OR `-v` WITHOUT `-l` apply. So `print -v x -l a b c` stores
+        // `a\nb\nc\n` (with the trailing newline) where `print -v x a b c`
+        // stores `a b c` (none). The port previously suppressed it for every
+        // `-v`, dropping the `-l` trailing newline.
+        let suppress_term =
+            nonewline || backslash_c_truncated || !OPT_ISSET(ops, b'l');
+        let mut val = body.clone();
+        if !suppress_term {
+            val.push(if nul_sep { '\0' } else { '\n' }); // c:546
+        }
+        setsparam(v, &val);
     } else {
         // c:5130-5132 — final terminator: `-n` suppresses; `-N` emits
         // NUL instead of newline; else newline. `\c` truncation
