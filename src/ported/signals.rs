@@ -1616,7 +1616,40 @@ pub fn dotrap(sig: i32) -> i32 {
                 libc::dup2(out_fd, libc::STDOUT_FILENO);
             }
         }
-        let _ = crate::ported::exec::execute_script(&body);
+        // c:1268/1170 — `execode((Eprog)sigfn, 1, 0, "trap")`. The THIRD
+        // argument is `exiting`, and C passes 0: a trap body is not an
+        // exiting list, so `execlist`'s
+        // `if (exiting && sigtrapped[SIGEXIT]) dotrap(SIGEXIT);`
+        // (c:Src/exec.c:1645) never fires inside a trap body.
+        //
+        // zshrs has no `exiting` parameter here: `execute_script` drives a
+        // full script pipeline, and that driver fires the EXIT trap at the
+        // end of EVERY pipeline it runs (vm_helper.rs:2111-2126). So
+        // dispatching a USR1/USR2/DEBUG string trap through it ALSO ran any
+        // installed EXIT trap — early, and then again at real script exit:
+        // `trap 'print b' EXIT; trap 'print a' USR1; kill -USR1 $$` printed
+        // `a b … b` where zsh prints `a … b`.
+        //
+        // Pull the EXIT body aside for the duration of the nested pipeline so
+        // its end-of-script check finds nothing to fire, then put it back.
+        // Same bracket `endtrapscope` uses around its own EXIT dispatch
+        // (c:961 arm). Skipped when sig IS SIGEXIT — that body is the EXIT
+        // trap, and C consumes it (`sigtrapped[SIGEXIT] = 0`, c:Src/exec.c:1648)
+        // rather than restoring it.
+        let exit_stash = if sig != SIGEXIT {
+            crate::ported::builtin::traps_table()
+                .lock()
+                .ok()
+                .and_then(|mut t| t.remove("EXIT"))
+        } else {
+            None
+        };
+        let _ = crate::ported::exec::execute_script(&body); // c:1268
+        if let Some(b) = exit_stash {
+            if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                t.insert("EXIT".to_string(), b);
+            }
+        }
         if let Some(_) = outer {
             if saved_inner >= 0 {
                 unsafe {

@@ -1725,6 +1725,40 @@ pub fn bin_cd(
     //          Read from paramtab (the canonical zsh-side `pwd`
     //          global); was reading OS env which can lag behind.
     let old = getsparam("PWD");
+    // c:1207-1245 — compute the new logical pwd (`new_pwd` in C's
+    //   cd_new_pwd) up front so the PUSHDIGNOREDUPS scan below and the
+    //   final `pwd =` write share one value. Hoisted from the old
+    //   write site; behaviour is identical (chase → resolved cwd,
+    //   absolute dest → as-is, relative dest → logical join).
+    let chase = CHASINGLINKS.load(Relaxed) != 0; // c:1203
+    let new_pwd_logical: String = if chase {
+        match env::current_dir() {
+            Ok(c) => c.to_string_lossy().into_owned(),
+            Err(_) => dest_path.clone(),
+        }
+    } else if dest_path.starts_with('/') {
+        dest_path.clone()
+    } else {
+        let mut segs: Vec<&str> = if pre_pwd.is_empty() || pre_pwd == "/" {
+            Vec::new()
+        } else {
+            pre_pwd.trim_start_matches('/').split('/').collect()
+        };
+        for part in dest_path.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    segs.pop();
+                }
+                _ => segs.push(part),
+            }
+        }
+        if segs.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", segs.join("/"))
+        }
+    };
     // c:Src/builtin.c:849 + cd_new_pwd dirstack maintenance —
     // collapsed into a single post-cd update here since the Rust
     // cd_get_dest returns a String rather than a LinkNode that
@@ -1811,29 +1845,57 @@ pub fn bin_cd(
                 // to a non-top dirstack index, remove from dirstack
                 // directly.
                 let k = if from_top { dd } else { n - 1 - dd };
-                if k >= 1 && k - 1 < d.len() {
+                if k == 0 {
+                    // c:934-940 + c:1197-1203 — the +N/-N resolved to
+                    // firstnode (the current PWD): this is a bare-`popd`
+                    // top removal. Pop the entry below PWD (DIRSTACK[0])
+                    // and let the normal cd path below move PWD into it
+                    // (cd_get_dest resolved dest to DIRSTACK[0]). Do NOT
+                    // set skip_popd_n_cd — PWD must change here.
+                    // Bug: prior port's `k >= 1` guard fell through this
+                    // else-if arm without popping, so the plain-POPD arm
+                    // was never reached and the top entry survived.
+                    if !d.is_empty() {
+                        d.remove(0);
+                    }
+                } else if k - 1 < d.len() {
                     d.remove(k - 1);
                     // Override the cd path: keep PWD at pre_pwd so
                     // the surrounding flow doesn't cd to the removed
-                    // entry. Clear `old` so OLDPWD isn't updated
-                    // either. The destination passed to bin_cd was
+                    // entry. The destination passed to bin_cd was
                     // the removed entry; we overwrite the post-cd
                     // PWD write below to pre_pwd.
                     skip_popd_n_cd = true;
                 }
             } else if func == BIN_PUSHD || (func == BIN_CD && autopushd) {
                 // c:849 — push pre-cd pwd.
-                // c:1210-1218 — PUSHDIGNOREDUPS: skip duplicate of
-                // the new (current) pwd.
-                let dup_skip =
-                    isset(PUSHDIGNOREDUPS) && d.first().map(|s| *s == pre_pwd).unwrap_or(false);
-                if !dup_skip {
-                    d.insert(0, pre_pwd.clone());
-                }
+                d.insert(0, pre_pwd.clone());
             } else if func == BIN_POPD {
                 // c:1197-1199 — pop top of stack (the dir we left).
                 if !d.is_empty() {
                     d.remove(0);
+                }
+            }
+            // c:1214-1222 — PUSHDIGNOREDUPS runs inside cd_new_pwd for
+            //   EVERY func (plain cd, pushd, popd — the block is not
+            //   guarded by func), scanning the now-current dirstack for
+            //   the FIRST entry equal to `new_pwd` (the directory just
+            //   moved into) and removing it so a directory never appears
+            //   twice on the stack:
+            //     if (isset(PUSHDIGNOREDUPS)) {
+            //         for (n = firstnode(dirstack); n; incnode(n))
+            //             if (!strcmp(new_pwd, getdata(n))) {
+            //                 zsfree(remnode(dirstack, n)); break; }
+            //     }
+            //   Prior port only checked pushd and compared d.first()
+            //   against pre_pwd (wrong target, wrong action), so a plain
+            //   `cd` into a dir already on the stack, or re-pushing such
+            //   a dir, left the stale duplicate in place. The non-top
+            //   `popd +N` path (skip_popd_n_cd) keeps PWD = pre_pwd, so
+            //   its dedup runs there against pre_pwd (see below).
+            if !skip_popd_n_cd && isset(PUSHDIGNOREDUPS) {
+                if let Some(pos) = d.iter().position(|s| *s == new_pwd_logical) {
+                    d.remove(pos);
                 }
             }
         }
@@ -1848,6 +1910,14 @@ pub fn bin_cd(
         // Restore process cwd to pre_pwd. Ignore errors; the
         // dirstack mutation already happened.
         let _ = env::set_current_dir(&pre_pwd);
+        // c:1242-1246 — cd_new_pwd runs `oldpwd = pwd; pwd = new_pwd`
+        //   for EVERY popd, including a non-top `popd +N`. There
+        //   new_pwd resolves back to the front-of-stack pre_pwd, so
+        //   PWD is unchanged but OLDPWD becomes the pre-popd PWD.
+        //   Prior port left OLDPWD stale (whatever an earlier cd/pushd
+        //   set), diverging on any `$OLDPWD` / `cd -` that followed.
+        setsparam("OLDPWD", &pre_pwd);
+        env::set_var("OLDPWD", &pre_pwd);
         // c:Src/builtin.c:1245-1252 — print dirstack on POPD unless
         // quiet. Pass func=BIN_POPD so the dirstack-print branch
         // still fires for the listing (matches zsh's `popd +N` echo
@@ -1866,48 +1936,11 @@ pub fn bin_cd(
         env::set_var("OLDPWD", &o);
     }
     // c:1241 — `pwd = new_pwd;` writes the LOGICAL path (the dest
-    // argument as given to cd, not `getcwd()`). Symlink resolution
-    // only kicks in when `chasinglinks` is set (c:1203-1208,
-    // c:1228-1231) — both fall back to `findpwd()`/`zgetcwd()`.
-    // Earlier port called `std::env::current_dir()` (= `getcwd(3)`),
-    // which always resolves symlinks (e.g. /tmp → /private/tmp on
-    // macOS), breaking logical-PWD parity with zsh.
-    let chase = CHASINGLINKS.load(Relaxed) != 0; // c:1203
-    let pwd: String = if chase {
-        // c:1203
-        // c:1204 — `s = findpwd(new_pwd);` — resolved cwd.
-        match env::current_dir() {
-            Ok(c) => c.to_string_lossy().into_owned(),
-            Err(_) => dest_path.clone(),
-        }
-    } else if dest_path.starts_with('/') {
-        // c:1241 — absolute path. pwd = new_pwd.
-        dest_path.clone()
-    } else {
-        // c:1240 — relative path. zsh resolves logically: walk the
-        // dest segments against pre-cd pwd, collapsing `.` and `..`
-        // without dereferencing symlinks. Without this, `pushd ..`
-        // from /tmp left $PWD = ".." literally.
-        let mut segs: Vec<&str> = if pre_pwd.is_empty() || pre_pwd == "/" {
-            Vec::new()
-        } else {
-            pre_pwd.trim_start_matches('/').split('/').collect()
-        };
-        for part in dest_path.split('/') {
-            match part {
-                "" | "." => {}
-                ".." => {
-                    segs.pop();
-                }
-                _ => segs.push(part),
-            }
-        }
-        if segs.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{}", segs.join("/"))
-        }
-    };
+    // argument as given to cd, not `getcwd()`). Computed once up front
+    // (see `new_pwd_logical` above) so the PUSHDIGNOREDUPS scan and this
+    // write agree. Symlink resolution only kicks in when `chasinglinks`
+    // is set (c:1203-1208, c:1228-1231).
+    let pwd: String = new_pwd_logical;
     // c:1242 — `setsparam("PWD", pwd);` + export side via env.
     setsparam("PWD", &pwd);
     env::set_var("PWD", &pwd);
@@ -2030,7 +2063,22 @@ pub fn cd_get_dest(nam: &str, argv: &[String], _hard: bool, func: i32) -> Option
                     n - 1 - dd
                 };
                 if k == 0 {
-                    Some(pwd_now.clone())
+                    // c:934-940 — for BIN_POPD, dir==firstnode(dirstack)
+                    //   (the current PWD) is NOT removed in place: C does
+                    //   `dir = nextnode(dir)` and cd_do_chdir's into the
+                    //   entry BELOW PWD, then cd_new_pwd (c:1197-1199)
+                    //   pops the front. So the chdir destination is
+                    //   DIRSTACK[0] (the first non-current entry), not PWD.
+                    //   For BIN_CD / BIN_PUSHD, +0 (or the swapped -last)
+                    //   resolves to the current dir itself.
+                    //   Bug: prior port returned pwd_now for every func, so
+                    //   `popd +0` (and `popd +N`/`-N` mapping to firstnode
+                    //   under PUSHD_MINUS) no-op'd instead of popping the top.
+                    if func == BIN_POPD {
+                        d.first().cloned().or_else(|| Some(pwd_now.clone()))
+                    } else {
+                        Some(pwd_now.clone())
+                    }
                 } else {
                     d.get(k - 1).cloned()
                 }
@@ -13032,12 +13080,16 @@ pub fn bin_trap(
                                                       // success and downstream scripts couldn't detect the bad
                                                       // signal name.
         let mut had_error = 0i32;
+        // c:7386-7398 — build the signal list, then run ONE
+        // `unsettrap` body over it. `trap -` clears every slot
+        // (c:7387-7388: `for (sig = 0; sig < TRAPCOUNT; sig++)
+        // unsettrap(sig);`); `trap - SIG…` clears the named ones and
+        // stops at the first undefined name (c:7390-7398), leaving
+        // the already-walked signals cleared exactly as C does.
+        let mut to_clear: Vec<i32> = Vec::new();
         if start >= argv.len() {
             // c:7386
-            // c:7387 — clear all.
-            if let Ok(mut t) = traps_table().lock() {
-                t.clear(); // c:7388
-            }
+            to_clear.extend(0..crate::ported::signals_h::TRAPCOUNT); // c:7387
         } else {
             for arg in &argv[start..] {
                 // c:7390
@@ -13048,9 +13100,45 @@ pub fn bin_trap(
                     had_error = 1; // c:7399 *argv non-NULL on break
                     break; // c:7394
                 }
-                if let Ok(mut t) = traps_table().lock() {
-                    t.remove(arg); // c:7396
-                }
+                to_clear.push(sig);
+            }
+        }
+        for sig in to_clear {
+            // c:7388 / c:7397 — `unsettrap(sig)`. C's unsettrap
+            // (c:Src/signals.c:759) → removetrap (c:Src/signals.c:772)
+            // does three things the previous zshrs clear path skipped
+            // by only doing `traps_table().remove()`:
+            //   - c:Src/signals.c:800 `sigtrapped[sig] = 0`, so
+            //     handletrap stops claiming the signal;
+            //   - c:Src/signals.c:815 `signal_default(sig)`, which
+            //     RESTORES THE DEFAULT DISPOSITION — this is why
+            //     `trap 'print caught' USR2; kill -USR2 $$; trap - USR2;
+            //     kill -USR2 $$` kills the shell in zsh instead of
+            //     silently ignoring the second signal;
+            //   - c:Src/signals.c:836-843 `removehashnode(shfunctab,
+            //     node->nam)`, dropping the `TRAP<sig>` function-form
+            //     trap (freed by unsettrap at c:765).
+            // unsettrap MUST run FIRST: removetrap → dosavetrap (c:774)
+            // snapshots the CURRENT body for the LOCAL_TRAPS restore.
+            crate::ported::signals::unsettrap(sig);
+            // c:Src/signals.c:846 `siglists[sig] = NULL` — the body
+            // drop. zshrs keeps trap bodies in `traps_table` keyed by
+            // canonical signal NAME (C indexes siglists[] by number),
+            // so the number has to be mapped back to the name bin_trap
+            // installed it under (`0` → `EXIT`).
+            let key = if sig == 0 {
+                "EXIT".to_string()
+            } else {
+                crate::ported::signals_h::sigs_name(sig)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| sig.to_string())
+            };
+            if let Ok(mut t) = traps_table().lock() {
+                t.remove(&key);
+            }
+            // c:Src/signals.c:836-843 — ZSIG_FUNC arm.
+            if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+                tab.remove(&format!("TRAP{}", key));
             }
         }
         return had_error; // c:7399
@@ -16398,6 +16486,8 @@ use crate::ported::signals_h::run_queued_signals;
 fn getsigidx(name: &str) -> i32 {
     crate::ported::jobs::getsigidx(name).unwrap_or(-1)
 }
+
+
 
 /// Port of `int pat_enables(const char *cmd, char **patp, int enable)`
 /// from `Src/pattern.c:4171`. Local builtin.rs shim that delegates to

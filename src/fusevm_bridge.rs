@@ -109,7 +109,13 @@ thread_local! {
     /// c:Src/exec.c WC_TRYBLOCK — zsh's wordcode walker handles this
     /// inline; the zshrs port lifts it into a paired SET / RESTORE
     /// pair around the always-arm.
-    static TRY_ESCAPE_SAVE: RefCell<Vec<(i32, i32, i32, i32)>> =
+    /// Tuple: `(retflag, breaks, contflag, exit_pending, try_errflag,
+    /// try_interrupt)`. The last two are c:Src/loop.c:762-763's
+    /// `save_try_errflag` / `save_try_interrupt` — the ENCLOSING try
+    /// block's values, restored at c:778-779 so nested
+    /// `{…} always {…}` constructs don't leak `$TRY_BLOCK_ERROR`
+    /// outward.
+    static TRY_ESCAPE_SAVE: RefCell<Vec<(i32, i32, i32, i32, i64, i64)>> =
         const { RefCell::new(Vec::new()) };
     /// Re-entry guard for BUILTIN_DEBUG_TRAP. While the DEBUG trap
     /// body is running, the per-statement DEBUG_TRAP dispatch in the
@@ -299,18 +305,51 @@ pub fn cmdsubst_outer_stdout() -> Option<i32> {
     CMDSUBST_OUTER_FDS.with(|s| s.borrow().last().map(|(o, _)| *o))
 }
 
+thread_local! {
+    /// The pipeline fds a stage still has to install onto 0/1, as
+    /// `(input, output)` with -1 meaning "leave this fd alone".
+    ///
+    /// c:Src/exec.c:3720-3724 — the pipe's read/write ends are the
+    /// FIRST entries of the command's multio table:
+    ///     /* Add pipeline input/output to mnodes */
+    ///     if (input)  addfd(forked, save, mfds, 0, input, 0, NULL);
+    ///     if (output) addfd(forked, save, mfds, 1, output, 1, NULL);
+    /// and that runs AFTER prefork (c:3304) + globlist (c:3702) have
+    /// expanded the command's argument words. So a `$(...)` inside a
+    /// stage's ARGS reads the shell's original fd 0, not the pipe:
+    /// `print -rl -- c a b | print -r -- "[$(cat)]"` prints `[]`.
+    /// (The stage's own fork at c:3000 happens before the expansion,
+    /// which is why `${x::=v}` in a non-last stage doesn't survive —
+    /// but the fds are still installed after it.)
+    ///
+    /// zshrs's [`BUILTIN_RUN_PIPELINE`] forks per stage, so it parks
+    /// the stage's fds here instead of dup2'ing them itself, and the
+    /// compiled stage chunk installs them via
+    /// [`BUILTIN_PIPE_FDS_INSTALL`] at the C-faithful point: after the
+    /// arg-word ops, before the redirect scope
+    /// (compile_zsh.rs::emit_stage_fds_install). A compound stage
+    /// (`{ … }`, `( … )`, a function) installs at chunk entry — its
+    /// body legitimately reads the pipe.
+    static PENDING_STAGE_FDS: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((-1, -1)) };
+}
+
+/// Park the current stage's `(input, output)` pipe fds for the stage
+/// chunk's `BUILTIN_PIPE_FDS_INSTALL` to pick up. Returns the previous
+/// value so a nested pipeline (`print -- "$(a | b)" | c`) can restore
+/// the outer stage's still-uninstalled fds when it finishes.
+fn stage_fds_park(input: i32, output: i32) -> (i32, i32) {
+    PENDING_STAGE_FDS.with(|c| c.replace((input, output)))
+}
+
+/// Take (and clear) the parked stage fds.
+fn stage_fds_take() -> (i32, i32) {
+    PENDING_STAGE_FDS.with(|c| c.replace((-1, -1)))
+}
+
 // Thread-local pointer to the current ShellExecutor.
 // Set before VM execution, cleared after. Used by builtin handlers.
 thread_local! {
     static CURRENT_EXECUTOR: RefCell<Option<*mut ShellExecutor>> = const { RefCell::new(None) };
-    /// Set by subshell_end after a deferred subshell `exit N` lands.
-    /// Read + cleared by the next GET_VAR sync_status path so the
-    /// vm.last_status → LASTVAL sync doesn't clobber the deferred
-    /// exit status. RUST-ONLY: needed because zshrs runs subshells
-    /// in-process (no fork) so vm.last_status doesn't track the
-    /// subshell's exit; C zsh's subshell forks and the child's
-    /// process::exit(N) becomes $? in the parent automatically.
-    static SUBSHELL_EXIT_STATUS_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The installed session executor, registered by
     /// `exec::install_session_executor`. Lets [`with_session_context`]
     /// establish a VM execution context for STARTUP work that runs
@@ -337,6 +376,17 @@ pub fn register_session_executor(exec: &mut ShellExecutor) {
     SESSION_EXECUTOR_PTR.with(|c| c.set(Some(exec as *mut ShellExecutor)));
 }
 
+/// Run `f` with the registered session executor established as
+/// `CURRENT_EXECUTOR`, so code reaching the live executor via
+/// `try_with_executor` works even when no per-command `execode` context
+/// is active yet.
+///
+/// Sole caller: `zsh_main`'s `run_init_scripts()` (c:1914), which
+/// sources `.zshenv`/`.zshrc`/`.zlogin` via `source()` BEFORE the loop's
+/// first `execode`. Without an active context those sourced bodies
+/// `try_with_executor` → `None` → no-op, so the shell silently ignored
+/// the user's dotfiles. The scope is entered once around the startup
+/// sourcing window and dropped before the loop begins — deliberately NOT
 /// Run `f` with the registered session executor established as
 /// `CURRENT_EXECUTOR`, so code reaching the live executor via
 /// `try_with_executor` works even when no per-command `execode` context
@@ -959,8 +1009,31 @@ pub(crate) fn dispatch_builtin(name: &str, args: Vec<String>) -> i32 {
             return status;
         }
     }
+    // c:Src/exec.c:3997 `int q = queue_signal_level();`
+    // c:Src/exec.c:4231 `dont_queue_signals();`
+    // c:Src/exec.c:4243 `restore_queue_signals(q);`
+    //
+    // C runs EVERY builtin with signal queueing switched OFF. Two
+    // consequences the zshrs port was missing:
+    //
+    //   1. `dont_queue_signals()` DRAINS the pending queue (it calls
+    //      run_queued_signals()), so a signal that arrived while an
+    //      enclosing scope held queue_signals() — doshfunc holds one
+    //      for the whole call, c:Src/exec.c:5835 — fires its trap at
+    //      the NEXT command boundary rather than at function exit.
+    //   2. While the builtin runs, queueing stays off, so a signal the
+    //      builtin sends to itself (`kill -USR1 $$`) dispatches the
+    //      trap synchronously inside the builtin — which is why zsh
+    //      prints pre/trap/post for
+    //      `f() { print pre; kill -USR1 $$; print post }`.
+    //
+    // Without this bracket every trap raised inside a function was
+    // deferred to the enclosing unqueue_signals() (i.e. script end).
+    let q = crate::ported::signals_h::queue_signal_level(); // c:3997
+    crate::ported::signals_h::dont_queue_signals(); // c:4231
     let status = dispatch_builtin_raw(name, args);
-    // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
+    crate::ported::signals_h::restore_queue_signals(q); // c:4243
+                                                        // c:Src/jobs.c:1748 waitonejob — canonical single-command pipestats update.
     crate::ported::builtin::LASTVAL.store(status, std::sync::atomic::Ordering::Relaxed);
     let mut synth = crate::ported::zsh_h::job::default();
     crate::ported::jobs::waitonejob(&mut synth);
@@ -2418,29 +2491,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         .get_or_init(|| std::sync::Mutex::new(-1))
                         .lock()
                         .unwrap() = -1;
-                    // Child: wire stdin from previous pipe's read end
-                    if i > 0 {
-                        unsafe {
-                            libc::dup2(pipes[i - 1].0, libc::STDIN_FILENO);
-                        }
-                    }
-                    // Wire stdout to next pipe's write end
-                    unsafe {
-                        libc::dup2(pipes[i].1, libc::STDOUT_FILENO);
-                    }
+                    // c:Src/exec.c:3720-3724 — the stage's own fds go
+                    // onto 0/1 only AFTER its argument words have been
+                    // expanded (prefork c:3304 / globlist c:3702), so
+                    // park them and let the stage chunk's
+                    // BUILTIN_PIPE_FDS_INSTALL do the dup2 at the
+                    // C-faithful point. `print -rl -- c a b |
+                    // print -r -- "[$(cat)]" | cat` therefore prints
+                    // `[]` — the middle stage's `$(cat)` reads the
+                    // shell's stdin, not the pipe.
+                    let in_fd = if i > 0 { pipes[i - 1].0 } else { -1 };
+                    let out_fd = pipes[i].1;
                     // (Pipe-output MULTIOS marking — c:Src/exec.c:3724 —
                     // is emitted INTO the stage chunk by compile_pipe
                     // via BUILTIN_PIPE_OUTPUT_MARK, gated on the stage's
                     // top-level command actually carrying redirects, so
                     // a nested `{ echo a > f; } | cat` body redirect
                     // does not wrongly join the pipe.)
-                    // Close all original pipe fds (keeping stdin/stdout dups)
+                    // Close every pipe fd this stage doesn't need. The
+                    // two it does keep are closed by the install op
+                    // right after their dup2.
                     for (r, w) in &pipes {
                         unsafe {
-                            libc::close(*r);
-                            libc::close(*w);
+                            if *r != in_fd && *r != out_fd {
+                                libc::close(*r);
+                            }
+                            if *w != in_fd && *w != out_fd {
+                                libc::close(*w);
+                            }
                         }
                     }
+                    stage_fds_park(in_fd, out_fd);
 
                     // Run this stage's bytecode on a fresh VM
                     crate::fusevm_disasm::maybe_print_stdout(
@@ -2462,26 +2543,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
 
-        // Parent runs the LAST stage inline. Save stdin, dup the last
-        // pipe's read end onto fd 0, run the chunk, restore stdin.
-        // Close every other pipe fd so the producer side gets EOF
-        // when the last upstream stage exits.
+        // Parent runs the LAST stage inline. Save stdin, park the last
+        // pipe's read end for the chunk's BUILTIN_PIPE_FDS_INSTALL
+        // (c:Src/exec.c:3722 `addfd(..., 0, input, 0, NULL)` — after
+        // the stage's args are expanded, so `… | print -r -- "[$(cat)]"`
+        // has its `$(cat)` read the shell's stdin, not the pipe), run
+        // the chunk, restore stdin. Close every other pipe fd so the
+        // producer side gets EOF when the last upstream stage exits.
         let saved_stdin = unsafe { libc::dup(libc::STDIN_FILENO) };
-        if last_idx > 0 {
-            let read_fd = pipes[last_idx - 1].0;
-            unsafe {
-                libc::dup2(read_fd, libc::STDIN_FILENO);
-            }
-        }
-        // Close all pipe fds in the parent now that stdin is wired.
-        // (Children already have their own copies. The dup2 above
-        // already gave us a fresh fd 0 if needed.)
+        let last_in_fd = if last_idx > 0 {
+            pipes[last_idx - 1].0
+        } else {
+            -1
+        };
+        // Close all pipe fds in the parent except the one the last
+        // stage still has to install. (Children already have their own
+        // copies; the install op closes the read end after its dup2.)
         for (r, w) in &pipes {
             unsafe {
-                libc::close(*r);
+                if *r != last_in_fd {
+                    libc::close(*r);
+                }
                 libc::close(*w);
             }
         }
+        let outer_stage_fds = stage_fds_park(last_in_fd, -1);
 
         // Run the last stage's bytecode on a sub-VM with the host
         // wired up. The host points back at the executor so reads
@@ -2498,6 +2584,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _ = std::io::stderr().flush();
             stage_vm.last_status
         };
+
+        // Reclaim the read end if the stage chunk never reached its
+        // install op (an expansion error aborted it, or the stage was
+        // a shape that dispatches without one), then restore the outer
+        // stage's still-pending fds for a nested pipeline.
+        let (leftover_in, _) = stage_fds_take();
+        if leftover_in >= 0 {
+            unsafe { libc::close(leftover_in) };
+        }
+        stage_fds_park(outer_stage_fds.0, outer_stage_fds.1);
 
         // Restore stdin
         if saved_stdin >= 0 {
@@ -3853,6 +3949,63 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         nodes_to_value(parts)
     });
 
+    // BUILTIN_FORCE_SPLIT — `${=name}` / SH_WORD_SPLIT forced split.
+    // c:Src/subst.c:3920-3928 —
+    //     if (force_split && !isarr) {
+    //         aval = sepsplit(val, spsep, 0, 1);
+    //         if (!aval || !aval[0])   val = dupstring("");
+    //         else if (!aval[1])       val = aval[0];
+    //         else                     isarr = nojoin ? 1 : 2;
+    //     }
+    // with spsep == NULL for the `=` flag, so sepsplit falls through to
+    // Src/utils.c:3711 spacesplit(s, allownull=0). See BUILTIN_FORCE_SPLIT's
+    // doc comment for the empty-field rule and the argc contract.
+    vm.register_builtin(BUILTIN_FORCE_SPLIT, |vm, argc| {
+        let s = vm.pop().to_str();
+        let keep_empties = argc == 1;
+        // c:3921 — `sepsplit(val, spsep, 0, 1)`; spsep NULL → spacesplit.
+        let raw = crate::ported::utils::sepsplit(&s, None, false);
+        // c:Src/subst.c:36 `char nulstring[] = {Nularg, '\0'};` — spacesplit
+        // emits this for an empty field delimited by IFS-NON-whitespace
+        // (c:Src/utils.c:3732 / :3752); it survives prefork's empty-node
+        // delete and remnulargs (c:Src/glob.c:3649) turns it back into "".
+        // A plain "" field (c:3734 / :3757) is what a skipped run of
+        // IFS-WHITESPACE leaves behind, and prefork DOES delete that one.
+        let nulstring = crate::ported::zsh_h::Nularg.to_string();
+        let mut out: Vec<String> = Vec::with_capacity(raw.len());
+        for w in raw {
+            if w == nulstring {
+                out.push(String::new());
+            } else if w.is_empty() {
+                if keep_empties {
+                    out.push(String::new());
+                }
+            } else {
+                out.push(w);
+            }
+        }
+        if out.is_empty() {
+            // c:3922-3923 — `if (!aval || !aval[0]) val = dupstring("");`:
+            // the split produced nothing, so the value is the empty SCALAR.
+            // Quoted, that is one empty word (c:4465 `if (qt && !*y) y =
+            // dupstring(nulstring);` → `a=( "${=v}" )` has one element);
+            // unquoted, prefork deletes it and the word vanishes.
+            if keep_empties {
+                return Value::str(String::new());
+            }
+            note_empty_is_scalar(true);
+            return Value::Array(Vec::new());
+        }
+        if out.len() == 1 {
+            // c:3924 — `else if (!aval[1]) val = aval[0];` — a one-field
+            // split stays a SCALAR (this is why `${#${(f)v}}` counts
+            // characters when the split yields a single line).
+            return Value::str(out.into_iter().next().unwrap());
+        }
+        // c:3927 — `isarr = nojoin ? 1 : 2;`
+        Value::Array(out.into_iter().map(Value::str).collect())
+    });
+
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
         // c:Src/glob.c::xpandbraces — brace expansion runs per word.
         // When the upstream produced an array (e.g. `${a:e}` splat),
@@ -4159,6 +4312,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ARRAY_ALL, |vm, _argc| {
         let name = vm.pop().to_str();
+        // c:Src/params.c:2027-2029 — a `[@]`/`[*]` subscript sets
+        // SCANPM_ISVAR_AT, i.e. `isarr != 0` (c:2915). An empty result is
+        // therefore an empty ARRAY, and plan9 deletes the whole word
+        // (c:4362) rather than keeping the surrounding text.
+        note_empty_is_scalar(false);
         with_executor(|exec| {
             // Special positional names — splice the positional list.
             if name == "@" || name == "*" || name == "argv" {
@@ -4249,16 +4407,37 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             );
                             exec.set_last_status(1);
                         }
+                        // c:Src/subst.c:3480-3485 — an UNSET parameter takes the
+                        // `vunset` arm: `val = dupstring("")` with isarr left at
+                        // 0. That is a SCALAR empty, so plan9 keeps the
+                        // surrounding text (`setopt rcexpandparam;
+                        // print -r -- "[${unset[@]}]"` → `[]`), unlike a
+                        // DECLARED-but-empty array (`arr=()`, matched by the
+                        // `Some(vec![])` arm above), which sets isarr and gets
+                        // the word deleted at c:4362.
+                        note_empty_is_scalar(true);
                         Value::Array(vec![])
                     } else if opt_state_get("shwordsplit").unwrap_or(false) {
-                        // bash-compat: under setopt sh_word_split, do
-                        // split scalars on IFS chars.
-                        let ifs = exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string());
-                        let parts: Vec<Value> = val
-                            .split(|c: char| ifs.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(Value::str)
-                            .collect();
+                        // c:3921 `aval = sepsplit(val, spsep, 0, 1)` — same
+                        // splitter as `${=name}` (Src/utils.c:3711 spacesplit),
+                        // not a naive `split().filter(non-empty)`: only the
+                        // IFS-WHITESPACE-derived empty fields are elided; the
+                        // `nulstring` ones an IFS-NON-whitespace separator makes
+                        // survive (c:Src/subst.c:36).
+                        let nulstring = crate::ported::zsh_h::Nularg.to_string();
+                        let parts: Vec<Value> =
+                            crate::ported::utils::sepsplit(&val, None, false)
+                                .into_iter()
+                                .filter_map(|w| {
+                                    if w == nulstring {
+                                        Some(Value::str(String::new()))
+                                    } else if w.is_empty() {
+                                        None // c:184-187 prefork uremnode
+                                    } else {
+                                        Some(Value::str(w))
+                                    }
+                                })
+                                .collect();
                         Value::Array(parts)
                     } else {
                         Value::Array(vec![Value::str(val)])
@@ -4485,24 +4664,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         let name = args.into_iter().next().unwrap_or_default();
         let live_status = vm.last_status;
-        // Suppress sync when a deferred subshell exit just landed:
-        // LASTVAL holds the correct deferred status, vm.last_status
-        // is stale (post-subshell vm doesn't propagate status). See
-        // SUBSHELL_EXIT_STATUS_PENDING TLS declaration for rationale.
-        let suppress_sync = SUBSHELL_EXIT_STATUS_PENDING.with(|c| {
-            let prev = c.get();
-            c.set(false);
-            prev
-        });
         // `$@` and `$*` need splice semantics — return Value::Array of
         // positional params so for-loop's BUILTIN_ARRAY_FLATTEN spreads them
         // and pop_args splits them into argv slots. zsh's `"$@"` bslashquote-each-
         // word semantics matches: each pos-param becomes its own arg.
         // Same for arrays accessed by name (e.g. `$arr` in some contexts).
+        //
+        // vm.last_status is authoritative: `subshell_end` now returns
+        // Some(status) and fusevm's `Op::SubshellEnd` writes it into
+        // vm.last_status, so a deferred subshell `exit N` is visible
+        // here. Suppressing this sync (as an older revision did, back
+        // when the host hook returned nothing) made LASTVAL win over
+        // any status the VM set AFTER SubshellEnd — which dropped the
+        // `!` negation of `Src/exec.c:1979-1980`
+        //   if ((slflags & WC_SUBLIST_NOT) && !errflag && !retflag)
+        //       lastval = !lastval;
+        // for `! (exit 7)` (emit_negate_status' SetStatus updated
+        // vm.last_status, then `$?` read the stale LASTVAL=7).
         let sync_status = |exec: &mut ShellExecutor| {
-            if !suppress_sync {
-                exec.set_last_status(live_status);
-            }
+            exec.set_last_status(live_status);
         };
         if name == "@" || name == "*" {
             // Quoting decides empty-word retention (c:Src/subst.c:
@@ -4537,6 +4717,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.array(&name)
             });
             if let Some(arr) = arr_val {
+                // c:4245 — a real array reference (`isarr != 0`). An empty one
+                // takes plan9's word-removal path (c:4362), so clear the
+                // scalar bit; a preceding empty-SCALAR expansion in the same
+                // word would otherwise leave it set and keep the word alive
+                // (`empty=''; e=(); a=("$empty"); print -rl -- x$e y`).
+                note_empty_is_scalar(false);
                 return Value::Array(arr.into_iter().map(Value::str).collect());
             }
         }
@@ -4650,6 +4836,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // couldn't distinguish unset from set-empty.
                 return Value::str(crate::ported::utils::sepjoin(&items, None));
             }
+            // c:4245 — a real array reference: `isarr != 0`, so an empty
+            // one takes plan9's word-removal path, not the scalar path.
+            note_empty_is_scalar(false);
             return Value::Array(items.into_iter().map(Value::str).collect());
         }
         let (val, in_dq, is_known) = with_executor(|exec| {
@@ -4710,6 +4899,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // string so "$a" stays a single empty arg. Direct port of
         // subst.c's elide-empty pass.
         if val.is_empty() && !in_dq {
+            // c:1650-1656 / c:4437 — a SCALAR parameter has `isarr == 0`,
+            // so it never reaches plan9's word-removal at c:4362. Flag the
+            // empty Array below as a scalar so `setopt rcexpandparam;
+            // v=; print -rl -- x$v y` still emits `x` (only an empty
+            // ARRAY deletes the word).
+            note_empty_is_scalar(true);
             return Value::Array(Vec::new());
         }
         // c:Src/subst.c:1759 SH_WORD_SPLIT — when shwordsplit is set and
@@ -4719,19 +4914,41 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // `$s` in `print $s` stayed a single arg even with the option
         // set, breaking POSIX-style scalar word-splitting.
         if !in_dq && opt_state_get("shwordsplit").unwrap_or(false) {
-            let ifs =
-                with_executor(|exec| exec.scalar("IFS").unwrap_or_else(|| " \t\n".to_string()));
-            let parts: Vec<Value> = val
-                .split(|c: char| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .map(|s| Value::str(s.to_string()))
+            // c:1705 — `spbreak = (pf_flags & PREFORK_SHWORDSPLIT) && !qt`,
+            // then c:3902 `force_split = !ssub && (spbreak || spsep)` and
+            // c:3921 `aval = sepsplit(val, spsep, 0, 1)`. SH_WORD_SPLIT runs
+            // the SAME splitter as `${=name}`, so route it through the same
+            // port. The previous `split(|c| ifs.contains(c)).filter(non-empty)`
+            // dropped every empty field, but spacesplit (Src/utils.c:3711)
+            // only elides the ones a run of IFS-WHITESPACE produces — an
+            // IFS-NON-whitespace separator preserves them as `nulstring`.
+            // `IFS=x; v=xaxbx; setopt shwordsplit; print -rl -- $v` is four
+            // words in zsh (``, a, b, ``), not two.
+            let raw = crate::ported::utils::sepsplit(&val, None, false); // c:3921
+            let nulstring = crate::ported::zsh_h::Nularg.to_string(); // c:36
+            let parts: Vec<Value> = raw
+                .into_iter()
+                .filter_map(|w| {
+                    if w == nulstring {
+                        Some(Value::str(String::new()))
+                    } else if w.is_empty() {
+                        // c:184-187 — prefork deletes the truly-empty node.
+                        None
+                    } else {
+                        Some(Value::str(w))
+                    }
+                })
                 .collect();
             if parts.is_empty() {
+                // c:3922 — `val = dupstring("")`: an empty SCALAR, not an
+                // empty array (see EMPTY_EXPANSION_IS_SCALAR).
+                note_empty_is_scalar(true);
                 return Value::Array(Vec::new());
             } else if parts.len() == 1 {
+                // c:3924 — `else if (!aval[1]) val = aval[0];`
                 return parts.into_iter().next().unwrap();
             } else {
-                return Value::Array(parts);
+                return Value::Array(parts); // c:3927
             }
         }
         Value::str(val)
@@ -5416,47 +5633,73 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_TRY_BLOCK_ERROR, |vm, _argc| {
         use std::sync::atomic::Ordering;
         let vm_status = vm.last_status;
-        let errored = (crate::ported::utils::errflag.load(Ordering::Relaxed)
-            & crate::ported::zsh_h::ERRFLAG_ERROR)
-            != 0;
         // c:Src/exec.c WC_TRYBLOCK — the always-arm runs with a
         // clean escape state. Snapshot RETFLAG / BREAKS / CONTFLAG /
         // EXIT_PENDING here and clear them; RESTORE_TRY_BLOCK_STATUS
         // re-applies them at always-arm exit so the propagation jump
         // emitted by compile_zsh fires correctly.
-        let ret_save = crate::ported::builtin::RETFLAG.swap(0, Ordering::Relaxed);
-        let brk_save = crate::ported::builtin::BREAKS.swap(0, Ordering::Relaxed);
-        let cont_save = crate::ported::builtin::CONTFLAG.swap(0, Ordering::Relaxed);
+        let ret_save = crate::ported::builtin::RETFLAG.swap(0, Ordering::Relaxed); // c:769-770
+        let brk_save = crate::ported::builtin::BREAKS.swap(0, Ordering::Relaxed); // c:771-772
+        let cont_save = crate::ported::builtin::CONTFLAG.swap(0, Ordering::Relaxed); // c:773-774
         let exit_save = crate::ported::builtin::EXIT_PENDING.swap(0, Ordering::Relaxed);
+        // c:Src/loop.c:762-763 — `save_try_errflag = try_errflag;
+        // save_try_interrupt = try_interrupt;`. Restored at c:778-779
+        // by RESTORE_TRY_BLOCK_STATUS so a nested try block doesn't
+        // clobber the enclosing one's `$TRY_BLOCK_ERROR`.
+        let try_err_save = crate::ported::r#loop::try_errflag.load(Ordering::Relaxed); // c:762
+        let try_int_save = crate::ported::r#loop::try_interrupt.load(Ordering::Relaxed); // c:763
         TRY_ESCAPE_SAVE.with(|s| {
-            s.borrow_mut()
-                .push((ret_save, brk_save, cont_save, exit_save));
+            s.borrow_mut().push((
+                ret_save,
+                brk_save,
+                cont_save,
+                exit_save,
+                try_err_save,
+                try_int_save,
+            ));
         });
+        // c:Src/loop.c:764-766 — `try_errflag = (zlong)(errflag &
+        // ERRFLAG_ERROR); try_interrupt = (zlong)((errflag &
+        // ERRFLAG_INT) ? 1 : 0);`. Both are the RAW FLAG BITS, not the
+        // try-list's exit status: ERRFLAG_ERROR is 1 (zsh.h:2972), so
+        // `$TRY_BLOCK_ERROR` is 1-or-0 in zsh regardless of what the
+        // failing command's `$?` was. The try-list's status is carried
+        // separately in `__zshrs_try_block_saved_status`.
+        let live_errflag = crate::ported::utils::errflag.load(Ordering::Relaxed);
+        let try_err = (live_errflag & crate::ported::zsh_h::ERRFLAG_ERROR) as i64; // c:765
+        let try_int = if (live_errflag & crate::ported::zsh_h::ERRFLAG_INT) != 0 {
+            1i64
+        } else {
+            0i64
+        }; // c:766
+        crate::ported::r#loop::try_errflag.store(try_err, Ordering::Relaxed); // c:765
+        crate::ported::r#loop::try_interrupt.store(try_int, Ordering::Relaxed); // c:766
+        // c:Src/loop.c:755 — `endval = lastval ? lastval : errflag;`.
+        // The status of the WHOLE `{…} always {…}` construct, captured
+        // BEFORE the always-list runs (exectry returns it at c:801) and
+        // deliberately including the errflag fallback: a try-list that
+        // failed with `lastval == 0` but raised errflag still reports 1.
+        let endval = if vm_status != 0 {
+            vm_status
+        } else {
+            live_errflag
+        }; // c:755
         with_executor(|exec| {
             exec.set_scalar(
                 "__zshrs_try_block_saved_status".to_string(),
-                vm_status.to_string(),
+                endval.to_string(),
             );
-            // c:Src/loop.c:765-766 — `try_errflag = errflag &
-            // ERRFLAG_ERROR; try_interrupt = (errflag & ERRFLAG_INT) ?
-            // 1 : 0`. Updates the canonical loop.c globals that
-            // `$TRY_BLOCK_ERROR` / `$TRY_BLOCK_INTERRUPT` read from
-            // (port at src/ported/loop.rs::try_errflag etc.).
-            // Mirror into paramtab too via set_scalar so
-            // `${parameters[TRY_BLOCK_ERROR]}` and direct assignment
-            // shapes stay in sync.
-            let try_err = if errored { vm_status as i64 } else { 0 };
-            crate::ported::r#loop::try_errflag.store(try_err, Ordering::Relaxed);
-            crate::ported::r#loop::try_interrupt.store(0, Ordering::Relaxed);
-            if errored {
-                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
-                // Clear errflag so always-arm runs cleanly. c:768.
-                crate::ported::utils::errflag
-                    .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
-            } else {
-                exec.set_scalar("TRY_BLOCK_ERROR".to_string(), "0".to_string());
-            }
+            // Mirror into paramtab so `${parameters[TRY_BLOCK_ERROR]}`
+            // and the PM_INTEGER `u_val` shadow agree with the atomic
+            // the special-var getter reads. (setsparam → intsetfn's
+            // TRY_BLOCK_ERROR arm re-stores the same value.)
+            exec.set_scalar("TRY_BLOCK_ERROR".to_string(), try_err.to_string());
+            exec.set_scalar("TRY_BLOCK_INTERRUPT".to_string(), try_int.to_string());
         });
+        // c:Src/loop.c:768 — `errflag = 0;` ("We need to reset all
+        // errors to allow the block to execute"). C clears the WHOLE
+        // word, not just ERRFLAG_ERROR.
+        crate::ported::utils::errflag.store(0, Ordering::Relaxed); // c:768
         Value::Status(0)
     });
 
@@ -5534,26 +5777,66 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // exit status is discarded for the construct.
     vm.register_builtin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, |_vm, _argc| {
         use std::sync::atomic::Ordering;
-        // c:Src/exec.c — the entire `{try} always {…}` construct's
-        // exit status is the try-block's last status. Per zsh
-        // semantics this carries through regardless of what the
-        // always-arm did (including reads/writes of TRY_BLOCK_ERROR
-        // — those affect later commands' visible value but don't
-        // override the construct's exit). The "swallow" idiom in
-        // C is gated on errflag state at always-arm exit, not on
-        // TBE's literal value; full fidelity needs more state and
-        // is deferred.
+        // c:Src/loop.c:801 — `return endval;`. The construct's exit
+        // status is the try-list's (captured at c:755 by
+        // SET_TRY_BLOCK_ERROR), never the always-list's.
         let saved = with_executor(|exec| {
             exec.scalar("__zshrs_try_block_saved_status")
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0)
         });
+        // c:Src/exec.c:1375 — `lastval = lv;` on the exectry return.
+        // The always-list's own commands left their status in LASTVAL
+        // (`always { : }` → 0); without this store the errflag re-raise
+        // below aborts the shell with the always-list's 0 instead of
+        // the try-list's failure status.
+        crate::ported::builtin::LASTVAL.store(saved, Ordering::Relaxed); // c:1375
+        // c:Src/loop.c:774-777 — the error RE-RAISE. This is the
+        // whole point of TRY_BLOCK_ERROR being writable:
+        //
+        //     if (try_errflag)  errflag |= ERRFLAG_ERROR;
+        //     else              errflag &= ~ERRFLAG_ERROR;
+        //     if (try_interrupt) errflag |= ERRFLAG_INT;
+        //     else               errflag &= ~ERRFLAG_INT;
+        //
+        // SET_TRY_BLOCK_ERROR cleared errflag (c:768) so the always-arm
+        // could run; the try-block's error is PARKED in `try_errflag`
+        // and re-raised HERE unless the always-arm zeroed it
+        // (`TRY_BLOCK_ERROR=0`, the documented swallow idiom — routed
+        // to the atomic by intsetfn's IPDEF6 arm, params.rs).
+        //
+        // zshrs used to just drop the parked error, so
+        // `f() { { typeset -r ro=1; ro=2 } always { … }; print reached }`
+        // kept running and exited 0, where zsh aborts f with status 1.
+        let te = crate::ported::r#loop::try_errflag.load(Ordering::Relaxed); // c:774
+        let ti = crate::ported::r#loop::try_interrupt.load(Ordering::Relaxed); // c:776
+        if te != 0 {
+            crate::ported::utils::errflag
+                .fetch_or(crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed); // c:775
+        } else {
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed); // c:777
+        }
+        if ti != 0 {
+            crate::ported::utils::errflag
+                .fetch_or(crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed); // c:779
+        } else {
+            crate::ported::utils::errflag
+                .fetch_and(!crate::ported::zsh_h::ERRFLAG_INT, Ordering::Relaxed); // c:781
+        }
         // Re-apply the escape flags captured by SET_TRY_BLOCK_ERROR.
         // If the always-arm itself fired return/break/continue/exit,
         // its handler already overwrote the canonical atomics; let
         // those win — the always-arm's own escape always takes
         // priority over the try-block's deferred one.
-        if let Some((ret, brk, cont, exit_p)) = TRY_ESCAPE_SAVE.with(|s| s.borrow_mut().pop()) {
+        if let Some((ret, brk, cont, exit_p, try_err_save, try_int_save)) =
+            TRY_ESCAPE_SAVE.with(|s| s.borrow_mut().pop())
+        {
+            // c:Src/loop.c:782-783 — `try_errflag = save_try_errflag;
+            // try_interrupt = save_try_interrupt;`
+            crate::ported::r#loop::try_errflag.store(try_err_save, Ordering::Relaxed); // c:782
+            crate::ported::r#loop::try_interrupt.store(try_int_save, Ordering::Relaxed);
+            // c:783
             if crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0 {
                 crate::ported::builtin::RETFLAG.store(ret, Ordering::Relaxed);
             }
@@ -5941,85 +6224,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
-    // sticking (default zsh splice semantics for `${arr[@]}`, `$@`).
+    // BUILTIN_CONCAT_SPLICE — word-segment concat for an expansion whose
+    // ARRAY shape survives into the word (`${arr[@]}`, `$@`, `${(@)a}`,
+    // `${=v}`, slices). c:Src/subst.c:4245 `if (isarr)` gates the two
+    // emit shapes and c:1663 `int plan9 = isset(RCEXPANDPARAM);` picks
+    // between them at RUNTIME — so the option, not the compile-time
+    // segment shape, decides splice-vs-cross-product here.
     vm.register_builtin(BUILTIN_CONCAT_SPLICE, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
-        match (lhs, rhs) {
-            (Value::Array(mut la), Value::Array(ra)) => {
-                if la.is_empty() {
-                    return Value::Array(ra);
-                }
-                if ra.is_empty() {
-                    return Value::Array(la);
-                }
-                // Last of la merges with first of ra; rest unchanged.
-                let last_l = la.pop().unwrap();
-                let mut ra_iter = ra.into_iter();
-                let first_r = ra_iter.next().unwrap();
-                let l_s = last_l.as_str_cow();
-                let r_s = first_r.as_str_cow();
-                let mut merged = String::with_capacity(l_s.len() + r_s.len());
-                merged.push_str(&l_s);
-                merged.push_str(&r_s);
-                la.push(Value::str(merged));
-                la.extend(ra_iter);
-                Value::Array(la)
-            }
-            (Value::Array(mut la), rhs_scalar) => {
-                // c:Src/subst.c paramsubst splice — empty array on
-                // either side preserves the empty (zero words),
-                // doesn't collapse into a single-empty-string scalar.
-                // Bug #120 in docs/BUGS.md: empty array slice
-                // concatenated with empty literal returned
-                // Value::str("") which surfaced as one empty arg
-                // instead of zero args.
-                let rhs_s = rhs_scalar.as_str_cow();
-                if la.is_empty() {
-                    if rhs_s.is_empty() {
-                        return Value::Array(Vec::new());
-                    }
-                    return Value::str(rhs_s.to_string());
-                }
-                let last = la.pop().unwrap();
-                let l_s = last.as_str_cow();
-                let mut s = String::with_capacity(l_s.len() + rhs_s.len());
-                s.push_str(&l_s);
-                s.push_str(&rhs_s);
-                la.push(Value::str(s));
-                Value::Array(la)
-            }
-            (lhs_scalar, Value::Array(mut ra)) => {
-                let lhs_s = lhs_scalar.as_str_cow();
-                if ra.is_empty() {
-                    // Empty-array RHS — preserve emptiness when the
-                    // LHS is also empty (no prefix to attach). Bug
-                    // #120 in docs/BUGS.md.
-                    if lhs_s.is_empty() {
-                        return Value::Array(Vec::new());
-                    }
-                    return Value::str(lhs_s.to_string());
-                }
-                let first = ra.remove(0);
-                let r_s = first.as_str_cow();
-                let mut s = String::with_capacity(lhs_s.len() + r_s.len());
-                s.push_str(&lhs_s);
-                s.push_str(&r_s);
-                let mut out = Vec::with_capacity(ra.len() + 1);
-                out.push(Value::str(s));
-                out.extend(ra);
-                Value::Array(out)
-            }
-            (lhs_s, rhs_s) => {
-                let l = lhs_s.as_str_cow();
-                let r = rhs_s.as_str_cow();
-                let mut s = String::with_capacity(l.len() + r.len());
-                s.push_str(&l);
-                s.push_str(&r);
-                Value::str(s)
-            }
+        if plan9_active() {
+            return concat_plan9(lhs, rhs);
         }
+        concat_splice(lhs, rhs)
     });
 
     // BUILTIN_CONCAT_DISTRIBUTE — word-segment concat. With
@@ -6118,26 +6335,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
-        // c:Src/options.c — RC_EXPAND_PARAM applies to UNQUOTED
-        // expansions only; inside DQ `"$foo${arr}bar"` joins via
-        // $IFS[0] regardless of the option. The compiler emits
-        // CallBuiltin(BUILTIN_CONCAT_DISTRIBUTE, 1) when the parent
-        // word is DQ-wrapped (compile_zsh.rs parent_is_dq); the
-        // default UNQUOTED path emits argc=2 (lhs + rhs). Treat
-        // argc==1 as "force rc_expand off." Bug #246 in docs/BUGS.md.
-        let dq_suppress = argc == 1;
-        let rc_expand =
-            !dq_suppress && with_executor(|exec| opt_state_get("rcexpandparam").unwrap_or(false));
-        // Helper: join an Array to scalar via sepjoin's IFS default.
-        // c:Src/utils.c:3936-3945 — set-but-empty IFS joins with ""
-        // (`IFS=""; echo "x$*y"` → `xabcy`); only unset /
-        // space-leading IFS yields " ".
-        let join_arr = |arr: Vec<Value>| -> String {
-            let strs: Vec<String> = arr.iter().map(|v| v.as_str_cow().into_owned()).collect();
-            crate::ported::utils::sepjoin(&strs, None)
-        };
-        if !rc_expand {
-            // Default: join any Array side to scalar, then concat.
+        // c:Src/subst.c:4245 `if (isarr)` — an unquoted array embedded
+        // in a word ALWAYS emits one word per element, never a scalar
+        // join. The shape (splice vs plan9 cross-product) is chosen at
+        // RUNTIME by c:1663 `int plan9 = isset(RCEXPANDPARAM);`, exactly
+        // as BUILTIN_CONCAT_SPLICE does. The only extra case DISTRIBUTE
+        // handles is the DQ context: the compiler emits
+        // CallBuiltin(BUILTIN_CONCAT_DISTRIBUTE, 1) when the parent word
+        // is DQ-wrapped (compile_zsh.rs parent_is_dq), and inside DQ
+        // `"pre${arr}post"` joins via $IFS[0] to a single scalar
+        // regardless of the option (c:Src/subst.c:1650-1656 isarr
+        // comment). The default UNQUOTED path emits argc=2 (lhs + rhs).
+        // Bug #246 in docs/BUGS.md.
+        if argc == 1 {
+            // DQ context: join any Array side to scalar via sepjoin's
+            // IFS default. c:Src/utils.c:3936-3945 — set-but-empty IFS
+            // joins with "" (`IFS=""; echo "x$*y"` → `xabcy`); only
+            // unset / space-leading IFS yields " ".
+            let join_arr = |arr: Vec<Value>| -> String {
+                let strs: Vec<String> = arr.iter().map(|v| v.as_str_cow().into_owned()).collect();
+                crate::ported::utils::sepjoin(&strs, None)
+            };
             let l = match lhs {
                 Value::Array(a) => join_arr(a),
                 other => other.as_str_cow().into_owned(),
@@ -6151,84 +6369,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             s.push_str(&r);
             return Value::str(s);
         }
-        match (lhs, rhs) {
-            (Value::Array(la), Value::Array(ra)) => {
-                // Cartesian product: [a + b for a in la for b in ra].
-                let mut out = Vec::with_capacity(la.len() * ra.len().max(1));
-                if ra.is_empty() {
-                    return Value::Array(la);
-                }
-                if la.is_empty() {
-                    return Value::Array(ra);
-                }
-                for a in &la {
-                    let a_s = a.as_str_cow();
-                    for b in &ra {
-                        let b_s = b.as_str_cow();
-                        let mut s = String::with_capacity(a_s.len() + b_s.len());
-                        s.push_str(&a_s);
-                        s.push_str(&b_s);
-                        out.push(Value::str(s));
-                    }
-                }
-                Value::Array(out)
-            }
-            (Value::Array(la), rhs_scalar) => {
-                // An EMPTY array contributes nothing to a concatenated
-                // word — the surrounding scalar text survives. zsh:
-                // `x${^a}y` (a=()) / `x${(P)scalar-empty}y` → "xy", NOT
-                // a dropped word. Without this, a `(P)` indirect to an
-                // unset/empty scalar (which nodes_to_value collapses to
-                // Value::Array([]) for standalone-removal semantics)
-                // cartesian-dropped the whole word — p10k's
-                // `typeset -g _$2=${(P)2}` then arrived as a bare
-                // `typeset` and dumped every parameter (~217× → 19 MB
-                // terminal flood → startup hang).
-                if la.is_empty() {
-                    return rhs_scalar;
-                }
-                let r = rhs_scalar.as_str_cow();
-                let out: Vec<Value> = la
-                    .into_iter()
-                    .map(|a| {
-                        let a_s = a.as_str_cow();
-                        let mut s = String::with_capacity(a_s.len() + r.len());
-                        s.push_str(&a_s);
-                        s.push_str(&r);
-                        Value::str(s)
-                    })
-                    .collect();
-                Value::Array(out)
-            }
-            (lhs_scalar, Value::Array(ra)) => {
-                // Symmetric empty-array-contributes-nothing rule; see
-                // the (Array, scalar) arm above.
-                if ra.is_empty() {
-                    return lhs_scalar;
-                }
-                let l = lhs_scalar.as_str_cow();
-                let out: Vec<Value> = ra
-                    .into_iter()
-                    .map(|b| {
-                        let b_s = b.as_str_cow();
-                        let mut s = String::with_capacity(l.len() + b_s.len());
-                        s.push_str(&l);
-                        s.push_str(&b_s);
-                        Value::str(s)
-                    })
-                    .collect();
-                Value::Array(out)
-            }
-            (lhs_s, rhs_s) => {
-                // Fast path: both scalar → identical to Op::Concat.
-                let l = lhs_s.as_str_cow();
-                let r = rhs_s.as_str_cow();
-                let mut s = String::with_capacity(l.len() + r.len());
-                s.push_str(&l);
-                s.push_str(&r);
-                Value::str(s)
-            }
+        // Unquoted plain `${arr}`: same runtime dispatch as
+        // BUILTIN_CONCAT_SPLICE — c:4245 `if (isarr)` always distributes
+        // one word per element; c:1663 picks splice (default, first/last
+        // sticking, c:4366-4437) vs plan9 cross-product (c:4316-4365).
+        // concat_splice / concat_plan9 both honor EMPTY_EXPANSION_IS_SCALAR
+        // so the p10k `${(P)2}` empty-array word-removal semantics survive.
+        if plan9_active() {
+            return concat_plan9(lhs, rhs);
         }
+        concat_splice(lhs, rhs)
     });
 
     // `[[ a -ef b ]]` — same-inode test. Resolves both paths via fs::metadata
@@ -7305,6 +7455,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| exec.pipe_output_pending = true);
         Value::Status(0)
     });
+    // c:Src/exec.c:3710-3724 — install this pipeline stage's fds.
+    //     /* Make a copy of stderr for xtrace output before redirecting */
+    //     fflush(xtrerr);
+    //     ...
+    //     /* Add pipeline input/output to mnodes */
+    //     if (input)  addfd(forked, save, mfds, 0, input, 0, NULL);
+    //     if (output) addfd(forked, save, mfds, 1, output, 1, NULL);
+    // Emitted into the stage chunk by compile_zsh.rs (after the arg
+    // words' expansion ops, before the redirect scope), and fed by
+    // BUILTIN_RUN_PIPELINE via `stage_fds_park`. Doing the dup2 HERE
+    // rather than before the chunk runs is what makes a `$(...)` in a
+    // stage's arguments see the shell's fd 0 instead of the pipe.
+    vm.register_builtin(BUILTIN_PIPE_FDS_INSTALL, |vm, argc| {
+        // Arg: `|&` merge-stderr flag (compile_zsh always passes it).
+        let merge_stderr = pop_args(vm, argc)
+            .first()
+            .map(|s| s != "0" && !s.is_empty())
+            .unwrap_or(false);
+        let (in_fd, out_fd) = stage_fds_take();
+        if in_fd < 0 && out_fd < 0 {
+            return Value::Status(0);
+        }
+        // c:3711 `fflush(xtrerr)` — flush before the fds move, so
+        // anything buffered from the expansion phase lands on the
+        // ORIGINAL fd, not on the pipe.
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        unsafe {
+            if in_fd >= 0 {
+                libc::dup2(in_fd, libc::STDIN_FILENO);
+                if in_fd != libc::STDIN_FILENO {
+                    libc::close(in_fd);
+                }
+            }
+            if out_fd >= 0 {
+                libc::dup2(out_fd, libc::STDOUT_FILENO);
+                if out_fd != libc::STDOUT_FILENO {
+                    libc::close(out_fd);
+                }
+                // `cmd |& next`: the `2>&1` C appends to cmd's redirect
+                // list (walked at c:3730+, i.e. after this addfd), so
+                // stderr follows the pipe, not the shell's stdout.
+                if merge_stderr {
+                    libc::dup2(libc::STDOUT_FILENO, libc::STDERR_FILENO);
+                }
+            }
+        }
+        Value::Status(0)
+    });
     // c:Src/exec.c — block-level redirect-failure gate. When a
     // compound command (`{ … } < file`, `( … ) > file`, etc.) has a
     // failing redirect (e.g. `< /nonexistent`), zsh skips the entire
@@ -7787,6 +7986,61 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         use std::sync::atomic::Ordering;
         let retflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed);
         let exit_pending = crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed);
+        // c:Src/exec.c:1571-1603 — `sublist_done:` runs the ZERR trap for
+        // the sublist that just failed. It is NOT gated on retflag: C only
+        // consults retflag at the TOP of the list loop (c:1370 `while
+        // (wc_code(code) == WC_LIST && !breaks && !retflag && !errflag)`),
+        // which stops the NEXT sublist — the current one still completes
+        // its sublist_done. So `return 5` fires the ERR trap on its way out.
+        //
+        // zshrs's escape short-circuit below returns before ever reaching
+        // the ZERR fire, so a `return N` inside a try-list skipped the trap:
+        //   f() { { return 5 } always { print fin } }; f
+        // printed `fin / err=5` where zsh prints `err=5 / fin / err=5`.
+        // (Plain `f() { return 5 }` matched by luck — the inner fire was
+        // missing but the OUTER sublist fired instead, since doshfunc had
+        // cleared retflag by then and DONETRAP was still 0.)
+        //
+        // `exit` is deliberately excluded: C's `exit` goes zexit() →
+        // realexit(), leaving the process without ever reaching
+        // sublist_done. Verified: `zsh -fc 'trap "print err" ERR; f(){ exit
+        // 5 }; f'` prints nothing.
+        if retflag != 0 && exit_pending == 0 {
+            let last = vm.last_status;
+            // c:1598-1603 — same DONETRAP gate as the non-escape path below.
+            if last != 0 && crate::ported::exec::DONETRAP.load(Ordering::Relaxed) == 0 {
+                // c:Src/signals.c:1085-1087 — `int obreaks = breaks; int
+                // oretflag = retflag; int olastval = lastval;` and c:1220-1222
+                // — `breaks += obreaks; retflag = oretflag;`. dotrapargs
+                // brackets EVERY trap dispatch with this save/restore because
+                // the trap body runs as a normal list and would otherwise
+                // consume the caller's control-flow flags. That matters
+                // exactly here: we are firing ZERR while retflag is SET, and a
+                // FUNCTION-form trap (`TRAPZERR() { … }`) goes through
+                // doshfunc, whose epilogue eats retflag outright
+                // (c:Src/exec.c:6047-6052 `if (retflag) { retflag = 0; breaks
+                // = funcsave->breaks; }`). Without the bracket the pending
+                // `return 5` was swallowed by its own ERR trap and the
+                // function ran on:
+                //   TRAPZERR() { print z }; f() { { return 2 } always { : }
+                //                             print after }; f
+                // printed `after`, where zsh returns from f.
+                //
+                // zshrs's `dotrap` inlines the dispatch and does not carry
+                // dotrapargs' save/restore, so the bracket lives at this call
+                // site. lastval is restored too (c:1087 / c:1213 `lastval =
+                // olastval`) — the trap body's own commands must not become
+                // the caller's `$?`.
+                let obreaks = crate::ported::builtin::BREAKS.load(Ordering::Relaxed); // c:1085
+                let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed); // c:1086
+                let olastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:1087
+                let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR); // c:1601
+                crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed); // c:1602
+                crate::ported::builtin::BREAKS.store(obreaks, Ordering::Relaxed); // c:1220
+                crate::ported::builtin::RETFLAG.store(oretflag, Ordering::Relaxed); // c:1222
+                crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed); // c:1213
+            }
+        }
         if retflag != 0 || exit_pending != 0 {
             if exit_pending != 0 {
                 // c:Src/builtin.c zexit — the deferred exit carries its
@@ -8823,6 +9077,233 @@ fn paramsubst_to_value(body: &str) -> Value {
 /// xpandbraces output) into a fusevm `Value`: 0 → empty Array, 1 →
 /// Str, >1 → Array. Same unwrap idiom every handler that calls a
 /// canonical Vec-returning fn does.
+/// c:Src/subst.c:1663 — `int plan9 = isset(RCEXPANDPARAM);`
+///
+/// zsh calls the RC_EXPAND_PARAM word shape "plan9" after the rc(1)
+/// shell it comes from. The option is read fresh on every expansion
+/// (`setopt` mid-script changes the very next word), so the concat
+/// builtins must consult it at RUNTIME, not bake it in at compile time.
+fn plan9_active() -> bool {
+    with_executor(|_exec| opt_state_get("rcexpandparam").unwrap_or(false))
+}
+
+thread_local! {
+    /// The `isarr` bit that `Value` cannot carry.
+    ///
+    /// c:Src/subst.c:4245 `if (isarr)` gates the whole array emit block,
+    /// so plan9's word-removal rule (c:4362 `uremnode`) only ever applies
+    /// to an ARRAY-valued expansion. An empty SCALAR has `isarr == 0`,
+    /// takes the c:4437 scalar branch, and leaves the surrounding text
+    /// intact — `setopt rcexpandparam; v=; print -rl -- x$v y` prints `x`
+    /// and `y`, while the same line with an empty ARRAY prints only `y`.
+    ///
+    /// zshrs collapses BOTH shapes to `Value::Array(vec![])`: a real empty
+    /// array, and an unquoted empty scalar (collapsed so a standalone `$v`
+    /// contributes zero argv words, mirroring prefork's `uremnode` at
+    /// c:Src/subst.c:184-187). The two are indistinguishable by the time
+    /// they reach a concat builtin, so the expansion builtins record here
+    /// whether the empty Array they just produced came from a scalar.
+    ///
+    /// Sticky until the next expansion overwrites it — a word folds its
+    /// segments left-associatively (`concat(concat(x, $e), y)`), so the
+    /// propagating second concat must still see the first one's bit.
+    static EMPTY_EXPANSION_IS_SCALAR: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Record whether the empty expansion just produced was a scalar (`true`)
+/// or a genuine array (`false`). See `EMPTY_EXPANSION_IS_SCALAR`.
+fn note_empty_is_scalar(is_scalar: bool) {
+    EMPTY_EXPANSION_IS_SCALAR.with(|c| c.set(is_scalar));
+}
+
+/// True when the empty `Value::Array` about to be concatenated stands for
+/// an empty SCALAR (c:4437), not an empty array (c:4362).
+fn empty_is_scalar() -> bool {
+    EMPTY_EXPANSION_IS_SCALAR.with(|c| c.get())
+}
+
+/// c:Src/subst.c:4366-4437 — the NON-plan9 arm of paramsubst's array
+/// emit block: "simply join the first and last values."
+///
+/// The word prefix (`ostr..aptr`) is concatenated onto element 0
+/// (c:4386 `strcatsub(&y, ostr, aptr, x, xlen, NULL, …)`), the interior
+/// elements are emitted bare (c:4393-4412), and the word suffix (`fstr`)
+/// is concatenated onto the final element (c:4414-4429). Applied left-
+/// associatively across a word's segments this reproduces zsh's
+/// `pre${arr}post` → `prep` / `q` / `rpost`.
+///
+/// An EMPTY array never reaches this arm in C: c:4261
+/// `if ((!aval[0] || !aval[1]) && !plan9)` collapses it to the scalar ""
+/// first, so the surrounding text survives as one word (`x$e y` → `x`).
+/// That is what the empty-Array arms below reproduce.
+fn concat_splice(lhs: Value, rhs: Value) -> Value {
+    match (lhs, rhs) {
+        (Value::Array(mut la), Value::Array(ra)) => {
+            if la.is_empty() {
+                return Value::Array(ra);
+            }
+            if ra.is_empty() {
+                return Value::Array(la);
+            }
+            // Last of la merges with first of ra; rest unchanged.
+            let last_l = la.pop().unwrap();
+            let mut ra_iter = ra.into_iter();
+            let first_r = ra_iter.next().unwrap();
+            let l_s = last_l.as_str_cow();
+            let r_s = first_r.as_str_cow();
+            let mut merged = String::with_capacity(l_s.len() + r_s.len());
+            merged.push_str(&l_s);
+            merged.push_str(&r_s);
+            la.push(Value::str(merged));
+            la.extend(ra_iter);
+            Value::Array(la)
+        }
+        (Value::Array(mut la), rhs_scalar) => {
+            // c:4261 — empty array + empty surrounding text is zero
+            // words, not one empty word. Bug #120 in docs/BUGS.md:
+            // `b=("${a[@]:0:-1}")` gave len=1 instead of zsh's len=0.
+            let rhs_s = rhs_scalar.as_str_cow();
+            if la.is_empty() {
+                if rhs_s.is_empty() {
+                    return Value::Array(Vec::new());
+                }
+                return Value::str(rhs_s.to_string());
+            }
+            let last = la.pop().unwrap();
+            let l_s = last.as_str_cow();
+            let mut s = String::with_capacity(l_s.len() + rhs_s.len());
+            s.push_str(&l_s);
+            s.push_str(&rhs_s);
+            la.push(Value::str(s));
+            Value::Array(la)
+        }
+        (lhs_scalar, Value::Array(mut ra)) => {
+            let lhs_s = lhs_scalar.as_str_cow();
+            if ra.is_empty() {
+                // Symmetric c:4261 empty-array rule; see the arm above.
+                if lhs_s.is_empty() {
+                    return Value::Array(Vec::new());
+                }
+                return Value::str(lhs_s.to_string());
+            }
+            let first = ra.remove(0);
+            let r_s = first.as_str_cow();
+            let mut s = String::with_capacity(lhs_s.len() + r_s.len());
+            s.push_str(&lhs_s);
+            s.push_str(&r_s);
+            let mut out = Vec::with_capacity(ra.len() + 1);
+            out.push(Value::str(s));
+            out.extend(ra);
+            Value::Array(out)
+        }
+        (lhs_s, rhs_s) => {
+            let l = lhs_s.as_str_cow();
+            let r = rhs_s.as_str_cow();
+            let mut s = String::with_capacity(l.len() + r.len());
+            s.push_str(&l);
+            s.push_str(&r);
+            Value::str(s)
+        }
+    }
+}
+
+/// c:Src/subst.c:4316-4365 — the plan9 (RC_EXPAND_PARAM) arm of
+/// paramsubst's array emit block.
+///
+/// Every element gets the FULL word prefix and suffix
+/// (c:4341 `strcatsub(&y, ostr, aptr, x, xlen, y + 1, …)` inside the
+/// per-element loop), giving the cross product with the surrounding
+/// text: `pre${arr}post` → `preppost` / `preqpost` / `prerpost`.
+///
+/// An EMPTY array removes the WHOLE word: the c:4327
+/// `while ((x = *aval++))` loop body never runs, so `plan9` is still
+/// non-zero at c:4362 and the node is deleted —
+/// `if (plan9) { uremnode(l, n); return n; }` (c:4362-4365). `e=();
+/// setopt RC_EXPAND_PARAM; print -rl -- x$e y` prints only `y`. This is
+/// the opposite of the non-plan9 rule at c:4261, which keeps `x`.
+fn concat_plan9(lhs: Value, rhs: Value) -> Value {
+    // c:4245 `if (isarr)` — an empty SCALAR never enters the array emit
+    // block, so it contributes "" and the word survives (c:4437). Only a
+    // real empty ARRAY reaches c:4362's `uremnode`. `Value` cannot tell
+    // the two apart; EMPTY_EXPANSION_IS_SCALAR carries the missing bit.
+    let scalar_empty = empty_is_scalar();
+    match (lhs, rhs) {
+        // c:4362-4365 — an empty array on either side deletes the word.
+        // Propagated as an empty Array so a later concat in the same word
+        // (`x${e[@]}y` folds twice) keeps the word deleted; pop_args
+        // splats an empty Array into zero argv words.
+        (Value::Array(la), rhs_v) if la.is_empty() => {
+            if scalar_empty {
+                // Empty scalar prefix: "" + rhs (c:4437 strcatsub).
+                return match rhs_v {
+                    Value::Array(ra) if ra.is_empty() => Value::Array(Vec::new()),
+                    other => other,
+                };
+            }
+            Value::Array(Vec::new())
+        }
+        (lhs_v, Value::Array(ra)) if ra.is_empty() => {
+            if scalar_empty {
+                // Empty scalar suffix: lhs + "" (c:4437 strcatsub).
+                return lhs_v;
+            }
+            Value::Array(Vec::new())
+        }
+        (Value::Array(la), Value::Array(ra)) => {
+            let mut out = Vec::with_capacity(la.len() * ra.len());
+            for a in &la {
+                let a_s = a.as_str_cow();
+                for b in &ra {
+                    let b_s = b.as_str_cow();
+                    let mut s = String::with_capacity(a_s.len() + b_s.len());
+                    s.push_str(&a_s);
+                    s.push_str(&b_s);
+                    out.push(Value::str(s));
+                }
+            }
+            Value::Array(out)
+        }
+        (Value::Array(la), rhs_scalar) => {
+            let r = rhs_scalar.as_str_cow();
+            let out: Vec<Value> = la
+                .into_iter()
+                .map(|a| {
+                    let a_s = a.as_str_cow();
+                    let mut s = String::with_capacity(a_s.len() + r.len());
+                    s.push_str(&a_s);
+                    s.push_str(&r);
+                    Value::str(s)
+                })
+                .collect();
+            Value::Array(out)
+        }
+        (lhs_scalar, Value::Array(ra)) => {
+            let l = lhs_scalar.as_str_cow();
+            let out: Vec<Value> = ra
+                .into_iter()
+                .map(|b| {
+                    let b_s = b.as_str_cow();
+                    let mut s = String::with_capacity(l.len() + b_s.len());
+                    s.push_str(&l);
+                    s.push_str(&b_s);
+                    Value::str(s)
+                })
+                .collect();
+            Value::Array(out)
+        }
+        (lhs_s, rhs_s) => {
+            // Both scalar: nothing to distribute (c:4444 scalar branch).
+            let l = lhs_s.as_str_cow();
+            let r = rhs_s.as_str_cow();
+            let mut s = String::with_capacity(l.len() + r.len());
+            s.push_str(&l);
+            s.push_str(&r);
+            Value::str(s)
+        }
+    }
+}
+
 fn nodes_to_value(nodes: Vec<String>) -> Value {
     // c:Src/glob.c:3649 remnulargs — strip the Nularg (`\u{a1}`)
     //   sentinel and other INULL bytes that paramsubst's splat block
@@ -8839,6 +9320,10 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
         })
         .collect();
     if stripped.is_empty() {
+        // Zero nodes = an ARRAY-shaped expansion that produced no words
+        // (empty array splat, empty slice). c:4245 `if (isarr)` holds, so
+        // plan9 deletes the surrounding word (c:4362).
+        note_empty_is_scalar(false);
         Value::Array(Vec::new())
     } else if stripped.len() == 1 {
         let only = stripped.into_iter().next().unwrap();
@@ -8861,6 +9346,9 @@ fn nodes_to_value(nodes: Vec<String>) -> Value {
         if only.is_empty() {
             let in_dq = with_executor(|exec| exec.in_dq_context > 0);
             if !in_dq {
+                // One empty node = a SCALAR-shaped empty result (c:4437),
+                // not an empty array — see EMPTY_EXPANSION_IS_SCALAR.
+                note_empty_is_scalar(true);
                 return Value::Array(Vec::new());
             }
         }
@@ -9116,6 +9604,32 @@ pub const BUILTIN_BRACE_EXPAND: u16 = 301;
 /// returns Value::Array of fields. Used in array-literal context where
 /// `arr=($(cmd))` should expand cmd's stdout into multiple elements.
 pub const BUILTIN_WORD_SPLIT: u16 = 304;
+
+/// `${=name}` / SH_WORD_SPLIT forced IFS split — c:Src/subst.c:3920-3928
+/// `aval = sepsplit(val, spsep, 0, 1);`.
+///
+/// Unlike BUILTIN_WORD_SPLIT (which routes through `multsub`'s
+/// PREFORK_SPLIT walker — the c:553-620 loop that COLLAPSES runs of
+/// separators and never emits an empty field), this is the *other* zsh
+/// splitter: `sepsplit` → `Src/utils.c:3711 spacesplit(s, allownull=0)`,
+/// which distinguishes the two IFS classes and preserves empty fields.
+///
+/// Stack: \[value\]. argc selects the empty-field rule:
+///   * argc == 0 — the expansion is a bare unquoted word (`${=v}`): the
+///     leading/trailing `""` fields spacesplit emits for skipped
+///     IFS-WHITESPACE are empty argv words and prefork deletes them
+///     (c:Src/subst.c:184-187 `uremnode`).
+///   * argc == 1 — the expansion is quoted (`"${=v}"`) or has adjacent
+///     word segments (`x${=v}y`): those fields survive, because in C the
+///     word's `Dnull` quote markers / literal prefix+suffix attach to the
+///     first and last elements (c:4386 / c:4429 strcatsub) and the node is
+///     no longer empty. `v=$' a:b '` → `""`, `a:b`, `""` quoted; `x`,
+///     `a:b`, `y` with surrounding text.
+///
+/// Empty fields that come from an IFS-NON-whitespace separator are the
+/// `nulstring` (`Nularg`, c:Src/subst.c:36) and survive in BOTH cases —
+/// `IFS=x; v=xaxbx` splits to `""`, `a`, `b`, `""` quoted or not.
+pub const BUILTIN_FORCE_SPLIT: u16 = 643;
 
 /// Register a pre-compiled fusevm chunk as a function. Stack: [name,
 /// base64-bincode-of-Chunk]. Used by compile_zsh's compile_funcdef to
@@ -9741,6 +10255,17 @@ pub const BUILTIN_EXEC_PERM_REDIRS: u16 = 619;
 /// walks the stage command's redirect list; mfds is per-execcmd, so
 /// nested body commands (`{ echo a > f; } | cat`) never see it.
 pub const BUILTIN_PIPE_OUTPUT_MARK: u16 = 620;
+
+/// Install the pipeline stage's parked fds onto 0/1.
+///
+/// c:Src/exec.c:3720-3724 — `addfd(forked, save, mfds, 0, input, 0,
+/// NULL)` / `addfd(..., 1, output, 1, NULL)`. Runs after prefork
+/// (c:3304) and globlist (c:3702) have expanded the stage's argument
+/// words, which is why a `$(...)` in those words reads the shell's
+/// original stdin rather than the pipe. Emitted by
+/// `compile_zsh.rs::emit_stage_fds_install`; the fds themselves are
+/// parked by `BUILTIN_RUN_PIPELINE`.
+pub const BUILTIN_PIPE_FDS_INSTALL: u16 = 642;
 
 /// Magic-equals prefork for a single arg word of a
 /// `BINF_MAGICEQUALS` builtin head (`alias`). Direct port of
@@ -10693,13 +11218,6 @@ impl fusevm::ShellHost for ZshrsHost {
             crate::ported::builtin::EXIT_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
             crate::ported::builtin::RETFLAG.store(0, std::sync::atomic::Ordering::Relaxed);
             crate::ported::builtin::BREAKS.store(0, std::sync::atomic::Ordering::Relaxed);
-            // Set the post-subshell-exit guard. The next GET_VAR
-            // sync_status path consults this to skip its
-            // vm.last_status→LASTVAL sync (which would overwrite the
-            // deferred-exit status we just set with stale vm state
-            // since SubshellEnd doesn't propagate status into the
-            // VM). Cleared as soon as the next sync_status sees it.
-            SUBSHELL_EXIT_STATUS_PENDING.with(|c| c.set(true));
             // Return the deferred-exit status so the VM updates its
             // own `last_status`. Otherwise run_chunk's post-script
             // `set_last_status(vm.last_status)` would clobber LASTVAL

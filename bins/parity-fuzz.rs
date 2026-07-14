@@ -53,20 +53,53 @@ fn zsh_path() -> &'static str {
 
 struct RunOut {
     stdout: String,
+    stderr: String,
     exit: i32,
     timed_out: bool,
+}
+
+/// --stderr: also require the two shells' DIAGNOSTICS to agree, not just stdout
+/// and exit status. Off by default: a message-text mismatch is a much softer gap
+/// than a wrong value, and mixing the two would drown the hard gaps.
+static CMP_STDERR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The two shells necessarily disagree on their own name in a diagnostic
+/// (`zsh: no such file` vs `zshrs: no such file`), which is not a parity gap.
+/// Normalize the leading shell-name tag off every line; everything after it —
+/// the wording, the offending word, the line number — must match exactly.
+fn norm_stderr(s: &str) -> String {
+    s.lines()
+        .map(|l| {
+            l.strip_prefix("zshrs:")
+                .or_else(|| l.strip_prefix("zsh:"))
+                .unwrap_or(l)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The divergence predicate. stdout + exit always; stderr only under --stderr.
+fn differs(z: &RunOut, r: &RunOut) -> bool {
+    if z.stdout != r.stdout || z.exit != r.exit {
+        return true;
+    }
+    if CMP_STDERR.load(std::sync::atomic::Ordering::Relaxed) {
+        return norm_stderr(&z.stderr) != norm_stderr(&r.stderr);
+    }
+    false
 }
 
 /// Spawn `cmd` and wait up to `timeout`, killing it if it overruns.
 fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(_) => {
             return RunOut {
                 stdout: String::new(),
+                stderr: String::new(),
                 exit: -999,
                 timed_out: false,
             }
@@ -76,13 +109,18 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                use std::io::Read;
                 let mut buf = String::new();
                 if let Some(mut out) = child.stdout.take() {
-                    use std::io::Read;
                     let _ = out.read_to_string(&mut buf);
+                }
+                let mut ebuf = String::new();
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_string(&mut ebuf);
                 }
                 return RunOut {
                     stdout: buf,
+                    stderr: ebuf,
                     exit: status.code().unwrap_or(-1),
                     timed_out: false,
                 };
@@ -93,6 +131,7 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
                     let _ = child.wait();
                     return RunOut {
                         stdout: String::new(),
+                        stderr: String::new(),
                         exit: -1,
                         timed_out: true,
                     };
@@ -102,6 +141,7 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
             Err(_) => {
                 return RunOut {
                     stdout: String::new(),
+                    stderr: String::new(),
                     exit: -998,
                     timed_out: false,
                 }
@@ -740,7 +780,7 @@ fn diverges(script: &str, bin: &Path, timeout: Duration) -> bool {
     if r.exit == -999 || r.exit == -998 || r.timed_out || z.exit == -999 || z.exit == -998 {
         return false;
     }
-    z.stdout != r.stdout || z.exit != r.exit
+    differs(&z, &r)
 }
 
 /// Delta-debug a diverging statement list to a locally-minimal one: repeatedly
@@ -2248,6 +2288,654 @@ fn gen_loop(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// split generator
+//
+// Word splitting is the one rule every other mode carefully avoids so its
+// output stays stable — which means nothing here was being tested. This mode
+// attacks it head-on: IFS (whitespace vs non-whitespace separators, empty,
+// multi-char, unset), the SH_WORD_SPLIT / RC_EXPAND_PARAM / GLOB_SUBST /
+// KSH_ARRAYS options, the explicit ${=x} (split) and ${~x} (glob) flags, and
+// the $* / "$*" / "$@" / ${arr[*]} join rules that use IFS[1].
+//
+// Determinism: values hold no glob metacharacter that could match a real file,
+// so even GLOB_SUBST / ${~x} either match nothing (NOMATCH error, deterministic)
+// or expand to themselves. Nothing here touches the filesystem's contents.
+// ---------------------------------------------------------------------------
+
+/// Options that change splitting/joining/expansion of a *word*.
+const SPLIT_OPTS: &[&str] = &[
+    "SH_WORD_SPLIT",
+    "RC_EXPAND_PARAM",
+    "GLOB_SUBST",
+    "KSH_ARRAYS",
+    "NULL_GLOB",
+    "NO_NOMATCH",
+    "CSH_NULL_GLOB",
+    "SH_NULLCMD",
+];
+
+/// IFS settings that exercise the whitespace/non-whitespace split rule: a run of
+/// whitespace separators collapses to one break, a non-whitespace separator does
+/// not (so `a::b` under IFS=: yields an EMPTY middle field).
+const IFS_VALS: &[&str] = &[
+    "$' \\t\\n'", // default
+    "':'",
+    "':,'",
+    "' :'", // mixed whitespace + non-whitespace
+    "''",   // empty: no splitting at all
+    "$'\\n'",
+    "'x'",
+];
+
+fn gen_split_mode(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+
+    // A value whose split depends entirely on IFS: leading/trailing/doubled
+    // separators are where the whitespace-vs-not rule actually bites.
+    let val = pick(
+        &mut rng,
+        &[
+            "a b  c",
+            "a:b::c",
+            " a:b ",
+            ":a:b:",
+            "a, b ,c",
+            "one",
+            "",
+            "a\tb\nc",
+            "xaxbx",
+        ],
+    );
+    stmts.push(format!("v=$'{val}'"));
+    stmts.push("arr=(p q r); e=(); empty=''".to_string());
+    if rng.gen_bool(0.7) {
+        stmts.push(format!("IFS={}", pick(&mut rng, IFS_VALS)));
+    }
+    if rng.gen_bool(0.6) {
+        let neg = if rng.gen_bool(0.3) { "un" } else { "" };
+        stmts.push(format!("{neg}setopt {}", pick(&mut rng, SPLIT_OPTS)));
+    }
+
+    for _ in 0..rng.gen_range(2..=4) {
+        let probe = match rng.gen_range(0..16) {
+            // Unquoted scalar: splits only under SH_WORD_SPLIT.
+            0 => "print -rl -- $v; print -r -- END",
+            // Quoted: never splits, whatever the options.
+            1 => r#"print -rl -- "$v"; print -r -- END"#,
+            // ${=v}: force splitting regardless of SH_WORD_SPLIT.
+            2 => "print -rl -- ${=v}; print -r -- END",
+            // ${=v} inside quotes still splits (the flag beats the quoting).
+            3 => r#"print -rl -- "${=v}"; print -r -- END"#,
+            // Counting the fields is a sharper probe than printing them.
+            4 => "a=( ${=v} ); print -r -- \"n=${#a} [${(j:|:)a}]\"",
+            // Explicit (s) split flag — independent of IFS.
+            5 => r#"print -r -- "[${(s.:.)v}]" "[${(ps.:.)v}]""#,
+            // (f) splits on newlines only; (z) does shell-word splitting.
+            6 => r#"print -r -- "n=${#${(f)v}} z=${#${(z)v}}""#,
+            // $* / "$*" join with IFS[1]; "$@" never joins.
+            7 => "set -- a b c; print -rl -- \"$*\"; print -rl -- \"$@\"; print -r -- END",
+            8 => "set -- a b c; print -rl -- $*; print -r -- END",
+            // ${arr[*]} joins on IFS[1]; ${arr[@]} does not. With an EMPTY IFS
+            // the join is a bare concatenation.
+            9 => r#"print -r -- "[${arr[*]}] [${arr[@]}]""#,
+            // RC_EXPAND_PARAM: `x${arr}y` distributes the prefix/suffix over
+            // every element instead of only the first/last.
+            10 => "print -rl -- pre${arr}post; print -r -- END",
+            // Empty array / empty scalar in a word: does it produce an empty
+            // word or no word at all?
+            11 => "print -rl -- x$e y; print -r -- \"n=$#\"; set -- $e; print -r -- \"after=$#\"",
+            12 => r#"a=( "$empty" $empty ); print -r -- "n=${#a}""#,
+            // ${~v}: force glob expansion of the VALUE. The pattern matches no
+            // real file, so NOMATCH / NULL_GLOB / CSH_NULL_GLOB decide the
+            // outcome (error, removal, or literal) — all deterministic.
+            13 => "p='zzq*'; print -rl -- ${~p}; print -r -- \"rc=$?\"",
+            // GLOB_SUBST does the same implicitly, for an unquoted expansion.
+            14 => "p='zzq*'; print -rl -- $p; print -r -- \"rc=$?\"",
+            // Assignment never word-splits, even under SH_WORD_SPLIT — the RHS
+            // of a scalar assignment is one word.
+            _ => r#"w=$v; print -r -- "[$w]"; a=($v); print -r -- "n=${#a}""#,
+        };
+        stmts.push(probe.to_string());
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// trap generator
+//
+// Traps are pure control-flow state: which handler runs, in what order, with
+// what $?, and whether a handler set in a function/subshell survives the frame.
+// zsh has two spellings (`trap '…' SIG` and the `TRAPSIG()` function form) with
+// DIFFERENT semantics — the function form runs in its own frame with its own $?
+// and can `return`. Plus `always` blocks and TRY_BLOCK_ERROR.
+//
+// Determinism: only self-sent signals (kill -SIG $$), no timers, no children.
+// ---------------------------------------------------------------------------
+
+fn gen_trap(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+
+    for _ in 0..rng.gen_range(1..=2) {
+        let stmt = match rng.gen_range(0..14) {
+            // EXIT trap fires at shell exit, and sees the exit status in $?.
+            0 => "trap 'print -r -- \"exit-trap rc=$?\"' EXIT; print -r -- body; exit 3".to_string(),
+            // EXIT trap in a subshell fires when the SUBSHELL exits, not later.
+            1 => "trap 'print -r -- outer' EXIT; ( trap 'print -r -- inner' EXIT; print -r -- sub ); print -r -- after".to_string(),
+            // A trap set inside a function is GLOBAL unless LOCAL_TRAPS is set.
+            2 => {
+                let lt = if rng.gen_bool(0.5) { "setopt local_traps; " } else { "" };
+                format!("trap 'print -r -- outer-usr1' USR1; f() {{ {lt}trap 'print -r -- inner-usr1' USR1; kill -USR1 $$ }}; f; kill -USR1 $$")
+            }
+            // ERR trap fires on every failing command (not inside a condition).
+            3 => "trap 'print -r -- \"err rc=$?\"' ERR; false; print -r -- mid; if false; then :; fi; true; print -r -- done".to_string(),
+            // TRAPZERR() — the function spelling of ERR.
+            4 => "TRAPZERR() { print -r -- \"zerr rc=$?\" }; false; (exit 7); print -r -- end".to_string(),
+            // `trap - SIG` removes the handler; `trap ''` ignores the signal.
+            5 => {
+                let which = pick(&mut rng, &["-", "''"]);
+                format!("trap 'print -r -- caught' USR2; kill -USR2 $$; trap {which} USR2; kill -USR2 $$; print -r -- survived")
+            }
+            // `trap` with no args LISTS the installed handlers.
+            6 => "trap 'print -r -- a' USR1; trap 'print -r -- b' EXIT; trap".to_string(),
+            // always block: runs whether the try block succeeded or failed.
+            7 => {
+                let body = pick(&mut rng, &["true", "false", "print -r -- t; false", "return 2"]);
+                format!("f() {{ {{ {body} }} always {{ print -r -- \"always rc=$?\" }}; print -r -- \"after rc=$?\" }}; f; print -r -- \"outer rc=$?\"")
+            }
+            // TRY_BLOCK_ERROR: set inside `always` when the try block was
+            // aborted by an error; zeroing it swallows the error.
+            8 => {
+                let clear = if rng.gen_bool(0.5) { "TRY_BLOCK_ERROR=0; " } else { "" };
+                format!("f() {{ {{ typeset -r ro=1; ro=2 }} always {{ print -r -- \"tbe=$TRY_BLOCK_ERROR\"; {clear}}} ; print -r -- reached }}; f; print -r -- \"rc=$?\"")
+            }
+            // The function form of a signal trap runs in its own frame: a
+            // `local` inside it must not leak, and `return` exits only the trap.
+            9 => "g=outer; TRAPUSR1() { local g=inner; print -r -- \"in=$g\"; return }; kill -USR1 $$; print -r -- \"out=$g\"".to_string(),
+            // A trap fired while a function is running resumes the function.
+            10 => "TRAPUSR1() { print -r -- trap }; f() { print -r -- pre; kill -USR1 $$; print -r -- post }; f".to_string(),
+            // DEBUG trap runs BEFORE each command; EXIT ordering vs it matters.
+            11 => "trap 'print -r -- \"dbg\"' DEBUG; print -r -- one; print -r -- two; trap - DEBUG; print -r -- three".to_string(),
+            // errexit + trap: the EXIT trap still runs when errexit kills us.
+            12 => "setopt err_exit; trap 'print -r -- \"exiting rc=$?\"' EXIT; print -r -- before; false; print -r -- unreachable".to_string(),
+            // An `always` block runs even when the try block `return`s, and the
+            // return value survives it.
+            _ => "f() { { print -r -- try; return 5 } always { print -r -- fin } }; f; print -r -- \"rc=$?\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// pipeline generator
+//
+// Exit-status plumbing: $? through pipes/negation/&&/||, $pipestatus (and the
+// ksh-spelled $PIPESTATUS), PIPE_FAIL, ERR_EXIT and its interaction with
+// conditions, and the "each pipeline stage is a subshell" rule (so a `read` or
+// an assignment in the last stage does NOT survive — zsh forks the last stage
+// too, unlike ksh).
+// ---------------------------------------------------------------------------
+
+fn gen_pipeline(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+
+    if rng.gen_bool(0.4) {
+        let neg = if rng.gen_bool(0.3) { "un" } else { "" };
+        stmts.push(format!("{neg}setopt {}", pick(&mut rng, &["pipe_fail", "err_exit", "err_return"])));
+    }
+
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..14) {
+            // $? of a pipeline is the LAST stage's status (unless PIPE_FAIL).
+            0 => {
+                let a = pick(&mut rng, &["true", "false", "(exit 3)"]);
+                let b = pick(&mut rng, &["true", "false", "(exit 4)"]);
+                format!("{a} | {b}; print -r -- \"rc=$? ps=(${{(j:,:)pipestatus}})\"")
+            }
+            // Three stages: pipestatus must have one entry per stage, in order.
+            1 => "(exit 1) | (exit 0) | (exit 2); print -r -- \"rc=$? ps=(${(j:,:)pipestatus}) n=${#pipestatus}\"".to_string(),
+            // The ksh spelling is an alias of the same array.
+            2 => "false | true; print -r -- \"ps=${(j:,:)pipestatus} PS=${(j:,:)PIPESTATUS}\"".to_string(),
+            // `!` negates the pipeline status (0<->1, never other values).
+            3 => {
+                let p = pick(&mut rng, &["true", "false", "(exit 7)"]);
+                format!("! {p}; print -r -- \"rc=$?\"")
+            }
+            // && / || short-circuit chains, and their combined status.
+            4 => {
+                let c = pick(
+                    &mut rng,
+                    &[
+                        "true && print -r -- A || print -r -- B",
+                        "false && print -r -- A || print -r -- B",
+                        "false || false || print -r -- C",
+                        "true && false && print -r -- D",
+                        "(exit 3) || print -r -- E",
+                    ],
+                );
+                format!("{c}; print -r -- \"rc=$?\"")
+            }
+            // Every stage — INCLUDING the last — runs in a subshell: `x` does
+            // not survive the pipeline.
+            5 => "x=before; print -r -- new | read x; print -r -- \"x=$x\"".to_string(),
+            6 => "n=0; print -rl -- a b c | while read l; do (( n++ )); done; print -r -- \"n=$n\"".to_string(),
+            // A pipeline reading from a builtin producer into a builtin consumer.
+            7 => "print -rl -- c a b | sort | print -rl -- $(cat); print -r -- END".to_string(),
+            // The status of a compound as a pipeline stage.
+            8 => "{ print -r -- x; false } | cat; print -r -- \"rc=$? ps=${(j:,:)pipestatus}\"".to_string(),
+            // ERR_EXIT does NOT fire for a command in a condition context, but
+            // DOES for a bare failing command.
+            9 => "if false; then :; fi; while false; do :; done; false || true; print -r -- alive; false; print -r -- unreachable".to_string(),
+            // ERR_RETURN inside a function returns instead of exiting.
+            10 => "f() { setopt local_options err_return; print -r -- in; false; print -r -- never }; f; print -r -- \"rc=$? still-here\"".to_string(),
+            // Exit status of an empty/`:`-only compound, and of an assignment
+            // whose RHS is a failing substitution.
+            11 => "(:); print -r -- \"rc=$?\"; v=$(exit 6); print -r -- \"assign=$?\"; v=$(exit 6) print -r -- prefix; print -r -- \"pre_rc=$?\"".to_string(),
+            // `command` / `builtin` prefixes must not change the status.
+            12 => "builtin false; print -r -- \"b=$?\"; command false; print -r -- \"c=$?\"".to_string(),
+            // Background + wait: `wait` yields the job's status. Deterministic
+            // (one job, fixed exit code).
+            _ => "(exit 9) & wait $!; print -r -- \"wait=$?\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// prompt generator
+//
+// `print -P` runs the full prompt expander (Src/prompt.c promptexpand) — the
+// %-escape vocabulary, the visual attributes (%B/%U/%S/%F/%K) that emit real
+// terminal escapes, the ternary `%(x.t.f)` conditions, and the truncation forms
+// `%N<…<` / `%N>…>` which are their own little algorithm.
+//
+// Determinism: only escapes whose value is identical in both shells (attributes,
+// literals, ternaries on $?, truncation). Never %D/%T (time), %! (history), %N
+// (script name — argv[0] genuinely differs), %i (line number).
+// ---------------------------------------------------------------------------
+
+const PROMPT_ATOMS: &[&str] = &[
+    "%B bold %b",
+    "%U under %u",
+    "%S standout %s",
+    "%F{red}red%f",
+    "%F{4}blue%f",
+    "%K{green}bg%k",
+    "%F{red}%Kboth%k%f",
+    "%%",
+    "%)",
+    "%{raw%}lit",
+    "a%Bb%bc",
+    "%(?.ok.bad)",
+    "%(?.%F{green}Y%f.%F{red}N%f)",
+    "%(1j.jobs.nojobs)",
+    "%(#.root.user)",
+    "%10(l.wide.narrow)",
+    "%5<...<abcdefghij",
+    "%5>...>abcdefghij",
+    "%3<<abcdefg",
+    "%20<..<short",
+    "%c",
+    "%2d",
+    "%-1d",
+];
+
+fn gen_prompt(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=3) {
+        // A prior command fixes $? so the %(?..) ternaries are deterministic.
+        if rng.gen_bool(0.4) {
+            stmts.push(if rng.gen_bool(0.5) { "true".into() } else { "false".into() });
+        }
+        let n = rng.gen_range(1..=3);
+        let body: Vec<&str> = (0..n).map(|_| *pick(&mut rng, PROMPT_ATOMS)).collect();
+        let s = body.join("|");
+        match rng.gen_range(0..4) {
+            // print -P: the prompt expander on an explicit string.
+            0 => stmts.push(format!("print -P -- '{s}'")),
+            // -n: no trailing newline, so trailing-escape handling is visible.
+            1 => stmts.push(format!("print -Pn -- '{s}'; print -r -- '|END'")),
+            // ${(%)…} — the same expander as a parameter flag.
+            2 => stmts.push(format!("p='{s}'; print -r -- \"${{(%)p}}\"")),
+            // Expansion inside the prompt string: %-escapes AND ${…} together
+            // (PROMPT_SUBST off ⇒ the ${…} is expanded by the double quotes,
+            // not by the prompt expander).
+            _ => stmts.push(format!("v=VAL; print -P -- \"{s}:$v\"")),
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// modifier generator
+//
+// History-style modifiers on parameters (Src/hist.c) — `:h :t :r :e :l :u :s :&
+// :g :q :Q :f :F :A :a :P` — plus the array set-ops that share the `:` prefix
+// (`:|` diff, `:*` intersect, `:^` zip, `:#` filter). These are what zpwr and
+// compsys lean on for path munging; they have no other coverage.
+//
+// Determinism: the paths are literal strings, never globbed. `:a` / `:A` do
+// touch the cwd, but both shells run with the same cwd, and the fixed relative
+// paths below do not exist, so :A degrades to :a identically.
+// ---------------------------------------------------------------------------
+
+const MOD_PATHS: &[&str] = &[
+    "/a/b/c.txt",
+    "/a/b/",
+    "dir/file.tar.gz",
+    "noext",
+    ".hidden",
+    "/",
+    "a.b.c",
+    "./rel/x.rs",
+    "../up/y.md",
+    "trailing/",
+    "sp ace/f.c",
+];
+
+const MODS: &[&str] = &[
+    ":h", ":t", ":r", ":e", ":l", ":u", ":q", ":Q", ":h:t", ":t:r", ":r:e", ":h:h", ":a", ":s/a/Z/",
+    ":gs/a/Z/", ":s|/|_|", ":gs|/|_|", ":s/x/Y/:&", ":fs/a//", ":t:u", ":r:l",
+];
+
+fn gen_modifier(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+
+    match rng.gen_range(0..6) {
+        // Scalar + a modifier chain.
+        0 | 1 => {
+            for _ in 0..rng.gen_range(1..=3) {
+                let p = pick(&mut rng, MOD_PATHS);
+                let m = pick(&mut rng, MODS);
+                stmts.push(format!("f='{p}'; print -r -- \"[${{f{m}}}]\""));
+            }
+        }
+        // Array: a modifier applies to EVERY element.
+        2 => {
+            let m = pick(&mut rng, MODS);
+            stmts.push(
+                "a=(/x/one.txt two/three.tar.gz /four/ five)".to_string(),
+            );
+            stmts.push(format!("print -rl -- \"${{a{m}}}\"; print -r -- END"));
+            stmts.push(format!("print -rl -- ${{^a{m}}}; print -r -- END"));
+        }
+        // The `${name:#pat}` filter and its (M) inverse, on an array.
+        3 => {
+            let pat = pick(&mut rng, &["*.txt", "a*", "?", "*x*", "[0-9]*"]);
+            stmts.push("a=(a.txt bx c1 2d ax.txt)".to_string());
+            stmts.push(format!("print -rl -- ${{a:#{pat}}}; print -r -- END"));
+            stmts.push(format!("print -rl -- ${{(M)a:#{pat}}}; print -r -- END"));
+        }
+        // Array set-ops: difference / intersection / zip.
+        4 => {
+            stmts.push("a=(x y z y); b=(y w)".to_string());
+            let op = pick(&mut rng, &[":|b", ":*b", ":^b", ":^^b"]);
+            stmts.push(format!("print -rl -- ${{a{op}}}; print -r -- END"));
+            stmts.push(format!("print -r -- \"[${{(j:,:)a{op}}}]\""));
+        }
+        // Modifiers combined with a parameter flag, and applied to $0/$PWD-ish
+        // values through a nested expansion.
+        _ => {
+            let m = pick(&mut rng, MODS);
+            stmts.push("f='/usr/local/lib/libz.so.1'".to_string());
+            stmts.push(format!("print -r -- \"[${{(U)f{m}}}]\""));
+            stmts.push(format!("print -r -- \"[${{${{f{m}}}:-EMPTY}}]\""));
+            stmts.push(format!("a=(/p/q.c /r/s.h); print -r -- \"[${{(j:,:)a{m}}}]\""));
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// mathfunc generator
+//
+// `zmodload zsh/mathfunc` (Src/Modules/mathfunc.c) plus `functions -M`, the
+// user-defined math-function mechanism (Src/builtin.c bin_functions / math.c
+// callmathfunc). Both extend the arithmetic evaluator's namespace at runtime —
+// a path no arith-mode case reaches, since arith mode only uses operators.
+//
+// Determinism: no rand48/rand. Float results print through the shell's own
+// float formatter, which is the parity question, so they are NOT rounded away.
+// ---------------------------------------------------------------------------
+
+/// Single-argument mathfunc calls with exactly representable or stable results.
+const MF_1ARG: &[&str] = &[
+    "sqrt(4)", "sqrt(2)", "abs(-3)", "fabs(-2.5)", "ceil(1.2)", "floor(1.8)", "rint(2.5)",
+    "int(3.9)", "float(3)", "log(1)", "exp(0)", "log10(100)", "sin(0)", "cos(0)", "asin(1)",
+    "atan(1)", "sinh(0)", "tanh(0)", "erf(0)", "j0(0)",
+];
+
+fn gen_mathfunc(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["zmodload zsh/mathfunc".to_string()];
+
+    match rng.gen_range(0..6) {
+        // Bare calls, printed raw: the float formatter is part of the parity.
+        0 | 1 => {
+            for _ in 0..rng.gen_range(1..=3) {
+                let e = pick(&mut rng, MF_1ARG);
+                stmts.push(format!("print -r -- \"$(( {e} ))\""));
+            }
+        }
+        // Two-arg funcs, and a func inside a larger expression (so the
+        // int/float contagion rule applies to the result).
+        2 => {
+            let e = pick(
+                &mut rng,
+                &[
+                    "atan2(1,1)",
+                    "fmod(7,3)",
+                    "copysign(3,-1)",
+                    "ldexp(1,4)",
+                    "hypot(3,4)",
+                    "atan(1,1)",
+                    "1 + sqrt(9)",
+                    "int(sqrt(2)) + 1",
+                    "3 * ceil(0.1)",
+                ],
+            );
+            stmts.push(format!("print -r -- \"$(( {e} ))\""));
+            stmts.push(format!("integer i=$(( {e} )); print -r -- \"i=$i\""));
+            stmts.push(format!("typeset -F 4 f=$(( {e} )); print -r -- \"f=$f\""));
+        }
+        // functions -M: a user math function, called from arithmetic.
+        3 => {
+            stmts.push("_cube() { (( REPLY = $1 * $1 * $1 )) }".to_string());
+            stmts.push("functions -M cube 1 1 _cube".to_string());
+            let n = rng.gen_range(0..6);
+            stmts.push(format!("print -r -- \"$(( cube({n}) ))\""));
+            stmts.push(format!("print -r -- \"$(( cube({n}) + cube(2) ))\""));
+            // Wrong arity is an error, and must be reported the same way.
+            stmts.push("print -r -- \"$(( cube(1,2) ))\"; print -r -- \"rc=$?\"".to_string());
+        }
+        // functions -M with a variable argument count and a string-arg variant.
+        4 => {
+            stmts.push("_sum() { local s=0 x; for x in \"$@\"; do (( s += x )); done; (( REPLY = s )) }".to_string());
+            stmts.push("functions -M msum 1 4 _sum".to_string());
+            stmts.push("print -r -- \"$(( msum(1) )) $(( msum(1,2) )) $(( msum(1,2,3,4) ))\"".to_string());
+            stmts.push("_len() { (( REPLY = ${#1} )) }; functions -M slen 1 1 _len".to_string());
+            stmts.push("print -r -- \"$(( slen(12345) ))\"".to_string());
+            // `functions -M` with no body listed, and removal with +M.
+            stmts.push("functions +M msum; print -r -- \"$(( msum(1,2) ))\"; print -r -- \"rc=$?\"".to_string());
+        }
+        // An undefined math function, and a mathfunc call before zmodload —
+        // both are errors with a defined status, not a crash.
+        _ => {
+            stmts.push("print -r -- \"$(( nosuchfn(1) ))\"; print -r -- \"rc=$?\"".to_string());
+            stmts.push("print -r -- \"$(( sqrt(-1) ))\"; print -r -- \"rc=$?\"".to_string());
+            stmts.push("float x=$(( sqrt(2) )); print -r -- \"x=$x\"".to_string());
+            stmts.push("typeset -F 6 y=$(( exp(1) )); print -r -- \"y=$y\"".to_string());
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// emulate generator
+//
+// `emulate sh|ksh|zsh` (Src/options.c bin_emulate) flips a whole BLOCK of
+// options at once, and `emulate -L` scopes that to the enclosing function. The
+// resulting option set is what decides word splitting, array base, `$0`, the
+// `[[ ]]` vs `[` grammar, and the function-scope rules — so a single wrong
+// option in the emulation table silently changes the meaning of every script
+// that runs under it. Nothing else in the suite exercises the table.
+// ---------------------------------------------------------------------------
+
+fn gen_emulate(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let emu = pick(&mut rng, &["sh", "ksh", "zsh"]);
+    let mut stmts: Vec<String> = Vec::new();
+
+    match rng.gen_range(0..6) {
+        // What the emulation actually SET: probe the options it is defined to
+        // flip. This catches a wrong entry in the emulation table directly.
+        0 => {
+            stmts.push(format!("emulate {emu}"));
+            for o in ["shwordsplit", "ksharrays", "globsubst", "bareglobqual", "rcexpandparam", "functionargzero", "nomatch", "banghist"] {
+                stmts.push(format!("[[ -o {o} ]]; print -r -- \"{o}=$?\""));
+            }
+        }
+        // The splitting/array semantics those options imply, observed directly.
+        1 => {
+            stmts.push(format!("emulate {emu}"));
+            stmts.push("v='a b c'; arr=(x y z)".to_string());
+            stmts.push("print -rl -- $v; print -r -- END".to_string());
+            stmts.push(r#"print -r -- "[${arr[0]}] [${arr[1]}] n=${#arr}""#.to_string());
+        }
+        // `emulate -L` is LOCAL to the function: the option state must be
+        // restored on return.
+        2 => {
+            stmts.push("setopt extendedglob".to_string());
+            stmts.push(format!(
+                "f() {{ emulate -L {emu}; [[ -o extendedglob ]]; print -r -- \"in=$?\"; [[ -o shwordsplit ]]; print -r -- \"split=$?\" }}"
+            ));
+            stmts.push("f; [[ -o extendedglob ]]; print -r -- \"out=$?\"".to_string());
+            stmts.push("[[ -o shwordsplit ]]; print -r -- \"outsplit=$?\"".to_string());
+        }
+        // `emulate -c` / the `emulate sh -c 'script'` one-shot form.
+        // NB: never probe `$0` here — its VALUE is the shell's own argv[0]
+        // (a different path for zsh vs zshrs), which is a binary-name
+        // artifact, not a parity gap. FUNCTION_ARGZERO is exercised via its
+        // OPTION STATE below instead.
+        3 => {
+            let body = pick(
+                &mut rng,
+                &[
+                    "v='a b'; print -rl -- $v",
+                    "a=(1 2 3); print -r -- ${a[1]}",
+                    "print -r -- ${#*}",
+                    "x=5; print -r -- $((x*2))",
+                ],
+            );
+            stmts.push(format!("emulate {emu} -c '{body}'"));
+            stmts.push("print -r -- END".to_string());
+        }
+        // FUNCTION_ARGZERO: emulation flips it; probe the OPTION STATE (not the
+        // value of $0, which is the binary's own path and differs by name).
+        4 => {
+            stmts.push(format!("emulate {emu}"));
+            stmts.push("[[ -o functionargzero ]]; print -r -- \"faz=$?\"".to_string());
+            stmts.push("f() { print -r -- \"nargs=$#\" }; f a b".to_string());
+        }
+        // Emulation + a construct whose parse depends on the option set.
+        _ => {
+            stmts.push(format!("emulate -L {emu}"));
+            let probe = pick(
+                &mut rng,
+                &[
+                    "[[ abc == a* ]]; print -r -- $?",
+                    "[ abc = abc ]; print -r -- $?",
+                    "print -r -- $(( 3 / 2 ))",
+                    "x=5; print -r -- $((x++)) $x",
+                    "print -r -- ${undefined-def}",
+                    "typeset -A h=(k v); print -r -- $h[k]",
+                ],
+            );
+            stmts.push(probe.to_string());
+        }
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// dirstack generator
+//
+// cd / pushd / popd / dirs and the directory stack (Src/builtins.c bin_cd,
+// Src/hashnameddir.c) — `cd -`, `cd old new`, `pushd +N/-N`, PUSHD_MINUS,
+// AUTO_PUSHD, PUSHD_IGNORE_DUPS, CDPATH, `~name` named directories, and the
+// $PWD/$OLDPWD bookkeeping each of them must leave behind.
+//
+// SAFETY: the cleanup `rm` target is a LITERAL temp path that is NEVER
+// reassigned and is guarded by a `*/pf_ds_*` glob, and the script `exit`s
+// before any probe if the initial `cd` into the temp dir fails. This is
+// deliberate: an earlier version derived the rm target from `$PWD` after a
+// `cd`, so a `cd` bug in the shell-under-test (exactly what this mode hunts)
+// redirected `rm -rf` at the fuzzer's own cwd. The rm target must never depend
+// on shell-under-test behaviour.
+// ---------------------------------------------------------------------------
+
+fn gen_dirstack(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![
+        // `d` is the rm target: a literal, never reassigned from $PWD.
+        format!("d=${{TMPDIR:-/tmp}}/pf_ds_{seed}"),
+        "command rm -rf -- \"$d\"; command mkdir -p -- \"$d\"/a/b \"$d\"/c \"$d\"/d/e".to_string(),
+        // If we cannot enter the fixture, bail BEFORE any probe or rm runs.
+        "cd -- \"$d\" || exit 0".to_string(),
+        // `base` is the RESOLVED cwd, used only to strip a machine path off
+        // output — never as an rm target.
+        "base=$PWD".to_string(),
+        "p() { print -r -- \"${PWD#$base}|${OLDPWD#$base}\" }".to_string(),
+    ];
+
+    if rng.gen_bool(0.5) {
+        let neg = if rng.gen_bool(0.3) { "un" } else { "" };
+        stmts.push(format!(
+            "{neg}setopt {}",
+            pick(&mut rng, &["auto_pushd", "pushd_minus", "pushd_ignore_dups", "pushd_silent", "cdable_vars", "chase_links"])
+        ));
+    }
+
+    for _ in 0..rng.gen_range(2..=5) {
+        let stmt = match rng.gen_range(0..12) {
+            // cd + the $OLDPWD bookkeeping, and `cd -` to return.
+            0 => "cd a; p; cd -; p".to_string(),
+            1 => "cd a/b; cd ../..; p".to_string(),
+            // `cd old new` — string substitution on $PWD.
+            2 => "cd a/b; cd b e 2>/dev/null; print -r -- \"rc=$? ${PWD#$base}\"".to_string(),
+            // pushd/popd and the stack listing (relative, so it is portable).
+            3 => "pushd a >/dev/null; pushd c >/dev/null; print -rl -- ${${(f)\"$(dirs -p)\"}#$base}; popd >/dev/null; p".to_string(),
+            4 => "pushd a >/dev/null; pushd d >/dev/null; pushd +1 >/dev/null; p; print -r -- \"n=${#dirstack}\"".to_string(),
+            5 => "pushd a >/dev/null; pushd c >/dev/null; popd +1 >/dev/null; print -r -- \"n=${#dirstack} ${PWD#$base}\"".to_string(),
+            // pushd with no args swaps the top two entries.
+            6 => "pushd a >/dev/null; pushd >/dev/null; p".to_string(),
+            // `dirs -v` numbering, and the $dirstack array itself.
+            7 => "pushd a >/dev/null; pushd c >/dev/null; print -rl -- ${dirstack#$base}; print -r -- END".to_string(),
+            // popd on an empty stack is an error with a defined status.
+            8 => "popd; print -r -- \"rc=$?\"".to_string(),
+            // CDPATH: a bare `cd b` finds $d/a/b through the search path.
+            9 => "CDPATH=$base/a; cd -- \"$base\"; cd b; print -r -- \"${PWD#$base}\"; CDPATH=".to_string(),
+            // A named directory: ~name expands to its value, and %~ / ${(D)}
+            // render a path back through the named-directory table.
+            10 => "hash -d nd=$base/d/e; cd ~nd; print -r -- \"${PWD#$base}\"; print -r -- \"${(D)PWD}\"".to_string(),
+            // cd to a nonexistent directory must fail without moving.
+            _ => "cd nosuchdir 2>/dev/null; print -r -- \"rc=$? ${PWD#$base}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    // Cleanup: leave the fixture, then rm the LITERAL guarded target only.
+    stmts.push("cd /".to_string());
+    stmts.push("case $d in (*/pf_ds_*) command rm -rf -- \"$d\";; esac".to_string());
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -2271,6 +2959,14 @@ enum Mode {
     Builtin,
     Cmdsub,
     Loop,
+    Split,
+    Trap,
+    Pipeline,
+    Prompt,
+    Modifier,
+    Mathfunc,
+    Emulate,
+    Dirstack,
 }
 
 struct Args {
@@ -2307,6 +3003,14 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Builtin => gen_builtin(seed),
         Mode::Cmdsub => gen_cmdsub(seed),
         Mode::Loop => gen_loop(seed),
+        Mode::Split => gen_split_mode(seed),
+        Mode::Trap => gen_trap(seed),
+        Mode::Pipeline => gen_pipeline(seed),
+        Mode::Prompt => gen_prompt(seed),
+        Mode::Modifier => gen_modifier(seed),
+        Mode::Mathfunc => gen_mathfunc(seed),
+        Mode::Emulate => gen_emulate(seed),
+        Mode::Dirstack => gen_dirstack(seed),
     }
 }
 
@@ -2331,6 +3035,14 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Builtin => "builtin",
         Mode::Cmdsub => "cmdsub",
         Mode::Loop => "loop",
+        Mode::Split => "split",
+        Mode::Trap => "trap",
+        Mode::Pipeline => "pipeline",
+        Mode::Prompt => "prompt",
+        Mode::Modifier => "modifier",
+        Mode::Mathfunc => "mathfunc",
+        Mode::Emulate => "emulate",
+        Mode::Dirstack => "dirstack",
     }
 }
 
@@ -2355,6 +3067,14 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Builtin,
         Mode::Cmdsub,
         Mode::Loop,
+        Mode::Split,
+        Mode::Trap,
+        Mode::Pipeline,
+        Mode::Prompt,
+        Mode::Modifier,
+        Mode::Mathfunc,
+        Mode::Emulate,
+        Mode::Dirstack,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -2439,6 +3159,9 @@ fn parse_args() -> Args {
                 i += 1;
                 baseline = argv.get(i).map(PathBuf::from);
             }
+            "--stderr" => {
+                CMP_STDERR.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             "--help" | "-h" => {
                 eprintln!(
                     "parity-fuzz — differential zsh/zshrs parity fuzzer\n\
@@ -2447,8 +3170,13 @@ fn parse_args() -> Args {
                      --seed N         base seed; case i uses seed+i (default 1)\n\
                      --mode M         stateful (default), expr, glob, printf, heredoc,\n\
                      subscript, pattern, typeset, zutil, func, redir,\n\
-                     nest, arith, match, regex, builtin, cmdsub, loop\n\
+                     nest, arith, match, regex, builtin, cmdsub, loop,\n\
+                     split, trap, pipeline, prompt, modifier, mathfunc,\n\
+                     emulate, dirstack\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
+                     --stderr         also require the DIAGNOSTICS to match (the\n\
+                                      leading `zsh:`/`zshrs:` tag is normalized\n\
+                                      away; the wording after it must agree)\n\
                      --once           run a single case (seed) and print both outputs\n\
                      --timeout-ms N   per-shell wall-clock timeout (default 5000)\n\
                      --out PATH       divergence corpus file\n\
@@ -2548,7 +3276,7 @@ fn main() {
         let script = build_program(&stmts);
         let z = run_zsh(&script, timeout);
         let r = run_zshrs(&script, &bin, timeout);
-        let diverged = !z.timed_out && (z.stdout != r.stdout || z.exit != r.exit);
+        let diverged = !z.timed_out && differs(&z, &r);
         println!("seed   : {}", args.base_seed);
         println!("mode   : {}", mode_name(args.mode));
         let (show, z, r) = if diverged && stmts.len() > 1 {
@@ -2604,7 +3332,7 @@ fn main() {
                         timeouts.fetch_add(1, Ordering::Relaxed);
                     }
                     // zsh-side timeout ⇒ pathological case; not a parity gap.
-                    if !z.timed_out && (z.stdout != r.stdout || z.exit != r.exit) {
+                    if !z.timed_out && differs(&z, &r) {
                         // Delta-debug to the minimal state + probe that repros.
                         let minimal = minimize(stmts, &bin, timeout);
                         let mscript = build_program(&minimal);
@@ -2615,7 +3343,7 @@ fn main() {
                         // parallelism) won't reproduce. Require `verify`
                         // consecutive divergences or discard as flaky. This is
                         // what makes a CI fuzz run non-flaky.
-                        let mut confirmed = mz.stdout != mr.stdout || mz.exit != mr.exit;
+                        let mut confirmed = differs(&mz, &mr);
                         for _ in 1..args.verify.max(1) {
                             if !confirmed {
                                 break;
@@ -2625,17 +3353,29 @@ fn main() {
                         if !confirmed {
                             continue; // flaky/transient — not a real gap
                         }
+                        // Under --stderr the diagnostics are part of the compared
+                        // output, so the record has to show them or the report is
+                        // unreadable (identical stdout, invisible difference).
+                        let err_of = |o: &RunOut| -> String {
+                            if CMP_STDERR.load(Ordering::Relaxed) {
+                                format!("\n  stderr: {}", norm_stderr(o.stderr.trim_end()).replace('\n', "\n  "))
+                            } else {
+                                String::new()
+                            }
+                        };
                         let rec = format!(
                             "==== seed {seed} ====\n\
                              program:\n  {}\n\
-                             zsh   : exit={} timeout={}\n{}\n\
-                             zshrs : exit={} timeout={}\n{}\n",
+                             zsh   : exit={} timeout={}{}\n{}\n\
+                             zshrs : exit={} timeout={}{}\n{}\n",
                             mscript.replace('\n', "\n  "),
                             mz.exit,
                             mz.timed_out,
+                            err_of(&mz),
                             mz.stdout.trim_end_matches('\n'),
                             mr.exit,
                             mr.timed_out,
+                            err_of(&mr),
                             mr.stdout.trim_end_matches('\n'),
                         );
                         let mut d = divergences.lock().unwrap();

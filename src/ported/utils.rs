@@ -5535,21 +5535,37 @@ pub fn inittyptab() {
         // dispatch path matches C); on miss, fall through to ifs_lock
         // directly so a fresh `ifssetfn` update before any paramtab
         // entry exists is still visible to inittyptab.
-        let ifs = crate::ported::params::paramtab()
+        // c:4216 — `for (s = ifs ? ifs : CURRENT_DEFAULT_IFS; *s; s++)`.
+        // The default-IFS fallback is keyed on the `ifs` POINTER being
+        // NULL (i.e. IFS unset), NOT on it pointing at an empty string.
+        // `IFS=''` leaves a non-NULL empty `ifs`, the loop body never
+        // runs, and typtab ends up with ZERO ISEP/IWSEP bits — which is
+        // exactly how an empty IFS disables all word splitting
+        // (`IFS=''; v='a b  c'; print -rl -- ${=v}` is one word). The
+        // port used to coerce "" → DEFAULT_IFS at both the paramtab read
+        // and the fallback, so an empty IFS still split on whitespace.
+        let pt_ifs: Option<String> = crate::ported::params::paramtab()
             .read()
             .ok()
-            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)))
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                crate::ported::params::ifs_lock()
+            .and_then(|t| t.get("IFS").map(|pm| crate::ported::params::ifsgetfn(pm)));
+        let src: String = match pt_ifs {
+            // IFS is SET (possibly to ""): walk its chars verbatim.
+            Some(v) => v,
+            // No paramtab entry yet. Fall through to the ifs_lock global so
+            // a fresh ifssetfn update landing before the paramtab entry
+            // exists is still visible; an empty global there means "not
+            // initialised", which is C's NULL → CURRENT_DEFAULT_IFS.
+            None => {
+                let g = crate::ported::params::ifs_lock()
                     .lock()
                     .map(|g| g.clone())
-                    .unwrap_or_default()
-            });
-        let src: String = if ifs.is_empty() {
-            DEFAULT_IFS.to_string()
-        } else {
-            ifs
+                    .unwrap_or_default();
+                if g.is_empty() {
+                    DEFAULT_IFS.to_string() // c:4216 (ifs == NULL)
+                } else {
+                    g
+                }
+            }
         };
         let bytes = src.as_bytes();
         let mut i = 0;

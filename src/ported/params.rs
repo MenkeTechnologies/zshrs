@@ -8038,6 +8038,33 @@ pub fn intsetfn(pm: &mut param, x: i64) {
             intsecondssetfn(x);
             return;
         }
+        // c:Src/params.c:364-365 —
+        //   IPDEF6("TRY_BLOCK_ERROR",     &try_errflag,  varinteger_gsu)
+        //   IPDEF6("TRY_BLOCK_INTERRUPT", &try_interrupt, varinteger_gsu)
+        // varinteger_gsu's setfn is `intvarsetfn` (c:4213), whose body is
+        // `*pm->u.valptr = x;` — i.e. the assignment writes the loop.c
+        // GLOBAL itself, not just `pm->u.val`. That is the entire
+        // mechanism behind `TRY_BLOCK_ERROR=0` inside an `always` block:
+        // `exectry` re-reads the global after the always-list runs
+        // (c:Src/loop.c:774 `if (try_errflag) errflag |= ERRFLAG_ERROR;`)
+        // and a user-zeroed global swallows the try-block's error.
+        //
+        // The Rust port cannot carry C's `u.valptr` raw pointer, so the
+        // bound global is reached by name — the same asymmetry the
+        // SECONDS / RANDOM arms below already resolve this way. Without
+        // it, `TRY_BLOCK_ERROR=0` wrote `pm.u_val` while every reader
+        // (params.rs's special-var getter, exectry) kept consulting the
+        // atomic, so the assignment was a no-op.
+        "TRY_BLOCK_ERROR" => {
+            crate::ported::r#loop::try_errflag.store(x, Ordering::Relaxed); // c:4213
+            intvarsetfn(pm, x); // c:4213 `*pm->u.valptr = x;`
+            return;
+        }
+        "TRY_BLOCK_INTERRUPT" => {
+            crate::ported::r#loop::try_interrupt.store(x, Ordering::Relaxed); // c:4213
+            intvarsetfn(pm, x); // c:4213
+            return;
+        }
         // c:Src/params.c:4552 randomsetfn — `RANDOM=N` calls
         // srand(N). Without this dispatch, $RANDOM writes only u.val
         // and the next read returns rand()'s next value from the
