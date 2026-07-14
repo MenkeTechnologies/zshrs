@@ -97,6 +97,11 @@ pub fn init_named(filename: &str) {
         // --- File log layer (always on) ---
         // Use a blocking Mutex<File> writer — log writes are microseconds and this
         // guarantees data reaches disk even when std::process::exit() skips destructors.
+        // c:Src/utils.c:1990 movefd — the shell's own descriptors must not sit
+        // in the script's fd range. Without this the log landed on fd 3, so
+        // `print -u 3 -r -- x` appended to it (and reported success), and
+        // `exec 3>file` would dup2 over the live log handle.
+        let _lowfd = crate::lowfd::LowFdGuard::new();
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

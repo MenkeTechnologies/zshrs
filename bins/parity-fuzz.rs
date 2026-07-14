@@ -3020,7 +3020,7 @@ fn gen_dirstack(seed: u64) -> Vec<String> {
 //
 // Multibyte text is the single largest hole in the rest of the corpus: every
 // other mode is pure ASCII, so nothing pins the character-vs-byte distinction.
-// zsh counts CHARACTERS (not bytes) for ${#s} and subscripts, but pads by
+// zsh counts CHARACTERS (not bytes) for ${#ts} and subscripts, but pads by
 // DISPLAY WIDTH under the (m) flag — a wide CJK char counts 1 for ${#} and 2
 // for (ml:N:). C: Src/utils.c mb_metastrlen()/MB_METASTRWIDTH, Src/subst.c.
 //
@@ -3872,6 +3872,204 @@ fn gen_zwc(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// (no nameref mode)
+//
+// `typeset -n` namerefs exist in the zsh SOURCE (PM_NAMEREF) but NOT in the
+// reference binary this fuzzer differentials against — zsh 5.9.2 answers
+// `typeset: bad option: -n`. A mode for them would compare zshrs against a
+// shell that only ever errors, which teaches nothing about parity. Add one when
+// the reference zsh is new enough to have them.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// tied generator
+//
+// `typeset -T SCALAR array [sep]` ties a scalar to an array: writing either
+// rewrites the other, joined/split on `sep` (`:` by default). It is how
+// PATH/path, FPATH/fpath and MANPATH/manpath work, so every plugin manager
+// depends on the tie holding in BOTH directions. C: Src/params.c (PM_TIED,
+// tiedarr GSU), Src/builtin.c typeset_single's -T arm.
+// ---------------------------------------------------------------------------
+
+fn gen_tied(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // NB: the tied names are deliberately obscure. A first cut used `S`/`s`, and
+    // `S` happened to be an exported variable in the ambient environment, so the
+    // probe silently tested "tie an already-exported scalar" instead of "tie a
+    // fresh one" — a real gap, but found by accident and only reproducible on
+    // that machine. Env-collidable names make a mode's meaning depend on who
+    // runs it; the export case is now probed on purpose below.
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..14) {
+            // Scalar → array propagation, and back.
+            0 => "typeset -T TS ts; TS=a:b:c; print -r -- \"n=${#ts} [${(j:|:)ts}]\"".to_string(),
+            1 => "typeset -T TS ts; ts=(x y z); print -r -- \"[$TS]\"".to_string(),
+            // A custom separator.
+            2 => "typeset -T TS ts ,; TS=a,b,c; print -r -- \"n=${#ts} [${(j:|:)ts}]\"".to_string(),
+            3 => "typeset -T TS ts ,; ts=(p q); print -r -- \"[$TS]\"".to_string(),
+            // The tie survives an append to either side.
+            4 => "typeset -T TS ts; TS=a:b; ts+=(c); print -r -- \"[$TS] n=${#ts}\"".to_string(),
+            5 => "typeset -T TS ts; ts=(a b); TS=$TS:c; print -r -- \"n=${#ts} [${(j:|:)ts}]\"".to_string(),
+            // Empty fields are preserved on the scalar side.
+            6 => "typeset -T TS ts; TS=a::b; print -r -- \"n=${#ts} [${(j:|:)ts}]\"".to_string(),
+            // An empty array yields an empty scalar.
+            7 => "typeset -T TS ts; ts=(); print -r -- \"[$TS] n=${#ts}\"".to_string(),
+            // Types: the scalar is scalar-tied, the array is array-tied.
+            8 => "typeset -T TS ts; TS=a:b; print -r -- \"${(t)TS} ${(t)ts}\"".to_string(),
+            // Element assignment through the array reaches the scalar.
+            9 => "typeset -T TS ts; TS=a:b:c; ts[2]=B; print -r -- \"[$TS]\"".to_string(),
+            // The real thing: PATH/path are tied by the shell itself.
+            10 => "path=(/bin /usr/bin); print -r -- \"[$PATH]\"; PATH=/x:/y; print -r -- \"n=${#path} [${(j:|:)path}]\"".to_string(),
+            // Untying leaves both halves standing.
+            _ => "typeset -T TS ts; TS=a:b; unset S; print -r -- \"${+S} ${+s}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// readb generator
+//
+// The `read` builtin's flag matrix, driven from a here-string / heredoc so the
+// input is fixed. -A reads a whole array, -d changes the record delimiter, -k
+// reads a character COUNT (not a line), -q asks a y/n question, -e/-E echo, -u
+// picks an fd, and the trailing-word rule ("the last name gets the rest") is
+// its own contract. C: Src/builtin.c bin_read().
+// ---------------------------------------------------------------------------
+
+fn gen_readb(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..14) {
+            // The last name absorbs the remaining words.
+            0 => "read a b <<< 'one two three'; print -r -- \"[$a][$b]\"".to_string(),
+            1 => "read a b c d <<< 'one two'; print -r -- \"[$a][$b][$c][$d]\"".to_string(),
+            // -A: the whole line as an array.
+            2 => "read -A arr <<< 'one two three'; print -r -- \"n=${#arr} [${(j:,:)arr}]\"".to_string(),
+            // -r keeps backslashes; without it they escape.
+            3 => "read x <<< 'a\\tb'; print -r -- \"[$x]\"".to_string(),
+            4 => "read -r x <<< 'a\\tb'; print -r -- \"[$x]\"".to_string(),
+            // -d: a custom record delimiter.
+            5 => "read -d , x <<< 'first,second'; print -r -- \"[$x]\"".to_string(),
+            6 => "printf 'a\\0b\\0' | { read -d '' x; print -r -- \"[$x]\" }".to_string(),
+            // -k: read exactly N characters, not a line.
+            7 => "read -k 3 x <<< 'abcdef'; print -r -- \"[$x]\"".to_string(),
+            8 => "read -k 2 -u 0 x <<< 'xyz'; print -r -- \"[$x]\"".to_string(),
+            // -q: y/n — true only for `y`.
+            9 => "read -q x <<< 'y'; print -r -- \"rc=$? [$x]\"".to_string(),
+            10 => "read -q x <<< 'n'; print -r -- \"rc=$? [$x]\"".to_string(),
+            // IFS drives the field split.
+            11 => "IFS=: read a b <<< 'l:r'; print -r -- \"[$a][$b]\"".to_string(),
+            // EOF with no input: nonzero status, name left empty.
+            12 => "read x </dev/null; print -r -- \"rc=$? [$x]\"".to_string(),
+            // Reading several lines in sequence from one heredoc.
+            _ => "{ read a; read b } <<'EOF'\nline1\nline2\nEOF\nprint -r -- \"[$a][$b]\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// fd generator
+//
+// Explicit file-descriptor manipulation: `exec N>file` opens a long-lived fd,
+// `{v}>file` allocates one and stores its number, `>&N` / `<&N` duplicate, and
+// `>&-` closes. The allocated NUMBER in `{v}` is not a parity property (it
+// depends on what else is open), so it is never printed — only what flows
+// through it. Runs from the scratch fixture: these probes create files.
+// C: Src/exec.c (addfd/closemn), Src/parse.c redirection parsing.
+// ---------------------------------------------------------------------------
+
+fn gen_fd(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // Per-seed file names keep parallel workers from colliding in the shared
+    // scratch cwd; both shells run the same seed, so both use the same names.
+    let f = format!("fd_{seed}");
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=2) {
+        let stmt = match rng.gen_range(0..12) {
+            // exec-opened fd, written across several commands, then closed.
+            0 => format!("exec 3> {f}; print -u 3 -r -- one; print -u 3 -r -- two; exec 3>&-; cat {f}"),
+            // Read side.
+            1 => format!("print -l a b c > {f}; exec 3< {f}; read -u 3 x; read -u 3 y; exec 3<&-; print -r -- \"[$x][$y]\""),
+            // {v} auto-allocation — print the CONTENT, never the fd number.
+            2 => format!("exec {{v}}> {f}; print -u $v -r -- alloc; exec {{v}}>&-; cat {f}"),
+            3 => format!("print -r -- src > {f}; exec {{v}}< {f}; read -u $v x; exec {{v}}<&-; print -r -- \"[$x]\""),
+            // Duplication: 2>&1 merges, and the ORDER of the dup matters.
+            4 => "{ print -r -- out; print -r -- err >&2 } 2>&1 | cat".to_string(),
+            5 => format!("{{ print -r -- o; print -r -- e >&2 }} > {f} 2>&1; cat {f}"),
+            // Closing a fd then using it must fail.
+            6 => "exec 3>&-; print -u 3 -r -- x 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
+            // Appending vs truncating.
+            7 => format!("print -r -- a > {f}; print -r -- b >> {f}; cat {f}"),
+            8 => format!("print -r -- a > {f}; print -r -- b > {f}; cat {f}"),
+            // Read-write open.
+            9 => format!("print -r -- rw > {f}; exec 3<> {f}; read -u 3 x; exec 3>&-; print -r -- \"[$x]\""),
+            // A redirection scoped to a single compound command.
+            10 => format!("for i in 1 2; do print -r -- \"line$i\"; done > {f}; wc -l < {f}"),
+            // stdin from a file for a whole block.
+            _ => format!("print -l p q > {f}; {{ read a; read b }} < {f}; print -r -- \"[$a][$b]\""),
+        };
+        stmts.push(stmt);
+    }
+    stmts.push(format!("case {f} in (fd_*) command rm -f -- {f};; esac"));
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// special generator
+//
+// Shell-maintained parameters whose VALUES are deterministic: $0, $?, $#,
+// LINENO, ZSH_SUBSHELL (subshell nesting depth), funcstack/funcfiletrace,
+// ZSH_NAME/ZSH_ARGZERO, and the option-driven ones. $RANDOM, $$, $EPOCHSECONDS
+// and $SECONDS are excluded by construction — they are nondeterministic, not
+// parity-relevant. C: Src/params.c (the special-parameter GSU table).
+// ---------------------------------------------------------------------------
+
+fn gen_special(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..14) {
+            // $? threading.
+            0 => "true; print -r -- $?; false; print -r -- $?; (exit 7); print -r -- $?".to_string(),
+            // LINENO counts SOURCE lines, and is 1-based.
+            1 => "print -r -- $LINENO\nprint -r -- $LINENO".to_string(),
+            2 => "f() { print -r -- \"in=$LINENO\" }; f".to_string(),
+            // ZSH_SUBSHELL is the nesting depth.
+            3 => "print -r -- $ZSH_SUBSHELL; ( print -r -- $ZSH_SUBSHELL; ( print -r -- $ZSH_SUBSHELL ) )".to_string(),
+            // A command substitution is a subshell too.
+            4 => "print -r -- \"$(print -r -- $ZSH_SUBSHELL)\"".to_string(),
+            // funcstack / funcfiletrace inside nested calls.
+            5 => "outer() { inner }; inner() { print -r -- \"${(j:>:)funcstack}\" }; outer".to_string(),
+            6 => "f() { print -r -- \"depth=${#funcstack}\" }; f".to_string(),
+            // $0 inside and outside a function (FUNCTION_ARGZERO).
+            // $0 INSIDE a function is the function name. At top level it is the
+            // interpreter's own path, which is `zsh` vs `zshrs` by construction —
+            // never a parity property, so it is not probed.
+            7 => "f() { print -r -- \"[$0]\" }; f".to_string(),
+            8 => "f() { print -r -- \"argzero=$0\" }; f; f() { print -r -- \"again=$0\" }; f".to_string(),
+            // $# / $* with no positionals.
+            9 => "print -r -- \"n=$# [$*]\"".to_string(),
+            // $_ is the last argument of the previous command.
+            10 => "print -r -- alpha >/dev/null; print -r -- \"[$_]\"".to_string(),
+            // Option-state params.
+            11 => "print -r -- \"[$ZSH_NAME]\"".to_string(),
+            // $pipestatus for a whole pipeline.
+            12 => "true | false | true; print -r -- \"[${(j:,:)pipestatus}]\"".to_string(),
+            // Read-only specials must reject assignment.
+            _ => "ZSH_SUBSHELL=9 2>/dev/null; print -r -- \"rc=$? [$ZSH_SUBSHELL]\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -3917,6 +4115,10 @@ enum Mode {
     Mapfile,
     Pcre,
     Zwc,
+    Tied,
+    Readb,
+    Fd,
+    Special,
 }
 
 struct Args {
@@ -3975,6 +4177,10 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Mapfile => gen_mapfile(seed),
         Mode::Pcre => gen_pcre(seed),
         Mode::Zwc => gen_zwc(seed),
+        Mode::Tied => gen_tied(seed),
+        Mode::Readb => gen_readb(seed),
+        Mode::Fd => gen_fd(seed),
+        Mode::Special => gen_special(seed),
     }
 }
 
@@ -4021,6 +4227,10 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Mapfile => "mapfile",
         Mode::Pcre => "pcre",
         Mode::Zwc => "zwc",
+        Mode::Tied => "tied",
+        Mode::Readb => "readb",
+        Mode::Fd => "fd",
+        Mode::Special => "special",
     }
 }
 
@@ -4067,6 +4277,10 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Mapfile,
         Mode::Pcre,
         Mode::Zwc,
+        Mode::Tied,
+        Mode::Readb,
+        Mode::Fd,
+        Mode::Special,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -4166,7 +4380,8 @@ fn parse_args() -> Args {
                      split, trap, pipeline, prompt, modifier, mathfunc,\n\
                      emulate, dirstack, unicode, quote, datetime,\n\
                      paramod, procsub, alias, autoload, stat, errexit,\n\
-                     posparam, numfmt, mapfile, pcre, zwc\n\
+                     posparam, numfmt, mapfile, pcre, zwc, tied,\n\
+                     readb, fd, special\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
@@ -4272,7 +4487,7 @@ fn main() {
         }
         // Modes whose probes (or whose MINIMIZED probes) can create files must
         // never run from the source tree — see setup_scratch_fixture.
-        Mode::Alias | Mode::Procsub | Mode::Errexit | Mode::Mapfile => {
+        Mode::Alias | Mode::Procsub | Mode::Errexit | Mode::Mapfile | Mode::Fd => {
             FIXTURE_CWD.set(setup_scratch_fixture()).ok();
         }
         _ => {}

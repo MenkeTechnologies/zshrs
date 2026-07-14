@@ -7546,19 +7546,34 @@ impl ZshCompiler {
         // text in function_source so introspection (whence, which, typeset
         // -f, ${functions[name]}) returns canonical body text.
         //
-        // Set lineno_offset = (first_body_line - 1) so $LINENO
-        // inside the function reads 1, 2, 3 relative to the body
-        // (matches zsh's `lineno = 1` reset on function entry at
-        // Src/init.c:1588). Use the first list's pipe lineno as
-        // the offset anchor.
+        // $LINENO inside a function is measured from the line the function was
+        // DEFINED on — c:Src/exec.c:5384 stamps `shf->lineno` with the def line,
+        // and the body's own line numbers are relative to it. So a one-line
+        // `f() { print $LINENO }` reads 0 wherever it is defined, and the second
+        // line of a multi-line body reads 1.
+        //
+        // The offset used to be `first_body_line - 1`, which is the def line
+        // only when the body starts on the line AFTER `f() {`. For an INLINE
+        // body (`f() { … }`, body on the same line as the definition) the two
+        // differ, and $LINENO came out one too high for every function defined
+        // below line 1:
+        //     print top            # line 1
+        //     f() { print $LINENO }; f   # line 2 -> zsh: 0, zshrs was: 1
+        //
+        // `current_sublist_line` is the line of the sublist being compiled — the
+        // funcdef's own line — in whatever numbering the enclosing context uses,
+        // so a nested definition stays relative to its enclosing function, which
+        // is what C's `funcstack->flineno + lineno` (c:5387) arrives at too.
+        //
+        // `current_sublist_line` is RELATIVE to the enclosing context, while the
+        // body's AST line numbers are absolute, so the two have to be put in the
+        // same frame before subtracting: add back the enclosing offset. At top
+        // level that offset is 0 and this is just the funcdef's line; inside a
+        // function it recovers the absolute line, which is what C's
+        // `funcstack->flineno + lineno` (c:5387) computes for a nested def.
         let mut body_compiler = ZshCompiler::new();
-        let first_body_line = f
-            .body
-            .lists
-            .first()
-            .map(|l| l.sublist.pipe.lineno)
-            .unwrap_or(1);
-        body_compiler.lineno_offset = first_body_line.saturating_sub(1);
+        let def_line = (self.current_sublist_line.max(1) as u64).saturating_add(self.lineno_offset);
+        body_compiler.lineno_offset = def_line;
         body_compiler.is_function_body = true;
         let lineno_off = body_compiler.lineno_offset;
         let body_chunk = body_compiler.compile(&f.body);

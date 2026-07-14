@@ -64,6 +64,10 @@ impl CompsysCache {
 
     /// Open or create cache database with maximum performance settings
     pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
+        // Hold the script's fd range while sqlite opens the db (and, via the
+        // pragmas below, its WAL and SHM side files) so none of them land on
+        // fds 3-9. See crate::lowfd.
+        let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(path)?;
         let cache = Self { conn };
         cache.configure_for_speed()?;

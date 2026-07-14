@@ -4373,7 +4373,26 @@ pub fn bin_typeset(
         // is). Previously both were hardcoded to `…|PM_TIED`, so `export -T`
         // left FOO unexported — `${(t)FOO}` read `scalar-tied` and
         // `typeset -p FOO` printed `typeset -T` instead of `export -T`.
-        let tie_attr: u32 = on & (PM_EXPORTED | PM_READONLY);
+        //
+        // c:Src/builtin.c:2953 — `on |= (pm->node.flags & ~roff) & PM_EXPORTED;`
+        //
+        //   "Variable already exists in the current scope but is not tied.
+        //    We're preserving its value and export attribute but no other
+        //    attributes upon converting to 'tied'."
+        //
+        // So tying an ALREADY-EXPORTED scalar keeps it exported, even without
+        // `-x`: `export E=a:b; typeset -T E e` leaves E in the environment
+        // (${(t)E} == scalar-tied-export). zshrs built the tie attributes from
+        // the command-line flags alone and silently dropped the export, which
+        // takes the variable OUT of the environment of every later child.
+        let inherited_export: u32 = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(sname).map(|p| p.node.flags as u32))
+            .unwrap_or(0)
+            & PM_EXPORTED
+            & !(off as u32); // c:2953 `& ~roff` — an explicit +x still wins
+        let tie_attr: u32 = (on as u32 | inherited_export) & (PM_EXPORTED | PM_READONLY);
         let mut apm = param::default();
         apm.node.nam = aname.to_string();
         apm.node.flags = ((PM_ARRAY | PM_TIED) | (tie_attr & !PM_EXPORTED)) as i32;

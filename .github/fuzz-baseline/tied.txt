@@ -1,0 +1,10 @@
+# parity-fuzz --mode tied baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode tied --count N --verify 3  (copy NEW-signature lines).
+#
+# Open gap (NOT actually about ties): an UNBRACED `$var:x` applies a word
+# MODIFIER to the parameter, the way `$var:h` / `$var:t` / `$var:r` do — so zsh
+# reads `TS=$TS:c` as $TS with a `c` modifier and the `:c` never reaches the
+# value. zshrs treats the `:c` as literal text. Braced (`${TS}:c`) and quoted
+# forms already agree; only the unbraced parameter+modifier parse diverges.
+typeset -T TS ts; ts=(a b); TS=$TS:c; print -r -- "n=${#ts} [${(j:|:)ts}]"
