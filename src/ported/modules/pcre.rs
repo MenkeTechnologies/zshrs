@@ -651,15 +651,20 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                 Some(re) => re,
                 None => return (None, None, Vec::new(), Vec::new()),
             };
-            let search_text: &str =
-                if offset_start > 0 && (offset_start as usize) <= plaintext.len() {
-                    &plaintext[offset_start as usize..]
-                } else if (offset_start as usize) > plaintext.len() {
-                    return (None, None, Vec::new(), Vec::new());
-                } else {
-                    &plaintext
-                };
-            let caps = match re.captures(search_text) {
+            // c:381-382 — `pcre2_match(pat, subject, subject_len, offset_start, ...)`.
+            // The offset is handed to the MATCHER against the whole subject; it
+            // is NOT a slice. The difference is observable: PCRE still anchors
+            // `^` to the true start of the string, so matching `^(\w+)@…` from
+            // offset 1 must FAIL. Slicing the subject re-anchored `^` at the new
+            // start and reported a match. `captures_at` has exactly PCRE's
+            // start-offset semantics, and its offsets come back ABSOLUTE.
+            //
+            // c:377-378 — `if (offset_start > 0 && offset_start >= subject_len)
+            //                  ret = PCRE2_ERROR_NOMATCH;`
+            if offset_start > 0 && (offset_start as usize) >= plaintext.len() {
+                return (None, None, Vec::new(), Vec::new());
+            }
+            let caps = match re.captures_at(&plaintext, search_base_offset) {
                 Some(c) => c,
                 None => return (None, None, Vec::new(), Vec::new()),
             };
@@ -669,9 +674,30 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
             // ovec is RELATIVE TO THE WHOLE SUBJECT, so add back the -n
             // offset the regex was started from (search_base_offset).
             let range = full_m.map(|m| (m.start(), m.end()));
+            // c:393 — `ret = pcre2_get_ovector_count(pcre_mdata)`, then
+            // c:206-207 — `zalloc(... captured_count+1-capture_start)` /
+            //             `for (i = capture_start; i < captured_count; i++)`.
+            //
+            // PCRE reports the number of ovector PAIRS SET — that is, the
+            // highest group that actually participated, plus one — NOT the
+            // number of groups the pattern declares. So a TRAILING group that
+            // did not participate is not reported at all, while a non-
+            // participating group BEFORE a participating one is reported empty:
+            //
+            //   x(y)?z   on "xz"  -> 0 captures   (zshrs previously reported 1)
+            //   (a)(b)?  on "a"   -> 1 capture
+            //   (a)?(b)  on "b"   -> 2 captures, the first empty
+            //
+            // Using the pattern's group count (`caps.len()`) instead padded the
+            // array with trailing empties that zsh never produces.
+            let captured_count = (1..caps.len())
+                .filter(|&i| caps.get(i).is_some())
+                .max()
+                .map(|hi| hi + 1)
+                .unwrap_or(1);
             let mut subs = Vec::new();
-            for i in 1..caps.len() {
-                // c:401 ovector capture loop
+            for i in 1..captured_count {
+                // c:207-209 ovector capture loop
                 subs.push(caps.get(i).map(|m| m.as_str().to_string()));
             }
             // c:215-229 — named-capture table walk:
@@ -722,7 +748,11 @@ pub fn bin_pcre_match(nam: &str, args: &[String], ops: &options, _func: i32) -> 
                           // this) saw stale values from prior invocations.
         if want_offset_pair != 0 {
             if let Some((s, e)) = full_range {
-                let zop = format!("{} {}", s + search_base_offset, e + search_base_offset);
+                // Already absolute: `captures_at` searches the whole subject
+                // from an offset, so ovec is relative to the subject exactly as
+                // in C. (The previous port sliced, making these relative to the
+                // slice, and added the offset back here.)
+                let zop = format!("{} {}", s, e);
                 crate::ported::params::setsparam("ZPCRE_OP", &zop); // c:181
             }
         }

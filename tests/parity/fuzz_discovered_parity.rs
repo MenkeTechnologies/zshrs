@@ -1414,3 +1414,139 @@ case $d in (/tmp/pf_auto_*) command rm -rf -- "$d";; esac"#,
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// O. `=~` used the wrong regex LANGUAGE
+//
+// C dispatches `[[ =~ ]]` to a module, and which one is an option
+// (Src/cond.c:115): `zsh/pcre` under REMATCH_PCRE, else `zsh/regex`, which is
+// regcomp(REG_EXTENDED) — POSIX ERE. ERE is a different language from the RE2
+// syntax the Rust regex crate speaks: there is no `\d`/`\w`/`\s` (a backslash
+// before an ordinary character yields that character, so `\d` matches a literal
+// `d`), and `(?…)` is a repetition operator with no operand, i.e. a compile
+// error, not a group modifier. zshrs accepted both and so MATCHED text zsh does
+// not — and it ignored REMATCH_PCRE entirely, so `setopt rematchpcre` did
+// nothing.
+// ─────────────────────────────────────────────────────────────────────
+mod regex_ere_vs_pcre {
+    use super::*;
+
+    /// `\d` is a literal `d` in ERE — this must NOT match.
+    #[test]
+    fn backslash_d_is_a_literal_d() {
+        assert_parity(r#"[[ '2024-06' =~ '(\d{2,4})-(\d{2})' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+    }
+
+    /// …and it DOES match an actual run of `d`s.
+    #[test]
+    fn backslash_d_matches_the_letter_d() {
+        assert_parity(r#"[[ 'ddd-06' =~ '(\d+)' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+    }
+
+    /// `\w` likewise.
+    #[test]
+    fn backslash_w_is_a_literal_w() {
+        assert_parity(r#"[[ 'user@site.com' =~ '^(\w+)@(\w+)\.com$' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+    }
+
+    /// `(?…)` is a compile error in ERE, not a group modifier.
+    #[test]
+    fn paren_question_is_a_compile_error() {
+        assert_parity(r#"[[ 'abc' =~ '(?<w>[a-z]+)' ]] && print -r -- "M=$MATCH" || print -r -- NOMATCH"#);
+    }
+
+    /// A real ERE escape keeps its meaning.
+    #[test]
+    fn escaped_dot_is_still_a_literal_dot() {
+        assert_parity(r#"[[ 'a.b' =~ 'a\.b' ]] && print -r -- YES || print -r -- NO"#);
+    }
+
+    /// `.` matches newline (regcomp without REG_NEWLINE).
+    #[test]
+    fn dot_matches_newline() {
+        assert_parity("[[ $'a\\nb' =~ 'a.b' ]] && print -r -- YES || print -r -- NO");
+    }
+
+    /// REMATCH_PCRE re-points `=~` at PCRE, where `\d` IS a digit class.
+    #[test]
+    fn rematchpcre_switches_engines() {
+        assert_parity(r#"setopt rematchpcre; [[ '2024-06' =~ '(\d{2,4})-(\d{2})' ]] && print -r -- "M=$MATCH m=(${(j:,:)match})" || print -r -- NOMATCH"#);
+    }
+
+    /// …and named groups compile under PCRE.
+    #[test]
+    fn rematchpcre_allows_named_groups() {
+        assert_parity(r#"setopt rematchpcre; [[ 'abc123' =~ '(?<word>[a-z]+)' ]] && print -r -- "M=[$MATCH]" || print -r -- NOMATCH"#);
+    }
+
+    /// The `[[ ]]` path must honour BASH_REMATCH (it did not, before the
+    /// duplicate inline implementation was replaced by a module dispatch).
+    #[test]
+    fn bash_rematch_array_is_populated() {
+        assert_parity(r#"setopt bashrematch; [[ 'ab' =~ '(a)(b)' ]]; print -r -- "[${BASH_REMATCH[1]}][${BASH_REMATCH[2]}]""#);
+    }
+
+    /// CASE_MATCH off maps to REG_ICASE.
+    #[test]
+    fn casematch_off_is_case_insensitive() {
+        assert_parity(r#"unsetopt casematch; [[ 'AbC' =~ 'abc' ]] && print -r -- ICASE || print -r -- NO"#);
+    }
+
+    /// Captures, $match and $mbegin still come out right.
+    #[test]
+    fn captures_and_offsets_intact() {
+        assert_parity(r#"[[ 'abc123' =~ '([a-z]+)([0-9]+)' ]] && print -r -- "M=$MATCH m=(${(j:,:)match}) b=(${(j:,:)mbegin}) e=(${(j:,:)mend})""#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// P. pcre_match: -n is a START OFFSET, not a slice; and captures are the
+//    PAIRS SET, not the pattern's group count
+//
+// C passes the offset to the matcher against the whole subject
+// (Src/Modules/pcre.c:381 `pcre2_match(pat, subject, subject_len, offset_start,
+// …)`), so `^` still anchors to the true start of the string. zshrs sliced the
+// subject, which re-anchored `^` at the new start and reported matches zsh does
+// not. Separately, PCRE reports the number of ovector PAIRS SET — the highest
+// participating group plus one — so a TRAILING group that did not participate
+// is not reported at all.
+// ─────────────────────────────────────────────────────────────────────
+mod pcre_offset_and_captures {
+    use super::*;
+
+    /// `^` still anchors to the string start, so matching from offset 1 fails.
+    #[test]
+    fn start_offset_does_not_reanchor_caret() {
+        assert_parity(r#"zmodload zsh/pcre; pcre_compile '^(\w+)@(\w+)\.com$'; pcre_match -n 1 'user@site.com'; print -r -- "rc=$?""#);
+    }
+
+    /// A non-anchored pattern still matches from the offset.
+    #[test]
+    fn start_offset_still_searches() {
+        assert_parity(r#"zmodload zsh/pcre; pcre_compile 'b'; pcre_match -n 2 'abab'; print -r -- "rc=$?""#);
+    }
+
+    /// -b offsets are absolute (relative to the whole subject), under -n too.
+    #[test]
+    fn offsets_are_absolute_under_start_offset() {
+        assert_parity(r#"zmodload zsh/pcre; pcre_compile 'b'; pcre_match -b -n 2 'abab'; print -r -- "rc=$? op=[$ZPCRE_OP]""#);
+    }
+
+    /// A trailing group that did not participate is not reported.
+    #[test]
+    fn trailing_unset_group_is_truncated() {
+        assert_parity(r#"zmodload zsh/pcre; pcre_compile 'x(y)?z'; pcre_match -a arr 'xz'; print -r -- "n=${#arr}""#);
+    }
+
+    /// An unset group BEFORE a participating one IS reported, as empty.
+    #[test]
+    fn leading_unset_group_is_kept_empty() {
+        assert_parity(r#"zmodload zsh/pcre; pcre_compile '(a)?(b)'; pcre_match -a arr 'b'; print -r -- "n=${#arr} [${(j:,:)arr}]""#);
+    }
+
+    /// The ordinary all-groups-participate case is unchanged.
+    #[test]
+    fn participating_groups_all_reported() {
+        assert_parity(r#"zmodload zsh/pcre; pcre_compile '([a-z]+)([0-9]+)'; pcre_match 'abc123'; print -r -- "M=$MATCH m=(${(j:,:)match})""#);
+    }
+}

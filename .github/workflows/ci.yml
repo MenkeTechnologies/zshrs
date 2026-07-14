@@ -424,6 +424,23 @@ jobs:
         run: ./target/debug/parity-fuzz --mode errexit --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/errexit.txt --out target/parity-fuzz/ci-errexit.txt
       - name: Fuzz — paramod
         run: ./target/debug/parity-fuzz --mode paramod --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/paramod.txt --out target/parity-fuzz/ci-paramod.txt
+      # posparam / numfmt / mapfile / pcre / zwc cover the positional-parameter
+      # list ($@ vs $* vs argv, shift, slices), numeric RE-RENDERING (typeset -i
+      # output base, -F/-E precision, -Z/-L/-R padding, float formatting),
+      # zsh/mapfile, the zsh/pcre engine and its `=~` REMATCH_PCRE dispatch, and
+      # the zcompile/.zwc digest path that every autoload goes through once a
+      # digest exists. All five are clean (empty baseline: any divergence is a
+      # regression).
+      - name: Fuzz — posparam
+        run: ./target/debug/parity-fuzz --mode posparam --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/posparam.txt --out target/parity-fuzz/ci-posparam.txt
+      - name: Fuzz — numfmt
+        run: ./target/debug/parity-fuzz --mode numfmt --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/numfmt.txt --out target/parity-fuzz/ci-numfmt.txt
+      - name: Fuzz — mapfile
+        run: ./target/debug/parity-fuzz --mode mapfile --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/mapfile.txt --out target/parity-fuzz/ci-mapfile.txt
+      - name: Fuzz — pcre
+        run: ./target/debug/parity-fuzz --mode pcre --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/pcre.txt --out target/parity-fuzz/ci-pcre.txt
+      - name: Fuzz — zwc
+        run: ./target/debug/parity-fuzz --mode zwc --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zwc.txt --out target/parity-fuzz/ci-zwc.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking

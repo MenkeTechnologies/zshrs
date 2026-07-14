@@ -11256,10 +11256,28 @@ impl fusevm::ShellHost for ZshrsHost {
         // the same untokenize path inside zcond_regex_match.
         let s_clean = crate::lex::untokenize(s);
         let regex_clean = crate::lex::untokenize(regex);
-        crate::ported::modules::regex::zcond_regex_match(
-            &[s_clean.as_str(), regex_clean.as_str()],
-            crate::ported::modules::regex::ZREGEX_EXTENDED,
-        ) != 0
+        // c:Src/cond.c:113-119 — WHICH engine `=~` uses is an option:
+        //
+        //   char *modname = isset(REMATCHPCRE) ? "zsh/pcre" : "zsh/regex";
+        //
+        // and the two speak different languages (POSIX ERE vs PCRE), so the
+        // option decides whether `\d` is a digit class or a literal `d`, and
+        // whether `(?<name>…)` compiles at all. This dispatch was missing:
+        // `=~` always used the regex module, so `setopt rematchpcre` silently
+        // did nothing.
+        if crate::ported::zsh_h::isset(crate::ported::zsh_h::REMATCHPCRE) {
+            // c:115 — "zsh/pcre" → the `-pcre-match` cond.
+            crate::ported::modules::pcre::cond_pcre_match(
+                &[s_clean, regex_clean],
+                crate::ported::modules::pcre::CPCRE_PLAIN,
+            ) != 0
+        } else {
+            // c:115 — "zsh/regex" → the `-regex-match` cond.
+            crate::ported::modules::regex::zcond_regex_match(
+                &[s_clean.as_str(), regex_clean.as_str()],
+                crate::ported::modules::regex::ZREGEX_EXTENDED,
+            ) != 0
+        }
     }
 
     fn with_redirects_end(&mut self) {

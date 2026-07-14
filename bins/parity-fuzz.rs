@@ -3604,6 +3604,274 @@ fn gen_errexit(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// posparam generator
+//
+// Positional parameters are their own parameter type in C: `$@`/`$*` differ
+// only under quoting, `argv` is an ALIAS for the whole list (assigning to it
+// rewrites the positionals), `shift` takes a count, and `${@:off:len}` slices
+// with 1-based, not 0-based, semantics. The joins all key off IFS[1].
+// C: Src/params.c (argvgetfn/argvsetfn), Src/builtin.c bin_shift.
+// ---------------------------------------------------------------------------
+
+fn gen_posparam(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["set -- alpha beta gamma delta".to_string()];
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..16) {
+            0 => "print -r -- \"n=$# 1=$1 last=${@[-1]} all=$*\"".to_string(),
+            // "$*" joins on IFS[1]; "$@" never joins.
+            1 => "print -rl -- \"$*\"; print -r -- --; print -rl -- \"$@\"; print -r -- END".to_string(),
+            2 => "IFS=:; print -r -- \"[$*]\"; IFS=' '; print -r -- \"[$*]\"".to_string(),
+            // Unquoted $@ word-splits and DROPS empties; "$@" keeps them.
+            3 => "set -- a '' b; print -r -- \"n=$#\"; for x in \"$@\"; do print -r -- \"<$x>\"; done".to_string(),
+            4 => "set -- a '' b; for x in $@; do print -r -- \"<$x>\"; done; print -r -- END".to_string(),
+            // Slices are 1-based.
+            5 => format!("print -r -- \"[${{@:{}:{}}}]\"", rng.gen_range(1..4), rng.gen_range(1..4)),
+            6 => "print -r -- \"[${@:2}]\" \"[${*:2:2}]\"".to_string(),
+            // shift with a count, and past the end.
+            7 => format!("shift {}; print -r -- \"n=$# rest=$*\"", rng.gen_range(1..3)),
+            8 => "shift 9 2>/dev/null; print -r -- \"rc=$? n=$#\"".to_string(),
+            // `argv` aliases the whole list, in both directions.
+            9 => "print -r -- \"argv=(${(j:,:)argv}) count=${#argv}\"".to_string(),
+            10 => "argv=(x y); print -r -- \"n=$# 1=$1 2=$2\"".to_string(),
+            11 => "argv[2]=BETA; print -r -- \"$*\"".to_string(),
+            // set -- with no args clears; `set --` vs `set -` differ.
+            12 => "set --; print -r -- \"n=$# empty=[$*]\"".to_string(),
+            // Flags applied to the positional list.
+            13 => "print -r -- \"${(o)@}\" ; print -r -- \"${(U)@}\"".to_string(),
+            14 => "print -r -- \"${#@} ${(j:-:)@}\"".to_string(),
+            // Positionals inside a function are the FUNCTION's, not the shell's.
+            _ => "f() { print -r -- \"in=$# $1\" }; f one two; print -r -- \"out=$# $1\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// numfmt generator
+//
+// How a number turns back into TEXT: the output base of `typeset -i N`, the
+// precision of `-F`/`-E`, the zero/blank padding of `-Z`/`-L`/`-R`, and the
+// float formatting the arithmetic evaluator uses when it prints a result. These
+// are the details a prompt or a numeric script trips over.
+// C: Src/params.c convfloat()/convbase(), Src/builtin.c typeset_setbase().
+// ---------------------------------------------------------------------------
+
+fn gen_numfmt(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..14) {
+            // Integer with an output base: the value re-renders as `base#digits`.
+            0 => {
+                let b = pick(&mut rng, &[2, 8, 16, 36]);
+                format!("typeset -i {b} v={}; print -r -- $v", rng.gen_range(0..300))
+            }
+            // A negative value in a non-decimal base.
+            1 => format!("typeset -i 16 v=-{}; print -r -- $v", rng.gen_range(1..300)),
+            // Bases are a RENDER property: arithmetic on it stays numeric.
+            2 => "typeset -i 16 v=255; print -r -- $v; print -r -- $(( v + 1 ))".to_string(),
+            // Float precision, fixed vs scientific.
+            3 => {
+                let p = rng.gen_range(0..8);
+                format!("typeset -F {p} f=3.14159265358979; print -r -- $f")
+            }
+            4 => {
+                let p = rng.gen_range(0..8);
+                format!("typeset -E {p} f=3.14159265358979; print -r -- $f")
+            }
+            5 => "typeset -F f=0.1; print -r -- $f; typeset -E e=0.1; print -r -- $e".to_string(),
+            // Very large / very small magnitudes pick the exponent form.
+            6 => "typeset -F f=1e20; print -r -- $f; typeset -E g=1e-20; print -r -- $g".to_string(),
+            // Bare arithmetic float printing (no typeset) — the default format.
+            7 => "print -r -- $(( 1.0 / 3 )); print -r -- $(( 2.0 ** 0.5 ))".to_string(),
+            8 => "print -r -- $(( 1 / 3 )); print -r -- $(( 1.0 / 3.0 * 3 ))".to_string(),
+            // Zero / left / right padding.
+            9 => {
+                let w = rng.gen_range(2..8);
+                format!("typeset -Z {w} z={}; print -r -- \"[$z]\"", rng.gen_range(1..9999))
+            }
+            10 => {
+                let w = rng.gen_range(2..8);
+                format!("typeset -L {w} l=abc; typeset -R {w} r=abc; print -r -- \"[$l][$r]\"")
+            }
+            // -Z on a value LONGER than the width truncates, it does not grow.
+            11 => "typeset -Z 3 z=123456; print -r -- \"[$z]\"".to_string(),
+            // printf's own float formats over the same values.
+            12 => "printf '%g|%e|%f\\n' 0.1 0.1 0.1; printf '%g|%e\\n' 1e20 1e-20".to_string(),
+            // Integer overflow / 64-bit edges re-rendered.
+            _ => "print -r -- $(( 2**62 )); print -r -- $(( -(2**62) ))".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// mapfile generator (zsh/mapfile)
+//
+// $mapfile[file] reads a whole file as one scalar and, on assignment, WRITES
+// it. Unlike `$(<file)` it preserves the trailing newline, and unsetting an
+// element unlinks the file. Runs from the scratch fixture because it mutates
+// the filesystem. C: Src/Modules/mapfile.c.
+// ---------------------------------------------------------------------------
+
+fn gen_mapfile(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // A per-case file name keeps parallel workers from colliding in the shared
+    // scratch cwd; both shells run the SAME seed, so they use the same name and
+    // each fully rewrites it before reading.
+    let f = format!("mf_{seed}");
+    let mut stmts = vec!["zmodload zsh/mapfile".to_string()];
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..10) {
+            // Write then read back — mapfile keeps the trailing newline that
+            // `$(<f)` strips.
+            0 => format!("mapfile[{f}]=$'a\\nb\\n'; print -r -- \"[${{mapfile[{f}]}}]\""),
+            1 => format!("mapfile[{f}]=$'a\\nb\\n'; print -r -- \"[$(<{f})]\""),
+            2 => format!("mapfile[{f}]=$'x\\n'; print -r -- \"len=${{#mapfile[{f}]}}\""),
+            // Split the read-back content into lines.
+            3 => format!("mapfile[{f}]=$'l1\\nl2\\nl3\\n'; print -rl -- ${{(f)mapfile[{f}]}}; print -r -- END"),
+            // Append by re-assigning the concatenation.
+            4 => format!("mapfile[{f}]=$'one\\n'; mapfile[{f}]=\"${{mapfile[{f}]}}two\"; print -r -- \"[${{mapfile[{f}]}}]\""),
+            // An empty write creates an empty file.
+            5 => format!("mapfile[{f}]=''; print -r -- \"e=${{#mapfile[{f}]}} exists=$([[ -f {f} ]] && print y || print n)\""),
+            // Membership / absence of a nonexistent file.
+            6 => format!("print -r -- \"${{+mapfile[nosuch_{seed}]}} [${{mapfile[nosuch_{seed}]}}]\""),
+            // unset unlinks the file.
+            7 => format!("mapfile[{f}]=$'z\\n'; unset \"mapfile[{f}]\"; print -r -- \"gone=$([[ -f {f} ]] && print n || print y)\""),
+            // Binary-ish content round trip (no NULs — those are not preservable).
+            8 => format!("mapfile[{f}]=$'\\x01\\x02\\n'; print -r -- \"len=${{#mapfile[{f}]}}\""),
+            // Content with no trailing newline stays that way.
+            _ => format!("mapfile[{f}]='notrail'; print -r -- \"[${{mapfile[{f}]}}] len=${{#mapfile[{f}]}}\""),
+        };
+        stmts.push(stmt);
+    }
+    // Cleanup: literal name, guarded by a glob that can only match the fixture.
+    stmts.push(format!("case {f} in (mf_*) command rm -f -- {f};; esac"));
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// pcre generator (zsh/pcre)
+//
+// The PCRE backend is a SECOND regex engine with its own capture plumbing:
+// `pcre_compile`/`pcre_match` set $MATCH/$match (or a named assoc via -a/-A),
+// and `setopt rematchpcre` re-points the `=~` operator at it. The capture
+// side effects are where the two engines diverge.
+// C: Src/Modules/pcre.c.
+// ---------------------------------------------------------------------------
+
+const PCRE_PATS: &[&str] = &[
+    "([a-z]+)([0-9]+)",
+    "^(\\w+)@(\\w+)\\.com$",
+    "(?i)HELLO",
+    "a(b*)c",
+    "(\\d{2,4})-(\\d{2})",
+    "(?<word>[a-z]+)",
+    "x(y)?z",
+    "^$",
+    "(a|b)+",
+];
+
+const PCRE_SUBJ: &[&str] = &[
+    "abc123", "user@site.com", "hello", "ac", "abbbc", "2024-06", "xz", "xyz", "", "ababab",
+];
+
+fn gen_pcre(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["zmodload zsh/pcre".to_string()];
+    for _ in 0..rng.gen_range(1..=3) {
+        let p = pick(&mut rng, PCRE_PATS);
+        let s = pick(&mut rng, PCRE_SUBJ);
+        let stmt = match rng.gen_range(0..8) {
+            // Plain compile + match, reporting only the status.
+            0 => format!("pcre_compile '{p}'; pcre_match '{s}'; print -r -- \"rc=$?\""),
+            // $MATCH / $match capture side effects.
+            1 => format!(
+                "pcre_compile '{p}'; if pcre_match '{s}'; then print -r -- \"M=[$MATCH] m=(${{(j:,:)match}})\"; else print -r -- NOMATCH; fi"
+            ),
+            // -a: captures into a named ARRAY instead of $match.
+            2 => format!(
+                "pcre_compile '{p}'; if pcre_match -a arr '{s}'; then print -r -- \"arr=(${{(j:,:)arr}}) n=${{#arr}}\"; else print -r -- NOMATCH; fi"
+            ),
+            // -n: start the match at an offset.
+            3 => format!("pcre_compile '{p}'; pcre_match -n 1 '{s}'; print -r -- \"rc=$?\""),
+            // -b: report the byte offsets of the match ($ZPCRE_OP).
+            4 => format!(
+                "pcre_compile '{p}'; if pcre_match -b '{s}'; then print -r -- \"op=[$ZPCRE_OP]\"; else print -r -- NOMATCH; fi"
+            ),
+            // Case-insensitive compile flag.
+            5 => format!("pcre_compile -i '{p}'; pcre_match '{s}'; print -r -- \"rc=$?\""),
+            // REMATCH_PCRE re-points `=~` at the PCRE engine — same operator,
+            // different engine, same capture variables.
+            6 => format!(
+                "setopt rematchpcre; if [[ '{s}' =~ '{p}' ]]; then print -r -- \"M=[$MATCH] m=(${{(j:,:)match}})\"; else print -r -- NOMATCH; fi"
+            ),
+            // …and the POSIX engine for the same input, as the control.
+            _ => format!(
+                "if [[ '{s}' =~ '{p}' ]]; then print -r -- \"M=[$MATCH]\"; else print -r -- NOMATCH; fi"
+            ),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// zwc generator (zcompile + .zwc autoload)
+//
+// The compiled-digest path is a compat-floor item: zsh writes a `.zwc` next to
+// a function file, and every later autoload reads the DIGEST instead of the
+// source. A shell that cannot read its own (or zsh's) .zwc silently falls back
+// to reparsing, which is exactly the regression this mode is here to catch.
+//
+// Each case builds its own mktemp fixture INSIDE the script, so the two shells
+// never share a .zwc — otherwise whichever shell ran first would leave a digest
+// for the other to consume, making the case order-dependent and flaky.
+// C: Src/parse.c bin_zcompile / Src/exec.c getfpfunc (dump lookup).
+// ---------------------------------------------------------------------------
+
+fn gen_zwc(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![
+        "d=$(mktemp -d /tmp/pf_zwc_XXXXXX) || exit 1".to_string(),
+        "mkdir -p $d/fns".to_string(),
+        "print -r -- 'print -r -- \"zw args=$* n=$#\"' > $d/fns/zw_fn".to_string(),
+        "print -r -- 'print -r -- second' > $d/fns/zw_two".to_string(),
+    ];
+    for _ in 0..rng.gen_range(1..=2) {
+        let stmt = match rng.gen_range(0..8) {
+            // Compile a function file, then autoload it — the .zwc must be used
+            // and must produce the same result as the source would.
+            0 => "zcompile $d/fns/zw_fn; fpath=($d/fns); autoload -Uz zw_fn; zw_fn a b".to_string(),
+            // The digest file exists and is non-empty.
+            1 => "zcompile $d/fns/zw_fn; print -r -- \"zwc=$([[ -s $d/fns/zw_fn.zwc ]] && print y || print n)\"".to_string(),
+            // -c: compile a set of files into ONE digest named by the first arg.
+            2 => "zcompile $d/all.zwc $d/fns/zw_fn $d/fns/zw_two; print -r -- \"rc=$? made=$([[ -s $d/all.zwc ]] && print y || print n)\"".to_string(),
+            // A digest earlier on $fpath than the source still resolves.
+            3 => "zcompile $d/fns/zw_fn; command rm -f $d/fns/zw_fn; fpath=($d/fns); autoload -Uz zw_fn; zw_fn x".to_string(),
+            // -t: TEST whether a digest is up to date. Its LISTING output is
+            // discarded on purpose: it prints the digest's own path, and the two
+            // shells each build their own mktemp fixture, so the path is not a
+            // parity property. Only the status is.
+            4 => "zcompile $d/fns/zw_fn; zcompile -t $d/fns/zw_fn.zwc >/dev/null 2>&1; print -r -- \"rc=$?\"".to_string(),
+            // A stale digest (source newer) must not be preferred.
+            5 => "zcompile $d/fns/zw_fn; print -r -- 'print -r -- FRESH' > $d/fns/zw_fn; touch $d/fns/zw_fn; fpath=($d/fns); autoload -Uz zw_fn; zw_fn".to_string(),
+            // zcompile on a missing file fails cleanly.
+            6 => "zcompile $d/fns/nosuch 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
+            // Two functions from one digest.
+            _ => "zcompile $d/fns/zw_two; fpath=($d/fns); autoload -Uz zw_two; zw_two; zw_two".to_string(),
+        };
+        stmts.push(stmt.to_string());
+    }
+    // Cleanup: literal path, glob-guarded so it can only ever match the fixture.
+    stmts.push("case $d in (/tmp/pf_zwc_*) command rm -rf -- \"$d\";; esac".to_string());
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -3644,6 +3912,11 @@ enum Mode {
     Autoload,
     Stat,
     Errexit,
+    Posparam,
+    Numfmt,
+    Mapfile,
+    Pcre,
+    Zwc,
 }
 
 struct Args {
@@ -3697,6 +3970,11 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Autoload => gen_autoload(seed),
         Mode::Stat => gen_stat(seed),
         Mode::Errexit => gen_errexit(seed),
+        Mode::Posparam => gen_posparam(seed),
+        Mode::Numfmt => gen_numfmt(seed),
+        Mode::Mapfile => gen_mapfile(seed),
+        Mode::Pcre => gen_pcre(seed),
+        Mode::Zwc => gen_zwc(seed),
     }
 }
 
@@ -3738,6 +4016,11 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Autoload => "autoload",
         Mode::Stat => "stat",
         Mode::Errexit => "errexit",
+        Mode::Posparam => "posparam",
+        Mode::Numfmt => "numfmt",
+        Mode::Mapfile => "mapfile",
+        Mode::Pcre => "pcre",
+        Mode::Zwc => "zwc",
     }
 }
 
@@ -3779,6 +4062,11 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Autoload,
         Mode::Stat,
         Mode::Errexit,
+        Mode::Posparam,
+        Mode::Numfmt,
+        Mode::Mapfile,
+        Mode::Pcre,
+        Mode::Zwc,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -3877,7 +4165,8 @@ fn parse_args() -> Args {
                      nest, arith, match, regex, builtin, cmdsub, loop,\n\
                      split, trap, pipeline, prompt, modifier, mathfunc,\n\
                      emulate, dirstack, unicode, quote, datetime,\n\
-                     paramod, procsub, alias, autoload, stat, errexit\n\
+                     paramod, procsub, alias, autoload, stat, errexit,\n\
+                     posparam, numfmt, mapfile, pcre, zwc\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
@@ -3983,7 +4272,7 @@ fn main() {
         }
         // Modes whose probes (or whose MINIMIZED probes) can create files must
         // never run from the source tree — see setup_scratch_fixture.
-        Mode::Alias | Mode::Procsub | Mode::Errexit => {
+        Mode::Alias | Mode::Procsub | Mode::Errexit | Mode::Mapfile => {
             FIXTURE_CWD.set(setup_scratch_fixture()).ok();
         }
         _ => {}

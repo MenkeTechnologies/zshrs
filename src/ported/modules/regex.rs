@@ -84,9 +84,26 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         return 0; // c:200
     }
 
-    // c:74-76 — flag computation. POSIX REG_EXTENDED is implicit
-    // in Rust's regex crate (RE2 syntax is extended-by-default);
-    // CASEMATCH off → REG_ICASE → wrap with `(?i)`.
+    // c:74-77 — `rcflags = REG_EXTENDED | (isset(CASEMATCH) ? 0 : REG_ICASE)`.
+    //
+    // C hands the pattern to regcomp(3) as POSIX ERE. ERE is a DIFFERENT
+    // LANGUAGE from the RE2 syntax the Rust `regex` crate speaks, and the
+    // difference is observable, not cosmetic:
+    //
+    //   * ERE has no `\d` / `\w` / `\s`. A backslash before an ordinary
+    //     character just yields that character, so `\d` matches a literal `d`.
+    //       [[ 2024-06 =~ '(\d{2,4})-(\d{2})' ]]  -> zsh: NO match
+    //     zshrs matched it, and captured "2024"/"06" that zsh never captures.
+    //   * `(?` is not a group modifier — `?` is a repetition operator with no
+    //     operand, which regcomp rejects:
+    //       [[ abc =~ '(?<w>[a-z]+)' ]]  -> zsh: failed to compile regex
+    //     zshrs compiled it as a named group and matched.
+    //
+    // Calling regcomp directly would be the literal port, but `libc` does not
+    // declare regcomp for linux-gnu and keeps every regex_t field private, so
+    // FFI here would neither build on the Linux targets nor be layout-stable.
+    // Instead the pattern is translated into the RE2 dialect that expresses the
+    // SAME ERE semantics, and the constructs ERE rejects are rejected here.
     let casematch = isset(CASEMATCH);
     let pat_for_compile = if !casematch {
         // c:75
@@ -100,45 +117,73 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // regex crate ACCEPTS an empty pattern as "matches everywhere"
     // (POSIX-style). To match zsh, reject empty patterns explicitly.
     if rhre.is_empty() {
-        crate::regex_module::zregex_regerrwarn(
-            "-regex-match",
-            "failed to compile regex: empty (sub)expression",
-        );
+        crate::ported::utils::zwarn("failed to compile regex: empty (sub)expression");
         return 0;
     }
-    // c:78 — regcomp(&re, rhre, rcflags). zsh's regex (system
-    // POSIX ERE or PCRE under `setopt rematchpcre`) treats `.`
-    // as matching newline by default. Rust's regex crate defaults
-    // `.` to NOT match newline; enable
-    // `dot_matches_new_line(true)` so multi-line `=~` behaves
-    // like zsh. Bug #557.
-    // c:78 — regcomp(3) POSIX-ERE bracket semantics: inside `[...]`
-    // a backslash is an ordinary class member (`[a-z\n]` = the set
-    // {a..z, '\', 'n'}, not "plus newline"), and `[`/`&&`/`~~`/`--`
-    // are ordinary characters. The Rust regex crate diverges on all
-    // of these; translate at the boundary. BUGS.md #558.
+    // c:78 — regcomp(3): in ERE a `(` immediately followed by a repetition
+    // operator is a repetition with NO OPERAND, which regcomp rejects with
+    // "repetition-operator operand invalid". RE2 instead reads `(?…` as a group
+    // modifier — `(?i)`, `(?<name>…)`, `(?:…)` — and compiles it happily, so
+    // without this check zshrs accepted (and matched) patterns zsh refuses.
+    // Backslash-escaped parens and parens inside a bracket expression are
+    // ordinary characters and do not open a group.
+    let ere_rejects = {
+        let b: Vec<char> = rhre.chars().collect();
+        let mut i = 0usize;
+        let mut in_bracket = false;
+        let mut bad = false;
+        while i < b.len() {
+            let c = b[i];
+            if in_bracket {
+                // A `]` that is the FIRST character of the bracket expression is
+                // an ordinary member, not the terminator.
+                if c == ']' {
+                    in_bracket = false;
+                }
+                i += 1;
+                continue;
+            }
+            match c {
+                '\\' => i += 2, // escaped: the next char is literal
+                '[' => {
+                    in_bracket = true;
+                    i += 1;
+                    // `[]…]` and `[^]…]` — a leading `]` is a member.
+                    if i < b.len() && b[i] == '^' {
+                        i += 1;
+                    }
+                    if i < b.len() && b[i] == ']' {
+                        i += 1;
+                    }
+                }
+                '(' if i + 1 < b.len() && matches!(b[i + 1], '?' | '*' | '+') => {
+                    bad = true;
+                    break;
+                }
+                _ => i += 1,
+            }
+        }
+        bad
+    };
+    if ere_rejects {
+        crate::ported::utils::zwarn("failed to compile regex: repetition-operator operand invalid");
+        return 0; // c:81 break;
+    }
+    // c:78 — regcomp(3) POSIX-ERE semantics the RE2 dialect does not share:
+    // backslash-before-ordinary is a LITERAL (so `\d` is `d`, not a digit
+    // class), and inside `[...]` a backslash is an ordinary class member
+    // (`[a-z\n]` is {a..z, '\', 'n'}, not "plus newline").
     let pat_for_compile = crate::ported::modules::regex::posix_ere_bracket_escape(&pat_for_compile);
+    // zsh's regex treats `.` as matching newline (regcomp without REG_NEWLINE);
+    // the regex crate defaults `.` to exclude it. Bug #557.
     let re = match regex::RegexBuilder::new(&pat_for_compile)
         .dot_matches_new_line(true)
         .build()
     {
         Ok(r) => r,
         Err(e) => {
-            // c:79-81 zregex_regerrwarn — C zsh emits
-            // `failed to compile regex: <regerror_msg>` via zwarn (no
-            // cmd-name prefix; the `zsh:1:` prefix comes from zwarn's
-            // default path). zshrs's previous emit used zwarnnam with
-            // an internal "-regex-match" cmd-name that leaked into the
-            // diagnostic as `zsh:-regex-match:1:`. Switch to zwarn so
-            // the prefix matches zsh exactly, and append the specific
-            // regex-engine error (matches zsh's "brackets ([ ]) not
-            // balanced" / "trailing backslash" etc. detail). Bug #437.
-            //
-            // The Rust `regex` crate's error has a multi-line Display
-            // including pattern echo + caret. Extract the last
-            // `error: <reason>` line for a compact one-line message,
-            // falling back to the full Display if the structure
-            // changes.
+            // c:79-81 zregex_regerrwarn — `failed to compile regex: <msg>` via
+            // zwarn (the `zsh:1:` prefix comes from zwarn's default path).
             let raw = e.to_string();
             let detail = raw
                 .lines()
@@ -156,9 +201,13 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         Some(c) => c,
         None => return 0, // c:93-94 REG_NOMATCH
     };
+    // Group N's byte range, or None when it did not participate.
+    let group = |n: usize| -> Option<(usize, usize)> {
+        captures.get(n).map(|m| (m.start(), m.end()))
+    };
+    let nsub = re.captures_len() - 1; // c:90 re.re_nsub — declared paren groups
 
     return_value = 1; // c:96
-    let nsub = re.captures_len() - 1; // re_nsub: # of paren groups
     let bashre = isset(BASHREMATCH);
     let ksharr = isset(KSHARRAYS);
 
@@ -185,9 +234,9 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     let mut arr: Vec<String> = Vec::with_capacity(nelem);
     for n in start..=nsub {
         // c:108
-        if let Some(m) = captures.get(n) {
+        if let Some((s, e)) = group(n) {
             // c:109 — `metafy(lhstr + m->rm_so, m->rm_eo - m->rm_so, META_DUP)`
-            arr.push(crate::ported::utils::metafy(m.as_str()));
+            arr.push(crate::ported::utils::metafy(&lhstr[s..e]));
         } else {
             arr.push(String::new());
         }
@@ -209,18 +258,16 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
     // c:119-122 — `m = matches; s = metafy(lhstr + m->rm_so,
     //                   m->rm_eo - m->rm_so, META_DUP);
     //                assignsparam("MATCH", s, 0);`
-    let m0 = captures.get(0).expect("regex matched but no group 0");
+    let (so, eo) = group(0).expect("regex matched but no group 0");
     // c:121 — metafy the full-match text before assignsparam, same
     // reason as the capture-array metafy above.
-    let full = crate::ported::utils::metafy(m0.as_str());
+    let full = crate::ported::utils::metafy(&lhstr[so..eo]);
     setsparam("MATCH", &full); // c:122 assignsparam
 
     // c:124-135 — char-offset MBEGIN. C walks the pre-match bytes
     // counting MB_CHARLEN-stepped characters; Rust collapses to
     // chars().count() over the byte slice up to m->rm_so since
     // String::chars() handles UTF-8 boundaries natively.
-    let so = m0.start();
-    let eo = m0.end();
     let mbegin_chars = lhstr[..so].chars().count() as i64; // c:128-133
     let kshoff: i64 = if ksharr { 0 } else { 1 }; // c:134 !isset(KSHARRAYS)
     let mbegin = mbegin_chars + kshoff; // c:134
@@ -241,11 +288,11 @@ pub fn zcond_regex_match(a: &[&str], id: i32) -> i32 {
         for n in 0..nelem {
             // c:152
             let cap_idx = start + n;
-            match captures.get(cap_idx) {
+            match group(cap_idx) {
                 // c:158
-                Some(m) => {
-                    let beg_chars = lhstr[..m.start()].chars().count() as i64;
-                    let len_chars = lhstr[m.start()..m.end()].chars().count() as i64;
+                Some((gs, ge)) => {
+                    let beg_chars = lhstr[..gs].chars().count() as i64;
+                    let len_chars = lhstr[gs..ge].chars().count() as i64;
                     mbegin_arr.push((beg_chars + kshoff).to_string()); // c:172
                     mend_arr.push((beg_chars + len_chars + kshoff - 1).to_string());
                     // c:178
@@ -1140,15 +1187,41 @@ pub fn posix_ere_bracket_escape(pat: &str) -> String {
     let chars: Vec<char> = pat.chars().collect();
     let mut out = String::with_capacity(pat.len() + 8);
     let mut i = 0;
+    // POSIX ERE special characters — the only ones for which a backslash is
+    // meaningful. For ANY other character, ERE says `\X` is just the literal X,
+    // so `\d` is the letter `d`, `\w` is `w`, `\s` is `s`, `\b` is `b`. RE2
+    // reads those as character classes / assertions instead, which made zshrs
+    // match text zsh does not.
+    const ERE_SPECIAL: &[char] = &[
+        '.', '[', ']', '\\', '(', ')', '*', '+', '?', '{', '}', '|', '^', '$',
+    ];
     while i < chars.len() {
         let c = chars[i];
         if c == '\\' {
-            // Outside a class: copy the escape pair verbatim.
-            out.push(c);
             i += 1;
             if i < chars.len() {
-                out.push(chars[i]);
+                let n = chars[i];
+                if ERE_SPECIAL.contains(&n) {
+                    // A real ERE escape — keep the pair, it means the same in RE2.
+                    out.push('\\');
+                    out.push(n);
+                } else {
+                    // Backslash before an ordinary character: the character
+                    // itself. Re-escape it if RE2 would otherwise read it as
+                    // syntax (it cannot be an ERE special here, but `-` and the
+                    // like are harmless; escaping alphanumerics is ILLEGAL in
+                    // RE2, so only escape punctuation).
+                    if n.is_alphanumeric() {
+                        out.push(n);
+                    } else {
+                        out.push('\\');
+                        out.push(n);
+                    }
+                }
                 i += 1;
+            } else {
+                // Trailing backslash — leave it for the engine to reject.
+                out.push('\\');
             }
             continue;
         }
