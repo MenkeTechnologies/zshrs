@@ -12024,13 +12024,39 @@ pub fn bin_read(
         // reading until \0, used by `find -print0 | while read -d ''`).
         let delim = arg.as_bytes().first().copied().unwrap_or(b'\0');
         let mut buf_bytes = Vec::<u8>::new();
-        let mut got_any = false;
+        // c:7045 — the loop breaks on `c == EOF || (c == delim && !zbuf)`, and
+        // c:7116 keys the exit status off WHICH of the two ended it. "Did any
+        // byte arrive" can't tell an EOF-terminated record from a
+        // delimiter-terminated one, so track the delimiter itself.
+        let mut saw_delim = false;
+        // c:7055 — `bslash = c == '\\' && !bslash && !OPT_ISSET(ops,'r')`.
+        // In C there is ONE read loop and `-d` only swaps the `delim` variable,
+        // so the backslash rules apply to `-d` exactly as they do to a plain
+        // `read`. zshrs split the loop in two and the `-d` copy dropped them,
+        // so `read -d ' ' x <<< 'esc\ttab'` kept the backslash (`esc\ttab`)
+        // where zsh yields `escttab`.
+        let raw_mode = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R');
+        let mut bslash = false;
         loop {
             match read_byte(ufd) {
                 Ok(Some(b)) => {
-                    got_any = true;
+                    // c:7041-7043 — a backslash-escaped DELIMITER is a line
+                    // continuation: both bytes are dropped and the record keeps
+                    // going. `read -d t x <<< 'esc\ttab'` therefore yields `esc`
+                    // (the escaped `t` vanishes; the NEXT `t` terminates).
+                    if bslash && b == delim {
+                        bslash = false; // c:7042
+                        continue; // c:7043
+                    }
                     if b == delim {
+                        saw_delim = true; // c:7045 (`c == delim`)
                         break;
+                    }
+                    // c:7055-7057 — an unescaped backslash is consumed and
+                    // escapes the next byte (unless `-r`).
+                    bslash = b == b'\\' && !bslash && !raw_mode; // c:7055
+                    if bslash {
+                        continue; // c:7057
                     }
                     buf_bytes.push(b);
                 }
@@ -12054,9 +12080,20 @@ pub fn bin_read(
                 buf.pop();
             }
         }
-        if !got_any {
-            return 1; // EOF without any input
-        }
+        // c:7107 + c:7116-7122 — C assigns the parameter FIRST (`setsparam(reply,
+        // buf)`) and only then returns 1 if the loop ended at EOF. So an
+        // unterminated record still lands in the variable but reports failure:
+        // `read -d : x <<< 'abc'` sets x=abc and returns 1, which is what makes
+        // `while read -d : x` terminate on a final field with no trailing
+        // delimiter. The old early `return 1` fired only when NOTHING was read,
+        // so every EOF-terminated record wrongly reported success (rc=0) — and
+        // it also skipped the assignment entirely, leaving the variable at its
+        // previous value instead of clearing it.
+        //
+        // `partial_eof` is the same carrier the default line branch below uses;
+        // the shared `if partial_eof { return 1 }` after the assignment block
+        // applies the status.
+        partial_eof = !saw_delim; // c:7116 (`else if (c == EOF)`)
     } else {
         // Read a line (default behaviour). c:Src/builtin.c:6505
         // — without `-r`, backslash-X eats the backslash and keeps

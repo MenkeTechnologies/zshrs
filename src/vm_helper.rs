@@ -200,6 +200,19 @@ pub struct SubshellSnapshot {
     pub positional_params: Vec<String>,
     /// `env_vars` field.
     pub env_vars: HashMap<String, String>,
+    /// Values of the special parameters whose backing store is a process
+    /// GLOBAL rather than the parameter table — `Src/params.c`'s `char *ifs`
+    /// (IFS), `wordchars`, `home`, `histsiz`, … — each reached through a GSU
+    /// getfn/setfn pair (the dispatch list at params.rs:12548).
+    ///
+    /// The `paramtab` snapshot above restores the param NODE, but the node only
+    /// carries the GSU pair; the value itself lives in the global, which a
+    /// paramtab restore doesn't touch. C forks for `(...)`, so a child's writes
+    /// to those globals die with it. zshrs runs subshells in-process, so
+    /// `(IFS=,; :)` left the PARENT's IFS as `,` — and every later word-split
+    /// in the parent silently used it. Same fork-copy reasoning as `opts` /
+    /// `umask` / `aliases` above.
+    pub special_globals: Vec<(String, String)>,
     /// Process working directory at subshell entry. `cd` inside the
     /// subshell shouldn't leak to the parent; we restore on End.
     pub cwd: Option<PathBuf>,

@@ -833,3 +833,256 @@ mod sub_match_nested_pattern {
         assert_parity("a=(one two three); print -r -- ${(M)a:#t*}:${a:#t*}");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// L. `$((…))` output radix survives a NESTED evaluation
+//
+// c:Src/math.c:1486 — `if (!mlevel) outputradix = outputunderscore = 0;`.
+// The radix is cleared only at TOP level; the comment above it in the C source
+// says the values are deliberately "maintain[ed] … across levels of
+// evaluation". The port had the reset at the top of `mathevall`, which is
+// re-entered for EVERY nesting level — including the recursive re-evaluation of
+// a scalar parameter whose value is itself a math expression. So reading `j`
+// (value `8#62`) wiped the `[#36]` the caller had just set.
+// ─────────────────────────────────────────────────────────────────────
+mod output_radix_across_eval_levels {
+    use super::*;
+
+    /// The gap: the operand's value is a based literal, so evaluating it
+    /// recurses into the evaluator. zsh: `36#1E`; zshrs printed `50`.
+    #[test]
+    fn radix_survives_param_whose_value_is_a_based_literal() {
+        assert_parity(r#"j=8#62; print -r -- "$(( [#36] j ))""#);
+    }
+
+    /// Same shape reached through an arithmetic assignment.
+    #[test]
+    fn radix_survives_after_arith_assignment_of_based_literal() {
+        assert_parity(
+            r#"print -r -- "$(( j = 8#62 ))"; print -r -- "$(( [#36] 0 ** ((j & big) & 3) ))""#,
+        );
+    }
+
+    /// The reset must still happen at TOP level: a `[#16]` must not leak into
+    /// the NEXT `$((…))`. This is the behaviour the misplaced reset protected,
+    /// so pin it alongside the fix.
+    #[test]
+    fn radix_does_not_leak_between_top_level_expressions() {
+        assert_parity(r#"print -r -- "$(( [#16] 255 ))"; print -r -- "$(( 255 ))""#);
+    }
+
+    /// A subscript evaluation between the two must not disturb it either.
+    #[test]
+    fn radix_reset_survives_an_intervening_subscript() {
+        assert_parity(
+            r#"print -r -- "$(( [#16] 255 ))"; a=(x y); print -r -- "$a[2]"; print -r -- "$(( 12 ))""#,
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// M. An out-of-range ARITHMETIC subscript must yield an EMPTY array, not the
+//    whole backing array
+//
+// c:Src/params.c:2548 `getarrvalue` ALWAYS returns an array; an out-of-range or
+// inverted slice returns an EMPTY one (c:2573-2578 `arrdup_max(nular, 0)`).
+// zshrs resolved the bounds correctly but, on the empty result, returned a bare
+// empty string without setting `split_parts` (C's `aval`) — indistinguishable
+// downstream from "no subscript at all", so a `(j:…:)` sepjoin re-fetched and
+// joined the WHOLE array. Only a NON-literal bound took that path, which is why
+// the shape real code writes — `"${(j:,:)argv[OPTIND,-1]}"` — was the one that
+// broke.
+// ─────────────────────────────────────────────────────────────────────
+mod oob_arithmetic_subscript_is_empty {
+    use super::*;
+
+    /// Slice whose start is past the end, via a variable. zsh: empty.
+    #[test]
+    fn slice_past_end_via_variable_is_empty() {
+        assert_parity(r#"a=(x y); i=3; print -r -- "(${(j:,:)a[i,-1]})""#);
+    }
+
+    /// The getopts idiom this actually broke: after consuming every option,
+    /// `$@[OPTIND,-1]` is the (empty) remainder.
+    #[test]
+    fn getopts_remainder_slice_is_empty_when_all_args_consumed() {
+        assert_parity(
+            "set -- -c\nwhile getopts ab:c opt; do print -r -- \"opt=$opt\"; done\n\
+             print -r -- \"rest=(${(j:,:)@[OPTIND,-1]})\"",
+        );
+    }
+
+    /// A single out-of-range ELEMENT subscript is empty too, not element 1.
+    #[test]
+    fn element_past_end_via_variable_is_empty() {
+        assert_parity(r#"a=(x y z); i=9; print -r -- "(${(j:,:)a[i]})""#);
+    }
+
+    /// `(j:…:)` over a single-element subscript joins THAT element — it must not
+    /// re-fetch the backing array. zsh: `y`; zshrs printed `x,y,z`.
+    #[test]
+    fn join_flag_over_single_element_subscript() {
+        assert_parity(r#"a=(x y z); print -r -- "(${(j:,:)a[2]})""#);
+    }
+
+    /// In-range slices/elements and the whole-array joins must be unchanged.
+    #[test]
+    fn in_range_subscripts_and_whole_array_joins_unchanged() {
+        assert_parity(
+            r#"a=(x y z); i=2; print -r -- "(${(j:,:)a[i,-1]})(${(j:,:)a[1,2]})(${(j:,:)a})(${(j:,:)a[@]})""#,
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// N. Special parameters backed by a process GLOBAL must not leak out of a
+//    subshell
+//
+// `IFS`, `WORDCHARS`, `HOME`, `HISTSIZE`, … live in a C global reached through a
+// GSU (`Src/params.c`'s `char *ifs`), not in the parameter table. C forks for
+// `( … )`, so a child's writes to those globals die with it. zshrs runs
+// subshells IN-PROCESS and snapshots the param table — which restores the param
+// NODE but not the global behind it. So `(IFS=,; :)` left the PARENT's IFS as
+// `,` and every later word-split in the parent silently used it.
+// ─────────────────────────────────────────────────────────────────────
+mod subshell_special_param_isolation {
+    use super::*;
+
+    /// The gap. zsh restores the default `space/tab/newline/nul`.
+    #[test]
+    fn ifs_assignment_does_not_escape_a_subshell() {
+        assert_parity(r#"(IFS=,; :); printf "%q\n" "$IFS""#);
+    }
+
+    /// The leak was FUNCTIONAL, not cosmetic: the parent's splitting changed.
+    #[test]
+    fn parent_word_splitting_unaffected_by_subshell_ifs() {
+        assert_parity("x=$'a\\nb'; (IFS=,; :); print -rl -- ${=x}; print END");
+    }
+
+    /// Same class, other globals.
+    #[test]
+    fn wordchars_and_histsize_do_not_escape_a_subshell() {
+        assert_parity(r#"(WORDCHARS=xyz; HISTSIZE=99; :); print -r -- "$WORDCHARS $HISTSIZE""#);
+    }
+
+    /// IFS must still take effect INSIDE the subshell.
+    #[test]
+    fn ifs_still_applies_within_the_subshell() {
+        assert_parity(r#"(IFS=,; s="a,b,c"; print -rl -- ${=s}); print END"#);
+    }
+
+    /// An UNSET special must not be resurrected by the restore.
+    #[test]
+    fn unset_special_stays_unset_after_subshell() {
+        assert_parity(r#"unset IFS; (IFS=,; :); print -r -- "[${IFS-UNSET}]""#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// O. `[[ … ]]` operands are NOT brace-expanded
+//
+// c:Src/subst.c:170 — `if (unset(IGNOREBRACES) && !(flags & PREFORK_SINGLE))`
+// gates `xpandbraces`. Cond operands reach prefork with PREFORK_SINGLE
+// (cond.c:53 `singsub` → subst.c:520 `prefork(&foo, PREFORK_SINGLE, NULL)`), so
+// C never brace-expands them. zshrs did: an ERE bound `a{2,3}` became `a2 a3`
+// (so the regex stopped matching), and `[[ -n a{2,3} ]]` split ONE operand into
+// two words.
+// ─────────────────────────────────────────────────────────────────────
+mod cond_operands_are_not_brace_expanded {
+    use super::*;
+
+    /// The gap: an ERE interval on the `=~` RHS. zsh: rc=0.
+    #[test]
+    fn ere_bound_survives_on_regex_rhs() {
+        assert_parity("[[ aaa =~ a{2,3} ]]; print rc=$?");
+    }
+
+    /// Open-ended bound, and an anchored one.
+    #[test]
+    fn ere_open_bound_and_anchored() {
+        assert_parity("[[ aaa =~ a{2,} ]]; print rc=$?; [[ aaa =~ ^a{2,3}$ ]]; print rc=$?");
+    }
+
+    /// A braced word stays ONE operand — as a unary operand and on both sides
+    /// of a comparison.
+    #[test]
+    fn braced_word_stays_one_operand() {
+        assert_parity("[[ -n a{2,3} ]]; print rc=$?; [[ a{2,3} == a{2,3} ]]; print rc=$?");
+    }
+
+    /// Capture groups with counted repeats still populate $match.
+    #[test]
+    fn ere_bounds_with_capture_groups() {
+        assert_parity(
+            r#"[[ 2024-01-31 =~ ([0-9]{4})-([0-9]{2}) ]]; print -r -- "$match[1]/$match[2]""#,
+        );
+    }
+
+    /// Brace expansion everywhere ELSE must be untouched.
+    #[test]
+    fn brace_expansion_outside_cond_is_unchanged() {
+        assert_parity("a=(x{1,2}); print -r -- ${a[@]}; print -r -- pre{x,y}post; echo {1..3}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// P. `read -d DELIM` — EOF status and backslash handling
+//
+// C has ONE read loop; `-d` only swaps the `delim` variable, so the backslash
+// rules (c:7041-7057) and the EOF status (c:7116 `else if (c == EOF) return 1`)
+// apply to `-d` exactly as to a plain `read`. zshrs had a separate `-d` loop
+// that returned 1 only when NOTHING was read and never processed backslashes.
+// The status is what makes `while read -d : f` terminate on a final field with
+// no trailing delimiter.
+// ─────────────────────────────────────────────────────────────────────
+mod read_delim_eof_and_backslash {
+    use super::*;
+
+    /// EOF before the delimiter: the value IS assigned (c:7107) but the status
+    /// is 1 (c:7116). zsh: `[abc] rc=1`.
+    #[test]
+    fn eof_before_delim_assigns_but_returns_one() {
+        assert_parity(r#"read -d : x <<< 'abc'; print -r -- "[$x] rc=$?""#);
+    }
+
+    /// Delimiter found → status 0.
+    #[test]
+    fn delim_found_returns_zero() {
+        assert_parity(r#"read -d : x <<< 'ab:c'; print -r -- "[$x] rc=$?""#);
+    }
+
+    /// The loop this status drives: the last field has no trailing delimiter.
+    #[test]
+    fn read_delim_loop_consumes_final_unterminated_field() {
+        assert_parity(
+            "printf 'a:b:c' | { while read -d : f; do print -r -- \"f=$f\"; done; \
+             print -r -- \"last=$f\"; }",
+        );
+    }
+
+    /// Without -r a backslash escapes the next byte (c:7055-7057).
+    #[test]
+    fn backslash_is_processed_without_dash_r() {
+        assert_parity(r#"read -d ' ' x <<< 'esc\ttab'; print -r -- "[$x] rc=$?""#);
+    }
+
+    /// A backslash-escaped DELIMITER is a continuation: both bytes vanish and
+    /// the record keeps going (c:7041-7043). zsh: `[esc] rc=0`.
+    #[test]
+    fn escaped_delimiter_is_a_continuation() {
+        assert_parity(r#"read -d 't' x <<< 'esc\ttab'; print -r -- "[$x] rc=$?""#);
+    }
+
+    /// `-r` keeps the backslash literal.
+    #[test]
+    fn raw_mode_keeps_backslash() {
+        assert_parity(r#"read -rd ' ' x <<< 'esc\ttab'; print -r -- "[$x] rc=$?""#);
+    }
+
+    /// The NUL-delimiter idiom (`find -print0 | while read -d ''`) still works.
+    #[test]
+    fn nul_delimiter_loop_unchanged() {
+        assert_parity("printf 'p1\\0p2\\0' | { while read -d '' p; do print -r -- \"p=$p\"; done; }");
+    }
+}
