@@ -978,6 +978,16 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         // fires.
         "clear-screen" => Some(|_| crate::ported::zle::zle_refresh::clearscreen()),
         "redisplay" => Some(|_| crate::ported::zle::zle_refresh::redisplay()),
+        // c:Src/Zle/zle_main.c iwidgets.list `"reset-prompt", resetprompt` —
+        // `resetprompt()` is `reexpandprompt(); redisplay();`, ported as
+        // `zle_resetprompt`. The name was listed in IWIDGET_NAMES but had no
+        // dispatch arm, so `zle reset-prompt` (called from a
+        // `zle-keymap-select` hook to repaint a vim-mode right prompt) hit
+        // the no-op fallback and never re-expanded RPS1/RPROMPT. Bug #654.
+        "reset-prompt" => Some(|_| {
+            crate::ported::zle::zle_main::zle_resetprompt();
+            0
+        }),
         "yank" => Some(|_| {
             let ring = KILLRING.lock().unwrap();
             let text = match ring.front() {

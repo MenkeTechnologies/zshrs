@@ -1867,6 +1867,31 @@ pub fn scanbuiltins(
             });
             f(&node, flags); // c:838
         }
+        // zshrs extension builtins (`ext_builtins::EXT_BUILTIN_NAMES`)
+        // dispatch in-process exactly like core builtins but have no
+        // entry in the C-port BUILTINS table, so `${(k)builtins}` — and
+        // therefore compsys's `_builtins` command-position completion —
+        // never offered names such as `doctor`, `peach`, `help`, or
+        // `zassert_eq`. Emit them for the `builtins` param (dis == 0)
+        // in default mode only; `--zsh` strict emulation keeps the
+        // 103-name zsh-parity set (these names don't exist in zsh).
+        if dis == 0 && !is_zsh_mode {
+            for name in crate::ext_builtins::EXT_BUILTIN_NAMES {
+                let n = (*name).to_string();
+                if disabled_set.contains(&n) {
+                    continue; // c:825 honor `disable`
+                }
+                if !emitted.insert(n.clone()) {
+                    continue; // already emitted from BUILTINS (e.g. coreutils drop-ins)
+                }
+                let node = Box::new(hashnode {
+                    next: None,
+                    nam: n,
+                    flags: 0,
+                });
+                f(&node, flags);
+            }
+        }
     }
 }
 

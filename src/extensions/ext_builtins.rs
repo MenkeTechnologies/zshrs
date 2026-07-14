@@ -1616,7 +1616,12 @@ impl ShellExecutor {
                     // port of `Src/builtin.c:40-137 builtins[]`) so
                     // every wired builtin shows up in completion.
                     let mut names: Vec<&str> = BUILTIN_NAMES.iter().map(|s| s.as_str()).collect();
+                    // zshrs extension builtins dispatch in-process too;
+                    // include them so `compgen -b doc`/`compgen -b peach`
+                    // resolve names the C-port BUILTINS table lacks.
+                    names.extend(crate::ext_builtins::EXT_BUILTIN_NAMES.iter().copied());
                     names.sort();
+                    names.dedup();
                     for name in names {
                         if name.starts_with(&prefix) {
                             results.push(name.to_string());
