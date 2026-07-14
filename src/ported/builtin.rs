@@ -4156,11 +4156,13 @@ pub fn bin_typeset(
         // c:2827-2830 — `if (nargs < 2)` reject.
         if argv.len() < 2 {
             zwarnnam(name, "-T requires names of scalar and array");
+            unqueue_signals();
             return 1;
         }
         // c:2831-2833 — `if (nargs > 3)` reject.
         if argv.len() > 3 {
             zwarnnam(name, "too many arguments for -T");
+            unqueue_signals();
             return 1;
         }
         // First arg: SCALAR name (with optional =value). c:2838-2840
@@ -4204,6 +4206,7 @@ pub fn bin_typeset(
                     name,
                     &format!("second argument of tie must be array: {}", a),
                 );
+                unqueue_signals();
                 return 1;
             } else {
                 (a, None)
@@ -4212,11 +4215,13 @@ pub fn bin_typeset(
         // c:2857-2860 — `can't tie a variable to itself`.
         if sname == aname {
             zerrnam(name, &format!("can't tie a variable to itself: {}", sname));
+            unqueue_signals();
             return 1;
         }
         // c:2861-2864 — `can't tie array elements` (subscripted name).
         if sname.contains('[') || aname.contains('[') {
             zerrnam(name, &format!("can't tie array elements: {}", sname));
+            unqueue_signals();
             return 1;
         }
         // c:2866-2870 — `only one tied parameter can have value`.
@@ -4225,6 +4230,7 @@ pub fn bin_typeset(
                 name,
                 &format!("only one tied parameter can have value: {}", sname),
             );
+            unqueue_signals();
             return 1;
         }
         // c:2876-2898 — joinchar parse. Third argument, if given, is
@@ -4369,6 +4375,7 @@ pub fn bin_typeset(
             tab.insert(aname.to_string(), Box::new(apm));
             tab.insert(sname.to_string(), Box::new(spm));
         }
+        unqueue_signals();
         return 0;
     }
 
@@ -4400,6 +4407,7 @@ pub fn bin_typeset(
             // c:3044-3050 — mass-changing types is fatal for namerefs.
             if (on & PM_NAMEREF) != 0 && OPT_MINUS(&ops, b'm') {
                 zerrnam(name, "-m not allowed with -n"); // c:3048
+                unqueue_signals();
                 return 1; // c:3049
             }
             if (on | roff) == 0 {
@@ -4690,6 +4698,7 @@ pub fn bin_typeset(
                         name,
                         &format!("{}: reference variable cannot be an array", arg_name),
                     );
+                    unqueue_signals();
                     return 1;
                 }
 
@@ -4707,6 +4716,7 @@ pub fn bin_typeset(
                         .unwrap_or(false);
                     if special_ref {
                         zwarnnam(name, &format!("{}: invalid reference", v)); // c:3122
+                        unqueue_signals();
                         return 1; // c:3123-3124
                     }
                 }
@@ -4735,6 +4745,7 @@ pub fn bin_typeset(
                             "variable"
                         };
                         zerrnam(name, &format!("{}: read-only {}", arg_name, kind)); // c:2254
+                        unqueue_signals();
                         return 1; // c:2256
                     }
                     // c:3127-3141 — namerefs always start over fresh.
@@ -5262,6 +5273,7 @@ pub fn bin_typeset(
                     name, // cname
                     &format!("{}: inconsistent type for assignment", n),
                 );
+                unqueue_signals();
                 return 1;
             }
             if is_paren_init {

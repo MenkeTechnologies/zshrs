@@ -1933,7 +1933,18 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                 // c:129 interact && toplevel
                 let hstop = stophist.load(Ordering::SeqCst); // c:130
                 stophist.store(3, Ordering::SeqCst); // c:131
-                                                     // c:133-138 — reset errflag for preprompt
+                // c:146-148 — drain any signals queued during the previous read
+                // WITHOUT changing the queueing nesting level: snapshot the level,
+                // dont_queue_signals() (whose run_queued_signals() reaps bg-job
+                // SIGCHLDs that were queued while queueing_enabled stayed at its
+                // baseline 1 across the ZLE read), then restore the level. This
+                // port previously jumped straight to preprompt(), so every queued
+                // SIGCHLD went undrained → children never reaped (zombies) and the
+                // shell hung at the prompt. Port of Src/init.c:146-148.
+                let q = crate::ported::signals_h::queue_signal_level();
+                dont_queue_signals();
+                crate::ported::signals_h::restore_queue_signals(q);
+                // c:133-138 — reset errflag for preprompt
                 errflag.store(0, Ordering::SeqCst); // c:139 errflag = 0
                 crate::ported::utils::preprompt(); // c:140
                 if stophist.load(Ordering::SeqCst) != 3 {
