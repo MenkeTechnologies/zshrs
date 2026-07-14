@@ -204,6 +204,9 @@ pub mod history;
 /// `log` submodule.
 #[path = "extensions/log.rs"]
 pub mod log;
+/// `lowfd` submodule — keeps the shell's own descriptors out of the user's fd space.
+#[path = "extensions/lowfd.rs"]
+pub mod lowfd;
 /// `zsh_ast` submodule.
 #[path = "extensions/zsh_ast.rs"]
 pub mod zsh_ast;

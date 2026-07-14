@@ -67,6 +67,11 @@ impl HistoryEngine {
             std::fs::create_dir_all(parent).ok();
         }
 
+        // Open (and materialize the WAL/SHM side files) with the low fds held,
+        // so sqlite's descriptors land above the script's range. sqlite caches
+        // the fd NUMBER internally, so this cannot be fixed up after the open —
+        // it has to land high in the first place. See crate::lowfd.
+        let _lowfd = crate::lowfd::LowFdGuard::new();
         let conn = Connection::open(&path)?;
         let engine = Self { conn };
         engine.init_schema()?;

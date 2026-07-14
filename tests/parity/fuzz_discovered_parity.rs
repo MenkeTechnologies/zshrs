@@ -1550,3 +1550,161 @@ mod pcre_offset_and_captures {
         assert_parity(r#"zmodload zsh/pcre; pcre_compile '([a-z]+)([0-9]+)'; pcre_match 'abc123'; print -r -- "M=$MATCH m=(${(j:,:)match})""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Q. The shell parked its OWN descriptors in the script's fd range
+//
+// zsh routes every internal descriptor through movefd() (Src/utils.c:1990 —
+// `fcntl(fd, F_DUPFD, 10)`), because fds 0-9 belong to the SCRIPT: `exec 3>out`,
+// `read -u 4` and `print -u 3` address them by number. zshrs held its log on fd
+// 3, the history sqlite on fd 4 and the compsys sqlite on 5-7, and parked
+// redirection SAVE descriptors (a plain dup(), which returns the lowest free fd)
+// on fd 3 as well. Consequences: `print -u 3 -r -- x` appended to the shell's own
+// log and reported SUCCESS where zsh says `bad file number: 3`, and `exec 3>f`
+// would dup2 over a live internal handle.
+// ─────────────────────────────────────────────────────────────────────
+mod internal_fds_stay_out_of_the_script_range {
+    use super::*;
+
+    /// fds 3-9 must be closed at startup, exactly as in zsh.
+    #[test]
+    fn low_fds_are_free_at_startup() {
+        assert_parity(
+            r#"for f in 3 4 5 6 7 8 9; do print -u $f -rn -- "" 2>/dev/null && print -r -- "fd $f OPEN"; done; print -r -- done"#,
+        );
+    }
+
+    /// Writing to an unopened fd fails; it must not land in an internal file.
+    #[test]
+    fn print_to_unopened_fd_fails() {
+        assert_parity(r#"print -u 3 -r -- X 2>/dev/null; print -r -- "rc=$?""#);
+    }
+
+    /// …including fd 4, which used to be the history database.
+    #[test]
+    fn print_to_fd_four_fails() {
+        assert_parity(r#"print -u 4 -r -- X 2>/dev/null; print -r -- "rc=$?""#);
+    }
+
+    /// A redirection on the SAME command must not expose its saved fd as fd 3.
+    #[test]
+    fn redirection_save_fd_is_not_visible() {
+        assert_parity(r#"print -u 3 -r -- X 2>/dev/null; print -r -- "rc=$?""#);
+    }
+
+    /// The script's own use of fd 3 still works end to end.
+    #[test]
+    fn script_can_still_use_fd_three() {
+        assert_parity(
+            r#"f=$(mktemp /tmp/pf_fd_XXXXXX) || exit 1
+exec 3> $f
+print -u 3 -r -- hello
+exec 3>&-
+cat $f
+case $f in (/tmp/pf_fd_*) command rm -f -- "$f";; esac"#,
+        );
+    }
+
+    /// …and reading through an explicitly opened fd.
+    #[test]
+    fn script_can_read_through_fd_three() {
+        assert_parity(
+            r#"f=$(mktemp /tmp/pf_fd_XXXXXX) || exit 1
+print -l a b > $f
+exec 3< $f
+read -u 3 x
+exec 3<&-
+print -r -- "[$x]"
+case $f in (/tmp/pf_fd_*) command rm -f -- "$f";; esac"#,
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R. $LINENO inside a function is measured from the DEFINITION line
+//
+// C stamps `shf->lineno` with the line the function was defined on
+// (Src/exec.c:5384) and the body's line numbers are relative to it, so a
+// one-line `f() { print $LINENO }` reads 0 wherever it sits. zshrs subtracted
+// `first_body_line - 1`, which equals the definition line only when the body
+// starts on the line AFTER `f() {` — so every function with an INLINE body
+// defined below line 1 reported $LINENO one too high.
+// ─────────────────────────────────────────────────────────────────────
+mod lineno_in_functions {
+    use super::*;
+
+    /// The original repro: inline body, function defined on line 2.
+    #[test]
+    fn inline_body_below_line_one() {
+        assert_parity("print -r -- top\nf() { print -r -- \"in=$LINENO\" }; f");
+    }
+
+    /// Inline body on line 1 (this one already worked — pin it).
+    #[test]
+    fn inline_body_on_line_one() {
+        assert_parity(r#"f() { print -r -- "in=$LINENO" }; f"#);
+    }
+
+    /// A multi-line body counts from the definition line.
+    #[test]
+    fn multi_line_body_counts_from_def() {
+        assert_parity("f() {\n  print -r -- \"a=$LINENO\"\n  print -r -- \"b=$LINENO\"\n}\nf");
+    }
+
+    /// A nested definition is relative to its own definition line.
+    #[test]
+    fn nested_function_definition() {
+        assert_parity("outer() {\n  inner() { print -r -- \"i=$LINENO\" }\n  inner\n}\nouter");
+    }
+
+    /// Top-level LINENO is unaffected.
+    #[test]
+    fn top_level_lineno_still_absolute() {
+        assert_parity("print -r -- $LINENO\nprint -r -- $LINENO\nprint -r -- $LINENO");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// S. Tying an already-exported scalar must PRESERVE the export
+//
+// C: "Variable already exists in the current scope but is not tied. We're
+// preserving its value and export attribute but no other attributes upon
+// converting to 'tied'." — Src/builtin.c:2953,
+//     on |= (pm->node.flags & ~roff) & PM_EXPORTED;
+// zshrs built the tie's attributes from the command-line flags alone, so
+// `export E=…; typeset -T E e` silently dropped E out of the environment of
+// every later child.
+// ─────────────────────────────────────────────────────────────────────
+mod tie_preserves_export {
+    use super::*;
+
+    /// The export attribute survives the tie.
+    #[test]
+    fn exported_scalar_stays_exported() {
+        assert_parity(r#"export E=x; typeset -T E e; print -r -- "${(t)E}""#);
+    }
+
+    /// …and the variable is really still in the environment.
+    #[test]
+    fn exported_scalar_still_reaches_children() {
+        assert_parity(r#"export E=a:b; typeset -T E e; print -r -- "${(t)E} n=${#e}"; printenv E"#);
+    }
+
+    /// A fresh (unexported) scalar is NOT exported by the tie.
+    #[test]
+    fn fresh_scalar_is_not_exported() {
+        assert_parity(r#"typeset -T TS ts; TS=a:b; print -r -- "${(t)TS} ${(t)ts}""#);
+    }
+
+    /// An explicit +x still wins over the inherited attribute.
+    #[test]
+    fn explicit_plus_x_removes_export() {
+        assert_parity(r#"export E=a:b; typeset -T E e; typeset +x E; print -r -- "${(t)E}""#);
+    }
+
+    /// `typeset -xT` exports the scalar only (not the array).
+    #[test]
+    fn explicit_xT_exports_the_scalar() {
+        assert_parity(r#"typeset -xT X x; X=a:b; print -r -- "${(t)X}"; printenv X"#);
+    }
+}

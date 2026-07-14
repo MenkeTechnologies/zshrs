@@ -441,6 +441,20 @@ jobs:
         run: ./target/debug/parity-fuzz --mode pcre --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/pcre.txt --out target/parity-fuzz/ci-pcre.txt
       - name: Fuzz — zwc
         run: ./target/debug/parity-fuzz --mode zwc --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zwc.txt --out target/parity-fuzz/ci-zwc.txt
+      # readb / fd / special cover the `read` builtin's flag matrix, explicit
+      # file-descriptor manipulation (exec N>, {v}>, >&N, >&-) and the
+      # deterministic shell-maintained parameters (LINENO, ZSH_SUBSHELL, $?,
+      # funcstack, pipestatus). fd is the one that caught the shell parking its
+      # own log and sqlite handles on fds 3-7. All three are clean; tied carries
+      # one documented gap (see its baseline header).
+      - name: Fuzz — readb
+        run: ./target/debug/parity-fuzz --mode readb --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/readb.txt --out target/parity-fuzz/ci-readb.txt
+      - name: Fuzz — fd
+        run: ./target/debug/parity-fuzz --mode fd --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/fd.txt --out target/parity-fuzz/ci-fd.txt
+      - name: Fuzz — special
+        run: ./target/debug/parity-fuzz --mode special --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/special.txt --out target/parity-fuzz/ci-special.txt
+      - name: Fuzz — tied
+        run: ./target/debug/parity-fuzz --mode tied --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/tied.txt --out target/parity-fuzz/ci-tied.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
