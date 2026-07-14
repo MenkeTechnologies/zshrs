@@ -2124,6 +2124,23 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             if let Some(path) = named {
                 return Some(format!("{}{}", path, suffix));
             }
+            // c:Src/hashnameddir.c getnameddir — after nameddirtab, a
+            // SCALAR parameter whose value is an ABSOLUTE path acts as a
+            // dynamic named directory: `~NAME` expands to `$NAME` when
+            // `$NAME` begins with `/`. Checked BEFORE getpwnam (named
+            // directories outrank OS users in zsh). zpwr relies on this
+            // (`: ~ZPWR_PLUGIN_DIR`, `cd ~foo`). Only true SCALARS
+            // qualify — C guards on `PM_TYPE == PM_SCALAR`. getsparam
+            // joins an array/assoc into a string that can spuriously
+            // start with `/` (`arr=(/a /b)` → "/a /b"), so exclude those
+            // explicitly: zsh reports `~arr` as "no such … directory".
+            if arrays_get(&user).is_none() && !assoc_contains(&user) {
+                if let Some(val) = crate::ported::params::getsparam(&user) {
+                    if val.starts_with('/') {
+                        return Some(format!("{}{}", val, suffix));
+                    }
+                }
+            }
             // libc getpwnam — cstring -> pw_dir
             if let Ok(cname) = CString::new(user.clone()) {
                 unsafe {
