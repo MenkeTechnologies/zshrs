@@ -468,6 +468,13 @@ jobs:
         run: ./target/debug/parity-fuzz --mode assoc --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/assoc.txt --out target/parity-fuzz/ci-assoc.txt
       - name: Fuzz — casesel
         run: ./target/debug/parity-fuzz --mode casesel --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/casesel.txt --out target/parity-fuzz/ci-casesel.txt
+      # default / anonfn cover the ${x:-w}/${x:=w}/${x:+w}/${x:?m} default-value
+      # family across the unset/empty/set states, and anonymous functions
+      # (`() { … } args` — positionals, $0, locals, redirs). Both clean.
+      - name: Fuzz — default
+        run: ./target/debug/parity-fuzz --mode default --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/default.txt --out target/parity-fuzz/ci-default.txt
+      - name: Fuzz — anonfn
+        run: ./target/debug/parity-fuzz --mode anonfn --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/anonfn.txt --out target/parity-fuzz/ci-anonfn.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking

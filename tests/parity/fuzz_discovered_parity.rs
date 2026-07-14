@@ -1819,3 +1819,65 @@ mod unbraced_modifiers {
         assert_parity(r#"v=ls; f=/a/a/c; print -r -- "${v:c} ${f:fs/a/Z/}""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// V. SH_WORD_SPLIT must not split (or trim) an assignment RHS
+//
+// A scalar assignment's value is expanded with PREFORK_SINGLE (c:Src/exec.c:2554
+// addvars), so it is NOT word-split even under SH_WORD_SPLIT. zshrs ran the RHS
+// through the splitting GET_VAR, which — because `sepsplit(' a:b ')` yields the
+// single field `a:b` after IFS-whitespace elision — TRIMMED the surrounding
+// spaces (`w=$v` gave `[a:b]` not `[ a:b ]`), and for `export E=$v` with a
+// multi-word value it dropped everything after the first word.
+// ─────────────────────────────────────────────────────────────────────
+mod shwordsplit_assignment {
+    use super::*;
+
+    /// Leading/trailing IFS whitespace on the RHS survives.
+    #[test]
+    fn assignment_rhs_keeps_surrounding_whitespace() {
+        assert_parity(r#"setopt shwordsplit; v=' a:b '; w=$v; print -r -- "[$w]""#);
+    }
+
+    /// Interior whitespace survives too (it was never the split boundary here).
+    #[test]
+    fn assignment_rhs_keeps_interior_whitespace() {
+        assert_parity(r#"setopt shwordsplit; v='x  y'; w=$v; print -r -- "[$w]""#);
+    }
+
+    /// `export NAME=$v` keeps the whole multi-word value.
+    #[test]
+    fn export_assignment_keeps_all_words() {
+        assert_parity(r#"setopt shwordsplit; v='a b'; export E=$v; print -r -- "[$E]""#);
+    }
+
+    /// `typeset` / `local` too.
+    #[test]
+    fn typeset_assignment_keeps_all_words() {
+        assert_parity(r#"setopt shwordsplit; v=' a '; typeset E=$v; print -r -- "[$E]""#);
+    }
+
+    /// A REGULAR command argument still splits (the fix is scoped to assigns).
+    #[test]
+    fn command_argument_still_splits() {
+        assert_parity(r#"setopt shwordsplit; v='a b'; print $v | wc -w"#);
+    }
+
+    /// An ARRAY assignment still splits.
+    #[test]
+    fn array_assignment_still_splits() {
+        assert_parity(r#"setopt shwordsplit; v='a b c'; arr=($v); print -r -- "n=${#arr}""#);
+    }
+
+    /// A `for` list still splits.
+    #[test]
+    fn for_list_still_splits() {
+        assert_parity(r#"setopt shwordsplit; v='a b'; for x in $v; do print -r -- "<$x>"; done"#);
+    }
+
+    /// With the option OFF the RHS is unchanged (regression pin).
+    #[test]
+    fn no_split_option_off() {
+        assert_parity(r#"v=' a:b '; w=$v; print -r -- "[$w]""#);
+    }
+}

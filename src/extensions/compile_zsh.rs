@@ -4273,8 +4273,21 @@ impl ZshCompiler {
             let in_dq =
                 self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
             self.builder.emit(Op::LoadConst(idx), 0);
-            self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+            // c:Src/exec.c:2554 addvars — a SCALAR assignment RHS is expanded
+            // with PREFORK_SINGLE, so it is NOT word-split even under
+            // SH_WORD_SPLIT. GET_VAR applies the split (and hence trims
+            // leading/trailing IFS-whitespace: `sepsplit(' a:b ')` → `a:b`),
+            // GET_VAR_DQ does not. A bare `w=$v` reaches this unquoted path, so
+            // route it through the DQ (no-split) variant when it is a scalar
+            // assignment value: `setopt shwordsplit; v=' a:b '; w=$v` kept the
+            // surrounding spaces in zsh but zshrs trimmed them.
+            let no_split = in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
+            let getvar = if no_split {
+                crate::vm_helper::BUILTIN_GET_VAR_DQ
+            } else {
+                crate::vm_helper::BUILTIN_GET_VAR
+            };
+            self.builder.emit(Op::CallBuiltin(getvar, 1), 0);
             if !in_dq {
                 // c:Src/subst.c:184-187 — prefork's empty-word
                 // removal applies to the UNQUOTED positional splat:
@@ -4431,9 +4444,15 @@ impl ZshCompiler {
                 // OR raw token DQ-wrapping (same dual check as `$@`/`$*`).
                 let in_dq =
                     self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                // c:Src/exec.c:2554 — a SCALAR assignment RHS is expanded with
+                // PREFORK_SINGLE, so it is NOT word-split under SH_WORD_SPLIT.
+                // GET_VAR applies the split (which also trims leading/trailing
+                // IFS-whitespace: `sepsplit(' a:b ')` → `a:b`); GET_VAR_DQ keeps
+                // the value whole. `setopt shwordsplit; v=' a:b '; w=$v` kept
+                // the spaces in zsh but zshrs trimmed them.
                 let opcode = if matches!(name, "argv" | "@" | "*") {
                     crate::vm_helper::BUILTIN_ARRAY_ALL
-                } else if in_dq {
+                } else if in_dq || self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0 {
                     crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
                     crate::vm_helper::BUILTIN_GET_VAR

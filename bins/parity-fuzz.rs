@@ -4299,6 +4299,108 @@ fn gen_casesel(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// default generator
+//
+// The parameter default / alternate / assign / error family, which every
+// config script leans on:
+//   ${x-w} ${x:-w}   use w when x is unset (`-`) / unset-or-empty (`:-`)
+//   ${x=w} ${x:=w}   the same, AND assign w back to x
+//   ${x+w} ${x:+w}   use w when x IS set / set-and-nonempty
+//   ${x?m} ${x:?m}   error with message m when x is unset / unset-or-empty
+// The colon is the whole subtlety: it folds "empty" in with "unset". Probed
+// across all three states (unset, empty, set) so each branch is hit.
+// C: Src/subst.c (the `-`/`+`/`=`/`?` arms of paramsubst).
+// ---------------------------------------------------------------------------
+
+fn gen_default(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // Three starting states for the tested parameter.
+    let state = match rng.gen_range(0..3) {
+        0 => "unset x",             // unset
+        1 => "x=''",                // empty
+        _ => "x=set",               // non-empty
+    };
+    let mut stmts = vec![state.to_string()];
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..16) {
+            // `-` vs `:-`.
+            0 => "print -r -- \"[${x-DEF}]\"".to_string(),
+            1 => "print -r -- \"[${x:-DEF}]\"".to_string(),
+            // `+` vs `:+`.
+            2 => "print -r -- \"[${x+ALT}]\"".to_string(),
+            3 => "print -r -- \"[${x:+ALT}]\"".to_string(),
+            // `=` / `:=` assign back — observe both the expansion and x after.
+            4 => "print -r -- \"[${x=ASG}]\"; print -r -- \"x=[$x]\"".to_string(),
+            5 => "print -r -- \"[${x:=ASG}]\"; print -r -- \"x=[$x]\"".to_string(),
+            // `?` / `:?` error path (status + message on stderr).
+            6 => "( print -r -- \"[${x?missing}]\" ) 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
+            7 => "( print -r -- \"[${x:?empty or unset}]\" ) 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
+            // The replacement word is itself an expansion.
+            8 => "y=fallback; print -r -- \"[${x:-$y}]\"".to_string(),
+            9 => "print -r -- \"[${x:-$(print -n sub)}]\"".to_string(),
+            // Nested defaults.
+            10 => "print -r -- \"[${x:-${y:-inner}}]\"".to_string(),
+            // The word undergoes the usual expansions (but no split in DQ).
+            11 => "y='a b'; print -r -- \"[${x:-$y}]\"".to_string(),
+            // Length of a defaulted value.
+            12 => "print -r -- \"n=${#x:-abc}\"".to_string(),
+            // A default in the middle of a larger word.
+            13 => "print -r -- \"pre-${x:-mid}-post\"".to_string(),
+            // `:+` guard idiom (append only when set).
+            14 => "print -r -- \"${x:+prefix:}rest\"".to_string(),
+            // Assignment default reflects into a later plain read.
+            _ => "v=${x:=filled}; print -r -- \"v=[$v] x=[$x]\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// anonfn generator
+//
+// Anonymous functions: `() { body } args` defines and immediately calls a
+// function with no name. Inside, `$1..$N`/`$#`/`$@` are the args, `$0` is
+// "(anon)", and local declarations are scoped to the call. They also take
+// redirections (`() { … } > file`) and compose with other constructs. This is
+// a zsh-native idiom (the `{ … }` block that takes positional args), distinct
+// from a plain group. C: Src/exec.c execfuncdef (the anonymous branch).
+// ---------------------------------------------------------------------------
+
+fn gen_anonfn(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=2) {
+        let stmt = match rng.gen_range(0..12) {
+            0 => "() { print -r -- \"n=$# 1=$1 2=$2\" } a b c".to_string(),
+            // $@ / $* inside.
+            1 => "() { print -rl -- \"$@\"; print -r -- END } x y z".to_string(),
+            2 => "() { print -r -- \"[$*]\" } one two".to_string(),
+            // $0 is (anon).
+            3 => "() { print -r -- \"[$0]\" }".to_string(),
+            // A local is scoped to the call.
+            4 => "v=outer; () { local v=inner; print -r -- \"[$v]\" }; print -r -- \"[$v]\"".to_string(),
+            // No args.
+            5 => "() { print -r -- \"n=$#\" }".to_string(),
+            // A return value / status.
+            6 => "() { return 3 }; print -r -- \"rc=$?\"".to_string(),
+            // Args that need splitting / quoting.
+            7 => "() { print -r -- \"[$1][$2]\" } 'a b' c".to_string(),
+            // A redirection on the anon function.
+            8 => "() { print -r -- inside } >/dev/null; print -r -- after".to_string(),
+            // Loop inside.
+            9 => "() { for a; do print -r -- \"<$a>\"; done } p q r".to_string(),
+            // Nested anon.
+            10 => "() { () { print -r -- inner } } ".to_string(),
+            // Arguments from an expansion.
+            _ => "arr=(1 2 3); () { print -r -- \"n=$# sum=$(( $1 + $2 + $3 ))\" } $arr".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4352,6 +4454,8 @@ enum Mode {
     Getopts,
     Assoc,
     Casesel,
+    Default,
+    Anonfn,
 }
 
 struct Args {
@@ -4418,6 +4522,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Getopts => gen_getopts(seed),
         Mode::Assoc => gen_assoc(seed),
         Mode::Casesel => gen_casesel(seed),
+        Mode::Default => gen_default(seed),
+        Mode::Anonfn => gen_anonfn(seed),
     }
 }
 
@@ -4472,6 +4578,8 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Getopts => "getopts",
         Mode::Assoc => "assoc",
         Mode::Casesel => "casesel",
+        Mode::Default => "default",
+        Mode::Anonfn => "anonfn",
     }
 }
 
@@ -4526,6 +4634,8 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Getopts,
         Mode::Assoc,
         Mode::Casesel,
+        Mode::Default,
+        Mode::Anonfn,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -4627,7 +4737,7 @@ fn parse_args() -> Args {
                      paramod, procsub, alias, autoload, stat, errexit,\n\
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
-                     casesel\n\
+                     casesel, default, anonfn\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
