@@ -1119,6 +1119,14 @@ mod tests_hooks {
     fn reexpandprompt_re_runs_expansion_against_raw_templates() {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
+        use crate::ported::zle::zle_main::ZLECONTEXT;
+        use std::sync::atomic::Ordering::SeqCst;
+        // In a caller-supplied-prompt context (vared/select), reexpandprompt
+        // must expand the stashed RAW templates verbatim — it must NOT
+        // re-read PS1/RPS1 (those aren't the vared prompt). Bug #654 gates
+        // the param re-read on ZLCON_LINE_START, so pin the raw-template
+        // path under ZLCON_VARED.
+        let saved_ctx = ZLECONTEXT.swap(crate::ported::zsh_h::ZLCON_VARED, SeqCst);
         // Set raw templates that don't reference dynamic state, so the
         // expansion is idempotent and easy to assert. %% expands to a
         // single literal '%' per zsh prompt rules.
@@ -1127,6 +1135,35 @@ mod tests_hooks {
         reexpandprompt();
         assert_eq!(prompt(), "% > ");
         assert_eq!(rprompt(), "[%]");
+        ZLECONTEXT.store(saved_ctx, SeqCst);
+    }
+
+    // Bug #654 — on a normal command-line edit (ZLCON_LINE_START),
+    // reexpandprompt re-reads the LIVE PS1/RPS1/RPROMPT parameters (zsh's
+    // raw_lp/raw_rp are pointers to the live globals), so a mid-line
+    // `RPROMPT=…` change from a zle-keymap-select hook repaints the right
+    // prompt. Pin that re-read, incl. the RPS1→RPROMPT classic-name fallback.
+    #[test]
+    fn reexpandprompt_rereads_live_params_on_command_line() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        use crate::ported::params::{setsparam, unsetparam};
+        use crate::ported::zle::zle_main::ZLECONTEXT;
+        use std::sync::atomic::Ordering::SeqCst;
+        let saved_ctx = ZLECONTEXT.swap(crate::ported::zsh_h::ZLCON_LINE_START, SeqCst);
+        crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.set(true));
+        // Stale stash + a live RPROMPT set only via the classic name.
+        setsparam("PS1", "P> ");
+        unsetparam("RPS1");
+        setsparam("RPROMPT", "[%%R]");
+        *RAW_LP.lock().unwrap() = "STALE_L".to_string();
+        *RAW_RP.lock().unwrap() = "STALE_R".to_string();
+        reexpandprompt();
+        assert_eq!(prompt(), "P> ", "PS1 re-read live, not from stale RAW_LP");
+        assert_eq!(rprompt(), "[%R]", "RPROMPT (classic name) re-read live");
+        unsetparam("PS1");
+        unsetparam("RPROMPT");
+        ZLECONTEXT.store(saved_ctx, SeqCst);
     }
 }
 

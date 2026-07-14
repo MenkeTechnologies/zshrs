@@ -921,10 +921,47 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
         }
         resolved = ".safe".to_string();
     }
-    // c:513 — `curkeymapname = ztrdup(name)`.
-    *curkeymapname() = resolved;
+    // c:513-521 — set curkeymapname to the new name and, when the keymap
+    // actually CHANGES during an active edit, fire the `zle-keymap-select`
+    // hook widget. In C:
+    //   char *oname = curkeymapname;
+    //   curkeymapname = ztrdup(name);
+    //   if (oname && strcmp(oname, name) && zleactive &&
+    //       (t = rthingy_nocreate("zle-keymap-select"))) {
+    //       char *args[2] = { oname, NULL };
+    //       execzlefunc(t, args, 1, 0);
+    //   }
+    // The hook reads `$KEYMAP` (the just-updated curkeymapname) and gets
+    // the OLD keymap name as `$1`; it drives vi-mode indicators (a
+    // keymap-select widget that sets RPROMPT + `zle reset-prompt`). The
+    // earlier port set curkeymapname/curkeymap but NEVER fired the hook,
+    // so `bindkey -v` + Esc switched keymaps silently and the right-prompt
+    // mode indicator never appeared. Bug #654.
+    let oldname = std::mem::replace(&mut *curkeymapname(), resolved.clone()); // c:513
     // c:518 — `curkeymap = km`.
     *curkeymap.lock().unwrap() = km;
+    // Keep the `$KEYMAP` zle parameter in sync so the zle-keymap-select
+    // hook (and any widget) reads the CURRENT keymap. zsh backs `$KEYMAP`
+    // with a live getfn (get_keymap → curkeymapname); zshrs's makezleparams
+    // snapshots the zle params via setsparam and had no KEYMAP entry, so
+    // `$KEYMAP` was empty inside the hook. Gate on `zleactive` to mirror
+    // zsh's "KEYMAP exists only during line editing". Bug #654.
+    if crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+        let _ = crate::ported::params::setsparam("KEYMAP", &resolved);
+    }
+    if !oldname.is_empty()
+        && oldname != resolved
+        && crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
+        && crate::ported::zle::zle_thingy::rthingy_nocreate("zle-keymap-select")
+    {
+        // c:519 — `execzlefunc(t, args, 1, 0)` with args[0] = old keymap name.
+        let _ = crate::ported::zle::zle_main::execzlefunc(
+            "zle-keymap-select",
+            &[oldname],
+            1,
+            0,
+        );
+    }
     0 // c:527
 }
 

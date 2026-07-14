@@ -83,6 +83,12 @@ pub fn makezleparams(_ro: i32) {
         crate::ported::zle::compcore::ZLECS.load(Ordering::Relaxed) as i64,
     ); // c:zleparams[3]
     let _ = setiparam("NUMERIC", ZMULT.load(Ordering::Relaxed) as i64); // c:zleparams[7]
+                                                                        // $KEYMAP — currently-active keymap name (zle_params.c backs this
+                                                                        // with the get_keymap getfn). Seed it here so a widget that reads
+                                                                        // $KEYMAP before any keymap switch (or when the shell starts in vi
+                                                                        // mode) sees a value; selectkeymap keeps it in sync on every
+                                                                        // change. Without it $KEYMAP was empty in zle-keymap-select. Bug #654.
+    let _ = setsparam("KEYMAP", &super::zle_params::get_keymap()); // c:zleparams KEYMAP
                                                                         // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
     let _ = setiparam("BUFFERLINES", lines); // c:zleparams[10]
