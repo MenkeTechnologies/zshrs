@@ -1576,6 +1576,37 @@ pub fn reexpandprompt() {
         let pre_zs = PRE_ZLE_STATUS.load(SeqCst);
         LASTVAL.store(pre_zs, SeqCst);
 
+        // c:2025/2033 — zsh's `raw_lp`/`raw_rp` are `char **` pointing at
+        // the LIVE prompt globals (`&prompt`/`&rprompt`), so
+        // `promptexpand(*raw_rp)` re-reads the CURRENT PS1/RPS1/RPROMPT on
+        // every reexpand — that is how `zle reset-prompt` (from a
+        // `zle-keymap-select` hook) repaints a vim-mode right-prompt
+        // indicator mid-line. zshrs stashes RAW_LP/RAW_RP as string COPIES
+        // at zleread, so a mid-line `RPROMPT=…` change was invisible and the
+        // right prompt never updated. For a normal command-line edit
+        // (ZLCON_LINE_START — NOT vared/select, whose prompts are
+        // caller-supplied and must not be clobbered), refresh the stash from
+        // the live parameters here, matching the inputline read (PS1/RPS1 on
+        // the first line, PS2/RPS2 on a continuation, RPROMPT/RPROMPT2 as the
+        // classic-name fallback). This is the faithful equivalent of C's
+        // live-pointer deref. Bug #654.
+        if ZLECONTEXT.load(SeqCst) == crate::ported::zsh_h::ZLCON_LINE_START {
+            let first = crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get());
+            let (ps, rp_primary, rp_legacy) = if first {
+                ("PS1", "RPS1", "RPROMPT")
+            } else {
+                ("PS2", "RPS2", "RPROMPT2")
+            };
+            if let Some(lp) = crate::ported::params::getsparam(ps) {
+                *RAW_LP.lock().unwrap() = lp;
+            }
+            let rp = match crate::ported::params::getsparam(rp_primary) {
+                Some(s) if !s.is_empty() => Some(s),
+                _ => crate::ported::params::getsparam(rp_legacy),
+            };
+            *RAW_RP.lock().unwrap() = rp.unwrap_or_default();
+        }
+
         // c:2015-2038 — do { ... } while (looping != reexpanding);
         //               The loop guards against SIGWINCH-during-promptexpand.
         //               Without the SIGWINCH/promptexpand interleave hook

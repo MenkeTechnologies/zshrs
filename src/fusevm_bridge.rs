@@ -1814,6 +1814,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if clean_env {
                 command.env_clear();
             }
+            // Queue signals across spawn+wait so the SIGCHLD reaper
+            // can't reap this child before child.wait() does — see
+            // ForegroundWaitGuard.
+            let _wait_guard = ForegroundWaitGuard::enter();
             let status = match command.spawn() {
                 Ok(mut child) => match child.wait() {
                     Ok(s) => s.code().unwrap_or(127),
@@ -9432,6 +9436,46 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// own external-command dispatch would do. Returns the child's exit
 /// status (or 127 if PATH lookup fails — the standard "command not
 /// found" code).
+/// RAII guard that queues signals for the lifetime of a synchronous
+/// foreground `waitpid` (via `std::process::Command::status`/`wait`).
+///
+/// zshrs installs a process-wide SIGCHLD handler (`zhandler` →
+/// `wait_for_processes` → `waitpid(-1, WNOHANG)`) that reaps EVERY
+/// exited child to drive the job table. `std::process::Command` does
+/// its own targeted `waitpid(pid)`; when the reaper fires on any
+/// thread between the fork and that wait, it reaps the child first and
+/// `Command::status()` fails with ECHILD ("No child processes (os
+/// error 10)"). This surfaced as `zshrs: hostname: No child processes
+/// (os error 10)` when a coreutils shadow (`coreutils_shadows = off`
+/// default) fork-execs `/usr/bin/hostname` while a background prewarm
+/// child exits at the same instant.
+///
+/// Holding this guard bumps `queueing_enabled` (a global SeqCst atomic
+/// that `zhandler` honors on every thread), so a SIGCHLD arriving
+/// during the wait is pushed onto the deferred queue instead of being
+/// reaped — `Command::status()` reaps its own child and reads the real
+/// status. On drop, `unqueue_signals()` drains the queue, so any
+/// genuine background children that exited meanwhile still get reaped
+/// and routed to the job table. This is the same queue_signals /
+/// unqueue_signals fencing zsh uses around its own foreground waits
+/// (Src/exec.c). Panic-safe via `Drop`.
+pub(crate) struct ForegroundWaitGuard;
+
+impl ForegroundWaitGuard {
+    #[inline]
+    pub(crate) fn enter() -> Self {
+        crate::ported::signals_h::queue_signals();
+        ForegroundWaitGuard
+    }
+}
+
+impl Drop for ForegroundWaitGuard {
+    #[inline]
+    fn drop(&mut self) {
+        crate::ported::signals_h::unqueue_signals();
+    }
+}
+
 fn exec_system_command(name: &str, args: &[String]) -> i32 {
     // c:Src/jobs.c — count the fork so `time` reports for an
     // overridable coreutils shadow run as an external (`time sleep 0`,
@@ -9440,12 +9484,17 @@ fn exec_system_command(name: &str, args: &[String]) -> i32 {
     // job and stayed silent. (Builtins that don't reach a spawn never
     // hit this fn.)
     crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let status = std::process::Command::new(name)
-        .args(args)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status();
+    // Queue signals across the wait so the SIGCHLD reaper can't steal
+    // this child out from under Command::status — see ForegroundWaitGuard.
+    let status = {
+        let _wait_guard = ForegroundWaitGuard::enter();
+        std::process::Command::new(name)
+            .args(args)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+    };
     match status {
         Ok(s) => s.code().unwrap_or(if s.success() { 0 } else { 1 }),
         Err(e) => {

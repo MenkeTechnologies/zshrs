@@ -2760,7 +2760,16 @@ impl ShellExecutor {
                 }
             }
         } else {
-            match command.status() {
+            // Queue signals across the wait so zshrs's SIGCHLD reaper
+            // (waitpid(-1) in wait_for_processes, delivered on any
+            // thread) can't reap this child before Command::status()
+            // does — otherwise status() fails with ECHILD ("No child
+            // processes"). See ForegroundWaitGuard in fusevm_bridge.
+            let status_result = {
+                let _wait_guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
+                command.status()
+            };
+            match status_result {
                 Ok(status) => Ok(status.code().unwrap_or(1)),
                 Err(e) => {
                     // Use scriptname (the user-visible shell identifier

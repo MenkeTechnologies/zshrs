@@ -1113,6 +1113,20 @@ pub fn zrefresh() {
     // overrun.
     LPROMPTW.store(prompt_width as i32, Ordering::Relaxed);
     let rprompt_width = countprompt(&rprompt);
+    // c:774 — `countprompt(rpromptbuf, &rpromptw, &rprompth, 0)`. The live
+    // zrefresh (unlike `resetvideo`, which sets these but is only reached
+    // from tests) never published the right-prompt metrics, so the
+    // PUT_RPMPT gate below (c:1648-1656) always read a stale
+    // RPROMPTW=0 / RPROMPTH=0 and the right prompt was NEVER emitted —
+    // regardless of RPS1/RPROMPT being set. Publish them here from the
+    // same `rprompt` string the emit uses. Bug #654.
+    {
+        let mut rpw = 0i32;
+        let mut rph = 0i32;
+        crate::ported::prompt::countprompt(&rprompt, &mut rpw, &mut rph, 0);
+        RPROMPTW.store(rpw, Ordering::Relaxed);
+        RPROMPTH.store(rph, Ordering::Relaxed);
+    }
     // ZLELINE was locked TWICE in this expression — std::sync::Mutex
     // isn't reentrant, so the second `.lock()` deadlocks forever
     // waiting for the first guard to drop. Take a single lock, derive

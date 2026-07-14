@@ -536,14 +536,41 @@ pub fn inputline() -> i32 {
     let mut ingetcpmptr: Option<String> = None;
     if crate::ported::zsh_h::interact() && isset(SHINSTDIN) {
         // c:372
+        // RPS1/RPROMPT (and RPS2/RPROMPT2) are documented as equivalent
+        // right-prompt names but are SEPARATE parameters (unlike PS1/PROMPT,
+        // which zshrs aliases): `RPROMPT=x` does NOT set `$RPS1` and vice
+        // versa, matching zsh's readback. zsh nonetheless renders the right
+        // prompt from whichever is set, so read RPS1 first and fall back to
+        // RPROMPT when it's unset/empty. Without the fallback, a config that
+        // sets only RPROMPT (the classic name — e.g. zpwr's vim-mode keymap
+        // indicator) produced no right prompt at all. (Both set is
+        // contradictory config; RPS1 wins here vs zsh's last-assigned wins.)
+        // RPS1/RPROMPT (and RPS2/RPROMPT2) are documented as equivalent
+        // right-prompt names but are SEPARATE parameters (unlike PS1/PROMPT,
+        // which zshrs aliases): `RPROMPT=x` does NOT set `$RPS1` and vice
+        // versa, matching zsh's readback. zsh nonetheless renders the right
+        // prompt from whichever is set, so read the modern RPS1/RPS2 name
+        // first and fall back to the classic RPROMPT/RPROMPT2 when it's
+        // unset/empty. Without the fallback a config that sets only RPROMPT
+        // (the classic name — e.g. zpwr's vim-mode keymap indicator)
+        // produced no right prompt at all. An empty primary is treated as
+        // "not set" so a bare `RPS1=` doesn't blank a populated RPROMPT.
+        // (Both set is contradictory config; RPS1 wins here vs zsh's
+        // last-assigned wins.) Bug #654.
+        let rprompt_effective = |primary: &str, legacy: &str| -> Option<String> {
+            match crate::ported::params::getsparam(primary) {
+                Some(s) if !s.is_empty() => Some(s),
+                _ => crate::ported::params::getsparam(legacy),
+            }
+        };
         if !crate::ported::lex::LEX_ISFIRSTLN.with(|c| c.get()) {
-            // c:373-377 — continuation line → PS2 / RPS2.
+            // c:373-377 — continuation line → PS2 / RPS2 (or RPROMPT2).
             ingetcpmptl = crate::ported::params::getsparam("PS2");
-            ingetcpmptr = crate::ported::params::getsparam("RPS2");
+            ingetcpmptr = rprompt_effective("RPS2", "RPROMPT2");
         } else {
-            // c:379-382 — first line → PS1 / RPS1.
+            // c:379-382 — first line → PS1 / RPS1 (or RPROMPT).
             ingetcpmptl = crate::ported::params::getsparam("PS1");
-            ingetcpmptr = crate::ported::params::getsparam("RPS1");
+            ingetcpmptr = rprompt_effective("RPS1", "RPROMPT");
         }
     }
     // c:385 — `if (!(interact && isset(SHINSTDIN) && SHTTY != -1 &&

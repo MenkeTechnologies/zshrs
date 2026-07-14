@@ -4057,10 +4057,22 @@ pub(crate) fn makecomplistflags(cc: &Arc<Compctl>, mut s: String, _incmd: bool, 
             .unwrap_or_default();
         dumphashtable(funcs, -3);
         // c:3654 — builtins.
-        let builtins: Vec<String> = crate::ported::builtin::BUILTINS
+        let mut builtins: Vec<String> = crate::ported::builtin::BUILTINS
             .iter()
             .map(|b| b.node.nam.clone())
             .collect();
+        // zshrs extension builtins dispatch in-process but have no
+        // entry in the C-port BUILTINS table, so command-position
+        // completion never offered `doctor`, `peach`, `zassert_eq`,
+        // etc. Offer them in default mode; strict `--zsh` emulation
+        // keeps only zsh's own builtin set.
+        if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            builtins.extend(
+                crate::ext_builtins::EXT_BUILTIN_NAMES
+                    .iter()
+                    .map(|s| (*s).to_string()),
+            );
+        }
         dumphashtable(builtins, -3);
         // c:3655-3657 — external commands; HASHLISTALL (default on) bulk-
         // hashes $path first so every reachable command is offered.
