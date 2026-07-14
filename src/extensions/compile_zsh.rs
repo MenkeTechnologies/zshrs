@@ -7165,6 +7165,100 @@ impl ZshCompiler {
         self.emit_cmd_pop();
     }
 
+    /// True when a substitution segment forces GLOB_SUBST for itself — the
+    /// `${~name}` / `$~name` flag (c:Src/subst.c — the `~` substitution flag
+    /// shtokenizes the spliced value so its metachars stay pattern-active
+    /// regardless of the global option). Shared by the `[[ = ]]` cond path and
+    /// the `case` pattern path, which must classify `$~p` identically.
+    fn seg_forces_glob_subst(text: &str) -> bool {
+        // Word text may carry the lexer's token form: `$` as String (U+0085) /
+        // Qstring (U+008C), `{` as Inbrace (U+008F), `~` as Tilde (U+0098).
+        let cs: Vec<char> = text.chars().take(4).collect();
+        let dollar = matches!(
+            cs.first().map(|c| *c as u32),
+            Some(0x24) | Some(0x85) | Some(0x8c)
+        );
+        if !dollar {
+            return false;
+        }
+        let flag_at = match cs.get(1) {
+            Some(c) if *c == '{' || *c as u32 == 0x8f => 2,
+            _ => 1,
+        };
+        let is_tilde = |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0x98);
+        is_tilde(cs.get(flag_at)) && !is_tilde(cs.get(flag_at + 1))
+    }
+
+    /// Emit a PATTERN word (for `case` arms and `[[ = ]]` RHS) so that
+    /// GLOB_SUBST is honored: glob metachars that come from a SUBSTITUTION
+    /// (`$p` → `a*`) are literal-ized unless `$~`/`${~}` or the GLOB_SUBST
+    /// option is set, while SOURCE-level glob metas always stay match-active.
+    /// This is exactly the split zsh's singsub draws (c:Src/subst.c), and it is
+    /// why `case abc in $p) …` with p='a*' does NOT match (the `*` is literal)
+    /// but `case abc in $~p) …` does.
+    fn emit_glob_subst_pattern(&mut self, word: &str) {
+        // Bare `$~name` (String + Tilde tokens, no braces) loses its Tilde in
+        // the name parse, so normalize it to the braced `${~name}` spelling
+        // first — same fix the cond Binary path applies, hoisted here so `case`
+        // gets it too. Without this, `case x in $~p) …` never forced the glob.
+        let normalized: Option<String> = {
+            let cs: Vec<char> = word.chars().collect();
+            let dollar = matches!(
+                cs.first().map(|c| *c as u32),
+                Some(0x24) | Some(0x85) | Some(0x8c)
+            );
+            let tilde_bare = dollar
+                && matches!(cs.get(1).map(|c| *c as u32), Some(0x7e) | Some(0x98))
+                && cs.get(2).map_or(false, |c| c.is_ascii_alphanumeric() || *c == '_')
+                && cs[2..].iter().all(|c| c.is_ascii_alphanumeric() || *c == '_');
+            if tilde_bare {
+                let mut s = String::new();
+                s.push(cs[0]);
+                s.push('\u{8f}'); // Inbrace
+                s.extend(&cs[1..]);
+                s.push('\u{90}'); // Outbrace
+                Some(s)
+            } else {
+                None
+            }
+        };
+        let word: &str = normalized.as_deref().unwrap_or(word);
+        let segments = split_pattern_for_glob_subst(word);
+        if segments.len() <= 1 {
+            self.dq_context_depth += 1;
+            self.compile_word_str(word);
+            self.dq_context_depth -= 1;
+            if !Self::seg_forces_glob_subst(word) {
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1), 0);
+            }
+            return;
+        }
+        for (idx, seg) in segments.iter().enumerate() {
+            match seg {
+                PatSeg::Subst(text) => {
+                    self.dq_context_depth += 1;
+                    self.compile_word_str(text);
+                    self.dq_context_depth -= 1;
+                    if !Self::seg_forces_glob_subst(text) {
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
+                            0,
+                        );
+                    }
+                }
+                PatSeg::Literal(text) => {
+                    let lit = crate::lex::untokenize(text);
+                    let c = self.builder.add_constant(Value::str(lit.as_str()));
+                    self.builder.emit(Op::LoadConst(c), 0);
+                }
+            }
+            if idx > 0 {
+                self.builder.emit(Op::Concat, 0);
+            }
+        }
+    }
+
     fn compile_case(&mut self, c: &crate::parse::ZshCase) {
         // cmdstack: direct port of Src/loop.c:615 `cmdpush(CS_CASE);`
         // wrapping the whole case statement.
@@ -7334,54 +7428,18 @@ impl ZshCompiler {
                     || raw.contains('\u{8c}') // Qstring (ANSI-C)
                     || raw.contains('\u{99}'); // META-`` ` ``
                 if needs_runtime_expand {
-                    // Same source-meta-vs-substitution distinction as
-                    // the cond Binary path (search this file for
-                    // split_pattern_for_glob_subst). singsub-only
-                    // expansion on the WHOLE pattern reaches
-                    // patcompile with substituted bytes adjacent to
-                    // source-level glob metas; the latter survive
-                    // singsub but get untokenized to literal bytes
-                    // somewhere downstream and stop matching as
-                    // globs. Walk segments at compile time so the
-                    // substitution part goes through singsub and the
-                    // source-meta part lands as a constant whose
-                    // literal `*` / `?` / `[` bytes reach patcompile
-                    // as match-time globs. Bug: `case foo in $H*) …`
-                    // failed (with H=foo) because singsub of `$H*`
-                    // yielded `foo*` where the `*` was treated as a
-                    // literal post-expansion byte (the same root
-                    // cause as the `[[ foo = $H* ]]` bug at the cond
-                    // Binary path).
-                    let segments = split_pattern_for_glob_subst(raw);
-                    if segments.len() <= 1 {
-                        let pat_const = self.builder.add_constant(Value::str(pattern.as_str()));
-                        self.builder.emit(Op::LoadConst(pat_const), 0);
-                        self.builder.emit(Op::LoadInt(4), 0);
-                        self.builder
-                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0), 0);
-                    } else {
-                        for (sidx, seg) in segments.iter().enumerate() {
-                            match seg {
-                                PatSeg::Subst(text) => {
-                                    let pc = self.builder.add_constant(Value::str(text.as_str()));
-                                    self.builder.emit(Op::LoadConst(pc), 0);
-                                    self.builder.emit(Op::LoadInt(4), 0);
-                                    self.builder.emit(
-                                        Op::CallBuiltin(crate::vm_helper::BUILTIN_EXPAND_TEXT, 0),
-                                        0,
-                                    );
-                                }
-                                PatSeg::Literal(text) => {
-                                    let lit = crate::lex::untokenize(text);
-                                    let pc = self.builder.add_constant(Value::str(lit.as_str()));
-                                    self.builder.emit(Op::LoadConst(pc), 0);
-                                }
-                            }
-                            if sidx > 0 {
-                                self.builder.emit(Op::Concat, 0);
-                            }
-                        }
-                    }
+                    // A case pattern honors GLOB_SUBST exactly like a `[[ = ]]`
+                    // RHS: glob metachars from a SUBSTITUTION (`$p` → `a*`) are
+                    // literal unless `$~`/`${~}` forces them active, while
+                    // source-level metas always glob. This used to run the whole
+                    // pattern through BUILTIN_EXPAND_TEXT (flag 4) with no
+                    // GLOB_SUBST_GUARD on the substituted part, so a substituted
+                    // `*` stayed match-active (bash semantics): `case abc in $p)`
+                    // with p='a*' wrongly MATCHED, and `$~p` — which should force
+                    // the glob — was left literal, so it wrongly did NOT. The
+                    // shared helper is the same one the cond path uses.
+                    let _ = raw;
+                    self.emit_glob_subst_pattern(pattern);
                 } else {
                     // Patterns are RAW glob strings. The lexer encodes
                     // glob chars (`*`, `?`, `[`, `]`) in the META range
@@ -8131,92 +8189,10 @@ impl ZshCompiler {
                         // with a=b="ab\\c" (4-byte `ab\c`) failed
                         // because the RHS became 5-byte `ab\\c`.
                         // qq_then_Q_roundtrip_specials parity test.
-                        let segments = split_pattern_for_glob_subst(right);
-                        // c:Src/subst.c — the `~` substitution flag
-                        // (`${~P}` / `$~P`) turns on GLOB_SUBST for
-                        // THAT substitution: C shtokenizes the spliced
-                        // value so its metachars stay pattern-active
-                        // regardless of the global option. Skip the
-                        // guard for `~`-flagged segments. (`${~~...}`
-                        // forced-off is not yet modelled; it falls to
-                        // the option default.)
-                        let tilde_glob = |text: &str| -> bool {
-                            // The compiler's word text may carry the
-                            // lexer's token form: `{` arrives as
-                            // Inbrace (U+008F). Accept both.
-                            let cs: Vec<char> = text.chars().take(4).collect();
-                            // `$` arrives as String (U+0085) or
-                            // Qstring (U+008C) from the lexer.
-                            let dollar = matches!(
-                                cs.first().map(|c| *c as u32),
-                                Some(0x24) | Some(0x85) | Some(0x8c)
-                            );
-                            if !dollar {
-                                return false;
-                            }
-                            let (flag_at, brace) = match cs.get(1) {
-                                Some(c) if *c == '{' || *c as u32 == 0x8f => (2, true),
-                                _ => (1, false),
-                            };
-                            let _ = brace;
-                            // `~` may itself arrive as the Tilde token
-                            // (U+0098) from the lexer.
-                            let is_tilde = |c: Option<&char>| matches!(c, Some(c) if *c == '~' || *c as u32 == 0x98);
-                            is_tilde(cs.get(flag_at)) && !is_tilde(cs.get(flag_at + 1))
-                        };
-                        if segments.len() <= 1 {
-                            // Single segment — preserve original
-                            // shape (the lone substitution case).
-                            //
-                            self.dq_context_depth += 1;
-                            self.compile_word_str(right);
-                            self.dq_context_depth -= 1;
-                            // NOTE: no .trim() here — the String token
-                            // U+0085 is Unicode whitespace and trim()
-                            // would eat the leading `$` token.
-                            if !tilde_glob(right) {
-                                self.builder.emit(
-                                    Op::CallBuiltin(crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD, 1),
-                                    0,
-                                );
-                            }
-                        } else {
-                            // Multiple segments — emit each, concat
-                            // sequentially. First segment establishes
-                            // the stack value; subsequent segments
-                            // get Concat-ed in.
-                            for (idx, seg) in segments.iter().enumerate() {
-                                match seg {
-                                    PatSeg::Subst(text) => {
-                                        self.dq_context_depth += 1;
-                                        self.compile_word_str(text);
-                                        self.dq_context_depth -= 1;
-                                        if !tilde_glob(text) {
-                                            self.builder.emit(
-                                                Op::CallBuiltin(
-                                                    crate::vm_helper::BUILTIN_GLOB_SUBST_GUARD,
-                                                    1,
-                                                ),
-                                                0,
-                                            );
-                                        }
-                                    }
-                                    PatSeg::Literal(text) => {
-                                        // Untokenize source-level
-                                        // tokens to their literal
-                                        // byte form (`\u{87}` Star
-                                        // → `*`) so patcompile
-                                        // treats them as globs.
-                                        let lit = crate::lex::untokenize(text);
-                                        let c = self.builder.add_constant(Value::str(lit.as_str()));
-                                        self.builder.emit(Op::LoadConst(c), 0);
-                                    }
-                                }
-                                if idx > 0 {
-                                    self.builder.emit(Op::Concat, 0);
-                                }
-                            }
-                        }
+                        // The `~`-flag / source-meta-vs-substitution split lives
+                        // in the shared helper (`case` arms need the identical
+                        // logic, so it must not be duplicated here).
+                        self.emit_glob_subst_pattern(right);
                     } else if rhs_is_pure_dq_pre {
                         // Literal-compare path: when the RHS is one DQ
                         // span (including DQ-only-vars like `"$x"`),
@@ -9613,17 +9589,23 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
 fn walk_bare_modifier_chain(chars: &[char], j: &mut usize) {
     while *j + 1 < chars.len() && chars[*j] == ':' {
         let mut probe = *j + 1;
-        // Optional `g` prefix (global modifier for :s).
-        let saw_g = chars[probe] == 'g';
-        if saw_g {
+        // Optional prefixes to `:s` — `g` (global, apply everywhere) and `f`
+        // (repeat until the substitution stops changing the string). C accepts
+        // them before the `s` (Src/hist.c — the `g`/`f`/count flags on the
+        // substitute modifier). The unbraced scanner handled `g` but not `f`,
+        // so `$f:fs/a//` fell through as literal text while `${f:fs/a//}` and
+        // `$f:gs/a//` both worked.
+        let mut saw_prefix = false;
+        while probe < chars.len() && (chars[probe] == 'g' || chars[probe] == 'f') {
+            saw_prefix = true;
             probe += 1;
-            if probe >= chars.len() {
-                break;
-            }
+        }
+        if probe >= chars.len() {
+            break;
         }
         let after = chars[probe];
-        if saw_g || after == 's' {
-            if (saw_g && after != 's') || (!saw_g && after != 's') {
+        if saw_prefix || after == 's' {
+            if after != 's' {
                 break;
             }
             // Position now: at `s`.
@@ -9663,9 +9645,13 @@ fn walk_bare_modifier_chain(chars: &[char], j: &mut usize) {
             *j = probe;
             continue;
         }
+        // 'c' — PATH search (c:Src/hist.c:863 `equalsubstr`); '&' — repeat the
+        // last `s///` (c:Src/hist.c:903). Both were missing from this UNBRACED
+        // scanner, so `$p:c` and `$f:s/x/Y/:&` fell through as literal text while
+        // the braced spelling resolved.
         if !matches!(
             after,
-            'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P'
+            'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P' | 'c' | '&'
         ) {
             break;
         }

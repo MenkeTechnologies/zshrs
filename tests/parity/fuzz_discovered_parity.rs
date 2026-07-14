@@ -1708,3 +1708,114 @@ mod tie_preserves_export {
         assert_parity(r#"typeset -xT X x; X=a:b; print -r -- "${(t)X}"; printenv X"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// T. `case` pattern GLOB_SUBST was inverted
+//
+// In a pattern, a substituted parameter's glob metachars are LITERAL unless
+// `$~`/`${~}` or the GLOB_SUBST option forces them active (c:Src/subst.c — the
+// singsub split between substituted bytes and source-level metas). `[[ = ]]`
+// already got this right; `case` had it backwards — plain `$p` globbed (should
+// be literal) and `$~p` was literal (should glob). The two paths now share one
+// helper, so they cannot drift again.
+// ─────────────────────────────────────────────────────────────────────
+mod case_glob_subst {
+    use super::*;
+
+    /// Plain `$p` in a case pattern is LITERAL — `a*` matches only "a*".
+    #[test]
+    fn plain_param_is_literal() {
+        assert_parity(r#"p='a*'; case abc in $p) print -r -- Y;; *) print -r -- N;; esac"#);
+    }
+
+    /// …and it matches the literal string.
+    #[test]
+    fn plain_param_matches_literal() {
+        assert_parity(r#"p='a*'; case 'a*' in $p) print -r -- Y;; *) print -r -- N;; esac"#);
+    }
+
+    /// `$~p` forces the value to glob.
+    #[test]
+    fn tilde_forces_glob() {
+        assert_parity(r#"p='a*'; case abc in $~p) print -r -- Y;; *) print -r -- N;; esac"#);
+    }
+
+    /// `${~p}` (braced) forces the glob too.
+    #[test]
+    fn braced_tilde_forces_glob() {
+        assert_parity(r#"p='a*'; case abc in ${~p}) print -r -- Y;; *) print -r -- N;; esac"#);
+    }
+
+    /// GLOB_SUBST makes plain `$p` glob.
+    #[test]
+    fn globsubst_option_makes_plain_glob() {
+        assert_parity(r#"setopt globsubst; p='a*'; case abc in $p) print -r -- Y;; *) print -r -- N;; esac"#);
+    }
+
+    /// A SOURCE-level meta adjacent to a substitution still globs.
+    #[test]
+    fn source_meta_beside_subst_still_globs() {
+        assert_parity(r#"H=foo; case foobar in $H*) print -r -- Y;; *) print -r -- N;; esac"#);
+    }
+
+    /// The `[[ = ]]` path stays correct (shared helper regression).
+    #[test]
+    fn cond_path_still_correct() {
+        assert_parity(r#"p='a*'; [[ abc = $p ]] && print -r -- Y || print -r -- N; [[ abc = $~p ]] && print -r -- Y || print -r -- N"#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U. Word modifiers missing from the UNBRACED `$var:mod` form
+//
+// zsh applies the whole modifier set to a bare parameter, not just a braced
+// one. Three modifiers were absent from the unbraced scanner and so were left
+// as literal text (`$p:c` stayed `…:c`) while `${p:c}` worked: `:c` (PATH
+// search, c:Src/hist.c:863), `:fs` (the `f` "repeat until stable" prefix on
+// `:s`, c:hist.c), and `:&` (repeat the last `:s`, c:hist.c:903).
+// ─────────────────────────────────────────────────────────────────────
+mod unbraced_modifiers {
+    use super::*;
+
+    /// `:c` resolves a command through $PATH, unbraced.
+    #[test]
+    fn c_path_search_unbraced() {
+        assert_parity(r#"v=ls; print -r -- $v:c"#);
+    }
+
+    /// A non-command value is left unchanged by `:c`.
+    #[test]
+    fn c_leaves_non_command_alone() {
+        assert_parity(r#"v=a:b; print -r -- $v:c"#);
+    }
+
+    /// `:c` in an assignment RHS.
+    #[test]
+    fn c_in_assignment_rhs() {
+        assert_parity(r#"v=ls; w=$v:c; print -r -- "[$w]""#);
+    }
+
+    /// `:fs` — the `f` repeat prefix, unbraced.
+    #[test]
+    fn fs_repeat_prefix_unbraced() {
+        assert_parity(r#"f=/a/a/c; print -r -- $f:fs/a/Z/"#);
+    }
+
+    /// `:fs` vs `:s` — one pass vs repeat-until-stable.
+    #[test]
+    fn fs_differs_from_single_s() {
+        assert_parity(r#"f=/a/a/a; print -r -- "one=$f:s/a/b/ all=$f:fs/a/b/""#);
+    }
+
+    /// `:&` — repeat the last substitution, unbraced (quoted so `&` is literal).
+    #[test]
+    fn ampersand_repeat_unbraced() {
+        assert_parity(r#"f=/x/x/z; print -r -- "$f:s/x/Y/:&""#);
+    }
+
+    /// The braced spellings still work (regression).
+    #[test]
+    fn braced_forms_still_work() {
+        assert_parity(r#"v=ls; f=/a/a/c; print -r -- "${v:c} ${f:fs/a/Z/}""#);
+    }
+}

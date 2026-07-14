@@ -3589,6 +3589,18 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
         }
     }
 
+    // c:2675 — zsh's hist_ring is a doubly-linked list, so its per-entry
+    // "insert at head" (addhistnode) is O(1). This port stores the ring in a
+    // Vec, where `insert(0, ..)` shifts every existing element — O(n) per line,
+    // O(n²) over the whole file. A large HISTFILE (hundreds of thousands of
+    // lines) plus SHARE_HISTORY (which re-reads the file in hend() after every
+    // command, c:1529) turned that into a multi-second memmove spin per prompt.
+    // Collect into a local batch in file order (push = O(1)), then splice the
+    // whole run onto the front of the ring ONCE below. Repeated `insert(0)` of
+    // e1..eN (oldest..newest) yields ring == [eN..e1, existing..]; pushing
+    // e1..eN then reversing gives the same [eN..e1] prefix. One lock, not one
+    // per line.
+    let mut batch: Vec<histent> = Vec::new();
     let mut current: Option<(i64, i64, String)> = None;
     for raw_line in contents.lines() {
         if let Some((stim, ftim, ref mut text)) = current {
@@ -3604,7 +3616,7 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
             entry.stim = stim;
             entry.ftim = ftim;
             entry.node.flags |= HIST_OLD as i32;
-            hist_ring.lock().unwrap().insert(0, entry);
+            batch.push(entry);
             histlinect.fetch_add(1, SeqCst);
             current = None;
         }
@@ -3631,8 +3643,16 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
         entry.stim = stim;
         entry.ftim = ftim;
         entry.node.flags |= HIST_OLD as i32;
-        hist_ring.lock().unwrap().insert(0, entry);
+        batch.push(entry);
         histlinect.fetch_add(1, SeqCst);
+    }
+    if !batch.is_empty() {
+        // Prepend the batch (newest-first) ahead of anything already in the
+        // ring, matching the per-line `insert(0)` order. Single O(n) splice.
+        batch.reverse();
+        let mut ring = hist_ring.lock().unwrap();
+        batch.append(&mut ring);
+        *ring = batch;
     }
     unlockhistfile(&path);
     resizehistents();

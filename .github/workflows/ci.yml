@@ -455,6 +455,19 @@ jobs:
         run: ./target/debug/parity-fuzz --mode special --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/special.txt --out target/parity-fuzz/ci-special.txt
       - name: Fuzz — tied
         run: ./target/debug/parity-fuzz --mode tied --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/tied.txt --out target/parity-fuzz/ci-tied.txt
+      # brace / getopts / assoc / casesel cover brace expansion (ranges, padding,
+      # products), the getopts parse loop (OPTIND/OPTARG, clustering, silent
+      # mode), associative-array flags/subscripts, and case pattern selection
+      # incl. `;&`/`;|` fallthrough and the GLOB_SUBST rule for `$p` vs `$~p`.
+      # All clean (empty baseline: any divergence is a regression).
+      - name: Fuzz — brace
+        run: ./target/debug/parity-fuzz --mode brace --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/brace.txt --out target/parity-fuzz/ci-brace.txt
+      - name: Fuzz — getopts
+        run: ./target/debug/parity-fuzz --mode getopts --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/getopts.txt --out target/parity-fuzz/ci-getopts.txt
+      - name: Fuzz — assoc
+        run: ./target/debug/parity-fuzz --mode assoc --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/assoc.txt --out target/parity-fuzz/ci-assoc.txt
+      - name: Fuzz — casesel
+        run: ./target/debug/parity-fuzz --mode casesel --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/casesel.txt --out target/parity-fuzz/ci-casesel.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
