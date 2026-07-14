@@ -2721,13 +2721,21 @@ const MOD_PATHS: &[&str] = &[
 const MODS: &[&str] = &[
     ":h", ":t", ":r", ":e", ":l", ":u", ":q", ":Q", ":h:t", ":t:r", ":r:e", ":h:h", ":a", ":s/a/Z/",
     ":gs/a/Z/", ":s|/|_|", ":gs|/|_|", ":s/x/Y/:&", ":fs/a//", ":t:u", ":r:l",
+    // `:c` — PATH search (c:Src/hist.c:863). It was absent from this list, and
+    // that is exactly why the fuzzer never noticed it was unimplemented in the
+    // UNBRACED form: every probe below used `${f:mod}`, which worked.
+    ":c", ":c:t", ":c:h",
 ];
+
+/// Values for the `:c` PATH-search modifier: a name that resolves, and one that
+/// does not (an unresolvable name is left UNCHANGED, not emptied).
+const MOD_CMDS: &[&str] = &["ls", "sh", "no_such_command_xyz", "a:b"];
 
 fn gen_modifier(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts: Vec<String> = Vec::new();
 
-    match rng.gen_range(0..6) {
+    match rng.gen_range(0..8) {
         // Scalar + a modifier chain.
         0 | 1 => {
             for _ in 0..rng.gen_range(1..=3) {
@@ -2735,6 +2743,32 @@ fn gen_modifier(seed: u64) -> Vec<String> {
                 let m = pick(&mut rng, MODS);
                 stmts.push(format!("f='{p}'; print -r -- \"[${{f{m}}}]\""));
             }
+        }
+        // The UNBRACED form `$f:mod`. zsh applies the whole modifier set to a
+        // bare parameter too, and this arm is the one that was missing: every
+        // other probe here braces the expansion, so an unbraced-only gap (`$f:c`
+        // left as literal text) was invisible.
+        6 => {
+            // Unquoted `$f:mod`. `&` and `|` are shell metachars bare (`&`
+            // backgrounds the command → output-ordering race; `|` pipes), so the
+            // UNQUOTED probe uses only metachar-free modifiers. The quoted arm
+            // above still exercises `&`/`|` forms.
+            let safe: Vec<&&str> = MODS.iter().filter(|m| !m.contains('&') && !m.contains('|')).collect();
+            for _ in 0..rng.gen_range(1..=3) {
+                let p = pick(&mut rng, MOD_PATHS);
+                let m = **pick(&mut rng, &safe);
+                stmts.push(format!("f='{p}'; print -r -- $f{m}"));
+                stmts.push(format!("f='{p}'; print -r -- \"$f{m}\""));
+            }
+        }
+        // `:c` resolves a command name through $PATH; an unresolvable name is
+        // left alone. Probed both braced and unbraced, and in an assignment RHS
+        // (where the modifier still applies).
+        7 => {
+            let c = pick(&mut rng, MOD_CMDS);
+            stmts.push(format!("v='{c}'; print -r -- \"[${{v:c}}]\""));
+            stmts.push(format!("v='{c}'; print -r -- \"[$v:c]\""));
+            stmts.push(format!("v='{c}'; w=$v:c; print -r -- \"[$w]\""));
         }
         // Array: a modifier applies to EVERY element.
         2 => {
@@ -4070,6 +4104,201 @@ fn gen_special(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// brace generator
+//
+// Brace expansion happens BEFORE parameter expansion and is purely lexical:
+// `{a,b}` alternation, `{1..9}` ranges (which count backwards, zero-pad when
+// the endpoints are padded, and take a third `..step` field), and the products
+// of adjacent braces. A brace with no comma and no range is NOT an expansion —
+// it stays literal — and that rule is where implementations drift.
+// C: Src/glob.c xpandbraces().
+// ---------------------------------------------------------------------------
+
+fn gen_brace_mode(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..18) {
+            0 => "print -r -- {a,b,c}".to_string(),
+            1 => "print -r -- x{a,b}y".to_string(),
+            // Adjacent braces multiply.
+            2 => "print -r -- {a,b}{1,2}".to_string(),
+            3 => "print -r -- {a,b}{c,d}{e,f}".to_string(),
+            // Nested.
+            4 => "print -r -- {a,{b,c},d}".to_string(),
+            5 => "print -r -- x{a,b{c,d}}y".to_string(),
+            // Numeric ranges, including descending.
+            6 => "print -r -- {1..5}".to_string(),
+            7 => "print -r -- {5..1}".to_string(),
+            8 => "print -r -- {-2..2}".to_string(),
+            // Zero padding is inferred from the endpoints.
+            9 => "print -r -- {01..10}".to_string(),
+            10 => "print -r -- {001..003}".to_string(),
+            // A step field.
+            11 => "print -r -- {1..10..3}".to_string(),
+            12 => "print -r -- {10..1..3}".to_string(),
+            // Character ranges.
+            13 => "print -r -- {a..e}".to_string(),
+            14 => "print -r -- {e..a}".to_string(),
+            // NOT expansions: no comma, no range — stays literal.
+            15 => "print -r -- {abc}; print -r -- {}; print -r -- {a}".to_string(),
+            // An empty alternative is a real (empty) word.
+            16 => "print -r -- x{,a}y; print -rl -- {a,,b}; print -r -- END".to_string(),
+            // Braces are expanded before parameters, so a `$var` holding
+            // `{a,b}` does NOT re-expand (without GLOB_SUBST).
+            _ => "v='{a,b}'; print -r -- $v; print -r -- \"{a,b}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// getopts generator
+//
+// `getopts` is a stateful parse loop: $OPTIND indexes the next word, $OPTARG
+// carries the argument, a leading `:` in the option string switches to silent
+// error reporting (`?`/`:` land in the NAME with OPTARG set), clustered flags
+// (`-ab`) come out one per call, and `--` ends the options. Every one of those
+// is an interaction, which is what makes it worth fuzzing rather than unit
+// testing. C: Src/builtin.c bin_getopts().
+// ---------------------------------------------------------------------------
+
+fn gen_getopts(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // A fixed driver so only the option string / argv vary.
+    const DRIVE: &str = "while getopts {OPTSTR} o; do print -r -- \"o=$o arg=[$OPTARG] ind=$OPTIND\"; done; print -r -- \"rest=$* ind=$OPTIND\"";
+    let cases: &[(&str, &str)] = &[
+        ("ab", "set -- -a -b x"),
+        ("ab", "set -- -ab x"),
+        ("a:b", "set -- -a val -b"),
+        ("a:b", "set -- -aval -b"),
+        // Missing argument: loud vs silent.
+        ("a:", "set -- -a"),
+        (":a:", "set -- -a"),
+        // Unknown option: loud vs silent.
+        ("ab", "set -- -z"),
+        (":ab", "set -- -z"),
+        // `--` terminates.
+        ("ab", "set -- -a -- -b"),
+        // A non-option word stops the scan.
+        ("ab", "set -- -a plain -b"),
+        // No options at all.
+        ("ab", "set -- plain"),
+        // Optind is resettable and the loop can be run twice.
+        ("ab", "set -- -a -b"),
+    ];
+    let (optstr, setup) = pick(&mut rng, cases);
+    let mut stmts = vec![setup.to_string()];
+    stmts.push(DRIVE.replace("{OPTSTR}", optstr));
+    // Half the cases re-run the loop after resetting OPTIND, which is the
+    // documented way to parse a second argument list.
+    if rng.gen_bool(0.4) {
+        stmts.push("OPTIND=1".to_string());
+        stmts.push(DRIVE.replace("{OPTSTR}", optstr));
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// assoc generator
+//
+// Associative arrays: the (k)/(v)/(kv) flags, key-ordered iteration, the search
+// subscripts ((i)/(I)/(r)/(R)) over KEYS vs VALUES, element append/unset, and
+// `${(@)h}` vs `$h`. Every whole-table read goes through an ordering flag —
+// hash order is undefined, and an unordered dump would report a divergence that
+// is nothing but the hash seed. C: Src/params.c (assoc GSU), Src/subst.c flags.
+// ---------------------------------------------------------------------------
+
+const ASSOC_STATE: &str = "typeset -A h; h=(one 1 two 2 three 3 four 4); typeset -A e; e=()";
+
+fn gen_assoc(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![ASSOC_STATE.to_string()];
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..18) {
+            // Ordered dumps — never an unordered one.
+            0 => "print -r -- \"${(ok)h}\"".to_string(),
+            1 => "print -r -- \"${(Ok)h}\"".to_string(),
+            2 => "print -r -- \"${(kv)h[(I)*]}\" | tr ' ' '\\n' | sort | tr '\\n' ' '; print -r -- END".to_string(),
+            3 => "for k in ${(ok)h}; do print -r -- \"$k=$h[$k]\"; done".to_string(),
+            // Values, sorted so the order is defined.
+            4 => "print -r -- \"${(on)${(v)h}}\"".to_string(),
+            // Single-key read / membership / count.
+            5 => "print -r -- \"[$h[two]] ${+h[two]} ${+h[nope]} n=${#h}\"".to_string(),
+            // A missing key is empty, not an error.
+            6 => "print -r -- \"[$h[nope]] rc=$?\"".to_string(),
+            // Element assign, append and unset.
+            7 => "h[five]=5; print -r -- \"${(ok)h} n=${#h}\"".to_string(),
+            8 => "h[one]+=X; print -r -- \"[$h[one]]\"".to_string(),
+            9 => "unset 'h[two]'; print -r -- \"${(ok)h} n=${#h}\"".to_string(),
+            // Whole-table append via +=.
+            10 => "h+=(six 6); print -r -- \"${(ok)h} n=${#h}\"".to_string(),
+            // Search subscripts: (i)/(I) match KEYS, (r)/(R) match VALUES.
+            11 => "print -r -- \"[${h[(i)two]}] [${h[(r)2]}]\"".to_string(),
+            12 => "print -rl -- ${(o)h[(I)t*]} | sort | tr '\\n' ' '; print -r -- END".to_string(),
+            13 => "print -rl -- ${(o)h[(R)[0-9]]} | sort | tr '\\n' ' '; print -r -- END".to_string(),
+            // The empty assoc.
+            14 => "print -r -- \"n=${#e} [${(ok)e}] ${+e[x]}\"".to_string(),
+            // (@) keeps elements separate; a bare $h joins with spaces.
+            15 => "print -r -- \"n=${#${(@v)h}}\"".to_string(),
+            // Keys containing spaces survive a round trip.
+            16 => "typeset -A s; s=('a b' 'v 1'); print -r -- \"[${s[a b]}] n=${#s}\"".to_string(),
+            // ${(t)} reports the type.
+            _ => "print -r -- \"${(t)h}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// casesel generator
+//
+// `case` pattern selection and its three terminators: `;;` stops, `;&` falls
+// through to the NEXT body unconditionally, and `;|` re-tests the remaining
+// patterns. Plus alternation, the `(pat)` form, quoting (a quoted pattern is
+// literal), and the exit status of a case with no match.
+// C: Src/exec.c execcase(), Src/parse.c par_case().
+// ---------------------------------------------------------------------------
+
+fn gen_casesel(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let subjects = ["abc", "a", "xyz", "", "a b", "A", "123"];
+    let s = pick(&mut rng, &subjects);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=2) {
+        let stmt = match rng.gen_range(0..12) {
+            0 => format!("case '{s}' in a*) print -r -- STAR;; a) print -r -- EXACT;; *) print -r -- OTHER;; esac"),
+            // Alternation.
+            1 => format!("case '{s}' in a|b|abc) print -r -- ALT;; *) print -r -- NO;; esac"),
+            // `;&` falls through unconditionally.
+            2 => format!("case '{s}' in a*) print -r -- ONE;& x*) print -r -- TWO;; *) print -r -- THREE;; esac"),
+            // `;|` re-tests the remaining patterns.
+            3 => format!("case '{s}' in a*) print -r -- A;| *c) print -r -- C;; *) print -r -- REST;; esac"),
+            // No match at all: status 0, no output.
+            4 => format!("case '{s}' in zzz) print -r -- Z;; esac; print -r -- \"rc=$?\""),
+            // The leading-paren form.
+            5 => format!("case '{s}' in (a*) print -r -- P1;; (*) print -r -- P2;; esac"),
+            // A quoted pattern is a literal.
+            6 => format!("case '{s}' in '*') print -r -- LITSTAR;; *) print -r -- GLOB;; esac"),
+            // Empty subject vs `*` (which matches it).
+            7 => format!("case '{s}' in '') print -r -- EMPTY;; *) print -r -- NONEMPTY;; esac"),
+            // Character classes and extended-glob forms in patterns.
+            8 => format!("setopt extendedglob; case '{s}' in [0-9]##) print -r -- NUM;; [a-z]##) print -r -- LOWER;; *) print -r -- OTHER;; esac"),
+            // The body's status is the case's status.
+            9 => format!("case '{s}' in *) false;; esac; print -r -- \"rc=$?\""),
+            // A pattern containing a parameter.
+            10 => format!("p='a*'; case '{s}' in $~p) print -r -- MATCH;; *) print -r -- NO;; esac"),
+            // Nested case.
+            _ => format!("case '{s}' in a*) case '{s}' in *c) print -r -- INNER;; *) print -r -- OUTER;; esac;; *) print -r -- NONE;; esac"),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4119,6 +4348,10 @@ enum Mode {
     Readb,
     Fd,
     Special,
+    Brace,
+    Getopts,
+    Assoc,
+    Casesel,
 }
 
 struct Args {
@@ -4181,6 +4414,10 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Readb => gen_readb(seed),
         Mode::Fd => gen_fd(seed),
         Mode::Special => gen_special(seed),
+        Mode::Brace => gen_brace_mode(seed),
+        Mode::Getopts => gen_getopts(seed),
+        Mode::Assoc => gen_assoc(seed),
+        Mode::Casesel => gen_casesel(seed),
     }
 }
 
@@ -4231,6 +4468,10 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Readb => "readb",
         Mode::Fd => "fd",
         Mode::Special => "special",
+        Mode::Brace => "brace",
+        Mode::Getopts => "getopts",
+        Mode::Assoc => "assoc",
+        Mode::Casesel => "casesel",
     }
 }
 
@@ -4281,6 +4522,10 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Readb,
         Mode::Fd,
         Mode::Special,
+        Mode::Brace,
+        Mode::Getopts,
+        Mode::Assoc,
+        Mode::Casesel,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -4381,7 +4626,8 @@ fn parse_args() -> Args {
                      emulate, dirstack, unicode, quote, datetime,\n\
                      paramod, procsub, alias, autoload, stat, errexit,\n\
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
-                     readb, fd, special\n\
+                     readb, fd, special, brace, getopts, assoc,\n\
+                     casesel\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

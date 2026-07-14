@@ -16633,14 +16633,19 @@ pub fn apply_bare_modifier_chain(value: &str, chars: &[char], start: usize) -> (
     let mut mod_buf = String::new();
     let mut probe = start;
     while probe < chars.len() && chars[probe] == ':' {
-        let saw_g = chars.get(probe + 1).copied() == Some('g');
-        let s_pos = if saw_g { probe + 2 } else { probe + 1 };
-        if saw_g && chars.get(s_pos).copied() != Some('s') {
-            break;
+        // `g` (global) and `f` (repeat until stable) both prefix `:s`
+        // (c:Src/hist.c — the substitute-modifier flags). Only `g` was accepted
+        // here, so an unbraced `$f:fs/a//` was left as literal text where the
+        // braced `${f:fs/a//}` and the unbraced `$f:gs/a//` both worked.
+        let mut s_pos = probe + 1;
+        let mut saw_prefix = false;
+        while matches!(chars.get(s_pos).copied(), Some('g') | Some('f')) {
+            saw_prefix = true;
+            s_pos += 1;
         }
         let after = chars.get(s_pos).copied();
-        if saw_g || after == Some('s') {
-            if chars.get(s_pos).copied() != Some('s') {
+        if saw_prefix || after == Some('s') {
+            if after != Some('s') {
                 break;
             }
             let delim_pos = s_pos + 1;
@@ -16689,9 +16694,13 @@ pub fn apply_bare_modifier_chain(value: &str, chars: &[char], start: usize) -> (
             probe = span_end;
             continue;
         }
+        // 'c' — PATH search (c:Src/hist.c:863). '&' — repeat the LAST `s///`
+        // substitution (c:Src/hist.c:903). Both were missing here, so an
+        // UNBRACED `$p:c` / `$f:s/x/Y/:&` was left as literal text where the
+        // braced spelling resolved. `&` takes no argument, like h/t.
         let is_simple_mod = matches!(
             after,
-            Some('h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P')
+            Some('h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'a' | 'A' | 'P' | 'c' | '&')
         );
         if !is_simple_mod {
             break;
