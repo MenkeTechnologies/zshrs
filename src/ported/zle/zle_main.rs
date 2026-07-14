@@ -373,7 +373,22 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
 
     let timeout = calc_timeout(do_keytmout);
     let have_timeout = timeout.tp != ztmouttp::ZTM_NONE;
-    let shtty = io::stdin().as_raw_fd();
+
+    // c:531-577 — ZLE reads keystrokes from SHTTY, never fd 0. init.rs relocated
+    // the terminal to a high, FD_CLOEXEC fd via movefd precisely so that fd-0
+    // redirection (a `$(...)`, an external command's stdin) cannot break keyboard
+    // input. Reading io::stdin() (fd 0) here re-exposed that hazard: once a command
+    // substitution left a pipe on fd 0, raw_getbyte blocked forever on a dead fd
+    // while the tty still delivered SIGINT — hang with only C-c alive. Read SHTTY;
+    // fall back to fd 0 only when SHTTY is unset (non-interactive).
+    let shtty = {
+        let fd = SHTTY.load(Ordering::Relaxed);
+        if fd >= 0 {
+            fd
+        } else {
+            io::stdin().as_raw_fd()
+        }
+    };
 
     // c:531-577 — poll SHTTY together with any `zle -F` watched fds,
     // dispatching their handlers as they fire. Replaces a busy-wait sleep
@@ -383,6 +398,15 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     // c:532 — `if (nwatch || tmout.tp != ZTM_NONE)`.
     if initial_nwatch > 0 || have_timeout {
         let ready = libc::POLLIN | libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+        // c:302-303 — a watched fd that reports POLLERR/POLLHUP/POLLNVAL is dead
+        // (peer write end closed). C marks it `fds[i+1].events = 0` so it is
+        // serviced ONCE then never polled again. The port rebuilds the poll set
+        // from WATCH_FDS each pass, so it needs a persistent skip-set instead;
+        // without it a hung-up fd (e.g. zinit's @zinit-scheduler pipe, whose
+        // handler aborts on a nomatch before its `zle -F $fd; exec {fd}<&-`
+        // self-removal) re-fires every pass forever, starving the SHTTY read →
+        // input hang.
+        let mut dont_poll_fds: Vec<i32> = Vec::new();
         loop {
             // Re-snapshot WATCH_FDS on EVERY pass. A fired `zle -F` handler
             // may add, remove, or CLOSE a watched fd: zinit's
@@ -397,6 +421,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 .lock()
                 .unwrap()
                 .iter()
+                .filter(|w| !dont_poll_fds.contains(&w.fd))
                 .map(|w| (w.fd, w.func.clone(), w.widget))
                 .collect();
             // c:565-577 — pollfd array: SHTTY first, then each watch fd.
@@ -469,6 +494,22 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 // c:776-778 — clear any handler error; nothing to recover.
                 crate::ported::utils::errflag
                     .fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::SeqCst);
+                // c:302-303 — this fd hung up / errored. C sets `fds[i+1].events
+                // = 0` to skip it for the rest of THIS getbyte, relying on the
+                // handler's own `zle -F $fd; exec {fd}<&-` to remove it for good.
+                // When the handler aborts before that (e.g. zinit's
+                // @zinit-scheduler hitting a nomatch), the fd stays in WATCH_FDS
+                // and is re-serviced once per getbyte forever — a fork+redraw
+                // churn that never lets the prompt settle. A POLLHUP/POLLNVAL fd
+                // is permanently dead (peer write end closed / fd invalid), so
+                // drop its watcher outright here; POLLERR alone only skips for the
+                // call (transient errors may clear). Without this the shell hangs.
+                if re & (libc::POLLHUP | libc::POLLNVAL) != 0 {
+                    WATCH_FDS.lock().unwrap().retain(|x| x.fd != w.0);
+                    dont_poll_fds.push(w.0);
+                } else if re & libc::POLLERR != 0 {
+                    dont_poll_fds.push(w.0);
+                }
             }
             // loop: re-poll now that the handlers have run.
         }
@@ -479,6 +520,14 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         // next byte never arrives and multi-byte keys like arrows break).
         let mut buf = [0u8; 1];
         let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        if n != 1 {
+            tracing::warn!(
+                "DIAG raw_getbyte poll-path returns None (EOF): read({})=={} errno={}",
+                shtty,
+                n,
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            );
+        }
         return if n == 1 { Some(buf[0]) } else { None };
     }
 
@@ -501,6 +550,11 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         true
     };
     if !in_raw_mode {
+        tracing::warn!(
+            "DIAG raw_getbyte simple-read returns None (EOF): NOT in raw mode. shtty={} is_tty={}",
+            shtty,
+            is_tty
+        );
         return None;
     }
     // RAW unbuffered read (see the poll-path note above): going through
@@ -510,6 +564,12 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     if n == 1 {
         Some(buf[0])
     } else {
+        tracing::warn!(
+            "DIAG raw_getbyte simple-read returns None (EOF): read({})=={} errno={}",
+            shtty,
+            n,
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        );
         None
     }
 }

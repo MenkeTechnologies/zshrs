@@ -2246,10 +2246,15 @@ pub fn ihwend() {
     {
         return;
     }
-    // c:1691 — `if (chwordpos%2 && chline)`. Even chwordpos means
-    // we're between words (no in-flight word to close).
+    // c:1691 — `if (chwordpos%2 && chline)`. Even chwordpos means we're between
+    // words (no in-flight word to close); a NULL `chline` (empty buffer here)
+    // means the history line has been freed. The previous port dropped the
+    // `&& chline` half of this guard, so after `hend()` cleared the buffer a
+    // fall-through still indexed `chwords[chwordpos-1]` out of bounds and
+    // panicked (worker-thread OOB → poisoned the chwords mutex → main-thread
+    // cascade in hend). Restore both halves.
     let pos = chwordpos.load(SeqCst);
-    if pos % 2 == 0 {
+    if pos % 2 == 0 || chline.lock().unwrap().is_empty() {
         return;
     }
     // c:1693 — `if (hptr > chline + chwords[chwordpos-1])`. The
@@ -2261,7 +2266,11 @@ pub fn ihwend() {
     let cur = hptr.load(SeqCst) as i16; // c:1693
     let mut words = chwords.lock().unwrap();
     let start_idx = (pos - 1) as usize;
-    if cur > words[start_idx] {
+    // chwordpos (atomic) and chwords (mutex) are separate primitives; parallel
+    // lexers can leave chwordpos ahead of a chwords that another thread just
+    // cleared. Single-threaded C indexes `chwords[chwordpos-1]` directly; guard
+    // the bound here so the race degrades to "scrub that word" instead of an OOB.
+    if start_idx < words.len() && cur > words[start_idx] {
         // c:1693
         let end_idx = pos as usize;
         if words.len() <= end_idx {
@@ -4809,12 +4818,17 @@ fn resolve_histfile() -> Option<String> {
 
 fn ring_get(ev: i64) -> Option<histent> {
     let ring = hist_ring.lock().unwrap();
-    for h in ring.iter() {
-        if h.histnum == ev {
-            return Some(clone_histent(h));
-        }
+    // hist_ring is strictly DESCENDING by histnum: entries are only ever added
+    // via `insert(0, ...)` with the monotonically increasing `curhist` counter,
+    // so index 0 holds the newest (highest) histnum. A linear scan here walked
+    // all ~40k entries on every lookup — and the full ring on every miss — which
+    // made each prompt slower as history grew (profiled hot path: ring_get →
+    // Iter::next). Binary search is O(log n); the comparator is `ev.cmp(elem)`
+    // to match the descending order.
+    match ring.binary_search_by(|h| ev.cmp(&h.histnum)) {
+        Ok(idx) => Some(clone_histent(&ring[idx])),
+        Err(_) => None,
     }
-    None
 }
 
 fn clone_histent(h: &histent) -> histent {
@@ -4836,11 +4850,13 @@ fn clone_histent(h: &histent) -> histent {
 }
 
 fn ring_position(ev: i64) -> Option<usize> {
+    // hist_ring is strictly descending by histnum (see ring_get); O(log n)
+    // binary search instead of an O(n) linear `position` scan.
     hist_ring
         .lock()
         .unwrap()
-        .iter()
-        .position(|h| h.histnum == ev)
+        .binary_search_by(|h| ev.cmp(&h.histnum))
+        .ok()
 }
 
 fn ring_at(idx: usize) -> i64 {

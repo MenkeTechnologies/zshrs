@@ -6625,11 +6625,13 @@ pub fn paramsubst(
                         // subscript (`${a[1+1]}`, `${a[i+1]}`, `${a[n]}`
                         // where n is a numeric var) evaluate properly.
                         // Parity bug: integer-only parse missed these.
-                        // Skip when sub contains a top-level comma —
+                        // Skip only when sub has a TOP-LEVEL comma —
                         // that's a slice form `[lo,hi]`, handled by
-                        // the downstream split_once arm. mathevali
-                        // would evaluate the comma as the C-style
-                        // sequence operator and mask the slice.
+                        // the downstream split arm. A comma nested in
+                        // `(...)` is the arithmetic comma operator
+                        // (`${a[(3, 2)]}` → 2), which mathevali must
+                        // evaluate here; `sub.contains(',')` wrongly
+                        // treated that as a slice and returned empty.
                         //
                         // Bug #9 in docs/BUGS.md — untokenize before
                         // handing to mathevali. The bare-context lexer
@@ -6644,7 +6646,32 @@ pub fn paramsubst(
                         // because the lexer keeps subscript chars
                         // literal inside DQ. Untokenize here so both
                         // forms hit the same math path.
-                        if sub.contains(',') {
+                        //
+                        // c:Src/lex.c:1743 parse_subscript — a comma is a
+                        // slice separator only at nesting depth 0. Inside a
+                        // `(...)` group it is the arith comma operator
+                        // (`${a[(3, 2)]}` → 2) or a flag delimiter arg
+                        // (`(s.,.)`); track both literal + tokenized
+                        // (Inpar/Inbrack) nesting so it isn't mis-read as a
+                        // slice.
+                        let top_comma = {
+                            let mut depth = 0i32;
+                            sub.chars().any(|c| match c {
+                                '(' | Inpar | '[' | Inbrack => {
+                                    depth += 1;
+                                    false
+                                }
+                                ')' | Outpar | ']' | Outbrack => {
+                                    if depth > 0 {
+                                        depth -= 1;
+                                    }
+                                    false
+                                }
+                                ',' => depth == 0,
+                                _ => false,
+                            })
+                        };
+                        if top_comma {
                             None
                         } else {
                             let untoked = if sub.chars().any(|c| {
@@ -6727,21 +6754,23 @@ pub fn paramsubst(
                     }
                 } else if let Some((start_s, end_s)) = {
                     // Split the slice on its TOP-LEVEL comma (depth 0,
-                    // outside any `(...)` flag block). This keeps a
-                    // PER-BOUND search-flag subscript with its bound
-                    // (`(r)3,(r)5` → "(r)3","(r)5") while still finding
-                    // the range comma when a whole-subscript separator
-                    // flag carries a comma inside its delimiters
-                    // (`(s.,.)1,3` → "(s.,.)1","3"). Bug #83 (separator)
-                    // + per-bound (r)/(i) slice bounds. eval_idx below
-                    // strips/handles each bound's leading flag.
+                    // outside any `(...)` flag block or `[...]`/tokenized
+                    // group). This keeps a PER-BOUND search-flag subscript
+                    // with its bound (`(r)3,(r)5` → "(r)3","(r)5") while
+                    // still finding the range comma when a whole-subscript
+                    // separator flag carries a comma inside its delimiters
+                    // (`(s.,.)1,3` → "(s.,.)1","3"), and never mis-splits an
+                    // arith comma inside `(...)` (`(3, 2)`). Bug #83
+                    // (separator) + per-bound (r)/(i) slice bounds. eval_idx
+                    // below strips/handles each bound's leading flag.
+                    // c:Src/lex.c:1743 parse_subscript nesting walk.
                     let bs: Vec<char> = sub.chars().collect();
                     let mut depth = 0i32;
                     let mut at: Option<usize> = None;
                     for (k, &c) in bs.iter().enumerate() {
                         match c {
-                            '(' => depth += 1,
-                            ')' => {
+                            '(' | Inpar | '[' | Inbrack => depth += 1,
+                            ')' | Outpar | ']' | Outbrack => {
                                 if depth > 0 {
                                     depth -= 1;
                                 }
@@ -7549,12 +7578,31 @@ pub fn paramsubst(
                         })
                         .or_else(|| {
                             // mathevali fallback for arith subscripts like
-                            // `${x[1+1]}`. NOTE: skip when the expression
-                            // contains a top-level comma — that's a slice
-                            // `${x[lo,hi]}`, NOT a math comma-operator.
-                            // mathevali would evaluate "2,4" → 4 and
-                            // mask the slice.
-                            if sub.contains(',') {
+                            // `${x[1+1]}`. NOTE: skip only on a TOP-LEVEL
+                            // comma — that's a slice `${x[lo,hi]}`. A comma
+                            // nested in `(...)` is the math comma operator
+                            // (`${s[(3, 2)]}` → char 2), which mathevali
+                            // must evaluate; `sub.contains(',')` wrongly
+                            // treated it as a slice and returned empty.
+                            // c:Src/lex.c:1743 parse_subscript nesting walk.
+                            let top_comma = {
+                                let mut depth = 0i32;
+                                sub.chars().any(|c| match c {
+                                    '(' | Inpar | '[' | Inbrack => {
+                                        depth += 1;
+                                        false
+                                    }
+                                    ')' | Outpar | ']' | Outbrack => {
+                                        if depth > 0 {
+                                            depth -= 1;
+                                        }
+                                        false
+                                    }
+                                    ',' => depth == 0,
+                                    _ => false,
+                                })
+                            };
+                            if top_comma {
                                 None
                             } else {
                                 // c:Src/params.c getindex -> matheval —
@@ -7619,18 +7667,36 @@ pub fn paramsubst(
                             String::new()
                         }
                     } else if let Some((lo, hi)) = {
-                        // c:Src/params.c parse_subscript — split on the TOP-LEVEL
-                        // range comma. A comma inside the leading `(flags)` group
-                        // (delimited `(n,N,)`/`(s,X,)` args) is NOT the separator,
-                        // so skip the group before searching for the comma.
-                        let scan = if sub.starts_with('(') {
-                            sub.find(')').map(|c| c + 1).unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        sub[scan..]
-                            .find(',')
-                            .map(|rel| (&sub[..scan + rel], &sub[scan + rel + 1..]))
+                        // c:Src/lex.c:1743 parse_subscript — split on the
+                        // TOP-LEVEL range comma. A comma inside a `(flags)`
+                        // group (delimited `(n,N,)`/`(s,X,)` args) or a
+                        // `(...)` arith group is NOT the separator; only a
+                        // depth-0 comma (literal or tokenized nesting) splits
+                        // the slice.
+                        let bs: Vec<char> = sub.chars().collect();
+                        let mut depth = 0i32;
+                        let mut at: Option<usize> = None;
+                        for (k, &c) in bs.iter().enumerate() {
+                            match c {
+                                '(' | Inpar | '[' | Inbrack => depth += 1,
+                                ')' | Outpar | ']' | Outbrack => {
+                                    if depth > 0 {
+                                        depth -= 1;
+                                    }
+                                }
+                                ',' if depth == 0 => {
+                                    at = Some(k);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        at.map(|k| {
+                            (
+                                bs[..k].iter().collect::<String>(),
+                                bs[k + 1..].iter().collect::<String>(),
+                            )
+                        })
                     } {
                         // `${var[N,M]}` scalar char-slice — bug-for-bug port
                         // of getarrvalue's range arm operating on a per-char
@@ -7807,8 +7873,8 @@ pub fn paramsubst(
                             let expanded = singsub(e);
                             crate::ported::math::mathevali(&expanded).unwrap_or(default)
                         };
-                        let lo: i64 = bound_idx(lo, false, 1);
-                        let hi: i64 = bound_idx(hi, true, s_chars.len() as i64);
+                        let lo: i64 = bound_idx(&lo, false, 1);
+                        let hi: i64 = bound_idx(&hi, true, s_chars.len() as i64);
                         // c:Src/params.c — KSH_ARRAYS shifts scalar slice
                         // bounds from 1-based to 0-based inclusive. `a[0,2]`
                         // under KSH_ARRAYS = chars at positions 0,1,2.
@@ -14922,7 +14988,30 @@ pub fn paramsubst(
         // (slice has multiple elements).
         let scripted_scalar = subscript
             .as_deref() // c:3950
-            .map(|s| s != "@" && s != "*" && !s.contains(','))
+            .map(|s| {
+                // A single-element subscript picks a SCALAR (no splat); a
+                // slice `[lo,hi]` stays an array. The separator is a comma
+                // at nesting depth 0 only — a comma inside `(...)` is the
+                // arith comma operator (`${a[(3, 2)]}` → element 2, scalar),
+                // so `s.contains(',')` wrongly flagged it as a slice and
+                // splatted the whole array. c:Src/lex.c:1743 parse_subscript.
+                let mut depth = 0i32;
+                let top_comma = s.chars().any(|c| match c {
+                    '(' | Inpar | '[' | Inbrack => {
+                        depth += 1;
+                        false
+                    }
+                    ')' | Outpar | ']' | Outbrack => {
+                        if depth > 0 {
+                            depth -= 1;
+                        }
+                        false
+                    }
+                    ',' => depth == 0,
+                    _ => false,
+                });
+                s != "@" && s != "*" && !top_comma
+            })
             .unwrap_or(false); // c:3950
                                // ${=name} explicitly forces splat even in DQ context per
                                // subst.c:2566 — the spbreak=2 setting overrides the qt
@@ -15007,16 +15096,17 @@ pub fn paramsubst(
                 // `(...)` flag block) so a per-bound search-flag subscript
                 // stays with its bound (`(r)b,(r)c` → "(r)b","(r)c") and a
                 // whole-subscript separator flag whose delimiters contain a
-                // comma (`(s.,.)1,3`) isn't mis-split. Mirrors the
-                // raw_value slice arm's top-level split at subst.rs:6189.
+                // comma (`(s.,.)1,3`) isn't mis-split, and a comma nested in
+                // `(...)` (the arith comma operator, `(3, 2)`) never
+                // mis-splits. c:Src/lex.c:1743 parse_subscript nesting walk.
                 let top_comma = {
                     let bs: Vec<char> = sub.chars().collect();
                     let mut depth = 0i32;
                     let mut at: Option<usize> = None;
                     for (k, &c) in bs.iter().enumerate() {
                         match c {
-                            '(' => depth += 1,
-                            ')' => {
+                            '(' | Inpar | '[' | Inbrack => depth += 1,
+                            ')' | Outpar | ']' | Outbrack => {
                                 if depth > 0 {
                                     depth -= 1;
                                 }
