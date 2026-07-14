@@ -362,6 +362,44 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                     }
                 }
             }
+            // c:Src/math.c:337 getmathparam → getvalue: magic-assoc special
+            // parameters (`sysparams`, `errnos`, `commands`, …) don't live in
+            // paramtab — their per-key value comes from a module getfn, the
+            // same PARTAB dispatch string context uses (subst.rs:8102). Route
+            // through it so `(( sysparams[pid] ))` yields the pid instead of 0.
+            // gitstatus_start relies on this (plugin line 649 / 593), so the
+            // whole zsh/system-backed init path (p10k's git prompt) was dead.
+            if let Some(e_) = crate::ported::modules::parameter::PARTAB
+                .iter()
+                .find(|e_| e_.name == arr_name)
+            {
+                let module_ok = match e_.module {
+                    Some(m_) => crate::ported::module::MODULESTAB
+                        .lock()
+                        .map(|t| t.is_loaded(m_))
+                        .unwrap_or(false),
+                    None => true,
+                };
+                if module_ok {
+                    if let Some(v) = (e_.getfn)(std::ptr::null_mut(), idx_str).and_then(|p_| p_.u_str)
+                    {
+                        if let Ok(n) = v.parse::<i64>() {
+                            return mnumber {
+                                l: n,
+                                d: 0.0,
+                                type_: MN_INTEGER,
+                            };
+                        }
+                        if let Ok(f) = v.parse::<f64>() {
+                            return mnumber {
+                                l: 0,
+                                d: f,
+                                type_: MN_FLOAT,
+                            };
+                        }
+                    }
+                }
+            }
             return mnumber {
                 l: 0,
                 d: 0.0,
