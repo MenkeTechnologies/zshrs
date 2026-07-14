@@ -528,59 +528,45 @@ pub fn evalcond(
                             // `dot_matches_new_line(true)` so
                             // multi-line `=~` behaves like zsh on
                             // `a\nb`-style inputs. Bug #557.
-                            // c:Src/Modules/regex.c:78 — regcomp(3)
-                            // POSIX-ERE bracket semantics: inside
-                            // `[...]` a backslash is an ordinary
-                            // class member. Translate to the Rust
-                            // regex crate's class syntax via the
-                            // same bridge helper zcond_regex_match
-                            // uses. BUGS.md #558.
-                            let right_ere =
-                                crate::ported::modules::regex::posix_ere_bracket_escape(&right);
-                            match regex::RegexBuilder::new(&right_ere)
-                                .dot_matches_new_line(true)
-                                .build()
-                            {
-                                Ok(re) => {
-                                    if let Some(caps) = re.captures(&left) {
-                                        // Whole-match: $MATCH.
-                                        let m0 = caps.get(0).unwrap();
-                                        setsparam("MATCH", m0.as_str());
-                                        // Capture groups → $match[1..N].
-                                        // zsh's regex module emits the
-                                        // unnamed groups as $match[1..N]
-                                        // — the 0th group (whole match)
-                                        // lives in $MATCH, NOT $match[].
-                                        let mut match_arr: Vec<String> = Vec::new();
-                                        let mut begin_arr: Vec<String> = Vec::new();
-                                        let mut end_arr: Vec<String> = Vec::new();
-                                        for i in 1..caps.len() {
-                                            let s = caps
-                                                .get(i)
-                                                .map(|m| m.as_str().to_string())
-                                                .unwrap_or_default();
-                                            let b = caps
-                                                .get(i)
-                                                .map(|m| (m.start() + 1).to_string())
-                                                .unwrap_or_else(|| "0".into());
-                                            let e = caps
-                                                .get(i)
-                                                .map(|m| m.end().to_string())
-                                                .unwrap_or_else(|| "0".into());
-                                            match_arr.push(s);
-                                            begin_arr.push(b);
-                                            end_arr.push(e);
-                                        }
-                                        setaparam("match", match_arr);
-                                        setaparam("mbegin", begin_arr);
-                                        setaparam("mend", end_arr);
-                                        b2i(true)
-                                    } else {
-                                        b2i(false)
-                                    }
-                                }
-                                Err(_) => 2,
-                            }
+                            // c:Src/cond.c:113-119 — `[[ =~ ]]` carries no engine
+                            // of its own; it DISPATCHES to a module, and WHICH
+                            // module is an option:
+                            //
+                            //   char *modname = isset(REMATCHPCRE) ? "zsh/pcre"
+                            //                                      : "zsh/regex";
+                            //
+                            // The two speak different languages — zsh/regex is
+                            // POSIX ERE (no `\d`, `(?…)` is an error), zsh/pcre
+                            // is PCRE (both work) — so the option genuinely
+                            // changes which patterns match.
+                            //
+                            // This arm used to re-implement the match inline
+                            // against the Rust regex crate, giving zshrs two
+                            // independent `=~` implementations that disagreed
+                            // with each other and with zsh: the inline one
+                            // ignored REMATCHPCRE entirely, honoured neither
+                            // BASH_REMATCH nor KSH_ARRAYS, and computed
+                            // mbegin/mend in BYTES where the module uses
+                            // CHARACTERS. Dispatch, don't duplicate.
+                            //
+                            // The two conventions differ and must be bridged: a
+                            // cond MODULE returns 1 for "matched" (C's Conddef
+                            // handlers are boolean), while evalcond returns the
+                            // SHELL sense, 0 for true. Hence b2i(… != 0).
+                            let matched = if isset(crate::ported::zsh_h::REMATCHPCRE) {
+                                // c:115 — "zsh/pcre" → the `-pcre-match` cond.
+                                crate::ported::modules::pcre::cond_pcre_match(
+                                    &[left.clone(), right.clone()],
+                                    crate::ported::modules::pcre::CPCRE_PLAIN,
+                                )
+                            } else {
+                                // c:115 — "zsh/regex" → the `-regex-match` cond.
+                                crate::ported::modules::regex::zcond_regex_match(
+                                    &[left.as_str(), right.as_str()],
+                                    crate::ported::modules::regex::ZREGEX_EXTENDED,
+                                )
+                            };
+                            b2i(matched != 0)
                         }
                         _ => 2,
                     };
