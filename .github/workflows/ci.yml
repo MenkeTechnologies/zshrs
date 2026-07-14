@@ -400,6 +400,30 @@ jobs:
         run: ./target/debug/parity-fuzz --mode cmdsub --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/cmdsub.txt --out target/parity-fuzz/ci-cmdsub.txt
       - name: Fuzz — loop
         run: ./target/debug/parity-fuzz --mode loop --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/loop.txt --out target/parity-fuzz/ci-loop.txt
+      # datetime / alias / stat reach surface no other mode does — zsh/datetime's
+      # strftime format specifiers, lexer-level alias expansion (parse-time
+      # binding, global + suffix aliases), and zsh/stat's field/format matrix.
+      # All three are fully clean (empty baseline: any divergence is a regression).
+      - name: Fuzz — datetime
+        run: ./target/debug/parity-fuzz --mode datetime --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/datetime.txt --out target/parity-fuzz/ci-datetime.txt
+      - name: Fuzz — alias
+        run: ./target/debug/parity-fuzz --mode alias --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/alias.txt --out target/parity-fuzz/ci-alias.txt
+      - name: Fuzz — stat
+        run: ./target/debug/parity-fuzz --mode stat --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/stat.txt --out target/parity-fuzz/ci-stat.txt
+      # quote / procsub / autoload / errexit / paramod each carry a SMALL set of
+      # triaged, documented gaps (see the header of each baseline file). They are
+      # blocking gates against that allowlist: the known gaps are tolerated, any
+      # NEW divergence fails the build. Drive the allowlists to empty over time.
+      - name: Fuzz — quote
+        run: ./target/debug/parity-fuzz --mode quote --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/quote.txt --out target/parity-fuzz/ci-quote.txt
+      - name: Fuzz — procsub
+        run: ./target/debug/parity-fuzz --mode procsub --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/procsub.txt --out target/parity-fuzz/ci-procsub.txt
+      - name: Fuzz — autoload
+        run: ./target/debug/parity-fuzz --mode autoload --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/autoload.txt --out target/parity-fuzz/ci-autoload.txt
+      - name: Fuzz — errexit
+        run: ./target/debug/parity-fuzz --mode errexit --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/errexit.txt --out target/parity-fuzz/ci-errexit.txt
+      - name: Fuzz — paramod
+        run: ./target/debug/parity-fuzz --mode paramod --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/paramod.txt --out target/parity-fuzz/ci-paramod.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
@@ -418,6 +442,18 @@ jobs:
       - name: Fuzz — arith (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode arith --count 4000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-arith.txt
+      # Informational — unicode is still gap-rich. Character-class matching
+      # ([[:alpha:]] and bracket literals/ranges) is byte-based rather than
+      # decoding a character and testing it with the isw*() family
+      # (Src/pattern.c:3609 mb_patmatchrange), and the MULTIBYTE option is not
+      # consulted by the length / index / pad sites (C gates them all behind two
+      # primitives, Src/utils.c:5611 mb_metacharlenconv and :5654
+      # mb_metastrlenend). Both are structural; until they are ported this mode
+      # reports its count for visibility rather than blocking. Promote to a
+      # baselined gate once those land.
+      - name: Fuzz — unicode (informational)
+        continue-on-error: true
+        run: ./target/debug/parity-fuzz --mode unicode --count 3000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-unicode.txt
       - name: Upload divergence corpora
         if: failure()
         uses: actions/upload-artifact@v4

@@ -2285,6 +2285,21 @@ impl ShellExecutor {
                 let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
             }
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
+                // c:Src/exec.c:5684-5704 (loadautofn) —
+                //     int noalias = noaliases;
+                //     noaliases = (shf->node.flags & PM_UNALIASED);
+                //     prog = getfpfunc(...);        /* parses the file */
+                //     noaliases = noalias;
+                // `autoload -U` records PM_UNALIASED (c:3354-3357), and its ONLY
+                // effect is that the autoloaded body is PARSED with alias
+                // expansion disabled. zshrs recorded the bit but never consulted
+                // it, so a body calling `helper` picked up a caller-defined
+                // `alias helper=...` — exactly what -U exists to prevent.
+                let unaliased =
+                    (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0;
+                let noalias_save = crate::ported::lex::noaliases(); // c:5684
+                crate::ported::lex::set_noaliases(unaliased); // c:5697
+                let _restore_noaliases = NoAliasesRestore(noalias_save); // c:5704
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
@@ -2381,6 +2396,20 @@ impl ShellExecutor {
                 let _ = self.execute_script_zsh_pipeline(&format!("autoload -rUz -- {name}"));
             }
             if let Some(stub) = crate::ported::utils::getshfunc(name) {
+                // c:Src/exec.c:5684-5704 (loadautofn) — `autoload -U` records
+                // PM_UNALIASED, whose ONLY effect is that the autoloaded body is
+                // PARSED with alias expansion disabled:
+                //     int noalias = noaliases;
+                //     noaliases = (shf->node.flags & PM_UNALIASED);
+                //     prog = getfpfunc(...);        /* parses the file */
+                //     noaliases = noalias;
+                let unaliased =
+                    (stub.node.flags as u32 & crate::ported::zsh_h::PM_UNALIASED) != 0;
+                let noalias_save = crate::ported::lex::noaliases(); // c:5684
+                crate::ported::lex::set_noaliases(unaliased); // c:5697
+                                                              // c:5704 — restored on EVERY exit from this block, including the
+                                                              // early `return Some(1)` paths below.
+                let _restore_noaliases = NoAliasesRestore(noalias_save);
                 if (stub.node.flags as u32 & PM_UNDEFINED) != 0 {
                     let boxed = Box::new(stub.clone());
                     let ptr = Box::into_raw(boxed);
@@ -3624,6 +3653,22 @@ impl ShellExecutor {
 // the canonical funcdef opcode still fires and any extra
 // statements run inside the registered body, matching C's
 // behavior of using the whole prog as funcdef in that case.
+/// Restore `noaliases` on scope exit.
+///
+/// C's `loadautofn` (Src/exec.c:5684-5704) saves `noaliases`, sets it from the
+/// function's PM_UNALIASED bit for the duration of the body parse, and restores
+/// it unconditionally. The zshrs autoload block has early `return` paths, so the
+/// restore has to ride on Drop rather than a trailing statement — otherwise a
+/// `-U` autoload that failed to load would leave alias expansion disabled for
+/// the rest of the shell.
+struct NoAliasesRestore(bool);
+
+impl Drop for NoAliasesRestore {
+    fn drop(&mut self) {
+        crate::ported::lex::set_noaliases(self.0); // c:5704
+    }
+}
+
 fn autoload_register_source(name: &str, body: &str) -> String {
     // c:Src/exec.c:5725 — `if (ksh == 2 || (ksh == 1 && isset(KSHAUTOLOAD)))`
     // — the ksh-style load branch. ksh derives from the stub's

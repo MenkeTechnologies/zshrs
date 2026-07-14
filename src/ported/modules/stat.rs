@@ -614,6 +614,13 @@ pub fn bin_stat(
                 };
                 zwarnnam(nam, &format!("{}: {}", path, msg));
                 rc = 1;
+                // c:567-568 — `if (OPT_ISSET(ops,'f') || arrnam) break; else continue;`
+                // With -A (or -f) the whole result is a single aggregate, so the
+                // first failure abandons the loop; without one, the remaining
+                // files are still reported.
+                if arrnam.is_some() || ops[b'f' as usize] {
+                    break;
+                }
                 continue;
             }
         };
@@ -653,21 +660,27 @@ pub fn bin_stat(
         }
     }
 
-    if let Some(name) = arrnam {
-        // c:setaparam
-        // c — `setaparam(name, zarrdup(array_out));` — real indexed array.
-        setaparam(&name, array_out); // c:params.c:3595
-    }
-    if let Some(name) = hashnam {
-        // c:sethparam
-        // c — `sethparam(name, ...);` — real assoc array. Flatten
-        // hash_out into alternating [k,v,k,v,...].
-        let mut flat: Vec<String> = Vec::with_capacity(hash_out.len() * 2);
-        for (k, v) in hash_out {
-            flat.push(k);
-            flat.push(v);
+    // c:613-631 — `if (ret) freearray(array); else setaparam(...)`. The result is
+    // accumulated into a LOCAL buffer and only published to the parameter when
+    // every file stat'd cleanly. On any failure the buffer is dropped and the
+    // target parameter keeps whatever it already held — so a failing
+    // `zstat -H h <dangling-link>` must not wipe the assoc a previous successful
+    // zstat left in `h`.
+    if rc == 0 {
+        if let Some(name) = arrnam {
+            // c — `setaparam(name, zarrdup(array_out));` — real indexed array.
+            setaparam(&name, array_out); // c:params.c:3595
         }
-        sethparam(&name, flat); // c:params.c:3602
+        if let Some(name) = hashnam {
+            // c — `sethparam(name, ...);` — real assoc array. Flatten
+            // hash_out into alternating [k,v,k,v,...].
+            let mut flat: Vec<String> = Vec::with_capacity(hash_out.len() * 2);
+            for (k, v) in hash_out {
+                flat.push(k);
+                flat.push(v);
+            }
+            sethparam(&name, flat); // c:params.c:3602
+        }
     }
     rc
 }

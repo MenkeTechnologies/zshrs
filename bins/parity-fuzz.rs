@@ -51,11 +51,31 @@ fn zsh_path() -> &'static str {
     }
 }
 
+/// Raw bytes, never `String`: a shell legitimately emits output that is not
+/// valid UTF-8 (`$'\M-a'`, `printf '\xff'`, an 8-bit locale). `read_to_string`
+/// FAILS on such a stream and leaves the buffer empty, so both shells would
+/// report "" and silently agree — a divergence the harness could never see.
+/// Comparing bytes (and only ever lossy-rendering for the human-facing report)
+/// keeps the 8-bit surface honest.
 struct RunOut {
-    stdout: String,
-    stderr: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
     exit: i32,
     timed_out: bool,
+}
+
+/// Render captured bytes for a report. Invalid UTF-8 is shown lossily AND
+/// followed by a hex line — two different invalid byte strings both render to
+/// U+FFFD, so without the hex the record would show a divergence as identical
+/// text.
+fn render(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim_end_matches('\n');
+    if std::str::from_utf8(bytes).is_err() {
+        let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        return format!("{text}\n  (hex) {}", hex.join(" "));
+    }
+    text.to_string()
 }
 
 /// --stderr: also require the two shells' DIAGNOSTICS to agree, not just stdout
@@ -67,15 +87,19 @@ static CMP_STDERR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// (`zsh: no such file` vs `zshrs: no such file`), which is not a parity gap.
 /// Normalize the leading shell-name tag off every line; everything after it —
 /// the wording, the offending word, the line number — must match exactly.
-fn norm_stderr(s: &str) -> String {
-    s.lines()
-        .map(|l| {
-            l.strip_prefix("zshrs:")
-                .or_else(|| l.strip_prefix("zsh:"))
-                .unwrap_or(l)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+fn norm_stderr(s: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
+    for (i, line) in s.split(|&b| b == b'\n').enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        let l = line
+            .strip_prefix(b"zshrs:".as_slice())
+            .or_else(|| line.strip_prefix(b"zsh:".as_slice()))
+            .unwrap_or(line);
+        out.extend_from_slice(l);
+    }
+    out
 }
 
 /// The divergence predicate. stdout + exit always; stderr only under --stderr.
@@ -98,8 +122,8 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
         Ok(c) => c,
         Err(_) => {
             return RunOut {
-                stdout: String::new(),
-                stderr: String::new(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
                 exit: -999,
                 timed_out: false,
             }
@@ -110,13 +134,13 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
         match child.try_wait() {
             Ok(Some(status)) => {
                 use std::io::Read;
-                let mut buf = String::new();
+                let mut buf: Vec<u8> = Vec::new();
                 if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_string(&mut buf);
+                    let _ = out.read_to_end(&mut buf);
                 }
-                let mut ebuf = String::new();
+                let mut ebuf: Vec<u8> = Vec::new();
                 if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_string(&mut ebuf);
+                    let _ = err.read_to_end(&mut ebuf);
                 }
                 return RunOut {
                     stdout: buf,
@@ -130,8 +154,8 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
                     let _ = child.kill();
                     let _ = child.wait();
                     return RunOut {
-                        stdout: String::new(),
-                        stderr: String::new(),
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
                         exit: -1,
                         timed_out: true,
                     };
@@ -140,8 +164,8 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunOut {
             }
             Err(_) => {
                 return RunOut {
-                    stdout: String::new(),
-                    stderr: String::new(),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
                     exit: -998,
                     timed_out: false,
                 }
@@ -1032,6 +1056,62 @@ fn setup_glob_fixture() -> PathBuf {
     // Stagger directory mtimes too.
     set_mtime(&dir.join("dir1"), base_epoch + 1000);
     set_mtime(&dir.join("dir2"), base_epoch + 1100);
+    dir
+}
+
+/// Create (idempotently) the autoload fixture: a directory whose `fns/` holds
+/// one file per autoloadable function. Under zsh's default (non-KSH) autoload
+/// the file's TEXT IS THE BODY; under KSH_AUTOLOAD the file is expected to
+/// DEFINE the function. `af_ksh` is written to satisfy the ksh contract so the
+/// two loading styles produce visibly different results from the same file.
+fn setup_autoload_fixture() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-fuzz")
+        .join("autoload-fixture");
+    let _ = std::fs::remove_dir_all(&dir);
+    let fns = dir.join("fns");
+    std::fs::create_dir_all(&fns).expect("create autoload fixture dir");
+
+    let files: &[(&str, &str)] = &[
+        ("af_plain", "print -r -- plain\n"),
+        ("af_args", "print -r -- \"args=$* n=$#\"\n"),
+        ("af_zero", "print -r -- \"zero=$0\"\n"),
+        // ksh-style: defines the function; KSH_AUTOLOAD then calls it. Under the
+        // default style, running the body merely REDEFINES af_ksh and prints
+        // nothing — that difference is the probe.
+        ("af_ksh", "af_ksh() { print -r -- \"ksh $1\" }\n"),
+        // Body calls `helper`, which the caller has defined BOTH as a function
+        // and as an alias: -U picks the function, no -U picks the alias.
+        ("af_alias", "helper arg\n"),
+        // One file, several functions: the named one is the body, the rest are
+        // defined as a side effect of running it.
+        (
+            "af_multi",
+            "af_extra() { print -r -- extra }\nprint -r -- multi\naf_extra\n",
+        ),
+    ];
+    for (name, body) in files {
+        std::fs::write(fns.join(name), body).unwrap();
+    }
+    dir
+}
+
+/// An empty, disposable directory to run modes that can WRITE files.
+///
+/// alias mode probes a global alias in redirect position
+/// (`alias -g N=/dev/null; print -r -- gone > N`). That is safe as written — but
+/// the delta-minimizer's whole job is to drop statements, and dropping the alias
+/// line leaves `print -r -- gone > N`, which creates a literal file called `N`
+/// in the cwd. Without this fixture that file lands in the REPO ROOT. Any mode
+/// whose probes can redirect must run from here, not from the source tree.
+fn setup_scratch_fixture() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-fuzz")
+        .join("scratch");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create scratch fixture dir");
     dir
 }
 
@@ -2936,6 +3016,594 @@ fn gen_dirstack(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// unicode generator
+//
+// Multibyte text is the single largest hole in the rest of the corpus: every
+// other mode is pure ASCII, so nothing pins the character-vs-byte distinction.
+// zsh counts CHARACTERS (not bytes) for ${#s} and subscripts, but pads by
+// DISPLAY WIDTH under the (m) flag — a wide CJK char counts 1 for ${#} and 2
+// for (ml:N:). C: Src/utils.c mb_metastrlen()/MB_METASTRWIDTH, Src/subst.c.
+//
+// Deterministic: fixed literals, no locale-dependent collation (no (o)/(O) on
+// non-ASCII — strcoll order is a libc property, not a parity property).
+// ---------------------------------------------------------------------------
+
+const UNI_STATE: &str = concat!(
+    "u=héllo_wörld; ",           // Latin-1 supplement: 2 bytes/char
+    "j=日本語テキスト; ",         // CJK: 3 bytes/char, display width 2
+    "gr=αβγδε; ",                // Greek: 2 bytes/char
+    "cy=Привет; ",               // Cyrillic: 2 bytes/char
+    "acc=$'e\\u0301'; ",         // e + COMBINING ACUTE — 2 chars, 3 bytes, 1 glyph
+    "mix='aé漢z'; ",             // 1+2+3+1 bytes across four chars
+    "wide='一二三'; ",            // all-wide, for (m) width padding
+    "uarr=(é ö 漢 z a); ",
+);
+
+fn gen_unicode(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let vars = ["u", "j", "gr", "cy", "acc", "mix", "wide"];
+    let mut stmts = vec![UNI_STATE.trim_end().to_string()];
+    // MULTIBYTE is default-on; flipping it off switches every length/index
+    // operation to raw bytes — the same probe must then agree byte-for-byte.
+    if rng.gen_bool(0.2) {
+        stmts.push("unsetopt multibyte".to_string());
+    }
+    for _ in 0..rng.gen_range(2..=4) {
+        let v = *pick(&mut rng, &vars);
+        let stmt = match rng.gen_range(0..16) {
+            // Character count vs byte count: ${#v} is chars, $#v under
+            // nomultibyte is bytes.
+            0 => format!("print -r -- \"len=${{#{v}}}\""),
+            // Character subscripting — indexes are character offsets.
+            1 => format!("print -r -- \"[${{{v}[2]}}][${{{v}[2,3]}}][${{{v}[-1]}}]\""),
+            2 => format!("print -r -- \"[${{{v}[1,-2]}}]\""),
+            // Case conversion over non-ASCII (Greek/Cyrillic have real case).
+            3 => format!("print -r -- \"${{({0}){v}}}\"", pick(&mut rng, &["U", "L", "C"])),
+            // Padding: (l)/(r) count CHARACTERS; with (m) they count WIDTH.
+            4 => format!("print -r -- \"[${{(l:8::.:){v}}}]\""),
+            5 => format!("print -r -- \"[${{(r:8::.:){v}}}]\""),
+            6 => format!("print -r -- \"[${{(ml:8::.:){v}}}]\""),
+            // Splitting into characters: (s::) with an empty separator.
+            7 => format!("print -rl -- ${{(s::){v}}}; print -r -- END"),
+            // (#) — arithmetic value → character. `##x` is the codepoint of x.
+            8 => format!("print -r -- \"${{(#)$(( ##${{{v}[1]}} ))}}\""),
+            9 => format!("print -r -- \"cp=$(( ##${{{v}[1]}} ))\""),
+            // Pattern matching: `?` is one CHARACTER, not one byte.
+            10 => format!("[[ ${v} = ? ]] && print -r -- one || print -r -- many"),
+            11 => format!("[[ ${v} = ??* ]] && print -r -- Y || print -r -- N"),
+            // Character classes over non-ASCII.
+            12 => format!("print -r -- \"${{{v}//[[:alpha:]]/.}}\""),
+            // Quoting a multibyte string must not split a character.
+            13 => format!("print -r -- \"${{(q){v}}}|${{(qq){v}}}\""),
+            // (V) makes unprintables visible — must not mangle valid multibyte.
+            14 => format!("print -r -- \"${{(V){v}}}\""),
+            // Substitution with a multibyte needle and replacement.
+            _ => format!("print -r -- \"${{{v}/[[:alpha:]]/漢}}\""),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// quote generator
+//
+// Two halves of one round trip:
+//   * `$'…'` DECODES escapes (C: Src/utils.c getkeystring()) — \x41, \101,
+//     é, \U0001F600, \M-a (meta: sets bit 7), \C-a (control), \e, \a…
+//   * the (q…) family ENCODES a string back to a re-parseable form (C:
+//     Src/subst.c quotestring(), QT_* modes): (q) backslash, (qq) single,
+//     (qqq) double, (qqqq) $'…', (q-) minimal, (q+) $'…' only when needed.
+// `${(Q)${(q…)v}}` must be the identity for every v — that is the invariant.
+//
+// The RunOut byte-comparison above is what makes this mode possible at all:
+// \M-a emits a bare 0xE1 byte, which is not valid UTF-8.
+// ---------------------------------------------------------------------------
+
+/// Strings chosen so every quoting mode has something to escape: spaces, both
+/// quote characters, glob metachars, `!`, `$`, backslash, tab/newline, and a
+/// leading `-` / `~` (which only (q-)/(q+) treat specially).
+const QUOTE_SUBJECTS: &[&str] = &[
+    "plain",
+    "a b",
+    "a'b",
+    r#"a"b"#,
+    "a\\$b",
+    "a*b?c[d]",
+    "a!b",
+    "-lead",
+    "~home",
+    "a#b",
+    "",
+    "a=b",
+];
+
+/// `$'…'` escape bodies. Every one has a single, defined byte expansion.
+const QUOTE_ESCAPES: &[&str] = &[
+    r"\x41\x42",
+    r"\101\102",
+    r"é",
+    r"日本",
+    r"\U0001F600",
+    r"\a\b\f\v",
+    r"\e[1m",
+    r"\t|\n|",
+    r"\\|\'",
+    r"\M-a",
+    r"\M-\C-a",
+    r"\C-a\C-z",
+    r"\x7f",
+    r"\0101",
+];
+
+fn gen_quote(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..10) {
+            // $'…' decoding, byte-exact (piped through od so an invalid-UTF-8
+            // result is still a comparable, printable byte sequence — and the
+            // raw form is printed too, since the harness compares bytes).
+            0 => {
+                let e = pick(&mut rng, QUOTE_ESCAPES);
+                format!("print -rn -- $'{e}' | od -An -tx1 | tr -s ' '")
+            }
+            1 => {
+                let e = pick(&mut rng, QUOTE_ESCAPES);
+                format!("v=$'{e}'; print -r -- \"len=${{#v}}\"")
+            }
+            2 => {
+                let e = pick(&mut rng, QUOTE_ESCAPES);
+                format!("v=$'{e}'; print -r -- \"[${{(V)v}}]\"")
+            }
+            // (q…) encoding of a subject with something to escape.
+            3 => {
+                let s = pick(&mut rng, QUOTE_SUBJECTS);
+                let f = pick(&mut rng, &["q", "qq", "qqq", "qqqq", "q-", "q+"]);
+                format!("v='{}'; print -r -- \"[${{({f})v}}]\"", s.replace('\'', "'\\''"))
+            }
+            // The round-trip invariant: (Q) undoes every (q…) form exactly.
+            4 => {
+                let s = pick(&mut rng, QUOTE_SUBJECTS);
+                let f = pick(&mut rng, &["q", "qq", "qqq", "qqqq", "q-", "q+"]);
+                format!(
+                    "v='{}'; r=${{(Q)${{({f})v}}}}; [[ $r == $v ]] && print -r -- ok || print -r -- \"BAD[$r]\"",
+                    s.replace('\'', "'\\''")
+                )
+            }
+            // Quoting a value that itself contains decoded escapes.
+            5 => {
+                let e = pick(&mut rng, QUOTE_ESCAPES);
+                let f = pick(&mut rng, &["q", "qq", "qqqq", "q+"]);
+                format!("v=$'{e}'; print -r -- \"[${{({f})v}}]\" | od -An -tx1 | tr -s ' '")
+            }
+            // printf %q — the builtin path into the same quoting code.
+            6 => {
+                let s = pick(&mut rng, QUOTE_SUBJECTS);
+                format!("printf '%q\\n' '{}'", s.replace('\'', "'\\''"))
+            }
+            // (q) applied element-wise across an array.
+            7 => "arr=('a b' \"c'd\" 'e*f' '' '-g'); print -r -- \"${(q)arr}\"; print -r -- \"${(qq)arr}\"".to_string(),
+            // Quoting inside a nested expansion — the flag must not leak out.
+            8 => {
+                let s = pick(&mut rng, QUOTE_SUBJECTS);
+                format!("v='{}'; print -r -- \"${{(q)${{v}}}}\"", s.replace('\'', "'\\''"))
+            }
+            // ${(z)…} splits a quoted string back into shell words — the
+            // consumer of everything above.
+            _ => {
+                let s = pick(&mut rng, QUOTE_SUBJECTS);
+                format!(
+                    "v=\"${{(q)$(print -rn -- '{}')}}\"; print -rl -- ${{(z)v}}; print -r -- END",
+                    s.replace('\'', "'\\''")
+                )
+            }
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// datetime generator (zsh/datetime)
+//
+// `strftime` is on the hot path of every prompt theme, so its format-specifier
+// coverage is load-bearing. TZ is pinned to UTC in the preamble: without it the
+// two shells would still agree (same env) but the corpus would not reproduce
+// across machines. Only FIXED epochs are used — never $EPOCHSECONDS, which is
+// nondeterministic by construction. C: Src/Modules/datetime.c bin_strftime().
+// ---------------------------------------------------------------------------
+
+/// Epochs chosen to straddle the awkward cases: a leap day, a year boundary,
+/// an ISO-week boundary (Jan 1 falling in the previous ISO year), the epoch
+/// itself, and a pre-epoch (negative) instant.
+const EPOCHS: &[&str] = &[
+    "0",            // 1970-01-01T00:00:00Z
+    "1600000000",   // 2020-09-13 (Sunday — %u/%w edge)
+    "1583020800",   // 2020-03-01, just past a leap day
+    "1582934400",   // 2020-02-29 — leap day
+    "1577836800",   // 2020-01-01 — ISO week 1 of 2020
+    "1609459199",   // 2020-12-31T23:59:59Z
+    "946684800",    // 2000-01-01
+    "2147483647",   // Y2038 boundary
+    "-86400",       // 1969-12-31 — pre-epoch
+];
+
+const STRF_FMTS: &[&str] = &[
+    "%Y-%m-%d",
+    "%H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+    "%j",           // day of year
+    "%U|%W|%V",     // week numbers: Sunday-based, Monday-based, ISO
+    "%G-W%V-%u",    // ISO year/week/day — disagrees with %Y at year boundaries
+    "%a %A %b %B",  // names
+    "%C|%y",        // century, 2-digit year
+    "%e|%k|%l",     // space-padded variants
+    "%I %p",        // 12-hour
+    "%D|%F|%R|%T",  // compound specifiers
+    "%s",           // seconds back out — must round-trip the input
+    "%n|%t|%%",     // literal newline/tab/percent
+    "%Z|%z",        // TZ-pinned
+    "%c|%x|%X",     // locale-dependent (same libc both sides)
+    "%w|%u",        // weekday numbering: 0-6 (Sun=0) vs 1-7 (Mon=1)
+];
+
+fn gen_datetime(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![
+        "zmodload zsh/datetime".to_string(),
+        "export TZ=UTC".to_string(),
+    ];
+    for _ in 0..rng.gen_range(2..=4) {
+        let f = pick(&mut rng, STRF_FMTS);
+        let e = pick(&mut rng, EPOCHS);
+        let stmt = match rng.gen_range(0..6) {
+            // Plain: format an epoch to stdout.
+            0 => format!("strftime '{f}' {e}"),
+            // -s: assign instead of printing.
+            1 => format!("strftime -s v '{f}' {e}; print -r -- \"[$v]\""),
+            // -r: parse a formatted time back to an epoch. Round-trips only for
+            // formats that carry a full date+time, so use a fixed pair.
+            2 => format!("strftime -r '%Y-%m-%d %H:%M:%S' '2020-09-13 12:26:40'"),
+            3 => format!("strftime -r -s v '%Y-%m-%dT%H:%M:%S' '2000-01-01T00:00:00'; print -r -- \"[$v]\""),
+            // The %s round trip: format then re-parse must be the identity.
+            4 => format!(
+                "strftime -s t '%Y-%m-%d %H:%M:%S' {e}; strftime -r -s back '%Y-%m-%d %H:%M:%S' \"$t\"; print -r -- \"$(( back == {e} ))\""
+            ),
+            // Nanosecond arg (3rd positional) — %N is a zsh extension.
+            _ => format!("strftime '{f}' {e} 123456789"),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// paramod generator (zsh/parameter)
+//
+// The introspection surface every serious plugin framework is built on:
+// $functions (function BODIES as text — the formatting is a parity contract),
+// $parameters (type strings), $options, $aliases/$galiases/$saliases,
+// $funcstack/$funcfiletrace, $+commands/$+builtins.
+// C: Src/Modules/parameter.c.
+//
+// Deterministic: membership tests and single-key reads only; whole-table dumps
+// always go through an ordering flag, and $commands is only ever probed with
+// `${+commands[…]}` (its contents depend on PATH, its membership does not).
+// ---------------------------------------------------------------------------
+
+fn gen_paramod(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["zmodload zsh/parameter".to_string()];
+    for _ in 0..rng.gen_range(2..=4) {
+        let stmt = match rng.gen_range(0..14) {
+            // $functions[f] is the function body, re-rendered from the parse
+            // tree — indentation, `;` placement and keyword spelling must match.
+            0 => "f() { print -r -- hi }; print -r -- \"$functions[f]\"".to_string(),
+            1 => "f() { if [[ -n $1 ]]; then print -r -- \"$1\"; else print -r -- none; fi }; print -r -- \"$functions[f]\"".to_string(),
+            2 => "f() { for i in 1 2 3; do print -r -- $i; done }; print -r -- \"$functions[f]\"".to_string(),
+            3 => "f() { local x=1; (( x++ )); print -r -- $x }; print -r -- \"$functions[f]\"".to_string(),
+            // Round trip: eval the stored body back into a function and run it.
+            4 => "f() { print -r -- body }; functions[g]=$functions[f]; g".to_string(),
+            // Membership / removal.
+            5 => "f() { : }; print -r -- \"${+functions[f]} ${+functions[nope]}\"; unfunction f; print -r -- \"${+functions[f]}\"".to_string(),
+            6 => "f() { : }; g() { : }; print -r -- ${(ok)functions[(I)[fg]]}".to_string(),
+            // $parameters — the TYPE string for each declared parameter.
+            7 => {
+                let d = pick(
+                    &mut rng,
+                    &[
+                        "x=1",
+                        "typeset -i x=1",
+                        "typeset -a x=(1 2)",
+                        "typeset -A x=(k v)",
+                        "typeset -F x=1.5",
+                        "typeset -r x=ro",
+                        "typeset -x x=exported",
+                        "typeset -Z 3 x=7",
+                    ],
+                );
+                format!("{d}; print -r -- \"$parameters[x]\"; print -r -- \"${{(t)x}}\"")
+            }
+            // $options tracks setopt state, both directions.
+            8 => {
+                let o = pick(&mut rng, &["extendedglob", "nullglob", "ksharrays", "shwordsplit", "nomatch"]);
+                format!("print -r -- \"$options[{o}]\"; setopt {o}; print -r -- \"$options[{o}]\"; unsetopt {o}; print -r -- \"$options[{o}]\"")
+            }
+            // $options is writable: assigning drives setopt.
+            9 => "options[extendedglob]=on; [[ -o extendedglob ]] && print -r -- on || print -r -- off".to_string(),
+            // $aliases / $galiases / $saliases.
+            10 => "alias a1='print x'; alias -g G1='| cat'; alias -s sfx='print'; print -r -- \"[$aliases[a1]][$galiases[G1]][$saliases[sfx]]\"".to_string(),
+            11 => "alias b='print y'; print -r -- ${(ok)aliases[(I)b]}; unalias b; print -r -- \"${+aliases[b]}\"".to_string(),
+            // $funcstack / $functrace inside nested calls.
+            12 => "outer() { inner }; inner() { print -r -- \"stack=${(j:,:)funcstack}\" }; outer".to_string(),
+            // Builtin/command membership (never the whole table — PATH varies).
+            _ => "print -r -- \"${+builtins[print]} ${+builtins[nosuchbuiltin]} ${+functions[print]}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// procsub generator
+//
+// Process substitution: `<(…)` (a /dev/fd path fed by a forked writer) and
+// `=(…)` (a real temp file, written fully before the command runs). The two
+// differ in exactly the ways that matter — a `=()` file is seekable and
+// complete, a `<()` fifo/fd is neither. C: Src/exec.c getproc()/getoutputfile().
+//
+// Deterministic: the substituted PATH is never printed (an fd number / temp
+// name is not a parity property) — only the CONTENT read through it. `>(…)` is
+// excluded on purpose: zsh does not wait for the writer before the next
+// command, so its output ordering is racy and would produce false positives.
+// ---------------------------------------------------------------------------
+
+fn gen_procsub(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..12) {
+            0 => "cat <(print -l a b c)".to_string(),
+            1 => "cat <(print -l a b) <(print -l c d)".to_string(),
+            // Nested process substitution.
+            2 => "cat <(cat <(print -l x y))".to_string(),
+            // Redirect stdin FROM a process substitution.
+            3 => "while read -r l; do print -r -- \"L:$l\"; done < <(print -l p q r)".to_string(),
+            4 => "read -r first < <(print -l one two); print -r -- \"first=$first\"".to_string(),
+            // `=(…)`: a real file — seekable, and `$(<f)` works on it.
+            5 => "cat =(print -l 1 2 3)".to_string(),
+            6 => "f==(print -l a b); print -r -- \"$(<$f)\"; print -r -- \"exists=$([[ -f $f ]] && print y || print n)\"".to_string(),
+            // A `=()` file is a regular file; a `<()` path is not.
+            7 => "[[ -f =(print x) ]] && print -r -- regular || print -r -- notregular".to_string(),
+            // Command substitution wrapping process substitution.
+            8 => "v=$(cat <(print -l m n)); print -r -- \"[${v//$'\\n'/,}]\"".to_string(),
+            // Word splitting of the read-back content.
+            9 => "print -rl -- ${(f)\"$(cat <(print -l q w e))\"}; print -r -- END".to_string(),
+            // Process substitution as a non-first argument, twice in one word list.
+            10 => "wc -l < <(print -l a b c d)".to_string(),
+            // Exit status: the SUBSTITUTION's status is not the command's.
+            _ => "cat <(exit 3) > /dev/null; print -r -- \"rc=$?\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// alias generator
+//
+// Aliases are expanded by the LEXER, not the evaluator: the binding is frozen
+// when the enclosing function is PARSED, so redefining an alias afterwards does
+// not change the already-parsed body. An AST-first shell gets this wrong by
+// construction unless it models it deliberately. Also covered: global aliases
+// (expand in any word position), suffix aliases (expand on the command word by
+// extension), a trailing space in an alias body (which makes the NEXT word
+// alias-eligible), and self-referential aliases (expanded once, not forever).
+// C: Src/lex.c checkalias(), Src/hashtable.c, Src/builtin.c bin_alias().
+// ---------------------------------------------------------------------------
+
+fn gen_alias(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..14) {
+            0 => "alias hi='print -r -- HI'; hi".to_string(),
+            // Alias body ending in a space makes the next word alias-eligible.
+            1 => "alias e='print -r -- '; alias w=WORD; e w".to_string(),
+            // No trailing space ⇒ the next word is NOT expanded.
+            2 => "alias e='print -r --'; alias w=WORD; e w".to_string(),
+            // Alias chaining.
+            3 => "alias a=b; alias b='print -r -- CHAIN'; a".to_string(),
+            // Self-reference: expanded once, then the command word wins.
+            4 => "alias print='print -r -- pre'; print x; unalias print; print -r -- post".to_string(),
+            // Parse-time binding: f captures the alias as it was at PARSE time.
+            5 => "alias x='print -r -- A'; f() { x }; alias x='print -r -- B'; f; x".to_string(),
+            // Global alias: expands in ANY word position, not just command.
+            6 => "alias -g UP='| tr a-z A-Z'; print -r -- hello UP".to_string(),
+            7 => "alias -g N=/dev/null; print -r -- gone > N; print -r -- done".to_string(),
+            8 => "alias -g A='a b'; print -rl -- A; print -r -- END".to_string(),
+            // Suffix alias: a command word with that extension runs the alias.
+            9 => "alias -s zzz='print -r -- ran'; foo.zzz".to_string(),
+            // Alias listing forms — the OUTPUT FORMAT is the contract.
+            10 => "alias q1='print \"a b\"'; alias q2='x*y'; alias".to_string(),
+            11 => "alias l1='print 1'; alias -L".to_string(),
+            12 => "alias m1='print 1'; alias m2='print 2'; alias -m 'm*'".to_string(),
+            // `command`/`\` bypass alias expansion; unalias -m removes by pattern.
+            _ => "alias p='print -r -- ALIASED'; \\p -r -- raw; unalias -m 'p*'; p -r -- gone".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// autoload generator
+//
+// Function autoloading off $fpath: zsh's default is "the file IS the body"
+// (a bare list of commands), while KSH_AUTOLOAD means "the file DEFINES the
+// function and is then called". `autoload +X` loads without running; `-U`
+// suppresses alias expansion inside the loaded body; `functions`/`whence -v`
+// must report the loaded state. Runs from a read-only fixture directory whose
+// `fns/` holds the function files. C: Src/exec.c loadautofn()/execautofn().
+// ---------------------------------------------------------------------------
+
+fn gen_autoload(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec!["fpath=(./fns)".to_string()];
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..12) {
+            // Default (non-ksh) autoload: the file's text is the body.
+            0 => "autoload -Uz af_args; af_args a b c".to_string(),
+            1 => "autoload -Uz af_plain; af_plain; af_plain".to_string(),
+            // $0 inside an autoloaded function is the FUNCTION name (unless
+            // FUNCTION_ARGZERO is off).
+            2 => "autoload -Uz af_zero; af_zero".to_string(),
+            // +X loads the body without executing it; the body is then visible.
+            3 => "autoload -Uz +X af_plain; print -r -- \"${+functions[af_plain]}\"; functions af_plain".to_string(),
+            // Undefined until called: the stub body is the marker.
+            4 => "autoload -Uz af_plain; print -r -- \"$functions[af_plain]\"".to_string(),
+            5 => "autoload -Uz af_plain; whence -v af_plain".to_string(),
+            // KSH_AUTOLOAD: the file DEFINES the function, then it is called.
+            6 => "setopt kshautoload; autoload -Uz af_ksh; af_ksh one".to_string(),
+            // Without KSH_AUTOLOAD, a file that both defines AND calls runs the
+            // definition as the body — the extra call is the observable.
+            7 => "autoload -Uz af_ksh; af_ksh one".to_string(),
+            // -U suppresses alias expansion inside the loaded body: the body's
+            // `helper arg` resolves to the FUNCTION, not the alias.
+            8 => "helper() { print -r -- \"FUNC $1\" }; alias helper='print -r -- HIJACKED'; autoload -Uz af_alias; af_alias".to_string(),
+            // …without -U, the alias DOES apply inside the body.
+            9 => "helper() { print -r -- \"FUNC $1\" }; alias helper='print -r -- HIJACKED'; autoload -z af_alias; af_alias".to_string(),
+            // A file defining several functions; only the named one autoloads.
+            10 => "autoload -Uz af_multi; af_multi".to_string(),
+            // Listing autoloads and unfunction'ing an unresolved stub.
+            _ => "autoload -Uz af_plain af_args; autoload +X af_plain; unfunction af_args; print -r -- \"${+functions[af_args]} ${+functions[af_plain]}\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// stat generator (zsh/stat)
+//
+// Runs against the same fixed fixture as glob mode (distinct sizes, staggered
+// mtimes), so every field read is deterministic. atime and ctime are NEVER
+// probed: reading a file updates atime, so the second shell to run would see a
+// different value — a harness artifact, not a parity gap.
+// C: Src/Modules/stat.c bin_stat().
+// ---------------------------------------------------------------------------
+
+const STAT_FILES: &[&str] = &["a.txt", "bb.log", "ccc.txt", "d.md", "empty", "dir1", "link"];
+const STAT_FIELDS: &[&str] = &["+size", "+mode", "+nlink", "+mtime", "+uid", "+gid", "+link"];
+
+fn gen_stat(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![
+        "zmodload zsh/stat".to_string(),
+        "export TZ=UTC".to_string(),
+    ];
+    for _ in 0..rng.gen_range(1..=3) {
+        let f = pick(&mut rng, STAT_FILES);
+        let fld = pick(&mut rng, STAT_FIELDS);
+        let stmt = match rng.gen_range(0..10) {
+            // Single field, raw.
+            0 => format!("zstat {fld} {f}"),
+            // -s: string-ify (mode becomes -rw-r--r--, uid becomes a name).
+            1 => format!("zstat -s {fld} {f}"),
+            // -H: read the whole stat into an assoc, then index it.
+            2 => format!("zstat -H h {f}; print -r -- \"$h[size] $h[nlink]\""),
+            3 => format!("zstat -s -H h {f}; print -r -- \"$h[mode]\""),
+            // -A: read into an array (order is the canonical field order).
+            4 => format!("zstat -A arr +size {f}; print -r -- \"${{(j:,:)arr}}\""),
+            // -F: format the time fields (TZ-pinned above).
+            5 => format!("zstat -F '%Y-%m-%d %H:%M:%S' +mtime {f}"),
+            // -L: lstat — the dangling symlink is the whole point.
+            6 => format!("zstat -L +size link; zstat -L -s +mode link"),
+            // -n: prefix each result with the file name (multi-file form).
+            7 => format!("zstat -n {fld} a.txt bb.log ccc.txt"),
+            // Whole stat, no field selector: every name=value line.
+            8 => format!("zstat -H h {f}; print -rl -- ${{(ok)h}}; print -r -- END"),
+            // Error path: a nonexistent file must fail the same way.
+            _ => "zstat +size nosuchfile 2>/dev/null; print -r -- \"rc=$?\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// errexit generator
+//
+// Failure propagation is a nest of interacting options, and the exception
+// carve-outs are the part shells get wrong: under ERR_EXIT a command that fails
+// inside an `if` condition, a `&&`/`||` left operand, a `!`-negated pipeline, or
+// a `while` test must NOT exit — but the same command as a plain statement must.
+// PIPE_FAIL changes which member of a pipeline supplies `$?`; ERR_RETURN makes a
+// failure return from the enclosing function instead of exiting the shell; an
+// `always` block runs regardless and can clear the error via TRY_BLOCK_ERROR.
+// The generated script's EXIT STATUS is itself a compared output here.
+// C: Src/exec.c execlist()/execpline(), Src/loop.c, Src/builtin.c.
+// ---------------------------------------------------------------------------
+
+fn gen_errexit(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    // Roughly half the cases arm one or more of the propagation options.
+    let mut opts: Vec<&str> = Vec::new();
+    if rng.gen_bool(0.5) {
+        opts.push("errexit");
+    }
+    if rng.gen_bool(0.3) {
+        opts.push("pipefail");
+    }
+    if rng.gen_bool(0.3) {
+        opts.push("errreturn");
+    }
+    if !opts.is_empty() {
+        stmts.push(format!("setopt {}", opts.join(" ")));
+    }
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..16) {
+            // Bare failure — under errexit the shell dies here and the trailing
+            // print never runs, so the script's exit code is the observable.
+            0 => "false; print -r -- after".to_string(),
+            1 => "(exit 3); print -r -- \"rc=$?\"".to_string(),
+            // Carve-out: a failing command in an `if` CONDITION never triggers
+            // errexit.
+            2 => "if false; then print -r -- t; else print -r -- f; fi; print -r -- after".to_string(),
+            // Carve-out: left operand of && / ||.
+            3 => "false || print -r -- fallback; print -r -- after".to_string(),
+            4 => "false && print -r -- never; print -r -- after".to_string(),
+            // Carve-out: a `!`-negated pipeline.
+            5 => "! false; print -r -- \"rc=$? after\"".to_string(),
+            // Carve-out: a `while` test.
+            6 => "n=0; while (( n < 2 )) && false; do :; done; print -r -- after".to_string(),
+            // NOT a carve-out: the last command of an && chain still triggers.
+            7 => "true && false; print -r -- after".to_string(),
+            // Pipelines: $? is the LAST member's status, or the last FAILING
+            // member's under pipefail.
+            8 => "true | false | true; print -r -- \"rc=$?\"".to_string(),
+            9 => "false | true; print -r -- \"rc=$?\"".to_string(),
+            10 => "print -r -- x | false; print -r -- \"rc=$?\"".to_string(),
+            // errreturn: the failure returns from f, not from the shell.
+            11 => "f() { false; print -r -- unreached }; f; print -r -- \"rc=$? after\"".to_string(),
+            12 => "f() { return 4 }; f; print -r -- \"rc=$?\"".to_string(),
+            // always: runs on both paths; TRY_BLOCK_ERROR reports/clears the error.
+            13 => "{ false } always { print -r -- \"always tbe=$TRY_BLOCK_ERROR\" }; print -r -- \"rc=$? after\"".to_string(),
+            14 => "{ false } always { TRY_BLOCK_ERROR=0 }; print -r -- \"rc=$? cleared\"".to_string(),
+            // A failing command in a subshell/command substitution.
+            _ => "v=$(false); print -r -- \"rc=$? v=[$v]\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    // Make the final exit status observable even when errexit killed the script
+    // early (in which case this line never runs — which is itself the signal).
+    stmts.push("print -r -- END".to_string());
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -2967,6 +3635,15 @@ enum Mode {
     Mathfunc,
     Emulate,
     Dirstack,
+    Unicode,
+    Quote,
+    Datetime,
+    Paramod,
+    Procsub,
+    Alias,
+    Autoload,
+    Stat,
+    Errexit,
 }
 
 struct Args {
@@ -3011,6 +3688,15 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Mathfunc => gen_mathfunc(seed),
         Mode::Emulate => gen_emulate(seed),
         Mode::Dirstack => gen_dirstack(seed),
+        Mode::Unicode => gen_unicode(seed),
+        Mode::Quote => gen_quote(seed),
+        Mode::Datetime => gen_datetime(seed),
+        Mode::Paramod => gen_paramod(seed),
+        Mode::Procsub => gen_procsub(seed),
+        Mode::Alias => gen_alias(seed),
+        Mode::Autoload => gen_autoload(seed),
+        Mode::Stat => gen_stat(seed),
+        Mode::Errexit => gen_errexit(seed),
     }
 }
 
@@ -3043,6 +3729,15 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Mathfunc => "mathfunc",
         Mode::Emulate => "emulate",
         Mode::Dirstack => "dirstack",
+        Mode::Unicode => "unicode",
+        Mode::Quote => "quote",
+        Mode::Datetime => "datetime",
+        Mode::Paramod => "paramod",
+        Mode::Procsub => "procsub",
+        Mode::Alias => "alias",
+        Mode::Autoload => "autoload",
+        Mode::Stat => "stat",
+        Mode::Errexit => "errexit",
     }
 }
 
@@ -3075,6 +3770,15 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Mathfunc,
         Mode::Emulate,
         Mode::Dirstack,
+        Mode::Unicode,
+        Mode::Quote,
+        Mode::Datetime,
+        Mode::Paramod,
+        Mode::Procsub,
+        Mode::Alias,
+        Mode::Autoload,
+        Mode::Stat,
+        Mode::Errexit,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -3172,7 +3876,8 @@ fn parse_args() -> Args {
                      subscript, pattern, typeset, zutil, func, redir,\n\
                      nest, arith, match, regex, builtin, cmdsub, loop,\n\
                      split, trap, pipeline, prompt, modifier, mathfunc,\n\
-                     emulate, dirstack\n\
+                     emulate, dirstack, unicode, quote, datetime,\n\
+                     paramod, procsub, alias, autoload, stat, errexit\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
@@ -3264,10 +3969,24 @@ fn main() {
         std::process::exit(2);
     }
 
-    // Glob mode needs a fixture directory that every generated pattern globs.
-    if args.mode == Mode::Glob {
-        let dir = setup_glob_fixture();
-        FIXTURE_CWD.set(dir).ok();
+    // Modes that read the filesystem run from a fixture directory. glob and
+    // stat share one (fixed sizes + staggered mtimes make both the ordering
+    // qualifiers and the stat fields deterministic); autoload gets its own
+    // `fns/` tree on $fpath. Every fixture is READ-ONLY at run time, which is
+    // what lets the parallel workers share a single cwd.
+    match args.mode {
+        Mode::Glob | Mode::Stat => {
+            FIXTURE_CWD.set(setup_glob_fixture()).ok();
+        }
+        Mode::Autoload => {
+            FIXTURE_CWD.set(setup_autoload_fixture()).ok();
+        }
+        // Modes whose probes (or whose MINIMIZED probes) can create files must
+        // never run from the source tree — see setup_scratch_fixture.
+        Mode::Alias | Mode::Procsub | Mode::Errexit => {
+            FIXTURE_CWD.set(setup_scratch_fixture()).ok();
+        }
+        _ => {}
     }
 
     // --once: replay a single seed, minimize if it diverges, dump both sides.
@@ -3290,9 +4009,9 @@ fn main() {
         };
         println!("program:\n  {}", show.replace('\n', "\n  "));
         println!("--- zsh   exit={} timeout={} ---", z.exit, z.timed_out);
-        print!("{}", z.stdout);
+        let _ = std::io::stdout().write_all(&z.stdout);
         println!("--- zshrs exit={} timeout={} ---", r.exit, r.timed_out);
-        print!("{}", r.stdout);
+        let _ = std::io::stdout().write_all(&r.stdout);
         println!("--- {} ---", if diverged { "DIVERGE" } else { "match" });
         std::process::exit(if diverged { 1 } else { 0 });
     }
@@ -3358,7 +4077,7 @@ fn main() {
                         // unreadable (identical stdout, invisible difference).
                         let err_of = |o: &RunOut| -> String {
                             if CMP_STDERR.load(Ordering::Relaxed) {
-                                format!("\n  stderr: {}", norm_stderr(o.stderr.trim_end()).replace('\n', "\n  "))
+                                format!("\n  stderr: {}", render(&norm_stderr(&o.stderr)).replace('\n', "\n  "))
                             } else {
                                 String::new()
                             }
@@ -3372,11 +4091,11 @@ fn main() {
                             mz.exit,
                             mz.timed_out,
                             err_of(&mz),
-                            mz.stdout.trim_end_matches('\n'),
+                            render(&mz.stdout),
                             mr.exit,
                             mr.timed_out,
                             err_of(&mr),
-                            mr.stdout.trim_end_matches('\n'),
+                            render(&mr.stdout),
                         );
                         let mut d = divergences.lock().unwrap();
                         d.push((seed, rec));

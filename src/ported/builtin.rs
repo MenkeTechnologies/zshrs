@@ -3548,12 +3548,26 @@ pub fn typeset_single(
                | PM_HASHED | PM_ARRAY | PM_TIED | PM_AUTOLOAD);
         if chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT) {
             tc = 1; // c:2122
-            if OPT_MINUS(ops, b'p') {
+            usepm = if OPT_MINUS(ops, b'p') {
                 // c:2123
-                usepm = (on as u32 & pm_flags) as i32;
+                (on as u32 & pm_flags) as i32
             } else if OPT_PLUS(ops, b'p') {
-                usepm = (off as u32 & pm_flags) as i32;
-            }
+                // c:2125
+                (off as u32 & pm_flags) as i32
+            } else {
+                // c:2127 — `else usepm = 0;`
+                //
+                // This `else` was missing, and it is what selects between the
+                // two mutually exclusive paths. usepm != 0 takes the MERGE path
+                // (c:2291: keep the existing flags, add `on`, drop `off`), while
+                // usepm == 0 falls through to the type-conversion path (c:2355),
+                // which deletes the parameter and recreates it carrying ONLY
+                // READONLY|EXPORTED (c:2357). Leaving usepm set meant a base-type
+                // change merged instead of recreating, so `typeset -Z 3 x=7;
+                // typeset -i x=1` kept the right_zeros attribute (zsh: `integer`,
+                // zshrs: `integer-right_zeros`).
+                0
+            };
         }
     }
 

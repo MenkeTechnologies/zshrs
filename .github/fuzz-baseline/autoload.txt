@@ -1,0 +1,11 @@
+# parity-fuzz --mode autoload baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode autoload --count N --verify 3  (copy NEW-signature lines).
+#
+# Open gap: an autoloaded function must record the DIRECTORY it was loaded
+# from (Shfunc.filename + PM_LOADDIR, Src/exec.c:5656 loadautofnsetfile), so
+# `whence -v` prints "... from <fpath-dir>/<name>". zshrs re-registers the
+# body through the funcdef opcode, which stamps scriptfilename ("zsh") and
+# drops PM_LOADDIR.
+autoload -Uz af_plain; af_plain; af_plain
+autoload -Uz af_plain; whence -v af_plain

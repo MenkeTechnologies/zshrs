@@ -14558,20 +14558,21 @@ pub fn paramsubst(
             }
         }
 
-        // (V) visible — render non-printable chars per zsh's
-        // `nicechar` style (`\t` and `\n` get backslash forms, other
-        // controls under 0x20 use `^X`, 0x7f → `^?`, high-bit bytes →
-        // `\M-X`). Port of subst.c:2232 mods bit 1 calling
-        // Src/utils.c:520 nicechar via Src/utils.c:4157. The previous
-        // Rust port used `^X` uniformly so `(V)$'a\tb'` rendered
-        // `a^Ib` instead of zsh's `a\tb`.
+        // (V) visible — render non-printable chars per zsh's `nicechar` style
+        // (`\t`/`\n` get backslash forms, controls under 0x20 use `^X`, 0x7f →
+        // `^?`, undecodable high-bit bytes → `\M-X`). Port of subst.c:2232 mods
+        // bit 1, which calls nicedupstring (c:4166) — NOT nicechar directly.
+        //
+        // The distinction is the whole bug: nicechar/nicechar_sel is the BYTE
+        // renderer (`c &= 0xff` at utils.c:466), so feeding it a `char` truncates
+        // the codepoint — `一` (U+4E00) came out as `^@`, `二` (U+4E8C) as
+        // `\M-^L`, `é` as `\M-i`. nicedupstring → mb_niceformat (utils.c:5366)
+        // instead decodes the string and tests each WIDE char with iswprint,
+        // passing printable multibyte through verbatim, and only falls back to
+        // the byte renderer for bytes that genuinely do not decode.
         let visible_one = |s: &str| -> String {
-            // c:2232
-            let mut out = String::with_capacity(s.len());
-            for c in s.chars() {
-                out.push_str(&crate::ported::utils::nicechar(c)); // c:520
-            }
-            out
+            // c:4166 — `val = nicedupstring(val);`
+            crate::ported::utils::nicedupstring(s)
         };
         // c:Src/subst.c:4041 (quotemod) precedes 4160 (mods/V): a positive
         // `q` quote runs BEFORE the `(V)` visible mod. Since q-quoting always
@@ -14870,54 +14871,25 @@ pub fn paramsubst(
                     // c:4157 if (mods & 2)
                     return s.to_string(); // c:4158
                 } // c:4158
-                  // Direct port of nicechar / nicedupstring per
-                  // Src/utils.c:462 — render non-printables as
-                  // `\n`, `\t`, `^X`, `\M-X`, `^?` etc.
-                let mut out = String::with_capacity(s.len());
-                for ch in s.chars() {
-                    let code = ch as u32;
-                    if code == 0x9d {
-                        // Internal Snull marker injected by the (q) flag's
-                        // wrap_snull around a quoted region. It is NOT user
-                        // content and must pass through untouched so the
-                        // downstream Snull stripper can remove it; rendering
-                        // it here as `\M-^]` leaked literal markers to output
-                        // (`${(Vq)empty}` → `\M-^]''\M-^]` instead of `''`).
-                        out.push(ch);
-                    } else if (0x20..=0x7e).contains(&code) {
-                        out.push(ch);
-                    } else if code == 0x7f {
-                        out.push('^');
-                        out.push('?');
-                    } else if code == 0x0a {
-                        out.push('\\');
-                        out.push('n');
-                    } else if code == 0x09 {
-                        out.push('\\');
-                        out.push('t');
-                    } else if code < 0x20 {
-                        out.push('^');
-                        out.push((b'@' + (code as u8)) as char);
-                    } else if code < 0x100 {
-                        // High-bit byte → `\M-X`
-                        out.push_str("\\M-");
-                        let stripped = code & 0x7f;
-                        if (0x20..=0x7e).contains(&stripped) {
-                            out.push(stripped as u8 as char);
-                        } else if stripped < 0x20 {
-                            out.push('^');
-                            out.push((b'@' + (stripped as u8)) as char);
-                        } else {
-                            out.push('?');
-                        }
-                    } else {
-                        // Multi-byte char above ASCII range — pass through
-                        // (zsh's wcs_nicechar handles this; for now keep
-                        // the codepoint visible as-is).
-                        out.push(ch);
-                    }
-                }
-                out
+                  // c:4166 — `val = nicedupstring(val);`
+                  //
+                  // This used to hand-roll the rendering per `char`, with a
+                  // `code < 0x100 → \M-X` arm. That arm is the BYTE renderer's
+                  // rule applied to a CHARACTER, so every codepoint in
+                  // 0x80..=0xFF was mangled: `é` (U+00E9) came out as `\M-i`,
+                  // `ö` as `\M-v`. (Codepoints >= 0x100 fell through the
+                  // pass-through arm, which is why Greek and Cyrillic looked
+                  // fine and only Latin-1 broke.) nicedupstring → mb_niceformat
+                  // decodes properly and tests each WIDE char with iswprint.
+                  //
+                  // Snull (0x9d) is an internal marker the (q) flag wraps around
+                  // a quoted region — not user content — so hold those out of the
+                  // rendering and re-emit them verbatim, or `${(Vq)empty}` leaks
+                  // `\M-^]''\M-^]` instead of `''`.
+                s.split(Snull)
+                    .map(crate::ported::utils::nicedupstring)
+                    .collect::<Vec<String>>()
+                    .join(&Snull.to_string())
             };
             let pipeline = |s: &str| -> String {
                 let s1 = render_d(s);

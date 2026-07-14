@@ -1,0 +1,15 @@
+# parity-fuzz --mode quote baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode quote --count N --verify 3  (copy NEW-signature lines).
+#
+# Open gaps:
+#  * $'...' decode: the \M-\C-x form yields the wrong byte.
+#  * (q+) / quotedzputs on an undecodable byte.
+#  * (q) of a backslash-$ string, re-split by (z).
+#  * (Q) of a (qqqq)-quoted `!` does not round-trip (BANGHIST escape).
+v="${(q)$(print -rn -- 'a\$b')}"; print -rl -- ${(z)v}; print -r -- END
+v=$'\M-\C-a'; print -r -- "[${(V)v}]"
+v=$'\M-\C-a'; print -r -- "[${(q+)v}]" | od -An -tW | tr -s ' '
+v=$'\M-\C-a'; print -r -- "[${(qq)v}]" | od -An -tW | tr -s ' '
+v=$'\M-a'; print -r -- "[${(q+)v}]" | od -An -tW | tr -s ' '
+v='a!b'; r=${(Q)${(qqqq)v}}; [[ $r == $v ]] && print -r -- ok || print -r -- "BAD[$r]"

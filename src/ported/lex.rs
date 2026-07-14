@@ -1070,7 +1070,9 @@ fn gettok() -> lextok {
     // loop; don't unget+reread.
     let c = loop {
         match hgetc() {
-            Some(ch) if crate::ztype_h::iblank(ch as u8) => continue,
+            // `ch as u8` truncates a multibyte codepoint into the blank range
+            // (U+4E09 → 0x09); only ASCII can be blank.
+            Some(ch) if ch.is_ascii() && crate::ztype_h::iblank(ch as u8) => continue,
             Some(ch) => break ch,
             None => {
                 // c:624-625 — `if (lexstop) return (errflag) ?
@@ -1158,7 +1160,9 @@ fn gettok() -> lextok {
     // `peekfd` and `c` is rewritten to the operator char so the
     // LX1 dispatch sees the redir, not the digit.
     let mut c = c;
-    if crate::ztype_h::idigit(c as u8) {
+    // ASCII-only: `c as u8` on a multibyte char truncates into the digit range
+    // (U+4E30 → 0x30 = '0'), which would misread a CJK word as a redirection fd.
+    if c.is_ascii() && crate::ztype_h::idigit(c as u8) {
         let d = hgetc();
         match d {
             Some('&') => {
@@ -1603,7 +1607,13 @@ fn gettokstr(c: char, sub: bool) -> lextok {
     }
 
     loop {
-        let inbl = crate::ztype_h::inblank(c as u8);
+        // C's lexer walks BYTES, so `inblank(c)` can only ever fire on a byte —
+        // and no byte of a UTF-8 multibyte character is 0x20 or 0x09. Rust walks
+        // `char`s, so casting one to u8 TRUNCATES the codepoint: `三` (U+4E09)
+        // became 0x09 = TAB and `丠` (U+4E20) became 0x20 = SPACE, so an
+        // unquoted CJK word was split apart as if it were whitespace
+        // (`print -r -- 三` printed nothing). Only ASCII can be blank.
+        let inbl = c.is_ascii() && crate::ztype_h::inblank(c as u8);
 
         if inbl && in_brace_param == 0 && pct == 0 {
             // Whitespace outside brace param ends token
@@ -3121,7 +3131,8 @@ fn checkalias(lextext: &str) -> bool {
             // This pulls a blank out of the queue if its only purpose
             // was a pending re-read for whitespace handling.
             while let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
-                if !crate::ztype_h::iblank(c as u8) {
+                // ASCII-only: see the truncation note in `gettokstr`.
+                if !(c.is_ascii() && crate::ztype_h::iblank(c as u8)) {
                     break;
                 }
                 LEX_UNGET_BUF.with_borrow_mut(|b| {
@@ -3130,7 +3141,8 @@ fn checkalias(lextext: &str) -> bool {
             }
             if !LEX_LEXSTOP.get() {
                 if let Some(c) = peek() {
-                    if !crate::ztype_h::iblank(c as u8) {
+                    // ASCII-only: see the truncation note in `gettokstr`.
+                    if !(c.is_ascii() && crate::ztype_h::iblank(c as u8)) {
                         inpush(" ", INP_ALIAS, None);
                     }
                 }
@@ -3656,7 +3668,9 @@ fn skipcomm() -> Result<(), ()> {
             }
         };
 
-        let iswhite = crate::ztype_h::inblank(c as u8);
+        // Only ASCII can be blank — see the note in `gettokstr`: `c as u8` on a
+        // multibyte char truncates the codepoint into the blank range.
+        let iswhite = c.is_ascii() && crate::ztype_h::inblank(c as u8);
 
         // Word boundary keyword tracking.
         let is_word_terminator =
@@ -4093,7 +4107,13 @@ pub fn lex_init(input: &str) {
     LEX_INCONDPAT.set(false);
     LEX_OLDPOS.set(true);
     LEX_DBPARENS.set(false);
-    LEX_NOALIASES.set(false);
+    // NOT reset here. C's `lexinit` (c:441-445) resets nocorrect/dbparens/lexstop
+    // but deliberately leaves `noaliases` alone: it is a plain global
+    // (Src/lex.c:135), saved and restored by its callers. `loadautofn`
+    // (Src/exec.c:5684-5704) sets it from the function's PM_UNALIASED bit and
+    // then parses the autoloaded file — so resetting it inside lexinit would
+    // clobber the flag before the parse it exists to govern, which is why
+    // `autoload -U` failed to suppress alias expansion in the loaded body.
     LEX_NOCORRECT.set(0);
     LEX_NOCOMMENTS.set(false);
     LEX_LEXFLAGS.set(0);
@@ -4369,7 +4389,15 @@ fn is_valid_assignment_target(s: &str) -> bool {
             if c == Inbrack || c == '[' || c == '+' {
                 break;
             }
-            if !crate::ztype_h::iident(c as u8) && c != Stringg && !itok(c as u8) {
+            // Both classifiers are BYTE tables, so a `char as u8` cast truncates.
+            // `iident` is ASCII-only; `itok` must stay reachable for the token
+            // codepoints themselves (Pound 0x84 … Nularg 0xa1, all < 0x100), so
+            // it is gated on the codepoint fitting in a byte rather than on
+            // is_ascii — otherwise `二` (U+4E8C → 0x8C) would masquerade as a
+            // token and be swallowed into an identifier.
+            let c_is_ident = c.is_ascii() && crate::ztype_h::iident(c as u8);
+            let c_is_tok = (c as u32) < 0x100 && itok(c as u8);
+            if !c_is_ident && c != Stringg && !c_is_tok {
                 return false;
             }
             has_ident = true;

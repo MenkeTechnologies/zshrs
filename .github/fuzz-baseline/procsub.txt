@@ -1,0 +1,14 @@
+# parity-fuzz --mode procsub baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode procsub --count N --verify 3  (copy NEW-signature lines).
+#
+# Open gaps (both one root cause):
+#  * =(...) is implemented as a /dev/fd pipe, not a real temp file. C
+#    (Src/exec.c:4906 getoutputfile) opens an O_EXCL temp file under
+#    $TMPPREFIX, forks a writer, and WAITS for it, so the consumer sees a
+#    complete, seekable, regular file that is unlinked at job end.
+#  * process substitution in a job-less context ([[ ]], (( )) ) must be
+#    REJECTED ("process substitution %s cannot be used here", exec.c:4918),
+#    gated on thisjob == -1 — not performed.
+[[ -f =(print x) ]] && print -r -- regular || print -r -- notregular
+f==(print -l a b); print -r -- "$(<$f)"; print -r -- "exists=$([[ -f $f ]] && print y || print n)"
