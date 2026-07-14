@@ -3889,11 +3889,32 @@ pub fn paramsubst(
                                   // matched-delim check rejected later).
                                   // Bug #114 in docs/BUGS.md.
                         let n_start = idx;
-                        while idx < body_chars.len()
-                            && body_chars[idx] != close_del
-                            && body_chars[idx] != ')'
-                            && body_chars[idx] != Outpar
-                        {
+                        // c:Src/subst.c:1366 get_strarg — scan to the
+                        // matching delimiter, balancing nested `(...)` /
+                        // Inpar/Outpar groups so a `)` or a stray delimiter
+                        // inside a nested `${(P)…}` flag list or `$(…)`
+                        // command substitution doesn't terminate the flag
+                        // argument early (ZUI stdlib.lzui:544
+                        // `${(mr:${(P)${(Q)match[1]}}::_:)…}`). Braces /
+                        // brackets stay transparent — a bare `:` inside
+                        // `${v:-5}` still terminates the arg, matching zsh's
+                        // "bad substitution" there. The flag-block close `)`
+                        // at paren-depth 0 still ends the scan (bug #162/#191
+                        // unterminated-arg diagnostics preserved).
+                        let mut pdepth = 0i32;
+                        while idx < body_chars.len() {
+                            let ch = body_chars[idx];
+                            if ch == '(' || ch == Inpar {
+                                pdepth += 1;
+                            } else if ch == ')' || ch == Outpar {
+                                if pdepth > 0 {
+                                    pdepth -= 1;
+                                } else {
+                                    break;
+                                }
+                            } else if pdepth == 0 && ch == close_del {
+                                break;
+                            }
                             idx += 1;
                         }
                         // c:Src/subst.c:1366-1456 — get_strarg / get_intarg
@@ -3963,11 +3984,32 @@ pub fn paramsubst(
                         // delimiter — `(l.5..)` previously consumed
                         // `)s)s` as the STR1 content. Bug #191 in
                         // docs/BUGS.md.
-                        while idx < body_chars.len()
-                            && body_chars[idx] != close_del
-                            && body_chars[idx] != ')'
-                            && body_chars[idx] != Outpar
-                        {
+                        // c:Src/subst.c:1366 get_strarg — scan to the
+                        // matching delimiter, balancing nested `(...)` /
+                        // Inpar/Outpar groups so a `)` or a stray delimiter
+                        // inside a nested `${(P)…}` flag list or `$(…)`
+                        // command substitution doesn't terminate the flag
+                        // argument early (ZUI stdlib.lzui:544
+                        // `${(mr:${(P)${(Q)match[1]}}::_:)…}`). Braces /
+                        // brackets stay transparent — a bare `:` inside
+                        // `${v:-5}` still terminates the arg, matching zsh's
+                        // "bad substitution" there. The flag-block close `)`
+                        // at paren-depth 0 still ends the scan (bug #162/#191
+                        // unterminated-arg diagnostics preserved).
+                        let mut pdepth = 0i32;
+                        while idx < body_chars.len() {
+                            let ch = body_chars[idx];
+                            if ch == '(' || ch == Inpar {
+                                pdepth += 1;
+                            } else if ch == ')' || ch == Outpar {
+                                if pdepth > 0 {
+                                    pdepth -= 1;
+                                } else {
+                                    break;
+                                }
+                            } else if pdepth == 0 && ch == close_del {
+                                break;
+                            }
                             idx += 1;
                         }
                         // If we hit `)` without finding the close
@@ -4002,11 +4044,32 @@ pub fn paramsubst(
                         // c:2360 — STR2 (one-time pad).
                         idx += 1;
                         let s2_start = idx;
-                        while idx < body_chars.len()
-                            && body_chars[idx] != close_del
-                            && body_chars[idx] != ')'
-                            && body_chars[idx] != Outpar
-                        {
+                        // c:Src/subst.c:1366 get_strarg — scan to the
+                        // matching delimiter, balancing nested `(...)` /
+                        // Inpar/Outpar groups so a `)` or a stray delimiter
+                        // inside a nested `${(P)…}` flag list or `$(…)`
+                        // command substitution doesn't terminate the flag
+                        // argument early (ZUI stdlib.lzui:544
+                        // `${(mr:${(P)${(Q)match[1]}}::_:)…}`). Braces /
+                        // brackets stay transparent — a bare `:` inside
+                        // `${v:-5}` still terminates the arg, matching zsh's
+                        // "bad substitution" there. The flag-block close `)`
+                        // at paren-depth 0 still ends the scan (bug #162/#191
+                        // unterminated-arg diagnostics preserved).
+                        let mut pdepth = 0i32;
+                        while idx < body_chars.len() {
+                            let ch = body_chars[idx];
+                            if ch == '(' || ch == Inpar {
+                                pdepth += 1;
+                            } else if ch == ')' || ch == Outpar {
+                                if pdepth > 0 {
+                                    pdepth -= 1;
+                                } else {
+                                    break;
+                                }
+                            } else if pdepth == 0 && ch == close_del {
+                                break;
+                            }
                             idx += 1;
                         }
                         // Same close-paren guard for STR2. Bug #191.
@@ -4132,11 +4195,32 @@ pub fn paramsubst(
                         };
                         idx += 1; // get_strarg(s) past opening delimiter
                         let n_start = idx;
-                        while idx < body_chars.len()
-                            && body_chars[idx] != close_del
-                            && body_chars[idx] != ')'
-                            && body_chars[idx] != Outpar
-                        {
+                        // c:Src/subst.c:1366 get_strarg — scan to the
+                        // matching delimiter, balancing nested `(...)` /
+                        // Inpar/Outpar groups so a `)` or a stray delimiter
+                        // inside a nested `${(P)…}` flag list or `$(…)`
+                        // command substitution doesn't terminate the flag
+                        // argument early (ZUI stdlib.lzui:544
+                        // `${(mr:${(P)${(Q)match[1]}}::_:)…}`). Braces /
+                        // brackets stay transparent — a bare `:` inside
+                        // `${v:-5}` still terminates the arg, matching zsh's
+                        // "bad substitution" there. The flag-block close `)`
+                        // at paren-depth 0 still ends the scan (bug #162/#191
+                        // unterminated-arg diagnostics preserved).
+                        let mut pdepth = 0i32;
+                        while idx < body_chars.len() {
+                            let ch = body_chars[idx];
+                            if ch == '(' || ch == Inpar {
+                                pdepth += 1;
+                            } else if ch == ')' || ch == Outpar {
+                                if pdepth > 0 {
+                                    pdepth -= 1;
+                                } else {
+                                    break;
+                                }
+                            } else if pdepth == 0 && ch == close_del {
+                                break;
+                            }
                             idx += 1;
                         }
                         // c:1436-1437 get_strarg returns -1 if `!*t`
@@ -10063,6 +10147,19 @@ pub fn paramsubst(
                     // every match (the normal `//` behavior).
                     let target_global = flnum.max(1);
                     let mut match_count: u32 = 0;
+                    // Byte offset of each char boundary (len nn+1) so the
+                    // single-pass patmatch scan can map char index <-> byte
+                    // offset without re-walking the string each position.
+                    let byte_off: Vec<usize> = {
+                        let mut v = Vec::with_capacity(nn + 1);
+                        let mut b = 0usize;
+                        for ch in &cv {
+                            v.push(b);
+                            b += ch.len_utf8();
+                        }
+                        v.push(b);
+                        v
+                    };
                     let mut q = 0_usize;
                     while q < nn {
                         let mut m: Option<usize> = None;
@@ -10101,9 +10198,81 @@ pub fn paramsubst(
                                     break;
                                 }
                             }
+                        } else if let Some(prog) = prog_opt.as_ref() {
+                            // c:Src/glob.c:2900+ getmatch — run the compiled
+                            // matcher ONCE at position q and read how far it got
+                            // (patmatchlen), instead of probing every end offset.
+                            // The old `for e in (q..=nn).rev()` end scan made
+                            // this O(n) per position, O(n^2) per string, O(n^3)
+                            // once nested — the p10k `${_p9k__prompt//…}` hang.
+                            // patmatch also gives the engine's real greedy /
+                            // leftmost-alternation semantics, fixing the end
+                            // scan's WRONG longest-span behavior
+                            // (`${x//(a|ab)/-}` on `abab` → `-b-b`, not `--`).
+                            // (#s)/(#e) are gated inside patmatch via the byte
+                            // offset (P_ISSTART: s_off==0, P_ISEND: s_off==len),
+                            // so the anchor_ok probe is unnecessary here.
+                            // Match against the tail slice `val[q..]` at
+                            // position 0 (patmatch's only exercised call shape).
+                            // c:Src/pattern.c:3451-3454 — PAT_NOANCH lets P_END
+                            // accept a PREFIX match (`patinput < patinend`
+                            // without failing), which is what makes this a
+                            // substring scan rather than a whole-string test; it
+                            // also yields the engine's leftmost-alternation
+                            // semantics (first matching branch wins, so
+                            // `(a|ab)` on `abab` matches `a`). PAT_NOTSTART is
+                            // ORed for q>0 so the `(#s)` P_ISSTART arm (which
+                            // sees the slice's position 0) still fails at
+                            // interior positions, exactly as C's getmatch flags
+                            // the interior-slice scan. The slice's end IS the
+                            // real string end, so `(#e)` needs no PAT_NOTEND.
+                            let q_byte = byte_off[q];
+                            crate::ported::pattern::patflags.store(
+                                prog.0.flags
+                                    | crate::ported::zsh_h::PAT_NOANCH
+                                    | if q_byte > 0 {
+                                        crate::ported::zsh_h::PAT_NOTSTART
+                                    } else {
+                                        0
+                                    },
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            let mut _pst = crate::ported::pattern::rpat::new();
+                            // c:Src/pattern.c — single-"*" (PAT_ANY) fast path
+                            // matches the whole remainder without the bytecode.
+                            let matched = if (prog.0.flags
+                                & crate::ported::zsh_h::PAT_ANY)
+                                != 0
+                            {
+                                Some(val.len())
+                            } else {
+                                crate::ported::pattern::patmatch(
+                                    &prog.1,
+                                    0,
+                                    &val[q_byte..],
+                                    0,
+                                    &mut _pst,
+                                    prog.0.globflags,
+                                )
+                                .map(|end| q_byte + end)
+                            };
+                            if let Some(end_byte) = matched {
+                                let e = byte_off.partition_point(|&b| b < end_byte);
+                                if pat_needs_per_match {
+                                    // Re-run pattry on the committed span so the
+                                    // (#b)/(#m) capture arrays ($match/$mbegin/
+                                    // $mend) are published before the
+                                    // replacement is evaluated — same span-local
+                                    // publication the old scan did via gms, once
+                                    // per real match instead of per position.
+                                    let span: String = cv[q..e].iter().collect();
+                                    let _ = gms(&span, &pat);
+                                }
+                                m = Some(e);
+                            }
                         } else {
-                            // Greedy (default): e walks q..=nn
-                            // descending.
+                            // Greedy fallback (no compiled prog, e.g. empty
+                            // pattern): e walks q..=nn descending.
                             for e in (q..=nn).rev() {
                                 if !anchor_ok(q, e) {
                                     continue;

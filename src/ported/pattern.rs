@@ -3891,7 +3891,7 @@ pub type Patprog = Box<(patprog, Vec<u8>)>;
 const I_OP: usize = 0; // opcode byte
 
 impl rpat {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             wbranch_visits: std::collections::HashMap::new(),
             patbeginp: [usize::MAX; NSUBEXP],
@@ -4419,7 +4419,7 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-fn patmatch(
+pub fn patmatch(
     code: &[u8],
     prog_off: usize,
     string: &str,

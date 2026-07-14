@@ -2326,11 +2326,22 @@ fn par_funcdef() -> Option<ZshCommand> {
                 if s == "{" || s == "\u{8f}" {
                     break;
                 }
-                let first = s.chars().next();
-                if matches!(first, Some('-') | Some('+')) || matches!(first, Some(c) if c == Dash) {
-                    if s.contains('T') {
-                        tracing = true;
-                    }
+                // c:Src/parse.c par_funcdef — `if (tokstr[0] == Dash &&
+                // tokstr[1] == 'T' && !tokstr[2])`: ONLY the exact word
+                // `-T` (Dash + 'T' + nothing else) is the tracing option.
+                // Every other word — INCLUDING names that merely start
+                // with `-` or `+` such as `-zui_std_button_ext` or `+foo`
+                // — is a function NAME. The previous check skipped any
+                // `-`/`+`-prefixed word as an option, so all 47 of ZUI's
+                // `function -zui_std_*()` names were dropped, leaving an
+                // anonymous `function { body }` that executed its body at
+                // parse time (the cascade of "command not found: -zui_std_*"
+                // and "bad substitution" while sourcing stdlib.lzui).
+                let sc: Vec<char> = s.chars().collect();
+                let is_trace_opt =
+                    sc.len() == 2 && (sc[0] == '-' || sc[0] == Dash) && sc[1] == 'T';
+                if is_trace_opt {
+                    tracing = true;
                     zshlex();
                     continue;
                 }
