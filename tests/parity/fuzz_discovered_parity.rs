@@ -1881,3 +1881,53 @@ mod shwordsplit_assignment {
         assert_parity(r#"v=' a:b '; w=$v; print -r -- "[$w]""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// W. `print -v` dropped the trailing separator when `-l` was set
+//
+// C captures the trailing separator into the `-v` value too — it is written to
+// the same (memory) stream and read back into the buffer — and suppresses it
+// only when `-n`, a `\c` escape, OR `-v` WITHOUT `-l` apply (c:Src/builtin.c:544-546).
+// So `print -v x -l a b c` stores `a\nb\nc\n` where `print -v x a b c` stores
+// `a b c`. zshrs suppressed the terminator for EVERY `-v`, losing the `-l`
+// trailing newline.
+// ─────────────────────────────────────────────────────────────────────
+mod print_v_trailing_sep {
+    use super::*;
+
+    /// `-v` with `-l` keeps the trailing newline.
+    #[test]
+    fn dash_v_dash_l_keeps_trailing_newline() {
+        assert_parity(r#"print -v x -l a b c; print -r -- "[$x]""#);
+    }
+
+    /// …reflected in the length.
+    #[test]
+    fn dash_v_dash_l_length() {
+        assert_parity(r#"print -v x -l a b c; print -r -- "n=${#x}""#);
+    }
+
+    /// `-v` WITHOUT `-l` has no trailing separator.
+    #[test]
+    fn dash_v_without_l_no_trailing() {
+        assert_parity(r#"print -v x a b c; print -r -- "[$x]""#);
+    }
+
+    /// `-n` suppresses the trailing newline even with `-l`.
+    #[test]
+    fn dash_n_suppresses_even_with_l() {
+        assert_parity(r#"print -nv x -l a b c; print -r -- "[$x]""#);
+    }
+
+    /// A single-arg `-v -l` still gets its terminator.
+    #[test]
+    fn single_arg_dash_l_terminated() {
+        assert_parity(r#"print -v x -l a; print -r -- "[$x]""#);
+    }
+
+    /// `printf -v` (no -l) is unaffected.
+    #[test]
+    fn printf_v_unaffected() {
+        assert_parity(r#"printf -v y "%s" hi; print -r -- "[$y]""#);
+    }
+}
