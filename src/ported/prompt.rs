@@ -312,41 +312,67 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
         path.to_string()
     };
 
-    // c:142-165 — npath truncation. `npath > 0` keeps LAST N
-    // components; `npath < 0` keeps FIRST -N components. Sig still
-    // usize for caller compat; treat values >= 0x80000000 (negative
-    // i32 cast to usize) as the negative form. Live `%N` callers pass
-    // a positive count from `%[<NUM>~]`; negative form is uncommon
-    // but real per the C source.
+    // c:142-165 — npath truncation. `npath > 0` keeps the LAST N
+    // components; `npath < 0` keeps the FIRST -N components. Sig is
+    // still usize for caller compat; a negative i32 arrives here as
+    // its `as usize` widening, so recover the signed value first.
     if npath == 0 {
+        // c:164-165 — `else stradd(modp);`
         return display;
     }
-    let signed = npath as i64;
-    let neg_n = if signed < 0 || (signed as u64) >= (i32::MIN as u32 as u64) {
-        // High-bit set → originally a negative i32 widened through usize.
-        let as_i32 = (signed as i32).wrapping_neg();
-        if as_i32 > 0 {
-            Some(as_i32 as usize)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let mut npath = npath as i32; // c:134 `int npath`
 
-    let components: Vec<&str> = display.split('/').filter(|s| !s.is_empty()).collect();
-    if let Some(first_n) = neg_n {
-        // c:155-163 — keep FIRST N components.
-        if components.len() <= first_n {
-            return display;
+    let bytes = display.as_bytes();
+    if npath > 0 {
+        // c:144-153 — walk BACKWARDS from the NUL; the N-th `/` from
+        // the right ends the kept suffix.
+        //   for (sptr = modp + strlen(modp); sptr > modp; sptr--)
+        //       if (*sptr == '/' && !--npath) { sptr++; break; }
+        //   if (*sptr == '/' && sptr[1] && sptr != modp) sptr++;
+        //   stradd(sptr);
+        let mut sptr = bytes.len();
+        while sptr > 0 {
+            // c:146 — `*sptr` at the NUL terminator is '\0', never '/',
+            // so the first iteration can only match on a real byte.
+            if sptr < bytes.len() && bytes[sptr] == b'/' {
+                npath -= 1;
+                if npath == 0 {
+                    sptr += 1; // c:147
+                    break;
+                }
+            }
+            sptr -= 1; // c:145 loop step
         }
-        components[..first_n].join("/")
+        // c:151-152 — `if (*sptr == '/' && sptr[1] && sptr != modp) sptr++;`
+        if sptr < bytes.len()
+            && bytes[sptr] == b'/'
+            && sptr + 1 < bytes.len()
+            && sptr != 0
+        {
+            sptr += 1;
+        }
+        display[sptr.min(display.len())..].to_string() // c:153
     } else {
-        // c:144-153 — keep LAST N components.
-        if components.len() <= npath {
-            return display;
+        // c:154-163 — keep the leading components. C starts the scan at
+        // `modp + 1` (so the leading `/` of an absolute path is never
+        // the delimiter that ends the prefix) and cuts at the |npath|-th
+        // `/` found after it:
+        //   for (sptr = modp+1; *sptr; sptr++)
+        //       if (*sptr == '/' && !++npath) break;
+        //   cbu = *sptr; *sptr = 0; stradd(modp); *sptr = cbu;
+        // This is why zsh's `%-1d` in `/Users/x` prints `/Users`, not
+        // `Users` — the prefix INCLUDES the root slash.
+        let mut sptr = 1usize.min(bytes.len());
+        while sptr < bytes.len() {
+            if bytes[sptr] == b'/' {
+                npath += 1;
+                if npath == 0 {
+                    break; // c:158
+                }
+            }
+            sptr += 1;
         }
-        components[components.len() - npath..].join("/")
+        display[..sptr].to_string() // c:159-162
     }
 }
 
@@ -635,6 +661,42 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
     use crate::ported::zsh_h::{isset, PROMPTPERCENT};
     use crate::ported::ztype_h::idigit;
 
+    // C hands `countprompt` the raw metafied output buffer (c:460 for
+    // `%(l…)`, c:668 for `%-N<`); the Rust port of countprompt (c:1140)
+    // consumes a decoded `&str`, because a Rust `String` cannot carry the
+    // bare token bytes Inpar (0x88) / Outpar (0x8a) / Nularg (0xa1) — they
+    // are not valid UTF-8 on their own. Re-materialize the region first:
+    // un-metafy the text runs (C does this inline at c:1188,
+    // `inchar = *++str ^ 32`, before feeding mbrtowc) so multibyte characters
+    // stay intact, and keep the three raw tokens as their `char` form, which
+    // countprompt recognizes (c:1179-1184) so `%{…%}` spans stay zero-width.
+    let promptbuf_str = |buf: &[u8]| -> String {
+        let mut out = String::with_capacity(buf.len());
+        let mut run: Vec<u8> = Vec::with_capacity(buf.len());
+        let mut i = 0usize;
+        while i < buf.len() {
+            let b = buf[i];
+            if b == Meta && i + 1 < buf.len() {
+                run.push(buf[i + 1] ^ 32); // c:1188
+                i += 2;
+            } else if b == Inpar as u8 || b == Outpar as u8 || b == Nularg as u8 {
+                if !run.is_empty() {
+                    out.push_str(&String::from_utf8_lossy(&run));
+                    run.clear();
+                }
+                out.push(b as char); // c:1179-1184
+                i += 1;
+            } else {
+                run.push(b);
+                i += 1;
+            }
+        }
+        if !run.is_empty() {
+            out.push_str(&String::from_utf8_lossy(&run));
+        }
+        out
+    };
+
     // c:369 — `for (; *bv->fm && *bv->fm != endchar; bv->fm++)`.
     loop {
         let c = match bv.fm.as_bytes().get(bv.fm_pos).copied() {
@@ -788,48 +850,40 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     // escape sequences and `%{…%}`/readline (\x01..\x02)
                     // zero-width spans, one column per UTF-8 char.
                     b'l' => {
+                        // c:459-464 — C body:
+                        //   *bv->bp = '\0';
+                        //   countprompt(bv->bufline, &t0, 0, 0);
+                        //   if (minus) t0 = zterm_columns - t0;
+                        //   if (t0 >= arg) test = 1;
+                        // `bv->bufline` is the start of the CURRENT line in
+                        // the output buffer (pputc resets it after every
+                        // newline emitted outside a `%{…%}` span), so `%l`
+                        // measures the column reached so far on this line.
+                        // The previous port hand-rolled a byte counter that
+                        // skipped only ANSI CSI runs and readline \x01..\x02
+                        // spans — but at this point the buffer still holds
+                        // the CANONICAL Inpar (0x88) / Outpar (0x8a) tokens
+                        // (the \x01/\x02 translation happens later, in
+                        // expand_prompt), so every byte inside a `%{raw%}`
+                        // span was counted as a visible column and the test
+                        // flipped true too early. countprompt is the C routine
+                        // and gets the token bytes right.
+                        let start = bv.bufline.min(bv.bp);
                         let end = bv.bp.min(bv.buf.len());
-                        let slice = &bv.buf[..end];
+                        let line = promptbuf_str(&bv.buf[start..end]);
                         let mut t0: i32 = 0;
-                        let mut i = 0usize;
-                        while i < slice.len() {
-                            let b = slice[i];
-                            if b == 0x1b {
-                                // ESC — skip a CSI (`ESC [ … letter`) span.
-                                i += 1;
-                                if i < slice.len() && slice[i] == b'[' {
-                                    i += 1;
-                                    while i < slice.len()
-                                        && !slice[i].is_ascii_alphabetic()
-                                    {
-                                        i += 1;
-                                    }
-                                    if i < slice.len() {
-                                        i += 1;
-                                    }
-                                }
-                                continue;
+                        let mut h: i32 = 0;
+                        countprompt(&line, &mut t0, &mut h, 0); // c:460
+                        if minus != 0 {
+                            // c:461-462 — `t0 = zterm_columns - t0;`
+                            let mut cols = crate::ported::utils::adjustcolumns() as i32;
+                            if cols <= 0 {
+                                cols = 80;
                             }
-                            if b == 0x01 {
-                                // readline "ignore width" span → skip to 0x02.
-                                i += 1;
-                                while i < slice.len() && slice[i] != 0x02 {
-                                    i += 1;
-                                }
-                                if i < slice.len() {
-                                    i += 1;
-                                }
-                                continue;
-                            }
-                            // One display column per UTF-8 scalar (byte that
-                            // is not a continuation byte 0x80..=0xBF).
-                            if b < 0x80 || b >= 0xC0 {
-                                t0 += 1;
-                            }
-                            i += 1;
+                            t0 = cols - t0;
                         }
                         if t0 >= arg {
-                            test = 1;
+                            test = 1; // c:463-464
                         }
                     }
                     // c:477-479 — `L`: SHLVL >= arg.
@@ -1443,8 +1497,17 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     }
                     bv.dontcount += 1;
                 }
-                // c:644-651 — `%}` (end dontcount span)
+                // c:695-702 — `%}` (end dontcount span)
                 b'}' => {
+                    // c:696-697 — `if (bv->trunccount &&
+                    //   bv->trunccount >= bv->dontcount) return *bv->fm;`
+                    // A truncation that STARTED inside a `%{…%}` span must
+                    // not swallow the span's closing `%}`: bail out so the
+                    // enclosing prompttrunc finishes and the `%}` is
+                    // reprocessed at the outer level.
+                    if bv.trunccount != 0 && bv.trunccount >= bv.dontcount {
+                        return bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) as i32;
+                    }
                     if bv.dontcount > 0 {
                         bv.dontcount -= 1;
                         if bv.dontcount == 0 {
@@ -1923,8 +1986,43 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                 // first `>` and left the second as a literal char,
                 // producing visible `>` in the output. Bug #439.
                 b'<' | b'>' => {
+                    // c:665-672 — `if (minus) { *bv->bp = '\0';
+                    //   countprompt(bv->bufline, &t0, 0, 0);
+                    //   arg = zterm_columns - t0 + arg;
+                    //   if (arg <= 0) arg = 1; }`
+                    // "Test (minus) here so -0 means at the right margin."
+                    let mut arg = arg;
+                    if minus != 0 {
+                        let start = bv.bufline.min(bv.bp);
+                        let end = bv.bp.min(bv.buf.len());
+                        let line = promptbuf_str(&bv.buf[start..end]);
+                        let mut t0: i32 = 0;
+                        let mut h: i32 = 0;
+                        countprompt(&line, &mut t0, &mut h, 0); // c:668
+                        let mut cols = crate::ported::utils::adjustcolumns() as i32;
+                        if cols <= 0 {
+                            cols = 80;
+                        }
+                        arg = cols - t0 + arg; // c:669
+                        if arg <= 0 {
+                            arg = 1; // c:670-671
+                        }
+                    }
+                    // c:673-674 — `if (!prompttrunc(arg, *bv->fm, doprint,
+                    // endchar)) return *bv->fm;`. Propagating the 0 return
+                    // is load-bearing: when prompttrunc hits a SECOND
+                    // truncation it rewinds `bv->fm` to just before that
+                    // `%` and returns 0, and the caller MUST unwind so the
+                    // enclosing prompttrunc can finish the first truncation
+                    // and then restart at the rewound `%`. The previous port
+                    // discarded the return value, so the rewound cursor was
+                    // re-advanced by the loop step and the expander spun
+                    // forever on any prompt with two truncations
+                    // (`%5<...<a|%3<<b` hung until the 5s fuzz timeout).
                     let truncchar = xc as i32;
-                    let _ = prompttrunc(bv, arg, truncchar, doprint, endchar);
+                    if prompttrunc(bv, arg, truncchar, doprint, endchar) == 0 {
+                        return bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) as i32;
+                    }
                 }
                 // c:Src/prompt.c:657-661 — `%[arg INNER ]content<endchar>`.
                 // C body:
@@ -1959,13 +2057,15 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         local_arg = num;
                         bv.fm_pos = end;
                     }
-                    let _ = prompttrunc(bv, local_arg, b']' as i32, doprint, endchar);
-                    // prompttrunc consumed the truncstr + bracketed
-                    // content; the outer `bv.fm_pos += 1` below would
-                    // skip a byte of whatever follows. Pre-decrement
-                    // to cancel that out.
-                    if bv.fm_pos > 0 {
-                        bv.fm_pos -= 1;
+                    // c:660-661 — `if (!prompttrunc(arg, ']', doprint,
+                    // endchar)) return *bv->fm;`. prompttrunc's tail
+                    // (c:1607 `bv->fm--`) already backs the cursor up one
+                    // byte so the loop step below lands on the terminator,
+                    // so no extra adjustment here (the previous port's
+                    // manual `fm_pos -= 1` compensated for that missing
+                    // tail and is now wrong).
+                    if prompttrunc(bv, local_arg, b']' as i32, doprint, endchar) == 0 {
+                        return bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) as i32;
                     }
                 }
                 // c:899 — null terminator inside an escape
@@ -2344,27 +2444,118 @@ pub fn prompttrunc(
     doprint: i32,
     endchar: i32,
 ) -> i32 {
+    // c:1425-1463 / c:1505-1534 — decode ONE character of the METAFIED buffer
+    // at byte `i`, yielding (buffer bytes consumed, display width). C
+    // open-codes this same walk in BOTH truncation scanners: it un-metafies
+    // each byte (`if (*p == Meta) inchar = *++p ^ 32;`, c:1439-1441) and feeds
+    // the bytes one at a time to `mbrtowc` with a persistent `mbstate_t`, so a
+    // multibyte character is assembled ACROSS metafied bytes. That matters:
+    // `pputc` metafies every `imeta` byte, and 0x83 (Meta) / 0x88 (Inpar) /
+    // 0x8a (Outpar) all occur as UTF-8 continuation bytes — e.g. `ト` is
+    // E3 83 88, stored as E3, Meta A3, Meta A8. Decoding the raw buffer
+    // instead of the un-metafied stream splits such characters in half.
+    // MB_INVALID / incomplete ⇒ one unit of width 1 (c:1448-1455); otherwise
+    // WCWIDTH, with a negative (non-printable) width counted as 1
+    // (c:1456-1462).
+    let step = |buf: &[u8], start: usize| -> (usize, i32) {
+        let unmeta = |i: usize| -> (u8, usize) {
+            if buf[i] == Meta && i + 1 < buf.len() {
+                (buf[i + 1] ^ 32, 2) // c:1439-1440
+            } else {
+                (buf[i], 1) // c:1442
+            }
+        };
+        let mut raw = [0u8; 4];
+        let (b0, adv0) = unmeta(start);
+        raw[0] = b0;
+        let mut i = start + adv0;
+        let need = match b0 {
+            0x00..=0x7f => 1,
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => 1, // c:1448 MB_INVALID lead byte
+        };
+        let mut n = 1usize;
+        while n < need && i < buf.len() && buf[i] != 0 {
+            let (b, adv) = unmeta(i);
+            raw[n] = b;
+            n += 1;
+            i += adv;
+        }
+        if n < need {
+            return (adv0, 1); // truncated sequence — one unit, width 1
+        }
+        match std::str::from_utf8(&raw[..n]) {
+            Ok(s) => {
+                let c = s.chars().next().unwrap_or('\u{0}');
+                let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as i32;
+                (i - start, cw) // c:1456-1462
+            }
+            Err(_) => (adv0, 1), // c:1448-1454 MB_INVALID: take the byte alone
+        }
+    };
+    // c:1343 — `countprompt(ptr, &w, 0, -1)` gets the metafied buffer; the
+    // Rust countprompt port (c:1140) takes a decoded &str. Same adapter as in
+    // putpromptchar: un-metafy the text runs (so multibyte characters survive
+    // intact, as above) while keeping the raw Inpar/Outpar/Nularg tokens as
+    // their `char` form, which is what countprompt tests for. Those three
+    // bytes appear raw ONLY when putpromptchar wrote them as tokens — the same
+    // byte values occurring inside real text are always Meta-escaped by pputc,
+    // which is precisely what makes this split unambiguous.
+    let promptbuf_str = |buf: &[u8]| -> String {
+        let mut out = String::with_capacity(buf.len());
+        let mut run: Vec<u8> = Vec::with_capacity(buf.len());
+        let mut i = 0usize;
+        while i < buf.len() {
+            let b = buf[i];
+            if b == Meta && i + 1 < buf.len() {
+                run.push(buf[i + 1] ^ 32); // c:1188 `inchar = *++str ^ 32`
+                i += 2;
+            } else if b == Inpar as u8 || b == Outpar as u8 || b == Nularg as u8 {
+                if !run.is_empty() {
+                    out.push_str(&String::from_utf8_lossy(&run));
+                    run.clear();
+                }
+                out.push(b as char); // c:1179-1184
+                i += 1;
+            } else {
+                run.push(b);
+                i += 1;
+            }
+        }
+        if !run.is_empty() {
+            out.push_str(&String::from_utf8_lossy(&run));
+        }
+        out
+    };
+
     if arg > 0 {
         // c:1278
         // c:1279 — `char ch = *bv->fm;` (peek)
         let ch = bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0);
         let truncatleft = ch == b'<'; // c:1280
-        let w = bv.bp; // c:1281 bp - buf
+        let mut w = bv.bp; // c:1281 `int w = bv->bp - bv->buf;`
 
         // c:1288-1293 — re-entry guard: if a truncation is already
-        // active, back up to the % marker and return so the outer
-        // call can finish first.
+        // active, rewind `fm` to just BEFORE the `%` that opened this
+        // second truncation and return 0. The caller (putpromptchar's
+        // `%<`/`%>`/`%[` arm) unwinds on the 0, the enclosing
+        // prompttrunc finishes the first truncation, and its tail
+        // (c:1597-1605) re-enters putpromptchar with fm++ landing back
+        // on that `%`.
         if bv.truncwidth != 0 {
             // c:1288
+            // c:1289-1290 — `while (*--bv->fm != '%') ;`
             while bv.fm_pos > 0 {
-                bv.fm_pos -= 1; // c:1289
+                bv.fm_pos -= 1;
                 if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == b'%' {
                     break;
                 }
             }
             if bv.fm_pos > 0 {
-                bv.fm_pos -= 1;
-            } // c:1291
+                bv.fm_pos -= 1; // c:1291 `bv->fm--;`
+            }
             return 0; // c:1292
         }
 
@@ -2374,7 +2565,8 @@ pub fn prompttrunc(
             bv.fm_pos += 1; // c:1297
         }
 
-        // c:1298-1303 — copy truncation string into buf until truncchar.
+        // c:1298-1303 — copy the truncation string (the text between the
+        // opening and closing `truncchar`) into the buffer at `w`.
         let tchar = truncchar as u8;
         while let Some(&c) = bv.fm.as_bytes().get(bv.fm_pos) {
             // c:1298
@@ -2383,15 +2575,12 @@ pub fn prompttrunc(
             }
             let mut cur = c;
             if cur == b'\\' && bv.fm.as_bytes().get(bv.fm_pos + 1).is_some() {
-                // c:1299
+                // c:1299-1300 — `if (*bv->fm == '\\' && bv->fm[1]) ++bv->fm;`
                 bv.fm_pos += 1;
                 cur = bv.fm.as_bytes()[bv.fm_pos];
             }
-            // c:1301 — addbufspc(1)
-            if bv.bp >= bv.buf.len() {
-                bv.buf.resize(bv.bp + 1, 0);
-            }
-            bv.buf[bv.bp] = cur; // c:1302 *bv->bp++ = *bv->fm++
+            addbufspc(bv, 1); // c:1301
+            bv.buf[bv.bp] = cur; // c:1302 `*bv->bp++ = *bv->fm++;`
             bv.bp += 1;
             bv.fm_pos += 1;
         }
@@ -2400,94 +2589,213 @@ pub fn prompttrunc(
             return 0; // c:1305
         }
         if bv.bp == w && truncchar == b']' as i32 {
-            // c:1306
-            if bv.bp >= bv.buf.len() {
-                bv.buf.resize(bv.bp + 1, 0);
-            }
+            // c:1306-1309 — `%[…]` with an empty marker defaults to `<`.
+            addbufspc(bv, 1);
             bv.buf[bv.bp] = b'<'; // c:1308
             bv.bp += 1;
         }
-        // c:1310 — `ptr = bv->buf + w;` (truncation-string start)
-        let ptr = w;
+        // c:1310 — `ptr = bv->buf + w;` (start of the truncation string)
+        let mut ptr = w;
         // c:1317 — `truncstr = ztrduppfx(ptr, bv->bp - ptr);`
-        let trunc_bytes = bv.buf[ptr..bv.bp].to_vec();
-        let truncstr = String::from_utf8_lossy(&trunc_bytes).into_owned();
+        let t: Vec<u8> = bv.buf[ptr..bv.bp].to_vec();
 
-        bv.bp = ptr; // c:1319
-        let w_save = bv.bp; // c:1320
-        bv.fm_pos += 1; // c:1321
+        bv.bp = ptr; // c:1319 — rewind over the stashed marker
+        w = bv.bp; // c:1320
+        bv.fm_pos += 1; // c:1321 — past the closing truncchar
         bv.trunccount = bv.dontcount; // c:1322
-                                      // c:1323 — `putpromptchar(doprint, endchar);` — recurse to
-                                      // expand the bounded region; output goes into bv.buf at bp.
+        // c:1323 — `putpromptchar(doprint, endchar);` — expand EVERYTHING
+        // that follows (to the end of the prompt or to `endchar`); the
+        // truncation applies to all of it, not just to a bracketed span.
         putpromptchar(bv, doprint, endchar); // c:1323
         bv.trunccount = 0; // c:1324
-        let ptr = w_save; // c:1325
-                          // c:1326 — `*bv->bp = '\0';` — null-terminate.
-        if bv.bp < bv.buf.len() {
-            bv.buf[bv.bp] = 0;
-        }
+        ptr = w; // c:1325
+        addbufspc(bv, 1);
+        bv.buf[bv.bp] = 0; // c:1326 `*bv->bp = '\0';`
 
-        // c:1343-1344 — `countprompt(ptr, &w, 0, -1)`: compute screen width.
-        let region_bytes = &bv.buf[ptr..bv.bp];
-        let region_str = std::str::from_utf8(region_bytes).unwrap_or("");
-        let mut visible_w: i32 = 0;
-        // Count chars (rough screen width — C's countprompt skips
-        // escape sequences and counts MB_METASTRWIDTH; collapsed to
-        // char count here since the bv buffer stores expanded text).
-        for _ in region_str.chars() {
-            visible_w += 1;
-        }
+        // c:1343 — `countprompt(ptr, &w, 0, -1);` — `w` becomes the SCREEN
+        // WIDTH of the text to truncate (overf == -1 ⇒ no column wrap).
+        let region = promptbuf_str(&bv.buf[ptr..bv.bp]);
+        let mut wid: i32 = 0;
+        let mut hgt: i32 = 0;
+        countprompt(&region, &mut wid, &mut hgt, -1); // c:1343
 
-        if visible_w > bv.truncwidth {
+        if wid > bv.truncwidth {
             // c:1344
-            // c:1354-1410 — truncate. truncstr is the marker; replace
-            // either the head (truncatleft=true: e.g. `%<...<`) or
-            // tail (truncatleft=false: `%>...>`) with the marker.
-            let maxwidth = bv.truncwidth - truncstr.chars().count() as i32;
-            if maxwidth < 0 {
-                // truncation marker is longer than the budget — use marker only
-                bv.bp = ptr;
-                let mb = truncstr.as_bytes();
-                for &b in mb {
-                    if bv.bp >= bv.buf.len() {
-                        bv.buf.resize(bv.bp + 1, 0);
+            let fullen = bv.bp - ptr; // c:1355
+            let ntrunc = t.len(); // c:1357
+            // c:1359 — `twidth = MB_METASTRWIDTH(t);`
+            let twidth =
+                crate::ported::zsh_h::MB_METASTRWIDTH(&String::from_utf8_lossy(&t)) as i32;
+            if twidth < bv.truncwidth {
+                // c:1360
+                let mut maxwidth = bv.truncwidth - twidth; // c:1361
+                addbufspc(bv, (ntrunc + 1) as i32); // c:1367
+
+                if truncatleft {
+                    // c:1371-1481 — keep the TAIL. The text is shifted up by
+                    // `ntrunc` bytes so the marker can be written in front of
+                    // it without clobbering the source we still have to scan.
+                    //   fulltextptr = fulltext = ptr + ntrunc;
+                    //   memmove(fulltext, ptr, fullen);
+                    //   fulltext[fullen] = '\0';
+                    let fulltext = ptr + ntrunc;
+                    bv.buf.copy_within(ptr..ptr + fullen, fulltext); // c:1392
+                    bv.buf[fulltext + fullen] = 0; // c:1393
+                    let mut fulltextptr = fulltext;
+                    // c:1396-1397 — `while (*t) *ptr++ = *t++;`
+                    for &b in &t {
+                        bv.buf[ptr] = b;
+                        ptr += 1;
                     }
-                    bv.buf[bv.bp] = b;
-                    bv.bp += 1;
+                    // c:1404-1472 — drop leading VISIBLE characters until the
+                    // remaining width fits; invisible (Inpar..Outpar) spans are
+                    // copied through regardless since they may hold escapes
+                    // that all later text depends on.
+                    let mut remw = wid; // c:1404
+                    while remw > maxwidth && bv.buf[fulltextptr] != 0 {
+                        // c:1405
+                        if bv.buf[fulltextptr] == Inpar as u8 {
+                            // c:1406-1423
+                            loop {
+                                bv.buf[ptr] = bv.buf[fulltextptr]; // c:1417
+                                let cur = bv.buf[fulltextptr];
+                                ptr += 1;
+                                if cur == 0 {
+                                    break; // c:1418-1420
+                                }
+                                fulltextptr += 1;
+                                if cur == Outpar as u8 {
+                                    break; // c:1419
+                                }
+                                if bv.buf[fulltextptr - 1] == Nularg as u8 {
+                                    remw -= 1; // c:1421-1422
+                                }
+                            }
+                        } else {
+                            // c:1425-1463 — one (possibly metafied, possibly
+                            // multibyte) character: advance the source, drop
+                            // its width from the remaining total, emit nothing.
+                            let (used, cw) = step(&bv.buf, fulltextptr);
+                            fulltextptr += used;
+                            remw -= cw;
+                        }
+                    }
+                    // c:1478-1481 — `while (*fulltextptr) *ptr++ = *fulltextptr++;`
+                    while bv.buf[fulltextptr] != 0 {
+                        bv.buf[ptr] = bv.buf[fulltextptr];
+                        ptr += 1;
+                        fulltextptr += 1;
+                    }
+                    bv.bp = ptr; // c:1481
+                } else {
+                    // c:1482-1578 — keep the HEAD: walk forward until the
+                    // width budget is spent, then plant the marker there and
+                    // keep only the invisible spans from the discarded tail.
+                    let mut skiptext = ptr; // c:1488
+                    while maxwidth > 0 && bv.buf[skiptext] != 0 {
+                        // c:1494
+                        if bv.buf[skiptext] == Inpar as u8 {
+                            // c:1495-1503 — skip the whole invisible span.
+                            loop {
+                                let cur = bv.buf[skiptext];
+                                if cur == 0 {
+                                    break; // c:1498-1500
+                                }
+                                skiptext += 1;
+                                if cur == Outpar as u8 {
+                                    break; // c:1499
+                                }
+                                if bv.buf[skiptext - 1] == Nularg as u8 {
+                                    maxwidth -= 1; // c:1501-1502
+                                }
+                            }
+                        } else {
+                            // c:1505-1534
+                            let (used, cw) = step(&bv.buf, skiptext);
+                            skiptext += used;
+                            maxwidth -= cw;
+                        }
+                    }
+                    // c:1553-1556 — `ptr = skiptext; while (*t) *ptr++ = *t++;
+                    //                bv->bp = ptr;`
+                    ptr = skiptext;
+                    for &b in &t {
+                        bv.buf[ptr] = b;
+                        ptr += 1;
+                    }
+                    bv.bp = ptr;
+                    // c:1557-1578 — the marker overwrote the head of the
+                    // discarded tail, so relocate the whole remainder past
+                    // `bp` and copy back ONLY the invisible spans (history
+                    // dictates they follow the truncation string — they may
+                    // turn OFF an effect that applies to the kept text).
+                    if bv.buf[skiptext] != 0 {
+                        // c:1557
+                        let mut end = skiptext;
+                        while end < bv.buf.len() && bv.buf[end] != 0 {
+                            end += 1;
+                        }
+                        let len = end - skiptext; // strlen(skiptext)
+                        addbufspc(bv, (len + 1) as i32);
+                        bv.buf.copy_within(skiptext..skiptext + len + 1, bv.bp); // c:1559
+                        skiptext = bv.bp; // c:1560
+                        while bv.buf[skiptext] != 0 {
+                            // c:1565
+                            if bv.buf[skiptext] == Inpar as u8 {
+                                // c:1566-1574
+                                loop {
+                                    bv.buf[bv.bp] = bv.buf[skiptext]; // c:1568
+                                    let cur = bv.buf[skiptext];
+                                    bv.bp += 1;
+                                    if cur == Outpar as u8 || cur == 0 {
+                                        break; // c:1569-1571
+                                    }
+                                    skiptext += 1; // c:1572
+                                }
+                            } else {
+                                skiptext += 1; // c:1576
+                            }
+                        }
+                    }
                 }
             } else {
-                let region_chars: Vec<char> = region_str.chars().collect();
-                let len = region_chars.len() as i32;
-                let keep = maxwidth.max(0) as usize;
-                let kept: String = if truncatleft {
-                    // c:1354 ch == '<'
-                    // keep tail: drop (len-keep) chars from front, prefix marker
-                    let drop_n = (len - keep as i32).max(0) as usize;
-                    let suffix: String = region_chars[drop_n..].iter().collect();
-                    format!("{}{}", truncstr, suffix)
-                } else {
-                    // keep head: take first `keep` chars, append marker
-                    let prefix: String = region_chars[..keep.min(region_chars.len())]
-                        .iter()
-                        .collect();
-                    format!("{}{}", prefix, truncstr)
-                };
-                // Rewrite buf[ptr..] with `kept`.
-                bv.bp = ptr;
-                for &b in kept.as_bytes() {
-                    if bv.bp >= bv.buf.len() {
-                        bv.buf.resize(bv.bp + 1, 0);
-                    }
-                    bv.buf[bv.bp] = b;
-                    bv.bp += 1;
+                // c:1580-1585 — the marker is at least as wide as the whole
+                // budget: emit ONLY the marker, no other text appears.
+                // C writes here with no reservation of its own (the c:1367
+                // addbufspc sits in the other arm) and gets away with it
+                // because the buffer is calloc'd with slack; a Rust Vec index
+                // past `len` panics instead, so reserve the exact bytes about
+                // to be written. Capacity-only — no behavioural difference.
+                addbufspc(bv, (t.len() + 1) as i32);
+                for &b in &t {
+                    bv.buf[ptr] = b;
+                    ptr += 1;
                 }
+                bv.bp = ptr; // c:1584
+            }
+            addbufspc(bv, 1);
+            bv.buf[bv.bp] = 0; // c:1586 `*bv->bp = '\0';`
+        }
+        bv.truncwidth = 0; // c:1589
+
+        // c:1595-1607 — we may have returned early from the putpromptchar
+        // above because it found ANOTHER truncation; with truncwidth back
+        // to 0 the rest of the prompt is expanded now.
+        if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) == 0 {
+            return 0; // c:1595-1596
+        }
+        if bv.fm.as_bytes().get(bv.fm_pos).copied().unwrap_or(0) != endchar as u8 {
+            // c:1597
+            bv.fm_pos += 1; // c:1598
+            if putpromptchar(bv, doprint, endchar) == 0 {
+                return 0; // c:1603-1604
             }
         }
-        if bv.bp < bv.buf.len() {
-            bv.buf[bv.bp] = 0; // c:1421 terminate
+        // c:1606-1607 — back up one so the caller's loop step re-lands on
+        // `endchar` and terminates.
+        if bv.fm_pos > 0 {
+            bv.fm_pos -= 1;
         }
-
-        bv.truncwidth = 0; // c:1431
     } else {
         // c:Src/prompt.c:1608-1617 — `arg <= 0` (no width prefix). Walk
         // past the optional `>`-string content until the matching
@@ -3004,20 +3312,16 @@ pub fn mixattrs(primary: zattr, mask: zattr, secondary: zattr) -> zattr {
 /// WARNING: param names match C — Rust=(str, wp, hp, overf) vs C=(str, wp, hp, overf)
 pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
     // c:1140
-    // adjustcolumns falls back to 80 when neither winsize nor
-    // `COLUMNS` paramtab is set, but a prior test that wrote
-    // `COLUMNS=0` (or empty) leaks through to here as zterm_columns=0.
-    // The c:1158 overflow-wrap loop (`while w > zterm_columns ...
-    // w -= zterm_columns`) is an infinite loop in that case and h
-    // overflows. C zsh's `init.c::setupvals` guarantees zterm_columns
-    // >= 1 via the same fallback chain (`tccolumns > 0 ? tccolumns :
-    // 80`); when zero or negative slips through, default to 80 so the
-    // wrap-loop math runs normally instead of clamping to 1 (which
-    // wraps every column and miscounts the visible width).
-    let mut zterm_columns = crate::ported::utils::adjustcolumns() as i32;
-    if zterm_columns <= 0 {
-        zterm_columns = 80;
-    }
+    // `zterm_columns` is legitimately 0 in a NON-INTERACTIVE shell: C's
+    // `setupvals` calls `adjustwinsize(0)` (Src/init.c:1276), which bails
+    // out at `if (SHTTY == -1) return;` (Src/utils.c:1900-1901) before
+    // `adjustcolumns()` can install the 80-column fallback — hence
+    // `zsh -f -c 'print -r $COLUMNS'` prints `0`. The c:1158 wrap loop then
+    // collapses `w` to the width of the LAST character on every step, which
+    // is why `zsh -f -c "print -P 'abcdefghij%2(l.X.Y)'"` prints `Y`: t0 is
+    // 1, not 10. Substituting 80 here (the previous port) made every `%(l…)`
+    // and `%-N<` compare against a width zsh never computes.
+    let zterm_columns = crate::ported::utils::adjustcolumns() as i32;
     let mut w: i32 = 0; // c:1142
     let mut h: i32 = 1;
     let multi = 0i32; // c:1142
@@ -3033,9 +3337,19 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
                 // c:1160
                 w = wcw; // c:1165
                 break; // c:1166
-            } else {
-                w -= zterm_columns; // c:1171
             }
+            if zterm_columns <= 0 {
+                // C spins forever here (`w -= 0`): with zterm_columns == 0
+                // and no wide-char width to snap back to, the loop never
+                // terminates — verified upstream, `zsh -f -c $'print -P
+                // "a\tb%1(l.X.Y)"'` never returns. zshrs does not ship
+                // hangs: stop after the one `h++` C would also do on its
+                // first pass. Every input that reaches this branch is an
+                // input real zsh cannot complete, so no observable parity is
+                // lost.
+                break;
+            }
+            w -= zterm_columns; // c:1171
         }
         wcw = 0; // c:1174
 
@@ -3092,7 +3406,25 @@ pub fn countprompt(s: &str, wp: &mut i32, hp: &mut i32, overf: i32) {
             w += cw; // c:1234
         }
     }
-    // c:1265-1268 — final-column edge case: w == zterm_columns && overf == 0.
+    // c:1255-1263 — the SAME wrap loop again after the walk: the last line
+    // may still be over-wide (the in-loop copy only runs before each new
+    // character, so it never sees the final one). Omitting it left `w` one
+    // wrap too high — with the non-interactive zterm_columns == 0 that is
+    // the whole difference between `%2(l.X.Y)` picking X (wrong) and Y.
+    while w > zterm_columns && overf >= 0 {
+        // c:1255
+        h += 1; // c:1256
+        if wcw != 0 {
+            // c:1257
+            w = wcw; // c:1258
+            break; // c:1259
+        }
+        if zterm_columns <= 0 {
+            break; // see the in-loop guard above: C spins here.
+        }
+        w -= zterm_columns; // c:1261
+    }
+    // c:1264-1267 — final-column edge case: w == zterm_columns && overf == 0.
     // C body is bare `if (w == zterm_columns && overf == 0)`. When
     // `zterm_columns` is 0 (test context where TIOCGWINSZ fails AND
     // `COLUMNS` paramtab is empty/zero), C zsh also fires — but real
@@ -4273,22 +4605,52 @@ pub fn expand_prompt(s: &str) -> String {
     putpromptchar(&mut bv, 1, 0); // c:1305 `putpromptchar(1, '\0')`
                                   // Unmetafy the buffer for display.
     let end = bv.bp.min(bv.buf.len());
-    let mut raw = bv.buf[..end].to_vec();
-    crate::ported::utils::unmetafy(&mut raw);
     // Translate Inpar/Outpar (C's internal width-ignore markers) to
     // readline-style RL_PROMPT_START_IGNORE (0x01) / RL_PROMPT_END_IGNORE
     // (0x02) for the consumer terminal. Nularg is the `%G` glitch-
     // space marker — strip from visible output (zsh's
     // putpromptchar emits it as a no-print width hint).
-    let translated: Vec<u8> = raw
-        .into_iter()
-        .filter_map(|b| match b {
-            x if x == Inpar as u8 => Some(0x01),
-            x if x == Outpar as u8 => Some(0x02),
-            x if x == Nularg as u8 => None,
-            other => Some(other),
-        })
-        .collect();
+    //
+    // ORDER IS LOAD-BEARING: this MUST run on the still-METAFIED buffer, and
+    // must step over `Meta` pairs, exactly as C's promptexpand does when it
+    // chucks the same three tokens (c:238-246):
+    //     for (bp = buf; *bp; ) {
+    //         if (*bp == Meta) bp += 2;
+    //         else if (*bp == Inpar || *bp == Outpar || *bp == Nularg) chuck(bp);
+    //         else bp++;
+    //     }
+    // The previous port unmetafied FIRST and then rewrote every 0x88 / 0x8a /
+    // 0xa1 byte it found. Those values are ordinary UTF-8 continuation bytes:
+    // `ト` is E3 83 88, so its last byte became 0x01, the character stopped
+    // being valid UTF-8, and from_utf8_lossy replaced it with U+FFFD —
+    // `print -P '日本語テキスト'` printed a replacement char. On the metafied
+    // buffer the distinction is exact: pputc Meta-escapes every imeta byte
+    // that came from text, so a RAW Inpar/Outpar/Nularg can only be a marker
+    // putpromptchar wrote itself.
+    let mut translated: Vec<u8> = Vec::with_capacity(end);
+    let mut i = 0usize;
+    while i < end {
+        let b = bv.buf[i];
+        if b == Meta && i + 1 < end {
+            // c:239-240 — `if (*bp == Meta) bp += 2;` — keep the pair intact
+            // for the unmetafy below.
+            translated.push(b);
+            translated.push(bv.buf[i + 1]);
+            i += 2;
+        } else if b == Inpar as u8 {
+            translated.push(0x01); // c:241
+            i += 1;
+        } else if b == Outpar as u8 {
+            translated.push(0x02); // c:241
+            i += 1;
+        } else if b == Nularg as u8 {
+            i += 1; // c:242-243 — chucked
+        } else {
+            translated.push(b); // c:244-245
+            i += 1;
+        }
+    }
+    crate::ported::utils::unmetafy(&mut translated);
     String::from_utf8_lossy(&translated).into_owned()
 }
 

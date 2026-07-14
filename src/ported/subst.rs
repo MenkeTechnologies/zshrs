@@ -11982,9 +11982,14 @@ pub fn paramsubst(
                 let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
                 let zipped: Vec<String> =
                     if qt && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
-                        // c:Src/subst.c:3032 — `sepjoin(aval, sep, 1)` joins
-                        // the `:^` left operand by IFS[0] in DQ.
-                        let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
+                        // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
+                        // The DQ collapse joins with `sep` — the (j:STR:) /
+                        // (F) separator when one was given, NOT a hardcoded
+                        // space. Passing None here made
+                        // `"[${(j:,:)a:^^b}]"` flatten the LEFT operand with
+                        // " " (`x y z y`) while the final c:3903 sepjoin used
+                        // "," — zsh uses "," for both (`x,y,z,y,y,…`).
+                        let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
                         let n = other.len();
                         let mut z: Vec<String> = Vec::with_capacity(n * 2);
                         for i in 0..n {
@@ -12063,9 +12068,13 @@ pub fn paramsubst(
                     // a unset → return b verbatim.
                     other.clone()
                 } else if qt && !is_at_subscript_zip {
-                    // c:Src/subst.c:3032 — `sepjoin(aval, sep, 1)` joins
-                    // the `:^` left operand by IFS[0] in DQ.
-                    let joined = crate::ported::utils::sepjoin(&arr, None); // c:3032
+                    // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
+                    // Join with the (j:STR:) / (F) separator when one was
+                    // given (`sep`), else IFS[0]. Hardcoding None made
+                    // `"[${(j:,:)a:^b}]"` emit `[x y z y,y]` where zsh emits
+                    // `[x,y,z,y,y]` — the same `sep` feeds both this collapse
+                    // and the final c:3903 join.
+                    let joined = crate::ported::utils::sepjoin(&arr, sep.as_deref()); // c:3032
                                                                             // outlen = min(1, blen). When blen=0 → 0 elements.
                     if other.is_empty() {
                         Vec::new()
@@ -14225,7 +14234,27 @@ pub fn paramsubst(
                 }
             }
             value = words.join(" "); // c:4191 single-word case
-            if !words.is_empty() {
+                                     // c:Src/subst.c:4189-4197 — the bufferwords result decides the
+                                     // SHAPE, and a 0/1-word result is a SCALAR, not a 1-element
+                                     // array:
+                                     //     if (!list || !firstnode(list))
+                                     //         val = dupstring("");            // c:4189-4190
+                                     //     else if (!nextnode(firstnode(list)))
+                                     //         val = getdata(firstnode(list)); // c:4191-4192
+                                     //     else {                              // c:4193-4197
+                                     //         aval = hlinklist2array(list, 0);
+                                     //         isarr = nojoin ? 1 : 2;
+                                     //         l->list.flags |= LF_ARRAY;
+                                     //     }
+                                     // Only the >= 2 word branch sets `isarr`/LF_ARRAY. The port
+                                     // previously array-ized ANY non-empty word list, so a single
+                                     // word read as a 1-element array and `${#${(z)v}}` counted
+                                     // ELEMENTS (1) where zsh counts CHARACTERS of the scalar
+                                     // (`v=one` → 3, `v='a:b::c'` → 6). The (f) flag already got
+                                     // this right through the c:3924 `else if (!aval[1]) val =
+                                     // aval[0];` collapse (see `forced_split_to_one` below); this
+                                     // makes (z)/(Z) consistent with the same C rule.
+            if words.len() >= 2 {
                 split_parts = Some(words); // c:4194
                                            // Bug #363 sub-issue: in DQ context, (z) flag must
                                            // preserve splat shape per zsh — `"${(z)c}"` produces
@@ -14245,6 +14274,12 @@ pub fn paramsubst(
                 } else {
                     2 // c:3274 split-from-scalar (unquoted)
                 };
+            } else {
+                // c:4183 + c:4189-4192 — an array source is flattened by
+                // bufferwords (`isarr = 0`), and a 0/1-word list leaves the
+                // result in `val` as a plain scalar.
+                split_parts = None;
+                isarr = 0;
             }
         } // c:2473
 

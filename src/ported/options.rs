@@ -1643,7 +1643,7 @@ fn optns_flags(name: &str) -> u16 {
         "cshnullglob" => OPT_EMULATE | (OPT_CSH as u16), // c:129
         "debugbeforecmd" => OPT_ALL as u16,          // c:127
         "emacs" => 0,                                // c:128
-        "equals" => OPT_EMULATE | (OPT_NONBOURNE as u16), // c:129
+        "equals" => OPT_EMULATE | (OPT_ZSH as u16), // c:132
         "errexit" => OPT_EMULATE,                    // c:130
         "errreturn" => OPT_EMULATE,                  // c:131
         "exec" => OPT_ALL as u16,                    // c:132
@@ -1755,7 +1755,7 @@ fn optns_flags(name: &str) -> u16 {
         "restricted" => OPT_SPECIAL as u16, // c:234
         "rmstarsilent" => OPT_BOURNE as u16, // c:243
         "rmstarwait" => 0,             // c:236
-        "sharehistory" => 0,           // c:237
+        "sharehistory" => OPT_KSH as u16, // c:245
         "shfileexpansion" => OPT_EMULATE | (OPT_BOURNE as u16), // c:238
         "shglob" => OPT_EMULATE | (OPT_BOURNE as u16), // c:239
         "shinstdin" => OPT_SPECIAL as u16, // c:240
@@ -1769,12 +1769,13 @@ fn optns_flags(name: &str) -> u16 {
         "shortrepeat" => OPT_EMULATE,                         // c:252
         "shwordsplit" => OPT_EMULATE | (OPT_BOURNE as u16),   // c:245
         "singlecommand" => OPT_SPECIAL as u16,                // c:246
-        "singlelinezle" => 0,                                 // c:247
+        "singlelinezle" => OPT_KSH as u16,                    // c:255
         "sourcetrace" => 0,                                   // c:248
         "sunkeyboardhack" => 0,                               // c:249
         "transientrprompt" => 0,                              // c:250
         "trapsasync" => 0,                                    // c:251
         "typesetsilent" => OPT_EMULATE | (OPT_BOURNE as u16), // c:252
+        "typesettounset" => OPT_EMULATE | (OPT_BOURNE as u16), // c:261
         "unset" => OPT_EMULATE | (OPT_BSHELL as u16),         // c:253
         "verbose" => 0,                                       // c:263
         "vi" => 0,                                            // c:255

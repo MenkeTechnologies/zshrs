@@ -152,6 +152,21 @@ pub struct ZshCompiler {
     /// matching C zsh's `execlist` save/restore of `lineno`
     /// around each body execution (c:Src/exec.c::execlist:28,292).
     pub current_sublist_line: i64,
+    /// Set while compiling a pipeline stage whose top-level command is
+    /// a SIMPLE command: the stage's pipe fds must be dup2'd onto 0/1
+    /// only after that command's argument words have been expanded.
+    /// c:Src/exec.c:3720-3724 — the `addfd(…, 0, input, …)` /
+    /// `addfd(…, 1, output, …)` pair runs after prefork (c:3304) and
+    /// globlist (c:3702). [`ZshCompiler::emit_stage_fds_install`]
+    /// consumes the flag at that point in each dispatch arm; compound
+    /// stages (`{ … }`, `( … )`, functions) install at chunk entry
+    /// instead, since their bodies do read the pipe.
+    stage_fds_pending: bool,
+    /// `cmd |& next` — the stage also dups its (already piped) stdout
+    /// onto stderr. c:Src/parse.c gives cmd an extra `2>&1` redirect,
+    /// which C walks at c:Src/exec.c:3730+, after addfd installed the
+    /// pipe on fd 1 — so it rides along with the fd install.
+    stage_fds_merge_stderr: bool,
     /// Depth tracker for "compiling a redirect target word".
     /// c:Src/glob.c:2161 xpandredir — `prefork(&fake, isset(MULTIOS)
     /// ? 0 : PREFORK_SINGLE, NULL)` then "Globbing is only done for
@@ -208,6 +223,8 @@ impl ZshCompiler {
             defined_functions: std::collections::HashSet::new(),
             is_function_body: false,
             current_sublist_line: 1,
+            stage_fds_pending: false,
+            stage_fds_merge_stderr: false,
             redir_word_depth: 0,
             word_seg_depth: 0,
             assign_builtin_arg_depth: 0,
@@ -818,55 +835,80 @@ impl ZshCompiler {
             }
         }
         for (i, (stage_cmd, merge)) in stages.iter().enumerate() {
-            let mut sub = ZshCompiler::new();
-            // c:Src/exec.c::execpline2 — recursive pipeline emit
-            // pushes CS_PIPE BEFORE each recursive call into the
-            // rest of the pipeline. Stage i (0-based) inherits `i`
-            // cumulative CS_PIPE pushes from the outer recursion
-            // depth: stage 0 = 0 pushes, stage 1 = 1 push, stage 2
-            // = 2 pushes, etc. zsh's `%_` then renders the chain
-            // (`pipe`, `pipe pipe`, `pipe pipe pipe`, …) matching
-            // the recursive call depth.
-            for _ in 0..i {
-                sub.emit_cmd_push(crate::ported::zsh_h::CS_PIPE as u8);
-            }
-            if *merge {
-                let one_const = sub.builder.add_constant(Value::str("1"));
-                sub.builder.emit(Op::LoadConst(one_const), 0);
-                sub.builder
-                    .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
-            }
-            // c:Src/exec.c:3722-3724 — pipeline output occupies mfds[1]
-            // before the stage command's redirect list is walked, so
-            // that list's fd-1 write redirects MULTIOS-join the pipe
-            // (`{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | cat`
-            // sends `a` to BOTH the pipe and stderr). mfds is
-            // per-execcmd: only the stage's TOP-LEVEL redirects join —
-            // hence the gate on the command shape — and only non-last
-            // stages have their stdout on the pipe (the last runs
-            // inline in the parent).
-            let stage_has_toplevel_redirs = match stage_cmd {
-                ZshCommand::Simple(s) => !s.redirs.is_empty(),
-                ZshCommand::Redirected(_, redirs) => !redirs.is_empty(),
-                _ => false,
+            // c:Src/exec.c:3720-3724 — where the stage's pipe fds land
+            // on 0/1. For a SIMPLE command the addfd pair runs after
+            // prefork/globlist have expanded the argument words, so the
+            // install op is emitted inside compile_simple (see
+            // emit_stage_fds_install). Every other stage shape — `{ … }`,
+            // `( … )`, `if`, a loop — has no args at this level and
+            // its BODY legitimately reads the pipe (zsh:
+            // `print -rl -- c a b | { print -r -- "[$(cat)]" }` prints
+            // the data), so those install at chunk entry.
+            let stage_is_simple = matches!(stage_cmd, ZshCommand::Simple(_));
+            let mut install_at_top = !stage_is_simple;
+            let chunk = loop {
+                let mut sub = ZshCompiler::new();
+                // c:Src/exec.c::execpline2 — recursive pipeline emit
+                // pushes CS_PIPE BEFORE each recursive call into the
+                // rest of the pipeline. Stage i (0-based) inherits `i`
+                // cumulative CS_PIPE pushes from the outer recursion
+                // depth: stage 0 = 0 pushes, stage 1 = 1 push, stage 2
+                // = 2 pushes, etc. zsh's `%_` then renders the chain
+                // (`pipe`, `pipe pipe`, `pipe pipe pipe`, …) matching
+                // the recursive call depth.
+                for _ in 0..i {
+                    sub.emit_cmd_push(crate::ported::zsh_h::CS_PIPE as u8);
+                }
+                // c:Src/exec.c:3722-3724 — pipeline output occupies mfds[1]
+                // before the stage command's redirect list is walked, so
+                // that list's fd-1 write redirects MULTIOS-join the pipe
+                // (`{ echo a; echo b >&2; } 3>&1 1>&2 2>&3 3>&- | cat`
+                // sends `a` to BOTH the pipe and stderr). mfds is
+                // per-execcmd: only the stage's TOP-LEVEL redirects join —
+                // hence the gate on the command shape — and only non-last
+                // stages have their stdout on the pipe (the last runs
+                // inline in the parent).
+                let stage_has_toplevel_redirs = match stage_cmd {
+                    ZshCommand::Simple(s) => !s.redirs.is_empty(),
+                    ZshCommand::Redirected(_, redirs) => !redirs.is_empty(),
+                    _ => false,
+                };
+                if i + 1 < stages.len() && stage_has_toplevel_redirs {
+                    sub.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_PIPE_OUTPUT_MARK, 0),
+                        0,
+                    );
+                    sub.builder.emit(Op::Pop, 0);
+                }
+                sub.stage_fds_pending = true;
+                // `cmd1 |& cmd2` — the parser hands cmd1 an extra
+                // `2>&1`, and C walks it in the redirect loop at
+                // c:3730+, i.e. AFTER addfd has put the pipe on fd 1.
+                // Folding it into the install op keeps that order (a
+                // chunk-entry `2>&1` would now dup the shell's stdout,
+                // not the pipe).
+                sub.stage_fds_merge_stderr = *merge;
+                if install_at_top {
+                    sub.emit_stage_fds_install();
+                }
+                sub.compile_command(stage_cmd);
+                if sub.stage_fds_pending {
+                    // No dispatch arm consumed the install — rather than
+                    // run a stage whose output never reaches the pipe,
+                    // fall back to installing at chunk entry.
+                    install_at_top = true;
+                    continue;
+                }
+                // Pop the i CS_PIPE pushes from the head.
+                for _ in 0..i {
+                    sub.emit_cmd_pop();
+                }
+                let sub_end = sub.builder.current_pos();
+                for patch in std::mem::take(&mut sub.return_patches) {
+                    sub.builder.patch_jump(patch, sub_end);
+                }
+                break sub.builder.build();
             };
-            if i + 1 < stages.len() && stage_has_toplevel_redirs {
-                sub.builder.emit(
-                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PIPE_OUTPUT_MARK, 0),
-                    0,
-                );
-                sub.builder.emit(Op::Pop, 0);
-            }
-            sub.compile_command(stage_cmd);
-            // Pop the i CS_PIPE pushes from the head.
-            for _ in 0..i {
-                sub.emit_cmd_pop();
-            }
-            let sub_end = sub.builder.current_pos();
-            for patch in std::mem::take(&mut sub.return_patches) {
-                sub.builder.patch_jump(patch, sub_end);
-            }
-            let chunk = sub.builder.build();
             let idx = self.builder.add_sub_chunk(chunk);
             self.builder.emit(Op::LoadInt(idx as i64), 0);
         }
@@ -1287,6 +1329,15 @@ impl ZshCompiler {
         // SET_VAR can stash and restore each name's prior state.
         // Direct port of zsh's addvars()-list scoping in execute_simple.
         let has_inline_env_scope = !simple.assigns.is_empty() && !simple.words.is_empty();
+        // c:Src/exec.c:3720-3724 — a pipeline stage with no command
+        // word has no argument expansion for the addfd pair to follow,
+        // so its pipe fds install right here: before the redirect loop
+        // (c:3730+) and before addvars (c:4142), which is C's order.
+        // `print -rl -- a b | x=$(cat)` therefore has the assignment's
+        // `$(cat)` read the PIPE, unlike a command's arg words.
+        if simple.words.is_empty() {
+            self.emit_stage_fds_install();
+        }
         // c:Src/exec.c — prefork (arg expansion) runs BEFORE addvars
         // (the inline-assign list) in zsh. That's how `a=1 echo "$a"`
         // prints empty (the shell's own `a` is still unset when the
@@ -1497,6 +1548,10 @@ impl ZshCompiler {
         let bare_exec_redir =
             simple.words.len() == 1 && simple.words[0] == "exec" && !simple.redirs.is_empty();
         if bare_exec_redir {
+            // c:Src/exec.c:3721-3724 — addfd for the pipe still runs
+            // ahead of the redirect loop under nullexec==1 (`exec
+            // >file` has no args to expand first).
+            self.emit_stage_fds_install();
             for redir in &simple.redirs {
                 // permanent=true: c:Src/exec.c:3978-3986 nullexec==1 —
                 // exec's fd changes skip save/restore even when an
@@ -1605,9 +1660,12 @@ impl ZshCompiler {
             for w in &simple.words {
                 self.compile_word_str(w);
             }
-            // c:Src/exec.c:3285-3304 → c:3720 — redirect scope opens
-            // AFTER the word ops so an expansion zerr (`=cmd` not
-            // found, nomatch) hits the original stderr.
+            // c:Src/exec.c:3285-3304 → c:3720 — the pipe fds and then
+            // the redirect scope open AFTER the word ops, so an
+            // expansion zerr (`=cmd` not found, nomatch) hits the
+            // original stderr and a `$( … )` in the args reads the
+            // shell's fd 0 rather than the pipe.
+            self.emit_stage_fds_install();
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
@@ -1636,6 +1694,7 @@ impl ZshCompiler {
             // Redirect scope opens before the xtrace/dispatch ops —
             // `break N` args are literal numerals (no expansion-error
             // window), so the C prefork-before-addfd order is moot.
+            self.emit_stage_fds_install(); // c:Src/exec.c:3721-3724
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
@@ -1707,6 +1766,7 @@ impl ZshCompiler {
         if first == "continue" {
             // Redirect scope: same placement rationale as the `break`
             // arm above.
+            self.emit_stage_fds_install(); // c:Src/exec.c:3721-3724
             if has_redirects {
                 self.emit_redir_scope_begin(&simple.redirs);
             }
@@ -1831,8 +1891,10 @@ impl ZshCompiler {
                 for word in &simple.words[1..] {
                     self.compile_word_str(word);
                 }
-                // c:Src/exec.c:3285-3304 → c:3720 — redirect scope
-                // opens after arg expansion, before addvars/dispatch.
+                // c:Src/exec.c:3285-3304 → c:3720 — pipe fds and then
+                // the redirect scope open after arg expansion, before
+                // addvars/dispatch.
+                self.emit_stage_fds_install();
                 if has_redirects {
                     self.emit_redir_scope_begin(&simple.redirs);
                 }
@@ -1880,6 +1942,10 @@ impl ZshCompiler {
         // when no $(cmd) ran) and returns without dispatching.
         // Surfaced by execcmd_compile_head via `is_empty_command`.
         if dispatch.is_empty_command {
+            // c:Src/exec.c:3721-3724 — nothing left to expand, so the
+            // stage's fds go on now (the c:3342 zerr below still hits
+            // the un-redirected stderr).
+            self.emit_stage_fds_install();
             // c:Src/exec.c:3342 — `if (redir) { zerr("redirection
             // with no command"); ... return 1; }`. A bare prefix
             // keyword (`builtin`, `command`, `exec`, `noglob`,
@@ -2101,12 +2167,15 @@ impl ZshCompiler {
         let argc = (simple.words.len() - precmd_skip - 1) as u8;
 
         // c:Src/exec.c:3285-3304 (prefork) + c:3702 (globlist) →
-        // c:3720+ (addfd loop) — open the redirect scope only after
-        // every arg word's expansion ops are emitted. An expansion
-        // zerr (nomatch, `${var?msg}`, `=cmd` not found) therefore
-        // prints to the shell's original stderr, not the command's
-        // redirected one, and the dispatch op aborts via the
-        // glob_failed/errflag gates in dispatch_builtin.
+        // c:3720+ (addfd loop) — install the pipeline fds and open the
+        // redirect scope only after every arg word's expansion ops are
+        // emitted. An expansion zerr (nomatch, `${var?msg}`, `=cmd`
+        // not found) therefore prints to the shell's original stderr,
+        // not the command's redirected one, and the dispatch op aborts
+        // via the glob_failed/errflag gates in dispatch_builtin. A
+        // `$( … )` in the args likewise reads the shell's fd 0, not the
+        // stage's pipe.
+        self.emit_stage_fds_install();
         if has_redirects {
             self.emit_redir_scope_begin(&simple.redirs);
         }
@@ -2261,6 +2330,38 @@ impl ZshCompiler {
                 || first_clean == "return"
                 || first_clean == "exit"
             {
+                // c:Src/exec.c:1571-1603 — a `return` does NOT skip
+                // `sublist_done:`. retflag is consulted only at the TOP of
+                // execlist's list loop (c:1370 `while (… && !retflag && …)`),
+                // which stops the NEXT sublist; the sublist holding the
+                // `return` still runs its ZERR-trap tail. So `return 5` fires
+                // the ERR trap on its way out. This arm used to jump straight
+                // to the scope's return landing without ever running the
+                // check, so a `return` inside a try-list never fired ERR:
+                //   f() { { return 5 } always { print fin } }; f
+                // printed `fin / err=5` where zsh prints `err=5 / fin / err=5`.
+                //
+                // BUILTIN_ERREXIT_CHECK is emitted for its SIDE EFFECT only
+                // (it fires dotrap(SIGZERR), gated on DONETRAP per c:1598) and
+                // its result is popped: the escape jump below stays
+                // UNCONDITIONAL, because retflag propagation is not contingent
+                // on the check's verdict. Suppressed contexts
+                // (errexit_suppress_depth > 0 — the `&&`/`||` operands and
+                // `if`/`while` conditions that carry C's this_noerrexit) skip
+                // the check entirely, so `false && return 3` stays silent.
+                //
+                // `exit` is excluded: c:Src/builtin.c zexit → realexit()
+                // leaves the process without ever reaching sublist_done, so no
+                // ERR trap fires (`zsh -fc 'trap "print e" ERR; f(){ exit 5 };
+                // f'` prints nothing).
+                let is_return = first == "return" || first_clean == "return";
+                if is_return && self.errexit_suppress_depth == 0 {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ERREXIT_CHECK, 0),
+                        0,
+                    ); // c:1601
+                    self.builder.emit(Op::Pop, 0);
+                }
                 self.emit_cmd_stack_drain();
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
@@ -2323,6 +2424,41 @@ impl ZshCompiler {
         self.builder
             .emit(Op::WithRedirectsBegin(redirs.len() as u8), 0);
         self.compile_redirs_multios(redirs);
+    }
+
+    /// Dup this pipeline stage's pipe fds onto 0/1, if we're compiling
+    /// one. Direct port of the addfd pair at c:Src/exec.c:3720-3724:
+    ///
+    ///     /* Add pipeline input/output to mnodes */
+    ///     if (input)  addfd(forked, save, mfds, 0, input, 0, NULL);
+    ///     if (output) addfd(forked, save, mfds, 1, output, 1, NULL);
+    ///
+    /// Called by every dispatch arm of `compile_simple` at exactly the
+    /// C position: after the argument words' expansion ops (prefork
+    /// c:3304 + globlist c:3702), before the redirect scope opens
+    /// (c:3730+). That ordering is observable — `print -rl -- c a b |
+    /// print -r -- "[$(cat)]"` prints `[]` in zsh because the `$(cat)`
+    /// expands while fd 0 is still the shell's, not the pipe.
+    ///
+    /// One-shot: the flag is cleared here so nested `compile_simple`
+    /// calls inside the same stage (a function body, a `$( … )` chunk)
+    /// don't re-install. The runtime side is
+    /// `fusevm_bridge::BUILTIN_PIPE_FDS_INSTALL`, fed by
+    /// `BUILTIN_RUN_PIPELINE`'s `stage_fds_park`.
+    fn emit_stage_fds_install(&mut self) {
+        if !self.stage_fds_pending {
+            return;
+        }
+        self.stage_fds_pending = false;
+        // Arg 1: `|&` — merge stderr into the piped stdout (the extra
+        // `2>&1` C walks in the redirect loop right after addfd).
+        self.builder
+            .emit(Op::LoadInt(self.stage_fds_merge_stderr as i64), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_PIPE_FDS_INSTALL, 1),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
     }
 
     /// Translate a ZshRedir → fusevm Redirect/HereDoc/HereString op.
@@ -4761,7 +4897,19 @@ impl ZshCompiler {
                 let load_bid = match splice {
                     '@' => crate::vm_helper::BUILTIN_ARRAY_ALL,
                     '*' => crate::vm_helper::BUILTIN_ARRAY_JOIN_STAR,
-                    _ => crate::vm_helper::BUILTIN_GET_VAR,
+                    // c:Src/subst.c:1705 / :2558-2569 — `spbreak` is ONE flag:
+                    // SH_WORD_SPLIT sets it to 1, a leading `=` sets it to 2,
+                    // and `==` clears it. Either way c:3921 runs exactly one
+                    // `sepsplit`. BUILTIN_GET_VAR applies its OWN SH_WORD_SPLIT
+                    // split when the option is on, which would then be split
+                    // again by the FORCE_SPLIT below — `IFS=x; setopt
+                    // SH_WORD_SPLIT; print -rl -- "${=v}"` came back as the
+                    // single word ` a b ` (pre-split array joined by to_str,
+                    // then re-split on a now-absent separator). GET_VAR_DQ is
+                    // the same read WITHOUT the split, and its array arm
+                    // sepjoins — which is precisely c:3903's
+                    // `val = sepjoin(aval, sep, 1)` before the c:3921 split.
+                    _ => crate::vm_helper::BUILTIN_GET_VAR_DQ,
                 };
                 let argc = if splice == ' ' { 1 } else { 0 };
                 self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
@@ -4775,8 +4923,27 @@ impl ZshCompiler {
                 let in_scalar_assign =
                     self.scalar_assign_depth > 0 || self.assign_builtin_arg_depth > 0;
                 if force_split && !in_scalar_assign {
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+                    // c:Src/subst.c:3921 `sepsplit(val, spsep, 0, 1)` →
+                    // Src/utils.c:3711 spacesplit. BUILTIN_FORCE_SPLIT is the
+                    // faithful port; BUILTIN_WORD_SPLIT (multsub's c:553-620
+                    // PREFORK_SPLIT walker) collapses separator runs and drops
+                    // every empty field, so `"${=v}"` lost the leading and
+                    // trailing fields zsh keeps.
+                    //
+                    // The empty leading/trailing WHITESPACE fields survive only
+                    // when something attaches to them: the `Dnull` markers of a
+                    // quoted word (c:4386/:4429 strcatsub over `ostr`/`fstr`),
+                    // or a literal/expansion segment next door. Both are known
+                    // here, so pass them through as argc — see
+                    // BUILTIN_FORCE_SPLIT's argc contract.
+                    let in_dq = self.dq_context_depth > 0
+                        || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                    let keep_empties = in_dq || self.word_seg_depth > 0;
+                    let argc = if keep_empties { 1 } else { 0 };
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_FORCE_SPLIT, argc),
+                        0,
+                    );
                 }
                 return;
             }
