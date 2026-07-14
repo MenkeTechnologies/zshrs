@@ -3551,7 +3551,7 @@ pub fn readhistline(line: &str) -> Option<histent> {
 }
 
 /// Port of `void readhistfile(char *fn, int err, int readflags)` from Src/hist.c:2675.
-pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
+pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     // c:2675
     let path: String = match fn_path {
         Some(p) => p.to_string(),
@@ -3560,11 +3560,64 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
             None => return,
         },
     };
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(_) => return,
+    // c:2675 — HFILE_FAST is the incremental (share / append) read: resume at
+    // lasthist.fpos and consume only what other shells appended, rather than
+    // re-parsing the whole file. Under SHARE_HISTORY hend() re-reads after
+    // EVERY command (c:1529); a full re-read there is O(file) per prompt (and,
+    // with the Vec ring, was an O(n²) memmove hang on a large HISTFILE).
+    let fast = readflags & HFILE_FAST as i32 != 0;
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(&path).ok();
+    let cur_size = meta.as_ref().map(|m| m.len() as i64).unwrap_or(0);
+    let cur_mtim = meta.as_ref().map(|m| m.mtime()).unwrap_or(0);
+    if cur_size == 0 {
+        return;
+    }
+    if fast {
+        // Nothing changed since our last read/write — savehistfile keeps
+        // lasthist.{fpos,fsiz,mtim} current (c:3049/3079/3080) — so there is
+        // nothing new to pull in. Skip without opening the file.
+        let lh = lasthist.lock().unwrap();
+        if lh.fsiz == cur_size && lh.mtim == cur_mtim {
+            return;
+        }
+    }
+    // A fast read resumes at lasthist.fpos when the file only grew; a rewrite
+    // or truncation (file now shorter than fpos) or a cold/full read starts at
+    // 0. `read_end` is where we actually stopped, recorded into lasthist below.
+    let start_pos: i64 = if fast {
+        let fp = lasthist.lock().unwrap().fpos;
+        if fp > 0 && fp <= cur_size {
+            fp
+        } else {
+            0
+        }
+    } else {
+        0
     };
+    let contents = {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        if start_pos > 0 && f.seek(SeekFrom::Start(start_pos as u64)).is_err() {
+            return;
+        }
+        let mut s = String::new();
+        if f.read_to_string(&mut s).is_err() {
+            return;
+        }
+        s
+    };
+    let read_end = start_pos + contents.len() as i64;
     if contents.is_empty() {
+        // Nothing appended past fpos, but the file was touched (mtime/size
+        // differed). Refresh lasthist so the next fast read early-outs.
+        let mut lh = lasthist.lock().unwrap();
+        lh.fpos = read_end;
+        lh.fsiz = cur_size;
+        lh.mtim = cur_mtim;
         return;
     }
     // c:2700-2706 — lockhistfile return codes:
@@ -3653,6 +3706,15 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, _readflags: i32) {
         let mut ring = hist_ring.lock().unwrap();
         batch.append(&mut ring);
         *ring = batch;
+    }
+    // c:2675 — record where this read stopped. A non-fast (startup) read primes
+    // lasthist too, so the first HFILE_FAST share-read early-outs instead of
+    // re-reading from offset 0 and DUPLICATING every entry already in the ring.
+    {
+        let mut lh = lasthist.lock().unwrap();
+        lh.fpos = read_end;
+        lh.fsiz = cur_size;
+        lh.mtim = cur_mtim;
     }
     unlockhistfile(&path);
     resizehistents();
