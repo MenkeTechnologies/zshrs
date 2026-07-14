@@ -545,6 +545,23 @@ pub(crate) fn mathevall() -> Result<mnumber, String> {
     // outputunderscore across levels of evaluation".
     let _mlevel = MathLevel::enter();
 
+    // c:Src/math.c — bound recursive re-evaluation. A scalar whose
+    // value references itself in arithmetic — `x=x`, `x="1+x"`, or a
+    // cycle `x=y; y=x` — makes getmathparam re-enter mathevall on the
+    // same value without end (getsparam returns the self-referential
+    // string, mathevall re-parses it, getmathparam resolves the var
+    // again …). Unbounded, that recursion overruns the stack and the
+    // whole shell dies with SIGBUS/SIGABRT rather than erroring. zsh
+    // caps `mlevel` and bails with a diagnostic; match it so the eval
+    // fails cleanly (0 result) instead of crashing. thefuck's config
+    // tripped this the moment the cmd-subst deadlock that used to mask
+    // it was fixed.
+    const MAX_MLEVEL: i32 = 256; // c:Src/math.c MAX_MLEVEL
+    if M_LEVEL.with(|c| c.get()) > MAX_MLEVEL {
+        let expr = m_input_clone();
+        return Err(format!("math recursion limit exceeded: {}", expr.trim()));
+    }
+
     // Skip leading whitespace and Nularg
     while let Some(c) = peek() {
         if c.is_whitespace() || c == '\u{a1}' {

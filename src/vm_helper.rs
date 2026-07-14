@@ -2971,6 +2971,47 @@ impl ShellExecutor {
         // is cleared from fdtable — c:Src/utils.c:2137.
         crate::ported::utils::zclose(write_fd);
 
+        // Drain the capture pipe CONCURRENTLY on a background reader
+        // thread. The sub-VM (and any children it forks, which inherit
+        // fd 1) writes to the pipe; reading it only AFTER vm.run()
+        // returns deadlocks the moment the output exceeds the OS pipe
+        // buffer (~64KB): the writer blocks on a full pipe that nothing
+        // is draining, so vm.run() never returns. `$(alias)` over
+        // zpwr's 2000+ aliases (~177KB) hung the whole shell a few
+        // prompts in (thefuck's `fuck()` init runs `TF_SHELL_ALIASES=
+        // $(alias)`). C's getoutput (Src/exec.c) forks the writer child
+        // so the parent reads concurrently; this reader thread is the
+        // in-process analog. It does only raw fd reads (no shell state /
+        // thread-locals). EOF arrives once every write end closes — fd 1
+        // restored below plus any forked child exiting.
+        let reader_handle = std::thread::spawn(move || {
+            let mut buf: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 65536];
+            loop {
+                let n = unsafe {
+                    libc::read(
+                        read_fd,
+                        chunk.as_mut_ptr() as *mut libc::c_void,
+                        chunk.len(),
+                    )
+                };
+                if n < 0 {
+                    // Retry on EINTR (a signal interrupted the read);
+                    // any other error ends the drain.
+                    let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    break;
+                }
+                if n == 0 {
+                    break; // EOF — all write ends closed.
+                }
+                buf.extend_from_slice(&chunk[..n as usize]);
+            }
+            buf
+        });
+
         // c:Src/exec.c:1161 — forked cmdsub child runs entersubsh()
         // which does `zsh_subshell++`; in-process equivalent (RAII,
         // restored on every return path below).
@@ -3292,17 +3333,15 @@ impl ShellExecutor {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
         }
         crate::ported::utils::zclose(saved_stdout);
-        let mut output = String::new();
-        {
-            // Borrow the fd for reading without letting File's Drop
-            // close it — the close must go through zclose so the
-            // FDT_INTERNAL mark from mpipe is cleared (c:Src/utils.c:2137).
-            let mut read_file = unsafe { File::from_raw_fd(read_fd) };
-            let _ = io::BufReader::new(&mut read_file).read_to_string(&mut output);
-            use std::os::unix::io::IntoRawFd;
-            let _ = read_file.into_raw_fd();
-        }
+        // Collect the concurrently-drained output. With fd 1 restored
+        // above, the last shell-side write end is closed, so the reader
+        // hits EOF and join() returns the full buffer regardless of
+        // size — no pipe-full deadlock. The reader only read (never
+        // closed) read_fd, so zclose still clears its FDT_INTERNAL mark
+        // (c:Src/utils.c:2137).
+        let bytes = reader_handle.join().unwrap_or_default();
         crate::ported::utils::zclose(read_fd);
+        let mut output = String::from_utf8_lossy(&bytes).into_owned();
 
         // POSIX: trailing newlines stripped from cmd-sub result.
         while output.ends_with('\n') {

@@ -1703,6 +1703,33 @@ pub fn preprompt() {
     // measures correctly), this can't be ported without reimplementing
     // countprompt's job inline — which it must not. Left as a no-op.
 
+    // Reap any children that exited while the shell sat idle. zsh's
+    // SIGCHLD handler reaps asynchronously during the ZLE read (signals
+    // are unqueued there), but zshrs runs the interactive event loop
+    // inside a queued-signal window (init.rs `queue_signals()` at loop
+    // top), so zhandler QUEUES each SIGCHLD instead of reaping it
+    // (signals.rs:373). Disowned / background jobs (`&!`, `&`, and
+    // `<(…)` process substitutions) therefore piled up as zombies
+    // between prompts — every zpwr/zinit/p10k async `&!` per prompt
+    // leaked a zombie, slowing startup and eventually exhausting the
+    // process table. Mirror zhandler's reap+route here, right before
+    // the scanjobs notification pass, so `waitpid(-1)` clears the
+    // zombies and the DONE bits land for scanjobs to print/delete. No
+    // foreground job is live at preprompt, so reaping -1 can't steal a
+    // fg wait's status.
+    {
+        let reaped = crate::ported::signals::wait_for_processes();
+        if !reaped.is_empty() {
+            if let Some(jt) = crate::ported::jobs::JOBTAB.get() {
+                if let Ok(mut guard) = jt.lock() {
+                    for (pid, status) in reaped {
+                        let _ = crate::ported::jobs::update_bg_job(&mut guard, pid, status);
+                    }
+                }
+            }
+        }
+    }
+
     // c:1569-1572 — `if (unset(NOTIFY)) scanjobs();` — sync job-status
     // print before prompt, via the canonical scanjobs port
     // (Src/jobs.c:1993).
