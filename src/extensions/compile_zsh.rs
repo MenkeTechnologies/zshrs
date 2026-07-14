@@ -4000,7 +4000,27 @@ impl ZshCompiler {
             || untoked.starts_with('=');
         // Brace expansion: `{a,b,c}` and `{1..5}` need expansion. Detect
         // matched-brace forms with comma or `..` inside.
-        let trigger_brace = looks_like_brace_expansion(&untoked);
+        //
+        // c:Src/subst.c:170 — `if (unset(IGNOREBRACES) && !(flags &
+        // PREFORK_SINGLE))` gates the `xpandbraces` loop. A word reaching
+        // prefork with PREFORK_SINGLE is NEVER brace-expanded, and cond
+        // operands are exactly such words: cond.c:53 `singsub(strp)` →
+        // subst.c:520 `prefork(&foo, PREFORK_SINGLE, NULL)`.
+        //
+        // `dq_context_depth > 0` is this compiler's existing spelling of that
+        // state (see the singsub/PREFORK_SINGLE comment at line 3305, and the
+        // cond-operand bumps in compile_cond_expr). Without the gate, `[[ aaa
+        // =~ a{2,3} ]]` brace-expanded its ERE bound to `a2 a3` (so the regex
+        // became `a2` and stopped matching), and `[[ -n a{2,3} ]]` split one
+        // operand into two words and returned 1 where zsh returns 0.
+        //
+        // A DQ-marker-wrapped word (`\u{9e}…\u{9e}`) counts as the same state:
+        // braces are literal inside `"…"` (`print -r -- "{a,b}"` → `{a,b}`), and
+        // the `=~` arm wraps its RHS in those markers precisely to reach
+        // singsub semantics. Same spelling as `has_quote_markers` (line 4118).
+        let in_prefork_single = self.dq_context_depth > 0
+            || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+        let trigger_brace = !in_prefork_single && looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
         // outer angle bracket with Inang (`\u{94}`) / Outang (`\u{95}`)
@@ -7808,11 +7828,18 @@ impl ZshCompiler {
                 // `[[ a* = a* ]]` hit \"no matches found: a*\" because
                 // the LHS was glob-expanded before reaching the test
                 // runtime.
+                // Inbrace (`\u{8f}`) joins the list for the same reason: C runs
+                // every cond operand through singsub → prefork(PREFORK_SINGLE)
+                // (cond.c:53 / subst.c:520), and subst.c:170 skips xpandbraces
+                // under that flag. So a LHS of `a{2,3}` stays ONE literal word;
+                // without the bump it brace-expanded and `[[ a{2,3} ==
+                // 'a{2,3}' ]]` compared `a2 a3` against `a{2,3}` → 1.
                 let left_has_unquoted_glob = !left.contains('\u{9e}')
                     && !left.contains('\u{9d}')
                     && (left.contains('\u{87}')
                         || left.contains('\u{86}')
-                        || left.contains('\u{91}'));
+                        || left.contains('\u{91}')
+                        || left.contains('\u{8f}'));
                 if left_has_unquoted_glob {
                     self.dq_context_depth += 1;
                     self.compile_word_str(left);

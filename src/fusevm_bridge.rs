@@ -10198,6 +10198,34 @@ impl fusevm::ShellHost for ZshrsHost {
 
     fn subshell_begin(&mut self) {
         with_executor(|exec| {
+            // Special parameters whose value lives in a process GLOBAL behind a
+            // GSU (`Src/params.c`'s `ifs`, `wordchars`, `home`, `histsiz`, …)
+            // rather than in the param table. Mirrors the getfn dispatch list at
+            // params.rs:12548. C isolates these for free by forking `(...)`;
+            // zshrs's in-process subshell has to snapshot them by hand, or a
+            // subshell-local `IFS=,` rewrites the parent's word-splitting.
+            const SUBSHELL_SPECIAL_GLOBALS: &[&str] = &[
+                "IFS",
+                "HOME",
+                "TERM",
+                "USERNAME",
+                "WORDCHARS",
+                "TERMINFO",
+                "TERMINFO_DIRS",
+                "KEYBOARD_HACK",
+                "histchars",
+                "HISTSIZE",
+                "SAVEHIST",
+            ];
+            // An UNSET special yields None and is skipped: the paramtab snapshot
+            // restores its PM_UNSET flag, and the getfn dispatch refuses to read
+            // the (stale) global while PM_UNSET is set (params.rs:12552).
+            let special_globals_snap: Vec<(String, String)> = SUBSHELL_SPECIAL_GLOBALS
+                .iter()
+                .filter_map(|n| {
+                    crate::ported::params::getsparam(n).map(|v| ((*n).to_string(), v))
+                })
+                .collect();
             // libc::umask returns the previous mask AND sets the new
             // one; call with current value to read without changing.
             let cur_umask = unsafe {
@@ -10222,6 +10250,7 @@ impl fusevm::ShellHost for ZshrsHost {
             exec.subshell_snapshots.push(SubshellSnapshot {
                 paramtab: paramtab_snap,
                 paramtab_hashed_storage: paramtab_hashed_snap,
+                special_globals: special_globals_snap,
                 positional_params: exec.pparams(),
                 env_vars: env::vars().collect(),
                 // Save the LOGICAL pwd ($PWD env), not `current_dir()`'s
@@ -10445,6 +10474,14 @@ impl fusevm::ShellHost for ZshrsHost {
                     .as_deref_mut()
                 {
                     *tab = snap.paramtab;
+                }
+                // Restore the global-backed specials (see
+                // SubshellSnapshot::special_globals). MUST run after the
+                // paramtab restore above: setsparam writes through the GSU setfn
+                // to BOTH the process global and the param node, so the paramtab
+                // overwrite would otherwise clobber the node half of it.
+                for (name, val) in &snap.special_globals {
+                    crate::ported::params::setsparam(name, val);
                 }
                 // c:Src/exec.c::entersubsh fork semantics — restore
                 // the parent's `$!`; a background job inside `(...)`

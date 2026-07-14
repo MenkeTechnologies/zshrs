@@ -384,6 +384,22 @@ jobs:
         run: ./target/debug/parity-fuzz --mode stateful --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/stateful.txt --out target/parity-fuzz/ci-stateful.txt
       - name: Fuzz — expr
         run: ./target/debug/parity-fuzz --mode expr --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/expr.txt --out target/parity-fuzz/ci-expr.txt
+      # match / regex / builtin / cmdsub / loop exercise surface no other mode
+      # reaches: the (S)(I)(B)(E)(M)(N) substring-match flags, `[[ =~ ]]` and its
+      # $MATCH/$match/BASH_REMATCH side effects, the print/echo/read/getopts/eval
+      # builtins, command substitution's splitting and `$(<file)` path, and the
+      # loop/case-fallthrough forms. All five are clean (empty baseline: any
+      # divergence is a regression).
+      - name: Fuzz — match
+        run: ./target/debug/parity-fuzz --mode match --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/match.txt --out target/parity-fuzz/ci-match.txt
+      - name: Fuzz — regex
+        run: ./target/debug/parity-fuzz --mode regex --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/regex.txt --out target/parity-fuzz/ci-regex.txt
+      - name: Fuzz — builtin
+        run: ./target/debug/parity-fuzz --mode builtin --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/builtin.txt --out target/parity-fuzz/ci-builtin.txt
+      - name: Fuzz — cmdsub
+        run: ./target/debug/parity-fuzz --mode cmdsub --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/cmdsub.txt --out target/parity-fuzz/ci-cmdsub.txt
+      - name: Fuzz — loop
+        run: ./target/debug/parity-fuzz --mode loop --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/loop.txt --out target/parity-fuzz/ci-loop.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
@@ -391,6 +407,17 @@ jobs:
       - name: Fuzz — printf (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode printf --count 5000 --verify 3 --max-report 400 --out target/parity-fuzz/ci-printf.txt
+      # Informational — arith has ONE known gap class: a comma operator inside an
+      # array subscript (`${arr[((x), (y)) % 5 + 1]}`). C never string-splits a
+      # subscript — mathevalarg (Src/math.c:1534) parses at MPREC_ARG, which stops
+      # at the TOP-LEVEL comma and reports where it stopped — whereas zshrs splits
+      # on the first comma at any paren depth. Every remaining arith divergence is
+      # an instance of that one class; it is informational (not baselined) because
+      # each operand combination normalizes to its own signature. Promote to a
+      # blocking gate once mathevalarg carries C's `**ss` out-param.
+      - name: Fuzz — arith (informational)
+        continue-on-error: true
+        run: ./target/debug/parity-fuzz --mode arith --count 4000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-arith.txt
       - name: Upload divergence corpora
         if: failure()
         uses: actions/upload-artifact@v4

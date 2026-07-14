@@ -6788,48 +6788,54 @@ pub fn paramsubst(
                     // C zsh returns empty at c:2576-2578. For positive
                     // or zero start, clamp `start - 1` to 0 (zsh treats
                     // `arr[0,N]` like `arr[1,N]`).
-                    let start_oob_neg = start < 0 && (len + start) < 0;
-                    let s_raw: i64 = if start < 0 { len + start } else { start - 1 };
-                    let e_raw: i64 = if end < 0 { len + end + 1 } else { end.min(len) };
-                    if start_oob_neg {
-                        // c:2576 — start still negative → empty.
-                        String::new()
+                    // c:2564-2596 — `getarrvalue` ALWAYS yields an array: an
+                    // out-of-range or inverted slice returns an EMPTY one
+                    // (c:2573-2578 `s = arrdup_max(nular, 0)`), never the
+                    // backing array. Call the canonical port instead of
+                    // re-deriving the bounds here.
+                    //
+                    // The inline copy resolved the bounds correctly but returned
+                    // a bare `String::new()` on the empty result and left
+                    // `split_parts` (C's `aval`) as None. Downstream that is
+                    // indistinguishable from "this expansion had no subscript",
+                    // so the `(j:…:)` sepjoin arm (subst.rs:13481) took its
+                    // `arrays_get(var_name)` fallback and joined the WHOLE
+                    // backing array: `a=(x y); i=3; "${(j:,:)a[i,-1]}"` printed
+                    // `x,y` where zsh prints nothing. An empty slice has to stay
+                    // an empty aval.
+                    //
+                    // Only a NON-literal bound reached this path (a literal one
+                    // is caught by an earlier arm), which is why the shape real
+                    // code writes — `"${(j:,:)argv[OPTIND,-1]}"` — was the one
+                    // that broke.
+                    let slice = crate::ported::params::getarrvalue(&arr_clone, start, end);
+                    // Preserve ARRAY SHAPE of the slice so `(q)`/`(qq)`
+                    // per-element quoting and `(@)` splat operate on the
+                    // sliced ELEMENTS, not the joined scalar. Without
+                    // split_parts the quote block (subst.rs:13781) fell
+                    // to its whole-scalar/no-op arm and dropped the
+                    // quoting: `${(@qq)arr[lo,hi]}` came out unquoted —
+                    // p10k `_p9k_declare` does
+                    // `eval "typeset -ga …=(${(@qq)*[4,-1]})"`, so the
+                    // unquoted `service_account:*` glob-expanded and
+                    // aborted the whole prompt build (garbled prompt /
+                    // startup hang). Matches the slice-of-slice arm
+                    // (subst.rs:7657) which already seeds split_parts.
+                    isarr = if slice.is_empty() { -1 } else { 1 };
+                    split_parts = Some(slice.clone()); // c:2596 (aval)
+                    // c:Src/subst.c:3032 — `val = sepjoin(aval,
+                    // sep, 1)`. Quoted array range `"${a[1,2]}"`
+                    // joins by IFS[0]. The range arm yields
+                    // isarr=0 (scalar shape), so it never reaches
+                    // the qt-sepjoin at subst.rs:7640 (unlike
+                    // `[*]`); call the ported sepjoin here for the
+                    // quoted case (Bug #635 range residual).
+                    // Unquoted keeps the space-join the caller
+                    // re-splits into words.
+                    if qt {
+                        crate::ported::utils::sepjoin(&slice, None) // c:3032
                     } else {
-                        let s = s_raw.max(0) as usize;
-                        let e = e_raw.max(0) as usize;
-                        if s < arr_clone.len() && s < e {
-                            let slice = &arr_clone[s..e.min(arr_clone.len())];
-                            // Preserve ARRAY SHAPE of the slice so `(q)`/`(qq)`
-                            // per-element quoting and `(@)` splat operate on the
-                            // sliced ELEMENTS, not the joined scalar. Without
-                            // split_parts the quote block (subst.rs:13781) fell
-                            // to its whole-scalar/no-op arm and dropped the
-                            // quoting: `${(@qq)arr[lo,hi]}` came out unquoted —
-                            // p10k `_p9k_declare` does
-                            // `eval "typeset -ga …=(${(@qq)*[4,-1]})"`, so the
-                            // unquoted `service_account:*` glob-expanded and
-                            // aborted the whole prompt build (garbled prompt /
-                            // startup hang). Matches the slice-of-slice arm
-                            // (subst.rs:7657) which already seeds split_parts.
-                            split_parts = Some(slice.to_vec());
-                            isarr = if slice.is_empty() { -1 } else { 1 };
-                            // c:Src/subst.c:3032 — `val = sepjoin(aval,
-                            // sep, 1)`. Quoted array range `"${a[1,2]}"`
-                            // joins by IFS[0]. The range arm yields
-                            // isarr=0 (scalar shape), so it never reaches
-                            // the qt-sepjoin at subst.rs:7640 (unlike
-                            // `[*]`); call the ported sepjoin here for the
-                            // quoted case (Bug #635 range residual).
-                            // Unquoted keeps the space-join the caller
-                            // re-splits into words.
-                            if qt {
-                                crate::ported::utils::sepjoin(slice, None) // c:3032
-                            } else {
-                                slice.join(" ")
-                            }
-                        } else {
-                            String::new()
-                        }
+                        slice.join(" ")
                     }
                 } else {
                     String::new()
@@ -13478,6 +13484,26 @@ pub fn paramsubst(
                 // the operator by rejoining the ORIGINAL array. C never
                 // reaches the c:3906 sepjoin in this path (it joined at
                 // c:3032), so leave `value` as the operator left it.
+            } else if subscript
+                .as_deref()
+                .map(|s| {
+                    let t = s.trim();
+                    t != "@" && t != "*" && !t.contains(',')
+                })
+                .unwrap_or(false)
+            {
+                // c:Src/subst.c:2916+ / c:Src/params.c:2596 — a SINGLE-element
+                // subscript (`a[2]`, not `@`/`*`/a slice) already resolved the
+                // array down to ONE element, and that element is sitting in
+                // `value`. C's `aval` here is that 1-element array — or an EMPTY
+                // one when the index is out of range (c:2579-2583) — so the
+                // sepjoin yields exactly that element (or nothing).
+                //
+                // Falling through to the `arrays_get` arm below instead joined
+                // the WHOLE backing array: `a=(x y z); "${(j:,:)a[2]}"` printed
+                // `x,y,z` where zsh prints `y`. This is the same gate the
+                // (s)-split arm already applies at subst.rs:13315.
+                joined = true; // c:3907 (isarr = 0 — the join collapsed to a scalar)
             } else if let Some(arr) = arrays_get(&var_name) {
                 // Bug #328: `${(j:SEP:)NAME[N,M]}` — when a slice
                 // subscript is present, sepjoin must operate on the
