@@ -6859,9 +6859,15 @@ pub fn mb_niceformat(
     // c:5389 — `ptr = unmetafy(ums, &umlen);` — `unmeta` is the safe
     // UTF-8 wrapper that runs unmetafy only when Meta bytes are
     // present and otherwise no-ops.
+    //
+    // `unmetafy_str` (not `unmeta`) is what produces the raw byte buffer C
+    // expects here. zshrs metafies at the CHARACTER level — an undecodable byte
+    // is stored as U+0083 followed by `char::from(byte ^ 32)` — and U+0083
+    // itself encodes as the two UTF-8 bytes C2 83. `unmeta` scans for a 0x83
+    // BYTE, so it finds the trailing byte of that pair and mangles the string:
+    // `$'\M-a'` came back out as `\M-^C\M-A` instead of `\M-a`.
     let detok = untokenize(s);
-    let unmeta_str = unmeta(&detok);
-    ums = unmeta_str.into_bytes();
+    ums = unmetafy_str(&detok);
     umlen = ums.len(); // c:5389 *umlen
     ptr = 0; // c:5389 ptr starts at 0 in ums
 
@@ -7581,6 +7587,21 @@ pub fn addunprintable(c: char) -> String {
     }
 }
 
+/// One element of a metafied string, as C's `MB_METACHARLENCONV` loop sees it:
+/// either a decoded character, or a raw byte that is not one.
+///
+/// A byte that cannot appear in a Rust `String` (an invalid-UTF-8 byte such as
+/// the 0xE1 produced by `$'\M-a'`) is stored metafied — `Meta` (0x83) followed
+/// by `byte ^ 32` — so a plain `.chars()` walk sees two innocuous characters
+/// where the shell means one raw byte, and passes them straight through. C hits
+/// exactly this case as `WEOF` out of `MB_METACHARLENCONV` (c:6210) and routes
+/// it to `addunprintable()`.
+#[derive(Clone, Copy, PartialEq)]
+enum MetaChar {
+    Ch(char),
+    Raw(u8),
+}
+
 /// Quote a string according to the specified type
 /// Port from zsh/Src/utils.c quotestring() (lines 6141-6452)
 /// Quote a string per the requested bslashquote style.
@@ -7589,6 +7610,80 @@ pub fn addunprintable(c: char) -> String {
 /// re-emission.
 /// WARNING: param names don't match C — Rust=(s, quote_type) vs C=(s, instring)
 pub fn quotestring(s: &str, quote_type: i32) -> String {
+    // c:6207-6210 — C walks the string with MB_METACHARINIT/MB_METACHARLENCONV,
+    // which yields one decoded character at a time, or WEOF for a byte that does
+    // not decode. These three closures are that walk, kept inline exactly as C
+    // keeps it inline in each arm below.
+    //
+    // `meta_chars` is the decoder: a byte that cannot live in a Rust `String`
+    // (an invalid-UTF-8 byte such as the 0xE1 from `$'\M-a'`) is stored metafied
+    // — Meta (0x83) then `byte ^ 32` — so a naive `.chars()` walk sees two
+    // innocuous characters where the shell means one raw byte and passes them
+    // straight through. That is C's WEOF case, and it must reach addunprintable.
+    let meta_chars = |s: &str| -> Vec<MetaChar> {
+        let mut out = Vec::with_capacity(s.len());
+        let mut it = s.chars().peekable();
+        while let Some(c) = it.next() {
+            if c as u32 == Meta as u32 {
+                if let Some(&n) = it.peek() {
+                    let nu = n as u32;
+                    if (0x80..=0xff).contains(&nu) {
+                        it.next();
+                        out.push(MetaChar::Raw((nu as u8) ^ 32));
+                        continue;
+                    }
+                }
+            }
+            out.push(MetaChar::Ch(c));
+        }
+        out
+    };
+    // c:6212 — `cc != WEOF && WC_ISPRINT(cc)`. A raw byte is never printable: it
+    // IS the WEOF case.
+    let mc_printable = |mc: MetaChar| -> bool {
+        match mc {
+            MetaChar::Ch(c) => !c.is_control(),
+            MetaChar::Raw(_) => false,
+        }
+    };
+    // c:6082-6124 addunprintable — emit a non-printable element BYTE by byte, so
+    // a non-printable multibyte character becomes one escape per UTF-8 byte.
+    // `\0` widens to `\000` when an octal digit follows so the escape cannot
+    // swallow it (c:6097-6103). There is deliberately no `\e` case: C has none,
+    // so ESC comes out as the octal `\033`.
+    let push_unprintable = |out: &mut String, mc: MetaChar, next: Option<MetaChar>| {
+        let mut buf = [0u8; 4];
+        let bytes: &[u8] = match mc {
+            MetaChar::Ch(c) => c.encode_utf8(&mut buf).as_bytes(),
+            MetaChar::Raw(b) => {
+                buf[0] = b;
+                &buf[0..1]
+            }
+        };
+        for i in 0..bytes.len() {
+            let b = bytes[i];
+            if b == 0 {
+                out.push_str("\\0");
+                let follows = if i + 1 < bytes.len() {
+                    Some(bytes[i + 1])
+                } else {
+                    next.map(|n| match n {
+                        MetaChar::Ch(c) => {
+                            let mut nb = [0u8; 4];
+                            c.encode_utf8(&mut nb).as_bytes()[0]
+                        }
+                        MetaChar::Raw(rb) => rb,
+                    })
+                };
+                if matches!(follows, Some(b'0'..=b'7')) {
+                    out.push_str("00");
+                }
+            } else {
+                out.push_str(&addunprintable(b as char));
+            }
+        }
+    };
+
     // c:6141
     if s.is_empty() {
         return if quote_type == QT_NONE {
@@ -7646,7 +7741,16 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // to the literal-emit path (c:6418-6434).
         let mut result = String::with_capacity(s.len() * 2);
         let mut prev: char = '\0'; // would-be u[-1]
-        for (i, c) in s.chars().enumerate() {
+        let mcs = meta_chars(s);
+        for i in 0..mcs.len() {
+            let mc = mcs[i];
+            let c = match mc {
+                MetaChar::Ch(c) => c,
+                // A raw byte is never `\n` and never ispecial — it is the
+                // not-printable case below. Stand in with its byte value so the
+                // `=`/`~` lookbehind still advances correctly.
+                MetaChar::Raw(b) => b as char,
+            };
             // c:6301-6306 gate for `=`/`~` (condition A/B/C/D).
             let eq_tilde_gate = if c == '=' || c == '~' {
                 i == 0 // c:6303 u == s
@@ -7655,42 +7759,24 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
             } else {
                 true // c:6302 *u != '=' && *u != '~'
             };
-            if c == '\n' {
+            if mc == MetaChar::Ch('\n') {
                 // c:6366-6371 — newline gets dedicated `$'\n'` form.
                 result.push_str("$'\\n'");
-            } else if ispecial(c) && eq_tilde_gate && c.is_ascii() && !c.is_ascii_control() {
+            } else if matches!(mc, MetaChar::Ch(_))
+                && ispecial(c)
+                && eq_tilde_gate
+                && c.is_ascii()
+                && !c.is_ascii_control()
+            {
                 // c:6385-6395 — printable special → `\<char>`.
                 result.push('\\');
                 result.push(c);
-            } else if c.is_ascii_control() {
-                // c:6412-6422 — control chars → `$'<addunprintable>'`.
-                // `addunprintable` (Src/utils.c) emits the C-string
-                // escape (`\t`, `\r`, `\a`, etc.) inside the `$'…'`
-                // wrapper, falling back to octal for unrecognised
-                // control bytes.
+            } else if !mc_printable(mc) {
+                // c:6412-6422 — anything not printable (a control char, a
+                // non-printable multibyte char, or a raw undecodable byte) is
+                // wrapped one element at a time as `$'<addunprintable>'`.
                 result.push_str("$'");
-                match c {
-                    // c:utils.c:6096-6104 — NUL emits the 2-char `\0`,
-                    // widening to `\000` ONLY when the following byte is an
-                    // octal digit (0-7), so the escape can't swallow it.
-                    // A lone NUL is `$'\0'`, not `$'\000'`.
-                    '\0' => {
-                        result.push_str("\\0");
-                        if let Some(nxt) = s.chars().nth(i + 1) {
-                            if ('0'..='7').contains(&nxt) {
-                                result.push_str("00");
-                            }
-                        }
-                    }
-                    '\t' => result.push_str("\\t"),
-                    '\r' => result.push_str("\\r"),
-                    '\x07' => result.push_str("\\a"),
-                    '\x08' => result.push_str("\\b"),
-                    '\x0c' => result.push_str("\\f"),
-                    '\x0b' => result.push_str("\\v"),
-                    '\x1b' => result.push_str("\\e"),
-                    c => result.push_str(&format!("\\{:03o}", c as u8)),
-                }
+                push_unprintable(&mut result, mc, mcs.get(i + 1).copied());
                 result.push('\'');
             } else {
                 result.push(c);
@@ -7740,14 +7826,31 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         // filled at start). For "it's" it yields `it\'s` (no quote
         // span ever opens). The naive per-char approach without
         // back-filling produced `hello' 'world` — parity bug.
-        let needs_quoting = s.chars().any(ispecial);
+        //
+        // c:6301-6306 — the SAME `=`/`~` gate the QT_BACKSLASH arm applies.
+        // `ispecial` alone would open a quote span on any mid-word `=` or `~`,
+        // so `a=b` came out as `'a=b'` where zsh leaves it bare.
+        let chars: Vec<char> = s.chars().collect();
+        let forces_quote = |i: usize, c: char| -> bool {
+            if !ispecial(c) {
+                return false; // c:6301
+            }
+            if c == '=' || c == '~' {
+                i == 0 // c:6303 u == s
+                    || (isset(MAGICEQUALSUBST) && (chars[i - 1] == '=' || chars[i - 1] == ':')) // c:6304-6305
+                    || (c == '~' && isset(EXTENDEDGLOB)) // c:6306
+            } else {
+                true // c:6302
+            }
+        };
+        let needs_quoting = chars.iter().enumerate().any(|(i, &c)| forces_quote(i, c));
         if !needs_quoting {
             return s.to_string();
         }
         let mut result: Vec<char> = Vec::with_capacity(s.len() + 4);
         let mut quotestart: usize = 0; // index in `result` where the next `'` would go
         let mut quotesub: u8 = 1; // 1 = not quoting, 2 = inside `'…'`
-        for c in s.chars() {
+        for (i, &c) in chars.iter().enumerate() {
             if c == '\'' {
                 if quotesub == 2 {
                     // close current quote span, then `\'`, then
@@ -7762,7 +7865,7 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
                     result.push('\'');
                     quotestart = result.len();
                 }
-            } else if ispecial(c) {
+            } else if forces_quote(i, c) {
                 if quotesub == 1 {
                     // Back-fill: insert `'` at quotestart, shifting
                     // everything after right by 1.
@@ -7791,27 +7894,35 @@ pub fn quotestring(s: &str, quote_type: i32) -> String {
         result.push('"');
         result
     } else if quote_type == QT_DOLLARS {
-        // $'...' quoting with escape sequences (lines 6203-6241)
+        // c:6203-6241 — `$'…'` quoting. Each element is either printable, in
+        // which case it is emitted verbatim (backslashing `\`, `'`, and — under
+        // BANGHIST — the history character), or it is NOT, in which case C hands
+        // its raw bytes to addunprintable(): a named escape (`\t`, `\n`, `\a`, …)
+        // or a 3-digit octal one.
+        //
+        // Two things this must NOT do, both of which the previous port did:
+        //   * pass an undecodable byte through raw. `$'\M-a'` is the byte 0xE1,
+        //     which is not valid UTF-8 and is stored metafied; walking `.chars()`
+        //     re-emitted it verbatim instead of `\341`, so the output could not
+        //     be re-parsed.
+        //   * emit `\e` for ESC. C's addunprintable has no `\e` case — ESC comes
+        //     out as the octal `\033`.
         let mut result = String::with_capacity(s.len() + 4);
         result.push_str("$'");
-        for c in s.chars() {
-            match c {
-                '\\' | '\'' => {
+        let mcs = meta_chars(s);
+        let bang = crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst);
+        for i in 0..mcs.len() {
+            let mc = mcs[i];
+            if let (true, MetaChar::Ch(c)) = (mc_printable(mc), mc) {
+                // c:6214-6224
+                if c == '\\' || c == '\'' || (isset(BANGHIST) && bang != 0 && c as u32 == bang as u32)
+                {
                     result.push('\\');
-                    result.push(c);
                 }
-                '\n' => result.push_str("\\n"),
-                '\r' => result.push_str("\\r"),
-                '\t' => result.push_str("\\t"),
-                '\x1b' => result.push_str("\\e"),
-                '\x07' => result.push_str("\\a"),
-                '\x08' => result.push_str("\\b"),
-                '\x0c' => result.push_str("\\f"),
-                '\x0b' => result.push_str("\\v"),
-                c if c.is_ascii_control() => {
-                    result.push_str(&format!("\\{:03o}", c as u8));
-                }
-                c => result.push(c),
+                result.push(c);
+            } else {
+                // c:6226-6229
+                push_unprintable(&mut result, mc, mcs.get(i + 1).copied());
             }
         }
         result.push('\'');

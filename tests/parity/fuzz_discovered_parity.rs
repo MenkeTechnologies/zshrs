@@ -1086,3 +1086,331 @@ mod read_delim_eof_and_backslash {
         assert_parity("printf 'p1\\0p2\\0' | { while read -d '' p; do print -r -- \"p=$p\"; done; }");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// I. An unquoted multibyte word was split apart as if it were whitespace
+//
+// The lexer walks `char`s, but the blank/digit/ident classifiers are BYTE
+// tables (C's lexer walks bytes, where no UTF-8 byte can be 0x20 or 0x09).
+// Casting a `char` to `u8` truncated the codepoint into those ranges, so
+// `三` (U+4E09 → 0x09 = TAB) and `丠` (U+4E20 → 0x20 = SPACE) terminated the
+// word: `print -r -- 三` printed NOTHING, and `v=三a` split into an
+// assignment plus a stray command `a`. Only ASCII can be a blank/digit.
+// ─────────────────────────────────────────────────────────────────────
+mod multibyte_word_lexing {
+    use super::*;
+
+    /// U+4E09's low byte is 0x09 (TAB) — the original repro. zsh: `三`.
+    #[test]
+    fn cjk_word_with_tab_low_byte_survives() {
+        assert_parity("print -r -- 三");
+    }
+
+    /// U+4E20's low byte is 0x20 (SPACE).
+    #[test]
+    fn cjk_word_with_space_low_byte_survives() {
+        assert_parity("print -r -- 丠");
+    }
+
+    /// The word was truncated, not just dropped: `v=三a` must stay one word.
+    #[test]
+    fn multibyte_does_not_terminate_an_assignment_word() {
+        assert_parity(r#"v=三a; print -r -- "[$v]""#);
+    }
+
+    /// A codepoint whose low byte is an ASCII digit must not read as an fd.
+    #[test]
+    fn multibyte_is_not_a_redirection_fd() {
+        assert_parity(r#"v=丰; print -r -- "[$v]""#);
+    }
+
+    /// Several such words in one list.
+    #[test]
+    fn multibyte_words_split_on_real_blanks_only() {
+        assert_parity("for x in 三 丠 二; do print -r -- \"<$x>\"; done");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// J. (V) rendered a CHARACTER through the BYTE renderer
+//
+// C's (V) calls nicedupstring → mb_niceformat (Src/utils.c:5366), which
+// decodes the string and tests each WIDE char with iswprint, passing printable
+// multibyte through untouched; only bytes that fail to decode fall back to the
+// `&0xff` `\M-`/`^X` renderer. zshrs called nicechar per char, so the codepoint
+// was masked to a byte: `一`(U+4E00) → `^@`, `二`(U+4E8C) → `\M-^L`,
+// `é`(U+00E9) → `\M-i`.
+// ─────────────────────────────────────────────────────────────────────
+mod visible_flag_multibyte {
+    use super::*;
+
+    /// Wide CJK is printable — passes through verbatim.
+    #[test]
+    fn wide_chars_pass_through() {
+        assert_parity(r#"w=一二三; print -r -- "${(V)w}""#);
+    }
+
+    /// Latin-1 range (0x80..=0xFF) was the arm that masked to a byte.
+    #[test]
+    fn latin1_chars_pass_through() {
+        assert_parity(r#"v=éöü; print -r -- "${(V)v}""#);
+    }
+
+    /// A genuinely undecodable byte STILL renders as `\M-x`.
+    #[test]
+    fn undecodable_byte_still_renders_meta() {
+        assert_parity(r#"v=$'\M-a'; print -r -- "${(V)v}""#);
+    }
+
+    /// Control characters keep their named / caret forms.
+    #[test]
+    fn controls_keep_named_forms() {
+        assert_parity(r#"v=$'a\tb\x01'; print -r -- "${(V)v}""#);
+    }
+
+    /// The (q)-flag's internal Snull marker must not leak into (V) output.
+    #[test]
+    fn quote_flag_marker_does_not_leak() {
+        assert_parity(r#"print -r -- "${(Vq)empty}""#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// K. quotestring: $'…' must escape what it cannot re-parse
+//
+// C walks the string with MB_METACHARLENCONV; anything that does not decode
+// (WEOF) or is not printable goes byte-by-byte through addunprintable()
+// (Src/utils.c:6082): a named escape or a 3-digit OCTAL one. zshrs walked
+// `.chars()` and re-emitted the raw byte, producing a $'…' string that could
+// not be read back. Two further C details: addunprintable has NO `\e` case (ESC
+// is `\033`), and QT_DOLLARS backslashes the history char under BANGHIST.
+// ─────────────────────────────────────────────────────────────────────
+mod dollar_quote_escaping {
+    use super::*;
+
+    /// The byte 0xE1 is not valid UTF-8 — it must come out as `$'\341'`.
+    #[test]
+    fn undecodable_byte_becomes_octal() {
+        assert_parity(r#"v=$'\M-a'; print -rn -- ${(qqqq)v} | od -An -tx1"#);
+    }
+
+    /// Same rule via the (q) backslash mode.
+    #[test]
+    fn undecodable_byte_becomes_octal_under_backslash_mode() {
+        assert_parity(r#"v=$'\M-a'; print -rn -- ${(q)v} | od -An -tx1"#);
+    }
+
+    /// C has no `\e` escape — ESC is octal.
+    #[test]
+    fn esc_is_octal_not_backslash_e() {
+        assert_parity(r#"v=$'\e'; print -r -- ${(qqqq)v}"#);
+    }
+
+    /// BANGHIST backslashes `!` inside $'…' even non-interactively.
+    #[test]
+    fn bang_is_escaped_in_dollar_quotes() {
+        assert_parity(r#"v="a!b"; print -r -- ${(qqqq)v}"#);
+    }
+
+    /// Printable multibyte is NOT escaped.
+    #[test]
+    fn printable_multibyte_is_not_escaped() {
+        assert_parity(r#"v=é; print -r -- ${(qqqq)v}"#);
+    }
+
+    /// Named escapes still win over octal for the ones C names.
+    #[test]
+    fn named_escapes_preserved() {
+        assert_parity(r#"v=$'a\tb\x01'; print -r -- ${(qqqq)v}"#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// L. (q-) minimal quoting over-quoted `=` and `~`
+//
+// C only forces quoting for `=`/`~` when the char is at offset 0, or
+// MAGIC_EQUAL_SUBST is set and the previous byte is `=`/`:`, or it is `~` under
+// EXTENDED_GLOB (Src/utils.c:6301-6306). The QT_BACKSLASH arm already had that
+// gate; QT_SINGLE_OPTIONAL did not, so a mid-word `=` opened a quote span and
+// `a=b` came out as `'a=b'`.
+// ─────────────────────────────────────────────────────────────────────
+mod minimal_quoting_eq_tilde {
+    use super::*;
+
+    /// A mid-word `=` needs no quoting.
+    #[test]
+    fn mid_word_equals_is_bare() {
+        assert_parity(r#"v="a=b"; print -r -- ${(q-)v}"#);
+    }
+
+    /// Nor does a mid-word `~`.
+    #[test]
+    fn mid_word_tilde_is_bare() {
+        assert_parity(r#"v="a~b"; print -r -- ${(q-)v}"#);
+    }
+
+    /// A LEADING `=` still must be quoted (it would be a command substitution).
+    #[test]
+    fn leading_equals_is_quoted() {
+        assert_parity(r#"v="=ab"; print -r -- ${(q-)v}"#);
+    }
+
+    /// A leading `~` still must be quoted.
+    #[test]
+    fn leading_tilde_is_quoted() {
+        assert_parity(r#"v="~home"; print -r -- ${(q-)v}"#);
+    }
+
+    /// Genuine specials still force a quote span.
+    #[test]
+    fn spaces_still_quoted() {
+        assert_parity(r#"v="a b"; print -r -- ${(q-)v}"#);
+    }
+
+    /// Round trip: (Q) undoes (q-).
+    #[test]
+    fn q_minus_round_trips() {
+        assert_parity(r#"v="a=b"; print -r -- ${(Q)${(q-)v}}"#);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// M. zstat must not clobber its target parameter when the stat FAILS
+//
+// C accumulates into a local buffer and publishes it to the parameter only
+// after the loop, and only if every file stat'd cleanly (Src/Modules/stat.c:613
+// — `if (ret) freearray(array); else setaparam(...)`). zshrs assigned
+// unconditionally, so a failing `zstat -H h <dangling-link>` wiped the assoc a
+// previous successful zstat had left in `h`. With -A/-f the first failure also
+// BREAKS the loop (c:567) rather than continuing.
+// ─────────────────────────────────────────────────────────────────────
+mod zstat_failure_preserves_target {
+    use super::*;
+
+    /// A failing `-H` must leave the previous assoc contents intact.
+    #[test]
+    fn failed_hash_stat_does_not_clobber() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_zstat_XXXXXX) || exit 1
+print -n x > $d/f
+ln -s /nonexistent-target-xyz $d/dangling
+zmodload zsh/stat
+zstat -H h $d/f
+zstat -s -H h $d/dangling 2>/dev/null
+print -r -- "n=${#h}"
+case $d in (/tmp/pf_zstat_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+
+    /// A failing `-A` must leave the previous array intact AND stop the loop.
+    #[test]
+    fn failed_array_stat_does_not_clobber_and_breaks() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_zstat_XXXXXX) || exit 1
+print -n x > $d/f
+ln -s /nonexistent-target-xyz $d/dangling
+zmodload zsh/stat
+a=(PRE)
+zstat -A a +mode $d/f $d/dangling $d/f 2>/dev/null
+print -r -- "rc=$? a=(${(j:,:)a})"
+case $d in (/tmp/pf_zstat_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+
+    /// Without -A/-H, a failure still CONTINUES to the remaining files.
+    ///
+    /// Runs from inside the fixture so the multi-file form's filename prefix is
+    /// relative — the mktemp path itself is nondeterministic and must never
+    /// reach stdout, or the two shells would "diverge" on the temp name.
+    #[test]
+    fn plain_stat_continues_past_failure() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_zstat_XXXXXX) || exit 1
+print -n x > $d/f
+ln -s /nonexistent-target-xyz $d/dangling
+builtin cd -q -- $d || exit 1
+zmodload zsh/stat
+zstat +mode dangling f 2>/dev/null
+print -r -- "rc=$?"
+builtin cd -q /
+case $d in (/tmp/pf_zstat_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// N. `autoload -U` must parse the loaded body with aliases DISABLED
+//
+// -U records PM_UNALIASED (Src/builtin.c:3354), and loadautofn copies that bit
+// into the global `noaliases` for the duration of the file parse
+// (Src/exec.c:5684-5704). zshrs recorded the bit but never consulted it, so a
+// body calling `helper` picked up a caller-defined `alias helper=…` — exactly
+// what -U exists to prevent, and why every `autoload -Uz` in a plugin framework
+// depends on this.
+// ─────────────────────────────────────────────────────────────────────
+mod autoload_unaliased {
+    use super::*;
+
+    /// -U: the body's `helper` resolves to the FUNCTION, not the alias.
+    #[test]
+    fn dash_u_suppresses_alias_expansion() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_auto_XXXXXX) || exit 1
+mkdir -p $d/fns
+print -r -- 'helper arg' > $d/fns/af_alias
+fpath=($d/fns)
+helper() { print -r -- "FUNC $1" }
+alias helper='print -r -- HIJACKED'
+autoload -Uz af_alias
+af_alias
+case $d in (/tmp/pf_auto_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+
+    /// WITHOUT -U the alias does apply — the flag must actually gate something.
+    #[test]
+    fn without_dash_u_alias_still_expands() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_auto_XXXXXX) || exit 1
+mkdir -p $d/fns
+print -r -- 'helper arg' > $d/fns/af_alias
+fpath=($d/fns)
+helper() { print -r -- "FUNC $1" }
+alias helper='print -r -- HIJACKED'
+autoload -z af_alias
+af_alias
+case $d in (/tmp/pf_auto_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+
+    /// -U must not otherwise disturb loading: args, $#, repeat calls.
+    #[test]
+    fn dash_u_body_still_loads_normally() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_auto_XXXXXX) || exit 1
+mkdir -p $d/fns
+print -r -- 'print -r -- "args=$* n=$#"' > $d/fns/af_args
+fpath=($d/fns)
+autoload -Uz af_args
+af_args a b c
+af_args
+case $d in (/tmp/pf_auto_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+
+    /// Alias expansion must be RESTORED after the autoload parse.
+    #[test]
+    fn aliases_work_again_after_a_dash_u_autoload() {
+        assert_parity(
+            r#"d=$(mktemp -d /tmp/pf_auto_XXXXXX) || exit 1
+mkdir -p $d/fns
+print -r -- 'print -r -- loaded' > $d/fns/af_plain
+fpath=($d/fns)
+autoload -Uz af_plain
+af_plain
+alias g='print -r -- ALIAS_OK'
+eval g
+case $d in (/tmp/pf_auto_*) command rm -rf -- "$d";; esac"#,
+        );
+    }
+}
