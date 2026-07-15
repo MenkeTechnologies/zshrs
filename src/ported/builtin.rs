@@ -5576,6 +5576,19 @@ pub fn bin_typeset(
                         }
                     }
                 }
+                // c:2357 — a scalar → array/hashed conversion is a TYPE change,
+                // which recreates the param carrying only READONLY|EXPORTED, so
+                // the old scalar padding flags (-L/-R/-Z) must NOT survive it:
+                // `typeset -Z 3 x=7; typeset -a x=(1 2)` is `array`, not
+                // `array-right_zeros`. Capture whether the param was ALREADY an
+                // array/hashed (in which case it is NOT a type change and the
+                // padding is preserved by the merge stamp below).
+                let prior_was_arraylike = paramtab().read().ok().and_then(|t| {
+                    t.get(n).map(|pm| {
+                        let typ = PM_TYPE(pm.node.flags as u32);
+                        typ == PM_ARRAY || typ == PM_HASHED
+                    })
+                }) == Some(true);
                 if is_hashed {
                     // c:2960-2975 — `setdataparam(..., PM_HASHED, …)`.
                     // Two assoc-init shapes accepted by zsh:
@@ -5606,6 +5619,17 @@ pub fn bin_typeset(
                 } else {
                     // c:2980-2995 — plain array.
                     crate::ported::exec::set_array(n, elems.clone());
+                }
+                // c:2357 — on a genuine type change (was NOT array/hashed), drop
+                // the old scalar padding flags; re-add only what THIS command's
+                // `on` requests (so `typeset -aZ 3 arr=(...)` still zero-pads).
+                if !prior_was_arraylike {
+                    let pad = (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z) as i32;
+                    if let Ok(mut tab) = paramtab().write() {
+                        if let Some(pm) = tab.get_mut(n) {
+                            pm.node.flags = (pm.node.flags & !pad) | (on as i32 & pad);
+                        }
+                    }
                 }
                 // c:2330-2337 (typeset_single) — `if (!(pm =
                 // assignaparam(pname, ..., flags))) return NULL;
@@ -5651,12 +5675,30 @@ pub fn bin_typeset(
                 if post_assign_to_set != 0 {
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(n) {
-                            pm.node.flags =
-                                (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                            // c:2289 MERGE — preserve untouched attributes.
+                            pm.node.flags |= post_assign_to_set;
                         }
                     }
                 }
             } else {
+                // c:2232-2238 (typeset_single) — a SCALAR assignment to an
+                // existing ARRAY/HASHED param WITHOUT a type flag to convert it
+                // is inconsistent: `typeset -A x=(k v); typeset x=scalar` errors.
+                // (An explicit type flag — `typeset -i x=9` — is a type change
+                // handled above and does NOT reach here.)
+                let target_is_arraylike = paramtab().read().ok().and_then(|t| {
+                    t.get(n).map(|pm| {
+                        let typ = PM_TYPE(pm.node.flags as u32);
+                        typ == PM_ARRAY || typ == PM_HASHED
+                    })
+                }) == Some(true);
+                let requesting_type =
+                    (on as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT | PM_ARRAY | PM_HASHED)) != 0;
+                if target_is_arraylike && !requesting_type {
+                    zerrnam(name, &format!("{}: inconsistent type for assignment", n)); // c:2236
+                    returnval = 1;
+                    continue;
+                }
                 // c:3010-3030 — `name=value` scalar assign. C-canonical
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
@@ -5715,10 +5757,56 @@ pub fn bin_typeset(
                         // PM_TYPE bits on the existing param BEFORE
                         // re-assigning so assignstrvalue routes through
                         // the new type's setfn.
-                        if let Ok(mut tab) = paramtab().write() {
+                        //
+                        // c:2357 — a TYPE change deletes and recreates the param
+                        // carrying ONLY READONLY|EXPORTED, so the old scalar
+                        // padding flags (-L/-R/-Z) do NOT survive it: after
+                        // `typeset -Z 3 x=7; typeset -i x=1` the type is plain
+                        // `integer`, not `integer-right_zeros`. When the new type
+                        // is numeric (INTEGER/EFLOAT/FFLOAT), clear the padding
+                        // flags from the old param too. (A single `typeset -iZ`
+                        // command re-adds RIGHT_Z via the post-assign stamp since
+                        // it is in `on`.)
+                        let is_numeric_type =
+                            (pre_assign_to_set as u32 & (PM_INTEGER | PM_EFLOAT | PM_FFLOAT)) != 0;
+                        // On a numeric type change also drop the scalar padding
+                        // flags AND — if the old param was an array/hashed —
+                        // PM_ARRAY|PM_HASHED plus its stored data, since C deletes
+                        // and recreates: `typeset -A x=(k v); typeset -F x=1.5`
+                        // yields a plain `float`, not a hashed remnant.
+                        let old_type = paramtab()
+                            .read()
+                            .ok()
+                            .and_then(|t| t.get(n).map(|pm| PM_TYPE(pm.node.flags as u32)))
+                            .unwrap_or(PM_SCALAR);
+                        let was_arraylike = old_type == PM_ARRAY || old_type == PM_HASHED;
+                        let extra_clear = if is_numeric_type {
+                            let mut c = (PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z) as i32;
+                            if was_arraylike {
+                                c |= (PM_ARRAY | PM_HASHED) as i32;
+                            }
+                            c
+                        } else {
+                            0
+                        };
+                        if is_numeric_type && was_arraylike {
+                            // c:2355-2378 — array/hashed → numeric is a full type
+                            // conversion: delete the old aggregate (storage +
+                            // paramtab entry) and recreate as the numeric type, so
+                            // the value migrates through the new setfn and the
+                            // result is a clean `integer`/`float`. Modifying flags
+                            // in place left the hashed storage's setfn dispatch
+                            // active, so the value stayed a scalar.
+                            crate::ported::exec::unset_array(n);
+                            crate::ported::exec::unset_assoc(n);
+                            if let Ok(mut tab) = paramtab().write() {
+                                tab.remove(n);
+                            }
+                            let _ = createparam(n, pre_assign_to_set);
+                        } else if let Ok(mut tab) = paramtab().write() {
                             if let Some(pm) = tab.get_mut(n) {
-                                pm.node.flags =
-                                    (pm.node.flags & !pre_assign_mask) | pre_assign_to_set;
+                                pm.node.flags = (pm.node.flags & !(pre_assign_mask | extra_clear))
+                                    | pre_assign_to_set;
                             }
                         }
                     }
@@ -5780,10 +5868,19 @@ pub fn bin_typeset(
                         | PM_HIDEVAL
                         | PM_UNIQUE)) as i32;
                 if post_assign_to_set != 0 {
+                    // c:2289 — `pm->node.flags = (pm->node.flags | (on & ...)) & ~off`.
+                    // This is a MERGE: OR in the requested attributes and clear
+                    // the ones explicitly turned off, but PRESERVE existing
+                    // attributes the user did not touch. The previous
+                    // `(flags & !post_assign_mask) | to_set` cleared EVERY mask
+                    // bit, so `typeset -Z 3 x=7; typeset -r x=ro` lost the -Z
+                    // (RIGHT_Z is in the mask but not in `on`), yielding
+                    // `scalar-readonly` where zsh keeps `scalar-right_zeros-readonly`.
+                    let post_assign_to_clear = (off as u32 & post_assign_mask as u32) as i32;
                     if let Ok(mut tab) = paramtab().write() {
                         if let Some(pm) = tab.get_mut(n) {
                             pm.node.flags =
-                                (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                                (pm.node.flags | post_assign_to_set) & !post_assign_to_clear;
                         }
                     }
                 }
@@ -5910,7 +6007,10 @@ pub fn bin_typeset(
             if post_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg_name) {
-                        pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                        // c:2289 MERGE — preserve attributes the user did not touch
+                        // (e.g. `typeset -L 4 x=hi; typeset -r x` keeps -L). `off` bits
+                        // are cleared separately below.
+                        pm.node.flags |= post_assign_to_set;
                     }
                 }
             }
@@ -6174,7 +6274,10 @@ pub fn bin_typeset(
             if post_assign_to_set != 0 {
                 if let Ok(mut tab) = paramtab().write() {
                     if let Some(pm) = tab.get_mut(arg) {
-                        pm.node.flags = (pm.node.flags & !post_assign_mask) | post_assign_to_set;
+                        // c:2289 MERGE — preserve attributes the user did not touch
+                        // (e.g. `typeset -L 4 x=hi; typeset -r x` keeps -L). `off` bits
+                        // are cleared separately below.
+                        pm.node.flags |= post_assign_to_set;
                     }
                 }
                 // c:Src/params.c — when PM_UNIQUE is freshly stamped on
