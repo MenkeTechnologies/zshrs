@@ -8,21 +8,21 @@
 //! `tmp1` / `matches`). The transient by-name arrays `tmp1` /
 //! `matches` are populated by `compadd -O` and unset before return.
 //!
-//! Upstream structure (see `/usr/share/zsh/5.9/functions/_multi_parts`):
+//! Upstream structure (line numbers from zsh 5.9):
 //! ```text
 //! sh:  1  #autoload
-//! sh: 10  typeset -U tmp1 matches
-//! sh: 14  zparseopts -D -a sopts 'J+:=group' 'V+:=group' 'x+:=expl' \
-//! sh: 15      'X+:=expl' 'P:=opts' 'F:=opts' S: r: R: q 1 2 o+: n \
-//! sh: 16      'f=opts' 'M+:=matcher' 'i=imm'
-//! sh: 18  sopts=( "$sopts[@]" "$opts[@]" )
-//! sh: 19  (( $#matcher )) && matcher="${matcher[2]}" || matcher=
-//! sh: 30  sep="$1"; tmp1=( literal-or-${(@P)2} )
-//! sh: 39  pre/suf/opre/osuf/orig snapshot
-//! sh: 45  menu detection
-//! sh: 52  compadd -O matches -M "r:|${sep}=* r:|=* $matcher" -a tmp1
-//! sh: 54  (( $#matches )) || matches=( "$tmp1[@]" )
-//! sh: 56  while true; do … end   # per-segment walk, all exits `return`
+//! sh: 12  typeset -U tmp1 matches
+//! sh: 16  zparseopts -D -a sopts 'J+:=group' 'V+:=group' 'x+:=expl' \
+//! sh: 17      'X+:=expl' 'P:=opts' 'F:=opts' S: r: R: q 1 2 o+: n \
+//! sh: 18      'f=opts' 'M+:=matcher' 'i=imm'
+//! sh: 20  sopts=( "$sopts[@]" "$opts[@]" )
+//! sh: 21  (( $#matcher )) && matcher="${matcher[2]}" || matcher=
+//! sh: 32  sep="$1"; tmp1=( literal-or-${(@P)2} )
+//! sh: 43  pre/suf/opre/osuf/orig snapshot
+//! sh: 51  menu detection
+//! sh: 62  compadd -O matches -M "r:|${sep}=* r:|=* $matcher" -a tmp1
+//! sh: 64  (( $#matches )) || matches=( "$tmp1[@]" )
+//! sh: 66  while true; do … end   # per-segment walk, all exits `return`
 //! ```
 
 use crate::ported::modules::zutil::lookupstyle;
@@ -114,7 +114,7 @@ fn zstyle_t(style: &str, value: &str) -> bool {
     lookupstyle(&ctx, style).iter().any(|v| v == value)
 }
 
-/// Parsed result of the upstream `zparseopts` (sh:14-16).
+/// Parsed result of the upstream `zparseopts` (sh:16-18).
 struct ParsedOpts {
     sopts: Vec<String>,
     group: Vec<String>,
@@ -125,7 +125,7 @@ struct ParsedOpts {
     rest: Vec<String>,
 }
 
-/// Mirror of `zparseopts -D -a sopts …` (sh:14-16). `=name` specs
+/// Mirror of `zparseopts -D -a sopts …` (sh:16-18). `=name` specs
 /// route to their named array only (verified against zsh 5.9):
 /// J/V→group, x/X→expl, P/F/f→opts, M→matcher, i→imm, and the
 /// remaining recognized options (S r R q 1 2 o n) → the default
@@ -201,7 +201,7 @@ fn zparse(args: &[String]) -> ParsedOpts {
     }
 }
 
-/// Resolve `$2` (sh:31-35): literal `(a b c)` splits on whitespace,
+/// Resolve `$2` (sh:33-36): literal `(a b c)` splits on whitespace,
 /// otherwise it is the name of an array parameter (`${(@P)2}`).
 fn resolve_array(spec: &str) -> Vec<String> {
     if spec.starts_with('(') && spec.ends_with(')') && spec.len() >= 2 {
@@ -219,7 +219,7 @@ fn resolve_array(spec: &str) -> Vec<String> {
 pub fn _multi_parts(args: &[String]) -> i32 {
     let comp_correct = getsparam("_comp_correct").unwrap_or_default();
 
-    // sh:14-16  zparseopts
+    // sh:16-18  zparseopts
     let ParsedOpts {
         mut sopts,
         group,
@@ -230,9 +230,9 @@ pub fn _multi_parts(args: &[String]) -> i32 {
         rest,
     } = zparse(args);
 
-    // sh:18  sopts=( "$sopts[@]" "$opts[@]" )
+    // sh:20  sopts=( "$sopts[@]" "$opts[@]" )
     sopts.extend(opts.iter().cloned());
-    // sh:19  (( $#matcher )) && matcher="${matcher[2]}" || matcher=
+    // sh:21-22  (( $#matcher )) && matcher="${matcher[2]}" || matcher=
     let matcher: String = if matcher.len() >= 2 {
         matcher[1].clone()
     } else {
@@ -242,35 +242,40 @@ pub fn _multi_parts(args: &[String]) -> i32 {
     if rest.len() < 2 {
         return 1;
     }
-    // sh:30  sep="$1"
+    // sh:32  sep="$1"
     let sep = rest[0].clone();
-    // sh:31-35  tmp1
+    // sh:33-36  tmp1
     let mut tmp1: Vec<String> = dedup(resolve_array(&rest[1]));
 
-    // sh:39-43  snapshots
+    // sh:43-47  snapshots
     let mut pre = getsparam("PREFIX").unwrap_or_default();
     let mut suf = getsparam("SUFFIX").unwrap_or_default();
     let opre = pre.clone();
     let osuf = suf.clone();
     let orig = format!("{}{}", pre, suf);
 
-    // sh:45-48  menu detection
+    // sh:51-53  menu detection
     let insert = get_compstate_str("insert").unwrap_or_default();
     let pattern_match = get_compstate_str("pattern_match").unwrap_or_default();
-    let insert_is_menu = insert.ends_with("menu") || insert.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false);
+    let insert_is_menu = insert.ends_with("menu")
+        || insert
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false);
     let menu = insert_is_menu
         || !comp_correct.is_empty()
         || (!pattern_match.is_empty() && orig != q_quote(&orig));
 
-    // sh:51  pref=''
+    // sh:57  pref=''
     let mut pref = String::new();
     // `cpre` accumulates the already-committed prefix path (sh:cpre).
     let mut cpre = String::new();
 
-    // The match specification threaded through every compadd (sh:52 …).
+    // The match specification threaded through every compadd (sh:62 …).
     let matchspec = format!("r:|{}=* r:|=* {}", sep, matcher);
 
-    // sh:52  compadd -O matches -M "$matchspec" -a tmp1
+    // sh:62  compadd -O matches -M "$matchspec" -a tmp1
     setaparam("tmp1", tmp1.clone());
     {
         let argv = vec![
@@ -284,7 +289,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
         let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
     }
     let mut matches: Vec<String> = dedup(getaparam("matches").unwrap_or_default());
-    // sh:54  (( $#matches )) || matches=( "$tmp1[@]" )
+    // sh:64  (( $#matches )) || matches=( "$tmp1[@]" )
     if matches.is_empty() {
         matches = tmp1.clone();
     }
@@ -297,9 +302,9 @@ pub fn _multi_parts(args: &[String]) -> i32 {
         }};
     }
 
-    // sh:56  while true
+    // sh:66  while true
     loop {
-        // sh:60-66  prefix/suffix for matching.
+        // sh:70-76  prefix/suffix for matching.
         let (mprefix, msuffix): (String, String) = if pre.contains(&sep) {
             (before_first(&pre, &sep), String::new())
         } else {
@@ -308,13 +313,17 @@ pub fn _multi_parts(args: &[String]) -> i32 {
         let _ = setsparam("PREFIX", &mprefix);
         let _ = setsparam("SUFFIX", &msuffix);
 
-        // sh:72-76  exact-component check.
+        // sh:83-87  exact-component check.
         // NOTE: `${(@M)matches:#PAT*}` is glob; components here are
         // literal, so we match by string prefix (approximation for
         // glob metacharacters in the segment).
         let exact_pat = format!("{}{}{}", mprefix, msuffix, sep);
         if !format!("{}{}", mprefix, msuffix).is_empty() || pre.starts_with(&sep) {
-            tmp1 = matches.iter().filter(|m| m.starts_with(&exact_pat)).cloned().collect();
+            tmp1 = matches
+                .iter()
+                .filter(|m| m.starts_with(&exact_pat))
+                .cloned()
+                .collect();
         } else {
             tmp1 = Vec::new();
         }
@@ -324,18 +333,23 @@ pub fn _multi_parts(args: &[String]) -> i32 {
         let npref: String;
 
         if !tmp1.is_empty() {
-            // sh:79  exact match on the line.
+            // sh:89-90  exact match on the line.
             npref = format!("{}{}{}", mprefix, msuffix, sep);
         } else {
-            // sh:83-88  no exact match: how many first-components match?
+            // sh:94-97  no exact match: how many first-components match?
             // words = ${(@)${(@)matches%%sep*}:#}
             let words: Vec<String> = matches
                 .iter()
                 .map(|m| before_first(m, &sep))
                 .filter(|w| !w.is_empty())
                 .collect();
-            let mut argv: Vec<String> =
-                vec!["-O".into(), "tmp1".into(), "-M".into(), matchspec.clone(), "-".into()];
+            let mut argv: Vec<String> = vec![
+                "-O".into(),
+                "tmp1".into(),
+                "-M".into(),
+                matchspec.clone(),
+                "-".into(),
+            ];
             argv.extend(words.iter().cloned());
             let _ = bin_compadd("compadd", &argv, &make_ops(), 0);
             tmp1 = dedup(getaparam("tmp1").unwrap_or_default());
@@ -345,12 +359,12 @@ pub fn _multi_parts(args: &[String]) -> i32 {
             }
 
             if tmp1.len() == 1 {
-                // sh:96-138  exactly one component matches.
+                // sh:99-128  exactly one component matches.
                 if format!("{}{}", pre, suf).contains(&sep) {
-                    // sh:104  still separators on the line — accept it.
+                    // sh:106-107  still separators on the line — accept it.
                     npref = format!("{}{}", tmp1[0], sep);
                 } else {
-                    // sh:106-137  insert what we collected.
+                    // sh:108-127  insert what we collected.
                     matches = matches
                         .iter()
                         .filter(|m| m.starts_with(&tmp1[0]))
@@ -363,7 +377,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
 
                     let rc;
                     if (!imm.is_empty() && matches.len() == 1) || zstyle_t("expand", "suffix") {
-                        // sh:113-114  compadd … - $pref$matches
+                        // sh:114-117  compadd … - $pref$matches
                         let mut argv: Vec<String> = Vec::new();
                         argv.extend(group.iter().cloned());
                         argv.extend(expl.iter().cloned());
@@ -376,7 +390,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                         }
                         rc = bin_compadd("compadd", &argv, &make_ops(), 0);
                     } else {
-                        // sh:116-121
+                        // sh:119-124
                         let has_multi = matches
                             .iter()
                             .any(|m| m.starts_with(&format!("{}{}", tmp1[0], sep)));
@@ -406,10 +420,10 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                     return rc;
                 }
             } else if !tmp1.is_empty() {
-                // sh:139-192  more than one component matches.
+                // sh:129-197  more than one component matches.
                 let mut ret = 1i32;
 
-                // sh:145-146  compadd -O matches -M spec -a matches
+                // sh:135-137  compadd -O matches -M spec -a matches
                 let _ = setsparam("PREFIX", &pre);
                 let _ = setsparam("SUFFIX", &suf);
                 setaparam("matches", matches.clone());
@@ -437,7 +451,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                     let _ = setsparam("SUFFIX", &suf);
                 }
 
-                // sh:167-168  cross-segment suffix guard.
+                // sh:153-154  cross-segment suffix guard.
                 if !format!("{}{}", pre, suf).is_empty() {
                     matches = matches
                         .iter()
@@ -447,13 +461,16 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                     matches = dedup(matches);
                 }
 
-                // sh:171  ! expand-suffix || [[ -n menu || -z insert ]]
+                // sh:156-157  ! expand-suffix || [[ -n menu || -z insert ]]
                 if !zstyle_t("expand", "suffix") || menu || insert.is_empty() {
-                    // sh:172-190  menu-style / ambiguous-component add.
+                    // sh:159-183  menu-style / ambiguous-component add.
                     // tmp2 = -s "${sep}${tmp2#*sep}" when pre$suf has sep.
                     let presuf = format!("{}{}", pre, suf);
                     let tmp2: Vec<String> = if presuf.contains(&sep) {
-                        vec!["-s".into(), format!("{}{}", sep, after_first(&presuf, &sep))]
+                        vec![
+                            "-s".into(),
+                            format!("{}{}", sep, after_first(&presuf, &sep)),
+                        ]
                     } else {
                         Vec::new()
                     };
@@ -469,7 +486,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                         ret = 0;
                     }
 
-                    // sh:180-182  a bare separator match.
+                    // sh:174-177  a bare separator match.
                     if matches.iter().any(|m| m.starts_with(&sep)) {
                         let mut argv: Vec<String> = Vec::new();
                         argv.extend(group.iter().cloned());
@@ -499,9 +516,12 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                         ret = 0;
                     }
 
-                    // sh:187-190  matches with NO sep, as -S '' with tmp2.
-                    let w3: Vec<String> =
-                        matches.iter().filter(|m| !m.contains(&sep)).cloned().collect();
+                    // sh:181-183  matches with NO sep, as -S '' with tmp2.
+                    let w3: Vec<String> = matches
+                        .iter()
+                        .filter(|m| !m.contains(&sep))
+                        .cloned()
+                        .collect();
                     let mut argv: Vec<String> = Vec::new();
                     argv.extend(group.iter().cloned());
                     argv.extend(expl.iter().cloned());
@@ -519,7 +539,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                         ret = 0;
                     }
                 } else {
-                    // sh:196-203  normal completion: longest unambiguous.
+                    // sh:184-195  normal completion: longest unambiguous.
                     // `-s "${i#*sep}"` — upstream `i` is an unset local,
                     // so this expands to `-s ""` (leftover in upstream).
                     let w1: Vec<String> = matches
@@ -544,8 +564,11 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                         ret = 0;
                     }
 
-                    let w2: Vec<String> =
-                        matches.iter().filter(|m| !m.contains(&sep)).cloned().collect();
+                    let w2: Vec<String> = matches
+                        .iter()
+                        .filter(|m| !m.contains(&sep))
+                        .cloned()
+                        .collect();
                     let mut argv2: Vec<String> = Vec::new();
                     argv2.extend(group.iter().cloned());
                     argv2.extend(expl.iter().cloned());
@@ -565,7 +588,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                 cleanup!();
                 return ret;
             } else {
-                // sh:205-222  nothing matched the line: insert the
+                // sh:198-216  nothing matched the line: insert the
                 // expanded prefix we collected if it differs.
                 if !zstyle_t("expand", "prefix") || orig == format!("{}{}{}", pref, pre, suf) {
                     cleanup!();
@@ -605,7 +628,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
             }
         }
 
-        // sh:226-228  accepted/expanded a component: drop it from
+        // sh:224-225  accepted/expanded a component: drop it from
         // matches (keep only those sharing npref, strip the leading
         // component), and append it to pref.
         // matches=( ${(@)${(@)${(@M)matches:#${npref}*}#*sep}:#} )
@@ -618,7 +641,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
         matches = dedup(matches);
         pref = format!("{}{}", pref, npref);
 
-        // sh:232-260  advance pre/suf/cpre or finish.
+        // sh:229-259  advance pre/suf/cpre or finish.
         if pre.contains(&sep) {
             cpre = format!("{}{}{}", cpre, before_first(&pre, &sep), sep);
             pre = after_first(&pre, &sep);
@@ -628,14 +651,14 @@ pub fn _multi_parts(args: &[String]) -> i32 {
             pre = after_first(&suf, &sep);
             suf = String::new();
         } else {
-            // sh:244-259  string from the line is fully handled.
+            // sh:241-259  string from the line is fully handled.
             let _ = setsparam("PREFIX", &format!("{}{}", opre, osuf));
             let _ = setsparam("SUFFIX", "");
 
             let rc;
             if !pref.is_empty() && orig != pref {
                 if ends_with_sep_component(&pref, &sep) {
-                    // sh:249-251  pref = *sep*sep
+                    // sh:245-248  pref = *sep*sep
                     let p = format!("{}{}", before_last(&before_last(&pref, &sep), &sep), sep);
                     let word = after_last(&strip_trailing(&pref, &sep), &sep);
                     let mut argv: Vec<String> = Vec::new();
@@ -652,7 +675,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                     argv.push(word);
                     rc = bin_compadd("compadd", &argv, &make_ops(), 0);
                 } else if pref.contains(&sep) {
-                    // sh:253-255
+                    // sh:250-253
                     let p = format!("{}{}", before_last(&pref, &sep), sep);
                     let word = after_last(&pref, &sep);
                     let mut argv: Vec<String> = Vec::new();
@@ -669,7 +692,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
                     argv.push(word);
                     rc = bin_compadd("compadd", &argv, &make_ops(), 0);
                 } else {
-                    // sh:257
+                    // sh:255-256
                     let mut argv: Vec<String> = Vec::new();
                     argv.extend(group.iter().cloned());
                     argv.extend(expl.iter().cloned());
@@ -691,7 +714,7 @@ pub fn _multi_parts(args: &[String]) -> i32 {
     }
 }
 
-/// `-r sep -S sep -p pref [tmp2…] -M spec - words…` (sh:176-178/184-186).
+/// `-r sep -S sep -p pref [tmp2…] -M spec - words…` (sh:171-173/178-180).
 #[allow(clippy::too_many_arguments)]
 fn compadd_seg(
     group: &[String],

@@ -157,7 +157,9 @@ fn arrlen(name: &str) -> usize {
 fn q_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if c.is_ascii_alphanumeric() || matches!(c, '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-' | '_') {
+        if c.is_ascii_alphanumeric()
+            || matches!(c, '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-' | '_')
+        {
             out.push(c);
         } else {
             out.push('\\');
