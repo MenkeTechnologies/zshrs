@@ -4778,6 +4778,19 @@ pub fn untokenize(s: &str) -> String {
 
     while i < chars.len() {
         let c = chars[i];
+        // A Meta byte (U+0083) escapes the FOLLOWING char: zshrs metafies at the
+        // CHARACTER level, so a raw high byte that C leaves untouched (0x81 is
+        // not `imeta`) is stored here as the pair (U+0083, byte ^ 0x20). That
+        // continuation char can land in the ITOK range — 0x81 -> 0xA1 = Nularg —
+        // and would be wrongly stripped as a token below. Copy the pair verbatim
+        // and never untokenize the continuation. (Only fires on metafied
+        // high-byte content; a plain tokenized string has no U+0083.)
+        if c as u32 == 0x83 && i + 1 < chars.len() {
+            result.push(c);
+            result.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
         // C `itok()` (Src/ztype.h:52 + Src/utils.c:4198-4201) covers
         // the canonical TOKEN range Pound (0x84) through Nularg (0x9d
         // via Snull's chain to Nularg=0xa1). The previous Rust port
