@@ -9987,7 +9987,16 @@ pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
 
 /// `[[ -t fd ]]` — fd-is-a-tty check. Stack: \[fd_string\].
 /// Routes through libc::isatty. Pushes Bool.
-pub const BUILTIN_IS_TTY: u16 = 325;
+///
+/// ID 644 (unique, next free above the previous max of 643). This was
+/// 325, which COLLIDED with BUILTIN_FILE_OLDER (also 325). The VM's
+/// builtin table is last-registration-wins, and FILE_OLDER registered
+/// after IS_TTY, so every `[[ -t fd ]]` silently dispatched to the
+/// file-`-ot` handler: it compared the mtime of a file NAMED by the fd
+/// string ("0", "1", …) — which never exists — so `[[ -t 0 ]]` was
+/// always false. That broke interactive detection (`[[ -t 0 && -t 1 ]]`)
+/// and any config gated on it. c:Src/cond.c:390 `return !isatty(...)`.
+pub const BUILTIN_IS_TTY: u16 = 644;
 /// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
 pub const BUILTIN_COND_ACCESS: u16 = 638;
 
@@ -9996,9 +10005,9 @@ pub const BUILTIN_COND_ACCESS: u16 = 638;
 /// of zsh's `lineno` global tracking (Src/input.c:330) — the
 /// compiler emits one of these per top-level pipe so `$LINENO`
 /// reflects the source position at runtime. ID 342 picked because
-/// the previous `326` collided with `BUILTIN_HAS_STICKY` (the file
-/// has several other duplicate IDs — 325 has two as well — but
-/// fixing those is out of scope for this port).
+/// the previous `326` collided with `BUILTIN_HAS_STICKY` (the 325
+/// collision between IS_TTY and FILE_OLDER has since been fixed by
+/// moving IS_TTY to 644).
 pub const BUILTIN_SET_LINENO: u16 = 342;
 
 /// Pop a scalar from the VM stack, run expand_glob on it, push the
