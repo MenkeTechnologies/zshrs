@@ -2020,6 +2020,21 @@ pub fn zshrs_main() {
         "startup complete, entering main loop"
     );
 
+    // Recording-staleness oracle: the startup path ignores rc files and
+    // replays the recorder shard, so an edited `.zshrc` is invisible until
+    // `zshrs record` re-runs. Log it (never printed to the tty — see the
+    // no-startup-chatter rule) so the "I edited config and forgot" case is
+    // discoverable via `~/.cache/zshrs/zshrs.log` + `--doctor` instead of
+    // silently serving yesterday's environment. One directory listing + a
+    // few stats; no IPC, no re-source.
+    if let Some(stale_rc) = zsh::daemon_presence::recording_staleness() {
+        tracing::warn!(
+            rc = %stale_rc,
+            "recording is stale: {} is newer than the recorded environment — run `zshrs record` to refresh",
+            stale_rc
+        );
+    }
+
     // Check if stdin is a TTY
     // Faithful entry: zsh's `main()` (Src/main.c:114) is just
     // `return zsh_main(argc, argv)` — there is NO tty/non-tty branch and
@@ -2375,6 +2390,24 @@ fn run_doctor() {
             // line; the distinction is meaningful only for the
             // present/up-to-date branch above.
             println!("  {} {}", dim("-"), dim(path));
+        }
+    }
+    // Recording staleness — an rc file edited since the last recording.
+    if !zsh::daemon_presence::recording_present() {
+        println!(
+            "  {} recording: {}",
+            dim("-"),
+            dim("none (rc files sourced normally)"),
+        );
+    } else {
+        match zsh::daemon_presence::recording_staleness() {
+            Some(rc) => println!(
+                "  {} recording: {} ({} is newer — run `zshrs record`)",
+                yellow("!"),
+                yellow("STALE"),
+                rc,
+            ),
+            None => println!("  {} recording: {}", green("*"), green("up to date")),
         }
     }
     println!();
