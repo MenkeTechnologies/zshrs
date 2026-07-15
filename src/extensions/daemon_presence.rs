@@ -497,6 +497,98 @@ pub fn probe() -> Mode {
 ///
 /// Returns false on any I/O error → caller falls through to vanilla
 /// `source_startup_files()`.
+/// Is the recorded environment STALE relative to the user's rc files?
+///
+/// "Configs are ignored after the recorder" is the speed thesis, but that
+/// makes an edited `.zshrc` invisible until the user re-runs the recorder.
+/// This is the cheap staleness oracle: compare the newest rc-file mtime
+/// against the newest `*-recorder.rkyv` shard mtime. Returns the path of the
+/// offending rc file when any rc is newer than the recording (i.e. the user
+/// edited config and hasn't re-recorded), else `None`.
+///
+/// NO IPC and NO re-sourcing — a directory listing + a handful of `stat`s,
+/// so it stays within the cold-start budget. The caller decides the channel;
+/// per the no-startup-chatter rule this is logged (never printed to the tty)
+/// and surfaced in `--doctor`.
+#[cfg(feature = "daemon")]
+pub fn recording_staleness() -> Option<String> {
+    use std::time::SystemTime;
+    let paths = crate::daemon::paths::CachePaths::resolve().ok()?;
+    // Newest recorder shard mtime.
+    let mut newest_shard: Option<SystemTime> = None;
+    for entry in std::fs::read_dir(&paths.images).ok()?.flatten() {
+        if entry
+            .file_name()
+            .to_str()
+            .map(|s| s.ends_with("-recorder.rkyv"))
+            .unwrap_or(false)
+        {
+            if let Ok(m) = entry.metadata().and_then(|md| md.modified()) {
+                if newest_shard.map(|n| m > n).unwrap_or(true) {
+                    newest_shard = Some(m);
+                }
+            }
+        }
+    }
+    let shard_mtime = newest_shard?; // no recording yet → not "stale", just absent
+    // Any rc file newer than the recording?
+    let zdotdir = std::env::var("ZDOTDIR")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    let rc_set = [
+        "/etc/zshenv".to_string(),
+        format!("{}/.zshenv", zdotdir),
+        "/etc/zprofile".to_string(),
+        format!("{}/.zprofile", zdotdir),
+        "/etc/zshrc".to_string(),
+        format!("{}/.zshrc", zdotdir),
+        "/etc/zlogin".to_string(),
+        format!("{}/.zlogin", zdotdir),
+    ];
+    let mut newest_rc: Option<(SystemTime, String)> = None;
+    for path in &rc_set {
+        if let Ok(m) = std::fs::metadata(path).and_then(|md| md.modified()) {
+            if newest_rc.as_ref().map(|(n, _)| m > *n).unwrap_or(true) {
+                newest_rc = Some((m, path.clone()));
+            }
+        }
+    }
+    match newest_rc {
+        Some((rc_mtime, rc_path)) if rc_mtime > shard_mtime => Some(rc_path),
+        _ => None,
+    }
+}
+
+/// Non-daemon builds have no recorder shard — nothing to be stale against.
+#[cfg(not(feature = "daemon"))]
+pub fn recording_staleness() -> Option<String> {
+    None
+}
+
+/// Does a recorder shard exist at all? Distinguishes "no recording" (this
+/// shell sources rc files normally) from "recording present and fresh" — so
+/// `--doctor` doesn't claim "up to date" when nothing was ever recorded.
+#[cfg(feature = "daemon")]
+pub fn recording_present() -> bool {
+    crate::daemon::paths::CachePaths::resolve()
+        .ok()
+        .and_then(|p| std::fs::read_dir(&p.images).ok())
+        .map(|it| {
+            it.flatten().any(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|s| s.ends_with("-recorder.rkyv"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(feature = "daemon"))]
+pub fn recording_present() -> bool {
+    false
+}
+
 #[cfg(feature = "daemon")]
 fn daemon_has_zshrs_rows() -> bool {
     let paths = match crate::daemon::paths::CachePaths::resolve() {

@@ -362,6 +362,26 @@ impl ShellExecutor {
             );
         }
 
+        // Recording staleness — startup replays the recorder shard and
+        // ignores rc files, so an edited `.zshrc` is invisible until
+        // `zshrs record` re-runs. Same oracle as the `--doctor` flag +
+        // startup log: newest rc mtime vs newest `*-recorder.rkyv` mtime.
+        if !crate::daemon_presence::recording_present() {
+            println!(
+                "  recording:   {}",
+                dim("none (rc files sourced normally)")
+            );
+        } else {
+            match crate::daemon_presence::recording_staleness() {
+                Some(rc) => println!(
+                    "  recording:   {} ({} is newer — run `zshrs record`)",
+                    yellow("STALE"),
+                    rc,
+                ),
+                None => println!("  recording:   {}", green("up to date")),
+            }
+        }
+
         // Legacy single-file shards still in active shell-side use until
         // they migrate under images/ in the daemon hydration path.
         if let Some((count, bytes)) = crate::script_cache::stats() {
