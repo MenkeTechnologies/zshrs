@@ -8133,8 +8133,28 @@ pub fn paramsubst(
             // holds it. Detect flag-form subscript (`(...)` prefix)
             // and treat is_set as true when raw_value is non-empty.
             let is_flag_form = sub.trim_start().starts_with('(');
+            // c:Src/params.c getarg — a pattern-SEARCH subscript on a HASH
+            // (`(r)/(R)/(i)/(I)`, incl. `(n:N:r)`) always yields a "set"
+            // value (empty on no-match): the scan machinery runs over the
+            // existing hash param rather than doing a missing-key lookup, so
+            // `${m[(r)x]+w}` and `${+m[(r)x]}` see SET even with no match —
+            // unlike a plain key (`${m[nokey]}`, unset) or the same flags on
+            // a plain ARRAY (`${a[(r)q]}`, unset, index 0). Exact `(e)` is a
+            // keyed lookup, not a search, and stays unset. Without this the
+            // `+`/`${+..}` forms wrongly fired the unset branch on an assoc
+            // search miss.
+            let is_assoc_search = is_flag_form
+                && assoc_contains(&var_name)
+                && sub
+                    .trim_start()
+                    .trim_start_matches('(')
+                    .split(')')
+                    .next()
+                    .map(|flags| flags.contains(|c| matches!(c, 'r' | 'R' | 'i' | 'I')))
+                    .unwrap_or(false);
             used_subexp
                 || (is_flag_form && !raw_value.is_empty())
+                || is_assoc_search
                 // Skip the whole-map `assoc_get` for magic assocs
                 // (functions/parameters/commands/aliases/…): materializing
                 // one of those enumerates the ENTIRE backing hash table (and
@@ -9742,7 +9762,14 @@ pub fn paramsubst(
                 // an empty result must NOT emit the Nularg sentinel
                 // node `¡` (no-array-element marker) that splat-of-
                 // (vec![""]) would produce.
-                if isarr != 0 && split_parts.is_none() && !value.is_empty() {
+                // None OR empty: a flag-form/search subscript pre-seeds
+                // split_parts=Some([]) up front, which would otherwise
+                // shadow the alternate word downstream (same shape as the
+                // `:-` seed above).
+                if isarr != 0
+                    && split_parts.as_ref().map_or(true, |v| v.is_empty())
+                    && !value.is_empty()
+                {
                     split_parts = Some(vec![value.clone()]);
                 }
             } else if let Some(alt) = r.strip_prefix('+') {
@@ -9758,7 +9785,14 @@ pub fn paramsubst(
                 } else {
                     value = String::new();
                 }
-                if isarr != 0 && split_parts.is_none() && !value.is_empty() {
+                // None OR empty: a flag-form/search subscript pre-seeds
+                // split_parts=Some([]) up front, which would otherwise
+                // shadow the alternate word downstream (same shape as the
+                // `:-` seed above).
+                if isarr != 0
+                    && split_parts.as_ref().map_or(true, |v| v.is_empty())
+                    && !value.is_empty()
+                {
                     split_parts = Some(vec![value.clone()]);
                 }
             } else if let Some(msg) = r.strip_prefix(":?") {
