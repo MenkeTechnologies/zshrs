@@ -9538,8 +9538,15 @@ pub fn paramsubst(
                     // seed split_parts when the var is positional-
                     // special so the qq path picks up the default.
                     let is_positional_special = matches!(var_name.as_str(), "*" | "@" | "argv");
+                    // Seed when split_parts is None OR already an EMPTY vec:
+                    // a flag-form subscript with no match (`${A[(r)x]}` on an
+                    // assoc) sets isarr and split_parts=Some([]) up front, so
+                    // the earlier `.is_none()` gate skipped the seed and the
+                    // empty array shadowed the `:-` default downstream (val
+                    // "DEF" computed but never emitted). Mirrors C subst.c:3193
+                    // case '-' storing the default back into val/aval.
                     if !value.is_empty()
-                        && split_parts.is_none()
+                        && split_parts.as_ref().map_or(true, |v| v.is_empty())
                         && (isarr != 0 || is_positional_special)
                     {
                         split_parts = Some(vec![value.clone()]);
