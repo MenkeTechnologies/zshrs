@@ -4503,6 +4503,112 @@ fn gen_globanchor(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// whence generator
+//
+// Command resolution: `whence` / `type` / `where` / `command -v` / `-V`, and
+// the flag matrix (-w kind, -v verbose, -c csh-style, -m pattern, -a all,
+// -s resolve symlinks). The answer depends on WHAT the name is — a function, an
+// alias (plain / global / suffix), a builtin, a reserved word, a hashed
+// command — and those categories are the whole contract. Kept deterministic by
+// probing shell-defined names, not $PATH lookups (a resolved path is machine
+// state, not a parity property).
+// C: Src/builtin.c bin_whence().
+// ---------------------------------------------------------------------------
+
+const WHENCE_SETUP: &str =
+    "f() { : }; alias al='print hi'; alias -g GL='| cat'; alias -s sfx='run'";
+
+fn gen_whence(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts = vec![WHENCE_SETUP.to_string()];
+    // Names whose resolution is fully shell-determined (no filesystem).
+    let names = ["f", "al", "GL", "sfx", "print", "if", "typeset", "nosuchname", "[["];
+    for _ in 0..rng.gen_range(2..=4) {
+        let n = pick(&mut rng, &names);
+        let stmt = match rng.gen_range(0..14) {
+            // -w: the KIND (function/alias/builtin/reserved/command/none).
+            0 => format!("whence -w {n}"),
+            // Verbose sentence form.
+            1 => format!("whence -v {n} 2>/dev/null || print -r -- \"rc=$?\""),
+            // Bare whence: the definition / name / nothing.
+            2 => format!("whence {n} 2>/dev/null; print -r -- \"rc=$?\""),
+            // `type` is whence -v; `type -w` is whence -w.
+            3 => format!("type {n} 2>/dev/null || print -r -- \"rc=$?\""),
+            4 => format!("type -w {n}"),
+            // command -v / -V.
+            5 => format!("command -v {n} 2>/dev/null; print -r -- \"rc=$?\""),
+            6 => format!("command -V {n} 2>/dev/null || print -r -- \"rc=$?\""),
+            // -a: every resolution of the name.
+            7 => format!("whence -a {n} 2>/dev/null; print -r -- \"rc=$?\""),
+            // -m with a pattern. The output of a pattern that reaches external
+            // commands is in command-hash-table order (an internal detail, not a
+            // parity property, like unsorted assoc iteration), so sort it — only
+            // the matched SET is meaningful.
+            8 => "whence -wm 'f'; whence -wm 'a*' | sort".to_string(),
+            // functions / aliases introspection.
+            9 => "print -r -- \"${+functions[f]} ${+aliases[al]} ${+galiases[GL]} ${+saliases[sfx]}\"".to_string(),
+            // A function shadowing a builtin resolves to the function.
+            10 => "print() { builtin print SHADOW }; whence -w print; unfunction print; whence -w print".to_string(),
+            // `where` lists all locations (whence -ca form) — probe on a builtin.
+            11 => format!("where {n} 2>/dev/null; print -r -- \"rc=$?\""),
+            // Disabling a builtin changes its resolution.
+            12 => "disable print 2>/dev/null; whence -w print; enable print; whence -w print".to_string(),
+            // A reserved word.
+            _ => "whence -w while; whence -w do; whence -w '{'".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
+// zstyle generator
+//
+// The zstyle database: `zstyle CONTEXT style value...` defines, and the query
+// forms read it back — `-g` (get into scalar), `-a`/`-b`/`-t`/`-T` (array /
+// boolean / test), `-s` (join with sep), `-m` (pattern-match a value), `-e`
+// (evaluated value), `-L` (list), `-d` (delete). Lookup is by MOST-SPECIFIC
+// matching context pattern, which is the part that carries real logic.
+// C: Src/Modules/zutil.c bin_zstyle().
+// ---------------------------------------------------------------------------
+
+fn gen_zstyle(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut stmts: Vec<String> = Vec::new();
+    for _ in 0..rng.gen_range(1..=3) {
+        let stmt = match rng.gen_range(0..14) {
+            // Define + get.
+            0 => "zstyle ':x:y' color blue; zstyle -g v ':x:y' color; print -r -- \"[$v] rc=$?\"".to_string(),
+            // Pattern context — most-specific wins.
+            1 => "zstyle ':a:*' k general; zstyle ':a:b' k specific; zstyle -g v ':a:b' k; print -r -- \"[$v]\"".to_string(),
+            2 => "zstyle ':p:*' k star; zstyle -g v ':p:q' k; print -r -- \"[$v] rc=$?\"".to_string(),
+            // -a: array value.
+            3 => "zstyle ':c' list a b c; zstyle -a ':c' list arr; print -r -- \"n=${#arr} [${(j:,:)arr}]\"".to_string(),
+            // -b: boolean into scalar (true/false).
+            4 => "zstyle ':d' flag yes; zstyle -b ':d' flag b; print -r -- \"[$b] rc=$?\"".to_string(),
+            5 => "zstyle ':d' flag off; zstyle -b ':d' flag b; print -r -- \"[$b] rc=$?\"".to_string(),
+            // -t / -T: test a boolean/value.
+            6 => "zstyle ':e' on true; zstyle -t ':e' on; print -r -- \"rc=$?\"".to_string(),
+            7 => "zstyle ':e' v x; zstyle -t ':e' v x; print -r -- \"rc=$?\"; zstyle -t ':e' v y; print -r -- \"rc=$?\"".to_string(),
+            // -s: join into a scalar with a separator.
+            8 => "zstyle ':f' parts a b c; zstyle -s ':f' parts s '+'; print -r -- \"[$s]\"".to_string(),
+            // -m: pattern-match a value in the style.
+            9 => "zstyle ':g' words foo bar baz; zstyle -m ':g' words 'ba*'; print -r -- \"rc=$?\"".to_string(),
+            // A missing style: nonzero status, target untouched.
+            10 => "v=PRE; zstyle -g v ':none' missing; print -r -- \"rc=$? [$v]\"".to_string(),
+            // Delete then re-query.
+            11 => "zstyle ':h' k val; zstyle -d ':h' k; zstyle -g v ':h' k; print -r -- \"rc=$?\"".to_string(),
+            // Overwrite replaces the value.
+            12 => "zstyle ':i' k first; zstyle ':i' k second; zstyle -g v ':i' k; print -r -- \"[$v]\"".to_string(),
+            // Several styles under one context.
+            _ => "zstyle ':j' s1 a; zstyle ':j' s2 b; zstyle -g v1 ':j' s1; zstyle -g v2 ':j' s2; print -r -- \"[$v1][$v2]\"".to_string(),
+        };
+        stmts.push(stmt);
+    }
+    stmts
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4560,6 +4666,8 @@ enum Mode {
     Anonfn,
     Printv,
     Globanchor,
+    Whence,
+    Zstyle,
 }
 
 struct Args {
@@ -4630,6 +4738,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Anonfn => gen_anonfn(seed),
         Mode::Printv => gen_printv(seed),
         Mode::Globanchor => gen_globanchor(seed),
+        Mode::Whence => gen_whence(seed),
+        Mode::Zstyle => gen_zstyle(seed),
     }
 }
 
@@ -4688,6 +4798,8 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Anonfn => "anonfn",
         Mode::Printv => "printv",
         Mode::Globanchor => "globanchor",
+        Mode::Whence => "whence",
+        Mode::Zstyle => "zstyle",
     }
 }
 
@@ -4746,6 +4858,8 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Anonfn,
         Mode::Printv,
         Mode::Globanchor,
+        Mode::Whence,
+        Mode::Zstyle,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -4847,7 +4961,8 @@ fn parse_args() -> Args {
                      paramod, procsub, alias, autoload, stat, errexit,\n\
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
-                     casesel, default, anonfn, printv, globanchor\n\
+                     casesel, default, anonfn, printv, globanchor,\n\
+                     whence, zstyle\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

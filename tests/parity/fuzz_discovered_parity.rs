@@ -1931,3 +1931,101 @@ mod print_v_trailing_sep {
         assert_parity(r#"printf -v y "%s" hi; print -r -- "[$y]""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// X. Deferred baseline gaps, fixed with C code (round: "all deferred")
+//
+// typeset attribute merge / type conversion (c:Src/builtin.c:2289,2355-2378,
+// 2232-2238); (V) meta-byte render + (Q) bang unescape (c:utils.c:6230);
+// whence -v autoload source (c:exec.c:5657); ERR_EXIT + always (c:exec.c:1618);
+// =() real temp file (c:exec.c:4906).
+// ─────────────────────────────────────────────────────────────────────
+mod deferred_fixes {
+    use super::*;
+
+    // --- typeset attribute merge / type conversion ---
+    #[test]
+    fn typeset_merge_keeps_right_zeros_on_attr_add() {
+        assert_parity(r#"typeset -Z 3 x=7; typeset -r x; print -r -- "${(t)x}""#);
+    }
+    #[test]
+    fn typeset_type_change_clears_right_zeros() {
+        assert_parity(r#"typeset -Z 3 x=7; typeset -i x=1; print -r -- "${(t)x}""#);
+    }
+    #[test]
+    fn typeset_scalar_to_array_clears_padding() {
+        assert_parity(r#"typeset -Z 3 x=7; typeset -a x=(1 2); print -r -- "${(t)x}""#);
+    }
+    #[test]
+    fn typeset_assoc_to_float_migrates() {
+        assert_parity(r#"typeset -A x=(k v); typeset -F x=1.5; print -r -- "${(t)x}""#);
+    }
+    #[test]
+    fn typeset_scalar_to_existing_arraylike_errors() {
+        assert_parity(r#"typeset -A x=(k v); typeset x=s 2>&1; print -r -- "rc=$?""#);
+    }
+    #[test]
+    fn typeset_iZ_single_command_keeps_both() {
+        assert_parity(r#"typeset -iZ 5 x=7; print -r -- "${(t)x}""#);
+    }
+
+    // --- (V) meta-byte render ---
+    #[test]
+    fn visible_meta_control_byte() {
+        assert_parity(r#"v=$'\M-\C-a'; print -r -- "[${(V)v}]""#);
+    }
+    #[test]
+    fn visible_two_meta_bytes() {
+        assert_parity(r#"v=$'\x81\x82'; print -r -- "[${(V)v}]""#);
+    }
+
+    // --- (Q) bang unescape roundtrip ---
+    #[test]
+    fn quote_q_bang_roundtrips() {
+        assert_parity(r#"v=a!b; r=${(Q)${(qqqq)v}}; [[ $r == $v ]] && print -r -- ok || print -r -- "BAD[$r]""#);
+    }
+    #[test]
+    fn quote_q_unknown_escape_kept() {
+        assert_parity("w=$'a\\qb'; print -r -- \"[${(Q)w}]\"");
+    }
+
+    // --- ERR_EXIT + always ---
+    #[test]
+    fn errexit_try_fail_skips_always() {
+        assert_parity(r#"setopt errexit; { false } always { print -r -- A }; print -r -- after"#);
+    }
+    #[test]
+    fn errexit_try_success_runs_always() {
+        assert_parity(r#"setopt errexit; { true } always { print -r -- A }; print -r -- after"#);
+    }
+    #[test]
+    fn errexit_in_function_skips_always() {
+        assert_parity(r#"setopt errexit; f(){ { false } always { print -r -- A } }; f; print -r -- after"#);
+    }
+    #[test]
+    fn errexit_exit_trap_still_fires() {
+        assert_parity(r#"setopt errexit; trap "print -r -- EXITTRAP" EXIT; { false } always { print -r -- A }"#);
+    }
+    #[test]
+    fn errexit_or_guard_runs_always() {
+        assert_parity(r#"setopt errexit; { false } always { print -r -- A } || print -r -- OR; print -r -- after"#);
+    }
+
+    // --- =() real temp file ---
+    #[test]
+    fn equals_subst_cat() {
+        assert_parity(r#"cat =(print -l a b c)"#);
+    }
+    #[test]
+    fn equals_subst_two_args() {
+        assert_parity(r#"cat =(print A) =(print B)"#);
+    }
+    #[test]
+    fn equals_subst_seekable() {
+        assert_parity(r#"wc -l < =(print -l a b c d)"#);
+    }
+    #[test]
+    fn process_sub_pipe_unchanged() {
+        assert_parity(r#"cat <(print pipe)"#);
+    }
+}

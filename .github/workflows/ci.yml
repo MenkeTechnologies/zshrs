@@ -483,6 +483,14 @@ jobs:
         run: ./target/debug/parity-fuzz --mode printv --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/printv.txt --out target/parity-fuzz/ci-printv.txt
       - name: Fuzz — globanchor
         run: ./target/debug/parity-fuzz --mode globanchor --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/globanchor.txt --out target/parity-fuzz/ci-globanchor.txt
+      # whence / zstyle cover command resolution (whence/type/where/command -v/-V,
+      # the -w/-v/-a/-m flag matrix over functions/aliases/builtins/reserved
+      # words) and the zstyle database (-g/-a/-b/-t/-s/-m/-e/-L/-d, most-specific
+      # context matching). Both clean.
+      - name: Fuzz — whence
+        run: ./target/debug/parity-fuzz --mode whence --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/whence.txt --out target/parity-fuzz/ci-whence.txt
+      - name: Fuzz — zstyle
+        run: ./target/debug/parity-fuzz --mode zstyle --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zstyle.txt --out target/parity-fuzz/ci-zstyle.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
