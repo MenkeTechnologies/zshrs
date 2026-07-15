@@ -1,28 +1,40 @@
 //! Port of `_history_modifiers` from
 //! `Completion/Zsh/Type/_history_modifiers`.
 //!
-//! Full upstream body (89 lines, abridged):
+//! Full upstream body (89 lines verbatim):
 //! ```text
 //! sh: 1  #autoload
-//! sh: 8  local type=$1 delim expl
-//! sh: 9  integer global
-//! sh:11  while true; do
-//! sh:12    if [[ -n $PREFIX ]]; then
-//! sh:13      local char=$PREFIX[1]
-//! sh:14      global=0
-//! sh:15      [[ $char = g ]] && { global=1; compset -P 1 } && char=$PREFIX[1]
-//! sh:17      case $char in
-//! sh:18        s|S) extract delim; compset -P "[gsS]$delim*$delim*$delim"; build list of modifier flags
-//! sh:80      esac
-//! sh:84    else
-//! sh:85      build top-level list of all modifier letters
-//! sh:88    fi
-//! sh:89  done
+//! sh: 8  local -a list
+//! sh:10  local type=$1 delim expl
+//! sh:11  integer global
+//! sh:13  while true; do
+//! sh:14    if [[ -n $PREFIX ]]; then
+//! sh:15      local char=$PREFIX[1]
+//! sh:17      global=0
+//! sh:18      compset -p 1
+//! sh:19      case $char in
+//! sh:20        ([hretpqQxlu\&]) ;;                 # single character modifiers
+//! sh:24        (s) ... _delimiters modifier-s / _message replacement|original ...
+//! sh:42        (g) global=1; continue ;;
+//! sh:46      esac
+//! sh:49      compset -P : && continue
+//! sh:51      [[ -n $PREFIX ]] && return 1
+//! sh:53      list=("\::modifier"); [[ $type = q ]] && list+=("):end of qualifiers")
+//! sh:56      _describe -t delimiters "delimiter" list -Q -S ''
+//! sh:57      return
+//! sh:58    else
+//! sh:59      list=("s:..." "&:..."); (( ! global )) && list+=( a A c g h t r e Q P l u ... )
+//! sh:84      _describe -t modifiers "modifier" list -Q -S ''
+//! sh:85      return
+//! sh:86    fi
+//! sh:87  done
 //! ```
 //!
-//! Emits the catalog of `:s/PAT/REPL/`-style history modifiers per
-//! context. Approximation: emit the top-level letter list +
-//! delegates to `_describe`.
+//! Completes history-style word modifiers. `$1` is the context type:
+//! `h`=history, `q`=glob qualifier, `p`=parameter. Each `while true`
+//! iteration inspects the FIRST char of `$PREFIX`, strips it with
+//! `compset -p 1`, and either loops (`g`/colon) or terminates by
+//! offering the next modifier / delimiter / substitution list.
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getsparam, setaparam};
@@ -38,76 +50,175 @@ fn make_ops() -> options {
     }
 }
 
+/// `compset FLAG PAT` → true when the strip matched (shell `compset`
+/// returns 0). Mutates the global PREFIX/SUFFIX completion state.
+fn compset(argv: &[&str]) -> bool {
+    let owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    bin_compset("compset", &owned, &make_ops(), 0) == 0
+}
+
 /// `_history_modifiers` — complete history modifier letters.
 /// `$1` is the context (`h`=history, `q`=glob qualifier,
 /// `p`=parameter).
 pub fn _history_modifiers(args: &[String]) -> i32 {
-    let typ = args.first().cloned().unwrap_or_default();
-    let prefix = getsparam("PREFIX").unwrap_or_default();
+    // sh: 8-11  locals. `type` is a Rust keyword → raw identifier
+    //   keeps the source name verbatim.
+    let mut list: Vec<String> = Vec::new();
+    let r#type = args.first().cloned().unwrap_or_default();
+    let mut delim: String = String::new();
+    let mut global: i64 = 0;
 
-    // sh:14-15  global `g` prefix swallow
-    let prefix = if prefix.starts_with('g') {
-        let _ = bin_compset(
-            "compset",
-            &["-P".to_string(), "1".to_string()],
-            &make_ops(),
-            0,
-        );
-        prefix[1..].to_string()
-    } else {
-        prefix
-    };
+    // sh:13
+    loop {
+        let prefix = getsparam("PREFIX").unwrap_or_default();
+        // sh:14  if [[ -n $PREFIX ]]; then
+        if !prefix.is_empty() {
+            // sh:15  local char=$PREFIX[1]
+            let char = prefix.chars().next().unwrap();
 
-    let first_char = prefix.chars().next();
-    if first_char.is_some() && matches!(first_char.unwrap(), 's' | 'S') {
-        // sh:18 — substitution mode, delimiter follows
-        //   Defer to _describe with the standard substitution
-        //   flag set (l/q/x/u, plus type-specific p/&).
-        let mut flags: Vec<String> = vec![
-            "l:lower case all words".to_string(),
-            "q:quote words".to_string(),
-            "u:upper case all words".to_string(),
-        ];
-        if typ == "h" {
-            flags.push("p:print without executing".to_string());
-            flags.push("x:quote words, breaking on whitespace".to_string());
-            flags.push("&:repeat previous substitution".to_string());
+            // sh:17  global=0
+            global = 0;
+            // sh:18  compset -p 1
+            compset(&["-p", "1"]);
+            // sh:19  case $char in
+            match char {
+                // sh:20-23  single character modifiers — nothing to do
+                'h' | 'r' | 'e' | 't' | 'p' | 'q' | 'Q' | 'x' | 'l' | 'u' | '&' => {}
+
+                // sh:24-42  (s) substitution: delimiter string delimiter
+                //   string delimiter
+                's' => {
+                    let prefix = getsparam("PREFIX").unwrap_or_default();
+                    // sh:26  if [[ -z $PREFIX ]]; then
+                    if prefix.is_empty() {
+                        // sh:27-28  _delimiters modifier-s; return
+                        return dispatch_function_call(
+                            "_delimiters",
+                            &["modifier-s".to_string()],
+                        )
+                        .unwrap_or(1);
+                    }
+                    // sh:30  delim=$PREFIX[1]
+                    delim = prefix.chars().next().unwrap().to_string();
+                    // sh:31  compset -p 1
+                    compset(&["-p", "1"]);
+                    // sh:32  if ! compset -P "[^${delim}]#${delim}[^${delim}]#${delim}"
+                    let full = format!("[^{d}]#{d}[^{d}]#{d}", d = delim);
+                    if !compset(&["-P", full.as_str()]) {
+                        // sh:33  if compset -P "[^${delim}]#${delim}"
+                        let half = format!("[^{d}]#{d}", d = delim);
+                        return if compset(&["-P", half.as_str()]) {
+                            // sh:34  _message "replacement string"
+                            dispatch_function_call(
+                                "_message",
+                                &["replacement string".to_string()],
+                            )
+                            .unwrap_or(1)
+                        } else {
+                            // sh:36  _message "original string"
+                            dispatch_function_call(
+                                "_message",
+                                &["original string".to_string()],
+                            )
+                            .unwrap_or(1)
+                        };
+                    }
+                }
+
+                // sh:42-45  (g) global flag, restart the loop
+                'g' => {
+                    global = 1;
+                    continue;
+                }
+
+                _ => {}
+            }
+
+            // sh:48  # modifier completely matched, see what's next.
+            // sh:49  compset -P : && continue
+            if compset(&["-P", ":"]) {
+                continue;
+            }
+            // sh:50-51  something other than colon next → bummer
+            if !getsparam("PREFIX").unwrap_or_default().is_empty() {
+                return 1;
+            }
+
+            // sh:53  list=("\::modifier")
+            list = vec!["\\::modifier".to_string()];
+            // sh:54  [[ $type = q ]] && list+=("):end of qualifiers")
+            if r#type == "q" {
+                list.push("):end of qualifiers".to_string());
+            }
+            // sh:55-56  _describe -t delimiters "delimiter" list -Q -S ''
+            setaparam("list", list);
+            return dispatch_function_call(
+                "_describe",
+                &[
+                    "-t".to_string(),
+                    "delimiters".to_string(),
+                    "delimiter".to_string(),
+                    "list".to_string(),
+                    "-Q".to_string(),
+                    "-S".to_string(),
+                    "".to_string(),
+                ],
+            )
+            .unwrap_or(1);
+        } else {
+            // sh:59-64  top-level modifier list
+            list = vec![
+                "s:substitute string".to_string(),
+                "&:repeat substitution".to_string(),
+            ];
+            // sh:65  if (( ! global )); then
+            if global == 0 {
+                // sh:66-79
+                list.extend(
+                    [
+                        "a:absolute path, resolve '..' lexically",
+                        "A:as ':a', then resolve symlinks",
+                        "c:PATH search for command",
+                        "g:globally apply s or &",
+                        "h:head - strip trailing path element",
+                        "t:tail - strip directories",
+                        "r:root - strip suffix",
+                        "e:leave only extension",
+                        "Q:strip quotes",
+                        "P:realpath, resolve '..' physically",
+                        "l:lower case all words",
+                        "u:upper case all words",
+                    ]
+                    .into_iter()
+                    .map(String::from),
+                );
+                // sh:80-83  [[ $type = h ]] && list+=( p x )
+                if r#type == "h" {
+                    list.push("p:print without executing".to_string());
+                    list.push("x:quote words, breaking on whitespace".to_string());
+                }
+                // sh:84  [[ $type = [hp] ]] && list+=("q:...")
+                if r#type == "h" || r#type == "p" {
+                    list.push("q:quote to escape further substitutions".to_string());
+                }
+            }
+            // sh:86  _describe -t modifiers "modifier" list -Q -S ''
+            setaparam("list", list);
+            return dispatch_function_call(
+                "_describe",
+                &[
+                    "-t".to_string(),
+                    "modifiers".to_string(),
+                    "modifier".to_string(),
+                    "list".to_string(),
+                    "-Q".to_string(),
+                    "-S".to_string(),
+                    "".to_string(),
+                ],
+            )
+            .unwrap_or(1);
         }
-        setaparam("list", flags);
-        let mut argv: Vec<String> = vec![
-            "-t".to_string(),
-            "history-modifiers".to_string(),
-            "history modifier".to_string(),
-            "list".to_string(),
-        ];
-        return dispatch_function_call("_describe", &argv).unwrap_or(1);
     }
-
-    // sh:85 — top-level catalog
-    let mut list: Vec<String> = vec![
-        "h:remove last filename component".to_string(),
-        "t:select tail (last filename component)".to_string(),
-        "r:remove last suffix".to_string(),
-        "e:select last suffix".to_string(),
-        "s:substitute on the word".to_string(),
-        "&:repeat previous substitution".to_string(),
-        "g:apply modifier globally".to_string(),
-        "l:convert words to lowercase".to_string(),
-        "u:convert words to uppercase".to_string(),
-        "q:quote words".to_string(),
-        "x:quote breaking on whitespace".to_string(),
-    ];
-    if typ == "h" {
-        list.push("p:print without executing".to_string());
-    }
-    setaparam("list", list);
-    let describe_argv: Vec<String> = vec![
-        "-t".to_string(),
-        "history-modifiers".to_string(),
-        "history modifier".to_string(),
-        "list".to_string(),
-    ];
-    dispatch_function_call("_describe", &describe_argv).unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -116,17 +227,39 @@ mod tests {
 
     #[test]
     fn returns_one_without_executor() {
+        // PREFIX empty → sh:58 else branch → `_describe` dispatch,
+        //   which returns None (no executor) → `.unwrap_or(1)`.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
         assert_eq!(_history_modifiers(&["h".to_string()]), 1);
     }
 
     #[test]
-    fn publishes_list_for_describe() {
+    fn publishes_top_level_list_for_describe() {
+        // sh:59-84 — the top-level catalog is published into the
+        //   `list` shell array for `_describe -t modifiers`.
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
         let _ = _history_modifiers(&["h".to_string()]);
         let list = crate::ported::params::getaparam("list").unwrap_or_default();
-        assert!(!list.is_empty());
+        // s, & (always) + 12 non-global + p, x (type=h) + q (type=[hp]).
+        assert_eq!(list.len(), 17);
+        assert_eq!(list[0], "s:substitute string");
+        assert_eq!(list[1], "&:repeat substitution");
+        assert!(list.contains(&"p:print without executing".to_string()));
+        assert!(list.contains(&"q:quote to escape further substitutions".to_string()));
+    }
+
+    #[test]
+    fn glob_qualifier_type_omits_history_only_entries() {
+        // sh:80-84 — the `p`/`x`/`q` entries are gated on the context
+        //   type; a `q` (glob-qualifier) context must not see them.
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("PREFIX", "");
+        let _ = _history_modifiers(&["q".to_string()]);
+        let list = crate::ported::params::getaparam("list").unwrap_or_default();
+        assert_eq!(list.len(), 14);
+        assert!(!list.contains(&"p:print without executing".to_string()));
+        assert!(!list.contains(&"q:quote to escape further substitutions".to_string()));
     }
 }

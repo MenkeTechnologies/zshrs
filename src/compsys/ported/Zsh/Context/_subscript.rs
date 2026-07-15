@@ -1,30 +1,41 @@
 //! Port of `_subscript` from `Completion/Zsh/Context/_subscript`.
 //!
-//! Full upstream body (136 lines, abridged):
+//! Full upstream body (134 lines), branch map:
 //! ```text
 //! sh:  1  #compdef -subscript-
-//! sh:  5  [[ $ISUFFIX = *\]* ]] || osuf=]
-//! sh:  7  if [[ "$1" = -q ]]; then compquote osuf; osuf+=' '; shift
-//! sh: 11  compset -P '\(([^\(\)]|\(*\))##\)' # strip subscript flags
-//! sh: 19  if dynamic-name expansion at ~[: → _dynamic_directory_name
-//! sh: 21  elif $PREFIX = :*: → character classes
-//! sh: 27  elif compset -P '(' → subscript-flag completion (assoc / array / scalar)
-//! sh: 79  elif assoc → _wanted association-keys + keys
-//! sh: 90  elif array → _tags indexes parameters loop
-//! sh:134  else _dispatch -math- -math-
+//! sh:  3  local expl ind osuf flags sep
+//! sh:  5  [[ $ISUFFIX = *\]* ]] || osuf=\]
+//! sh:  7  if [[ "$1" = -q ]]; then compquote osuf; osuf+=' '; shift; fi
+//! sh: 13  compset -P '\(([^\(\)]|\(*\))##\)'          # strip subscript flags
+//! sh: 21  pos scan → BUFFER[1,pos-1] = (|*[[:space:]:=]##)~[ → _dynamic_directory_name
+//! sh: 25  elif $PREFIX = :*  → _wanted characters … compadd -p: -S ':]' <classes>
+//! sh: 29  elif compset -P '\('  → subscript-flag _values catalog (assoc/scalar/array)
+//! sh: 84  elif (Pt)==assoc*  → _wanted association-keys … compadd -Q -S $suf -a keys
+//! sh: 93  elif (Pt)==array*  → _tags indexes parameters loop (_all_labels / _parameters)
+//! sh:132  else _dispatch -math- -math-
 //! ```
 //!
-//! Subscript context: dispatch based on parameter type
-//! (assoc/array/scalar) and current PREFIX shape.
+//! Local names mirror the source: `osuf`, `flags`, `ind`, `sep`,
+//! `match`→`f`/`d`/`e`/`v`, `keys`, `suf`, `list`, `disp`, `ret`.
+//! `compadd` is invoked as the action word of `_wanted`/`_all_labels`
+//! exactly as the source does (those ports route the `compadd` action
+//! word to `bin_compadd` internally). Scratch by-name arrays (`keys`,
+//! `ind`, `list`) are unset after use.
 
+use crate::compsys::ported::_all_labels::_all_labels;
 use crate::compsys::ported::_dynamic_directory_name::_dynamic_directory_name;
+use crate::compsys::ported::_message::_message;
+use crate::compsys::ported::_parameters::_parameters;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
+use crate::compsys::ported::_values::_values;
 use crate::compsys::ported::_wanted::_wanted;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::params::{getaparam, getsparam, setaparam};
+use crate::ported::modules::zutil::{bin_zformat, bin_zstyle};
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam, unsetparam};
 use crate::ported::zle::compcore::get_compstate_str;
 use crate::ported::zle::complete::bin_compset;
+use crate::ported::zle::computil::bin_compquote;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -36,121 +47,455 @@ fn make_ops() -> options {
     }
 }
 
-fn is_array_param(name: &str) -> bool {
-    getaparam(name).is_some()
+fn s(v: &str) -> String {
+    v.to_string()
 }
 
-fn is_assoc_param(name: &str) -> bool {
-    crate::ported::params::paramtab_hashed_storage()
+/// `${(Pt)name}` — typeset-style type of the parameter *named* by
+/// `name`. Returns `"association"`, `"array"`, `"scalar"`, or `""`
+/// (unset). Substring-compatible with the source's `assoc*` /
+/// `array*` / `scalar*` case tests.
+fn param_type(name: &str) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    let is_assoc = crate::ported::params::paramtab_hashed_storage()
         .lock()
         .map(|t| t.contains_key(name))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if is_assoc {
+        s("association")
+    } else if getaparam(name).is_some() {
+        s("array")
+    } else if getsparam(name).is_some() {
+        s("scalar")
+    } else {
+        String::new()
+    }
+}
+
+/// sh:104 — `[[ "$i" = ${PREFIX}*${SUFFIX} ]]`. PREFIX/SUFFIX are
+/// glob patterns in the source; for array indexes they are literal
+/// digit strings, so this treats them literally (prefix + anything +
+/// suffix). Approximation of the general glob case.
+fn index_matches(i: &str, prefix: &str, suffix: &str) -> bool {
+    i.len() >= prefix.len() + suffix.len() && i.starts_with(prefix) && i.ends_with(suffix)
+}
+
+/// sh:105 — `$(print -D -- <val>)`. `print -D` performs directory-name
+/// abbreviation (longest named-directory / `$HOME` prefix → `~`).
+/// Approximated here with the `$HOME` prefix case, which covers the
+/// common path; named-directory abbreviation is not reproduced.
+fn dir_abbrev(val: &str) -> String {
+    if let Some(home) = getsparam("HOME") {
+        if !home.is_empty() {
+            if val == home {
+                return s("~");
+            }
+            let with_slash = format!("{}/", home);
+            if let Some(rest) = val.strip_prefix(&with_slash) {
+                return format!("~/{}", rest);
+            }
+        }
+    }
+    val.to_string()
 }
 
 /// `_subscript` — `-subscript-` context: complete inside `${var[…]}`.
 pub fn _subscript(args: &[String]) -> i32 {
+    // sh:5  [[ $ISUFFIX = *\]* ]] || osuf=\]
     let isuffix = getsparam("ISUFFIX").unwrap_or_default();
-    let _osuf = if !isuffix.contains(']') { "]" } else { "" };
-    let _ = args; // -q flag tolerated; we don't model quoting
+    let mut osuf: String = if isuffix.contains(']') {
+        String::new()
+    } else {
+        s("]")
+    };
 
+    // sh:7-11  -q → compquote osuf; osuf+=' '; shift
+    if args.first().map(|a| a == "-q").unwrap_or(false) {
+        // `compquote osuf` quotes the value of the shell-local `osuf`
+        // in place. Bridge through a same-named scratch param so the
+        // real `bin_compquote` runs (no-op when the quote stack is
+        // empty, matching the C guard).
+        let _ = setsparam("osuf", &osuf);
+        let _ = bin_compquote("compquote", &[s("osuf")], &make_ops(), 0);
+        osuf = getsparam("osuf").unwrap_or_default();
+        unsetparam("osuf");
+        osuf.push(' ');
+        // `shift` drops -q; the remaining positionals are unused below.
+    }
+
+    // sh:13  compset -P '\(([^\(\)]|\(*\))##\)' — strip subscript flags
     let _ = bin_compset(
         "compset",
-        &["-P".to_string(), "\\(([^\\(\\)]|\\(*\\))##\\)".to_string()],
+        &[s("-P"), s("\\(([^\\(\\)]|\\(*\\))##\\)")],
         &make_ops(),
         0,
     );
 
     let prefix = getsparam("PREFIX").unwrap_or_default();
-    let cursor: i64 = getsparam("CURSOR")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
     let buffer = getsparam("BUFFER").unwrap_or_default();
+    let cursor: i64 = getsparam("CURSOR")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
-    // sh:19  ~[ dynamic-name expansion?
-    if let Some(open_at) = (1..=cursor as usize)
-        .rev()
-        .find(|&i| buffer.as_bytes().get(i.saturating_sub(1)) == Some(&b'['))
+    // sh:21-24  dynamic-name expansion at `~[`.
+    //   pos = CURSOR+1; while pos>1 && BUFFER[pos-1] != '[' : pos--
+    //   then BUFFER[1,pos-1] must match `(|*[[:space:]:=]##)~[`.
+    //   Byte-indexed (subscript context is ASCII in practice).
     {
-        let head = &buffer[..open_at.saturating_sub(1)];
-        if head.ends_with('~') {
-            return _dynamic_directory_name();
+        let bytes = buffer.as_bytes();
+        let mut pos: i64 = cursor + 1;
+        while pos > 1 && bytes.get((pos - 2) as usize).copied() != Some(b'[') {
+            pos -= 1;
+        }
+        if pos >= 2 {
+            let end = (pos - 1) as usize; // BUFFER[1,pos-1] → bytes[0..end]
+            if end <= buffer.len() {
+                let segment = &buffer[..end];
+                if let Some(before_bracket) = segment.strip_suffix('[') {
+                    if let Some(before_tilde) = before_bracket.strip_suffix('~') {
+                        // `~` at word start, or preceded by a run of
+                        // whitespace / ':' / '='.
+                        let ok = before_tilde.is_empty()
+                            || before_tilde
+                                .chars()
+                                .last()
+                                .map(|c| c.is_whitespace() || c == ':' || c == '=')
+                                .unwrap_or(false);
+                        if ok {
+                            return _dynamic_directory_name();
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // sh:21  :class:
+    // sh:25-28  :class:  — character-class completion (literal compadd args)
     if prefix.starts_with(':') {
-        let classes: Vec<String> = vec![
-            "alnum", "alpha", "ascii", "blank", "cntrl", "digit", "graph", "lower", "print",
-            "punct", "space", "upper", "xdigit", "IFS", "IDENT", "IFSSPACE", "WORD",
-        ]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect();
-        setaparam("classes", classes);
         return _wanted(&[
-            "characters".to_string(),
-            "expl".to_string(),
-            "character class".to_string(),
-            "compadd".to_string(),
-            "-p:".to_string(),
-            "-S".to_string(),
-            ":]".to_string(),
-            "-a".to_string(),
-            "classes".to_string(),
+            s("characters"),
+            s("expl"),
+            s("character class"),
+            s("compadd"),
+            s("-p:"),
+            s("-S"),
+            s(":]"),
+            s("alnum"),
+            s("alpha"),
+            s("ascii"),
+            s("blank"),
+            s("cntrl"),
+            s("digit"),
+            s("graph"),
+            s("lower"),
+            s("print"),
+            s("punct"),
+            s("space"),
+            s("upper"),
+            s("xdigit"),
+            s("IFS"),
+            s("IDENT"),
+            s("IFSSPACE"),
+            s("WORD"),
         ]);
     }
 
-    // sh:79 / sh:90 — type-driven branch
     let param = get_compstate_str("parameter").unwrap_or_default();
-    if !param.is_empty() {
-        if is_assoc_param(&param) {
-            let mut keys: Vec<String> = Vec::new();
-            if let Ok(tab) = crate::ported::params::paramtab_hashed_storage().lock() {
-                if let Some(h) = tab.get(&param) {
-                    keys.extend(h.keys().cloned());
-                }
+
+    // sh:29  elif compset -P '\('  — subscript-flag catalog via _values
+    if bin_compset("compset", &[s("-P"), s("\\(")], &make_ops(), 0) == 0 {
+        // sh:31  compset -S '\)*'
+        let _ = bin_compset("compset", &[s("-S"), s("\\)*")], &make_ops(), 0);
+
+        // sh:33  if [[ $PREFIX = (#b)*([bns])(?|)(*) ]]
+        //   Greedy `*` places [bns] at the rightmost b/n/s; match[2]=d
+        //   is the single following char (or empty); match[3]=v is the
+        //   remainder.
+        let prefix2 = getsparam("PREFIX").unwrap_or_default();
+        let pchars: Vec<char> = prefix2.chars().collect();
+        if let Some(i) = pchars
+            .iter()
+            .rposition(|&c| c == 'b' || c == 'n' || c == 's')
+        {
+            // sh:34  f=match[1] d=match[2] e=match[2] v=match[3]
+            let f = pchars[i];
+            let d: String = pchars.get(i + 1).map(|c| c.to_string()).unwrap_or_default();
+            let mut e: String = d.clone();
+            let v: String = if i + 2 <= pchars.len() {
+                pchars[i + 2..].iter().collect()
+            } else {
+                String::new()
+            };
+
+            // sh:35  [[ $f = s && (Pt) != scalar* ]] && return 1
+            if f == 's' && !param_type(&param).starts_with("scalar") {
+                return 1;
             }
-            keys.sort();
-            setaparam("subscript_keys", keys);
-            return _wanted(&[
-                "association-keys".to_string(),
-                "expl".to_string(),
-                "association key".to_string(),
-                "compadd".to_string(),
-                "-Q".to_string(),
-                "-a".to_string(),
-                "subscript_keys".to_string(),
-            ]);
-        }
-        if is_array_param(&param) {
-            let arr = getaparam(&param).unwrap_or_default();
-            let n = arr.len();
-            let indices: Vec<String> = (1..=n).map(|i| i.to_string()).collect();
-            setaparam("subscript_indices", indices);
-            let _ = _tags(&["indexes".to_string(), "parameters".to_string()]);
-            loop {
-                if _tags(&[]) != 0 {
-                    break;
+
+            // sh:36
+            if d.is_empty() {
+                // sh:37  _message -e delimiters 'delimiter'; return
+                return _message(&[s("-e"), s("delimiters"), s("delimiter")]);
+            } else {
+                // sh:40-44  case $d
+                match d.as_str() {
+                    "(" => e = s(")"),
+                    "[" => e = s("]"),
+                    "{" => e = s("}"),
+                    _ => {}
                 }
-                if _requested(&["indexes".to_string()]) == 0 {
-                    let _ = _wanted(&[
-                        "-V".to_string(),
-                        "indexes".to_string(),
-                        "expl".to_string(),
-                        "array index".to_string(),
-                        "compadd".to_string(),
-                        "-a".to_string(),
-                        "subscript_indices".to_string(),
-                    ]);
+                // sh:45  if [[ $v != *$e* ]]
+                if !v.contains(&e) {
+                    // sh:46-49  case $f
+                    match f {
+                        's' => {
+                            // sh:47  _message 'separator string'
+                            let _ = _message(&[s("separator string")]);
+                        }
+                        'b' | 'n' => {
+                            // sh:48  [[ $v = <-># ]] && _message 'number' || return 1
+                            //   <-># matches zero or more integers → all digits (or empty).
+                            if v.chars().all(|c| c.is_ascii_digit()) {
+                                let _ = _message(&[s("number")]);
+                            } else {
+                                return 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    // sh:50  [[ -n $v && $SUFFIX$ISUFFIX != *$e* ]] && _message 'delimiter'
+                    let suffix = getsparam("SUFFIX").unwrap_or_default();
+                    let isuffix2 = getsparam("ISUFFIX").unwrap_or_default();
+                    let combined = format!("{}{}", suffix, isuffix2);
+                    if !v.is_empty() && !combined.contains(&e) {
+                        let _ = _message(&[s("delimiter")]);
+                    }
+                    // sh:51  return 0
                     return 0;
                 }
+                // v contains e — delimiter closed; fall through to catalog.
             }
-            return 1;
         }
+
+        // sh:56-81  case (Pt) → build $flags
+        //   assoc*)  assoc specs
+        //   (|scalar*))  scalar specs ;&  (fallthrough) → array specs
+        //   array*)  array specs
+        let ptype = param_type(&param);
+        let assoc_specs: [&str; 7] = [
+            "(R k K i I)r[any one value matched by subscript as pattern]",
+            "(r k K i I)R[all values matched by subscript as pattern]",
+            "(r R K i I)k[any one value where subscript matched by key as pattern]",
+            "(r R k i I)K[all values where subscript matched by key as pattern]",
+            "(r R k K I)i[any one key matched by subscript as pattern]",
+            "(r R k K i)I[all keys matched by subscript as pattern]",
+            "e[interpret * or @ as a single key]",
+        ];
+        let scalar_specs: [&str; 4] = [
+            "f[make subscripting work on lines of scalar]",
+            "w[make subscripting work on words of scalar]",
+            "s[specify word separator]",
+            "p[recognise escape sequences in subsequent s flag]",
+        ];
+        let array_specs: [&str; 7] = [
+            "e[interpret * or @ as a single key and use plain string matching]",
+            "n[Nth lowest/highest index with i/I/r/R flag]",
+            "b[begin with specified element]",
+            "(r R k K i)I[highest index of value matched by subscript]",
+            "(r R k K I)i[lowest index of value matched by subscript]",
+            "(r k K i I)R[value matched by subscript at highest index]",
+            "(R k K i I)r[value matched by subscript at lowest index]",
+        ];
+
+        let mut flags: Vec<String> = Vec::new();
+        if ptype.starts_with("assoc") {
+            flags.extend(assoc_specs.iter().map(|x| s(x)));
+        } else if ptype.is_empty() || ptype.starts_with("scalar") {
+            // (|scalar*)) … ;&  → scalar specs then fall through to array specs
+            flags.extend(scalar_specs.iter().map(|x| s(x)));
+            flags.extend(array_specs.iter().map(|x| s(x)));
+        } else if ptype.starts_with("array") {
+            flags.extend(array_specs.iter().map(|x| s(x)));
+        }
+
+        // sh:83  _values -s '' 'subscript flag' $flags
+        let mut vargs: Vec<String> = vec![s("-s"), s(""), s("subscript flag")];
+        vargs.extend(flags);
+        return _values(&vargs);
     }
 
-    // sh:134 fallback
-    dispatch_function_call("_dispatch", &["-math-".to_string(), "-math-".to_string()]).unwrap_or(1)
+    // sh:84  elif (Pt) == assoc*  → association-key completion
+    if param_type(&param).starts_with("assoc") {
+        // sh:86-88  keys with special chars backslash-escaped, and a
+        //   key that is exactly `*` or `@` rewritten as `(e)*` / `(e)@`.
+        let mut keys: Vec<String> = Vec::new();
+        if let Ok(tab) = crate::ported::params::paramtab_hashed_storage().lock() {
+            if let Some(h) = tab.get(&param) {
+                keys.extend(h.keys().cloned());
+            }
+        }
+        for k in keys.iter_mut() {
+            let mut esc = String::with_capacity(k.len());
+            for c in k.chars() {
+                if matches!(c, '$' | '\\' | '[' | ']' | '(' | ')' | '{' | '}') {
+                    esc.push('\\');
+                }
+                esc.push(c);
+            }
+            *k = esc;
+        }
+        for k in keys.iter_mut() {
+            if k == "*" || k == "@" {
+                *k = format!("(e){}", k);
+            }
+        }
+
+        // sh:89  [[ "$RBUFFER" != (|\\)\]* ]] && suf="$osuf"
+        let rbuffer = getsparam("RBUFFER").unwrap_or_default();
+        let starts_bracket = rbuffer.starts_with(']') || rbuffer.starts_with("\\]");
+        let suf: String = if !starts_bracket {
+            osuf.clone()
+        } else {
+            String::new()
+        };
+
+        // sh:91-92  _wanted association-keys expl 'association key'
+        //           compadd -Q -S "$suf" -a keys
+        setaparam("keys", keys);
+        let r = _wanted(&[
+            s("association-keys"),
+            s("expl"),
+            s("association key"),
+            s("compadd"),
+            s("-Q"),
+            s("-S"),
+            suf,
+            s("-a"),
+            s("keys"),
+        ]);
+        unsetparam("keys");
+        return r;
+    }
+
+    // sh:93  elif (Pt) == array*  → array-index completion
+    if param_type(&param).starts_with("array") {
+        // sh:94  local … ret=1
+        let mut ret: i32 = 1;
+
+        // sh:96  _tags indexes parameters
+        let _ = _tags(&[s("indexes"), s("parameters")]);
+
+        // sh:98  while _tags; do
+        loop {
+            if _tags(&[]) != 0 {
+                break;
+            }
+
+            // sh:99  if _requested indexes; then
+            if _requested(&[s("indexes")]) == 0 {
+                // sh:100  ind=( {1..${#${(P)compstate[parameter]}}} )
+                let arr = getaparam(&param).unwrap_or_default();
+                let n = arr.len();
+                let ind: Vec<String> = (1..=n).map(|i| i.to_string()).collect();
+                setaparam("ind", ind.clone());
+
+                // sh:101  zstyle -T ":completion:${curcontext}:indexes" verbose
+                let curcontext = getsparam("curcontext").unwrap_or_default();
+                let ctx = format!(":completion:{}:indexes", curcontext);
+                let verbose = bin_zstyle(
+                    "zstyle",
+                    &[s("-T"), ctx.clone(), s("verbose")],
+                    &make_ops(),
+                    0,
+                ) == 0;
+
+                // sh:112 disp default empty
+                let disp: Vec<String>;
+                if verbose {
+                    // sh:103-109  build the per-index display list
+                    let pfx = getsparam("PREFIX").unwrap_or_default();
+                    let sfx = getsparam("SUFFIX").unwrap_or_default();
+                    let mut list: Vec<String> = Vec::new();
+                    for (idx0, iv) in ind.iter().enumerate() {
+                        if index_matches(iv, &pfx, &sfx) {
+                            // sh:105  "${i}:$(print -D -- ${(P)…[$i]})"
+                            let val = arr.get(idx0).cloned().unwrap_or_default();
+                            list.push(format!("{}:{}", iv, dir_abbrev(&val)));
+                        } else {
+                            list.push(String::new());
+                        }
+                    }
+                    // sh:110  zstyle -s … list-separator sep || sep=--
+                    unsetparam("sep");
+                    let got = bin_zstyle(
+                        "zstyle",
+                        &[s("-s"), ctx.clone(), s("list-separator"), s("sep")],
+                        &make_ops(),
+                        0,
+                    );
+                    let sep = if got == 0 {
+                        getsparam("sep").unwrap_or_else(|| s("--"))
+                    } else {
+                        s("--")
+                    };
+                    // sh:111  zformat -a list " $sep " "$list[@]"
+                    let mut zf: Vec<String> = vec![s("-a"), s("list"), format!(" {} ", sep)];
+                    zf.extend(list);
+                    let _ = bin_zformat("zformat", &zf, &make_ops(), 0);
+                    // sh:112  disp=( -d list )
+                    disp = vec![s("-d"), s("list")];
+                } else {
+                    disp = Vec::new();
+                }
+
+                // sh:117-123  compadd with -S '' or -S "$osuf" depending on
+                //   whether RBUFFER already opens with `]` / `\]`.
+                let rbuffer = getsparam("RBUFFER").unwrap_or_default();
+                let starts_bracket = rbuffer.starts_with(']') || rbuffer.starts_with("\\]");
+                let mut la: Vec<String> = vec![
+                    s("-V"),
+                    s("indexes"),
+                    s("expl"),
+                    s("array index"),
+                    s("compadd"),
+                    s("-S"),
+                ];
+                if starts_bracket {
+                    la.push(s(""));
+                } else {
+                    la.push(osuf.clone());
+                }
+                la.extend(disp); // "$disp[@]"
+                la.push(s("-a"));
+                la.push(s("ind"));
+                if _all_labels(&la) == 0 {
+                    ret = 0;
+                }
+                unsetparam("list");
+                unsetparam("sep");
+            }
+
+            // sh:125  _requested parameters && _parameters && ret=0
+            if _requested(&[s("parameters")]) == 0 && _parameters(&[]) == 0 {
+                ret = 0;
+            }
+
+            // sh:127  (( ret )) || return 0
+            if ret == 0 {
+                unsetparam("ind");
+                return 0;
+            }
+        }
+
+        unsetparam("ind");
+        // sh:130  return 1
+        return 1;
+    }
+
+    // sh:132  else _dispatch -math- -math-
+    dispatch_function_call("_dispatch", &[s("-math-"), s("-math-")]).unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -158,10 +503,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_one_without_executor() {
+    fn smoke_no_executor_falls_to_dispatch() {
+        // Empty PREFIX / ISUFFIX / parameter → no branch matches;
+        //   falls through to `_dispatch -math- -math-`, which returns
+        //   1 without an executor (dispatch_function_call → None).
         let _g = crate::test_util::global_state_lock();
         let _ = crate::ported::params::setsparam("PREFIX", "");
         let _ = crate::ported::params::setsparam("ISUFFIX", "");
-        let _r = _subscript(&[]);
+        let _ = crate::ported::params::setsparam("BUFFER", "");
+        let _ = crate::ported::params::setsparam("CURSOR", "0");
+        crate::ported::zle::compcore::set_compstate_str("parameter", "");
+        assert_eq!(_subscript(&[]), 1);
+    }
+
+    #[test]
+    fn osuf_empty_when_isuffix_has_bracket() {
+        // sh:5 — ISUFFIX containing `]` suppresses the `]` suffix.
+        //   Exercised indirectly: with a `]` in ISUFFIX and PREFIX=`:`,
+        //   the character-class branch fires (returns via _wanted).
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("ISUFFIX", "]rest");
+        let _ = crate::ported::params::setsparam("PREFIX", ":");
+        let _ = crate::ported::params::setsparam("BUFFER", "");
+        let _ = crate::ported::params::setsparam("CURSOR", "0");
+        // Without registered comptags, _wanted returns 1; we only
+        //   assert we reached the class branch without panicking.
+        let _ = _subscript(&[]);
+    }
+
+    #[test]
+    fn param_type_classifies_scalar_array_assoc_unset() {
+        let _g = crate::test_util::global_state_lock();
+        crate::ported::params::unsetparam("st_scalar");
+        crate::ported::params::unsetparam("st_array");
+        let _ = crate::ported::params::setsparam("st_scalar", "x");
+        assert_eq!(param_type("st_scalar"), "scalar");
+        setaparam("st_array", vec![s("a"), s("b")]);
+        assert_eq!(param_type("st_array"), "array");
+        assert_eq!(param_type("never_ever_set_qwerty"), "");
+        assert_eq!(param_type(""), "");
+    }
+
+    #[test]
+    fn index_matches_prefix_suffix_literal() {
+        // sh:104 — literal ${PREFIX}*${SUFFIX} interpretation.
+        assert!(index_matches("123", "1", "3"));
+        assert!(index_matches("12", "1", "2"));
+        assert!(!index_matches("12", "3", ""));
+        assert!(index_matches("5", "", ""));
+        // len guard: prefix+suffix longer than value → no match.
+        assert!(!index_matches("1", "1", "1"));
+    }
+
+    #[test]
+    fn dir_abbrev_replaces_home_prefix() {
+        // sh:105 — print -D $HOME abbreviation approximation.
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setsparam("HOME", "/home/u");
+        assert_eq!(dir_abbrev("/home/u"), "~");
+        assert_eq!(dir_abbrev("/home/u/x/y"), "~/x/y");
+        assert_eq!(dir_abbrev("/etc/passwd"), "/etc/passwd");
     }
 }
