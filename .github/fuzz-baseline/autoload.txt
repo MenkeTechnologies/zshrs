@@ -2,10 +2,7 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode autoload --count N --verify 3  (copy NEW-signature lines).
 #
-# Open gap: an autoloaded function must record the DIRECTORY it was loaded
-# from (Shfunc.filename + PM_LOADDIR, Src/exec.c:5656 loadautofnsetfile), so
-# `whence -v` prints "... from <fpath-dir>/<name>". zshrs re-registers the
-# body through the funcdef opcode, which stamps scriptfilename ("zsh") and
-# drops PM_LOADDIR.
-autoload -Uz af_plain; af_plain; af_plain
+# whence -v now reports the fpath source. One re-autoload-after-+X ordering
+# edge remains: a function loaded via `autoload +X`, re-declared, then run,
+# reports "from zsh" because the lazy-load restore captures a clobbered name.
 autoload -Uz af_plain; whence -v af_plain

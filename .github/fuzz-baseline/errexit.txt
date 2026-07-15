@@ -2,8 +2,7 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode errexit --count N --verify 3  (copy NEW-signature lines).
 #
-# Open gap: under ERR_EXIT a failing command inside a `{ } always { }` try
-# body must exit the shell FROM the try body (Src/exec.c:1598 realexit()), so
-# the always arm never runs. zshrs defers the exit and repoints the unwind at
-# the always arm, so it runs the block and then exits.
-{ false } always { print -r -- "always tbe=$TRY_BLOCK_ERROR" }; print -r -- "rc=$? after"
+# The top-level / in-function ERR_EXIT + always gap is FIXED. A subshell
+# `( { false } always {…} )` under errexit still runs the always arm (zshrs
+# runs subshells in-process and cannot process-exit), but the fuzz mode does
+# not generate it, so this baseline is empty.
