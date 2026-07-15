@@ -741,22 +741,28 @@ pub fn loadautofn(
     if let Ok(mut tab) = shfunctab_lock().write() {
         if let Some(existing) = tab.get_mut(&name) {
             existing.body = Some(body);
-            existing.filename = dir_path;
             existing.node.flags = (existing.node.flags | ksh_on) & !ksh_off;
+            // c:5657 loadautofnsetfile — store the fpath DIRECTORY absolutized
+            // with PM_LOADDIR (not the raw relative `./fns`), so `whence -v`
+            // prints the absolute source. The `+X` (eval-autoload) path relies
+            // on this since it does not re-register through vm_helper.
+            loadautofnsetfile(existing, dir_path.as_deref());
         } else {
-            tab.add(shfunc {
+            let mut shf = shfunc {
                 node: hashnode {
                     next: None,
                     nam: name.clone(),
                     flags: ksh_on, // c:5706-5710 dump-style fold
                 },
-                filename: dir_path,
+                filename: None,
                 lineno: 0,
                 funcdef: None,
                 redir: None,
                 sticky: None,
                 body: Some(body),
-            });
+            };
+            loadautofnsetfile(&mut shf, dir_path.as_deref()); // c:5657
+            tab.add(shf);
         }
     }
     0

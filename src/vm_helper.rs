@@ -2307,9 +2307,22 @@ impl ShellExecutor {
                     unsafe {
                         let _ = Box::from_raw(ptr);
                     }
+                    // c:5657 — preserve the fpath dir + PM_LOADDIR across the
+                    // funcdef re-register (which stamps filename="zsh"), so
+                    // `whence -v` reports the source. See the twin site below.
+                    let loaded_dir = crate::ported::utils::getshfunc(name)
+                        .and_then(|f| f.filename)
+                        .filter(|d| d != "zsh");
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let registered = autoload_register_source(name, &body);
                         let _ = self.execute_script_zsh_pipeline(&registered);
+                    }
+                    if let Some(dir) = loaded_dir.as_deref() {
+                        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+                            if let Some(shf) = tab.get_mut(name) {
+                                crate::ported::exec::loadautofnsetfile(shf, Some(dir)); // c:5735
+                            }
+                        }
                     }
                 } else if let Some(body) = stub.body.clone() {
                     let registered = autoload_register_source(name, &body);
@@ -2417,9 +2430,24 @@ impl ShellExecutor {
                     unsafe {
                         let _ = Box::from_raw(ptr);
                     }
+                    // c:Src/exec.c:5657 loadautofnsetfile — capture the fpath
+                    // directory loadautofn wrote so it can be restored (as an
+                    // absolutized path with PM_LOADDIR) after the funcdef pipeline
+                    // below clobbers `filename` to scriptfilename ("zsh"). Without
+                    // this, `whence -v <autoloaded>` printed "from zsh".
+                    let loaded_dir = crate::ported::utils::getshfunc(name)
+                        .and_then(|f| f.filename)
+                        .filter(|d| d != "zsh");
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let registered = autoload_register_source(name, &body);
                         let _ = self.execute_script_zsh_pipeline(&registered);
+                        if let Some(dir) = loaded_dir.as_deref() {
+                            if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+                                if let Some(shf) = tab.get_mut(name) {
+                                    crate::ported::exec::loadautofnsetfile(shf, Some(dir)); // c:5735
+                                }
+                            }
+                        }
                         if !self.functions_compiled.contains_key(name) {
                             // c:Src/exec.c:5742-5745 — ksh-style load ran
                             // the file (`execode`, "evalautofunc") but it
