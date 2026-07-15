@@ -143,6 +143,9 @@ thread_local! {
     /// `(scope_depth, fd)` here and drain after the consuming
     /// command (external exec or builtin dispatch) completes.
     static PSUB_PENDING_FDS: RefCell<Vec<(usize, i32)>> = const { RefCell::new(Vec::new()) };
+    /// `(scope_depth, path)` for `=(cmd)` temp files, unlinked at the same
+    /// job-end boundary as the pending fds (c:Src/jobs.c deletefilelist).
+    static PSUB_PENDING_FILES: RefCell<Vec<(usize, String)>> = const { RefCell::new(Vec::new()) };
     /// Scope depth for PSUB_PENDING_FDS tagging. Incremented around
     /// nested execution contexts (cmd-subst bodies, shell-function
     /// bodies) so a command running INSIDE the nested context only
@@ -275,6 +278,19 @@ fn close_pending_psub_fds() {
         v.borrow_mut().retain(|&(d, fd)| {
             if d >= depth {
                 unsafe { libc::close(fd) };
+                false
+            } else {
+                true
+            }
+        });
+    });
+    // c:Src/jobs.c deletefilelist — `=(cmd)` temp files are unlinked at the
+    // same job-end boundary. `f==(print x); [[ -f $f ]]` is false after the
+    // command line ends.
+    PSUB_PENDING_FILES.with(|v| {
+        v.borrow_mut().retain(|(d, path)| {
+            if *d >= depth {
+                let _ = fs::remove_file(path);
                 false
             } else {
                 true
@@ -10618,6 +10634,68 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn process_sub_in(&mut self, sub: &fusevm::Chunk) -> String {
+        // c:Src/exec.c:4906 getoutputfile — `=(cmd)` (marked "equalsubst" by the
+        // compiler) is the TEMP-FILE flavor: create a real regular file, fork a
+        // writer whose stdout is the file, WAIT for it (so the file is complete
+        // and seekable before the consumer runs), and return the file path. It
+        // is unlinked at job end. This differs from `<(cmd)` below, which is a
+        // /dev/fd pipe that is never waited on.
+        if sub.source == "equalsubst" {
+            let nam = crate::ported::utils::gettempname(None, true)
+                .unwrap_or_else(|| format!("/tmp/zshrs_eqsub_{}", std::process::id()));
+            let cpath = match std::ffi::CString::new(nam.as_str()) {
+                Ok(c) => c,
+                Err(_) => return String::from("/dev/null"),
+            };
+            // c:4945 — O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY, 0600.
+            let fd = unsafe {
+                libc::open(
+                    cpath.as_ptr(),
+                    libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOCTTY,
+                    0o600,
+                )
+            };
+            if fd < 0 {
+                return String::from("/dev/null");
+            }
+            let sub_for_child = sub.clone();
+            match unsafe { libc::fork() } {
+                -1 => {
+                    unsafe { libc::close(fd) };
+                    let _ = fs::remove_file(&nam);
+                    return String::from("/dev/null");
+                }
+                0 => {
+                    // c:4985 — child: stdout → the temp file, run the body, exit.
+                    // Clear the inherited pending-file list so this child never
+                    // unlinks the PARENT's =() temp files when its own commands
+                    // dispatch (fork copies the list; unlink hits the shared fs).
+                    PSUB_PENDING_FILES.with(|v| v.borrow_mut().clear());
+                    unsafe {
+                        libc::dup2(fd, libc::STDOUT_FILENO);
+                        libc::close(fd);
+                    }
+                    let mut vm = fusevm::VM::new(sub_for_child);
+                    register_builtins(&mut vm);
+                    vm.set_shell_host(Box::new(ZshrsHost));
+                    let _ = vm.run();
+                    let _ = std::io::stdout().flush();
+                    unsafe { libc::_exit(0) };
+                }
+                child_pid => {
+                    // c:4976-4980 — parent: close the write fd and WAIT so the
+                    // file is fully written before the consumer opens it.
+                    unsafe {
+                        libc::close(fd);
+                        let mut status: libc::c_int = 0;
+                        libc::waitpid(child_pid, &mut status, 0);
+                    }
+                    let depth = PSUB_SCOPE_DEPTH.with(|d| d.get());
+                    PSUB_PENDING_FILES.with(|v| v.borrow_mut().push((depth, nam.clone())));
+                    return nam;
+                }
+            }
+        }
         // c:Src/exec.c::getproc — `<(cmd)` uses pipe + fork + the
         // `/dev/fd/N` filesystem entry (where N is the read end of
         // the pipe held open in the parent). Consumer opens
@@ -10659,6 +10737,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // run the sub-chunk, exit. The exit closes the
                 // write end automatically, so the parent's reader
                 // gets EOF when the cmd finishes.
+                PSUB_PENDING_FILES.with(|v| v.borrow_mut().clear());
                 unsafe {
                     libc::close(read_end);
                     libc::dup2(write_end, libc::STDOUT_FILENO);

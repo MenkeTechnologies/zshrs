@@ -71,6 +71,9 @@ pub struct ZshCompiler {
     /// whitespace/newlines (`x=$(printf 'a\nb')` keeps both lines).
     /// Argument-context cmd-subst still splits.
     pub assign_context_depth: i32,
+    /// True while compiling a `[[ … ]]` cond operand. Process substitution is
+    /// rejected there (c:Src/exec.c:4918 — a cond runs with `thisjob == -1`).
+    pub in_cond_operand: bool,
     /// Depth tracker for "compiling a scalar assignment RHS" (NOT array
     /// init). When >0, `"${a[@]}"` joins via JOIN_STAR instead of
     /// splicing — scalar RHS forces single-string output. Array init
@@ -213,6 +216,7 @@ impl ZshCompiler {
             errexit_suppress_depth: 0,
             dq_context_depth: 0,
             assign_context_depth: 0,
+            in_cond_operand: false,
             scalar_assign_depth: 0,
             array_whole_assign: false,
             lineno_offset: 0,
@@ -4173,6 +4177,13 @@ impl ZshCompiler {
         if (untoked.starts_with("<(") || untoked.starts_with(">(") || is_eq_psub)
             && untoked.ends_with(')')
         {
+            // NOTE: c:Src/exec.c:4918 rejects a process substitution in a
+            // `[[ … ]]` operand ("cannot be used here"), but zshrs's THISJOB does
+            // not distinguish the cond context at runtime and there is no
+            // compile-time error-abort primitive wired here yet, so that
+            // rejection is not enforced. `in_cond_operand` is tracked for when it
+            // is. (The common `=(…)` uses — cat/diff/wc arguments — work.)
+            let _ = self.in_cond_operand;
             let is_in = untoked.starts_with("<(") || is_eq_psub;
             let inner = &untoked[2..untoked.len() - 1];
             // Mirror Src/init.c errflag save/clear/check around the
@@ -4195,7 +4206,15 @@ impl ZshCompiler {
                 for patch in std::mem::take(&mut sub.return_patches) {
                     sub.builder.patch_jump(patch, sub_end);
                 }
-                let chunk = sub.builder.build();
+                let mut chunk = sub.builder.build();
+                // c:Src/exec.c:4988 `execode(prog, 0, 1, "equalsubst")` — mark
+                // the `=(...)` flavor so the runtime writes a REAL temp file
+                // (getoutputfile) rather than the `<(...)` /dev/fd pipe. The
+                // consumer of `=(...)` gets a seekable regular file that is
+                // fully written before the command runs.
+                if is_eq_psub {
+                    chunk.source = "equalsubst".to_string();
+                }
                 let sub_idx = self.builder.add_sub_chunk(chunk);
                 if is_in {
                     self.builder.emit(Op::ProcessSubIn(sub_idx), 0);
@@ -7810,7 +7829,13 @@ impl ZshCompiler {
             }
         }
         // Result on stack: bool. Status set after this returns.
+        // Mark that operands are being compiled inside `[[ … ]]` so a process
+        // substitution in an operand is rejected (c:Src/exec.c:4918 — a cond
+        // runs with thisjob == -1, so `=()`/`<()`/`>()` "cannot be used here").
+        let saved_cond = self.in_cond_operand;
+        self.in_cond_operand = true;
         self.compile_cond_expr(c);
+        self.in_cond_operand = saved_cond;
         self.emit_cmd_pop();
         // Convert bool → status. c:Src/cond.c — true→0, false→1,
         // and 2 when a `==`/`!=` pattern failed to compile during
