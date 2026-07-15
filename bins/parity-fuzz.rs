@@ -4609,6 +4609,90 @@ fn gen_zstyle(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// atflag generator
+//
+// The `(@)` word-flag (nojoin=2) and its composition with subscripts, outer
+// length/join operators, and nested expansions. The load-bearing zsh rule
+// (Src/subst.c:2915 + 3881): `(@)` forces NO-JOIN but does NOT make a scalar
+// array-shaped — `isarr` comes from the value / subscript scanflags, and
+// `LF_ARRAY` tracks `isarr`, not the flag. So:
+//   ${#${(@)scalar}}  counts CHARACTERS   (scalar stays scalar)
+//   ${#${(@)array}}   counts ELEMENTS     (array stays array, even len 1)
+//   ${(@)a[N]}        picks element N      (single index applied before nojoin)
+//   ${(@)a[lo,hi]}    splats the slice
+//   ${(@)a[@]}        splats the whole array
+// This mode stresses every combination against the reference shell.
+// ---------------------------------------------------------------------------
+
+fn gen_atflag(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // Value declarations: (setup, name, kind) where kind picks legal subscripts.
+    let decls: &[(&str, &str, u8)] = &[
+        ("s=hi", "s", 0),                              // scalar, multi-char
+        ("s=", "s", 0),                                // scalar, empty
+        ("s=abcde", "s", 0),                           // scalar, longer
+        ("s=x", "s", 0),                               // scalar, 1-char
+        ("a=(only)", "a", 1),                          // array, 1 element
+        ("a=(one two three)", "a", 1),                 // array, 3 elements
+        ("a=()", "a", 1),                              // array, empty
+        ("a=(a b c d e)", "a", 1),                     // array, 5 elements
+        ("typeset -A h; h=(k v)", "h", 2),             // assoc, 1 pair
+        ("typeset -A h; h=(k1 v1 k2 v2 k3 v3)", "h", 2), // assoc, 3 pairs
+    ];
+    let (setup, name, kind) = *pick(&mut rng, decls);
+
+    // A flag group containing (@) plus optional companions. `(k)`/`(v)`/`(kv)`
+    // are only meaningful on an ASSOC (keys/values) — on an indexed array they
+    // exercise a separate (index-enumeration) subsystem, so scope them to
+    // assocs and keep this mode focused on `(@)`/`(A)`/`(o)` array-SHAPE.
+    let flags = match kind {
+        2 => pick(
+            &mut rng,
+            &["(@)", "(@k)", "(@v)", "(@kv)", "(o@)", "(@o)", "(A@)"],
+        ),
+        _ => pick(&mut rng, &["(@)", "(@)", "(o@)", "(@o)", "(A@)", "(@)"]),
+    };
+
+    // A subscript legal for the value kind (or none).
+    let sub: &str = match kind {
+        0 => pick(&mut rng, &["", "", "[1]", "[2]", "[-1]", "[1,2]"]), // scalar → char subscripts
+        1 => pick(
+            &mut rng,
+            &["", "[1]", "[2]", "[-1]", "[1,2]", "[2,-1]", "[@]", "[*]", "[(r)a]", "[(R)*]"],
+        ),
+        _ => pick(&mut rng, &["", "[@]", "[k1]", "[(R)v1]", "[(I)k*]"]),
+    };
+
+    // Outer operator wrapping the `${flags name sub}` expansion.
+    let inner = format!("${{{flags}{name}{sub}}}");
+    let expr = match rng.gen_range(0..8) {
+        0 => format!("${{#{inner}}}"),                 // length (elements vs chars)
+        1 => format!("${{#{}}}", nested_at(&inner)),   // nested ${#${(@)…}}
+        2 => inner.clone(),                            // bare splat
+        3 => format!("${{(j:,:){inner}}}"),            // join
+        4 => nested_at(&inner),                        // ${(@)${(@)…}}
+        5 => format!("x{inner}y"),                     // surrounded by text
+        6 => format!("${{(o){inner}}}"),               // sort
+        _ => format!("${{#{inner}}}"),                 // length again
+    };
+
+    // Emit both an unquoted (word-split) and a double-quoted read so the
+    // isarr/LF_ARRAY shape is checked in both contexts.
+    let quoted = rng.gen_bool(0.5);
+    let read = if quoted {
+        format!("print -rl -- \"{expr}\"")
+    } else {
+        format!("print -rl -- {expr}")
+    };
+    vec![format!("{setup}; {read}")]
+}
+
+/// Wrap an already-formed `${…}` inner in an outer `${(@)…}` for nesting.
+fn nested_at(inner: &str) -> String {
+    format!("${{(@){inner}}}")
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4668,6 +4752,7 @@ enum Mode {
     Globanchor,
     Whence,
     Zstyle,
+    Atflag,
 }
 
 struct Args {
@@ -4740,6 +4825,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Globanchor => gen_globanchor(seed),
         Mode::Whence => gen_whence(seed),
         Mode::Zstyle => gen_zstyle(seed),
+        Mode::Atflag => gen_atflag(seed),
     }
 }
 
@@ -4800,6 +4886,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Globanchor => "globanchor",
         Mode::Whence => "whence",
         Mode::Zstyle => "zstyle",
+        Mode::Atflag => "atflag",
     }
 }
 
@@ -4860,6 +4947,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Globanchor,
         Mode::Whence,
         Mode::Zstyle,
+        Mode::Atflag,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -4962,7 +5050,7 @@ fn parse_args() -> Args {
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
-                     whence, zstyle\n\
+                     whence, zstyle, atflag\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

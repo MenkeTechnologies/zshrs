@@ -2028,4 +2028,133 @@ mod deferred_fixes {
     fn process_sub_pipe_unchanged() {
         assert_parity(r#"cat <(print pipe)"#);
     }
+
+    // --- (@) on a SCALAR is a no-op: ${#${(@)scalar}} counts CHARS,
+    // not elements (c:subst.c:2915 isarr from scanflags, c:3881 LF_ARRAY
+    // tracks isarr). A real array/assoc keeps element-count. ---
+    #[test]
+    fn at_flag_scalar_len_counts_chars() {
+        assert_parity(r#"s=hi; print -r -- "${#${(@)s}}""#);
+    }
+    #[test]
+    fn at_flag_empty_scalar_len_zero() {
+        assert_parity(r#"s=; print -r -- "${#${(@)s}}""#);
+    }
+    #[test]
+    fn at_flag_scalar_len_multichar() {
+        assert_parity(r#"s=abcde; print -r -- "${#${(@)s}}""#);
+    }
+    #[test]
+    fn at_flag_cmdsubst_scalar_len_counts_chars() {
+        assert_parity(r#"print -r -- "${#${(@)$(print hi)}}""#);
+    }
+    #[test]
+    fn at_flag_array_len_counts_elements() {
+        assert_parity(r#"a=(x y z); print -r -- "${#${(@)a}}""#);
+    }
+    #[test]
+    fn at_flag_one_elem_array_len_counts_one() {
+        assert_parity(r#"a=(only); print -r -- "${#${(@)a}}""#);
+    }
+    #[test]
+    fn at_flag_assoc_len_counts_pairs() {
+        assert_parity(r#"typeset -A h; h=(k1 v1 k2 v2); print -r -- "${#${(@)h}}""#);
+    }
+
+    // --- (@) with a SINGLE-index subscript picks the element, does not
+    // re-splat the whole array (c:params.c:2926 getarrvalue applies the
+    // index before nojoin affects joining). ---
+    #[test]
+    fn at_flag_single_index_subscript() {
+        assert_parity(r#"a=(a b c); print -r -- "${(@)a[2]}""#);
+    }
+    #[test]
+    fn at_flag_first_index_subscript() {
+        assert_parity(r#"a=(a b c); print -r -- "${(@)a[1]}""#);
+    }
+    #[test]
+    fn at_flag_negative_index_subscript() {
+        assert_parity(r#"a=(a b c); print -r -- "${(@)a[-1]}""#);
+    }
+    #[test]
+    fn at_flag_index_subscript_with_surround() {
+        assert_parity(r#"a=(a b c); print -r -- "x${(@)a[2]}y""#);
+    }
+    #[test]
+    fn at_flag_search_subscript_single_value() {
+        assert_parity(r#"a=(foo bar baz); print -r -- "${(@)a[(r)bar]}""#);
+    }
+    #[test]
+    fn at_flag_range_subscript_still_splats() {
+        assert_parity(r#"a=(a b c d); print -rl -- "${(@)a[2,4]}""#);
+    }
+    #[test]
+    fn at_flag_star_subscript_still_splats() {
+        assert_parity(r#"a=(a b c); print -rl -- "${(@)a[@]}""#);
+    }
+
+    // --- (@) + (o) sort with a single index: the index picks one element
+    // BEFORE the sort/splat blocks (isarr=0), so sort is a no-op and the
+    // whole array is not re-fetched (c:params.c:2915 + c:4245). ---
+    #[test]
+    fn at_sort_single_index_picks_element() {
+        assert_parity(r#"a=(a b c d e); print -rl -- ${(@o)a[1]}"#);
+    }
+    #[test]
+    fn at_sort_single_index_surrounded() {
+        assert_parity(r#"a=(c a b); print -rl -- x${(@o)a[2]}y"#);
+    }
+    #[test]
+    fn at_sort_full_array_still_sorts() {
+        assert_parity(r#"a=(c a b); print -rl -- ${(@o)a}"#);
+    }
+
+    // --- (@) on a SCALAR char slice `[lo,hi]` is the substring, not an
+    // array range on a (nonexistent) indexed array. ---
+    #[test]
+    fn at_scalar_char_slice() {
+        assert_parity(r#"s=hello; print -r -- "${(@)s[1,3]}""#);
+    }
+    #[test]
+    fn at_scalar_char_slice_nested_len() {
+        assert_parity(r#"s=hello; print -r -- "${#${(@)s[2,4]}}""#);
+    }
+
+    // --- (A) flag (arrasg) forces a scalar into an array (c:subst.c:4235):
+    // a non-empty value → 1-element array, an empty value → empty array. ---
+    #[test]
+    fn a_flag_scalar_becomes_one_elem() {
+        assert_parity(r#"s=hi; print -r -- "${#${(A@)s}}""#);
+    }
+    #[test]
+    fn a_flag_empty_scalar_becomes_empty_array() {
+        assert_parity(r#"s=; print -r -- "${#${(A@)s}}""#);
+    }
+    #[test]
+    fn a_flag_array_index_one_elem() {
+        assert_parity(r#"a=(one two three); print -r -- "${#${(A@)a[2]}}""#);
+    }
+    #[test]
+    fn a_flag_out_of_range_index_empty() {
+        assert_parity(r#"s=x; print -r -- "${#${(A@)s[2]}}""#);
+    }
+
+    // --- (@) on an assoc with an `[@]` splat subscript splats the VALUES
+    // (same as bare `${(@)h}`); the `[@]` is the splat the `(@)` requests. ---
+    #[test]
+    fn at_assoc_splat_subscript_values() {
+        assert_parity(r#"typeset -A h; h=(k1 v1 k2 v2); print -rl -- ${(@)h[@]}"#);
+    }
+    #[test]
+    fn at_assoc_splat_subscript_len() {
+        assert_parity(r#"typeset -A h; h=(k1 v1 k2 v2); print -r -- "${#${(@)h[@]}}""#);
+    }
+    #[test]
+    fn at_assoc_splat_subscript_joined() {
+        assert_parity(r#"typeset -A h; h=(k1 v1 k2 v2); print -r -- "${(j:,:)${(@)h[@]}}""#);
+    }
+    #[test]
+    fn at_assoc_single_key_unaffected() {
+        assert_parity(r#"typeset -A h; h=(k1 v1 k2 v2); print -r -- "${(@)h[k1]}""#);
+    }
 }
