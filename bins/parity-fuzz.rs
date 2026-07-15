@@ -1155,13 +1155,19 @@ const SUB_PATS: &[&str] = &[
     "t*", "*e", "one", "x", "y", "five", "z*", "[a-f]*", "?????", "*o*", "1", "5",
 ];
 
+/// Default / alternate word operators composed onto subscripted values. The
+/// colon forms treat an empty match as unset (subst.c:3187), the bare forms
+/// only fire on a truly unset slot. `word` is metachar-free so it splices
+/// verbatim.
+const DEF_OPS: &[&str] = &[":-D", ":+A", "-D", "+A", ":-", ":+", "-", "+"];
+
 fn gen_subscript(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec![SUB_STATE.trim_end().to_string()];
     let n = rng.gen_range(2..=5);
     for _ in 0..n {
         let arr = pick(&mut rng, &["a", "nums", "dup"]);
-        let expr = match rng.gen_range(0..9) {
+        let expr = match rng.gen_range(0..13) {
             // Plain element, including out-of-range and negative indices.
             0 => {
                 let i: i32 = rng.gen_range(-7..=7);
@@ -1217,6 +1223,48 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                     1 => format!("${{(k)m[(R){}]}}", pick(&mut rng, &["v1", "v2", "v9", "v*"])),
                     2 => format!("${{(v)m[(I){}]}}", pick(&mut rng, &["k1", "k*", "z*"])),
                     _ => "${(kv)m[(I)k*]}".to_string(),
+                }
+            }
+            // Default-operator on a flag-form subscript: `${a[(r)pat]:-x}`.
+            // A no-match makes the subscripted value vunset, so `:-`/`:=`/
+            // `:?` must apply the default and `:+` must NOT. Composing a
+            // search subscript with a default was previously ungenerated —
+            // it is exactly where an assoc `(r)` no-match wrongly returned
+            // "" instead of the default (fixed in subst.rs).
+            8 => {
+                let op = pick(&mut rng, DEF_OPS);
+                let f = pick(&mut rng, &["r", "R", "i", "I"]);
+                let p = pick(&mut rng, SUB_PATS);
+                format!("${{{arr}[({f}){p}]{op}}}")
+            }
+            // Default-operator on assoc key / value-search subscripts,
+            // including missing keys and no-match value searches.
+            9 => {
+                let op = pick(&mut rng, DEF_OPS);
+                match rng.gen_range(0..4) {
+                    0 => format!("${{m[{}]{op}}}", pick(&mut rng, &["k1", "k2", "nokey", "zz"])),
+                    1 => format!("${{m[(r){}]{op}}}", pick(&mut rng, &["v1", "v9", "v*", "z*"])),
+                    2 => format!("${{m[(i){}]{op}}}", pick(&mut rng, &["k1", "k*", "z*"])),
+                    _ => format!("${{(k)m[(R){}]{op}}}", pick(&mut rng, &["v1", "v9", "z*"])),
+                }
+            }
+            // Nested subscript whose inner default feeds the outer key —
+            // the exact `${_comps[${_services[(r)$svc]:-$svc}]}` compdef
+            // shape that the service-form lookup depends on.
+            10 => {
+                let inner = pick(&mut rng, &[":-k1", ":-nokey", ":-k2", ":-v1"]);
+                let outer = pick(&mut rng, DEF_OPS);
+                let vp = pick(&mut rng, &["v1", "v9", "z*", "v*"]);
+                format!("${{m[${{m[(r){vp}]{inner}}}]{outer}}}")
+            }
+            // `:=` / `:?` on a plain key/index (assignment default and the
+            // error-default), where the assign target is a real lvalue.
+            11 => {
+                match rng.gen_range(0..4) {
+                    0 => format!("${{m[nokey]:=NEWVAL}}"),
+                    1 => format!("${{m[k1]:=NEWVAL}}"),
+                    2 => format!("${{{arr}[3]:=Z}}"),
+                    _ => format!("${{m[nokey]:?}}"),
                 }
             }
             // Count / length of a subscripted result.

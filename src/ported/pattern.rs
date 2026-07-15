@@ -1799,6 +1799,16 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             *flagp &= !P_PURESTR;
             // Inline bracket-expression parse (C patcomppiece bracket case).
             let mut chars: Vec<u8> = Vec::new();
+            // Multibyte augmentation: `chars` is a flat ASCII byte set, so a
+            // multibyte input char (Cyrillic/Greek/CJK/accented) can never
+            // match it. C's `mb_patmatchrange` handles wide chars via
+            // `iswalpha`/wide ranges. To match without disturbing the
+            // (heavily-tested, byte-for-byte) ASCII path, collect the class
+            // predicates and the non-ASCII literals/ranges SEPARATELY and
+            // consult them only when the input char is multibyte (P_ANYOF).
+            let mut mb_classmask: u32 = 0;
+            let mut mb_chars: Vec<char> = Vec::new();
+            let mut mb_ranges: Vec<(char, char)> = Vec::new();
             let mut negate = false;
             let bracket_start = patparse_off.load(Ordering::Relaxed);
             let parse_b = patparse.lock().unwrap();
@@ -1988,13 +1998,77 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
                             }
                             _ => {}
                         }
+                        // Record the class predicate for multibyte input.
+                        // Bits mirror the Unicode-aware `iswXXX` checks C's
+                        // mb_patmatchrange applies (pattern.rs:3364). digit/
+                        // xdigit stay ASCII-only (already in `chars`) — zsh's
+                        // iswdigit is ASCII in the common locale.
+                        mb_classmask |= match class_name {
+                            "alpha" => 1 << 0,
+                            "alnum" => 1 << 1,
+                            "upper" => 1 << 2,
+                            "lower" => 1 << 3,
+                            "space" | "IFS" | "IFSSPACE" => 1 << 4,
+                            "blank" => 1 << 5,
+                            "punct" => 1 << 6,
+                            "cntrl" => 1 << 7,
+                            "print" => 1 << 8,
+                            "graph" => 1 << 9,
+                            "IDENT" | "WORD" => 1 << 1, // alnum-ish for wide chars
+                            _ => 0,
+                        };
                         i_b = j_b + 2;
+                        continue;
+                    }
+                }
+                // Multibyte member: a byte >= 0x80 leads a UTF-8 sequence
+                // that cannot live in the ASCII `chars` set. Decode it as a
+                // wide literal, or a wide range `<ch>-<ch>`, for the P_ANYOF
+                // multibyte path.
+                if bb[i_b] >= 0x80 {
+                    if let Some(lo) = std::str::from_utf8(&bb[i_b..])
+                        .ok()
+                        .and_then(|s| s.chars().next())
+                    {
+                        let lolen = lo.len_utf8();
+                        if i_b + lolen < bb.len()
+                            && bb[i_b + lolen] == b'-'
+                            && i_b + lolen + 1 < bb.len()
+                            && bb[i_b + lolen + 1] != b']'
+                        {
+                            if let Some(hi) = std::str::from_utf8(&bb[i_b + lolen + 1..])
+                                .ok()
+                                .and_then(|s| s.chars().next())
+                            {
+                                mb_ranges.push((lo, hi));
+                                i_b += lolen + 1 + hi.len_utf8();
+                                continue;
+                            }
+                        }
+                        mb_chars.push(lo);
+                        i_b += lolen;
                         continue;
                     }
                 }
                 if i_b + 2 < bb.len() && bb[i_b + 1] == b'-' && bb[i_b + 2] != b']' {
                     let lo = bb[i_b];
                     let hi = bb[i_b + 2];
+                    // ASCII-low, multibyte-high range (`[a-я]`): record as a
+                    // wide range so the high end matches; the ASCII portion
+                    // of the range still expands into `chars` below.
+                    if hi >= 0x80 {
+                        if let Some(hich) = std::str::from_utf8(&bb[i_b + 2..])
+                            .ok()
+                            .and_then(|s| s.chars().next())
+                        {
+                            mb_ranges.push((lo as char, hich));
+                            for c in lo..=0x7f {
+                                chars.push(c);
+                            }
+                            i_b += 2 + hich.len_utf8();
+                            continue;
+                        }
+                    }
                     for c in lo..=hi {
                         chars.push(c);
                     }
@@ -2014,9 +2088,29 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             let opcode = if negate { P_ANYBUT } else { P_ANYOF };
             let off2 = patnode(opcode);
             let mut buf = patout.lock().unwrap();
-            let len = chars.len() as u32;
+            // Body layout: `[len:u32]` (total following bytes) then
+            // `[chars_len:u32][chars][classmask:u32][n_mbchars:u32]
+            // [mbchars:u32*n][n_mbranges:u32][(lo,hi):u32*2]`. `len` counts
+            // the WHOLE body so `advance_past_instr` / node traversal (which
+            // do `4 + len`) skip it unchanged — only the P_ANYOF/P_ANYBUT
+            // matcher parses the sub-structure. Pure-ASCII brackets carry a
+            // zeroed 12-byte tail (classmask 0, no mbchars/mbranges).
+            let mut body_ext: Vec<u8> = Vec::new();
+            body_ext.extend_from_slice(&(chars.len() as u32).to_le_bytes());
+            body_ext.extend_from_slice(&chars);
+            body_ext.extend_from_slice(&mb_classmask.to_le_bytes());
+            body_ext.extend_from_slice(&(mb_chars.len() as u32).to_le_bytes());
+            for c in &mb_chars {
+                body_ext.extend_from_slice(&(*c as u32).to_le_bytes());
+            }
+            body_ext.extend_from_slice(&(mb_ranges.len() as u32).to_le_bytes());
+            for (lo, hi) in &mb_ranges {
+                body_ext.extend_from_slice(&(*lo as u32).to_le_bytes());
+                body_ext.extend_from_slice(&(*hi as u32).to_le_bytes());
+            }
+            let len = body_ext.len() as u32;
             buf.extend_from_slice(&len.to_le_bytes());
-            buf.extend_from_slice(&chars);
+            buf.extend_from_slice(&body_ext);
             *tail_out = off2;
             off2 as i64
         }
@@ -4494,6 +4588,84 @@ pub fn patmatch(
         false // c:2677
     };
 
+    // Membership test for a P_ANYOF/P_ANYBUT body at `body_off` against the
+    // input char at byte offset `off`. Returns (in_set, byte_advance). ASCII
+    // input takes the unchanged byte `charmatch` path over the `chars` set; a
+    // multibyte char is decoded (raw UTF-8, or a metafied `$'\xNN'` Meta-pair)
+    // and tested against the appended class mask / wide ranges / wide literals
+    // — C's `mb_patmatchrange` equivalent (pattern.c:3610).
+    let anyof_membership = |body_off: usize, off: usize, gflags: i32| -> (bool, usize) {
+        let range_flags = gflags & !(GF_IGNCASE | GF_LCMATCHUC);
+        let chars_len =
+            u32::from_le_bytes(code[body_off + 4..body_off + 8].try_into().unwrap()) as usize;
+        let cs = body_off + 8;
+        let set = &code[cs..cs + chars_len];
+        let mut p = cs + chars_len;
+        let classmask = u32::from_le_bytes(code[p..p + 4].try_into().unwrap());
+        p += 4;
+        let n_mbc = u32::from_le_bytes(code[p..p + 4].try_into().unwrap()) as usize;
+        p += 4;
+        let mbc_start = p;
+        p += n_mbc * 4;
+        let n_mbr = u32::from_le_bytes(code[p..p + 4].try_into().unwrap()) as usize;
+        p += 4;
+        let mbr_start = p;
+
+        let bytes = string.as_bytes();
+        let b = bytes[off];
+        // ASCII input, OR `unsetopt multibyte`: byte-level match (the prior
+        // behaviour). C only takes the wide `mb_patmatchrange` path under
+        // GF_MULTIBYTE; with it clear a high byte is matched as a raw byte.
+        if b < 0x80 || (gflags & GF_MULTIBYTE) == 0 {
+            return (set.iter().any(|&c| charmatch(b, c, range_flags)), 1);
+        }
+        // Decode one logical input char + its source byte span.
+        let mut it = string[off..].chars();
+        let (ch, adv) = match it.next() {
+            Some('\u{83}') => match it.next() {
+                Some(n) => (
+                    ((n as u32 as u8) ^ 0x20) as char,
+                    '\u{83}'.len_utf8() + n.len_utf8(),
+                ),
+                None => ('\u{83}', 2),
+            },
+            Some(c) => (c, c.len_utf8()),
+            None => return (false, 1),
+        };
+        let class_hit = (classmask & (1 << 0) != 0 && ch.is_alphabetic())
+            || (classmask & (1 << 1) != 0 && ch.is_alphanumeric())
+            || (classmask & (1 << 2) != 0 && ch.is_uppercase())
+            || (classmask & (1 << 3) != 0 && ch.is_lowercase())
+            || (classmask & (1 << 4) != 0 && ch.is_whitespace())
+            || (classmask & (1 << 5) != 0 && (ch == ' ' || ch == '\t'))
+            || (classmask & (1 << 6) != 0
+                && !ch.is_alphanumeric()
+                && !ch.is_whitespace()
+                && !ch.is_control())
+            || (classmask & (1 << 7) != 0 && ch.is_control())
+            || (classmask & (1 << 8) != 0 && !ch.is_control())
+            || (classmask & (1 << 9) != 0 && !ch.is_control() && !ch.is_whitespace());
+        if class_hit {
+            return (true, adv);
+        }
+        let cp = ch as u32;
+        for k in 0..n_mbc {
+            let o = mbc_start + k * 4;
+            if u32::from_le_bytes(code[o..o + 4].try_into().unwrap()) == cp {
+                return (true, adv);
+            }
+        }
+        for k in 0..n_mbr {
+            let o = mbr_start + k * 8;
+            let lo = u32::from_le_bytes(code[o..o + 4].try_into().unwrap());
+            let hi = u32::from_le_bytes(code[o + 4..o + 8].try_into().unwrap());
+            if cp >= lo && cp <= hi {
+                return (true, adv);
+            }
+        }
+        (false, adv)
+    };
+
     while scan < code.len() {
         let op = code[scan + I_OP];
         let next_bytes: [u8; 4] = code[scan + I_NEXT..scan + I_NEXT + 4].try_into().unwrap();
@@ -4697,15 +4869,13 @@ pub fn patmatch(
                 // (zsh: no match) and `[[ F = (#i)[[:lower:]] ]]` matched
                 // (zsh: no match). Mask the case bits off for the set test.
                 let body = scan + I_BODY;
-                let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
-                let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
                 let max_errs = (glob_flags & 0xff) as i32;
-                let range_flags = glob_flags & !(GF_IGNCASE | GF_LCMATCHUC);
-                let has_match = s_off < input_bytes.len()
-                    && set
-                        .iter()
-                        .any(|&c| charmatch(input_bytes[s_off], c, range_flags));
+                let (has_match, adv) = if s_off < input_bytes.len() {
+                    anyof_membership(body, s_off, glob_flags)
+                } else {
+                    (false, 0)
+                };
                 if !has_match {
                     // c:Src/pattern.c:3463-3505 — approximate-match fail
                     // handler. For non-P_EXACTLY opcodes, the ONLY
@@ -4721,23 +4891,21 @@ pub fn patmatch(
                     }
                     return None;
                 }
-                s_off += 1;
+                s_off += adv;
             }
             P_ANYBUT => {
                 let body = scan + I_BODY;
-                let len = u32::from_le_bytes(code[body..body + 4].try_into().unwrap()) as usize;
-                let set = &code[body + 4..body + 4 + len];
                 let input_bytes = string.as_bytes();
                 let max_errs = (glob_flags & 0xff) as i32;
                 // c:2781-2800 — the negated bracket shares P_ANYOF's matcher
                 // (`… ^ (P_OP(scan) == P_ANYOF)`), so it is equally
-                // case-BLIND: the case bits are masked off here too, or
-                // `(#i)[^a-z]` would negate a folded set.
-                let range_flags = glob_flags & !(GF_IGNCASE | GF_LCMATCHUC);
-                let has_match = s_off < input_bytes.len()
-                    && !set
-                        .iter()
-                        .any(|&c| charmatch(input_bytes[s_off], c, range_flags));
+                // case-BLIND (anyof_membership masks the case bits off).
+                let (in_set, adv) = if s_off < input_bytes.len() {
+                    anyof_membership(body, s_off, glob_flags)
+                } else {
+                    (true, 0)
+                };
+                let has_match = s_off < input_bytes.len() && !in_set;
                 if !has_match {
                     if state.errsfound < max_errs && s_off < input_bytes.len() {
                         // c:3463 — omit-input approx path (same as P_ANYOF).
@@ -4746,7 +4914,7 @@ pub fn patmatch(
                     }
                     return None;
                 }
-                s_off += 1;
+                s_off += adv;
             }
             P_STAR => {
                 // c:P_STAR arm (greedy)
