@@ -772,10 +772,10 @@ pub use super::compaudit::{compaudit, CompauditError};
 pub enum CompDef {
     /// Regular command completion: #compdef cmd1 cmd2 ...
     Commands(Vec<String>),
-    /// Pattern completion: #compdef -p 'pattern'
-    Pattern(String),
-    /// Post-pattern completion: #compdef -P 'pattern'
-    PostPattern(String),
+    /// Pattern completion: #compdef -p 'pattern' [pattern...]
+    Pattern(Vec<String>),
+    /// Post-pattern completion: #compdef -P 'pattern' [pattern...]
+    PostPattern(Vec<String>),
     /// Key binding: #compdef -k style key1 key2 ...
     KeyBinding { style: String, keys: Vec<String> },
     /// Widget key binding: #compdef -K widget style key
@@ -859,31 +859,29 @@ fn parse_first_line(line: &str) -> CompFileDef {
 
         // Check for special options first
         match parts[0] {
+            // c:compinit sh:277,387-396 — `-p pattern` sets type=pattern; every
+            // remaining word is a PATTERN key inserted into `_patcomps` (NOT
+            // `_comps`). Collect all patterns after the flag.
             "-p" if parts.len() >= 2 => {
-                CompFileDef::CompDef(CompDef::Pattern(parts[1].to_string()))
-            }
-            "-P" if parts.len() >= 2 => {
-                // -P patterns go directly into _comps (not _patcomps!)
-                // zsh puts these patterns as keys in _comps hash
-                // Can have multiple: #compdef -P pattern1 -P pattern2 cmd1 cmd2
-                let mut all_cmds = Vec::new();
-                let mut i = 0;
-                while i < parts.len() {
-                    if parts[i] == "-P" && i + 1 < parts.len() {
-                        // Pattern goes directly as a key in _comps
-                        all_cmds.push(parts[i + 1].to_string());
-                        i += 2;
-                    } else if !parts[i].starts_with('-') || is_context_entry(parts[i]) {
-                        all_cmds.push(parts[i].to_string());
-                        i += 1;
-                    } else {
-                        i += 1;
-                    }
-                }
-                if all_cmds.is_empty() {
+                let pats: Vec<String> =
+                    parts[1..].iter().filter(|p| **p != "-p").map(|s| s.to_string()).collect();
+                if pats.is_empty() {
                     CompFileDef::None
                 } else {
-                    CompFileDef::CompDef(CompDef::Commands(all_cmds))
+                    CompFileDef::CompDef(CompDef::Pattern(pats))
+                }
+            }
+            // c:compinit sh:279,389-403 — `-P pattern` sets type=postpattern; every
+            // remaining word is a PATTERN key inserted into `_postpatcomps` (a
+            // post-pattern is tried AFTER normal completion). It does NOT go into
+            // `_comps`. (Previously mis-routed to `_comps` via CompDef::Commands.)
+            "-P" if parts.len() >= 2 => {
+                let pats: Vec<String> =
+                    parts[1..].iter().filter(|p| **p != "-P").map(|s| s.to_string()).collect();
+                if pats.is_empty() {
+                    CompFileDef::None
+                } else {
+                    CompFileDef::CompDef(CompDef::PostPattern(pats))
                 }
             }
             "-k" if parts.len() >= 3 => CompFileDef::CompDef(CompDef::KeyBinding {
@@ -1083,13 +1081,18 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                             }
                         }
                     }
-                    CompDef::Pattern(pat) => {
-                        // -p patterns go to BOTH _comps and _patcomps (zsh behavior)
-                        result.comps.insert(pat.clone(), file.name.clone());
-                        result.patcomps.insert(pat.clone(), file.name.clone());
+                    CompDef::Pattern(pats) => {
+                        // c:compinit sh:396 — `_patcomps[$1]="$func"`. Pattern
+                        // compdefs go to `_patcomps` ONLY, never `_comps`.
+                        for pat in pats {
+                            result.patcomps.insert(pat.clone(), file.name.clone());
+                        }
                     }
-                    CompDef::PostPattern(pat) => {
-                        result.postpatcomps.insert(pat.clone(), file.name.clone());
+                    CompDef::PostPattern(pats) => {
+                        // c:compinit sh:403 — `_postpatcomps[$1]="$func"`.
+                        for pat in pats {
+                            result.postpatcomps.insert(pat.clone(), file.name.clone());
+                        }
                     }
                     CompDef::KeyBinding { .. } | CompDef::WidgetKey { .. } => {
                         // Key bindings need to be handled by the shell
@@ -1803,10 +1806,22 @@ mod tests {
     fn test_parse_compdef_pattern() {
         let def = parse_first_line("#compdef -p 'c*'");
         match def {
-            CompFileDef::CompDef(CompDef::Pattern(pat)) => {
-                assert_eq!(pat, "'c*'");
+            CompFileDef::CompDef(CompDef::Pattern(pats)) => {
+                assert_eq!(pats, vec!["'c*'".to_string()]);
             }
             _ => panic!("Expected Pattern"),
+        }
+    }
+
+    // Bug #657 — `#compdef -P pat` must route to `_postpatcomps` (post-pattern),
+    // NOT `_comps`; `#compdef -p pat` to `_patcomps` only, NOT `_comps`.
+    #[test]
+    fn test_parse_compdef_postpattern_routing() {
+        match parse_first_line("#compdef -P 'pip[0-9.]#'") {
+            CompFileDef::CompDef(CompDef::PostPattern(pats)) => {
+                assert_eq!(pats, vec!["'pip[0-9.]#'".to_string()]);
+            }
+            other => panic!("Expected PostPattern, got {:?}", other),
         }
     }
 
@@ -2078,13 +2093,20 @@ mod tests {
 
     #[test]
     fn compdef_publishes_state_to_shell_arrays() {
-        // The shell-side `getaparam("_comps")` must see the
-        //   registered entries flat key/value.
+        // `_comps` is an ASSOCIATIVE array in zsh (`typeset -gHA`), so the
+        // shell-side view must be a hash where `${_comps[git]}` == `_git`.
+        // (Previously published via setaparam as a flat array, which broke
+        // `${_comps[cmd]}` key lookup and every completion — Bug #655.)
         let _g = crate::test_util::global_state_lock();
         reset_compdef_state();
         run(&["_git", "git"]);
-        let arr = crate::ported::params::getaparam("_comps").unwrap_or_default();
-        // Flat layout: [k, v, k, v, ...] sorted by key.
-        assert!(arr.windows(2).any(|w| w[0] == "git" && w[1] == "_git"));
+        // Must be a proper association, not a flat array.
+        let map = crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .unwrap()
+            .get("_comps")
+            .cloned()
+            .expect("_comps must be a hashed (associative) param");
+        assert_eq!(map.get("git").map(String::as_str), Some("_git"));
     }
 }

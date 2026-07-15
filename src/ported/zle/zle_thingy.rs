@@ -1599,6 +1599,11 @@ pub fn bin_zle_invalidate(_name: &str, _args: &[String], _ops: &options, _func: 
     }
 }
 
+/// Monotonic id source for `watch_fd.gen` (Rust-only; see the field
+/// doc on `watch_fd`). A `static` counter, not a fn, so it stamps a
+/// fresh id inline at each `zle -F` registration site.
+static WATCH_FD_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Port of `bin_zle_fd(char *name, char **args, Options ops, UNUSED(char func))` from `Src/Zle/zle_thingy.c:857`.
 /// `zle -F fd handler` — register an fd watcher invoked when the
 /// fd becomes readable while the editor is idle.
@@ -1615,6 +1620,11 @@ pub fn bin_zle_invalidate(_name: &str, _args: &[String], _ops: &options, _func: 
 /// `watch_fds` LinkList add/remove; the poll loop in `raw_getbyte`
 /// reads the map directly, no callback-table indirection needed.
 /// WARNING: param names don't match C — Rust=(args) vs C=(name, args, ops, func)
+///
+/// Every registration (push or in-place replace) stamps a fresh id
+/// from [`WATCH_FD_GEN`] so the poll loop can tell a handler's
+/// re-armed watcher apart from the dead one it replaced on a reused
+/// fd number.
 pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i32 {
     // c:857
     // c:859 — locals.
@@ -1676,6 +1686,7 @@ pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i3
                     // c:895
                     w.func = funcnam.clone(); // c:897
                     w.widget = if OPT_ISSET(ops, b'w') { 1 } else { 0 }; // c:898
+                    w.gen = WATCH_FD_GEN.fetch_add(1, Ordering::Relaxed); // fresh id: a replace is a new watcher
                     found = true; // c:899
                     break; // c:900
                 }
@@ -1687,6 +1698,7 @@ pub fn bin_zle_fd(_name: &str, args: &[String], ops: &options, _func: i32) -> i3
                     fd,                                               // c:911
                     func: funcnam,                                    // c:912
                     widget: if OPT_ISSET(ops, b'w') { 1 } else { 0 }, // c:913
+                    gen: WATCH_FD_GEN.fetch_add(1, Ordering::Relaxed),
                 });
                 // c:914 — `nwatch = newnwatch;` (Vec.len() tracks
                 // nwatch implicitly).

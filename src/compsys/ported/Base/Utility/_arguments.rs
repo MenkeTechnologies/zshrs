@@ -24,10 +24,9 @@
 //!   * `(val1 val2 val3)`            (literal list)
 //!   * `->state`                     (sets $state for caller)
 
-use crate::compsys::ported::_alternative::_alternative;
 use crate::compsys::ported::_message::_message;
 use crate::ported::exec::dispatch_function_call;
-use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam};
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, setsparam, unsetparam};
 
 /// Spec classification.
 #[derive(Debug, Clone)]
@@ -320,10 +319,32 @@ pub fn _arguments(args: &[String]) -> i32 {
             return dispatch_action(&a, &m);
         }
         if !option_strs.is_empty() {
-            setaparam("_arguments_options", option_strs);
-            let mut alt_args: Vec<String> = vec!["options:option:_arguments_options".to_string()];
-            let _ = alt_args.split_off(1);
-            return _alternative(&alt_args);
+            // Complete the collected `flag:description` pairs via `_describe`
+            // in options mode (`-o`), exactly as zsh's `_arguments` does
+            // (`_describe -O option tmp1 …`). `_describe` reads its match
+            // array BY NAME and preserves multi-word descriptions.
+            //
+            // zsh uses FUNCTION-LOCAL arrays (`tmp1`/`tmp2`/`tmp3`); the
+            // Rust port has no local-param scope here, so we set a scratch
+            // param and UNSET it immediately after — nothing lingers in the
+            // user's namespace. The earlier code left a persistent global
+            // `_arguments_options` AND passed it as an `_alternative` action
+            // field, where a bare word is EXECUTED as a function → it tried
+            // to autoload the (nonexistent) `_arguments_options` function and
+            // died with `function definition file not found`. `_arguments_options`
+            // is not a real zsh identifier and is gone entirely. Bug #656.
+            const OPT_ARR: &str = "__args_opt_matches";
+            setaparam(OPT_ARR, option_strs);
+            // `_describe -o option <arrayname>`. NOTE: the `_describe` port
+            // treats every arg after the description as an ARRAY NAME, so a
+            // trailing `-M <matcher>` would be misread as two bogus array
+            // names — omit it here (the option matcher isn't wired through
+            // this port yet).
+            let describe_argv: Vec<String> =
+                vec!["-o".to_string(), "option".to_string(), OPT_ARR.to_string()];
+            let rc = dispatch_function_call("_describe", &describe_argv).unwrap_or(1);
+            unsetparam(OPT_ARR);
+            return rc;
         }
     }
 

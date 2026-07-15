@@ -73,6 +73,9 @@ fn run_zparseopts_pick_variant(args: &[String]) -> (Vec<String>, Vec<String>) {
     );
     let opts_flat = getaparam("opts_flat").unwrap_or_default();
     let remaining = getaparam(src).unwrap_or_default();
+    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
+    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    crate::ported::params::unsetparam(src);
     (remaining, opts_flat)
 }
 

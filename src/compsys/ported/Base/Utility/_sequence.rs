@@ -87,8 +87,12 @@ fn run_zparseopts_sequence(
         &make_ops(),
         0,
     );
+    let remaining = getaparam(src).unwrap_or_default();
+    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
+    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    crate::ported::params::unsetparam(src);
     (
-        getaparam(src).unwrap_or_default(),
+        remaining,
         getaparam("opts").unwrap_or_default(),
         getaparam("sep").unwrap_or_default(),
         getaparam("num").unwrap_or_default(),

@@ -66,6 +66,9 @@ fn run_gopt(args: &[String]) -> (Vec<String>, Vec<String>) {
     );
     let gopt = getaparam("__gopt").unwrap_or_default();
     let remaining = getaparam(src).unwrap_or_default();
+    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
+    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    crate::ported::params::unsetparam(src);
     (remaining, gopt)
 }
 

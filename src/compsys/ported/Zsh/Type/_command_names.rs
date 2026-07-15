@@ -94,10 +94,15 @@ pub fn _command_names(args: &[String]) -> i32 {
 
     let precommands = getaparam("precommands").unwrap_or_default();
     let builtin_precommands = getaparam("builtin_precommands").unwrap_or_default();
-    let precmd_overlap =
-        !precommands.is_empty() && precommands.iter().any(|p| builtin_precommands.contains(p));
+    // sh:28 — `(( ${#precommands:|builtin_precommands} ))`. `${a:|b}` is the
+    // set difference (elements of `a` NOT in `b`); the test is true when that
+    // difference is NON-EMPTY, i.e. at least one precommand is NOT a builtin
+    // precommand. The previous port tested the INTERSECTION (any precommand
+    // that IS a builtin precommand) — the inverted condition, so the defs
+    // block was included/excluded backwards. Bug #657.
+    let precmd_diff_nonempty = precommands.iter().any(|p| !builtin_precommands.contains(p));
 
-    if !dash_e && !precmd_overlap {
+    if !dash_e && !precmd_diff_nonempty {
         // sh:31
         if argv.first().map(|s| s == "-").unwrap_or(false) {
             argv.remove(0);

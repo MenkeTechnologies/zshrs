@@ -110,47 +110,13 @@ pub fn _set_command() -> i32 {
     0
 }
 
-/// sh:9's `$+builtins[$command]` test. We treat any non-shfunc name
-/// that looks like a well-known shell builtin as such; the
-/// authoritative test would read the active builtins table.
+/// sh:12's `$+builtins[$command]` test — consult the LIVE builtin table.
+/// The previous port used a hardcoded ~34-name allowlist that misclassified
+/// every builtin outside it (`print`, `typeset`, `zle`, `setopt`, `zstyle`,
+/// `compadd`, `zmodload`, `whence`, `getopts`, …) as non-builtins, so
+/// `_set_command` failed to recognise them as the command word. Bug #657.
 fn is_known_builtin(name: &str) -> bool {
-    matches!(
-        name,
-        "cd" | "echo"
-            | "pwd"
-            | "exit"
-            | "set"
-            | "unset"
-            | "export"
-            | "alias"
-            | "unalias"
-            | "source"
-            | "."
-            | "eval"
-            | "exec"
-            | "test"
-            | "["
-            | "true"
-            | "false"
-            | "printf"
-            | "read"
-            | "shift"
-            | "type"
-            | "command"
-            | "builtin"
-            | "let"
-            | "return"
-            | "break"
-            | "continue"
-            | "trap"
-            | "wait"
-            | "kill"
-            | "jobs"
-            | "fg"
-            | "bg"
-            | "umask"
-            | "ulimit"
-    )
+    crate::ported::builtin::createbuiltintable().contains_key(name)
 }
 
 /// `${command:t}` — basename.

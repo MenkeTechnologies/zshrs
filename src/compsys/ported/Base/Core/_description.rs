@@ -209,6 +209,9 @@ fn run_zparseopts(
     let ign = getaparam("ign").unwrap_or_default();
     let xopt = getaparam("xopt").unwrap_or_default();
     let remaining = getaparam(src_name).unwrap_or_default();
+    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
+    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    crate::ported::params::unsetparam(src_name);
     (remaining, nopt, gropt, ign, xopt)
 }
 

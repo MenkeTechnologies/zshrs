@@ -337,7 +337,7 @@ pub struct ztmout {
 fn calc_timeout(do_keytmout: bool) -> ztmout {
     // c:454
     let kt = KEYTIMEOUT.load(SeqCst);
-    if do_keytmout && kt > 0 {
+    let mut out = if do_keytmout && kt > 0 {
         let exp = if kt > ZMAXTIMEOUT * 100 {
             ZMAXTIMEOUT * 100
         } else {
@@ -352,7 +352,26 @@ fn calc_timeout(do_keytmout: bool) -> ztmout {
             tp: ztmouttp::ZTM_NONE,
             exp100ths: 0,
         }
+    };
+
+    // c:465-491 — fold in the timedfns list (the `sched` wakeups register
+    // there via addtimedfn). The list is time-sorted, so the head is the
+    // soonest deadline. If it is due sooner than the key timeout — or there
+    // is no key timeout at all — the read must wake at that deadline and run
+    // the function; otherwise a `sched +N …` armed while sitting idle at the
+    // prompt (e.g. zinit turbo's `@zinit-scheduler following` chain) never
+    // fires until the next keypress. Without this the input loop blocks
+    // forever in read() and the turbo scheduler stalls after a handler abort.
+    if let Some(&(when, _)) = crate::ported::utils::TIMED_FNS.lock().unwrap().first() {
+        let now = unsafe { libc::time(std::ptr::null_mut()) } as i64;
+        let diff = (when - now).max(0);
+        let exp100 = diff.saturating_mul(100);
+        if out.tp == ztmouttp::ZTM_NONE || exp100 < out.exp100ths {
+            out.tp = ztmouttp::ZTM_FUNC;
+            out.exp100ths = exp100;
+        }
     }
+    out
 }
 
 /// Read one byte from the input queue (or stdin) with optional
@@ -371,7 +390,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         return Some(b);
     }
 
-    let timeout = calc_timeout(do_keytmout);
+    let mut timeout = calc_timeout(do_keytmout);
     let have_timeout = timeout.tp != ztmouttp::ZTM_NONE;
 
     // c:531-577 — ZLE reads keystrokes from SHTTY, never fd 0. init.rs relocated
@@ -408,6 +427,12 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         // input hang.
         let mut dont_poll_fds: Vec<i32> = Vec::new();
         loop {
+            // Recompute the timeout each pass: a fired watch-fd handler or a
+            // just-run timed function may have armed a new `sched` wakeup with
+            // a different deadline (or cleared the last one). c:604 recomputes
+            // `calc_timeout` inside the poll loop for exactly this reason.
+            timeout = calc_timeout(do_keytmout);
+            let have_to = timeout.tp != ztmouttp::ZTM_NONE;
             // Re-snapshot WATCH_FDS on EVERY pass. A fired `zle -F` handler
             // may add, remove, or CLOSE a watched fd: zinit's
             // @zinit-scheduler runs `zle -F $fd; exec {fd}<&-`, removing its
@@ -417,12 +442,12 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             // "No handler installed for fd N" warning (and a spurious re-run
             // of the scheduler). Rebuilding each pass reflects the handler's
             // mutations to the same WATCH_FDS the poll set is derived from.
-            let watches: Vec<(i32, String, i32)> = WATCH_FDS
+            let watches: Vec<(i32, String, i32, u64)> = WATCH_FDS
                 .lock()
                 .unwrap()
                 .iter()
                 .filter(|w| !dont_poll_fds.contains(&w.fd))
-                .map(|w| (w.fd, w.func.clone(), w.widget))
+                .map(|w| (w.fd, w.func.clone(), w.widget, w.gen))
                 .collect();
             // c:565-577 — pollfd array: SHTTY first, then each watch fd.
             let mut fds: Vec<libc::pollfd> = Vec::with_capacity(1 + watches.len());
@@ -439,7 +464,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 });
             }
             // c:579-583 — poll timeout in ms (-1 = block forever).
-            let poll_timeout: libc::c_int = if have_timeout {
+            let poll_timeout: libc::c_int = if have_to {
                 (timeout.exp100ths * 10) as libc::c_int
             } else {
                 -1
@@ -458,8 +483,18 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 }
                 return None;
             }
-            // c:646-660 — timed out, nothing ready (ZTM_KEY → -2/none).
+            // c:646-660 — timed out, nothing ready.
             if selret == 0 {
+                // c:648-658 — a ZTM_FUNC deadline means a timed function (the
+                // `sched` wakeup) is due: run it and keep waiting for a key.
+                // Only a ZTM_KEY (keymap) timeout ends the read. checksched()
+                // drains every due `sched` command and re-arms the timedfn for
+                // the next one, so one call fully services this deadline; the
+                // loop then recomputes calc_timeout for whatever it armed.
+                if timeout.tp == ztmouttp::ZTM_FUNC {
+                    crate::ported::builtins::sched::checksched();
+                    continue;
+                }
                 return None;
             }
             // c:710-714 — terminal input ready: break out and read it.
@@ -502,11 +537,29 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 // and is re-serviced once per getbyte forever — a fork+redraw
                 // churn that never lets the prompt settle. A POLLHUP/POLLNVAL fd
                 // is permanently dead (peer write end closed / fd invalid), so
-                // drop its watcher outright here; POLLERR alone only skips for the
-                // call (transient errors may clear). Without this the shell hangs.
+                // drop its watcher here; POLLERR alone only skips for the call
+                // (transient errors may clear). Without this the shell hangs.
+                //
+                // But the handler routinely closes this fd and re-arms a fresh
+                // watcher (zinit turbo: `zle -F $fd; exec {fd}<&-; exec {new}<
+                // <(...); zle -F $new $handler`), and the OS hands back the same
+                // fd number for `$new`. Removing by fd number alone would delete
+                // that re-armed watcher and stall the turbo scheduler after one
+                // task. Key the removal on the fired watcher's `gen` id so only
+                // the exact dead watcher is dropped, never a handler-reinstalled
+                // one on the reused number.
                 if re & (libc::POLLHUP | libc::POLLNVAL) != 0 {
-                    WATCH_FDS.lock().unwrap().retain(|x| x.fd != w.0);
-                    dont_poll_fds.push(w.0);
+                    // Drop only the exact dead watcher. If the handler re-armed
+                    // a fresh one on the reused fd number it has a new `gen` and
+                    // survives — and must stay pollable THIS getbyte so idle-time
+                    // turbo draining continues, so it is NOT added to
+                    // `dont_poll_fds`. The gen-keyed retain already prevents the
+                    // dead fd from being re-serviced (it is gone from WATCH_FDS,
+                    // hence absent from the next re-snapshot).
+                    WATCH_FDS
+                        .lock()
+                        .unwrap()
+                        .retain(|x| !(x.fd == w.0 && x.gen == w.3));
                 } else if re & libc::POLLERR != 0 {
                     dont_poll_fds.push(w.0);
                 }
