@@ -1435,11 +1435,21 @@ fn publish_compdef_state(s: &CompdefState) {
         }
         out
     };
-    crate::ported::params::setaparam("_comps", flatten(&s.comps));
-    crate::ported::params::setaparam("_services", flatten(&s.services));
-    crate::ported::params::setaparam("_patcomps", flatten(&s.patcomps));
-    crate::ported::params::setaparam("_postpatcomps", flatten(&s.postpatcomps));
-    crate::ported::params::setaparam("_compautos", flatten(&s.compautos));
+    // These are ASSOCIATIVE arrays in zsh (`typeset -gHA _comps _services
+    // _patcomps _postpatcomps` / `_compautos`, sh:116/121). They MUST be
+    // published via `sethparam` (hashed) — `flatten` already emits the
+    // `[k, v, k, v, …]` pair layout `sethparam` consumes. Using `setaparam`
+    // (plain array) made `_comps` a flat array, so `${_comps[ls]}` couldn't
+    // hash-lookup and `_complete`/`_dispatch` found no completer for ANY
+    // command → every `<cmd> <TAB>` (incl. `ls -<TAB>`) just rang the bell.
+    // The synchronous `compinit -C` path used `set_assoc` (→ sethparam) and
+    // worked, which is why only the fresh/compdef-driven path was broken.
+    // Bug #655.
+    crate::ported::params::sethparam("_comps", flatten(&s.comps));
+    crate::ported::params::sethparam("_services", flatten(&s.services));
+    crate::ported::params::sethparam("_patcomps", flatten(&s.patcomps));
+    crate::ported::params::sethparam("_postpatcomps", flatten(&s.postpatcomps));
+    crate::ported::params::sethparam("_compautos", flatten(&s.compautos));
 }
 
 /// Parse `compdef`'s short-option flags via the upstream
