@@ -14739,8 +14739,15 @@ pub fn paramsubst(
             // false there because the bridge passes the body as a raw string), so
             // `"${${(q)nums}//o/0}"` quoted each token separately — escaping
             // nothing — where zsh quotes the JOINED string (`3\ 1\ 4\ 1\ 5`).
-            let want_per_element =
-                !dq_collapsed && (nojoin == 2 || !qt || is_at_subscript_splat);
+            // The bare `@` positional-params array keeps its words even inside
+            // `"…"` (like `"$@"`), so `(q)` quotes each element and the words
+            // are joined later with a PLAIN separator — never join-then-quote,
+            // which would escape the inter-element separators too. Without the
+            // `var_name == "@"` arm `"${(q)@}"` gave `a\ b\ c` instead of zsh's
+            // `a b\ c`, and zinit's `${(j: :)${(q)@}}` compdef-replay produced
+            // one escaped word (a bogus `compdef: unknown command` per call).
+            let want_per_element = !dq_collapsed
+                && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
             // c:2237
             if let Some(parts) = split_parts.clone() {
                 if want_per_element {

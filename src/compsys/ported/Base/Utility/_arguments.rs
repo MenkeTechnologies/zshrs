@@ -289,7 +289,7 @@ fn long_option_cache(full: &[String], long: usize, cmd: &str) -> Vec<String> {
     // sh:47 — if (( ! ${(P)+name} )): rebuild only when unset.
     let already_set = crate::ported::params::paramtab()
         .read()
-        .map(|t| t.contains_key(&name))
+        .map(|t| t.contains_key(name.as_str()))
         .unwrap_or(false);
 
     if !already_set {
@@ -306,6 +306,20 @@ fn long_option_cache(full: &[String], long: usize, cmd: &str) -> Vec<String> {
     let mut out = tmpargv;
     out.extend(getaparam(&name).unwrap_or_default());
     out
+}
+
+/// True when the string has a `[` with no `]` anywhere after it — the
+/// exact condition zshrs's pattern compiler flags as a "bad pattern"
+/// (`pattern.rs` bracket case). Used to keep a malformed dup-check pattern
+/// out of `matchpat` (see `scrape_help_lopts`).
+fn has_unclosed_bracket(p: &str) -> bool {
+    let b = p.as_bytes();
+    for i in 0..b.len() {
+        if b[i] == b'[' && !b[i + 1..].contains(&b']') {
+            return true;
+        }
+    }
+    false
 }
 
 /// sh:97-162 — scrape long options out of `--help` text into the unique
@@ -352,8 +366,18 @@ fn scrape_help_lopts(help_text: &str) -> Vec<String> {
             let rest = trimmed[end..].to_string();
 
             // sh:131 — skip if tmp already holds the cleaned name.
+            // The cleaned name can carry an unterminated `[` (e.g.
+            // `--color[=WHEN` after `]` was stripped). zsh's `[(r)…]`
+            // subscript treats an unmatched `[` as a literal and simply
+            // doesn't match; zshrs's pattern compiler would reject it as a
+            // bad pattern (stderr noise), so fall back to a literal compare
+            // in that case — same observable result (verified vs zsh 5.9).
             let cleaned = strip_trailing_nonword(&start);
-            let dup = tmp.iter().any(|e| matchpat(&cleaned, e, true, true));
+            let dup = if has_unclosed_bracket(&cleaned) {
+                tmp.iter().any(|e| e == &cleaned)
+            } else {
+                tmp.iter().any(|e| matchpat(&cleaned, e, true, true))
+            };
             if !dup {
                 // sh:135 — `--[fetch]all` variant → `--fetchall` + `--all`.
                 if start.starts_with("--[") {
@@ -1500,12 +1524,17 @@ mod tests {
     }
 
     #[test]
-    fn double_dash_truncates_specs_but_still_needs_context() {
-        // The `--` long-option cache block keeps only pre-`--` specs
-        // (sh:39 tmpargv). Without a completion context it still returns 1,
-        // but the truncation must not panic on the trailing `--` section.
+    fn double_dash_drives_the_long_option_cache() {
+        // The `--` long-option cache block runs `$cmd --help`, folds the
+        // result, and prepends the pre-`--` specs (sh:39 tmpargv). With a
+        // nonexistent command the scrape yields nothing, the cache is
+        // empty, and without a completion context we still return 1 — the
+        // point is that the whole `--help` path executes without panicking.
         let _g = crate::test_util::global_state_lock();
-        setaparam("words", vec!["cmd".to_string(), "".to_string()]);
+        setaparam(
+            "words",
+            vec!["zshrs-no-such-cmd-xyz".to_string(), "".to_string()],
+        );
         let _ = setiparam("CURRENT", 2);
         let r = _arguments(&[
             "-v[verbose]".to_string(),
@@ -1514,6 +1543,144 @@ mod tests {
             "ignored".to_string(),
         ]);
         assert_eq!(r, 1);
+    }
+
+    #[test]
+    fn cache_name_sanitizes_command_word() {
+        assert_eq!(
+            sanitize_cache_name("_args_cache_/usr/bin/ls"),
+            "_args_cache__usr_bin_ls"
+        );
+        assert_eq!(sanitize_cache_name("a.b-c"), "a_b_c");
+    }
+
+    #[test]
+    fn word_char_helpers() {
+        assert_eq!(strip_to_wordchars("--foo=[bar]"), "--foobar");
+        // `%%[^word]#` strips only the trailing all-non-word run (the `]`),
+        // matching zsh with extendedglob (verified against zsh 5.9).
+        assert_eq!(strip_trailing_nonword("--foo[=BAR]"), "--foo[=BAR");
+        assert_eq!(strip_trailing_nonword("--foo=BAR"), "--foo=BAR");
+    }
+
+    #[test]
+    fn desc_transform_maps_colon_and_brackets() {
+        assert_eq!(desc_transform("a:b [c] d"), "a-b (c) d");
+    }
+
+    #[test]
+    fn split_spec_pattern_splits_at_first_unescaped_colon() {
+        assert_eq!(
+            split_spec_pattern("*=FILE*:file:_files"),
+            ("*=FILE*".to_string(), ":file:_files".to_string())
+        );
+        assert_eq!(
+            split_spec_pattern("*: :  "),
+            ("*".to_string(), ": :  ".to_string())
+        );
+        // \: is an escaped colon and must not split.
+        assert_eq!(
+            split_spec_pattern("a\\:b:c"),
+            ("a:b".to_string(), ":c".to_string())
+        );
+    }
+
+    #[test]
+    fn strip_leading_argword_drops_space_arg_space_space() {
+        assert_eq!(strip_leading_argword(" fooarg  Do stuff"), "Do stuff");
+        // No double-space terminator → unchanged.
+        assert_eq!(strip_leading_argword(" fooarg Do stuff"), " fooarg Do stuff");
+    }
+
+    #[test]
+    fn split_last_colon_uses_last_colon() {
+        assert_eq!(
+            split_last_colon("a:b:c"),
+            ("a:b".to_string(), Some("c".to_string()))
+        );
+        assert_eq!(split_last_colon("abc"), ("abc".to_string(), None));
+    }
+
+    #[test]
+    fn arg_name_lower_extracts_lowercased_argname() {
+        assert_eq!(arg_name_lower("--foo=BAR"), "bar");
+        assert_eq!(arg_name_lower("--foo[=BAR]"), "bar");
+    }
+
+    #[test]
+    fn subst_first_replaces_leftmost_glob_match() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(subst_first("--enable-foo", "enable", "disable"), "--disable-foo");
+        // No match → unchanged.
+        assert_eq!(subst_first("--other", "enable", "disable"), "--other");
+    }
+
+    #[test]
+    fn scrape_help_lopts_extracts_long_options() {
+        let _g = crate::test_util::global_state_lock();
+        // GNU-style: options and descriptions on the same line, comma
+        // separated short+long, and a `[=ARG]` optional argument.
+        let help = "\
+Usage: foo [OPTION]...
+  -v, --verbose       be verbose
+  -o, --output=FILE   write to FILE
+      --color[=WHEN]   colorize output
+";
+        let lopts = scrape_help_lopts(help);
+        assert!(lopts.contains(&"-v:be verbose".to_string()), "{:?}", lopts);
+        assert!(lopts.contains(&"--verbose:be verbose".to_string()), "{:?}", lopts);
+        assert!(lopts.contains(&"--output=FILE:write to FILE".to_string()), "{:?}", lopts);
+        assert!(
+            lopts.contains(&"--color[=WHEN]:colorize output".to_string()),
+            "{:?}",
+            lopts
+        );
+    }
+
+    #[test]
+    fn scrape_help_lopts_handles_description_on_next_line() {
+        let _g = crate::test_util::global_state_lock();
+        // Option on one line, description indented on the following line.
+        let help = "  --long-only\n       the description here\n";
+        let lopts = scrape_help_lopts(help);
+        assert!(
+            lopts.contains(&"--long-only:the description here".to_string()),
+            "{:?}",
+            lopts
+        );
+    }
+
+    #[test]
+    fn scrape_help_lopts_bracket_variant_expands() {
+        let _g = crate::test_util::global_state_lock();
+        // fetchmail-style `--[fetch]all` → both `--fetchall` and `--all`.
+        let help = "  --[fetch]all   fetch everything\n";
+        let lopts = scrape_help_lopts(help);
+        assert!(lopts.contains(&"--fetchall:fetch everything".to_string()), "{:?}", lopts);
+        assert!(lopts.contains(&"--all:fetch everything".to_string()), "{:?}", lopts);
+    }
+
+    #[test]
+    fn has_unclosed_bracket_detects_bad_dup_pattern() {
+        assert!(has_unclosed_bracket("--color[=WHEN"));
+        assert!(!has_unclosed_bracket("--color[=WHEN]"));
+        assert!(!has_unclosed_bracket("--foo"));
+    }
+
+    #[test]
+    fn scrape_help_lopts_multi_option_with_bracketed_optarg() {
+        let _g = crate::test_util::global_state_lock();
+        // Short+long on one line where the long form carries `[=WHEN]`. The
+        // per-line dup check must not feed the unterminated `[` (from the
+        // stripped `]`) to the pattern compiler.
+        let help = "  -c, --color[=WHEN]   colorize output\n";
+        let lopts = scrape_help_lopts(help);
+        assert!(lopts.contains(&"-c:colorize output".to_string()), "{:?}", lopts);
+        assert!(
+            lopts.contains(&"--color[=WHEN]:colorize output".to_string()),
+            "{:?}",
+            lopts
+        );
     }
 
     #[test]

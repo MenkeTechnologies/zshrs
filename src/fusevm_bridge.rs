@@ -2705,6 +2705,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // with the last status. The parent registers the job in the canonical
     // JOBTAB (c:Src/exec.c::execpline Z_ASYNC arm) and returns Status(0).
     vm.register_builtin(BUILTIN_RUN_BG, |vm, _argc| {
+        // `&|` / `&!` set disown → the job is dropped from the table (no
+        // `[N] pid` announcement, no `[N] done`), matching C exec.c:1752-1758.
+        let disown = vm.pop().to_int() != 0;
         let sub_idx = vm.pop().to_int() as usize;
         let job_text = vm.pop().to_str();
         let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
@@ -2768,7 +2771,25 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock() {
                         *tj = idx as i32;
                     }
-                    jobs::spawnjob(); // c:exec.c:1758
+                    if disown {
+                        // c:exec.c:1752-1755 — `pipecleanfilelist(...);
+                        // deletejob(jobtab + thisjob, 1); thisjob = -1;` — a
+                        // disowned job leaves the table entirely, so neither
+                        // spawnjob's `[N] pid` nor the later `[N] done` prints.
+                        // This is what keeps zinit-turbo's `… &|` completion
+                        // jobs silent (they load inside a `zle -F` handler).
+                        {
+                            let mut tab = table.lock().unwrap_or_else(|e| e.into_inner());
+                            jobs::pipecleanfilelist(&mut tab[idx], false); // c:1753
+                            jobs::deletejob(&mut tab[idx], true); // c:1754
+                        }
+                        if let Ok(mut tj) = jobs::THISJOB.get_or_init(|| Mutex::new(-1)).lock()
+                        {
+                            *tj = -1; // c:1755
+                        }
+                    } else {
+                        jobs::spawnjob(); // c:exec.c:1758
+                    }
                 }
                 with_executor(|exec| {
                     exec.jobs

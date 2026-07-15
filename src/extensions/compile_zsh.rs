@@ -490,8 +490,15 @@ impl ZshCompiler {
             let text_const = self.builder.add_constant(Value::str(&job_text));
             self.builder.emit(Op::LoadConst(text_const), 0);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
+            // `&|` / `&!` (disown): pass the flag so BUILTIN_RUN_BG deletes the
+            // job (C exec.c:1752-1758) instead of announcing it via spawnjob.
+            // Without this, `cmd &|` inside a function/`zle -F` handler leaked a
+            // `[N] pid` line — e.g. zinit-turbo's `rustup completions zsh … &|`
+            // spewed into the prompt where real zsh is silent.
             self.builder
-                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 2), 0);
+                .emit(Op::LoadInt(i64::from(list.flags.disown)), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_BG, 3), 0);
             self.builder.emit(Op::SetStatus, 0);
         } else {
             self.compile_sublist(&list.sublist);
