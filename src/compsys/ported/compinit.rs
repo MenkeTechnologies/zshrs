@@ -1573,44 +1573,75 @@ pub fn compdef(args: &[String]) -> i32 {
             let mut sp = entry.splitn(2, '=');
             let cmd = sp.next().unwrap_or("").to_string();
             let svc_in = sp.next().unwrap_or("").to_string();
-            // sh:307-311 — resolve `$svc` via `_services[(r)$svc]` reverse
-            //   lookup (find an entry mapping TO $svc); else use $svc
-            //   directly. Then look up `_comps[$svc]` for the function.
-            let resolved_svc = {
-                with_state(|s| {
-                    s.services
-                        .iter()
-                        .find(|(_, v)| **v == svc_in)
-                        .map(|(k, _)| k.clone())
-                        .unwrap_or(svc_in.clone())
+            // sh:307-311 — resolve `$svc` and look up its completion
+            //   function. zsh reads the `_comps`/`_services` PARAMETERS
+            //   (`func="$_comps[...]"`), which are the source of truth:
+            //   the `compinit -C` dump-source path and third-party plugins
+            //   populate the parameters directly, while the internal
+            //   `s.comps` state only sees native `compdef` calls — so it
+            //   lags and made `compdef func=cmd` wrongly report
+            //   "unknown command or service" even though `$_comps[cmd]`
+            //   was set. Read the parameters first, fall back to s.comps.
+            let comps_param =
+                crate::ported::subst::assoc_get("_comps").unwrap_or_default();
+            // sh:307 — `${_services[(r)$svc]:-$svc}`. `(r)` returns the
+            //   matching VALUE (== $svc for a literal), else the `:-$svc`
+            //   default, so the effective service key is `$svc` itself.
+            let resolved_svc = svc_in.clone();
+            let func = comps_param
+                .get(&resolved_svc)
+                .filter(|f| !f.is_empty())
+                .cloned()
+                .or_else(|| {
+                    with_state(|s| s.comps.get(&resolved_svc).cloned())
+                        .filter(|f| !f.is_empty())
                 })
-            };
-            let func = with_state(|s| {
-                s.comps
-                    .get(&resolved_svc)
-                    .cloned()
-                    .or_else(|| {
-                        // sh:311 fallback to first matching pat/postpat key
-                        s.patcomps
-                            .iter()
-                            .find(|(k, _)| pattern_matches(k, &svc_in))
-                            .map(|(_, v)| v.clone())
-                            .or_else(|| {
-                                s.postpatcomps
+                .or_else(|| {
+                    // sh:311 fallback to first matching pat/postpat key,
+                    //   again preferring the parameters over s.* state.
+                    let pat = crate::ported::subst::assoc_get("_patcomps")
+                        .unwrap_or_default();
+                    let postpat = crate::ported::subst::assoc_get("_postpatcomps")
+                        .unwrap_or_default();
+                    pat.iter()
+                        .find(|(k, _)| pattern_matches(k, &svc_in))
+                        .map(|(_, v)| v.clone())
+                        .or_else(|| {
+                            postpat
+                                .iter()
+                                .find(|(k, _)| pattern_matches(k, &svc_in))
+                                .map(|(_, v)| v.clone())
+                        })
+                        .or_else(|| {
+                            with_state(|s| {
+                                s.patcomps
                                     .iter()
                                     .find(|(k, _)| pattern_matches(k, &svc_in))
                                     .map(|(_, v)| v.clone())
+                                    .or_else(|| {
+                                        s.postpatcomps
+                                            .iter()
+                                            .find(|(k, _)| pattern_matches(k, &svc_in))
+                                            .map(|(_, v)| v.clone())
+                                    })
                             })
-                    })
-                    .unwrap_or_default()
-            });
+                        })
+                })
+                .unwrap_or_default();
             if func.is_empty() {
                 eprintln!("compdef: unknown command or service: {}", svc_in);
                 ret = 1;
                 continue;
             }
-            let svc_for_state =
-                with_state(|s| s.services.get(&svc_in).cloned().unwrap_or(svc_in.clone()));
+            // sh:308-309 — `[[ -n ${_services[$svc]} ]] && svc=${_services[$svc]}`.
+            let services_param =
+                crate::ported::subst::assoc_get("_services").unwrap_or_default();
+            let svc_for_state = services_param
+                .get(&svc_in)
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .or_else(|| with_state(|s| s.services.get(&svc_in).cloned()))
+                .unwrap_or(svc_in.clone());
             with_state(|s| {
                 s.comps.insert(cmd.clone(), func.clone());
                 s.services.insert(cmd, svc_for_state);
