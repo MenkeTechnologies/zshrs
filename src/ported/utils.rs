@@ -8669,6 +8669,20 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                     }
                 }
             }
+            Some(c) if isset(BANGHIST)
+                && crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst) != 0
+                && c as u32
+                    == crate::ported::hist::bangchar.load(std::sync::atomic::Ordering::SeqCst) as u32 =>
+            {
+                // The reverse of quotestring's BANGHIST escape (c:Src/utils.c:6230
+                // — `\!` is emitted for the history char): unquoting `$'a\!b'`
+                // must strip the backslash so `${(Q)${(qqqq)v}}` round-trips.
+                // In zsh this happens because `(Q)` re-lexes the string and
+                // history expansion consumes the `\<bangchar>`; here the decoder
+                // consumes it directly.
+                consumed += 1;
+                result.push(c);
+            }
             Some(c) => {
                 consumed += 1;
                 result.push('\\');
