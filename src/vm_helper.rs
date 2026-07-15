@@ -2276,6 +2276,16 @@ impl ShellExecutor {
         if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(name) {
             return Some(rust_fn(args));
         }
+        // Bug #657 gap #2 — `_regex_arguments`-generated completion functions
+        // live in a runtime registry, not the static router table (a plain
+        // `fn` ptr can't carry the dynamic name). Consult that registry here
+        // so `compdef mycmd` → `_comps[cmd]=mycmd` → this call routes to the
+        // compiled regex state machine.
+        if let Some(rc) =
+            crate::compsys::ported::_regex_arguments::dispatch_if_registered(name)
+        {
+            return Some(rc);
+        }
         // Autoload prelude (same as dispatch_function_call's).
         if !self.functions_compiled.contains_key(name) {
             // On-demand $fpath autoload for `_`-prefixed compsys helpers that

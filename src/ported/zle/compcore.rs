@@ -2618,6 +2618,29 @@ pub fn addmatches(
     let mut apar_list: Vec<String> = Vec::new();
     let mut opar_list: Vec<String> = Vec::new();
 
+    // c:2189-2207 — `-D par…` setup. Each `dpar` name holds an array
+    // PARALLEL to the candidate words; as each word is added, the current
+    // element of every dpar array is consumed into an output list, and at
+    // the end the output lists are written back (so each dpar param ends
+    // up holding just the entries for the words that matched). Names whose
+    // array is empty/missing are dropped (C swaps them out). Bug #657 —
+    // the previous port collected apar/opar but never handled dpar.
+    let mut dpar_names: Vec<String> = Vec::new();
+    let mut dparr: Vec<Vec<String>> = Vec::new();
+    let mut dpar_idx: Vec<usize> = Vec::new();
+    let mut dparl: Vec<Vec<String>> = Vec::new();
+    for name in &dat.dpar {
+        match crate::ported::params::getaparam(name) {
+            Some(arr) if !arr.is_empty() => {
+                dpar_names.push(name.clone()); // c:2197 getaparam non-empty
+                dparr.push(arr);
+                dpar_idx.push(0);
+                dparl.push(Vec::new());
+            }
+            _ => {} // c:2200 — drop names with an empty/missing array
+        }
+    }
+
     // c:2460-2476 + c:2582-2600 — CAF_ARRAYS expansion. `compadd -a
     // NAME…` / `-k NAME…` pass PARAMETER names, not literal matches:
     // the candidates are the values of the named arrays (or, with
@@ -2771,6 +2794,14 @@ pub fn addmatches(
                 // c:2569
                 opar_list.push(word.clone());
             }
+            // c:2571-2578 — consume one element from each live dpar array
+            // in lockstep with this added word.
+            for i in 0..dparl.len() {
+                if dpar_idx[i] < dparr[i].len() {
+                    dparl[i].push(dparr[i][dpar_idx[i]].clone());
+                    dpar_idx[i] += 1;
+                }
+            }
         }
     }
 
@@ -2780,6 +2811,10 @@ pub fn addmatches(
     }
     if let Some(ref name) = dat.opar {
         setaparam(name, opar_list);
+    }
+    // c:2606-2607 — set_list_array(dpar[i], dparl[i]).
+    for (i, name) in dpar_names.iter().enumerate() {
+        setaparam(name, std::mem::take(&mut dparl[i]));
     }
 
     // c:2610 — explanation emit.

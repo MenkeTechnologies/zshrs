@@ -235,6 +235,21 @@ pub fn _complete_help(args: &[String]) -> i32 {
             "zstyle".to_string(),
         ],
     );
+    // sh:13-15 — install the override shell functions. `_shadow` (above)
+    // backed up the real builtins as `NAME@suffix` and bumped
+    // `.shadow.depth`; these overrides are what the `bin_compadd` gap-#3
+    // interception hook now routes to under the active shadow. `compadd`
+    // returns 1 (suppress real matches during the diagnostic scan); the tag
+    // recording happens via `$_sort_tags=_help_sort_tags` set above.
+    // (`zstyle`'s recording override — sh:16 — needs builtin-side zstyle
+    // interception too and is left to the shadow backup; the styles
+    // sub-report stays limited, as documented in the module header.)
+    crate::ported::modules::parameter::setfunction("compadd", "return 1".to_string(), 0);
+    crate::ported::modules::parameter::setfunction(
+        "compcall",
+        "_help_sort_tags use-compctl".to_string(),
+        0,
+    );
 
     // sh:50 — ${1:-_main_complete}
     let target = args
@@ -244,7 +259,12 @@ pub fn _complete_help(args: &[String]) -> i32 {
         .unwrap_or_else(|| "_main_complete".to_string());
     let ret = dispatch_function_call(&target, &[]).unwrap_or(1);
 
-    // sh:51-53 — always { unfunction compadd compcall zstyle }
+    // sh:52 — `unfunction compadd compcall zstyle` (remove the overrides we
+    // installed) then sh:53 `_unshadow` (restore the real builtins' backups).
+    if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+        tab.remove("compadd");
+        tab.remove("compcall");
+    }
     let _ = dispatch_function_call("_unshadow", &[]);
 
     // sh:55-64 — tags report.

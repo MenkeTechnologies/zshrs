@@ -139,17 +139,18 @@ pub fn _next_label(args: &[String]) -> i32 {
     // sh:11
     let spec = getsparam("__spec").unwrap_or_default();
     // sh:_next_tags:66 — `[[ "$_next_tags_not" = *\ ${__spec}\ * ]] &&
-    //   continue`. When the `_next_tags` shadow is active, skip any
-    //   spec already on the not-list by recursing into self to
-    //   advance to the next spec (preserves the 0/1 return contract).
-    //   Empty `_next_tags_not` makes this branch dead, matching the
-    //   unshadowed body.
-    let not = getsparam("_next_tags_not").unwrap_or_default();
-    if !not.is_empty() && !spec.is_empty() {
-        let needle = format!(" {} ", spec);
-        if not.contains(&needle) {
-            return _next_label(args);
-        }
+    //   continue`. Skip any spec already shown in a previous cycle. This
+    //   natively reproduces the tag-filtering `_next_label` body that the
+    //   `_next_tags` widget installs via
+    //   `unfunction _next_label; _next_label() { … }` at sh:10-82 — a Rust
+    //   port can't inject a shell-function body, so it consults
+    //   `$_next_tags_not` directly instead. The sh `continue` (inside the
+    //   caller's `while`) is expressed here by recursing to advance to the
+    //   next spec, preserving the 0/1 return contract. Empty
+    //   `_next_tags_not` makes this branch dead, matching the unshadowed
+    //   body exactly.
+    if spec_in_not_list(&spec, &getsparam("_next_tags_not").unwrap_or_default()) {
+        return _next_label(args);
     }
     let mut comp_tags = getsparam("_comp_tags").unwrap_or_default();
     comp_tags.push_str(&format!(" {} ", spec));
@@ -209,6 +210,18 @@ pub fn _next_label(args: &[String]) -> i32 {
     }
 
     0 // sh:22
+}
+
+/// sh:_next_tags:39 / :66 — the `[[ "$_next_tags_not" = *\ ${__spec}\ * ]]`
+/// glob test. Returns true when `spec` occurs as a whole, space-delimited
+/// entry inside `not` (a space required on BOTH sides, exactly like the zsh
+/// glob). This is how the Rust port replaces the `_next_tags` widget's
+/// `unfunction _all_labels _next_label; <redefine>` trick (sh:10-82): a
+/// shell-function body can't be injected from Rust, so the ports read
+/// `$_next_tags_not` themselves. Empty `not`/`spec` → false, keeping the
+/// default (unshadowed) path unchanged.
+fn spec_in_not_list(spec: &str, not: &str) -> bool {
+    !not.is_empty() && !spec.is_empty() && not.contains(&format!(" {} ", spec))
 }
 
 /// sh:12 — `*[^\\]:*` test (mirrors helper in `_description`).
@@ -286,6 +299,29 @@ mod tests {
         assert!(has_unescaped_colon("foo:bar"));
         assert!(!has_unescaped_colon("foo\\:bar"));
         assert!(!has_unescaped_colon("plain"));
+    }
+
+    #[test]
+    fn spec_in_not_list_skips_listed_spec() {
+        // sh:_next_tags:66 — a spec bracketed by spaces in $_next_tags_not
+        //   is on the not-list, so `_next_label` recurses past it (skips
+        //   it) to advance to the next spec.
+        assert!(spec_in_not_list("files", " files directories "));
+        assert!(spec_in_not_list("directories", " files directories "));
+    }
+
+    #[test]
+    fn spec_in_not_list_default_and_boundary() {
+        // Default path: empty $_next_tags_not never filters.
+        assert!(!spec_in_not_list("files", ""));
+        // Empty spec never filters (guards the `${__spec}` == "" edge).
+        assert!(!spec_in_not_list("", " files "));
+        // An unlisted spec is not skipped.
+        assert!(!spec_in_not_list("options", " files directories "));
+        // sh-glob parity: the trailing entry has no following space (the
+        //   widget appends `" $tags"` with no trailing space at sh:95), so
+        //   `*\ ${__spec}\ *` does NOT match it — mirrored here.
+        assert!(!spec_in_not_list("dirs", " files dirs"));
     }
 
     #[test]
