@@ -43,18 +43,21 @@
 //!   * `$_next_tags_pfx` / `$_next_tags_sfx` — the prefix/suffix to
 //!     restore when the user re-fires on the same word (sh:85-86).
 //!
-//! Honest substrate gap: sh:10-82 `unfunction _all_labels _next_label`
-//! then redefines them inline as tag-filtering versions that consult
-//! `$_next_tags_not`. Injecting a fresh shell-function *body* from a
-//! Rust port isn't supported by the dispatch layer, and the Rust ports
-//! of `_all_labels`/`_next_label` (Base/Core) do not yet read
-//! `$_next_tags_not`. So the label-level filter override is NOT
-//! installed here. What IS restored (and was previously dead — the old
-//! port read an invented, always-empty `$_next_tags_in`): the real
-//! `$_next_tags_pre`/`$_lastcomp[tags]` bookkeeping, the sh:105
-//! `compadd -Uns` menu fixup, the sh:108 `compstate[list]='list force'`,
-//! and the sh:110 `compprefuncs` append. `$_next_tags_not` is
-//! maintained correctly so a future filtered-label port can consult it.
+//! sh:10-82 substrate note: the widget `unfunction`s `_all_labels` /
+//! `_next_label` and redefines them inline as tag-filtering versions that
+//! consult `$_next_tags_not`. Injecting a fresh shell-function *body* from
+//! a Rust port isn't supported by the dispatch layer, so instead the
+//! Base/Core Rust ports of `_all_labels`/`_next_label` read
+//! `$_next_tags_not` natively (see their `spec_in_not_list` helper): when
+//! it's non-empty they skip any spec already on the list, exactly like the
+//! redefined bodies at sh:39 / sh:66. The label-level filter is therefore
+//! live without any function-body injection. This widget's job is to keep
+//! `$_next_tags_not` accurate (sh:95) so those ports have the list to
+//! consult. It also restores the real `$_next_tags_pre`/`$_lastcomp[tags]`
+//! bookkeeping (previously dead — the old port read an invented,
+//! always-empty `$_next_tags_in`), the sh:105 `compadd -Uns` menu fixup,
+//! the sh:108 `compstate[list]='list force'`, and the sh:110
+//! `compprefuncs` append.
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::params::{getaparam, gethkparam, gethparam, getsparam, setaparam, setsparam};
@@ -90,9 +93,12 @@ pub fn _next_tags() -> i32 {
     let mut suffix = getsparam("SUFFIX").unwrap_or_default();
     let ops = format!("{}{}", prefix, suffix);
 
-    // sh:10-82  unfunction / inline-redefine _all_labels _next_label —
-    //   tag-filtering label overrides. Not installable from Rust; see
-    //   module doc. $_next_tags_not below is still maintained faithfully.
+    // sh:10-82  the widget `unfunction`s + inline-redefines _all_labels /
+    //   _next_label as $_next_tags_not-filtering versions. We can't inject
+    //   a shell-function body from Rust, so the Base/Core ports read
+    //   $_next_tags_not natively instead (their `spec_in_not_list` helper,
+    //   sh:39 / sh:66). Here we just keep $_next_tags_not accurate below
+    //   (sh:95) so those ports have the list to consult.
 
     // sh:84  if [[ "${LBUFFER%${PREFIX}}" = "$_next_tags_pre" ]]; then
     let lbuffer = getsparam("LBUFFER").unwrap_or_default();

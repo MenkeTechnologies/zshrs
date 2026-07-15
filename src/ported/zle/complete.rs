@@ -861,6 +861,27 @@ pub fn bin_compadd(
         zwarnnam(name, "can only be called from completion function"); // c:609
         return 1; // c:610
     }
+    // Bug #657 gap #3 — completion-builtin override interception. In zsh a
+    // completer can install a `compadd` SHELL FUNCTION (e.g. `_complete_help`'s
+    // `compadd(){ return 1 }` at sh:13, or `_approximate`'s correction body)
+    // and `compadd` then resolves function-before-builtin. The Rust ports call
+    // `bin_compadd` directly, bypassing that override; route to it here. Gated
+    // on an active `_shadow` (`.shadow.depth` > 0) so NORMAL completion (depth
+    // 0) is completely untouched — zero overhead beyond one int read. The
+    // thread-local guard lets the override's `builtin compadd` / `compadd@suffix`
+    // (body `builtin compadd`) reach the real builtin below without re-entry.
+    thread_local! {
+        static IN_COMPADD_OVERRIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if !IN_COMPADD_OVERRIDE.with(|g| g.get())
+        && crate::ported::params::getiparam(".shadow.depth") > 0
+        && crate::ported::utils::getshfunc("compadd").is_some()
+    {
+        IN_COMPADD_OVERRIDE.with(|g| g.set(true));
+        let rc = crate::ported::exec::dispatch_function_call("compadd", argv).unwrap_or(1);
+        IN_COMPADD_OVERRIDE.with(|g| g.set(false));
+        return rc;
+    }
     // sh:_approximate:57-72 — process-wide PREFIX-injection hook.
     //   When set, `(#a${_comp_correct})` (or another caller-supplied
     //   prefix) is prepended to `$PREFIX` for the duration of this

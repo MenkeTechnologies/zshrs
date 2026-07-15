@@ -135,6 +135,28 @@ pub fn _regex_arguments(args: &[String]) -> i32 {
 /// router / `callcompfunc` path, out of scope for this file. Until then
 /// this entry is reachable via [`_regex_arguments`]-registered names in
 /// tests but not through live `Tab` completion.
+/// Route a call to a `_regex_arguments`-generated completion function.
+///
+/// `_regex_arguments funcname regex…` compiles `funcname` into the
+/// [`REGEX_FUNCS`] registry rather than a shell function, so the compsys
+/// dispatch chokepoint (`vm_helper`'s function-call path) can't find it as
+/// a shfunc or a static-router entry. This lets that chokepoint consult the
+/// registry: returns `Some(dispatch_registered(name))` when `name` is a
+/// registered regex function, else `None` (defer to normal dispatch). Bug
+/// #657 gap #2 — previously the generated function was unreachable at
+/// completion time.
+pub fn dispatch_if_registered(funcname: &str) -> Option<i32> {
+    let known = {
+        let g = registry();
+        g.as_ref().map(|m| m.contains_key(funcname)).unwrap_or(false)
+    };
+    if known {
+        Some(dispatch_registered(funcname))
+    } else {
+        None
+    }
+}
+
 pub fn dispatch_registered(funcname: &str) -> i32 {
     let regex = {
         let g = registry();

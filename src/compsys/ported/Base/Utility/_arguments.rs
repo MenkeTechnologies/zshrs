@@ -17,10 +17,10 @@
 //!   sh:6-10   locals + `opt_args_use_NUL_separators`
 //!   sh:14-28  `while [[ "$1" = -([AMO]...` getopt loop
 //!   sh:30-33  end-of-options `:`, `singopt+=(:)`, `PREFIX=[-+]`
-//!   sh:35-323 `long=$argv[(I)--]` `--help` long-option cache (APPROX —
-//!             see note in code; requires running the command's `--help`
-//!             plus a persistent `_args_cache_*` global, neither wired
-//!             through this port).
+//!   sh:35-323 `long=$argv[(I)--]` `--help` long-option cache — runs the
+//!             command's `--help`, scrapes/folds its long options, and
+//!             memoises them in the persistent `_args_cache_<cmd>` global.
+//!             Ported in `long_option_cache`/`build_help_cache` below.
 //!   sh:325    `zstyle -s …:options auto-description autod`
 //!   sh:327    `comparguments -i "$autod" "$singopt[@]" "$@"`
 //!   sh:333-356 `-D`/`-O`/`-a` dispatch + `_tags`
@@ -37,6 +37,7 @@ use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_requested::_requested;
 use crate::compsys::ported::_tags::_tags;
 use crate::ported::exec::{dispatch_function_call, execute_script};
+use crate::ported::glob::matchpat;
 use crate::ported::modules::zutil::zstyletab;
 use crate::ported::params::{
     getaparam, getiparam, getsparam, setaparam, setiparam, setsparam, unsetparam,
@@ -93,12 +94,606 @@ fn strip_last_field(ctx: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// sh:35-323 — `--help` long-option cache helpers.
+//
+// This block, when the spec list contains a literal `--`, runs the target
+// command's `--help`, scrapes long options out of the text, folds them
+// against the user's own specs, and memoises the result in a persistent
+// `_args_cache_<cmd>` global array param. Ported faithfully from
+// `Completion/Base/Utility/_arguments`. The zsh parameter-expansion /
+// glob idioms are reproduced with `matchpat` (extended glob, case
+// sensitive) for the pattern filters and direct string ops for the
+// `(#b)` backreference extractions.
+// ---------------------------------------------------------------------------
+
+/// sh:45 — `${name//[^a-zA-Z0-9_]/_}`: every non-`[a-zA-Z0-9_]` → `_`.
+fn sanitize_cache_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// sh — `${x//[^a-zA-Z0-9_-]}`: drop every char not in `[a-zA-Z0-9_-]`.
+fn strip_to_wordchars(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect()
+}
+
+/// sh — `${x%%[^a-zA-Z0-9_-]#}`: strip the longest trailing run of
+/// non-`[a-zA-Z0-9_-]` chars (used to derive a clean option name).
+fn strip_trailing_nonword(s: &str) -> String {
+    s.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .to_string()
+}
+
+/// sh:110/153 — description transform `${${${d//:/-}//\[/(}//\]/)}`
+/// (`:`→`-`, `[`→`(`, `]`→`)`).
+fn desc_transform(s: &str) -> String {
+    s.replace(':', "-").replace('[', "(").replace(']', ")")
+}
+
+/// Append `elem:suffix` to `lopts` for each `elem` of `tmp`, maintaining
+/// the `typeset -Ua lopts` uniqueness (sh:49). Mirrors `${^tmp[@]}:suffix`.
+fn lopts_add_distributed(lopts: &mut Vec<String>, tmp: &[String], suffix: &str) {
+    for e in tmp {
+        let v = format!("{}:{}", e, suffix);
+        if !lopts.contains(&v) {
+            lopts.push(v);
+        }
+    }
+}
+
+/// zsh `${(M)1#*[^\\]:}[1,-2]` + `${1#pattern}` (sh:215-217): split an
+/// optspec at its first *unescaped* colon. Returns `(pattern, descr)`
+/// where `pattern` has `\:`→`:` applied and excludes the colon, and
+/// `descr` is the remainder starting at the colon (or empty).
+fn split_spec_pattern(spec: &str) -> (String, String) {
+    let chars: Vec<char> = spec.chars().collect();
+    let mut idx = None;
+    for (j, &c) in chars.iter().enumerate() {
+        // sh `*[^\\]:` requires a non-backslash char before the colon.
+        if c == ':' && j > 0 && chars[j - 1] != '\\' {
+            idx = Some(j);
+            break;
+        }
+    }
+    match idx {
+        Some(k) => {
+            let pat: String = chars[..k].iter().collect::<String>().replace("\\:", ":");
+            let descr: String = chars[k..].iter().collect();
+            (pat, descr)
+        }
+        None => (spec.to_string(), String::new()),
+    }
+}
+
+/// sh:148 — `${opt## [^[:space:]]##  }`: strip a leading
+/// `<space><nonspace>+<space><space>` prefix (the "--foo fooarg  desc"
+/// case where `fooarg` must be dropped).
+fn strip_leading_argword(s: &str) -> String {
+    let b: Vec<char> = s.chars().collect();
+    if b.first() == Some(&' ') {
+        let mut i = 1;
+        while i < b.len() && b[i] != ' ' {
+            i += 1;
+        }
+        if i > 1 && i + 1 < b.len() && b[i] == ' ' && b[i + 1] == ' ' {
+            return b[i + 2..].iter().collect();
+        }
+    }
+    s.to_string()
+}
+
+/// `(#b)(*):([^:]#)` (sh:255/285): split at the LAST colon, returning
+/// `(before, Some(after))`, or `(whole, None)` when there is no colon.
+fn split_last_colon(s: &str) -> (String, Option<String>) {
+    match s.rfind(':') {
+        Some(i) => (s[..i].to_string(), Some(s[i + 1..].to_string())),
+        None => (s.to_string(), None),
+    }
+}
+
+/// Run `$cmd --help` and return the captured text (stdout+stderr merged,
+/// mirroring the caller's `2>&1` at sh:98 — the shared `_call_program`
+/// port only captures stdout, so this call site does the exec directly to
+/// keep the `2>&1` merge). `command`-style override, `COLUMNS=999` and the
+/// C-locale reset from `_call_program`/`_comp_locale` are reproduced here.
+fn run_help(cmd: &str, use_locale: bool) -> String {
+    use std::process::{Command, Stdio};
+
+    // sh:26-33 (via _call_program) — style key `${1}` is "options".
+    let curcontext = getsparam("curcontext").unwrap_or_default();
+    let style_ctx = format!(":completion:{}:options", curcontext);
+    let styled = crate::ported::modules::zutil::lookupstyle(&style_ctx, "command")
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    // sh:98 argv[2,-1] == `${~words[1]} --help`.
+    let cmdline = if !styled.is_empty() {
+        if let Some(rest) = styled.strip_prefix('-') {
+            // sh:28 — eval "$tmp[2,-1]" "$argv[2,-1]"
+            format!("{} {} --help", rest, cmd)
+        } else {
+            // sh:30 — eval $prefix "$tmp" (cmd/--help ignored)
+            styled
+        }
+    } else {
+        // sh:33 — eval $prefix "$argv[2,-1]"
+        format!("{} --help", cmd)
+    };
+
+    let mut c = Command::new("sh");
+    c.arg("-c").arg(format!("{} 2>&1", cmdline));
+    c.env("COLUMNS", "999"); // _call_program sh:3
+    c.stdin(Stdio::null());
+    if use_locale {
+        // _comp_locale: LANG=C, keep LC_CTYPE, all other LC_* → C.
+        // Apply to the child env only (no parent-env mutation).
+        for (k, _) in std::env::vars() {
+            if k.starts_with("LC_") && k != "LC_CTYPE" {
+                c.env_remove(&k);
+            }
+        }
+        let ctype = std::env::var("LC_ALL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("LC_CTYPE").ok().filter(|s| !s.is_empty()))
+            .or_else(|| std::env::var("LANG").ok().filter(|s| !s.is_empty()))
+            .unwrap_or_else(|| "C".to_string());
+        c.env("LC_CTYPE", ctype);
+        c.env("LANG", "C");
+    }
+
+    // Queue signals across the foreground wait so the SIGCHLD reaper can't
+    // steal the child from under `.output()` (same fencing as
+    // fusevm_bridge::ForegroundWaitGuard).
+    let _guard = crate::fusevm_bridge::ForegroundWaitGuard::enter();
+    match c.output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
+/// sh:35-323 — build (or reuse) the `_args_cache_<cmd>` long-option cache
+/// and return the final spec vector `tmpargv + <cached optspecs>` (sh:322).
+///
+/// `full` is the post-getopt spec vector (`$argv` at sh:35); `long` is the
+/// 0-based index of the `--` element in it; `cmd` is `$words[1]`.
+fn long_option_cache(full: &[String], long: usize, cmd: &str) -> Vec<String> {
+    // sh:39 — optspecs before `--`.
+    let tmpargv: Vec<String> = full[..long].to_vec();
+
+    // sh:41-45 — build the cache param name from the command word.
+    //   name=${~words[1]}; [[ $name = [^/]*/* ]] && name="$PWD/$name"
+    let mut name = cmd.to_string();
+    if let Some(rest) = name.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            name = format!("{}/{}", home, rest);
+        }
+    } else if name == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            name = home;
+        }
+    }
+    // [[ "$name" = [^/]*/* ]] — relative path containing a slash.
+    if !name.starts_with('/') && name.contains('/') {
+        let pwd = getsparam("PWD")
+            .or_else(|| std::env::var("PWD").ok())
+            .unwrap_or_default();
+        name = format!("{}/{}", pwd, name);
+    }
+    let name = sanitize_cache_name(&format!("_args_cache_{}", name));
+
+    // sh:47 — if (( ! ${(P)+name} )): rebuild only when unset.
+    let already_set = crate::ported::params::paramtab()
+        .read()
+        .map(|t| t.contains_key(&name))
+        .unwrap_or(false);
+
+    if !already_set {
+        let cache = build_help_cache(full, long, cmd, &tmpargv);
+        // sh:320 — set -A "$name" "${(@)cache:# #}" (drop all-space elems).
+        let cache: Vec<String> = cache
+            .into_iter()
+            .filter(|e| !e.bytes().all(|b| b == b' '))
+            .collect();
+        setaparam(&name, cache);
+    }
+
+    // sh:322 — set -- "$tmpargv[@]" "${(@P)name}"
+    let mut out = tmpargv;
+    out.extend(getaparam(&name).unwrap_or_default());
+    out
+}
+
+/// sh:97-162 — scrape long options out of `--help` text into the unique
+/// `lopts` array (`option:description`, description colon-transformed).
+fn scrape_help_lopts(help_text: &str) -> Vec<String> {
+    let mut lopts: Vec<String> = Vec::new(); // typeset -Ua (unique)
+    let mut tmp: Vec<String> = Vec::new(); // per-line option accumulator
+
+    for line in help_text.lines() {
+        let mut opt = line.to_string();
+
+        // sh:100-122 — flush the previous line's uncommented options.
+        if !tmp.is_empty() {
+            let leading3_ws = {
+                let c: Vec<char> = opt.chars().take(3).collect();
+                c.len() == 3 && c.iter().all(|ch| ch.is_whitespace())
+            };
+            let has_alpha_after = opt.chars().skip(3).any(|c| c.is_ascii_alphabetic());
+            if leading3_ws && has_alpha_after {
+                // sh:106 — this line is the description for the prev opts.
+                opt = opt.trim_start_matches(char::is_whitespace).to_string();
+                lopts_add_distributed(&mut lopts, &tmp, &desc_transform(&opt));
+                tmp.clear();
+                continue;
+            } else {
+                // sh:119 — no description; add options with empty desc.
+                lopts_add_distributed(&mut lopts, &tmp, "");
+                tmp.clear();
+            }
+        }
+
+        // sh:123-142 — pull consecutive `-…`/`--…` option tokens.
+        loop {
+            let trimmed = opt.trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+            if !trimmed.starts_with('-') {
+                break;
+            }
+            // start = `-` + run of non-comma-non-space; rest = remainder.
+            let end = trimmed[1..]
+                .find(|c: char| c == ',' || c.is_whitespace())
+                .map(|i| i + 1)
+                .unwrap_or(trimmed.len());
+            let start = trimmed[..end].to_string();
+            let rest = trimmed[end..].to_string();
+
+            // sh:131 — skip if tmp already holds the cleaned name.
+            let cleaned = strip_trailing_nonword(&start);
+            let dup = tmp.iter().any(|e| matchpat(&cleaned, e, true, true));
+            if !dup {
+                // sh:135 — `--[fetch]all` variant → `--fetchall` + `--all`.
+                if start.starts_with("--[") {
+                    if let Some(close) = start.rfind(']') {
+                        let inner = &start[3..close];
+                        let after = &start[close + 1..];
+                        tmp.push(format!("--{}{}", inner, after));
+                        tmp.push(format!("--{}", after));
+                    } else {
+                        tmp.push(start.clone());
+                    }
+                } else {
+                    tmp.push(start.clone());
+                }
+            }
+            opt = rest;
+        }
+
+        // sh:148-149 — drop a leading " ARG  " then leading whitespace.
+        opt = strip_leading_argword(&opt);
+        opt = opt.trim_start_matches(char::is_whitespace).to_string();
+
+        // sh:150-157 — leftover text is the description for this line.
+        if !opt.is_empty() {
+            lopts_add_distributed(&mut lopts, &tmp, &desc_transform(&opt));
+            tmp.clear();
+        }
+    }
+    // sh:160-162 — tidy up any trailing uncommented options.
+    if !tmp.is_empty() {
+        lopts_add_distributed(&mut lopts, &tmp, "");
+    }
+
+    lopts
+}
+
+/// sh:48-320 — the actual cache construction (only runs on a cache miss).
+fn build_help_cache(
+    full: &[String],
+    long: usize,
+    cmd: &str,
+    tmpargv: &[String],
+) -> Vec<String> {
+    // sh:56 — set -- "${(@)argv[long+1,-1]}" (args after `--`).
+    let post: Vec<String> = full[long + 1..].to_vec();
+    let mut p = 0usize;
+
+    // sh:58-84 — parse the `-i`/`-s`/`-l` option-generation flags.
+    let mut iopts: Vec<String> = Vec::new(); // ignore patterns
+    let mut sopts: Vec<String> = Vec::new(); // "same" substitution pairs
+    let mut use_locale = true; // lflag: `-l` disables the C-locale reset
+    while p < post.len() {
+        let a = &post[p];
+        // while [[ "$1" = -[lis]* ]]
+        if !(a.len() >= 2 && a.as_bytes()[0] == b'-' && matches!(a.as_bytes()[1], b'l' | b'i' | b's'))
+        {
+            break;
+        }
+        // sh:61 — exact `-l` is the locale flag; consume and continue.
+        if a == "-l" {
+            use_locale = false;
+            p += 1;
+            continue;
+        }
+        // sh:66 — attached (`-iFOO`) vs separate (`-i FOO`) argument.
+        let (raw, cur) = if a.len() > 2 {
+            (a[2..].to_string(), 1usize)
+        } else if p + 1 < post.len() {
+            (post[p + 1].clone(), 2usize)
+        } else {
+            (String::new(), 1usize)
+        };
+        // sh:73-77 — literal `(a b c)` list, else a parameter name.
+        let vals: Vec<String> = if raw.starts_with('(') {
+            // ${=tmp[2,-2]} — drop the parens, then word-split on IFS.
+            let inner = raw
+                .strip_prefix('(')
+                .map(|s| s.strip_suffix(')').unwrap_or(s))
+                .unwrap_or(raw.as_str());
+            inner.split_whitespace().map(|s| s.to_string()).collect()
+        } else {
+            getaparam(&raw).unwrap_or_default()
+        };
+        // sh:78-82 — `-i*` → ignore, else `-s*` → same.
+        if a.as_bytes()[1] == b'i' {
+            iopts.extend(vals);
+        } else {
+            sopts.extend(vals);
+        }
+        p += cur;
+    }
+    // The remaining post-`--` args are the help-conversion description specs.
+    let descr_specs_user: Vec<String> = post[p..].to_vec();
+
+    // sh:97-162 — scrape long options from `$cmd --help`.
+    let help_text = run_help(cmd, use_locale);
+    let mut lopts: Vec<String> = scrape_help_lopts(&help_text);
+
+    // sh:164-176 — drop options already covered by user-defined specs.
+    {
+        let mut kept: Vec<String> = Vec::new();
+        // Iterate the cleaned names of every non-`--` lopt.
+        let names: Vec<String> = lopts
+            .iter()
+            .filter(|e| e.as_str() != "--")
+            .map(|e| {
+                // ${e%%[\[:=]*}
+                let cut = e
+                    .find(|c: char| c == '[' || c == ':' || c == '=')
+                    .unwrap_or(e.len());
+                e[..cut].to_string()
+            })
+            .collect();
+        for optn in names {
+            // sh:173 — covered if any user spec matches this pattern.
+            // sh:173 — `(|\*)` and `\[*\]` are LITERAL `*`/`[`/`]`; the
+            // interior `*` inside `\[*\]` is the glob wildcard.
+            let pat = format!(
+                "(|\\([^)]#\\))(|\\*){}(|[-+]|=(|-))(|\\[*\\])(|:*)",
+                optn
+            );
+            let covered = tmpargv.iter().any(|s| matchpat(&pat, s, true, true));
+            if !covered {
+                // sh:174 — keep the original lopt element matching `optn`.
+                let keep_pat = format!("{}(|[\\[:=]*)", optn);
+                if let Some(found) = lopts.iter().find(|e| matchpat(&keep_pat, e.as_str(), true, true)) {
+                    if !kept.contains(found) {
+                        kept.push(found.clone());
+                    }
+                }
+            }
+        }
+        lopts = kept;
+    }
+
+    // sh:180-183 — remove all ignored options.
+    for ig in &iopts {
+        let pat = format!("{}(|[\\[:=]*)", ig);
+        lopts.retain(|e| !matchpat(&pat, e, true, true));
+    }
+
+    // sh:187-194 — add "same" options (e.g. --disable-* from --enable-*).
+    // sopts is a flat list of (pattern, replacement) pairs.
+    {
+        let mut i = 0;
+        while i + 1 < sopts.len() {
+            let pat = &sopts[i];
+            let repl = &sopts[i + 1];
+            // ${lopts/pat/repl}: first-match substitution per element,
+            // appended back (uniqueness absorbs the unchanged copies).
+            let subs: Vec<String> = lopts
+                .iter()
+                .map(|e| subst_first(e, pat, repl))
+                .collect();
+            for s in subs {
+                if !lopts.contains(&s) {
+                    lopts.push(s);
+                }
+            }
+            i += 2;
+        }
+    }
+
+    // sh:200-205 — builtin description specs, appended after the user's.
+    let mut descr_specs = descr_specs_user;
+    descr_specs.push("*=FILE*:file:_files".to_string());
+    descr_specs.push("*=(DIR|PATH)*:directory:_files -/".to_string());
+    descr_specs.push("*=*:=: ".to_string());
+    descr_specs.push("*: :  ".to_string());
+
+    // sh:207-319 — walk the description specs, matching lopts and building
+    // the final optspec cache.
+    let mut cache: Vec<String> = Vec::new();
+    for spec in descr_specs {
+        // sh:215-217 — split into pattern and description.
+        let (mut pattern, descr) = split_spec_pattern(&spec);
+
+        // sh:218-225 — trailing `(-)` disallows an argument in the next word.
+        let dir = if pattern.ends_with("(-)") {
+            pattern.truncate(pattern.len() - 3);
+            "-".to_string()
+        } else {
+            String::new()
+        };
+
+        // sh:234-235 — the lopts matching `pattern:*`; remove from lopts.
+        let match_pat = format!("{}:*", pattern);
+        let mut matched: Vec<String> = lopts
+            .iter()
+            .filter(|e| matchpat(&match_pat, e.as_str(), true, true))
+            .cloned()
+            .collect();
+        lopts.retain(|e| !matchpat(&match_pat, e, true, true));
+
+        // sh:237 — nothing matched → next spec.
+        if matched.is_empty() {
+            continue;
+        }
+
+        // sh:242 — strip the trailing ':' added during the scrape.
+        for e in &mut matched {
+            if e.ends_with(':') {
+                e.pop();
+            }
+        }
+
+        // sh:247-274 — options with `[=ARG]` → optional argument.
+        {
+            let optpat = "[^:]##\\[\\=*";
+            let tmpo: Vec<String> = matched
+                .iter()
+                .filter(|e| matchpat(optpat, e.as_str(), true, true))
+                .cloned()
+                .collect();
+            if !tmpo.is_empty() {
+                matched.retain(|e| !matchpat(optpat, e.as_str(), true, true));
+                for opt in tmpo {
+                    // sh:255 — split trailing :description → odescr.
+                    let (opt, odescr) = match split_last_colon(&opt) {
+                        (base, Some(d)) => (base, format!("[{}]", d)),
+                        (base, None) => (base, String::new()),
+                    };
+                    // sh:261 — has `[=` → strip it; opt2 uses `=-` (optional).
+                    let opt2 = if let Some(pos) = opt.rfind("[=") {
+                        format!("{}=-{}{}", strip_to_wordchars(&opt[..pos]), dir, odescr)
+                    } else {
+                        format!("{}={}{}", strip_to_wordchars(&opt), dir, odescr)
+                    };
+                    // sh:266-272 — assemble the cache entry per descr form.
+                    if descr.starts_with(":=") {
+                        // sh:267 — "${opt2}::${(L)${opt%\]}#*\=}: "
+                        cache.push(format!("{}::{}: ", opt2, arg_name_lower(&opt)));
+                    } else if descr.starts_with("::") {
+                        cache.push(format!("{}{}", opt2, descr)); // sh:269
+                    } else {
+                        cache.push(format!("{}:{}", opt2, descr)); // sh:271
+                    }
+                }
+            }
+        }
+
+        // sh:280-298 — options with `=ARG` → mandatory argument.
+        {
+            let eqpat = "[^:]##\\=*";
+            let tmpo: Vec<String> = matched
+                .iter()
+                .filter(|e| matchpat(eqpat, e.as_str(), true, true))
+                .cloned()
+                .collect();
+            if !tmpo.is_empty() {
+                matched.retain(|e| !matchpat(eqpat, e.as_str(), true, true));
+                for opt in tmpo {
+                    let (opt, odescr) = match split_last_colon(&opt) {
+                        (base, Some(d)) => (base, format!("[{}]", d)),
+                        (base, None) => (base, String::new()),
+                    };
+                    // sh:291 — opt2="${${opt%%\=*}//[^word]}=${dir}${odescr}"
+                    let base = opt.split('=').next().unwrap_or("");
+                    let opt2 = format!("{}={}{}", strip_to_wordchars(base), dir, odescr);
+                    if descr.starts_with(":=") {
+                        // sh:293 — "${opt2}:${(L)${opt%\]}#*\=}: "
+                        cache.push(format!("{}:{}: ", opt2, arg_name_lower(&opt)));
+                    } else {
+                        cache.push(format!("{}{}", opt2, descr)); // sh:295
+                    }
+                }
+            }
+        }
+
+        // sh:303-318 — everything else: option without an argument.
+        if !matched.is_empty() {
+            let mut built: Vec<String> = Vec::new();
+            // sh:310 — options WITH a description → "option[description]".
+            for e in &matched {
+                if let Some(ci) = e.find(':') {
+                    let head = e[..ci].to_string();
+                    let tail = e[ci + 1..].to_string();
+                    // ${e//:/[} then append ']' (desc already colon-free).
+                    built.push(format!("{}[{}]", head, tail.replace(':', "[")));
+                }
+            }
+            // sh:312 — options WITHOUT a description → sanitized bare option.
+            for e in &matched {
+                if !e.contains(':') {
+                    built.push(strip_to_wordchars(e));
+                }
+            }
+            // sh:313-317 — append descr unless it's the catch-all ': :  '.
+            if !descr.is_empty() && descr != ": :  " {
+                for b in built {
+                    cache.push(format!("{}{}", b, descr));
+                }
+            } else {
+                cache.extend(built);
+            }
+        }
+    }
+
+    cache
+}
+
+/// sh:267/293 — `${(L)${opt%\]}#*\=}`: strip a trailing `]`, drop
+/// everything up to and including the first `=`, then lowercase.
+fn arg_name_lower(opt: &str) -> String {
+    let s = opt.strip_suffix(']').unwrap_or(opt);
+    let after = match s.find('=') {
+        Some(i) => &s[i + 1..],
+        None => s,
+    };
+    after.to_lowercase()
+}
+
+/// zsh `${str/pat/repl}` — replace the FIRST glob match of `pat` in `str`
+/// with `repl`. Falls back to the unchanged string when nothing matches.
+fn subst_first(str_in: &str, pat: &str, repl: &str) -> String {
+    // Find the shortest leftmost substring that matches `pat` as a full
+    // glob, then splice in `repl`. zsh `${x/p/r}` matches the leftmost,
+    // longest run; we approximate with leftmost start + longest end,
+    // which is faithful for the anchored `--enable-*`-style patterns used
+    // by the `-s` "same" option feature.
+    let chars: Vec<char> = str_in.chars().collect();
+    for start in 0..=chars.len() {
+        for end in (start..=chars.len()).rev() {
+            let sub: String = chars[start..end].iter().collect();
+            if !sub.is_empty() && matchpat(pat, &sub, true, true) {
+                let prefix: String = chars[..start].iter().collect();
+                let suffix: String = chars[end..].iter().collect();
+                return format!("{}{}{}", prefix, repl, suffix);
+            }
+        }
+    }
+    str_in.to_string()
+}
+
 /// `_arguments` — spec engine. `args` is the full argument vector the
 /// caller passed after the function name (flags then spec strings).
 pub fn _arguments(args: &[String]) -> i32 {
     // sh:6-8 — locals mirroring the zsh source. `cmd="$words[1]"`.
     let words0 = getaparam("words").unwrap_or_default();
-    let _cmd = words0.first().cloned().unwrap_or_default();
+    let cmd = words0.first().cloned().unwrap_or_default(); // sh:6 cmd
     let oldcontext = getsparam("curcontext").unwrap_or_default(); // sh:7
 
     let mut subopts: Vec<String> = Vec::new(); // sh:12
@@ -198,23 +793,17 @@ pub fn _arguments(args: &[String]) -> i32 {
         alwopt = "arg".to_string();
     }
 
-    // sh:35-323 — long=$argv[(I)--] `--help` long-option cache.
-    //
-    // APPROXIMATION: the upstream block, when a `--` appears in the spec
-    // list, runs `_call_program … $cmd --help`, scrapes long options out
-    // of the help text, folds them against the user specs, and memoises
-    // the result in a persistent `_args_cache_${cmd}` global. Reproducing
-    // that needs (a) executing the target command's `--help` during
-    // completion and (b) a durable per-command cache param — neither is
-    // wired through this port. We therefore keep only the deterministic,
-    // side-effect-free part: the specs BEFORE `--` (`tmpargv`). The
-    // synthesised long options are dropped. Everything else below is
-    // faithful. The remaining spec vector after this point is `specs`.
-    let mut specs: Vec<String> = args[i..].to_vec();
-    if let Some(long) = specs.iter().rposition(|s| s == "--") {
-        // sh:39 tmpargv=( "${(@)argv[1,long-1]}" ) — optspecs before `--`.
-        specs.truncate(long);
-    }
+    // sh:35-323 — long=$argv[(I)--] `--help` long-option cache. When a
+    // `--` appears in the spec list, run `$cmd --help`, scrape its long
+    // options, fold them against the user specs, memoise into the
+    // persistent `_args_cache_<cmd>` global, and pass `tmpargv +
+    // <cached optspecs>` on to `comparguments -i`. See `long_option_cache`.
+    let full: Vec<String> = args[i..].to_vec();
+    let specs: Vec<String> = match full.iter().rposition(|s| s == "--") {
+        // sh:36 (( long )) — `(I)` returns the last match (rposition).
+        Some(long) => long_option_cache(&full, long, &cmd),
+        None => full,
+    };
 
     // sh:325 — zstyle -s ":completion:${curcontext}:options" \
     //          auto-description autod

@@ -123,7 +123,20 @@ pub fn _complete_debug(args: &[String]) -> i32 {
         .cloned()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "_main_complete".to_string());
+    // sh:23/27 — `setopt xtrace` … `unsetopt xtrace`. The executor emits
+    // PS4 trace lines to fd 2 (exec.rs:5409-5445 `if isset(XTRACE)`), and
+    // fd 2 is redirected to `$tmp` above, so the trace of the in-process
+    // completion dispatch lands in the capture file — Bug #657 gap #4.
+    // Only when we actually created the capture (debug_fd != -1), and the
+    // prior XTRACE state is restored (the port has no `localoptions`).
+    let prev_xtrace = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
+    if debug_fd != -1 {
+        crate::ported::options::setoption("xtrace", 1);
+    }
     let ret = dispatch_function_call(&target, &[]).unwrap_or(1);
+    if debug_fd != -1 {
+        crate::ported::options::setoption("xtrace", prev_xtrace as i32);
+    }
 
     // sh:29  if (( debug_fd != -1 )); then — only when a file was created.
     if debug_fd != -1 {

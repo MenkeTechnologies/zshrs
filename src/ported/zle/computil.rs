@@ -7911,9 +7911,15 @@ pub fn bin_compfiles(
     match sub {
         b'p' | b'P' => {
             // c:4981
-            // c:4983 — accept `-p` or `-p--` (the `--` toggles noopt).
+            // c:4983 — `if (args[0][2] && (args[0][2] != '-' || args[0][3]))`
+            // reject: the only valid forms are `-p`/`-P` (no 3rd char) or
+            // `-p-`/`-P-` (a LONE trailing `-`). `-p--` / `-px` are invalid.
+            // c:5005 — `noopt = !!args[0][2]` (true iff a 3rd char exists), so
+            // `-p-` sets noopt. The previous port had this inverted (required
+            // `-p--`, rejected `-p-`), breaking the `_comp_correct` path which
+            // emits `-p-`/`-P-`. Bug #657.
             let noopt = a0.len() > 2;
-            if noopt && (a0.len() != 4 || a0[2] != b'-' || a0[3] != b'-') {
+            if a0.len() > 2 && (a0[2] != b'-' || a0.len() > 3) {
                 zwarnnam(nam, &format!("invalid option: {}", args[0]));
                 return 1;
             }
