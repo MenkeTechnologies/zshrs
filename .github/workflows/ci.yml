@@ -491,6 +491,13 @@ jobs:
         run: ./target/debug/parity-fuzz --mode whence --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/whence.txt --out target/parity-fuzz/ci-whence.txt
       - name: Fuzz — zstyle
         run: ./target/debug/parity-fuzz --mode zstyle --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zstyle.txt --out target/parity-fuzz/ci-zstyle.txt
+      # atflag covers the `(@)` word-flag (nojoin=2) and `(A)` array-force
+      # (arrasg) composed with subscripts, outer length/join/sort operators,
+      # and nested expansions across scalar / array / assoc value sources —
+      # the array-vs-scalar SHAPE rules (isarr / LF_ARRAY, c:subst.c:2915,
+      # 3881, 4235). One known-gap class baselined (empty-array slice length).
+      - name: Fuzz — atflag
+        run: ./target/debug/parity-fuzz --mode atflag --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/atflag.txt --out target/parity-fuzz/ci-atflag.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking

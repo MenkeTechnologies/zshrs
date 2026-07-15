@@ -8904,8 +8904,39 @@ pub fn paramsubst(
                     })
                     .unwrap_or_else(|| raw_value.clone());
             }
-            // c:2922 — getarrvalue sets isarr=1; nojoin=2 keeps it.
-            if arrays_contains(&var_name) || assoc_contains(&var_name) {
+            // c:Src/params.c:2915-2926 getindex — `isarr` reflects the
+            // SHAPE of what the subscript picked, NOT merely "the var is an
+            // array". A SINGLE-index subscript (`[N]`, `[-N]`, `[key]`,
+            // `[(r)pat]`) reduces to one scalar element → isarr=0, so the
+            // downstream sort/unique (c:4245) and splat (c:3950) blocks
+            // (both gated on `isarr != 0`) SKIP. Only a bare whole-array
+            // read, an `[@]`/`[*]` splat, or a `[lo,hi]` slice keeps array
+            // shape. Without this, `${(@o)a[1]}` sorted+splatted the whole
+            // array instead of yielding element 1; `${(@)a[2]}` leaned on
+            // the splat-block value fallback but the sort variant escaped.
+            let single_index_sub = subscript.as_deref().map_or(false, |s| {
+                if matches!(s, "@" | "*") {
+                    return false;
+                }
+                // Depth-aware: a comma at paren/bracket depth 0 marks a
+                // `[lo,hi]` slice (keeps array shape); a comma inside `(...)`
+                // (arith operator, per-bound search flag) does not.
+                let mut depth = 0i32;
+                for c in s.chars() {
+                    match c {
+                        '(' | '\u{88}' | '[' | '\u{8e}' => depth += 1,
+                        ')' | '\u{8a}' | ']' | '\u{8f}' => {
+                            if depth > 0 {
+                                depth -= 1;
+                            }
+                        }
+                        ',' if depth == 0 => return false,
+                        _ => {}
+                    }
+                }
+                true
+            });
+            if (arrays_contains(&var_name) || assoc_contains(&var_name)) && !single_index_sub {
                 isarr = 1;
             }
             // c:Src/params.c fetchvalue — under KSHARRAYS a BARE array
@@ -9154,10 +9185,14 @@ pub fn paramsubst(
         // splats the assoc's VALUES one per result_node. Seed
         // split_parts here so the auto-splat block at c:4245 emits
         // each value separately. Bug #287 in docs/BUGS.md. Gated on
-        // nojoin == 2 (the (@) flag) AND no subscript (the bare
-        // assoc-name form). Mirrors the magic_assoc_array seed above
-        // but covers user-defined assocs (not just magic ones).
-        if nojoin == 2 && subscript.is_none() && magic_assoc_array.is_none() {
+        // nojoin == 2 (the (@) flag) AND the bare assoc-name form OR an
+        // `[@]`/`[*]` splat subscript — `${(@)h[@]}` is the same values
+        // splat as `${(@)h}` (the `[@]` IS the splat the `(@)` requests),
+        // so it must seed the value list too; without this it fell to the
+        // splat block's scalar fallback and joined the values into one
+        // element. Mirrors the magic_assoc_array seed above but covers
+        // user-defined assocs (not just magic ones).
+        if nojoin == 2 && (subscript.is_none() || is_at_splat_sub) && magic_assoc_array.is_none() {
             if let Some(map) = assoc_get(&var_name) {
                 let values: Vec<String> = map.values().cloned().collect();
                 if !values.is_empty() {
@@ -15069,6 +15104,26 @@ pub fn paramsubst(
             split_parts = Some(vec![value.clone()]);
             isarr = 0;
         }
+        // c:Src/subst.c:4235 — `if (arrasg && !isarr) { l->list.flags |=
+        // LF_ARRAY; aval = hmkarray(val); isarr = 1; }`. The `(A)` flag
+        // (arrasg) forces a SCALAR result into a one-element array. This
+        // runs AFTER all the value/subscript/flag processing, so it turns
+        // `${(A@)s}` (s="hi") into a 1-element array → `${#…}` counts 1
+        // ELEMENT, not 2 chars. Without it, the `(A)` flag was a no-op on
+        // scalars and the length counted characters.
+        if arrasg != 0 && isarr == 0 {
+            // hmkarray(val) (utils.c:4094) builds a 1-element array from a
+            // non-NULL val, but an EMPTY/unset scalar reaches here as C's
+            // NULL val → hmkarray(NULL) → a ZERO-element array. So
+            // `${#${(A@)s}}` is 0 for an empty s (empty array) and 1 for a
+            // set non-empty s. Mirror that: empty value → empty array.
+            split_parts = Some(if value.is_empty() {
+                Vec::new()
+            } else {
+                vec![value.clone()]
+            });
+            isarr = 1;
+        }
         let auto_splat = !wantt
             && (isarr != 0                  // c:4245
             || force_splat_from_eq                           // c:2566
@@ -15146,7 +15201,7 @@ pub fn paramsubst(
                         )
                     })
                 };
-                if let Some((lo, hi)) = top_comma {
+                if let Some((lo, hi)) = top_comma.filter(|_| arrays_get(&var_name).is_some()) {
                     // c:Src/params.c::getarg — bounds route through
                     // singsub then mathevali, so variable / arithmetic
                     // bounds resolve (`${(@)b[1,R]}`, `${(@)b[1,-1*R-1]}`).
@@ -15219,9 +15274,19 @@ pub fn paramsubst(
                         (lo, hi)
                     };
                     getarrvalue(&arr_clone, lo, hi) // c:3950
-                } else if let Some(arr) = arrays_get(&var_name) {
-                    arr.clone() // c:3950 (@ / *)
+                } else if is_at_splat_sub {
+                    // c:3950 — only `[@]`/`[*]` splat the whole array here.
+                    arrays_get(&var_name).unwrap_or_else(|| vec![value.clone()])
                 } else {
+                    // c:Src/params.c:2926 getarrvalue — a SINGLE-index
+                    // subscript (`[N]`, `[(r)pat]`, negative index) already
+                    // resolved to the picked element in `value`/raw_value.
+                    // The `(@)` flag (nojoin=2) forces this splat block to
+                    // run, but it must NOT re-splat the whole array — C
+                    // applies the index in getvalue BEFORE nojoin affects
+                    // joining, so `${(@)a[2]}` is the single element `b`,
+                    // not the array. Was falling through to the array
+                    // fallback below and emitting every element.
                     vec![value.clone()]
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
@@ -15344,7 +15409,16 @@ pub fn paramsubst(
             // `(@f)` stays scalar when the split yields one field —
             // `"${${(@f)$(echo hello)}[1]}"` is `h`, not `hello`.
             let forced_split_to_one = (spsep.is_some() || force_split) && parts.len() == 1;
-            PARAMSUBST_LF_ARRAY.with(|c| c.set(!forced_split_to_one));
+            // c:Src/subst.c:3881 `if (isarr) l->list.flags |= LF_ARRAY; else … &= ~LF_ARRAY;`
+            // LF_ARRAY tracks `isarr`, NOT `nojoin`. The `(@)` word-flag sets
+            // nojoin=2 (force-no-join) but does NOT make a SCALAR array-shaped:
+            // C c:2915 derives isarr from `v->scanflags` (subscript-driven), which
+            // is 0 for a bare `${(@)scalar}`. So `${#${(@)s}}` counts CHARACTERS
+            // (isarr=0 → scalar), while `${#${(@)arr}}` counts ELEMENTS (isarr≠0).
+            // A genuine 1-element array keeps isarr≠0 here (c:3903 stays array even
+            // at length 1); only a forced (s)/(f) split that collapses to one field
+            // clears it (c:3924). Gating on `isarr != 0` reproduces both.
+            PARAMSUBST_LF_ARRAY.with(|c| c.set(isarr != 0 && !forced_split_to_one));
 
             let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
             for (i, part) in parts.iter().enumerate() {

@@ -1,0 +1,21 @@
+# parity-fuzz --mode atflag baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode atflag --count N --verify 3  (copy NEW-signature lines).
+#
+# The one remaining known gap class: a RANGE (`[lo,hi]`) or search
+# (`[(R)pat]`) subscript on an EMPTY indexed array, observed through a
+# length count. zsh's getarrvalue yields a single EMPTY element for an
+# out-of-range slice of an empty array, so `${#${(@)a[1,2]}}` is 1 (one
+# empty element) for `a=()`, where the port returns 0. Only visible via
+# `${#…}`; the bare splat prints identically (one empty word). Left as a
+# known gap — the underlying quirk is a zsh getarrvalue empty-slice edge.
+a=(); print -rl -- "${#${(@)${(@)a[(R)*]}}}"
+a=(); print -rl -- "${#${(@)${(@)a[N,N]}}}"
+a=(); print -rl -- "${#${(@)${(@o)a[N,N]}}}"
+a=(); print -rl -- "${#${(@)${(o@)a[N,N]}}}"
+a=(); print -rl -- "${#${(@)a[(R)*]}}"
+a=(); print -rl -- "${#${(@)a[N,N]}}"
+a=(); print -rl -- "${#${(@o)a[(R)*]}}"
+a=(); print -rl -- "${#${(@o)a[N,N]}}"
+a=(); print -rl -- "${#${(o@)a[(R)*]}}"
+a=(); print -rl -- "${#${(o@)a[N,N]}}"
