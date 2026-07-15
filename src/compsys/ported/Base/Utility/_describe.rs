@@ -1,34 +1,50 @@
 //! Port of `_describe` from `Completion/Base/Utility/_describe`.
 //!
-//! Full upstream body (140 lines, abridged):
+//! Faithful translation of the zsh shell function. Unlike the earlier
+//! reimplementation (which hand-built display lines and invented a
+//! `_describe_disp` array), this drives the C builtin `compdescribe`
+//! exactly as the shell source does: `compdescribe -i`/`-I` initialises
+//! the parsed state, then a `while compdescribe -g ...` loop pulls each
+//! group's compadd-options/matches/displays out into named params which
+//! are fed straight to `compadd`.
+//!
 //! ```text
 //! sh:  1  #autoload
-//! sh: 19  while getopts "oOt:12JVx" _opt; do …
+//! sh: 19  while getopts "oOt:12JVx" _opt; do …           (flag parse)
+//! sh: 30  shift $(( OPTIND - 1 ))
 //! sh: 38  [[ "$_type$_noprefix" = options && ! -prefix [-+]* ]] &&
 //! sh: 39      zstyle -T … options prefix-needed && return 1
 //! sh: 42  zstyle -T … verbose && _showd=yes
 //! sh: 46  zstyle -s … list-separator _sep || _sep=--
-//! sh: 49  _descr="$1"; shift
-//! sh: 58  _tags "$_type"
-//! sh: 59  while _tags; do
-//! sh: 60    while _next_label $_jvx12 "$_type" _expl "$_descr"; do
-//! sh: 65      … iterate value:description arrays, build display lines …
-//! sh:130      compadd "$_jvx12[@]" "$_expl[@]" -d … "$@" - "$_new[@]"
-//! sh:135    done
-//! sh:136    [[ $_ret -eq 0 ]] && return 0
-//! sh:137  done
-//! sh:140  return _ret
+//! sh: 47  zstyle -s … max-matches-width _mlen || _mlen=$((COLUMNS/2))
+//! sh: 51  _descr="$1"; shift
+//! sh: 53  if _showd && zstyle -T … list-grouped; then _oargv=("$@"); _grp=(-g)
+//! sh: 61  [[ options ]] && zstyle -t … prefix-hidden && _hide=${(M)PREFIX##(--|[-+])}
+//! sh: 64  _tags "$_type"
+//! sh: 65  while _tags; do
+//! sh: 66    while _next_label $_jvx12 "$_type" _expl "$_descr"; do
+//! sh: 68      if (( $#_grp )); then … grouped -D/-O pre-pass … fi
+//! sh: 118     if _showd; compdescribe -I "$_hide" "$_mlen" "$_sep " _expl "$_grp[@]" "$@"
+//! sh: 120     else       compdescribe -i "$_hide" "$_mlen" "$@"
+//! sh: 122     compstate[list]="$csl"
+//! sh: 124     while compdescribe -g csl2 _args _tmpm _tmpd; do
+//! sh: 126       compstate[list]="$csl $csl2"
+//! sh: 127       [[ -n "$csl2" ]] && compstate[list]="${compstate[list]:s/rows//}"
+//! sh: 128       compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0
+//! sh: 129     done
+//! sh: 130   done
+//! sh: 131   (( _ret )) || return 0
+//! sh: 132 done
+//! sh: 134 return 1
 //! ```
-//!
-//! Heavy display-line construction is approximated: we read each
-//! named array (1st extra arg), build the strings list, and call
-//! `compadd` with the description-list flag set.
 
 use crate::compsys::ported::_next_label::_next_label;
 use crate::compsys::ported::_tags::_tags;
-use crate::ported::modules::zutil::{lookupstyle, testforstyle};
-use crate::ported::params::{getaparam, getiparam, getsparam, setaparam};
+use crate::ported::modules::zutil::lookupstyle;
+use crate::ported::params::{getaparam, getiparam, getsparam, setaparam, unsetparam};
+use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 use crate::ported::zle::complete::bin_compadd;
+use crate::ported::zle::computil::bin_compdescribe;
 use crate::ported::zsh_h::{options, MAX_OPS};
 
 fn make_ops() -> options {
@@ -40,165 +56,360 @@ fn make_ops() -> options {
     }
 }
 
-/// `_describe` — emit a labeled list of `value:description` pairs.
-/// Flags: `-o` options-mode, `-O` options no-prefix, `-t TAG`,
-/// `-1/-2/-J/-V/-x` forwarded to `_next_label`.
-pub fn _describe(args: &[String]) -> i32 {
-    let mut typ = "values".to_string();
-    let mut noprefix = false;
-    let mut jvx12: Vec<String> = Vec::new();
-    let mut idx = 0usize;
+/// zsh boolean-style truthiness: first value ∈ {true,yes,on,1}.
+fn style_is_true(vals: &[String]) -> bool {
+    matches!(
+        vals.first().map(String::as_str),
+        Some("true") | Some("yes") | Some("on") | Some("1")
+    )
+}
 
-    // sh:19-35  flag parse
+/// `zstyle -T ctx style` — true when the style is unset, or set to a
+/// true value (default-true).
+fn zstyle_t_default_true(ctx: &str, style: &str) -> bool {
+    let v = lookupstyle(ctx, style);
+    if v.is_empty() {
+        true
+    } else {
+        style_is_true(&v)
+    }
+}
+
+/// `zstyle -t ctx style` — true only when the style is set to a true
+/// value (default-false).
+fn zstyle_t_default_false(ctx: &str, style: &str) -> bool {
+    let v = lookupstyle(ctx, style);
+    !v.is_empty() && style_is_true(&v)
+}
+
+/// `zstyle -s ctx style var` — return the first value, or `None`.
+fn zstyle_s(ctx: &str, style: &str) -> Option<String> {
+    lookupstyle(ctx, style).into_iter().next()
+}
+
+/// Extract the value ("match") half of a `value:description` entry and
+/// unescape it — the Rust equivalent of the zsh expansion
+/// `${(@)${(@M)${(@P)ARR}##([^:\\]|\\?)##}//\\(#b)(?)/$match[1]}`:
+/// take the leading run of unescaped chars up to the first unescaped
+/// `:`, treating `\X` as the single char `X`.
+fn extract_match_parts(arr: &[String]) -> Vec<String> {
+    arr.iter()
+        .map(|e| {
+            let b = e.as_bytes();
+            let mut out = Vec::<u8>::with_capacity(b.len());
+            let mut i = 0usize;
+            while i < b.len() {
+                if b[i] == b'\\' && i + 1 < b.len() {
+                    out.push(b[i + 1]); // \X -> X
+                    i += 2;
+                } else if b[i] == b':' {
+                    break;
+                } else {
+                    out.push(b[i]);
+                    i += 1;
+                }
+            }
+            String::from_utf8(out).unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Resolve one grouped-pre-pass argument to array values: either a
+/// literal `(a b c)` list or the contents of the named array param.
+/// Literal splitting is a simplified approximation of zsh word-
+/// splitting (whitespace only, no quote handling) — grouped `_describe`
+/// callers pass array *names* in practice, not inline literals.
+fn resolve_array_arg(arg: &str) -> Vec<String> {
+    if arg.starts_with('(') && arg.ends_with(')') && arg.len() >= 2 {
+        arg[1..arg.len() - 1]
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    } else {
+        getaparam(arg).unwrap_or_default()
+    }
+}
+
+/// `_describe` — add options or values with descriptions as matches.
+/// Flags: `-o` options-mode, `-O` options-mode with no prefix test,
+/// `-t TAG`, `-1/-2/-J/-V/-x` forwarded to `_next_label`.
+///
+/// Signature preserved for callers (`_arguments`, `_alternative`).
+pub fn _describe(args: &[String]) -> i32 {
+    // sh:5-16 — locals.
+    let mut _type = "values".to_string();
+    let mut _noprefix = false;
+    let mut _ret: i32 = 1;
+    let mut _hide = String::new();
+    let mut _jvx12: Vec<String> = Vec::new();
+
+    // sh:19-30 — getopts "oOt:12JVx".  Single-token parse (getopts flag
+    // clustering like `-12` is not reproduced — `_describe` callers pass
+    // each flag separately in practice).
+    let mut idx = 0usize;
     while idx < args.len() {
-        let a = &args[idx];
-        match a.as_str() {
+        match args[idx].as_str() {
             "-o" => {
-                typ = "options".to_string();
+                _type = "options".to_string(); // sh:22
                 idx += 1;
             }
             "-O" => {
-                typ = "options".to_string();
-                noprefix = true;
+                _type = "options".to_string(); // sh:24
+                _noprefix = true; // sh:25
                 idx += 1;
             }
             "-t" if idx + 1 < args.len() => {
-                typ = args[idx + 1].clone();
+                _type = args[idx + 1].clone(); // sh:27
                 idx += 2;
             }
             "-1" | "-2" | "-J" | "-V" | "-x" => {
-                jvx12.push(a.clone());
+                _jvx12.push(args[idx].clone()); // sh:28-29
                 idx += 1;
             }
             _ => break,
         }
     }
 
-    // sh:38-39  options + prefix-needed
-    let prefix = getsparam("PREFIX").unwrap_or_default();
     let curcontext = getsparam("curcontext").unwrap_or_default();
-    if typ == "options"
-        && !noprefix
-        && !prefix.starts_with('-')
-        && !prefix.starts_with('+')
-        && testforstyle(
-            &format!(":completion:{}:options", curcontext),
-            "prefix-needed",
-        ) == 0
-    {
-        return 1;
+
+    // sh:38-39 — options + prefix not [-+]* + prefix-needed (default-true)
+    // ⇒ bail.  `! -prefix [-+]*` is true when PREFIX does not start with
+    // `-` or `+`.
+    if _type == "options" && !_noprefix {
+        let prefix = getsparam("PREFIX").unwrap_or_default();
+        let is_dashplus = prefix.starts_with('-') || prefix.starts_with('+');
+        if !is_dashplus
+            && zstyle_t_default_true(&format!(":completion:{}:options", curcontext), "prefix-needed")
+        {
+            return 1;
+        }
     }
 
-    // sh:49
+    let style_ctx = format!(":completion:{}:{}", curcontext, _type);
+
+    // sh:42 — verbose (default-true) ⇒ show descriptions.
+    let _showd = zstyle_t_default_true(&style_ctx, "verbose");
+
+    // sh:46 — list-separator, default "--".
+    let _sep = zstyle_s(&style_ctx, "list-separator").unwrap_or_else(|| "--".to_string());
+
+    // sh:47-48 — max-matches-width, default COLUMNS/2.
+    let _mlen: String = zstyle_s(&style_ctx, "max-matches-width").unwrap_or_else(|| {
+        let cols = getiparam("COLUMNS");
+        (if cols > 0 { cols / 2 } else { 0 }).to_string()
+    });
+
+    // sh:51 — _descr="$1"; shift.
     if idx >= args.len() {
         return 1;
     }
-    let descr = args[idx].clone();
+    let _descr = args[idx].clone();
     idx += 1;
 
-    // sh:42-48  per-tag styles: verbose, list-separator, max-matches-width
-    let curcontext = getsparam("curcontext").unwrap_or_default();
-    let style_ctx = format!(":completion:{}:{}", curcontext, typ);
-    let showd_default_on = lookupstyle(&style_ctx, "verbose")
-        .first()
-        .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
-        .unwrap_or(true);
-    let sep = lookupstyle(&style_ctx, "list-separator")
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "--".to_string());
-    let max_width: usize = lookupstyle(&style_ctx, "max-matches-width")
-        .first()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| {
-            // Default: COLUMNS/2 per sh:48
-            let cols = getiparam("COLUMNS");
-            if cols > 0 {
-                (cols as usize) / 2
-            } else {
-                40
-            }
-        });
-    let list_grouped = lookupstyle(&style_ctx, "list-grouped")
-        .first()
-        .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
-        .unwrap_or(true);
+    // The remaining args (value-array names, optional match arrays,
+    // `--`-separated per-set opts) — the shell's `"$@"`.
+    let positional: Vec<String> = args[idx..].to_vec();
 
-    // sh:58
-    let _ = _tags(&[typ.clone()]);
+    // sh:53-58 — list-grouped (default-true) under verbose ⇒ pre-pass.
+    let grouped = _showd && zstyle_t_default_true(&style_ctx, "list-grouped");
+    let _oargv: Vec<String> = if grouped {
+        positional.clone()
+    } else {
+        Vec::new()
+    };
 
-    let arrays: Vec<String> = args[idx..].to_vec();
-    let mut ret: i32 = 1;
+    // sh:61-63 — options + prefix-hidden (default-false) ⇒ strip the
+    // leading `--`/`-`/`+` of PREFIX into _hide (= ${(M)PREFIX##(--|[-+])}).
+    if _type == "options"
+        && zstyle_t_default_false(&format!(":completion:{}:options", curcontext), "prefix-hidden")
+    {
+        let prefix = getsparam("PREFIX").unwrap_or_default();
+        _hide = if prefix.starts_with("--") {
+            "--".to_string()
+        } else if prefix.starts_with('-') {
+            "-".to_string()
+        } else if prefix.starts_with('+') {
+            "+".to_string()
+        } else {
+            String::new()
+        };
+    }
 
-    // sh:59
-    loop {
-        if _tags(&[]) != 0 {
-            break;
-        }
-        // sh:60
+    // sh:64 — request the tag.
+    let _ = _tags(&[_type.clone()]);
+
+    let csl = get_compstate_str("list").unwrap_or_default();
+    let mut _try = 0i32;
+
+    // sh:65 — while _tags; do
+    while _tags(&[]) == 0 {
+        // sh:66 — while _next_label $_jvx12 "$_type" _expl "$_descr"; do
         loop {
-            let mut nl_args = jvx12.clone();
-            nl_args.push(typ.clone());
+            let mut nl_args = _jvx12.clone();
+            nl_args.push(_type.clone());
             nl_args.push("_expl".to_string());
-            nl_args.push(descr.clone());
+            nl_args.push(_descr.clone());
             if _next_label(&nl_args) != 0 {
                 break;
             }
 
-            // For each named array, read it and emit values + descs.
-            //   sh:65-130 — when list-grouped is set AND we have a
-            //   description column, build per-value display lines
-            //   aligned to `max-matches-width` and joined by `sep`.
-            for arr_name in &arrays {
-                let arr = getaparam(arr_name).unwrap_or_default();
-                // Width for value column when grouping
-                let val_width = if list_grouped && showd_default_on {
-                    arr.iter()
-                        .map(|e| e.splitn(2, ':').next().unwrap_or("").len())
-                        .max()
-                        .unwrap_or(0)
-                        .min(max_width)
-                } else {
-                    0
-                };
-                let (strs, disp): (Vec<String>, Vec<String>) = arr
-                    .iter()
-                    .map(|entry| {
-                        let mut parts = entry.splitn(2, ':');
-                        let v = parts.next().unwrap_or("").to_string();
-                        let d = parts.next().unwrap_or("").to_string();
-                        let display = if d.is_empty() {
-                            v.clone()
-                        } else if list_grouped && val_width > 0 {
-                            format!("{:>w$} {} {}", v, sep, d, w = val_width)
+            // Transient `_a_<try><i>` params created by the grouped
+            // pre-pass — unset at the end of this iteration.
+            let mut a_names: Vec<String> = Vec::new();
+
+            // The argv handed to compdescribe: `$@`.  In grouped mode it
+            // is rebuilt from _oargv each iteration; otherwise it is the
+            // untouched positional list.
+            let cd_argv: Vec<String> = if grouped {
+                // sh:68-116 — grouped -D/-O pre-pass.  Walk _oargv,
+                // stashing each value array (and optional match array)
+                // into a fresh `_a_<try><i>` param, doing a dry-run
+                // `compadd -D _strs [-O _mats]` to filter to the matches
+                // that actually apply, then rebuild argv from the stash.
+                _try += 1; // sh:73
+                let _expl_vals = getaparam("_expl").unwrap_or_default();
+                let mut _argv: Vec<String> = Vec::with_capacity(_oargv.len());
+                let mut _i = 1i32; // 1-based, mirrors the shell
+                let mut p = 0usize;
+                while p < _oargv.len() {
+                    // sh:76-84 — value array → _a_<try><i>.
+                    let _strs = format!("_a_{}{}", _try, _i);
+                    let vals = resolve_array_arg(&_oargv[p]);
+                    setaparam(&_strs, vals.clone());
+                    a_names.push(_strs.clone());
+                    _argv.push(_strs.clone());
+                    p += 1;
+                    _i += 1;
+
+                    // sh:86-97 — optional match array (only if next arg
+                    // is non-empty and not an option).
+                    let (mats_name, mats_vals): (Option<String>, Vec<String>) =
+                        if p >= _oargv.len() || _oargv[p].is_empty() || _oargv[p].starts_with('-') {
+                            (None, Vec::new())
                         } else {
-                            format!("{} -- {}", v, d)
+                            let mn = format!("_a_{}{}", _try, _i);
+                            let mv = resolve_array_arg(&_oargv[p]);
+                            setaparam(&mn, mv.clone());
+                            a_names.push(mn.clone());
+                            _argv.push(mn.clone());
+                            p += 1;
+                            _i += 1;
+                            (Some(mn), mv)
                         };
-                        (v, display)
-                    })
-                    .unzip();
-                if strs.is_empty() {
-                    continue;
+
+                    // sh:99-104 — gather per-set opts up to `--`.
+                    let mut _opts: Vec<String> = Vec::new();
+                    while p < _oargv.len() && _oargv[p] != "--" {
+                        _opts.push(_oargv[p].clone());
+                        _argv.push(_oargv[p].clone());
+                        p += 1;
+                        _i += 1;
+                    }
+                    if p < _oargv.len() && _oargv[p] == "--" {
+                        _argv.push("--".to_string()); // sh:106 leave `--` in place
+                        p += 1;
+                        _i += 1;
+                    }
+
+                    // sh:108-115 — dry-run compadd that filters _strs
+                    // (and records into _mats) against the current word.
+                    let mut cadd: Vec<String> = _opts;
+                    cadd.push("-2".to_string());
+                    cadd.push("-o".to_string());
+                    cadd.push("nosort".to_string());
+                    cadd.extend(_expl_vals.clone());
+                    cadd.push("-D".to_string());
+                    cadd.push(_strs.clone());
+                    if let Some(mn) = &mats_name {
+                        cadd.push("-O".to_string());
+                        cadd.push(mn.clone());
+                    }
+                    cadd.push("-".to_string());
+                    let words = if mats_name.is_some() {
+                        extract_match_parts(&mats_vals)
+                    } else {
+                        extract_match_parts(&vals)
+                    };
+                    cadd.extend(words);
+                    bin_compadd("compadd", &cadd, &make_ops(), 0);
                 }
-                setaparam("_describe_disp", disp);
-                let expl = getaparam("_expl").unwrap_or_default();
-                let mut compadd_argv: Vec<String> = jvx12.clone();
-                compadd_argv.extend(expl);
-                compadd_argv.push("-d".to_string());
-                compadd_argv.push("_describe_disp".to_string());
-                compadd_argv.push("-".to_string());
-                compadd_argv.extend(strs);
-                if bin_compadd("compadd", &compadd_argv, &make_ops(), 0) == 0 {
-                    ret = 0;
+                _argv // sh:117 set - "$_argv[@]"
+            } else {
+                positional.clone()
+            };
+
+            // sh:118-121 — init parsed state.
+            if _showd {
+                // compdescribe -I "$_hide" "$_mlen" "$_sep " _expl "$_grp[@]" "$@"
+                let mut cd: Vec<String> = vec![
+                    "-I".to_string(),
+                    _hide.clone(),
+                    _mlen.clone(),
+                    format!("{} ", _sep),
+                    "_expl".to_string(),
+                ];
+                if grouped {
+                    cd.push("-g".to_string());
+                }
+                cd.extend(cd_argv.clone());
+                bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
+            } else {
+                // compdescribe -i "$_hide" "$_mlen" "$@"
+                let mut cd: Vec<String> =
+                    vec!["-i".to_string(), _hide.clone(), _mlen.clone()];
+                cd.extend(cd_argv.clone());
+                bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
+            }
+
+            // sh:122 — compstate[list]="$csl".
+            set_compstate_str("list", &csl);
+
+            // sh:124-129 — pull each group out and add it.
+            loop {
+                let g_argv = [
+                    "-g".to_string(),
+                    "csl2".to_string(),
+                    "_args".to_string(),
+                    "_tmpm".to_string(),
+                    "_tmpd".to_string(),
+                ];
+                if bin_compdescribe("compdescribe", &g_argv, &make_ops(), 0) != 0 {
+                    break;
+                }
+
+                // sh:126-127 — compstate[list]="$csl $csl2"; drop "rows".
+                let csl2 = getsparam("csl2").unwrap_or_default();
+                let mut list_val = format!("{} {}", csl, csl2);
+                if !csl2.is_empty() {
+                    list_val = list_val.replacen("rows", "", 1);
+                }
+                set_compstate_str("list", &list_val);
+
+                // sh:128 — compadd "$_args[@]" -d _tmpd -a _tmpm && _ret=0.
+                let mut cadd: Vec<String> = getaparam("_args").unwrap_or_default();
+                cadd.push("-d".to_string());
+                cadd.push("_tmpd".to_string());
+                cadd.push("-a".to_string());
+                cadd.push("_tmpm".to_string());
+                if bin_compadd("compadd", &cadd, &make_ops(), 0) == 0 {
+                    _ret = 0;
                 }
             }
+
+            // Clean up transient grouped-pre-pass params.
+            for n in &a_names {
+                unsetparam(n);
+            }
         }
-        if ret == 0 {
+
+        // sh:131 — (( _ret )) || return 0.
+        if _ret == 0 {
             return 0;
         }
     }
 
-    ret
+    // sh:134 — return 1.
+    1
 }
 
 #[cfg(test)]
@@ -208,12 +419,15 @@ mod tests {
     #[test]
     fn returns_one_for_empty_args() {
         let _g = crate::test_util::global_state_lock();
+        // No `_descr` arg ⇒ sh:51 early return 1.
         assert_eq!(_describe(&[]), 1);
     }
 
     #[test]
     fn returns_one_with_no_tag_setup() {
         let _g = crate::test_util::global_state_lock();
+        // `_tags` reports no requested tag ⇒ the outer while never runs
+        // and _ret stays 1 (sh:65/sh:134).
         assert_eq!(
             _describe(&[
                 "-t".to_string(),
@@ -222,6 +436,38 @@ mod tests {
                 "myarr".to_string(),
             ]),
             1
+        );
+    }
+
+    #[test]
+    fn extract_match_parts_splits_on_unescaped_colon_and_unescapes() {
+        // value:description ⇒ value; `\:` is an escaped colon inside the
+        // value; `\\` collapses to `\`.
+        assert_eq!(
+            extract_match_parts(&[
+                "foo:the foo".to_string(),
+                "a\\:b:desc".to_string(),
+                "plain".to_string(),
+            ]),
+            vec!["foo".to_string(), "a:b".to_string(), "plain".to_string()]
+        );
+    }
+
+    #[test]
+    fn style_truthiness_matches_zstyle_semantics() {
+        // -T (default true): unset ⇒ true; explicit false-ish ⇒ false.
+        assert!(style_is_true(&["yes".to_string()]));
+        assert!(style_is_true(&["1".to_string()]));
+        assert!(!style_is_true(&["no".to_string()]));
+        assert!(!style_is_true(&[]));
+    }
+
+    #[test]
+    fn resolve_array_arg_parses_inline_literal() {
+        let _g = crate::test_util::global_state_lock();
+        assert_eq!(
+            resolve_array_arg("(a b c)"),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
     }
 }
