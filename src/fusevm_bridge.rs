@@ -8177,19 +8177,24 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if !errexit_on {
             return Value::Int(0);
         }
-        // c:Src/exec.c — `set -e` fires shell exit, NOT a function-only
-        // unwind. When LOCAL_OPTIONS restores the option mid-fn, the
-        // restoration would otherwise mask the trigger and let the
-        // outer scope continue. Setting EXIT_PENDING + EXIT_VAL here
-        // (for ALL scope kinds, not just subshells) makes the fn-exit
-        // path propagate to the shell-exit boundary at c:6135-6155.
+        // c:Src/exec.c:1611-1618 — under ERR_EXIT a failing command exits the
+        // whole shell via realexit() FROM THE POINT OF FAILURE, before any
+        // enclosing `always` arm can run. zsh 5.9.2 (the reference) has no
+        // `this_noerrexit` deferral, so at top-level / function scope the
+        // faithful behavior is to process-exit here (zexit fires the SIGEXIT
+        // trap and exits). This bypasses the always arm, fixing
+        // `setopt errexit; { false } always { print A }` which wrongly ran the
+        // always body: the deferred EXIT_PENDING routed the unwind through
+        // always_entry (compile_zsh.rs re-points it there) and
+        // SET_TRY_BLOCK_ERROR then cleared the pending exit so the body ran.
+        if crate::ported::builtin::SUBSHELL_DEPTH.load(Ordering::Relaxed) == 0 {
+            crate::ported::builtin::zexit(last, crate::ported::zsh_h::ZEXIT_NORMAL); // c:1618 realexit
+        }
+        // Subshell: zshrs runs subshells in-process, so it cannot process-exit
+        // the whole shell here — defer to the subshell-end unwind.
         crate::ported::builtin::EXIT_VAL.store(last, Ordering::Relaxed);
         crate::ported::builtin::EXIT_PENDING.store(1, Ordering::Relaxed);
         let _ = in_subshell;
-        // Function scope and top-level scope both branch to their
-        // respective return_patches; top-level lands at chunk-end,
-        // so execute_script returns `last` as the script's exit
-        // status (same observable behavior as a process::exit).
         Value::Int(1)
     });
 
