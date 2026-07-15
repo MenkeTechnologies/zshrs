@@ -76,6 +76,9 @@ pub fn _normal(args: &[String]) -> i32 {
     );
     let opts_flat = getaparam("opts_flat").unwrap_or_default();
     let precommand = getaparam("precommand").unwrap_or_default();
+    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
+    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    crate::ported::params::unsetparam(src);
     let saw_s = opts_flat.contains(&"-s".to_string());
     let saw_p_cap = opts_flat.contains(&"-P".to_string());
 

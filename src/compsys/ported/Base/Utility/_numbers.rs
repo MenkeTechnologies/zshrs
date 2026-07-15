@@ -85,6 +85,9 @@ pub fn _numbers(args: &[String]) -> i32 {
         0,
     );
     let argv = getaparam(src).unwrap_or_default();
+    // Tear down the `__compsys_argv` zparseopts-bridge scratch global (not a
+    // real zsh identifier; zsh operates on positional $argv). Bug #657.
+    crate::ported::params::unsetparam(src);
     let tags = getaparam("tags").unwrap_or_default();
     let units = getaparam("units").unwrap_or_default();
     let min = getaparam("min").unwrap_or_default();

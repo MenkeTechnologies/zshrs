@@ -1079,6 +1079,14 @@ pub struct watch_fd {
     pub fd: i32, // c:576
     /// 1 if func is called as a widget.
     pub widget: i32, // c:578
+    /// Monotonic id assigned at creation (not in C's struct).
+    /// A `zle -F` handler routinely closes its fd and re-arms a new
+    /// watcher; the OS reuses the just-freed fd number, so the new
+    /// watcher shares the old one's `fd`. The poll loop's dead-fd
+    /// cleanup keys on this id so it removes only the exact watcher
+    /// that fired, never a fresh one the handler installed on the
+    /// reused number (the zinit-turbo stall — see `raw_getbyte`).
+    pub gen: u64,
 }
 
 #[cfg(test)]
