@@ -3278,9 +3278,98 @@ impl ZshCompiler {
                 // are not. The DQ-wrap below untokenizes the value, so the
                 // runtime can't recover this — carry it via BUILTIN_MARK_GLOB_
                 // ELIGIBLE emitted just before SET_VAR.
-                let glob_eligible = s.contains('\u{87}')   // Star
-                    || s.contains('\u{97}')                 // Quest
-                    || s.contains('\u{91}'); // Inbrack
+                // A glob token counts only at TOP LEVEL. A Star/Quest/Inbrack
+                // INSIDE a `${…}` / `$(…)` expansion, a `$name[…]` subscript, or
+                // a `` `…` `` is not a value glob: `${A[1]}` / `$A[1]` carry an
+                // Inbrack for their SUBSCRIPT, `${x#*/}` a Star for its PATTERN,
+                // `$*` a Star for the PARAM — none glob the assigned value. zsh
+                // globs the value POST-expansion (Src/subst.c globlist → zglob's
+                // haswilds on the RESULT), so an expansion-interior token never
+                // counts. Skipping those interiors before testing matches zsh:
+                // `x=/tmp/*`, `x=[abc]`, `x=$p*` glob; `x=$p`, `x=${A[1]}`,
+                // `x=$A[1]`, `x=$*` do not.
+                let glob_eligible = {
+                    use crate::ported::zsh_h::{
+                        Inbrace, Inbrack, Inpar, Outbrace, Outbrack, Outpar, Qstring, Qtick, Quest,
+                        Star, Stringg, Tick,
+                    };
+                    let mut brace_depth = 0i32; // ${ … } / $( … ) nesting
+                    let mut sub_depth = 0i32; //   $name[ … ] subscript nesting
+                    let mut in_tick = false; //    ` … ` command substitution
+                    let mut param_ctx = false; //  scanning a `$…` reference
+                    let mut param_first = false; // next char is the param's 1st (e.g. `$*`)
+                    let mut prev = '\0';
+                    let mut found = false;
+                    for c in s.chars() {
+                        if in_tick {
+                            if c == Tick || c == Qtick {
+                                in_tick = false;
+                            }
+                            prev = c;
+                            continue;
+                        }
+                        // `$` immediately followed by `{`/`(` opens an expansion.
+                        if (prev == Stringg || prev == Qstring) && (c == Inbrace || c == Inpar) {
+                            brace_depth += 1;
+                            param_ctx = false;
+                            param_first = false;
+                            prev = c;
+                            continue;
+                        }
+                        if brace_depth > 0 {
+                            if c == Inbrace || c == Inpar {
+                                brace_depth += 1;
+                            } else if c == Outbrace || c == Outpar {
+                                brace_depth -= 1;
+                            }
+                            prev = c;
+                            continue;
+                        }
+                        if sub_depth > 0 {
+                            if c == Inbrack {
+                                sub_depth += 1;
+                            } else if c == Outbrack {
+                                sub_depth -= 1;
+                            }
+                            prev = c;
+                            continue;
+                        }
+                        if c == Tick || c == Qtick {
+                            in_tick = true;
+                            param_ctx = false;
+                            prev = c;
+                            continue;
+                        }
+                        if c == Stringg || c == Qstring {
+                            param_ctx = true;
+                            param_first = true;
+                            prev = c;
+                            continue;
+                        }
+                        if param_ctx && param_first {
+                            // First char after `$` is always param content
+                            // (`$*`, `$@`, `$#`, `$1`, `$name`, …).
+                            param_first = false;
+                            prev = c;
+                            continue;
+                        }
+                        if param_ctx && c == Inbrack {
+                            sub_depth = 1; // `$name[ … ]` subscript
+                            prev = c;
+                            continue;
+                        }
+                        if param_ctx && (c.is_alphanumeric() || c == '_') {
+                            prev = c;
+                            continue; // still scanning the param name
+                        }
+                        param_ctx = false;
+                        if c == Star || c == Quest || c == Inbrack {
+                            found = true;
+                        }
+                        prev = c;
+                    }
+                    found
+                };
                 self.assign_context_depth += 1;
                 self.scalar_assign_depth += 1;
                 if needs_dq_wrap {

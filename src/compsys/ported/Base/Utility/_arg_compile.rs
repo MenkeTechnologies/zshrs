@@ -45,9 +45,13 @@ fn rewrite_follow(how: &str) -> String {
     s
 }
 
-/// sh:126 — POS is `<1->` (a positive integer) or `*`.
+/// sh:126 — POS is `<1->` (an integer ≥ 1) or `*`.
 fn is_position(s: &str) -> bool {
-    s == "*" || (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+    if s == "*" {
+        return true;
+    }
+    // `<1->` matches the numeric VALUE ≥ 1 (so "0" does not match).
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s.parse::<u64>().map_or(false, |n| n >= 1)
 }
 
 /// `_arg_compile` — compile arg-specs into the caller-named array.

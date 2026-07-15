@@ -413,7 +413,7 @@ mod tests {
         assert!(!builtin_defined(name));
         let _ = _shadow(&["-s".to_string(), "sfx".to_string(), name.to_string()]);
         let backup = current_backup_name(name).unwrap();
-        assert_eq!(body_of(&backup).as_deref(), Some(&format!("command {} \"$@\"", name)));
+        assert_eq!(body_of(&backup).as_deref(), Some(format!("command {} \"$@\"", name).as_str()));
         let stack = getaparam(STACK_PARAM).unwrap();
         assert!(stack.iter().any(|e| e == &format!("c@{}", name)));
         let _ = _unshadow();

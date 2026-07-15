@@ -58,7 +58,7 @@
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::modules::zutil::bin_zformat;
-use crate::ported::params::{getaparam, getsparam, sethparam, setaparam, setsparam};
+use crate::ported::params::{getaparam, getsparam, setaparam, setsparam};
 use crate::ported::zle::compcore::set_compstate_str;
 use crate::ported::zle::complete::bin_compadd;
 use crate::ported::zle::computil::bin_comptry;
@@ -78,6 +78,14 @@ fn make_ops() -> options {
         argsalloc: 0,
     }
 }
+
+// The four associative arrays are stored as flat `[k, v, k, v, …]`
+// plain arrays (`setaparam`/`getaparam` — the same interleaved layout
+// `_complete` uses for `$_comps`), because `getaparam` only reads
+// `PM_ARRAY` params: a `PM_HASHED` param (what `sethparam` builds)
+// reads back as `None`. The pairing is internal-only, so this is
+// behaviourally identical to the upstream `typeset -A` while staying
+// on the array-read path that actually round-trips.
 
 /// Flat-`(k,v)` associative lookup (`$assoc[$key]`).
 fn assoc_get(name: &str, key: &str) -> String {
@@ -107,7 +115,7 @@ fn assoc_set(name: &str, key: &str, val: &str) {
         flat.push(key.to_string());
         flat.push(val.to_string());
     }
-    let _ = sethparam(name, flat);
+    let _ = setaparam(name, flat);
 }
 
 /// `${(@ok)assoc}` — the keys of an associative array, sorted.
@@ -152,10 +160,7 @@ fn append_context_report(
         // sh:60 — zformat -a tmp '  (' "$tmp[@]"
         let aligned = zformat_align("  (", &tmp);
         // sh:61 — tmp=( $'\n    '${^tmp}')' )
-        let wrapped: Vec<String> = aligned
-            .iter()
-            .map(|e| format!("\n    {})", e))
-            .collect();
+        let wrapped: Vec<String> = aligned.iter().map(|e| format!("\n    {})", e)).collect();
         // sh:62 — text+="${tmp}"  (array joined by IFS space)
         text.push_str(&wrapped.join(" "));
     }
@@ -207,13 +212,8 @@ pub fn _complete_help(args: &[String]) -> i32 {
     //   help_funcs help_tags help_sfuncs help_styles. These are
     //   function-local upstream; emulate the dynamic scope with global
     //   params, cleared at entry so a re-invocation starts fresh.
-    for a in [
-        "help_funcs",
-        "help_tags",
-        "help_sfuncs",
-        "help_styles",
-    ] {
-        let _ = sethparam(a, Vec::new());
+    for a in ["help_funcs", "help_tags", "help_sfuncs", "help_styles"] {
+        let _ = setaparam(a, Vec::new());
     }
     // sh:10-11 — publish the scan/filter sets for `_help_sort_tags`.
     let _ = setsparam("_help_scan_funcstack", HELP_SCAN_FUNCSTACK);
@@ -343,10 +343,24 @@ pub fn _help_sort_tags(args: &[String]) -> i32 {
     0
 }
 
+/// `$funcstack` — the shell special is computed from the canonical
+/// `FUNCSTACK` Vec (a direct `getaparam` read misses it), innermost
+/// frame first, matching `Src/Modules/parameter.c`'s `funcstackgetfn`
+/// (mirrored in `subst.rs`). During a real completion the dispatched
+/// compsys functions run inside `doshfunc`, so `_help_sort_tags` and
+/// `_tags` are the top two frames — exactly what the `[3,…]` slice
+/// skips.
+fn read_funcstack() -> Vec<String> {
+    crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .map(|f| f.iter().rev().map(|fs| fs.name.clone()).collect())
+        .unwrap_or_default()
+}
+
 /// sh:84 — derive `$f`, the completion function responsible for the
 /// current tag registration, from `$funcstack`.
 fn derive_responsible_func() -> String {
-    let funcstack = getaparam("funcstack").unwrap_or_default();
+    let funcstack = read_funcstack();
     let len = funcstack.len();
 
     // `funcstack[3,(i)_($~_help_scan_funcstack)]`: 1-based slice from
@@ -367,7 +381,11 @@ fn derive_responsible_func() -> String {
     // 1-based [3, end] → rust [2, end).
     let start = 2usize;
     let end = end_1based.min(len);
-    let slice: &[String] = if start < end { &funcstack[start..end] } else { &[] };
+    let slice: &[String] = if start < end {
+        &funcstack[start..end]
+    } else {
+        &[]
+    };
 
     // `:#(_($~_help_filter_funcstack)|\((eval|anon)\))` — drop filtered
     //   completion helpers and eval/anon frames.
@@ -396,6 +414,32 @@ fn derive_responsible_func() -> String {
 mod tests {
     use super::*;
 
+    /// Seed `FUNCSTACK` so `$funcstack` (innermost-first) equals
+    /// `names`. `FUNCSTACK` stores push-order (oldest first) and is
+    /// reversed on read, so push the reverse here.
+    fn set_test_funcstack(names_innermost_first: &[&str]) {
+        let mut stack = crate::ported::modules::parameter::FUNCSTACK.lock().unwrap();
+        stack.clear();
+        for name in names_innermost_first.iter().rev() {
+            stack.push(crate::ported::zsh_h::funcstack {
+                prev: None,
+                name: name.to_string(),
+                filename: None,
+                caller: None,
+                flineno: 0,
+                lineno: 0,
+                tp: 0,
+            });
+        }
+    }
+
+    fn clear_test_funcstack() {
+        crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .unwrap()
+            .clear();
+    }
+
     #[test]
     fn returns_one_without_executor() {
         let _g = crate::test_util::global_state_lock();
@@ -408,7 +452,7 @@ mod tests {
         //   upstream; here they are cleared at entry so stale entries
         //   from a prior invocation never bleed into a fresh report.
         let _g = crate::test_util::global_state_lock();
-        let _ = sethparam("help_funcs", vec!["ctx".to_string(), "\0stale".to_string()]);
+        let _ = setaparam("help_funcs", vec!["ctx".to_string(), "\0stale".to_string()]);
         let _ = _complete_help(&[]);
         let after = getaparam("help_funcs").unwrap_or_default();
         assert!(
@@ -438,21 +482,13 @@ mod tests {
         //   completer, `_help_sort_tags` records the function into
         //   help_funcs and the tag list into help_tags.
         let _g = crate::test_util::global_state_lock();
-        let _ = sethparam("help_funcs", Vec::new());
-        let _ = sethparam("help_tags", Vec::new());
+        let _ = setaparam("help_funcs", Vec::new());
+        let _ = setaparam("help_tags", Vec::new());
         let _ = setsparam("curcontext", ":completion::complete:mycmd:");
         // funcstack: [ _help_sort_tags, _tags, _files, _main_complete ]
         //   → slice[3,(i)_main_complete] = (_files _main_complete),
         //   filtered → "_files _main_complete" joined.
-        let _ = setaparam(
-            "funcstack",
-            vec![
-                "_help_sort_tags".to_string(),
-                "_tags".to_string(),
-                "_files".to_string(),
-                "_main_complete".to_string(),
-            ],
-        );
+        set_test_funcstack(&["_help_sort_tags", "_tags", "_files", "_main_complete"]);
         let _ = _help_sort_tags(&["files".to_string(), "directories".to_string()]);
         let funcs = assoc_get("help_funcs", ":completion::complete:mycmd:");
         assert!(
@@ -460,13 +496,16 @@ mod tests {
             "help_funcs must record the responsible completer, got {:?}",
             funcs
         );
-        let tags = assoc_get("help_tags", &format!(":completion::complete:mycmd:{}", "_files _main_complete"));
+        let tags = assoc_get(
+            "help_tags",
+            &format!(":completion::complete:mycmd:{}", "_files _main_complete"),
+        );
         assert!(
             tags.contains("files directories"),
             "help_tags must record the tag list, got {:?}",
             tags
         );
-        let _ = setaparam("funcstack", Vec::new());
+        clear_test_funcstack();
     }
 
     #[test]
@@ -474,19 +513,16 @@ mod tests {
         // sh:84 — filter set drops `_dispatch`/`_wanted`; scan set
         //   terminates the slice at `_main_complete`.
         let _g = crate::test_util::global_state_lock();
-        let _ = setaparam(
-            "funcstack",
-            vec![
-                "_help_sort_tags".to_string(),
-                "_tags".to_string(),
-                "_wanted".to_string(),
-                "_files".to_string(),
-                "_main_complete".to_string(),
-                "_normal".to_string(),
-            ],
-        );
+        set_test_funcstack(&[
+            "_help_sort_tags",
+            "_tags",
+            "_wanted",
+            "_files",
+            "_main_complete",
+            "_normal",
+        ]);
         let f = derive_responsible_func();
         assert_eq!(f, "_files _main_complete");
-        let _ = setaparam("funcstack", Vec::new());
+        clear_test_funcstack();
     }
 }

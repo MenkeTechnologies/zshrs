@@ -47,14 +47,15 @@ fn module_math_funcs(m: &str) -> Vec<String> {
         Ok(t) => t,
         Err(_) => return Vec::new(),
     };
+    let table = &mut *table;
     let mut features: Vec<String> = Vec::new();
     // 2>/dev/null — a module that doesn't support features contributes
     //   nothing (features_module returns non-zero).
-    if features_module(&mut table, &modname, &mut features) != 0 {
+    if features_module(table, &modname, &mut features) != 0 {
         return Vec::new();
     }
     let mut enables_opt: Option<Vec<i32>> = None;
-    let _ = enables_module(&mut table, &modname, &mut enables_opt);
+    let _ = enables_module(table, &modname, &mut enables_opt);
     let enables = enables_opt.unwrap_or_else(|| vec![0; features.len()]);
 
     let mut funcs = Vec::new();

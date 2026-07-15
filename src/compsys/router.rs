@@ -109,6 +109,7 @@ fn rust_compsys_lookup(name: &str) -> Option<fn(&[String]) -> i32> {
         "_path_commands" => Some(_path_commands::_path_commands),
         "_path_files" => Some(_path_files::_path_files),
         "_pick_variant" => Some(_pick_variant::_pick_variant),
+        "_ra_comp" => Some(_regex_arguments::_ra_comp),
         "_regex_arguments" => Some(_regex_arguments::_regex_arguments),
         "_regex_words" => Some(_regex_words::_regex_words),
         "_requested" => Some(_requested::_requested),
