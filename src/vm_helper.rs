@@ -56,6 +56,51 @@ use crate::ported::builtin::{BREAKS, CONTFLAG};
 use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
 use crate::ported::subst::singsub;
+
+/// O(1) single-key probe against the canonical hashed storage — the
+/// fast-path companion to subst.rs `assoc_get` for order-independent
+/// single-key reads. Returns `None` when `name` (post-nameref) isn't
+/// an assoc; otherwise `Some((key_present, value))` under ONE lock,
+/// with no whole-map clone and no zsh-bucket-order rebuild (that
+/// reorder is only observable to whole-map enumeration). Hot: shell
+/// loops reading `${assoc[$k]}` per iteration were O(n²) through
+/// assoc_get — zpwr expandstats over 42k records took 43s vs zsh's ~1s.
+/// Lives here (not src/ported/) because it has no C counterpart — C's
+/// getarg IS the single-key path.
+/// Classify an assoc subscript as an EXACT-key lookup and return the
+/// key: plain text (no leading flag group) passes through; a leading
+/// `(e…)`/`(E…)` group (c:Src/params.c:1449 — literal-key flag) is
+/// stripped. Search groups ((r)/(i)/(k)/…) return `None` — they need
+/// the full getarg walk. Companion gate for [`assoc_key_hit`]'s O(1)
+/// fast paths.
+pub fn exact_assoc_sub_key(sub: &str) -> Option<&str> {
+    match sub.strip_prefix('(') {
+        None => Some(sub),
+        Some(rest) => {
+            let close = rest.find(')')?;
+            let grp = &rest[..close];
+            if !grp.is_empty() && grp.chars().all(|c| c == 'e' || c == 'E') {
+                Some(&rest[close + 1..])
+            } else {
+                None
+            }
+        }
+    }
+}
+
+pub fn assoc_key_hit(name: &str, key: &str) -> Option<(bool, Option<String>)> {
+    let resolved = match crate::ported::params::resolve_nameref_name(name, None) {
+        crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
+        _ => name.to_string(),
+    };
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()
+        .and_then(|s| {
+            s.get(resolved.as_str())
+                .map(|m| (m.contains_key(key), m.get(key).cloned()))
+        })
+}
 use crate::ported::utils::{errflag, ERRFLAG_ERROR};
 use crate::ported::zsh_h::PM_UNDEFINED;
 use crate::ported::zsh_h::WC_SIMPLE;

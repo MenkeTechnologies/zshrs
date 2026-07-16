@@ -5447,17 +5447,16 @@ pub fn inittyptab() {
 
     // c:4160 — `if (!(typtab_flags & ZTF_INIT))` one-off init.
     {
-        let mut flags = TYPTAB_FLAGS.lock().unwrap();
-        if (*flags & ZTF_INIT) == 0 {
-            *flags = ZTF_INIT;
+        let flags = TYPTAB_FLAGS.load(Ordering::Relaxed);
+        if (flags & ZTF_INIT) == 0 {
+            TYPTAB_FLAGS.store(ZTF_INIT, Ordering::Relaxed);
         }
     }
 
-    let mut t = TYPTAB.lock().unwrap();
-    // c:4168 — `memset(typtab, 0, sizeof(typtab));`
-    for slot in t.iter_mut() {
-        *slot = 0;
-    }
+    // Local scratch, flushed to the atomic table at fn end — C mutates
+    // typtab[] in place unlocked; the atomic store-per-slot flush keeps
+    // readers lock-free (see TYPTAB doc in ztype_h.rs).
+    let mut t = [0u32; 256]; // c:4168 memset(typtab, 0, sizeof(typtab))
     // c:4169-4170 — control chars 0..32 and 128..160.
     for c in 0..32u32 {
         t[c as usize] = ICNTRL as u32;
@@ -5667,7 +5666,7 @@ pub fn inittyptab() {
     // c:4255-4256 — comma special only when ZTF_SP_COMMA was set
     // via `makecommaspecial(1)`. KSH_GLOB / extended-glob path.
     {
-        let flags = *TYPTAB_FLAGS.lock().unwrap();
+        let flags = TYPTAB_FLAGS.load(Ordering::Relaxed);
         if (flags & ZTF_SP_COMMA) != 0 {
             // c:4255
             t[b',' as usize] |= ISPECIAL as u32; // c:4256
@@ -5679,15 +5678,15 @@ pub fn inittyptab() {
     // bangchar byte ISPECIAL.
     {
         let bangchar2 = bangchar.load(Ordering::SeqCst) as usize;
-        let flags = *TYPTAB_FLAGS.lock().unwrap();
+        let flags = TYPTAB_FLAGS.load(Ordering::Relaxed);
         let interact_flag = (flags & ZTF_INTERACT) != 0;
         let banghist = isset(BANGHIST);
         if banghist && bangchar2 != 0 && bangchar2 < 256 && interact_flag {
             // c:4257
-            *TYPTAB_FLAGS.lock().unwrap() |= ZTF_BANGCHAR; // c:4258
+            TYPTAB_FLAGS.fetch_or(ZTF_BANGCHAR, Ordering::Relaxed); // c:4258
             t[bangchar2] |= ISPECIAL as u32; // c:4259
         } else {
-            *TYPTAB_FLAGS.lock().unwrap() &= !ZTF_BANGCHAR; // c:4261
+            TYPTAB_FLAGS.fetch_and(!ZTF_BANGCHAR, Ordering::Relaxed); // c:4261
         }
     }
 
@@ -5698,6 +5697,11 @@ pub fn inittyptab() {
             t[b as usize] |= IPATTERN as u32; // c:4263
         }
     }
+
+    // Flush the scratch to the lock-free table (see header note).
+    for (i, v) in t.iter().enumerate() {
+        TYPTAB[i].store(*v, Ordering::Relaxed);
+    }
 }
 
 /// Port of `void makecommaspecial(int yesno)` from Src/utils.c:4270.
@@ -5707,15 +5711,13 @@ pub fn inittyptab() {
 /// (KSH_GLOB) as a metacharacter.
 pub fn makecommaspecial(yesno: bool) {
     // c:4270
-    let mut flags = TYPTAB_FLAGS.lock().unwrap();
-    let mut tab = TYPTAB.lock().unwrap();
     if yesno {
         // c:4272
-        *flags |= ZTF_SP_COMMA; // c:4273
-        tab[b',' as usize] |= ISPECIAL as u32; // c:4274
+        TYPTAB_FLAGS.fetch_or(ZTF_SP_COMMA, Ordering::Relaxed); // c:4273
+        TYPTAB[b',' as usize].fetch_or(ISPECIAL as u32, Ordering::Relaxed); // c:4274
     } else {
-        *flags &= !ZTF_SP_COMMA; // c:4276
-        tab[b',' as usize] &= !(ISPECIAL as u32); // c:4277
+        TYPTAB_FLAGS.fetch_and(!ZTF_SP_COMMA, Ordering::Relaxed); // c:4276
+        TYPTAB[b',' as usize].fetch_and(!(ISPECIAL as u32), Ordering::Relaxed); // c:4277
     }
 }
 
@@ -5730,14 +5732,13 @@ pub fn makebangspecial(yesno: bool) {
     if bc == 0 || bc >= 256 {
         return;
     }
-    let flags = *TYPTAB_FLAGS.lock().unwrap();
-    let mut tab = TYPTAB.lock().unwrap();
+    let flags = TYPTAB_FLAGS.load(Ordering::Relaxed);
     if !yesno {
         // c:4289
-        tab[bc] &= !(ISPECIAL as u32); // c:4290
+        TYPTAB[bc].fetch_and(!(ISPECIAL as u32), Ordering::Relaxed); // c:4290
     } else if (flags & ZTF_BANGCHAR) != 0 {
         // c:4291
-        tab[bc] |= ISPECIAL as u32; // c:4292
+        TYPTAB[bc].fetch_or(ISPECIAL as u32, Ordering::Relaxed); // c:4292
     }
 }
 
@@ -5774,15 +5775,13 @@ pub fn wcsitype(c: char, itype: u32) -> bool {
     if !isset(MULTIBYTE) {
         // c:4327
         if (c as u32) < 256 {
-            let tab = TYPTAB.lock().unwrap();
-            return (tab[c as usize] & itype) != 0;
+            return (TYPTAB[c as usize].load(Ordering::Relaxed) & itype) != 0;
         }
         return false;
     }
     if (c as u32) < 128 {
         // c:4343
-        let tab = TYPTAB.lock().unwrap();
-        return (tab[c as usize] & itype) != 0;
+        return (TYPTAB[c as usize].load(Ordering::Relaxed) & itype) != 0;
     }
     let cls = itype as u16;
     if cls == IIDENT {
