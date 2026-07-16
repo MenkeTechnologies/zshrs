@@ -1308,8 +1308,8 @@ fn assoc_set_and_get_single_entry() {
 #[test]
 fn assoc_typeset_then_set_and_get() {
     ok(
-        r#"typeset -A m; m[name]=Jacob; m[role]=eng; echo "name=${m[name]} role=${m[role]}""#,
-        "name=Jacob role=eng\n",
+        r#"typeset -A m; m[name]=Alice; m[role]=eng; echo "name=${m[name]} role=${m[role]}""#,
+        "name=Alice role=eng\n",
     );
 }
 
