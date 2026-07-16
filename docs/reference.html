@@ -139,7 +139,7 @@
           <span class="sep">/</span>
           <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
-        <p class="docs-build-line">zshrs v0.12.14 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 560 regression tests (392 corpus · 160 dispatch · 8 absence) · 17,852 <code>#[test]</code> hooks workspace-wide</p>
+        <p class="docs-build-line">zshrs v0.12.14 · 15 chapters · every supported builtin, keyword, expansion form &amp; AOP primitive — pinned by 560 regression tests (392 corpus · 160 dispatch · 8 absence) · 18,188 <code>#[test]</code> hooks workspace-wide</p>
       </div>
       <div class="tutorial-toolbar">
         <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -160,7 +160,7 @@
 
   <main class="tutorial-main">
     <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>SHELL REFERENCE</h2>
-    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 392 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>17,852 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-07-12) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
+    <p class="tutorial-subtitle">Every builtin, keyword, parameter-expansion form, ZshFlag, array shape, AOP primitive, parallel primitive, and anti-fork coreutils replacement that zshrs ships. Each entry shows what it does and a runnable example. <strong>Coverage gate:</strong> 392 construct-corpus tests in <code>tests/zsh_construct_corpus.rs</code> exercise every category below; <strong>18,188 <code>#[test]</code> hooks</strong> (<code>git ls-files '*.rs' | xargs rg '^\s*#\[test\]'</code>, 2026-07-16) span tracked Rust sources. Jump via the chapter index, or <kbd>Ctrl+F</kbd> for a specific name.</p>
 
     <section class="tutorial-section">
       <h2>Pipeline Architecture</h2>
@@ -460,9 +460,9 @@ echo "len=${#arr[@]}"   # len=0</code></pre>
         <h3><a class="doc-anchor" href="#doc-assoc-decl">#</a> <code>typeset -A name</code> / <code>declare -A name</code></h3>
         <p>Declare an associative array. The executor's <code>builtin_typeset</code> handles <code>-A</code> and pre-creates the <code>HashMap&lt;String, String&gt;</code> entry in <code>executor.assoc_arrays</code>. Optional — <code>name[key]=val</code> creates the assoc on demand too.</p>
         <pre><code>typeset -A user
-user[name]=Jacob
+user[name]=Alice
 user[role]=eng
-echo "${user[name]}"   # Jacob</code></pre>
+echo "${user[name]}"   # Alice</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-assoc-set">
@@ -553,7 +553,7 @@ cargo build $flag</code></pre>
       <article class="doc-entry" id="doc-pe-length">
         <h3><a class="doc-anchor" href="#doc-pe-length">#</a> <code>${#var}</code></h3>
         <p>String length of scalar (or via <code>${(#)arr}</code> the element count of an array — see Zsh Flags). Lowers to <code>Op::ExpandParam(LENGTH)</code>.</p>
-        <pre><code>name=Jacob
+        <pre><code>name=Alice
 echo ${#name}   # 5</code></pre>
       </article>
 
@@ -846,7 +846,7 @@ echo "${(%)fragment}"</code></pre>
         <h3><a class="doc-anchor" href="#doc-flag-e">#</a> <code>(e)</code> — re-evaluate</h3>
         <p>Run the value as a shell command and return its captured stdout. Equivalent to <code>$(eval "$value")</code> but uses the in-process pipe-capture path (no fork). Late-bound config strings.</p>
         <pre><code>cmd='echo "user is $(whoami)"'
-echo "${(e)cmd}"   # user is jacob</code></pre>
+echo "${(e)cmd}"   # user is alice</code></pre>
       </article>
 
       <article class="doc-entry" id="doc-flag-p">
@@ -1880,7 +1880,7 @@ fi</code></pre>
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <section class="tutorial-section" id="ch-recently-closed">
       <h2>Recently Closed Compat Gaps (eighty-eighth-pass)</h2>
-      <p class="chapter-meta">46 constructs · all verified against <code>~/forkedRepos/zsh/Src/</code> via direct C-source ports. Each entry is pinned by at least one assertion in <code>tests/zshrs_shell.rs</code>; workspace-wide test hooks today: 17,852 (see header strip). These were the highest-impact gaps in <code>man zshall</code> coverage that remained after the seventy-seventh pass — most are param expansion, pattern matching, function scoping, and trap behavior.</p>
+      <p class="chapter-meta">46 constructs · all verified against <code>~/forkedRepos/zsh/Src/</code> via direct C-source ports. Each entry is pinned by at least one assertion in <code>tests/zshrs_shell.rs</code>; workspace-wide test hooks today: 18,188 (see header strip). These were the highest-impact gaps in <code>man zshall</code> coverage that remained after the seventy-seventh pass — most are param expansion, pattern matching, function scoping, and trap behavior.</p>
 
       <h3>Glob &amp; Pattern</h3>
       <article class="doc-entry" id="doc-gap-glob-tilde-exclude">
@@ -9815,7 +9815,7 @@ echo done
 <!-- END CANONICAL-GRAMMAR -->
 
     <p style="font-size: 11px; color: var(--text-muted); text-align: center; margin: 3rem 0 1rem; font-family: 'Share Tech Mono', monospace;">
-      // generated against fusevm 0.14.5 dispatch · zshrs v0.12.14 · 15 chapters · 17,852 #[test] hooks · MenkeTechnologies
+      // generated against fusevm 0.14.5 dispatch · zshrs v0.12.14 · 15 chapters · 18,188 #[test] hooks · MenkeTechnologies
     </p>
   </main>
   </div>
