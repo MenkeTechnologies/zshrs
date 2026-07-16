@@ -504,3 +504,38 @@ mod S_substring_match_flag_refs {
         );
     }
 }
+
+mod spliced_backslash_in_replace_pattern {
+    //! A parameter value spliced into a `${x//pat}` pattern is LITERAL
+    //! (GLOBSUBST off) — including a trailing `\`. The literalize pass
+    //! treated every raw `\` as a source escape prefix, so a spliced
+    //! backslash swallowed the source class-close `]` (a token char by
+    //! then) and patcompile rejected the class: `bad pattern: [ab\`.
+    //! Broke history-search-multi-word's `[$specch]` (specch ends in
+    //! `\\`) at _hsmw_main:45 — every ^R search errored.
+    use super::*;
+
+    /// Class from a var whose value ends in a literal backslash.
+    #[test]
+    fn class_from_var_with_trailing_backslash() {
+        assert_parity(r#"c="ab\\"; s="x\\y"; print -r -- "${s//[$c]/_}""#);
+    }
+
+    /// The exact hsmw specch shape (all glob metas + trailing `\`).
+    #[test]
+    fn hsmw_specch_class_escapes_metas() {
+        assert_parity(
+            r#"setopt extendedglob
+specch="][*?|#~^()><\\"
+b="foo bar[baz]*"
+b="${b//(#b)((\[?##\])|([$specch]))/${${match[2]:+$match[2]}:-\\${match[3]}}}"
+print -r -- "$b""#,
+        );
+    }
+
+    /// Spliced backslash as the entire pattern value.
+    #[test]
+    fn spliced_lone_backslash_pattern() {
+        assert_parity(r#"c="\\"; s="a\\b"; print -r -- "${s//$c/_}""#);
+    }
+}

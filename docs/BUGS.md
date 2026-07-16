@@ -19,6 +19,47 @@ CI green pending the underlying fix.
 
 ---
 
+## #664 — spliced backslash in a `${x//pat}` pattern swallowed the class-close `]` — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+c="ab\\"; s="x\\y"; print -r -- "${s//[$c]/_}"
+# zsh: x_y      zshrs (before): bad pattern: [ab\
+```
+
+Real-world hit: history-search-multi-word's `_hsmw_main:45` —
+`search_buffer="${search_buffer//(#b)((\[?##\])|([$specch]))/…}"` with
+`specch="][*?|#~^()><\\"` (trailing literal backslash) → every ^R search
+errored `bad pattern`. (The user-visible `(eval):114: parse error near
+`do'` + `function not defined by file` from the report was the OLDER
+running binary; `repeat 1; do` parses correctly on current HEAD — only
+the bad-pattern remained.)
+
+**Root cause:** the `pretokenize_src_pat` → `singsub` → 
+`literalize_spliced_metas` contract (subst.rs:3366) splices parameter
+values RAW into the pre-tokenized pattern; the literalize pass must
+escape spliced glob metas (GLOBSUBST off ⇒ spliced text is literal,
+Src/pattern.c:248 token-only dispatch). Its escape-pair passthrough
+treated EVERY raw `\` as a source `\X` escape prefix — but a spliced
+trailing backslash precedes the source class-close `]`, which is an
+Outbrack TOKEN by then; the passthrough consumed it as escape payload,
+the class never closed, and patcompile rejected the pattern. A source
+escape can never precede a token char (pretokenize copies `\X` pairs
+verbatim BEFORE converting metas to tokens), so `\`+token is provably a
+splice.
+
+**Fix:** in `literalize_spliced_metas`, a raw `\` followed by a token
+char (or at end of string) is emitted as `\\` (escaped literal) with the
+token char left for the transpose arms; unchanged under GLOBSUBST
+(spliced values stay active, Src/subst.c:1669). Verified byte-identical
+to zsh 5.9 on the minimal repro, the exact hsmw specch shape, and a
+lone spliced-backslash pattern; subst parity 330/330.
+
+---
+
 ## #663 — `_main_complete` port skipped `eval "$_comp_setup"`: global options leaked into completion — FIXED
 
 **Status:** `fixed`

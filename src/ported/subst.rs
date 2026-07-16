@@ -3390,6 +3390,29 @@ pub fn paramsubst(
         let mut i = 0usize;
         while i < chars.len() {
             let c = chars[i];
+            // A raw `\` immediately before a TOKEN char (or at end of
+            // string) cannot be a source `\X` escape — pretokenize
+            // copies source escape pairs verbatim BEFORE converting
+            // metas to tokens, so an escape payload is never a token.
+            // It is a SPLICED literal backslash (a param value ending
+            // in `\`, e.g. hsmw's `[$specch]` where specch ends in
+            // `\\`): escape it and leave the following token char for
+            // the transpose arms below — otherwise the class-close
+            // Outbrack is swallowed as escape payload, the char class
+            // never closes, and patcompile rejects the whole pattern
+            // ("bad pattern: [ab\", _hsmw_main:45). Under GLOBSUBST a
+            // spliced backslash stays active, matching C's shtokenize
+            // of spliced values (Src/subst.c:1669).
+            if c == '\\'
+                && !glob_subst
+                && (i + 1 >= chars.len()
+                    || ((chars[i + 1] as u32) < 256 && crate::ztype_h::itok(chars[i + 1] as u8)))
+            {
+                out.push('\\');
+                out.push('\\');
+                i += 1;
+                continue;
+            }
             if (c == '\\' || c == Bnull || c == Bnullkeep) && i + 1 < chars.len() {
                 out.push(c);
                 out.push(chars[i + 1]);
