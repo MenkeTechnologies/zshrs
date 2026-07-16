@@ -1260,17 +1260,9 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         // (`[[ -z $BUFFER ]]`) took its empty-line branch on every
         // Enter press and never accepted the line — the Enter key
         // appeared dead with the zpwr ZLE overrides loaded.
-        makezleparams(0); // c:1534
-        // !!! RUST-ONLY WRITE-BACK SNAPSHOT !!! — C's makezleparams
-        // installs GSU-backed specials (writes go live via
-        // set_buffer/set_cursor). The Rust port snapshots via
-        // setsparam, so widget mutations land in the paramtab only;
-        // diff pre/post below and apply changes to the real editor
-        // state (zsh-expand and friends rewrite $BUFFER / $LBUFFER).
-        let pre_buf = crate::ported::params::getsparam("BUFFER").unwrap_or_default();
-        let pre_lbuf = crate::ported::params::getsparam("LBUFFER").unwrap_or_default();
-        let pre_rbuf = crate::ported::params::getsparam("RBUFFER").unwrap_or_default();
-        let pre_cur = crate::ported::params::getiparam("CURSOR");
+        makezleparams(0); // c:1534 — also arms the RUST-ONLY
+                          // ZLE_PARAM_SNAPSHOT (see zle_params.rs) that
+                          // zleparams_sync_from_paramtab diffs against.
         // c:1535 — `sfcontext = SFC_WIDGET;`.
         crate::ported::exec::sfcontext
             .store(crate::ported::zsh_h::SFC_WIDGET, Ordering::Relaxed); // c:1535
@@ -1287,25 +1279,12 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         ); // c:1538
         // c:1539 — `sfcontext = osc;`.
         crate::ported::exec::sfcontext.store(osc, Ordering::Relaxed); // c:1539
-        // RUST-ONLY WRITE-BACK (see snapshot note above): $BUFFER
-        // wins over $LBUFFER/$RBUFFER when both changed; set_buffer
-        // clamps ZLECS via ZLELL. An LBUFFER/RBUFFER edit places the
-        // cursor at the join point (matches C set_lbuffer /
-        // set_rbuffer, zle_params.c:280-320).
-        let post_buf = crate::ported::params::getsparam("BUFFER").unwrap_or_default();
-        let post_lbuf = crate::ported::params::getsparam("LBUFFER").unwrap_or_default();
-        let post_rbuf = crate::ported::params::getsparam("RBUFFER").unwrap_or_default();
-        let post_cur = crate::ported::params::getiparam("CURSOR");
-        if post_buf != pre_buf {
-            crate::ported::zle::zle_params::set_buffer(&post_buf);
-        } else if post_lbuf != pre_lbuf || post_rbuf != pre_rbuf {
-            let joined = format!("{}{}", post_lbuf, post_rbuf);
-            crate::ported::zle::zle_params::set_buffer(&joined);
-            crate::ported::zle::zle_params::set_cursor(post_lbuf.chars().count());
-        }
-        if post_cur != pre_cur && post_cur >= 0 {
-            crate::ported::zle::zle_params::set_cursor(post_cur as usize);
-        }
+        // RUST-ONLY WRITE-BACK (C: live GSU setters — see
+        // crate::zle_param_sync): apply any widget mutations of
+        // $BUFFER/$LBUFFER/$RBUFFER/$CURSOR still pending in the
+        // paramtab, then drop the widget scope.
+        crate::zle_param_sync::sync_from_paramtab();
+        crate::zle_param_sync::clear_snapshot();
         // c:1540 — `endparamscope();`.
         crate::ported::params::endparamscope(); // c:1540
         // c:1530 — capture LASTVAL after the call.

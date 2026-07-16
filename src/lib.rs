@@ -301,6 +301,10 @@ pub mod zsh_special_var_docs;
 /// (port of `../strykelang` test framework).
 #[path = "extensions/ztest.rs"]
 pub mod ztest;
+/// `zle_param_sync` submodule — ZLE special-param write-back sync
+/// (Rust-only adapter for C's live GSU setters).
+#[path = "extensions/zle_param_sync.rs"]
+pub mod zle_param_sync;
 /// `zwc` submodule.
 #[path = "extensions/zwc.rs"]
 pub mod zwc;
