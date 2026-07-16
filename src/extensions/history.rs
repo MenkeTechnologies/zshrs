@@ -498,6 +498,66 @@ impl HistoryEngine {
     }
 }
 
+// ---------------------------------------------------------------------
+// Interactive-session sink — the SQLite index is zshrs's DEFAULT
+// history store; the flat $HISTFILE path in ported hist.rs stays fully
+// functional for users who override via HISTFILE/SAVEHIST. `hend()`
+// (src/ported/hist.rs) calls `history_sqlite_add` for every accepted
+// interactive line (same accept policy as the $HISTFILE write:
+// HIST_TMPSTORE / HIST_NOWRITE excluded); `preprompt()`
+// (src/ported/utils.rs) calls `history_sqlite_finish` right after
+// execode returns to stamp duration + exit status — mirroring what the
+// `-c` path does via ShellExecutor.history at bins/zshrs.rs
+// (engine.add → update_last). Thread-local because
+// rusqlite::Connection is !Sync; the interactive loop is
+// single-threaded on the main thread.
+// ---------------------------------------------------------------------
+
+thread_local! {
+    /// Lazily-opened engine for the interactive loop. Outer Option =
+    /// "tried to open yet?", inner Option = open result (None when the
+    /// db can't be opened — sink becomes a no-op, never an error).
+    static SESSION_HISTORY: std::cell::RefCell<Option<Option<HistoryEngine>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Row id + start instant of the line whose command is currently
+    /// executing, armed by `history_sqlite_add`, consumed by
+    /// `history_sqlite_finish`.
+    static HIST_PENDING: std::cell::Cell<Option<(i64, std::time::Instant)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn with_session_engine<R>(f: impl FnOnce(&HistoryEngine) -> R) -> Option<R> {
+    SESSION_HISTORY.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(HistoryEngine::new().ok());
+        }
+        slot.as_ref().unwrap().as_ref().map(f)
+    })
+}
+
+/// Append an accepted interactive line to the SQLite history index
+/// (+ text mirror) and arm the pending row for `history_sqlite_finish`.
+pub fn history_sqlite_add(line: &str) {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+    let id = with_session_engine(|e| e.add(line, cwd.as_deref()).ok()).flatten();
+    if let Some(id) = id {
+        HIST_PENDING.with(|p| p.set(Some((id, std::time::Instant::now()))));
+    }
+}
+
+/// Stamp duration + exit status onto the row `history_sqlite_add`
+/// armed. No-op when nothing is pending.
+pub fn history_sqlite_finish(exit_code: i32) {
+    let Some((id, start)) = HIST_PENDING.with(|p| p.take()) else {
+        return;
+    };
+    let dur = start.elapsed().as_millis() as i64;
+    let _ = with_session_engine(|e| e.update_last(id, dur, exit_code));
+}
+
 /// Detect whether `path` is a sqlite database by sniffing the magic
 /// header (first 16 bytes start with `SQLite format 3\0`). Errors /
 /// short files / unknown content all return false (safe default —
