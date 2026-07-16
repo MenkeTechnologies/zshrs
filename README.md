@@ -376,7 +376,7 @@ for x in ${arr[@]}; do …; done    # iterate (flattens via BUILTIN_ARRAY_FLATTE
 
 ```zsh
 typeset -A m                      # declare
-m[name]=Jacob; m[role]=eng        # set
+m[name]=Alice; m[role]=eng        # set
 echo "${m[name]}"                 # lookup
 for k in "${(k)m}"; do echo $k; done   # keys
 for v in "${(v)m}"; do echo $v; done   # values
@@ -729,7 +729,7 @@ release notes. Suggested wording:
 
 > Inspired by / ported from
 > [zshrs](https://github.com/MenkeTechnologies/zshrs) by
-> Jacob Menke (MenkeTechnologies).
+> MenkeTechnologies.
 
 Ideas can't be copyrighted so this is an ask, not an
 MIT-enforced clause; honoring it keeps the legacy traceable.
