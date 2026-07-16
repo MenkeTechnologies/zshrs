@@ -6402,6 +6402,7 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 strs: strs_tail,
                 shf: None,  // c:5377
                 dump: None, // c:5356
+                strs_metafied: false, // native pool — clean UTF-8
             });
         } else if dump_present {
             // c:5358-5363 — EF_MAP path: refcount the dump, allocate
@@ -6425,6 +6426,7 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 strs: strs_tail,
                 shf: None,                     // c:5377
                 dump: state.prog.dump.clone(), // c:5361
+                strs_metafied: state.prog.strs_metafied, // pool copied verbatim — carry provenance
             });
         } else {
             // c:5366-5374 — EF_REAL: copy wordcode + strs into a
@@ -6449,6 +6451,7 @@ pub fn execfuncdef(state: &mut estate, mut redir_prog: Option<crate::ported::zsh
                 strs: strs_copy,
                 shf: None,  // c:5377
                 dump: None, // c:5371
+                strs_metafied: false, // native pool — clean UTF-8
             });
         }
 
@@ -11615,6 +11618,7 @@ pub fn stripkshdef(
         strs: new_strs,
         shf: None, // c:6363
         dump: None,
+        strs_metafied: false, // native pool — clean UTF-8
     });
     Some(ret)
 }

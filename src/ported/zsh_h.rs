@@ -1528,6 +1528,17 @@ pub struct eprog {
     pub strs: Option<String>,   // c:812
     pub shf: Option<Shfunc>,    // c:813
     pub dump: Option<FuncDump>, // c:814
+    // !!! WARNING: RUST-ONLY FIELD — NO C COUNTERPART !!!
+    // C keeps EVERY internal string metafied, so a .zwc string pool
+    // needs no marker. zshrs's native eprogs carry clean UTF-8 pools;
+    // only pools read verbatim from a C-zsh-written .zwc dump
+    // (check_dump_file) still contain Meta (0x83) escapes. ecgetstr /
+    // ecrawstr unmetafy per-string when this is set — whole-pool
+    // unmetafy is impossible because wordcode words bake in byte
+    // offsets. Without this, sourcing a .zwc-shadowed file rendered
+    // every multibyte glyph as tofu (█ = E2 96 88 stored metafied as
+    // E2 83 B6 88 → decoded U+20F6 + stray byte).
+    pub strs_metafied: bool,
 }
 
 /// Port of `struct estate` from `Src/zsh.h:824-828`.

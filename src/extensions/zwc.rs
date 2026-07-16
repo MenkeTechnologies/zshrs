@@ -89,6 +89,25 @@ pub fn wordcode_pool_str(bytes: &[u8]) -> String {
     out
 }
 
+/// Decode one raw wordcode-pool slice: unmetafy first when the pool
+/// came from a C-zsh-written `.zwc` dump (`eprog.strs_metafied` — see
+/// the field doc in zsh_h.rs), then widen through
+/// [`wordcode_pool_str`]. Meta pairs never contain NUL (escaped byte =
+/// x^32 for x ∈ {0, 0x83..=0xA2} → {0x20, 0xA3..=0xC2}), so the
+/// caller's NUL-terminated slicing is unaffected by the escapes.
+/// Without the unmetafy, multibyte glyphs whose bytes fall in the
+/// IMETA range decode as tofu: █ (E2 96 88) is dumped as E2 83 B6 88,
+/// whose prefix is VALID UTF-8 (U+20F6 ⃶) — the zpwr banner bug.
+pub fn wordcode_pool_str_unmeta(slice: &[u8], metafied: bool) -> String {
+    if metafied && slice.contains(&0x83) {
+        let mut b = slice.to_vec();
+        crate::ported::utils::unmetafy(&mut b);
+        wordcode_pool_str(&b)
+    } else {
+        wordcode_pool_str(slice)
+    }
+}
+
 /// Untokenize a zsh tokenized string back to shell syntax
 pub(crate) fn untokenize(bytes: &[u8]) -> String {
     let mut result = String::new();

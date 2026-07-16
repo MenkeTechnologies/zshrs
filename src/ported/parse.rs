@@ -661,6 +661,7 @@ pub fn bld_eprog(heap: bool) -> eprog {
         strs: Some(strs_string),
         shf: None,
         dump: None,
+        strs_metafied: false, // native pool — clean UTF-8
     };
 
     // c:577 — free ecbuf so next parse starts fresh.
@@ -3550,10 +3551,11 @@ pub fn dupeprog(p: &eprog, heap: bool) -> eprog {
         // c:2787 — `nref = heap ? -1 : 1;`
         nref: if heap { -1 } else { 1 },
         prog: p.prog.clone(),
-        strs: p.strs.clone(),
+        strs: p.strs.clone(), // pool copied verbatim — provenance below
         pats: (0..p.npats).map(|_| Box::new(dummy_pat())).collect(),
         shf: None,
         dump: None,
+        strs_metafied: p.strs_metafied, // pool copied verbatim — carry provenance
     };
     r
 }
@@ -3638,7 +3640,7 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
                                                                      // C reads raw bytes (token codes included) — widen via the
                                                                      // wordcode-pool bridge, never from_utf8_lossy (which mangles
                                                                      // raw token bytes from C-zsh-written .zwc dumps to U+FFFD).
-        crate::zwc::wordcode_pool_str(&v[..end])
+        crate::zwc::wordcode_pool_str_unmeta(&v[..end], s.prog.strs_metafied)
     } else {
         // c:2877 `else r = s->strs + (c >> 2);`
         let off = (c >> 2) as usize + s.strs_offset;
@@ -3648,7 +3650,7 @@ pub fn ecgetstr(s: &mut estate, dup: i32, tokflag: Option<&mut i32>) -> String {
         } else {
             let tail = &strs_bytes[off..];
             let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
-            crate::zwc::wordcode_pool_str(&tail[..end])
+            crate::zwc::wordcode_pool_str_unmeta(&tail[..end], s.prog.strs_metafied)
         }
     };
     // c:2891 `return ((dup == EC_DUP || (dup && (c & 1))) ? dupstring(r) : r);`
@@ -3692,7 +3694,7 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         let v = [b0, b1, b2];
         let end = v.iter().position(|&x| x == 0).unwrap_or(v.len()); // c:2906 strlen(buf)
                                                                      // Raw-byte widening — see ecgetstr (same C-convention bridge).
-        crate::zwc::wordcode_pool_str(&v[..end])
+        crate::zwc::wordcode_pool_str_unmeta(&v[..end], p.strs_metafied)
     } else {
         // c:2911
         let off = (c >> 2) as usize;
@@ -3702,7 +3704,7 @@ pub fn ecrawstr(p: &eprog, pc: usize, tokflag: Option<&mut i32>) -> String {
         }
         let tail = &strs_bytes[off..];
         let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
-        crate::zwc::wordcode_pool_str(&tail[..end])
+        crate::zwc::wordcode_pool_str_unmeta(&tail[..end], p.strs_metafied)
     }
 }
 
@@ -5169,6 +5171,7 @@ pub fn check_dump_file(
         strs: Some(strs_string),           // c:3947
         shf: None,                         // c:3948
         dump: None,                        // c:3949
+        strs_metafied: true, // .zwc pool read verbatim — still METAFIED (see eprog field doc)
     };
 
     // c:3899 — incrdumpcount(f) on the mmap-cache hit path.
@@ -5442,6 +5445,7 @@ pub static DUMMY_EPROG: std::sync::Mutex<eprog> = std::sync::Mutex::new(eprog {
     pats: Vec::new(),
     shf: None,
     dump: None,
+    strs_metafied: false, // native pool — clean UTF-8
 });
 
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
@@ -10777,6 +10781,7 @@ esac"#;
                 strs: None,
                 shf: None,
                 dump: None,
+                strs_metafied: false, // native pool — clean UTF-8
             };
             estate {
                 prog: Box::new(p),
