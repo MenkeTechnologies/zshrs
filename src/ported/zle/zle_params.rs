@@ -88,6 +88,22 @@ pub fn makezleparams(_ro: i32) {
                                                                         // $BUFFERLINES — count of newlines in BUFFER + 1.
     let lines = line.chars().filter(|c| *c == '\n').count() as i64 + 1;
     let _ = setiparam("BUFFERLINES", lines); // c:zleparams[10]
+    // c:zleparams[] KEYS / WIDGET / LASTWIDGET / WIDGETFUNC /
+    // WIDGETSTYLE / HISTNO / CONTEXT / PENDING — snapshot through the
+    // canonical getter ports. zsh-expand's space widget dispatches on
+    // `[[ $KEYS == " " ]]`; with $KEYS missing it never took the
+    // supernatural-space path, so `ra<space>` didn't expand.
+    let keys_bytes = get_keys(); // c:463 get_keys → keybuf
+    let mut keys_unmeta = keys_bytes.clone();
+    crate::ported::utils::unmetafy(&mut keys_unmeta);
+    let _ = setsparam("KEYS", &String::from_utf8_lossy(&keys_unmeta)); // c:zleparams KEYS
+    let _ = setsparam("WIDGET", &get_widget()); // c:414 bindk->nam
+    let _ = setsparam("LASTWIDGET", &get_lwidget()); // c:428 lbindk->nam
+    let _ = setsparam("WIDGETFUNC", &get_widgetfunc()); // c:421
+    let _ = setsparam("WIDGETSTYLE", &get_widgetstyle()); // c:435
+    let _ = setiparam("HISTNO", get_histno()); // c:514 histline
+    let _ = setsparam("CONTEXT", get_context()); // c:942
+    let _ = setiparam("PENDING", get_pending() as i64); // c:528
 }
 
 /// Direct port of `static void zleunsetfn(Param pm, int exp)` from
