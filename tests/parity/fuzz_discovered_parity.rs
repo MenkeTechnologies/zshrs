@@ -2854,3 +2854,50 @@ mod qplus_meta_byte_quoting {
         assert_parity(r#"v=café; print -rn -- "${(q+)v}" | od -An -tx1"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// W. A flag expansion on an array/assoc must not leak array-ness into a
+//    following unrelated `${#${#scalar}}`.
+//
+// PARAMSUBST_LF_ARRAY is the thread-local that hands a paramsubst call's
+// array-ness back to its caller (stringsubst / the nested-subexp reader).
+// C resets it to the non-array default (subst.c:3932) up front. zshrs only
+// SET it on the array-producing paths, so the getlen early-return
+// (`${#name}`) left whatever the PREVIOUS call stored. `${(U)arr}` sets it
+// true; a following `${#${#s}}` then read the stale true, materialised the
+// scalar length into a __subexp_arr_N temp, and counted 1 ELEMENT instead
+// of 2 CHARS. Initialising it false at the top of every paramsubst fixes
+// the cross-expansion state leak. This was a real correctness bug, not
+// just a fuzz artifact.
+// ─────────────────────────────────────────────────────────────────────
+mod flag_expansion_no_array_state_leak {
+    use super::*;
+
+    /// zsh: `[2]`. Was `[1]` after `${(U)arr}` leaked LF_ARRAY.
+    #[test]
+    fn uppercase_array_then_nested_length() {
+        assert_parity(
+            r#"s=Hello_World; a=(x y); : ${(U)a}; print -r -- "[${#${#s}}]""#,
+        );
+    }
+
+    /// Same via an associative array and the (U) listing form.
+    #[test]
+    fn uppercase_assoc_then_nested_length() {
+        assert_parity(
+            r#"s=Hello_World; typeset -A m; m=(k1 v1 k2 v2); print -rl -- ${(U)m}; print -r -- "[${#${#s}}]""#,
+        );
+    }
+
+    /// (o) sort flag on an array is the same class of leak.
+    #[test]
+    fn sort_array_then_nested_length() {
+        assert_parity(r#"s=Hello_World; a=(3 1 2); : ${(o)a}; print -r -- "[${#${#s}}]""#);
+    }
+
+    /// The nested-array count itself must STILL work (no over-reset).
+    #[test]
+    fn nested_split_count_unaffected() {
+        assert_parity(r#"v="a b c"; print -r -- ${#${(z)v}}"#);
+    }
+}
