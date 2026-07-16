@@ -2261,16 +2261,34 @@ pub fn adjustwinsize(from: i32) -> (usize, usize) {
         0 | 1 => {
             // c:1922-1923
             ADJUSTWINSIZE_GETWINSZ.store(0, Ordering::SeqCst); // c:1924
-                                                               // c:1931-1932 — `if (adjustlines(from) && zgetenv("LINES")) setiparam(...)`
-            let lines = adjustlines() as i32;
-            if std::env::var_os("LINES").is_some() {
-                setiparam("LINES", lines as i64); // c:1932
-            }
-            // c:1933-1934 — same for COLUMNS.
-            let cols = adjustcolumns() as i32;
-            if std::env::var_os("COLUMNS").is_some() {
-                setiparam("COLUMNS", cols as i64); // c:1934
-            }
+            // c:1931-1934 — C: `if (adjustlines(from) && zgetenv("LINES"))
+            // setiparam("LINES", zterm_lines);` (same for COLUMNS). The
+            // zgetenv gate only guards re-publishing to an ENV-exported
+            // LINES — in C the param itself is ALWAYS live because its
+            // valptr aliases the `zterm_lines` global that adjustlines
+            // just wrote (createparamtable IPDEF5 → zlevarsetfn/intvargetfn
+            // on &zterm_lines). zshrs params store their own u_val copy
+            // (no valptr aliasing), so the probe result must be written
+            // through setiparam unconditionally — gating on the env left
+            // `$LINES`/`$COLUMNS` at 0 for every interactive shell
+            // (LINES is not in the environment; zsh doesn't export it).
+            // Effect: `$(( LINES / 3 ))` = 0 → division-by-zero in
+            // history-search-multi-word pagination (_hsmw_main:81), and
+            // every LINES/COLUMNS-derived layout was wrong. Recursion is
+            // safe: setiparam → zlevarsetfn → adjustwinsize(2|3) never
+            // re-enters this arm.
+            let lines = if ttyrows > 0 {
+                ttyrows as i64 // c:1837 — zterm_lines = shttyinfo.winsize.ws_row
+            } else {
+                adjustlines() as i64 // c:1844 — tclines/24 fallback chain
+            };
+            setiparam("LINES", lines); // c:1932
+            let cols = if ttycols > 0 {
+                ttycols as i64 // c:1862 — zterm_columns = ws_col
+            } else {
+                adjustcolumns() as i64 // c:1869 — tccolumns/80 fallback chain
+            };
+            setiparam("COLUMNS", cols); // c:1934
             ADJUSTWINSIZE_GETWINSZ.store(1, Ordering::SeqCst); // c:1935
         }
         2 => {
@@ -15088,6 +15106,51 @@ mod tests {
     fn get_username_returns_string_type() {
         let _g = crate::test_util::global_state_lock();
         let _: String = get_username();
+    }
+
+    /// c:1921-1935 — adjustwinsize(1) seeds `$LINES`/`$COLUMNS` from the
+    /// TIOCGWINSZ probe of SHTTY. The port gated the setiparam calls on
+    /// LINES/COLUMNS being in the OS environment (a misread of C's
+    /// zgetenv guard, which only covers env re-publication — the C param
+    /// is always live via its zterm_lines valptr alias), so every
+    /// interactive shell ran with LINES=0 → `$(( LINES / 3 ))` division
+    /// by zero in history-search-multi-word pagination (_hsmw_main:81).
+    #[test]
+    fn adjustwinsize_seeds_lines_columns_from_shtty() {
+        let _g = crate::test_util::global_state_lock();
+        unsafe {
+            let mut master: libc::c_int = -1;
+            let mut slave: libc::c_int = -1;
+            let mut ws: libc::winsize = std::mem::zeroed();
+            ws.ws_row = 33;
+            ws.ws_col = 77;
+            if libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut ws,
+            ) != 0
+            {
+                return; // no pty available (sandboxed CI) — skip
+            }
+            let saved_shtty = crate::ported::init::SHTTY.load(Ordering::Relaxed);
+            crate::ported::init::SHTTY.store(slave, Ordering::Relaxed);
+            let _ = adjustwinsize(1);
+            crate::ported::init::SHTTY.store(saved_shtty, Ordering::Relaxed);
+            libc::close(slave);
+            libc::close(master);
+        }
+        assert_eq!(
+            crate::ported::params::getiparam("LINES"),
+            33,
+            "LINES must reflect the SHTTY winsize probe"
+        );
+        assert_eq!(
+            crate::ported::params::getiparam("COLUMNS"),
+            77,
+            "COLUMNS must reflect the SHTTY winsize probe"
+        );
     }
 }
 
