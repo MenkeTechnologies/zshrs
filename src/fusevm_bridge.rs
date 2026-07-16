@@ -2075,8 +2075,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let args = pop_args(vm, argc);
         // c:Bug #475/#555 — `compgen` is a bash-only builtin. In
         // `--zsh` mode emit "command not found" matching zsh's
-        // external-command lookup miss.
+        // external-command lookup miss — UNLESS a user FUNCTION of
+        // that name exists: zsh has no such builtin, so bashcompinit's
+        // `compgen() {...}` definition wins the dispatch there. The
+        // unconditional 127 shadowed it and broke every
+        // bashcompinit-style completion file (zsh-more-completions
+        // _msync/_gocomplete/_qshell/_cw), spraying "command not
+        // found: complete" at every deferred compinit load.
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            if crate::ported::utils::getshfunc("compgen").is_some() {
+                let status = with_executor(|exec| exec.dispatch_function_call("compgen", &args))
+                    .unwrap_or(127);
+                return Value::Status(status);
+            }
             eprintln!("zsh:1: command not found: compgen");
             let _ = args;
             return Value::Status(127);
@@ -2087,9 +2098,14 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_COMPLETE, |vm, argc| {
         let args = pop_args(vm, argc);
-        // c:Bug #475 — `complete` is a bash-only builtin. Same gate
-        // as BUILTIN_COMPGEN above.
+        // c:Bug #475 — `complete` is a bash-only builtin. Same gate +
+        // user-function precedence as BUILTIN_COMPGEN above.
         if crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            if crate::ported::utils::getshfunc("complete").is_some() {
+                let status = with_executor(|exec| exec.dispatch_function_call("complete", &args))
+                    .unwrap_or(127);
+                return Value::Status(status);
+            }
             eprintln!("zsh:1: command not found: complete");
             let _ = args;
             return Value::Status(127);
