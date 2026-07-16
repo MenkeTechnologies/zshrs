@@ -2708,6 +2708,14 @@ pub fn get_key_cmd() -> Option<Thingy> {
     let mut buf: Vec<u8> = Vec::with_capacity(8);
     let mut last_match: Option<Thingy> = None;
     let mut last_match_len = 0usize;
+    // c:zle_keymap.c:1585 — `int lastlen = 0, lastc = lastchar;` —
+    // remember lastchar as of the LAST RECORDED MATCH. When the walk
+    // reads past the match probing a longer binding (`bindkey 'fj'
+    // …` makes `f` a prefix), the probe byte overwrites LASTCHAR;
+    // dispatching the shorter match must restore it or self-insert
+    // inserts the PROBE byte: typing `df80` with `f`-prefix bindings
+    // inserted `d880` (every f/j replaced by its follower).
+    let mut lastc = LASTCHAR.load(SeqCst); // c:1585
 
     // c:zle_keymap.c:1588-1589 — `keybuflen = 0; keybuf[0] = 0;` —
     // reset the GLOBAL keybuf at sequence start. The local `buf`
@@ -2777,6 +2785,7 @@ pub fn get_key_cmd() -> Option<Thingy> {
         if let Some(t) = current_match {
             last_match = Some(t);
             last_match_len = buf.len();
+            lastc = LASTCHAR.load(SeqCst); // c:1622 — `lastc = lastchar;`
         }
 
         // If this sequence is no longer a prefix of any binding,
@@ -2785,6 +2794,15 @@ pub fn get_key_cmd() -> Option<Thingy> {
         if !is_prefix {
             break;
         }
+    }
+
+    // c:1692-1695 — `if(!lastlen && keybuflen) lastlen = keybuflen;
+    // else lastchar = lastc;` — when a shorter match is being
+    // dispatched after probe bytes were read, restore lastchar to
+    // its match-time value so self-insert inserts the MATCHED key,
+    // not the probe byte.
+    if !(last_match_len == 0 && !buf.is_empty()) {
+        LASTCHAR.store(lastc, SeqCst); // c:1695
     }
 
     // Unget any bytes past the matched prefix so the next read sees

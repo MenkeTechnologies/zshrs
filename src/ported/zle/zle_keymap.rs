@@ -2669,6 +2669,9 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
     let mut last_match: Option<super::zle_thingy::Thingy> = None; // c:1584
     let mut last_match_str: Option<String> = None;
     let mut last_match_len = 0usize; // c:1585
+    // c:1585 — `lastc = lastchar` — see get_key_cmd (zle_main.rs) for
+    // the probe-byte restore rationale.
+    let mut lastc = crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst); // c:1585
 
     // c:1588-1589 — `keybuflen = 0; keybuf[0] = 0;` — reset the GLOBAL
     // keybuf. The local `buf` drives the (raw-byte-keyed) Rust keymap
@@ -2710,12 +2713,21 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
             last_match = Some(t);
             last_match_str = current_str;
             last_match_len = buf.len();
+            lastc = crate::ported::zle::compcore::LASTCHAR.load(std::sync::atomic::Ordering::SeqCst);
+            // c:1622
         }
 
         // c:1614 — `if (!ispfx) break;` stop when not a prefix anymore.
         if !is_prefix {
             break;
         }
+    }
+
+    // c:1692-1695 — `if(!lastlen && keybuflen) lastlen = keybuflen;
+    // else lastchar = lastc;` — restore lastchar to its match-time
+    // value when probe bytes were read past the dispatched match.
+    if !(last_match_len == 0 && !buf.is_empty()) {
+        crate::ported::zle::compcore::LASTCHAR.store(lastc, std::sync::atomic::Ordering::SeqCst); // c:1695
     }
 
     // c:1696-1708 — unget extra bytes past the matched prefix and
