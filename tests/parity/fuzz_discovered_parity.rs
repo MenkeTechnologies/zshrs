@@ -2650,3 +2650,61 @@ mod ksharrays_nested_split_count {
         assert_parity(r#"a=(xx yy zz); setopt ksharrays; print -r -- ${#a[@]}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// S. An unquoted expansion flanked by SEPARATE double-quoted spans stays
+//    unquoted: `"x"$a"y"`.
+//
+// The fusevm word compiler classified a word as whole-word double-quoted
+// whenever its tokenized form merely STARTED and ENDED with a Dnull
+// marker. For `"x"$a"y"` the leading/trailing Dnulls belong to DIFFERENT
+// quote runs and the middle `$a` is UNQUOTED, so zsh word-splits the
+// array (`a=(one two three)` → `xone two threey`, three words) — but the
+// mis-classification bumped dq_context_depth and joined it to one scalar.
+// The fix counts Dnulls only at brace/bracket/paren depth 0: a genuine
+// single wrap has exactly 2, sibling spans have 4+, and Dnulls nested
+// inside `${…}` sit at depth>0 and are ignored.
+// ─────────────────────────────────────────────────────────────────────
+mod quoted_flanked_unquoted_expansion {
+    use super::*;
+
+    /// zsh: 3 words (`xone`, `two`, `threey`). Was 1 (joined) before fix.
+    #[test]
+    fn both_quoted_flanks_array_splits() {
+        assert_parity(r#"a=(one two three); print -rl -- "x"${a}"y""#);
+    }
+
+    /// No-brace form `"x"$a"y"` behaves identically.
+    #[test]
+    fn both_quoted_flanks_array_no_brace() {
+        assert_parity(r#"a=(one two three); print -rl -- "x"$a"y""#);
+    }
+
+    /// A set-op expansion flanked by quotes still applies the set-op AND
+    /// splices: `"x"${a:|b}"y"` → `xone three fivey`.
+    #[test]
+    fn both_quoted_flanks_setop_splice() {
+        assert_parity(
+            r#"a=(one two three four five); b=(two four six eight); print -r -- "x"${a:|b}"y""#,
+        );
+    }
+
+    /// Genuine whole-word DQ wrap must NOT split (regression guard).
+    #[test]
+    fn genuine_dq_wrap_no_split() {
+        assert_parity(r#"a=(one two three); print -rl -- "pre ${a} post""#);
+    }
+
+    /// A double-quote NESTED inside `${…}` keeps the outer wrap intact.
+    #[test]
+    fn nested_dq_inside_braces_keeps_wrap() {
+        assert_parity(r#"x=(o t); print -rl -- "a${x:-"n"}b""#);
+    }
+
+    /// One-sided quote (quoted prefix, literal suffix) already worked —
+    /// pin it so the depth-count change can't regress it.
+    #[test]
+    fn one_sided_quote_splits() {
+        assert_parity(r#"a=(one two three); print -rl -- "x"${a}suf"#);
+    }
+}
