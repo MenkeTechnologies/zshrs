@@ -13338,7 +13338,26 @@ pub fn bin_trap(
             // as "2", so `trap "" 2; trap` listed `trap -- '' 2`
             // instead of `trap -- '' INT`. Resolve to the canonical
             // signal name via sigs_name(idx).
-            name.to_string()
+            //
+            // c:Src/jobs.c:2740 alt_sigs + jobs.c:3089 getsigname — a trap
+            // set via an ALIAS name lists under the ALIAS, not the
+            // canonical sigs[] name (C flags it ZSIG_ALIAS). The only
+            // unconditional alt_sigs entry is `{ "ERR", SIGZERR }`, so
+            // `trap … ERR; trap` must print `… ERR`, not `… ZERR`. The
+            // Rust port stores traps by name string; preserve the alias
+            // the user typed as the key. The dotrap dispatch already
+            // resolves SIGZERR through both "ZERR" and "ERR"
+            // (signals.rs:1505), so firing is unaffected.
+            let normalized = sigarg
+                .strip_prefix("SIG")
+                .or_else(|| sigarg.strip_prefix("sig"))
+                .unwrap_or(sigarg.as_str())
+                .to_uppercase();
+            if sig == crate::ported::signals_h::SIGZERR && normalized == "ERR" {
+                "ERR".to_string()
+            } else {
+                name.to_string()
+            }
         } else {
             // Strip SIG/sig prefix and uppercase so `SIGINT` / `int`
             // / `INT` all map to the same key.
