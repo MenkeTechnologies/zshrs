@@ -3846,6 +3846,46 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 key.clone()
             }
         });
+        // c:Src/params.c getindex — C parses the subscript from the
+        // TOKENIZED source word, so a `]`/`}` that arrived via `$key`
+        // expansion is plain data and can never terminate the
+        // subscript. The textual `name[key]` rebuild below re-parses
+        // the FLAT string, where an expanded `]` splits the key at the
+        // first bracket (`c[$k]=5` with k='x]y' stored key "x" and
+        // spilled junk — zpwr expandstats died on the spill in a later
+        // math expr). For a PM_HASHED target the compile-time split
+        // already isolated the exact key: store it directly via the
+        // canonical hashed storage (same mechanism as the
+        // dynamic-empty-key arm above / assignsparam's PM_HASHED
+        // tail), with the readonly guard assignsparam would apply.
+        let target_flags = with_executor(|exec| exec.param_flags(&name));
+        // PM_SPECIAL exclusion: the zsh/parameter magic assocs
+        // (functions / aliases / galiases / saliases / options / …)
+        // have per-key setfns with SIDE EFFECTS — `functions[x]=body`
+        // must parse the body into shfunctab (Src/Modules/
+        // parameter.c:296 setfunction), `aliases[x]=v` must write
+        // aliastab. The direct hashed-storage store below silently
+        // swallowed those: zinit's tmp-subst wrappers
+        // (`functions[autoload]=':zinit-tmp-subst-autoload "$@";'`)
+        // never became real functions, so every
+        // `.zinit-tmp-subst-off` spammed `unfunction: no such hash
+        // table element: autoload/compdef/bindkey/…`. Route specials
+        // through assignsparam's canonical per-name arms instead.
+        if (target_flags as u32 & crate::ported::zsh_h::PM_HASHED) != 0
+            && (target_flags as u32 & crate::ported::zsh_h::PM_SPECIAL) == 0
+        {
+            if (target_flags as u32 & crate::ported::zsh_h::PM_READONLY) != 0 {
+                crate::ported::utils::zerr(&format!("read-only variable: {}", name));
+                return Value::Status(1);
+            }
+            if let Ok(mut store) = crate::ported::params::paramtab_hashed_storage().lock() {
+                store
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(resolved_key.clone(), value.clone());
+            }
+            return Value::Status(0);
+        }
         let subscripted = format!("{}[{}]", name, resolved_key);
         crate::ported::params::assignsparam(&subscripted, &value, crate::ported::zsh_h::ASSPM_WARN);
         Value::Status(0)
@@ -9115,8 +9155,87 @@ fn array_index_lookup(name: &str, idx: &str) -> Value {
             return Value::str(v);
         }
     }
+    // c:Src/params.c:1449-1450 getindex — a leading `(e)`/`(E)` flag
+    // group makes the subscript LITERAL (group consumed, exact key).
+    // The textual rebuild below re-parses a FLAT `${name[(e)KEY]}`
+    // string, so a `]` / `}` that arrived via `$key` expansion
+    // terminates the subscript / brace early — "bad substitution" or
+    // spilled-junk values (zpwr expandstats iterates alias keys
+    // containing brackets). C never re-parses: getarg scans the
+    // TOKENIZED source where expanded data brackets are inert. Do the
+    // exact-match lookup directly against the assoc (plain or magic
+    // alias tables); search groups ((r)/(i)/(k)/…) and other targets
+    // keep the textual path.
+    if let Some(rest) = idx.strip_prefix('(') {
+        if let Some(close) = rest.find(')') {
+            let grp = &rest[..close];
+            if !grp.is_empty() && grp.chars().all(|ch| ch == 'e' || ch == 'E') {
+                let key = &rest[close + 1..];
+                if let Some(hit) = direct_assoc_key_get(name, key) {
+                    return Value::str(hit.unwrap_or_default());
+                }
+            }
+        }
+    }
+    // Plain assoc key that the flat rebuild would mangle (`]` closes
+    // the subscript, `}` closes the brace): direct lookup. On a miss
+    // return empty — the textual fallback cannot represent the key.
+    if (idx.contains(']') || idx.contains('}')) && !idx.starts_with('(') {
+        if let Some(hit) = direct_assoc_key_get(name, idx) {
+            return Value::str(hit.unwrap_or_default());
+        }
+    }
     let body = format!("${{{}[{}]}}", name, idx);
     paramsubst_to_value(&body)
+}
+
+/// Exact-key read against an assoc-like target WITHOUT the textual
+/// `${name[key]}` reparse (see array_index_lookup — expanded `]`/`}`
+/// in keys break the flat form). `Some(hit)` when `name` is a target
+/// this helper understands (plain assoc, or the alias magic assocs of
+/// zsh/parameter — Src/Modules/parameter.c getpmalias family);
+/// `None` = not direct-capable, caller keeps the textual path.
+fn direct_assoc_key_get(name: &str, key: &str) -> Option<Option<String>> {
+    use crate::ported::zsh_h::{ALIAS_GLOBAL, DISABLED};
+    // c:Src/Modules/parameter.c:1247+ getpmalias / getpmgalias /
+    // getpmsalias — each view filters its table by flags.
+    let alias_view = |global: bool, suffix: bool, disabled: bool| -> Option<String> {
+        let tab = if suffix {
+            crate::ported::hashtable::sufaliastab_lock()
+        } else {
+            crate::ported::hashtable::aliastab_lock()
+        };
+        tab.read().ok().and_then(|t| {
+            t.iter().find_map(|(k, a)| {
+                let f = a.node.flags as u32;
+                if k == key
+                    && ((f & ALIAS_GLOBAL as u32 != 0) == global || suffix)
+                    && ((f & DISABLED as u32 != 0) == disabled)
+                {
+                    Some(a.text.clone())
+                } else {
+                    None
+                }
+            })
+        })
+    };
+    match name {
+        "aliases" => Some(alias_view(false, false, false)),
+        "galiases" => Some(alias_view(true, false, false)),
+        "saliases" => Some(alias_view(false, true, false)),
+        "dis_aliases" => Some(alias_view(false, false, true)),
+        "dis_galiases" => Some(alias_view(true, false, true)),
+        "dis_saliases" => Some(alias_view(false, true, true)),
+        _ => {
+            if with_executor(|exec| exec.assoc(name).is_some()) {
+                Some(with_executor(|exec| {
+                    exec.assoc(name).and_then(|m| m.get(key).cloned())
+                }))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// KSHARRAYS bare-`$name` expansion words for the unbraced

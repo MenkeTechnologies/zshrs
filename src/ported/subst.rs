@@ -4011,7 +4011,16 @@ pub fn paramsubst(
                         let raw_expr: String = body_chars[n_start..idx].iter().collect();
                         // singsub expands `$var` / backticks / arith; then
                         // mathevali resolves the result string.
-                        let expanded = singsub(&raw_expr);
+                        //
+                        // Untokenize first: in scalar-assignment context
+                        // (EXPAND_TEXT mode 5 → singsub) the body arrives
+                        // TOKENIZED — `-` is Dash (\u{90}-family), `*` is
+                        // Star — and mathevali rejects the token chars
+                        // ("illegal character"), collapsing the pad width
+                        // to 0. Argument context (multsub) delivered ASCII
+                        // and worked; `c=${(l:a-b::░:)}` silently produced
+                        // "" (zpwr expandstats bars lost their ░ fill).
+                        let expanded = singsub(&crate::ported::lex::untokenize(&raw_expr));
                         let n: i64 = if expanded.is_empty() {
                             0
                         } else {
