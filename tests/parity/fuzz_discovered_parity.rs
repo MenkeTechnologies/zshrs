@@ -2600,3 +2600,53 @@ mod rcexpandparam_split_empty {
         assert_parity(r#"setopt rcexpandparam; a=(x y z); echo ${a%x*}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// R. Nested `${#${(flag)v}}` counts elements under KSH_ARRAYS.
+//
+// getlen (subst.c:3849) counts array ELEMENTS whenever `isarr` is set;
+// KSHARRAYS never touches that block. A nested flag-split — `${(z)v}`,
+// `${(s:X:)v}`, `${(f)v}` — sets isarr from the split, so the outer `#`
+// must count its elements even under ksharrays. zshrs materialized the
+// inner result into a synthetic __subexp_arr_N temp and then wrongly
+// applied the KSHARRAYS bare-array→element-1 scalarization to it,
+// collapsing `${#${(z)v}}` for v="a b c" to element-0's char length (1)
+// instead of the element count (3). The fix excludes subexp temps from
+// that scalarization.
+// ─────────────────────────────────────────────────────────────────────
+mod ksharrays_nested_split_count {
+    use super::*;
+
+    /// zsh: 3 (element count of the (z) split). Was 1 before the fix.
+    #[test]
+    fn ksharrays_nested_z_split_counts_elements() {
+        assert_parity(r#"v="a b c"; setopt ksharrays; print -r -- ${#${(z)v}}"#);
+    }
+
+    /// (s:X:) forced split nested count under ksharrays → 3.
+    #[test]
+    fn ksharrays_nested_s_split_counts_elements() {
+        assert_parity(r#"v="a:b:c"; setopt ksharrays; print -r -- ${#${(s.:.)v}}"#);
+    }
+
+    /// (f) line split nested count under ksharrays → 3.
+    #[test]
+    fn ksharrays_nested_f_split_counts_elements() {
+        assert_parity(
+            "v=$'x\\ny\\nz'; setopt ksharrays; print -r -- ${#${(f)v}}",
+        );
+    }
+
+    /// A REAL bare array `${#a}` under ksharrays still yields element-0's
+    /// char length (KSHARRAYS scalarization must NOT regress).
+    #[test]
+    fn ksharrays_bare_array_length_unchanged() {
+        assert_parity(r#"a=(xx yy zz); setopt ksharrays; print -r -- ${#a}"#);
+    }
+
+    /// `${#a[@]}` keeps the element count under ksharrays.
+    #[test]
+    fn ksharrays_at_subscript_length_unchanged() {
+        assert_parity(r#"a=(xx yy zz); setopt ksharrays; print -r -- ${#a[@]}"#);
+    }
+}

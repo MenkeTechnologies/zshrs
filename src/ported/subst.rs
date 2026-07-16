@@ -8499,10 +8499,21 @@ pub fn paramsubst(
             // `${#arr[@]}` still counts — the compiler now preserves that
             // subscript (compile_zsh.rs `${#…}` parse) so the two forms are
             // distinguishable here.
+            // c:Src/subst.c:3849 — getlen counts ELEMENTS whenever `isarr`
+            // is set; KSHARRAYS never touches that block. The KSHARRAYS
+            // bare-array→element-1 scalarization (params.c:1616) applies
+            // only to a real bare array PARAM reference — NOT to a nested
+            // split-derived result like `${#${(z)v}}`, whose inner `(z)`
+            // sets isarr from a split. That inner result is materialized
+            // into a synthetic `__subexp_arr_N` temp; excluding it keeps
+            // `setopt ksharrays; v="a b c"; print ${#${(z)v}}` at 3 (the
+            // element count) instead of collapsing to element-0's char
+            // length (1). subexp_array_temp is Some only on that path.
             let ksh_scalar_array = crate::ported::zsh_h::isset(crate::ported::zsh_h::KSHARRAYS)
                 && subscript.is_none()
                 && !flagged_array_subscript
                 && magic_keys.is_none()
+                && subexp_array_temp.is_none()
                 && arrays_contains(&var_name);
             // The scalar length branch counts `raw_value_for_len`, which for a
             // bare array name is the space-joined array; under KSHARRAYS the
