@@ -7441,6 +7441,21 @@ impl ZshCompiler {
         let word: &str = normalized.as_deref().unwrap_or(word);
         let segments = split_pattern_for_glob_subst(word);
         if segments.len() <= 1 {
+            // A single pure-LITERAL segment has no substitution to run —
+            // it lands here when the `$` that made the caller's
+            // needs_expand true is source-ESCAPED (`[[ $v = \$* ]]`,
+            // f-sy-h's `\$[{]` matcher). Routing it through
+            // compile_word_str + GLOB_SUBST_GUARD substituted the
+            // escaped dollar and escaped the SOURCE metas (pattern
+            // `\$*` became `$\*` — dollar active, star literal). Emit
+            // it like the multi-segment Literal arm: untokenized,
+            // guard-free, escapes intact for the runtime patcompile.
+            if let Some(PatSeg::Literal(text)) = segments.first() {
+                let lit = crate::lex::untokenize(text);
+                let c = self.builder.add_constant(Value::str(lit.as_str()));
+                self.builder.emit(Op::LoadConst(c), 0);
+                return;
+            }
             self.dq_context_depth += 1;
             self.compile_word_str(word);
             self.dq_context_depth -= 1;
@@ -9755,7 +9770,20 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
         //   are META-marked. Followed by Inbrace/Inpar/alphanumeric to
         //   distinguish from a literal trailing `$`.
         let is_meta_dollar = c == '\u{85}' || c == '\u{8c}';
-        let is_literal_dollar_with_expansion = c == '$' && {
+        // An ESCAPED dollar is literal: the lexer marks `\$` as
+        // Bnull(\u{9f})+`$`, and raw-source paths may carry `\$`
+        // verbatim (odd backslash run). Without this, the cond
+        // pattern `\$[{]` (f-sy-h's -fast-highlight-string dollar
+        // matcher) compiled as `$[…]` old-style math with the
+        // tokenized `{` (0x8f) inside — "bad math expression:
+        // illegal character:" per keystroke, and the plugin's
+        // while loop then spun the shell at 100% CPU.
+        let escaped_dollar = c == '$'
+            && (chars.get(i.wrapping_sub(1)).is_some_and(|&p| p == '\u{9f}') || {
+                let bs = chars[..i].iter().rev().take_while(|&&b| b == '\\').count();
+                bs % 2 == 1
+            });
+        let is_literal_dollar_with_expansion = c == '$' && !escaped_dollar && {
             // peek next char — must be `{`-meta/literal, `(`-meta/literal,
             // or ident-start. The literal `{` and `(` cases apply when
             // the input has been pre-untokenized (assoc-LHS key arrives
@@ -10825,6 +10853,29 @@ fn split_pattern_for_glob_subst(s: &str) -> Vec<PatSeg> {
                     if cc == close {
                         break;
                     }
+                }
+            }
+            // Bnull/Bnullkeep (lexer escape markers) and a raw `\`
+            // escape the NEXT char as source-literal — consume the
+            // PAIR into the literal segment so an escaped `$` never
+            // reaches the Subst arm above. Without this, the cond
+            // pattern `\$*` (Bnull,$,Star) split as Literal(Bnull) +
+            // Subst("$*") — the escaped dollar substituted the
+            // positional params (f-sy-h's `\$[{]` variant compiled
+            // `$[…]` math on the class body and errored "bad math
+            // expression: illegal character: 0x8f" per keystroke,
+            // then its while loop spun the shell at 100% CPU).
+            '\u{9f}' | '\u{a0}' | '\\' => {
+                // Emit the RAW-ASCII escape form (`\X`) — the STRMATCH
+                // runtime re-tokenizes the assembled pattern, folding
+                // `\X` to a Bnull literal for patcompile; a raw marker
+                // byte would not round-trip.
+                lit.push('\\');
+                if let Some(&nxt) = chars.get(i + 1) {
+                    lit.push(nxt);
+                    i += 2;
+                } else {
+                    i += 1;
                 }
             }
             _ => {

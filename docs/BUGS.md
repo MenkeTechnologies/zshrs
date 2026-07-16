@@ -19,6 +19,55 @@ CI green pending the underlying fix.
 
 ---
 
+## #671 — escaped `\$` in cond patterns treated as substitution — f-sy-h math error + 100% CPU infinite loop — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+v='$x'; [[ $v = \$* ]]        # zsh: match   zshrs (before): no match ($* substituted!)
+v='${x}'; [[ $v = \$[{]* ]]   # zshrs (before): bad math expression: illegal character: 0x8f
+```
+
+Real-world hit: fast-syntax-highlighting's `-fast-highlight-string`
+dollar matcher (fast-highlight:1346, the `(#b)…\$[{]…` pattern) errored
+`bad math expression: illegal character:` on every keystroke inside a
+string — and because the error skipped the loop-body advance
+(`_mybuf=${match[7]:1}`), its `while [[ … ]]` re-matched the same text
+forever: the sampled 100% CPU infinite loop
+(`execcmd_exec`/`haswilds` hot frames under `execzlefunc`).
+
+**Root cause (two compile-time gaps in the cond/case pattern path):**
+
+1. `split_pattern_for_glob_subst` had no escape arm — Bnull(0x9f)/
+   Bnullkeep/raw-`\` escape markers fell into the default literal arm
+   one char at a time, so the FOLLOWING `$` hit the substitution arm:
+   `\$*` split as `Literal(0x9f)` + `Subst("$*")` (positional splice),
+   and `\$[{]` compiled the `$[…]` old-style arithmetic with the
+   tokenized `{` in the body.
+2. `emit_glob_subst_pattern`'s single-segment fallback routed pure
+   LITERAL segments through compile_word_str + GLOB_SUBST_GUARD, which
+   substituted the escaped dollar and escaped SOURCE metas (`\$*` →
+   `$\*` — exactly inverted).
+
+**Fix:** the splitter consumes escape pairs into the literal segment
+(emitted in raw-ASCII `\X` form so the runtime tokenize→patcompile
+round-trips), and a single pure-literal segment emits as an untokenized
+constant — no substitution, no guard. An earlier attempt to guard raw
+`\$` inside stringsubst was REVERTED: after the Bnull arm strips
+markers in place, a preceding backslash is indistinguishable from
+stripped-escape data, and the guard broke `${1//(#m)[…]/\\$MATCH}`
+(replacement `\\$MATCH` went literal).
+
+Verified byte-identical to zsh 5.9: `\$*`, `\$[a-z]*`, `\$[{]*`, the
+full f-sy-h matcher (match vars identical), `$H*` active substitution
+still substitutes; live f-sy-h now paints per-token (green cmd, yellow
+string) with no errors and no spin. cond 363/363, subst 338/338,
+glob/case remaining failures verified pre-existing. 5 regression tests.
+
+---
+
 ## #670 — `LBUFFER+=` inside a widget ASSIGNED instead of appending — autopair wiped the line — FIXED
 
 **Status:** `fixed`
