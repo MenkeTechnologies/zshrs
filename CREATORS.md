@@ -1,6 +1,6 @@
 # Creators
 
-zshrs was created by **Jacob Menke** ([MenkeTechnologies](https://github.com/MenkeTechnologies)).
+zshrs was created by [MenkeTechnologies](https://github.com/MenkeTechnologies).
 
 Original synthesis (2025–): the first compiled Unix shell, the
 no-fork architecture, the 90/10 work split between
@@ -90,7 +90,7 @@ project. Suggested wording:
 
 > Inspired by / ported from
 > [zshrs](https://github.com/MenkeTechnologies/zshrs) by
-> Jacob Menke (MenkeTechnologies). Original synthesis 2025–.
+> MenkeTechnologies. Original synthesis 2025–.
 
 Verbatim source-code reuse is governed by the MIT license
 and already requires the copyright + license notice. The
