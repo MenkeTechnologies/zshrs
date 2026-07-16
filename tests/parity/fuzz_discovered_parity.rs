@@ -2427,4 +2427,91 @@ mod deferred_fixes {
     fn at_subscript_zip_per_element_unaffected() {
         assert_parity(r#"a=(1 2 3); b=(x y); print -r -- "${a[@]:^b}""#);
     }
+
+    // --- `(m)` display-cell padding TRUNCATION: when the value exceeds the
+    // width, wide (2-cell) chars must be counted in CELLS, not chars, on both
+    // the left (keep rightmost fitting chars) and right (keep leftmost, copy
+    // the crossing char) — c:Src/subst.c:912-925 / :1072-1080. ---
+    #[test]
+    fn m_pad_left_truncate_wide() {
+        assert_parity(r#"j=日本語テキスト; print -r -- "[${(ml:8::.:)j}]""#);
+    }
+    #[test]
+    fn m_pad_right_truncate_wide() {
+        assert_parity(r#"j=日本語テキスト; print -r -- "[${(mr:8::.:)j}]""#);
+    }
+    #[test]
+    fn m_pad_left_truncate_short_width() {
+        assert_parity(r#"j=日本語; print -r -- "[${(ml:3::.:)j}]""#);
+    }
+    #[test]
+    fn m_pad_right_truncate_crossing_char() {
+        assert_parity(r#"j=日本語; print -r -- "[${(mr:3::.:)j}]""#);
+    }
+    #[test]
+    fn m_pad_left_partial_wide() {
+        assert_parity(r#"j=一二三; print -r -- "[${(ml:4::.:)j}]""#);
+    }
+    #[test]
+    fn non_m_pad_truncate_unaffected() {
+        assert_parity(r#"s=abcdef; print -r -- "[${(r:3:)s}][${(l:3:)s}]""#);
+    }
+    #[test]
+    fn m_pad_no_truncate_still_pads() {
+        assert_parity(r#"j=日本語; print -r -- "[${(ml:8::.:)j}]""#);
+    }
+    #[test]
+    fn m_pad_both_sides_wide() {
+        assert_parity(r#"j=日本語テキスト; print -r -- "[${(ml:4::.:mr:4::+:)j}]""#);
+    }
+
+    // --- Assignment inside a parameter expansion (`${(A)n::=v}` etc.): the RHS
+    // splits into array elements ONLY under `spsep`/`spbreak` (the `(s:X:)` or
+    // `=` flag), across all three operators (c:Src/subst.c:3272). ---
+    #[test]
+    fn assign_array_eq_flag_word_splits() {
+        assert_parity(r#"unset o; v="1 2 3"; : ${(A)=o::=$v}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_array_no_flag_one_element() {
+        assert_parity(r#"unset o; v="1 2 3"; : ${(A)o::=$v}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_array_colon_eq_no_split() {
+        assert_parity(r#"unset o; v="1 2 3"; : ${(A)o:=$v}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_array_eq_op_no_split() {
+        assert_parity(r#"unset o; v="1 2 3"; : ${(A)o=$v}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_array_s_separator_splits() {
+        assert_parity(r#"unset o; v="a:b:c"; : ${(As.:.)o=$v}; print -r -- "${#o}""#);
+    }
+    // --- Empty/scalar element shapes (c:3282-3293). ---
+    #[test]
+    fn assign_array_empty_one_element() {
+        assert_parity(r#"unset o; : ${(A)o::=}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_array_eq_flag_empty_one_element() {
+        assert_parity(r#"unset o; : ${(A)=o::=}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_assoc_empty_zero_elements() {
+        assert_parity(r#"unset o; : ${(AA)o::=}; print -r -- "${#o}""#);
+    }
+    #[test]
+    fn assign_array_s_separator_empty_zero() {
+        assert_parity(r#"unset o; : ${(As.:.)o::=}; print -r -- "${#o}""#);
+    }
+    // --- (AA) odd key/value count errors. ---
+    #[test]
+    fn assign_assoc_odd_count_errors() {
+        assert_parity(r#"unset o; : ${(AA)o::=k1 v1 k2}; print -r -- done"#);
+    }
+    #[test]
+    fn assign_assoc_eq_flag_even_ok() {
+        assert_parity(r#"unset o; v="k1 v1 k2 v2"; : ${(AA)=o::=$v}; print -r -- "${o[k2]}""#);
+    }
 }

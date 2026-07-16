@@ -2407,10 +2407,27 @@ pub fn dopadding(
         let chars: Vec<char> = s.chars().collect(); // c:893
 
         if len > prenum {
-            // c:893
-            // Truncate from left
-            let skip = len - prenum; // c:893
-            result = chars.into_iter().skip(skip).collect(); // c:893
+            // c:Src/subst.c:912-925 — left-pad truncation keeps the RIGHTMOST
+            // characters whose cumulative CELL width is ≤ prenum. `len`/`prenum`
+            // are CELL counts (under the (m) flag a wide char is 2 cells), so a
+            // char-index `skip = len - prenum` over-truncates: `${(ml:8:)}` on a
+            // 14-cell CJK string dropped all but the last char instead of keeping
+            // the last 8 cells. Walk from the right accumulating cell width.
+            let mut w = 0usize;
+            let mut keep_from = chars.len();
+            for i in (0..chars.len()).rev() {
+                let cw = if multi_width <= 0 {
+                    1
+                } else {
+                    wcpadwidth(chars[i], multi_width) as usize
+                };
+                if w + cw > prenum {
+                    break;
+                }
+                w += cw;
+                keep_from = i;
+            }
+            result = chars[keep_from..].iter().collect(); // c:912
         } else {
             // c:893
             // Pad on left
@@ -2481,9 +2498,28 @@ pub fn dopadding(
         let current_len = cells(&result); // c:893
 
         if current_len > postnum {
-            // c:893
-            // Truncate from right
-            result = result.chars().take(postnum).collect(); // c:893
+            // c:Src/subst.c:1072-1080 — right-pad truncation copies the
+            // LEFTMOST chars while the cell budget `c` (starting at postnum)
+            // is still > 0, decrementing by each char's cell width; the char
+            // that crosses the boundary is still copied (`for (c=postnum;
+            // c>0;) { copy char; c -= WCPADWIDTH(...) }`). `postnum` is a CELL
+            // count, so the old `.take(postnum)` used it as a char count and
+            // never truncated a wide string whose char count was already
+            // ≤ postnum — `${(mr:8:)}` on a 14-cell CJK string kept all 7 chars.
+            let mut c = postnum as isize; // c:1072
+            let mut out = String::new();
+            for ch in result.chars() {
+                if c <= 0 {
+                    break;
+                }
+                out.push(ch); // c:1076
+                c -= if multi_width <= 0 {
+                    1
+                } else {
+                    wcpadwidth(ch, multi_width) as isize
+                }; // c:1078
+            }
+            result = out;
         } else if current_len < postnum {
             // c:893
             // Pad on right
@@ -9662,9 +9698,24 @@ pub fn paramsubst(
                 // matching zsh). The previous port singsub'd to a scalar
                 // then IFS-split, which both lost quoting and wrongly
                 // split. Only the (s:…:) flag (spsep) re-splits.
-                if arrasg != 0 && spsep.is_none() {
-                    let (joined, parts, _isarr, _ms) = multsub(default, PREFORK_NOSHWORDSPLIT);
-                    value = joined;
+                if arrasg != 0 && spsep.is_none() && !force_split {
+                    let (joined, parts, isarr_rhs, _ms) =
+                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    value = joined.clone();
+                    // c:Src/subst.c:3282-3293 — a SCALAR (non-isarr) RHS
+                    // becomes a ONE-element array `arr[0]=val` (even when the
+                    // value is empty: `${(A)out::=}` → `("")`, count 1), EXCEPT
+                    // `(AA)` with an empty value → a zero-element hash (c:3283).
+                    // An array-shaped RHS keeps its elements. `parts` from a
+                    // NOSHWORDSPLIT multsub is empty for an empty scalar, so it
+                    // undercounted the empty case.
+                    let parts = if isarr_rhs {
+                        parts
+                    } else if arrasg > 1 && joined.is_empty() {
+                        Vec::new() // c:3283 (AA) + empty → zero-element hash
+                    } else {
+                        vec![joined.clone()] // c:3287 scalar → 1 elem (empty ⇒ "")
+                    };
                     if arrasg == 1 {
                         exec_assignaparam(&var_name, parts); // c:3263 (A)
                     } else {
@@ -9672,23 +9723,40 @@ pub fn paramsubst(
                     }
                 } else {
                     value = singsub(default);
+                    // c:Src/subst.c:3272-3273 — array assign with `spsep ||
+                    // spbreak` splits via `sepsplit(val, spsep, 0, 1)`: on the
+                    // (s:X:) separator when one was given (spsep), else — for
+                    // the `=` split flag (spbreak / force_split) — on IFS
+                    // (word-split). `${(A)=out::=$v}` for v="1 2 3" is a 3-elem
+                    // array; the port previously stored one "1 2 3" element.
+                    let split_arrasg = |v: &str| -> Vec<String> {
+                        let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
+                            v.split(|c: char| sep.contains(c))
+                                .filter(|s| !s.is_empty())
+                                .map(|s| s.to_string())
+                                .collect()
+                        } else {
+                            // c:3273 sepsplit(val, NULL, …) → IFS word-split.
+                            crate::ported::utils::sepsplit(v, None, false)
+                                .into_iter()
+                                .filter(|s| !s.is_empty())
+                                .collect()
+                        };
+                        // c:3287 — (A) with an all-empty split still yields ONE
+                        // empty element; (AA) empty stays a zero-element hash.
+                        if p.is_empty() && arrasg == 1 && spsep.is_none() {
+                            vec![String::new()]
+                        } else {
+                            p
+                        }
+                    };
                     if arrasg == 1 {
-                        // c:3263 (A) with (s) separator
-                        let sep = spsep.clone().unwrap_or_default();
-                        let parts: Vec<String> = value
-                            .split(|c: char| sep.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect();
+                        // c:3263 (A) with (s) separator or `=` word-split
+                        let parts = split_arrasg(&value);
                         exec_assignaparam(&var_name, parts);
                     } else if arrasg == 2 {
-                        // c:3263 (AA) with (s) separator
-                        let sep = spsep.clone().unwrap_or_default();
-                        let parts: Vec<String> = value
-                            .split(|c: char| sep.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect();
+                        // c:3263 (AA) with (s) separator or `=` word-split
+                        let parts = split_arrasg(&value);
                         exec_sethparam(&var_name, parts);
                     } else {
                         let __s = match subscript.as_deref() {
@@ -9702,32 +9770,60 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix(":=") {
                 // c:3245
                 if !is_set || raw_value.is_empty() {
-                    value = singsub(default);
-                    if arrasg == 1 {
-                        // c:3263 (A)
-                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                        let parts: Vec<String> = value
-                            .split(|c: char| ifs.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect();
-                        exec_assignaparam(&var_name, parts);
-                    } else if arrasg == 2 {
-                        // c:3263 (AA)
-                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                        let parts: Vec<String> = value
-                            .split(|c: char| ifs.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect();
-                        exec_sethparam(&var_name, parts);
-                    } else {
-                        let __s = match subscript.as_deref() {
-                            Some(k) => format!("{}[{}]", var_name, k),
-                            None => var_name.clone(),
+                    // c:Src/subst.c:3269-3307 — array/assoc assign splits the
+                    // RHS ONLY when `spsep || spbreak` (the (s:X:) or `=`
+                    // flag); otherwise the value stays a single element
+                    // (multsub PREFORK_NOSHWORDSPLIT). Same as the `::=` arm.
+                    if arrasg != 0 && spsep.is_none() && !force_split {
+                        let (joined, parts, isarr_rhs, _ms) =
+                            multsub(default, PREFORK_NOSHWORDSPLIT);
+                        value = joined.clone();
+                        // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
+                        // empty ⇒ 0; array-shaped RHS keeps its elements.
+                        let parts = if isarr_rhs {
+                            parts
+                        } else if arrasg > 1 && joined.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![joined.clone()]
                         };
-                        assignsparam(&__s, &value, 0);
-                        exec_sync_state_from_paramtab();
+                        if arrasg == 1 {
+                            exec_assignaparam(&var_name, parts); // c:3263 (A)
+                        } else {
+                            exec_sethparam(&var_name, parts); // c:3263 (AA)
+                        }
+                    } else {
+                        value = singsub(default);
+                        let split_arrasg = |v: &str| -> Vec<String> {
+                            let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
+                                v.split(|c: char| sep.contains(c))
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string())
+                                    .collect()
+                            } else {
+                                crate::ported::utils::sepsplit(v, None, false)
+                                    .into_iter()
+                                    .filter(|s| !s.is_empty())
+                                    .collect()
+                            };
+                            if p.is_empty() && arrasg == 1 && spsep.is_none() {
+                                vec![String::new()]
+                            } else {
+                                p
+                            }
+                        };
+                        if arrasg == 1 {
+                            exec_assignaparam(&var_name, split_arrasg(&value));
+                        } else if arrasg == 2 {
+                            exec_sethparam(&var_name, split_arrasg(&value));
+                        } else {
+                            let __s = match subscript.as_deref() {
+                                Some(k) => format!("{}[{}]", var_name, k),
+                                None => var_name.clone(),
+                            };
+                            assignsparam(&__s, &value, 0);
+                            exec_sync_state_from_paramtab();
+                        }
                     }
                 }
             } else if let Some(default) = r.strip_prefix('=') {
@@ -9736,32 +9832,58 @@ pub fn paramsubst(
                 // empty). Direct port of subst.c case '=' which
                 // only checks vunset, not !*val.
                 if !is_set {
-                    value = singsub(default);
-                    if arrasg == 1 {
-                        // c:3263 (A)
-                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                        let parts: Vec<String> = value
-                            .split(|c: char| ifs.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect();
-                        exec_assignaparam(&var_name, parts);
-                    } else if arrasg == 2 {
-                        // c:3263 (AA)
-                        let ifs = vars_get("IFS").unwrap_or_else(|| " \t\n".to_string());
-                        let parts: Vec<String> = value
-                            .split(|c: char| ifs.contains(c))
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect();
-                        exec_sethparam(&var_name, parts);
-                    } else {
-                        let __s = match subscript.as_deref() {
-                            Some(k) => format!("{}[{}]", var_name, k),
-                            None => var_name.clone(),
+                    // c:Src/subst.c:3269-3307 — split the RHS only when
+                    // `spsep || spbreak`, same as the `:=`/`::=` arms.
+                    if arrasg != 0 && spsep.is_none() && !force_split {
+                        let (joined, parts, isarr_rhs, _ms) =
+                            multsub(default, PREFORK_NOSHWORDSPLIT);
+                        value = joined.clone();
+                        // c:3282-3293 — scalar RHS ⇒ 1 elem (empty ⇒ ""); (AA)
+                        // empty ⇒ 0; array-shaped RHS keeps its elements.
+                        let parts = if isarr_rhs {
+                            parts
+                        } else if arrasg > 1 && joined.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![joined.clone()]
                         };
-                        assignsparam(&__s, &value, 0);
-                        exec_sync_state_from_paramtab();
+                        if arrasg == 1 {
+                            exec_assignaparam(&var_name, parts);
+                        } else {
+                            exec_sethparam(&var_name, parts);
+                        }
+                    } else {
+                        value = singsub(default);
+                        let split_arrasg = |v: &str| -> Vec<String> {
+                            let p: Vec<String> = if let Some(sep) = spsep.as_deref() {
+                                v.split(|c: char| sep.contains(c))
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string())
+                                    .collect()
+                            } else {
+                                crate::ported::utils::sepsplit(v, None, false)
+                                    .into_iter()
+                                    .filter(|s| !s.is_empty())
+                                    .collect()
+                            };
+                            if p.is_empty() && arrasg == 1 && spsep.is_none() {
+                                vec![String::new()]
+                            } else {
+                                p
+                            }
+                        };
+                        if arrasg == 1 {
+                            exec_assignaparam(&var_name, split_arrasg(&value));
+                        } else if arrasg == 2 {
+                            exec_sethparam(&var_name, split_arrasg(&value));
+                        } else {
+                            let __s = match subscript.as_deref() {
+                                Some(k) => format!("{}[{}]", var_name, k),
+                                None => var_name.clone(),
+                            };
+                            assignsparam(&__s, &value, 0);
+                            exec_sync_state_from_paramtab();
+                        }
                     }
                 }
             } else if let Some(alt) = r.strip_prefix(":+") {
@@ -21841,6 +21963,15 @@ pub static NULSTRING_BYTES: [char; 2] = [Nularg, '\0']; // c:3193
 /// argument follows the C `sethparam` convention: alternating
 /// key, value, key, value (`Src/params.c:3602`).
 fn exec_sethparam(name: &str, parts: Vec<String>) {
+    // c:Src/params.c arrhashsetfn — an ODD number of elements is rejected:
+    // `${(AA)h::=k1 v1 k2}` (or a single un-split "k1 v1 k2 v2" value) is a
+    // "bad set of key/value pairs for associative array". The port silently
+    // dropped the dangling key; error like C so the assignment aborts.
+    if parts.len() % 2 != 0 {
+        zerr("bad set of key/value pairs for associative array");
+        errflag_set_error();
+        return;
+    }
     let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
     let mut it = parts.into_iter();
     while let (Some(k), Some(v)) = (it.next(), it.next()) {

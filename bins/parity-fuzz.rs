@@ -4908,6 +4908,65 @@ fn gen_replace(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// assign generator
+//
+// Assignment INSIDE a parameter expansion: `${name=word}` / `${name:=word}` /
+// `${name::=word}` (set default & assign) with the `(A)`/`(AA)` array/assoc
+// flags, the `=` (SH_WORD_SPLIT) and `(s:X:)` split flags, and various RHS
+// shapes. Src/subst.c:3245-3307 (assignsparam / setaparam / sethparam),
+// c:3272 sepsplit-on-`spsep||spbreak`. The result is read back via the target
+// so the array/assoc SHAPE and element count are what's compared.
+// ---------------------------------------------------------------------------
+
+fn gen_assign(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // RHS value: a plain string (may contain spaces / separators / empties).
+    let rhs = pick(
+        &mut rng,
+        &[
+            "1 2 3", "a b c d", "x", "", "k1 v1 k2 v2", "a:b:c", "one  two",
+            "p q r s t", "single", "a b", "1 2 3 4 5 6",
+        ],
+    );
+    // Deliver the RHS via a variable (so the `=` flag word-splits $v) or
+    // literally in the expansion.
+    let via_var = rng.gen_bool(0.6);
+    let (pre, word) = if via_var {
+        (format!("v={:?}; ", rhs), "$v".to_string())
+    } else {
+        (String::new(), (*rhs).to_string())
+    };
+
+    // Flags: array/assoc + optional `=` split or `(s:X:)` separator.
+    let flag = pick(
+        &mut rng,
+        &[
+            "", "(A)", "(A)=", "(AA)", "(AA)=", "(A)", "(As.:.)", "(AAs.:.)",
+            "=", "(A)=", "",
+        ],
+    );
+    // Assign operator (all "assign if unset/empty" or unconditional).
+    let op = pick(&mut rng, &["::=", ":=", "="]);
+    let target = "out";
+
+    // Read the result back in a shape that exposes the array/assoc element
+    // count and a couple of members.
+    let readback = if flag.contains("AA") {
+        format!("print -r -- \"[${{(kv){target}}}]\"")
+    } else if flag.contains('A') {
+        format!("print -r -- \"n=${{#{target}}} [${{{target}[1]}}][${{{target}[2]}}]\"")
+    } else {
+        format!("print -r -- \"[${{{target}}}]\"")
+    };
+
+    // `unset out` first so `:=`/`::=` fire deterministically.
+    let prog = format!(
+        "unset {target} 2>/dev/null; {pre}: ${{{flag}{target}{op}{word}}}; {readback}"
+    );
+    vec![prog]
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4970,6 +5029,7 @@ enum Mode {
     Atflag,
     Subexp,
     Replace,
+    Assign,
 }
 
 struct Args {
@@ -5045,6 +5105,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Atflag => gen_atflag(seed),
         Mode::Subexp => gen_subexp(seed),
         Mode::Replace => gen_replace(seed),
+        Mode::Assign => gen_assign(seed),
     }
 }
 
@@ -5108,6 +5169,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Atflag => "atflag",
         Mode::Subexp => "subexp",
         Mode::Replace => "replace",
+        Mode::Assign => "assign",
     }
 }
 
@@ -5171,6 +5233,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Atflag,
         Mode::Subexp,
         Mode::Replace,
+        Mode::Assign,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -5273,7 +5336,7 @@ fn parse_args() -> Args {
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
-                     whence, zstyle, atflag, subexp, replace\n\
+                     whence, zstyle, atflag, subexp, replace, assign\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

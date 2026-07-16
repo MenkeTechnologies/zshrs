@@ -1,0 +1,21 @@
+# parity-fuzz --mode assign baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode assign --count N --verify 3  (copy NEW-signature lines).
+#
+# STRICT GATE — zero known gaps. This mode pins assignment INSIDE a parameter
+# expansion: `${name=word}` / `${name:=word}` / `${name::=word}` with the
+# `(A)`/`(AA)` array/assoc flags and the `=` (SH_WORD_SPLIT) / `(s:X:)` split
+# flags (Src/subst.c:3245-3307).
+#
+# Fixed to reach a strict gate:
+#   - The RHS is split into array elements ONLY when `spsep || spbreak` (the
+#     `(s:X:)` separator or the `=` flag): `${(A)=out::=$v}` for "1 2 3" is a
+#     3-element array, while `${(A)out::=$v}` stays one element (c:3272). This
+#     was fixed for all three operators (`=`, `:=`, `::=`), not just `::=`.
+#   - A SCALAR RHS becomes a ONE-element array — empty ⇒ `("")` for `(A)`,
+#     but a zero-element hash for `(AA)` empty (c:3282-3293); the `(s:X:)`
+#     separator with an all-empty split yields zero elements.
+#   - `(AA)` with an ODD number of key/value elements errors
+#     "bad set of key/value pairs for associative array" (c:params.c).
+#
+# Any new divergence here fails CI.
