@@ -1,0 +1,17 @@
+# parity-fuzz --mode subexp baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode subexp --count N --verify 3  (copy NEW-signature lines).
+#
+# This mode pins UNQUOTED nested `${${...}[...]}` value semantics (a
+# double-quoted inner collapses to a scalar before the outer subscript — a
+# separate DQ-collapse concern excluded from this mode).
+#
+# STRICT GATE — zero known gaps. All previously-baselined classes are FIXED:
+#   - `${${(P)assoc}[key]}` assoc-key lookup;
+#   - `${#${subexp}[N]}` subscript-under-length;
+#   - nested bare-assoc value-splat shape (`${${h}}`, `${(@)${h}}`);
+#   - `(P)`-assoc `[@]`/`[*]` splat (`${${(P)h}[@]}`);
+#   - `${#${emptyarray}[lo,hi]}` empty-array slice length (getarrvalue nular
+#     padding, c:params.c:2570-2585 — the empty array now stays array-shaped
+#     through the nesting so the outer slice pads correctly).
+# Any new divergence here fails CI.

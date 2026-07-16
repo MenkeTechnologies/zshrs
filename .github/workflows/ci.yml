@@ -498,6 +498,27 @@ jobs:
       # 3881, 4235). One known-gap class baselined (empty-array slice length).
       - name: Fuzz — atflag
         run: ./target/debug/parity-fuzz --mode atflag --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/atflag.txt --out target/parity-fuzz/ci-atflag.txt
+      # subexp covers UNQUOTED nested `${${...}[...]}` value semantics: the
+      # `(P)` named-ref (Src/subst.c aspar) with a following subscript across
+      # scalar / array / assoc referents, and subscript-under-length. Fixed
+      # this round: `${${(P)assoc}[key]}` key lookup and `${#${subexp}[N]}`.
+      # Known-gap classes baselined: nested bare-assoc value-splat shape and
+      # empty-array slice length.
+      - name: Fuzz — subexp
+        run: ./target/debug/parity-fuzz --mode subexp --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/subexp.txt --out target/parity-fuzz/ci-subexp.txt
+      # replace pins the `${name/pat/repl}` / `${name//pat/repl}` substitution
+      # engine under extendedglob (anchors, x#/x## zero-or-more, alternation,
+      # (#b)/(#m) backreferences). Fixed to a strict gate: the `(#e)` end-anchor
+      # zero-width match and top-level alternation first-branch across all
+      # replace paths (c:Src/glob.c getmatch + Src/pattern.c patmatch).
+      - name: Fuzz — replace
+        run: ./target/debug/parity-fuzz --mode replace --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/replace.txt --out target/parity-fuzz/ci-replace.txt
+      # nest — deeply nested `${…${…}…}` expansions combining flags, subscripts,
+      # modifiers and set/zip operators. Fixed the DQ scalar-collapse of a nested
+      # `:^`/`:^^` zip (c:Src/subst.c:3032 via SUBEXP_SCALAR_CTX); one narrow
+      # empty-field-split edge remains baselined.
+      - name: Fuzz — nest
+        run: ./target/debug/parity-fuzz --mode nest --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/nest.txt --out target/parity-fuzz/ci-nest.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking

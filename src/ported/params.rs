@@ -3747,23 +3747,54 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
 /// WARNING: param names don't match C — Rust=(arr, start, end) vs C=(v)
 pub fn getarrvalue(arr: &[String], start: i64, end: i64) -> Vec<String> {
     let len = arr.len() as i64;
+    // c:Src/params.c:2570-2585 getarrvalue — a slice whose START is at or
+    // beyond the array end does NOT collapse to an empty array; it returns
+    // EMPTY-STRING padding from the global `nular` (a one-element `{"", NULL}`
+    // array), so the result is capped at a SINGLE empty element. The C
+    // branch order (after `v->start += arrlen` / `v->end += arrlen + 1` for
+    // negatives) is: `v->end <= v->start` → 0 elems; else `v->start < 0` → 1
+    // elem; else `arrlen_le(s, v->start)` → `v->end - (v->start + 1)` elems
+    // (capped by nular's length to ≤ 1). Only observable via `${#}` (counts
+    // the empty element → `${#arr[1,2]}` is 1 for `arr=()`) and quoted splat;
+    // unquoted array-capture elides the empty word. Mirror it here so the
+    // out-of-range cases that previously returned `[]` pad correctly.
+    let nular_pad = || -> Vec<String> {
+        let v_start0 = start - 1; // C v->start is 0-based (subscript - 1)
+        let v_end = if end < 0 { end + len + 1 } else { end }; // c:2565
+        let v_start = if v_start0 < 0 { v_start0 + len } else { v_start0 }; // c:2563
+        if v_end <= v_start {
+            Vec::new() // c:2578 (empty/inverted range)
+        } else if v_start < 0 {
+            vec![String::new()] // c:2580 (arrdup_max(nular, 1))
+        } else if v_start >= len {
+            // c:2582 — arrdup_max(nular, v->end - (v->start + 1)); nular has a
+            // single element, so the count is capped at 1.
+            if v_end - (v_start + 1) >= 1 {
+                vec![String::new()]
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    };
     if len == 0 {
-        return Vec::new();
+        return nular_pad();
     }
     // Out-of-range starts (positive past len, or negative below
-    // -len) collapse to empty per Src/params.c getarrvalue's
-    // slice-resolution branches.
+    // -len) return nular padding per Src/params.c getarrvalue's
+    // slice-resolution branches (c:2570-2585).
     if start > len {
-        return Vec::new();
+        return nular_pad();
     }
     if end < 0 && (len + end + 1) < 1 {
-        return Vec::new();
+        return nular_pad();
     }
     if start < 0 && end < 0 && start > end {
-        return Vec::new();
+        return nular_pad();
     }
     if start < 0 && start < -len {
-        return Vec::new();
+        return nular_pad();
     }
     let resolve_start = |i: i64| -> i64 {
         if i < 0 {

@@ -5031,7 +5031,15 @@ pub fn paramsubst(
                     } else {
                         (joined, arr_parts, isarr)
                     };
-                if isarr && !arr_parts.is_empty() {
+                if isarr {
+                    // c:Src/subst.c:2681 — an inner expansion that is
+                    // ARRAY-shaped (isarr) stays an array through the nesting
+                    // EVEN WHEN EMPTY, so an outer subscript/length sees the
+                    // array (not a collapsed scalar). `${#${arr}[1,2]}` for
+                    // `arr=()` is 1 (getarrvalue nular pad on the empty temp),
+                    // matching the direct `${#arr[1,2]}`; the prior
+                    // `!arr_parts.is_empty()` guard collapsed the empty array
+                    // to a scalar "" and the outer slice char-subscripted it.
                     // Generate a stable per-call temp name. We use a
                     // process-local counter; cleanup happens at end of
                     // paramsubst (state.arrays.remove).
@@ -5230,7 +5238,20 @@ pub fn paramsubst(
         // on the array via the existing var-lookup paths instead of
         // treating the joined scalar as a value.
         if let Some(ref temp) = subexp_array_temp {
-            var_name = temp.clone();
+            // c:Src/subst.c (P) named-ref — `${(P)n}` makes the outer
+            // expansion reference the parameter NAMED by $n. When that
+            // name is an ASSOC, a following subscript is an assoc KEY
+            // lookup on it (`${${(P)n}[key]}` ≡ `${n_val[key]}`), NOT an
+            // index into the flattened-values temp array. Point var_name
+            // at the referenced assoc so the normal subscript machinery
+            // (key lookup, `[@]`/`[*]` splat, `(R)`/`(k)` search) runs
+            // against the real hash. Without this the values were bound
+            // to an INDEXED temp and a string key `[b]` found nothing.
+            if let Some(ref an) = subexp_passoc_name {
+                var_name = an.clone();
+            } else {
+                var_name = temp.clone();
+            }
             subexp_value = None;
         }
 
@@ -5782,7 +5803,14 @@ pub fn paramsubst(
             // split_parts pipeline that handles outer-flag + subscript
             // composition correctly.
             if let Some(sub) = subscript.as_deref() {
-                if !length_op {
+                {
+                    // c:Src/subst.c — apply the outer subscript to the
+                    // subexp result even under a length op. `${#${s}[2]}`
+                    // is 1 (length of char 2), NOT 5 (whole inner value);
+                    // the non-nested `${#name[N]}` path already counts the
+                    // subscripted element, and the subexp path must match.
+                    // The prior `if !length_op` skipped the subscript and
+                    // measured the entire inner result.
                     // c:Src/subst.c:2681+ — nested expansion result
                     // with an outer `[N]` subscript. Two sub-cases:
                     //
@@ -5916,8 +5944,6 @@ pub fn paramsubst(
                     } else {
                         sv
                     }
-                } else {
-                    sv
                 }
             } else {
                 sv // c:2681 (subexp result)
@@ -10222,20 +10248,47 @@ pub fn paramsubst(
                         return o;
                     }
                     if pat_anchor == '#' {
-                        let mut matched: Option<usize> = None;
-                        // c:Src/glob.c:2920-2941 igetmatch `case 0/
-                        // SUB_LONG` — `pattrylen` at the head can
-                        // return a ZERO-length match (`patmatchlen()
-                        // == 0`), e.g. `c#` on "ab" → replace the
-                        // empty prefix: "Xab". Include end == 0.
-                        for end in (0..=nn).rev() {
-                            let cand: String = cv[..end].iter().collect();
-                            if gms(&cand, &pat) {
-                                matched = Some(end);
-                                break;
-                            }
-                        }
+                        // c:Src/glob.c:2920-2941 igetmatch `case 0/SUB_LONG`
+                        // — start-anchored: the match begins at position 0.
+                        // Use the compiled engine (patmatch) so a top-level
+                        // alternation takes the FIRST branch (`${s//#(a|ab)/X}`
+                        // → replace "a", not "ab"); the old longest-first
+                        // window scan picked the longer branch. A zero-length
+                        // head match (`c#` on "ab" → "Xab") still lands at
+                        // end==0. Empty-pattern falls back to the window scan.
+                        let matched: Option<usize> = if let Some(prog) = prog_opt.as_ref() {
+                            crate::ported::pattern::patflags.store(
+                                prog.0.flags | crate::ported::zsh_h::PAT_NOANCH,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            let mut pst = crate::ported::pattern::rpat::new();
+                            crate::ported::pattern::patmatch(
+                                &prog.1,
+                                0,
+                                val,
+                                0,
+                                &mut pst,
+                                prog.0.globflags,
+                            )
+                            .map(|end_byte| {
+                                let mut ci = 0usize;
+                                let mut b = 0usize;
+                                while ci < cv.len() && b < end_byte {
+                                    b += cv[ci].len_utf8();
+                                    ci += 1;
+                                }
+                                ci
+                            })
+                        } else {
+                            (0..=nn)
+                                .rev()
+                                .find(|&end| gms(&cv[..end].iter().collect::<String>(), &pat))
+                        };
                         if let Some(e) = matched {
+                            if pat_needs_per_match {
+                                let span: String = cv[..e].iter().collect();
+                                let _ = gms(&span, &pat);
+                            }
                             let span: String = cv[..e].iter().collect();
                             o.push_str(&eval_repl_for_match(&span, 0));
                             o.push_str(&cv[e..].iter().collect::<String>());
@@ -10320,6 +10373,14 @@ pub fn paramsubst(
                         v
                     };
                     let mut q = 0_usize;
+                    // c:Src/glob.c:3082 — track whether the loop reached the
+                    // end via a MATCH+bump (`if (t == send) break` + outer
+                    // `while (matched && t < send)` exits) vs consecutive
+                    // NON-matches (the `for (; t <= send;)` scans to send and
+                    // tries it). Only the latter attempts the end empty match,
+                    // so `a#` on "bbb" (interior empties bump to end) skips it
+                    // while `(#e)` (no interior match) hits it.
+                    let mut just_matched = false;
                     while q < nn {
                         let mut m: Option<usize> = None;
                         // c:Src/pattern.c P_ISSTART / P_ISEND — gate
@@ -10444,6 +10505,7 @@ pub fn paramsubst(
                             }
                         }
                         if let Some(e) = m {
+                            just_matched = true;
                             let span_text: String = cv[q..e].iter().collect();
                             let span_byte = cv[..q].iter().map(|c| c.len_utf8()).sum::<usize>();
                             match_count += 1; // c:3057
@@ -10468,8 +10530,57 @@ pub fn paramsubst(
                                 q = e;
                             }
                         } else {
+                            just_matched = false;
                             o.push(cv[q]);
                             q += 1;
+                        }
+                    }
+                    // c:Src/glob.c:3035-3061 — the global getmatch loop also
+                    // probes the END position (t == send) for a ZERO-WIDTH
+                    // match there: `(#e)` (empty-at-end), an empty pattern, or
+                    // a `pat#` zero-or-more all match the empty string at
+                    // position nn. The `while q < nn` scan above stops one
+                    // short, so `${s//(#e)/X}` never appended the tail match.
+                    // Try the empty end-match exactly once here (no char to
+                    // copy — the span is the empty string at nn).
+                    if q == nn && !just_matched {
+                        let end_empty_match = if let Some(prog) = prog_opt.as_ref() {
+                            let q_byte = byte_off[nn];
+                            crate::ported::pattern::patflags.store(
+                                prog.0.flags
+                                    | crate::ported::zsh_h::PAT_NOANCH
+                                    | if q_byte > 0 {
+                                        crate::ported::zsh_h::PAT_NOTSTART
+                                    } else {
+                                        0
+                                    },
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            let mut _pst = crate::ported::pattern::rpat::new();
+                            crate::ported::pattern::patmatch(
+                                &prog.1,
+                                0,
+                                &val[q_byte..],
+                                0,
+                                &mut _pst,
+                                prog.0.globflags,
+                            ) == Some(0)
+                        } else {
+                            gms("", &pat)
+                        };
+                        // anchor_ok(nn, nn): a start-ONLY anchor can't match at
+                        // the end (unless the whole string is empty); an end
+                        // anchor or no anchor is fine.
+                        let anchor_ok_end =
+                            !(has_start_anchor_global && !has_end_anchor_global) || nn == 0;
+                        if end_empty_match && anchor_ok_end {
+                            match_count += 1; // c:3057
+                            if match_count >= target_global {
+                                if pat_needs_per_match {
+                                    let _ = gms("", &pat);
+                                }
+                                o.push_str(&eval_repl_for_match("", byte_off[nn]));
+                            }
                         }
                     }
                     o
@@ -10863,6 +10974,53 @@ pub fn paramsubst(
                     }
                 };
                 let replace_one = |val: &str| -> String {
+                    // c:Src/glob.c getmatch → Src/pattern.c patmatch — the
+                    // ENGINE's leftmost match at char position `start` (greedy
+                    // length, but FIRST-BRANCH alternation: `(a|ab)` matches
+                    // `a`, not the longer `ab`). The window scans below pick
+                    // the longest matching window, which mis-orders a top-level
+                    // alternation. Returns the END char index, honoring
+                    // (#s)/(#e) via the real slice offset. None → no match.
+                    let match_end_at = |pat_str: &str, start: usize, cvv: &[char]| -> Option<usize> {
+                        let prog = crate::ported::pattern::patcompile(
+                            &{
+                                let mut t = pat_str.to_string();
+                                crate::ported::glob::tokenize(&mut t);
+                                t
+                            },
+                            PAT_HEAPDUP as i32,
+                            None,
+                        )?;
+                        let start_byte: usize =
+                            cvv[..start].iter().map(|c| c.len_utf8()).sum();
+                        let full: String = cvv.iter().collect();
+                        crate::ported::pattern::patflags.store(
+                            prog.0.flags
+                                | crate::ported::zsh_h::PAT_NOANCH
+                                | if start_byte > 0 {
+                                    crate::ported::zsh_h::PAT_NOTSTART
+                                } else {
+                                    0
+                                },
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        let mut pst = crate::ported::pattern::rpat::new();
+                        let end_byte = crate::ported::pattern::patmatch(
+                            &prog.1,
+                            0,
+                            &full[start_byte..],
+                            0,
+                            &mut pst,
+                            prog.0.globflags,
+                        )? + start_byte;
+                        let mut ci = 0usize;
+                        let mut b = 0usize;
+                        while ci < cvv.len() && b < end_byte {
+                            b += cvv[ci].len_utf8();
+                            ci += 1;
+                        }
+                        Some(ci)
+                    };
                     if let Some(whole_pat) = both_anchor_pat {
                         if gms(val, whole_pat) {
                             let dyn_repl = resolve_repl(val, 0);
@@ -10872,17 +11030,22 @@ pub fn paramsubst(
                     }
                     if let Some(anchor_pat) = pat.strip_prefix('#') {
                         let cv: Vec<char> = val.chars().collect();
-                        let nn = cv.len();
-                        for end in (0..=nn).rev() {
+                        // Start-anchored (`${s/#pat/repl}`): the match must
+                        // begin at position 0. Use the engine so a top-level
+                        // alternation takes the FIRST branch (`#(a|ab)` on
+                        // "abc" → replace "a", not "ab"); the old longest-first
+                        // window scan picked "ab".
+                        if let Some(end) = match_end_at(anchor_pat, 0, &cv) {
                             let cand: String = cv[..end].iter().collect();
-                            if gms(&cand, anchor_pat) {
-                                let dyn_repl = resolve_repl(&cand, 0);
-                                return format!(
-                                    "{}{}",
-                                    dyn_repl,
-                                    cv[end..].iter().collect::<String>()
-                                );
+                            if anchor_pat.contains("(#b)") || anchor_pat.contains("(#m)") {
+                                let _ = gms(&cand, anchor_pat);
                             }
+                            let dyn_repl = resolve_repl(&cand, 0);
+                            return format!(
+                                "{}{}",
+                                dyn_repl,
+                                cv[end..].iter().collect::<String>()
+                            );
                         }
                         val.to_string()
                     } else if let Some(anchor_pat) = pat.strip_prefix('%') {
@@ -10970,13 +11133,47 @@ pub fn paramsubst(
                         // and keeps scanning), replacing only the Nth.
                         let target = flnum.max(1);
                         let mut count: u32 = 0;
+                        // c:Src/pattern.c — for the DEFAULT longest match (not
+                        // `(S)` shortest) use the engine so a top-level
+                        // alternation takes the first branch. patmatch already
+                        // honors greedy length + (#s)/(#e) via the slice, so it
+                        // subsumes the anchor/window special-cases too.
+                        let use_engine = !substr_short;
                         for start in start_range {
-                            let end_iter: Vec<usize> = if has_end_anchor {
-                                if nn >= start + 1 {
-                                    vec![nn]
-                                } else {
-                                    vec![]
+                            if use_engine {
+                                if let Some(end) = match_end_at(&pat, start, &cv) {
+                                    count += 1; // c:3057
+                                    if count < target {
+                                        continue;
+                                    }
+                                    let span_byte: usize =
+                                        cv[..start].iter().map(|c| c.len_utf8()).sum();
+                                    let cand: String = cv[start..end].iter().collect();
+                                    // Publish (#b)/(#m) $match/$MATCH captures for
+                                    // the committed span before evaluating the
+                                    // replacement (patmatch above didn't set them).
+                                    if pat.contains("(#b)") || pat.contains("(#m)") {
+                                        let _ = gms(&cand, &pat);
+                                    }
+                                    let dyn_repl = resolve_repl(&cand, span_byte);
+                                    let mut out = String::with_capacity(val.len());
+                                    out.extend(cv[..start].iter());
+                                    out.push_str(&dyn_repl);
+                                    out.extend(cv[end..].iter());
+                                    return out;
                                 }
+                                continue;
+                            }
+                            let end_iter: Vec<usize> = if has_end_anchor {
+                                // c:Src/glob.c:3029 `for (; t <= send;)` — an
+                                // end-anchored pattern always ends at nn; a
+                                // ZERO-WIDTH match (`(#e)` alone) sits at
+                                // start==end==nn. The old `nn >= start + 1`
+                                // guard excluded that empty-at-end window, so
+                                // `${s/(#e)/X}` never appended. Always offer
+                                // end=nn (the leftmost non-empty match still
+                                // wins first when the pattern consumes chars).
+                                vec![nn]
                             } else if substr_short {
                                 // c:Src/glob.c:3041-3053 — shortest
                                 // first, starting at length 0.
@@ -12056,8 +12253,17 @@ pub fn paramsubst(
                 // shape across DQ for the same SCANPM_ISVAR_AT reason
                 // documented in the `:^` arm below. Bug #597.
                 let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                // c:Src/subst.c:3032 — the DQ scalar-collapse of the LEFT
+                // operand fires in ANY scalar context, including a NESTED inner
+                // (`"${${a:^^b}}"`) whose own qt is false but which runs under
+                // the outer's ssub scalar context. Mirror the c:3901-3907
+                // "inner runs in ssub" rule via SUBEXP_SCALAR_CTX, exactly like
+                // the plain array collapse does. Without this the nested zip
+                // walked per-element instead of joining the LHS first.
+                let zip_dq_ctx =
+                    (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
                 let zipped: Vec<String> =
-                    if qt && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
+                    if zip_dq_ctx && !is_at_subscript_zip && !other.is_empty() && !arr.is_empty() {
                         // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
                         // The DQ collapse joins with `sep` — the (j:STR:) /
                         // (F) separator when one was given, NOT a hardcoded
@@ -12137,13 +12343,18 @@ pub fn paramsubst(
                 // `[sepjoin(a), b[0]]` — 2 elements instead of the
                 // interleaved 2*min(|a|,|b|). Bug #597.
                 let is_at_subscript_zip = matches!(subscript.as_deref(), Some("@") | Some("*"));
+                // c:Src/subst.c:3032 — DQ collapse of the LHS also fires in a
+                // NESTED scalar context (`"${${a:^b}}"`), tracked via
+                // SUBEXP_SCALAR_CTX just like the `:^^` arm above.
+                let zip_dq_ctx =
+                    (qt || SUBEXP_SCALAR_CTX.with(|c| c.get()) > 0) && nojoin != 2;
                 let zipped: Vec<String> = if other_unset && !arr_unset {
                     // b unset → return a verbatim.
                     arr.clone()
                 } else if arr_unset && !other_unset {
                     // a unset → return b verbatim.
                     other.clone()
-                } else if qt && !is_at_subscript_zip {
+                } else if zip_dq_ctx && !is_at_subscript_zip {
                     // c:Src/subst.c:3032 — `val = sepjoin(aval, sep, 1);`.
                     // Join with the (j:STR:) / (F) separator when one was
                     // given (`sep`), else IFS[0]. Hardcoding None made
@@ -15145,18 +15356,34 @@ pub fn paramsubst(
         // `${(A@)s}` (s="hi") into a 1-element array → `${#…}` counts 1
         // ELEMENT, not 2 chars. Without it, the `(A)` flag was a no-op on
         // scalars and the length counted characters.
-        if arrasg != 0 && isarr == 0 {
-            // hmkarray(val) (utils.c:4094) builds a 1-element array from a
-            // non-NULL val, but an EMPTY/unset scalar reaches here as C's
-            // NULL val → hmkarray(NULL) → a ZERO-element array. So
-            // `${#${(A@)s}}` is 0 for an empty s (empty array) and 1 for a
-            // set non-empty s. Mirror that: empty value → empty array.
-            split_parts = Some(if value.is_empty() {
-                Vec::new()
-            } else {
-                vec![value.clone()]
-            });
-            isarr = 1;
+        if arrasg != 0 {
+            if isarr == 0 {
+                // hmkarray(val) (utils.c:4094) builds a 1-element array from a
+                // non-NULL val, but an EMPTY/unset scalar reaches here as C's
+                // NULL val → hmkarray(NULL) → a ZERO-element array. So
+                // `${#${(A@)s}}` is 0 for an empty s (empty array) and 1 for a
+                // set non-empty s. Mirror that: empty value → empty array.
+                split_parts = Some(if value.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![value.clone()]
+                });
+                isarr = 1;
+            } else if split_parts.as_ref().map_or(value.is_empty(), |p| {
+                p.len() == 1 && p[0].is_empty()
+            }) {
+                // c:Src/subst.c — the `(A)` array-force applies hmkarray to
+                // the SCALARIZED result, so a LONE empty-string element (a
+                // single real "" reached by subscript, or the getarrvalue
+                // nular pad from an out-of-range slice) collapses to a
+                // ZERO-element array just like an empty scalar does. Verified:
+                // `${#${(A@)a[1,1]}}` for a=("") is 0, `${#${(A@)a}}` for
+                // a=("") is 0, but a 2-element result (`a=("" "")`) stays 2.
+                // (@) alone, by contrast, KEEPS the lone empty element.
+                split_parts = Some(Vec::new());
+                value = String::new();
+                isarr = 1;
+            }
         }
         let auto_splat = !wantt
             && (isarr != 0                  // c:4245
@@ -15310,7 +15537,16 @@ pub fn paramsubst(
                     getarrvalue(&arr_clone, lo, hi) // c:3950
                 } else if is_at_splat_sub {
                     // c:3950 — only `[@]`/`[*]` splat the whole array here.
-                    arrays_get(&var_name).unwrap_or_else(|| vec![value.clone()])
+                    // An ASSOC splats its VALUES (getvaluearr on a PM_HASHED
+                    // param, c:params.c), so `${h[@]}` — reached here via a
+                    // `(P)` name-ref redirect (`${${(P)n}[@]}`) — must emit
+                    // the values, not the IFS-joined scalar. Without the
+                    // assoc arm it fell to `vec![value]` and joined.
+                    arrays_get(&var_name)
+                        .or_else(|| {
+                            assoc_get(&var_name).map(|m| m.values().cloned().collect())
+                        })
+                        .unwrap_or_else(|| vec![value.clone()])
                 } else {
                     // c:Src/params.c:2926 getarrvalue — a SINGLE-index
                     // subscript (`[N]`, `[(r)pat]`, negative index) already
@@ -15354,7 +15590,16 @@ pub fn paramsubst(
                     // c:3957 (v-flag splat)
                     map.values().cloned().collect()
                 } else {
-                    vec![value.clone()] // c:3962 (scalar fallback)
+                    // c:Src/subst.c:3947-3985 — a BARE assoc read has
+                    // `aval` = its VALUES (getvaluearr sets the array for a
+                    // PM_HASHED param), so the splat emits one node per
+                    // value, NOT the IFS-joined scalar. The compile bridge
+                    // splats top-level `${h}` correctly, but a NESTED
+                    // `${${h}}` / `${(@)${h}}` reaches this paramsubst splat
+                    // path where `value` is already joined — emit the values
+                    // so the array shape survives the nesting (matching the
+                    // indexed-array arm above). Values in insertion order.
+                    map.values().cloned().collect()
                 }
             } else {
                 vec![value.clone()] // c:3960 (scalar)

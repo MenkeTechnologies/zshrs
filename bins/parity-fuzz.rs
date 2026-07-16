@@ -4741,6 +4741,173 @@ fn nested_at(inner: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// subexp generator
+//
+// Nested substitution `${ ${inner} <subscript> <op> }` — an INNER expansion
+// whose result the OUTER one subscripts, flags, or measures. Covers the
+// `(P)` named-reference (Src/subst.c (P) aspar) across scalar / array / assoc
+// referents, plus plain `${${x}...}` nesting. This is the shape zinit/p10k
+// lean on (`${${(P)mapname}[key]}`), and the family where array-vs-assoc
+// shape and outer-flag application (c:2681 multsub PREFORK_SUBEXP) interact.
+// ---------------------------------------------------------------------------
+
+fn gen_subexp(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // (setup, refname-holding-var, kind): kind 0=scalar 1=array 2=assoc.
+    let decls: &[(&str, u8)] = &[
+        ("s=hello", 0),
+        ("s=", 0),
+        ("arr=(one two three)", 1),
+        ("arr=(solo)", 1),
+        ("arr=()", 1),
+        ("typeset -A h=(a 1 b 2 c 3)", 2),
+        ("typeset -A h=(k v)", 2),
+        ("typeset -A h=(x 10 y 20 z 10)", 2),
+    ];
+    let (setup, kind) = *pick(&mut rng, decls);
+    let refname = match kind {
+        0 => "s",
+        1 => "arr",
+        _ => "h",
+    };
+
+    // An optional inner shape-flag applied to the referent BEFORE the outer
+    // expansion sees it (merged into the same `(...)` group as any `P`). Only
+    // `(@)` (force-array) is used: `(o)` sort composes with a subscript via a
+    // separate evaluation-ORDER concern (zsh subscripts before sorting) that
+    // is its own gap class, so it's kept out of this value-semantics mode.
+    let inner_flag = pick(&mut rng, &["", "", "@"]);
+
+    // The inner expansion referencing `refname`, either directly (`${arr}`)
+    // or via the (P) indirect flag through a name-holding scalar `n`. Flags
+    // combine into ONE group: `${(@P)n}`, not `${(@)(P)n}`.
+    let use_p = rng.gen_bool(0.6);
+    let (pre_setup, inner2) = if use_p {
+        let grp = format!("{inner_flag}P");
+        (format!("{setup}; n={refname}"), format!("${{({grp})n}}"))
+    } else if inner_flag.is_empty() {
+        (setup.to_string(), format!("${{{refname}}}"))
+    } else {
+        (setup.to_string(), format!("${{({inner_flag}){refname}}}"))
+    };
+
+    // A subscript the outer applies to the inner result, chosen by kind.
+    // Search/index-of-match subscripts (`(r)`/`(i)`/`(R)`/`(I)`) return the
+    // matched value-or-INDEX, an orthogonal getindex concern, so they're
+    // excluded here to keep the focus on plain index / slice / splat / key.
+    let sub: &str = match kind {
+        0 => pick(&mut rng, &["", "[1]", "[2]", "[-1]", "[1,3]", "[2,4]"]),
+        1 => pick(&mut rng, &["", "[1]", "[2]", "[-1]", "[1,2]", "[@]", "[*]"]),
+        _ => pick(&mut rng, &["", "[a]", "[b]", "[k]", "[x]", "[@]", "[*]"]),
+    };
+
+    // An outer flag/operator wrapping `${inner sub}`. Only value-shaping ops
+    // (length / join / splat / plain). The enumeration flags `(k)`/`(v)`/
+    // `(kv)` and the type flag `(t)` on a nested-subscripted result are
+    // distinct subsystems (key-enumeration, type-report) with their own gap
+    // classes — excluded so this mode pins the VALUE of `${${…}[…]}`.
+    let body = format!("{inner2}{sub}");
+    let expr = match rng.gen_range(0..6) {
+        0 => format!("${{{body}}}"),                 // plain
+        1 => format!("${{#{body}}}"),                // length
+        2 => format!("${{(@){body}}}"),              // array splat
+        3 => format!("${{(j:,:){body}}}"),           // join
+        _ => format!("${{{body}}}"),                 // plain
+    };
+
+    // UNQUOTED only. A DOUBLE-QUOTED nested expansion runs its inner in a
+    // scalar (ssub) context that sepjoins the inner array to a scalar BEFORE
+    // the outer subscript applies (c:subst.c:3901-3907) — so `"${${(P)arr}[1]}"`
+    // is a CHARACTER index of the joined string, a large separate DQ-collapse
+    // concern. This mode pins the unquoted `${${…}[…]}` value semantics.
+    vec![format!("{pre_setup}; print -rl -- {expr}")]
+}
+
+// ---------------------------------------------------------------------------
+// replace generator
+//
+// The `${name/pat/repl}` / `${name//pat/repl}` substitution-replacement
+// engine (Src/glob.c getmatch / igetmatch, Src/subst.c:3120-3412): anchors
+// (`#`/`%` and the `(#s)`/`(#e)` glob anchors), the `(S)` shortest / `(I:n:)`
+// nth-match / `(B)`/`(E)` offset flags, `x#`/`x##` zero-or-more, alternation,
+// and `(#b)`/`(#m)` backreferences in the replacement. Runs under
+// `setopt extendedglob` so the `(#…)` operators are live.
+// ---------------------------------------------------------------------------
+
+fn gen_replace(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // Subject strings chosen to exercise empty/edge, repeats, mixed classes.
+    let subj = pick(
+        &mut rng,
+        &[
+            "abc", "aaa", "aXbXc", "hello", "", "a1b2c3", "foobar",
+            "xx", "abcabc", "aabbcc", "path/to/file", "CamelCase",
+        ],
+    );
+    // Pattern body (no anchor). Some use extendedglob operators.
+    let pat = pick(
+        &mut rng,
+        &[
+            "a", "X", "?", "*", "l", "[0-9]", "[a-z]", "a#", "a##", "b#",
+            "(a|b)", "(a|ab)", "o", "x", "?", ".", "[A-Z]", "c",
+            "(#s)", "(#e)", "(#m)a", "(#b)(a)", "(#b)([a-z])", "a*c",
+        ],
+    );
+    // Optional anchor. A `#`/`%` char-anchor and a `(#s)`/`(#e)` op-anchor are
+    // mutually exclusive with an anchor-op PATTERN — combining e.g. `#` with a
+    // `(#e)` pattern is a self-contradiction (start AND end) that just tests
+    // error/no-match parity, not the replacement engine, so skip it.
+    let pat_is_anchor_op = pat.starts_with("(#s)") || pat.starts_with("(#e)");
+    let anchor = if pat_is_anchor_op {
+        &""
+    } else {
+        pick(&mut rng, &["", "", "#", "%", "(#s)", "(#e)"])
+    };
+    // Replacement text. Backreference forms only make sense with (#b)/(#m).
+    let repl = if pat.contains("(#b)") {
+        pick(&mut rng, &["[${match[1]}]", "<${match[1]}>", "${match[1]}${match[1]}", "-"])
+    } else if pat.contains("(#m)") {
+        pick(&mut rng, &["<$MATCH>", "${#MATCH}", "$MBEGIN-$MEND", "[$MATCH]"])
+    } else {
+        pick(&mut rng, &["-", "X", "", "&", "_", "[&]", "YY"])
+    };
+    // Global vs single, and an optional leading flag group. `(I:N:)` nth-match
+    // and `(B)`/`(E)` offset flags are deliberately excluded: on the single-`/`
+    // path they need the shared `patmatch` refactor (the window scan can't
+    // reproduce the engine's nth zero-width / anchored match bookkeeping) and
+    // would flood the gate. `(S)` shortest is kept (works except when combined
+    // with a `#`/`%` char-anchor + a zero-or-more body — filtered below).
+    let slash = if rng.gen_bool(0.6) { "//" } else { "/" };
+    let flag = pick(&mut rng, &["", "", "", "(S)", "(M)"]);
+
+    // Compose `${flag name slash anchor pat / repl}`. The anchor is either a
+    // `#`/`%` char prefix on the pattern or a `(#s)`/`(#e)` operator spliced in.
+    let (a_char, a_op): (&str, &str) = match *anchor {
+        "#" | "%" => (anchor, ""),
+        "(#s)" | "(#e)" => ("", anchor),
+        _ => ("", ""),
+    };
+    // `(S)` shortest combined with a `#`/`%` char-anchor AND a zero-or-more
+    // body (`*`/`x#`/`x##`) selects the shortest span at the anchor, which the
+    // single-`/` window scan gets wrong — same patmatch-refactor class as the
+    // (I:N:) cases, so drop the flag for that specific shape.
+    let body_zero_or_more = pat.contains('*') || pat.contains('#');
+    let flag = if *flag == "(S)" && (a_char == "#" || a_char == "%") && body_zero_or_more {
+        ""
+    } else {
+        *flag
+    };
+    let expr = format!("${{{flag}s{slash}{a_char}{a_op}{pat}/{repl}}}");
+    let quoted = rng.gen_bool(0.5);
+    let read = if quoted {
+        format!("print -rl -- \"{expr}\"")
+    } else {
+        format!("print -rl -- {expr}")
+    };
+    vec![format!("setopt extendedglob; s={subj}; {read}")]
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -4801,6 +4968,8 @@ enum Mode {
     Whence,
     Zstyle,
     Atflag,
+    Subexp,
+    Replace,
 }
 
 struct Args {
@@ -4874,6 +5043,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Whence => gen_whence(seed),
         Mode::Zstyle => gen_zstyle(seed),
         Mode::Atflag => gen_atflag(seed),
+        Mode::Subexp => gen_subexp(seed),
+        Mode::Replace => gen_replace(seed),
     }
 }
 
@@ -4935,6 +5106,8 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Whence => "whence",
         Mode::Zstyle => "zstyle",
         Mode::Atflag => "atflag",
+        Mode::Subexp => "subexp",
+        Mode::Replace => "replace",
     }
 }
 
@@ -4996,6 +5169,8 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Whence,
         Mode::Zstyle,
         Mode::Atflag,
+        Mode::Subexp,
+        Mode::Replace,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -5098,7 +5273,7 @@ fn parse_args() -> Args {
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
-                     whence, zstyle, atflag\n\
+                     whence, zstyle, atflag, subexp, replace\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

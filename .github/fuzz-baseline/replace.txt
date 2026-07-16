@@ -1,0 +1,20 @@
+# parity-fuzz --mode replace baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode replace --count N --verify 3  (copy NEW-signature lines).
+#
+# STRICT GATE — zero known gaps. This mode pins the `${name/pat/repl}` /
+# `${name//pat/repl}` substitution-replacement engine (Src/glob.c getmatch /
+# igetmatch, Src/subst.c:3120-3412) under `setopt extendedglob`: anchors
+# (`#`/`%` and `(#s)`/`(#e)`), `x#`/`x##` zero-or-more, alternation, and
+# `(#b)`/`(#m)` backreferences.
+#
+# Fixed to reach a strict gate:
+#   - `(#e)` end-anchor ZERO-WIDTH match in both `/` and `//` (c:glob.c:3029-
+#     3082) — probes the end position without over-firing for `pat#` interior
+#     empties.
+#   - Top-level alternation FIRST-BRANCH (`(a|ab)` → `a`, not the longer
+#     `ab`) across the single-`/` substr scan, the `#`-char-anchor single and
+#     global paths — all now use the compiled `patmatch` engine (Src/
+#     pattern.c leftmost-alternation) instead of a longest-window scan.
+#
+# Any new divergence here fails CI.

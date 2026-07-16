@@ -2157,4 +2157,274 @@ mod deferred_fixes {
     fn at_assoc_single_key_unaffected() {
         assert_parity(r#"typeset -A h; h=(k1 v1 k2 v2); print -r -- "${(@)h[k1]}""#);
     }
+
+    // --- `${${(P)assoc}[key]}` — the (P) named-ref makes the outer
+    // subscript an assoc KEY lookup on the referenced hash, not an index
+    // into the flattened-values temp (c:subst.c (P) aspar). Used by
+    // zinit/p10k (`${${(P)mapname}[key]}`). ---
+    #[test]
+    fn p_indirect_assoc_string_key() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); n=h; print -r - ${${(P)n}[b]}"#);
+    }
+    #[test]
+    fn p_indirect_assoc_var_key() {
+        assert_parity(r#"typeset -A h=(a 1 b 2); n=h; k=a; print -r - ${${(P)n}[$k]}"#);
+    }
+    #[test]
+    fn p_indirect_assoc_positional_ref() {
+        assert_parity(r#"typeset -A opts=(a 1 b 2); set -- opts; print -r - ${${(P)1}[b]}"#);
+    }
+    #[test]
+    fn p_indirect_assoc_missing_key() {
+        assert_parity(r#"typeset -A h=(a 1 b 2); n=h; print -r - ${${(P)n}[missing]}"#);
+    }
+    #[test]
+    fn p_indirect_assoc_search_subscript() {
+        assert_parity(r#"typeset -A h=(x 10 y 20); n=h; print -r - ${${(P)n}[(R)10]}"#);
+    }
+    #[test]
+    fn p_indirect_assoc_splat() {
+        assert_parity(r#"typeset -A h=(a 1 b 2); n=h; print -r - "${${(P)n}[@]}""#);
+    }
+    #[test]
+    fn p_indirect_array_index_unaffected() {
+        assert_parity(r#"arr=(x y z); n=arr; print -r - ${${(P)n}[2]}"#);
+    }
+
+    // --- `${#${subexp}[N]}` — the outer subscript applies BEFORE the
+    // length op; the length counts the SUBSCRIPTED value, not the whole
+    // inner result (matches the non-nested `${#name[N]}` path). ---
+    #[test]
+    fn len_subexp_scalar_index() {
+        assert_parity(r#"s=hello; print -r -- "${#${s}[2]}""#);
+    }
+    #[test]
+    fn len_subexp_scalar_slice() {
+        assert_parity(r#"s=hello; print -r -- "${#${s}[2,4]}""#);
+    }
+    #[test]
+    fn len_subexp_p_scalar_index() {
+        assert_parity(r#"s=hello; n=s; print -r -- "${#${(P)n}[2]}""#);
+    }
+    #[test]
+    fn len_subexp_p_scalar_neg_index() {
+        assert_parity(r#"s=hello; n=s; print -r -- "${#${(P)n}[-1]}""#);
+    }
+    #[test]
+    fn len_subexp_bare_array_char_index() {
+        assert_parity(r#"arr=(one two three); print -r -- "${#${arr}[2]}""#);
+    }
+    #[test]
+    fn subexp_scalar_index_no_len_unaffected() {
+        assert_parity(r#"s=hello; print -r -- "${${s}[2]}""#);
+    }
+
+    // --- Nested BARE assoc splats its VALUES as an array (c:subst.c:3947 —
+    // a PM_HASHED param's aval is its values), so the shape survives the
+    // nesting (`${${h}}` prints one line per value, not the joined scalar).
+    // The non-nested `${h}` already splatted; only the nested form was
+    // collapsing to a joined scalar. ---
+    #[test]
+    fn nested_bare_assoc_splats_values() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); print -rl -- ${${h}}"#);
+    }
+    #[test]
+    fn nested_bare_assoc_at_flag_splats() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); print -rl -- ${(@)${h}}"#);
+    }
+    #[test]
+    fn nested_bare_assoc_len_counts_values() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); print -r -- ${#${h}}"#);
+    }
+    #[test]
+    fn nested_bare_assoc_values_with_spaces() {
+        assert_parity(r#"typeset -A h=(a "x y" b "z w"); x=(${${h}}); print ${#x}"#);
+    }
+    #[test]
+    fn nested_p_assoc_bare_splats_values() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); n=h; print -rl -- ${${(P)n}}"#);
+    }
+    #[test]
+    fn nested_bare_assoc_join() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); print -r -- ${(j:,:)${h}}"#);
+    }
+
+    // --- `(P)`-assoc `[@]`/`[*]` splat via a name-ref redirect emits the
+    // assoc VALUES (getvaluearr), not the IFS-joined scalar. ---
+    #[test]
+    fn p_assoc_at_subscript_splats_values() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); n=h; print -rl -- ${${(P)n}[@]}"#);
+    }
+    #[test]
+    fn p_assoc_star_subscript_splats_values() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); n=h; print -rl -- ${${(P)n}[*]}"#);
+    }
+    #[test]
+    fn p_assoc_at_subscript_values_with_spaces() {
+        assert_parity(r#"typeset -A h=(a "x y" b "z w"); n=h; print -rl -- ${${(P)n}[@]}"#);
+    }
+    #[test]
+    fn direct_assoc_at_subscript_unaffected() {
+        assert_parity(r#"typeset -A h=(a 1 b 2 c 3); print -rl -- ${h[@]}"#);
+    }
+
+    // --- getarrvalue `nular` padding (c:params.c:2570-2585): a slice whose
+    // start is at/beyond the array end returns a single empty element (capped
+    // at nular's one element), visible via `${#}`. ---
+    #[test]
+    fn empty_array_slice_len_is_one() {
+        assert_parity(r#"arr=(); print -r -- ${#arr[1,2]}"#);
+    }
+    #[test]
+    fn empty_array_slice_degenerate_len_zero() {
+        assert_parity(r#"arr=(); print -r -- ${#arr[1,1]}"#);
+    }
+    #[test]
+    fn empty_array_slice_neg_start_len_one() {
+        assert_parity(r#"arr=(); print -r -- ${#arr[-1,2]}"#);
+    }
+    #[test]
+    fn nonempty_array_out_of_range_slice_len_one() {
+        assert_parity(r#"arr=(x); print -r -- ${#arr[2,3]}"#);
+    }
+    #[test]
+    fn empty_array_slice_value_empty() {
+        assert_parity(r#"arr=(); print -r -- "[${arr[1,2]}]""#);
+    }
+    #[test]
+    fn empty_array_slice_unquoted_capture_zero() {
+        assert_parity(r#"arr=(); x=(${arr[1,2]}); print ${#x}"#);
+    }
+    #[test]
+    fn empty_array_slice_quoted_capture_one() {
+        assert_parity(r#"arr=(); x=("${arr[1,2]}"); print ${#x}"#);
+    }
+
+    // --- Nested empty-array stays array-shaped through the nesting, so the
+    // outer slice pads via getarrvalue (`${#${arr}[1,2]}` is 1 for arr=()). ---
+    #[test]
+    fn nested_empty_array_slice_len_one() {
+        assert_parity(r#"arr=(); print -rl -- ${#${arr}[1,2]}"#);
+    }
+    #[test]
+    fn nested_p_empty_array_slice_len_one() {
+        assert_parity(r#"arr=(); n=arr; print -rl -- ${#${(P)n}[1,2]}"#);
+    }
+    #[test]
+    fn nested_empty_array_bare_unaffected() {
+        assert_parity(r#"arr=(); print -rl -- ${${arr}}"#);
+    }
+
+    // --- (A) array-force collapses a LONE empty-string result to an empty
+    // array (getarrvalue nular phantom OR a single real ""), but keeps
+    // multi-element results (c:subst.c hmkarray on the scalarized value). ---
+    #[test]
+    fn a_flag_empty_array_slice_collapses() {
+        assert_parity(r#"a=(); print -r -- ${#${(A@)a[1,2]}}"#);
+    }
+    #[test]
+    fn a_flag_single_empty_elem_collapses() {
+        assert_parity(r#"a=(""); print -r -- ${#${(A@)a[1,1]}}"#);
+    }
+    #[test]
+    fn a_flag_bare_single_empty_collapses() {
+        assert_parity(r#"a=(""); print -r -- ${#${(A@)a}}"#);
+    }
+    #[test]
+    fn a_flag_two_empty_elems_kept() {
+        assert_parity(r#"a=("" ""); print -r -- ${#${(A@)a[1,2]}}"#);
+    }
+    #[test]
+    fn a_flag_mixed_empty_kept() {
+        assert_parity(r#"a=(x ""); print -r -- ${#${(A@)a[1,2]}}"#);
+    }
+
+    // --- `(#e)` end-anchor ZERO-WIDTH match in replacement: the scan probes
+    // the end position (c:glob.c:3029-3082) without over-firing for `pat#`
+    // interior empties. ---
+    #[test]
+    fn replace_end_anchor_global() {
+        assert_parity(r#"setopt extendedglob; s=abc; print -r -- ${s//(#e)/X}"#);
+    }
+    #[test]
+    fn replace_end_anchor_single() {
+        assert_parity(r#"setopt extendedglob; s=abc; print -r -- ${s/(#e)/X}"#);
+    }
+    #[test]
+    fn replace_end_anchor_empty_subject() {
+        assert_parity(r#"setopt extendedglob; s=; print -r -- ${s//(#e)/X}"#);
+    }
+    #[test]
+    fn replace_zero_or_more_no_extra_end() {
+        assert_parity(r#"setopt extendedglob; s=bbb; print -r -- ${s//a#/X}"#);
+    }
+    #[test]
+    fn replace_end_anchored_char() {
+        assert_parity(r#"setopt extendedglob; s=abc; print -r -- ${s//c(#e)/X}"#);
+    }
+
+    // --- Top-level alternation FIRST-BRANCH: `(a|ab)` matches the first
+    // branch `a`, not the longer `ab` (c:Src/pattern.c leftmost-alternation),
+    // across single/global and anchored replace paths. ---
+    #[test]
+    fn replace_alternation_first_branch_single() {
+        assert_parity(r#"setopt extendedglob; s=abc; print -r -- ${s/(a|ab)/X}"#);
+    }
+    #[test]
+    fn replace_alternation_first_branch_amp() {
+        assert_parity(r#"setopt extendedglob; s=abc; print -r -- ${s/(a|ab)/&}"#);
+    }
+    #[test]
+    fn replace_alternation_anchor_single() {
+        assert_parity(r#"setopt extendedglob; s=abc; print -r -- ${s/#(a|ab)/X}"#);
+    }
+    #[test]
+    fn replace_alternation_anchor_global() {
+        assert_parity(r#"setopt extendedglob; s=abcabc; print -r -- ${s//#(a|ab)/-}"#);
+    }
+    #[test]
+    fn replace_alternation_backref_still_captures() {
+        assert_parity(r#"setopt extendedglob; s=camelCase; print -r -- ${s/(#b)([A-Z])/_${match[1]}}"#);
+    }
+    #[test]
+    fn replace_greedy_star_unaffected() {
+        assert_parity(r#"setopt extendedglob; s=abcabc; print -r -- ${s/a*c/-}"#);
+    }
+
+    // --- Nested `:^` / `:^^` zip in DQ scalar context collapses the LEFT
+    // operand to a sepjoined scalar before zipping (c:subst.c:3032, via
+    // SUBEXP_SCALAR_CTX), matching a directly-quoted expansion. The `(@)`
+    // flag (nojoin=2) suppresses the collapse → per-element zip. ---
+    #[test]
+    fn nested_zip_short_collapses_left() {
+        assert_parity(r#"a=(1 2 3); b=(a b); print -r -- "${${a:^b}}""#);
+    }
+    #[test]
+    fn nested_zip_long_collapses_left() {
+        assert_parity(r#"a=(1 2 3); b=(a b); print -r -- "${${a:^^b}}""#);
+    }
+    #[test]
+    fn nested_zip_join_flag() {
+        assert_parity(r#"a=(1 2); b=(x y z); print -r -- "${(j:,:)${a:^^b}}""#);
+    }
+    #[test]
+    fn direct_quoted_zip_still_collapses() {
+        assert_parity(r#"a=(1 2 3); b=(a b); print -r -- "${a:^b}""#);
+    }
+    #[test]
+    fn at_flag_zip_stays_per_element() {
+        assert_parity(r#"a=(1 2 3); b=(a b); print -rl -- "${(@)a:^b}""#);
+    }
+    #[test]
+    fn at_flag_zip_long_stays_per_element() {
+        assert_parity(r#"a=(1 2 3); b=(a b); print -rl -- "${(@)a:^^b}""#);
+    }
+    #[test]
+    fn unquoted_zip_stays_per_element() {
+        assert_parity(r#"a=(1 2 3); b=(a b); print -r -- ${${a:^b}}"#);
+    }
+    #[test]
+    fn at_subscript_zip_per_element_unaffected() {
+        assert_parity(r#"a=(1 2 3); b=(x y); print -r -- "${a[@]:^b}""#);
+    }
 }
