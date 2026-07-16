@@ -39,7 +39,7 @@ Options:
   --home <DIR>               Override $ZSHRS_HOME for this session.
                              Default = ~/.zshrs/. One root directory
                              holds sockets, rkyv shards, sqlite
-                             databases, config (daemon.toml,
+                             databases, config (zshrs-daemon.toml,
                              zshrs.toml), and the log.
   --log-level <DIRECTIVE>    Override ZSHRS_LOG for this session
                              (e.g. info | debug | info,fsnotify=trace).
@@ -52,7 +52,7 @@ Options:
   --quiet-first-run          Suppress the 6-line first-run stderr block.
   --print-paths              Print resolved root / socket / config / pid /
                              log paths as JSON, then exit. Honors --home.
-  --check-config             Parse ~/.zshrs/daemon.toml + report
+  --check-config             Parse ~/.zshrs/zshrs-daemon.toml + report
                              validation status as JSON, then exit. Lets
                              editors / CI pre-flight a config edit
                              without restarting the daemon.
