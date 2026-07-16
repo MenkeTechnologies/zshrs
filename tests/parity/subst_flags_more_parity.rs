@@ -582,3 +582,44 @@ mod default_alternate_words_keep_arrays {
         assert_parity(r#"unset u; a=(${u-hello}); b=(${u:-one}); print $#a $#b $a $b"#);
     }
 }
+
+mod quoted_empty_subscript_word_survives {
+    //! c:Src/subst.c:4437 + 1650-1656 — a word CONTAINING a quoted span
+    //! never drops to zero args, even under RC_EXPAND_PARAM. zpwr sets
+    //! `rc_expand_param` globally; autopair's `_ap-can-delete-p` runs
+    //! `local lchar="${LBUFFER[-1]}"` — with an EMPTY prompt the whole
+    //! `lchar=…` word vanished and the ARGLESS `local` dumped the full
+    //! parameter table on every backspace.
+    use super::*;
+
+    #[test]
+    fn local_assign_from_quoted_empty_subscript() {
+        assert_parity(
+            r#"setopt rcexpandparam; v=""; f(){ local c="${v[-1]}"; print -r -- "c=[$c] ok"; }; f"#,
+        );
+    }
+
+    #[test]
+    fn word_with_quoted_empty_subscript_survives() {
+        assert_parity(r#"setopt rcexpandparam; v=""; print -rl -- A x"${v[-1]}"y B"#);
+    }
+
+    #[test]
+    fn standalone_quoted_empty_subscript_is_one_arg() {
+        assert_parity(r#"setopt rcexpandparam; v=""; set -- x${v[-1]}y "${v[-1]}"; print -r -- argc=$#"#);
+    }
+
+    #[test]
+    fn typeset_assign_quoted_empty_subscript() {
+        assert_parity(
+            r#"setopt rcexpandparam; v=""; typeset tv="${v[-1]}"; print -r -- "t=[$tv] ${(t)tv}""#,
+        );
+    }
+
+    /// Unquoted empty expansions still drop under rcexpandparam
+    /// (plan9 word-removal is real for genuine arrays).
+    #[test]
+    fn unquoted_empty_array_still_drops() {
+        assert_parity(r#"setopt rcexpandparam; e=(); print -rl -- A x${e}y B"#);
+    }
+}

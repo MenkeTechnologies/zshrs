@@ -19,6 +19,47 @@ CI green pending the underlying fix.
 
 ---
 
+## #673 — backspace on empty prompt dumped the entire parameter table (zbrowse-style typeset flood) — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** full zpwr session, empty prompt, press backspace 2-3× —
+the terminal floods with `integer readonly '#'=0`, `array
+zsh_loaded_plugins=(…)`, `association colour=(…)` … (a bare-`typeset`
+full listing; `$0=_ap-can-delete-p` in the dump names the frame). Same
+flood previously seen at session start. Minimal:
+
+```zsh
+setopt rcexpandparam; v=""
+f(){ local c="${v[-1]}"; print "c=[$c]" }; f
+# zsh: c=[]      zshrs (before): argless `local` → full param dump
+```
+
+**Root cause:** zpwr sets `rc_expand_param` globally (.zshrc:743).
+zsh-autopair's `_ap-can-delete-p` begins `local lchar="${LBUFFER[-1]}"`;
+on an EMPTY prompt the quoted subscript expands empty, and the mode-0
+EXPAND_TEXT arm's empty-elide collapsed the WHOLE `lchar=…` word to zero
+args — `local` ran ARGLESS and listed every parameter, every backspace.
+C never drops a word containing a QUOTED span (Src/subst.c:4437 +
+1650-1656): `x"${v[-1]}"y` is the scalar "xy", standalone `"${v[-1]}"`
+is one empty arg; only genuinely unquoted empties elide.
+
+**Fix:** the empty-elide in the mode-0 arm now checks the SOURCE word
+for quote spans (Dnull/Snull/Qstring/Bnull markers or raw quotes) and
+keeps a scalar empty instead of dropping the arg. Verified parity on:
+`local`/`typeset` assigns, mid-word `x"${v[-1]}"y`, standalone quoted
+(one arg), and unquoted empty-array plan9 removal still drops. Live:
+backspace ×3 on empty prompt — no dump, session responsive. subst
+339/339, brace 185/185; 5 regression tests.
+
+**Observed alongside (separate, still open):** `$-` returns
+`24569BHJNPQRTXYZghikms` (letters of set options crammed with junk vs
+zsh's short flag string) — this is also the garbage string painted at
+the right margin (the "RPROMPT garble"): zpwr's RPS1 interpolates
+shell state that includes `$-`.
+
+---
+
 ## #672 — hsmw ^R froze ~4 CPU-minutes: pattern engine hot-loop pathologies — FIXED
 
 **Status:** `fixed`

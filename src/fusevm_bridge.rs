@@ -9011,8 +9011,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // from unquoted contexts. Quoted DQ/SQ paths (modes
                     // 1/2/5) take separate arms above and always emit
                     // Value::Str so the empty arg survives.
+                    //
+                    // c:Src/subst.c:4437 + 1650-1656 — a word CONTAINING a
+                    // quoted span never drops: `x"${v[-1]}"y` (v empty)
+                    // is the scalar "xy", and a standalone `"${v[-1]}"`
+                    // is ONE empty arg. The lexer marks DQ/SQ spans with
+                    // Dnull(\u{9e})/Snull(\u{9d})/Qstring(\u{8c})/
+                    // Bnull(\u{9f}); their presence in the SOURCE word
+                    // means qt semantics apply. Without this gate, zpwr's
+                    // global `setopt rc_expand_param` turned autopair's
+                    // `local lchar="${LBUFFER[-1]}"` (empty prompt +
+                    // backspace) into an ARGLESS `local` — the full
+                    // parameter-table dump the user saw per keystroke.
                     if only.is_empty() {
-                        Value::Array(Vec::new())
+                        let word_has_quoted_span = text.chars().any(|c| {
+                            matches!(c, '\u{9e}' | '\u{9d}' | '\u{8c}' | '\u{9f}' | '"' | '\'')
+                        });
+                        if word_has_quoted_span {
+                            Value::str(String::new())
+                        } else {
+                            Value::Array(Vec::new())
+                        }
                     } else {
                         Value::str(only)
                     }
