@@ -17,10 +17,13 @@
 # paramsubst (c:Src/subst.c:3932). The two `${#${#s}}` signatures below were
 # removed once fixed so a regression re-flags as NEW.
 #
-# One remaining known gap: an (s::)/split that yields ONLY EMPTY fields,
-# nested under another flag in DQ (`"${(L)${(s.:.)${t[2]}}}"` where t[2] is a
-# lone `:`). zsh's prefork deletes the empty nodes in the SUBEXP multsub pass
-# (→ empty result `[]`), whereas the port keeps them and sepjoins to a single
-# space (`[ ]`). Narrow edge (splitting a lone delimiter, nested, quoted);
-# the DIRECT `"${(s.:.):}"` form matches (both a single space).
-print -r -- "[${(L)${(s.:.)${t[N]}}}]"
+# FIXED (no longer a gap): an (s::)/split nested under another flag in DQ
+# whose fields are empty (`"${(L)${(s.:.)${t[2]}}}"`, t[2] a lone `:`). C's
+# prefork deletes the split-derived empty nodes in the SUBEXP multsub pass
+# (→ `[]` / `a`), whereas the port kept them and sepjoined to spaces. Fixed
+# by flagging the inner as a NON-@ forced split (SUBEXP_NONAT_SPLIT) so the
+# nested reader drops the empties (c:Src/subst.c:100 uremnode); `@` splits
+# and real-array elements keep theirs. The signature below was removed once
+# fixed so a regression re-flags as NEW.
+#
+# No known nest gaps remain.
