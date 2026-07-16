@@ -104,6 +104,11 @@ pub fn makezleparams(_ro: i32) {
     let _ = setiparam("HISTNO", get_histno()); // c:514 histline
     let _ = setsparam("CONTEXT", get_context()); // c:942
     let _ = setiparam("PENDING", get_pending() as i64); // c:528
+
+    // RUST-ONLY (crate::zle_param_sync — adapter for C's live GSU
+    // setters): record the values just snapshotted so the sync
+    // boundaries can diff widget mutations against them.
+    crate::zle_param_sync::arm_snapshot(line, lbuf, rbuf, cs as i64);
 }
 
 /// Direct port of `static void zleunsetfn(Param pm, int exp)` from

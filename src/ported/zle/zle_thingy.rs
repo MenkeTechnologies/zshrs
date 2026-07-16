@@ -1548,10 +1548,26 @@ pub fn bin_zle_call(_name: &str, args: &[String], _ops: &options, _func: i32) ->
     //   setbindk, setlbindk); unrefthingy(t);`. Rust execzlefunc takes
     // (name, args); setbindk/setlbindk plumbing pending the wider sig.
     rthingy(&wname); // c:800
-                     // c:806 — `ret = execzlefunc(t, args, setbindk, setlbindk)`.
-                     // Now that execzlefunc takes the 4-arg C sig, thread the flags
-                     // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
+                     // RUST-ONLY SYNC (C: live GSU setters — see ZLE_PARAM_SNAPSHOT
+                     // in zle_params.rs): a `zle <widget>` call from inside a user
+                     // widget must see that widget's pending $BUFFER/$LBUFFER
+                     // writes (zsh-expand does `LBUFFER=expanded; zle self-insert`
+                     // — without the sync, self-insert appended to the STALE line
+                     // and the exit write-back clobbered it, dropping the space).
+    let in_widget_scope = crate::zle_param_sync::active();
+    if in_widget_scope {
+        crate::zle_param_sync::sync_from_paramtab();
+    }
+    // c:806 — `ret = execzlefunc(t, args, setbindk, setlbindk)`.
+    // Now that execzlefunc takes the 4-arg C sig, thread the flags
+    // collected from `-w` (setbindk) and `-f nolast` (setlbindk).
     let ret = execzlefunc(&wname, &argv, setbindk, setlbindk); // c:806
+    // RUST-ONLY SYNC (other direction): refresh the caller widget's
+    // params + snapshot from the live editor so post-call reads of
+    // $BUFFER/$CURSOR see what the inner widget did.
+    if in_widget_scope {
+        crate::ported::zle::zle_params::makezleparams(0);
+    }
     unrefthingy(&wname); // c:807
 
     // c:808-809 — `if (saveflag) zmod = modsave;`.
