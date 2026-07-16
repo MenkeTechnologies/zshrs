@@ -2051,6 +2051,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                         strs: None,
                         shf: None,
                         dump: None,
+                        strs_metafied: false, // native pool — clean UTF-8
                     });
                     let placeholder2: Eprog = Box::new(eprog {
                         flags: 0,
@@ -2062,6 +2063,7 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                         strs: None,
                         shf: None,
                         dump: None,
+                        strs_metafied: false, // native pool — clean UTF-8
                     });
                     let job_text = crate::ported::text::getjobtext(placeholder, None); // c:199
                     args.push(crate::ported::mem::dupstring(&job_text));

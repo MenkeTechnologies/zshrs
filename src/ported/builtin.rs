@@ -7629,6 +7629,7 @@ pub fn mkautofn(shf: *mut shfunc) -> *mut eprog {
         flags: 0,
         pats: Vec::new(),
         dump: None,
+        strs_metafied: false, // native pool — clean UTF-8
     });
     Box::into_raw(p)
 }
