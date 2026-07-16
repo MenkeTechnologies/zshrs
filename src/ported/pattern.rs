@@ -3087,6 +3087,120 @@ pub fn pattryrefs(
     } else {
         &string[..stringlen as usize]
     };
+    // Substring fast path for the ubiquitous `*literal*` shape
+    // (optionally `(#i)`): program is [P_GFLAGS] P_STAR P_EXACTLY
+    // P_STAR P_END with no captures requested. history-search-multi-
+    // word's `${history[(R)(#i)*pat*]}` runs this shape over EVERY
+    // history entry — 566k backtracking patmatch walks took CPU-
+    // minutes per ^R (the reported freeze); a memmem-style scan is
+    // what the shape actually needs. C reads this spirit via its
+    // `mustoff` must-match prefilter (Src/pattern.c:2460-2483) but
+    // declines under globflags; here the exact-bytes variant covers
+    // any content and the `(#i)` variant is taken only when pattern
+    // AND subject are pure ASCII (byte-fold == the matcher's char
+    // fold there); anything else falls through to the full matcher.
+    if nump.is_none()
+        && begp.is_none()
+        && endp.is_none()
+        && patoffset == 0
+        && (prog.0.flags & (PAT_NOTSTART | PAT_NOTEND) as i32) == 0
+    {
+        // Shape probe, inline (build-gate: no new fn in ported/ without
+        // a C counterpart): Some((literal, igncase)) iff the program is
+        // exactly `[P_GFLAGS] P_STAR P_EXACTLY(lit) P_STAR P_END` with
+        // glob flags ⊆ IGNCASE|MULTIBYTE (no approx budget, no backrefs).
+        let shape: Option<(String, bool)> = (|| {
+            let buf: &[u8] = &prog.1;
+            let mut off = prog.0.startoff as usize;
+            let mut gflags = prog.0.globflags;
+            let op_at = |o: usize| -> Option<u8> {
+                if o + I_BODY <= buf.len() {
+                    Some(buf[o + I_OP])
+                } else {
+                    None
+                }
+            };
+            // A sole leading BRANCH (next == 0: no alternative) wraps
+            // the whole program — step inside it.
+            if op_at(off)? == P_BRANCH {
+                let next =
+                    u32::from_le_bytes(buf[off + I_NEXT..off + I_NEXT + 4].try_into().ok()?);
+                if next != 0 {
+                    return None; // real alternation — full matcher
+                }
+                off = advance_past_instr(buf, off);
+            }
+            if op_at(off)? == P_GFLAGS {
+                let body = off + I_BODY;
+                if body + 4 > buf.len() {
+                    return None;
+                }
+                gflags |= i32::from_le_bytes(buf[body..body + 4].try_into().ok()?);
+                off = advance_past_instr(buf, off);
+            }
+            if (gflags & !(GF_IGNCASE | GF_MULTIBYTE)) != 0 {
+                return None;
+            }
+            if op_at(off)? != P_STAR {
+                return None;
+            }
+            off = advance_past_instr(buf, off);
+            // One or more contiguous EXACTLY chunks form the literal
+            // (the compiler splits long/space-bearing literals).
+            if op_at(off)? != P_EXACTLY {
+                return None;
+            }
+            let mut lit = String::new();
+            while op_at(off)? == P_EXACTLY {
+                let body = off + I_BODY;
+                if body + 4 > buf.len() {
+                    return None;
+                }
+                let len = u32::from_le_bytes(buf[body..body + 4].try_into().ok()?) as usize;
+                if body + 4 + len > buf.len() {
+                    return None;
+                }
+                lit.push_str(std::str::from_utf8(&buf[body + 4..body + 4 + len]).ok()?);
+                off = advance_past_instr(buf, off);
+            }
+            if op_at(off)? != P_STAR {
+                return None;
+            }
+            off = advance_past_instr(buf, off);
+            if off + I_OP >= buf.len() || buf[off + I_OP] != P_END {
+                return None;
+            }
+            Some((lit, (gflags & GF_IGNCASE) != 0))
+        })();
+        if let Some((lit, igncase)) = shape.as_ref().map(|(l, i)| (l.as_str(), *i)) {
+            if !igncase {
+                return trial.contains(lit);
+            }
+            if lit.is_ascii() && trial.is_ascii() {
+                let lb = lit.as_bytes();
+                let tb = trial.as_bytes();
+                if lb.is_empty() {
+                    return true;
+                }
+                if lb.len() <= tb.len() {
+                    let l0 = lb[0].to_ascii_lowercase();
+                    'scan: for s in 0..=(tb.len() - lb.len()) {
+                        if tb[s].to_ascii_lowercase() != l0 {
+                            continue;
+                        }
+                        for k in 1..lb.len() {
+                            if tb[s + k].to_ascii_lowercase() != lb[k].to_ascii_lowercase() {
+                                continue 'scan;
+                            }
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+            // Non-ASCII under (#i): general matcher below.
+        }
+    }
     let mut state = rpat::new();
     // c:Src/pattern.c:2334 — `patflags = prog->flags;` C copies the
     // prog's flags into the file-static `patflags` so subsequent
@@ -4795,9 +4909,23 @@ pub fn patmatch(
                                     (None, None) => break,
                                     (Some(_), None) | (None, Some(_)) => return None,
                                     (Some(a), Some(b)) => {
-                                        let af: String = a.to_lowercase().collect();
-                                        let bf: String = b.to_lowercase().collect();
-                                        if af != bf {
+                                        // Equal chars (the common case) and ASCII
+                                        // pairs fold without touching the heap.
+                                        // The old per-char `to_lowercase()
+                                        // .collect::<String>()` pair allocated
+                                        // TWICE PER CHARACTER — `(#i)` scans over
+                                        // a 566k-entry history (hsmw ^R) burned
+                                        // ~4 CPU-minutes in RawVec::reserve.
+                                        // Iterator::eq covers the multi-char
+                                        // Unicode folds allocation-free.
+                                        if a != b
+                                            && (if a.is_ascii() && b.is_ascii() {
+                                                a.to_ascii_lowercase()
+                                                    != b.to_ascii_lowercase()
+                                            } else {
+                                                !a.to_lowercase().eq(b.to_lowercase())
+                                            })
+                                        {
                                             return None;
                                         }
                                     }
