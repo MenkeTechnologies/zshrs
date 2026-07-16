@@ -83,7 +83,9 @@ use crate::ported::zsh_h::{
     BINF_PLUSOPTS, BINF_PREFIX, BINF_PRINTOPTS, BINF_PSPECIAL, BINF_SKIPDASH, BINF_SKIPINVALID,
     BSDECHO, CDABLEVARS, CHASELINKS, CHECKRUNNINGJOBS, DISABLED, EMULATE_CSH, EMULATE_KSH,
     EMULATE_SH, EMULATE_ZSH, EMULATION, ERRFLAG_ERROR, FS_FUNC, FUNCTIONARGZERO, GLOBALEXPORT,
-    HASHED, HFILE_APPEND, HFILE_SKIPOLD, HFILE_USE_OPTIONS, HIST_FOREIGN, INTERACTIVE, KSHARRAYS,
+    GLOBALRCS,
+    interact, islogin, HASHED, HFILE_APPEND, HFILE_NO_REWRITE, HFILE_SKIPOLD, HFILE_USE_OPTIONS,
+    HIST_FOREIGN, INTERACTIVE, KSHARRAYS,
     LOGINSHELL, MAX_OPS, MFF_STR, MFF_USERFUNC, MONITOR, NULLBINCMD, OPT_ARG, OPT_HASARG,
     OPT_ISSET, OPT_MINUS, OPT_PLUS, PATHDIRS, PAT_HEAPDUP, PAT_STATIC, PM_ABSPATH_USED, PM_ARRAY,
     PM_AUTOLOAD, PM_CUR_FPATH, PM_DECLARED, PM_DEFAULTED, PM_EFLOAT, PM_EXPORTED, PM_FFLOAT,
@@ -94,7 +96,8 @@ use crate::ported::zsh_h::{
     PRINT_INCLUDEVALUE, PRINT_LINE, PRINT_LIST, PRINT_NAMEONLY, PRINT_POSIX_EXPORT,
     PRINT_POSIX_READONLY, PRINT_TYPE, PRINT_TYPESET, PRINT_WHENCE_CSH, PRINT_WHENCE_FUNCDEF,
     PRINT_WHENCE_SIMPLE, PRINT_WHENCE_VERBOSE, PRINT_WHENCE_WORD, PRINT_WITH_NAMESPACE,
-    PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME, RCQUOTES, SHINSTDIN, SORTIT_BACKWARDS,
+    PUSHDIGNOREDUPS, PUSHDMINUS, PUSHDSILENT, PUSHDTOHOME, RCQUOTES, RCS, SHINSTDIN,
+    SORTIT_BACKWARDS,
     SORTIT_IGNORING_CASE, STAT_LOCKED, STAT_NOPRINT, STAT_STOPPED, TRAP_STATE_FORCE_RETURN,
     TRAP_STATE_PRIMED, TYPESETSILENT, TYPESET_OPTSTR, VERBOSE, XTRACE, ZEXIT_DEFERRED,
     ZEXIT_NORMAL, ZEXIT_SIGNAL, ZSIG_FUNC,
@@ -5829,7 +5832,13 @@ pub fn bin_typeset(
                         }
                     }
                 }
-                setsparam(n, &folded); // c:params.c:3350
+                // c:2322 — typeset assigns via `assignsparam(pname, ..., 0)`:
+                // flags=0, NOT setsparam's ASSPM_WARN (params.c:3294), so an
+                // explicit `typeset -g NAME=val` inside a function never
+                // trips WARN_CREATE_GLOBAL. Routing through setsparam here
+                // made zshrs warn where zsh is silent (f-sy-h's
+                // `typeset -g _ZSH_HIGHLIGHT_PRIOR_BUFFER=...`).
+                crate::ported::params::assignsparam(n, &folded, 0); // c:2322
                                        // c:2326-2328 + c:2336-2337 (typeset_single) —
                                        // `if (asg->value.scalar && !(pm = assignsparam(
                                        //     pname, ztrdup(asg->value.scalar), 0)))
@@ -6120,7 +6129,10 @@ pub fn bin_typeset(
             let was_fresh = saved_val.is_none() && !already_typed;
             if was_fresh {
                 // c:3072 — `if (!getsparam(pname)) setsparam(pname, "")`.
-                setsparam(arg, ""); // c:3074
+                // flags=0: a typeset-driven create never trips
+                // WARN_CREATE_GLOBAL (typeset_single assigns with
+                // `assignsparam(pname, ..., 0)`, c:2322).
+                crate::ported::params::assignsparam(arg, "", 0); // c:3074
                                     // c:Src/builtin.c:2544 — `if (isset(TYPESETTOUNSET))
                                     //     pm->node.flags |= PM_DEFAULTED;`. Under
                                     // `setopt typeset_to_unset`, bare `typeset NAME` (no
@@ -6164,9 +6176,10 @@ pub fn bin_typeset(
                 }
                 // Restore the captured scalar so the cleared-type
                 // param has its value as a string (PM_SCALAR
-                // semantics now apply).
+                // semantics now apply). flags=0 — typeset-internal
+                // restore, never WARN_CREATE_GLOBAL (c:2322).
                 if let Some(ref val) = saved_val {
-                    setsparam(arg, val);
+                    crate::ported::params::assignsparam(arg, val, 0);
                 }
             }
             if pre_assign_to_set != 0 {
@@ -10913,6 +10926,43 @@ pub fn zexit(val: i32, from_where: i32) {
         RETFLAG.store(1, Relaxed);
         BREAKS.store(LOOPS.load(Relaxed), Relaxed);
         return;
+    }
+    // c:6012 — `cleanfilelists();` — delete per-job temp-file lists
+    // before exit. jobs.rs::cleanfilelists is a Rust-only-signature
+    // adapter over the C global jobtab (see its WARNING block).
+    if let Some(tab) = crate::ported::jobs::JOBTAB.get() {
+        let mut tab = tab.lock().unwrap_or_else(|e| e.into_inner());
+        crate::ported::jobs::cleanfilelists(&mut tab); // c:6012
+    }
+    // c:6013-6028 — `if (isset(RCS) && interact)`: save the history
+    // file and run logout scripts. This is THE write-at-exit path for
+    // interactive history (`-f`/NO_RCS shells intentionally skip it,
+    // matching C).
+    if isset(RCS) && interact() {
+        // c:6013
+        // c:6014-6020 — `if (!nohistsave) { ... }`. `nohistsave` isn't
+        // ported as a Rust global (same approximation as
+        // hist.rs::saveandpophiststack); default 0 = allow saves.
+        let mut writeflags = HFILE_USE_OPTIONS as i32; // c:6015
+        if from_where == ZEXIT_SIGNAL {
+            // c:6016
+            writeflags |= HFILE_NO_REWRITE as i32; // c:6017
+        }
+        saveandpophiststack(1, writeflags); // c:6018
+        savehistfile(None, writeflags); // c:6019
+        // c:6021-6027 — `if (islogin && !subsh) { sourcehome(".zlogout");
+        // ... source(GLOBAL_ZLOGOUT); }`. The C `subsh` check is covered
+        // by the RUST-ONLY SUBSHELL_DEPTH gate above (in-process
+        // subshells returned before reaching here).
+        if islogin() {
+            // c:6021
+            crate::ported::init::sourcehome(".zlogout"); // c:6022
+            if isset(RCS) && isset(GLOBALRCS) {
+                // c:6024
+                let _ = crate::ported::init::source(crate::ported::config_h::GLOBAL_ZLOGOUT);
+                // c:6025
+            }
+        }
     }
     // c:Src/builtin.c:6075-6079 — fire EXIT trap (SIGEXIT) before
     // calling realexit. The trap body sees $? = val (carried via
