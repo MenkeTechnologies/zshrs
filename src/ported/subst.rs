@@ -14070,7 +14070,26 @@ pub fn paramsubst(
             // Only the INTERIOR empties between two non-empty
             // neighbours collapse — leading/trailing empties stay.
             // Bug #542.
-            if nojoin != 2 && parts.len() >= 3 {
+            //
+            // C reality (utils.c:3962 sepsplit → wordcount(s,sep,1),
+            // mul=1 so line 3887 always increments): the split itself
+            // NEVER drops empties — every field, interior included, is
+            // kept. The observed collapse is downstream: prefork
+            // (subst.c:100 `else if (!keep) uremnode`) drops the
+            // truly-empty NODES the array emits, but only where they
+            // render empty and unprotected. This split-time collapse is
+            // a hack approximating that, and it MUST NOT fire under
+            // RC_EXPAND_PARAM (`plan9`): there the cross-product
+            // emission (subst.rs:15826) applies the surrounding
+            // prefix/suffix to EACH element, so an interior empty
+            // becomes e.g. `xy` (non-empty) and must survive —
+            // `v=a:b::c; setopt rcexpandparam; print -r x${(s.:.)v}y`
+            // → `xay xby xy xcy`. With no affix, the empty renders `""`
+            // and the existing `!qt` drop (subst.rs:15874) elides it in
+            // unquoted context while quoted keeps it, exactly matching
+            // zsh (unquoted → 3 elems, quoted `"…"` → 4). Gating on
+            // `!plan9` leaves the non-plan9 Bug #542 path untouched.
+            if nojoin != 2 && !plan9 && parts.len() >= 3 {
                 let mut collapsed: Vec<String> = Vec::with_capacity(parts.len());
                 let n = parts.len();
                 for (i, p) in parts.iter().enumerate() {
@@ -15544,7 +15563,16 @@ pub fn paramsubst(
                 // `b=(\${(s.l.)hello})` producing 2 elements not 3).
                 // Quoted `"\${(@s.l.)hello}"` keeps them (the @
                 // flag forces array semantics + qt preserves empties).
-                if !qt && spsep.is_some() {
+                //
+                // Skip the drop under RC_EXPAND_PARAM (`plan9`): the
+                // cross-product emission below (subst.rs:15844) applies
+                // the surrounding prefix/suffix to EVERY element, so an
+                // interior/leading/trailing empty renders non-empty
+                // (`x${(s.:.)v}y` → `… xy …`) and must reach emission.
+                // A plan9 element that stays truly empty (no affix) is
+                // then dropped by the `!qt` retain at subst.rs:15894,
+                // so unquoted no-affix still elides — matching zsh.
+                if !qt && !plan9 && spsep.is_some() {
                     sp.into_iter().filter(|s| !s.is_empty()).collect()
                 } else {
                     sp // c:3950
