@@ -3569,7 +3569,23 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
         Some(p) => p.to_string(),
         None => match resolve_histfile() {
             Some(p) => p,
-            None => return,
+            // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+            // zshrs's DEFAULT history store is the SQLite index; its
+            // extended-history text mirror ($ZSHRS_HOME/zshrs_history,
+            // extensions/history.rs::text_path) is kept current by the
+            // per-command interactive sink (history_sqlite_add). With no
+            // $HISTFILE override set, the startup read (init.c:1573)
+            // hydrates the ring from that mirror so up-arrow recalls
+            // previous sessions. READ-side only: savehistfile stays
+            // HISTFILE-gated — the engine owns all mirror writes, so a
+            // rewrite-at-exit would duplicate every row.
+            None => {
+                let p = crate::history::HistoryEngine::text_path();
+                if !p.exists() {
+                    return;
+                }
+                p.to_string_lossy().to_string()
+            }
         },
     };
     // c:2675 — HFILE_FAST is the incremental (share / append) read: resume at

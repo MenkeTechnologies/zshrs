@@ -1497,7 +1497,18 @@ pub fn init_misc(cmd: Option<&str>, zsh_name: &str) {
         std::process::exit(0);
     }
 
-    // if (interact && isset(RCS)) readhistfile(NULL, 0, HFILE_USE_OPTIONS); // c:1551-1541
+    // c:1573-1574 — `if (interact && isset(RCS))
+    //                    readhistfile(NULL, 0, HFILE_USE_OPTIONS);`
+    // — THE startup read of $HISTFILE into the history ring. Without
+    // it an interactive shell starts with empty history (up-arrow /
+    // fc -l see nothing from previous sessions).
+    if crate::ported::zsh_h::interact() && isset(RCS) {
+        crate::ported::hist::readhistfile(
+            None,
+            0,
+            crate::ported::zsh_h::HFILE_USE_OPTIONS as i32,
+        ); // c:1574
+    }
 }
 
 /// Port of `mod_export enum source_return source(char *s)` from Src/init.c:1551.
