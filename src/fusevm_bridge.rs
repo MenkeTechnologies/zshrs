@@ -4839,6 +4839,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 return Some((arr.clone(), in_dq));
             }
             if exec.assoc(&name).is_some() {
+                // c:Src/params.c:2351-2358 — under KSH EMULATION a bare
+                // `$assoc` is `${assoc[0]}` (a KEY-"0" lookup), so it is
+                // EMPTY unless the hash actually has a key "0". This is
+                // EMULATION-gated, not KSHARRAYS-option-gated: `emulate -L
+                // ksh; typeset -A h=(a 1 b 2); print $h` is empty, whereas
+                // `setopt ksharrays; …; print $h` collapses to the bucket-
+                // first value below.
+                if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+                    let v = crate::ported::subst::assoc_get(&name)
+                        .and_then(|m| m.get("0").cloned())
+                        .unwrap_or_default();
+                    return Some((vec![v], in_dq));
+                }
                 // c:Src/hashtable.c scanhashtable — a bare `$assoc` joins its
                 // VALUES in zsh hash-BUCKET order (the same order `(k)`/`(v)`
                 // enumerate), NOT sorted or insertion order. `assoc_get`
@@ -9108,6 +9121,14 @@ fn ksharrays_bare_words(name: &str) -> Vec<String> {
             return Some(arr.first().cloned().unwrap_or_default());
         }
         if let Some(map) = exec.assoc(name) {
+            // c:Src/params.c:2351-2358 — under KSH EMULATION a bare
+            // `$assoc` is `${assoc[0]}` (KEY-"0" lookup), EMPTY unless the
+            // hash has a key "0": `emulate -L ksh; typeset -A h=(a 1 b 2);
+            // print $h` is empty. Every other mode (`setopt ksharrays`,
+            // `emulate sh`) falls through to the first bucket value below.
+            if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+                return Some(map.get("0").cloned().unwrap_or_default());
+            }
             // Mirrors BUILTIN_GET_VAR's bare-assoc ordering
             // (sorted keys, first value).
             let mut keys: Vec<&String> = map.keys().collect();
