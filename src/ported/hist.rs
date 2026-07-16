@@ -3623,7 +3623,7 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     } else {
         0
     };
-    let contents = {
+    let (contents, raw_len) = {
         use std::io::{Read, Seek, SeekFrom};
         let mut f = match std::fs::File::open(&path) {
             Ok(f) => f,
@@ -3632,13 +3632,27 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
         if start_pos > 0 && f.seek(SeekFrom::Start(start_pos as u64)).is_err() {
             return;
         }
-        let mut s = String::new();
-        if f.read_to_string(&mut s).is_err() {
+        // c:2718 readhistline — C reads RAW BYTES and unmetafies each
+        // line: savehistfile writes the file METAFIED (c:3030), and
+        // decades-old real-world HISTFILEs also carry non-UTF-8 bytes
+        // (latin1 args, binary paste). The previous `read_to_string`
+        // errored on the first invalid byte and silently skipped the
+        // ENTIRE file — a 26MB / 558k-line zpwr history loaded zero
+        // entries (empty ring, no up-arrow across sessions) while small
+        // clean-ASCII files worked. Unmetafy, then lossy-decode.
+        // `raw_len` keeps the ON-DISK byte count: lasthist.fpos tracks
+        // raw file offsets, and unmetafy/lossy-decode shrink the buffer
+        // — recording the shrunk length would make the next HFILE_FAST
+        // share-read resume short and re-read (duplicate) the tail.
+        let mut bytes = Vec::new();
+        if f.read_to_end(&mut bytes).is_err() {
             return;
         }
-        s
+        let raw_len = bytes.len() as i64;
+        crate::ported::utils::unmetafy(&mut bytes); // c:2731 unmetafy
+        (String::from_utf8_lossy(&bytes).into_owned(), raw_len)
     };
-    let read_end = start_pos + contents.len() as i64;
+    let read_end = start_pos + raw_len;
     if contents.is_empty() {
         // Nothing appended past fpos, but the file was touched (mtime/size
         // differed). Refresh lasthist so the next fast read early-outs.
