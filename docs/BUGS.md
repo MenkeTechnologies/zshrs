@@ -19,6 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
+## #674 — every prompt took ~5s: full 566k-entry ZLE history rebuild per zleread — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** full zpwr session with the real 566k-entry history — every
+command took ~5s to return to a prompt (`zshrs -f` instant). Sampled
+during the stall: `zleread → quietgethist → ring_get →
+slice::binary_search_by` dominating.
+
+**Root cause:** the Rust-only adapter in `zleread` that feeds the ZLE
+history-navigation list (C needs none of this — its ZLE walks the live
+ring lazily) CLEARED and re-walked the ENTIRE ring on EVERY line edit:
+one `quietgethist` per event = 566k binary searches + 566k full-entry
+clones (words vecs included) per prompt.
+
+**Fix:** incremental sync keyed on `(firsthist, curhist)` watermarks:
+- unchanged window → no-op; `cur` advanced → append only new events;
+- HISTSIZE trim (first advanced) → drain aged entries off the front;
+- window moved backwards / shrank → full rebuild, now via ONE direct
+  O(n) pass over `hist_ring` (line strings only, no per-event binary
+  search, no full-entry clones).
+Two subtleties caught during verification: `curhist` points at the
+IN-FLIGHT event (its text commits after execution), so the watermark
+stores `cur - 1` or every accepted command was skipped and up-arrow
+recalled stale lines; and appends carry a dedupe guard (`num` strictly
+increasing).
+
+**Measured (full zpwr env, 566k history, debug build):** steady-state
+prompt 5s → ~0.4s incl. harness polling; first prompt ~8s (the one-time
+initial list build — remaining startup work, tracked). Up-arrow recalls
+the newest entry correctly in both the minimal and full env; hist parity
+82/82.
+
+---
+
 ## #673 — backspace on empty prompt dumped the entire parameter table (zbrowse-style typeset flood) — FIXED
 
 **Status:** `fixed`
