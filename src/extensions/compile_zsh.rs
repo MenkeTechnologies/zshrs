@@ -2034,6 +2034,31 @@ impl ZshCompiler {
         // found") fires before the redirect scope opens.
         let head_is_magic_equals =
             !user_function_shadow && (dispatch_first_raw == "alias" || first_clean == "alias");
+        // c:Src/builtin.c BUILTIN table — the OTHER BINF_MAGICEQUALS
+        // heads: declare, export, float, hash, integer, local, readonly,
+        // typeset. C runs prefork's filesub on the LEXED word before any
+        // expansion (exec.c:3353-3359); zshrs's 621 op runs on the
+        // runtime-EXPANDED value, so emitting it unconditionally
+        // re-processes values that arrived via `$var` (`local al=$3`
+        // with a regex-ish value died in bin_typeset). Gate the emit to
+        // words whose RAW text carries an expandable tilde (`=~` value
+        // start or `:~` path segment) — exactly the shapes filesub acts
+        // on — so `export V=~/x` expands while `local al=$3` is left
+        // untouched. Previously NO typeset-family word got the emit and
+        // the tilde stayed literal (zpwr's `export
+        // ZPWR_EXPAND_STATS_FILE=~/...` then failed every -f test).
+        let head_is_typeset_magic = !user_function_shadow
+            && matches!(
+                first_clean.as_str(),
+                "declare"
+                    | "export"
+                    | "float"
+                    | "hash"
+                    | "integer"
+                    | "local"
+                    | "readonly"
+                    | "typeset"
+            );
 
         // c:Src/builtin.c BUILTIN table — BINF_ASSIGN family: typeset /
         // declare / local / export / readonly / integer / float /
@@ -2180,7 +2205,22 @@ impl ZshCompiler {
             // quoted text is inert. Magic-equals expansion only acts
             // on UNQUOTED `=`/`~` anyway, so a word carrying quoted
             // spans skips the prefork emit entirely.
-            if head_is_magic_equals
+            // Raw-word tilde probe: the lexer emits TOKEN chars where it
+            // already recognised the shape — Equals = \u{8d}, Tilde =
+            // \u{98} (zsh_h.rs:161/183) — and leaves literals elsewhere
+            // (e.g. '~' after ':' in a path-list value). Accept every
+            // '='/':' × '~' spelling combination.
+            let word_has_assign_tilde = [
+                "=~",
+                ":~",
+                "=\u{98}",
+                ":\u{98}",
+                "\u{8d}~",
+                "\u{8d}\u{98}",
+            ]
+            .iter()
+            .any(|p| word.contains(p));
+            if (head_is_magic_equals || (head_is_typeset_magic && word_has_assign_tilde))
                 && !word.contains('\u{9d}')
                 && !word.contains('\u{9e}')
                 && !word.contains('\u{9f}')
