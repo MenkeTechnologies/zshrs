@@ -4756,10 +4756,17 @@ pub fn MB_CHARLENCONV(s: &[u8], len: usize) -> (usize, Option<char>) {
 #[inline]
 #[allow(non_snake_case)]
 pub fn WCWIDTH(wc: char) -> i32 {
-    // c:3300
+    // c:3300 — `#define WCWIDTH(wc) wcwidth(wc)`: control chars are -1
+    // per wcwidth(3), NOT 0. The previous 0 fallback made
+    // IS_COMBINING('\n') true (c:3343 gates on `WCWIDTH(wc) == 0`), so
+    // the refresh build's combining-cluster absorption swallowed hard
+    // newlines into the preceding char's cluster — a multiline BUFFER
+    // flattened to ONE video row, nextline never ran, and every later
+    // frame painted anchored rows below where VLN said (zsh-expand's
+    // multiline `i ` snippet scrambled the display on each keystroke).
     unicode_width::UnicodeWidthChar::width(wc)
         .map(|w| w as i32)
-        .unwrap_or_else(|| if wc.is_control() { 0 } else { 1 })
+        .unwrap_or_else(|| if wc.is_control() { -1 } else { 1 })
 }
 
 /// Port of `WCWIDTH_WINT(wc)` from `Src/zsh.h:3311/3369`. Always
@@ -4951,7 +4958,13 @@ mod tests {
     fn wcwidth_basic() {
         let _g = crate::test_util::global_state_lock();
         assert_eq!(WCWIDTH('a'), 1);
-        assert_eq!(WCWIDTH('\u{0007}'), 0); // BEL is control
+        // wcwidth(3): control chars are -1, NOT 0 — the old `0` pin
+        // documented a divergence that made IS_COMBINING('\n') true
+        // (refresh build swallowed hard newlines into combining
+        // clusters, flattening multiline buffers to one video row).
+        assert_eq!(WCWIDTH('\u{0007}'), -1); // BEL is control
+        assert_eq!(WCWIDTH('\n'), -1); // newline is control
+        assert!(!IS_COMBINING('\n'), "hard newline is never a combining mark");
         assert_eq!(WCWIDTH('\u{4E2D}'), 2); // CJK
     }
 

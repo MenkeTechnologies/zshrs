@@ -9746,7 +9746,23 @@ pub fn paramsubst(
                     !is_set || raw_value.is_empty()
                 };
                 if vunset {
-                    value = singsub(default);
+                    // c:3207-3228 — the default word goes through
+                    // multsub(&val, split_flags, &aval, &isarr, …), NOT a
+                    // single-word substitution: a nested array-producing
+                    // expansion (`${u-${(z)buf}}`, `${u-$arr}`) yields an
+                    // ARRAY. singsub joined it to one word — f-sy-h's
+                    // `${interactive_comments-${(z)__buf}}` tokenizer got
+                    // the whole buffer as a single "word" and painted the
+                    // entire line unknown-token red.
+                    let (ms_joined, ms_parts, ms_isarr, _ms) =
+                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    value = ms_joined;
+                    if ms_isarr && !ms_parts.is_empty() {
+                        split_parts = Some(ms_parts);
+                        if isarr == 0 {
+                            isarr = 1; // c:3227 multsub writes &isarr
+                        }
+                    }
                     // c:Src/subst.c → globlist — the default word is
                     // SOURCE text, so a glob metachar in it drives
                     // filename generation on the assembled word (a
@@ -9803,7 +9819,18 @@ pub fn paramsubst(
             } else if let Some(default) = r.strip_prefix('-') {
                 // c:3193
                 if !is_set {
-                    value = singsub(default);
+                    // c:3207-3228 — multsub, not singsub: a nested
+                    // array-producing default stays an array (see the
+                    // `:-` arm above; this is the f-sy-h shape).
+                    let (ms_joined, ms_parts, ms_isarr, _ms) =
+                        multsub(default, PREFORK_NOSHWORDSPLIT);
+                    value = ms_joined;
+                    if ms_isarr && !ms_parts.is_empty() {
+                        split_parts = Some(ms_parts);
+                        if isarr == 0 {
+                            isarr = 1; // c:3227 multsub writes &isarr
+                        }
+                    }
                     if !qt {
                         let __dg = pretokenize_src_pat(default); // c:globlist (default-word glob)
                         if crate::ported::pattern::haswilds(&__dg) {
@@ -10020,7 +10047,17 @@ pub fn paramsubst(
             } else if let Some(alt) = r.strip_prefix(":+") {
                 // c:3296
                 if is_set && !raw_value.is_empty() {
-                    value = singsub(alt);
+                    // c:3300-3313 — the alternate word also goes through
+                    // multsub: `${str+${(z)v}}` / `${str+$arr}` yield arrays.
+                    let (ms_joined, ms_parts, ms_isarr, _ms) =
+                        multsub(alt, PREFORK_NOSHWORDSPLIT);
+                    value = ms_joined;
+                    if ms_isarr && !ms_parts.is_empty() {
+                        split_parts = Some(ms_parts);
+                        if isarr == 0 {
+                            isarr = 1; // c:3313 multsub writes &isarr
+                        }
+                    }
                     if !qt {
                         let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
                         if crate::ported::pattern::haswilds(&__dg) {
@@ -10054,7 +10091,16 @@ pub fn paramsubst(
             } else if let Some(alt) = r.strip_prefix('+') {
                 // c:3296
                 if is_set {
-                    value = singsub(alt);
+                    // c:3300-3313 — multsub, not singsub (see `:+` above).
+                    let (ms_joined, ms_parts, ms_isarr, _ms) =
+                        multsub(alt, PREFORK_NOSHWORDSPLIT);
+                    value = ms_joined;
+                    if ms_isarr && !ms_parts.is_empty() {
+                        split_parts = Some(ms_parts);
+                        if isarr == 0 {
+                            isarr = 1; // c:3313 multsub writes &isarr
+                        }
+                    }
                     if !qt {
                         let __dg = pretokenize_src_pat(alt); // c:globlist (alt-word glob)
                         if crate::ported::pattern::haswilds(&__dg) {
