@@ -2232,11 +2232,22 @@ fn par_while(until: bool) -> Option<ZshCommand> {
 /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
 /// parser doesn't yet special-case that variant.
 fn par_repeat() -> Option<ZshCommand> {
+    // c:1572 — `incmdpos = 0;` BEFORE lexing the count word, so
+    // checkalias's `(incmdpos && tok == STRING)` gate stays closed and
+    // the count is NEVER alias-expanded. OMZL::directories.zsh defines
+    // `alias 1='cd -1'`; without this, `repeat 1; do …; done` (hsmw
+    // file:114) expanded `1` mid-header and errored "parse error near
+    // `do'" (#665, sibling of the funcdef-name bug #662).
+    set_incmdpos(false);
     zshlex(); // skip 'repeat'
 
     let count = match tok() {
         STRING_LEX => {
             let c = tokstr().unwrap_or_default();
+            // c:1577-1578 — `incmdpos = 1; zshlex();` — restore command
+            // position before the separator/`do` lex so the body's
+            // reserved words promote again.
+            set_incmdpos(true);
             zshlex();
             c
         }

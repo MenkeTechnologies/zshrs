@@ -325,3 +325,38 @@ mod repeat_arith_count {
         assert_parity(r#"repeat "1+1" print w"#);
     }
 }
+
+mod repeat_count_not_alias_expanded {
+    //! The count word after the `repeat` reserved word is NEVER
+    //! alias-expanded: par_repeat sets `incmdpos = 0` before lexing it
+    //! (c:Src/parse.c:1572), closing checkalias's `(incmdpos && tok ==
+    //! STRING)` gate, and restores `incmdpos = 1` after (c:1577). The
+    //! AST-path port lexed the count in command position, so with
+    //! OMZL::directories.zsh's `alias 1='cd -1'` active,
+    //! `eval "repeat 1; do …; done"` (history-search-multi-word
+    //! file:114) expanded the count mid-header and errored
+    //! "parse error near `do'" → `function not defined by file` on ^R.
+    //! eval matters: `-c` strings parse before the alias executes.
+    use super::*;
+
+    /// The corruption shape: OMZ dirstack alias vs repeat count.
+    #[test]
+    fn eval_repeat_count_ignores_alias() {
+        assert_parity(r#"alias 1="cd -1"; eval "repeat 1; do echo x; done""#);
+    }
+
+    /// Short form (no do/done) with the alias active.
+    #[test]
+    fn eval_repeat_short_form_ignores_alias() {
+        assert_parity(r#"setopt shortrepeat; alias 1="cd -1"; eval "repeat 1 echo y""#);
+    }
+
+    /// Multiline body with an if — reserved words still promote after
+    /// the incmdpos=0 count lex (the c:1577 restore).
+    #[test]
+    fn eval_repeat_body_keywords_still_parse() {
+        assert_parity(
+            "alias 2=\"cd -2\"; eval 'repeat 2; do\nif [[ -n x ]]; then echo body; fi\ndone'",
+        );
+    }
+}

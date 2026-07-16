@@ -19,6 +19,74 @@ CI green pending the underlying fix.
 
 ---
 
+## #666 — `$LINES`/`$COLUMNS` were 0 in every interactive shell — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** `print $LINES $COLUMNS` at any interactive prompt → `0 0`
+(zsh: real terminal size). Downstream: `zstyle`-less
+history-search-multi-word computed `page_size=$(( LINES / 3 ))` = 0 →
+`_hsmw_main:81: division by zero` on every ^R once the loader bugs
+(#665) were fixed.
+
+**Root cause:** `adjustwinsize` (utils.rs, port of Src/utils.c:1889)
+gated its `setiparam("LINES"/"COLUMNS", …)` calls on the names being
+present in the OS ENVIRONMENT — a misread of C's
+`if (adjustlines(from) && zgetenv("LINES"))`: that guard only covers
+re-publication to an env-exported LINES; in C the param itself is ALWAYS
+live because its valptr aliases the `zterm_lines` global the probe just
+wrote (createparamtable IPDEF5). zshrs params hold their own `u_val`
+copy — nothing ever wrote the probe result, so the params stayed 0 from
+startup (`setupvals` → `adjustwinsize(0)`, init.rs:1231) through every
+SIGWINCH (`adjustwinsize(1)`, signals.rs:503).
+
+**Fix:** the `from == 0|1` arm now writes the TIOCGWINSZ probe result
+(SHTTY) through `setiparam` unconditionally, falling back to
+`adjustlines()`/`adjustcolumns()` when the probe returns 0. Recursion
+stays safe (setiparam → zlevarsetfn → adjustwinsize(2|3) never
+re-enters the arm). Verified live: full zpwr session `L=99 C=316`
+matching /bin/zsh; pty unit test seeds a 33×77 winsize and asserts both
+params. ^R on history-search-multi-word no longer divides by zero — it
+now enters the search loop; the remaining gap is ZLE recursive-edit
+rendering/input (session stops accepting keys inside the hsmw loop),
+tracked separately.
+
+---
+
+## #665 — count after `repeat` keyword was alias-expanded, breaking hsmw's `repeat 1; do` — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+alias 1='cd -1'   # OMZL::directories.zsh:14, loaded by zpwr via zinit
+eval 'repeat 1; do echo x; done'
+# zsh: x      zshrs (before): (eval):1: parse error near `do'
+```
+
+Real-world hit: history-search-multi-word file:114 (`repeat 1; do`) —
+the widget's autoload eval died with `(eval):114: parse error near
+`do'` + `history-search-multi-word: function not defined by file` on
+every ^R. Only reproduces with the alias active at parse time (eval /
+autoload body), never in `-c` isolation — same visibility rule as #662.
+
+**Root cause:** C `par_repeat` sets `incmdpos = 0` before lexing the
+count word (Src/parse.c:1572) — closing checkalias's
+`(incmdpos && tok == STRING)` gate — and restores `incmdpos = 1` after
+(c:1577). The AST-path `par_repeat()` (parse.rs) lexed the count in
+command position, so the OMZ dirstack alias `1` expanded to `cd -1`
+mid-header. Sibling of #662 (funcdef name); the wordcode path
+(`par_repeat_wordcode`) already had both ends.
+
+**Fix:** mirror C on the AST path — `set_incmdpos(false)` before the
+count lex, `set_incmdpos(true)` after capturing it. Verified against
+zsh 5.9: do/done form, shortrepeat form, multiline body with `if`
+keywords, `repeat $n`; the hsmw function now loads in the full zpwr
+session. 3 parity regression tests.
+
+---
+
 ## #664 — spliced backslash in a `${x//pat}` pattern swallowed the class-close `]` — FIXED
 
 **Status:** `fixed`
