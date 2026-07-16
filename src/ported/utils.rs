@@ -7050,13 +7050,16 @@ pub fn is_mb_niceformat(s: &str) -> i32 {
     let mut ptr: usize; // c:5477
 
     // c:5481-5483 — `ums = ztrdup(s); untokenize(ums); ptr =
-    //                unmetafy(ums, &umlen);` — Rust uses char-based
-    // `lex::untokenize` (never corrupts UTF-8 continuation bytes) and
-    // `unmeta` (no-op on UTF-8 without Meta bytes; runs unmetafy when
-    // they're present).
+    //                unmetafy(ums, &umlen);`. Use BYTE-level `unmetafy_str`,
+    // not char-level `unmeta`: `unmeta` decodes a metafied eight-bit byte
+    // (Meta 0x83 + 0xC1 for `$'\M-a'`) into the valid Rust char U+00E1
+    // (`á`), which the UTF-8 scan below reads as a PRINTABLE Latin-1 letter
+    // → is_mb_niceformat=0 → `(q+)`/quotedzputs left the raw byte unquoted
+    // (`\341`) where zsh emits `$'\M-a'`. `unmetafy_str` preserves the raw
+    // 0xE1 byte (C's `unmetafy`), so the MB_INVALID arm's is_nicechar(0xE1)
+    // fires (high-bit → nice) exactly as C does.
     let detok = untokenize(s);
-    let unmeta_str = unmeta(&detok);
-    ums = unmeta_str.into_bytes();
+    ums = unmetafy_str(&detok);
     umlen = ums.len(); // c:5483 *umlen
     ptr = 0; // c:5483 ptr starts at 0
 

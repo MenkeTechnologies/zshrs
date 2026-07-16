@@ -2813,3 +2813,44 @@ mod string_trap_replaces_function {
         assert_parity(r#"TRAPZERR() { print -r -- z }; false; print -r -- mid"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// V. `(q+)` / quotedzputs `$'…'`-quote a high-bit (meta) byte.
+//
+// is_mb_niceformat (utils.c:5474) decides whether quotedzputs upgrades to
+// the `$'…'` form. zshrs unmetafied its input with the CHAR-level `unmeta`,
+// which decodes an eight-bit meta byte (Meta 0x83 + 0xC1 for `$'\M-a'`)
+// into the valid Rust char U+00E1 (`á`) — read as a printable Latin-1
+// letter, so is_mb_niceformat returned 0 and `(q+)` left the raw byte
+// unquoted (`\341`) where zsh emits `$'\M-a'`. Using BYTE-level
+// unmetafy_str (C's unmetafy) preserves the raw 0xE1 so the MB_INVALID arm
+// flags it nice. Control chars already worked; printable UTF-8 stays
+// unquoted.
+// ─────────────────────────────────────────────────────────────────────
+mod qplus_meta_byte_quoting {
+    use super::*;
+
+    /// zsh: `$'\M-a'`. Was the raw byte `\341` before the fix.
+    #[test]
+    fn qplus_quotes_meta_byte() {
+        assert_parity(r#"v=$'\M-a'; print -rn -- "${(q+)v}" | od -An -tx1"#);
+    }
+
+    /// Meta byte embedded in printable text.
+    #[test]
+    fn qplus_quotes_embedded_meta_byte() {
+        assert_parity(r#"v=$'a\M-ab'; print -rn -- "${(q+)v}" | od -An -tx1"#);
+    }
+
+    /// Control char still upgrades to `$'\C-A'` (no regression).
+    #[test]
+    fn qplus_control_char_unchanged() {
+        assert_parity(r#"v=$'\x01'; print -rn -- "${(q+)v}" | od -An -tx1"#);
+    }
+
+    /// Printable multibyte (café) must NOT be over-quoted.
+    #[test]
+    fn qplus_printable_utf8_not_quoted() {
+        assert_parity(r#"v=café; print -rn -- "${(q+)v}" | od -An -tx1"#);
+    }
+}
