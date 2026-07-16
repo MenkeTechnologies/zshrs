@@ -3011,3 +3011,52 @@ mod ksh_emulation_bare_assoc {
         assert_parity(r#"emulate -L ksh; a=(x y z); print -r -- "[$a]""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Z. A process substitution in a `[[ … ]]` cond operand errors.
+//
+// c:Src/exec.c:4918/5040/5069 — getoutputfile/getproc error "process
+// substitution %s cannot be used here" when `thisjob == -1`, which holds
+// during cond evaluation. zshrs's THISJOB never distinguishes that
+// context at runtime, so the compiler (where `in_cond_operand` is known)
+// emits BUILTIN_PROCSUB_COND_ERROR in place of ProcessSubIn/Out: it
+// zerrs, sets errflag (aborting the statement), and returns empty — so
+// `[[ -f =(cmd) ]] && …` produces empty stdout and exit 1, matching zsh
+// instead of the file-exists `true`. Command-argument uses (`cat =(…)`,
+// `diff <(…)`, `wc < =(…)`) are unaffected (in_cond_operand is false).
+// ─────────────────────────────────────────────────────────────────────
+mod procsub_in_cond_errors {
+    use super::*;
+
+    /// zsh: empty stdout, exit 1 (error). Was `regular` (exit 0) before.
+    #[test]
+    fn eq_procsub_in_dbracket_f() {
+        assert_parity(
+            r#"[[ -f =(print x) ]] && print -r -- regular || print -r -- notregular"#,
+        );
+    }
+
+    /// `<(…)` in `[[ -f ]]` also errors.
+    #[test]
+    fn in_procsub_in_dbracket_f() {
+        assert_parity(r#"[[ -f <(print x) ]] && print -r -- y || print -r -- n"#);
+    }
+
+    /// The error exit status propagates.
+    #[test]
+    fn eq_procsub_in_dbracket_e_status() {
+        assert_parity(r#"[[ -e =(echo hi) ]]; print -r -- "rc=$?""#);
+    }
+
+    /// Command-argument `=(…)` still works (regression guard).
+    #[test]
+    fn eq_procsub_as_command_arg_works() {
+        assert_parity(r#"cat =(print hello)"#);
+    }
+
+    /// `<(…)` command-argument still works.
+    #[test]
+    fn in_procsub_as_command_arg_works() {
+        assert_parity(r#"diff <(print a) <(print a) && print -r -- same"#);
+    }
+}

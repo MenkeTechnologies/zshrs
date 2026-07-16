@@ -5937,6 +5937,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Bool(is_tty)
     });
 
+    // c:Src/exec.c:4918/5040/5069 — a process substitution used inside a
+    // `[[ … ]]` cond operand errors "process substitution %s cannot be
+    // used here" (getoutputfile/getproc run with thisjob == -1). Emitted
+    // by the compiler in place of ProcessSubIn/Out when in_cond_operand.
+    vm.register_builtin(BUILTIN_PROCSUB_COND_ERROR, |_vm, _argc| {
+        let cmd = _vm.pop().to_str();
+        crate::ported::utils::zerr(&format!(
+            "process substitution {} cannot be used here",
+            cmd
+        ));
+        // c:getoutputfile returns NULL with errflag set → the enclosing
+        // statement aborts (empty stdout, exit 1), rather than the cond
+        // merely evaluating false.
+        crate::ported::utils::errflag.fetch_or(
+            crate::ported::zsh_h::ERRFLAG_ERROR,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        with_executor(|exec| exec.set_last_status(1));
+        _vm.last_status = 1;
+        Value::str("")
+    });
+
     // Set $LINENO before executing the next statement. Direct
     // port of zsh's `lineno` global tracking from Src/input.c
     // (`if ((inbufflags & INP_LINENO) || !strin) && c == '\n')
@@ -10099,6 +10121,15 @@ pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
 /// always false. That broke interactive detection (`[[ -t 0 && -t 1 ]]`)
 /// and any config gated on it. c:Src/cond.c:390 `return !isatty(...)`.
 pub const BUILTIN_IS_TTY: u16 = 644;
+/// Runtime rejection of a process substitution used inside a `[[ … ]]`
+/// cond operand. c:Src/exec.c:4918/5040/5069 — `getoutputfile`/`getproc`
+/// error `"process substitution %s cannot be used here"` when `thisjob ==
+/// -1`, which is the case during cond evaluation. zshrs's THISJOB never
+/// distinguishes that context at runtime, so the compiler emits this
+/// builtin (gated on `in_cond_operand`) instead of the ProcessSubIn/Out
+/// opcode. Pops the substitution text, zerrs, sets errflag (aborting the
+/// statement → empty stdout, exit 1, matching zsh), returns empty.
+pub const BUILTIN_PROCSUB_COND_ERROR: u16 = 645;
 /// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
 pub const BUILTIN_COND_ACCESS: u16 = 638;
 
