@@ -1,0 +1,36 @@
+# parity-fuzz --mode bindkey baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode bindkey --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps. Every divergence this mode found on introduction was a real
+# port bug and was FIXED rather than baselined. bindkey decodes its key spec
+# with `getkeystring(seq, &len, GETKEYS_BINDKEY, NULL)` (c:Src/Zle/zle_keymap.c
+# :1022/1038/1045/1104/1119), i.e. GETKEY_OCTAL_ESC|GETKEY_EMACS|GETKEY_CTRL
+# (c:zsh.h:3187) — a flag set no other caller uses:
+#
+#   1. bindkey had its OWN hand-rolled decoder rather than calling
+#      getkeystring, and it disagreed with C on every flag-gated arm:
+#      `\M-x` pushed ESC + `x` where C sets the META BIT (c:7029-7038 +
+#      c:7255-7275 `if (meta) c |= 0x80`); octal escapes were absent despite
+#      GETKEY_OCTAL_ESC, so `bindkey '\101' cmd` bound the 3-char string `101`
+#      rather than `A`; `\C-?` computed `'?' - '@'` and wrapped to 0xff where
+#      C special-cases 0x7f (c:7261-7263); `\M-\C-a` emitted ESC + a literal
+#      backslash. It now delegates to the one canonical decoder.
+#   2. `\M`/`\C` consume at most ONE `-` separator (c:7032/7044
+#      `if (s[1] == '-') s++;`). Eating a RUN of dashes swallowed the base
+#      character of `\M--` (meta applied to `-`, 0xad).
+#   3. A caret-form control may follow a modifier and vice versa, because C's
+#      `case 'M'`/`case 'C'` only set state and `continue` (c:7040/7052) and
+#      the `^` handler is likewise `control = 1; continue;` (c:7194-7196). So
+#      `\M-^?` is one byte 0xff — this is the very common
+#      `bindkey '\M-^?' backward-kill-word` — and `^\M-a` is 0x81.
+#   4. `meta = 1 + control` (c:7034) records whether `\M` was seen BEFORE or
+#      AFTER a pending control, and c:7261-7275 applies `|0x80` before the
+#      control mask when meta==2. The orders differ: `\M-\C-?` is 0xff but
+#      `\C-\M-?` is 0x9f. A boolean meta could not express it.
+#
+# Full `bindkey -L` dumps are deliberately not compared — keymap iteration
+# order is not a parity guarantee worth pinning; the mode uses targeted
+# lookups and `grep -c` counts instead.
+#
+# Any divergence here is a regression.

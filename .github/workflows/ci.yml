@@ -536,6 +536,28 @@ jobs:
       # regression.
       - name: Fuzz — gflag
         run: ./target/debug/parity-fuzz --mode gflag --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/gflag.txt --out target/parity-fuzz/ci-gflag.txt
+      # select — the `select` loop (c:Src/loop.c:217 execselect) and its menu
+      # (c:347 selectlist): word lists of varying width/count, every reply shape
+      # (valid / out-of-range / 0 / negative / non-numeric / EMPTY), the
+      # positional-parameter form, and multi-pick runs that drain stdin. Scripts
+      # pin COLUMNS/LINES/PS3 because the menu is stderr + terminal-width driven.
+      # Strict gate: the menu prints once per select plus once per blank line
+      # (never per body iteration), the reply parses with atoi(3) semantics, and
+      # the pparam form keeps empty positionals. Empty baseline: any divergence
+      # is a regression.
+      - name: Fuzz — select
+        run: ./target/debug/parity-fuzz --mode select --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/select.txt --out target/parity-fuzz/ci-select.txt
+      # bindkey — the key-spec decoder (c:Src/Zle/zle_keymap.c:1022 et al call
+      # getkeystring with GETKEYS_BINDKEY = OCTAL_ESC|EMACS|CTRL, a combination
+      # no other caller uses) plus the display path. Binds through one spelling
+      # and reads back through an EQUIVALENT one (`^X` vs `\C-x`, `\M-^A` vs
+      # `\M-\C-a`, `\101` vs `A`), so a self-consistently wrong decoder still
+      # fails. Strict gate: `\M` sets the meta BIT, one `-` per modifier,
+      # `^`/`\M`/`\C` chain in either order, and `meta = 1 + control` ordering
+      # (`\M-\C-?` is 0xff, `\C-\M-?` is 0x9f). Empty baseline: any divergence
+      # is a regression.
+      - name: Fuzz — bindkey
+        run: ./target/debug/parity-fuzz --mode bindkey --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/bindkey.txt --out target/parity-fuzz/ci-bindkey.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking

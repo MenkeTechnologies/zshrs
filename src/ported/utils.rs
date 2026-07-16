@@ -10000,13 +10000,33 @@ pub fn getkeystring_with(
     let mut result = String::new();
     let mut chars = s.chars().peekable();
     let mut consumed = 0;
+    // c:7194 — C's `^` handler is `control = 1; continue;`, so the control bit
+    // stays PENDING across loop iterations and a following `\M`/`\C` escape
+    // chains onto it (`^\M-a` → c:7034 `meta = 1 + control` → meta==2 → 0x81).
+    // This port's `^` arm consumes its base character inline, which cannot
+    // express that, so the flag carries the state to the modifier arm instead.
+    let mut pending_control = false;
     while let Some(c) = chars.next() {
         consumed += c.len_utf8();
         // c:utils.c:7194 — `^X` caret notation. A bare `^` (not a backslash
         // escape) followed by any char applies the control mask to it, but
         // ONLY under GETKEY_CTRL — i.e. `print -b` / bindkey. Plain print
         // (GETKEYS_PRINT, no GETKEY_CTRL) keeps `^A` literal.
-        if c == '^' && (how & GETKEY_CTRL) != 0 {
+        if c == '^' && !pending_control && (how & GETKEY_CTRL) != 0 {
+            // A `\M`/`\C` escape after the caret must be handled by the
+            // modifier arm with control already pending — C reaches it via
+            // `continue` rather than consuming the base char here. Gated on
+            // GETKEY_EMACS because that is what enables the modifier arm at
+            // all (c:7031/7043); without it C's `case 'M'` emits a literal
+            // backslash instead.
+            let mut la = chars.clone();
+            if (how & GETKEY_EMACS) != 0
+                && la.next() == Some('\\')
+                && matches!(la.next(), Some('M') | Some('C'))
+            {
+                pending_control = true;
+                continue;
+            }
             if let Some(base) = chars.next() {
                 consumed += base.len_utf8();
                 let mut byte = base as u32;
@@ -10342,15 +10362,36 @@ pub fn getkeystring_with(
             // path lacked it, so `print "\C-a"` emitted literal `C-a`.
             Some(mod_letter @ ('C' | 'M')) if (how & GETKEY_EMACS) != 0 => {
                 consumed += 1;
-                let mut control = mod_letter == 'C';
-                let mut meta = mod_letter == 'M';
-                // Consume optional `-` separator + chained `\C`/`\M`.
+                // c:7034 `meta = 1 + control;  /* preserve the order of ^ and
+                // meta */` — meta is a COUNT, not a flag: 2 when `\M` was seen
+                // while control was already pending, which makes c:7261-7264
+                // apply `|0x80` BEFORE the control mask instead of after. The
+                // two orders differ for `?`: `\M-\C-?` is 0xff, `\C-\M-?` is
+                // 0x9f. Booleans could not express that.
+                // A `^` already seen (c:7194 `control = 1; continue;`) arrives
+                // here as pending state, so `^\M-a` gives meta = 1 + 1 = 2.
+                let mut control: u32 = if pending_control {
+                    pending_control = false;
+                    1
+                } else {
+                    0
+                };
+                let mut meta: u32 = 0;
+                if mod_letter == 'C' {
+                    control = 1; // c:7046
+                } else {
+                    meta = 1 + control; // c:7034
+                }
+                // c:7032-7033 / 7044-7045 — `if (s[1] == '-') s++;` consumes at
+                // most ONE separator per modifier. Looping over a RUN of dashes
+                // ate the base character of `\M--` (meta applied to `-`, 0xad),
+                // leaving an empty binding.
+                if chars.peek() == Some(&'-') {
+                    chars.next();
+                    consumed += 1;
+                }
+                // Chained `\C`/`\M`, and the caret form after a modifier.
                 loop {
-                    if chars.peek() == Some(&'-') {
-                        chars.next();
-                        consumed += 1;
-                        continue;
-                    }
                     let mut iter_clone = chars.clone();
                     if iter_clone.next() == Some('\\') {
                         if let Some(nx) = iter_clone.next() {
@@ -10359,12 +10400,35 @@ pub fn getkeystring_with(
                                 chars.next(); // consume C/M
                                 consumed += 2;
                                 if nx == 'C' {
-                                    control = true;
+                                    control = 1; // c:7046
                                 } else {
-                                    meta = true;
+                                    meta = 1 + control; // c:7034
+                                }
+                                if chars.peek() == Some(&'-') {
+                                    chars.next();
+                                    consumed += 1;
                                 }
                                 continue;
                             }
+                        }
+                    }
+                    // c:7194 — `else if (*s == '^' && !control && (how &
+                    // GETKEY_CTRL) && s[1]) { control = 1; continue; }`. C's
+                    // `case 'M'` only sets `meta` and `continue`s, so the MAIN
+                    // loop reaches this `^` handler with meta still pending:
+                    // `\M-^?` is control+meta applied to `?` (0xff). This arm
+                    // consumed the base char itself, so `^` became the base and
+                    // `\M-^?` bound TWO bytes (0xde 0x3f) — breaking the very
+                    // common `bindkey '\M-^?' backward-kill-word`.
+                    if control == 0 && (how & GETKEY_CTRL) != 0 && chars.peek() == Some(&'^') {
+                        let mut it2 = chars.clone();
+                        it2.next();
+                        if it2.next().is_some() {
+                            // c:7194 `s[1]` guard
+                            chars.next();
+                            consumed += 1;
+                            control = 1;
+                            continue;
                         }
                     }
                     break;
@@ -10431,16 +10495,23 @@ pub fn getkeystring_with(
                 };
                 if let Some(ch) = base {
                     let mut byte = ch as u32;
-                    // c:7261-7267 — control mask (`\C-?` → 0x7f, else & 0x9f).
-                    if control {
+                    // c:7261-7264 — `if (meta == 2) { t[-1] |= 0x80; meta = 0; }`
+                    // runs BEFORE the control mask: `\M` seen while control was
+                    // already pending sets the high bit first.
+                    if meta == 2 {
+                        byte |= 0x80;
+                    }
+                    // c:7265-7271 — control mask (`\C-?` → 0x7f, else & 0x9f).
+                    if control == 1 {
                         if byte == '?' as u32 {
                             byte = 0x7f;
                         } else {
                             byte &= 0x9f;
                         }
                     }
-                    // c:7268-7271 — meta sets the high bit.
-                    if meta {
+                    // c:7272-7275 — `if (meta) { t[-1] |= 0x80; }` — the
+                    // meta==1 order, applied AFTER the mask.
+                    if meta == 1 {
                         byte |= 0x80;
                     }
                     // c:7289-7294 — a masked byte >= 0x80 is metafied so it

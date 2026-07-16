@@ -6841,33 +6841,47 @@ impl ZshCompiler {
 
         // Push word_1, ..., word_N (in source order), then name, then sub_idx.
         // RUN_SELECT pops sub_idx, name, then collects N words.
-        let words: Vec<&str> = match &f.list {
-            ForList::Words(ws) => ws.iter().map(|s| s.as_str()).collect(),
-            // c:Src/loop.c — `select x do ... done` without `in`
-            // iterates over the positional parameters as separate
-            // elements (same shape as `for x do ...`). Using `"$@"`
-            // here would DQ-collapse the positionals into a single
-            // joined word; unquoted `$@` splats them so RUN_SELECT
-            // sees one menu entry per positional.
-            ForList::Positional => vec!["$@"],
+        let nwords: usize = match &f.list {
+            ForList::Words(ws) => {
+                for w in ws {
+                    self.compile_word_str(w);
+                    if has_unquoted_expansion(w) {
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
+                    }
+                }
+                ws.len()
+            }
+            // c:Src/loop.c:235-242 — `select x; do … done` (WC_SELECT_PPARAM)
+            // takes the positionals DIRECTLY:
+            //     for (x = pparams; *x; x++)
+            //         addlinknode(args, dupstring(*x));
+            // No splitting, so an EMPTY positional keeps its own menu entry.
+            // This compiled the list as the word `$@` and then ran
+            // BUILTIN_WORD_SPLIT over it, and word splitting DROPS empty
+            // fields — `f '' x` produced one entry where zsh shows two
+            // (`1)    2) x`). GET_VAR("@") yields a Value::Array that
+            // RUN_SELECT flattens per element, preserving empties: the same
+            // mechanism compile_for_positional (see below) already uses for
+            // the identical `for x; do … done` pparam form.
+            ForList::Positional => {
+                let at_const = self.builder.add_constant(Value::str("@"));
+                self.builder.emit(Op::LoadConst(at_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_GET_VAR, 1), 0);
+                1
+            }
             ForList::CStyle { .. } => {
                 // C-style isn't valid for select; nothing to do.
                 return;
             }
         };
 
-        for w in &words {
-            self.compile_word_str(w);
-            if has_unquoted_expansion(w) {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
-            }
-        }
         let name_const = self.builder.add_constant(Value::str(f.var.as_str()));
         self.builder.emit(Op::LoadConst(name_const), 0);
         self.builder.emit(Op::LoadInt(body_idx as i64), 0);
 
-        let argc = (words.len() + 2) as u8;
+        let argc = (nwords + 2) as u8;
         self.builder.emit(
             Op::CallBuiltin(crate::vm_helper::BUILTIN_RUN_SELECT, argc),
             0,

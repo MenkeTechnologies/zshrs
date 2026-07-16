@@ -12,152 +12,41 @@ use crate::ported::zle::{
 };
 /// Parse a bindkey-style key sequence string into raw bytes.
 ///
-/// Bindkey-vocabulary subset of `getkeystring` (Src/utils.c) —
-/// zsh uses the same parser for `bindkey 'seq' widget`, restricted
-/// to the key-sequence vocabulary documented at `man zshzle`
-/// BINDKEY:
-///   - `^X` → control character (X & 0x1F)
-///   - `\\e` → ESC (0x1B)
-///   - `\\M-X` → ESC + X (zsh's meta encoding for the keymap-trie)
-///   - `\\C-X` → control character
-///   - everything else → literal byte
+/// Port of `getkeystring(char *s, int *len, int how, int *misc)` from
+/// Src/utils.c:6915, as `bindkey` calls it — Src/Zle/zle_keymap.c:1022,
+/// 1038, 1045, 1104 and 1119 all pass `GETKEYS_BINDKEY`
+/// (`GETKEY_OCTAL_ESC | GETKEY_EMACS | GETKEY_CTRL`, c:zsh.h:3187) to turn
+/// the user-typed key spec into the raw byte sequence the keymap trie is
+/// indexed by. The C version fills a buffer in place and writes the length
+/// through an out pointer; this returns a fresh `Vec<u8>`.
 ///
-/// Port of `getkeystring(char *s, int *len, int how, int *misc)` from Src/utils.c:6915 — `bindkey` calls
-/// it at line 4111 with `GETKEYS_BINDKEY` to convert the user-typed
-/// key spec into the raw byte sequence the keymap trie indexes by.
-/// The C version mutates a buffer in place + writes length via out
-/// pointer; this Rust port returns a fresh `Vec<u8>`.
-/// WARNING: param names don't match C — Rust=(s) vs C=(s, len, how, misc)
-
-// --- AUTO: cross-zle hoisted-fn use glob ---
-/// `getkeystring` — see implementation.
-#[allow(unused_imports)]
-#[allow(unused_imports)]
-
+/// Delegates to the one canonical decoder (`utils::getkeystring_with`) rather
+/// than re-deriving the escape vocabulary. This body used to be a hand-rolled
+/// approximation and disagreed with C on every flag-gated arm:
+///   - `\M-x` pushed ESC + `x`, where C sets the META BIT (c:7029-7038 then
+///     c:7255-7275 `if (meta) c |= 0x80`), so `bindkey '\M-a'` bound ESC,`a`
+///     instead of the single byte 0xe1 (zsh shows it back as `"\M-a"`).
+///   - Octal escapes were absent entirely despite GETKEY_OCTAL_ESC being set,
+///     so `bindkey '\101' cmd` bound the three-char string `101` rather than
+///     `A` (c:7156-7178).
+///   - `\C-?` computed `'?' - '@'`, wrapping to 0xff; C special-cases it to
+///     0x7f (c:7261-7263).
+///   - `\M-\C-a` emitted ESC then a literal backslash instead of chaining the
+///     modifiers to 0x81 (c:7031-7052 walks `\M`/`\C` runs).
+///   - `\u`/`\U` were unhandled, and the hex arm dropped its output on an
+///     out-of-range parse.
+///
+/// `getkeystring_with` returns a char-level METAFIED String (high bytes as
+/// `Meta` + `c ^ 32`) because a Rust String must stay valid UTF-8; the keymap
+/// trie indexes RAW bytes, so unmetafy back to bytes on the way out.
 pub fn getkeystring(s: &str) -> Vec<u8> {
-    // c:utils.c:6915
-    let mut result = Vec::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match c {
-            '^' => {
-                // Control character
-                if let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next == '?' {
-                        result.push(0x7f); // DEL
-                    } else if next == '[' {
-                        result.push(0x1b); // ESC
-                    } else {
-                        result.push((next.to_ascii_uppercase() as u8).wrapping_sub(b'@'));
-                    }
-                }
-            }
-            '\\' => {
-                // Escape sequence — must mirror C's
-                // `Src/utils.c:6993-7017` switch:
-                //   \a → 0x07 (BEL)         c:6995
-                //   \b → 0x08 (BS)          c:7003
-                //   \e / \E → 0x1b (ESC)    c:7019/7026
-                //   \f → 0x0c (FF)          c:7013
-                //   \n → 0x0a (LF)          c:7000
-                //   \r → 0x0d (CR)          c:7016
-                //   \t → 0x09 (TAB)         c:7006
-                //   \v → 0x0b (VT)          c:7009
-                // The previous Rust port only handled e/E/n/t/r,
-                // silently dropping \a/\b/\f/\v through the
-                // generic Some(&c) arm — `getkeystring("\\b")`
-                // returned ['b'] (0x62) instead of [0x08]. Fixed
-                // 2026-05 to match the C switch verbatim.
-                match chars.peek() {
-                    Some(&'a') => {
-                        chars.next();
-                        result.push(0x07); // BEL — c:6995
-                    }
-                    Some(&'b') => {
-                        chars.next();
-                        result.push(0x08); // BS — c:7003
-                    }
-                    Some(&'e') | Some(&'E') => {
-                        chars.next();
-                        result.push(0x1b); // ESC
-                    }
-                    Some(&'f') => {
-                        chars.next();
-                        result.push(0x0c); // FF — c:7013
-                    }
-                    Some(&'n') => {
-                        chars.next();
-                        result.push(b'\n');
-                    }
-                    Some(&'t') => {
-                        chars.next();
-                        result.push(b'\t');
-                    }
-                    Some(&'r') => {
-                        chars.next();
-                        result.push(b'\r');
-                    }
-                    Some(&'v') => {
-                        chars.next();
-                        result.push(0x0b); // VT — c:7009
-                    }
-                    Some(&'M') => {
-                        chars.next();
-                        if chars.peek() == Some(&'-') {
-                            chars.next();
-                            // Meta prefix (escape + char)
-                            result.push(0x1b);
-                            if let Some(next) = chars.next() {
-                                result.push(next as u8);
-                            }
-                        }
-                    }
-                    Some(&'C') => {
-                        chars.next();
-                        if chars.peek() == Some(&'-') {
-                            chars.next();
-                            // Control
-                            if let Some(next) = chars.next() {
-                                result.push((next.to_ascii_uppercase() as u8).wrapping_sub(b'@'));
-                            }
-                        }
-                    }
-                    Some(&'x') => {
-                        chars.next();
-                        // Hex escape
-                        let mut hex = String::new();
-                        for _ in 0..2 {
-                            if let Some(&c) = chars.peek() {
-                                if c.is_ascii_hexdigit() {
-                                    hex.push(c);
-                                    chars.next();
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                        if let Ok(n) = u8::from_str_radix(&hex, 16) {
-                            result.push(n);
-                        }
-                    }
-                    Some(&c) => {
-                        chars.next();
-                        result.push(c as u8);
-                    }
-                    None => {
-                        result.push(b'\\');
-                    }
-                }
-            }
-            _ => {
-                result.push(c as u8);
-            }
-        }
-    }
-
-    result
+    // c:utils.c:6915 via c:Src/Zle/zle_keymap.c:1022
+    let (decoded, _) = crate::ported::utils::getkeystring_with(
+        s,
+        crate::ported::zsh_h::GETKEYS_BINDKEY as u32, // c:zle_keymap.c:1022
+        None,
+    );
+    crate::ported::utils::unmetafy_str(&decoded)
 }
 
 // `printbind` lives in zle_utils.rs (matching C: `Src/Zle/
