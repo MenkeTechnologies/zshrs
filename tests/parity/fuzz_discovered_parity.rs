@@ -3164,3 +3164,57 @@ mod z_flag_literal_dollar {
         assert_parity(r#"v='a; b && c'; print -rl -- ${(z)v}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// AC. remnulargs is Meta-aware: a metafied eight-bit byte is data, not a
+//     sentinel — even when it aliases one.
+//
+// C strings are byte arrays, so an eight-bit char (`$'\M-\C-a'` = 0x81)
+// is stored RAW and its byte never aliases an inull sentinel. A Rust
+// String is UTF-8, so zshrs METAFIES it — Meta (0x83) + (byte ^ 0x20) —
+// and 0x81 ^ 0x20 = 0xA1 = the Nularg sentinel (0xBD/0xBE/0xBF likewise
+// alias Snull/Dnull/Bnull). remnulargs (glob.c:3649) is a byte walk that
+// strips inull chars; on the metafied string it dropped the 0xA1 and left
+// the lone Meta, so `${(qq)v}` for v=$'\M-\C-a' emitted `'\xc2\x83'` where
+// zsh emits `'\x81'`. Treat Meta+next as an opaque data pair on both the
+// scan and copy walks — the C byte walk needs no such guard.
+// ─────────────────────────────────────────────────────────────────────
+mod remnulargs_meta_aware {
+    use super::*;
+
+    /// zsh: `'<0x81>'`. Was `'<Meta>'` (0xc2 0x83) before the fix.
+    #[test]
+    fn qq_quote_meta_ctrl_a_nularg_alias() {
+        assert_parity(r#"v=$'\M-\C-a'; print -rn -- "[${(qq)v}]" | od -An -tx1"#);
+    }
+
+    /// 0xBD aliases Snull.
+    #[test]
+    fn qq_quote_meta_eq_snull_alias() {
+        assert_parity(r#"v=$'\M-='; print -rn -- "[${(qq)v}]" | od -An -tx1"#);
+    }
+
+    /// 0xBE aliases Dnull.
+    #[test]
+    fn qq_quote_meta_gt_dnull_alias() {
+        assert_parity(r#"v=$'\M->'; print -rn -- "[${(qq)v}]" | od -An -tx1"#);
+    }
+
+    /// 0xBF aliases Bnull.
+    #[test]
+    fn qq_quote_meta_q_bnull_alias() {
+        assert_parity(r#"v=$'\M-?'; print -rn -- "[${(qq)v}]" | od -An -tx1"#);
+    }
+
+    /// A non-aliasing meta byte (0xE1) still works (regression guard).
+    #[test]
+    fn qq_quote_meta_a_no_alias() {
+        assert_parity(r#"v=$'\M-a'; print -rn -- "[${(qq)v}]" | od -An -tx1"#);
+    }
+
+    /// A real empty array still drops empty words (remnulargs Nularg path).
+    #[test]
+    fn empty_array_word_drop_unaffected() {
+        assert_parity(r#"a=(x '' y); print -rl -- $a | wc -l"#);
+    }
+}

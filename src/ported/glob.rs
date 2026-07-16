@@ -2858,9 +2858,28 @@ pub fn remnulargs(s: &mut String) {
     let src: Vec<char> = s.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let mut i = 0usize;
+    // rs-only adaptation of C's byte walk: C strings are byte arrays and
+    // store an eight-bit char (e.g. `$'\M-\C-a'` = 0x81) RAW, so its byte
+    // never aliases an inull sentinel. A Rust `String` is UTF-8, so zshrs
+    // METAFIES that byte — Meta (0x83) + (byte ^ 0x20) — and 0x81 ^ 0x20 =
+    // 0xA1, which IS the Nularg sentinel (0xBD/0xBE/0xBF/0xBC likewise
+    // alias Snull/Dnull/Bnull/Bnullkeep). A metafied byte is DATA, not a
+    // sentinel, so treat `Meta` + next char as an opaque pair on BOTH the
+    // scan and copy walks — otherwise `${(qq)v}` for v=$'\M-\C-a' dropped
+    // the 0xA1 and left the lone Meta (rs emitted `'\xc2\x83'` where zsh
+    // emits `'\x81'`). C's byte walk needs no such guard.
+    // Meta is a byte constant (0x83); a metafied string stores it as the
+    // char U+0083, so compare against the char form.
+    let meta = char::from(crate::ported::zsh_h::Meta);
     // c:3656 — SCAN phase: copy chars, skip standalone Bnullkeep.
     while i < src.len() {
         let c = src[i];
+        if c == meta && i + 1 < src.len() {
+            out.push(c);
+            out.push(src[i + 1]);
+            i += 2;
+            continue;
+        }
         if c == Bnullkeep {
             // c:3657 continue
             i += 1;
@@ -2873,6 +2892,13 @@ pub fn remnulargs(s: &mut String) {
             i += 1;
             while i < src.len() {
                 let d = src[i];
+                if d == meta && i + 1 < src.len() {
+                    // Metafied data pair — keep verbatim.
+                    out.push(d);
+                    out.push(src[i + 1]);
+                    i += 2;
+                    continue;
+                }
                 if d == Bnullkeep {
                     // c:3666
                     out.push('\\'); // c:3667
