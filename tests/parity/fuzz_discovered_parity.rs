@@ -2546,3 +2546,57 @@ mod deferred_fixes {
         assert_parity(r#"emulate sh; print "kshauto=${options[kshautoload]}""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Q. RC_EXPAND_PARAM keeps interior empty fields from a forced (s::)
+//    split in QUOTED context.
+//
+// `sepsplit` (utils.c:3962 → wordcount(s,sep,1)) never drops empties;
+// the interior-empty collapse is downstream (prefork's empty-node
+// removal). Under `setopt rcexpandparam` a forced (s:X:) split keeps
+// its interior empties in a quoted expansion — `a=("${(s.:.)v}")` for
+// v="a:b::c" is a 4-element array (`a b "" c`), not 3. zshrs's
+// split-time collapse (Bug #542) dropped the empty even under plan9;
+// the fix gates that collapse (and the !qt empty filter) on !plan9.
+// ─────────────────────────────────────────────────────────────────────
+mod rcexpandparam_split_empty {
+    use super::*;
+
+    /// zsh: 4 (interior empty kept). Was 3 before the plan9 gate.
+    #[test]
+    fn quoted_forced_split_keeps_interior_empty() {
+        assert_parity(
+            r#"v="a:b::c"; setopt rcexpandparam; a=("${(s.:.)v}"); print $#a"#,
+        );
+    }
+
+    /// (@) forced split under rcexpandparam — also 4.
+    #[test]
+    fn quoted_at_forced_split_keeps_interior_empty() {
+        assert_parity(
+            r#"v="a:b::c"; setopt rcexpandparam; a=("${(@s.:.)v}"); print $#a"#,
+        );
+    }
+
+    /// Unquoted forced split under rcexpandparam still drops empties (3).
+    #[test]
+    fn unquoted_forced_split_drops_interior_empty() {
+        assert_parity(
+            r#"v="a:b::c"; setopt rcexpandparam; a=(${(s.:.)v}); print $#a"#,
+        );
+    }
+
+    /// Non-plan9 quoted forced split still collapses interior empties
+    /// (Bug #542 path unchanged) → 3.
+    #[test]
+    fn non_plan9_quoted_forced_split_collapses() {
+        assert_parity(r#"v="a:b::c"; a=("${(s.:.)v}"); print $#a"#);
+    }
+
+    /// Bug #578 must not regress under rcexpandparam: a leading empty
+    /// from ${a%x*} on the first element stays dropped unquoted.
+    #[test]
+    fn rcexpand_leading_empty_still_dropped() {
+        assert_parity(r#"setopt rcexpandparam; a=(x y z); echo ${a%x*}"#);
+    }
+}
