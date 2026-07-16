@@ -3729,6 +3729,19 @@ pub fn paramsubst(
         // Value struct, so nothing leaks into `typeset -p`; this guard
         // restores that invariant for the zshrs paramtab-scratch design.
         let mut subexp_temp_guard = crate::subexp_cleanup::SubexpTempGuard::new();
+        // c:Src/subst.c:3932 `else l->list.flags &= ~LF_ARRAY;` — the
+        // non-array DEFAULT. PARAMSUBST_LF_ARRAY is the thread-local that
+        // hands this call's array-ness back to the caller (stringsubst /
+        // the nested-subexp reader). Every EARLY return — the getlen
+        // `${#name}` arm, `(t)`, `+name`, error bail-outs — must leave it
+        // FALSE, because a scalar result is not an array. Initialise it
+        // here so those paths can't leak the PREVIOUS paramsubst's TRUE:
+        // `${(U)arr}` sets it true, and a following `${#${#s}}` whose inner
+        // `${#s}` returns via the getlen early-return then read the stale
+        // true, materialised the scalar length into a `__subexp_arr_N`
+        // temp, and counted 1 element instead of 2 chars. The array
+        // producing paths below (subst.rs:15864) overwrite this default.
+        PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
         // c:Src/subst.c — when the inner sub-expression is `(P)NAME`
         // (the `(P)` indirect flag referencing a parameter NAME) and that
         // name resolves to an ASSOCIATIVE array, the `(P)` acts as a
