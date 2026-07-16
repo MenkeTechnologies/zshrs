@@ -6165,6 +6165,33 @@ pub fn paramsubst(
                 assoc_keys(&var_name)
                     .map(|k| k.join(" "))
                     .unwrap_or_default()
+            } else if sub != "@"
+                && sub != "*"
+                && crate::vm_helper::exact_assoc_sub_key(sub)
+                    .is_some_and(|k| crate::vm_helper::assoc_key_hit(&var_name, k).is_some())
+            {
+                // O(1) single-key fast path — skips assoc_get's
+                // whole-map clone + zsh-bucket-order rebuild below.
+                // Bucket order only matters for whole-map enumeration
+                // ((k)/(v)/(kv)/[@]); a single-key get is
+                // order-independent (assoc_get's own doc says so), yet
+                // every `${counts[$k]}` / `${counts[(e)$k]}` read
+                // materialized the full map with per-key re-hashing —
+                // 42k-iteration shell loops went O(n²): zpwr
+                // expandstats took 43s vs zsh's ~1s.
+                let sub: &str = crate::vm_helper::exact_assoc_sub_key(sub).unwrap();
+                let (contains, val) = crate::vm_helper::assoc_key_hit(&var_name, sub).unwrap_or((false, None));
+                if (hkeys & SCANPM_WANTKEYS) != 0 && (hvals & SCANPM_WANTVALS) == 0 {
+                    // `(k)` on a plain-key subscript returns the KEY when
+                    // present (c:Src/params.c:1492-1494 — see the arm below).
+                    if contains {
+                        sub.to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    val.unwrap_or_default()
+                }
             } else if let Some(map) = assoc_get(&var_name) {
                 // c:2926 (assoc lookup)
                 // c:Src/params.c — `${assoc[@]}` and `${assoc[*]}`

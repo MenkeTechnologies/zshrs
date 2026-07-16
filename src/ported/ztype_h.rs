@@ -12,10 +12,11 @@
 //! multibyte-conditional convenience macros (`WC_ZISTYPE`/`WC_ISPRINT`/
 //! `ZISPRINT`, c:74-90). 0 structs/enums.
 //!
-//! The Rust port keeps the table as `static TYPTAB: Mutex<[u32; 256]>`
-//! to mirror C's `mod_export short int typtab[256]` (utils.c:4148),
-//! widened to `u32` so `INAMESPC` (`1 << 16`) fits cleanly.
-//! `inittyptab` lives in `utils.rs` per its C home (utils.c:4155).
+//! The Rust port keeps the table as `static TYPTAB: [AtomicU32; 256]`
+//! (lock-free Relaxed reads — see the TYPTAB doc below) mirroring C's
+//! `mod_export short int typtab[256]` (utils.c:4148), widened to `u32`
+//! so `INAMESPC` (`1 << 16`) fits cleanly. `inittyptab` lives in
+//! `utils.rs` per its C home (utils.c:4155).
 
 use std::sync::Mutex;
 
@@ -71,11 +72,23 @@ pub const INAMESPC: u32 = 1 << 16; // c:46
 /// Port of `mod_export short int typtab[256];` from `Src/utils.c:4148`.
 /// Per-byte type-bit lookup. Widened from C's `short int` to `u32` so
 /// `INAMESPC` (`1 << 16`) fits.
-pub static TYPTAB: Mutex<[u32; 256]> = Mutex::new([0; 256]); // utils.c:4148
+///
+/// Storage is `[AtomicU32; 256]` (Relaxed), not a Mutex: C reads the
+/// bare array with zero synchronization, and `zistype` is THE hottest
+/// predicate in the shell — every char classification (itype_end,
+/// lexer, metafy checks) hit a pthread mutex per byte, which profiled
+/// as a top cost in tight shell loops (zpwr expandstats over 42k
+/// records). Writers (`inittyptab` family, utils.c:4155) are rare
+/// whole-table rebuilds; Relaxed per-slot stores match C's unlocked
+/// `typtab[i] = x` semantics.
+pub static TYPTAB: [std::sync::atomic::AtomicU32; 256] =
+    [const { std::sync::atomic::AtomicU32::new(0) }; 256]; // utils.c:4148
 
 /// Port of `static int typtab_flags = 0;` from `Src/utils.c:4149`.
-/// State flags managed by `inittyptab()`.
-pub static TYPTAB_FLAGS: Mutex<u32> = Mutex::new(0); // utils.c:4149
+/// State flags managed by `inittyptab()`. Atomic for the same reason
+/// as TYPTAB (C reads it unlocked).
+pub static TYPTAB_FLAGS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0); // utils.c:4149
 
 // ZTF_* state flags (c:69-72) preserved across `inittyptab()` calls.
 /// `ZTF_INIT` constant.
@@ -104,7 +117,7 @@ pub const ZTF_BANGCHAR: u32 = 0x0008; // c:72
 #[inline]
 pub fn zistype(x: u8, bits: u32) -> bool {
     // c:47
-    (TYPTAB.lock().unwrap()[x as usize] & bits) != 0
+    (TYPTAB[x as usize].load(std::sync::atomic::Ordering::Relaxed) & bits) != 0
 }
 
 /// Port of `#define idigit(X)` from `Src/ztype.h:48`.
@@ -340,12 +353,12 @@ mod tests {
     fn zistype_reads_typtab() {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = TYPTAB.lock().unwrap()[b'X' as usize];
-        TYPTAB.lock().unwrap()[b'X' as usize] = (IDIGIT | IALNUM) as u32;
+        let saved = TYPTAB[b'X' as usize].load(std::sync::atomic::Ordering::Relaxed);
+        TYPTAB[b'X' as usize].store((IDIGIT | IALNUM) as u32, std::sync::atomic::Ordering::Relaxed);
         assert!(zistype(b'X', IDIGIT as u32));
         assert!(zistype(b'X', IALNUM as u32));
         assert!(!zistype(b'X', ICNTRL as u32));
-        TYPTAB.lock().unwrap()[b'X' as usize] = saved;
+        TYPTAB[b'X' as usize].store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Verifies the predicate ported dispatch through zistype.
@@ -353,11 +366,11 @@ mod tests {
     fn idigit_dispatches_through_typtab() {
         let _g = crate::test_util::global_state_lock();
         let _g = TYPTAB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = TYPTAB.lock().unwrap()[b'7' as usize];
-        TYPTAB.lock().unwrap()[b'7' as usize] = IDIGIT as u32;
+        let saved = TYPTAB[b'7' as usize].load(std::sync::atomic::Ordering::Relaxed);
+        TYPTAB[b'7' as usize].store(IDIGIT as u32, std::sync::atomic::Ordering::Relaxed);
         assert!(idigit(b'7'));
         assert!(!ialpha(b'7'));
-        TYPTAB.lock().unwrap()[b'7' as usize] = saved;
+        TYPTAB[b'7' as usize].store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Verifies `wc_zistype` falls through to Unicode predicates for
@@ -369,10 +382,10 @@ mod tests {
         assert!(WC_ZISTYPE('é', IALNUM as u32));
         assert!(WC_ZISTYPE('é', IWORD as u32));
         assert!(!WC_ZISTYPE('é', IDIGIT as u32));
-        let saved = TYPTAB.lock().unwrap()[b'a' as usize];
-        TYPTAB.lock().unwrap()[b'a' as usize] = IALPHA as u32;
+        let saved = TYPTAB[b'a' as usize].load(std::sync::atomic::Ordering::Relaxed);
+        TYPTAB[b'a' as usize].store(IALPHA as u32, std::sync::atomic::Ordering::Relaxed);
         assert!(WC_ZISTYPE('a', IALPHA as u32));
-        TYPTAB.lock().unwrap()[b'a' as usize] = saved;
+        TYPTAB[b'a' as usize].store(saved, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Verifies `wc_isprint` rejects controls per c:79.

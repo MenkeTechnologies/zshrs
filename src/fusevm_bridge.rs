@@ -9151,7 +9151,9 @@ impl ZshrsHost {
 fn array_index_lookup(name: &str, idx: &str) -> Value {
     let idx_is_simple = !idx.starts_with('(') && idx != "@" && idx != "*" && !idx.contains(',');
     if idx_is_simple {
-        if let Some(v) = with_executor(|exec| exec.assoc(name).and_then(|m| m.get(idx).cloned())) {
+        // assoc_key_hit: single-lock O(1) probe — exec.assoc() clones
+        // the WHOLE map per lookup (O(n), quadratic in shell loops).
+        if let Some((_, Some(v))) = crate::vm_helper::assoc_key_hit(name, idx) {
             return Value::str(v);
         }
     }
@@ -9227,13 +9229,9 @@ fn direct_assoc_key_get(name: &str, key: &str) -> Option<Option<String>> {
         "dis_galiases" => Some(alias_view(true, false, true)),
         "dis_saliases" => Some(alias_view(false, true, true)),
         _ => {
-            if with_executor(|exec| exec.assoc(name).is_some()) {
-                Some(with_executor(|exec| {
-                    exec.assoc(name).and_then(|m| m.get(key).cloned())
-                }))
-            } else {
-                None
-            }
+            // Single-lock O(1) probe (see assoc_key_hit) — the previous
+            // double exec.assoc() cloned the whole map twice per lookup.
+            crate::vm_helper::assoc_key_hit(name, key).map(|(_, v)| v)
         }
     }
 }
