@@ -525,6 +525,17 @@ jobs:
       # empty/scalar element shapes match (c:3282-3293), and (AA) odd counts error.
       - name: Fuzz — assign
         run: ./target/debug/parity-fuzz --mode assign --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/assign.txt --out target/parity-fuzz/ci-assign.txt
+      # gflag — `${(g:opts:)}`, i.e. getkeystring (c:Src/utils.c:6915), the escape
+      # decoder shared with print/echo/$'…'/printf/bindkey. Covers every opts
+      # subset (e/o/c → GETKEY_EMACS/OCTAL_ESC/CTRL, c:Src/subst.c:2411-2425)
+      # against every escape shape, and the array-vs-scalar decode ordering.
+      # Strict gate: C's numeric branch is ONE arm whose bits are coupled —
+      # `\1` without `o` is a literal backslash, the parse runs through zstrtol
+      # (blank-skip + sign), `\0x41` is hex, and a quoted non-`(@)` array is
+      # decoded AFTER the c:3032 join. Empty baseline: any divergence is a
+      # regression.
+      - name: Fuzz — gflag
+        run: ./target/debug/parity-fuzz --mode gflag --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/gflag.txt --out target/parity-fuzz/ci-gflag.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
