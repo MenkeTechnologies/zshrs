@@ -3060,3 +3060,53 @@ mod procsub_in_cond_errors {
         assert_parity(r#"diff <(print a) <(print a) && print -r -- same"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// AA. A `=(cmd)` temp file is deleted at the end of the command that
+//     created it — including an assignment-only command.
+//
+// c:Src/jobs.c deletefilelist — the temp is bound to the JOB of its
+// creating command and unlinked when that command completes. `f==(cmd)`
+// has no consuming builtin/exec, so zshrs's PsubFdGuard (which cleans
+// consuming commands) never fired and the temp leaked: a later
+// `[[ -f $f ]]` / `$(<$f)` still saw it. zsh deletes it at the end of the
+// assignment (even `f==(x) && cat $f` fails). Fixed by cleaning pending
+// procsub temps in BUILTIN_ASSIGN_ONLY_STATUS. Command-argument `=(…)`
+// uses are unaffected (their consuming command still cleans them AFTER
+// the read).
+// ─────────────────────────────────────────────────────────────────────
+mod eq_procsub_temp_lifetime {
+    use super::*;
+
+    /// zsh: `exists=n` (temp gone after the assignment). Was `y` before.
+    #[test]
+    fn assign_procsub_temp_gone_next_statement() {
+        assert_parity(
+            r#"f==(print -l a b); print -r -- "exists=$([[ -f $f ]] && print y || print n)""#,
+        );
+    }
+
+    /// Reading the deleted temp yields empty.
+    #[test]
+    fn assign_procsub_read_after_is_empty() {
+        assert_parity(r#"f==(print hi); print -r -- "[$(<$f 2>/dev/null)]""#);
+    }
+
+    /// The temp is gone even within the same `&&` list.
+    #[test]
+    fn assign_procsub_gone_in_same_and_list() {
+        assert_parity(r#"f==(print hi) && cat $f 2>/dev/null | grep -c hi"#);
+    }
+
+    /// Command-argument `=(…)` still works (temp survives until read).
+    #[test]
+    fn command_arg_procsub_still_works() {
+        assert_parity(r#"cat =(print hello)"#);
+    }
+
+    /// `x=$(cat =(…))` — nested use is cleaned by cat, not the outer assign.
+    #[test]
+    fn cmdsub_arg_procsub_still_works() {
+        assert_parity(r#"x=$(cat =(print abc)); print -r -- $x"#);
+    }
+}

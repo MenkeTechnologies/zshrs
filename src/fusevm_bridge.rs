@@ -8338,6 +8338,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             0 // c:3396 `lastval = cmdoutval` (cmdoutval = 0)
         };
         with_executor(|exec| exec.set_last_status(status));
+        // c:Src/jobs.c deletefilelist — a `=(cmd)` temp file is bound to the
+        // JOB of the command that created it and unlinked when that command
+        // completes (Src/exec.c:5588 for the shfunc case; the simple-command
+        // job's filelist likewise). An assignment-only command like
+        // `f==(cmd)` has no consuming builtin/exec, so the PsubFdGuard that
+        // cleans consuming commands never fires — the temp leaked and a later
+        // `$(<$f)` / `[[ -f $f ]]` still saw it, where zsh deletes it at the
+        // end of the assignment (verified: even `f==(x) && cat $f` fails).
+        // Clean here so the assignment command is the temp's job boundary.
+        close_pending_psub_fds();
         Value::Status(status)
     });
 
