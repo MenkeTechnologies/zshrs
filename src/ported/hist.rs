@@ -222,16 +222,31 @@ pub fn ihwaddc(c: i32) {
             }
             pos += 1;
         }
-        // c:368 — `*hptr++ = c;`.
-        if pos < bytes.len() {
-            bytes[pos] = c as u8;
-        } else {
-            while bytes.len() < pos {
-                bytes.push(0);
+        // c:368 — `*hptr++ = c;`. C's input stream is METAFIED BYTES so
+        // a single-byte store is right there; zshrs's ingetc yields full
+        // Unicode chars, so encode the char's UTF-8 bytes at the cursor.
+        // The previous `c as u8` TRUNCATED every non-ASCII char — ★
+        // (U+2605) stored as 0x05, é (U+00E9) as a lone invalid 0xE9 —
+        // corrupting the ring and $HISTFILE for any multibyte line.
+        let mut utf8 = [0u8; 4];
+        let enc: &[u8] = match char::from_u32(c as u32) {
+            Some(ch) => ch.encode_utf8(&mut utf8).as_bytes(),
+            None => {
+                utf8[0] = c as u8;
+                &utf8[..1]
             }
-            bytes.push(c as u8);
+        };
+        for &b in enc {
+            if pos < bytes.len() {
+                bytes[pos] = b;
+            } else {
+                while bytes.len() < pos {
+                    bytes.push(0);
+                }
+                bytes.push(b);
+            }
+            pos += 1;
         }
-        pos += 1;
         hptr.store(pos, SeqCst);
     }
     // c:370-374 — resize tracking. Rust `String` grows on `push`
@@ -322,17 +337,19 @@ pub fn iaddtoline(c: i32) {
     let inbufct_v = crate::ported::input::inbufct.with(|cnt| cnt.get());
     exlast.store(inbufct_v, SeqCst); // c:413
                                      // c:413 — `itok(c) ? ztokens[c - Pound] : c`.
-    let push_byte: u8 = if c >= 0 && c <= 0xff && itok(c as u8) {
+    let push_ch: char = if c >= 0 && c <= 0xff && itok(c as u8) {
         let idx = (c as u8).wrapping_sub(Pound as u8) as usize;
         // ztokens is the literal-char back-mapping for ITOK bytes.
         // Defensively guard against an out-of-range token byte
         // (the closed range Pound..=Nularg is 0x84..=0xa1, 30
         // entries; ztokens covers them).
-        ztokens.bytes().nth(idx).unwrap_or(c as u8)
+        ztokens.bytes().nth(idx).unwrap_or(c as u8) as char
     } else {
-        c as u8
+        // Full Unicode scalar from the char-based ingetc — the previous
+        // `c as u8` truncated non-ASCII chars (same bug as ihwaddc).
+        char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER)
     };
-    chline.lock().unwrap().push(push_byte as char); // c:413
+    chline.lock().unwrap().push(push_ch); // c:413
 }
 
 /// Port of `void safeinungetc(int c)` from Src/hist.c:466.
@@ -1434,8 +1451,14 @@ pub fn linkcurline() {
 
 /// Port of `static void unlinkcurline(void)` from Src/hist.c:1093.
 pub fn unlinkcurline() {
-    // c:1093
-    *curline.lock().unwrap() = None; // c:1093-1102
+    // c:1093-1102 — C splices the STATIC `curline` struct out of the
+    // ring; its fields (histnum included) survive. Two readers depend
+    // on that during command execution: bin_fc's default-range check
+    // `curline.histnum == curhist` (builtin.c:1581 — excludes the
+    // in-flight fc command from `fc -l`) and loop()'s preexec-hook
+    // same-event check (init.c:195). zshrs's ring never physically
+    // holds the curline sentinel, so the splice itself is a no-op —
+    // the previous `*curline = None` DROPPED histnum and broke both.
     curhist.fetch_sub(1, SeqCst); // c:1103
 }
 
@@ -4098,7 +4121,19 @@ pub fn savehistfile(fn_path: Option<&str>, writeflags: i32) {
                     buf.push(b'\\'); // c:3062
                 }
                 end_backslashes = c == b'\\' || (end_backslashes && c == b' '); // c:3064
-                buf.push(c); // c:3065
+                // C writes the in-memory METAFIED text verbatim here
+                // (metafication happened at input time, utils.c:4856);
+                // zshrs's ring holds clean UTF-8, so metafy at write
+                // time for byte parity with zsh's HISTFILE: IMETA bytes
+                // ({0x00, 0x83..=0xA2}, typtab utils.c:4195-4201) are
+                // escaped as Meta + (byte ^ 32). readhistfile's
+                // unmetafy is the exact inverse.
+                if crate::ported::utils::imeta_byte(c) {
+                    buf.push(0x83); // Meta
+                    buf.push(c ^ 32);
+                } else {
+                    buf.push(c); // c:3065
+                }
             }
             if end_backslashes {
                 buf.push(b' '); // c:3070-3071

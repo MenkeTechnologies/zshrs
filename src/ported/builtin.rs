@@ -2802,10 +2802,27 @@ pub fn bin_fc(
         // c:1573
         if OPT_ISSET(ops, b'l') && first < curhist {
             // c:1574
-            last = curhist; // c:1583
-            if last < 1 {
-                last = 1;
-            } // c:1585
+            // c:1581-1583 — `last = (curline.histnum == curhist) ?
+            //     addhistnum(curhist,-1,0) : curhist;`
+            // When the fc command itself occupies the current event
+            // (the normal interactive case), the default range EXCLUDES
+            // it — zsh's `fc -l 1` does not list the in-flight `fc -l 1`
+            // line. The previous `last = curhist` included it.
+            let curline_num = crate::ported::hist::curline
+                .lock()
+                .ok()
+                .and_then(|c| c.as_ref().map(|e| e.histnum))
+                .unwrap_or(0);
+            last = if curline_num == curhist {
+                crate::ported::hist::addhistnum(curhist, -1, 0) // c:1582
+            } else {
+                curhist // c:1583
+            };
+            // c:1584-1585 — `if (last < firsthist()) last = firsthist();`
+            let fh = crate::ported::hist::firsthist();
+            if last < fh {
+                last = fh; // c:1585
+            }
         } else {
             last = first; // c:1587
         }
