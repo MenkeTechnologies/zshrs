@@ -5383,9 +5383,34 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
     // live_write re-publish the derived family. Only fires inside an
     // active widget scope; live_write's guard blocks its own
     // re-publish writes.
-    if matches!(s, "BUFFER" | "LBUFFER" | "RBUFFER" | "CURSOR")
-        && crate::zle_param_sync::live_write(s, val)
-    {
+    // ASSPM_AUGMENT must be resolved BEFORE the live write: `+=`
+    // routes here with only the APPENDED text as `val`, and writing
+    // that raw would ASSIGN it (`LBUFFER+=\"` in zsh-autopair's
+    // _ap-self-insert nuked everything typed before the quote —
+    // `echo hi "` collapsed to `""`). C never has this problem: its
+    // augment concatenation happens before gsu.s->setfn dispatch
+    // (Src/params.c:2742-2748). Concatenate against the LIVE editor
+    // value (CURSOR augments arithmetically, matching PM_INTEGER).
+    let zle_special = matches!(s, "BUFFER" | "LBUFFER" | "RBUFFER" | "CURSOR");
+    let zle_augmented: String;
+    let zle_val: &str = if zle_special && (flags & ASSPM_AUGMENT) != 0 {
+        use crate::ported::zle::zle_params as zp;
+        zle_augmented = match s {
+            "BUFFER" => format!("{}{}", zp::get_buffer(), val),
+            "LBUFFER" => format!("{}{}", zp::get_lbuffer(), val),
+            "RBUFFER" => format!("{}{}", zp::get_rbuffer(), val),
+            // c:2775-2778 — integer augment is arithmetic add.
+            _ => {
+                let old = zp::get_cursor() as i64;
+                let add = val.trim().parse::<i64>().unwrap_or(0);
+                (old + add).to_string()
+            }
+        };
+        &zle_augmented
+    } else {
+        val
+    };
+    if zle_special && crate::zle_param_sync::live_write(s, zle_val) {
         return getsparam(s).map(|_| {
             Box::new(crate::ported::zsh_h::param {
                 node: crate::ported::zsh_h::hashnode {
@@ -5396,7 +5421,7 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 u_data: 0,
                 u_tied: None,
                 u_arr: None,
-                u_str: Some(val.to_string()),
+                u_str: Some(zle_val.to_string()),
                 u_val: 0,
                 u_dval: 0.0,
                 u_hash: None,

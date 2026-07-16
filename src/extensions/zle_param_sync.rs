@@ -184,3 +184,45 @@ pub fn sync_from_paramtab() {
         crate::ported::zle::zle_refresh::set_region_highlight(Some(&post_rh));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// `LBUFFER+=X` inside a widget scope must APPEND to the live
+    /// editor value, not assign the appended text (zsh-autopair's
+    /// `_ap-self-insert` — `LBUFFER+=$1; RBUFFER="$2$RBUFFER"` —
+    /// collapsed `echo hi "` to `""`). assignsparam's ZLE live-write
+    /// arm fired with the raw `+=` operand before ASSPM_AUGMENT was
+    /// applied; C concatenates before gsu setfn dispatch
+    /// (Src/params.c:2742-2748).
+    #[test]
+    fn zle_special_augment_appends_to_live_value() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::zle::zle_params as zp;
+        zp::set_buffer("echo hi ");
+        zp::set_cursor(8);
+        // Arm a widget scope so live_write is active (makezleparams shape).
+        super::arm_snapshot(
+            "echo hi ".into(),
+            "echo hi ".into(),
+            String::new(),
+            8,
+            String::new(),
+            String::new(),
+            Vec::new(),
+        );
+        let _ = crate::ported::params::assignsparam(
+            "LBUFFER",
+            "\"",
+            crate::ported::zsh_h::ASSPM_AUGMENT,
+        );
+        let _ = crate::ported::params::assignsparam(
+            "RBUFFER",
+            "\"",
+            crate::ported::zsh_h::ASSPM_AUGMENT,
+        );
+        super::clear_snapshot();
+        assert_eq!(zp::get_buffer(), "echo hi \"\"", "append, not assign");
+        assert_eq!(zp::get_cursor(), 9, "cursor sits between the pair");
+        zp::set_buffer("");
+    }
+}

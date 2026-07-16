@@ -19,6 +19,37 @@ CI green pending the underlying fix.
 
 ---
 
+## #670 — `LBUFFER+=` inside a widget ASSIGNED instead of appending — autopair wiped the line — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** with zsh-autopair loaded, type `echo hi "` → buffer
+collapses to `""` (everything before the quote deleted). Minimal:
+
+```zsh
+w(){ LBUFFER+="X"; RBUFFER="Y$RBUFFER" }; zle -N w; bindkey '^T' w
+# type "echo hi ", press ^T — zsh: "echo hi XY"; zshrs (before): "XY"
+```
+
+**Root cause:** `assignsparam`'s ZLE live-write arm (the Rust-only GSU
+adapter routing BUFFER/LBUFFER/RBUFFER/CURSOR writes to the live editor)
+fired with the RAW incoming value BEFORE `ASSPM_AUGMENT` was resolved —
+`LBUFFER+=\"` arrived as `assignsparam("LBUFFER", "\"", AUGMENT)` and
+live-wrote `set_lbuffer("\"")`, an assignment. C concatenates the
+augment before `gsu.s->setfn` dispatch (Src/params.c:2742-2748), so its
+live setters only ever see the final value. autopair's
+`_ap-self-insert` (`LBUFFER+=$1; RBUFFER="$2$RBUFFER"`) nuked the typed
+prefix on every pair character.
+
+**Fix:** the live-write arm resolves ASSPM_AUGMENT against the LIVE
+editor value first (BUFFER/LBUFFER/RBUFFER concatenate; CURSOR adds
+arithmetically per the PM_INTEGER augment contract, c:2775-2778).
+Verified live: `echo hi "` → `echo hi ""` with the cursor between the
+quotes, typed text lands inside, Enter executes `echo hi "wow"`.
+params parity 137, zle_params 92, + a unit test pinning the contract.
+
+---
+
 ## #669 — `${var-word}` family collapsed nested array expansions to one word — FIXED
 
 **Status:** `fixed` (code landed via `c36333819e`)
