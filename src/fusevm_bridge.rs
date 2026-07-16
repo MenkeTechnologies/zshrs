@@ -5741,10 +5741,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             live_errflag
         }; // c:755
         with_executor(|exec| {
-            exec.set_scalar(
-                "__zshrs_try_block_saved_status".to_string(),
-                endval.to_string(),
+            // flags=0 (not setsparam's ASSPM_WARN): VM-internal scratch —
+            // must never surface as a WARN_CREATE_GLOBAL diagnostic inside
+            // a user function running `{...} always {...}` (f-sy-h's
+            // `_zsh_highlight` does exactly that under warncreateglobal).
+            crate::ported::params::assignsparam(
+                "__zshrs_try_block_saved_status",
+                &endval.to_string(),
+                0,
             );
+            let _ = exec;
             // Mirror into paramtab so `${parameters[TRY_BLOCK_ERROR]}`
             // and the PM_INTEGER `u_val` shadow agree with the atomic
             // the special-var getter reads. (setsparam → intsetfn's

@@ -1130,8 +1130,20 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
     // c:1420
     // c:1420 — `if (!func) return 1`.
     if !rthingy_nocreate(name) {
-        // c:1422
-        return 1;
+        // c:1422 — C's `func` is a Thingy pointer, so this gate is just
+        // a NULL check. The Rust adaptation is name-based and gets called
+        // in TWO shapes: with a thingy name (C shape, e.g. from
+        // bin_zle_call) or with a bare shell-function name from
+        // execute_widget's UserFunc arm (`zle -N widget fn` — `fn` never
+        // gets a thingy; C resolves it via `w->u.fnnam` → shfunctab at
+        // zle_main.c:1503). Fall through to the shfunc path below when
+        // the name is a known shell function; otherwise fail as before.
+        // Without this, EVERY user-defined widget feeped and no-opped —
+        // f-sy-h wraps all widgets (self-insert included), so the whole
+        // keyboard died with fast-syntax-highlighting loaded.
+        if getshfunc(name).is_none() {
+            return 1;
+        }
     }
 
     // c:1426-1427 — `Thingy save_bindk = bindk; Thingy save_lbindk = lbindk;`.
