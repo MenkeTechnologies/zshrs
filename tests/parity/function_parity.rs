@@ -414,6 +414,44 @@ mod multi_name_funcdef {
     }
 }
 
+/// The word after the `function` reserved word is NEVER alias-expanded:
+/// par_funcdef sets `incmdpos = 0` before lexing the name (c:parse.c:1681),
+/// closing checkalias's `(incmdpos && tok == STRING)` gate. The port lexed
+/// the name in command position, so with `alias ts='cd $HOME/.Trash'`
+/// active, `eval "function ts { ... }"` (the OMZP::tmux
+/// `_build_tmux_alias` shape) expanded the alias and bound the body to
+/// `cd` — hijacking cd with `tmux new-session`. eval matters: `-c` strings
+/// parse upfront before the alias command runs.
+mod funcdef_name_not_alias_expanded {
+    use super::*;
+
+    /// The corruption shape: alias name reused as function name via eval.
+    #[test]
+    fn eval_function_keyword_name_ignores_alias() {
+        assert_parity(
+            r#"alias ts="cd \$HOME/.Trash"; eval "function ts { tmux new-session -s \"\$@\"; }"; whence -w ts cd; print -r -- "$functions[ts]""#,
+        );
+    }
+
+    /// Body keywords still get reserved-word promotion after the
+    /// incmdpos=0 header (c:parse.c:1715-1716 restores incmdpos=1).
+    #[test]
+    fn eval_function_keyword_body_keywords_still_parse() {
+        assert_parity(
+            r#"alias ts="cd \$HOME/.Trash"; eval "function ts { if [[ -z \$1 ]]; then print none; else print got \$1; fi }"; ts; ts x; whence -w cd"#,
+        );
+    }
+
+    /// Direct (non-eval) form with the alias active at parse time via
+    /// separate lines sourced from stdin-equivalent eval of two stages.
+    #[test]
+    fn multi_name_funcdef_names_ignore_aliases() {
+        assert_parity(
+            r#"alias a1="print X"; alias a2="print Y"; eval "function a1 a2 { print body \$0; }"; unalias a1 a2; a1; a2; whence -w print"#,
+        );
+    }
+}
+
 /// `function NAME () <short-body>` (function keyword + parens + braceless
 /// body) parses the body as ONE sublist (c:parse.c:1747 par_list1), not a
 /// greedy list. The port used par_list which swallowed the trailing `;`

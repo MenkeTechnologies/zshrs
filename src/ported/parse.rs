@@ -2288,6 +2288,13 @@ fn par_subsh() -> Option<ZshCommand> {
 /// the optional `[fname1 fname2 ...]` for multi-name function defs,
 /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
 fn par_funcdef() -> Option<ZshCommand> {
+    // c:1680-1681 — `nocorrect = 1; incmdpos = 0;` BEFORE lexing the
+    // name. incmdpos=0 keeps checkalias's `(incmdpos && tok == STRING)`
+    // gate closed, so the word after `function` is NEVER alias-expanded
+    // (`alias ts='cd x'; function ts { }` must define `ts`, not `cd`).
+    // nocorrect=1 likewise suppresses spell-correction on the name.
+    set_nocorrect(1);
+    set_incmdpos(false);
     zshlex(); // skip 'function'
 
     let mut names = Vec::new();
@@ -2393,6 +2400,13 @@ fn par_funcdef() -> Option<ZshCommand> {
             _ => break,
         }
     }
+
+    // c:1715-1716 — `nocorrect = 0; incmdpos = 1;` after the name
+    // wordlist, BEFORE lexing past `()`/separators into the body, so
+    // body keywords (`if`, `while`, …) get reserved-word promotion
+    // again (the header ran with incmdpos=0 to keep names alias-free).
+    set_nocorrect(0);
+    set_incmdpos(true);
 
     // Optional ()
     let saw_paren = tok() == INOUTPAR;
