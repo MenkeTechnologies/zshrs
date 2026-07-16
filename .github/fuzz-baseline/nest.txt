@@ -9,6 +9,14 @@
 # (c:Src/subst.c:3032, gated on SUBEXP_SCALAR_CTX like the `:|`/`:*` arms).
 # The `(@)` flag (nojoin=2) correctly suppresses that collapse (per-element).
 #
+# FIXED (no longer gaps): `${#${#s}}` after a flag expansion on an
+# array/assoc (`${(U)arr}`, `${(o)a}`, …). PARAMSUBST_LF_ARRAY leaked the
+# prior call's array-ness into the getlen early-return, so the outer `${#…}`
+# counted the inner scalar length as 1 ELEMENT instead of 2 CHARS. Fixed by
+# resetting PARAMSUBST_LF_ARRAY to the non-array default at the top of every
+# paramsubst (c:Src/subst.c:3932). The two `${#${#s}}` signatures below were
+# removed once fixed so a regression re-flags as NEW.
+#
 # One remaining known gap: an (s::)/split that yields ONLY EMPTY fields,
 # nested under another flag in DQ (`"${(L)${(s.:.)${t[2]}}}"` where t[2] is a
 # lone `:`). zsh's prefork deletes the empty nodes in the SUBEXP multsub pass
@@ -16,5 +24,3 @@
 # space (`[ ]`). Narrow edge (splitting a lone delimiter, nested, quoted);
 # the DIRECT `"${(s.:.):}"` form matches (both a single space).
 print -r -- "[${(L)${(s.:.)${t[N]}}}]"
-print -r -- "[${#${#s}}]"
-print -rl -- ${#${#s}}
