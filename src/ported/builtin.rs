@@ -13435,6 +13435,29 @@ pub fn bin_trap(
             };
             settrap(sig, body_eprog, 0);
         }
+        // c:Src/signals.c:707 — settrap → unsettrap → removetrap
+        // (c:836-843 removeshfuncnode) drops any pre-existing
+        // FUNCTION-form trap for this signal BEFORE the new (string-form)
+        // body is installed. zshrs's removetrap does not touch shfunctab,
+        // so a leftover `TRAPZERR() { … }` would shadow a later `trap
+        // 'body' ERR` — the dispatch prefers the function form, so the OLD
+        // function fired instead of the new string body. Remove it here,
+        // mirroring the `trap -` unset path above. Keyed by the CANONICAL
+        // signal name (sigs_name), so both `ERR` and `ZERR` spellings drop
+        // the same `TRAPZERR` node. Runs for VIRTUAL signals too (ZERR /
+        // DEBUG / EXIT sit beyond SIGCOUNT, so the settrap block above is
+        // skipped for them — the earlier placement inside that block never
+        // fired for ZERR).
+        let func_key = if sig == 0 {
+            "EXIT".to_string()
+        } else {
+            crate::ported::signals_h::sigs_name(sig)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| sig.to_string())
+        };
+        if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
+            tab.remove(&format!("TRAP{}", func_key));
+        }
         if let Ok(mut t) = traps_table().lock() {
             t.insert(canonical.clone(), arg.clone()); // c:7448 (effective)
         }

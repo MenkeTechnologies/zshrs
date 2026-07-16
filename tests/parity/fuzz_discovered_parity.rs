@@ -2766,3 +2766,50 @@ mod zerr_trap_on_errflag {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U. A string-form `trap 'body' SIG` replaces a pre-existing
+//    FUNCTION-form `TRAPSIG() { … }` trap.
+//
+// C's settrap (signals.c:707) calls unsettrap → removetrap
+// (c:836-843 removeshfuncnode) which drops any existing function-form
+// trap before installing the new body. zshrs's removetrap never touched
+// shfunctab, so a leftover `TRAPZERR() { … }` shadowed a later
+// `trap 'body' ERR` — the dispatch prefers the function form, so the OLD
+// function fired instead of the new string body. The fix removes the
+// `TRAP<canonical>` shfunctab node when a string trap is installed, for
+// virtual signals (ERR/EXIT/DEBUG, beyond SIGCOUNT) as well as real ones.
+// ─────────────────────────────────────────────────────────────────────
+mod string_trap_replaces_function {
+    use super::*;
+
+    /// zsh fires the NEW string body, not the replaced TRAPZERR function.
+    #[test]
+    fn string_err_replaces_trapzerr_function() {
+        assert_parity(
+            r#"TRAPZERR() { print -r -- zerr }; trap 'print -r -- strerr' ERR; false; print -r -- mid"#,
+        );
+    }
+
+    /// EXIT (virtual signal) — string form replaces TRAPEXIT function.
+    #[test]
+    fn string_exit_replaces_trapexit_function() {
+        assert_parity(
+            r#"TRAPEXIT() { print -r -- fe }; trap 'print -r -- se' EXIT; print -r -- body"#,
+        );
+    }
+
+    /// Real signal INT — string form replaces TRAPINT function.
+    #[test]
+    fn string_int_replaces_trapint_function() {
+        assert_parity(
+            r#"TRAPINT() { print -r -- fi }; trap 'print -r -- si' INT; trap"#,
+        );
+    }
+
+    /// Function-only trap still fires (no over-removal).
+    #[test]
+    fn function_only_still_fires() {
+        assert_parity(r#"TRAPZERR() { print -r -- z }; false; print -r -- mid"#);
+    }
+}
