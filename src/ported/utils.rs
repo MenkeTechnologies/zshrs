@@ -1676,6 +1676,13 @@ pub fn callhookfunc(name: &str, lnklst: Option<&[String]>, arrayp: i32, retval: 
 /// + `precmd_functions` array, the `periodic` hook on its
 /// PERIOD-second cadence, and walks the prepromptfns registry.
 pub fn preprompt() {
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Stamp duration + exit status onto the SQLite history row hend()
+    // added for the just-finished command (no-op when nothing is
+    // pending). preprompt runs immediately after execode returns and
+    // before the next ZLE read, so the elapsed time is command
+    // wall-time, not prompt idle.
+    crate::history::history_sqlite_finish(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
     // c:1532 `static time_t lastperiodic;` — periodic-hook last-fire timestamp.
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
     // `lastmailcheck` is module-scoped (LAST_MAILCHECK below) because C makes it

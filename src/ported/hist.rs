@@ -2179,6 +2179,18 @@ pub fn hend(prog: Option<&[u8]>) -> i32 {
                 addhistnode(&text, n as i32);
             }
         }
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // zshrs's DEFAULT history store is the SQLite index
+        // (src/extensions/history.rs); write every accepted interactive
+        // line. `newflags == 0` excludes HIST_TMPSTORE (leading space /
+        // zshaddhistory reject) and HIST_NOWRITE — the same policy the
+        // flat-$HISTFILE write applies. The $HISTFILE path elsewhere in
+        // this fn is untouched (user HISTFILE/SAVEHIST overrides keep
+        // full zsh-compat behavior alongside the index). Duration/exit
+        // land later via history_sqlite_finish (preprompt).
+        if newflags == 0 && crate::ported::zsh_h::interact() {
+            crate::history::history_sqlite_add(&text);
+        }
     }
     chline.lock().unwrap().clear(); // c:1628 zfree(chline)
     chwords.lock().unwrap().clear(); // c:1629 zfree(chwords)
