@@ -519,6 +519,12 @@ jobs:
       # empty-field-split edge remains baselined.
       - name: Fuzz — nest
         run: ./target/debug/parity-fuzz --mode nest --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/nest.txt --out target/parity-fuzz/ci-nest.txt
+      # assign — assignment inside a parameter expansion (${n=w}/${n:=w}/${n::=w})
+      # with (A)/(AA) array/assoc flags and the `=`/`(s:X:)` split flags. Strict
+      # gate: the RHS splits only under spsep/spbreak (c:Src/subst.c:3272), the
+      # empty/scalar element shapes match (c:3282-3293), and (AA) odd counts error.
+      - name: Fuzz — assign
+        run: ./target/debug/parity-fuzz --mode assign --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/assign.txt --out target/parity-fuzz/ci-assign.txt
       # Informational — printf is still gap-rich (many distinct diverging format
       # classes), so it is NOT a blocking gate yet; it reports the divergence
       # count for visibility and its corpus is uploaded. Promote to a blocking
@@ -537,15 +543,16 @@ jobs:
       - name: Fuzz — arith (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode arith --count 4000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-arith.txt
-      # Informational — unicode is still gap-rich. Character-class matching
-      # ([[:alpha:]] and bracket literals/ranges) is byte-based rather than
-      # decoding a character and testing it with the isw*() family
-      # (Src/pattern.c:3609 mb_patmatchrange), and the MULTIBYTE option is not
-      # consulted by the length / index / pad sites (C gates them all behind two
-      # primitives, Src/utils.c:5611 mb_metacharlenconv and :5654
-      # mb_metastrlenend). Both are structural; until they are ported this mode
-      # reports its count for visibility rather than blocking. Promote to a
-      # baselined gate once those land.
+      # Informational — the remaining unicode divergences are the byte-mode
+      # class: when the MULTIBYTE option is OFF (`unsetopt multibyte`) the
+      # length / index / slice / pad / split / char-class sites must count
+      # BYTES, but the port always counts characters (C gates them behind
+      # Src/utils.c:5611 mb_metacharlenconv / :5654 mb_metastrlenend, which
+      # short-circuit to byte length when MULTIBYTE is unset). That is a broad
+      # structural change across many sites for a rarely-used option, so it
+      # stays informational. FIXED: the `(m)` display-cell padding TRUNCATION
+      # now counts wide chars in cells on both sides (c:Src/subst.c:912-1080),
+      # so `${(ml:8:)日本語テキスト}` keeps the last 8 CELLS, not 8 chars.
       - name: Fuzz — unicode (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode unicode --count 3000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-unicode.txt
