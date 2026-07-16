@@ -4290,13 +4290,23 @@ impl ZshCompiler {
         if (untoked.starts_with("<(") || untoked.starts_with(">(") || is_eq_psub)
             && untoked.ends_with(')')
         {
-            // NOTE: c:Src/exec.c:4918 rejects a process substitution in a
-            // `[[ … ]]` operand ("cannot be used here"), but zshrs's THISJOB does
-            // not distinguish the cond context at runtime and there is no
-            // compile-time error-abort primitive wired here yet, so that
-            // rejection is not enforced. `in_cond_operand` is tracked for when it
-            // is. (The common `=(…)` uses — cat/diff/wc arguments — work.)
-            let _ = self.in_cond_operand;
+            // c:Src/exec.c:4918/5040/5069 — a process substitution used in a
+            // `[[ … ]]` cond operand errors "process substitution %s cannot
+            // be used here" (getoutputfile/getproc run with thisjob == -1).
+            // zshrs's THISJOB doesn't distinguish the cond context at
+            // runtime, so emit the rejection here where `in_cond_operand` is
+            // known: push the raw substitution text and call the error
+            // builtin instead of ProcessSubIn/Out. (`cat =(…)` / `diff <(…)`
+            // argument uses stay unaffected — in_cond_operand is false there.)
+            if self.in_cond_operand {
+                let idx = self.builder.add_constant(Value::str(untoked.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_PROCSUB_COND_ERROR, 1),
+                    0,
+                );
+                return;
+            }
             let is_in = untoked.starts_with("<(") || is_eq_psub;
             let inner = &untoked[2..untoked.len() - 1];
             // Mirror Src/init.c errflag save/clear/check around the
