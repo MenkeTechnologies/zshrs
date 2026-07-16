@@ -117,6 +117,33 @@ mod via_eval {
     fn alias_with_args_via_eval() {
         assert_parity(r#"alias greet='echo hi'; eval "greet world""#);
     }
+
+    /// Pin: nested alias inside an alias frame keeps the frame's
+    /// remaining words. inpoptop must restore the PUSH-TIME inbufct
+    /// (input.c:686/764) — recomputing only the restored frame's
+    /// remainder tripped ingetc's `!inbufct && strin` EOF gate
+    /// (input.c:342) and dropped ` x` entirely.
+    #[test]
+    fn nested_alias_keeps_frame_remainder_via_eval() {
+        assert_parity(r#"alias g='echo A'; alias t='g x'; eval t"#);
+    }
+
+    /// Pin: two-level alias chain with trailing args after the inner
+    /// alias word (`tommy` → `git status`, `git` → `hub`). The alias
+    /// body must not fuse with the following word (`hubstatus`) and
+    /// the frame remainder must survive the inner expansion.
+    #[test]
+    fn two_level_alias_chain_via_eval() {
+        assert_parity(r#"alias hub='echo HUB'; alias git=hub; alias tommy='git status'; eval tommy"#);
+    }
+
+    /// Pin: trailing-space alias body marks the NEXT word
+    /// alias-eligible (inalmore, input.c:775 / lex.c:1917) — the
+    /// `alias sudo='sudo '` chaining pattern.
+    #[test]
+    fn trailing_space_alias_chains_next_word() {
+        assert_parity(r#"alias sp='echo trail '; alias comp='echo comp'; eval "sp comp""#);
+    }
 }
 
 mod position {
