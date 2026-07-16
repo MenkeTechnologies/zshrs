@@ -19,6 +19,42 @@ CI green pending the underlying fix.
 
 ---
 
+## #662 — name after `function` keyword was alias-expanded, hijacking `cd` — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:**
+
+```zsh
+alias ts='cd $HOME/.Trash'
+eval 'function ts { tmux new-session -s "$@"; }'
+whence -w ts cd    # expect: ts: alias / cd: builtin
+declare -f cd      # expect: not a function
+```
+
+**Observed (before):** the alias body's first word became the function name —
+`cd` was defined with the `ts` body (`tmux new-session -s "$@"`). In the real
+environment this was the OMZP::tmux snippet's `_build_tmux_alias "ts"
+"new-session" "-s"` eval colliding with zpwr's `alias ts='cd $HOME/.Trash'`-style
+alias: every `cd` launched a tmux session. eval is required to reproduce —
+`-c` strings parse upfront before the `alias` command executes, so the alias
+isn't active during the funcdef parse.
+
+**Root cause:** C `par_funcdef` sets `nocorrect = 1; incmdpos = 0;` BEFORE
+lexing the word after `function` (Src/parse.c:1679-1682), which closes
+`checkalias`'s `(incmdpos && tok == STRING)` gate — funcdef names are never
+alias-expanded. The wordcode port (`par_funcdef_wordcode`, parse.rs) carried
+this over, but the AST-path `par_funcdef()` — the one the interactive/eval
+parser dispatches to on FUNC — called `zshlex()` with the lexer still in
+command position, so the name token ran through alias expansion.
+
+**Fix:** mirror C on the AST path — `set_nocorrect(1); set_incmdpos(false)`
+before the name lex, and restore `set_nocorrect(0); set_incmdpos(true)` after
+the name wordlist (Src/parse.c:1715-1716) so body keywords (`if`, `while`, …)
+regain reserved-word promotion.
+
+---
+
 ## #661 — `((EXPR))` command truncated a trailing `)` closing an inner subexpr — FIXED
 
 **Status:** `fixed`
