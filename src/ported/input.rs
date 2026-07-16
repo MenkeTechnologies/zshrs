@@ -880,17 +880,27 @@ pub fn inpoptop() {
         // c:770-778 — if (instacktop->alias) { alias->inuse = 0; if trailing
         //               space → inalmore=1; histbackword(); }
         if let Some(name) = &entry.alias {
-            {
+            // c:771 — `char *t = instacktop->alias->text;` — the check
+            // below is against the ALIAS BODY, not the saved outer
+            // buffer (`entry.buf` is the frame being restored; the
+            // drained alias text was in `inbuf`).
+            let alias_text: Option<String> = {
                 let mut tab = aliastab_lock().write().expect("aliastab poisoned");
-                if let Some(a) = tab.get_mut(name) {
-                    a.inuse = 0; // c:773
+                match tab.get_mut(name) {
+                    Some(a) => {
+                        a.inuse = 0; // c:773
+                        Some(a.text.clone())
+                    }
+                    None => None,
                 }
-            }
-            // c:774-777 — trailing-space → trigger inalmore + histbackword.
-            //              INALMORE is not yet a public Rust global; the
-            //              histbackword call alone preserves the C-visible
-            //              effect on the history cursor.
-            if entry.buf.ends_with(' ') {
+            };
+            // c:774-777 — `if (*t && t[strlen(t) - 1] == ' ')
+            //                 { inalmore = 1; histbackword(); }`
+            // — a trailing-space alias body marks the NEXT word
+            // alias-eligible (input.c:63 comment; consumed by
+            // checkalias at lex.c:1917).
+            if alias_text.is_some_and(|t| t.ends_with(' ')) {
+                crate::ported::lex::LEX_INALMORE.with(|f| f.set(1)); // c:775
                 histbackword(); // c:776
             }
         }

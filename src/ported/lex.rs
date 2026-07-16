@@ -39,7 +39,8 @@ use crate::ported::zsh_h::{
     Snull, Star, Stringg, Tick, Tilde, ALIASESOPT, CORRECT, CORRECTALL, CSHJUNKIEQUOTES, CS_BQUOTE,
     CS_BRACE, CS_BRACEPAR, CS_CMDSUBST, CS_CURSH, CS_DQUOTE, CS_HEREDOC, CS_HEREDOCD, CS_MATH,
     CS_MATHSUBST, CS_QUOTE, ERRFLAG_INT, HISTALLOWCLOBBER, IGNOREBRACES, IGNORECLOSEBRACES,
-    INP_ALIAS, INTERACTIVECOMMENTS, KSHGLOB, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN, SHORTLOOPS,
+    INP_ALIAS, INP_CONT, INTERACTIVECOMMENTS, KSHGLOB, POSIXALIASES, RCQUOTES, SHGLOB, SHINSTDIN,
+    SHORTLOOPS,
     SHORTREPEAT, ZCONTEXT_LEX, ZCONTEXT_PARSE,
 };
 use crate::ported::ztype_h::itok;
@@ -997,6 +998,14 @@ thread_local! {
     pub static LEX_DBPARENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `int noaliases` (lex.c:135).
     pub static LEX_NOALIASES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `int inalmore` (lex.c:80). Set by `inpoptop` (input.c:775)
+    /// when a drained non-global alias body ends in a space —
+    /// "aliases should be expanded, as if we are continuing after
+    /// an alias" (input.c:63) — so the NEXT word is alias-eligible
+    /// even outside command position (`alias sudo='sudo '` chains).
+    /// Consulted by `checkalias` (lex.c:1917); cleared by `exalias`
+    /// (lex.c:2016).
+    pub static LEX_INALMORE: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int nocorrect` (lex.c:144).
     pub static LEX_NOCORRECT: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
     /// `int nocomments` (lex.c:148).
@@ -3107,45 +3116,74 @@ fn checkalias(lextext: &str) -> bool {
     };
     if let Some(alias) = alias_clone {
         let is_global = (alias.node.flags & crate::ported::zsh_h::ALIAS_GLOBAL) != 0;
-        if alias.inuse == 0 && (is_global || (LEX_INCMDPOS.get() && tok() == STRING_LEX)) {
-            // c:1918-1927 — if the next char isn't blank, insert a
-            // space so the alias body can't accidentally join the
-            // following word.
+        // c:1915-1917 — `if (an && !an->inuse && ((an->node.flags &
+        // ALIAS_GLOBAL) || (incmdpos && tok == STRING) || inalmore))`
+        // — `inalmore` extends eligibility to the word following a
+        // trailing-space alias body (`alias sudo='sudo '` chaining).
+        if alias.inuse == 0
+            && (is_global
+                || (LEX_INCMDPOS.get() && tok() == STRING_LEX)
+                || LEX_INALMORE.get() != 0)
+        {
+            // c:1918-1927 — `if (!lexstop) { int c = hgetc();
+            // hungetc(c); if (!iblank(c)) inpush(" ", INP_ALIAS, 0); }`
+            // — if the next char isn't blank, insert a space so the
+            // alias body can't accidentally join the following word.
             //
-            // C does: `int c = hgetc(); hungetc(c); if (!iblank(c))
-            // inpush(" ", ...);` — actually CONSUMES one char then
-            // un-consumes it, ensuring the check uses the "actual
-            // next char that would be read". zshrs's peek() reads
-            // LEX_INPUT[pos] directly, but the inter-token blank
-            // that broke gettokstr's loop is already consumed (lex.rs
-            // line 1506 `if inbl ... break;` without hungetc). The
-            // next char is in LEX_INPUT past the blank — peek returns
-            // 'w' for `greet world`, the space-push fires correctly.
-            // But if any earlier hungetc left a ' ' in UNGET_BUF
-            // (e.g. from c:546 / c:578 / c:616 paths), peek returns
-            // that blank and skips the separator push — fusing
-            // alias body with the following word.
+            // c:1919-1922 — "Tokens that don't require a space after,
+            // get one, because they are treated as if preceded by one."
             //
-            // Drain any blank chars sitting in UNGET_BUF before the
-            // check so peek sees the actual next-non-blank position.
-            // This pulls a blank out of the queue if its only purpose
-            // was a pending re-read for whitespace handling.
-            while let Some(c) = LEX_UNGET_BUF.with_borrow(|b| b.front().copied()) {
-                // ASCII-only: see the truncation note in `gettokstr`.
-                if !(c.is_ascii() && crate::ztype_h::iblank(c as u8)) {
-                    break;
-                }
-                LEX_UNGET_BUF.with_borrow_mut(|b| {
-                    b.pop_front();
-                });
-            }
+            // C consumes one char via hgetc then un-consumes it, so the
+            // check uses the actual next char from the ACTIVE input
+            // source — the unget queue, the inbuf/instack (stdin loop,
+            // interactive, alias re-lex), or the LEX_INPUT window.
+            // The previous Rust version peeked LEX_INPUT[pos] directly,
+            // which never sees inbuf-stack content: for stdin/interactive
+            // lines (`git status` with `alias git=hub`) the pending
+            // "status" lives in inbuf, peek() returned None, the
+            // separator push was skipped, and the alias body fused with
+            // the following word → `hubstatus`.
             if !LEX_LEXSTOP.get() {
-                if let Some(c) = peek() {
+                // c:1918
+                if let Some(c) = hgetc() {
+                    // c:1923
+                    hungetc(c); // c:1924
+                    // !!! ORDERING DIVERGENCE ADAPTER — C's inungetc
+                    // returns the char to the CURRENT input frame
+                    // (inbufptr--), which the alias inpush below then
+                    // covers, so the terminator is read AFTER the alias
+                    // body. zshrs's hungetc pushes into LEX_UNGET_BUF,
+                    // which hgetc drains BEFORE any inbuf frame — so the
+                    // terminator (blank / `;` / `\n`) would be consumed
+                    // ahead of the alias text: `alias git=hub; git
+                    // status` fused to `hubstatus`, and the line's `\n`
+                    // ran early (PS2 prompt mid-command). Re-route the
+                    // pending ungets into an INP_CONT frame pushed UNDER
+                    // the separator/alias frames so read order matches C:
+                    // alias body → separator → terminator → line rest.
+                    // Only plain chars are re-routed — ingetc skips itok
+                    // bytes (input.rs c:328), which must stay in
+                    // LEX_UNGET_BUF to survive.
+                    let all_plain = LEX_UNGET_BUF.with_borrow(|b| {
+                        b.iter()
+                            .all(|&ch| !((ch as u32) < 256 && crate::ztype_h::itok(ch as u8)))
+                    });
+                    if all_plain {
+                        let pending: String =
+                            LEX_UNGET_BUF.with_borrow_mut(|b| b.drain(..).collect());
+                        if !pending.is_empty() {
+                            inpush(&pending, INP_CONT, None);
+                        }
+                    }
                     // ASCII-only: see the truncation note in `gettokstr`.
                     if !(c.is_ascii() && crate::ztype_h::iblank(c as u8)) {
-                        inpush(" ", INP_ALIAS, None);
+                        // c:1925
+                        inpush(" ", INP_ALIAS, None); // c:1926
                     }
                 }
+                // hgetc() == None → EOF: C's ingetc returns ' ' under
+                // lexstop (input.c:322), iblank(' ') → no push. Same
+                // net effect; nothing to unget.
             }
             // c:1928 — `inpush(an->text, INP_ALIAS, an);`
             inpush(&alias.text, INP_ALIAS, Some(lextext.to_string()));
@@ -3425,11 +3463,11 @@ pub fn exalias() -> bool {
         }
     }
 
-    // lex.c:2016 — `inalmore = 0;` — alias-more flag clears after
-    // any non-alias token.
-    // (zshrs's lexer doesn't have inalmore yet — added here would
-    // require gettok to track when an alias-pushed token has more
-    // text after it. Documented divergence.)
+    // lex.c:2016 — `inalmore = 0;` — alias-more flag clears once a
+    // token makes it through exalias without being re-injected as
+    // an alias (checkalias returning true short-circuits before
+    // this point via the `return true` above).
+    LEX_INALMORE.set(0); // c:2016
 
     false
 }
