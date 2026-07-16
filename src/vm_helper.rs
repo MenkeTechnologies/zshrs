@@ -2450,7 +2450,53 @@ impl ShellExecutor {
                         .filter(|d| d != "zsh");
                     if let Some(body) = crate::ported::utils::getshfunc(name).and_then(|f| f.body) {
                         let registered = autoload_register_source(name, &body);
-                        let _ = self.execute_script_zsh_pipeline(&registered);
+                        // c:Src/exec.c:5739 — the ksh-autoload body runs via
+                        // `execode(prog, 1, 0, "evalautofunc")` at the function
+                        // invocation's locallevel, so a `return`/`break`/
+                        // `continue` inside the file body is CONTAINED to the
+                        // autoload call. add-zle-hook-widget's first line is
+                        // `zmodload -e zsh/zle || return 1`; when a plugin has
+                        // leaked `ksh_autoload` on (e.g. a bare `emulate sh`),
+                        // that `return` must NOT propagate out and abort the
+                        // caller's precmd/shell (zsh warns "not defined by file"
+                        // and CONTINUES). Save & restore the control-flow flags
+                        // around the body run to reinstate that boundary.
+                        {
+                            use crate::ported::builtin::{
+                                BREAKS, EXIT_PENDING, EXIT_VAL, RETFLAG, SHELL_EXITING,
+                            };
+                            use std::sync::atomic::Ordering::Relaxed;
+                            // c:Src/exec.c:5739 — `execode(prog, 1, 0,
+                            // "evalautofunc")` runs the file body as part of the
+                            // autoload invocation. add-zle-hook-widget's
+                            // `zmodload -e zsh/zle || return 1` sits at the
+                            // file's TOP LEVEL (above its anon-func wrapper); at
+                            // script scope a top-level `return` is a shell EXIT,
+                            // so running the body as a plain script aborted the
+                            // caller's precmd/shell. `return` is contained when
+                            // `locallevel || sourcelevel` (bin_return, c:5840) —
+                            // raise SOURCELEVEL (the file-source counter, which
+                            // unlike locallevel does NOT open a local scope, so
+                            // the body's global assignments still land globally)
+                            // so the top-level `return` returns from the load
+                            // instead of exiting. Save/restore the control-flow
+                            // flags so nothing leaks — matching zsh's
+                            // warn-and-continue.
+                            use crate::ported::init::sourcelevel;
+                            let saved_retflag = RETFLAG.swap(0, Relaxed);
+                            let saved_breaks = BREAKS.swap(0, Relaxed);
+                            let saved_exit_pending = EXIT_PENDING.swap(0, Relaxed);
+                            let saved_exit_val = EXIT_VAL.swap(0, Relaxed);
+                            let saved_shell_exiting = SHELL_EXITING.swap(0, Relaxed);
+                            sourcelevel.fetch_add(1, Relaxed);
+                            let _ = self.execute_script_zsh_pipeline(&registered);
+                            sourcelevel.fetch_sub(1, Relaxed);
+                            RETFLAG.store(saved_retflag, Relaxed);
+                            BREAKS.store(saved_breaks, Relaxed);
+                            EXIT_PENDING.store(saved_exit_pending, Relaxed);
+                            EXIT_VAL.store(saved_exit_val, Relaxed);
+                            SHELL_EXITING.store(saved_shell_exiting, Relaxed);
+                        }
                         if let Some(dir) = loaded_dir.as_deref() {
                             if let Ok(mut tab) = crate::ported::hashtable::shfunctab_lock().write() {
                                 if let Some(shf) = tab.get_mut(name) {
