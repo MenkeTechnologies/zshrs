@@ -744,3 +744,52 @@ mod errexit {
         assert_parity(r#"[[ a -xyz b ]]; echo after"#);
     }
 }
+
+mod escaped_dollar_in_cond_pattern {
+    //! An escaped `\$` in a `[[ = ]]` pattern is a LITERAL dollar. The
+    //! compile-time pattern splitter treated the `$` after a
+    //! Bnull/backslash escape as a substitution start: `[[ $v = \$* ]]`
+    //! substituted `$*` (positionals), and f-sy-h's dollar matcher
+    //! `\$[{]` compiled `$[…]` old-style MATH on the class body —
+    //! "bad math expression: illegal character: 0x8f" on every
+    //! keystroke, after which `-fast-highlight-string`'s while loop
+    //! never advanced and the shell spun at 100% CPU (the
+    //! sample-reported infinite loop).
+    use super::*;
+
+    #[test]
+    fn escaped_dollar_star_matches_literal_dollar() {
+        assert_parity(r#"v='$x'; [[ $v = \$* ]] && print yes || print no"#);
+    }
+
+    #[test]
+    fn escaped_dollar_class_matches() {
+        assert_parity(r#"v='$a'; [[ $v = \$[a-z]* ]] && print yes || print no"#);
+    }
+
+    #[test]
+    fn escaped_dollar_brace_class_fsh_shape() {
+        assert_parity(r#"v='${x}'; [[ $v = \$[{]* ]] && print yes || print no"#);
+    }
+
+    /// The full f-sy-h `-fast-highlight-string` dollar matcher.
+    #[test]
+    fn fsh_string_highlight_pattern_matches() {
+        assert_parity(
+            r#"setopt extendedglob
+local _mybuf='say $there ok'
+if [[ $_mybuf = (#b)[^\$\\]#((\$(#B)([#+^=~](#c1,2))(#c0,1)(#B)([a-zA-Z_:][a-zA-Z0-9_:]#|[0-9]##)(#b)(\[[^\]]#\])(#c0,1))|(\$[{](#B)([#+^=~](#c1,2))(#c0,1)(#b)(\([a-zA-Z0-9_:@%#]##\))(#c0,1)[a-zA-Z0-9_:#]##(\[[^\]]#\])(#c0,1)[}])|\$|[\\][\'\"\$]|[\\](*))(*) ]]; then
+  print -r -- "mb1=$mbegin[1] m1=$match[1]"
+else
+  print no-match
+fi"#,
+        );
+    }
+
+    /// Active substitutions in patterns still substitute (guard against
+    /// over-escaping): `$H*` with H=foo must match foo-prefixed strings.
+    #[test]
+    fn active_dollar_in_pattern_still_substitutes() {
+        assert_parity(r#"H=foo; [[ foobar = $H* ]] && print yes || print no"#);
+    }
+}
