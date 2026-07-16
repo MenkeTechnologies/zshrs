@@ -3525,18 +3525,25 @@ pub fn inithist() {
     histlinect.store(0, SeqCst);
 }
 
-/// Port of `void resizehistents(void)` from Src/hist.c.
+/// Port of `void resizehistents(void)` from Src/hist.c — free the
+/// oldest entries until `histlinect <= histsiz` (C loops
+/// `putoldhistentryontop(1); freehistnode(&hist_ring->node)`).
+/// `hist_ring` is strictly DESCENDING by histnum (see ring_get), so
+/// the oldest entries are the Vec TAIL — one `truncate`, not the
+/// previous per-entry `ring_oldest()` scan + `retain()` rebuild,
+/// which was O(n²): a 558k-entry HISTFILE read under the default
+/// histsiz spun for minutes (`fc -R` looked hung).
 pub fn resizehistents() {
     let cap = histsiz.load(SeqCst);
-    while histlinect.load(SeqCst) > cap {
-        if let Some(oldest) = ring_oldest() {
-            let mut ring = hist_ring.lock().unwrap();
-            ring.retain(|h| h.histnum != oldest);
-            histlinect.fetch_sub(1, SeqCst);
-        } else {
-            break;
-        }
+    let ct = histlinect.load(SeqCst);
+    if ct <= cap {
+        return;
     }
+    let excess = (ct - cap) as usize;
+    let mut ring = hist_ring.lock().unwrap();
+    let keep = ring.len().saturating_sub(excess);
+    ring.truncate(keep);
+    histlinect.store(cap, SeqCst);
 }
 
 /// Port of `void readhistline(char *line, ...)` from Src/hist.c.
