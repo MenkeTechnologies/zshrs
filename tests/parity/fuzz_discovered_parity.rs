@@ -2708,3 +2708,61 @@ mod quoted_flanked_unquoted_expansion {
         assert_parity(r#"a=(one two three); print -rl -- "x"${a}suf"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// T. The ZERR trap fires when a failing command sets errflag (readonly
+//    reassignment, bad redirect) — not only on a plain non-zero exit.
+//
+// C's sublist_done (exec.c:1598-1603) runs dotrap(SIGZERR) BEFORE the
+// enclosing list loop breaks on errflag. zshrs's BUILTIN_ERREXIT_CHECK
+// fired ZERR in the retflag escape and the plain fall-through, but the
+// errflag branch returned early WITHOUT firing — so `TRAPZERR() { … };
+// typeset -r ro=1; ro=2` aborted (correct) yet never ran the trap. The
+// fix fires ZERR in the errflag branch, clearing errflag across the
+// dispatch (signals.c:1101 dotrapargs returns early on errflag; 1174/
+// 1216 save+restore) so the trap body runs, then restoring it so the
+// script still aborts.
+// ─────────────────────────────────────────────────────────────────────
+mod zerr_trap_on_errflag {
+    use super::*;
+
+    /// zsh fires TRAPZERR on the readonly reassignment. Was silent before.
+    #[test]
+    fn trapzerr_fires_on_readonly_reassign() {
+        assert_parity(
+            r#"TRAPZERR() { print -r -- zerr }; typeset -r ro=1; ro=2; echo end"#,
+        );
+    }
+
+    /// `trap … ERR` string form also fires.
+    #[test]
+    fn err_trap_fires_on_readonly_reassign() {
+        assert_parity(
+            r#"trap 'print -r -- ERRFIRED' ERR; typeset -r ro=1; ro=2; echo end"#,
+        );
+    }
+
+    /// Inside a { } always { } block the trap fires for the failed body
+    /// and again at the sublist boundary — two `zerr` lines like zsh.
+    #[test]
+    fn zerr_fires_in_always_block() {
+        assert_parity(
+            r#"TRAPZERR() { print -r -- zerr }; { typeset -r ro=1; ro=2 } always { print -r -- always }; print -r -- end"#,
+        );
+    }
+
+    /// No-trap readonly reassignment must STILL abort with exit 1
+    /// (errflag preserved across the — absent — dispatch).
+    #[test]
+    fn no_trap_readonly_still_aborts() {
+        assert_parity(r#"typeset -r ro=1; ro=2; echo SHOULD_NOT_PRINT"#);
+    }
+
+    /// A function-scope readonly reassignment fires ZERR and unwinds.
+    #[test]
+    fn zerr_fires_in_function_scope() {
+        assert_parity(
+            r#"TRAPZERR() { print -r -- z }; f() { local -r x=5; x=10; print -r -- inner }; f; print -r -- after"#,
+        );
+    }
+}
