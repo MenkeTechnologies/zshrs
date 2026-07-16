@@ -11206,7 +11206,11 @@ impl fusevm::ShellHost for ZshrsHost {
                 aliases: crate::ported::hashtable::aliastab_lock()
                     .read()
                     .ok()
-                    .map(|t| t.iter().map(|(k, v)| (k.clone(), v.text.clone())).collect())
+                    .map(|t| {
+                        t.iter()
+                            .map(|(k, v)| (k.clone(), v.text.clone(), v.node.flags))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 // c:Src/exec.c::entersubsh — same fork-copy
                 //   semantics for shfunctab. `(f() { ... })` defined
@@ -11489,12 +11493,15 @@ impl fusevm::ShellHost for ZshrsHost {
                 // then re-add parent's. Bug #209 in docs/BUGS.md.
                 if let Ok(mut tab) = crate::ported::hashtable::aliastab_lock().write() {
                     tab.clear();
-                    for (name, text) in snap.aliases {
+                    for (name, text, flags) in snap.aliases {
                         tab.add(crate::ported::zsh_h::alias {
                             node: crate::ported::zsh_h::hashnode {
                                 next: None,
                                 nam: name,
-                                flags: 0,
+                                // ALIAS_GLOBAL / DISABLED must survive the
+                                // round-trip — flags:0 turned every global
+                                // alias regular on ANY subshell exit.
+                                flags,
                             },
                             text,
                             inuse: 0,
