@@ -4312,7 +4312,7 @@ impl ZshCompiler {
         // the `=~` arm wraps its RHS in those markers precisely to reach
         // singsub semantics. Same spelling as `has_quote_markers` (line 4118).
         let in_prefork_single = self.dq_context_depth > 0
-            || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+            || word_is_single_dq_span(s);
         let trigger_brace = !in_prefork_single && looks_like_brace_expansion(&untoked);
 
         // Process substitution `<(cmd)` / `>(cmd)`. The lexer marks the
@@ -4453,7 +4453,7 @@ impl ZshCompiler {
             // Array. Without the `*` fix, `v="$*"` captured only the
             // first positional because pop_args flattens Array.
             let in_dq =
-                self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                self.dq_context_depth > 0 || word_is_single_dq_span(s);
             self.builder.emit(Op::LoadConst(idx), 0);
             // c:Src/exec.c:2554 addvars — a SCALAR assignment RHS is expanded
             // with PREFORK_SINGLE, so it is NOT word-split even under
@@ -4625,7 +4625,7 @@ impl ZshCompiler {
                 // `a=(1 "" 3); "$a"` → `1  3`. Detect quoting via dq-depth
                 // OR raw token DQ-wrapping (same dual check as `$@`/`$*`).
                 let in_dq =
-                    self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                    self.dq_context_depth > 0 || word_is_single_dq_span(s);
                 // c:Src/exec.c:2554 — a SCALAR assignment RHS is expanded with
                 // PREFORK_SINGLE, so it is NOT word-split under SH_WORD_SPLIT.
                 // GET_VAR applies the split (which also trims leading/trailing
@@ -4956,7 +4956,7 @@ impl ZshCompiler {
                 // token wrapped in DQ markers (`\u{9e}…\u{9e}`) — the
                 // brace form arrives 9e-wrapped with dq_depth==0.
                 let in_dq =
-                    self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                    self.dq_context_depth > 0 || word_is_single_dq_span(s);
                 let bid = if in_dq {
                     crate::vm_helper::BUILTIN_GET_VAR_DQ
                 } else {
@@ -5138,7 +5138,7 @@ impl ZshCompiler {
                     // here, so pass them through as argc — see
                     // BUILTIN_FORCE_SPLIT's argc contract.
                     let in_dq = self.dq_context_depth > 0
-                        || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+                        || word_is_single_dq_span(s);
                     let keep_empties = in_dq || self.word_seg_depth > 0;
                     let argc = if keep_empties { 1 } else { 0 };
                     self.builder.emit(
@@ -5173,7 +5173,7 @@ impl ZshCompiler {
         // single-string semantics intact. Bug #428.
         if !has_bnull {
             let raw_dq_for_splice =
-                s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                word_is_single_dq_span(s);
             let dq_for_splice = raw_dq_for_splice || self.dq_context_depth > 0;
             let is_star = array_splice_is_star(&untoked);
             // Force-join via the fast path only when (a) it's
@@ -5311,7 +5311,7 @@ impl ZshCompiler {
                 // DQ context: either the raw word is itself DQ-wrapped,
                 // OR we're recursing into an Expansion segment from a
                 // DQ-wrapped parent (tracked via dq_context_depth).
-                let dq_wrapped = (s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2)
+                let dq_wrapped = (word_is_single_dq_span(s))
                     || self.dq_context_depth > 0;
                 if dq_wrapped {
                     // Fall through to the default text-expansion path.
@@ -5798,7 +5798,7 @@ impl ZshCompiler {
                         // (zshrs printed "ha he hi" for
                         // `"${(M)a:#h?}"` where zsh prints "").
                         let in_dq_ba =
-                            (s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2)
+                            (word_is_single_dq_span(s))
                                 || self.dq_context_depth > 0;
                         let body_text = if in_dq_ba {
                             format!("\u{8c}{}", inner_safe)
@@ -5839,7 +5839,7 @@ impl ZshCompiler {
         // ([sepjoin(a), b[0]]) and long-zip emits pairs of
         // (sepjoin(a), b[i]). The fast path still applies — pass
         // DQ flag through so paramsubst_to_value flips qt on.
-        let raw_dq_word_zip = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+        let raw_dq_word_zip = word_is_single_dq_span(s);
         let in_dq = raw_dq_word_zip || self.dq_context_depth > 0;
         // Verify the `${...}` spans the WHOLE word (i.e. there's no
         // trailing text after the matching close brace). For multi-
@@ -6063,7 +6063,7 @@ impl ZshCompiler {
         // breaking DQ semantics. Fall through to the default
         // text-expansion path which routes through multsub →
         // paramsubst with qt propagated via Qstring tokens.
-        let raw_dq_word = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+        let raw_dq_word = word_is_single_dq_span(s);
         let in_dq = raw_dq_word || self.dq_context_depth > 0;
         if (!has_bnull || modifier_safe_with_bnull) && !in_dq {
             if let Some(mut modifier) = parsed_mod {
@@ -6098,7 +6098,7 @@ impl ZshCompiler {
                 // segments-loop above. Without this, the strip
                 // fast path passed dq=0 to BUILTIN_PARAM_STRIP
                 // even inside `"..."`.
-                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                let raw_dq = word_is_single_dq_span(s);
                 if raw_dq {
                     self.dq_context_depth += 1;
                 }
@@ -6287,33 +6287,7 @@ impl ZshCompiler {
                 // Dnulls NESTED inside `${…}` — `"a${x:-"n"}b"` — sit at
                 // depth>0 and are ignored so the outer wrap still counts.
                 let dq_marker_wrap = {
-                    use crate::ported::zsh_h::{
-                        Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar,
-                        Outparmath,
-                    };
-                    let chars: Vec<char> = s.chars().collect();
-                    if chars.len() >= 2
-                        && chars[0] == '\u{9e}'
-                        && *chars.last().unwrap() == '\u{9e}'
-                    {
-                        let mut depth = 0i32;
-                        let mut depth0_dnull = 0usize;
-                        for &c in &chars {
-                            match c {
-                                Inpar | Inparmath | Inbrace | Inbrack => depth += 1,
-                                Outpar | Outparmath | Outbrace | Outbrack => {
-                                    if depth > 0 {
-                                        depth -= 1;
-                                    }
-                                }
-                                '\u{9e}' if depth == 0 => depth0_dnull += 1,
-                                _ => {}
-                            }
-                        }
-                        depth0_dnull == 2
-                    } else {
-                        false
-                    }
+                    word_is_single_dq_span(s)
                 };
                 let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
                 let concat_builtin = if has_splice_seg {
@@ -9675,6 +9649,41 @@ fn is_distribute_expansion(s: &str) -> bool {
         }
     }
     false
+}
+
+/// True when the tokenized word `s` is a SINGLE double-quoted span
+/// wrapping everything — i.e. genuinely DQ-context. `"${x}"` (one outer
+/// Dnull pair) is; `""${x}""` and `"x"${a}"y"` (SIBLING spans that merely
+/// start and end with a Dnull) are NOT — their middle expansion is
+/// UNQUOTED. The naive `starts_with(Dnull) && ends_with(Dnull)` test
+/// misfires on the sibling case and joined an array that zsh splits
+/// (`""${a}""` for a=(1 2 3) → 3 words, not 1). Count Dnull markers only
+/// at brace/bracket/paren depth 0: a real single wrap has exactly 2,
+/// sibling spans have 4+, and Dnulls NESTED inside `${…}` (`"a${x:-"n"}b"`)
+/// sit at depth>0 and are ignored so the outer wrap still counts.
+fn word_is_single_dq_span(s: &str) -> bool {
+    use crate::ported::zsh_h::{
+        Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar, Outparmath,
+    };
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() < 2 || chars[0] != '\u{9e}' || *chars.last().unwrap() != '\u{9e}' {
+        return false;
+    }
+    let mut depth = 0i32;
+    let mut depth0_dnull = 0usize;
+    for &c in &chars {
+        match c {
+            Inpar | Inparmath | Inbrace | Inbrack => depth += 1,
+            Outpar | Outparmath | Outbrace | Outbrack => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            '\u{9e}' if depth == 0 => depth0_dnull += 1,
+            _ => {}
+        }
+    }
+    depth0_dnull == 2
 }
 
 fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
