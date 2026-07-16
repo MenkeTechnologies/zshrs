@@ -1617,6 +1617,17 @@ set_pparams
 unregister_function
 cmdsubst_outer_stdout
 
+# SQLite history index accessors (same live-executor-accessor class as
+# the block above). zshrs's persistent history store is the SQLite
+# index + FTS + text mirror owned by ShellExecutor.history
+# (src/extensions/history.rs) — a zshrs extension with no C analog (C
+# zsh has only the ring + flat $HISTFILE). hend() calls _add for every
+# accepted interactive line; preprompt() calls _finish to stamp
+# duration + exit status after execode returns. Both carry the
+# RUST-ONLY WARNING block and hide no port gap.
+history_sqlite_add
+history_sqlite_finish
+
 # Approximate-match `(#aN)` inner walker for P_EXACTLY arms (pattern.c
 # inlines the edit-operation backtracking into the P_EXACTLY case at
 # c:2737-2779). Rust port factors the per-byte walk + sub/ins/del
