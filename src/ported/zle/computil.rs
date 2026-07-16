@@ -7923,8 +7923,14 @@ pub fn bin_compfiles(
                 zwarnnam(nam, &format!("invalid option: {}", args[0]));
                 return 1;
             }
+            // c:5019-5022 — `-p` needs args[1]..args[7] (len >= 8);
+            // `-P` needs args[1]..args[6] (len >= 7). `<=` here was an
+            // off-by-one that rejected minimum-length calls, breaking
+            // every `_path_files` `-P` call (exactly 7 args) and `-p`
+            // with a single pattern (exactly 8): `_files:compfiles:1:
+            // too few arguments` on `ls -<TAB>`.
             let required = if sub == b'p' { 8 } else { 7 };
-            if args.len() <= required {
+            if args.len() < required {
                 // c:4990
                 zwarnnam(nam, "too few arguments");
                 return 1;

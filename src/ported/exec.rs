@@ -635,6 +635,26 @@ pub fn loadautofn(
     let path = match getfpfunc(&name, &mut dir_path, loaddir_spec.as_deref(), 0, &mut dump_hit) {
         Some(p) => p,
         None => {
+            // !!! WARNING: RUST-ONLY BRANCH — NO DIRECT C COUNTERPART !!!
+            // compsys ships as native Rust functions (src/compsys/router.rs),
+            // so names like `_main_complete` have no definition file in
+            // $fpath. C zsh always loads them from files; zshrs must let
+            // `autoload +X -Uz _main_complete` (e.g. fzf-tab via zinit's
+            // :zinit-tmp-subst-autoload, zinit.zsh:356) succeed without one.
+            // Mark the stub loaded and return success — call-time dispatch
+            // short-circuits to the native fn (vm_helper.rs:2276), so no
+            // funcdef/body is needed.
+            if crate::compsys::router::try_rust_dispatch(&name).is_some() {
+                unsafe {
+                    (*shf).node.flags &= !(PM_UNDEFINED as i32);
+                }
+                if let Ok(mut tab) = shfunctab_lock().write() {
+                    if let Some(existing) = tab.get_mut(&name) {
+                        existing.node.flags &= !(PM_UNDEFINED as i32);
+                    }
+                }
+                return 0;
+            }
             // c:Src/exec.c:5713-5719 — file not found path. C:
             //   `if (prog == &dummy_eprog) {
             //        locallevel--;
