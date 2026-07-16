@@ -3218,3 +3218,57 @@ mod remnulargs_meta_aware {
         assert_parity(r#"a=(x '' y); print -rl -- $a | wc -l"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// AD. An expansion flanked by SIBLING empty double-quoted spans stays
+//     unquoted: `""${a}""`.
+//
+// Many word-compile fast paths decided DQ-context with a naive
+// `starts_with(Dnull) && ends_with(Dnull)` test. That misfires on SIBLING
+// spans — `""${a}""` (two empty `""`) starts and ends with a Dnull but its
+// middle `${a}` is UNQUOTED, so zsh word-splits the array (a=(1 2 3) → 3
+// words) where the naive test joined it to one. The concat path already
+// used a depth-aware count (my earlier "x"${a}"y" fix); this extracts it
+// into word_is_single_dq_span and applies it to all 12 DQ-context
+// fast paths (${NAME}, ${(flags)…}, ${a[@]}, set-op/zip, …). A real single
+// wrap `"${a}"` (2 depth-0 Dnulls) still joins; sibling spans (4+) split.
+// ─────────────────────────────────────────────────────────────────────
+mod sibling_empty_dq_spans {
+    use super::*;
+
+    /// zsh: 3 words. Was 1 (joined) before the fix.
+    #[test]
+    fn empty_quotes_flank_array_splits() {
+        assert_parity(r#"a=(1 2 3); print -rl -- ""${a}""#);
+    }
+
+    /// Nested flag + set-op in empty quotes (the fuzz seed).
+    #[test]
+    fn empty_quotes_nested_join_setop() {
+        assert_parity(r#"a=(1 2 3); b=(2); print -r -- ""${(j:,:)${a:|b}}""#);
+    }
+
+    /// `(j)` join inside empty quotes still applies.
+    #[test]
+    fn empty_quotes_join_flag() {
+        assert_parity(r#"a=(1 2 3); print -r -- ""${(j:-:)a}""#);
+    }
+
+    /// Genuine DQ wrap `"${a}"` must STILL join (regression guard).
+    #[test]
+    fn real_dq_wrap_still_joins() {
+        assert_parity(r#"a=(1 2 3); print -rl -- "${a}" | wc -l"#);
+    }
+
+    /// DQ nested set-op stays scalar.
+    #[test]
+    fn real_dq_nested_setop_joins() {
+        assert_parity(r#"a=(1 2); b=(2); print -r -- "${(j:,:)${a:|b}}""#);
+    }
+
+    /// `"${a[@]}"` still splats to N words.
+    #[test]
+    fn real_dq_splat_unaffected() {
+        assert_parity(r#"a=(1 2 3); print -rl -- "${a[@]}" | wc -l"#);
+    }
+}
