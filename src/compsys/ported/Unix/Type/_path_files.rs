@@ -31,8 +31,7 @@
 //! `(#b)` backreference substitutions and the sh:201 dir-detect glob —
 //! are implemented with the closest available primitive and commented.
 //! `compfiles -p$cfopt` emits the shell's exact option token (`-p` or
-//! `-p-`); note the current `bin_compfiles` expects `-p--` for the
-//! noopt form (discrepancy vs. C, which accepts `-p-`).
+//! `-p-`), matching C's accepted forms (computil.c:5011-5015).
 
 use crate::ported::exec::dispatch_function_call;
 use crate::ported::glob::{tokenize, zglob};
