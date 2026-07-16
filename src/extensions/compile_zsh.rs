@@ -6205,8 +6205,49 @@ impl ZshCompiler {
                 // already bumped `dq_context_depth` (e.g. cond's RHS
                 // pattern wants variable expansion but no filesystem
                 // glob — `[[ "$PATH" != *"$SCRIPTS"* ]]`).
-                let dq_marker_wrap =
-                    s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                // A word is WHOLE-WORD double-quoted only when its outer
+                // Dnull (`\u{9e}`) pair is the SINGLE span covering
+                // everything. `s.starts_with && s.ends_with` alone
+                // misfires on sibling spans like `"x"${a}"y"`, where the
+                // leading and trailing Dnulls belong to DIFFERENT quote
+                // runs and the middle `${a}` is UNQUOTED — treating the
+                // word as DQ-wrapped bumped dq_context_depth and made the
+                // unquoted array join to a scalar (zsh splits it:
+                // `"x"$a"y"` for a=(one two three) → `xone two threey`,
+                // three words). Count Dnulls only at brace/bracket/paren
+                // depth 0: a genuine single wrap has exactly 2 (`"a${x}b"`
+                // → 2), sibling spans have 4+ (`"x"${a}"y"` → 4), and
+                // Dnulls NESTED inside `${…}` — `"a${x:-"n"}b"` — sit at
+                // depth>0 and are ignored so the outer wrap still counts.
+                let dq_marker_wrap = {
+                    use crate::ported::zsh_h::{
+                        Inbrace, Inbrack, Inpar, Inparmath, Outbrace, Outbrack, Outpar,
+                        Outparmath,
+                    };
+                    let chars: Vec<char> = s.chars().collect();
+                    if chars.len() >= 2
+                        && chars[0] == '\u{9e}'
+                        && *chars.last().unwrap() == '\u{9e}'
+                    {
+                        let mut depth = 0i32;
+                        let mut depth0_dnull = 0usize;
+                        for &c in &chars {
+                            match c {
+                                Inpar | Inparmath | Inbrace | Inbrack => depth += 1,
+                                Outpar | Outparmath | Outbrace | Outbrack => {
+                                    if depth > 0 {
+                                        depth -= 1;
+                                    }
+                                }
+                                '\u{9e}' if depth == 0 => depth0_dnull += 1,
+                                _ => {}
+                            }
+                        }
+                        depth0_dnull == 2
+                    } else {
+                        false
+                    }
+                };
                 let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
                 let concat_builtin = if has_splice_seg {
                     Some(crate::vm_helper::BUILTIN_CONCAT_SPLICE)
