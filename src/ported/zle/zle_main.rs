@@ -252,6 +252,14 @@ pub fn ungetbytes_unmeta(s: &[u8]) {
 // `ZLECONTEXT` is now an `AtomicI32` static matching C's `int
 // zlecontext` (zle_main.c:163).
 
+// RUST-ONLY sync watermarks for the zleread ZLE-history adapter (see
+// the ZLRF_HISTORY block in zleread): the last (firsthist, curhist)
+// pair the navigation list was synced against. C needs none of this —
+// its ZLE walks the live ring; the adapter list must not be rebuilt
+// (566k entries) on every prompt.
+static ZLE_HIST_SYNC_FIRST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+static ZLE_HIST_SYNC_CUR: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+
 impl Default for modifier {
     fn default() -> Self {
         // c:1604 initmodifier — mult=1, tmult=1, base=10.
@@ -1012,21 +1020,87 @@ pub fn zleread(
         let first = crate::ported::hist::firsthist();
         let cur = crate::ported::hist::curhist.load(SeqCst);
         let mut h = history().lock().unwrap();
-        h.entries.clear();
-        let mut ev = first;
-        while ev <= cur {
-            if let Some(he) = crate::ported::hist::quietgethist(ev) {
-                let t = he.node.nam;
-                if !t.is_empty() {
-                    h.entries.push(crate::ported::zle::zle_hist::HistEntry {
-                        line: t,
-                        num: ev,
-                        time: None,
-                    });
-                }
+        // INCREMENTAL sync. The original rebuild cleared and re-walked
+        // the ENTIRE ring on EVERY zleread — with a 566k-entry history
+        // that was 566k binary searches + entry clones PER PROMPT
+        // (~5s of dead time before each prompt returned; C has no
+        // rebuild at all — its ZLE navigates the live ring lazily).
+        // The session ring is append-only between line edits, so:
+        //   - same (first, cur) as last sync → nothing to do;
+        //   - cur advanced → append only the new events;
+        //   - first moved / cur went backwards (HIST_IGNORE trims,
+        //     history -p, SHARE_HISTORY import) → full rebuild.
+        let last_first = ZLE_HIST_SYNC_FIRST.load(SeqCst);
+        let last_cur = ZLE_HIST_SYNC_CUR.load(SeqCst);
+        // Still-synced when the window only moved FORWARD: cur grows
+        // by one per accepted line and, at HISTSIZE capacity, first
+        // advances in lockstep (ring trim). Handle the trim by
+        // draining the aged entries off the FRONT of the list —
+        // rebuilding on every first-advance would be a full 566k pass
+        // per prompt again.
+        let synced =
+            last_cur >= 0 && !h.entries.is_empty() && first >= last_first && cur >= last_cur;
+        let (start_ev, full) = if synced {
+            if first > last_first {
+                let cut = h.entries.partition_point(|e| e.num < first);
+                h.entries.drain(..cut);
             }
-            ev += 1;
+            (last_cur + 1, false)
+        } else {
+            (first, true)
+        };
+        if full {
+            // One O(n) pass over the ring directly — per-event
+            // `quietgethist` would be n binary searches + n FULL entry
+            // clones (words vecs included): ~8s at 566k entries for
+            // the first prompt. Only the line string is needed here.
+            h.entries.clear();
+            let ring = crate::ported::hist::hist_ring.lock().unwrap();
+            h.entries.reserve(ring.len());
+            let mut items: Vec<(i64, String)> = ring
+                .iter()
+                .filter(|he| {
+                    he.histnum >= first && he.histnum <= cur && !he.node.nam.is_empty()
+                })
+                .map(|he| (he.histnum, he.node.nam.clone()))
+                .collect();
+            drop(ring);
+            // Ring storage order is an implementation detail; the
+            // navigation list contract is ascending event number.
+            items.sort_unstable_by_key(|(n, _)| *n);
+            for (num, line) in items {
+                h.entries.push(crate::ported::zle::zle_hist::HistEntry {
+                    line,
+                    num,
+                    time: None,
+                });
+            }
+        } else {
+            let mut ev = start_ev;
+            while ev <= cur {
+                if let Some(he) = crate::ported::hist::quietgethist(ev) {
+                    let t = he.node.nam;
+                    // Dedupe guard: an event can only append once
+                    // (protects against a committed `cur` at sync time
+                    // being re-fetched by the next prompt's pass).
+                    if !t.is_empty() && h.entries.last().map_or(true, |e| e.num < ev) {
+                        h.entries.push(crate::ported::zle::zle_hist::HistEntry {
+                            line: t,
+                            num: ev,
+                            time: None,
+                        });
+                    }
+                }
+                ev += 1;
+            }
         }
+        ZLE_HIST_SYNC_FIRST.store(first, SeqCst);
+        // `cur` is the IN-FLIGHT event (curhist points at the line being
+        // edited; its text commits only after execution), so it can never
+        // be synced now. Watermark one behind so the next prompt's append
+        // pass re-fetches it — storing `cur` skipped every accepted
+        // command and up-arrow recalled stale entries.
+        ZLE_HIST_SYNC_CUR.store(cur - 1, SeqCst);
         h.cursor = h.entries.len(); // start at the live (newest) end
         h.saved_line = None;
     }
