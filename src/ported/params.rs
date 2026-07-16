@@ -2838,22 +2838,32 @@ pub(crate) fn getarg<'a>(
         //         lookup. `(K)*` returns "" because there's no key
         //         literally named "*".
         //   r/R/i/I — value path: pprog=patcompile, glob/exact.
+        // c:params.c:1697 — `pprog = patcompile(s, 0, NULL)` runs ONCE
+        // before the scan loop. Compiling inside the per-entry compare
+        // re-tokenized + re-compiled the pattern for EVERY element —
+        // `${history[(R)(#i)*pat*]}` over a 566k-entry history ran
+        // ~4 CPU-minutes per hsmw ^R (the reported freeze) instead of
+        // one compile + 566k pattry calls.
+        let compiled_pat = if exact || (match_against_key && !key_glob) {
+            None
+        } else {
+            patcompile(
+                &{
+                    let mut __pat_tok = (pat).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_HEAPDUP as i32,
+                None,
+            )
+        };
         let key_compare = |target: &str| -> bool {
             if exact || (match_against_key && !key_glob) {
                 // (e) literal, and k/K exact key compare (no glob).
                 target == pat
             } else {
                 // i/I glob the key; r/R glob the value.
-                patcompile(
-                    &{
-                        let mut __pat_tok = (pat).to_string();
-                        crate::ported::glob::tokenize(&mut __pat_tok);
-                        __pat_tok
-                    },
-                    PAT_HEAPDUP as i32,
-                    None,
-                )
-                .map_or(false, |p| pattry(&p, target))
+                compiled_pat.as_ref().map_or(false, |p| pattry(p, target))
             }
         };
         if return_all {
@@ -3011,21 +3021,27 @@ pub(crate) fn getarg<'a>(
             Box::new(arr.iter().enumerate().skip(s_idx))
         };
         // c:1758 — `!--num` skips matches until the Nth.
+        // c:1697 — pattern compiled ONCE before the scan (see the
+        // assoc arm above; same per-element recompile hazard).
+        let compiled_arr_pat = if exact {
+            None
+        } else {
+            patcompile(
+                &{
+                    let mut __pat_tok = (pat_used).to_string();
+                    crate::ported::glob::tokenize(&mut __pat_tok);
+                    __pat_tok
+                },
+                PAT_HEAPDUP as i32,
+                None,
+            )
+        };
         let mut remaining = num;
         for (i, s) in iter {
             let hit = if exact {
                 s == pat
             } else {
-                patcompile(
-                    &{
-                        let mut __pat_tok = (pat_used).to_string();
-                        crate::ported::glob::tokenize(&mut __pat_tok);
-                        __pat_tok
-                    },
-                    PAT_HEAPDUP as i32,
-                    None,
-                )
-                .map_or(false, |p| pattry(&p, s))
+                compiled_arr_pat.as_ref().map_or(false, |p| pattry(p, s))
             };
             if hit {
                 remaining -= 1;
@@ -3124,6 +3140,22 @@ pub(crate) fn getarg<'a>(
             } else {
                 None
             };
+            // c:1697 — compile the search pattern ONCE (the scalar
+            // char-search tries O(n²) spans; a per-span recompile is
+            // quadratic × compile cost — same hazard as the assoc arm).
+            let compiled_span_pat = if flags.contains('e') {
+                None
+            } else {
+                patcompile(
+                    &{
+                        let mut __pat_tok = (pat).to_string();
+                        crate::ported::glob::tokenize(&mut __pat_tok);
+                        __pat_tok
+                    },
+                    PAT_HEAPDUP as i32,
+                    None,
+                )
+            };
             let mut found: Option<(usize, usize)> = None;
             let mut remaining = num;
             'outer: for start in positions {
@@ -3141,16 +3173,7 @@ pub(crate) fn getarg<'a>(
                     let hit = if flags.contains('e') {
                         cand == pat
                     } else {
-                        patcompile(
-                            &{
-                                let mut __pat_tok = (pat).to_string();
-                                crate::ported::glob::tokenize(&mut __pat_tok);
-                                __pat_tok
-                            },
-                            PAT_HEAPDUP as i32,
-                            None,
-                        )
-                        .map_or(false, |p| pattry(&p, &cand))
+                        compiled_span_pat.as_ref().map_or(false, |p| pattry(p, &cand))
                     };
                     if hit {
                         remaining -= 1;

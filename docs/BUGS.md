@@ -19,6 +19,49 @@ CI green pending the underlying fix.
 
 ---
 
+## #672 — hsmw ^R froze ~4 CPU-minutes: pattern engine hot-loop pathologies — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** ^R (history-search-multi-word) against the real 566k-entry
+history — the shell pinned a core for ~4 minutes per invocation
+(`sample`: `patmatch`/`glob`/`zshtokenize` under `execzlefunc`). Headless:
+`${history[(R)(#i)*pat*]}` over 50k synthetic entries: zshrs 0.74s vs
+zsh 0.014s (53×), linear in n → minutes at 566k with real content.
+
+**Three defects, cumulative:**
+
+1. **Per-entry pattern recompile** — `getarg`'s (r/R/i/I) subscript
+   compare closure ran `tokenize` + `patcompile` for EVERY element;
+   C compiles once before the scan (params.c:1697). Hoisted in all
+   three arms (assoc scan, array scan, scalar span search — the last
+   was per-SPAN inside an O(n²) walk).
+2. **Two heap allocations per character** — patmatch's `(#i)` multibyte
+   fold did `a.to_lowercase().collect::<String>()` for BOTH sides of
+   every char compare (~45M allocations per 566k scan, RawVec::reserve
+   dominated the profile). Now: equal-char short-circuit, ASCII fold,
+   allocation-free `Iterator::eq` for the Unicode tail. 2×.
+3. **No fast path for `*literal*`** — the ubiquitous shape walked the
+   full backtracking matcher per position per entry. `pattryrefs` now
+   probes the compiled program (sole-BRANCH → [GFLAGS] STAR EXACTLY+
+   STAR END, flags ⊆ IGNCASE|MULTIBYTE, no captures requested) and runs
+   a substring scan instead — exact bytes for the plain form; ASCII
+   byte-fold for `(#i)` ONLY when pattern and subject are pure ASCII
+   (byte-fold ≡ the matcher's char fold there); anything else falls
+   through to the full matcher. C's `mustoff` prefilter
+   (pattern.c:2460) reads the same spirit but declines under globflags.
+
+**Result:** 50k scan 0.74s → 0.17s, 100k 1.48s → 0.34s (4×; ~12× left
+vs zsh, remaining cost in the paramsubst/getarg layer). Live ^R + typed
+search against the 566k history: shell returns to 0% CPU in ~2s instead
+of 4 minutes. Parity: glob/cond/subst/pattern/extended_glob/case —
+1376 tests, no new failures; 6 fast-path regression tests pin semantics
+(igncase, non-ASCII fallback, alternation/anchor shapes excluded, the
+hsmw `(R)` scan end-to-end). hsmw's results DISPLAY (recursive-edit
+rendering) is still the separately-tracked gap — the freeze is gone.
+
+---
+
 ## #671 — escaped `\$` in cond patterns treated as substitution — f-sy-h math error + 100% CPU infinite loop — FIXED
 
 **Status:** `fixed`

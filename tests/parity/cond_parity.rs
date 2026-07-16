@@ -793,3 +793,56 @@ fi"#,
         assert_parity(r#"H=foo; [[ foobar = $H* ]] && print yes || print no"#);
     }
 }
+
+mod star_literal_star_fast_path {
+    //! pattryrefs takes a substring fast path for `*literal*` (and
+    //! `(#i)*literal*` when pattern+subject are ASCII) — the shape
+    //! history-search-multi-word scans 566k history entries with.
+    //! These pin the fast path to the full matcher's semantics.
+    use super::*;
+
+    #[test]
+    fn star_lit_star_basic() {
+        assert_parity(r#"v="abc needle xyz"; [[ $v = *needle* ]] && print y || print n; [[ $v = *missing* ]] && print y || print n"#);
+    }
+
+    #[test]
+    fn igncase_ascii() {
+        assert_parity(
+            r#"setopt extendedglob; v="abc NeEdLe xyz"; [[ $v = (#i)*needle* ]] && print y || print n; [[ $v = (#i)*NEEDLE* ]] && print y || print n; [[ $v = (#i)*nope* ]] && print y || print n"#,
+        );
+    }
+
+    #[test]
+    fn igncase_nonascii_falls_back() {
+        assert_parity(
+            r#"setopt extendedglob; v="pré Über post"; [[ $v = (#i)*über* ]] && print y || print n; [[ $v = (#i)*PRÉ* ]] && print y || print n"#,
+        );
+    }
+
+    #[test]
+    fn edge_positions_and_empty() {
+        assert_parity(
+            r#"v="needle"; [[ $v = *needle* ]] && print y || print n; [[ "" = ** ]] && print y || print n; [[ needle2 = *needle* ]] && print y || print n; [[ 2needle = *needle* ]] && print y || print n"#,
+        );
+    }
+
+    /// Shapes that must NOT take the fast path still match correctly.
+    #[test]
+    fn non_fastpath_shapes_unaffected() {
+        assert_parity(
+            r#"setopt extendedglob; v="a needle b"; [[ $v = *need(le|il)* ]] && print y || print n; [[ $v = *needle*b ]] && print y || print n; [[ $v = (#b)*(needle)* ]] && print m=$match[1] || print n"#,
+        );
+    }
+
+    /// The hsmw scan shape end-to-end on $history.
+    #[test]
+    fn history_r_subscript_scan() {
+        assert_parity(
+            r#"setopt extendedglob
+fc -p /dev/null 100 100 2>/dev/null
+print -s "echo alpha one"; print -s "echo beta two"; print -s "echo gamma three"
+print -r -- "${history[(R)(#i)*BETA*]}""#,
+        );
+    }
+}
