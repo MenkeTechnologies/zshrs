@@ -63,25 +63,21 @@ use crate::ported::zsh_h::{
 pub fn makezleparams(_ro: i32) {
     // c:194
 
-    let line = crate::ported::zle::compcore::ZLELINE
-        .get_or_init(|| Mutex::new(String::new()))
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default();
-    let cs = crate::ported::zle::compcore::ZLECS.load(Ordering::Relaxed) as usize;
-    let (lbuf, rbuf) = if cs <= line.len() {
-        (line[..cs].to_string(), line[cs..].to_string())
-    } else {
-        (line.clone(), String::new())
-    };
+    // Snapshot through the canonical GSU getter ports (get_buffer /
+    // get_lbuffer / get_rbuffer / get_cursor read the LIVE editor
+    // state in zle_main::ZLELINE / ZLECS). The previous version read
+    // compcore::ZLELINE — completion's staging copy, which is EMPTY
+    // during ordinary interactive editing — so every user widget saw
+    // `$BUFFER == ""` and zpwr's MagicEnter never accepted the line.
+    let line = get_buffer(); // c:zleparams[0] getfn
+    let lbuf = get_lbuffer(); // c:zleparams[1] getfn
+    let rbuf = get_rbuffer(); // c:zleparams[2] getfn
+    let cs = get_cursor(); // c:zleparams[3] getfn
 
     let _ = setsparam("BUFFER", &line); // c:zleparams[0]
     let _ = setsparam("LBUFFER", &lbuf); // c:zleparams[1]
     let _ = setsparam("RBUFFER", &rbuf); // c:zleparams[2]
-    let _ = setiparam(
-        "CURSOR",
-        crate::ported::zle::compcore::ZLECS.load(Ordering::Relaxed) as i64,
-    ); // c:zleparams[3]
+    let _ = setiparam("CURSOR", cs as i64); // c:zleparams[3]
     let _ = setiparam("NUMERIC", ZMULT.load(Ordering::Relaxed) as i64); // c:zleparams[7]
                                                                         // $KEYMAP — currently-active keymap name (zle_params.c backs this
                                                                         // with the get_keymap getfn). Seed it here so a widget that reads

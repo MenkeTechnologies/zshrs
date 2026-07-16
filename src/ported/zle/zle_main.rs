@@ -1218,6 +1218,10 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
     });
     let call_name = shfunc_name.as_deref().unwrap_or(name);
     if let Some(mut shf) = getshfunc(call_name) {
+        // c:1514 — `int osc = sfcontext`.
+        let osc = crate::ported::exec::sfcontext.load(Ordering::Relaxed);
+        // c:1515 — `int oxt = isset(XTRACE);`.
+        let oxt = crate::ported::zsh_h::isset(crate::ported::zsh_h::XTRACE);
         // c:1537 — `ret = doshfunc(shf, largs, 1);`. Direct doshfunc
         // call mirrors C — argv[0] = widget name, argv[1..] = args.
         let mut largs: Vec<String> = vec![call_name.to_string()];
@@ -1227,7 +1231,83 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         let body_runner = move || -> i32 {
             crate::ported::exec::run_function_body(&name_for_body, &body_args).unwrap_or(0)
         };
-        let rc = crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner);
+        // c:1533 — `startparamscope();`. Same fresh-table shape as
+        // zlebeforetrap (c:2107) below.
+        let mut local_scope: crate::ported::zsh_h::HashTable =
+            Box::new(crate::ported::zsh_h::hashtable {
+                hsize: 0,
+                ct: 0,
+                nodes: Vec::new(),
+                tmpdata: 0,
+                hash: None,
+                emptytable: None,
+                filltable: None,
+                cmpnodes: None,
+                addnode: None,
+                getnode: None,
+                getnode2: None,
+                removenode: None,
+                disablenode: None,
+                enablenode: None,
+                freenode: None,
+                printnode: None,
+                scantab: None,
+            });
+        crate::ported::params::startparamscope(&mut local_scope); // c:1533
+        // c:1534 — `makezleparams(0);` — expose $BUFFER / $LBUFFER /
+        // $RBUFFER / $CURSOR / … to the widget body. Without this,
+        // every user widget saw an EMPTY $BUFFER: zpwr's MagicEnter
+        // (`[[ -z $BUFFER ]]`) took its empty-line branch on every
+        // Enter press and never accepted the line — the Enter key
+        // appeared dead with the zpwr ZLE overrides loaded.
+        makezleparams(0); // c:1534
+        // !!! RUST-ONLY WRITE-BACK SNAPSHOT !!! — C's makezleparams
+        // installs GSU-backed specials (writes go live via
+        // set_buffer/set_cursor). The Rust port snapshots via
+        // setsparam, so widget mutations land in the paramtab only;
+        // diff pre/post below and apply changes to the real editor
+        // state (zsh-expand and friends rewrite $BUFFER / $LBUFFER).
+        let pre_buf = crate::ported::params::getsparam("BUFFER").unwrap_or_default();
+        let pre_lbuf = crate::ported::params::getsparam("LBUFFER").unwrap_or_default();
+        let pre_rbuf = crate::ported::params::getsparam("RBUFFER").unwrap_or_default();
+        let pre_cur = crate::ported::params::getiparam("CURSOR");
+        // c:1535 — `sfcontext = SFC_WIDGET;`.
+        crate::ported::exec::sfcontext
+            .store(crate::ported::zsh_h::SFC_WIDGET, Ordering::Relaxed); // c:1535
+        // c:1536 — `opts[XTRACE] = 0;`.
+        crate::ported::options::opt_state_set(
+            &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::XTRACE),
+            false,
+        ); // c:1536
+        let rc = crate::ported::exec::doshfunc(&mut shf, largs, true, body_runner); // c:1537
+        // c:1538 — `opts[XTRACE] = oxt;`.
+        crate::ported::options::opt_state_set(
+            &crate::ported::zsh_h::opt_name(crate::ported::zsh_h::XTRACE),
+            oxt,
+        ); // c:1538
+        // c:1539 — `sfcontext = osc;`.
+        crate::ported::exec::sfcontext.store(osc, Ordering::Relaxed); // c:1539
+        // RUST-ONLY WRITE-BACK (see snapshot note above): $BUFFER
+        // wins over $LBUFFER/$RBUFFER when both changed; set_buffer
+        // clamps ZLECS via ZLELL. An LBUFFER/RBUFFER edit places the
+        // cursor at the join point (matches C set_lbuffer /
+        // set_rbuffer, zle_params.c:280-320).
+        let post_buf = crate::ported::params::getsparam("BUFFER").unwrap_or_default();
+        let post_lbuf = crate::ported::params::getsparam("LBUFFER").unwrap_or_default();
+        let post_rbuf = crate::ported::params::getsparam("RBUFFER").unwrap_or_default();
+        let post_cur = crate::ported::params::getiparam("CURSOR");
+        if post_buf != pre_buf {
+            crate::ported::zle::zle_params::set_buffer(&post_buf);
+        } else if post_lbuf != pre_lbuf || post_rbuf != pre_rbuf {
+            let joined = format!("{}{}", post_lbuf, post_rbuf);
+            crate::ported::zle::zle_params::set_buffer(&joined);
+            crate::ported::zle::zle_params::set_cursor(post_lbuf.chars().count());
+        }
+        if post_cur != pre_cur && post_cur >= 0 {
+            crate::ported::zle::zle_params::set_cursor(post_cur as usize);
+        }
+        // c:1540 — `endparamscope();`.
+        crate::ported::params::endparamscope(); // c:1540
         // c:1530 — capture LASTVAL after the call.
         LASTVAL.store(rc, Ordering::Relaxed);
         // c:1597 — restore BINDK.
