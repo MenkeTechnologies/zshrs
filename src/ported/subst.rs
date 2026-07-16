@@ -3742,6 +3742,10 @@ pub fn paramsubst(
         // temp, and counted 1 element instead of 2 chars. The array
         // producing paths below (subst.rs:15864) overwrite this default.
         PARAMSUBST_LF_ARRAY.with(|c| c.set(false));
+        // Same non-leak discipline for the split-derived-array signal the
+        // nested reader consults (see SUBEXP_NONAT_SPLIT). Default false;
+        // the spsep split path sets it when this call is a non-`@` split.
+        SUBEXP_NONAT_SPLIT.with(|c| c.set(false));
         // c:Src/subst.c — when the inner sub-expression is `(P)NAME`
         // (the `(P)` indirect flag referencing a parameter NAME) and that
         // name resolves to an ASSOCIATIVE array, the `(P)` acts as a
@@ -5080,6 +5084,33 @@ pub fn paramsubst(
                     } else {
                         (joined, arr_parts, isarr)
                     };
+                // c:Src/subst.c:100 prefork `else if (!keep) uremnode` — the
+                // nested SUBEXP multsub pass deletes split-derived empty
+                // nodes, so `${${(s.:.):a:}}` is `a` and `${${(s.:.):}}` is
+                // empty, NOT `" a "` / `" "`. The immediate inner set
+                // SUBEXP_NONAT_SPLIT iff it was a NON-`@` forced split;
+                // consume it (reset to false) so it can't leak to an
+                // enclosing reader. Real-array elements and `@`-flagged
+                // splits leave the flag false, so their empties survive
+                // (`${${(v)h}}`, `${${(o)arr}}`, `${${(@s.:.)v}}` all keep).
+                let inner_nonat_split =
+                    SUBEXP_NONAT_SPLIT.with(|c| { let v = c.get(); c.set(false); v });
+                let (joined, arr_parts, isarr) = if inner_nonat_split
+                    && isarr
+                    && arr_parts.iter().any(|p| p.is_empty())
+                {
+                    let filtered: Vec<String> =
+                        arr_parts.into_iter().filter(|p| !p.is_empty()).collect();
+                    // c:Src/subst.c:3922-3927 — 2+ elems stay an array; a
+                    // lone survivor is a scalar; nothing left is empty "".
+                    match filtered.len() {
+                        0 => (String::new(), Vec::new(), false),
+                        1 => (filtered[0].clone(), filtered, false),
+                        _ => (crate::ported::utils::sepjoin(&filtered, None), filtered, true),
+                    }
+                } else {
+                    (joined, arr_parts, isarr)
+                };
                 if isarr {
                     // c:Src/subst.c:2681 — an inner expansion that is
                     // ARRAY-shaped (isarr) stays an array through the nesting
@@ -13957,6 +13988,11 @@ pub fn paramsubst(
         // for the auto-splat block. No-op if not set later.
         if let Some(ref sp) = spsep {
             // c:3950
+            // Signal to the nested sub-expression reader (subst.rs:5041)
+            // that THIS paramsubst is a split — so `${${(s.:.)v}}` drops
+            // the split-derived empties (C prefork deletion). `@`
+            // (nojoin==2) preserves empties, so it must NOT set the flag.
+            SUBEXP_NONAT_SPLIT.with(|c| c.set(nojoin != 2));
             // Per-element split when source is an array — each
             // element splits independently and the results
             // flat-concat. Direct port of subst.c's spsep arm
@@ -18238,6 +18274,18 @@ thread_local! {
     /// Two-or-more elements accidentally worked because `l > 1` alone
     /// selects the array path.
     pub static PARAMSUBST_LF_ARRAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+
+    /// True when the paramsubst that just returned was a NON-`@` forced
+    /// split (`(s:X:)` / `(f)` producing spsep, non-nojoin). The nested
+    /// sub-expression reader (subst.rs:5041) consults it to drop the
+    /// split-derived empty fields, matching C's prefork empty-node
+    /// deletion: `${${(s.:.):a:}}` is `a`, not `" a "`. A REAL array or an
+    /// `@`-flagged split leaves it false so their empties survive (`(@)`
+    /// preserves; `(v)`/`(o)`/`(u)`/bare-array elements are not
+    /// split-derived). Reset to the default at the top of every paramsubst
+    /// (like PARAMSUBST_LF_ARRAY) so a stale value never leaks; read AND
+    /// reset by the nested reader so it reflects only the immediate inner.
+    pub static SUBEXP_NONAT_SPLIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 // =====================================================================

@@ -2901,3 +2901,61 @@ mod flag_expansion_no_array_state_leak {
         assert_parity(r#"v="a b c"; print -r -- ${#${(z)v}}"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// X. A nested SPLIT sub-expression drops its split-derived empty fields.
+//
+// C's nested SUBEXP multsub pass runs prefork, which deletes the empty
+// nodes a forced split (`(s:X:)`/`(f)`) produced (subst.c:100 `else if
+// (!keep) uremnode`): `${${(s.:.):a:}}` is `a`, `${${(s.:.):}}` is empty
+// — NOT `" a "` / `" "`. zshrs kept them and sepjoined to spaces. The
+// inner paramsubst now flags SUBEXP_NONAT_SPLIT when it is a NON-`@`
+// forced split; the nested reader drops empties on that signal. `@`
+// splits and real-array elements (`(v)`/`(o)`/`(u)`/`(P)`/bare) leave the
+// flag false, so their empties survive — matching zsh.
+// ─────────────────────────────────────────────────────────────────────
+mod nested_split_drops_empties {
+    use super::*;
+
+    /// zsh: `[]`. Was `[ ]` (single space) before the fix.
+    #[test]
+    fn all_empty_split_nested() {
+        assert_parity(r#"v=":"; print -r -- "[${${(s.:.)v}}]""#);
+    }
+
+    /// Leading/trailing empties dropped → `a`.
+    #[test]
+    fn lead_trail_empty_split_nested() {
+        assert_parity(r#"v=":a:"; print -r -- "[${${(s.:.)v}}]""#);
+    }
+
+    /// Interior empty dropped → `a b`.
+    #[test]
+    fn interior_empty_split_nested() {
+        assert_parity(r#"v="a::b"; print -r -- "[${${(s.:.)v}}]""#);
+    }
+
+    /// `(j:,:)` join of a nested split drops the empties first → `a,b`.
+    #[test]
+    fn join_of_nested_split() {
+        assert_parity(r#"v="a::b"; print -r -- "[${(j:,:)${(s.:.)v}}]""#);
+    }
+
+    /// `@`-flagged split KEEPS its empties (regression guard).
+    #[test]
+    fn at_split_keeps_empties() {
+        assert_parity(r#"v=":a:"; print -r -- "[${${(@s.:.)v}}]""#);
+    }
+
+    /// A REAL array's empties survive nesting (assoc values).
+    #[test]
+    fn assoc_values_keep_empties() {
+        assert_parity(r#"typeset -A h=(x "" y 2); print -r -- "[${${(v)h}}]""#);
+    }
+
+    /// `(o)` sort over a real array with an empty keeps it.
+    #[test]
+    fn sort_real_array_keeps_empty() {
+        assert_parity(r#"arr=(a "" b); print -r -- "[${${(o)arr}}]""#);
+    }
+}
