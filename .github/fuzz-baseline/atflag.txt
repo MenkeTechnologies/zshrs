@@ -2,20 +2,22 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode atflag --count N --verify 3  (copy NEW-signature lines).
 #
-# The one remaining known gap class: a RANGE (`[lo,hi]`) or search
-# (`[(R)pat]`) subscript on an EMPTY indexed array, observed through a
-# length count. zsh's getarrvalue yields a single EMPTY element for an
-# out-of-range slice of an empty array, so `${#${(@)a[1,2]}}` is 1 (one
-# empty element) for `a=()`, where the port returns 0. Only visible via
-# `${#…}`; the bare splat prints identically (one empty word). Left as a
-# known gap — the underlying quirk is a zsh getarrvalue empty-slice edge.
+# FIXED (no longer gaps): the RANGE (`[lo,hi]`) subscript on an EMPTY array
+# now pads correctly via getarrvalue's `nular` port (c:params.c:2570-2585),
+# so `${#${(@)a[1,2]}}` is 1 for `a=()`; and the `(A)` array-force flag now
+# collapses a lone empty-string result to an empty array
+# (`${#${(A@)a[1,2]}}` is 0).
+#
+# One remaining known-gap class: a SEARCH subscript (`[(R)pat]`) on an EMPTY
+# array, observed through a length count. zsh returns a nular (a single
+# empty element) so `${#${(@)a[(R)*]}}` is 1 for `a=()`, where the port
+# returns 0. Unlike the range case (which flows through getarrvalue), the
+# search-subscript arm returns a SCALAR "" from the value-search path; making
+# it array-shaped nular requires seeding isarr/split_parts through that
+# scalar path — cross-cutting plumbing for a pathological case (a reverse
+# search of an EMPTY array, visible only via `${#}`). The bare/quoted splat
+# already matches (one empty word). Left as a known gap.
 a=(); print -rl -- "${#${(@)${(@)a[(R)*]}}}"
-a=(); print -rl -- "${#${(@)${(@)a[N,N]}}}"
-a=(); print -rl -- "${#${(@)${(@o)a[N,N]}}}"
-a=(); print -rl -- "${#${(@)${(o@)a[N,N]}}}"
 a=(); print -rl -- "${#${(@)a[(R)*]}}"
-a=(); print -rl -- "${#${(@)a[N,N]}}"
 a=(); print -rl -- "${#${(@o)a[(R)*]}}"
-a=(); print -rl -- "${#${(@o)a[N,N]}}"
 a=(); print -rl -- "${#${(o@)a[(R)*]}}"
-a=(); print -rl -- "${#${(o@)a[N,N]}}"
