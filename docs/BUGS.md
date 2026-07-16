@@ -19,6 +19,64 @@ CI green pending the underlying fix.
 
 ---
 
+## #669 — `${var-word}` family collapsed nested array expansions to one word — FIXED
+
+**Status:** `fixed` (code landed via `c36333819e`)
+
+**Reproducer:**
+
+```zsh
+unset u; v="a b c"
+a=(${u-${(z)v}}); print $#a     # zsh: 3    zshrs (before): 1
+arr=(x y z); b=(${u-$arr}); print $#b   # zsh: 3    zshrs (before): 1
+```
+
+**Real-world hit:** fast-syntax-highlighting's tokenizer loop
+(`fast-highlight:461`): `for __arg in ${interactive_comments-${(z)__buf}}`
+received the ENTIRE buffer as one "word", classified it unknown-token, and
+painted every command line solid `fg=red,bold` (`0 N` span) instead of
+per-token colors.
+
+**Root cause:** C substitutes the default/alternate word of `-` `:-` `+`
+`:+` through `multsub(&val, split_flags, &aval, &isarr, …)`
+(Src/subst.c:3203-3233, 3296-3313) — array-shaped results stay arrays.
+All four display arms in the port used `singsub` (single-word, joining).
+The `:=`/`::=` assignment arms already used multsub; the display arms
+never did.
+
+**Fix:** all four arms now run `multsub(word, PREFORK_NOSHWORDSPLIT)` and
+seed `split_parts`/`isarr` when the result is array-shaped. Verified
+against zsh 5.9 on the full matrix ((z)-split, `$arr`, `${arr[@]}`, both
+alternate arms, scalar defaults still single-word); f-sy-h's classifier
+now emits `0 4 fg=green` for `echo hello`, byte-identical to zsh.
+subst parity 333/333; 5 regression tests.
+
+**Remaining f-sy-h gaps (separate):** live typing still errors
+`-fast-highlight-string:7: bad math expression: illegal character:
+<token byte>` (match/mbegin vars leaking token bytes into arithmetic) and
+a widget error wedges ZLE input afterward. Tracked as the next layer.
+
+---
+
+## #668 — `builtin zd` said "no such builtin"; `whence -w zd` reported the external — FIXED
+
+**Status:** `fixed` (code landed via `c36333819e`)
+
+**Reproducer:** `builtin zd ping` → `no such builtin: zd` while bare
+`zd ping` dispatched fine; `whence -w zd` → `/opt/homebrew/bin/zd`.
+
+**Root cause:** the daemon z* extension builtins (`zd`, `zcache`, `zjob`,
+… — `ZSHRS_BUILTIN_NAMES`) dispatch by name via `try_dispatch` and never
+live in builtintab, so the `builtin` precommand's table probe and
+whence/type's `BUILTINS` scan couldn't see them.
+
+**Fix:** the `builtin` precommand consults `is_zshrs_builtin` before
+erroring and routes through `try_dispatch`; whence/type classify
+extension names as builtins (whence -w → `zd: builtin`, `whence -a zd`
+still lists the PATH externals after). whence parity 47/47.
+
+---
+
 ## #667 — zsh-autosuggestions showed no suggestions at all: `$POSTDISPLAY`/`$region_highlight` never rendered, widget writes never synced — FIXED
 
 **Status:** `fixed`

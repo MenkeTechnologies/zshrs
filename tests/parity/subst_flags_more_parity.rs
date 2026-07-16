@@ -539,3 +539,46 @@ print -r -- "$b""#,
         assert_parity(r#"c="\\"; s="a\\b"; print -r -- "${s//$c/_}""#);
     }
 }
+
+mod default_alternate_words_keep_arrays {
+    //! c:Src/subst.c:3203-3233 / 3296-3313 — the default/alternate word
+    //! of `${var-word}` `${var:-word}` `${var+word}` `${var:+word}` goes
+    //! through multsub, so a nested array-producing expansion
+    //! (`${(z)buf}`, `$arr`, `${arr[@]}`) stays an ARRAY. The port
+    //! singsub'd (joined) it: fast-syntax-highlighting's tokenizer
+    //! `for __arg in ${interactive_comments-${(z)__buf}}` received the
+    //! whole buffer as ONE word and painted every line unknown-token
+    //! red (0 N fg=red,bold instead of per-token styles).
+    use super::*;
+
+    /// The f-sy-h shape: (z)-split inside an unset-var default.
+    #[test]
+    fn z_split_in_default_arm_stays_split() {
+        assert_parity(r#"unset u; v="a b c"; a=(${u-${(z)v}}); print $#a $a[2]"#);
+    }
+
+    #[test]
+    fn z_split_in_colon_default_arm_stays_split() {
+        assert_parity(r#"unset u; v="a b c"; a=(${u:-${(z)v}}); print $#a $a[2]"#);
+    }
+
+    /// Nested array parameter in the default arm.
+    #[test]
+    fn array_in_default_arm_stays_array() {
+        assert_parity(r#"unset u; arr=(x y z); a=(${u-$arr}); b=(${u-${arr[@]}}); print $#a $#b $b[3]"#);
+    }
+
+    /// Alternate arms (`+` / `:+`) with the var set.
+    #[test]
+    fn array_in_alternate_arm_stays_array() {
+        assert_parity(
+            r#"u=set; v="a b c"; arr=(x y z); a=(${u+${(z)v}}); b=(${u:+$arr}); print $#a $#b $a[3]"#,
+        );
+    }
+
+    /// Scalar defaults still emit one word.
+    #[test]
+    fn scalar_default_still_single_word() {
+        assert_parity(r#"unset u; a=(${u-hello}); b=(${u:-one}); print $#a $#b $a $b"#);
+    }
+}
