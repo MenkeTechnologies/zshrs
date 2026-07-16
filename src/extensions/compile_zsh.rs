@@ -2127,10 +2127,27 @@ impl ZshCompiler {
             // BINF_ASSIGN-family args (`typeset T=${x:-*file}`) don't
             // filename-generate their value; suppress the default-word
             // glob bracket while compiling them.
+            //
+            // c:Src/parse.c par_simple (intypeset) + Src/exec.c:2601
+            // addvars → PREFORK_ASSIGN — an assignment-SHAPED arg
+            // (`NAME=value` / `NAME+=value`) is parsed as an
+            // assignment: its value never IFS-splits. Bump
+            // assign_context_depth so compile_word_str's cmd-subst
+            // arm skips its WORD_SPLIT emit (`export ZPWR_TTY=$(tty)`
+            // stored only "not" and exported stray `a`/`tty` names
+            // from the split remainder). Non-assignment args
+            // (`export PATH`) keep normal word semantics.
+            let arg_is_assign = head_is_typeset_family && is_typeset_scalar_assign(word);
             if head_is_typeset_family {
                 self.assign_builtin_arg_depth += 1;
             }
+            if arg_is_assign {
+                self.assign_context_depth += 1;
+            }
             self.compile_word_str(word);
+            if arg_is_assign {
+                self.assign_context_depth -= 1;
+            }
             if head_is_typeset_family {
                 self.assign_builtin_arg_depth -= 1;
             }
@@ -12154,6 +12171,57 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
             format!("{} =~ {}", untok(left), untok(regex))
         }
     }
+}
+
+/// True when a typeset-family arg word is assignment-shaped:
+/// `name=…` / `name+=…` / `name[sub]=…`. C's par_simple (Src/parse.c,
+/// `intypeset`) parses these args as ASSIGNMENTS, so the value side
+/// is expanded via `addvars` → `prefork(…, PREFORK_ASSIGN)`
+/// (Src/exec.c:2601) — parameter AND command substitution run with
+/// NO IFS split. Used by the simple-command argv loop to put the
+/// whole word in assign context (`export ZPWR_TTY=$(tty)` must keep
+/// "not a tty" as one value, not split it into extra export names).
+fn is_typeset_scalar_assign(word: &str) -> bool {
+    let chars: Vec<char> = word.chars().collect();
+    // NAME — ident chars only (same rule as split_typeset_paren_init).
+    let mut i = 0;
+    while i < chars.len() && (chars[i] == '_' || chars[i].is_ascii_alphanumeric()) {
+        i += 1;
+    }
+    if i == 0
+        || !chars
+            .first()
+            .map_or(false, |c| *c == '_' || c.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    // Optional `[subscript]` — literal or Inbrack/Outbrack tokens
+    // (\u{91}/\u{92}, zsh.h:171-172).
+    if matches!(chars.get(i), Some('[') | Some('\u{91}')) {
+        let mut depth = 0i32;
+        while i < chars.len() {
+            match chars[i] {
+                '[' | '\u{91}' => depth += 1,
+                ']' | '\u{92}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if depth != 0 {
+            return false;
+        }
+    }
+    if chars.get(i) == Some(&'+') {
+        i += 1;
+    }
+    // `=` may arrive literal or as the Equals token (\u{8d}).
+    matches!(chars.get(i), Some('=') | Some('\u{8d}'))
 }
 
 /// Split a typeset-family paren-init arg `name=( e1 e2 … )` /
