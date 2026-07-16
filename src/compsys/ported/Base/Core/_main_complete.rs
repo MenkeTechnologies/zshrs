@@ -52,10 +52,85 @@ fn make_ops() -> options {
     }
 }
 
+/// sh:25 — `eval "$_comp_setup"`, the option half. Upstream's
+/// `_comp_setup` (compinit sh:180-190) runs `setopt localoptions
+/// localtraps localpatterns ${_comp_options[@]}` so every completion
+/// function executes under the 33 canonical options regardless of the
+/// user's global state — e.g. a global `setopt cshnullglob` must NOT
+/// leak in (compinit forces `NO_cshnullglob`), or any glob-failing
+/// word expansion inside a completion function prints the csh-style
+/// `no match` error mid-completion (subst.c:507). Since this port is
+/// a Rust fn with no shell function scope for `localoptions`, the
+/// guard saves each option it changes and restores on drop (every
+/// return path). Nesting is safe: an inner guard saves the
+/// already-applied states and its drop is a no-op relative to the
+/// outer guard's restore. IFS is likewise forced to the standard
+/// `$' \t\r\n\0'` (sh:183 `local IFS=...`) and restored. The
+/// remaining `_comp_setup` pieces (`exec </dev/null`, `trap - ZERR`,
+/// `enable -p` pattern chars) are not yet applied here.
+struct CompSetupGuard {
+    saved_opts: Vec<(i32, bool)>,
+    saved_ifs: Option<String>,
+}
+
+impl CompSetupGuard {
+    fn apply() -> Self {
+        use crate::ported::options::{dosetopt, optlookup};
+        use crate::ported::zsh_h::OPT_INVALID;
+        let mut saved_opts = Vec::new();
+        for entry in crate::compsys::ported::compinit::COMP_OPTIONS {
+            let (name, want) = match entry.strip_prefix("NO_") {
+                Some(rest) => (rest, false),
+                None => (*entry, true),
+            };
+            let optno = optlookup(name);
+            if optno == OPT_INVALID {
+                continue;
+            }
+            // Alias rows resolve negative; normalise to the real index
+            // (dosetopt would re-negate the value, but isset needs the
+            // positive index and the alias sign is already folded into
+            // `want` by the canonical names in COMP_OPTIONS).
+            let idx = optno.abs();
+            let cur = isset(idx);
+            if cur != want {
+                saved_opts.push((idx, cur));
+                dosetopt(idx, want as i32, 0);
+            }
+        }
+        let saved_ifs = getsparam("IFS");
+        let _ = crate::ported::params::setsparam("IFS", " \t\r\n\0");
+        Self {
+            saved_opts,
+            saved_ifs,
+        }
+    }
+}
+
+impl Drop for CompSetupGuard {
+    fn drop(&mut self) {
+        use crate::ported::options::dosetopt;
+        for &(idx, was) in self.saved_opts.iter().rev() {
+            dosetopt(idx, was as i32, 0);
+        }
+        match self.saved_ifs.take() {
+            Some(ifs) => {
+                let _ = crate::ported::params::setsparam("IFS", &ifs);
+            }
+            None => {
+                unsetparam("IFS");
+            }
+        }
+    }
+}
+
 /// `_main_complete` — primary completion-dispatch entry. Args
 /// (when non-empty) override the configured `completer` style with
 /// the supplied chain.
 pub fn _main_complete(args: &[String]) -> i32 {
+    // sh:25 — `eval "$_comp_setup"` (options + IFS half); restores on
+    // every return path via Drop.
+    let _comp_setup = CompSetupGuard::apply();
     // sh:25  snapshot compstate so we can restore on exit
     let saved_curcontext = getsparam("curcontext").unwrap_or_default();
     let saved_compskip = getsparam("_compskip").unwrap_or_default();
@@ -489,6 +564,39 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _ = setsparam("curcontext", "a:b:c:d");
         assert_eq!(_main_complete(&[]), 1);
+    }
+
+    /// sh:25 — `eval "$_comp_setup"`: the user's global options must
+    /// not leak into completion (a global `setopt cshnullglob` made
+    /// any glob-failing expansion inside a completion function print
+    /// the csh `no match` error mid-completion), and the pre-existing
+    /// state must be restored on exit. Verified live against zpwr:
+    /// csh=off/null=on/aliases=off inside the completer, restored after.
+    #[test]
+    fn comp_setup_guard_forces_and_restores_options() {
+        use crate::ported::options::{dosetopt, optlookup};
+        let _g = crate::test_util::global_state_lock();
+        let csh = optlookup("cshnullglob").abs();
+        let null = optlookup("nullglob").abs();
+        let was_csh = isset(csh);
+        let was_null = isset(null);
+        // Simulate the user's global state: cshnullglob ON, nullglob OFF.
+        dosetopt(csh, 1, 0);
+        dosetopt(null, 0, 0);
+        {
+            let _setup = CompSetupGuard::apply();
+            // _comp_options forces NO_cshnullglob + nullglob.
+            assert!(!isset(csh), "cshnullglob must be forced off");
+            assert!(isset(null), "nullglob must be forced on");
+            // sh:183 — IFS forced to the standard set (with \r).
+            assert_eq!(getsparam("IFS").as_deref(), Some(" \t\r\n\0"));
+        }
+        // Guard dropped — the simulated globals are back.
+        assert!(isset(csh), "cshnullglob must be restored");
+        assert!(!isset(null), "nullglob must be restored");
+        // Restore the real pre-test state.
+        dosetopt(csh, was_csh as i32, 0);
+        dosetopt(null, was_null as i32, 0);
     }
 
     #[test]

@@ -19,6 +19,41 @@ CI green pending the underlying fix.
 
 ---
 
+## #663 — `_main_complete` port skipped `eval "$_comp_setup"`: global options leaked into completion — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** with the user's global `setopt cshnullglob` (.zshrc), press
+TAB on an unknown command (`pls -<TAB>`) so the zpwr `_megacomplete` chain
+reaches `_complete_clipboard`; any glob-failing word expansion inside the
+completion functions printed the csh-style error onto the command line:
+
+```
+_complete_clipboard:1: no match
+```
+
+**Root cause:** upstream `_main_complete:25` runs `eval "$_comp_setup"`
+(compinit sh:180-190), which applies `setopt localoptions localtraps
+localpatterns ${_comp_options[@]}` — 33 canonical options including
+`NO_cshnullglob`, `nullglob`, `NO_aliases`, `NO_shwordsplit` — plus
+`local IFS=$' \t\r\n\0'` for the entire completion. The Rust
+`_main_complete` port published `_comp_setup`/`_comp_options` as shell
+params (compinit.rs) but nothing consumed them: completion shell functions
+executed under the user's live global options, so a global `cshnullglob`
+turned any failed glob inside a completion function into a visible
+`no match` (subst.c:507) — impossible in real zsh.
+
+**Fix:** `CompSetupGuard` (RAII) in `_main_complete.rs` — saves each
+option it changes from the `COMP_OPTIONS` list, applies the canonical set
++ the standard IFS, restores both on drop (every return path; nesting
+safe). Verified live in the zpwr environment via a probe completer:
+`cshnullglob=off nullglob=on shwordsplit=off aliases=off` inside the
+completion, user's globals restored after. Remaining `_comp_setup` pieces
+(`exec </dev/null`, `trap - ZERR`, `enable -p` pattern chars) are noted
+in-code, not yet applied.
+
+---
+
 ## #662 — name after `function` keyword was alias-expanded, hijacking `cd` — FIXED
 
 **Status:** `fixed`
