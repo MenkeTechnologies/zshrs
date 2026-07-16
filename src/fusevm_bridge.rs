@@ -8157,6 +8157,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // from the executor's live lastval instead of
             // overwriting.
             vm.last_status = with_executor(|exec| exec.last_status());
+            // c:Src/exec.c:1598-1603 — `sublist_done:` runs the ZERR trap
+            // for the failed sublist BEFORE the enclosing list loop breaks
+            // on errflag (`while (... && !errflag)` at c:1370). So an
+            // errflag-setting command (readonly reassign, bad redirect)
+            // must fire ZERR on its way out, exactly like the retflag
+            // escape above and the non-escape fall-through below. Without
+            // this the errflag early-return pre-empted the ZERR block
+            // further down, so `TRAPZERR() { … }; typeset -r ro=1; ro=2`
+            // aborted the script (correct) but never fired the trap. Same
+            // DONETRAP gate + dotrapargs save/restore bracket
+            // (c:signals.c:1085-1087 / 1213-1222) as the retflag branch:
+            // a function-form TRAPZERR runs through doshfunc and would
+            // otherwise consume the caller's breaks/retflag/lastval.
+            let last = with_executor(|exec| exec.last_status());
+            if last != 0 && crate::ported::exec::DONETRAP.load(Ordering::Relaxed) == 0 {
+                let obreaks = crate::ported::builtin::BREAKS.load(Ordering::Relaxed); // c:1085
+                let oretflag = crate::ported::builtin::RETFLAG.load(Ordering::Relaxed); // c:1086
+                let olastval = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed); // c:1087
+                // c:Src/signals.c:1101 — dotrapargs returns early if errflag
+                // is set, and c:1174/1205-1218 brackets the dispatch with
+                // `traperr = errflag` … restore. The failing assignment left
+                // errflag SET, so the trap body (`print zerr`) would itself
+                // bail on the first op. Clear errflag across the dispatch so
+                // the body runs, then restore it so the script still aborts.
+                let oerrflag = crate::ported::utils::errflag.load(Ordering::Relaxed); // c:1174
+                crate::ported::utils::errflag.store(0, Ordering::Relaxed);
+                let _ = crate::ported::signals::dotrap(crate::ported::signals_h::SIGZERR); // c:1601
+                crate::ported::utils::errflag.store(oerrflag, Ordering::Relaxed); // c:1216
+                crate::ported::exec::DONETRAP.store(1, Ordering::Relaxed); // c:1602
+                crate::ported::builtin::BREAKS.store(obreaks, Ordering::Relaxed); // c:1220
+                crate::ported::builtin::RETFLAG.store(oretflag, Ordering::Relaxed); // c:1222
+                crate::ported::builtin::LASTVAL.store(olastval, Ordering::Relaxed); // c:1213
+            }
             return Value::Int(1);
         }
         let last = vm.last_status;
