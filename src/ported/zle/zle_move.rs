@@ -1021,11 +1021,18 @@ pub fn vifindchar(repeat: i32) -> i32 {
                 }
                 deccs();
             }
+            // c:818-820 — `while (zlecs >= 0 && zlecs < zlell &&
+            // zleline[zlecs] != vfindchar && zleline[zlecs] != '\n')`
+            // — C short-circuits the BOUNDS test before indexing
+            // zleline[zlecs]. The previous Rust indexed first, so
+            // `f<char>` with the cursor reaching end-of-line panicked
+            // (index out of bounds: len 18, index 18).
             if {
-                let __c = ZLELINE.lock().unwrap()[ZLECS.load(Ordering::SeqCst)];
-                ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst)
-                    || (__c as i32) == vfind
-                    || __c == '\n'
+                let cs = ZLECS.load(Ordering::SeqCst);
+                cs >= ZLELL.load(Ordering::SeqCst) || {
+                    let __c = ZLELINE.lock().unwrap()[cs];
+                    (__c as i32) == vfind || __c == '\n'
+                }
             } {
                 break;
             }

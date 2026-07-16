@@ -2709,6 +2709,16 @@ pub fn get_key_cmd() -> Option<Thingy> {
     let mut last_match: Option<Thingy> = None;
     let mut last_match_len = 0usize;
 
+    // c:zle_keymap.c:1588-1589 — `keybuflen = 0; keybuf[0] = 0;` —
+    // reset the GLOBAL keybuf at sequence start. The local `buf`
+    // drives the raw-byte keymap walk; the global mirrors it METAFIED
+    // via addkeybuf so `$KEYS` (get_keys → keybuf, zle_params.c:463)
+    // reports the sequence that invoked the widget. Without it $KEYS
+    // was empty and zsh-expand's `[[ $KEYS == " " ]]` space dispatch
+    // never fired.
+    crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear(); // c:1588
+    crate::ported::zle::zle_keymap::keybuflen.store(0, SeqCst); // c:1588
+
     loop {
         // Read one byte. Use timed read once we have a partial match
         // (a prefix that already hit a binding); otherwise block.
@@ -2732,6 +2742,12 @@ pub fn get_key_cmd() -> Option<Thingy> {
             }
         };
         buf.push(b);
+        // c:zle_keymap.c:1604 — getkeybuf → addkeybuf (global, metafied).
+        crate::ported::zle::zle_keymap::addkeybuf(b as i32);
+        crate::ported::zle::zle_keymap::keybuflen.store(
+            crate::ported::zle::zle_keymap::keybuf.lock().unwrap().len() as i32,
+            SeqCst,
+        );
 
         // Look up the current buffer.
         let (current_match, is_prefix) = if buf.len() == 1 {
@@ -2773,10 +2789,20 @@ pub fn get_key_cmd() -> Option<Thingy> {
 
     // Unget any bytes past the matched prefix so the next read sees
     // them. Mirrors the lastlen / keybuflen accounting in
-    // zle_keymap.c:1619.
+    // zle_keymap.c:1696-1708 (`keybuf[keybuflen = lastlen] = 0`).
     if last_match.is_some() && buf.len() > last_match_len {
         let extra = buf[last_match_len..].to_vec();
         ungetbytes(&extra);
+        buf.truncate(last_match_len);
+        // Rebuild the global metafied mirror from the kept raw bytes.
+        crate::ported::zle::zle_keymap::keybuf.lock().unwrap().clear();
+        for &kb in &buf {
+            crate::ported::zle::zle_keymap::addkeybuf(kb as i32);
+        }
+        crate::ported::zle::zle_keymap::keybuflen.store(
+            crate::ported::zle::zle_keymap::keybuf.lock().unwrap().len() as i32,
+            SeqCst,
+        ); // c:1708
     }
 
     if std::env::var_os("ZSHRS_ZLE_LOG").is_some() {

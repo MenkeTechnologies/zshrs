@@ -2670,6 +2670,16 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
     let mut last_match_str: Option<String> = None;
     let mut last_match_len = 0usize; // c:1585
 
+    // c:1588-1589 — `keybuflen = 0; keybuf[0] = 0;` — reset the GLOBAL
+    // keybuf. The local `buf` drives the (raw-byte-keyed) Rust keymap
+    // lookup; the global mirrors it METAFIED via addkeybuf so `$KEYS`
+    // (get_keys → keybuf, zle_params.c:463) sees the sequence that
+    // invoked the widget. Without the mirror, $KEYS was the stale
+    // 32-NUL init buffer and zsh-expand's `[[ $KEYS == " " ]]`
+    // space-dispatch never fired.
+    keybuf.lock().unwrap().clear(); // c:1588
+    keybuflen.store(0, std::sync::atomic::Ordering::SeqCst); // c:1588
+
     // c:1591 — `while(getkeybuf(timeout) != EOF)`.
     loop {
         // Read one byte. Use timed read once we have a partial match.
@@ -2679,6 +2689,8 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
             None => break, // c:1591 EOF
         };
         buf.push(b);
+        addkeybuf(b as i32); // c:1604 getkeybuf → addkeybuf (global, metafied)
+        keybuflen.store(keybuf.lock().unwrap().len() as i32, std::sync::atomic::Ordering::SeqCst);
 
         // c:1602-1604 — `f = keybind(km, keybuf, &s);` lookup.
         let (current_match, current_str, is_prefix) = if buf.len() == 1 {
@@ -2706,11 +2718,19 @@ pub fn getkeymapcmd(km: &Keymap) -> Option<(super::zle_thingy::Thingy, Vec<u8>, 
         }
     }
 
-    // c:1619 — unget extra bytes past the matched prefix.
+    // c:1696-1708 — unget extra bytes past the matched prefix and
+    // truncate keybuf to the used prefix (`keybuf[keybuflen = lastlen]
+    // = 0`).
     if last_match.is_some() && buf.len() > last_match_len {
         let extra = buf[last_match_len..].to_vec();
         super::zle_main::ungetbytes(&extra);
         buf.truncate(last_match_len);
+        // Rebuild the global metafied mirror from the kept raw bytes.
+        keybuf.lock().unwrap().clear();
+        for &kb in &buf {
+            addkeybuf(kb as i32);
+        }
+        keybuflen.store(keybuf.lock().unwrap().len() as i32, std::sync::atomic::Ordering::SeqCst); // c:1708
     }
 
     last_match.map(|t| (t, buf, last_match_str))
