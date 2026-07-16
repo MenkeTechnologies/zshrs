@@ -2736,13 +2736,18 @@ fn par_simple(mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
                     let untoked = super::lex::untokenize(last);
                     if untoked.starts_with('{') && untoked.ends_with('}') && untoked.len() > 2 {
                         let name = &untoked[1..untoked.len() - 1];
+                        // c:1944 — `if (itype_end(tokstr+1, IIDENT, 0) >= ptr)`:
+                        // every char between the braces must be an IIDENT char.
+                        // IIDENT (utils.c:4173/4190) covers digits, letters and
+                        // `_` — with NO first-char restriction, so an all-digit
+                        // name like `{1}` (a positional param, used by p10k's
+                        // `exec {1}>&-`) is a valid fd var. The prior check also
+                        // required the first char to be `_`/alphabetic, which
+                        // rejected `{1}`/`{2}`/`{12}` — zsh accepts them.
                         if !name.is_empty()
-                            && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
                             && name
-                                .chars()
-                                .next()
-                                .map(|c| c == '_' || c.is_ascii_alphabetic())
-                                .unwrap_or(false)
+                                .bytes()
+                                .all(crate::ported::ztype_h::iident)
                         {
                             let varid = name.to_string();
                             words.pop();
@@ -10343,6 +10348,38 @@ mod tests {
                 assert_eq!(s.redirs[0].rtype, REDIR_WRITE);
             }
             _ => panic!("expected simple command"),
+        }
+    }
+
+    /// Regression: `{var}>file` named-fd redirects accept any IIDENT name,
+    /// including all-digit positional-parameter names like `{1}` (used by
+    /// p10k's `_p9k_restore_prompt`: `exec {1}>&-`). The prior check required
+    /// the first char to be alphabetic/`_`, which rejected `{1}`/`{2}`/`{12}`
+    /// and made zshrs treat `{1}` as a command word — `command not found: {1}`.
+    /// zsh's rule is `itype_end(tokstr+1, IIDENT, 0) >= ptr` (per-char IIDENT,
+    /// no first-char restriction).
+    #[test]
+    fn test_fd_var_redir_digit_name() {
+        let _g = crate::test_util::global_state_lock();
+        for (src, want) in [
+            ("echo hi {1}>file", "1"),
+            ("echo hi {2}>file", "2"),
+            ("echo hi {12}>file", "12"),
+            ("echo hi {myfd}>file", "myfd"),
+            ("echo hi {fd1}>file", "fd1"),
+        ] {
+            let prog = parse(src).unwrap_or_else(|_| panic!("failed to parse {src:?}"));
+            match &prog.lists[0].sublist.pipe.cmd {
+                ZshCommand::Simple(s) => {
+                    assert_eq!(s.redirs.len(), 1, "{src:?}");
+                    assert_eq!(
+                        s.redirs[0].varid.as_deref(),
+                        Some(want),
+                        "{src:?} should carry fd-var {want:?}"
+                    );
+                }
+                _ => panic!("expected simple command for {src:?}"),
+            }
         }
     }
 

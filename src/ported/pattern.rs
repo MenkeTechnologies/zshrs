@@ -4616,7 +4616,14 @@ pub fn patmatch(
         // ASCII input, OR `unsetopt multibyte`: byte-level match (the prior
         // behaviour). C only takes the wide `mb_patmatchrange` path under
         // GF_MULTIBYTE; with it clear a high byte is matched as a raw byte.
-        if b < 0x80 || (gflags & GF_MULTIBYTE) == 0 {
+        //
+        // `off` can also land inside a multibyte char: P_STAR backtracks
+        // byte-by-byte (`s_off + consumed`) and the approx omit-input paths
+        // step `s_off + 1`, so a continuation P_ANYOF/P_ANYBUT can be tested
+        // at a continuation byte. Decoding `string[off..]` there would panic,
+        // so treat a non-boundary position as a raw byte (advance 1) — the
+        // same fallback the byte-level machinery already relies on.
+        if b < 0x80 || (gflags & GF_MULTIBYTE) == 0 || !string.is_char_boundary(off) {
             return (set.iter().any(|&c| charmatch(b, c, range_flags)), 1);
         }
         // Decode one logical input char + its source byte span.
@@ -6500,6 +6507,21 @@ mod tests {
         assert!(patmatch("[abc].txt", "b.txt"));
         assert!(patmatch("[abc].txt", "c.txt"));
         assert!(!patmatch("[abc].txt", "d.txt"));
+    }
+
+    /// Regression: `*[abc]*` over a string containing a multibyte char
+    /// (U+E0B0, a powerline separator) must not panic. P_STAR backtracks
+    /// byte-by-byte, so the continuation P_ANYOF was tested at a byte offset
+    /// inside the multibyte char; slicing `string[off..]` there panicked with
+    /// "not a char boundary". A non-boundary offset now falls to a raw-byte
+    /// test (advance 1) instead of decoding.
+    #[test]
+    fn patmatch_anyof_at_multibyte_continuation_byte_no_panic() {
+        let _g = crate::test_util::global_state_lock();
+        assert!(!patmatch("*[abc]*", "\u{e0b0}"));
+        assert!(patmatch("*[abc]*", "a\u{e0b0}b"));
+        assert!(!patmatch("*[!abc]*", "abc"));
+        assert!(patmatch("*[!abc]*", "a\u{e0b0}b"));
     }
 
     /// c:540 — negated `[!abc]` matches any char NOT in the set.
