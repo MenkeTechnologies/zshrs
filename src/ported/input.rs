@@ -39,6 +39,7 @@ struct instacks {
     // c:109
     buf: String,           // c:110 char *buf
     bufpos: usize,         // c:110 char *bufptr offset
+    bufct: i32,            // c:112 int bufct — inbufct AT PUSH TIME (spans lower CONT frames)
     flags: i32,            // c:112 int flags
     alias: Option<String>, // c:111 Alias alias
 }
@@ -796,10 +797,24 @@ pub fn inerrflush() {
 /// new input on top of the current one.
 pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
     // c:675
+    // c:687 — `inbufflags &= ~(INP_ALCONT|INP_HISTCONT);` — the
+    // continuation markers describe the frame BELOW; strip them from
+    // the flags being saved so a pop doesn't re-run the alias-unwind
+    // arm for a frame that isn't an alias continuation.
+    let saved_flags = inbufflags.with(|f| f.get()) & !(INP_ALCONT | INP_HISTCONT); // c:687
     let saved = instacks {
         buf: inbuf.with(|b| std::mem::take(&mut *b.borrow_mut())),
         bufpos: inbufpos.with(|p| p.replace(0)),
-        flags: inbufflags.with(|f| f.get()),
+        // c:686 — `instacktop->bufct = inbufct;` — the count AT PUSH
+        // TIME spans this frame's remainder plus every CONT frame
+        // below it; inpoptop restores it verbatim (c:764). The old
+        // port didn't save it and recomputed only the restored
+        // frame's remainder on pop — undercounting made ingetc's
+        // `!inbufct && strin` EOF gate (c:342) fire at an
+        // intermediate frame boundary, dropping everything below
+        // (`alias g='echo A'; alias t='g x'; eval t` lost ` x`).
+        bufct: inbufct.with(|c| c.get()), // c:686
+        flags: saved_flags,
         alias: None,
     };
     instack.with(|st| st.borrow_mut().push(saved));
@@ -822,6 +837,13 @@ pub fn inpush(str: &str, flags: i32, inalias: Option<String>) {
                 }
             });
         }
+    } else if (saved_flags & INP_ALIAS) != 0 && (flags & INP_CONT) != 0 {
+        // c:707-709 — `if (((instacktop->flags = inbufflags) & INP_ALIAS)
+        //   && (flags & INP_CONT)) flags |= INP_ALIAS;` — a plain
+        // INP_CONT push layered over an alias frame continues the
+        // alias expansion: mark the new frame INP_ALIAS too so
+        // history stays off for its chars.
+        combined |= INP_ALIAS;
     }
 
     let new_len = inbuf.with(|b| b.borrow().chars().count()) as i32; // char count — inbufct is char-based
@@ -907,10 +929,13 @@ pub fn inpoptop() {
         inbuf.with(|b| *b.borrow_mut() = entry.buf);
         inbufpos.with(|p| p.set(entry.bufpos));
         inbufflags.with(|f| f.set(entry.flags));
-        let remaining = inbuf
-            .with(|b| b.borrow().chars().count())
-            .saturating_sub(entry.bufpos) as i32; // char count (bufpos is a char index)
-        inbufct.with(|c| c.set(remaining));
+        // c:764 — `inbufct = instacktop->bufct;` — restore the count
+        // saved at push time. It spans the restored frame's remainder
+        // PLUS every CONT frame below; the previous recompute-from-
+        // this-frame-only undercounted, tripping ingetc's
+        // `!inbufct && strin` EOF gate (c:342) with unread CONT
+        // frames still stacked.
+        inbufct.with(|c| c.set(entry.bufct)); // c:764
     }
 }
 
