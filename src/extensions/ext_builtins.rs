@@ -7061,55 +7061,177 @@ impl ShellExecutor {
     /// nl [-b STYLE] [FILE...] — number lines. Direct port of
     /// coreutils nl(1) for the most-used flag set.
     pub(crate) fn builtin_nl(&self, args: &[String]) -> i32 {
-        // -b a: number all lines.  -b t: number non-empty (default).
-        let mut style = 't';
-        let mut start = 1i64;
-        let mut step = 1i64;
-        let mut sep = "\t".to_string();
-        let mut width = 6usize;
-        let mut files: Vec<&str> = Vec::new();
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-b" | "--body-numbering" => {
-                    if let Some(s) = iter.next() {
-                        style = s.chars().next().unwrap_or('t');
+        // GNU coreutils nl(1). Numbering styles per section: `a` (all),
+        // `t` (non-empty, body default), `n` (none, header/footer
+        // default), `pREGEX` (lines matching REGEX). Number formats
+        // (-n): `ln` left, `rn` right (default), `rz` right zero-pad.
+        // Logical pages: input lines of exactly DELIM*3/2/1 (default
+        // `\:`) switch to header/body/footer, are replaced by empty
+        // output lines, and reset numbering unless -p. GNU convention
+        // is followed where BSD differs (unnumbered lines emit spaces
+        // in place of number AND separator; delimiter lines emit an
+        // empty line).
+        #[derive(Clone)]
+        enum NlStyle {
+            All,
+            NonEmpty,
+            None,
+            Pat(regex::Regex),
+        }
+        fn parse_style(s: &str, opt: char) -> Result<NlStyle, i32> {
+            match s.chars().next() {
+                Some('a') => Ok(NlStyle::All),
+                Some('t') => Ok(NlStyle::NonEmpty),
+                Some('n') => Ok(NlStyle::None),
+                Some('p') => match regex::Regex::new(&s[1..]) {
+                    Ok(re) => Ok(NlStyle::Pat(re)),
+                    Err(e) => {
+                        eprintln!("nl: invalid regular expression: {}", e);
+                        Err(1)
                     }
-                }
-                "-i" | "--line-increment" => {
-                    if let Some(s) = iter.next() {
-                        step = s.parse().unwrap_or(1);
-                    }
-                }
-                "-v" | "--starting-line-number" => {
-                    if let Some(s) = iter.next() {
-                        start = s.parse().unwrap_or(1);
-                    }
-                }
-                "-s" | "--number-separator" => {
-                    if let Some(s) = iter.next() {
-                        sep = s.clone();
-                    }
-                }
-                "-w" | "--number-width" => {
-                    if let Some(s) = iter.next() {
-                        width = s.parse().unwrap_or(6);
-                    }
-                }
-                "-" => files.push("-"),
-                "--" => {} // end of options
-                s if !s.starts_with('-') => files.push(s),
-                s => {
-                    eprintln!("nl: unrecognized option: '{}'", s);
-                    return 1;
+                },
+                _ => {
+                    eprintln!("nl: invalid numbering style: '-{}{}'", opt, s);
+                    Err(1)
                 }
             }
         }
-        if files.is_empty() {
-            files.push("-");
+        let mut body = NlStyle::NonEmpty;
+        let mut header = NlStyle::None;
+        let mut footer = NlStyle::None;
+        let mut delim = "\\:".to_string();
+        let mut start = 1i64;
+        let mut step = 1i64;
+        let mut join_blanks = 1i64; // -l
+        let mut fmt = "rn".to_string(); // -n
+        let mut renumber = true; // -p clears
+        let mut sep = "\t".to_string();
+        let mut width = 6usize;
+        let mut files: Vec<String> = Vec::new();
+        let mut i = 0usize;
+        let mut no_more_opts = false;
+        // Short opts take attached (`-nrz`) or separate (`-n rz`) args.
+        macro_rules! optarg {
+            ($rest:expr, $name:expr) => {{
+                if !$rest.is_empty() {
+                    $rest.to_string()
+                } else {
+                    i += 1;
+                    match args.get(i) {
+                        Some(v) => v.clone(),
+                        None => {
+                            eprintln!("nl: option requires an argument -- '{}'", $name);
+                            return 1;
+                        }
+                    }
+                }
+            }};
         }
+        while i < args.len() {
+            let arg = args[i].as_str();
+            if no_more_opts || arg == "-" || !arg.starts_with('-') {
+                files.push(arg.to_string());
+                i += 1;
+                continue;
+            }
+            if arg == "--" {
+                no_more_opts = true;
+                i += 1;
+                continue;
+            }
+            let (opt, rest): (&str, &str) = if let Some(long) = arg.strip_prefix("--") {
+                match long.split_once('=') {
+                    Some((k, v)) => (k, v),
+                    None => (long, ""),
+                }
+            } else {
+                (&arg[1..2], &arg[2..])
+            };
+            match opt {
+                "b" | "body-numbering" => {
+                    let v = optarg!(rest, 'b');
+                    match parse_style(&v, 'b') {
+                        Ok(st) => body = st,
+                        Err(rc) => return rc,
+                    }
+                }
+                "h" | "header-numbering" => {
+                    let v = optarg!(rest, 'h');
+                    match parse_style(&v, 'h') {
+                        Ok(st) => header = st,
+                        Err(rc) => return rc,
+                    }
+                }
+                "f" | "footer-numbering" => {
+                    let v = optarg!(rest, 'f');
+                    match parse_style(&v, 'f') {
+                        Ok(st) => footer = st,
+                        Err(rc) => return rc,
+                    }
+                }
+                "d" | "section-delimiter" => {
+                    let v = optarg!(rest, 'd');
+                    // GNU: a single-char arg keeps ':' as 2nd char.
+                    delim = if v.chars().count() == 1 {
+                        format!("{}:", v)
+                    } else {
+                        v
+                    };
+                }
+                "i" | "line-increment" => {
+                    let v = optarg!(rest, 'i');
+                    step = v.parse().unwrap_or(1);
+                }
+                "l" | "join-blank-lines" => {
+                    let v = optarg!(rest, 'l');
+                    join_blanks = v.parse::<i64>().unwrap_or(1).max(1);
+                }
+                "n" | "number-format" => {
+                    let v = optarg!(rest, 'n');
+                    match v.as_str() {
+                        "ln" | "rn" | "rz" => fmt = v,
+                        _ => {
+                            eprintln!("nl: invalid line numbering format: '{}'", v);
+                            return 1;
+                        }
+                    }
+                }
+                "p" | "no-renumber" => {
+                    renumber = false;
+                    // -p takes no arg; attached chars are more short opts
+                    // (rare) — treat as error to stay simple and loud.
+                    if !rest.is_empty() {
+                        eprintln!("nl: unrecognized option: '{}'", arg);
+                        return 1;
+                    }
+                }
+                "s" | "number-separator" => {
+                    sep = optarg!(rest, 's');
+                }
+                "v" | "starting-line-number" => {
+                    let v = optarg!(rest, 'v');
+                    start = v.parse().unwrap_or(1);
+                }
+                "w" | "number-width" => {
+                    let v = optarg!(rest, 'w');
+                    width = v.parse().unwrap_or(6).max(1);
+                }
+                _ => {
+                    eprintln!("nl: unrecognized option: '{}'", arg);
+                    return 1;
+                }
+            }
+            i += 1;
+        }
+        if files.is_empty() {
+            files.push("-".to_string());
+        }
+        let hdr_delim = format!("{0}{0}{0}", delim);
+        let body_delim = format!("{0}{0}", delim);
         let mut n = start;
-        for file in files {
+        let mut section = 1u8; // 0=header 1=body 2=footer
+        let mut blank_run = 0i64;
+        for file in &files {
             let reader: Box<dyn BufRead> = if file == "-" {
                 Box::new(BufReader::new(std::io::stdin()))
             } else {
@@ -7122,17 +7244,71 @@ impl ShellExecutor {
                 }
             };
             for line in reader.lines().map_while(Result::ok) {
+                // Section delimiters — full-line match only.
+                let new_section = if line == hdr_delim {
+                    Some(0u8)
+                } else if line == body_delim {
+                    Some(1u8)
+                } else if line == delim {
+                    Some(2u8)
+                } else {
+                    None
+                };
+                if let Some(sec) = new_section {
+                    section = sec;
+                    if renumber {
+                        n = start;
+                    }
+                    blank_run = 0;
+                    println!();
+                    continue;
+                }
+                let style = match section {
+                    0 => &header,
+                    2 => &footer,
+                    _ => &body,
+                };
                 let blank = line.is_empty();
                 let do_number = match style {
-                    'a' => true,
-                    't' => !blank,
-                    'n' => false,
-                    _ => !blank,
+                    NlStyle::All => {
+                        // -l NUM: only the NUM-th of a run of blanks
+                        // gets a number (GNU join-blank-lines).
+                        if blank {
+                            blank_run += 1;
+                            if blank_run == join_blanks {
+                                blank_run = 0;
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            blank_run = 0;
+                            true
+                        }
+                    }
+                    NlStyle::NonEmpty => {
+                        blank_run = 0;
+                        !blank
+                    }
+                    NlStyle::None => {
+                        blank_run = 0;
+                        false
+                    }
+                    NlStyle::Pat(re) => {
+                        blank_run = 0;
+                        re.is_match(&line)
+                    }
                 };
                 if do_number {
-                    println!("{:>width$}{}{}", n, sep, line, width = width);
+                    match fmt.as_str() {
+                        "ln" => println!("{:<width$}{}{}", n, sep, line, width = width),
+                        "rz" => println!("{:0>width$}{}{}", n, sep, line, width = width),
+                        _ => println!("{:>width$}{}{}", n, sep, line, width = width),
+                    }
                     n += step;
                 } else {
+                    // GNU: spaces replace both the number and the
+                    // separator on unnumbered lines.
                     println!("{}{}", " ".repeat(width + sep.len()), line);
                 }
             }
