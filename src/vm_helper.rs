@@ -239,11 +239,15 @@ pub struct SubshellSnapshot {
     /// child and doesn't leak to the parent. zshrs runs subshells
     /// in-process, so we must restore the alias table on
     /// subshell_end. Bug #209 in docs/BUGS.md. Stored as a flat
-    /// Vec<(name, text)> snapshot — the underlying alias_table holds
-    /// an IndexMap<String, alias> but `alias` carries hashnode
-    /// metadata we don't need to round-trip; only name + text are
-    /// observable via `alias NAME` lookup.
-    pub aliases: Vec<(String, String)>,
+    /// Vec<(name, text, flags)> snapshot. The node FLAGS must
+    /// round-trip: ALIAS_GLOBAL / DISABLED distinguish global and
+    /// disabled aliases in the shared aliastab — the previous
+    /// (name, text) shape restored every entry with flags=0, so ANY
+    /// subshell (`(true)`, zsh-z's `(zshz --add … &)` precmd)
+    /// reflagged every global alias to REGULAR in the parent:
+    /// `alias -g` listed nothing and `${+galiases[x]}` went 0 one
+    /// prompt after every define.
+    pub aliases: Vec<(String, String, i32)>,
     /// Parent's shell-function table at subshell entry. C zsh's
     /// `entersubsh` (`Src/exec.c`) forks before running the
     /// subshell body so `(f() { ... })` defining a function dies
