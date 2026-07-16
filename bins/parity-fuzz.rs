@@ -4967,6 +4967,99 @@ fn gen_assign(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// gflag generator
+//
+// `${(g:opts:)v}` — run the value through getkeystring(), the shared escape
+// decoder (c:Src/utils.c:6915). The opts letters map to GETKEY_* bits at
+// c:Src/subst.c:2411-2425: `e` → GETKEY_EMACS, `o` → GETKEY_OCTAL_ESC,
+// `c` → GETKEY_CTRL; empty opts → 0. The bits are NOT independent — the
+// octal branch (c:7156-7178) is entered for any `0-7`/`x` and then re-checks
+// OCTAL_ESC, so `\1` under `e`-without-`o` takes the `*t++ = '\\', s--;
+// continue;` arm (a LITERAL backslash, unsuppressed by EMACS) while `\1`
+// under `o` is a byte. That cross-bit coupling is what this mode exists to
+// hammer: every opts subset × every escape shape.
+//
+// Determinism: pure string→string, no clock/pid/filesystem. Output is piped
+// through `od` because getkeystring legitimately emits raw non-UTF-8 bytes
+// (`\xff`, `\M-a`, octal >\177), and a bare print of two DIFFERENT invalid
+// byte strings would render identically in a report.
+// ---------------------------------------------------------------------------
+
+/// Every subset of the `g` opts letters, plus repeats/orderings (the C parse
+/// is a per-char bit-set loop, so `ec` and `ce` must agree, and a doubled
+/// letter must be idempotent).
+const GFLAG_OPTS: &[&str] = &[
+    "", "e", "o", "c", "oe", "eo", "ce", "ec", "co", "oc", "coe", "ceo", "eoc", "oce", "ee", "oo",
+];
+
+/// Escape shapes spanning every getkeystring branch. Written as they appear
+/// INSIDE a double-quoted zsh string, so `\` reaches the value literally.
+const GFLAG_ESCAPES: &[&str] = &[
+    // Simple letter escapes (c:7000-7018) — flag-independent.
+    "a", "\\a", "\\b", "\\e", "\\E", "\\f", "\\n", "\\r", "\\t", "\\v",
+    // Octal, leading NON-zero: the OCTAL_ESC-gated branch (c:7157-7161).
+    // Without `o` these must come back as a literal backslash + digits.
+    "\\1", "\\7", "\\10", "\\77", "\\101", "\\102x", "\\377", "\\400", "\\600", "\\777",
+    // Octal, leading zero: taken as the introducer when OCTAL_ESC is unset
+    // (c:7158 `if (*s == '0') s++`), so `\0101` is 'A' even with no `o`.
+    "\\0", "\\00", "\\0101", "\\0377", "\\0400", "\\0777", "\\08", "\\09z",
+    // Digits >= 8 are NOT octal (c:7156 `*s < '8'`) — default arm.
+    "\\8", "\\9", "\\8a",
+    // Hex (c:7169) — entered regardless of OCTAL_ESC, max 2 digits.
+    "\\x", "\\x0", "\\x41", "\\x4", "\\xff", "\\xg", "\\x41B", "\\xfff",
+    // Unicode (c:7072-7138) — ungated, writes UTF-8 not a raw byte.
+    "\\u0041", "\\u00e9", "\\u20ac", "\\U0001F600", "\\u", "\\uzz",
+    // Emacs key escapes (c:7029-7052), gated on GETKEY_EMACS.
+    "\\M-a", "\\C-a", "\\C-A", "\\M-\\C-a", "\\C-?", "\\C-@", "\\C-[", "\\M-", "\\C-",
+    "\\M-\\M-b", "\\C-\\C-c",
+    // `^X` control form (c:7194), gated on GETKEY_CTRL.
+    "^A", "^a", "^?", "^@", "^", "a^Bb", "^[",
+    // Unknown escapes — default arm (c:7180-7184): the backslash survives
+    // only when EMACS is unset.
+    "\\q", "\\z", "\\-", "\\.", "\\'", "\\\"", "\\\\", "\\%", "\\c", "\\ ",
+    // Mixed / adjacent shapes: an escape butted against ordinary text, and
+    // multi-escape strings where one arm's `s` fixup feeds the next.
+    "x\\101y", "\\101\\102", "\\1\\0101", "\\x41\\101", "ab\\", "\\\\1", "\\\\x41",
+    "pre\\M-a post", "\\0101\\x41\\u0041", "^A\\C-a\\1",
+];
+
+fn gen_gflag(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let opts = pick(&mut rng, GFLAG_OPTS);
+    let esc = pick(&mut rng, GFLAG_ESCAPES);
+
+    match rng.gen_range(0..6) {
+        // Byte-exact decode. The core case.
+        0 | 1 => vec![format!(
+            "v=\"{esc}\"; print -rn -- \"${{(g:{opts}:)v}}\" | od -An -tx1 | tr -s ' '"
+        )],
+        // Length of the decoded result: catches a decode that emits the right
+        // bytes as the WRONG number of characters (metafication slips, a
+        // multibyte \u counted as its byte length).
+        2 => vec![format!(
+            "v=\"{esc}\"; r=${{(g:{opts}:)v}}; print -r -- \"len=${{#r}}\""
+        )],
+        // Decode inside a larger expansion: the result feeds a second flag, so
+        // a wrong intermediate (e.g. an unmetafied high byte) surfaces as a
+        // different visible rendering rather than raw bytes.
+        3 => vec![format!(
+            "v=\"{esc}\"; print -r -- \"[${{(V)${{(g:{opts}:)v}}}}]\""
+        )],
+        // Decoded value used as a pattern subject — pushes the bytes through
+        // the matcher rather than straight to stdout.
+        4 => vec![format!(
+            "v=\"{esc}\"; r=${{(g:{opts}:)v}}; [[ -n $r ]] && print -r -- \"n=${{#r}}\" || print -r -- empty"
+        )],
+        // Array elements: each word decoded independently (c:subst.c:3965
+        // loops getkeystring over `*ap2`), which is a different call site from
+        // the scalar arm at c:3970.
+        _ => vec![format!(
+            "a=(\"{esc}\" \"x\" \"{esc}\"); print -rn -- \"${{(g:{opts}:)a}}\" | od -An -tx1 | tr -s ' '"
+        )],
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -5030,6 +5123,7 @@ enum Mode {
     Subexp,
     Replace,
     Assign,
+    Gflag,
 }
 
 struct Args {
@@ -5106,6 +5200,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Subexp => gen_subexp(seed),
         Mode::Replace => gen_replace(seed),
         Mode::Assign => gen_assign(seed),
+        Mode::Gflag => gen_gflag(seed),
     }
 }
 
@@ -5170,6 +5265,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Subexp => "subexp",
         Mode::Replace => "replace",
         Mode::Assign => "assign",
+        Mode::Gflag => "gflag",
     }
 }
 
@@ -5234,6 +5330,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Subexp,
         Mode::Replace,
         Mode::Assign,
+        Mode::Gflag,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -5336,7 +5433,8 @@ fn parse_args() -> Args {
                      posparam, numfmt, mapfile, pcre, zwc, tied,\n\
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
-                     whence, zstyle, atflag, subexp, replace, assign\n\
+                     whence, zstyle, atflag, subexp, replace, assign,\n\
+                     gflag\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

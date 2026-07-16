@@ -15462,7 +15462,38 @@ pub fn paramsubst(
             let decode_one = |s: &str| -> String {
                 crate::ported::utils::getkeystring_with(s, getkeys as u32, None).0
             };
-            if let Some(parts) = split_parts.clone() {
+            // c:3959 `if (isarr)` — the per-element arm fires only while the
+            // expansion is STILL array-shaped HERE. c:3029-3036 has already
+            // run: for a quoted expansion without `(@)`/nojoin it does
+            // `val = sepjoin(aval, sep, 1); isarr = 0`, so the getkeys block
+            // takes the SCALAR arm (c:3970) on the JOINED string. That is
+            // observable, because an escape decodes ACROSS the separator that
+            // the join inserted: for `a=("\0" "1")`, zsh's `"${(g::)a}"` is
+            // the single byte 0o01 (`\0` skips the introducer, then zstrtol
+            // reads past the space to the `1`), NOT `NUL " " 1`. Decoding
+            // per-element and joining afterwards produced the latter. With
+            // `(@)` (nojoin) or unquoted, isarr survives and each element
+            // decodes on its own — both shells already agreed there.
+            //
+            // Same `isarr` stand-in the (q) arm above (c:2800) computes; the
+            // two flags gate on the identical C variable, so the condition
+            // must stay identical. `is_at_subscript_splat` is re-derived here
+            // because that arm scopes it to its own block.
+            let is_at_subscript_splat = matches!(subscript.as_deref(), Some("@") | Some("*"));
+            let want_per_element = !dq_collapsed
+                && (nojoin == 2 || !qt || is_at_subscript_splat || var_name == "@");
+            if !want_per_element {
+                // c:3970 scalar arm on the already-joined value.
+                let joined = match split_parts.clone() {
+                    Some(parts) => parts.join(" "),
+                    None => value.clone(),
+                };
+                let decoded = decode_one(&joined);
+                value = decoded.clone();
+                if split_parts.is_some() {
+                    split_parts = Some(vec![decoded]);
+                }
+            } else if let Some(parts) = split_parts.clone() {
                 let new_parts: Vec<String> = parts.iter().map(|s| decode_one(s)).collect();
                 value = new_parts.join(" ");
                 split_parts = Some(new_parts);

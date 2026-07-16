@@ -10065,6 +10065,31 @@ pub fn getkeystring_with(
                 result.push('\r');
                 consumed += 1;
             }
+            // c:utils.c:7018-7024 — `\E` is EMACS-gated:
+            //     case 'E':
+            //         if (!(how & GETKEY_EMACS)) {
+            //             *t++ = '\\', s--;
+            //             if (miscadded) (*misc)++;
+            //             continue;
+            //         }
+            //         /* FALL THROUGH */
+            //     case 'e':
+            //         *t++ = '\033';
+            // Without EMACS `\E` stays a literal backslash + `E`; only `\e`
+            // is unconditional. Folding `E` in with `e` made `${(g::)v}` on
+            // `\E` yield ESC where zsh yields `\E`. Unlike the octal
+            // `continue` arm (c:7159), C restores the miscadded decrement
+            // here, since the backslash is kept.
+            Some('E') if (how & GETKEY_EMACS) == 0 => {
+                consumed += 1;
+                if miscadded {
+                    if let Some(m) = misc.as_deref_mut() {
+                        *m += 1;
+                    }
+                }
+                result.push('\\');
+                result.push('E');
+            }
             Some('e') | Some('E') => {
                 result.push('\x1b');
                 consumed += 1;
@@ -10105,52 +10130,6 @@ pub fn getkeystring_with(
                 result.push('\\');
                 consumed += 1;
             }
-            Some('x') => {
-                consumed += 1;
-                let mut hex = String::new();
-                for _ in 0..2 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                // c:utils.c:7169-7170 — `\x` ALWAYS runs `*t++ =
-                // zstrtol(s+1, &s, 16)`, even with no hex digit. zstrtol
-                // over a non-hex byte parses zero digits and returns 0, so
-                // a NUL byte is emitted (and the offending char is left for
-                // the next iteration). Mirror the `\0`/octal arm below: an
-                // empty parse yields 0, not "drop the escape". `$'\xg'` →
-                // NUL + 'g'; `$'\x'` → NUL. Previously `from_str_radix("")`
-                // errored and nothing was pushed.
-                let val: u8 = if hex.is_empty() {
-                    0 // c:7170 zstrtol on empty reads as 0
-                } else {
-                    u8::from_str_radix(&hex, 16).unwrap_or(0)
-                };
-                // c:Src/utils.c — `\xNN` is one raw BYTE, not a Unicode
-                // codepoint. Metafy high bytes (c:7289-7294 `if (imeta(c))
-                // { *p++ = Meta; *p++ = c ^ 32; }`) so the String stays
-                // valid UTF-8 and unmetafies back to the single raw byte on
-                // output. `push(val as char)` re-encoded 0xNN>=0x80 as two
-                // UTF-8 bytes (`\xff` → c3 bf instead of ff). Mirrors the
-                // getkeystring() hex arm.
-                if val < 0x80 {
-                    result.push(val as char);
-                } else {
-                    result.push('\u{83}');
-                    result.push(char::from(val ^ 32));
-                }
-                // c:utils.c:7172-7173 — under GETKEY_PRINTF_PERCENT
-                // a numeric escape producing `%` gets a second `%`.
-                if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0 && val == b'%'
-                {
-                    result.push('%');
-                }
-            }
             // c:utils.c:7072-7138 — `\u` (4-hex) / `\U` (8-hex)
             // Unicode codepoint escapes. Always interpreted; the C
             // source's `case 'U':` / `case 'u':` arms have no flag
@@ -10181,16 +10160,21 @@ pub fn getkeystring_with(
                         }
                     }
                 }
-                if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                    if let Some(ch) = char::from_u32(val) {
-                        result.push(ch);
-                        // c:utils.c:7123-7124 — add one per output byte,
-                        // checked at the last consumed input byte.
-                        if update_off {
-                            if let Some(m) = misc.as_deref_mut() {
-                                if ((consumed - 1) as i32) < *m {
-                                    *m += ch.len_utf8() as i32;
-                                }
+                // c:utils.c:7085 `wval = 0;` BEFORE the digit loop, and
+                // c:7087-7095 leaves it untouched when the first char is not
+                // a hex digit (`s--; break;`). So ZERO digits is not "not an
+                // escape" — it emits codepoint 0 via `ucs4tomb(wval, t)`
+                // (c:7101). `\u` → one NUL byte, `\uzz` → NUL + "zz". An Err
+                // on the empty parse pushed nothing at all.
+                let val = u32::from_str_radix(&hex, 16).unwrap_or(0);
+                if let Some(ch) = char::from_u32(val) {
+                    result.push(ch);
+                    // c:utils.c:7123-7124 — add one per output byte,
+                    // checked at the last consumed input byte.
+                    if update_off {
+                        if let Some(m) = misc.as_deref_mut() {
+                            if ((consumed - 1) as i32) < *m {
+                                *m += ch.len_utf8() as i32;
                             }
                         }
                     }
@@ -10218,100 +10202,131 @@ pub fn getkeystring_with(
                         }
                     }
                 }
-                if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                    if let Some(ch) = char::from_u32(val) {
-                        result.push(ch);
-                        // c:utils.c:7123-7124 — add one per output byte.
-                        if update_off {
-                            if let Some(m) = misc.as_deref_mut() {
-                                if ((consumed - 1) as i32) < *m {
-                                    *m += ch.len_utf8() as i32;
-                                }
+                // c:utils.c:7085 — same `wval = 0` default as the `\u` arm
+                // above: `\U` with no hex digits emits codepoint 0, not
+                // nothing.
+                let val = u32::from_str_radix(&hex, 16).unwrap_or(0);
+                if let Some(ch) = char::from_u32(val) {
+                    result.push(ch);
+                    // c:utils.c:7123-7124 — add one per output byte.
+                    if update_off {
+                        if let Some(m) = misc.as_deref_mut() {
+                            if ((consumed - 1) as i32) < *m {
+                                *m += ch.len_utf8() as i32;
                             }
                         }
                     }
                 }
             }
-            // c:utils.c:7156-7178 — `\0NNN` when GETKEY_OCTAL_ESC is
-            // NOT set (the echo path). C body:
-            //   if (!(how & GETKEY_OCTAL_ESC)) {
-            //       if (*s == '0')
-            //           s++;        // skip the 0 prefix
-            //       ...
-            //   }
-            //   *t++ = zstrtol(s + (*s == 'x'), &s, 8);
-            // So `\0NNN` reads up to 3 octal digits AFTER the leading
-            // 0 and emits one byte. Previously absent, so
-            // `echo -e "\0101"` emitted literal `\0101` instead of
-            // byte 0x41 ('A'). The OCTAL_ESC-gated arm below handles
-            // the printf path where any 0-7 digit starts an octal.
-            Some('0') if (how & GETKEY_OCTAL_ESC) == 0 => {
+            // c:utils.c:7156-7178 — the NUMERIC-ESCAPE branch. C handles
+            // `\x`, `\NNN` and `\0NNN` in ONE arm, and the shared tail is
+            // what makes them agree, so this port keeps them together too:
+            //
+            //     if ((idigit(*s) && *s < '8') || *s == 'x') {
+            //         if (!(how & GETKEY_OCTAL_ESC)) {
+            //             if (*s == '0')
+            //                 s++;
+            //             else if (*s != 'x') {
+            //                 *t++ = '\\', s--;
+            //                 continue;
+            //             }
+            //         }
+            //         if (s[1] && s[2] && s[3]) {
+            //             svchar = s[3]; s[3] = '\0'; u = s;
+            //         }
+            //         *t++ = zstrtol(s + (*s == 'x'), &s,
+            //                        (*s == 'x') ? 16 : 8);
+            //         ...
+            //         s--;
+            //     }
+            //
+            // Three behaviours here were each missing when these were three
+            // separate arms:
+            //
+            //  1. Without GETKEY_OCTAL_ESC a NON-ZERO digit is not an escape
+            //     at all (c:7159): C emits a literal backslash and backs up so
+            //     the digit is re-read as an ordinary char. This is INSIDE the
+            //     numeric branch, so — unlike the default arm — GETKEY_EMACS
+            //     does not suppress the backslash: `${(g:e:)v}` on `\101` is
+            //     `\101`, not `101`.
+            //  2. The value goes through `zstrtol`, which SKIPS leading blanks
+            //     and accepts a `+`/`-` sign (c:2444-2450), and whose end
+            //     pointer lands past everything it consumed — blanks included.
+            //     So `\0 1` is byte 0o1, `\x 41` is 0x04 then `1`, `\x y` is
+            //     NUL then `y`, and `\0-1` is 0xff (a NEGATIVE parse truncated
+            //     to a byte). Peeking for "is the next char a digit" stopped at
+            //     the blank and left it in the output.
+            //  3. The base is chosen from the char AT `s` AFTER the `\0`
+            //     introducer was skipped, so `\0x41` is HEX (`A`), not NUL
+            //     followed by `x41`.
+            //
+            // c:7166-7168 windows the parse by NUL-ing `s[3]` when three chars
+            // follow `s`, capping it at 3 significant chars (2 after an `x`),
+            // then restores the byte — so `\1234` is 0o123 then `4`.
+            //
+            // `*t++ = zstrtol(...)` assigns a zlong to a char, truncating to
+            // the low byte: `\777` (511) is 0xff, `\400` (256) is NUL. Parsing
+            // straight into u8 made those an Err and emitted nothing at all.
+            Some(d) if d.is_digit(8) || d == 'x' => {
                 consumed += 1;
-                let mut oct = String::new();
-                for _ in 0..3 {
-                    if let Some(&c) = chars.peek() {
-                        if ('0'..='7').contains(&c) {
-                            oct.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
+                // c:7157-7161 — the pre-checks that run only without
+                // GETKEY_OCTAL_ESC. `\0` is the octal introducer (`s++`);
+                // any other bare digit is not an escape.
+                let zero_intro = (how & GETKEY_OCTAL_ESC) == 0 && d == '0';
+                if (how & GETKEY_OCTAL_ESC) == 0 && d != '0' && d != 'x' {
+                    // c:7159 `*t++ = '\\', s--; continue;`
+                    result.push('\\');
+                    result.push(d);
+                    continue;
                 }
-                let val: u8 = if oct.is_empty() {
-                    0 // c:7170 zstrtol on empty reads as 0
+                // C's `s` after the pre-checks: the char AFTER the `\0`
+                // introducer, else the matched char itself.
+                //
+                // Four chars of lookahead is all C can read: the window test
+                // reaches `s[3]`, and the parse never sees past it. Bounding
+                // the clone keeps this O(1) per escape — collecting the whole
+                // tail here would make decoding an escape-dense string O(n²).
+                let rest: Vec<char> = chars.clone().take(4).collect();
+                let (p, after): (Option<char>, &[char]) = if zero_intro {
+                    (rest.first().copied(), rest.get(1..).unwrap_or(&[]))
                 } else {
-                    u8::from_str_radix(&oct, 8).unwrap_or(0)
+                    (Some(d), &rest[..])
                 };
-                // c:Src/utils.c — octal escape is one raw BYTE; metafy high
-                // bytes (c:7289-7294) so `\0377` unmetafies to a single 0xff
-                // byte, not the UTF-8 pair c3 bf. Mirrors the getkeystring()
-                // hex arm.
+                // c:7166 `if (s[1] && s[2] && s[3])` — needs three chars after
+                // `s`; the window then spans `s` plus two more.
+                let win: &[char] = if after.len() >= 3 { &after[..2] } else { after };
+                let mut vis: Vec<char> = Vec::with_capacity(3);
+                if let Some(pc) = p {
+                    vis.push(pc);
+                }
+                vis.extend_from_slice(win);
+                // c:7170 `zstrtol(s + (*s == 'x'), &s, (*s == 'x') ? 16 : 8)`.
+                let (base, skip_p) = if p == Some('x') { (16, 1) } else { (8, 0) };
+                let parse_src: String = vis[skip_p.min(vis.len())..].iter().collect();
+                let (num, tail) = zstrtol(&parse_src, base);
+                let used_chars = parse_src[..parse_src.len() - tail.len()].chars().count();
+                // Advance past what C consumed. `vis[0]` is the already-taken
+                // match char unless the `\0` introducer moved `s` forward.
+                let vis_used = skip_p + used_chars;
+                let advance = if zero_intro { vis_used } else { vis_used.saturating_sub(1) };
+                for _ in 0..advance {
+                    chars.next();
+                    consumed += 1;
+                }
+                let val = (num as u64 & 0xff) as u8;
+                // c:Src/utils.c — the escape is one raw BYTE; metafy high
+                // bytes (c:7289-7294) so `\377` unmetafies to a single 0xff,
+                // not the UTF-8 pair c3 bf.
                 if val < 0x80 {
                     result.push(val as char);
                 } else {
                     result.push('\u{83}');
                     result.push(char::from(val ^ 32));
                 }
-                // c:utils.c:7172-7173 — same `%` doubling under
-                // GETKEY_PRINTF_PERCENT as the hex/octal arms.
+                // c:7172-7173 — under GETKEY_PRINTF_PERCENT a numeric escape
+                // producing `%` gets a second `%`.
                 if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0 && val == b'%' {
                     result.push('%');
-                }
-            }
-            // Octal escape: \NNN (1-3 octal digits). Gated on
-            // GETKEY_OCTAL_ESC per c:utils.c:7156-7178.
-            Some(d) if d.is_digit(8) && (how & GETKEY_OCTAL_ESC) != 0 => {
-                consumed += 1;
-                let mut oct = String::from(d);
-                for _ in 0..2 {
-                    if let Some(&c) = chars.peek() {
-                        if c.is_digit(8) {
-                            oct.push(chars.next().unwrap());
-                            consumed += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                if let Ok(val) = u8::from_str_radix(&oct, 8) {
-                    // c:Src/utils.c — octal escape is one raw BYTE; metafy
-                    // high bytes (c:7289-7294) so `\377` unmetafies to a
-                    // single 0xff byte, not the UTF-8 pair. Mirrors the
-                    // getkeystring() octal arm.
-                    if val < 0x80 {
-                        result.push(val as char);
-                    } else {
-                        result.push('\u{83}');
-                        result.push(char::from(val ^ 32));
-                    }
-                    // c:utils.c:7172-7173 — `%` doubling under
-                    // GETKEY_PRINTF_PERCENT (the printf format path).
-                    if (how & crate::ported::zsh_h::GETKEY_PRINTF_PERCENT as u32) != 0
-                        && val == b'%'
-                    {
-                        result.push('%');
-                    }
                 }
             }
             // c:utils.c:7029-7052 + c:7255-7275 — `\C` / `\M` set the

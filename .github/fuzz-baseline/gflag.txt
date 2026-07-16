@@ -1,0 +1,29 @@
+# parity-fuzz --mode gflag baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode gflag --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps. Every divergence this mode found on introduction was a real
+# port bug and was FIXED rather than baselined:
+#
+#   1. getkeystring's numeric-escape branch (c:utils.c:7156-7178) was split
+#      into three Rust arms that each drifted from C's single branch:
+#      - `\1`..`\7` without GETKEY_OCTAL_ESC must emit a LITERAL backslash
+#        (c:7159 `*t++ = '\\', s--; continue;`), unsuppressed by GETKEY_EMACS.
+#      - the value parse must go through zstrtol (c:2444-2450), which skips
+#        leading blanks and takes a `+`/`-` sign: `\0 1` is 0o1, `\x y` is
+#        NUL+`y`, `\0-1` is 0xff.
+#      - the base comes from the char AFTER the `\0` introducer, so `\0x41`
+#        is hex `A`.
+#      - `*t++ = zstrtol(...)` truncates a zlong to a char, so `\777` is 0xff
+#        and `\400` is NUL; a u8 parse errored and emitted nothing.
+#   2. `\u`/`\U` with no hex digits emit codepoint 0 (c:7085 `wval = 0` +
+#      c:7101 ucs4tomb), not nothing: `\u` is one NUL, `\uzz` is NUL+`zz`.
+#   3. `\E` is GETKEY_EMACS-gated (c:7018-7024); without it `\E` stays a
+#      literal backslash + `E`.
+#   4. The `(g)` flag's per-element arm fires only while the expansion is
+#      still array-shaped (c:3959 `if (isarr)`). A quoted non-`(@)` array is
+#      already collapsed by c:3032 (`val = sepjoin(aval, sep, 1); isarr = 0`),
+#      so `"${(g::)a}"` decodes the JOINED string — escapes read ACROSS the
+#      inserted separator (`a=("\0" "1")` is the single byte 0o1).
+#
+# Any divergence here is a regression.
