@@ -2959,3 +2959,55 @@ mod nested_split_drops_empties {
         assert_parity(r#"arr=(a "" b); print -r -- "[${${(o)arr}}]""#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Y. A bare `$assoc` under KSH EMULATION is `${assoc[0]}` (key-"0"),
+//    not the first bucket value.
+//
+// c:Src/params.c:2351-2358 — `case PM_HASHED: if (!v->scanflags &&
+// EMULATION(EMULATE_KSH))` builds `s="[0]"`, does a KEY-"0" getindex, and
+// returns that element — EMPTY unless the hash has a key "0". This is
+// EMULATION-gated, NOT the KSHARRAYS option: `emulate -L ksh; typeset -A
+// h=(a 1 b 2); print $h` is empty, whereas `setopt ksharrays; …; print $h`
+// is the first bucket value `1`. zshrs collapsed both to the first value.
+// Fixed in the bare-assoc reader (get_var_impl / ksharrays_bare_words).
+// ─────────────────────────────────────────────────────────────────────
+mod ksh_emulation_bare_assoc {
+    use super::*;
+
+    /// zsh: empty (no key "0"). Was `1` (first value) before the fix.
+    #[test]
+    fn emulate_ksh_bare_assoc_empty() {
+        assert_parity(r#"emulate -L ksh; typeset -A h=(a 1 b 2); print -r -- "[$h]""#);
+    }
+
+    /// `$h[k]` under ksh emulation: bare $h (empty) then literal `[k]`.
+    #[test]
+    fn emulate_ksh_assoc_bracket_literal() {
+        assert_parity(r#"emulate -L ksh; typeset -A h=(k v); print -r -- $h[k]"#);
+    }
+
+    /// WITH a real key "0", the bare form yields that value.
+    #[test]
+    fn emulate_ksh_bare_assoc_with_key_zero() {
+        assert_parity(r#"emulate -L ksh; typeset -A h=(0 zero a 1); print -r -- "[$h]""#);
+    }
+
+    /// `setopt ksharrays` (no ksh emulation) stays first bucket value.
+    #[test]
+    fn setopt_ksharrays_bare_assoc_first_value() {
+        assert_parity(r#"setopt ksharrays; typeset -A h=(a 1 b 2); print -r -- "[$h]""#);
+    }
+
+    /// `emulate sh` bare assoc is also the first value (not key "0").
+    #[test]
+    fn emulate_sh_bare_assoc_first_value() {
+        assert_parity(r#"emulate -L sh; typeset -A h=(a 1 b 2); print -r -- "[$h]""#);
+    }
+
+    /// A regular array under ksh emulation still yields element 0.
+    #[test]
+    fn emulate_ksh_bare_array_first_element() {
+        assert_parity(r#"emulate -L ksh; a=(x y z); print -r -- "[$a]""#);
+    }
+}

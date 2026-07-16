@@ -8847,9 +8847,26 @@ pub fn paramsubst(
             && subscript.is_none()
             && assoc_contains(&var_name);
         if ksh_bare_assoc {
-            value = assoc_get(&var_name)
-                .and_then(|m| m.values().next().cloned())
-                .unwrap_or_default();
+            // c:Src/params.c:2351-2358 — a bare `$assoc` (no subscript) is
+            // scalarized differently by MODE:
+            //   * EMULATE_KSH: it is `${assoc[0]}` — a KEY-"0" lookup
+            //     (`s = "[0]"; getindex(...); s = getstrvalue(v)`), so it is
+            //     EMPTY unless the hash actually has a key "0". This is the
+            //     `!v->scanflags && EMULATION(EMULATE_KSH)` arm.
+            //   * else (`setopt ksharrays` without ksh emulation, `emulate
+            //     sh`, `emulate zsh`): fall through to PM_ARRAY → the first
+            //     bucket value.
+            // So `emulate -L ksh; typeset -A h=(a 1 b 2); print $h` is empty,
+            // while `setopt ksharrays; …; print $h` is `1`.
+            value = if crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH) {
+                assoc_get(&var_name)
+                    .and_then(|m| m.get("0").cloned())
+                    .unwrap_or_default()
+            } else {
+                assoc_get(&var_name)
+                    .and_then(|m| m.values().next().cloned())
+                    .unwrap_or_default()
+            };
             // The result is a single SCALAR — clear any array shape so a
             // trailing `(@)`/`(*)` splat emits just this one value
             // (`"${(@k)as}"` under KSHARRAYS → `v1`, not the key list).

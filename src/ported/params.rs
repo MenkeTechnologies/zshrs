@@ -3585,8 +3585,26 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
     let pmflags = pm.node.flags as u32;
 
     // c:2350-2370 — PM_TYPE dispatch.
-    let mut s: String = if t == PM_HASHED || t == PM_ARRAY {
-        // c:2351-2370
+    let mut s: String = if t == PM_HASHED && v.scanflags == 0 && EMULATION(EMULATE_KSH) {
+        // c:Src/params.c:2351-2358 — `case PM_HASHED: if (!v->scanflags &&
+        // EMULATION(EMULATE_KSH))` — a bare `$assoc` (no subscript) under
+        // KSH EMULATION is `${assoc[0]}`: it builds `s = "[0]"`, does a
+        // KEY-"0" `getindex`, and returns that element's value. So it is
+        // EMPTY unless the hash actually holds a key "0". This is
+        // emulation-gated, NOT KSHARRAYS-option-gated: `emulate -L ksh;
+        // typeset -A h=(a 1 b 2); print $h` is empty, whereas `setopt
+        // ksharrays; …; print $h` falls through below to the first bucket
+        // value `1`. (`setopt ksharrays` keeps v->scanflags non-zero for a
+        // bare assoc, so it never reaches this arm; the `scanflags==0`
+        // guard mirrors the C `!v->scanflags` "impossible unless emulating
+        // ksh" invariant.)
+        paramtab_hashed_storage()
+            .lock()
+            .ok()
+            .and_then(|store| store.get(&pm.node.nam).and_then(|m| m.get("0").cloned()))
+            .unwrap_or_default()
+    } else if t == PM_HASHED || t == PM_ARRAY {
+        // c:2359-2369 (PM_ARRAY, and the ksh-emulation PM_HASHED fall-through)
         let arr = arrgetfn(pm);
         if v.scanflags != 0 {
             // c:2361
