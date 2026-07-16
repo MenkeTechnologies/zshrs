@@ -4973,13 +4973,13 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(!IS_COMBINING('a')); // width 1
         assert!(!IS_COMBINING('\u{0000}')); // null returns false per c:3343
-                                            // Note: the WCWIDTH heuristic in this port doesn't recognise
-                                            // combining marks — that needs a unicode-width table. Test
-                                            // the contract (width-0 non-zero char) rather than the
-                                            // specific Unicode codepoint behaviour.
-                                            // BEL (control) returns 0 from WCWIDTH and is non-zero, so
-                                            // IS_COMBINING returns true.
-        assert!(IS_COMBINING('\u{0007}'));
+        // Control chars are wcwidth -1 per wcwidth(3), so IS_COMBINING
+        // (`WCWIDTH(wc) == 0`, c:3343) is FALSE for them — the old pin
+        // asserted the width-0 divergence that made the refresh build
+        // absorb '\n'/BEL into combining clusters.
+        assert!(!IS_COMBINING('\u{0007}'));
+        // Real combining mark (unicode-width table): width 0 → true.
+        assert!(IS_COMBINING('\u{0301}'));
     }
 
     #[test]
