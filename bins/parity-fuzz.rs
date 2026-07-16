@@ -5060,6 +5060,227 @@ fn gen_gflag(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// select generator
+//
+// `select name in words; do … done` — c:Src/loop.c:217 execselect. The menu
+// itself is `selectlist` (c:347): column-MAJOR layout, width driven by the
+// longest item plus the digit count of the item total.
+//
+// The C control flow is two NESTED loops, and the nesting is the whole point:
+//   more = selectlist(args, 0);        // c:264 — ONCE, before the loop
+//   for (;;) {                         // c:265 — per selection
+//       for (;;) {                     // c:266 — read until non-empty
+//           print prompt3; read str
+//           if (!str) { REPLY=""; goto done; }   // c:277-285 EOF
+//           if (*str) break;                     // c:288
+//           more = selectlist(args, more);       // c:290 — EMPTY line reprints
+//       }
+//       REPLY=str; name=nth(args, atoi(str));    // c:291-300
+//       execlist(body)                           // c:303
+//   }
+// So the menu appears once per select, plus once per blank line — never per
+// body iteration. A non-numeric or out-of-range reply sets `name` to "" but
+// still runs the body (c:293-299 `if (!i) str = ""`).
+//
+// Determinism: the menu goes to STDERR and its layout depends on the terminal
+// width, and the prompt is PS3 — so each script PINS `COLUMNS`/`LINES`/`PS3`
+// rather than inheriting them (the harness passes its own env through to both
+// shells, and a caller exporting a colored PS3 or COLUMNS=0 would otherwise
+// decide the output). stdin is always a fixed here-string/pipe, never a tty.
+// ---------------------------------------------------------------------------
+
+/// Word lists: varying counts/widths so the column math (longest item, digit
+/// count, items-per-row) lands differently.
+const SELECT_LISTS: &[&str] = &[
+    "a b",
+    "a b c",
+    "one two three",
+    "x",
+    "alpha beta gamma delta",
+    "a b c d e f g h i j k l",
+    "'a b' c",
+    "short longeritem s",
+    "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15",
+    "aa bb cc dd",
+    "'' x",
+    "verylongsingleitemhere z",
+];
+
+/// Reply sequences fed on stdin. Cover: valid picks, out-of-range, zero,
+/// negative, non-numeric, EMPTY (the c:290 reprint path), and multi-select
+/// runs that expose a per-iteration redraw.
+const SELECT_INPUTS: &[&str] = &[
+    "1", "2", "3", "0", "9", "-1", "abc", "", "1\\n2", "\\n1", "\\n\\n2", "1\\n1",
+    "2\\n\\n1", "1\\n2\\n3", "x\\n1", "10", "1 2",
+];
+
+fn gen_select(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let list = pick(&mut rng, SELECT_LISTS);
+    let input = pick(&mut rng, SELECT_INPUTS);
+    // Pin every terminal/prompt input the menu layout reads.
+    let pin = "COLUMNS=80; LINES=24; PS3='?# '; ";
+    // `break` after the first body run vs letting the loop drain stdin: the
+    // draining form is what catches a menu redrawn per iteration.
+    let body = pick(
+        &mut rng,
+        &[
+            "print -r -- \"[$x]\"; break",
+            "print -r -- \"[$x] r=$REPLY\"; break",
+            "print -r -- \"[$x]\"",
+            "print -r -- \"[$x] r=$REPLY\"",
+            "print -r -- \"n=$#x\"; break",
+            "break",
+            "print -r -- \"[$x]\"; continue",
+        ],
+    );
+
+    match rng.gen_range(0..4) {
+        // `select … in <words>` with the replies piped in. stderr is folded in
+        // so the MENU and PS3 prompt are compared, not just the body's stdout.
+        0 | 1 => vec![format!(
+            "{pin}printf '{input}\\n' | {{ select x in {list}; do {body}; done }} 2>&1; print -r -- \"rc=$?\""
+        )],
+        // Positional-parameter form (c:235-242 WC_SELECT_PPARAM) — the word
+        // list comes from $@ rather than an explicit `in`.
+        2 => vec![format!(
+            "{pin}f() {{ select x; do {body}; done }}; printf '{input}\\n' | f {list} 2>&1; print -r -- \"rc=$?\""
+        )],
+        // Empty/undefined list — c:248-252 skips the body entirely and the
+        // menu is never printed.
+        _ => vec![format!(
+            "{pin}a=({list}); printf '{input}\\n' | {{ select x in $a; do {body}; done }} 2>&1; print -r -- \"rc=$? n=${{#a}}\""
+        )],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bindkey generator
+//
+// `bindkey` (c:Src/Zle/zle_keymap.c:1022/1038/1045/1104/1119) decodes every
+// key spec with `getkeystring(seq, &len, GETKEYS_BINDKEY, NULL)` — the SAME
+// decoder as the `g` flag, but with a flag set the `(g:…:)` form cannot
+// produce on its own: OCTAL_ESC|EMACS|CTRL together (c:zsh.h:3187). That
+// combination is what makes `^X`, `\C-x`, `\M-x`, `\101` and the chained
+// `\M-^?` forms all live in one grammar, and the modifier bits interact:
+// c:7034 `meta = 1 + control` records whether `\M` was seen before or after
+// a pending control, which c:7261-7275 then applies in that order (`\M-\C-?`
+// is 0xff, `\C-\M-?` is 0x9f).
+//
+// The strongest probe here is not "does it decode" but "do two DIFFERENT
+// spellings of the same byte sequence land on the same binding" — bind via
+// one notation, look up via an equivalent one. That catches a decoder that is
+// self-consistently wrong.
+//
+// Determinism: bindkey output is a stable, targeted lookup — no clock, pid or
+// filesystem. Full `-L` dumps are avoided (keymap iteration order is not a
+// parity guarantee worth pinning); counts via `grep -c` are used instead.
+// ---------------------------------------------------------------------------
+
+/// Key specs spanning the GETKEYS_BINDKEY vocabulary. Written as they reach
+/// the shell inside SINGLE quotes, so backslashes arrive literally.
+const BINDKEY_SPECS: &[&str] = &[
+    // Caret control form (c:7194, GETKEY_CTRL).
+    "^X", "^A", "^?", "^[", "^@", "^A^B", "^X^X",
+    // Backslash control form (c:7041-7052).
+    "\\C-x", "\\C-?", "\\C-@", "\\C-a",
+    // Meta (c:7029-7040) — sets the HIGH BIT, not an ESC prefix.
+    "\\M-a", "\\M-x", "\\M--", "\\M-1",
+    // Chained modifiers — the `meta = 1 + control` ordering surface.
+    "\\M-^?", "\\M-^A", "\\M-^H", "\\M-\\C-a", "\\C-\\M-a", "^\\M-a", "\\M-\\M-a",
+    "\\M-\\C-?", "\\C-\\M-?", "\\M-\\C-x",
+    // Simple letter escapes.
+    "\\e", "\\E", "\\e[A", "\\e[1;5C", "\\n", "\\t", "\\r", "\\a", "\\b", "\\f", "\\v",
+    "\\M-\\n", "\\M-\\t",
+    // Numeric escapes — OCTAL_ESC is SET here, so `\101` is `A` (unlike the
+    // bare `(g::)` form where it stays a literal backslash).
+    "\\101", "\\0101", "\\x41", "\\x7f", "\\377", "\\777", "\\400", "\\0",
+    // Unicode.
+    "\\u0041", "\\U00000041",
+    // Plain / multi-char sequences.
+    "A", "abc", "x",
+];
+
+/// Pairs of DIFFERENT spellings that must decode to the SAME bytes, so a bind
+/// through one is visible through the other.
+const BINDKEY_EQUIV: &[(&str, &str)] = &[
+    ("^X", "\\C-x"),
+    ("^A", "\\C-a"),
+    ("^?", "\\C-?"),
+    ("^[", "\\e"),
+    ("\\e", "\\E"),
+    ("\\M-^A", "\\M-\\C-a"),
+    ("\\M-^?", "\\M-\\C-?"),
+    ("\\101", "A"),
+    ("\\0101", "A"),
+    ("\\x41", "A"),
+    ("\\u0041", "A"),
+    ("\\x7f", "^?"),
+    ("^@", "\\C-@"),
+    ("\\M-\\C-a", "\\M-^A"),
+];
+
+/// Widgets that exist in both shells' default keymaps.
+const BINDKEY_WIDGETS: &[&str] = &[
+    "self-insert",
+    "backward-kill-word",
+    "up-line-or-history",
+    "accept-line",
+    "forward-char",
+    "undefined-key",
+    "beep",
+    "kill-line",
+];
+
+fn gen_bindkey(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let widget = pick(&mut rng, BINDKEY_WIDGETS);
+
+    match rng.gen_range(0..7) {
+        // Bind, then read the binding back through the SAME spec. Exercises
+        // decode AND the display path (c:zle_keymap.c printbind → nicechar).
+        0 | 1 => {
+            let spec = pick(&mut rng, BINDKEY_SPECS);
+            vec![format!("bindkey '{spec}' {widget}; bindkey '{spec}'")]
+        }
+        // Bind via one spelling, look up via an equivalent one. A decoder that
+        // is wrong the same way on both sides still fails this.
+        2 => {
+            let (a, b) = pick(&mut rng, BINDKEY_EQUIV);
+            vec![format!("bindkey '{a}' {widget}; bindkey '{b}'")]
+        }
+        // Remove, then look up (c:1104 `bindkey -r`).
+        3 => {
+            let spec = pick(&mut rng, BINDKEY_SPECS);
+            vec![format!(
+                "bindkey '{spec}' {widget}; bindkey -r '{spec}'; bindkey '{spec}'"
+            )]
+        }
+        // A user keymap (c:1119 `-N`/`-M`) keeps its own trie.
+        4 => {
+            let spec = pick(&mut rng, BINDKEY_SPECS);
+            vec![format!(
+                "bindkey -N km; bindkey -M km '{spec}' {widget}; bindkey -M km '{spec}'; bindkey '{spec}'"
+            )]
+        }
+        // `-s` string binding (c:1038) — the RHS runs through getkeystring too.
+        5 => {
+            let spec = pick(&mut rng, BINDKEY_SPECS);
+            let rhs = pick(&mut rng, &["hi", "\\C-a", "\\M-b", "\\101", "x y"]);
+            vec![format!("bindkey -s '{spec}' '{rhs}'; bindkey -s '{spec}'")]
+        }
+        // Count the bindings that landed — catches a spec that decoded to the
+        // WRONG NUMBER of keys (a 2-byte binding where zsh makes 1).
+        _ => {
+            let spec = pick(&mut rng, BINDKEY_SPECS);
+            vec![format!(
+                "bindkey '{spec}' {widget}; print -r -- \"n=$(bindkey -L | grep -c -- {widget})\""
+            )]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -5124,6 +5345,8 @@ enum Mode {
     Replace,
     Assign,
     Gflag,
+    Select,
+    Bindkey,
 }
 
 struct Args {
@@ -5201,6 +5424,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Replace => gen_replace(seed),
         Mode::Assign => gen_assign(seed),
         Mode::Gflag => gen_gflag(seed),
+        Mode::Select => gen_select(seed),
+        Mode::Bindkey => gen_bindkey(seed),
     }
 }
 
@@ -5266,6 +5491,8 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Replace => "replace",
         Mode::Assign => "assign",
         Mode::Gflag => "gflag",
+        Mode::Select => "select",
+        Mode::Bindkey => "bindkey",
     }
 }
 
@@ -5331,6 +5558,8 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Replace,
         Mode::Assign,
         Mode::Gflag,
+        Mode::Select,
+        Mode::Bindkey,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -5434,7 +5663,7 @@ fn parse_args() -> Args {
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
                      whence, zstyle, atflag, subexp, replace, assign,\n\
-                     gflag\n\
+                     gflag, select, bindkey\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\

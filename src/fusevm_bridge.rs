@@ -3300,7 +3300,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let mut reader = stdin.lock();
         let mut last_status: i32 = 0;
 
-        loop {
+        // c:Src/loop.c:264 — `more = selectlist(args, 0);` renders the menu
+        // ONCE, BEFORE the selection loop. C reprints it ONLY when the user
+        // enters an EMPTY line (c:290, inside the inner read loop) — never per
+        // body iteration. This was a single conflated loop that re-rendered at
+        // the top of every pass, so `printf "1\n2\n" | select x in a b; do
+        // print $x; done` redrew the list before each prompt where zsh prints
+        // it once.
+        //
+        // (`selectlist` is also ported at src/ported/loop.rs:127, but that copy
+        // derives its row budget from adjustlines()/adjustcolumns() — an ioctl
+        // on fd 1 — and so renders nothing when stdout is not a tty, which is
+        // exactly this path. Keeping the working inline render here.)
+        let render_menu = || {
             // Direct port of zsh's selectlist from
             // src/zsh/Src/loop.c:347-409. Layout is column-major
             // ("down columns, then across") — NOT row-major. With
@@ -3373,39 +3385,80 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 let _ = writeln!(std::io::stderr());
             }
-            let _ = write!(std::io::stderr(), "{}", prompt);
-            let _ = std::io::stderr().flush();
+        };
+        render_menu(); // c:264 — once, before the loop
 
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => {
-                    // EOF — emit the final newline that zsh prints
-                    // after the prompt-then-EOF sequence (c:Src/loop.c
-                    // selectlist falls through to fputc('\n', stderr)
-                    // at the end of the read failure path). Without
-                    // this the next process's output runs directly
-                    // after `-->>>> ` on the same line.
-                    let _ = writeln!(std::io::stderr());
-                    let _ = std::io::stderr().flush();
-                    break;
+        'select: loop {
+            // c:266-290 — inner read loop: prompt and read until a NON-EMPTY
+            // line arrives; each empty line reprints the menu and re-reads.
+            let trimmed = loop {
+                let _ = write!(std::io::stderr(), "{}", prompt);
+                let _ = std::io::stderr().flush();
+
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        // c:277-285 — EOF (user pressed Ctrl+D): REPLY="",
+                        // a newline to stderr, then leave the construct.
+                        with_executor(|exec| {
+                            exec.set_scalar("REPLY".to_string(), String::new());
+                        });
+                        let _ = writeln!(std::io::stderr());
+                        let _ = std::io::stderr().flush();
+                        break 'select;
+                    }
+                    Ok(_) => {}
+                    Err(_) => break 'select,
                 }
-                Ok(_) => {}
-                Err(_) => break,
-            }
-            let trimmed = line.trim_end_matches(['\n', '\r'][..].as_ref()).to_string();
-
+                let t = line.trim_end_matches(['\n', '\r'][..].as_ref()).to_string();
+                // c:288-289 — `if (*str) break;`
+                if !t.is_empty() {
+                    break t;
+                }
+                // c:290 — `more = selectlist(args, more);` on an empty line.
+                render_menu();
+            };
+            // c:291 `setsparam("REPLY", ztrdup(str));` — REPLY is set once the
+            // inner loop yields a non-empty line. An empty line never reaches
+            // here: c:290 reprints and re-reads instead.
             with_executor(|exec| {
                 exec.set_scalar("REPLY".to_string(), trimmed.clone());
             });
 
-            if trimmed.is_empty() {
-                // Empty input → redraw menu without running body.
-                continue;
-            }
-
-            let chosen = match trimmed.parse::<usize>() {
-                Ok(n) if n >= 1 && n <= words.len() => words[n - 1].clone(),
-                _ => String::new(),
+            // c:293 `i = atoi(str);` — atoi(3) reads a LEADING integer:
+            // optional blanks, optional sign, then digits, ignoring whatever
+            // trails, and yields 0 when there are no digits at all.
+            // `parse::<usize>()` is strict and rejected `1 2` / `1abc` / `+2`
+            // / ` 1`, so a reply with anything after the number selected
+            // NOTHING where zsh selects the leading number's item.
+            let i: i64 = {
+                let b = trimmed.as_bytes();
+                let mut p = 0;
+                while p < b.len() && (b[p] == b' ' || b[p] == b'\t') {
+                    p += 1;
+                }
+                let neg = p < b.len() && b[p] == b'-';
+                if p < b.len() && (b[p] == b'-' || b[p] == b'+') {
+                    p += 1;
+                }
+                let mut v: i64 = 0;
+                while p < b.len() && b[p].is_ascii_digit() {
+                    v = v.saturating_mul(10).saturating_add((b[p] - b'0') as i64);
+                    p += 1;
+                }
+                if neg {
+                    -v
+                } else {
+                    v
+                }
+            };
+            // c:294-301 — `if (!i) str = "";` else walk i-1 nodes and take
+            // that word; running off the end leaves "". A NEGATIVE i walks
+            // until the list is exhausted (`n && i`), which also lands on "".
+            let chosen = if i <= 0 {
+                String::new()
+            } else {
+                words.get((i - 1) as usize).cloned().unwrap_or_default()
             };
 
             with_executor(|exec| {

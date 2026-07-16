@@ -1,0 +1,29 @@
+# parity-fuzz --mode select baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode select --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps. Every divergence this mode found on introduction was a real
+# port bug and was FIXED rather than baselined:
+#
+#   1. The menu is rendered ONCE before the selection loop (c:Src/loop.c:264
+#      `more = selectlist(args, 0);`) and reprinted ONLY when the user enters
+#      an empty line (c:290, inside the inner read loop). C's control flow is
+#      two NESTED loops; the port had collapsed them into one and redrew the
+#      list before every prompt, so `printf '1\n2\n' | select x in a b` showed
+#      the menu three times where zsh shows it once.
+#   2. The reply is parsed with atoi(3) semantics (c:293 `i = atoi(str)`):
+#      leading blanks, optional sign, leading digits, trailing garbage
+#      ignored, 0 when no digits. A strict integer parse rejected `1 2` /
+#      `1abc` / `+2` / ` 1` and selected nothing where zsh selects the leading
+#      number's item.
+#   3. `select x; do … done` over the positionals (c:235-242 WC_SELECT_PPARAM)
+#      copies pparams DIRECTLY — no word splitting — so an EMPTY positional
+#      keeps its own menu entry. The compiler emitted the word `$@` plus
+#      BUILTIN_WORD_SPLIT, and splitting drops empty fields, so `f '' x` gave
+#      one entry where zsh gives two.
+#
+# Scripts pin COLUMNS/LINES/PS3 themselves: the menu goes to stderr and its
+# column layout is terminal-width driven, so an inherited COLUMNS (or a
+# colored PS3) would otherwise decide the output rather than the shell.
+#
+# Any divergence here is a regression.
