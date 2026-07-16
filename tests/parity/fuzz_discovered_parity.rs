@@ -2514,4 +2514,35 @@ mod deferred_fixes {
     fn assign_assoc_eq_flag_even_ok() {
         assert_parity(r#"unset o; v="k1 v1 k2 v2"; : ${(AA)=o::=$v}; print -r -- "${o[k2]}""#);
     }
+
+    // --- ksh-style autoload of a file whose body has a TOP-LEVEL `return`
+    // (e.g. add-zle-hook-widget's `zmodload -e zsh/zle || return 1`) must
+    // WARN "not defined by file" and CONTINUE, not abort the caller's shell.
+    // The load runs at the autoload invocation's source level, so the
+    // top-level `return` is contained (c:Src/exec.c:5739, bin_return c:5840),
+    // exactly like zsh. Real-world trigger: a plugin's `emulate sh` leaks
+    // ksh_autoload on, then z-sy-h's `autoload -U add-zle-hook-widget` loads
+    // it ksh-style; before this fix zshrs aborted precmd and broke the prompt.
+    #[test]
+    fn ksh_autoload_body_toplevel_return_continues() {
+        assert_parity(
+            r#"d=$(mktemp -d); print "print BODY; return 1" > $d/kfn; setopt ksh_autoload; fpath=($d $fpath); autoload kfn; print BEFORE; kfn 2>/dev/null; print "AFTER rc=$?"; rm -rf $d"#,
+        );
+    }
+    #[test]
+    fn ksh_autoload_body_no_def_continues() {
+        assert_parity(
+            r#"d=$(mktemp -d); print "print RAN" > $d/kfn2; setopt ksh_autoload; fpath=($d $fpath); autoload kfn2; print BEFORE; kfn2 2>/dev/null; print "AFTER rc=$?"; rm -rf $d"#,
+        );
+    }
+    #[test]
+    fn ksh_autoload_body_defines_fn_ok() {
+        assert_parity(
+            r#"d=$(mktemp -d); print "kfn3() { print DEF:\$1 }" > $d/kfn3; setopt ksh_autoload; fpath=($d $fpath); autoload kfn3; print BEFORE; kfn3 arg; print "AFTER rc=$?"; rm -rf $d"#,
+        );
+    }
+    #[test]
+    fn emulate_sh_leaks_ksh_autoload() {
+        assert_parity(r#"emulate sh; print "kshauto=${options[kshautoload]}""#);
+    }
 }
