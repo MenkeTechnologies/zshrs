@@ -5373,6 +5373,47 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
         );
         return None; // c:3207
     }
+    // !!! WARNING: RUST-ONLY ARM — ZLE GSU adapter !!!
+    // C's makezleparams (Src/Zle/zle_params.c:194) installs LIVE GSU
+    // setters for the editing specials; zshrs snapshots copies into
+    // the paramtab (extensions/zle_param_sync.rs), so sequential
+    // widget mutations read STALE peers (`LBUFFER=tpl; CURSOR=n;
+    // RBUFFER=${RBUFFER:len}` scrambled zsh-expand's multiline
+    // snippet). Route these writes through the live editor and let
+    // live_write re-publish the derived family. Only fires inside an
+    // active widget scope; live_write's guard blocks its own
+    // re-publish writes.
+    if matches!(s, "BUFFER" | "LBUFFER" | "RBUFFER" | "CURSOR")
+        && crate::zle_param_sync::live_write(s, val)
+    {
+        return getsparam(s).map(|_| {
+            Box::new(crate::ported::zsh_h::param {
+                node: crate::ported::zsh_h::hashnode {
+                    next: None,
+                    nam: s.to_string(),
+                    flags: 0,
+                },
+                u_data: 0,
+                u_tied: None,
+                u_arr: None,
+                u_str: Some(val.to_string()),
+                u_val: 0,
+                u_dval: 0.0,
+                u_hash: None,
+                gsu_s: None,
+                gsu_i: None,
+                gsu_f: None,
+                gsu_a: None,
+                gsu_h: None,
+                base: 0,
+                width: 0,
+                env: None,
+                ename: None,
+                old: None,
+                level: 0,
+            })
+        });
+    }
     // c:3233/3252 — `getvalue(&vbuf, &s, 1)` routes through
     // fetchvalue which resolves PM_NAMEREF chains (c:2247-2270).
     // Mirror by redirecting the assignment to the resolved target.

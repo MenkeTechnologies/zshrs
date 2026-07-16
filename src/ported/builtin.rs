@@ -8514,6 +8514,23 @@ pub fn bin_whence(
                     continue;
                 } // c:4127
             }
+            // zshrs extension builtins (daemon z* family: zd, zcache,
+            // zjob, …) dispatch by name via try_dispatch instead of
+            // living in BUILTINS — but they ARE builtins and whence/
+            // type must classify them as such (`whence -w zd` reported
+            // the external /opt/homebrew/bin/zd instead).
+            if builtin_node.is_none() && crate::daemon::builtins::is_zshrs_builtin(arg) {
+                let mut ext_node = hashnode {
+                    next: None,
+                    nam: arg.clone(),
+                    flags: 0,
+                };
+                printbuiltinnode(&mut ext_node as *mut hashnode, printflags);
+                informed = 1;
+                if !all {
+                    continue;
+                }
+            }
             // c:4167-4173 — cmdnamtab HASHED check (commands installed
             // via `hash NAME=PATH`). Read the canonical cmdnamtab
             // directly. Was a fake env-var bridge under invented
@@ -15282,7 +15299,11 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("aAcCDfFIKlLmMNRTU"),
+            // c:Src/Zle/zle_main.c:2212 — exact C optstr. The previous
+            // string dropped g/G/r/w, so `zle -w -F fd handler`
+            // (zzcomplete's zz-deploy-code:27 widget-mode fd watcher)
+            // died with "bad option: -w" before bin_zle ever ran.
+            Some("aAcCDfFgGIKlLmMNrRTUw"),
             None,
         ),
         // zsh/files module — file-manipulation builtins. All have

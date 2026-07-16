@@ -1467,6 +1467,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // does the same default-list-nothing.
             return Value::Status(0);
         };
+        // zshrs extension builtins (daemon z* family: zd, zcache, zjob,
+        // …) are dispatched by name via try_dispatch instead of living
+        // in builtintab — but they ARE builtins, so the `builtin`
+        // precommand must reach them (`builtin zd ping` errored
+        // "no such builtin: zd" while bare `zd ping` worked).
+        if crate::daemon::builtins::is_zshrs_builtin(name) {
+            let argv: Vec<String> =
+                std::iter::once(name.to_string()).chain(rest.iter().cloned()).collect();
+            return Value::Status(
+                crate::daemon::builtins::try_dispatch(name, &argv).unwrap_or(1),
+            );
+        }
         // c:Src/exec.c:3435-3436 — `builtin NAME` with NAME not in
         // builtintab emits `zwarn("no such builtin: %s", cmdarg)`
         // and returns 1. zshrs's dispatch_builtin_raw bare-returned 1
@@ -9153,8 +9165,15 @@ fn array_index_lookup(name: &str, idx: &str) -> Value {
     if idx_is_simple {
         // assoc_key_hit: single-lock O(1) probe — exec.assoc() clones
         // the WHOLE map per lookup (O(n), quadratic in shell loops).
-        if let Some((_, Some(v))) = crate::vm_helper::assoc_key_hit(name, idx) {
-            return Value::str(v);
+        // When `name` IS an assoc, exact-key semantics apply to EVERY
+        // plain key: hit → value, miss → empty (C `${assoc[missing]}`).
+        // Never fall through to the textual `${name[key]}` rebuild —
+        // keys carrying `{`/`}`/`[`/`]` (zsh-autopair probes
+        // `${AUTOPAIR_LBOUNDS[$pair]}` with pair='{') re-parse as
+        // broken syntax there ("failed to compile regex: repetition
+        // quantifier…" + a `}` appended per keystroke).
+        if let Some((_, v)) = crate::vm_helper::assoc_key_hit(name, idx) {
+            return Value::str(v.unwrap_or_default());
         }
     }
     // c:Src/params.c:1449-1450 getindex — a leading `(e)`/`(E)` flag

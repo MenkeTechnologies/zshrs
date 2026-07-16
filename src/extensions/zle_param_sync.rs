@@ -71,6 +71,78 @@ pub fn active() -> bool {
     ZLE_PARAM_SNAPSHOT.lock().unwrap().is_some()
 }
 
+thread_local! {
+    /// Reentry guard for [`live_write`]'s paramtab re-publish (the
+    /// setsparam calls below would re-enter assignsparam's ZLE arm).
+    static IN_LIVE_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True while [`live_write`] is re-publishing — assignsparam's ZLE
+/// arm must not re-route those writes.
+pub fn in_live_write() -> bool {
+    IN_LIVE_WRITE.with(|c| c.get())
+}
+
+/// Live GSU-adapter write for the ZLE editing specials. C's
+/// `makezleparams` (Src/Zle/zle_params.c:194) installs REAL GSU
+/// setters: `LBUFFER=x` mutates the editor immediately and
+/// `$RBUFFER`/`$BUFFER`/`$CURSOR` reads derive from the ONE
+/// line+cursor state. The snapshot model here left four independent
+/// paramtab copies, so sequential widget mutations read STALE peers —
+/// zsh-expand's snippet path (`LBUFFER=template; CURSOR=n;
+/// RBUFFER=${RBUFFER:len}`) scrambled multiline templates. This
+/// routes each write through the live editor setter, then re-publishes
+/// the whole derived family into the paramtab so subsequent in-widget
+/// READS are coherent, and re-arms the snapshot so the end-of-widget
+/// diff doesn't double-apply.
+///
+/// Returns true when `name` was handled (an editing special while a
+/// widget scope is active).
+pub fn live_write(name: &str, val: &str) -> bool {
+    if !active() || in_live_write() {
+        return false;
+    }
+    use crate::ported::zle::zle_params as zp;
+    match name {
+        "BUFFER" => {
+            // c:set_buffer (zle_params.c:250) — cursor clamps to len.
+            zp::set_buffer(val);
+            let len = val.chars().count();
+            if zp::get_cursor() > len {
+                zp::set_cursor(len);
+            }
+        }
+        "LBUFFER" => zp::set_lbuffer(val), // c:set_lbuffer (zle_params.c:280)
+        "RBUFFER" => zp::set_rbuffer(val), // c:set_rbuffer (zle_params.c:310)
+        "CURSOR" => {
+            // c:set_cursor (zle_params.c:340) — clamp into [0, len].
+            let len = zp::get_buffer().chars().count() as i64;
+            let n = val.trim().parse::<i64>().unwrap_or(0).clamp(0, len);
+            zp::set_cursor(n as usize);
+        }
+        _ => return false,
+    }
+    // Re-publish the derived family so in-widget reads see live state.
+    IN_LIVE_WRITE.with(|c| c.set(true));
+    let buffer = zp::get_buffer();
+    let lbuffer = zp::get_lbuffer();
+    let rbuffer = zp::get_rbuffer();
+    let cursor = zp::get_cursor() as i64;
+    let _ = crate::ported::params::setsparam("BUFFER", &buffer);
+    let _ = crate::ported::params::setsparam("LBUFFER", &lbuffer);
+    let _ = crate::ported::params::setsparam("RBUFFER", &rbuffer);
+    let _ = crate::ported::params::setiparam("CURSOR", cursor);
+    IN_LIVE_WRITE.with(|c| c.set(false));
+    // Re-arm so sync_from_paramtab sees these values as the new base.
+    if let Some(snap) = ZLE_PARAM_SNAPSHOT.lock().unwrap().as_mut() {
+        snap.buffer = buffer;
+        snap.lbuffer = lbuffer;
+        snap.rbuffer = rbuffer;
+        snap.cursor = cursor;
+    }
+    true
+}
+
 /// Apply widget mutations of $BUFFER/$LBUFFER/$RBUFFER/$CURSOR from
 /// the paramtab to the live editor. $BUFFER wins over $LBUFFER/
 /// $RBUFFER when both changed; an LBUFFER/RBUFFER edit places the
