@@ -146,6 +146,28 @@ mod via_eval {
     }
 }
 
+mod subshell_survival {
+    use super::*;
+
+    /// Pin: ALIAS_GLOBAL must survive a subshell exit. The in-process
+    /// subshell alias snapshot restored every entry with flags=0, so
+    /// ANY subshell (`(true)`, zsh-z's `(zshz --add … &)` precmd)
+    /// reflagged every global alias to regular in the parent —
+    /// `alias -g` listed nothing one prompt after every define.
+    #[test]
+    fn global_alias_survives_subshell() {
+        assert_parity(r#"alias -g gx=t; (true); print -r -- ${+galiases[gx]} ${+aliases[gx]}"#);
+    }
+
+    /// Pin: suffix aliases and DISABLED flags round-trip too.
+    #[test]
+    fn suffix_and_disabled_survive_subshell() {
+        assert_parity(
+            r#"alias -s txt=cat; alias dd1=x; disable -a dd1; (true); print -r -- ${+saliases[txt]} ${+dis_aliases[dd1]}"#,
+        );
+    }
+}
+
 mod position {
     use super::*;
 
