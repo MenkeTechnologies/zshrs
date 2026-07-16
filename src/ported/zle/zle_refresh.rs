@@ -1220,7 +1220,33 @@ pub fn zrefresh() {
 
     // Walk the buffer chars from buffer_start, applying overlay attrs.
     let mut current_attr: Option<TextAttr> = None;
-    let line_snapshot = ZLELINE.lock().unwrap().clone();
+    // c:1013-1025 — `if (predisplaylen || postdisplaylen)` splice:
+    // `tmpline = predisplay + zleline + postdisplay`, `tmpcs = zlecs +
+    // predisplaylen`. $POSTDISPLAY is how zsh-autosuggestions paints its
+    // ghost suggestion after the cursor; rendering ZLELINE alone dropped
+    // it (and $PREDISPLAY) from every frame, so suggestions never
+    // appeared at all. The NBUF build and the attrs overlay below both
+    // consume this combined snapshot.
+    let predisplay_len: usize;
+    let line_snapshot: Vec<char> = {
+        let base = ZLELINE.lock().unwrap().clone();
+        let pre: Vec<char> = crate::ported::zle::zle_params::get_predisplay()
+            .chars()
+            .collect();
+        let post: Vec<char> = crate::ported::zle::zle_params::get_postdisplay()
+            .chars()
+            .collect();
+        predisplay_len = pre.len();
+        if pre.is_empty() && post.is_empty() {
+            base // c:1027-1030 — tmpline = zleline
+        } else {
+            let mut tmp = Vec::with_capacity(pre.len() + base.len() + post.len());
+            tmp.extend(pre); // c:1016-1017
+            tmp.extend(base); // c:1018-1019
+            tmp.extend(post); // c:1020-1022
+            tmp
+        }
+    };
     for (written, (idx, ch)) in line_snapshot
         .iter()
         .enumerate()
@@ -1478,7 +1504,9 @@ pub fn zrefresh() {
         PROMPT_ATTR.store(prompt_attr, Ordering::Relaxed);
         // Editable line with tab/control expansion (c:1248-1398). Each
         // line char's overlay attr is applied to the cell(s) it produces.
-        let cursor_idx = ZLECS.load(Ordering::SeqCst);
+        // c:1023 — `tmpcs = zlecs + predisplaylen` — the cursor index is
+        // relative to the combined pre+line+post snapshot.
+        let cursor_idx = ZLECS.load(Ordering::SeqCst) + predisplay_len;
         // c:396 / c:1242 — the `special` highlight, applied to specially
         // displayed cells (control chars shown as `^X`, meta bytes as `<hex>`).
         // C mixes `special_attr` into those cells' attr (`all_attr =
@@ -4422,7 +4450,22 @@ pub struct HighlightManager {
 /// region themselves — matching zle_refresh.c's auto-promotion of
 /// `region_active` into a paintable highlight.
 pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
-    let buf_len = ZLELINE.lock().unwrap().len();
+    // c:1013-1025 — the render line is predisplay + zleline + postdisplay;
+    // attrs must cover the combined length. region_highlight offsets are
+    // buffer-relative (zshzle(1)) and may extend past the buffer into
+    // $POSTDISPLAY — zsh-autosuggestions highlights its ghost text with
+    // `region_highlight+=("$#BUFFER $(($#BUFFER + $#POSTDISPLAY)) fg=8")`.
+    // Clamping to the bare buffer length silently dropped that entry.
+    // With $PREDISPLAY present, buffer-relative offsets shift right by
+    // its length in the combined snapshot (the C code renders from
+    // tmpline where the buffer starts at predisplaylen).
+    let pre_len = crate::ported::zle::zle_params::get_predisplay()
+        .chars()
+        .count();
+    let post_len = crate::ported::zle::zle_params::get_postdisplay()
+        .chars()
+        .count();
+    let buf_len = pre_len + ZLELINE.lock().unwrap().len() + post_len;
     let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
 
     // Visual-region attr: prefer the user's `region:` setting from
@@ -4445,17 +4488,42 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
         } else {
             (ZLECS.load(Ordering::SeqCst), MARK.load(Ordering::SeqCst))
         };
-        let lo = lo.min(buf_len);
-        let hi = hi.min(buf_len);
+        // MARK/ZLECS are buffer-relative — shift into the combined snapshot.
+        let lo = (lo + pre_len).min(buf_len);
+        let hi = (hi + pre_len).min(buf_len);
         for slot in attrs.iter_mut().take(hi).skip(lo) {
             *slot = Some(visual_attr);
         }
     }
     for region in &highlight().lock().unwrap().regions {
-        let start = region.start.min(buf_len);
-        let end = region.end.min(buf_len);
+        // Buffer-relative offsets land at +pre_len in the combined
+        // pre+line+post snapshot (C renders from tmpline where the
+        // buffer starts at predisplaylen).
+        let start = (region.start + pre_len).min(buf_len);
+        let end = (region.end + pre_len).min(buf_len);
         for slot in attrs.iter_mut().take(end).skip(start) {
             *slot = Some(region.attr);
+        }
+    }
+    // c:1102-1116 — the user `$region_highlight` entries (parsed into
+    // REGION_HIGHLIGHTS by set_region_highlight) paint over the line
+    // too. C keeps user entries in the same region_highlights array
+    // the render walks; the Rust port kept them in a separate store
+    // that the renderer never consumed — `region_highlight` assignments
+    // (zsh-autosuggestions' fg=8 ghost span, zsh-syntax-highlighting)
+    // had no visual effect. ZRH_PREDISPLAY entries are
+    // predisplay-relative (offset 0 in the combined snapshot); plain
+    // entries are buffer-relative (+pre_len).
+    for rhp in REGION_HIGHLIGHTS.lock().unwrap().iter() {
+        let off = if rhp.flags & ZRH_PREDISPLAY != 0 {
+            0
+        } else {
+            pre_len
+        };
+        let start = (rhp.start + off).min(buf_len);
+        let end = (rhp.end + off).min(buf_len);
+        for slot in attrs.iter_mut().take(end).skip(start) {
+            *slot = Some(rhp.attr);
         }
     }
     // c:1069-1075 — active completion suffix. A removable suffix (e.g. the
@@ -4476,7 +4544,8 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
                 bold: true,
                 ..TextAttr::default()
             });
-        let cs = ZLECS.load(Ordering::SeqCst).min(buf_len);
+        // ZLECS is buffer-relative — shift into the combined snapshot.
+        let cs = (ZLECS.load(Ordering::SeqCst) + pre_len).min(buf_len);
         let start = cs.saturating_sub(suffix_len as usize);
         for slot in attrs.iter_mut().take(cs).skip(start) {
             *slot = Some(suffix_attr);
@@ -6526,6 +6595,43 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         let _g = zle_test_setup();
         assert!(compute_render_attrs().is_empty());
+    }
+
+    /// c:1013-1025 — the render snapshot is predisplay + zleline +
+    /// postdisplay, and attrs must cover the combined length with the
+    /// user `$region_highlight` entries painted over it. This is the
+    /// zsh-autosuggestions contract: the widget sets
+    /// `POSTDISPLAY=<suffix>` + `region_highlight+=("$#BUFFER
+    /// $(($#BUFFER + $#POSTDISPLAY)) fg=8")` and the ghost text must
+    /// render (previously ZLELINE alone was rendered — no suggestions
+    /// at all — and the user store REGION_HIGHLIGHTS was never
+    /// consumed by the renderer).
+    #[test]
+    fn compute_render_attrs_covers_postdisplay_and_user_regions() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        *ZLELINE.lock().unwrap() = "echo hel".chars().collect();
+        ZLELL.store(8, Ordering::SeqCst);
+        ZLECS.store(8, Ordering::SeqCst);
+        crate::ported::zle::zle_params::set_postdisplay(Some("lo-world"));
+        // The autosuggestions highlight span: buffer end → combined end.
+        set_region_highlight(Some(&["8 16 fg=8".to_string()]));
+        let attrs = compute_render_attrs();
+        // Combined length: 8 (buffer) + 8 (postdisplay).
+        assert_eq!(attrs.len(), 16);
+        for slot in attrs.iter().take(8) {
+            assert!(slot.is_none(), "buffer chars unstyled");
+        }
+        for slot in attrs.iter().skip(8) {
+            assert_eq!(
+                slot.expect("ghost span styled").fg_color,
+                Some(8),
+                "postdisplay span carries the fg=8 ghost style"
+            );
+        }
+        // Cleanup for neighboring tests.
+        crate::ported::zle::zle_params::set_postdisplay(Some(""));
+        set_region_highlight(None);
     }
 
     #[test]

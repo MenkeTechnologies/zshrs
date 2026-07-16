@@ -19,6 +19,57 @@ CI green pending the underlying fix.
 
 ---
 
+## #667 — zsh-autosuggestions showed no suggestions at all: `$POSTDISPLAY`/`$region_highlight` never rendered, widget writes never synced — FIXED
+
+**Status:** `fixed`
+
+**Reproducer:** minimal, no plugin needed:
+
+```zsh
+pd-set(){ POSTDISPLAY=" ghost-text-here" }; zle -N pd-set; bindkey '^T' pd-set
+# type "echo abc", press ^T — zsh shows "echo abc ghost-text-here"; zshrs showed nothing
+```
+
+**Root causes (three, stacked):**
+
+1. **Renderer dropped `$POSTDISPLAY`/`$PREDISPLAY`.** C's zrefresh renders
+   `tmpline = predisplay + zleline + postdisplay` (Src/Zle/zle_refresh.c:
+   1013-1025); the port rendered ZLELINE alone, so overlay text never
+   appeared. Fixed: the render snapshot is now the combined line, cursor
+   shifted by predisplaylen (c:1023).
+2. **User `$region_highlight` entries never painted.** `set_region_highlight`
+   parses entries into `REGION_HIGHLIGHTS`, but `compute_render_attrs` only
+   consumed the separate HighlightManager store — assignments (the plugin's
+   `fg=8` ghost span, zsh-syntax-highlighting) had no visual effect, and
+   region offsets were clamped to the bare buffer length so spans extending
+   into POSTDISPLAY were dropped. Fixed: attrs cover the combined length and
+   REGION_HIGHLIGHTS paints over it (ZRH_PREDISPLAY entries offset 0, plain
+   entries +predisplaylen).
+3. **Widget writes to the overlay params never reached the editor.** The
+   Rust adapter (`zle_param_sync`) snapshots/diffs only BUFFER/LBUFFER/
+   RBUFFER/CURSOR; `POSTDISPLAY=...` inside a widget landed in the paramtab
+   and died there (C's GSU setters apply live, zle_params.c:886/900).
+   Fixed: makezleparams publishes PREDISPLAY/POSTDISPLAY/region_highlight
+   and the sync boundary diff-applies them via set_predisplay/
+   set_postdisplay/set_region_highlight.
+
+Plus: **async suggestions lagged one keystroke** — C runs `zrefresh()` after
+servicing `zle -F` watch-fd handlers (zle_main.c:787-788: "Function may have
+invalidated the display"); the port's handler loop never refreshed, so the
+async response (`zle autosuggest-suggest`) only became visible on the next
+key. Fixed: refresh after any fired handler.
+
+**Verified live** (tmux pty, `zshrs -f -i`, plugin sourced, history seeded):
+sync AND async modes show the gray `\e[90m` ghost suffix on the same
+keystroke; → accepts the suggestion; Enter executes the accepted line.
+Unit test pins the combined-snapshot attrs contract; zle_refresh 138 +
+zle_params 92 tests green. NOTE: the full zpwr session currently spins at
+99% CPU dumping the whole paramtab at startup (a `zle -F` handler re-fired
+every poll pass running a bare-`typeset`-style dump) — pre-existing this
+session's zle work, arrived with in-flight tree changes, tracked separately.
+
+---
+
 ## #666 — `$LINES`/`$COLUMNS` were 0 in every interactive shell — FIXED
 
 **Status:** `fixed`
