@@ -3110,3 +3110,57 @@ mod eq_procsub_temp_lifetime {
         assert_parity(r#"x=$(cat =(print abc)); print -r -- $x"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// AB. `${(z)v}` keeps a literal `$` / backtick UNESCAPED.
+//
+// The (z) shell-tokenize result must keep a `$foo` word unexpanded AND
+// unescaped: `v='a$b'; ${(z)v}` is `a$b`, not `a\$b`. zshrs protected the
+// `$`/backtick from stringsubst re-expansion (Bug #363) by prefixing it
+// with Bnull — but Bnull UNTOKENIZES to a literal backslash (C ztokens
+// maps Bnull → `\`), so every `(z)` result with a `$` grew a spurious
+// backslash. Switched to Snull single-quote markers, which stringsubst
+// strips as a literal region (subst.rs:654) BEFORE any untokenize, so the
+// char survives bare — the re-expansion guard is kept, the backslash gone.
+// ─────────────────────────────────────────────────────────────────────
+mod z_flag_literal_dollar {
+    use super::*;
+
+    /// zsh: `a$b` (b defined, still literal). Was `a\$b` before.
+    #[test]
+    fn z_keeps_dollar_literal_unescaped() {
+        assert_parity(r#"b=X; v='a$b'; print -rl -- ${(z)v}"#);
+    }
+
+    /// `$HOME` in a tokenized word stays literal and unescaped.
+    #[test]
+    fn z_keeps_dollar_home_literal() {
+        assert_parity(r#"v='echo $HOME'; print -rl -- ${(z)v}"#);
+    }
+
+    /// Multi-word: the `$b` word is one literal token.
+    #[test]
+    fn z_multiword_dollar_literal() {
+        assert_parity(r#"v='a $b c'; print -rl -- ${(z)v}"#);
+    }
+
+    /// The (q)-then-(z) round trip from the fuzz.
+    #[test]
+    fn z_of_q_quoted_backslash_dollar() {
+        assert_parity(
+            r#"v="${(q)$(print -rn -- 'a\$b')}"; print -rl -- ${(z)v}; print -r -- END"#,
+        );
+    }
+
+    /// Backtick stays literal too.
+    #[test]
+    fn z_keeps_backtick_literal() {
+        assert_parity(r#"v='foo `bar`'; print -rl -- ${(z)v}"#);
+    }
+
+    /// Separators/operators still tokenize as their own words.
+    #[test]
+    fn z_separators_still_tokenize() {
+        assert_parity(r#"v='a; b && c'; print -rl -- ${(z)v}"#);
+    }
+}

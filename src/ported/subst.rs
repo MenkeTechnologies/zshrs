@@ -14725,15 +14725,30 @@ pub fn paramsubst(
                                              // `$`/`` ` `` arms (Src/subst.c:265 `case Bnull: *s='\0'`
                                              // skip) and untokenize to the literal char at the final
                                              // output pass. Mirrors C bufferwords' tokenized result.
-            let bnull = crate::ported::zsh_h::Bnull;
+            // Wrap each `$` / `` ` `` in Snull single-quote markers rather
+            // than prefixing with Bnull. Both stop stringsubst re-expanding
+            // the char (subst.rs:654-665 treats a Snull region as a literal
+            // `'…'` span, stripping the markers and keeping the content
+            // verbatim), but Bnull UNTOKENIZES to a literal backslash
+            // (C ztokens maps Bnull → `\`, lex.rs:4936), so `${(z)v}` for
+            // v=`a$b` came out `a\$b` instead of zsh's `a$b`. Snull is
+            // stripped by stringsubst before any untokenize sees it, so the
+            // `$` survives as a bare literal char — matching zsh's `(z)`
+            // which keeps `$foo` unexpanded AND unescaped. Bug #363's
+            // re-expansion guard is preserved (Snull is still a literal
+            // region); only the spurious backslash is gone.
+            let snull = crate::ported::zsh_h::Snull;
             for w in words.iter_mut() {
                 if w.contains('$') || w.contains('`') {
-                    let mut out = String::with_capacity(w.len() + 2);
+                    let mut out = String::with_capacity(w.len() + 4);
                     for c in w.chars() {
                         if c == '$' || c == '`' {
-                            out.push(bnull);
+                            out.push(snull);
+                            out.push(c);
+                            out.push(snull);
+                        } else {
+                            out.push(c);
                         }
-                        out.push(c);
                     }
                     *w = out;
                 }
