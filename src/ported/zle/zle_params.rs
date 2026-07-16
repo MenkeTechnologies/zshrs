@@ -105,10 +105,27 @@ pub fn makezleparams(_ro: i32) {
     let _ = setsparam("CONTEXT", get_context()); // c:942
     let _ = setiparam("PENDING", get_pending() as i64); // c:528
 
+    // c:zleparams[] PREDISPLAY / POSTDISPLAY / region_highlight —
+    // snapshot the display-overlay params too. zsh-autosuggestions'
+    // whole mechanism is a widget writing `POSTDISPLAY=<suggestion>` +
+    // a `region_highlight` entry; without publish + write-back sync
+    // those writes stayed in the paramtab and the editor never showed
+    // a suggestion.
+    let predisp = get_predisplay(); // c:zleparams PREDISPLAY getfn
+    let postdisp = get_postdisplay(); // c:zleparams POSTDISPLAY getfn
+    // c:430 get_region_highlight — the GSU getter ignores its Param
+    // arg; pass a default handle to read the entries' string forms.
+    let rh = crate::ported::zle::zle_refresh::get_region_highlight(
+        &crate::ported::zsh_h::param::default(),
+    );
+    let _ = setsparam("PREDISPLAY", &predisp);
+    let _ = setsparam("POSTDISPLAY", &postdisp);
+    let _ = crate::ported::params::setaparam("region_highlight", rh.clone());
+
     // RUST-ONLY (crate::zle_param_sync — adapter for C's live GSU
     // setters): record the values just snapshotted so the sync
     // boundaries can diff widget mutations against them.
-    crate::zle_param_sync::arm_snapshot(line, lbuf, rbuf, cs as i64);
+    crate::zle_param_sync::arm_snapshot(line, lbuf, rbuf, cs as i64, predisp, postdisp, rh);
 }
 
 /// Direct port of `static void zleunsetfn(Param pm, int exp)` from

@@ -502,6 +502,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 break;
             }
             // c:715-772 — service each ready watch fd's handler.
+            let mut fired_any = false;
             for (i, w) in watches.iter().enumerate() {
                 let re = fds[i + 1].revents;
                 if re & ready == 0 {
@@ -563,6 +564,18 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 } else if re & libc::POLLERR != 0 {
                     dont_poll_fds.push(w.0);
                 }
+                fired_any = true;
+            }
+            // c:787-788 — `/* Function may have invalidated the display. */
+            //              if (resetneeded) zrefresh();`
+            // A `zle -F` handler routinely repaints state — e.g.
+            // zsh-autosuggestions' async response handler reads the
+            // suggestion from its fd and runs `zle autosuggest-suggest`
+            // (POSTDISPLAY + region_highlight). Without this refresh the
+            // ghost text only appeared on the NEXT keystroke's frame —
+            // async suggestions permanently lagged one key behind.
+            if fired_any {
+                crate::ported::zle::zle_refresh::zrefresh();
             }
             // loop: re-poll now that the handlers have run.
         }
