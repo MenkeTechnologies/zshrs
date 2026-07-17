@@ -3371,6 +3371,24 @@ mod ztst_mined {
         assert_parity(r#"print -r -- {$'\M-\C-@'..$'\M-\C-A'}"#);
     }
 
+    /// A07control — `break N`/`continue N` where N is a RUNTIME
+    /// expression (`$((...))`, `$var`) is treated as N=1: the compile
+    /// path's jump-patch mechanism can only read a LITERAL level count
+    /// (`untokenize.parse::<usize>()`), so a runtime count falls back to
+    /// 1 and never breaks/continues the outer loop. Literal `break 2`
+    /// works (compile-time jump target); `continue $((2))` does not.
+    /// The fix needs runtime-count propagation through the loop-exit
+    /// codegen (set BREAKS=N, decrement per level) rather than a
+    /// compile-time jump. zsh: `continue 2` skips to the next OUTER
+    /// iteration; zshrs runs the rest of the inner loop.
+    #[test]
+    #[ignore = "zshrs gap: break/continue with a RUNTIME count ($((..))/$var) acts as count=1"]
+    fn break_continue_runtime_count() {
+        assert_parity(
+            "for o in 0 1; do for i in 0 1 2; do print $o$i; continue $(( o ? 2 : 1 )); done; print end$o; done",
+        );
+    }
+
     /// corpus bulk_n — an assoc subscript KEY with backslash-quoted
     /// bracket metacharacters (`A[\[k\]]=v`) must STORE the dequoted key
     /// `[k]` (zsh runs untokenize on the parsed subscript). zshrs keeps
