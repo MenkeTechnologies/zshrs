@@ -7,34 +7,42 @@ unique to zshrs — see the comparison below.
 
 ## Rust plugins vs zsh plugins
 
-zsh has two ways to extend it, and zshrs adds a third. All three still
-work in zshrs (it runs zsh script plugins and its ported modules as
+Shells already have two extension models, and zshrs adds a third. All
+still work in zshrs (it runs zsh script plugins and its ported modules as
 before); the Rust plugin path is **additive**.
 
-|                     | zsh script plugin        | zsh native module (`zmodload`) | **zshrs Rust plugin** |
-| ------------------- | ------------------------ | ------------------------------ | --------------------- |
-| Language            | zsh script (interpreted) | C                              | Rust (any native lang via the C ABI) |
-| Artifact            | `.zsh` text file         | `.so` built in-tree            | `.dylib` / `.so` `cdylib` |
-| Build against       | nothing — it's sourced   | zsh's **private** internal headers, via the zsh build system (`.mdd` + `Src/Modules/`) | the published `zshrs-plugin` crate — `cargo add zshrs-plugin` |
-| ABI stability       | n/a                      | **none** — bound to the exact zsh build; no `MODULE_ABI_VERSION` guard exists | stable, versioned `ABI_VERSION`; mismatches refused at load |
-| Load mechanism      | `source` → parse + interpret every startup | `dlopen` + `dlsym` of `NAME_setup_`/`_boot_`/`_features_` | `dlopen` + `dlsym` of one symbol, `zshrs_plugin_init` |
-| Execution           | interpreted each call     | native machine code            | native machine code   |
-| Startup cost        | re-parsed on every shell start (the cost `zinit turbo`/`zcompile` fight) | `dlopen` once            | `dlopen` once         |
-| Registers           | functions, aliases, options, ZLE widgets, fpath completions | builtins, params, hooks (internal API) | builtins + host callbacks (`print`/`eval`/`getvar`/`setvar`) |
-| Third-party viable  | yes (the whole ecosystem — oh-my-zsh, zinit) | **no in practice** — needs the zsh source tree and tracks its internals, so ~only zsh-bundled modules exist | **yes** — depend on one crates.io crate, no zshrs source needed |
-| Type safety         | none                     | C (unchecked against zsh internals) | Rust type system, checked against the ABI crate |
-| Failure mode        | shell error, recoverable  | crash/UB against internal symbols | UB only if a handler panics across the FFI boundary (see Safety notes) |
+Native runtime plugin loading itself is **not** new — bash has
+`enable -f file.so name` (loadable builtins, since ~1996) and zsh has
+`zmodload` for C modules. What is new is *how* zshrs exposes it:
 
-The distinction that matters: zsh already loads compiled `.so` modules,
-but only through its **internal** C API — you build against zsh's private
-headers, in its build tree, with no stable ABI, so a module is welded to
-one zsh build. That is why the zsh plugin ecosystem is almost entirely
-interpreted scripts and the native modules are almost entirely the ones
-zsh ships itself. zshrs instead exposes a **stable, published, versioned
-C ABI** (the `zshrs-plugin` crate): a third party runs `cargo add
-zshrs-plugin`, writes a handler, ships a `cdylib`, and it loads into any
-compatible zshrs — native speed, no shell source tree, no recompile of
-the shell. First compiled Unix shell to offer that.
+|                     | script plugin (`.zsh`)   | bash `enable -f` / zsh `zmodload` native builtin | **zshrs Rust plugin** |
+| ------------------- | ------------------------ | ------------------------------ | --------------------- |
+| Language            | shell script (interpreted) | C                            | Rust (any native lang via the C ABI) |
+| Artifact            | `.zsh` text file         | `.so` built in the shell's tree | `.dylib` / `.so` `cdylib` |
+| Build against       | nothing — it's sourced   | the shell's **private** internal headers (`builtins.h`/`shell.h` for bash; the `.mdd` + `Src/Modules/` build for zsh) | the published `zshrs-plugin` crate — `cargo add zshrs-plugin` |
+| ABI stability       | n/a                      | **none** — bound to the exact shell build; no version magic in either | stable, versioned `ABI_VERSION`; mismatches refused at load |
+| Distribution        | a file to source         | must track and rebuild against each shell release | one crates.io SDK crate, independent of the shell's source |
+| Load / unload       | `source` (re-parse every startup) | `enable -f` / `-d` (bash); `zmodload` (zsh) — `dlsym` internal symbols | `zmodload -R` / `-uR` — `dlsym` one symbol, `zshrs_plugin_init` |
+| Execution           | interpreted each call     | native machine code            | native machine code   |
+| Registers           | functions, aliases, options, ZLE widgets, fpath completions | builtins/params/hooks via the shell's internal API | builtins + a curated host API (`print`/`eval`/`getvar`/`setvar`) |
+| Third-party viable  | yes (oh-my-zsh, zinit)   | **rare in practice** — needs the shell source tree and tracks its internals, so ~only the shell's own bundled modules exist | **yes** — depend on one crates.io crate, no zshrs source needed |
+| Type safety         | none                     | C (unchecked against shell internals) | Rust type system, checked against the ABI crate |
+
+The distinction that matters is **not** "loads native code" — bash and zsh
+both do. It is that bash's and zsh's native interfaces are their
+**internal** C APIs: you compile against the shell's private headers, in
+its build tree, with no stable ABI and no version gate, so a plugin is
+welded to one shell build and can crash a mismatched one. That is why
+neither ecosystem has meaningful third-party native plugins — the native
+modules that exist are almost all the ones the shell ships itself.
+
+zshrs instead exposes a **stable, published, versioned C ABI** — the
+`zshrs-plugin` crate on crates.io, gated by `ABI_VERSION`: a third party
+runs `cargo add zshrs-plugin`, writes a handler, ships a `cdylib`, and it
+loads into any compatible zshrs — native speed, no shell source tree, no
+recompile, and version-mismatched plugins refused rather than crashing.
+First shell to make its native-plugin interface an independently-published,
+versioned ABI package instead of its own build-tree internals.
 
 ## Architecture
 
