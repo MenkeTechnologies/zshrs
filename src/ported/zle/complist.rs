@@ -2430,13 +2430,15 @@ pub fn singlecalc(cp: &mut i32, l: i32, lcp: &mut i32) -> i32 {
 
     // c:1915-1923 — backward scan counting distinct pointers,
     //                tracking first cell where `*p == mp`. C uses
-    //                raw pointer equality on `Cmatch *`; we mirror
-    //                via `str_` slice-start identity since every
-    //                mtab insert reuses the same Cmatch struct.
+    //                raw pointer equality on `Cmatch *`; we resolve it via the
+    //                unique match number `gnum` (c:120), the value-equivalent of
+    //                the pointer. Display-string equality would wrongly collapse
+    //                distinct matches that share a display string, or grid
+    //                matches with str=None. (Same resolution as complist.rs:3657.)
     let cm_eq = |a: Option<&Cmatch>, b: Option<&Cmatch>| -> bool {
         match (a, b) {
             (None, None) => true,
-            (Some(x), Some(y)) => x.str == y.str,
+            (Some(x), Some(y)) => x.gnum == y.gnum,
             _ => false,
         }
     };
@@ -2533,7 +2535,9 @@ pub fn singledraw() -> i32 {
     let t2 = moline - molbeg; // c:1940
 
     // c:1942-1948 — pick top→bottom ordering for the two paints.
-    let (mc1, ml1, md1, mc2, ml2, md2);
+    // mc1/mc2 are mutable: singlecalc (c:1949-1950) rewrites each to the
+    // leftmost column of the multi-cell match at that row.
+    let (mut mc1, ml1, md1, mut mc2, ml2, md2);
     if t2 < t1 {
         // c:1942
         mc1 = mocol;
@@ -2552,12 +2556,15 @@ pub fn singledraw() -> i32 {
         md2 = t2; // c:1947
     }
 
-    // c:1949-1950 — singlecalc returns the mcc index after clamping
-    // to the actual match-width at that row. Stub: identity.
-    let mcc1 = mc1;
-    let _lc1 = 0i32;
-    let mcc2 = mc2;
-    let _lc2 = 0i32;
+    // c:1949-1950 — `mcc1 = singlecalc(&mc1, ml1, &lc1);
+    //                mcc2 = singlecalc(&mc2, ml2, &lc2);`
+    // singlecalc mutates mc1/mc2 back to the match's leftmost column, returns
+    // the distinct-match index (mcc, used to select the per-column width and
+    // passed to clprintm), and sets lc = last-column flag.
+    let mut lc1 = 0i32;
+    let mcc1 = singlecalc(&mut mc1, ml1, &mut lc1);
+    let mut lc2 = 0i32;
+    let mcc2 = singlecalc(&mut mc2, ml2, &mut lc2);
 
     if md1 != 0 {
         // c:1952
@@ -2587,7 +2594,7 @@ pub fn singledraw() -> i32 {
             }
         })
         .unwrap_or(0);
-    clprintm(g_at1.as_ref(), m_at1.as_ref(), mcc1, ml1, 0, width_at1); // c:1958
+    clprintm(g_at1.as_ref(), m_at1.as_ref(), mcc1, ml1, lc1, width_at1); // c:1958
 
     let mlprinted = MLPRINTED.load(Ordering::SeqCst);
     if mlprinted != 0 {
@@ -2630,8 +2637,13 @@ pub fn singledraw() -> i32 {
             }
         })
         .unwrap_or(0);
-    clprintm(g_at2.as_ref(), m_at2.as_ref(), mcc2, ml2, 0, width_at2); // c:1970
+    clprintm(g_at2.as_ref(), m_at2.as_ref(), mcc2, ml2, lc2, width_at2); // c:1970
 
+    // c:1972 — re-read the `mlprinted` GLOBAL, which the second clprintm just
+    // rewrote (c:800/825/857/864/874/1879). C reads it fresh here; caching the
+    // first clprintm's value would move the cursor up by the wrong line count
+    // when the two painted cells wrap to different heights.
+    let mlprinted = MLPRINTED.load(Ordering::SeqCst);
     if mlprinted != 0 {
         // c:1972
         tcmultout(
@@ -2671,9 +2683,9 @@ pub fn singledraw() -> i32 {
         );
     }
     SHOWINGLIST.store(-1, Ordering::SeqCst); // c:1985
+    LISTSHOWN.store(1, Ordering::SeqCst); // c:1986
 
-    let _ = (mcc1, mcc2);
-    0 // c:1986
+    0 // c:1987
 }
 
 /// Port of `int complistmatches(UNUSED(Hookdef dummy), Chdata dat)` from
@@ -2891,18 +2903,15 @@ pub fn complistmatches(
     let molbeg = MOLBEG.load(Ordering::SeqCst);
     let clearflag = CLEARFLAG.load(Ordering::SeqCst);
     // c:2106-2109 — C uses singledraw() (incremental two-cell highlight-move)
-    // when only the selection changed within the same frame. This port's
-    // singledraw (complist.rs:2444) still has unresolved cursor-GEOMETRY bugs:
-    // the horizontal cell positioning drops the first char of the moved cells
-    // (`build.rs`→`uild.rs`) and the grid drifts over repeated navigation (only
-    // the final cursor-up tail c:1975-1985 is ported). Forcing the full
-    // `compprintlist` repaint (correct, epilogue-fixed at c:1686-1726) on every
-    // menu-select redraw is visually identical to singledraw and renders
-    // navigation correctly — verified: columns aligned, highlight on the right
-    // cell, no drift. It just repaints the whole list per step instead of two
-    // cells (fine for completion-sized lists). Re-enable singledraw by dropping
-    // the `false &&` once its cursor math is fully ported/verified.
-    let use_singledraw = false;
+    // when only the selection changed within the same frame, instead of
+    // repainting the whole list every keystroke (which visibly flashes the list
+    // up/down as you navigate). The earlier gate-off was a bandaid: singledraw's
+    // horizontal cell math was wrong because it STUBBED singlecalc as identity
+    // (dropping the first char of the moved cell, `build.rs`→`uild.rs`) and
+    // hardcoded the last-column flag / stale mlprinted. Those are now ported
+    // faithfully (singlecalc called at c:1949-1950, lc/mcc/mlprinted wired,
+    // listshown set at c:1986), so the incremental path is enabled.
+    let use_singledraw = true;
     if use_singledraw && !mnew && inselect != 0 && cur_onlnct == nlnct         // c:2106
         && mlbeg_cur >= 0 && mlbeg_cur == molbeg
     {
