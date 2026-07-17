@@ -1753,7 +1753,34 @@ pub fn comp_match(
         // c:1235-1239 — prefix-only path.
         let after_pfx_start = (rpl as usize).min(w_quoted.len());
         let after_pfx = &w_quoted[after_pfx_start..];
-        let pli = bld_parts(after_pfx, (wl - rpl).max(0), mpl - rpl, None, None);
+        // c:1235 — append the unmatched word remainder onto MATCHBUF so `r`
+        // (below) reconstructs the full word, not just the matcher's own
+        // contribution.
+        add_match_str(None, "", after_pfx, (wl - rpl).max(0), 0); // c:1235
+        // c:1237-1238 — `add_match_part(NULL, NULL, NULL, 0, NULL, 0,
+        //                w + rpl, wl - rpl, mpl - rpl, 0); pli = matchparts;`
+        // This APPENDS to the matchparts chain already populated by
+        // match_str (matcher subs + exact runs live in matchsubs and are
+        // folded in here) — a bare bld_parts() would discard those and
+        // drop exactly-matched interior chars from the reconstruction.
+        add_match_part(
+            None,
+            None,
+            0,
+            "",
+            0,
+            None,
+            0,
+            after_pfx,
+            (wl - rpl).max(0),
+            mpl - rpl,
+            0,
+        ); // c:1237
+        let pli = MATCHPARTS
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take()); // c:1239 pli = matchparts
         if let Some(out) = clp {
             *out = pli;
         }
@@ -2105,12 +2132,31 @@ pub fn pattern_match(
         p_cur = pat.next.as_deref(); // c:1599
         wp_cur = wpat.next.as_deref();
     }
-    if p_cur.is_none() && wp_cur.is_none() && s_bytes.peek().is_none() && ws_bytes.peek().is_none()
-    {
-        1 // c:1612 match
-    } else {
-        0 // c:1613 partial
+    // c:1601-1607 — consume remaining LINE pattern chars (stop when EITHER
+    // the pattern OR the string is exhausted).
+    while let (Some(pat), Some(&c_ch)) = (p_cur, s_bytes.peek()) {
+        let c = c_ch as u32;
+        let mut mt: i32 = 0;
+        if pattern_match1(pat, c, &mut mt) == 0 {
+            return 0; // c:1604
+        }
+        s_bytes.next();
+        p_cur = pat.next.as_deref(); // c:1605
     }
+    // c:1609-1615 — remaining WORD pattern chars, symmetrically.
+    while let (Some(wpat), Some(&wc_ch)) = (wp_cur, ws_bytes.peek()) {
+        let wc = wc_ch as u32;
+        let mut wmt: i32 = 0;
+        if pattern_match1(wpat, wc, &mut wmt) == 0 {
+            return 0; // c:1611
+        }
+        ws_bytes.next();
+        wp_cur = wpat.next.as_deref(); // c:1613
+    }
+    // c:1617 — the port previously required BOTH strings fully consumed;
+    // a fixed-length matcher against a LONGER word failed on the remainder.
+    // C stops at pattern exhaustion; caller handles the rest of the word.
+    1
 }
 
 /// Port of `bld_parts(char *str, int len, int plen, Cline *lp, Cline *lprem)` from Src/Zle/compmatch.c:1638.
@@ -4606,6 +4652,58 @@ mod tests {
             *g = None;
         }
         assert!(r.is_some(), "'-' + option matcher must match '-a', got None");
+    }
+
+    /// Case-insensitive matcher `m:{a}={A}`, typed `a`, candidate `Apple`.
+    /// The matcher substitutes the first char; the word tail must be
+    /// appended so the reconstruction is the full `Apple`.
+    #[test]
+    fn comp_match_ci_single_char_reconstructs_full_word() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "m:{a}={A}");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "m:{a}={A}".to_string(),
+            }));
+        }
+        let mut clp: Option<Box<Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match("a", "", "Apple", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        assert_eq!(r.as_deref(), Some("Apple"), "'a' + m:{{a}}={{A}} must reconstruct 'Apple'");
+    }
+
+    /// Case-insensitive matcher `m:{a-z}={A-Z}`, typed `app`, candidate
+    /// `Apple`. The matcher swaps `a`->`A`; the exactly-matched `pp` and the
+    /// tail `le` must survive in the reconstruction. Regression: the exact
+    /// fast-path advanced the word cursor without emitting `pp`, so the
+    /// result came out `Ale`.
+    #[test]
+    fn comp_match_ci_multi_char_keeps_exact_run() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "m:{a-z}={A-Z}");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "m:{a-z}={A-Z}".to_string(),
+            }));
+        }
+        let mut clp: Option<Box<Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match("app", "", "Apple", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        assert_eq!(r.as_deref(), Some("Apple"), "'app' + m:{{a-z}}={{A-Z}} must reconstruct 'Apple', not drop the exact 'pp'");
     }
 
     /// The option-completion shape: typed word `-`, candidate `-a` —
