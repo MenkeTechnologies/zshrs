@@ -94,24 +94,12 @@ impl HistorySearch {
     }
 
     fn snapshot(term: &str, search_type: SearchType, ignore_case: bool) -> Vec<String> {
-        // SQLite probe: prefix uses the indexed LIKE (history.rs:349); substring
-        // uses the FTS trigram mirror (history.rs:315) with a recency-ordered
-        // fallback below.
-        let mut out: Vec<String> = crate::history::with_session_engine(|eng| {
-            let res = match search_type {
-                // Case-sensitive GLOB probe — index-eligible; the LIKE-based
-                // search_prefix full-scans at 500k+ rows (too slow even for
-                // the once-per-search snapshot).
-                SearchType::Prefix => eng.search_prefix_cs(term, 512),
-                SearchType::Contains => eng.search(term, 512),
-            };
-            res.map(|v| v.into_iter().map(|e| e.command).collect::<Vec<_>>())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default();
-
-        // In-memory ring union (newest at 0, hist.rs:2617-2621) — covers this
-        // session's lines that haven't hit SQLite and the no-DB case.
+        // The search cursor walks strictly NEWEST-FIRST (the plugin/fish
+        // contract): in-memory ring first (this session, newest at 0 —
+        // hist.rs:2617-2621), then SQLite matches re-sorted by timestamp —
+        // the FTS query orders frequency-first, which surfaced years-old
+        // high-frequency entries before the line executed seconds ago.
+        let mut out: Vec<String> = Vec::new();
         {
             let ring = crate::ported::hist::hist_ring.lock().unwrap();
             for e in ring.iter() {
@@ -121,7 +109,27 @@ impl HistorySearch {
                 }
             }
         }
-        // Keep newest-first order; exact dedup happens in ReaderHistorySearch::skips.
+
+        // SQLite probe: prefix uses the indexed GLOB (the LIKE-based
+        // search_prefix full-scans at 500k+ rows); substring uses the FTS
+        // trigram mirror (history.rs:315).
+        let mut db: Vec<(i64, String)> = crate::history::with_session_engine(|eng| {
+            let res = match search_type {
+                SearchType::Prefix => eng.search_prefix_cs(term, 512),
+                SearchType::Contains => eng.search(term, 512),
+            };
+            res.map(|v| {
+                v.into_iter()
+                    .map(|e| (e.timestamp, e.command))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+        })
+        .unwrap_or_default();
+        db.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+        out.extend(db.into_iter().map(|(_, c)| c));
+
+        // Exact dedup happens in ReaderHistorySearch::skips.
         out.retain(|c| entry_matches(c, term, search_type, ignore_case));
         out
     }
