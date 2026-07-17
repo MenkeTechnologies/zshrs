@@ -1038,7 +1038,38 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 'a' => dat.aflags |= CAF_ARRAYS, // c:658
                 'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS, // c:661
                 'l' => dat.flags |= CMF_DISPLINE as i32, // c:766-767
-                'o' => dat.aflags |= CAF_NOSORT, // c:634
+                'o' => {
+                    // c:701-706 + c:812-828 — `-o` takes an OPTIONAL ordering
+                    // spec (nosort/match/numeric/reverse, comma-joined) parsed
+                    // via parse_ordering into aflags. C: `order = oarg?-1:1;
+                    // sp = &oarg;`. The earlier port hard-set CAF_NOSORT and
+                    // left the spec word as a stray positional, so
+                    // `compadd -o nosort` — what _description emits for the
+                    // `sort false` style — both mis-sorted (always nosort) AND
+                    // offered "nosort"/"match,numeric" as a bogus match. A
+                    // following token that is NOT a valid ordering is left as a
+                    // real positional (parse_ordering defaults aflags to
+                    // CAF_MATSORT in that case).
+                    let mut fl: Option<i32> = Some(0);
+                    if p + 1 < bytes.len() {
+                        // pasted `-o<spec>`: the rest of this word is the spec.
+                        let cand = String::from_utf8_lossy(&bytes[p + 1..]).into_owned();
+                        let _ = parse_ordering(&cand, &mut fl);
+                        p = bytes.len(); // c: pasted arg consumed with the word
+                    } else if idx < argv.len() {
+                        // separate `-o <spec>`: consume the next word only when
+                        // it parses as a valid ordering (c:824-826 `--argv`).
+                        let cand = argv[idx].clone();
+                        if parse_ordering(&cand, &mut fl) == 0 {
+                            idx += 1;
+                        }
+                    }
+                    if let Some(f) = fl {
+                        if f != 0 {
+                            dat.aflags |= f;
+                        }
+                    }
+                }
                 'Q' => dat.aflags |= CAF_QUOTE, // c:648
                 '1' => dat.aflags |= CAF_UNIQALL, // c:693
                 '2' => dat.aflags |= CAF_UNIQCON, // c:697
