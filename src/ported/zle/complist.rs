@@ -2318,8 +2318,14 @@ pub fn singledraw() -> i32 {
 ///     return noselect;
 /// }
 /// ```
-/// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn complistmatches() -> i32 {
+/// The `dummy`/`dat` args mirror the C `int complistmatches(Hookdef
+/// dummy, Chdata dat)` signature so this registers directly as the
+/// `comp_list_matches` Hookfn (complist.c:3595); both are unused (the body
+/// reads the `amatches` globals as the C source does).
+pub fn complistmatches(
+    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dat: *mut std::ffi::c_void,
+) -> i32 {
     // c:1990
 
     // c:1995 — `Cmgroup oamatches = amatches;` — saved for restore
@@ -3583,7 +3589,7 @@ pub fn domenuselect() -> i32 {
                 CLEARLIST.store(0, Ordering::SeqCst);
                 CLEARFLAG.store(1, Ordering::SeqCst);
             }
-            complistmatches(); // c:2589 zrefresh()
+            complistmatches(std::ptr::null_mut(), std::ptr::null_mut()); // c:2589 zrefresh()
             *STATUSLINE.lock().unwrap() = None; // c:2590
 
             INSELECT.store(1, Ordering::SeqCst); // c:2591
@@ -3850,7 +3856,7 @@ pub fn domenuselect() -> i32 {
                 CLEARLIST.store(1, Ordering::SeqCst);
                 LISTSHOWN.store(1, Ordering::SeqCst);
                 crate::ported::zle::compcore::onlyexpl.store(0, Ordering::SeqCst);
-                complistmatches();
+                complistmatches(std::ptr::null_mut(), std::ptr::null_mut());
                 break;
             }
             setwish = 1; // c:2746
@@ -4788,10 +4794,14 @@ pub fn boot_() -> i32 {
     //  registration.
     // c:3578-3579 — `addhookfunc("comp_list_matches", complistmatches);
     //                addhookfunc("menu_start", domenuselect);`.
-    //  Hookfn is `fn(*mut hookdef, *mut c_void) -> i32`; complistmatches
-    //  and domenuselect aren't surfaced under that signature today —
-    //  the dispatchers in compcore.rs call them directly. Skipping the
-    //  registration so the static-link dispatch keeps working.
+    //  These add complist's funcs to the hookdefs registered at ZLE boot
+    //  (zle_main.rs boot_). `comp_list_matches` is the one that turns on
+    //  colored/columned listing: without it `runhookdef` falls back to the
+    //  plain `ilistmatches` default and every `list-colors`/`group-colors`
+    //  style is dropped. `complistmatches` carries the C `(Hookdef, Chdata)`
+    //  signature so it registers directly as a `Hookfn`. `menu_start`/
+    //  domenuselect stays a direct compcore dispatch for now (not a Hookfn).
+    crate::ported::module::addhookfunc("comp_list_matches", complistmatches);
 
     // zshrs lazily creates the standard keymaps (main/emacs/viins/…) on
     // the first bindkey / `${keymaps}` access. In C, complist loads AFTER
@@ -5735,7 +5745,7 @@ mod tests {
     #[test]
     fn complistmatches_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = complistmatches();
+        let _: i32 = complistmatches(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     /// c:2647 — `msearchpush` returns i32.

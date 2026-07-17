@@ -2381,20 +2381,29 @@ pub fn boot_(_m: *const module) -> i32 {
     // compresult / zle_tricky finds them. Re-entry is guarded by
     // `addhookdef`'s duplicate check (c:866) — second boot_() returns
     // 1 per hook and we ignore.
-    for name in [
-        "insert_match",    // c:1703
-        "menu_start",      // c:1704
-        "compctl_make",    // c:1705
-        "compctl_cleanup", // c:1706
-        "comp_list_matches",
-    ]
-    // c:1707
-    {
+    // c:1702-1707 — comphooks[] carries per-hook (default fn, flags). The
+    // earlier port blanket-registered all 5 with `def=None, HOOKF_ALL`,
+    // which broke `comp_list_matches`: C gives it `def=ilistmatches, 0`
+    // (complete.c:1717) so `runhookdef` falls back to the plain renderer
+    // when zsh/complist isn't loaded, and runs only the LAST func
+    // (complistmatches) — not all-funcs-then-default — when it is.
+    let comphooks: [(&str, Option<crate::ported::zsh_h::Hookfn>, i32); 5] = [
+        ("insert_match", None, crate::ported::zsh_h::HOOKF_ALL), // c:1703
+        ("menu_start", None, crate::ported::zsh_h::HOOKF_ALL),   // c:1704
+        ("compctl_make", None, 0),                               // c:1705
+        ("compctl_cleanup", None, 0),                            // c:1706
+        (
+            "comp_list_matches", // c:1707
+            Some(crate::ported::zle::compresult::ilistmatches),
+            0,
+        ),
+    ];
+    for (name, def, flags) in comphooks {
         let h = Box::into_raw(Box::new(hookdef {
             next: std::ptr::null_mut(),
             name: name.to_string(),
-            def: None,
-            flags: crate::ported::zsh_h::HOOKF_ALL,
+            def,
+            flags,
             funcs: std::ptr::null_mut(),
         }));
         if crate::ported::module::addhookdef(h) != 0 {
