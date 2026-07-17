@@ -127,7 +127,12 @@ pub fn substitute(t: &str, s: &WizardSettings) -> String {
 
     let mut out = t.to_string();
     let reps: &[(&str, String)] = &[
-        ("$FF", fc.to_string()),
+        // Frame foreground color. Like its siblings `$BGF`/`$SEPF`/`$PFXF`,
+        // this must expand to a COMPLETE `%<n>F` escape — emitting just the
+        // number (`%2`) makes promptexpand treat the next glyph's leading
+        // byte as the escape's directive char, corrupting multibyte frame
+        // glyphs (`╭`/`╰` → U+FFFD tofu). The trailing `F` was missing.
+        ("$FF", format!("{}F", fc)),
         ("$BGF", format!("{}F", BG_COLOR[ci])),
         ("$BG", BG_COLOR[ci].to_string()),
         ("$SEPF", format!("{}F", SEP_COLOR[ci])),
