@@ -66,6 +66,7 @@ pub mod ported;
 /// `test_util` submodule.
 #[cfg(test)]
 pub mod test_util;
+pub mod tolerant_sort;
 
 // Back-compat: re-export every ported submodule at the crate root so
 // historical call sites (`crate::exec::`, `crate::subst::`,
