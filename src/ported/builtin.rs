@@ -15077,14 +15077,22 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             None,
             None,
         ),
+        // C: `BUILTIN("compset", 0, bin_compset, 1, 3, 0, NULL, NULL)`
+        // (complete.c:1694). bin_compset parses `argv[0]` (-n/-p/-q/-P/-S)
+        // ITSELF; the earlier Rust registration added a getopt spec
+        // ("npqPS:") that C does NOT have, so the dispatcher pre-parsed and
+        // STRIPPED those options from argv before bin_compset ran —
+        // `argv[0].starts_with('-')` then failed and every shell-invoked
+        // `compset -p/-q/-n …` no-opped (word-splitting completers broke).
+        // Must be NULL optspec (+ max 3) so argv reaches bin_compset raw.
         BUILTIN(
             "compset",
             0,
             Some(crate::ported::zle::complete::bin_compset as HandlerFunc),
             1,
-            -1,
+            3,
             0,
-            Some("npqPS:"),
+            None,
             None,
         ),
         // c:Src/Zle/computil.c:5103-5110 — zsh/computil module's 8
