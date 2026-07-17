@@ -3283,6 +3283,33 @@ pub fn domenuselect(
     let _wasmeta: i32; // c:2394
     let mut status = String::new(); // c:2396
 
+    // Replace the entire metafied ZLE line (`ZLEMETALINE`) with `content` and
+    // move the metafied cursor to byte offset `cs`. This is the net effect of
+    // C's recurring menu-select idiom
+    //   `zlemetacs = 0; foredel(zlemetall, CUT_RAW); spaceinline(l);
+    //    memcpy(zlemetaline, content, l); zlemetacs = cs;`
+    // (complist.c:2455-2458, :2229-2232, :2665-2668, :2760-2765, :3140-3145),
+    // which in C runs metafied (`zleline == zlemetaline`) so all three ops hit
+    // one buffer, netting `zlemetaline = content`. zshrs SPLITS the buffers —
+    // char `ZLELINE` vs byte `ZLEMETALINE` — and `spaceinline`/`foredel(0)` are
+    // not meta-aware, so they mutated the WRONG (char) buffer while
+    // `replace_range(..l)` overwrote only the first l bytes of `ZLEMETALINE`,
+    // leaking `^@` NUL placeholders + any stale tail beyond l into the display
+    // (e.g. `ls  ^@^@^@<stale>`), self-perpetuating across completions.
+    // Reconstruct `ZLEMETALINE` directly. Kept a closure (not a fn) because
+    // this composite has no single C counterpart for the build.rs port gate;
+    // the real root fix is a meta-aware `spaceinline` (blocked by the
+    // `RegionHighlight` `start_meta`/`end_meta` gap).
+    let set_zlemetaline = |content: &str, cs: i32| {
+        if let Some(m) = ZLEMETALINE.get() {
+            if let Ok(mut g) = m.lock() {
+                *g = content.to_string();
+            }
+        }
+        ZLEMETALL.store(content.len() as i32, Ordering::SeqCst);
+        ZLEMETACS.store(cs, Ordering::SeqCst);
+    };
+
     // c:2398-2399 — bail-out when no previous list. `hasoldlist` is
     // the file-static at compcore.c:140 (ported as AtomicI32 in
     // compcore.rs:3462); set by `compprintlist` after populating
@@ -3342,31 +3369,10 @@ pub fn domenuselect(
                 .get()
                 .and_then(|m| m.lock().ok().map(|g| g.clone()))
                 .unwrap_or_default();
-            let l = origline.len() as i32;
-            ZLEMETACS.store(0, Ordering::SeqCst);
-            // c:2455-2457 — `foredel(zlemetall, CUT_RAW); spaceinline(l);
-            //                strncpy(zlemetaline, origline, l);`
-            // C runs menu-select metafied, so `zleline == zlemetaline` and all
-            // three ops target the SAME buffer, netting `zlemetaline = origline`
-            // (length l). In zshrs the buffers are SPLIT: `foredel`(flags=0) and
-            // the non-meta-aware `spaceinline` both mutate the char `ZLELINE`,
-            // NOT `ZLEMETALINE`. So the old code inserted NUL placeholders into
-            // the wrong buffer, and `replace_range(..l)` overwrote only the
-            // first l bytes of `ZLEMETALINE`, leaving any stale tail beyond l in
-            // place — leaking `^@` NULs (from the char buffer) plus stale line
-            // content into the interactive-mode display (`ls  ^@^@^@<stale>`).
-            // Reconstruct `ZLEMETALINE` directly to the net C result instead.
-            if let Some(m) = ZLEMETALINE.get() {
-                if let Ok(mut g) = m.lock() {
-                    *g = origline.clone(); // c:2456-2457
-                }
-            }
-            ZLEMETALL.store(l, Ordering::SeqCst);
-            ZLEMETACS.store(
-                // c:2458
-                ORIGCS.load(Ordering::SeqCst),
-                Ordering::SeqCst,
-            );
+            // c:2455-2458 — reconstruct the line to `origline`, cursor at
+            // `origcs`. See `set_zlemetaline` for why the C
+            // foredel/spaceinline/memcpy idiom can't be used verbatim here.
+            set_zlemetaline(&origline, ORIGCS.load(Ordering::SeqCst));
             let _ = setmstatus(&mut status, "", 0, 0, None, None, None); // c:2459
         } else if s.starts_with("search") {
             // c:2460
@@ -4013,20 +4019,8 @@ pub fn domenuselect(
                     .get()
                     .and_then(|m| m.lock().ok().map(|g| g.clone()))
                     .unwrap_or_default();
-                let l = origline.len() as i32;
-                ZLEMETACS.store(0, Ordering::SeqCst);
-                foredel(ZLEMETALL.load(Ordering::SeqCst), 0);
-                spaceinline(l);
-                if let Some(m) = ZLEMETALINE.get() {
-                    if let Ok(mut g) = m.lock() {
-                        if g.len() >= l as usize {
-                            g.replace_range(..l as usize, &origline);
-                        } else {
-                            *g = origline.clone();
-                        }
-                    }
-                }
-                ZLEMETACS.store(ORIGCS.load(Ordering::SeqCst), Ordering::SeqCst);
+                // c:2661-2687 — reconstruct to `origline`; see `set_zlemetaline`.
+                set_zlemetaline(&origline, ORIGCS.load(Ordering::SeqCst));
                 let _ = setmstatus(&mut status, "", 0, 0, None, None, None);
                 continue;
             }
@@ -4166,20 +4160,8 @@ pub fn domenuselect(
                 None => break, // c:2751
             };
             handleundo();
-            ZLEMETACS.store(0, Ordering::SeqCst);
-            foredel(ZLEMETALL.load(Ordering::SeqCst), 0);
-            let l = frame.line.len() as i32;
-            spaceinline(l);
-            if let Some(m) = ZLEMETALINE.get() {
-                if let Ok(mut g) = m.lock() {
-                    if g.len() >= l as usize {
-                        g.replace_range(..l as usize, &frame.line);
-                    } else {
-                        *g = frame.line.clone();
-                    }
-                }
-            }
-            ZLEMETACS.store(frame.cs, Ordering::SeqCst);
+            // c:2747-2790 — restore the undo frame's line; see `set_zlemetaline`.
+            set_zlemetaline(&frame.line, frame.cs);
             crate::ported::zle::compcore::menuacc.store(frame.acc, Ordering::SeqCst);
             if let Ok(mut mi) = MINFO
                 .get_or_init(|| {
@@ -4367,19 +4349,9 @@ pub fn domenuselect(
                 }
                 ORIGCS.store(modecs, Ordering::SeqCst);
                 ORIGLL.store(modell, Ordering::SeqCst);
-                ZLEMETACS.store(0, Ordering::SeqCst);
-                foredel(ZLEMETALL.load(Ordering::SeqCst), 0);
-                spaceinline(modell);
-                if let Some(m) = ZLEMETALINE.get() {
-                    if let Ok(mut g) = m.lock() {
-                        if g.len() >= modell as usize {
-                            g.replace_range(..modell as usize, &ml);
-                        } else {
-                            *g = ml.clone();
-                        }
-                    }
-                }
-                ZLEMETACS.store(modecs, Ordering::SeqCst);
+                // c:3109-3153 — restore the pre-menu line `ml` (length modell,
+                // captured together at c:2560-2566); see `set_zlemetaline`.
+                set_zlemetaline(&ml, modecs);
                 if let Some(lk) = MINFO.get() {
                     if let Ok(mut mi) = lk.lock() {
                         mi.len = modelen;
