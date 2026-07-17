@@ -3191,6 +3191,46 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
         pnl = 1;
     }
 
+    // c:2160-2174 — cursor-reposition epilogue (FAITHFUL PORT; was OMITTED).
+    // After the grid is printed the cursor sits on the last list row. C moves
+    // it back UP to the prompt via the terminal cursor-up capability
+    // (always_last_prompt) when the whole list fits on screen; when the list
+    // EXCEEDS the screen it drops clearflag and emits a newline so the terminal
+    // scrolls and the recursive zrefresh's video engine repaints correctly. The
+    // old port left the cursor on the list row and compensated with an ad-hoc
+    // `\x1b[{n}A` move in zle_refresh — a fixed distance that broke once the
+    // list forced a terminal scroll (completion menu climbed up line by line).
+    LASTLISTLEN.store(0, Relaxed); // c:2160
+    let ep_clearflag = CLEARFLAG.load(Relaxed);
+    let ep_nlnct = crate::ported::zle::zle_refresh::NLNCT.load(Relaxed);
+    let ep_nlines = crate::ported::zle::compcore::listdat
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|g| g.nlines)
+        .unwrap_or(0);
+    let ep_zterm = adjustlines() as i32;
+    if ep_clearflag != 0 {
+        // c:2161
+        let up = ep_nlines + ep_nlnct - 1; // c:2164
+        if up < ep_zterm {
+            crate::ported::zle::zle_refresh::tcmultout(
+                crate::ported::zsh_h::TCUP,
+                crate::ported::zsh_h::TCMULTUP,
+                up,
+            ); // c:2165
+            SHOWINGLIST.store(-1, Relaxed); // c:2166
+            LASTLISTLEN.store(ep_nlines, Relaxed); // c:2168
+        } else {
+            CLEARFLAG.store(0, Relaxed); // c:2170
+            let _ = write_loop(out_fd, b"\n");
+        }
+    } else {
+        // c:2171
+        let _ = write_loop(out_fd, b"\n");
+    }
+    // c:2174 — `listshown = (clearflag ? 1 : -1)`.
+    LISTSHOWN.store(if CLEARFLAG.load(Relaxed) != 0 { 1 } else { -1 }, Relaxed);
+
     let _ = Relaxed;
     ml // c:2185
 }
