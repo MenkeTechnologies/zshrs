@@ -657,13 +657,20 @@ pub fn _main_complete(args: &[String]) -> i32 {
         }
     }
 
-    // sh:400  restore compstate snapshots
-    set_compstate_str("exact", &saved_exact);
-    set_compstate_str("last_prompt", &saved_lastprompt);
-    set_compstate_str("list", &saved_list);
-    set_compstate_str("insert", &saved_insert);
+    // C does NOT restore compstate[insert]/[exact]/[list]/[last_prompt]:
+    // `_saved_*` are C locals (set at sh:34-37) that are only READ (the
+    // menu decision compares `_saved_insert` at sh:247) — never written
+    // back to compstate. The completion's decisions (compstate[insert]=menu
+    // from the menu block, list='list force' from force-list, exact from
+    // _setup) MUST persist so the completion core reads them back
+    // (compcore.c:857 → useline/usemenu → menucmp → the menu_start hook).
+    // The earlier port restored all four, wiping the menu decision every
+    // time — `menu select` was inert and interactive menu-select never
+    // started. Only curcontext/_compskip are restored here, emulating C's
+    // `local` scoping (they ARE locals in the C fn, unlike compstate).
     let _ = setsparam("curcontext", &saved_curcontext);
     let _ = setsparam("_compskip", &saved_compskip);
+    let _ = (&saved_exact, &saved_lastprompt, &saved_list, &saved_insert); // saved as _saved_* params above (sh:34-37) for other fns
     ret
 }
 
