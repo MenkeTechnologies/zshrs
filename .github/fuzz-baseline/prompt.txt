@@ -1,0 +1,66 @@
+# parity-fuzz --mode prompt baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode prompt --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean. Covers the `print -P` / ${(%)…} prompt
+# expander: %-escapes, %(x.t.f) ternaries, %N<s< / %N>s> truncation (BOTH
+# signs), colours, and %{raw%} spans.
+#
+# Every divergence this mode found was a real port bug and was FIXED:
+#
+#   1. `%G` did not exist. There was no `G` arm in putpromptchar's escape
+#      dispatch at all, so it fell to the unknown-escape default and emitted
+#      nothing. c:Src/prompt.c:684-694 emits Nularg — a marker that prints
+#      nothing but that countprompt charges ONE column (c:1183-1184 `else if
+#      (*str == Nularg) w++;`). That is the whole purpose of the escape: telling
+#      the expander that something invisible still occupies a cell.
+#      Nothing downstream was at fault — countprompt already had its Nularg arm,
+#      and prompttrunc already measures with countprompt (c:1343) — there was
+#      simply never a Nularg in the buffer to count. So every truncation spent
+#      the invisible column on a real character:
+#          %5<<abcdefghij%G  → zsh `ghij` (4 visible + 1 for %G)   was `fghij`
+#          %3<<abcdefg%G     → zsh `fg`                            was `efg`
+#          %5<...<abcdefg%G  → zsh `...g`                          was `...fg`
+#      and `%G%(1l.t.f)` took the false branch where zsh takes the true one.
+#
+#   2. The `%{` → `%G` FALLTHROUGH (c:676-683) was missing with it. C runs the
+#      two as one case: `%{` pushes Inpar, and then `if (arg <= 0) break;` —
+#      so a COUNTED `%N{…%}` continues into the Nularg emission and claims N
+#      columns, while a plain `%{…%}` claims none. `%3{xy%}%(3l.t.f)` must be
+#      true; it was false.
+#
+#   3. `%-N<` / `%-N>` (negative truncation width) did not truncate. c:663-672
+#      reads `-N` as "N columns before the RIGHT MARGIN" — `arg = zterm_columns
+#      - t0 + arg`, then c:670-671 clamps a non-positive result to 1 — not as a
+#      literal width. Two port bugs hid behind that one symptom:
+#        - prompt.rs invented an 80-column terminal (`if cols <= 0 {cols = 80}`)
+#          for a shell that has none, so the clamp-to-1 never fired. Not in the
+#          C, which reads the zterm_columns global and lets it be 0. Same
+#          invention sat on the `%(Nl.t.f)` path (c:461-462).
+#        - zshrs never called adjustwinsize(0) at init (c:Src/init.c:1276), so
+#          $COLUMNS/$LINES read 0 even at a real terminal — which is what made
+#          that fake 80 load-bearing. In a 97x24 pty zsh reports 97/24 and
+#          zshrs reported 0/0.
+#      Both are fixed; the generator now emits negative widths from the same
+#      vocabulary as positive ones, and reverting either fix makes this mode
+#      fail — the property that makes the gate worth having.
+#
+# ~12% of generated cases TIME OUT, and they are ZSH hanging, not zshrs. The
+# harness drops zsh-side timeouts (`if !z.timed_out && differs(...)`), so they
+# are uncomparable rather than wrong. It is an upstream infinite loop in
+# countprompt's line-wrap loop:
+#     while (w > zterm_columns && overf >= 0 && !multi) {
+#         h++;
+#         if (wcw) { w = wcw; break; }
+#         else { w -= zterm_columns; }     /* w -= 0 → spins forever */
+#     }
+# With zterm_columns == 0 the subtraction never terminates. It needs ALL of: a
+# styled span with CONTENT (`%B x %b`, `%U..%u`, `%S..%s`, `%F{red}..%f`; an
+# empty `%B%b` is fine), then the `l` conditional (not `L`, not `j`), a real
+# TERM (xterm/vt100 hang; dumb/empty/unknown do not), and COLUMNS == 0. zshrs
+# does not hang — its countprompt guards the zero case. Do NOT "fix" this by
+# exporting COLUMNS from the harness: COLUMNS == 0 is exactly the regime the
+# `%-N<` gap lived in, and papering over it would retire the coverage that
+# found it.
+#
+# Any divergence here is a regression.

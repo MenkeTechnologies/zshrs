@@ -41,14 +41,58 @@ fn zshrs_bin() -> PathBuf {
         .join("zshrs")
 }
 
+/// The ORACLE. Every divergence this harness reports is "zshrs disagrees with
+/// THIS binary", so which binary it is, is part of the result — a baseline is
+/// only meaningful against the zsh that produced it.
+///
+/// That is not a hypothetical. Three different zsh builds are in play:
+///   - local (macOS)  : Homebrew, `zsh-5.9.2-0-gddee3e7`
+///   - CI (ubuntu)    : whatever `apt-get install zsh` resolves to
+///   - the C spec     : ~/forkedRepos/zsh, upstream master past `zsh-5.9.0.2-test`
+/// and they are NOT the same code. 5.9.2's commit `ddee3e7` is not even in the
+/// fork's object database, and the fork carries changes 5.9.2 lacks — e.g.
+/// upstream 61f35bb626 made `sysopen` on a missing file `return 2` where 5.9.2
+/// still returns 1 (c:Src/Modules/system.c:388-391). Porting faithfully from
+/// the fork therefore *creates* a divergence against the Homebrew oracle, and
+/// the reverse "fix" would break the port. Silently picking whichever zsh
+/// happens to be installed is how that becomes an infinite chase.
+///
+/// So: `ZSHRS_FUZZ_ZSH` names the oracle explicitly (point it at a zsh built
+/// from the fork to make spec and oracle the same code). If it is set but
+/// unusable this is a HARD ERROR — falling back to a different zsh would
+/// silently answer a different question than the one that was asked.
 fn zsh_path() -> &'static str {
-    if Path::new("/opt/homebrew/bin/zsh").exists() {
-        "/opt/homebrew/bin/zsh"
-    } else if Path::new("/usr/local/bin/zsh").exists() {
-        "/usr/local/bin/zsh"
-    } else {
-        "/bin/zsh"
-    }
+    static ORACLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ORACLE.get_or_init(|| {
+        if let Ok(p) = std::env::var("ZSHRS_FUZZ_ZSH") {
+            if !Path::new(&p).exists() {
+                eprintln!("parity-fuzz: ZSHRS_FUZZ_ZSH={p}: no such file");
+                std::process::exit(2);
+            }
+            return p;
+        }
+        for p in ["/opt/homebrew/bin/zsh", "/usr/local/bin/zsh"] {
+            if Path::new(p).exists() {
+                return p.to_string();
+            }
+        }
+        "/bin/zsh".to_string()
+    })
+}
+
+/// `<path> (<$ZSH_PATCHLEVEL>)`, for the run header and the report file, so a
+/// divergence record can be attributed to the exact oracle that produced it.
+fn zsh_oracle_id() -> String {
+    let path = zsh_path();
+    let level = Command::new(path)
+        .args(["-fc", "print -rn -- $ZSH_PATCHLEVEL"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("{path} ({level})")
 }
 
 /// Raw bytes, never `String`: a shell legitimately emits output that is not
@@ -1943,7 +1987,7 @@ fn gen_arith_mode(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec![AR_STATE.to_string()];
     for _ in 0..rng.gen_range(2..=5) {
-        match rng.gen_range(0..8) {
+        match rng.gen_range(0..9) {
             // Plain integer expression.
             0 => {
                 let e = ar_expr(&mut rng, 3);
@@ -2009,10 +2053,25 @@ fn gen_arith_mode(seed: u64) -> Vec<String> {
             }
             // Arithmetic in an array subscript and in a `for ((;;))` header —
             // the same evaluator reached through two different callers.
-            _ => {
+            7 => {
                 let e = ar_expr(&mut rng, 1);
                 stmts.push(format!(
                     "arr=(a b c d e); print -r -- \"[${{arr[(({e}) % 5) + 1]}}]\""
+                ));
+            }
+            // Arithmetic in a RANGE subscript. A distinct caller from the
+            // single-index arm above (c:Src/params.c getindex parses two
+            // bounds), and the bounds are where a PARENTHESISED expression has
+            // to survive: c:1389 only reads `(…)` as a flag group while the
+            // chars are real flags, and c:1477-1482's `flagerr` REWINDS to
+            // before the `(` on anything else, so the group is re-read as math.
+            // `${arr[(x), 4]}` is `b c d`, not the whole array — the paren form
+            // must agree with the bare `${arr[x, 4]}`.
+            _ => {
+                let lo = pick(&mut rng, &["1", "2", "x", "(x)", "(x+1)", "(1+1)", "-3", "(i)"]);
+                let hi = pick(&mut rng, &["3", "4", "(y)", "(y-1)", "(2+2)", "-1", "5", "(j)"]);
+                stmts.push(format!(
+                    "arr=(a b c d e); x=2; y=4; i=1; j=3; print -rl -- ${{arr[{lo}, {hi}]}}; print -r -- \"n=${{#${{arr[{lo}, {hi}]}}}}\""
                 ));
             }
         }
@@ -2744,6 +2803,47 @@ const PROMPT_ATOMS: &[&str] = &[
     "%c",
     "%2d",
     "%-1d",
+    // NEGATIVE (minus) widths. c:Src/prompt.c:663-672 reads `-N` on `<`/`>`
+    // as "truncate to N columns BEFORE the right margin", not as a literal
+    // width: `arg = zterm_columns - t0 + arg`, then c:670-671 clamps a
+    // non-positive result to 1. The `-` is parsed for EVERY escape (c:374-382,
+    // where a bare `-` with no digits means arg = -1), but only these atoms
+    // make the value observable.
+    //
+    // The mode had truncation atoms yet none with a minus, so it ran clean
+    // while `%-5<<abc` printed `abc` where zsh prints `c`. The width also has
+    // to be reachable from BOTH sides of the margin: `%-90<<` against a
+    // 97-column terminal must leave 7 columns, while any of these against a
+    // shell with no tty (zterm_columns == 0) must collapse to the 1-column
+    // clamp — the two cases that a hardcoded 80-column fallback silently
+    // papered over.
+    "%-5<<abcdefghij",
+    "%-0<<abcdef",
+    "%-1<<abcdef",
+    "%-5>>abcdefghij",
+    "%-<<abcdef",
+    "%-3<...<abcdefghij",
+    "%-90<<abcdefghijklmnopqrstuvwxyz",
+    "XY%-5<<abcdef",
+    "%-10(l.wide.narrow)",
+    "%(-5l.wide.narrow)",
+    "%(0l.wide.narrow)",
+    // Escapes the vocabulary never reached. All are deterministic across the
+    // two shells under the harness's identical `-fc` invocation and cwd;
+    // time/history escapes (%D %T %t %* %@ %W %w %h %!) are deliberately
+    // EXCLUDED because they are not.
+    "%L",
+    "%i",
+    "%e",
+    "%?",
+    "%_",
+    "%^",
+    "%G",
+    "%C",
+    "%1~",
+    "%N",
+    "%F{300}oob%f",
+    "%F{#ff8800}hex%f",
 ];
 
 fn gen_prompt(seed: u64) -> Vec<String> {
@@ -5502,6 +5602,113 @@ fn gen_zcalc(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// rcexpand generator
+//
+// RC_EXPAND_PARAM — the `^` flag (c:Src/subst.c:2550-2557 `plan9`) and its
+// `setopt rcexpandparam` counterpart. `${^a}` cross-products the array with the
+// surrounding text (`x${^a}y` → `xa y xb y`), `${^^a}` forces it back OFF, and
+// C parses the flag with the SAME loop braced or not (the start guard at
+// c:1890-1891 admits `Hat`), so `$^a` and `${^a}` must agree exactly.
+//
+// The rules this pins, each one a bug this mode's construction found:
+//   * The UNBRACED `$^a` form exists at all — it used to compile to literal
+//     text, which is why promptinit:23's `$^fpath/prompt_*_setup(N)` found zero
+//     themes (29 of zsh's own functions use the form, `_git` among them).
+//   * Inside DOUBLE QUOTES the array is JOINED before plan9 ever runs
+//     (c:3029-3036 `if (qt && !getlen && isarr > 0) { val = sepjoin(...);
+//     isarr = 0; }`, and the plan9 block at c:4316 sits inside the isarr arm),
+//     so `"pre${^b}"` is ONE word.
+//   * `${^^a}` sets plan9 = 0 and NOTHING else (c:2554) — the value keeps its
+//     array shape, so it still splats one word per element.
+//   * Affixes attach per element when distributing but only to the last
+//     element when not.
+//
+// Determinism: pure array/text expansion — no clock, pid or filesystem.
+// ---------------------------------------------------------------------------
+
+/// Array values: element counts and empty/space-bearing members change the
+/// cross-product's word count and the DQ join's shape.
+const RCEXPAND_ARRAYS: &[&str] = &[
+    "(a b)",
+    "(a b c)",
+    "(one)",
+    "()",
+    "(a '' b)",
+    "('x y' z)",
+    "(1 2 3 4)",
+    "(d1 d2)",
+];
+
+/// Word shapes around the expansion: bare, prefix, suffix, both, and the
+/// braced/unbraced pair that must agree.
+///
+/// The braced/unbraced pairing is the load-bearing part. C runs ONE flag loop
+/// for both forms (c:1890-1891 admits the flag char at the paramsubst start,
+/// c:2550-2557 parses it), so `$^a` and `${^a}` must agree exactly — whereas
+/// this port reaches them through different code, which is precisely how `$^a`
+/// came to compile to literal text while `${^a}` worked.
+const RCEXPAND_WORDS: &[&str] = &[
+    "$^a", "${^a}", "pre$^a", "pre${^a}", "$^a.x", "${^a}.x", "pre$^a.x", "pre${^a}suf",
+    "$^^a", "${^^a}", "$^^a.x", "${^^a}.x", "x$^a$^a", "$^a-$^a", "$a.x", "${a}.x",
+];
+
+/// The sibling unbraced flag `=` (SH_WORD_SPLIT / spbreak, c:2558-2569), paired
+/// with its braced form. Same structure as `^`: the whole-word fast path could
+/// not express an affix, so `pre$=s` / `$=s.x` / `$==s.x` were literal text
+/// while the bare `$=s` worked.
+const RCEXPAND_SPLIT_WORDS: &[&str] = &[
+    "$=s", "${=s}", "pre$=s", "pre${=s}", "$=s.x", "${=s}.x", "x$=s.y", "x${=s}.y",
+    "$==s", "${==s}", "$==s.x", "${==s}.x", "$=s-$=s",
+];
+
+/// Scalar values for the `=` split surface: IFS-whitespace runs, leading and
+/// trailing separators, and an all-blank value all change the word count.
+const RCEXPAND_SCALARS: &[&str] = &[
+    "'a b'", "'a  b'", "' a b '", "'a'", "''", "'  '", "'a b c'", "'x'",
+];
+
+fn gen_rcexpand(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let arr = pick(&mut rng, RCEXPAND_ARRAYS);
+    let word = pick(&mut rng, RCEXPAND_WORDS);
+    // The option is half the surface: plan9 starts from isset(RCEXPANDPARAM)
+    // (c:1663), and `^`/`^^` override it either way.
+    let opt = pick(&mut rng, &["", "", "setopt rcexpandparam; ", "unsetopt rcexpandparam; "]);
+
+    match rng.gen_range(0..6) {
+        // Unquoted — the distributing case. `print -rl` makes the word COUNT
+        // visible, which is the whole point.
+        0 | 1 => vec![format!("{opt}a={arr}; print -rl -- {word}")],
+        // Double-quoted — must JOIN (c:3032), never cross-product.
+        2 => vec![format!("{opt}a={arr}; print -r -- \"{word}\"")],
+        // Captured into an array: pins the element COUNT rather than the
+        // rendered text.
+        3 => vec![format!(
+            "{opt}a={arr}; r=({word}); print -r -- \"n=${{#r}} [${{r[1]}}][${{r[2]}}]\""
+        )],
+        // The `=` split flag — same braced/unbraced pairing as `^`. `shwordsplit`
+        // matters here the way `rcexpandparam` does for `^`: c:1705 seeds spbreak
+        // from the option, and `=`/`==` override it either way.
+        4 => {
+            let w = pick(&mut rng, RCEXPAND_SPLIT_WORDS);
+            let v = pick(&mut rng, RCEXPAND_SCALARS);
+            let so = pick(&mut rng, &["", "", "setopt shwordsplit; ", "unsetopt shwordsplit; "]);
+            vec![format!("{so}s={v}; print -rl -- {w}")]
+        }
+        // `=` in a scalar-assignment RHS: c:3901-3920 `force_split = !ssub &&
+        // spbreak`, so ssub suppresses the split and the joined value is
+        // assigned — `v=$=s` must NOT split.
+        _ => {
+            let w = pick(&mut rng, RCEXPAND_SPLIT_WORDS);
+            let v = pick(&mut rng, RCEXPAND_SCALARS);
+            vec![format!(
+                "s={v}; r=({w}); print -r -- \"n=${{#r}}\"; v={w}; print -r -- \"[$v]\""
+            )]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -5570,6 +5777,7 @@ enum Mode {
     Bindkey,
     Zmv,
     Zcalc,
+    Rcexpand,
 }
 
 struct Args {
@@ -5651,6 +5859,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Bindkey => gen_bindkey(seed),
         Mode::Zmv => gen_zmv(seed),
         Mode::Zcalc => gen_zcalc(seed),
+        Mode::Rcexpand => gen_rcexpand(seed),
     }
 }
 
@@ -5720,6 +5929,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Bindkey => "bindkey",
         Mode::Zmv => "zmv",
         Mode::Zcalc => "zcalc",
+        Mode::Rcexpand => "rcexpand",
     }
 }
 
@@ -5789,6 +5999,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Bindkey,
         Mode::Zmv,
         Mode::Zcalc,
+        Mode::Rcexpand,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -5892,7 +6103,7 @@ fn parse_args() -> Args {
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
                      whence, zstyle, atflag, subexp, replace, assign,\n\
-                     gflag, select, bindkey, zmv, zcalc\n\
+                     gflag, select, bindkey, zmv, zcalc, rcexpand\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
@@ -5908,6 +6119,15 @@ fn parse_args() -> Args {
                      --baseline FILE  allowlist of known-gap signatures; only a\n\
                                       NEW divergence (not in FILE) fails the run\n\
                                       (exit 1). Prints new-signature lines to add.\n\
+                     \n\
+                     env  ZSHRS_FUZZ_ZSH=PATH  the zsh to compare against. The\n\
+                                      oracle is part of the result: a baseline is\n\
+                                      only valid against the zsh that produced it,\n\
+                                      and Homebrew 5.9.2, apt's zsh and the C-spec\n\
+                                      fork are three different codebases. Set this\n\
+                                      to a zsh built from the fork to make the\n\
+                                      oracle and the port's spec the same code.\n\
+                                      Every run prints the oracle it used.\n\
                      \n\
                      stateful mode builds a sequence of setopt/typeset/IFS/scope\n\
                      mutations interleaved with probes; glob mode runs generated\n\
@@ -6177,12 +6397,15 @@ fn main() {
         }
     }
 
+    let oracle = zsh_oracle_id();
     println!(
         "\nfuzzed {checked} cases in {:.1}s ({:.0}/s)\n\
+         oracle      : {}\n\
          divergences : {} ({} known / {} new)\n\
          timeouts    : {}",
         elapsed.as_secs_f64(),
         checked as f64 / elapsed.as_secs_f64().max(0.001),
+        oracle,
         divergences.len(),
         known,
         new_records.len(),
@@ -6194,6 +6417,9 @@ fn main() {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(mut f) = std::fs::File::create(&args.out_path) {
+            // Attribute the records: "zshrs disagrees with zsh" is only a claim
+            // about the zsh that ran, and three different ones are in play.
+            let _ = writeln!(f, "# oracle: {oracle}");
             for d in &divergences {
                 let _ = writeln!(f, "{d}");
             }

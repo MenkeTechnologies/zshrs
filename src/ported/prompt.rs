@@ -875,12 +875,14 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         let mut h: i32 = 0;
                         countprompt(&line, &mut t0, &mut h, 0); // c:460
                         if minus != 0 {
-                            // c:461-462 — `t0 = zterm_columns - t0;`
-                            let mut cols = crate::ported::utils::adjustcolumns() as i32;
-                            if cols <= 0 {
-                                cols = 80;
-                            }
-                            t0 = cols - t0;
+                            // c:461-462 — `t0 = zterm_columns - t0;`. Same as the
+                            // `%<`/`%>` site below: C reads the zterm_columns
+                            // global, which IPDEF5 aliases to $COLUMNS, so
+                            // getiparam is the port's equivalent. The old
+                            // adjustcolumns()+80-clamp re-probed the tty (C does
+                            // not probe here) and invented an 80-column terminal
+                            // for shells that have none.
+                            t0 = crate::ported::params::getiparam("COLUMNS") as i32 - t0;
                         }
                         if t0 >= arg {
                             test = 1; // c:463-464
@@ -1487,15 +1489,57 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                     bv.buf[bv.bp] = Outpar as u8;
                     bv.bp += 1;
                 }
-                // c:625-635 — `%{` (begin dontcount span)
-                b'{' => {
-                    // c:626 — `if (!bv->dontcount++) { addbufspc(1); *bv->bp++ = Inpar; }`
-                    if bv.dontcount == 0 {
-                        addbufspc(bv, 1);
-                        bv.buf[bv.bp] = Inpar as u8;
-                        bv.bp += 1;
+                // c:676-696 — `%{` (begin dontcount span), which FALLS THROUGH
+                // into `%G` when it carries a positive arg:
+                //     case '{':
+                //         if (!bv->dontcount++) { addbufspc(1); *bv->bp++ = Inpar; }
+                //         if (arg <= 0) break;
+                //         /* FALLTHROUGH */
+                //     case 'G':
+                //         if (arg > 0) { addbufspc(arg); while (arg--) *bv->bp++ = Nularg; }
+                //         else { addbufspc(1); *bv->bp++ = Nularg; }
+                //         break;
+                b'{' | b'G' => {
+                    // c:681-682 — `if (arg <= 0) break;` guards ONLY the `%{`
+                    // entry: a plain `%{…%}` claims no columns and stops here,
+                    // while a counted `%N{…%}` falls on through. `%G` always
+                    // emits. (Expressed as a flag rather than an early `break`
+                    // because this is a match arm, not a loop.)
+                    let mut fallthrough = true;
+                    if xc == b'{' {
+                        // c:677-680
+                        if bv.dontcount == 0 {
+                            addbufspc(bv, 1);
+                            bv.buf[bv.bp] = Inpar as u8;
+                            bv.bp += 1;
+                        }
+                        bv.dontcount += 1;
+                        fallthrough = arg > 0; // c:681-682
                     }
-                    bv.dontcount += 1;
+                    if fallthrough {
+                    // c:684-694 — emit the glitch placeholders. Nularg prints
+                    // nothing but countprompt charges it ONE column each
+                    // (c:1183-1184 `else if (*str == Nularg) w++;`), which is
+                    // the entire point of both escapes: `%G` tells the expander
+                    // that something invisible still occupies a cell, and
+                    // `%N{…%}` says the invisible span occupies N of them.
+                    //
+                    // There was no `G` arm at all, so `%G` fell to the
+                    // unknown-escape default and emitted nothing. Nothing
+                    // downstream was wrong — countprompt already had its Nularg
+                    // arm and prompttrunc already measured with countprompt —
+                    // there was simply never a Nularg in the buffer to count.
+                    // Effects: `%G%(1l.t.f)` took the false branch where zsh
+                    // takes the true one, and every truncation spent the
+                    // invisible column on a real character
+                    // (`%5<<abcdefghij%G` → `fghij`, zsh `ghij`).
+                        let n = if arg > 0 { arg } else { 1 }; // c:685/691
+                        addbufspc(bv, n as i32);
+                        for _ in 0..n {
+                            bv.buf[bv.bp] = Nularg as u8; // c:687-688 / c:693
+                            bv.bp += 1;
+                        }
+                    }
                 }
                 // c:695-702 — `%}` (end dontcount span)
                 b'}' => {
@@ -1999,10 +2043,30 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         let mut t0: i32 = 0;
                         let mut h: i32 = 0;
                         countprompt(&line, &mut t0, &mut h, 0); // c:668
-                        let mut cols = crate::ported::utils::adjustcolumns() as i32;
-                        if cols <= 0 {
-                            cols = 80;
-                        }
+                        // c:669 — `arg = zterm_columns - t0 + arg;`. C reads the
+                        // zterm_columns GLOBAL, which `IPDEF5("COLUMNS",
+                        // &zterm_columns, zlevar_gsu)` (c:params.c:355) aliases to
+                        // $COLUMNS — so the param IS the value, and getiparam is
+                        // the port's equivalent (it has no valptr aliasing).
+                        //
+                        // This previously called adjustcolumns() and clamped a
+                        // non-positive result to 80. Neither is in the C, and both
+                        // were wrong: adjustcolumns re-probes the tty (C does not
+                        // probe here at all), and the 80 clamp turned C's
+                        // "zterm_columns is legitimately 0 without a terminal"
+                        // into a fake 80-column terminal, so `%-5<<` never
+                        // truncated where zsh truncates to 1 (c:670-671 clamps the
+                        // NEGATIVE result to 1, which is the whole point).
+                        //
+                        // The clamp used to be load-bearing for a different
+                        // reason: zshrs never called adjustwinsize(0), so
+                        // $COLUMNS was 0 even at a real terminal and dropping the
+                        // clamp would have truncated every interactive prompt to
+                        // one character. That call now happens at init
+                        // (vm_helper, c:init.c:1276), so $COLUMNS is the true
+                        // width when there is a tty and 0 only when there isn't —
+                        // exactly C's zterm_columns.
+                        let cols = crate::ported::params::getiparam("COLUMNS") as i32;
                         arg = cols - t0 + arg; // c:669
                         if arg <= 0 {
                             arg = 1; // c:670-671

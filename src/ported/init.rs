@@ -1183,6 +1183,33 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     crate::ported::hashnameddir::createnameddirtable(); // c:1269
     crate::ported::params::createparamtable(); // c:1270
 
+    // c:Src/init.c:1274-1276 — `#ifdef TIOCGWINSZ / adjustwinsize(0);`, the
+    // first thing after createparamtable. Probes the tty via TIOCGWINSZ and
+    // publishes the geometry to $COLUMNS/$LINES.
+    //
+    // zshrs never made this call, so it never asked the tty: $COLUMNS/$LINES
+    // read 0 in every shell with a terminal (zsh reports 97/24 in a 97x24 pty).
+    // Everything width-derived was then computed against 0 — prompt `%<<`
+    // truncation, select lists, completion listing widths.
+    //
+    // Ordering is C's and it is load-bearing in both directions:
+    //   - It must follow init_io (c:1908), which is what sets SHTTY; while
+    //     SHTTY is -1 adjustwinsize early-returns (c:1900-1901) and does
+    //     nothing. That is also the correct behaviour with no terminal at all:
+    //     $COLUMNS keeps whatever the environment supplied, or 0.
+    //   - It must follow the environ import (createparamtable, c:1270) because
+    //     the tty geometry OVERRIDES an inherited COLUMNS: a 97-column terminal
+    //     reports 97 even when COLUMNS=10 was exported in. (C reaches that via
+    //     the c:1906-1907 "Signal missed while a job owned the tty?" promotion
+    //     of from=0 to from=1, which makes adjustcolumns take the signalled
+    //     path and overwrite zterm_columns with ws_col.)
+    //
+    // Note SHTTY does not require stdin/stdout to be a terminal: init_io's last
+    // resort is `open("/dev/tty")` (c:667-670), so a piped-but-still-attached
+    // shell gets the real width too — `zsh -fc 'print $COLUMNS | cat'` in a
+    // 97-column terminal prints 97.
+    let _ = crate::ported::utils::adjustwinsize(0); // c:1276
+
     // c:Src/init.c:1180-1194 — default prompts. C sets the `prompt`/
     // `prompt2`/`prompt3`/`prompt4`/`sprompt` globals (which IPDEF7 binds
     // to PS1/PS2/PS3/PS4/SPROMPT) BEFORE createparamtable; zshrs creates

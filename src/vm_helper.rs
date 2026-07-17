@@ -1103,12 +1103,12 @@ impl ShellExecutor {
         let argzero_default = env::args().next().unwrap_or_else(|| "zsh".to_string());
         setsparam("ZSH_ARGZERO", &argzero_default);
         setsparam("WORDCHARS", "*?_-.[]~=/&;!#$%^(){}<>");
-        let shlvl = env::var("SHLVL")
-            .ok()
-            .and_then(|v| v.parse::<i32>().ok())
-            .map(|n| (n + 1).to_string())
-            .unwrap_or_else(|| "1".to_string());
-        setsparam("SHLVL", &shlvl);
+        // SHLVL is NOT seeded here. c:Src/params.c:948-951 increments it
+        // AFTER the environ-import loop, so the +1 lives at the end of that
+        // loop below — see the `c:948-951` block. Doing it here instead meant
+        // parsing the raw env string with `parse::<i32>()`, which mis-read
+        // every non-decimal form C accepts via zstrtol_underscore
+        // (SHLVL=0x10 must give 17, 010 → 9, 1_0 → 11, 9abc → 10, abc → 1).
         // POSIX/zsh default IFS: space + tab + newline + NUL.
         setsparam("IFS", " \t\n\0");
         // POSIX getopts: OPTIND starts at 1.
@@ -1733,6 +1733,54 @@ impl ShellExecutor {
                             continue; // c:905 `continue;`
                         }
                         pm.node.flags |= PM_EXPORTED as i32;
+                        // c:Src/params.c:2769-2776 — assignstrvalue's
+                        // PM_INTEGER arm, which C's env import reaches via
+                        // `assignsparam(..., ASSPM_ENV_IMPORT)` (c:907-908;
+                        // assignsparam forwards its `flags` verbatim at
+                        // c:params.c assignstrvalue(v, val, flags)):
+                        //     if (flags & ASSPM_ENV_IMPORT) {
+                        //         char *ptr;
+                        //         ival = zstrtol_underscore(val, &ptr, 0, 1);
+                        //     } else
+                        //         ival = mathevali(val);
+                        //     v->pm->gsu.i->setfn(v->pm, ival);
+                        // An integer param keeps its value in `u.val`, NOT in
+                        // the scalar slot, so the `pm.u_str = env_value` seed
+                        // below stored the digits somewhere no integer reader
+                        // ever looks and EVERY pre-existing PM_INTEGER param
+                        // silently ignored the environment: COLUMNS/LINES
+                        // (IPDEF5, c:355-356) read back 0, while HISTSIZE,
+                        // SAVEHIST, LISTMAX, MAILCHECK, KEYTIMEOUT and
+                        // FUNCNEST kept their built-in defaults — i.e.
+                        // `HISTSIZE=5000 zshrs -c ...` was a no-op.
+                        //
+                        // Base 0 + underscore=1 is not incidental: it is what
+                        // makes `COLUMNS=0x10` 16, `COLUMNS=0b101` 5,
+                        // `COLUMNS=010` 8 (octal — c:utils.c:2452-2461 takes
+                        // the leading `0` then falls to `base = 8`),
+                        // `COLUMNS=1_0` 10, and a trailing-garbage value like
+                        // `9abc` a silent 9. mathevali would instead ERROR on
+                        // `9abc`, which is precisely why C splits the two
+                        // paths — importing a hostile environment must not
+                        // abort the shell (upstream 546203a770, "33276: safer
+                        // import of numerical variables from environment").
+                        if (pm.node.flags as u32 & crate::ported::zsh_h::PM_INTEGER) != 0 {
+                            let (ival, _) = crate::ported::utils::zstrtol_underscore(
+                                &env_value,
+                                0,
+                                true,
+                            ); // c:2773
+                            // c:3660 — any assignstrvalue write clears PM_UNSET.
+                            pm.node.flags &= !(PM_UNSET as i32);
+                            // c:2774 — `v->pm->gsu.i->setfn(v->pm, ival)`.
+                            // intsetfn is this port's stand-in for the gsu_i
+                            // vtable: it name-dispatches the specials whose
+                            // setter has side effects (SECONDS, RANDOM,
+                            // HISTSIZE, …) and writes u.val otherwise.
+                            crate::ported::params::intsetfn(pm.as_mut(), ival);
+                            pm.env = Some(format!("{env_name}={env_value}"));
+                            continue;
+                        }
                         // c:Src/params.c:893-924 — C's env-import calls
                         // `assignsparam(..., ASSPM_ENV_IMPORT)` which
                         // routes through the param's GSU setfn. For
@@ -1867,8 +1915,82 @@ impl ShellExecutor {
                         apm.node.flags &= !(crate::ported::zsh_h::PM_UNSET as i32);
                     }
                 }
+                // c:Src/params.c:948-951 — runs AFTER the import loop:
+                //     pm = (Param) paramtab->getnode(paramtab, "SHLVL");
+                //     sprintf(buf, "%d", (int)++shlvl);
+                //     /* shlvl value in environment needs updating unconditionally */
+                //     addenv(pm, buf);
+                // SHLVL is `IPDEF5("SHLVL", &shlvl, varinteger_gsu)` (c:358), so
+                // the loop above has already parsed any inherited value into it
+                // with zstrtol_underscore; C then increments THAT, in place.
+                // Ordering is the whole point: the increment must observe the
+                // imported value, and the import must not clobber the
+                // increment. When SHLVL is absent from the environment the
+                // param is still 0 here, so ++ yields 1 — matching C, whose
+                // `shlvl` global starts at 0.
+                //
+                // addenv also exports the INCREMENTED value, which is why a
+                // forked child sees 6 for `SHLVL=5 zsh -fc 'printenv SHLVL; true'`.
+                // (A bare `printenv SHLVL` shows 5 because zsh exec's the last
+                // command in place and backs the increment out — the shell is
+                // being replaced, not nested. That is a separate mechanism.)
+                if let Some(pm) = tab.get_mut("SHLVL") {
+                    let next = pm.u_val + 1; // c:949 `++shlvl`
+                    crate::ported::params::intsetfn(pm.as_mut(), next); // c:949
+                    pm.node.flags &= !(PM_UNSET as i32);
+                }
             }
         }
+        // NOT DONE HERE: c:Src/params.c:951 `addenv(pm, buf)`, which zputenv's
+        // the INCREMENTED SHLVL into the process environment so a forked child
+        // sees 6 for `SHLVL=5 zsh -fc 'printenv SHLVL; true'`. zshrs still
+        // exports the inherited 5 there.
+        //
+        // Adding the addenv alone makes parity WORSE, not better, because it
+        // is only half of a pair. C hands an exec'd command the DECREMENTED
+        // value (c:Src/exec.c:4276-4281 — "for either implicit or explicit
+        // exec, decrease $SHLVL as we're now done as a shell", guarded by
+        // `!subsh && !forked`), which is why a bare `SHLVL=5 zsh -fc 'printenv
+        // SHLVL'` prints 5 while `'printenv SHLVL; true'` prints 6 — the first
+        // is exec'd in place, the second forked. Exporting 6 without that
+        // decrement turns one divergence into four: the exec'd cases and every
+        // nested-shell count start reading one too high.
+        //
+        // The decrement IS ported, at exec.rs:11195-11199, but on the
+        // `ported::exec` path — not the fusevm path that actually runs `-c`.
+        // Wiring both belongs in one change, with the exec side first.
+        // c:Src/init.c:1907-1909 — `SHTTY = -1; init_io(cmd); setupvals(...)`.
+        // zsh_main runs those three in that order, and this constructor stands
+        // in for setupvals's param setup on the drivers that never reach
+        // zsh_main: `zshrs -c CODE` dispatches at bins/zshrs.rs:1716 (after
+        // --zsh/-f are stripped) straight into ShellExecutor::new + exit. So
+        // init_io has to happen here, or SHTTY is still -1 and the winsize
+        // probe below silently no-ops (adjustwinsize early-returns at
+        // c:1900-1901). setupvals's own adjustwinsize(0) covers the zsh_main
+        // path; init_io is idempotent (c:615-618 closes and reopens SHTTY), so
+        // that path just re-establishes it a moment later.
+        crate::ported::init::init_io(None); // c:1908
+
+        // c:Src/init.c:1274-1276 — `adjustwinsize(0)`, the first thing after
+        // createparamtable (c:1270). Probes the tty via TIOCGWINSZ and
+        // publishes the geometry to $COLUMNS/$LINES.
+        //
+        // Ordering is C's, and load-bearing in both directions: it must FOLLOW
+        // init_io (which sets SHTTY) and it must FOLLOW the environ import
+        // above, because the tty geometry OVERRIDES an inherited COLUMNS — a
+        // 97-column terminal reports 97 even when COLUMNS=10 was exported in.
+        // (C gets that via the c:1906-1907 "Signal missed while a job owned the
+        // tty?" promotion of from=0 to from=1, which makes adjustcolumns take
+        // the signalled path and overwrite zterm_columns with ws_col.)
+        //
+        // With no terminal at all, SHTTY stays -1 and the imported value (or 0)
+        // survives untouched — which is what C's zterm_columns does there, and
+        // why a piped `COLUMNS=20 zshrs -c` still reports 20. Note SHTTY does
+        // NOT require stdin/stdout to be a tty: init_io's last resort is
+        // `open("/dev/tty")` (c:667-670), so a piped-but-still-attached shell
+        // gets the real width, matching `zsh -fc 'print $COLUMNS | cat'`.
+        let _ = crate::ported::utils::adjustwinsize(0); // c:1276
+
         // c:Src/params.c:955 — `set_pwd_env();` runs AFTER the environ
         // import loop, overwriting the imported $PWD/$OLDPWD paramtab
         // entries with the ispwd()-validated values computed above

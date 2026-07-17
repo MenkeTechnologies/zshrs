@@ -7038,12 +7038,51 @@ pub fn paramsubst(
                                             return n;
                                         }
                                     }
-                                } else {
+                                } else if flags.chars().next().is_some_and(|c| {
+                                    // c:Src/params.c:1392-1476 — the flag
+                                    // switch's cases, verbatim.
+                                    matches!(
+                                        c,
+                                        'r' | 'R'
+                                            | 'k'
+                                            | 'K'
+                                            | 'i'
+                                            | 'I'
+                                            | 'w'
+                                            | 'f'
+                                            | 'e'
+                                            | 'n'
+                                            | 'b'
+                                            | 'p'
+                                            | 's'
+                                    )
+                                }) {
                                     // Separator/word flag (`(s.X.)` etc.) is a
                                     // no-op for an integer slice bound (c:#83);
                                     // strip it and parse the remainder.
                                     effective = &t[close + 1..];
                                 }
+                                // c:Src/params.c:1477-1482 — anything else is
+                                // NOT a flag group. C's flag switch falls to
+                                //     default:
+                                //       flagerr:
+                                //         num = 1; word = rev = ind = down =
+                                //         keymatch = 0; sep = NULL;
+                                //         s = *str - 1;      /* rewind */
+                                // so an unknown flag char REWINDS to before the
+                                // `(` and the group is re-read as MATH. That is
+                                // why `${arr[(zz)1]}` reports `bad math
+                                // expression` rather than a flag error.
+                                //
+                                // Stripping unconditionally deleted a
+                                // PARENTHESISED range bound: `${arr[(x), 4]}`
+                                // left `effective` empty, so the bound fell back
+                                // to the default 1 and the slice became 1..4
+                                // (`a b c d`) where zsh gives `b c d`. Leaving
+                                // `effective = t` hands `(x)` to mathevali
+                                // below — C's behaviour. Only the RANGE form was
+                                // affected: a single `${arr[(x)]}` takes a
+                                // different arm and already evaluated as math.
                             }
                         }
                         let expanded = singsub(effective);
@@ -14908,68 +14947,62 @@ pub fn paramsubst(
             }
         } // c:2473
 
-        // (D) dir-magic — replace $HOME and any nameddir prefix with
-        // tilde form. Direct port of subst.c:2229 mods bit 1, which
-        // routes through modify()'s tilde-contraction at the end of
-        // the pipeline. Common idiom: `${(D)PWD}` → `~/projects/foo`.
-        // Without ZLE's nameddir hash, this reduces to plain $HOME.
-        // (D) per-element dir-magic. Direct port of subst.c:2229
-        // mods bit 1 → modify()'s tilde-contraction iterating aval.
+        // (D) dir-magic — the `mods` bit-1 half of c:4149-4167:
+        //     if (isarr) { for (ap = aval; *ap; ap++) {
+        //         if (mods & 1) *ap = substnamedir(*ap);
+        //         if (mods & 2) *ap = nicedupstring(*ap); } }
+        //     else { if (mods & 1) val = substnamedir(val);
+        //            if (mods & 2) val = nicedupstring(val); }
+        // Common idiom: `${(D)PWD}` → `~/projects/foo`.
+        //
+        // This dispatches to the substnamedir PORT (utils.rs, c:utils.c:1053)
+        // rather than re-deriving the tilde contraction here. It previously
+        // had its own inline finddir walk, which left the real port with ZERO
+        // callers and drifted from it in the one way that matters: C's
+        // substnamedir does not just contract the prefix, it QUOTES —
+        //     if (!d) return quotestring(s, QT_BACKSLASH);
+        //     return zhtricat("~", d->node.nam,
+        //                     quotestring(s + strlen(d->dir), QT_BACKSLASH));
+        // so a no-match returns the WHOLE string backslash-quoted and a match
+        // quotes only the residue after the matched dir. The inline copy
+        // returned both unquoted, so every (D) result carrying a shell-special
+        // character came out wrong while the plain paths that get tested by
+        // hand looked fine:
+        //     ${(D)v}  v='x y'        → zsh `x\ y`      was `x y`
+        //     ${(D)v}  v="$HOME/a b"  → zsh `~/a\ b`    was `~/a b`
+        //     ${(D)v}  v='a*b'        → zsh `a\*b`      was `a*b`
+        // The bit-2 half below already calls the nicedupstring port directly;
+        // this is now symmetric with it.
         if (mods & 1) != 0 {
-            // c:4155 if (mods & 1)
-            let home_opt = getsparam("HOME"); // c:4155
-                                              // Pull named-dirs (~name) hash into a [(name, path)]
-                                              // sorted by path-length-descending so the LONGEST match
-                                              // wins (zsh canonical: most-specific tilde-contraction).
-                                              // Direct port of subst.c → modify dir-handling which
-                                              // walks the nameddirtab in length-desc order.
-                                              // c:2229 — canonical nameddirtab read (mirrors C's
-                                              // `mod_export HashTable nameddirtab` at hashnameddir.c:48).
-            let mut named: Vec<(String, String)> = nameddirtab()
-                .lock()
-                .map(|t| {
-                    t.iter()
-                        .map(|(k, nd)| (k.clone(), nd.dir.clone()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            named.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-            let dir_one = |s: &str| -> String {
-                // c:Src/utils.c:1127 finddir — HOME first (so the bare
-                // `~` wins when $HOME equals a named-dir path),
-                // then nameddirtab. The previous order (named first)
-                // made `hash -d hm=$HOME; (D)$HOME` render as `~hm`
-                // instead of zsh's `~`.
-                if let Some(ref h) = home_opt {
-                    if !h.is_empty() && s.starts_with(h.as_str()) {
-                        let r = &s[h.len()..];
-                        if r.is_empty() || r.starts_with('/') {
-                            return format!("~{}", r);
-                        }
-                    }
+            // c:4155/4163 — `substnamedir(...)`.
+            eprintln!("PROBE mods1 isarr={} value={:?} split_parts={:?} var_name={:?}", isarr, value, split_parts, var_name);
+            let dir_one = |s: &str| -> String { crate::ported::utils::substnamedir(s) };
+            // c:4150 — `if (isarr) { for (ap = aval; ...) } else { val = ... }`.
+            // The per-element walk is gated on isarr, NOT on "is there an array
+            // named var_name": by this point a double-quoted `"${(D)a}"` has
+            // already JOINED the array down to a scalar and cleared isarr, and C
+            // then quotes that joined string as a whole. Re-fetching the array
+            // from paramtab here ignored the join and quoted each element
+            // separately, so the spaces the join itself introduced went
+            // unquoted — `a=(one two three); "${(D)a}"` gave `one two three`
+            // where zsh gives `one\ two\ three`. Unquoted `${(D)a[@]}` keeps
+            // isarr set and still maps per element.
+            if isarr != 0 {
+                if let Some(parts) = split_parts.clone() {
+                    let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
+                    value = new_parts.join(" ");
+                    split_parts = Some(new_parts);
+                } else if let Some(arr) = arrays_get(&var_name) {
+                    let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
+                    value = new_arr.join(" ");
+                    split_parts = Some(new_arr);
+                } else {
+                    value = dir_one(&value); // c:4163
                 }
-                for (name, path) in &named {
-                    if !path.is_empty() && s.starts_with(path.as_str()) {
-                        let r = &s[path.len()..];
-                        if r.is_empty() || r.starts_with('/') {
-                            return format!("~{}{}", name, r);
-                        }
-                    }
-                }
-                s.to_string()
-            };
-            if let Some(parts) = split_parts.clone() {
-                let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
-                value = new_parts.join(" ");
-                split_parts = Some(new_parts);
-            } else if let Some(arr) = arrays_get(&var_name) {
-                let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
-                value = new_arr.join(" ");
-                split_parts = Some(new_arr);
             } else {
-                value = dir_one(&value); // c:2229
+                value = dir_one(&value); // c:4163
             }
-        } // c:2229
+        } // c:4167
 
         // (b) backslash-bslashquote pattern metachars — output is safe to
         // feed back into a glob/regex context as a literal.
@@ -15705,19 +15738,23 @@ pub fn paramsubst(
         // splat from the underlying array storage. Gate auto_splat
         // off when wantt fired, mirroring C's `if (isarr)` at
         // c:4245 not firing when wantt cleared isarr to 0.
-        // c:2554 — explicit `${^^arr}` forces RC_EXPAND off: the array
-        // must collapse to a JOINED scalar so it neither cross-product-
-        // distributes (under rcexpandparam) nor word-splits. Join now,
-        // before the auto-splat decision, so isarr=0 keeps it scalar.
-        if rc_force_off && isarr != 0 {
-            let src = split_parts
-                .clone()
-                .or_else(|| arrays_get(&var_name))
-                .unwrap_or_else(|| vec![value.clone()]);
-            value = crate::ported::utils::sepjoin(&src, None);
-            split_parts = Some(vec![value.clone()]);
-            isarr = 0;
-        }
+        // c:2553-2555 — explicit `${^^arr}` does exactly ONE thing:
+        //     if ((c = *++s) == '^' || c == Hat) {
+        //         plan9 = 0;
+        //         s++;
+        //     }
+        // It turns RC_EXPAND_PARAM off and touches NOTHING else — the value
+        // keeps its array shape, so an unquoted `${^^b}` still splats to one
+        // word per element; it merely stops cross-producting with the
+        // surrounding text. `plan9 = false` is already set at the flag parse
+        // (subst.rs:4667), which is the whole of C's behaviour.
+        //
+        // Joining to a scalar here was extra behaviour with no counterpart in
+        // C: it made `${^^b}` for b=(d1 d2) print `d1 d2` (ONE word) where zsh
+        // prints `d1` and `d2`, and `${^^b}.x` collapse to `d1 d2.x` instead of
+        // `d1` + `d2.x`. The "nor word-splits" premise in the old comment was
+        // simply wrong — zsh word-splits it like any other unquoted array.
+        let _ = rc_force_off;
         // c:Src/subst.c:4235 — `if (arrasg && !isarr) { l->list.flags |=
         // LF_ARRAY; aval = hmkarray(val); isarr = 1; }`. The `(A)` flag
         // (arrasg) forces a SCALAR result into a one-element array. This
@@ -15888,9 +15925,44 @@ pub fn paramsubst(
                                             return n;
                                         }
                                     }
-                                } else {
+                                } else if flags.chars().next().is_some_and(|c| {
+                                    // c:Src/params.c:1392-1476 — the flag
+                                    // switch's cases, verbatim.
+                                    matches!(
+                                        c,
+                                        'r' | 'R'
+                                            | 'k'
+                                            | 'K'
+                                            | 'i'
+                                            | 'I'
+                                            | 'w'
+                                            | 'f'
+                                            | 'e'
+                                            | 'n'
+                                            | 'b'
+                                            | 'p'
+                                            | 's'
+                                    )
+                                }) {
                                     effective = &t[close + 1..];
                                 }
+                                // c:Src/params.c:1477-1482 — an unknown flag
+                                // char hits `flagerr`, which rewinds `s` to
+                                // before the `(`, so the group is re-read as
+                                // MATH. Kept identical to the same test in
+                                // `eval_idx` (the slice-bound evaluator this
+                                // closure duplicates): stripping any `(…)`
+                                // unconditionally is what made `${arr[(x), 4]}`
+                                // slice from the default 1 there.
+                                //
+                                // NB: every splat shape probed reaches
+                                // `eval_idx`, not this closure, so this arm is
+                                // believed dead. It is corrected rather than
+                                // left divergent — two near-identical bound
+                                // evaluators disagreeing is exactly what hid
+                                // the bug: the same flaw was found here FIRST,
+                                // "fixed", and shown to change nothing, because
+                                // the live copy is the other one.
                             }
                         }
                         let expanded = singsub(effective);

@@ -6484,6 +6484,27 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // side is Array. Used for compile-time-detected explicit
     // distribution forms (`${^arr}` etc.) where the source flag
     // overrides the rcexpandparam option default.
+    // `${^arr}` — RC_EXPAND_PARAM forced on by the flag. concat_plan9 carries
+    // both halves of C's plan9 block: the c:4316-4350 cartesian emit AND the
+    // c:4362 `uremnode` word deletion for an empty array. The DISTRIBUTE_FORCED
+    // handler below cannot be reused: it is shared with `${(@)a}` / `${(f)v}` /
+    // `${a[@]}`, which KEEP the word on empty (`x${(@)a}y` → `xy`).
+    vm.register_builtin(BUILTIN_CONCAT_PLAN9, |vm, _argc| {
+        let rhs = vm.pop();
+        let lhs = vm.pop();
+        concat_plan9(lhs, rhs)
+    });
+
+    // `${^^arr}` — RC_EXPAND_PARAM forced OFF (c:2553-2555 `plan9 = 0`). Every
+    // other concat builtin re-checks plan9_active(), which is the OPTION, so
+    // under `setopt rcexpandparam` they cross-product regardless of the flag.
+    // Go straight to concat_splice — C's non-plan9 path (c:4366-4437).
+    vm.register_builtin(BUILTIN_CONCAT_SPLICE_NOPLAN9, |vm, _argc| {
+        let rhs = vm.pop();
+        let lhs = vm.pop();
+        concat_splice(lhs, rhs)
+    });
+
     vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE_FORCED, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
@@ -10392,6 +10413,31 @@ pub const BUILTIN_IS_TTY: u16 = 644;
 /// opcode. Pops the substitution text, zerrs, sets errflag (aborting the
 /// statement → empty stdout, exit 1, matching zsh), returns empty.
 pub const BUILTIN_PROCSUB_COND_ERROR: u16 = 645;
+/// `${^arr}` cross-product concat — RC_EXPAND_PARAM forced ON by the `^` flag.
+///
+/// Distinct from BUILTIN_CONCAT_DISTRIBUTE_FORCED, which the other distribute
+/// shapes (`${(@)a}`, `${(f)v}`, `${a[@]}`) share: those keep the word when the
+/// array is EMPTY (`x${(@)a}y` → `xy`), but plan9 DELETES it
+/// (c:Src/subst.c:4362-4365 `if (plan9) { uremnode(l, n); return n; }`), so
+/// `x${^a}y` with `a=()` produces no word at all. One builtin cannot serve both
+/// — the plan9-ness is known only at compile time, from the `^` flag itself.
+/// Routes to `concat_plan9`, which already ports both c:4362's removal and the
+/// c:4316-4350 cartesian emit, and is what the OPTION path
+/// (`setopt rcexpandparam`) has always used.
+pub const BUILTIN_CONCAT_PLAN9: u16 = 646;
+/// `${^^arr}` concat — RC_EXPAND_PARAM forced OFF by the doubled flag
+/// (c:Src/subst.c:2553-2555 `plan9 = 0`).
+///
+/// The mirror of BUILTIN_CONCAT_PLAN9. Needed because every other concat
+/// builtin consults `plan9_active()` (the runtime OPTION) and so cross-products
+/// anyway under `setopt rcexpandparam`, while `^^` must override the option:
+///     setopt rcexpandparam; a=(a b c); print -rl -- ${^^a}.x
+///     # zsh: `a`, `b`, `c.x`  — spliced, NOT `a.x b.x c.x`
+/// The override is computed in paramsubst but the distribution call is made
+/// here, so — like the `^` flag — the only place that knows is the compiler.
+/// Routes straight to `concat_splice`, C's non-plan9 join-first-and-last path
+/// (c:4366-4437).
+pub const BUILTIN_CONCAT_SPLICE_NOPLAN9: u16 = 647;
 /// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
 pub const BUILTIN_COND_ACCESS: u16 = 638;
 

@@ -1,0 +1,55 @@
+# parity-fuzz --mode rcexpand baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode rcexpand --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (the mode opened at 228). Covers
+# RC_EXPAND_PARAM (the `^` flag / plan9, c:Src/subst.c:2550-2557) and its
+# sibling unbraced flag `=` (SH_WORD_SPLIT / spbreak, c:2558-2569), each paired
+# with its braced form. That pairing is the load-bearing part: C runs ONE flag
+# loop for braced and unbraced alike (the paramsubst-start guard admits the flag
+# char at c:1890-1891), so `$^a` and `${^a}` must agree exactly — whereas this
+# port reaches them through different code, which is exactly how the unbraced
+# forms came to compile to literal text.
+#
+# Every divergence this mode found was a real port bug and was FIXED:
+#
+#   1. The UNBRACED `$^a` form did not exist; it compiled to LITERAL text, so
+#      promptinit:23's `$^fpath/prompt_*_setup(N)` found ZERO themes where zsh
+#      finds 18. 29 of zsh's own shipped functions use it, `_git` among them.
+#   2. `$=s` worked ONLY as a whole word: `pre$=s` / `$=s.x` / `$==s.x` were
+#      literal text, because a fast path keyed on `untoked.starts_with("$=")`
+#      with an all-alphanumeric name cannot express an affix.
+#   3. Double quotes JOIN before plan9 runs (c:3029-3036), so `"pre${^b}"` is
+#      ONE word.
+#   4. `${^^a}` sets plan9 = 0 and NOTHING else (c:2553-2555), and must override
+#      the rcexpandparam OPTION (c:2554).
+#   5. An EMPTY array under plan9 DELETES the whole word (c:4362-4365).
+#   6. An EMPTY ELEMENT drops from an unquoted splat (c:184-188) — but only as a
+#      standalone word: with an affix the cross-product runs first and makes it
+#      non-empty (`x${^a}y` → `xay xy xby`).
+#   7. prefork's empty-word delete (c:184-188) must run AFTER the word is
+#      ASSEMBLED, not at the split. For `s=' a b '` the split leaves an empty
+#      field at each end and an affix attaches to the one on ITS side, so only
+#      the FAR-side empty goes:
+#        ${=s}.x  → `a` `b` `.x`   (trailing empty became .x, leading deleted)
+#        pre${=s} → `pre` `a` `b`  (leading empty became pre, trailing deleted)
+#      Dropping before the concat would delete the field the affix lands on.
+#   8. `${==s}` forces NO split (c:2560-2564 `spbreak = 0`), but an unquoted
+#      expansion that comes out EMPTY is still an empty WORD that prefork
+#      deletes: `s=''; r=(${==s})` has ZERO elements. Every other form got this
+#      for free (`$v`, `${v}`, `${=s}` are all 0); only the no-split arm
+#      returned Value::Str("") and kept the word. Quoted `"${==s}"` correctly
+#      keeps its one empty word.
+#
+# Structural note, since it caused most of the above: the `^` / `=` flags are
+# known only at COMPILE time while every concat builtin dispatched on the
+# RUNTIME option (`plan9_active()`), so a flag could neither override its option
+# nor reuse the option path's already-correct logic. Fixed with two sibling
+# builtins — BUILTIN_CONCAT_PLAN9 (→ concat_plan9: C's c:4316-4350 cartesian
+# emit plus the c:4362 word deletion) and BUILTIN_CONCAT_SPLICE_NOPLAN9 (→
+# concat_splice: C's non-plan9 c:4366-4437) — chosen by is_plan9_expansion /
+# is_plan9_off_expansion. They cannot reuse CONCAT_DISTRIBUTE_FORCED: that also
+# serves `${(@)a}` / `${(f)v}` / `${a[@]}`, which KEEP the word when the array
+# is empty (`x${(@)a}y` → `xy`) where plan9 deletes it.
+#
+# Any divergence here is a regression.
