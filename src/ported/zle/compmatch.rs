@@ -4582,6 +4582,48 @@ mod tests {
         assert_eq!(exact, 1, "pfx == w → exact=1");
     }
 
+    /// The LIVE option-completion shape: `-M 'r:|[_-]=* r:|=*'` active on
+    /// mstack (what _describe passes for options), typed `-`, candidate
+    /// `-a`. C matches; a matcher-branch regression rejecting this kills
+    /// every `cmd -<TAB>` shell-wide.
+    #[test]
+    fn comp_match_dash_prefix_with_option_matcher() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        let m = crate::ported::zle::complete::parse_cmatcher("test", "r:|[_-]=* r:|=*");
+        assert!(m.is_some(), "matcher spec must parse");
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = Some(Box::new(crate::ported::zle::comp_h::Cmlist {
+                next: None,
+                matcher: m.unwrap(),
+                str: "r:|[_-]=* r:|=*".to_string(),
+            }));
+        }
+        let mut clp: Option<Box<Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match("-", "", "-a", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        assert!(r.is_some(), "'-' + option matcher must match '-a', got None");
+    }
+
+    /// The option-completion shape: typed word `-`, candidate `-a` —
+    /// must prefix-match (this is every `cmd -<TAB>` in compsys).
+    #[test]
+    fn comp_match_dash_prefix_matches_option_word() {
+        let _g = crate::test_util::global_state_lock();
+        let _g = zle_test_setup();
+        if let Ok(mut g) = mstack.get_or_init(|| Mutex::new(None)).lock() {
+            *g = None;
+        }
+        let mut clp: Option<Box<Cline>> = None;
+        let mut exact = 99i32;
+        let r = comp_match("-", "", "-a", None, Some(&mut clp), 1, None, 0, None, 0, &mut exact);
+        assert!(r.is_some(), "'-' must prefix-match '-a', got None");
+        assert_eq!(r.as_deref(), Some("-a"));
+    }
+
     /// c:546-1080 — match_str with diverging prefix returns -1 when
     /// mstack is empty (no matcher to bridge the gap).
     #[test]

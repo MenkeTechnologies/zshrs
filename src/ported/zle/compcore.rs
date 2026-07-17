@@ -247,6 +247,15 @@ pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     }
     let nm = nmatches.load(Ordering::Relaxed); // c:366
     let dm = diffmatches.load(Ordering::Relaxed);
+    tracing::debug!(
+        target: "compsys_args",
+        nm,
+        dm,
+        useline = useline.load(Ordering::Relaxed),
+        uselist = uselist.load(Ordering::Relaxed),
+        iforcemenu = iforcemenu.load(Ordering::Relaxed),
+        "do_completion branch point"
+    );
     if iforcemenu.load(Ordering::Relaxed) != 0 {
         // c:366
         if nm != 0 {
@@ -950,6 +959,13 @@ pub fn makecomplist(s: &str, incmd: i32, lst: i32) -> i32 {
         let any_nm =
             nmatches.load(Ordering::Relaxed) != 0 || nmessages.load(Ordering::Relaxed) != 0;
         let errset = errflag_get();
+        tracing::debug!(
+            target: "compsys_args",
+            nm = nmatches.load(Ordering::Relaxed),
+            nmsg = nmessages.load(Ordering::Relaxed),
+            errset,
+            "makecomplist RETURN"
+        );
         if any_nm && !errset {
             // c:1030
             VALIDLIST.store(1, Ordering::Relaxed); // c:1031
@@ -2616,6 +2632,15 @@ pub fn addmatches(
 
     // c:2179-2184 — `doadd = !apar && !opar && !dpar`.
     let doadd = dat.apar.is_none() && dat.opar.is_none() && dat.dpar.is_empty();
+    tracing::debug!(
+        target: "compsys_args",
+        %lpre,
+        %lsuf,
+        doadd,
+        caf_match = (dat.aflags & CAF_MATCH) != 0,
+        dpar = ?dat.dpar,
+        "addmatches candidate-loop setup"
+    );
     let mut apar_list: Vec<String> = Vec::new();
     let mut opar_list: Vec<String> = Vec::new();
 
@@ -2847,6 +2872,13 @@ pub fn addmatches(
         dat.dummies -= 1;
     }
 
+    tracing::debug!(
+        target: "compsys_args",
+        added,
+        mnum = mnum.load(Ordering::Relaxed),
+        doadd,
+        "addmatches candidate-loop done"
+    );
     let _ = (ppl, psl, compignored_local, added);
     0 // c:2636
 }
@@ -3997,6 +4029,16 @@ pub fn permmatches(last: i32) -> i32 {
             g.ecount = exps.len() as i32;
             // c:3475 ccount = 0
             g.ccount = 0; // c:3475
+            tracing::debug!(
+                target: "compsys_args",
+                mcount = g.mcount,
+                lcount = g.lcount,
+                nn,
+                nl,
+                ll,
+                name = ?g.name,
+                "permmatches group"
+            );
             nmatches.fetch_add(g.mcount, Ordering::Relaxed); // c:3477
             smatches.fetch_add(g.lcount, Ordering::Relaxed); // c:3478
             if g.mcount > 1 {
@@ -4737,6 +4779,21 @@ pub fn set_compstate_str(key: &str, val: &str) {
 /// param for entries that some code wrote via raw `setsparam` without
 /// going through [`set_compstate_str`].
 pub fn get_compstate_str(key: &str) -> Option<String> {
+    // c:complete.c:1411-1414 — `compstate[nmatches]` is a LIVE GSU integer:
+    // `get_nmatches` flushes pending match groups via `permmatches(0)` and
+    // returns the running `nmatches` counter. The stored-hash read below
+    // served a stale 0 for it, so every completer's `nm != $compstate[nmatches]`
+    // idiom (_describe, _arguments, _alternative, …) concluded "nothing was
+    // added" and option completion died even though addmatches had added
+    // hundreds of matches.
+    if key == "nmatches" {
+        let v = if permmatches(0) != 0 {
+            0
+        } else {
+            nmatches.load(Ordering::Relaxed)
+        };
+        return Some(v.to_string());
+    }
     if let Ok(tab) = paramtab_hashed_storage().lock() {
         if let Some(hash) = tab.get("compstate") {
             if let Some(v) = hash.get(key) {

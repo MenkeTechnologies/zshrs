@@ -734,6 +734,7 @@ pub fn docomplete(lst: i32) -> i32 {
     let _active_guard = ActiveGuard;
     // c:611 — `comprecursive = 0;`
     crate::ported::zle::complist::COMPRECURSIVE.store(0, std::sync::atomic::Ordering::Relaxed);
+    tracing::debug!(target: "compsys_args", lst, "docomplete ENTER");
 
     // c:621 — `runhookdef(BEFORECOMPLETEHOOK, &lst)`. Canonical
     // dispatch via `gethookdef + runhookdef`; null check matches
