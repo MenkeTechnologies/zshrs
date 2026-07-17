@@ -307,6 +307,10 @@ mod tests {
             String::new(),
             String::new(),
             Vec::new(),
+            0,
+            0,
+            String::new(),
+            Vec::new(),
         );
         let _ = crate::ported::params::assignsparam(
             "LBUFFER",
