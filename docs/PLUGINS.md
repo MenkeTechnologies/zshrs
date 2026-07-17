@@ -310,6 +310,21 @@ the frecency formula, aging, matching, and all `z` options. `cd` is delegated
 to the shell (`host.eval`) so `$PWD`/hooks stay correct; a `chpwd` hook does
 the recording. Published as: `zpm add MenkeTechnologies/zshrs-zsh-z`.
 
+[`plugin-git-repos/`](../examples/plugin-git-repos/) — **zsh-git-repo-cache**:
+scan the filesystem for every git repo, cache it, and `fzf`-pick one to `cd`
+into, with `--clean`/`--dirty` filters. The shell version does a sequential
+`git status` per repo; the native version classifies **in parallel across
+threads** — a real speedup. Published as: `zpm add MenkeTechnologies/zshrs-git-repos`.
+
+[`plugin-revolver/`](../examples/plugin-revolver/) — **revolver**, the
+progress spinner (`revolver start/update/stop/demo`, 55 styles), ported from
+zsh. Upstream forks a background process and coordinates through a
+`$PPID`-keyed statefile; the native port keeps the animator as an in-process
+**thread** and the running spinner in a `static` slot — no fork, no
+statefile, since `start`/`update`/`stop` now share memory. Shows how a plugin
+does concurrent/background work under a non-forking shell.
+`zpm add path:examples/plugin-revolver`.
+
 ## Porting an existing zsh plugin
 
 If you have a zsh plugin (shell functions + aliases + completions) and want

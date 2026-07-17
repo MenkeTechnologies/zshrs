@@ -1,0 +1,18 @@
+# zsh-git-repo-cache ported to a native zshrs plugin (gitrepos command).
+#   cargo build --manifest-path examples/plugin-git-repos/Cargo.toml
+#   zmodload -R examples/plugin-git-repos/target/debug/libgit_repos.dylib
+#   gitrepos          # fzf-pick any git repo and cd to it
+[package]
+name = "git_repos"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "git_repos"
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+[workspace]

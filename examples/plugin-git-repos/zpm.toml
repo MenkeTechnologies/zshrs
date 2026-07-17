@@ -1,0 +1,7 @@
+[plugin]
+name = "git-repos"
+version = "0.1.0"
+description = "zsh-git-repo-cache ported to a native zshrs plugin — scan/cache/fzf-jump all git repos (clean/dirty), parallel classification"
+
+[native]
+lib = "git_repos"    # produces libgit_repos.{dylib,so}
