@@ -231,6 +231,19 @@ zshrs   # interactive
 # % greet --lang <TAB>   → rust  ruby  python  perl  go
 ```
 
+[`plugin-forgit/`](../examples/plugin-forgit/) — the **forgit** git+fzf
+plugin ported command-for-command from zsh (`ga glo gd gcf …`). See
+[PORTING_ZSH_PLUGIN.md](PORTING_ZSH_PLUGIN.md) for the full zsh→Rust
+walkthrough.
+
+## Porting an existing zsh plugin
+
+If you have a zsh plugin (shell functions + aliases + completions) and want
+it as a native plugin, [**PORTING_ZSH_PLUGIN.md**](PORTING_ZSH_PLUGIN.md)
+is a step-by-step guide: the construct-by-construct mapping, the
+list→fzf→act pattern, subprocess/tty handling, and what stays shell —
+worked end-to-end on forgit.
+
 ## Safety notes
 
 - The loaded `libloading::Library` is kept alive for the process (or until
