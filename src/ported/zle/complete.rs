@@ -1193,14 +1193,25 @@ pub fn ignore_prefix(l: i32) {
     // c:864
     if l > 0 {
         // c:864
-        let mut prefix = lock_str(&COMPPREFIX).lock().unwrap();
-        let pl = prefix.len() as i32; // c:870 strlen(compprefix)
-        let take = l.min(pl) as usize; // c:888
-        let head: String = prefix[..take].to_string(); // c:888 sav split
-        let tail: String = prefix[take..].to_string(); // c:888 ztrdup(compprefix+l)
-        let mut iprefix = lock_str(&COMPIPREFIX).lock().unwrap();
-        iprefix.push_str(&head); // c:888 tricat(compiprefix, head)
-        *prefix = tail; // c:888 zsfree+ztrdup
+        let (new_prefix, new_iprefix) = {
+            let mut prefix = lock_str(&COMPPREFIX).lock().unwrap();
+            let pl = prefix.len() as i32; // c:870 strlen(compprefix)
+            let take = l.min(pl) as usize; // c:888
+            let head: String = prefix[..take].to_string(); // c:888 sav split
+            let tail: String = prefix[take..].to_string(); // c:888 ztrdup(compprefix+l)
+            let mut iprefix = lock_str(&COMPIPREFIX).lock().unwrap();
+            iprefix.push_str(&head); // c:888 tricat(compiprefix, head)
+            *prefix = tail.clone(); // c:888 zsfree+ztrdup
+            (tail, iprefix.clone())
+        };
+        // gsu-mirror: in C `compprefix`/`compiprefix` are gsu-bound to
+        // $PREFIX/$IPREFIX (one storage). The Rust port keeps the globals
+        // and the params in separate stores that only re-sync at addmatches,
+        // so a caller reading $PREFIX (e.g. `_values`' `-i` prefix strip)
+        // would see the stale pre-`ignore_prefix` value. Write the params
+        // here to preserve the C binding's single-storage semantics.
+        let _ = crate::ported::params::setsparam("PREFIX", &new_prefix);
+        let _ = crate::ported::params::setsparam("IPREFIX", &new_iprefix);
     }
 }
 
@@ -1211,20 +1222,27 @@ pub fn ignore_suffix(l: i32) {
     // c:888
     if l > 0 {
         // c:888
-        let mut suffix = lock_str(&COMPSUFFIX).lock().unwrap();
-        let sl = suffix.len() as i32; // c:894 strlen(compsuffix)
-        let mut split = sl - l; // c:896 (l = sl - l)
-        if split < 0 {
-            split = 0;
-        } // c:897
-        let split = split as usize;
-        let head: String = suffix[..split].to_string(); // c:902 sav split
-        let tail: String = suffix[split..].to_string(); // c:911 tricat(suffix+l, isuffix)
-        let mut isuffix = lock_str(&COMPISUFFIX).lock().unwrap();
-        let mut new_isuffix = tail; // c:911
-        new_isuffix.push_str(&isuffix);
-        *isuffix = new_isuffix;
-        *suffix = head; // c:911 zsfree+ztrdup
+        let (new_suffix, new_isuffix) = {
+            let mut suffix = lock_str(&COMPSUFFIX).lock().unwrap();
+            let sl = suffix.len() as i32; // c:894 strlen(compsuffix)
+            let mut split = sl - l; // c:896 (l = sl - l)
+            if split < 0 {
+                split = 0;
+            } // c:897
+            let split = split as usize;
+            let head: String = suffix[..split].to_string(); // c:902 sav split
+            let tail: String = suffix[split..].to_string(); // c:911 tricat(suffix+l, isuffix)
+            let mut isuffix = lock_str(&COMPISUFFIX).lock().unwrap();
+            let mut new_isuffix = tail; // c:911
+            new_isuffix.push_str(&isuffix);
+            *isuffix = new_isuffix.clone();
+            *suffix = head.clone(); // c:911 zsfree+ztrdup
+            (head, new_isuffix)
+        };
+        // gsu-mirror: see ignore_prefix — $SUFFIX/$ISUFFIX must track the
+        // compsuffix/compisuffix globals (gsu-bound as one storage in C).
+        let _ = crate::ported::params::setsparam("SUFFIX", &new_suffix);
+        let _ = crate::ported::params::setsparam("ISUFFIX", &new_isuffix);
     }
 }
 
