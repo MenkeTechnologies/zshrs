@@ -3250,10 +3250,14 @@ pub fn add_match_data(
             if let Some(mut head) = p {
                 let mut t: *mut Option<Box<Cline>> = &mut head.next;
                 unsafe {
+                    // Walk to the empty slot past the tail node, then attach
+                    // `line` there. The previous code stopped AT the last node
+                    // and did `*t = line`, OVERWRITING it (dropped the final
+                    // bld_parts segment — e.g. the last dir component `zdt3/`
+                    // of `/private/tmp/zdt3/` — so ambiguous path completion
+                    // corrupted the line). c:2812/2818/2824/2841 `lp->next =
+                    // line` appends; it never replaces lp.
                     while (*t).is_some() {
-                        if (*t).as_deref().unwrap().next.is_none() {
-                            break;
-                        }
                         t = &mut (*t).as_mut().unwrap().next;
                     }
                     *t = line.take();
@@ -3266,10 +3270,14 @@ pub fn add_match_data(
             if let Some(mut head) = p {
                 let mut t: *mut Option<Box<Cline>> = &mut head.next;
                 unsafe {
+                    // Walk to the empty slot past the tail node, then attach
+                    // `line` there. The previous code stopped AT the last node
+                    // and did `*t = line`, OVERWRITING it (dropped the final
+                    // bld_parts segment — e.g. the last dir component `zdt3/`
+                    // of `/private/tmp/zdt3/` — so ambiguous path completion
+                    // corrupted the line). c:2812/2818/2824/2841 `lp->next =
+                    // line` appends; it never replaces lp.
                     while (*t).is_some() {
-                        if (*t).as_deref().unwrap().next.is_none() {
-                            break;
-                        }
                         t = &mut (*t).as_mut().unwrap().next;
                     }
                     *t = line.take();
@@ -3292,10 +3300,14 @@ pub fn add_match_data(
             if let Some(mut head) = p {
                 let mut t: *mut Option<Box<Cline>> = &mut head.next;
                 unsafe {
+                    // Walk to the empty slot past the tail node, then attach
+                    // `line` there. The previous code stopped AT the last node
+                    // and did `*t = line`, OVERWRITING it (dropped the final
+                    // bld_parts segment — e.g. the last dir component `zdt3/`
+                    // of `/private/tmp/zdt3/` — so ambiguous path completion
+                    // corrupted the line). c:2812/2818/2824/2841 `lp->next =
+                    // line` appends; it never replaces lp.
                     while (*t).is_some() {
-                        if (*t).as_deref().unwrap().next.is_none() {
-                            break;
-                        }
                         t = &mut (*t).as_mut().unwrap().next;
                     }
                     *t = line.take();
