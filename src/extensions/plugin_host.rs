@@ -206,6 +206,44 @@ extern "C" fn host_register_completion(
     0
 }
 
+extern "C" fn host_getfunction(_host: *const HostApi, name: *const c_char) -> *mut c_char {
+    if name.is_null() {
+        return std::ptr::null_mut();
+    }
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    // Route through the exact `${functions[name]}` read: getpmfunction
+    // deparses the body into `u_str` and flags PM_UNSET when undefined.
+    match crate::ported::modules::parameter::getpmfunction(std::ptr::null_mut(), &name) {
+        Some(pm) if (pm.node.flags & crate::ported::zsh_h::PM_UNSET as i32) == 0 => {
+            match pm.u_str.and_then(|s| CString::new(s).ok()) {
+                Some(c) => c.into_raw(),
+                None => std::ptr::null_mut(),
+            }
+        }
+        _ => std::ptr::null_mut(),
+    }
+}
+
+extern "C" fn host_addfunction(
+    _host: *const HostApi,
+    name: *const c_char,
+    body: *const c_char,
+) -> c_int {
+    if name.is_null() || body.is_null() {
+        return 1;
+    }
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let body = unsafe { CStr::from_ptr(body) }.to_string_lossy().into_owned();
+    if name.is_empty() {
+        return 1;
+    }
+    // Same install as `functions[name]=body`: parse `body` and store the
+    // shfunc in shfunctab (dis = 0 = enabled).
+    crate::ported::modules::parameter::setfunction(&name, body, 0);
+    // setfunction installs unconditionally; report success.
+    0
+}
+
 /// The single process-wide host table. Leaked so its address is
 /// `'static` — plugins may retain the `*const HostApi` and call through
 /// it from any builtin at any time.
@@ -222,6 +260,8 @@ fn host_api() -> *const HostApi {
             setvar: host_setvar,
             free_cstring: host_free_cstring,
             register_completion: host_register_completion,
+            getfunction: host_getfunction,
+            addfunction: host_addfunction,
         });
         Box::into_raw(boxed) as usize
     });

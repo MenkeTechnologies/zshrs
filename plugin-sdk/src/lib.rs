@@ -52,7 +52,7 @@ use std::os::raw::{c_char, c_int, c_void};
 /// gate, not a warning.
 ///
 /// v2: added [`HostApi::register_completion`] for native completions.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// The one symbol every plugin `cdylib` must export. The host resolves
 /// it with `dlsym` after `dlopen`. Signature is [`InitFn`].
@@ -117,6 +117,25 @@ pub struct HostApi {
     /// on success. (ABI v2.)
     pub register_completion:
         extern "C" fn(host: *const HostApi, cmd: *const c_char, generator: *const c_char) -> c_int,
+    /// Read a shell **function**'s body by name — the same deparsed text
+    /// `${functions[name]}` yields (one statement per line, tab-indented;
+    /// `builtin autoload -X…` for an autoload stub). Returns a freshly
+    /// allocated C string the caller MUST release with `free_cstring`, or
+    /// null if no such function is defined. This is the only structured
+    /// read of a function; `getvar` reads scalars, `eval` returns only a
+    /// status. (ABI v3.)
+    pub getfunction: extern "C" fn(host: *const HostApi, name: *const c_char) -> *mut c_char,
+    /// Define (or replace) a shell function `name` with `body` — exactly
+    /// like `functions[name]=body`: the body is parsed and installed in
+    /// `shfunctab`, so a subsequent `getfunction` returns its deparsed
+    /// form and the shell can call it (as a command, ZLE widget, hook,
+    /// …). Returns 0 on success, non-zero if `body` fails to parse.
+    /// (ABI v3.)
+    pub addfunction: extern "C" fn(
+        host: *const HostApi,
+        name: *const c_char,
+        body: *const c_char,
+    ) -> c_int,
 }
 
 /// What a plugin returns from its [`InitFn`]. The strings must have
@@ -242,6 +261,32 @@ impl Host {
             return false;
         };
         (self.t().register_completion)(self.api, cc.as_ptr(), cg.as_ptr()) == 0
+    }
+
+    /// Read a shell function's deparsed body — the same text
+    /// `${functions[name]}` yields — or `None` if it is not defined.
+    /// Useful as a deparse-as-a-service: `addfunction(tmp, src)` then
+    /// `getfunction(tmp)` returns `src` re-formatted by the shell's own
+    /// pretty-printer. (ABI v3.)
+    pub fn getfunction(&self, name: &str) -> Option<String> {
+        let cname = CString::new(name).ok()?;
+        let raw = (self.t().getfunction)(self.api, cname.as_ptr());
+        if raw.is_null() {
+            return None;
+        }
+        let s = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+        (self.t().free_cstring)(self.api, raw);
+        Some(s)
+    }
+
+    /// Define (or replace) shell function `name` with `body`, exactly like
+    /// `functions[name]=body`. Returns `true` on success, `false` if the
+    /// body fails to parse. (ABI v3.)
+    pub fn addfunction(&self, name: &str, body: &str) -> bool {
+        let (Ok(cn), Ok(cb)) = (CString::new(name), CString::new(body)) else {
+            return false;
+        };
+        (self.t().addfunction)(self.api, cn.as_ptr(), cb.as_ptr()) == 0
     }
 }
 
