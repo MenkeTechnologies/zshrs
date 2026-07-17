@@ -3272,3 +3272,87 @@ mod sibling_empty_dq_spans {
         assert_parity(r#"a=(1 2 3); print -rl -- "${a[@]}" | wc -l"#);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// ztst-mined gaps (2026-07, from ~/forkedRepos/zsh/Test/*.ztst diffing).
+// The differential fuzzer (3000 cases) and 130+ hand-picked common
+// expressions found ZERO divergences — these are the adversarial edge
+// cases the zsh test suite deliberately exercises.
+// ─────────────────────────────────────────────────────────────────────
+mod ztst_mined {
+    use super::*;
+
+    /// D08cmdsubst — an UNBRACED `$*`/`$@` in a word that ALSO contains a
+    /// literal `"` from a `\"` escape is left unexpanded, so its `*`
+    /// globs and fails "no matches found". `${*}` (braced) works, `$1`
+    /// works. Root cause: a word containing any `\"`-escape takes a
+    /// compile path (compile_zsh.rs) that doesn't detect the unbraced
+    /// `$*`/`$@`. zsh: `"hi"`; zshrs: nomatch error. Fix is hot-path
+    /// word-compiler and needs dedicated investigation.
+    #[test]
+    #[ignore = "zshrs gap: unbraced $*/$@ not expanded in a word containing a \\\" escape (globs instead)"]
+    fn escaped_quote_with_dollar_star() {
+        assert_parity(r#"set -- hi; print \"$*\""#);
+    }
+
+    #[test]
+    #[ignore = "zshrs gap: unbraced $@ in a \\\"-escaped word drops its trailing quote"]
+    fn escaped_quote_with_dollar_at() {
+        assert_parity(r#"set -- hi; print \"$@\""#);
+    }
+
+    /// The braced/positional forms already work — pin so a fix to the
+    /// above can't regress them.
+    #[test]
+    fn braced_star_in_escaped_word_ok() {
+        assert_parity(r#"set -- hi; print \"${*}\""#);
+    }
+    #[test]
+    fn positional_digit_in_escaped_word_ok() {
+        assert_parity(r#"set -- hi; print \"$1\""#);
+    }
+
+    /// A06assign — `typeset a` under TYPESET_TO_UNSET declares an
+    /// unset scalar; `a+=(1 2 3)` converts it to an array and zsh
+    /// prepends the (empty) scalar value as element 0 (`'' 1 2 3`).
+    /// zshrs drops the empty element (`1 2 3`). Without the option the
+    /// two agree (declared-empty scalar → element 0 IS kept).
+    #[test]
+    #[ignore = "zshrs gap: TYPESET_TO_UNSET + scalar+=(array) drops the empty element-0"]
+    fn typeset_to_unset_append_array_keeps_empty_elem() {
+        assert_parity(
+            r#"setopt typeset_to_unset; typeset a; a+=(1 2 3); print "${(q@)a}""#,
+        );
+    }
+
+    /// D06subscript — a `(r)PAT,(R)PAT2` range subscript where PAT
+    /// expands (via `$x`) to a string containing the `,` range
+    /// separator. zsh finds the LITERAL separator comma in the
+    /// unexpanded subscript text; zshrs errors "bad substitution".
+    #[test]
+    #[ignore = "zshrs gap: (r)$x,(R)$x range subscript with a comma in the expanded pattern → bad substitution"]
+    fn range_subscript_comma_in_pattern() {
+        assert_parity(
+            r#"s='Twinkle, twinkle, little *, [how] I [wonder] what?'; x=','; print ${s[(r)$x,(R)$x]}"#,
+        );
+    }
+
+    /// D06subscript — search-flag subscripts `(r)`/`(R)`/`(i)` whose
+    /// pattern is a literal `[` or `]` (escaped). zshrs returns the
+    /// whole string unchanged instead of the matched range/index.
+    #[test]
+    #[ignore = "zshrs gap: (r)/(R) search subscript with literal bracket pattern returns whole string"]
+    fn range_subscript_bracket_pattern() {
+        assert_parity(
+            r#"s='Twinkle, [how] I [wonder]'; print $s[(r)\],(R)\[]"#,
+        );
+    }
+
+    /// D09brace — a brace range `{X..Y}` over non-ASCII single bytes
+    /// (metafied high bytes) doesn't expand in zshrs. Niche.
+    #[test]
+    #[ignore = "zshrs gap: brace range over high/multibyte single-byte endpoints not expanded"]
+    fn brace_range_high_bytes() {
+        assert_parity(r#"print -r -- {$'\M-\C-@'..$'\M-\C-A'}"#);
+    }
+}
