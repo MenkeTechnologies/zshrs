@@ -206,13 +206,16 @@ const INSERT_WIDGETS: &[&str] = &[
 ];
 
 /// History-search-up widget names → mode. `up-line-or-history` is the stock
-/// up-arrow binding: fish's up-or-search behavior applies (empty line falls
-/// through to the plain history walk).
+/// up-arrow binding: with text typed it searches SUBSTRING-wise — the
+/// zsh-history-substring-search behavior the user's fingers know ("{1..5}"
+/// typed mid-command must match entries CONTAINING it, not starting with
+/// it). Only the explicitly prefix-named widgets keep prefix semantics.
+/// An empty line still falls through to the plain history walk.
 fn up_search_mode(widget: &str) -> Option<SearchMode> {
     match widget {
         "up-line-or-search" | "history-beginning-search-backward" => Some(SearchMode::Prefix),
         "history-substring-search-up" => Some(SearchMode::Line),
-        "up-line-or-history" | "up-history" => Some(SearchMode::Prefix),
+        "up-line-or-history" | "up-history" => Some(SearchMode::Line),
         _ => None,
     }
 }
