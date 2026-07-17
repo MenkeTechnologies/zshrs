@@ -2807,7 +2807,28 @@ pub fn addmatches(
                 dat.flags,
                 isexact,
             );
-            let _ = cur_disp;
+            // c:2557-2564 — `cm->disp = dparr ? *dparr++ : NULL` (and the
+            // CMF_DISPLINE flag when `-l`/CAF_...): C patches the STORED
+            // match through the returned pointer; the port's return-by-value
+            // clone can't, so patch the just-pushed copy in the live list.
+            // Without this every `compadd -d` display string (the
+            // description lines _describe/_arguments build) was silently
+            // dropped and lists rendered bare match names.
+            // c:2562-2563 — `if (disp) cm->disp = dupstring(*disp)`. C
+            // patches the STORED match through the returned pointer; the
+            // port's add_match_data returns a VALUE clone while the stored
+            // copy lives in the `matches` list, so patch that copy in place
+            // (inline — no C-counterpart fn). Without this every
+            // `compadd -d` display string (the description lines
+            // _describe/_arguments build) was silently dropped and lists
+            // rendered bare match names.
+            if cur_disp.is_some() {
+                if let Ok(mut g) = matches.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                    if let Some(last) = g.last_mut() {
+                        last.disp = cur_disp.clone();
+                    }
+                }
+            }
             let _ = cm;
             added += 1;
         } else {
@@ -2861,12 +2882,23 @@ pub fn addmatches(
         hasallmatch.store(1, Ordering::Relaxed);
     }
 
-    // c:2616-2617 — dummy entries.
+    // c:2616-2617 — dummy entries. C's addmatch advances the SHARED disp
+    // cursor (`&disp`, c:2054-2058), so each dummy carries the next
+    // remaining display string — this is how the description-only lines
+    // (compdescribe's CRT_EXPL `-E n` run: "opt  --  description") reach
+    // the list. Passing None here dropped every description line.
     while dat.dummies > 0 {
+        let d: Option<&str> = if disp_idx < disp_arr.len() {
+            let d = Some(disp_arr[disp_idx].as_str());
+            disp_idx += 1;
+            d
+        } else {
+            None
+        };
         addmatch(
             "",
             dat.flags | crate::ported::zle::comp_h::CMF_DUMMY,
-            None,
+            d,
             false,
         );
         dat.dummies -= 1;
