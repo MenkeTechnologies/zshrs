@@ -3328,27 +3328,41 @@ pub fn pattryrefs(
         // it to every reported beg/end so MBEGIN/MEND / `$match` see
         // positions relative to the original string, not the local
         // trial slice.
+        // c:2556-2566 — `*begp++ = …` writes into the caller's FIXED-SIZE array
+        // (C: `int begpos[MAX_POS]`), filling the first `n` slots and leaving
+        // the array's length unchanged. Write IN PLACE (extend only if the
+        // caller's Vec is shorter than `n`) rather than clear()+push — clearing
+        // shrank a MAX_POS-length array down to `n`, so the caller's
+        // [n..MAX_POS] reset loop (complist.rs getcol, c:631) indexed past the
+        // end and panicked (`index 4 on len 4`) on patterns with < MAX_POS
+        // backrefs.
         if let Some(bv) = begp {
-            bv.clear();
             for i in 0..n {
                 let close_bit = 1u32 << (i + NSUBEXP);
-                if (state.captures_set & close_bit) != 0 {
-                    bv.push(state.patbeginp[i] as i32 + patoffset);
+                let val = if (state.captures_set & close_bit) != 0 {
+                    state.patbeginp[i] as i32 + patoffset
                 } else {
-                    // c:2563-2566 — unset group (unmatched alternation
-                    // branch): `*begp++ = -1; *endp++ = -1;`.
-                    bv.push(-1);
+                    -1 // c:2563-2566 — unset group (unmatched alternation branch)
+                };
+                if i < bv.len() {
+                    bv[i] = val;
+                } else {
+                    bv.push(val);
                 }
             }
         }
         if let Some(ev) = endp {
-            ev.clear();
             for i in 0..n {
                 let close_bit = 1u32 << (i + NSUBEXP);
-                if (state.captures_set & close_bit) != 0 {
-                    ev.push(state.patendp[i] as i32 + patoffset);
+                let val = if (state.captures_set & close_bit) != 0 {
+                    state.patendp[i] as i32 + patoffset
                 } else {
-                    ev.push(-1); // c:2565
+                    -1 // c:2565
+                };
+                if i < ev.len() {
+                    ev[i] = val;
+                } else {
+                    ev.push(val);
                 }
             }
         }
