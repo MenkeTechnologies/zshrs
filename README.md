@@ -750,6 +750,11 @@ builtins. The host API a plugin can call back through: `print`, `eval`
 (run shell code), `getvar` / `setvar` (shell scalars), and
 `register_builtin`.
 
+Plugins can also provide **native (Rust) completions** — a
+`completions:` block in `declare_plugin!` wires a Rust generator into
+zsh's completion system (compsys), so `mycmd <TAB>` runs your Rust code to
+produce candidates. See [`examples/plugin-complete/`](examples/plugin-complete/).
+
 ### vs bash / zsh native plugins
 
 Native runtime plugins aren't new — bash `enable -f file.so name` and zsh

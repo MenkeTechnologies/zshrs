@@ -1,0 +1,21 @@
+# Example native zshrs completion plugin. Build:
+#   cargo build --manifest-path examples/plugin-complete/Cargo.toml
+# then inside zshrs (after compinit):
+#   zmodload -R examples/plugin-complete/target/debug/libgreet.dylib  # macOS
+#   zmodload -R examples/plugin-complete/target/debug/libgreet.so     # Linux
+#   greet <TAB>          # native Rust completion: alice bob carol ...
+[package]
+name = "greet"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+# Standalone: empty workspace table so this example is not pulled into the
+# parent zshrs workspace.
+[workspace]

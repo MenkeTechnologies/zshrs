@@ -90,6 +90,25 @@ fn ownership() -> &'static Mutex<HashMap<String, String>> {
     O.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Completion wirings a plugin requested via `register_completion` that
+/// have not yet been installed into compsys. Each entry is
+/// `(cmd, generator_builtin, owning_plugin)`. Flushed by
+/// [`flush_pending_completions`] at a safe point in the completion
+/// pipeline (NOT during plugin init — evaling compsys glue deep inside
+/// the `zmodload` call stack hangs the VM; `do_completion` is a designed
+/// re-entry point where compsys itself evals).
+fn pending_completions() -> &'static Mutex<Vec<(String, String, String)>> {
+    static PC: OnceLock<Mutex<Vec<(String, String, String)>>> = OnceLock::new();
+    PC.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Completions already wired into compsys, so `unload` can drop their
+/// glue functions and `flush` never double-installs. Maps cmd → owner.
+fn installed_completions() -> &'static Mutex<HashMap<String, String>> {
+    static IC: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    IC.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 // ============================================================
 // Host API callbacks — the `extern "C"` functions plugins call back
 // through. One shared, leaked `HostApi` table for the whole process.
@@ -167,6 +186,26 @@ extern "C" fn host_free_cstring(_host: *const HostApi, s: *mut c_char) {
     }
 }
 
+extern "C" fn host_register_completion(
+    _host: *const HostApi,
+    cmd: *const c_char,
+    generator: *const c_char,
+) -> c_int {
+    if cmd.is_null() || generator.is_null() {
+        return 1;
+    }
+    let cmd = unsafe { CStr::from_ptr(cmd) }.to_string_lossy().into_owned();
+    let generator = unsafe { CStr::from_ptr(generator) }
+        .to_string_lossy()
+        .into_owned();
+    // Owner is tagged after init returns (name unknown yet); stage empty.
+    pending_completions()
+        .lock()
+        .unwrap()
+        .push((cmd, generator, String::new()));
+    0
+}
+
 /// The single process-wide host table. Leaked so its address is
 /// `'static` — plugins may retain the `*const HostApi` and call through
 /// it from any builtin at any time.
@@ -182,6 +221,7 @@ fn host_api() -> *const HostApi {
             getvar: host_getvar,
             setvar: host_setvar,
             free_cstring: host_free_cstring,
+            register_completion: host_register_completion,
         });
         Box::into_raw(boxed) as usize
     });
@@ -212,16 +252,21 @@ pub fn load(path: &str) -> Result<String, String> {
                 String::from_utf8_lossy(&INIT_SYMBOL[..INIT_SYMBOL.len() - 1])))?
     };
 
-    // Clear staging, call init, collect what it registered.
+    // Clear staging, call init, collect what it registered. Snapshot the
+    // pending-completion length so we can tag the entries THIS init adds
+    // with the owning plugin (the name isn't known until init returns).
     staging().lock().unwrap().clear();
+    let pc_start = pending_completions().lock().unwrap().len();
     let info_ptr: *const PluginInfo = init(host_api());
     if info_ptr.is_null() {
         staging().lock().unwrap().clear();
+        pending_completions().lock().unwrap().truncate(pc_start);
         return Err(format!("`{}`: plugin init failed (ABI mismatch or error)", path));
     }
     let info = unsafe { &*info_ptr };
     if info.abi_version != ABI_VERSION {
         staging().lock().unwrap().clear();
+        pending_completions().lock().unwrap().truncate(pc_start);
         return Err(format!(
             "`{}`: ABI version {} != host {}",
             path, info.abi_version, ABI_VERSION
@@ -234,6 +279,7 @@ pub fn load(path: &str) -> Result<String, String> {
     // the first with no clean unload story.
     if plugins().lock().unwrap().iter().any(|p| p.name == name) {
         staging().lock().unwrap().clear();
+        pending_completions().lock().unwrap().truncate(pc_start);
         return Err(format!("plugin `{}` already loaded", name));
     }
 
@@ -248,6 +294,14 @@ pub fn load(path: &str) -> Result<String, String> {
         }
     }
 
+    // Tag the completion wirings this init staged with the owning plugin.
+    {
+        let mut pc = pending_completions().lock().unwrap();
+        for entry in pc.iter_mut().skip(pc_start) {
+            entry.2 = name.clone();
+        }
+    }
+
     plugins().lock().unwrap().push(LoadedPlugin {
         name: name.clone(),
         version: version.clone(),
@@ -257,6 +311,51 @@ pub fn load(path: &str) -> Result<String, String> {
 
     tracing::info!(plugin = %name, version = %version, path, "loaded native plugin");
     Ok(name)
+}
+
+/// Install any completion wirings that plugins requested but that have not
+/// yet been bound into compsys. Called at the top of the completion
+/// pipeline (`do_completion`) — a safe point where compsys itself evals,
+/// unlike plugin-init (deep in the `zmodload` call stack, where evaling
+/// hangs the VM). Idempotent: each pending entry is installed once, then
+/// moved to `installed_completions`.
+///
+/// For each `(cmd, generator)` it defines a compsys completion function
+/// `_zshrs_plug_<cmd>` that runs the generator with `$CURRENT $words` and
+/// `compadd`s its newline-separated output, then binds it with `compdef`.
+pub fn flush_pending_completions() {
+    let pending: Vec<(String, String, String)> = {
+        let mut pc = pending_completions().lock().unwrap();
+        if pc.is_empty() {
+            return;
+        }
+        std::mem::take(&mut *pc)
+    };
+    for (cmd, generator, owner) in pending {
+        // `${(@f)...}` splits the generator's stdout on newlines into the
+        // match array; guard on compdef so a pre-compinit flush no-ops.
+        let glue = format!(
+            "_zshrs_plug_{cmd}() {{ \
+                local -a _zp_m; \
+                _zp_m=(\"${{(@f)$({gen} $CURRENT $words)}}\"); \
+                compadd -- $_zp_m; \
+             }}; \
+             (( ${{+functions[compdef]}} )) && compdef _zshrs_plug_{cmd} {cmd} 2>/dev/null; :",
+            cmd = cmd,
+            gen = generator,
+        );
+        // Use the exec.rs free fn (NOT try_with_executor): during
+        // `do_completion` the thread-local CURRENT_EXECUTOR is unset —
+        // completion runs on SESSION_EXECUTOR. try_with_executor would
+        // no-op here and the compdef glue would never eval. This free fn
+        // falls back to SESSION_EXECUTOR, so the glue lands on the same
+        // executor that then runs the completion.
+        let _ = crate::ported::exec::execute_script(&glue);
+        installed_completions()
+            .lock()
+            .unwrap()
+            .insert(cmd, owner);
+    }
 }
 
 /// Unload a plugin by name: purge its command registrations FIRST (so no
@@ -283,6 +382,21 @@ pub fn unload(name: &str) -> Result<(), String> {
             own.remove(&cmd);
         }
     }
+
+    // Drop this plugin's completion bookkeeping. We do NOT eval here to
+    // tear down the compsys glue function (evaling deep in the `zmodload`
+    // call stack hangs the VM); the orphaned `_zshrs_plug_<cmd>` function
+    // simply calls a now-removed generator builtin → empty command-subst
+    // → no matches. Removing the `installed_completions` record lets a
+    // later reload re-install cleanly.
+    pending_completions()
+        .lock()
+        .unwrap()
+        .retain(|(_, _, o)| o != name);
+    installed_completions()
+        .lock()
+        .unwrap()
+        .retain(|_, o| o != name);
 
     // Now it is safe to dlclose.
     let mut ps = plugins().lock().unwrap();
