@@ -1,0 +1,78 @@
+# parity-fuzz --mode funclist baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode funclist --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean. Covers function LISTING: `functions f`,
+# `functions`, `functions -- f`, `typeset -f f`, `whence -f f`, `which f` — all
+# of which funnel through printshfuncnode (c:Src/hashtable.c:914).
+#
+# This mode is about how zsh PRINTS a function back, not what the function does
+# (that is `func`). The distinction matters because C never echoes the source it
+# was handed: it stores the body as compiled wordcode and renders it back with
+# getpermtext (c:954). The printed form is therefore a contract with its own
+# rules, and it is meant to be re-parseable — which is the point of `functions`.
+#
+# The divergence this mode found was a real port bug and was FIXED:
+#
+#   1. zshrs only has an Eprog for zwc-loaded functions; shell-defined ones keep
+#      their raw source in `hn.body`, so printshfuncnode could not call
+#      getpermtext and instead ran ~500 lines of hand-rolled text
+#      canonicalization — a from-scratch reimplementation of the deparser,
+#      walking the body char-by-char tracking quote and brace depth. It drifted,
+#      as a reimplementation of a 300-line C renderer will:
+#          f() { for i in 1 2; do print $i; done }
+#              zsh  `for i in 1 2\ndo\n\tprint $i\ndone`   was `for i in 1 2\ndo print $i\ndone`
+#          f() { (print s) }
+#              zsh  `(\n\tprint s\n)`                      was `(print s)`
+#          f() { g=inner }
+#              zsh  `g=inner ` (trailing space)            was `g=inner`
+#          f() { { print x } always { print y } }
+#              zsh  `{\n\tprint x\n} always {\n\tprint y\n}`
+#                                                          was `print x } always { print y`
+#      7 of 12 hand-checked bodies diverged. The last one is not cosmetic: the
+#      listing is no longer valid zsh.
+#
+#      The trailing space after `g=inner` is not a typo in zsh — taddassign
+#      appends ' ' after every assignment value (c:Src/text.c:203-204) and,
+#      unlike taddlist (c:170-179, which backs over its final space with
+#      `tptr--`), nothing ever removes it. The port's taddassign already had it;
+#      the emulation simply never went through taddassign.
+#
+#      The fix routes the raw source back through the REAL deparser —
+#      parse_string then getpermtext — instead of re-deriving its formatting
+#      rules. The emulation stays as a fallback for bodies the wordcode parser
+#      cannot take (its coverage is narrower than the AST parser that executes
+#      them), so a parse failure costs the old rendering, not the listing.
+#
+#      Note parse_string (exec.rs) had ZERO callers before this: the faithful
+#      port existed and the live path went around it — the same
+#      port-shadowed-by-a-reimplementation shape as substnamedir and
+#      typeset_single.
+#
+# Nothing fuzzed the listing before this mode existed. `func` covers scoping
+# semantics and no generator emitted `functions`/`typeset -f` at all, which is
+# how the emulation drifted this far behind a green CI.
+#
+# Bodies are chosen to force a LAYOUT DECISION out of the deparser: loop and
+# conditional bodies (`do`/`then` on their own line, body indented beneath),
+# subshells and brace groups (`(`/`)` broken out), `always` blocks, nested
+# definitions, and assignments. Flat command lists agree no matter how the body
+# is rendered and prove nothing — that is precisely why this went unnoticed.
+#
+# Two shapes are deliberately NOT generated, both known-divergent for reasons
+# upstream of the listing code. Including them would add ~163 signatures (every
+# body × verb pair gets its own) for two underlying bugs, and each line would
+# then mask a future regression in that shape:
+#
+#   - `f() { }` — C keeps an empty-but-present body and prints `f () {\n\t\n}`
+#     (c:978-984); zshrs's parser stores no body, so printshfuncnode falls to
+#     C's `() { }` branch (c:986). Needs the parser to record an empty body
+#     distinctly from an autoload stub.
+#   - `f() { … } 2>/dev/null` — C stores the function-level redirection as its
+#     own Eprog and emits it after the closing brace (c:988-993). The port HAS
+#     that emit (hashtable.rs `// c:989`) but par_funcdef never populates
+#     shfunc.redir, so it is always None.
+#
+# Add both to the vocabulary once fixed.
+#
+# Any divergence here is a regression.

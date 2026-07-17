@@ -2,4 +2,86 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode loop --count N --verify 3  (copy NEW-signature lines).
 #
-# Empty: this mode is fully clean. Any divergence is a regression.
+# ONE known gap: `break` / `continue` inside a FUNCTION do not reach the
+# CALLER's loop.
+#
+#     f(){ break; };    for i in 1 2 3; do print $i; f; done
+#         zsh   → prints `1`  (the break ends the caller's loop, silently)
+#         zshrs → prints `1`, then "f:break: not in while, until, select, or
+#                 repeat loop"
+#     f(){ continue; }; for i in 1 2; do print $i; f; print after; done
+#         zsh → `1 2`   zshrs → error
+#     f(){ break; };    while true; do f; done      zsh → exits, zshrs → error
+#
+# `loops` is a GLOBAL counter in C, not a per-function one. bin_break tests
+# `if (!loops)` (c:Src/builtin.c), and doshfunc saves/restores it ONLY when the
+# LOCAL_LOOPS option is set (c:Src/exec.c:6104-6112):
+#     if (opts[LOCALLOOPS]) {
+#         if (contflag) zwarn("`continue' active at end of function scope");
+#         if (breaks)   zwarn("`break' active at end of function scope");
+#         breaks = funcsave->breaks;
+#         contflag = funcsave->contflag;
+#         loops = funcsave->loops;
+#     }
+# LOCAL_LOOPS defaults OFF (verified against the oracle: `${options[localloops]}`
+# is `off`), so by default a function called from inside a loop still sees the
+# caller's count. With the option SET, zsh warns with the messages above and the
+# break stays local — a third behaviour zshrs also does not produce.
+#
+# The port is faithful in the places that survive: ported/exec.rs saves `loops`
+# without resetting it (c:5861) and gates the restore on localloops
+# (c:6104-6111) — only the two zwarn lines are missing there. But that tree is
+# DEAD for the `-c` path. On the live VM path the counter is simply never
+# maintained: `select` increments it (fusevm_bridge, "Mirrors execwhile/
+# execrepeat's LOOPS.fetch_add pattern") while for/while/until/repeat compile to
+# raw jumps and never touch it, so bin_break inside a function always reads
+# loops == 0.
+#
+# This is architectural, not a missing branch. C's interpreter is recursive and
+# unwinds a loop via the `breaks` counter, so `loops++`/`loops--` bracket the
+# body naturally. The VM's loops are jump-based, so a counter would need
+# enter/exit instructions AND every break/continue jump would have to unwind it
+# on the way out — otherwise the count leaks. Fixing it means giving the VM a
+# real loop-scope concept; do not bolt a fetch_add onto the compiler's loop
+# emission without handling the jumps out.
+#
+# The no-enclosing-loop case is correct in both and must stay so:
+#     f(){ break; }; f   → "not in while, until, select, or repeat loop"
+#
+# Any divergence not listed below is a regression.
+f(){ break N; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+f(){ break N; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+f(){ break N; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+f(){ break N; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+f(){ break; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+f(){ break; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+f(){ break; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+f(){ break; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+f(){ continue; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+f(){ continue; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+f(){ continue; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+f(){ continue; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break N; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break N; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break N; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break N; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ break; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ continue; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ continue; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ continue; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+setopt localloops; f(){ continue; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break N; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break N; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break N; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break N; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ break; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ continue; }; for i in N N N; do print $i; f; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ continue; }; for i in N N; do print $i; f; print after; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ continue; }; for i in N; do for j in a b; do f; dW; dW N>&N; print -r -- "rc=$?"
+unsetopt localloops; f(){ continue; }; repeat N; do f; dW N>&N; print -r -- "rc=$?"

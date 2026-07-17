@@ -1,3 +1,54 @@
 # parity-fuzz --mode zutil baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode zutil --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers zsh/zutil: zstyle pattern precedence and lookup, zparseopts' option
+# grammar, and zformat's field expansion.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The vocabulary covered half of each builtin's option table and was widened
+# against the C dispatch:
+#
+#   zstyle (c:Src/Modules/zutil.c:588-597) — table is `d s b a t T m q g`, plus
+#   `L` (list as re-runnable syntax) and `e` (value is evaluated). Generated
+#   were only `-a -d -m -s -t`; added `-b -T -g -L`.
+#     `-T` is not `-t`: it returns TRUE when the style is not set at all, where
+#     `-t` returns 2. `-b` writes yes/no into a variable AND sets $? from it.
+#     `-g` retrieves style NAMES rather than a value.
+#
+#   zparseopts (c:Src/Modules/zutil.c bin_zparseopts) — flags are `D E F G K`
+#   plus the `-a`/`-A` destinations. Generated were only `-D -E`; added
+#   `-F -K -a -A`.
+#     `-F` fails and diagnoses on an option outside the spec instead of leaving
+#     it in argv. `-K` KEEPS the destination array's existing contents when the
+#     option is absent instead of emptying it (so it only shows a difference
+#     against a pre-seeded array — the generator seeds one). `-a`/`-A` collect
+#     every match into one array/assoc rather than per-option arrays.
+#
+# TWO FLAGS ARE DELIBERATELY NOT GENERATED — zshrs implements them CORRECTLY
+# and the 5.9.2 oracle does not have them:
+#
+#   zstyle -q       oracle: `invalid option: -q`
+#                   added upstream by c72b4a74ef ("52473: zstyle -q for testing
+#                   existence of a zstyle setting")
+#   zparseopts -G   oracle: `no default array defined: -G` — it does not know
+#                   the flag and misreads it as an option spec
+#                   added upstream by d051857e03 ("53260: zparseopts: add
+#                   options -v (argv) and -G (GNU-style parsing)")
+#
+# Both post-date the oracle (Homebrew zsh-5.9.2-0-gddee3e7) while being present
+# in the C reference fork (upstream master). Generating them would fail the gate
+# for behaviour that is RIGHT. This is the same fork-ahead-of-oracle split as
+# the `:S` history modifier and `typeset -n` namerefs, and it has a recognisable
+# signature: zshrs accepts the feature, the oracle answers `invalid option` or
+# misparses it. Check `git log -S` in the fork before treating that shape as a
+# zshrs bug.
+#
+# Any divergence here is a regression.

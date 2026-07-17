@@ -1,3 +1,62 @@
 # parity-fuzz --mode subscript baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode subscript --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers array/assoc subscripting: plain and negative indices, slices, and the
+# search flags from c:Src/params.c:1367 getarg — `r R k K i I w f e n b p s`.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The vocabulary only generated `r R i I e n b`. Adding `K w f p s` and, more
+# importantly, widening the `b` indices is what found the bug below.
+#
+# The divergence this mode found was a real port bug and is FIXED:
+#
+#   The `(b:N:)` begin-index was CLAMPED rather than bounds-checked
+#   (c:Src/params.c:1741-1748):
+#
+#       len = arrlen(ta);
+#       if (beg < 0) beg += len;
+#       if (down) {                    /* reverse: (I)/(R) */
+#           if (beg < 0) return 0;
+#       } else if (beg >= len)         /* forward: (i)/(r) */
+#           return len + 1;
+#       if (beg >= 0 && beg < len) {   /* the search runs ONLY in range */
+#           if (down) { if (!hasbeg) beg = len - 1; ...
+#
+#   zshrs clamped an out-of-range begin to the nearest valid element and
+#   searched from there, and floored a negative one to 0 instead of counting it
+#   back from the end:
+#
+#       dup=(x y x y x)
+#       ${dup[(Ib:6:)x]}    zsh 0    was 5
+#       ${dup[(Rb:6:)x]}    zsh ''   was x
+#       ${dup[(ib:-2:)x]}   zsh 5    was 1
+#       ${dup[(Ib:-2:)x]}   zsh 3    was 1
+#
+#   "Found nothing" has TWO answers depending on WHY, which is the part a
+#   reimplementation gets wrong: forward-past-the-end is len+1 (c:1746), while
+#   reverse-past-the-end — and EITHER direction still-negative after
+#   `beg += len` — is 0. In-range begins cannot separate those, which is why
+#   the b-indices generated here deliberately run past the end AND negative
+#   (-7..=7 against a 5-element array). Restricting them to 1..=5 makes the
+#   whole class pass.
+#
+#   Structural note, since it is what made this hard to find: FOUR
+#   implementations of this search exist. The faithful one (params.rs getarg,
+#   carrying the c:1748 guard) is reachable only for ASSOC subscripts;
+#   fusevm_bridge.rs serves LHS writes and does not parse `b` at all; subst.rs
+#   has a scalar character-index search; and the live ARRAY read path is a
+#   fourth, also in subst.rs, which is where the fix landed. Adding the guard to
+#   getarg changed nothing observable — verified by probing, not assumed — and
+#   that is what identified the live path. Same
+#   faithful-port-shadowed-by-a-reimplementation shape as substnamedir /
+#   typeset_single / parse_string / dotrapargs.
+#
+# Any divergence here is a regression.

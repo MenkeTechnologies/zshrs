@@ -1,3 +1,65 @@
 # parity-fuzz --mode func baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode func --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers function scoping: `local` / `typeset -a -A -f -g`, what survives a
+# call, and the options that reinterpret those declarations.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The vocabulary covered the DECLARATIONS but none of the OPTIONS that change
+# what they mean (c:Src/options.c): localoptions (c:189), localloops (c:190),
+# localpatterns (c:191), localtraps (c:192), warncreateglobal (c:265),
+# warnnestedvar (c:266), typesetsilent (c:260), typesettounset (c:261),
+# kshautoload (c:179), multifuncdef (c:207), functionargzero (c:141).
+#
+# typesettounset is the sharp one: it decides whether `typeset x` leaves x
+# UNSET or empty, and only `${x-UNSET}` can see the difference — comparing the
+# value alone shows "" either way.
+#
+# KNOWN GAP, deliberately NOT generated — `break` / `continue` inside a function
+# body with no enclosing loop IN that function:
+#
+#     f() { break }; for i in 1 2; do f; print -r -- $i; done
+#         zsh    (break escapes the function and breaks the caller's loop)
+#         zshrs  f:break: not in while, until, select, or repeat loop
+#
+#     setopt localloops; f() { break }; for i in 1 2; do f; print -r -- $i; done
+#         zsh    `break' active at end of function scope   (warned, contained,
+#                loop continues: 1, 2)
+#         zshrs  f:break: not in while, until, select, or repeat loop
+#
+# In C this is NOT an error. `break` sets a counter and the function return
+# decides what happens to it (c:Src/exec.c:6104-6112):
+#
+#     if (opts[LOCALLOOPS]) {
+#         if (contflag) zwarn("`continue' active at end of function scope");
+#         if (breaks)   zwarn("`break' active at end of function scope");
+#         breaks = funcsave->breaks;      /* restore — it does NOT escape */
+#         contflag = funcsave->contflag;
+#         loops = funcsave->loops;
+#     }
+#
+# so without LOCAL_LOOPS the pending `breaks` count survives the return and
+# breaks the CALLER's loop; with it, the count is warned about and rolled back.
+# zshrs requires a lexically-enclosing loop and rejects the builtin outright.
+#
+# This is architectural, not a missing branch: zshrs compiles loops to VM jumps
+# resolved at compile time, where C unwinds a runtime counter across the call
+# boundary. Wiring it up needs break/continue to propagate out of a function
+# call frame. Left alone rather than half-fixed.
+#
+# ALSO NOT GATEABLE — `$0` without functionargzero. zsh reports its own argv[0]
+# and so does zshrs, correctly; but the harness invokes them by different paths
+# (`zsh` vs `./target/debug/zshrs`), so the two can never agree. Verified by
+# invoking BOTH by full path, where each echoes its own path as expected. It is
+# a harness artifact, not a gap. Only the functionargzero-ON case (where $0 is
+# the function name in both) is generated.
+#
+# Any divergence here is a regression.

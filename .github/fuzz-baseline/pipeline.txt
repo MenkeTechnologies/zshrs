@@ -1,0 +1,57 @@
+# parity-fuzz --mode pipeline baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode pipeline --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (two seeds).
+#
+# Covers exit-status plumbing: $? through pipes/negation/&&/||, $pipestatus and
+# the ksh-spelled $PIPESTATUS, PIPE_FAIL, ERR_EXIT and its interaction with
+# conditions, and the "each pipeline stage is a subshell" rule — so a `read` or
+# an assignment in the LAST stage does not survive (zsh forks the last stage
+# too, unlike ksh).
+#
+# A small number of cases can time out; the harness drops zsh-side timeouts as
+# uncomparable rather than counting them as divergences.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# HARNESS BLIND SPOT — this mode (and every other) runs its cases via `-c`, so
+# `SHINSTDIN` is never set and everything gated on it is unreachable. That is
+# not a small corner: it is C's test for "the shell is reading a script", and
+# PRINT_EXIT_VALUE is gated on it at BOTH of its sites:
+#
+#     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval && !subsh)   /* c:Src/exec.c:4253 */
+#     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval)             /* c:Src/exec.c:5442 */
+#         fprintf(stderr, "zsh: exit %lld\n", lastval);
+#
+# A KNOWN GAP lives in exactly that blind spot — PRINT_EXIT_VALUE never fires:
+#
+#     $ printf 'setopt printexitvalue; false; print done\n' | zsh -f
+#     zsh: exit 1
+#     done
+#     $ printf 'setopt printexitvalue; false; print done\n' | zshrs --zsh -f
+#     done
+#
+# Same for a function returning non-zero (`f() { return 5 }; f` → `zsh: exit 5`).
+# zshrs sets SHINSTDIN correctly (on for stdin, off for -c — verified), and BOTH
+# C sites ARE ported — exec.rs `// c:4258` and `// c:5445/5447`, guards and all.
+# Neither fires: probing the c:4258 site shows the live path never reaches it
+# for a failing builtin. Same faithful-port-shadowed-by-a-reimplementation shape
+# as substnamedir / typeset_single / parse_string / dotrapargs / jn+yn.
+#
+# NOT generated here, because this mode cannot express it: the fix is not the
+# gap's own code but the harness's invocation. Reaching it needs run_zsh /
+# run_zshrs to feed the program on STDIN instead of `-c` — a harness-wide change
+# that would re-key every existing signature, so it wants its own pass rather
+# than being smuggled in behind a generator arm.
+#
+# The other options absent from this mode's vocabulary are absent for a good
+# reason and were checked: printexitvalue (above), notify (c:210), checkjobs
+# (c:115) and posixjobs (c:223) produce no observable difference under `-c` —
+# both shells agree — so generating them would gate nothing.
+#
+# Any divergence here is a regression.

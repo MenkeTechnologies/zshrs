@@ -2694,8 +2694,33 @@ pub fn chabspath(input: &str) -> Option<String> {
             && (i + 2 == chars.len() || chars[i + 2] == '/')
         {
             if out.len() <= 1 {
-                if out.is_empty() || out == ['/'] {
+                // c:1945 — `else return 0;` is reached ONLY when dest is still
+                // at the very start (nothing accumulated at all).
+                if out.is_empty() {
                     return None;
+                }
+                // c:1941-1944 — `else if (dest == *junkptr + 1) { current += 2; }`
+                // At the ROOT, `..` is SKIPPED: it is consumed and nothing is
+                // written, so `/..` collapses to `/` (POSIX: the parent of / is
+                // /). Returning an error here instead made chabspath fail, and
+                // the modifier dispatch reports a failed chabspath as
+                // `unrecognized modifier 'a'` — so `${f:a}` on `/..` errored
+                // out where zsh prints `/`. `:A` was unaffected because it
+                // reaches realpath(3), which resolves `/..` to `/` on its own,
+                // which is why only `:a` showed it.
+                if out == ['/'] {
+                    // c:1943 — `current += 2;` and NOTHING else: the `..` is
+                    // consumed but the '/' that follows it is NOT. That slash
+                    // is then copied by the '/' arm on top of the root already
+                    // in `out`, so zsh really does yield a DOUBLE slash here:
+                    //     /../x  :a → //x        (not /x)
+                    //     /..    :a → /
+                    // C's own comment flags it ("This might break with
+                    // Cygwin's leading double slashes?"). Consuming the slash
+                    // as well would be the tidier-looking answer and the wrong
+                    // one.
+                    i += 2;
+                    continue;
                 }
                 out.push('.');
                 out.push('.');
@@ -2789,7 +2814,13 @@ pub fn chrealpath(path: &str, mode: u8, _use_heap: bool) -> Option<String> {
             i -= 1;
         }
         if i == 0 {
-            // c:2020-2024 — no real prefix at all; keep nothing.
+            // c:2020-2024 — `if (nonreal == *junkptr) { real = NULL; break; }`
+            // Nothing along the path resolved. C's `nonreal` has walked back to
+            // the START of the string, so after the '/'-restoration loop below
+            // it spans the WHOLE input and c:2047 hands that back untouched.
+            // Leaving prefix_end where it was instead returned a TRUNCATED
+            // suffix: `/a/b/../c` came back as `/b/../c`.
+            prefix_end = 0;
             break;
         }
         prefix_end = i;

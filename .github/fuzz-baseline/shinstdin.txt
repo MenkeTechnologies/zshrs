@@ -1,0 +1,57 @@
+# parity-fuzz --mode shinstdin baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode shinstdin --count N --verify 3  (copy NEW-signature lines).
+#
+# Covers everything C gates on SHINSTDIN — "the shell is reading its program
+# from stdin". This mode exists because every OTHER mode runs its cases through
+# `-c`, which leaves SHINSTDIN OFF (c:Src/init.c), so the whole class was
+# unreachable no matter what the generated program said. It is the only mode fed
+# on stdin (STDIN_MODE); the program text is ordinary shell, only the invocation
+# differs, so no other mode's signatures are affected.
+#
+# KNOWN GAP — PRINT_EXIT_VALUE never fires. C reports a failing command's status
+# at TWO sites, both guarded on SHINSTDIN:
+#
+#     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval && !subsh)  /* c:Src/exec.c:4253 */
+#     if (isset(PRINTEXITVALUE) && isset(SHINSTDIN) && lastval)            /* c:Src/exec.c:5442 */
+#         fprintf(stderr, "zsh: exit %lld\n", lastval);
+#
+#     $ printf 'setopt printexitvalue; false; print done\n' | zsh -f
+#     zsh: exit 1
+#     done
+#     $ ... | zshrs --zsh -f
+#     done
+#
+# zshrs sets SHINSTDIN correctly (on for stdin, off for -c — verified), and BOTH
+# C sites ARE ported: exec.rs `// c:4258` (with the `!subsh` clause) and
+# `// c:5445/5447`. Neither is on a path the live shell takes — probing the
+# c:4258 site shows it never runs for a failing builtin. Same
+# faithful-port-shadowed-by-a-reimplementation shape as substnamedir /
+# typeset_single / parse_string / dotrapargs / jn+yn.
+#
+# ATTEMPTED AND REVERTED: adding the report to the live per-command hook
+# (BUILTIN_ERREXIT_CHECK, which is where zshrs makes the errexit decision C
+# makes in the same execlist region) gets `false` and `f() { return 5 }` right
+# and then fires SPURIOUSLY on correct programs:
+#
+#     (exit 3)       zsh silent (c:4254 `!subsh`)   hook reported exit 3
+#     false | true   zsh silent (pipeline rc is 0)  hook reported exit 1
+#     (false)        zsh silent                     hook reported TWICE
+#
+# because that hook runs per SIMPLE COMMAND, where C reports once per list
+# element with the PIPELINE's status, and because ported::exec::subsh is not set
+# by zshrs's in-process subshell so the `!subsh` clause never engages. Printing
+# `zsh: exit N` on programs that are fine is worse than not printing it at all,
+# so it was reverted rather than shipped.
+#
+# The fix needs the per-list-element point (after a whole pipeline, with its
+# status) plus a subshell-context flag the live path actually maintains. Fix
+# those, then delete the four signatures below.
+#
+# Any OTHER divergence here is a regression.
+setopt printexitvalue; f() { return N }; f N>&N; print -r -- dW
+setopt printexitvalue; false N>&N; print -r -- dW
+setopt printexitvalue; false N>&N; unsetopt printexitvalue; false N>&N; print -r -- dW
+setopt printexitvalue; setopt pipefail; { false | true } N>&N; print -r -- "rc=$?"
+setopt printexitvalue; setopt pipefail; { true | false } N>&N; print -r -- "rc=$?"
+setopt printexitvalue; { true | false } N>&N; print -r -- "rc=$?"

@@ -1,0 +1,57 @@
+# parity-fuzz --mode mathfunc baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode mathfunc --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (two seeds).
+#
+# Covers the user-defined math-function mechanism (c:Src/builtin.c bin_functions,
+# c:Src/math.c callmathfunc) — extending the arithmetic evaluator's namespace at
+# runtime, a path no arith-mode case reaches (arith only exercises operators).
+#
+# Float results print through the shell's own float formatter, which IS the
+# parity question here, so they are deliberately not rounded away.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The divergence this mode found was a real port bug and is FIXED:
+#
+#   `jn` and `yn` — the order-taking Bessel functions (c:144/168) — were
+#   UNIMPLEMENTED on the live path:
+#
+#       $(( jn(1,0) ))   zsh 0.                zshrs unknown function: jn
+#       $(( yn(1,1) ))   zsh -0.78121282...    zshrs unknown function: yn
+#
+#   c:Src/Modules/mathfunc.c:
+#       NUMMATHFUNC("jn", math_func, 2, 2, MF_JN | TFLAG(TF_INT1)),
+#       case MF_JN: retd = jn(argi, argd2); break;   /* c:333-335 */
+#       NUMMATHFUNC("yn", math_func, 2, 2, MF_YN | TFLAG(TF_INT1))
+#       case MF_YN: retd = yn(argi, argd2); break;   /* c:420-422 */
+#   TF_INT1 (c:106) = the FIRST argument is the integer one — the mirror of
+#   ldexp/scalb's TF_INT2, which the port already had.
+#
+#   TWO math-function tables exist. The faithful module port
+#   (modules/mathfunc.rs) HAS jn/yn, with the right arity and TF_INT1 flags and
+#   c: refs — and it is SHADOWED: the live evaluator is a second, inline table
+#   in math.rs that carried j0/j1/y0/y1 but stopped short of the order-taking
+#   forms. Same faithful-port-shadowed-by-a-reimplementation shape as
+#   substnamedir / typeset_single / parse_string / dotrapargs / the four
+#   subscript searches. The fix went into the live table.
+#
+#   The vocabulary is why it survived: C's module registers 49 functions and
+#   this generator emitted 20. Of the 26 never generated, the two that were
+#   broken were the only two taking an integer order. j0/j1/y0/y1 all worked,
+#   so the family looked covered.
+#
+# Excluded deliberately:
+#   rand48       nondeterministic by design (c:154)
+#   signgam      a global set as a side effect of lgamma, not a pure function
+#   isinf/isnan  the fork's table has them (c:140-141) but the 5.9.2 oracle
+#                does not expose them — BOTH shells answer `unknown function`,
+#                so they gate nothing. Same fork-ahead-of-oracle split as
+#                `zstyle -q` / `zparseopts -G` / the `:S` modifier.
+#
+# Any divergence here is a regression.

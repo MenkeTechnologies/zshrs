@@ -1,3 +1,72 @@
 # parity-fuzz --mode pattern baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode pattern --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers EXTENDED_GLOB pattern matching: the `(#...)` glob flags, `^neg`,
+# `pat~except`, `(a|b)` alternation, `(pat)#` closures, `<n-m>` ranges and
+# character classes.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The divergence this mode found was a real port bug and is FIXED:
+#
+#   `(#M)` was inert — it could not turn `(#m)` back off:
+#
+#       [[ abc = (#m)(#M)a* ]]
+#           zsh    $MATCH unset
+#           zshrs  $MATCH=abc
+#
+#   c:Src/pattern.c:1093-1100 — the glob flags come in ON/OFF pairs and the
+#   LAST one wins:
+#       case 'i': patglobflags = (patglobflags & ~GF_LCMATCHUC) | GF_IGNCASE;
+#       case 'I': patglobflags &= ~(GF_LCMATCHUC|GF_IGNCASE);
+#       case 'm': patglobflags |= GF_MATCHREF;
+#       case 'M': patglobflags &= ~GF_MATCHREF;
+#       case 'b': patglobflags |= GF_BACKREF;
+#       case 'B': patglobflags &= ~GF_BACKREF;
+#
+#   TWO layers were wrong, and each hid the other:
+#     - The MATCHER (pattern.rs, c:2526) gated $MATCH on `prog->globflags`.
+#       C reads the GLOBAL patglobflags there. They are not the same thing:
+#       c:Src/zsh.h:1606 documents the struct field as "globbing flags to set
+#       at START", so it keeps what the pattern opened with — it is 0x1800 for
+#       ALL of `(#m)a*`, `(#m)(#M)a*` and `(#M)(#m)a*`, while the global
+#       correctly ends at 0x800 / 0x0 / 0x800.
+#     - vm_helper's glob_match_static then RE-set $MATCH from
+#       `pattern.contains("(#m)")`, a substring test that can only ever answer
+#       "on" and cannot see which flag came last. It overwrote the matcher's
+#       correct decision. Removed: the matcher is the layer that has the
+#       compiled flags, which is where C decides it.
+#
+#   `(#b)`/`(#B)` behaved correctly throughout because that check reads real
+#   compiled state (`prog.patnpar`, the count of numbered groups) rather than
+#   sniffing text — the same reason `(#m)`/`(#M)` did not.
+#
+#   The vocabulary only generated `b i m`: the ON half of three pairs and none
+#   of `a l I B M s e u U`. An implementation that treats a flag as "present in
+#   the pattern text" passes every ON-only case, which is exactly how this
+#   survived. The generator now emits both halves of each pair and reads $MATCH
+#   back, since whether it was SET is the whole question and the exit status
+#   cannot see it.
+#
+# KNOWN GAP, deliberately NOT generated — `(#a<n>)` approximate matching:
+#
+#     [[ aaa    = (#a2)[^0-9] ]]        zsh Y   zshrs N
+#     [[ FooBar = (#a2)_(#c2,3)a ]]     zsh N   zshrs Y
+#
+# zshrs diverges in BOTH directions, so it is neither uniformly stricter nor
+# looser than zsh — this is not a threshold tweak. C implements it as an
+# error-tolerant matcher driven by the `(#a<n>)` error budget parsed at
+# c:1062-1071 (`patglobflags = (patglobflags & ~0xff) | (ret & 0xff)`), with
+# the budget consumed during matching. Simple cases already agree
+# (`[[ abc = (#a1)abd ]]` → 0 in both), so the gap is in how the budget is
+# spent across character classes and closures. Port C's matcher, then add
+# `(#a0)`/`(#a1)`/`(#a2)` back to the flag vocabulary above.
+#
+# Any divergence here is a regression.

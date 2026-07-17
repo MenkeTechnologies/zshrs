@@ -1,0 +1,137 @@
+# parity-fuzz --mode trap baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode trap --count N --verify 3  (copy NEW-signature lines).
+#
+# Covers both trap spellings (`trap '…' SIG` and `TRAPSIG() { … }`, which have
+# DIFFERENT semantics), EXIT/ERR/DEBUG, `always` blocks, TRY_BLOCK_ERROR,
+# LOCAL_TRAPS, install-time parsing, listing, and subshell inheritance.
+# Determinism: only self-sent signals (`kill -SIG $$`), no timers, no children.
+#
+# The mode existed but was NOT gated in CI, which is how the gaps below lived.
+#
+# No known gaps — 4000 cases run clean.
+#
+# Divergences this mode found that were real port bugs and are FIXED:
+#
+#   1. The trap body was not parsed at INSTALL time. C parses it in bin_trap
+#      (`parse_string(arg, 1)`, c:Src/builtin.c:7405-7409) and rejects an
+#      unparseable body on the spot with `couldn't parse trap command` and
+#      rc=1, installing nothing. zshrs stored the text unexamined and returned
+#      0, deferring the failure to delivery: `trap 'for' EXIT` reported success
+#      and then emitted a parse error at exit.
+#
+#   2. `trap` LISTING echoed the stored text verbatim. C holds the body as
+#      compiled wordcode and renders it back with getpermtext (c:7371), so the
+#      listing is canonical: `trap 'print a; print b' EXIT` lists as
+#      `trap -- $'print a\nprint b' EXIT`. Echoing back is right for a single
+#      command and wrong for everything else — which is why the single-command
+#      bodies this generator used never caught it.
+#
+#   3. A subshell INHERITED the parent's traps. c:Src/exec.c:1088-1092 —
+#      entersubsh resets them in the child:
+#          if (!(flags & ESUB_KEEPTRAP))
+#              for (sig = 0; sig <= SIGCOUNT; sig++)
+#                  if (!(sigtrapped[sig] & ZSIG_FUNC) &&
+#                      !(isset(POSIXTRAPS) && (sigtrapped[sig] & ZSIG_IGNORED)))
+#                      unsettrap(sig);
+#      Not just a listing bug: an inherited trap FIRED inside the child, so
+#      `trap 'print p' USR1; (kill -USR1 $$; print after)` printed p before
+#      after instead of after…p — the signal is meant to reach the parent and
+#      run there.
+#
+#      Three exemptions, and a shell that simply kept everything passes two of
+#      them by accident:
+#        - FUNCTION-form traps (ZSIG_FUNC) survive (c:1090).
+#        - Under POSIX_TRAPS an IGNORED trap (`trap '' SIG`) survives (c:1091).
+#        - The LOOP BOUND is spec, not detail: `sig <= SIGCOUNT` never reaches
+#          the pseudo-signals, which zsh numbers above the real ones —
+#          `#define SIGZERR (SIGCOUNT+1)`, `#define SIGDEBUG (SIGCOUNT+2)`
+#          (c:Src/signals.h:34-35) — so ERR/ZERR and DEBUG traps SURVIVE a
+#          subshell while SIGEXIT (sig 0) is inside the loop and is cleared.
+#          Clearing the whole table looks right until `trap 'print e' ERR;
+#          (trap)` stops listing the ERR trap.
+#
+#   4. The ERR trap fired from INSIDE a trap body:
+#
+#          trap 'print -r -- err' ERR; trap 'true; false' EXIT; print main
+#              zsh    main
+#              zshrs  main / err     <- the EXIT body's `false` re-entered ERR
+#
+#      C suppresses exactly EXIT, DEBUG and ZERR while another trap runs
+#      (c:Src/signals.c:1112-1119):
+#          if (intrap) {
+#              switch (sig) {
+#              case SIGEXIT: case SIGDEBUG: case SIGZERR: return;
+#              }
+#          }
+#      with `intrap++` / `intrap--` bracketing the body (c:1123 / c:1236).
+#
+#      Two things were wrong and had to be fixed together — fixing either one
+#      alone regresses the other:
+#        - dotrapargs IS that faithful port (selective guard + intrap counter)
+#          and has ZERO callers. dotrap reimplemented around it with an
+#          INVENTED blanket `if (intrap) return` for EVERY signal; C's dotrap
+#          (c:1244-1281) has no guard and just delegates (c:1254). The blanket
+#          guard was itself a live divergence — `TRAPUSR2() { kill -USR1 $$ }`
+#          runs the USR1 trap in zsh and was swallowed here. It existed as a
+#          band-aid against `trap "false" ERR; false` recursing; C stops that
+#          with this same guard, since ZERR is one of the three, so the
+#          selective form keeps the recursion protection without swallowing
+#          signals zsh delivers.
+#        - The live EXIT trap runs its body through the script pipeline
+#          (vm_helper.rs), not dotrap, so nothing raised intrap at all.
+#          Raising it there ALONE would have regressed
+#          `trap 'kill -USR1 $$' EXIT` (already correct) via the blanket guard.
+#      intrap is also a COUNTER, not a flag (c:1057 `volatile int intrap`):
+#      once non-suppressed signals can dispatch from inside a trap body, a
+#      nested dotrap must not reset the outer one's state on the way out.
+#
+#      Same faithful-port-shadowed-by-a-reimplementation shape as substnamedir,
+#      typeset_single and parse_string. dotrap dispatching inline rather than
+#      delegating to dotrapargs is the remaining structural debt; wiring that
+#      dead port back in would subsume the guard living in dotrap at all.
+#
+#   5. The outer EXIT trap stayed visible inside a function:
+#
+#          trap 'print -r -- p' EXIT; f() { trap }; f
+#              zsh    (nothing)   <- EXIT is unset for the function's scope
+#              zshrs  trap -- 'print -r -- p' EXIT
+#
+#      c:Src/signals.c:854-870 — starttrapscope, from doshfunc (c:5898):
+#          if (intrap) return;            /* no special SIGEXIT inside a trap */
+#          if (sigtrapped[SIGEXIT] && !exit_trap_posix) {
+#              locallevel++; unsettrap(SIGEXIT); locallevel--;
+#          }
+#
+#      starttrapscope was ported faithfully (both guards) and WAS on the live
+#      path, but its `unsettrap(SIGEXIT)` reached removetrap, which cleared
+#      sigtrapped[SIGEXIT] and siglists[SIGEXIT] and nothing else — while
+#      zshrs's trap BODY lives in traps_table. So the unset cleared a flag the
+#      live listing does not read, and the entry stayed. C frees the body right
+#      there (`freeeprog(siglists[sig])`, c:843-845; c:823-830 says why: "here
+#      we are remove the originals … a good deal more reliability").
+#
+#      Adding that removal alone is NOT enough and is worse than the bug: it
+#      fixes the listing and then LOSES the trap, because endtrapscope restored
+#      the saved body into traps_table BEFORE its settrap/unsettrap calls — and
+#      those reach removetrap, which now deletes what was just put back. C does
+#      not have this ordering hazard because it restores the body THROUGH
+#      settrap (`settrap(st->sig, st->list, st->flags)`, c:925): install and
+#      restore are one step. zshrs splits them (settrap(…, None, flags) plus a
+#      manual traps_table insert), so the insert has to come LAST.
+#
+#      Both halves therefore land together:
+#        - removetrap drops the traps_table body (c:843-845)
+#        - endtrapscope's body restore moves AFTER its settrap/unsettrap calls
+#      Reverting either one alone regresses the other — the first loses the
+#      trap, the second brings the listing back.
+#
+#      Everything around this already behaved and must keep behaving, which is
+#      what the funcscope arm checks on every case: an EXIT trap set INSIDE a
+#      function fires at RETURN; POSIX_TRAPS (c:863 `!exit_trap_posix`) keeps
+#      the outer one visible; inside another trap body the scoping is skipped
+#      entirely (c:855-857); only EXIT is scoped (USR1/ERR are not); and the
+#      LOCAL_TRAPS restore path (`trap 'o' USR1; f() { setopt local_traps;
+#      trap 'i' USR1 }; f; trap`) still puts `o` back.
+#
+# Any divergence here is a regression.

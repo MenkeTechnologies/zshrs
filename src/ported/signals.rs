@@ -1077,6 +1077,33 @@ pub fn removetrap(sig: i32) {
             *slot = None;
         }
     }
+    // c:843-845 — `} else if (siglists[sig]) { freeeprog(siglists[sig]); … }`.
+    // C destroys the trap BODY here, and says why at c:823-830: "At this point
+    // we free the appropriate structs … here we are remove the originals.
+    // That causes a little inefficiency, but a good deal more reliability."
+    //
+    // C's body is siglists[sig]; zshrs's is the traps_table entry (the bridge
+    // dispatches that raw string via execute_script), so clearing the siglists
+    // slot above is only half of it — the table entry IS the body and must go
+    // with it, or the two storages drift apart. dosavetrap (c:774, above) has
+    // already snapshotted it into SAVETRAPS.body, and endtrapscope's restore
+    // loop puts it back AFTER its settrap/unsettrap calls (which land here).
+    //
+    // This is what made starttrapscope's `unsettrap(SIGEXIT)` (c:866) a no-op
+    // for anything observable: it cleared sigtrapped[SIGEXIT] while the entry
+    // stayed in traps_table, so `trap 'p' EXIT; f() { trap }; f` still listed
+    // the EXIT trap inside f, where zsh — having unset it for the duration of
+    // the function's scope — lists nothing.
+    if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+        let signame = getsigname(sig);
+        t.remove(&signame);
+        // ERR/ZERR are one signal under two canonical spellings (bin_trap
+        // keys whichever the user wrote).
+        if sig == SIGZERR {
+            t.remove("ERR");
+            t.remove("ZERR");
+        }
+    }
     // c:803-845 — per-signal disposition reset after clearing the
     // trap. The previous Rust port collapsed everything to a single
     // signal_default() call, omitting the SIGINT/SIGHUP/SIGPIPE
@@ -1263,22 +1290,6 @@ pub fn endtrapscope() {
             // be truthy. The previous Rust port used `||` (either),
             // wrongly firing the restore branch on a flags-only or
             // list-only savetrap entry.
-            // Bug #80 — restore the saved body string into
-            // traps_table before settrap re-arms sigtrapped, so the
-            // outer scope's dispatch finds the right body.
-            {
-                let signame = getsigname(st.sig);
-                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
-                    match &st.body {
-                        Some(b) => {
-                            t.insert(signame, b.clone());
-                        }
-                        None => {
-                            t.remove(&signame);
-                        }
-                    }
-                }
-            }
             if st.flags != 0 && st.list.is_some() {
                 // c:919
                 // c:921-922 — prevent settrap from saving this.
@@ -1319,6 +1330,30 @@ pub fn endtrapscope() {
                     // c:938 — `if (sig != SIGEXIT || !exit_trap_posix)`.
                     if st.sig != SIGEXIT || !EXIT_TRAP_POSIX.load(Ordering::Relaxed) {
                         unsettrap(st.sig); // c:939
+                    }
+                }
+            }
+            // Bug #80 — put the saved body string back into traps_table so
+            // the outer scope's dispatch finds the right body.
+            //
+            // MUST run AFTER the settrap/unsettrap branches above, not
+            // before. C restores the body THROUGH settrap
+            // (`settrap(st->sig, st->list, st->flags)`, c:925) because its
+            // body lives in the Eprog it hands over. zshrs's body lives in
+            // traps_table and is restored separately, so an insert placed
+            // before those calls is undone by them: settrap and unsettrap
+            // both reach removetrap, which frees the body (c:843-845).
+            // Ordering it last is what makes the two storages agree.
+            {
+                let signame = getsigname(st.sig);
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    match &st.body {
+                        Some(b) => {
+                            t.insert(signame, b.clone());
+                        }
+                        None => {
+                            t.remove(&signame);
+                        }
                     }
                 }
             }
@@ -1528,15 +1563,38 @@ pub fn dotrap(sig: i32) -> i32 {
     if errflag.load(Ordering::Relaxed) != 0 {
         return 0;
     }
-    // c:Src/signals.c:1244 — `if (intrap) return;` — re-entry guard.
-    // Without this, a TRAP body that itself fails (e.g. `trap "false"
-    // ERR; false`) re-enters dotrap on its own failed status and
-    // recurses indefinitely → stack overflow.
-    if intrap.load(Ordering::Relaxed) != 0 {
+    // c:Src/signals.c:1112-1119 — while ALREADY inside a trap, exactly
+    // three traps are suppressed and every other signal still dispatches:
+    //     if (intrap) {
+    //         switch (sig) {
+    //         case SIGEXIT:
+    //         case SIGDEBUG:
+    //         case SIGZERR:
+    //             return;
+    //         }
+    //     }
+    // C keeps this in dotrapargs; C's dotrap (c:1244-1281) has no guard at
+    // all and just delegates to it (c:1254). zshrs's dotrap dispatches
+    // inline instead, so the guard has to sit here — but it must be C's
+    // SELECTIVE guard, not a blanket one.
+    //
+    // The blanket `if (intrap) return` this replaces was a band-aid against
+    // `trap "false" ERR; false` recursing (the body's own failure re-enters
+    // on ZERR). C prevents that with this same guard — ZERR is one of the
+    // three — so the selective form still stops the recursion while no
+    // longer swallowing signals zsh delivers: `TRAPUSR2() { kill -USR1 $$ }`
+    // runs the USR1 trap in zsh and was dropped here.
+    if intrap.load(Ordering::Relaxed) != 0
+        && (sig == SIGEXIT || sig == SIGDEBUG || sig == SIGZERR)
+    {
         return 0;
     }
 
-    intrap.store(1, Ordering::SeqCst);
+    // c:1123 — `intrap++`. A COUNTER, not a flag (c:Src/signals.c:1057
+    // `volatile int intrap`): now that non-suppressed signals can dispatch
+    // from inside a trap body, a nested dotrap must not reset the outer
+    // one's state on the way out.
+    intrap.fetch_add(1, Ordering::SeqCst);
     // c:1270 — `dont_queue_signals()`. C disables signal queueing for
     // the duration of the trap dispatch so signals delivered while
     // the trap is running run inline (not queued for later).
@@ -1677,7 +1735,7 @@ pub fn dotrap(sig: i32) -> i32 {
     // captured at entry (c:1248). Now properly captured above; the
     // previous tail was a hardcoded `intrap.store(0)` only.
     crate::ported::signals_h::restore_queue_signals(q); // c:1280
-    intrap.store(0, Ordering::SeqCst);
+    intrap.fetch_sub(1, Ordering::SeqCst); // c:1236 — `intrap--`, paired with c:1123
     0
 }
 
@@ -2608,6 +2666,27 @@ mod tests {
 
     /// `Src/signals.c:696-699` — `settrap` rejects trapping
     /// SIGTTOU/SIGTSTP/SIGTTIN when `jobbing` (= `isset(MONITOR)`).
+    /// c:Src/signals.c:1112-1119 — while already inside a trap, EXACTLY
+    /// SIGEXIT, SIGDEBUG and SIGZERR are suppressed; every other signal
+    /// still dispatches:
+    ///
+    /// ```c
+    ///     if (intrap) {
+    ///         switch (sig) {
+    ///         case SIGEXIT:
+    ///         case SIGDEBUG:
+    ///         case SIGZERR:
+    ///             return;
+    ///         }
+    ///     }
+    /// ```
+    ///
+    /// The guard used to be a blanket `if (intrap) return` for every
+    /// signal, which had two consequences: the ERR trap could not re-enter
+    /// (correct, but by accident), and a signal zsh DOES deliver from
+    /// inside a trap body was swallowed — `TRAPUSR2() { kill -USR1 $$ }`
+    /// runs the USR1 trap in zsh.
+    ///
     /// Pin:
     ///   * MONITOR unset → settrap on SIGTSTP succeeds (returns 0).
     ///   * MONITOR set   → settrap on SIGTSTP rejected (returns 1).

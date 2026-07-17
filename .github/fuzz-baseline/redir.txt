@@ -1,3 +1,60 @@
 # parity-fuzz --mode redir baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode redir --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean. Covers redirections, MULTIOS (zsh tees a
+# duplicated fd rather than overwriting), fd juggling (`exec {fd}>`, `>&-`),
+# here-strings, append-vs-truncate, stdout/stderr ordering, and function-level
+# redirections (`f() { … } > file`).
+#
+# The mode had a clean baseline from the start but was NOT gated in CI until the
+# function-redirect arms were added. Gating it is what makes the baseline mean
+# anything.
+#
+# ONE CONFIRMED BUG IS NOT GENERATED HERE — the same-fd merge case:
+#
+#     f() { print -r -- body } > f1; f > f2
+#         zsh    f1=[body] f2=[body]
+#         zshrs  f1=[body] f2=[]
+#
+# A function's redirections are not applied at definition time: C stores them on
+# the shfunc (`shf->redir`, c:Src/exec.c:5397) and re-opens them on every call.
+# What zshrs gets wrong is how they COMBINE with a redirection at the CALL site
+# (c:Src/exec.c:3565-3578):
+#
+#     redir2 = ecgetredirs(&s);        /* the DEFINITION's */
+#     if (!redir) redir = redir2;
+#     else while (nonempty(redir2))
+#              addlinknode(redir, ugetnode(redir2));
+#
+# The call's redirections come first and the definition's are APPENDED to the
+# SAME list. One flat list is what lets MULTIOS tee across both. zshrs has no
+# per-function redir storage — compile_zsh.rs (`Redirected(FuncDef(...))`) wraps
+# the BODY in `Redirected(Cursh(body), redirs)` instead, so the def-redirs and
+# the call-redirs apply as NESTED scopes; the inner (def) scope owns the fd and
+# the outer (call) redirect silently receives nothing. `unsetopt multios` agrees
+# on both shells, which is what pins the cause to the merge rather than to the
+# redirect itself.
+#
+# This is a real bug, not cosmetic: output goes to the wrong file with no error.
+# Fixing it faithfully needs substrate that does not exist yet — the def-redirs
+# must be available AT THE CALL so both join one MULTIOS list, which means
+# per-function redir storage plus a call-time merge inside the
+# WithRedirectsBegin/End machinery. The redirect scope is currently opened by
+# the COMPILER at the call site, before CallFunction runs. Left unfixed rather
+# than half-fixed.
+#
+# It is EXCLUDED from the vocabulary rather than baselined because signature()
+# keys a baseline entry off the LAST line of the program, and gen_redir's
+# cleanup statement (`cd /; command rm -rf $d`) can end up there after
+# minimization — an entry that would allow ANY redir divergence through. The
+# `errdef` form keeps def+call coverage on DIFFERENT fds (2> on the definition,
+# > at the call), which does not hit the merge and passes. Add the merge form
+# back once the call-time merge exists.
+#
+# The function-redirect arms tag their final statement (`defonly`, `callonly`,
+# `recall`, `errdef`) precisely so each form signs distinctly; a shared readback
+# line would collapse them onto one signature, and baselining the failing one
+# would then mask the passing ones.
+#
+# Any divergence here is a regression.

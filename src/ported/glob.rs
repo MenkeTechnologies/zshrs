@@ -3919,6 +3919,31 @@ pub fn globdata_glob(state: &mut globdata, pattern: &str) -> Vec<String> {
         }
     }
 
+    // c:Src/glob.c:518 — the `Y` limit belongs to the SCAN, not to the result:
+    //     scanner(q->next, shortcircuit);
+    //     if (shortcircuit && shortcircuit == matchct)
+    //         return;
+    // The scanner simply stops once N matches exist, so the survivors are the
+    // first N *found*, and only then does c:1868's sort run over them. Applying
+    // the limit after sorting (as apply_selection used to) keeps the first N by
+    // SORT ORDER instead — a different set: `*(.Y2on)` must be the two files
+    // the scan reached, re-ordered by name, not the two alphabetically-first.
+    //
+    // This port collects every match before sorting, so the faithful place for
+    // the truncation is here — after collection, before sort_matches. The
+    // `[first,last]` subscript stays in apply_selection: c:1868's sort precedes
+    // it, so THAT one really is a post-sort selection.
+    //
+    // Zero means "no limit" (c:518's leading `shortcircuit &&`), hence `> 0`.
+    if let Some(n) = state.qualifiers.as_ref().and_then(|q| q.short_circuit) {
+        if n > 0 {
+            let n = n as usize;
+            if state.matches.len() > n {
+                state.matches.truncate(n); // c:518
+            }
+        }
+    }
+
     // Sort results
     sort_matches(state);
 
@@ -4485,12 +4510,66 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                         }
                     };
                     let shifted = if follow && (key & GS_NORMAL) != 0 {
-                        key << GS_SHIFT
+                        key << GS_SHIFT // c:1692-1694
                     } else {
                         key
                     };
+                    // c:1695-1702 — a sort key may not be repeated:
+                    //     if (t != GS_EXEC) {
+                    //         if (gf_sorts & t) {
+                    //             zerr("doubled sort specifier");
+                    //             restore_globstate(saved);
+                    //             return;
+                    //         }
+                    //     }
+                    //     gf_sorts |= t;
+                    // GS_EXEC is exempt — `oe:…:` may appear repeatedly, each
+                    // with its own code. This check was missing entirely, so
+                    // `*(.onon)` and `*(.onOn)` silently sorted where zsh
+                    // fails. Note the test is on the SHIFTED key, so `oL` and
+                    // `OL` collide (same key, different direction) while `oL`
+                    // and `oLm` do not (the follow variant shifts).
+                    if (shifted & GS_EXEC) == 0 && qs.sorts.iter().any(|s| (s & !GS_DESC) == shifted)
+                    {
+                        crate::ported::utils::zerr("doubled sort specifier"); // c:1697
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::utils::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return qs; // c:1699
+                    }
+                    // c:1658-1662 — `if (gf_nsorts == MAX_SORTS) { zerr("too
+                    // many glob sort specifiers"); ... return; }`. MAX_SORTS is
+                    // 12 (c:164). Unreachable in practice now that the doubled
+                    // check above rejects repeats, but it is C's bound and the
+                    // list is otherwise unbounded.
+                    if qs.sorts.len() == MAX_SORTS {
+                        crate::ported::utils::zerr("too many glob sort specifiers"); // c:1659
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::utils::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return qs; // c:1661
+                    }
                     let tp = shifted | (if desc { GS_DESC } else { 0 });
                     qs.sorts.push(tp);
+                } else {
+                    // c:1666-1690 — C does not guard on "is there a next
+                    // character": it reads `switch (*s)` unconditionally, so an
+                    // `o`/`O` at the very end of the qualifier list sees the
+                    // terminating `)` and lands on `default: zerr("unknown sort
+                    // specifier")`. This port skipped the whole block when the
+                    // iterator was exhausted, so a trailing `o` was silently
+                    // ignored and `*(No)` listed every match where zsh fails.
+                    // A NON-trailing bad spec (`*(ozN)`) already errored — it
+                    // reaches the `_` arm above — which is why only the
+                    // end-of-list form survived.
+                    crate::ported::utils::zerr("unknown sort specifier"); // c:1688
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs; // c:1690
                 }
             }
             // Flags
@@ -4538,6 +4617,30 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // limit matches to at most N. Reads a numeric argument
             // immediately following the `Y`. Bug #41 in docs/BUGS.md.
             'Y' => {
+                // c:1579-1594:
+                //     const char *s_saved = s;
+                //     shortcircuit = !(sense & 1);
+                //     if (shortcircuit) {
+                //         data = qgetnum(&s);
+                //         if ((shortcircuit = data) != data) {
+                //             /* Integer overflow */
+                //             zerr("value too big: Y%s", s_saved);
+                //             restore_globstate(saved);
+                //             return;
+                //         }
+                //     }
+                // `data` is a zlong and `shortcircuit` an int, so the
+                // assignment-then-compare is a 64→32 TRUNCATION test: a limit
+                // that does not survive the narrowing is fatal. This parsed
+                // straight into i32 and silently dropped the qualifier when
+                // that failed, so `*(Y2147483648)` listed every match where
+                // zsh errors — the limit was simply ignored.
+                //
+                // s_saved is the text AFTER the `Y`, running to the end of the
+                // qualifier list, which is why the message carries any trailing
+                // qualifiers too: `*(.NY99…)` reports `value too big: Y99…`
+                // exactly as spelled.
+                let s_saved: String = chars.clone().collect(); // c:1582
                 let mut num_str = String::new();
                 while let Some(&pc) = chars.peek() {
                     if pc.is_ascii_digit() {
@@ -4547,9 +4650,27 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                         break;
                     }
                 }
-                if let Ok(n) = num_str.parse::<i32>() {
-                    qs.short_circuit = Some(n);
+                // c:1586 — qgetnum is `while (idigit(**s)) v = v * 10 + …`,
+                // with no overflow check of its own; it simply wraps. Mirror
+                // that rather than failing the parse, so the truncation test
+                // below is what decides, exactly as in C.
+                let mut data: i64 = 0;
+                for ch in num_str.chars() {
+                    data = data
+                        .wrapping_mul(10)
+                        .wrapping_add((ch as i64) - ('0' as i64));
                 }
+                let sc = data as i32; // c:1587 `shortcircuit = data`
+                if sc as i64 != data {
+                    // c:1587 `!= data`
+                    crate::ported::utils::zerr(&format!("value too big: Y{s_saved}")); // c:1589
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs; // c:1591
+                }
+                qs.short_circuit = Some(sc);
             }
             // c:Src/glob.c:1599-1620 `case 'e'` — `(e:CODE:)` shell-
             // eval qualifier. The body is delimited by the char
@@ -5193,12 +5314,36 @@ fn sort_matches(state: &mut globdata) {
     // glob.c falls back to GS_NAME (or GS_NONE under shortcircuit).
     // Mirror that here so a qualifier set carrying ONLY non-sort
     // qualifiers (`Lk+0`, etc.) still sorts alphabetically.
+    // c:1855-1857 is a CONDITIONAL default, not a fixed one:
+    //     if (!gf_nsorts) {
+    //         gf_sortlist[0].tp = gf_sorts = (shortcircuit ? GS_NONE : GS_NAME);
+    //         gf_nsorts = 1;
+    //     }
+    // A `Y` limit means "give me the first N the scanner finds", so with no
+    // explicit o/O spec the default becomes GS_NONE and the results stay in
+    // SCAN order — sorting them would defeat the short-circuit, since the first
+    // N by name are not the first N found. This always chose GS_NAME, so a
+    // limited glob returned the alphabetically-first N instead of the
+    // scan-order-first N, and even `*(Y99)` (a limit larger than the match
+    // count, which discards nothing) came back sorted where zsh leaves it in
+    // readdir order.
+    //
+    // `Y0` is the counter-case and must still sort: c:1583 parses the argument
+    // over `shortcircuit`, so 0 lands there legitimately and c:518's
+    // `if (shortcircuit && …)` reads it as "no limit" — hence the `> 0` test
+    // rather than `.is_some()`.
+    let limited = state
+        .qualifiers
+        .as_ref()
+        .and_then(|q| q.short_circuit)
+        .is_some_and(|n| n > 0); // c:1856 `shortcircuit ?`
+    let default_spec = if limited { GS_NONE } else { GS_NAME }; // c:1856
     let mut specs: Vec<i32> = state
         .qualifiers
         .as_ref()
         .map(|q| {
             if q.sorts.is_empty() {
-                vec![GS_NAME] // c:1856
+                vec![default_spec] // c:1856
             } else {
                 q.sorts.clone()
             }
@@ -5279,14 +5424,11 @@ fn apply_selection(state: &mut globdata) {
     // here we slice post-walk which produces the same set on the
     // common short-glob case where the scanner doesn't recurse
     // unboundedly. Bug #41 in docs/BUGS.md.
-    if let Some(n) = short_circuit {
-        if n >= 0 {
-            let n = n as usize;
-            if state.matches.len() > n {
-                state.matches.truncate(n);
-            }
-        }
-    }
+    // NOTE: the `Y` short-circuit is deliberately NOT applied here. It bounds
+    // the SCAN (c:Src/glob.c:518), so it must run BEFORE the sort — see the
+    // truncation at the sort_matches call site. Only the `[first,last]`
+    // subscript belongs in this post-sort selection.
+    let _ = short_circuit;
 }
 
 // `haswilds()` is defined in `Src/pattern.c:4306`, not glob.c — the

@@ -14057,3 +14057,484 @@ fn test_dq_nested_inner_flags_are_dropped() {
     let (_s, out, _e) = run_zshrs_parity("a=(one two three four); print -rl -- ${${(o)a}//o/0}");
     assert_eq!(out, "f0ur\n0ne\nthree\ntw0\n");
 }
+
+/// c:Src/signals.c:1112-1119 — while a trap body is running, EXACTLY the
+/// EXIT, DEBUG and ZERR traps are suppressed:
+///
+/// ```c
+///     if (intrap) {
+///         switch (sig) {
+///         case SIGEXIT:
+///         case SIGDEBUG:
+///         case SIGZERR:
+///             return;
+///         }
+///     }
+/// ```
+///
+/// The EXIT trap body's own failing command used to re-enter the ERR trap,
+/// printing a diagnostic zsh never prints. Two separate causes had to be
+/// fixed together: the live EXIT path ran its body without raising `intrap`
+/// (c:1123/1236), and dotrap's guard was a BLANKET `if (intrap) return`
+/// rather than C's three-signal one — so raising intrap alone would have
+/// swallowed signals zsh does deliver from inside a trap body.
+#[test]
+fn err_trap_does_not_fire_from_inside_a_trap_body() {
+    // The EXIT body fails; zsh runs no ERR trap for it.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- err' ERR; trap 'true; false' EXIT; print -r -- main");
+    assert_eq!(out, "main\n", "c:1114-1116 — ZERR is suppressed while intrap");
+
+    // Same through the TRAPZERR function spelling.
+    let (_s, out, _e) = run_zshrs_parity("TRAPZERR() { print -r -- zerr }; trap 'true; false' EXIT; print -r -- main");
+    assert_eq!(out, "main\n", "c:1114-1116 — the function form is suppressed too");
+}
+
+/// The counterpart to the above, and the reason the guard must be C's
+/// SELECTIVE one rather than a blanket `if (intrap) return`: a signal
+/// OUTSIDE {EXIT, DEBUG, ZERR} still dispatches from inside a trap body.
+/// A blanket guard swallows these, which zsh does not.
+#[test]
+fn non_suppressed_signals_still_dispatch_from_inside_a_trap_body() {
+    // USR1 raised from inside a USR2 function trap must run. The USR2 trap is
+    // triggered by a signal from OUTSIDE it — a `kill -USR2` within its own
+    // body would just recurse.
+    let (_s, out, _e) = run_zshrs_parity(
+        "trap 'print -r -- u' USR1; TRAPUSR2() { kill -USR1 $$; print -r -- in-usr2 }; kill -USR2 $$; print -r -- main",
+    );
+    assert_eq!(
+        out, "u\nin-usr2\nmain\n",
+        "USR1 must dispatch from inside a USR2 trap body: {out:?}"
+    );
+
+    // …and from inside the EXIT trap body.
+    let (_s, out, _e) = run_zshrs_parity(
+        "trap 'print -r -- u' USR1; trap 'kill -USR1 $$; print -r -- in-exit' EXIT; print -r -- main",
+    );
+    assert_eq!(out, "main\nu\nin-exit\n", "USR1 must dispatch from inside the EXIT body: {out:?}");
+}
+
+/// c:Src/signals.c — ZERR being one of the three suppressed signals is also
+/// what stops a self-failing ERR trap from recursing: the body's own failure
+/// re-enters on ZERR and is dropped. Pinned because the blanket guard this
+/// replaced existed specifically as a band-aid for this case, and removing it
+/// must not bring the stack overflow back.
+#[test]
+fn self_failing_err_trap_does_not_recurse() {
+    let (_s, out, _e) = run_zshrs_parity("trap 'false' ERR; false; print -r -- survived");
+    assert_eq!(out, "survived\n");
+
+    let (_s, out, _e) = run_zshrs_parity("TRAPZERR() { false }; false; print -r -- survived");
+    assert_eq!(out, "survived\n");
+
+    // The body runs once, and its own failure does not re-enter.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- e; false' ERR; false; print -r -- survived");
+    assert_eq!(out, "e\nsurvived\n");
+}
+
+/// c:Src/exec.c:1088-1092 — entersubsh resets traps in the child:
+///
+/// ```c
+///     if (!(flags & ESUB_KEEPTRAP))
+///         for (sig = 0; sig <= SIGCOUNT; sig++)
+///             if (!(sigtrapped[sig] & ZSIG_FUNC) &&
+///                 !(isset(POSIXTRAPS) && (sigtrapped[sig] & ZSIG_IGNORED)))
+///                 unsettrap(sig);
+/// ```
+///
+/// Three exemptions, two of which a shell that simply keeps everything passes
+/// by accident — which is why each is pinned separately. The loop BOUND is
+/// part of the spec: `sig <= SIGCOUNT` never reaches the pseudo-signals, which
+/// zsh numbers above the real ones (`SIGZERR = SIGCOUNT+1`,
+/// `SIGDEBUG = SIGCOUNT+2`, c:Src/signals.h:34-35), so ERR and DEBUG survive a
+/// subshell while EXIT (sig 0) is inside the loop and is cleared.
+#[test]
+fn subshell_resets_string_traps_but_keeps_func_pseudo_and_posix_ignored() {
+    // String-form traps are cleared in the child, and restored after.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' USR1; (trap); print -r -- out; trap");
+    assert_eq!(out, "out\ntrap -- 'print -r -- p' USR1\n", "c:1089 — cleared in the child, intact in the parent");
+
+    // ZSIG_FUNC survives (c:1090).
+    let (_s, out, _e) = run_zshrs_parity("TRAPUSR1() { print -r -- fn }; (trap)");
+    assert!(out.contains("TRAPUSR1"), "c:1090 — function-form traps survive a subshell: {out:?}");
+
+    // Ignored: cleared without POSIX_TRAPS…
+    let (_s, out, _e) = run_zshrs_parity("trap '' USR1; (trap); print -r -- done");
+    assert_eq!(out, "done\n");
+    // …and kept with it (c:1091).
+    let (_s, out, _e) = run_zshrs_parity("setopt posix_traps; trap '' USR1; (trap)");
+    assert_eq!(out, "trap -- '' USR1\n", "c:1091 — POSIX_TRAPS keeps an ignored trap");
+
+    // Pseudo-signals are above SIGCOUNT, so c:1088's loop never reaches them.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- e' ERR; (trap)");
+    assert_eq!(out, "trap -- 'print -r -- e' ERR\n", "c:signals.h:34 — SIGZERR > SIGCOUNT, survives");
+
+    // EXIT is sig 0 — inside the loop, so cleared in the child.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- x' EXIT; (trap); print -r -- done");
+    assert_eq!(out, "done\nx\n", "c:1088 — EXIT is sig 0 and IS cleared in the child");
+}
+
+/// c:Src/signals.c:854-870 — starttrapscope, called from doshfunc (c:5898),
+/// unsets the EXIT trap for the duration of a function's scope:
+///
+/// ```c
+///     if (intrap) return;            /* no special SIGEXIT inside a trap */
+///     if (sigtrapped[SIGEXIT] && !exit_trap_posix) {
+///         locallevel++;
+///         unsettrap(SIGEXIT);
+///         locallevel--;
+///     }
+/// ```
+///
+/// The unset and the restore are one contract: a shell that never unsets it
+/// lists the trap inside the function, and one that unsets without restoring
+/// silently LOSES it. Both are wrong in opposite directions, so every case
+/// here asserts the listing inside f AND the outer trap still firing after.
+///
+/// zshrs needed two coordinated changes, because its trap body lives in
+/// traps_table where C's lives in siglists[sig]: removetrap has to drop the
+/// body (c:843-845), and endtrapscope's body restore has to run AFTER its
+/// settrap/unsettrap calls — those reach removetrap, which would otherwise
+/// delete what was just restored. C has no such hazard: it restores the body
+/// THROUGH settrap (c:925), so install and restore are a single step.
+#[test]
+fn exit_trap_is_scoped_out_of_a_function_and_restored_after() {
+    // Hidden inside f…
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; f() { trap }; f; print -r -- done");
+    assert_eq!(out, "done\np\n", "c:866 — EXIT unset for the function's scope, and still fires after");
+
+    // …and demonstrably restored, not dropped.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; f() { trap }; f; trap; print -r -- done");
+    assert_eq!(out, "trap -- 'print -r -- p' EXIT\ndone\np\n", "the outer EXIT must be back after f returns");
+
+    // A function that never touches traps must not lose the outer one either.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; f() { : }; f; print -r -- done");
+    assert_eq!(out, "done\np\n");
+}
+
+/// The exemptions around the scoping above, each of which zshrs already had
+/// and which the two-part fix must not disturb.
+#[test]
+fn exit_trap_scoping_exemptions() {
+    // c:863 — POSIX_TRAPS (`!exit_trap_posix`) keeps the outer EXIT visible.
+    let (_s, out, _e) = run_zshrs_parity("setopt posix_traps; trap 'print -r -- p' EXIT; f() { trap }; f; print -r -- done");
+    assert_eq!(out, "trap -- 'print -r -- p' EXIT\ndone\np\n");
+
+    // c:855-857 — "No special SIGEXIT behaviour inside another trap."
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- p' EXIT; TRAPUSR1() { trap }; kill -USR1 $$; print -r -- done");
+    assert!(out.contains("trap -- 'print -r -- p' EXIT"), "inside a trap body the EXIT trap stays visible: {out:?}");
+
+    // Only EXIT is scoped this way.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- u' USR1; f() { trap }; f");
+    assert_eq!(out, "trap -- 'print -r -- u' USR1\n", "USR1 is not scoped out of a function");
+
+    // An EXIT trap set INSIDE a function fires at RETURN, not shell exit.
+    let (_s, out, _e) = run_zshrs_parity("f() { trap 'print -r -- inner' EXIT; print -r -- body }; f; print -r -- after");
+    assert_eq!(out, "body\ninner\nafter\n");
+
+    // The LOCAL_TRAPS restore path (same SAVETRAPS machinery) still works.
+    let (_s, out, _e) = run_zshrs_parity("trap 'print -r -- o' USR1; f() { setopt local_traps; trap 'print -r -- i' USR1 }; f; trap");
+    assert_eq!(out, "trap -- 'print -r -- o' USR1\n", "the outer USR1 body must be restored, not the inner one");
+}
+
+/// `:A` and `:P` are not interchangeable, and they were sharing one arm.
+///
+///   :A  c:Src/subst.c:4737 → `chrealpath(&copy, 'A', 1)`; chrealpath's mode-'A'
+///       branch runs chabspath FIRST (c:1988-1990), so `.`/`..` collapse
+///       LEXICALLY whether or not the path exists.
+///   :P  c:Src/subst.c:4787-4796 → cwd-prepend, then `xsymlink(copy, 1)` →
+///       `chrealpath(&s, 'P', heap)` — mode 'P' SKIPS chabspath, so `.`/`..`
+///       fold away ONLY through realpath(3), which cannot resolve them across a
+///       component that does not exist. When nothing resolves, chrealpath's
+///       `real == NULL` branch (c:2047) returns the string untouched.
+///
+/// The pair only separates on a path that does NOT exist. On an existing one
+/// realpath resolves everything and the two agree — which is exactly why a
+/// shared implementation looked correct.
+#[test]
+fn modifier_a_collapses_lexically_and_p_only_through_realpath() {
+    // Non-existent: :A collapses, :P must not.
+    for (path, want_a, want_p) in [
+        ("/a/b/../c", "/a/c", "/a/b/../c"),
+        ("/nope/../x", "/x", "/nope/../x"),
+        ("/a/./b", "/a/b", "/a/./b"),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("f={path}; print -r -- ${{f:A}}"));
+        assert_eq!(out, format!("{want_a}\n"), ":A must collapse {path:?} lexically");
+        let (_s, out, _e) = run_zshrs_parity(&format!("f={path}; print -r -- ${{f:P}}"));
+        assert_eq!(out, format!("{want_p}\n"), ":P must NOT collapse {path:?} — realpath cannot cross a missing component");
+    }
+
+    // Existing: realpath resolves, so both agree.
+    let (_s, a, _e) = run_zshrs_parity("f=/usr/bin/../bin; print -r -- ${f:A}");
+    let (_s, p, _e) = run_zshrs_parity("f=/usr/bin/../bin; print -r -- ${f:P}");
+    assert_eq!(a, "/usr/bin\n");
+    assert_eq!(p, "/usr/bin\n", ":A and :P agree once the path exists");
+
+    // `/..` resolves through realpath for both (/ exists).
+    let (_s, out, _e) = run_zshrs_parity("f=/..; print -r -- ${f:P}");
+    assert_eq!(out, "/\n");
+}
+
+/// c:Src/hist.c:1941-1944 — chabspath at the ROOT:
+///
+/// ```c
+///     } else if (dest == *junkptr + 1) {
+///         current += 2;        /* skip the "..", keep "/" */
+///     } else {
+///         return 0;            /* error ONLY when nothing accumulated */
+///     }
+/// ```
+///
+/// Returning an error for `/..` instead made chabspath fail, and the modifier
+/// dispatch reports a failed chabspath as `unrecognized modifier 'a'` — so
+/// `${f:a}` on `/..` errored where zsh prints `/`. `:A` hid it by reaching
+/// realpath(3), which resolves `/..` on its own.
+///
+/// Note `current += 2` consumes the `..` but NOT the following '/', which the
+/// '/' arm then copies on top of the root — so zsh really does yield `//x` for
+/// `/../x`. Consuming the slash too is the tidier-looking answer and wrong.
+#[test]
+fn chabspath_dotdot_at_root_is_skipped_not_an_error() {
+    for (path, want) in [
+        ("/..", "/"),
+        ("/../..", "/"),
+        ("/../x", "//x"),
+        ("/../../y", "/y"),
+        ("/", "/"),
+        ("/a/../b", "/b"),
+        ("/a/b/../c", "/a/c"),
+    ] {
+        let (status, out, err) = run_zshrs_parity(&format!("f={path}; print -r -- ${{f:a}}"));
+        assert_eq!(status, 0, ":a on {path:?} must not error (stderr: {err:?})");
+        assert_eq!(out, format!("{want}\n"), ":a on {path:?}");
+    }
+}
+
+/// c:Src/params.c:1741-1748 — the `(b:N:)` subscript begin-index is normalized
+/// and then BOUNDS-CHECKED; the search runs only when it lands in the array:
+///
+/// ```c
+///     len = arrlen(ta);
+///     if (beg < 0) beg += len;
+///     if (down) {                    /* reverse: (I)/(R) */
+///         if (beg < 0) return 0;
+///     } else if (beg >= len)         /* forward: (i)/(r) */
+///         return len + 1;
+///     if (beg >= 0 && beg < len) {
+///         if (down) { if (!hasbeg) beg = len - 1; ...
+/// ```
+///
+/// zshrs clamped an out-of-range begin to the nearest valid element and
+/// searched from there, and floored a negative one to 0 instead of counting it
+/// back from the end.
+///
+/// The subtle part — and what a reimplementation gets wrong — is that "found
+/// nothing" has TWO answers depending on WHY: forward-past-the-end is len+1
+/// (c:1746), while reverse-past-the-end, and EITHER direction still-negative
+/// after `beg += len`, is 0. In-range begins cannot tell those apart.
+#[test]
+fn subscript_begin_index_is_bounds_checked_not_clamped() {
+    let arr = "dup=(x y x y x); "; // 5 elements
+
+    for (sub, want) in [
+        // Past the end: forward → len+1, reverse → 0. NOT the same.
+        ("(ib:6:)x", "6"),
+        ("(ib:9:)x", "6"),
+        ("(Ib:6:)x", "0"),
+        ("(Ib:9:)x", "0"),
+        // Negative: `beg += len` counts back from the end.
+        ("(ib:-1:)x", "5"),
+        ("(ib:-2:)x", "5"),
+        ("(ib:-3:)x", "3"),
+        ("(Ib:-2:)x", "3"),
+        ("(Ib:-5:)x", "1"),
+        // Still negative after `beg += len` → 0, even FORWARD, where an
+        // ordinary miss would be len+1.
+        ("(ib:-6:)x", "0"),
+        ("(Ib:-6:)x", "0"),
+        // In range: unaffected.
+        ("(ib:1:)x", "1"),
+        ("(ib:3:)x", "3"),
+        ("(Ib:4:)x", "3"),
+        ("(Ib:5:)x", "5"),
+        // No `b` at all — the reverse default (len-1) is applied AFTER the
+        // bounds check (c:1750), so these must keep working.
+        ("(i)x", "1"),
+        ("(I)x", "5"),
+        ("(i)nomatch", "6"),
+        ("(I)nomatch", "0"),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("{arr}print -r -- ${{dup[{sub}]}}"));
+        assert_eq!(out, format!("{want}\n"), "${{dup[{sub}]}}");
+    }
+
+    // The element-returning spellings follow the same bounds.
+    for (sub, want) in [("(rb:6:)x", ""), ("(Rb:6:)x", ""), ("(Rb:3:)x", "x")] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("{arr}print -r -- \"[${{dup[{sub}]}}]\""));
+        assert_eq!(out, format!("[{want}]\n"), "${{dup[{sub}]}}");
+    }
+}
+
+/// c:Src/pattern.c:1093-1100 — glob flags come in ON/OFF pairs and the LAST one
+/// wins:
+///
+/// ```c
+///     case 'm': patglobflags |= GF_MATCHREF;
+///     case 'M': patglobflags &= ~GF_MATCHREF;
+///     case 'b': patglobflags |= GF_BACKREF;
+///     case 'B': patglobflags &= ~GF_BACKREF;
+/// ```
+///
+/// `(#M)` was inert, from two layers that each hid the other: the matcher
+/// (c:2526) gated $MATCH on `prog->globflags` — the flags to set AT START
+/// (c:Src/zsh.h:1606), identical for `(#m)a*`, `(#m)(#M)a*` and `(#M)(#m)a*` —
+/// where C reads the GLOBAL patglobflags; and glob_match_static then re-set
+/// $MATCH from `pattern.contains("(#m)")`, a substring test that can only
+/// answer "on".
+///
+/// Reading $MATCH back is the point: whether it was SET is the whole question,
+/// and the exit status cannot see it.
+#[test]
+fn glob_flag_off_switches_turn_their_on_switch_back_off() {
+    let e = "setopt extended_glob; ";
+
+    // (#m)/(#M) — the pair that was broken.
+    for (pat, want) in [
+        ("(#m)a*", "abc"),
+        ("(#M)(#m)a*", "abc"), // (#m) is last → on
+        ("(#m)(#M)a*", ""),    // (#M) is last → off
+        ("(#M)a*", ""),
+        ("a*", ""),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = {pat} ]]; print -r -- \"[$MATCH]\""));
+        assert_eq!(out, format!("[{want}]\n"), "$MATCH after [[ abc = {pat} ]]");
+    }
+
+    // MBEGIN/MEND follow MATCH, and are unset together with it.
+    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#m)a* ]]; print -r -- \"[$MATCH][$MBEGIN][$MEND]\""));
+    assert_eq!(out, "[abc][1][3]\n");
+    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#m)(#M)a* ]]; print -r -- \"[$MATCH][$MBEGIN][$MEND]\""));
+    assert_eq!(out, "[][][]\n");
+
+    // (#b)/(#B) always worked — that check reads compiled state (patnpar), not
+    // pattern text. Pinned so the two stay consistent.
+    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#b)(a)* ]]; print -r -- \"[$match[1]]\""));
+    assert_eq!(out, "[a]\n");
+    let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ abc = (#b)(#B)(a)* ]]; print -r -- \"n=${{#match}}\""));
+    assert_eq!(out, "n=0\n");
+
+    // The substitution paths share the matcher.
+    let (_s, out, _e) = run_zshrs_parity(&format!("{e}v=foobar; print -r -- ${{v//(#m)o/[$MATCH]}}"));
+    assert_eq!(out, "f[o][o]bar\n");
+}
+
+/// c:Src/builtin.c:6280-6291 — `emulate -l` lists what the options WOULD be
+/// under an emulation, without changing the shell:
+///
+/// ```c
+///     if (opt_l) {
+///         cmdopts = (char *)zhalloc(OPT_SIZE);
+///         memcpy(cmdopts, opts, OPT_SIZE);      /* a COPY of the live opts */
+///     } else
+///         cmdopts = opts;
+///     emulate(shname, opt_R, &emulation, cmdopts);   /* ALWAYS runs */
+///     ...
+///     if (opt_l) { list_emulate_options(cmdopts, opt_R); return 0; }
+/// ```
+///
+/// Two bugs stacked here, and the first hid the second:
+///  - print_emulate_option dropped C's flag filter (c:988-990), so the WHOLE
+///    table printed: 197 lines where zsh prints 81 (-l) / 177 (-lR).
+///  - bin_emulate guarded the `emulate(...)` call with `if !opt_l`, so cmdopts
+///    kept the CURRENT options and `-l sh` listed zsh's defaults — ~38 wrong.
+///
+/// `emulate -l zsh` was correct throughout: under -f the current options ARE
+/// zsh's defaults, so listing the wrong thing gives the right answer. It is the
+/// one emulation that proves nothing.
+#[test]
+fn emulate_l_lists_the_target_emulations_options_without_applying_them() {
+    // The counts are exact: 81 options carry OPT_EMULATE; 196 - 12 aliases
+    // - 7 specials = 177.
+    for e in ["sh", "ksh", "csh", "zsh"] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("emulate -l {e} | wc -l"));
+        assert_eq!(out.trim(), "81", "emulate -l {e} must list the OPT_EMULATE options");
+        let (_s, out, _e) = run_zshrs_parity(&format!("emulate -lR {e} | wc -l"));
+        assert_eq!(out.trim(), "177", "emulate -lR {e} must list all non-alias non-special options");
+    }
+
+    // The VALUES must be the target emulation's, not the current shell's.
+    // `sh` sets these; plain zsh does not.
+    let (_s, out, _e) = run_zshrs_parity("emulate -l sh | grep -cx 'shwordsplit'");
+    assert_eq!(out.trim(), "1", "emulate -l sh must report sh's shwordsplit, not zsh's");
+    let (_s, out, _e) = run_zshrs_parity("emulate -l sh | grep -cx 'ksharrays'");
+    assert_eq!(out.trim(), "1", "emulate -l sh must report sh's ksharrays");
+    let (_s, out, _e) = run_zshrs_parity("emulate -l zsh | grep -cx 'noksharrays'");
+    assert_eq!(out.trim(), "1", "emulate -l zsh must report zsh's noksharrays");
+
+    // Aliases are never listed (c:988), even though they ARE in the option table.
+    for a in ["braceexpand", "dotglob", "hashall", "histexpand"] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("emulate -lR sh | grep -c '{a}'"));
+        assert_eq!(out.trim(), "0", "OPT_ALIAS option {a} must never be listed");
+    }
+
+    // -l must NOT change the shell: C lists a copy.
+    let (_s, out, _e) = run_zshrs_parity("emulate -l sh >/dev/null; a=(1 2 3); print -r -- ${a[1]}");
+    assert_eq!(out, "1\n", "emulate -l must not apply ksharrays to the live shell");
+    let (_s, out, _e) = run_zshrs_parity("setopt extended_glob; emulate -l sh >/dev/null; print -r -- $options[extendedglob]");
+    assert_eq!(out, "on\n", "emulate -l must leave live options untouched");
+
+    // …while plain `emulate` and `emulate -L` still DO apply (Bug #26).
+    let (_s, out, _e) = run_zshrs_parity("f() { emulate -L sh; a=(1 2 3); print -r -- \"[${a[0]}]\" }; f; a=(1 2 3); print -r -- \"[${a[0]}]\"");
+    assert_eq!(out, "[1]\n[]\n", "emulate -L must apply ksharrays inside the function only");
+}
+
+/// c:Src/Modules/mathfunc.c:144/168 — `jn` and `yn` take the Bessel ORDER as
+/// their first argument, coerced to an integer:
+///
+/// ```c
+///     NUMMATHFUNC("jn", math_func, 2, 2, MF_JN | TFLAG(TF_INT1)),
+///     case MF_JN: retd = jn(argi, argd2); break;      /* c:333-335 */
+///     NUMMATHFUNC("yn", math_func, 2, 2, MF_YN | TFLAG(TF_INT1))
+///     case MF_YN: retd = yn(argi, argd2); break;      /* c:420-422 */
+/// ```
+///
+/// Both were unimplemented on the live path: math.rs's inline table carried
+/// j0/j1/y0/y1 but stopped short of the order-taking forms, while the faithful
+/// module port (modules/mathfunc.rs) HAS them and is shadowed by it. The
+/// zero-order family all worked, so the set looked covered.
+///
+/// TF_INT1 (c:106) is the mirror of ldexp/scalb's TF_INT2: it is the FIRST
+/// argument that is truncated, not the second.
+#[test]
+fn mathfunc_jn_yn_take_an_integer_order() {
+    let z = "zmodload zsh/mathfunc; ";
+
+    for (expr, want) in [
+        ("jn(0,0)", "1."),
+        ("jn(1,0)", "0."),
+        ("jn(2,1)", "0.11490348493190049"),
+        ("yn(0,1)", "0.08825696421567697"),
+        ("yn(1,1)", "-0.78121282130028868"),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( {expr} ))"));
+        assert_eq!(out, format!("{want}\n"), "$(( {expr} ))");
+    }
+
+    // TF_INT1: the ORDER truncates, so these equal their integer-order forms.
+    let (_s, a, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( jn(1.9,0) ))"));
+    let (_s, b, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( jn(1,0) ))"));
+    assert_eq!(a, b, "jn's first arg is truncated to int (TF_INT1)");
+    let (_s, a, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( yn(1.7,1) ))"));
+    let (_s, b, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( yn(1,1) ))"));
+    assert_eq!(a, b, "yn's first arg is truncated to int (TF_INT1)");
+
+    // 2 args exactly (c:144 min=max=2).
+    let (status, _o, err) = run_zshrs_parity(&format!("{z}print -r -- $(( jn(1) ))"));
+    assert_ne!(status, 0, "jn/1 must be an arity error: {err:?}");
+
+    // The zero-order family, which always worked, must keep working.
+    for (expr, want) in [("j0(0)", "1."), ("j1(0)", "0."), ("y1(1)", "-0.78121282130028868")] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("{z}print -r -- $(( {expr} ))"));
+        assert_eq!(out, format!("{want}\n"), "$(( {expr} ))");
+    }
+}

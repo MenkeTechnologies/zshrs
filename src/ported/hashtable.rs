@@ -1332,6 +1332,7 @@ pub fn freeshfuncnode(hn: &str) {
 /// default body emits the full re-parseable `name () { body }` form
 /// including autoload-stub, traced markers, and trailing redirections.
 pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
+
     // c:916 — `Shfunc f = (Shfunc) hn;` — Rust types give us shfunc.
     // c:917 — `char *t = 0;` — declared but only used by the funcdef/redir
     // branches; Rust scope-locals the `t` binding inside each branch.
@@ -1938,7 +1939,43 @@ pub fn printshfuncnode(hn: &shfunc, printflags: i32) {
                 }
                 fmt_body(&s, 1, false)
             };
-            t = hn.body.clone().map(|s| canonicalize_body(&s));
+            // c:954 — `t = getpermtext(fd, NULL, 1);`. C holds the body as
+            // compiled wordcode and renders it back to source with
+            // getpermtext, which is what produces zsh's canonical layout:
+            // `do`/`then` on their own line with the body indented under
+            // them, `(` and `)` broken onto separate lines, an `always`
+            // block re-emitted as `{ … } always { … }`, and a trailing
+            // space after every assignment (taddassign, c:203-204).
+            //
+            // zshrs only has an Eprog for zwc-loaded functions (the
+            // `hn.funcdef` branch above); shell-defined ones keep their raw
+            // source, which is why this branch existed. Re-parse that source
+            // and render it through the SAME deparser rather than
+            // re-deriving getpermtext's formatting rules by hand —
+            // canonicalize_body reproduced the flat cases but not the
+            // indenting ones, and mangled `always` blocks into
+            // `print x } always { print y`.
+            //
+            // The source is parsed as-is. hn.body arrives with the framing
+            // `{ }` of `name() { … }` ALREADY stripped, so removing a
+            // leading `{` here would eat the braces of a body whose first
+            // command is itself a brace group (`f() { { print x } }`) and
+            // would leave an always-block body unbalanced. That
+            // unconditional strip is exactly why canonicalize_body below
+            // rendered `f() { { print x } always { print y } }` as
+            // `print x } always { print y`.
+            //
+            // parse_string is the wordcode parser, whose coverage is
+            // narrower than the AST parser that executes these bodies, so
+            // fall back to canonicalize_body when it can't take the source
+            // rather than losing the listing entirely.
+            let deparse_body = |source: &str| -> String {
+                match crate::ported::exec::parse_string(source.trim(), 1) {
+                    Some(p) => crate::ported::text::getpermtext(Box::new(p), None, 1), // c:954
+                    None => canonicalize_body(source),
+                }
+            };
+            t = hn.body.clone().map(|s| deparse_body(&s));
         }
         // c:955-958 — PM_TAGGED | PM_TAGGED_LOCAL → `# traced` marker.
         if (hn.node.flags & (PM_TAGGED | PM_TAGGED_LOCAL) as i32) != 0 {
@@ -4485,5 +4522,47 @@ mod tests {
     #[test]
     fn newhashtable_returns_tuple_type() {
         let _: (String, i32) = newhashtable(0, "test");
+    }
+
+    /// c:954 — printshfuncnode renders a function body with
+    /// `getpermtext(fd, NULL, 1)`, so `functions f` prints CANONICAL text
+    /// rather than the source as typed. zshrs keeps raw source for
+    /// shell-defined functions, so its listing path re-parses and renders
+    /// through that same deparser; these are the shapes where the layout is
+    /// an actual decision rather than a passthrough.
+    ///
+    /// The `always` case is the one that matters most: the previous
+    /// hand-rolled canonicalization emitted `print x } always { print y`,
+    /// which is not merely mis-indented, it no longer parses — and
+    /// `functions` output is meant to be re-readable by the shell.
+    ///
+    /// Pins the deparse itself rather than printshfuncnode's stdout, so it
+    /// doesn't depend on capturing print! output. Indent 1 matches C, which
+    /// writes one tab via zoutputtab (c:949) before calling getpermtext.
+    #[test]
+    fn function_body_deparses_to_canonical_layout() {
+        let _g = crate::test_util::global_state_lock();
+        for (body, want) in [
+            // `do` gets its own line; the body indents beneath it.
+            (
+                "for i in 1 2; do print $i; done",
+                "for i in 1 2\n\tdo\n\t\tprint $i\n\tdone",
+            ),
+            // `(` and `)` break onto their own lines.
+            ("(print s)", "(\n\t\tprint s\n\t)"),
+            // taddassign appends a trailing space after the value
+            // (c:Src/text.c:203-204) and nothing backs it off.
+            ("g=inner", "g=inner "),
+            // The shape the emulation broke.
+            (
+                "{ print x } always { print y }",
+                "{\n\t\tprint x\n\t} always {\n\t\tprint y\n\t}",
+            ),
+        ] {
+            let prog = crate::ported::exec::parse_string(body, 1)
+                .unwrap_or_else(|| panic!("body must parse for the listing path: {body:?}"));
+            let got = crate::ported::text::getpermtext(Box::new(prog), None, 1);
+            assert_eq!(got, want, "c:954 deparse of {body:?}");
+        }
     }
 }

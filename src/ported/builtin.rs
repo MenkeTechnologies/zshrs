@@ -4235,6 +4235,20 @@ pub fn bin_typeset(
     // Bug #24 in docs/BUGS.md.
     let tied_mode = (on & PM_TIED) != 0;
     if tied_mode {
+        // c:2818-2822 — the FIRST thing the -T block does, ahead of the
+        // argument-count checks:
+        //     if (OPT_ISSET(ops,'m')) {
+        //         zwarnnam(name, "incompatible options for -T");
+        //         unqueue_signals();
+        //         return 1;
+        //     }
+        // `-m` takes its names as PATTERNS, which cannot express a tie; it was
+        // silently accepted and did nothing.
+        if OPT_ISSET(&ops, b'm') {
+            zwarnnam(name, "incompatible options for -T"); // c:2819
+            unqueue_signals(); // c:2820
+            return 1; // c:2821
+        }
         // c:2827-2830 — `if (nargs < 2)` reject.
         if argv.len() < 2 {
             zwarnnam(name, "-T requires names of scalar and array");
@@ -4254,6 +4268,28 @@ pub fn bin_typeset(
             Some(i) => (&argv[0][..i], Some(argv[0][i + 1..].to_string())),
             None => (argv[0].as_str(), None),
         };
+        // NOT PORTED: c:2841-2846's
+        //     asg0 = *asg;
+        //     if (ASG_ARRAYP(&asg0)) {
+        //         zwarnnam(name, "first argument of tie must be scalar: %s",
+        //                  asg0.name);
+        //         return 1;
+        //     }
+        // so `typeset -T S=(a b) s` is still silently accepted where zsh fails.
+        //
+        // It cannot be decided here. ASG_ARRAYP asks whether the PARSER built an
+        // array-valued assignment — the reserved-word `typeset` form seeing a
+        // literal `=(` — and that is a property of the parse, not of the text.
+        // By the time bin_typeset has argv it is just a string, and the two
+        // cases are textually identical:
+        //     typeset -T S=(a b) s     → array assignment, must FAIL
+        //     typeset -T "S=(a b)" s   → scalar assignment of the literal text
+        //                                `(a b)`, must SUCCEED (rc=0, $S is
+        //                                `(a b)` — verified against the oracle)
+        // A `starts_with('(')` test rejects both; it was tried and broke the
+        // quoted form. Fixing this needs the assignment shape carried down from
+        // the compiler (C's `assigns` LinkList), which is the same missing
+        // reserved-word/builtin distinction that ASG_ARRAYP exists to express.
         // Second arg: ARRAY name (with optional =(elements...) init).
         // Per c:2847-2854, second arg must be array-shape if it carries
         // a value. The Rust port accepts either `arr` or `arr=(a b c)`.
@@ -4779,6 +4815,23 @@ pub fn bin_typeset(
         return returnval;
     }
 
+    // c:3035-3039 — `+T` is not a way to untie:
+    //     if (off & PM_TIED) {
+    //         unqueue_signals();
+    //         zerrnam(name, "use unset to remove tied variables");
+    //         return 1;
+    //     }
+    // C puts this at the TOP LEVEL, so it precedes everything typeset_single
+    // does — notably the special-parameter type-change rule, whose `chflags`
+    // watches PM_TIED and would otherwise claim `typeset +T PATH path` and
+    // report "can't change type of a special parameter" instead. The check was
+    // missing entirely, so `+T` was silently accepted and did nothing.
+    if (off as u32 & PM_TIED) != 0 {
+        unqueue_signals(); // c:3036
+        zerrnam(name, "use unset to remove tied variables"); // c:3037
+        return 1; // c:3038
+    }
+
     let mut tied_name_count: usize = 0;
     for arg in argv {
         // c:Src/builtin.c typeset_single — when PM_LOCAL is in
@@ -4801,6 +4854,100 @@ pub fn bin_typeset(
             Some(i) => &arg[..i],
             None => arg.as_str(),
         };
+
+        // c:2117-2193 (inside typeset_single) — changing the TYPE of an
+        // existing parameter is refused for specials, with SECONDS the one
+        // documented exception.
+        //
+        //     int chflags = ((off & pm->node.flags) | (on & ~pm->node.flags)) &
+        //          (PM_INTEGER|PM_EFLOAT|PM_FFLOAT|PM_HASHED|PM_ARRAY|PM_TIED|PM_AUTOLOAD);
+        //     /* keep the parameter if just switching between floating types */
+        //     if ((tc = chflags && chflags != (PM_EFLOAT|PM_FFLOAT))) { ... }
+        //     ...
+        //     if (... || tc) {
+        //         if (pm->node.flags & PM_SPECIAL) {
+        //             int err = 1;
+        //             if (!readonly && !strcmp(pname, "SECONDS")) {
+        //                 ... else if (!setsecondstype(pm, on, off)) { ... err = 0; }
+        //             }
+        //             if (err) { zerrnam(cname, "%s: can't change type of a "
+        //                                "special parameter", pname); return NULL; }
+        //
+        // None of this was ported, so a type change against a special was
+        // silently ACCEPTED and then dropped: `typeset -F RANDOM`,
+        // `typeset -F LINENO` and `typeset -F HISTSIZE` all returned 0 having
+        // done nothing, where zsh fails. And the SECONDS exception — the
+        // documented way to get sub-second timing — never took effect:
+        // `typeset -F SECONDS` left it `integer-special` instead of
+        // `float-special`.
+        //
+        // `chflags` is why this fires only on a REAL type change:
+        // `typeset -i SECONDS` / `typeset -i LINENO` leave chflags == 0 (the
+        // bit is already set) and are correctly no-ops, and -E↔-F is exempted
+        // outright by the `!= (PM_EFLOAT|PM_FFLOAT)` clause. It also covers
+        // `typeset -a PATH`, which is a PM_ARRAY type change on a special and
+        // so earns the same message rather than an array-specific one.
+        //
+        // The `readonly` half of C's guard is not modelled here: it gates
+        // turning readonly OFF, which reaches this branch by a different route.
+        // setsecondstype (params.rs) is the real port and had NO callers.
+        if !tied_mode {
+            let pmf = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg_name).map(|p| p.node.flags as u32));
+            if let Some(pmf) = pmf {
+                let chflags = ((off as u32 & pmf) | (on as u32 & !pmf))
+                    & (PM_INTEGER
+                        | PM_EFLOAT
+                        | PM_FFLOAT
+                        | PM_HASHED
+                        | PM_ARRAY
+                        | PM_TIED
+                        | PM_AUTOLOAD); // c:2118-2120
+                let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2122
+                if tc && (pmf & PM_SPECIAL) != 0 {
+                    let mut err = true; // c:2144
+                    if arg_name == "SECONDS" {
+                        // c:2171 — `else if (!setsecondstype(pm, on, off))`.
+                        let ok = paramtab()
+                            .write()
+                            .ok()
+                            .and_then(|mut t| {
+                                t.get_mut(arg_name)
+                                    .map(|p| {
+                                        crate::ported::params::setsecondstype(
+                                            p, on as i32, off as i32,
+                                        )
+                                    })
+                            })
+                            .unwrap_or(1);
+                        if ok == 0 {
+                            err = false; // c:2176
+                            // c:2172-2175 — `if (asg->value.scalar && !(pm =
+                            // assignsparam(pname, ..., 0))) return NULL;`
+                            if let Some(i) = arg.find('=') {
+                                crate::ported::params::assignsparam(arg_name, &arg[i + 1..], 0);
+                            }
+                        }
+                    }
+                    if err {
+                        // c:2181-2187
+                        if !OPT_ISSET(&ops, b'p') {
+                            zerrnam(
+                                name,
+                                &format!("{arg_name}: can't change type of a special parameter"),
+                            );
+                        }
+                        unqueue_signals();
+                        return 1;
+                    }
+                    // SECONDS: setsecondstype already installed the new type;
+                    // c:2169's `tc = 0` skips the normal conversion below.
+                    continue;
+                }
+            }
+        }
 
         // c:2519-2552 (Src/builtin.c, inside typeset_single) — name
         // validation gate. Direct port:
@@ -9622,6 +9769,59 @@ pub fn bin_print(
     ops: &options,
     func: i32,
 ) -> i32 {
+    // c:4659-4684 — "Error check option combinations and option arguments".
+    // The FIRST thing bin_print does, before any argument work:
+    //     if (OPT_ISSET(ops,'z') + OPT_ISSET(ops,'s') + OPT_ISSET(ops,'S') +
+    //         OPT_ISSET(ops,'v') > 1) {
+    //         zwarnnam(name, "only one of -s, -S, -v, or -z allowed"); return 1; }
+    //     if ((OPT_ISSET(ops,'z') | OPT_ISSET(ops,'s') | OPT_ISSET(ops,'S')) +
+    //         (OPT_ISSET(ops,'c') | OPT_ISSET(ops,'C')) > 1) {
+    //         zwarnnam(name, "-c or -C not allowed with -s, -S, or -z"); return 1; }
+    //     if ((OPT_ISSET(ops,'z') | OPT_ISSET(ops,'v') | OPT_ISSET(ops,'s') |
+    //          OPT_ISSET(ops,'S')) + (OPT_ISSET(ops,'p') | OPT_ISSET(ops,'u')) > 1) {
+    //         zwarnnam(name, "-p or -u not allowed with -s, -S, -v, or -z"); return 1; }
+    //
+    // None of the three were ported, so every conflicting combination was
+    // silently accepted: `print -s -v v a b`, `print -C 2 -s a b` and
+    // `print -u1 -v v a b` all returned 0 having done something other than what
+    // zsh does. Note the mixed operators are deliberate — `+` counts DISTINCT
+    // options in the first test (so `-s -S` is two), while `|` collapses each
+    // GROUP in the other two before counting, so the test is "one from each
+    // group", not "two options total".
+    //
+    // C's fourth check ("-f not allowed with -c, -C, or -S", c:4679-4683) is
+    // COMMENTED OUT and must NOT be reinstated: `print -f %s -c a b` is legal
+    // and prints, as verified against the oracle. The string exists in the
+    // source but the code is dead — the reason to read the C rather than grep
+    // its message table.
+    //
+    // These precede the `-C` argument validation below, matching C, so
+    // `print -C 0 -s` reports the conflict rather than the bad column count.
+    {
+        let n_sv = i32::from(OPT_ISSET(ops, b'z'))
+            + i32::from(OPT_ISSET(ops, b's'))
+            + i32::from(OPT_ISSET(ops, b'S'))
+            + i32::from(OPT_ISSET(ops, b'v'));
+        if n_sv > 1 {
+            zwarnnam(name, "only one of -s, -S, -v, or -z allowed"); // c:4664
+            return 1; // c:4665
+        }
+        let g_zsS = OPT_ISSET(ops, b'z') || OPT_ISSET(ops, b's') || OPT_ISSET(ops, b'S');
+        let g_cC = OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'C');
+        if i32::from(g_zsS) + i32::from(g_cC) > 1 {
+            zwarnnam(name, "-c or -C not allowed with -s, -S, or -z"); // c:4670
+            return 1; // c:4671
+        }
+        let g_zvsS = OPT_ISSET(ops, b'z')
+            || OPT_ISSET(ops, b'v')
+            || OPT_ISSET(ops, b's')
+            || OPT_ISSET(ops, b'S');
+        let g_pu = OPT_ISSET(ops, b'p') || OPT_ISSET(ops, b'u');
+        if i32::from(g_zvsS) + i32::from(g_pu) > 1 {
+            zwarnnam(name, "-p or -u not allowed with -s, -S, -v, or -z"); // c:4677
+            return 1; // c:4678
+        }
+    }
     let nonewline = OPT_ISSET(ops, b'n'); // c:4595
     let raw = OPT_ISSET(ops, b'r') || OPT_ISSET(ops, b'R'); // c:4596
                                                             // c:4597 — `-l` puts one arg per line. `-c` is "columns" but
@@ -10137,10 +10337,36 @@ pub fn bin_print(
     // the next row. Bug #40 in docs/BUGS.md: zshrs ignored `-a` and
     // always produced column-major output.
     let body = if !_printf_mode && OPT_HASARG(ops, b'C') {
-        let nc: usize = OPT_ARG(ops, b'C')
-            .and_then(|s| s.trim().parse().ok())
-            .filter(|&n: &usize| n > 0)
-            .unwrap_or(1);
+        // c:4687-4698 — `-C` validates its argument two ways and FAILS; it does
+        // not fall back:
+        //     nc = (int)zstrtol(argptr, &eptr, 10);
+        //     if (*eptr) {
+        //         zwarnnam(name, "number expected after -%c: %s", 'C', argptr);
+        //         return 1;
+        //     }
+        //     if (nc <= 0) {
+        //         zwarnnam(name, "invalid number of columns: %s", argptr);
+        //         return 1;
+        //     }
+        // This parsed as usize, filtered `n > 0`, and silently
+        // `.unwrap_or(1)`, so `print -C 0`, `print -C -1`, `print -C abc` and
+        // `print -C ''` all printed one column per line and returned 0 where
+        // zsh fails. zstrtol is what separates the two messages: trailing
+        // garbage leaves *eptr set ("3x" → "number expected"), while a
+        // well-formed non-positive parses cleanly and reaches the second check
+        // ("-1" → "invalid number of columns"). Leading blanks are skipped by
+        // zstrtol, so `-C ' 2'` is valid.
+        let argptr = OPT_ARG(ops, b'C').unwrap_or("");
+        let (nc_l, rest) = crate::ported::utils::zstrtol_underscore(argptr, 10, false); // c:4689
+        if !rest.is_empty() {
+            zwarnnam(name, &format!("number expected after -C: {argptr}")); // c:4691
+            return 1; // c:4692
+        }
+        if nc_l <= 0 {
+            zwarnnam(name, &format!("invalid number of columns: {argptr}")); // c:4695
+            return 1; // c:4696
+        }
+        let nc: usize = nc_l as usize;
         let argc = processed_args.len();
         let nr = (argc + nc - 1) / nc;
         let across = OPT_ISSET(ops, b'a'); // c:4947 / c:4980
@@ -11738,17 +11964,38 @@ pub fn bin_emulate(
         // changed the emulation tag but left every option at its zsh
         // default, so `a=(1 2 3); echo ${a[0]}` stayed 1-indexed
         // (empty result) instead of switching to KSH_ARRAYS 0-indexed.
-        if !opt_l {
-            crate::ported::options::emulate(shname.as_str(), opt_r);
-            // Re-sync cmdopts from OPTS_LIVE so the snapshot the
-            // opt_L block writes back into reflects the new defaults
-            // (rather than the pre-emulate state captured above).
-            for n in ZSH_OPTIONS_SET.iter() {
-                cmdopts.insert(
-                    n.to_string(),
-                    crate::ported::options::opt_state_get(n).unwrap_or(false),
-                );
-            }
+        // c:6285 — `emulate(shname, opt_R, &emulation, cmdopts);` runs
+        // UNCONDITIONALLY. C can do that because it passes the target array in:
+        // under -l cmdopts is a COPY of opts (c:6281-6282) and the emulation is
+        // applied to the copy; otherwise cmdopts aliases the live opts[].
+        //
+        // options::emulate() has no such parameter — it writes through to
+        // OPTS_LIVE — so the -l case is expressed by applying it to the live
+        // state, snapshotting the result, and restoring. Same effect as C's
+        // copy: `emulate -l sh` reports what the options WOULD be, and the
+        // shell is left untouched.
+        //
+        // Skipping the call under -l (as this did) meant cmdopts stayed the
+        // CURRENT options, so `emulate -l sh` listed zsh's defaults, not sh's —
+        // ~38 options wrong. It looked right only for `emulate -l zsh`, where
+        // the current options ARE the answer.
+        let saved_opts = if opt_l {
+            Some(crate::ported::options::opt_state_snapshot())
+        } else {
+            None
+        };
+        crate::ported::options::emulate(shname.as_str(), opt_r); // c:6285
+        // Re-sync cmdopts from OPTS_LIVE so it reflects the emulation's
+        // defaults rather than the pre-emulate state captured above.
+        for n in ZSH_OPTIONS_SET.iter() {
+            cmdopts.insert(
+                n.to_string(),
+                crate::ported::options::opt_state_get(n).unwrap_or(false),
+            );
+        }
+        if let Some(saved) = saved_opts {
+            // Undo the live apply — C never touched opts[] in the -l path.
+            crate::ported::options::opt_state_restore(saved);
         }
 
         // c:6287-6289 — opt_L: set LOCALOPTIONS/LOCALTRAPS/LOCALPATTERNS=1
@@ -12960,6 +13207,65 @@ pub fn bin_test(
         argv.remove(0); // c:7272
     }
 
+    // c:Src/parse.c:2486-2492 par_cond_2 — a condition that is a single WORD
+    // means `-n word`:
+    //     if (n_testargs == 1) {
+    //         /* one argument: [ foo ] is equivalent to [ -n foo ] */
+    //         s1 = tokstr; condlex();
+    //         return par_cond_double(dupstring("-n"), s1);
+    //     }
+    //
+    // C needs no special handling around `-a`/`-o` for this: bin_test hands the
+    // whole argument list to the real grammar (c:7276-7280 `condlex = testlex;
+    // parse_cond()`), and every operand of a connective is parsed by
+    // par_cond_2 — so a lone word ANYWHERE becomes `-n word`. This port has no
+    // grammar to lean on: bin_test is an ad-hoc argument-count parser,
+    // `testlex` is dead code, and par_cond_2 hardcodes `let n_testargs = 0`,
+    // disabling the POSIX-test rules it otherwise ports. So do the equivalent
+    // rewrite explicitly — split on the top-level connectives and expand any
+    // single-word operand:
+    //     test a -a b     → -n a -a -n b     → 0   (was "unknown condition: -a")
+    //     test '' -a ''   → -n '' -a -n ''   → 1
+    //     test -n -a a    → -n -n -a -n a    → 0   (that first `-n` is an OPERAND)
+    //     test -n a -a -n → -n a -a -n -n    → 0   (2-word segment left alone)
+    //
+    // Skipped when parentheses are present: segmenting those needs the real
+    // grammar, and the parenthesised forms already agree. Skipped when any
+    // segment is empty (`test -a a`), which zsh reports as an error rather
+    // than parsing.
+    if !argv.iter().any(|a| a == "(" || a == ")") && argv.iter().any(|a| a == "-a" || a == "-o") {
+        let segs: Vec<Vec<String>> = argv
+            .split(|a| a == "-a" || a == "-o")
+            .map(|s| s.to_vec())
+            .collect();
+        if segs.iter().all(|s| !s.is_empty()) {
+            let mut rebuilt: Vec<String> = Vec::with_capacity(argv.len() + segs.len());
+            let mut seg_iter = segs.iter();
+            let mut pending = seg_iter.next();
+            let mut emitted_in_seg = 0usize;
+            for a in argv.iter() {
+                if a == "-a" || a == "-o" {
+                    rebuilt.push(a.clone());
+                    pending = seg_iter.next();
+                    emitted_in_seg = 0;
+                    continue;
+                }
+                if emitted_in_seg == 0 {
+                    // c:2488 — one word ⇒ `-n word`. `!` is an operator, never
+                    // an operand, so it does not take the implicit -n.
+                    if let Some(seg) = pending {
+                        if seg.len() == 1 && seg[0] != "!" {
+                            rebuilt.push("-n".to_string());
+                        }
+                    }
+                }
+                rebuilt.push(a.clone());
+                emitted_in_seg += 1;
+            }
+            argv = rebuilt;
+        }
+    }
+
     // c:Src/parse.c par_cond — 3-arg form with binary op at args[0]
     // (instead of args[1]) is a parse error: zsh treats args[0] as a
     // unary condition probe; binary ops aren't valid unary ops →
@@ -13076,7 +13382,24 @@ pub fn bin_test(
     // c:Src/parse.c par_cond — 4-arg form `-FLAG operand extra extra` /
     // any 4+ arg layout where args[0] is a recognized unary flag with
     // extras after the operand → "too many arguments".
-    if argv.len() == 4 && argv[0].starts_with('-') && argv[0].len() == 2 {
+    //
+    // ...but NOT when the third argument is a CONNECTIVE. c:Src/parse.c:2495
+    // par_cond_2 has no blanket 4-argument rejection: with n_testargs > 2 it
+    // only special-cases a binary operator in the SECOND position (`=`, `<`,
+    // `>`, `==`, `!=`, `-<condnum>`) and otherwise falls through to the general
+    // condition grammar, which happily consumes `-FLAG operand` and then
+    // applies the `-a`/`-o` that follows. So `test -n a -a b` is `(-n a) && b`
+    // → 0, and `test -n -a -n x` is `(-n -a) && (-n x)`; both were rejected
+    // here as "too many arguments".
+    // The connective can sit at either position: `test -f a -a b` puts it at
+    // index 2, while `test -n -a -n x` is `(-n -a) && (-n x)` and puts it at
+    // index 1. C never has to look — the grammar just consumes tokens — so the
+    // equivalent here is "a connective appears anywhere past argv[0]".
+    if argv.len() == 4
+        && argv[0].starts_with('-')
+        && argv[0].len() == 2
+        && !argv[1..].iter().any(|a| a == "-a" || a == "-o")
+    {
         let op_char = argv[0].chars().nth(1).unwrap_or(' ');
         if matches!(
             op_char,
@@ -13440,9 +13763,36 @@ pub fn bin_trap(
                     }
                 }
                 TrapEntry::Str(sig, body) => {
+                    // c:7371 — `s = getpermtext(siglists[sig], NULL, 0);`. C
+                    // holds the body as a compiled Eprog and renders it back
+                    // to source for the listing, so what prints is CANONICAL
+                    // text rather than the string the user typed:
+                    // `trap 'print a; print b' EXIT` lists as
+                    // `trap -- $'print a\nprint b' EXIT` (separators become
+                    // newlines, `if`/`for`/`(` bodies get re-indented).
+                    // zshrs stores the body as raw text, so deparse it here
+                    // the same way. Rendering only at listing time keeps the
+                    // stored text authoritative for execution — a getpermtext
+                    // rendering bug then costs a wrong listing, not a wrong
+                    // trap body.
+                    //
+                    // An empty body takes C's `!siglists[sig]` branch
+                    // (c:7368-7369, prints `trap -- '' SIG`) and is never
+                    // rendered. parse_string is the wordcode parser, whose
+                    // coverage is narrower than the AST parser that executes
+                    // the body (e.g. `(pat)` case arms — see the pin test in
+                    // text.rs), so fall back to the raw text on a parse
+                    // failure rather than dropping the entry.
+                    let rendered = if body.is_empty() {
+                        body.clone()
+                    } else {
+                        crate::ported::exec::parse_string(body, 1)
+                            .map(|p| crate::ported::text::getpermtext(Box::new(p), None, 0))
+                            .unwrap_or_else(|| body.clone())
+                    };
                     // c:7370-7375 — `printf("trap -- "); quotedzputs(...); printf(" %s\n", name);`
                     print!("trap -- "); // c:7372
-                    print!("{}", quotedzputs(body)); // c:7373
+                    print!("{}", quotedzputs(&rendered)); // c:7373
                     println!(" {}", sig); // c:7374
                 }
             }
@@ -13530,6 +13880,37 @@ pub fn bin_trap(
 
     // c:7404-7411 — first arg is the trap body.
     let arg = argv.remove(0); // c:7404
+    // c:7405-7409 — `if (!*arg) prog = &dummy_eprog; else if (!(prog =
+    // parse_string(arg, 1))) { zwarnnam(name, "couldn't parse trap
+    // command"); return 1; }`. The body is parsed when the trap is
+    // installed, so an unparseable body is rejected here rather than
+    // deferred to signal delivery. An empty body (`trap '' SIG`) takes
+    // C's dummy_eprog branch and is never parsed. This gate precedes
+    // the signal checks below, so `trap 'for' BOGUS` reports the parse
+    // failure, not "undefined signal".
+    //
+    // C reaches its parser through parse_string (ported at
+    // exec.rs:parse_string over the ported lexer). The trap body is
+    // stored as text and later run through parse_isolated by
+    // execute_script_zsh_pipeline (vm_helper.rs:2249), so validation
+    // goes through the same parser that will execute it — otherwise a
+    // body could pass here and still fail at delivery. Save/restore
+    // errflag around the probe exactly as vm_helper.rs:2240-2251 does,
+    // so a rejected body doesn't leave the error flag set and abort the
+    // enclosing shell. The parser emits its own `parse error` via zerr
+    // first; this adds C's second diagnostic.
+    if !arg.is_empty() {
+        let saved_errflag = errflag.load(Ordering::Relaxed);
+        errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Ordering::Relaxed);
+        let _ = crate::vm_helper::parse_isolated(&arg);
+        let parse_failed =
+            (errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_ERROR) != 0;
+        errflag.store(saved_errflag, Ordering::Relaxed);
+        if parse_failed {
+            zwarnnam(name, "couldn't parse trap command"); // c:7407
+            return 1; // c:7408
+        }
+    }
     if argv.is_empty() {
         // c:7411 — when only one arg AND it looks like a signal
         // (SIG-prefix or numeric) but didn't resolve to a real
@@ -17064,6 +17445,77 @@ mod tests {
             r, 0,
             "trap - <undefined> must report error per c:7399 (got {})",
             r
+        );
+    }
+
+    /// c:7405-7409 — the trap body is parsed when the trap is INSTALLED
+    /// (`parse_string(arg, 1)`), so an unparseable body fails right here
+    /// with `couldn't parse trap command` and rc=1, and nothing is
+    /// installed. zshrs previously stored the body text unexamined and
+    /// returned 0, deferring the failure to signal delivery: `trap 'for'
+    /// EXIT` reported success and then emitted a parse error at exit.
+    ///
+    /// The bodies here are the ones the oracle rejects. `while` is
+    /// deliberately not among them — `zsh -fc 'while'` treats it as an
+    /// incomplete construct and reads the remainder from stdin rather
+    /// than erroring, so it is not an install-time parse failure.
+    #[test]
+    fn bin_trap_unparseable_body_rejected_at_install() {
+        let _g = crate::test_util::global_state_lock();
+        let empty = options {
+            ind: [0u8; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        for body in ["for", "((", "fi", "done", "case", "if true", "print ok; for"] {
+            let r = bin_trap("trap", &[body.into(), "USR1".into()], &empty, 0);
+            assert_eq!(
+                r, 1,
+                "trap '{body}' USR1 must fail at install per c:7407 (got {r})"
+            );
+            // The rejected body must not have been installed (c:7408
+            // returns before the install loop at c:7421).
+            let installed = traps_table()
+                .lock()
+                .ok()
+                .map(|t| t.contains_key("USR1"))
+                .unwrap_or(false);
+            assert!(
+                !installed,
+                "trap '{body}' USR1 was rejected but still installed a handler"
+            );
+        }
+        // A parseable body still installs — the gate must not reject
+        // everything.
+        let r = bin_trap("trap", &["print ok".into(), "USR1".into()], &empty, 0);
+        assert_eq!(r, 0, "parseable body must install (got {r})");
+        if let Ok(mut t) = traps_table().lock() {
+            assert!(t.contains_key("USR1"), "parseable body must be installed");
+            t.remove("USR1");
+        }
+    }
+
+    /// c:7371 — `getpermtext(siglists[sig], NULL, 0)`. C keeps the trap
+    /// body as a compiled Eprog and renders it back to source for the
+    /// listing, so `trap` prints CANONICAL text rather than the string
+    /// that was typed: separators become newlines. zshrs stores the body
+    /// as raw text and previously echoed it verbatim, which is correct
+    /// only for a single command — `trap 'print a; print b' EXIT` listed
+    /// as `'print a; print b'` where zsh lists `$'print a\nprint b'`.
+    ///
+    /// Pins the deparse itself (parse_string → getpermtext) rather than
+    /// bin_trap's stdout, so the assertion doesn't depend on capturing
+    /// the builtin's print! output.
+    #[test]
+    fn trap_body_listing_deparses_to_canonical_text() {
+        let _g = crate::test_util::global_state_lock();
+        let prog = crate::ported::exec::parse_string("print a; print b", 1)
+            .expect("body must parse for the listing path");
+        let rendered = crate::ported::text::getpermtext(Box::new(prog), None, 0);
+        assert_eq!(
+            rendered, "print a\nprint b",
+            "c:7371 getpermtext must canonicalise `;` separators to newlines (got {rendered:?})"
         );
     }
 

@@ -461,6 +461,82 @@ jobs:
       # nothing ran it; `typeset -U path` was broken under a green build.
       - name: Fuzz — typeset
         run: ./target/debug/parity-fuzz --mode typeset --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/typeset.txt --out target/parity-fuzz/ci-typeset.txt
+      # cond covers the `test` / `[` builtin — unary flags, the 3-arg binary
+      # form, -a/-o connectives, !, parens — in both spellings, with stderr
+      # folded in so the diagnostics and the 1-vs-2 status distinction are both
+      # compared. Its baseline allows exactly one class (the literal `-a`/`-n`
+      # spelled as an operand, which needs the real condition grammar) and
+      # nothing else. It had NO mode at all before, which is how `test a -a b`
+      # stayed broken.
+      - name: Fuzz — cond
+        run: ./target/debug/parity-fuzz --mode cond --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/cond.txt --out target/parity-fuzz/ci-cond.txt
+      # funclist covers function LISTING (`functions`, `typeset -f`, `whence -f`,
+      # `which`) — how zsh prints a function back, not what it does. C renders
+      # the compiled wordcode via getpermtext (hashtable.c:954), so the output
+      # is canonical rather than the source as typed, and it is meant to be
+      # re-parseable. Nothing fuzzed the listing before, which is how a
+      # hand-rolled emulation of getpermtext drifted far enough to mangle
+      # `{ … } always { … }` into `print x } always { print y` unnoticed.
+      # Baseline is EMPTY: any divergence here is a regression.
+      - name: Fuzz — funclist
+        run: ./target/debug/parity-fuzz --mode funclist --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/funclist.txt --out target/parity-fuzz/ci-funclist.txt
+      # redir covers redirections, MULTIOS teeing, fd juggling, here-strings,
+      # append-vs-truncate, and function-level redirects (`f() { … } > file`,
+      # which zsh re-opens on every CALL, not at definition). The mode existed
+      # with a clean baseline but was never gated. Baseline is EMPTY: any
+      # divergence here is a regression.
+      - name: Fuzz — redir
+        run: ./target/debug/parity-fuzz --mode redir --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/redir.txt --out target/parity-fuzz/ci-redir.txt
+      # trap covers both trap spellings (`trap '…' SIG` and `TRAPSIG() { … }`,
+      # which have different semantics), EXIT/ERR/DEBUG, `always` blocks,
+      # TRY_BLOCK_ERROR, LOCAL_TRAPS, install-time parsing, listing, and
+      # subshell inheritance (entersubsh, exec.c:1088-1092). The mode existed
+      # but was never gated, which is how those gaps lived. Baseline carries
+      # ONE known gap (ERR firing from inside a trap body — see trap.txt);
+      # anything else is a regression.
+      - name: Fuzz — trap
+        run: ./target/debug/parity-fuzz --mode trap --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/trap.txt --out target/parity-fuzz/ci-trap.txt
+      # shinstdin is the only mode fed on STDIN rather than via `-c`. That is
+      # not a stylistic choice: `-c` leaves C's SHINSTDIN OFF (c:Src/init.c),
+      # so everything gated on it — PRINT_EXIT_VALUE at c:Src/exec.c:4253/5442
+      # — was unreachable by every other mode no matter what the program said.
+      # Baseline carries the PRINT_EXIT_VALUE gap (see shinstdin.txt).
+      - name: Fuzz — shinstdin
+        run: ./target/debug/parity-fuzz --mode shinstdin --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/shinstdin.txt --out target/parity-fuzz/ci-shinstdin.txt
+      # The ten modes below all EXISTED and ran clean, but none was gated, so
+      # nothing stopped a regression in any of them. `trap` and `redir` sat in
+      # exactly that state and each turned out to be hiding real bugs the moment
+      # their vocabulary was widened — a clean ungated mode is an untested mode,
+      # not a correct one. All baselines are EMPTY: any divergence is a
+      # regression. See each mode's baseline file for what it covers.
+      #
+      # func / pattern / subscript / zutil: function scoping and `local`,
+      # pattern matching, array+assoc subscripting and flags, and zsh/zutil
+      # (zstyle/zparseopts/zregexparse).
+      - name: Fuzz — func
+        run: ./target/debug/parity-fuzz --mode func --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/func.txt --out target/parity-fuzz/ci-func.txt
+      - name: Fuzz — pattern
+        run: ./target/debug/parity-fuzz --mode pattern --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/pattern.txt --out target/parity-fuzz/ci-pattern.txt
+      - name: Fuzz — subscript
+        run: ./target/debug/parity-fuzz --mode subscript --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/subscript.txt --out target/parity-fuzz/ci-subscript.txt
+      - name: Fuzz — zutil
+        run: ./target/debug/parity-fuzz --mode zutil --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/zutil.txt --out target/parity-fuzz/ci-zutil.txt
+      # dirstack / emulate / mathfunc / modifier / pipeline / split: the
+      # directory stack, `emulate sh|ksh|zsh` option blocks, user-defined math
+      # functions, history/parameter modifiers, exit-status plumbing
+      # ($pipestatus/PIPE_FAIL), and IFS word splitting.
+      - name: Fuzz — dirstack
+        run: ./target/debug/parity-fuzz --mode dirstack --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/dirstack.txt --out target/parity-fuzz/ci-dirstack.txt
+      - name: Fuzz — emulate
+        run: ./target/debug/parity-fuzz --mode emulate --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/emulate.txt --out target/parity-fuzz/ci-emulate.txt
+      - name: Fuzz — mathfunc
+        run: ./target/debug/parity-fuzz --mode mathfunc --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/mathfunc.txt --out target/parity-fuzz/ci-mathfunc.txt
+      - name: Fuzz — modifier
+        run: ./target/debug/parity-fuzz --mode modifier --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/modifier.txt --out target/parity-fuzz/ci-modifier.txt
+      - name: Fuzz — pipeline
+        run: ./target/debug/parity-fuzz --mode pipeline --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/pipeline.txt --out target/parity-fuzz/ci-pipeline.txt
+      - name: Fuzz — split
+        run: ./target/debug/parity-fuzz --mode split --count 4000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/split.txt --out target/parity-fuzz/ci-split.txt
       # brace / getopts / assoc / casesel cover brace expansion (ranges, padding,
       # products), the getopts parse loop (OPTIND/OPTARG, clustering, silent
       # mode), associative-array flags/subscripts, and case pattern selection
