@@ -1,0 +1,35 @@
+# parity-fuzz --mode zcalc baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode zcalc --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps. zcalc is an autoload FUNCTION (Functions/Misc/zcalc) that zshrs
+# intercepts with a native Rust impl (ext_builtins.rs zcalc), so this mode pins
+# the impl against the real function. Fixed on introduction, not baselined:
+#
+#   1. zcalc:133 `zmodload -i zsh/mathfunc` — zcalc pulls in the math library on
+#      startup, which is the whole reason `zcalc -e 'sqrt(16)'` resolves while a
+#      bare `$(( sqrt(16) ))` does not (the named-function table is empty until
+#      the module boots, math.rs:2519). The native impl never loaded it, so
+#      EVERY math function zcalc exists to provide answered "unknown function".
+#   2. zcalc:99-112 `zcalc_show_value` — the result is REFORMATTED, not echoed:
+#        - contains `.` → printf `%2$g` (6 significant digits), so `atan(1)*4`
+#          is 3.14159, not the expansion's 3.1415926535897931;
+#        - ends in a bare `.` → printed raw, so `sqrt(16)` keeps zsh's `4.`;
+#        - no `.` → `printf "%d"`, a CONVERSION: `1/0` under -f is Inf, which
+#          renders as ZLONG_MAX (9223372036854775807), and NaN renders as 0.
+#      Formatting must go through the PRINTF conversion
+#      (builtin.rs format_spec_float_conv), NOT `convfloat`: the float-parameter
+#      formatter re-appends a trailing `.` when %g yields none
+#      (params.rs:10770, c:params.c:5748-5749), which printed `sqrt(2)*sqrt(2)`
+#      as `2.` where zsh prints `2`.
+#   3. A failed evaluation prints its diagnostic and NO value — the expansion
+#      never produced one. arithsubst reports the error and returns "0", which
+#      was printed as a result, so `zcalc -e '1/0'` answered `0`.
+#
+# STDERR-only difference, invisible to this mode's default gate (stdout + exit)
+# and surfaced only under --stderr: zsh's zcalc evaluates through `eval`, so an
+# arithmetic error is tagged `(eval):1: division by zero` where the native impl
+# says `zsh:1:`. Same context-tag class as the zmv baseline's `zmv:239:` —
+# reproducing it means faking an eval frame around a native builtin.
+#
+# Any divergence here is a regression.

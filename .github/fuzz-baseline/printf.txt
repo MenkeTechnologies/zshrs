@@ -1,0 +1,26 @@
+# parity-fuzz --mode printf baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode printf --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps. This mode was INFORMATIONAL (continue-on-error, no baseline)
+# for a long stretch because it was gap-rich across many distinct format
+# classes; it is now a blocking gate — 10,000 cases run clean.
+#
+# What closed it was getkeystring (c:Src/utils.c:6915), which printf drives
+# through two flag sets no other caller uses (c:zsh.h:3181-3183):
+#   GETKEYS_PRINTF_FMT = OCTAL_ESC|BACKSLASH_C|PRINTF_PERCENT  (the format)
+#   GETKEYS_PRINTF_ARG = BACKSLASH_C                           (a %b argument)
+# The bits are what make the two behave DIFFERENTLY on the same input, and
+# each was wrong:
+#   - `\777` (511) truncates to its low byte 0xff (c:7170 assigns a zlong to a
+#     char); a u8 parse errored and emitted NOTHING at all. `\400` is NUL.
+#   - `%b`'s argument has no OCTAL_ESC, so `\777` must come back as a LITERAL
+#     backslash + digits (c:7157-7161 `*t++ = '\\', s--; continue;`) while the
+#     FORMAT decodes the same text to a byte.
+#   - Neither set has GETKEY_EMACS, so `\E` stays literal (c:7018-7024).
+#   - `\u` with no hex digits emits codepoint 0 (c:7085 `wval = 0`), not
+#     nothing.
+#   - `%` produced by a numeric escape is doubled under PRINTF_PERCENT
+#     (c:7172-7173).
+#
+# Any divergence here is a regression.

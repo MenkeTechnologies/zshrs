@@ -3738,6 +3738,90 @@ impl ZshCompiler {
     /// ops where possible. Words that hit no fast path fall through
     /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
+        // c:Src/subst.c:1890-1891 + 2550-2557 — `$^name` is the UNBRACED
+        // RC_EXPAND_PARAM form. C parses it with the very same flag loop as
+        // `${^name}`: the paramsubst-start guard admits `Hat`/`'^'`, then
+        //     if ((c = *s) == '^' || c == Hat) {
+        //         if ((c = *++s) == '^' || c == Hat) { plan9 = 0; s++; }
+        //         else plan9 = 1;
+        //     }
+        // This compiler instead carries a WHOLE-WORD fast path per flag
+        // (`$#`, `$+`, `$=`, `$~`) and never had one for `^`, so `$^b`
+        // compiled to LITERAL text — `print -rl -- $^b` printed `$^b`, and
+        // promptinit:23's `for theme in $^fpath/prompt_*_setup(N)` found ZERO
+        // themes where zsh finds 18. 29 of zsh's own shipped functions use the
+        // form, `_git` among them.
+        //
+        // Normalise `$^NAME` → `${^NAME}` in the TOKEN stream and let the brace
+        // machinery (already correct for `${^b}/*.txt(N)`) own it. Rewriting
+        // tokens rather than the untokenized text keeps the suffix's glob
+        // tokens intact, which is the whole point: the whole-word fast paths
+        // cannot express `$^fpath/prompt_*_setup(N)`.
+        //
+        // Quote-safe by construction: only an UNQUOTED `$` is tokenized to
+        // Stringg (`\u{85}`). Inside `'…'` or after a backslash the `$` stays a
+        // raw byte, so this scan cannot fire there — `'$^b'` and `\$^b` remain
+        // literal, exactly as zsh has them.
+        let s_rc_norm: String;
+        let s: &str = if (s.contains(crate::ported::zsh_h::Stringg)
+            || s.contains(crate::ported::zsh_h::Qstring))
+            && (s.contains(crate::ported::zsh_h::Hat) || s.contains('^'))
+        {
+            let ch: Vec<char> = s.chars().collect();
+            let mut out = String::with_capacity(s.len() + 2);
+            let mut i = 0usize;
+            while i < ch.len() {
+                // Stringg (`$`) followed by a run of `^` / Hat, then a name.
+                // A DQ `$` is Qstring (`\u{8c}`), not Stringg — `"$^b"` must
+                // normalise too. Re-emit whichever token was there so the
+                // double-quote context is preserved.
+                if (ch[i] == crate::ported::zsh_h::Stringg
+                    || ch[i] == crate::ported::zsh_h::Qstring)
+                    && i + 1 < ch.len()
+                    && (ch[i + 1] == crate::ported::zsh_h::Hat || ch[i + 1] == '^')
+                {
+                    let mut j = i + 1;
+                    let mut nflags = 0usize;
+                    while j < ch.len() && (ch[j] == crate::ported::zsh_h::Hat || ch[j] == '^') {
+                        nflags += 1;
+                        j += 1;
+                    }
+                    // Same name vocabulary the `$+NAME` arm accepts:
+                    // alnum/underscore, or one single-char special.
+                    let name_start = j;
+                    let mut name_end = name_start;
+                    if name_end < ch.len() {
+                        let f = ch[name_end];
+                        if f.is_ascii_alphanumeric() || f == '_' {
+                            while name_end < ch.len()
+                                && (ch[name_end].is_ascii_alphanumeric() || ch[name_end] == '_')
+                            {
+                                name_end += 1;
+                            }
+                        } else if matches!(f, '@' | '*' | '#' | '?') {
+                            name_end += 1;
+                        }
+                    }
+                    if name_end > name_start {
+                        out.push(ch[i]);
+                        out.push(crate::ported::zsh_h::Inbrace);
+                        for _ in 0..nflags {
+                            out.push('^');
+                        }
+                        out.extend(&ch[name_start..name_end]);
+                        out.push(crate::ported::zsh_h::Outbrace);
+                        i = name_end;
+                        continue;
+                    }
+                }
+                out.push(ch[i]);
+                i += 1;
+            }
+            s_rc_norm = out;
+            &s_rc_norm
+        } else {
+            s
+        };
         // ANSI-C quoted form: `$'a\tb'` arrives from the lexer as
         // `<META-Qstring><Snull>a<Bnull>tb<Snull>` —
         // `\u{8c}\u{9d}a\u{9f}tb\u{9d}` per parse/src/lex:1767-1799.

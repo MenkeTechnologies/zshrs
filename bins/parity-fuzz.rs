@@ -1115,6 +1115,40 @@ fn setup_scratch_fixture() -> PathBuf {
     dir
 }
 
+/// Fixed fileset for the zmv mode. Names are chosen so the pattern surface has
+/// something to bite on: two extensions that a `(txt|log)` alternation must
+/// BOTH pick up, a name with a space (the `${f// /_}` case from zsh's own zmv
+/// docs), multi-dot and digit names for multi-wildcard patterns, and a
+/// subdirectory so `(**/)` has somewhere to recurse.
+///
+/// READ-ONLY at run time: every generated probe passes `-n`, so zmv only ever
+/// PRINTS the mv/cp/ln commands it would run. That keeps the fixture shareable
+/// across the parallel workers and means a minimized probe can never rename a
+/// file out from under the other workers (or into the source tree).
+fn setup_zmv_fixture() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("parity-fuzz")
+        .join("zmv-fixture");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create zmv fixture dir");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    for name in [
+        "foo.txt",
+        "bar.txt",
+        "baz.log",
+        "one.two.txt",
+        "a b.txt",
+        "f1.dat",
+        "f2.dat",
+        "UP.TXT",
+        "sub/nested.txt",
+    ] {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    dir
+}
+
 /// Set both atime and mtime of `path` to a fixed epoch second.
 fn set_mtime(path: &Path, secs: i64) {
     let t = libc::timeval {
@@ -5281,6 +5315,193 @@ fn gen_bindkey(seed: u64) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// zmv generator
+//
+// `zmv` is a zsh autoload FUNCTION, not a builtin — its source is the spec
+// (Functions/Misc/zmv). zshrs ships a native Rust impl instead, so this mode
+// exists to pin that impl against the real thing. The mapping rules it has to
+// reproduce, with zmv line numbers:
+//
+//   zmv:126     `setopt extendedglob` — `(…)` in the pattern is BOTH a glob
+//               group and the capture syntax; the pattern IS the glob
+//               (zmv:237-239 `fpat=$pat; files=(${~fpat})`).
+//   zmv:255-257 `set -- "$match[@]"; g=${(Xe)repl}` — the captures become the
+//               POSITIONALS and the replacement gets FULL parameter expansion,
+//               which is why `$f` (zmv:245's loop variable) and even
+//               `${f// /_}` work — not just `$1`..`$N`.
+//   zmv:190-216 `-w` parenthesises the wildcards in the pattern; `-W` also
+//               rewrites the replacement's wildcards to `${1}..${N}` and errors
+//               when the counts disagree.
+//   zmv:264-276 empty expansion / unaltered name / collision handling.
+//   zmv:280-284 every substitution error is reported TOGETHER under one
+//               `$myname: error(s) in substitution:` header.
+//
+// Determinism + safety: EVERY probe passes `-n`, so zmv prints the commands it
+// would run and touches nothing. That keeps the fixture read-only (shared by
+// the parallel workers) and means even a minimized probe cannot rename a file.
+// ---------------------------------------------------------------------------
+
+/// (pattern, replacement) pairs using explicit `(…)` capture groups.
+const ZMV_PAREN: &[(&str, &str)] = &[
+    ("(*).txt", "$1.bak"),
+    ("(*).txt", "${1}.q"),
+    ("(*).txt", "$1.txt"),
+    ("(*).(txt|log)", "$1.$2.new"),
+    ("(*).(txt|log)", "$2/$1"),
+    ("(f)(o)(o).txt", "$3$2$1.txt"),
+    ("(*).(*)", "$2.$1"),
+    ("(?)(*).txt", "$2$1.txt"),
+    ("f(<1-9>).dat", "g$1.dat"),
+    ("([fb])(*).txt", "$1-$2.x"),
+    ("(*) (*).txt", "$1_$2.txt"),
+    ("(one).(two).txt", "$2.$1.txt"),
+    ("(*).log", ""),
+    ("(*).txt", "same.out"),
+];
+
+/// Patterns paired with `$f`-based replacements — the surface that only a real
+/// `${(Xe)repl}` expansion can satisfy.
+const ZMV_FVAR: &[(&str, &str)] = &[
+    ("*.txt", "new_$f"),
+    ("*.txt", "${f}.orig"),
+    ("* *", "${f// /_}"),
+    ("*.log", "${f:r}.out"),
+    ("*.txt", "${f:u}"),
+    ("*.dat", "pre-$f"),
+    ("*.txt", "$f"),
+];
+
+/// Wildcard patterns for `-w` / `-W` (counts must match for `-W`).
+const ZMV_WILD: &[(&str, &str)] = &[
+    ("*.txt", "*.bak"),
+    ("*.*", "${2}.${1}"),
+    ("*.txt", "${1}.md"),
+    ("?.dat", "${1}.dat2"),
+    ("*.*", "*.*"),
+    ("*.txt", "x-*.txt"),
+];
+
+fn gen_zmv(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // -n is NOT optional: it is what keeps this mode read-only.
+    let extra = pick(&mut rng, &["", "", "", "-v ", "-f ", "-Q "]);
+    // Only `zmv` itself: a stock zsh ships zmv in $fpath but NOT zcp/zln (they
+    // are usually links the distro may or may not create — this install has
+    // only zmv), so a `zcp` probe compares zshrs's native impl against
+    // `zcp: function definition file not found` and teaches nothing. The `-C`
+    // and `-L` arms below reach the copy/link actions through zmv, which is how
+    // zmv:149-151 selects them anyway.
+    let action = "zmv";
+
+    match rng.gen_range(0..6) {
+        // Explicit capture groups + $N references.
+        0 | 1 => {
+            let (pat, repl) = pick(&mut rng, ZMV_PAREN);
+            vec![format!(
+                "autoload -Uz {action}; {action} -n {extra}'{pat}' '{repl}'; print -r -- \"rc=$?\""
+            )]
+        }
+        // $f-based replacements (full ${(Xe)} expansion).
+        2 => {
+            let (pat, repl) = pick(&mut rng, ZMV_FVAR);
+            vec![format!(
+                "autoload -Uz {action}; {action} -n {extra}'{pat}' '{repl}'; print -r -- \"rc=$?\""
+            )]
+        }
+        // -w: parenthesise the pattern's wildcards only.
+        3 => {
+            let (pat, repl) = pick(&mut rng, ZMV_PAREN);
+            vec![format!(
+                "autoload -Uz {action}; {action} -n -w {extra}'{pat}' '{repl}'; print -r -- \"rc=$?\""
+            )]
+        }
+        // -W: pattern AND replacement wildcards.
+        4 => {
+            let (pat, repl) = pick(&mut rng, ZMV_WILD);
+            vec![format!(
+                "autoload -Uz {action}; {action} -n -W {extra}'{pat}' '{repl}'; print -r -- \"rc=$?\""
+            )]
+        }
+        // Action overrides (-C copy / -L link / -p prog).
+        _ => {
+            let (pat, repl) = pick(&mut rng, ZMV_PAREN);
+            let flag = pick(&mut rng, &["-C", "-L", "-M", "-p echo"]);
+            vec![format!(
+                "autoload -Uz zmv; zmv -n {flag} {extra}'{pat}' '{repl}'; print -r -- \"rc=$?\""
+            )]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// zcalc generator
+//
+// `zcalc` is an autoload FUNCTION (Functions/Misc/zcalc) that zshrs intercepts
+// with a native Rust impl, so — like the zmv mode — this pins the impl against
+// the real thing. The rules that are easy to get wrong, with zcalc line refs:
+//
+//   zcalc:133 `zmodload -i zsh/mathfunc` — zcalc LOADS the math library on
+//             startup. That is why `zcalc -e 'sqrt(16)'` resolves while a bare
+//             `$(( sqrt(16) ))` is "unknown function: sqrt": the named-function
+//             table stays empty until the module boots.
+//   zcalc:99-112 `zcalc_show_value` — the result is REFORMATTED, not echoed:
+//             a value containing `.` goes through `_forms[1]` = '%2$g' (so 6
+//             significant digits — `atan(1)*4` is 3.14159, NOT the full
+//             3.1415926535897931), EXCEPT one ending in a bare `.` which
+//             prints raw (`sqrt(16)` → `4.`); no dot at all → `printf "%d"`.
+//   zcalc:105 a FAILED evaluation prints its diagnostic and no value — the
+//             expansion never produced one, so `1/0` writes nothing to stdout.
+//
+// Determinism: expressions are pure arithmetic — no rand48(), no clock, no
+// filesystem. `-e` (expression mode) always, since the REPL needs a tty.
+// ---------------------------------------------------------------------------
+
+/// Expressions spanning the surfaces above. Anything whose value is not a
+/// function of the text alone (rand48, time) is deliberately absent.
+const ZCALC_EXPRS: &[&str] = &[
+    // Integer arithmetic → printf "%d" (zcalc:110).
+    "1+2", "10/4", "3 % 2", "1<<4", "2**10", "(1+2)*3", "-5+3", "2^10", "7&3", "7|8", "~5",
+    "10 > 3", "1 ? 2 : 3",
+    // Bases.
+    "0x10", "0b101", "010",
+    // Floats → %g via _forms[1] (zcalc:107).
+    "10.0/4", "1.0/3", "22.0/7", "1e10", "1.5e-8", "2.0**0.5", "1.0/7", "100.0/3", "0.1+0.2",
+    // zsh/mathfunc, loaded by zcalc:133. `sqrt(16)` is the bare-trailing-dot
+    // case (`4.`), the rest exercise the %g path.
+    "sqrt(16)", "sqrt(2)", "atan(1)*4", "sin(0)", "cos(0)", "log(1)", "exp(1)", "exp(0)",
+    "ceil(1.2)", "floor(1.8)", "int(3.7)", "abs(-5)", "fabs(-5.5)", "log10(100)", "sqrt(2)*sqrt(2)",
+    "atan2(1,1)", "pow(2,10)", "fmod(10,3)",
+    // Error paths: the diagnostic is printed and NO value (zcalc:105).
+    "1/0", "zzundefined_zz+1", "1%0",
+];
+
+fn gen_zcalc(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let e = pick(&mut rng, ZCALC_EXPRS);
+
+    match rng.gen_range(0..4) {
+        // Plain `-e EXPR`.
+        0 | 1 => vec![format!(
+            "autoload -Uz zcalc; zcalc -e '{e}'; print -r -- \"rc=$?\""
+        )],
+        // `-f` = forcefloat (zcalc:187 `setopt forcefloat`), which turns
+        // integer division into float division: `3/4` is 0.75, not 0.
+        2 => vec![format!(
+            "autoload -Uz zcalc; zcalc -e -f '{e}'; print -r -- \"rc=$?\""
+        )],
+        // Several expressions in one call — each is shown independently, and
+        // the forcefloat option must not leak past the call (zcalc runs under
+        // `emulate -L zsh`, so its setopt is function-local).
+        _ => {
+            let e2 = pick(&mut rng, ZCALC_EXPRS);
+            vec![format!(
+                "autoload -Uz zcalc; zcalc -e '{e}' '{e2}'; print -r -- \"rc=$? ff=${{options[forcefloat]}}\""
+            )]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main driver
 // ---------------------------------------------------------------------------
 
@@ -5347,6 +5568,8 @@ enum Mode {
     Gflag,
     Select,
     Bindkey,
+    Zmv,
+    Zcalc,
 }
 
 struct Args {
@@ -5426,6 +5649,8 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Gflag => gen_gflag(seed),
         Mode::Select => gen_select(seed),
         Mode::Bindkey => gen_bindkey(seed),
+        Mode::Zmv => gen_zmv(seed),
+        Mode::Zcalc => gen_zcalc(seed),
     }
 }
 
@@ -5493,6 +5718,8 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Gflag => "gflag",
         Mode::Select => "select",
         Mode::Bindkey => "bindkey",
+        Mode::Zmv => "zmv",
+        Mode::Zcalc => "zcalc",
     }
 }
 
@@ -5560,6 +5787,8 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Gflag,
         Mode::Select,
         Mode::Bindkey,
+        Mode::Zmv,
+        Mode::Zcalc,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }
@@ -5663,7 +5892,7 @@ fn parse_args() -> Args {
                      readb, fd, special, brace, getopts, assoc,\n\
                      casesel, default, anonfn, printv, globanchor,\n\
                      whence, zstyle, atflag, subexp, replace, assign,\n\
-                     gflag, select, bindkey\n\
+                     gflag, select, bindkey, zmv, zcalc\n\
                      (each also accepted as a `--<mode>` shorthand)\n\
                      --stderr         also require the DIAGNOSTICS to match (the\n\
                                       leading `zsh:`/`zshrs:` tag is normalized\n\
@@ -5766,6 +5995,9 @@ fn main() {
         }
         Mode::Autoload => {
             FIXTURE_CWD.set(setup_autoload_fixture()).ok();
+        }
+        Mode::Zmv => {
+            FIXTURE_CWD.set(setup_zmv_fixture()).ok();
         }
         // Modes whose probes (or whose MINIMIZED probes) can create files must
         // never run from the source tree — see setup_scratch_fixture.
