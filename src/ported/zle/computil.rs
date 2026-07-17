@@ -613,7 +613,9 @@ pub fn cd_prep() -> i32 {
         };
         if want_sort != 0 {
             // c:305
-            prep_lines.sort_by(|a, b| cd_sort(a, b)); // c:306
+            // c:306 — qsort cd_sort; tolerant sort: cd_sort→strcmp/numeric may
+            // not be a strict weak order, which makes Rust's sort_by PANIC.
+            crate::tolerant_sort::qsort_tolerant(&mut prep_lines, |a, b| cd_sort(a, b)); // c:306
         }
 
         // c:308-322 — dedup-adjacent: shuffle same-desc entries together.

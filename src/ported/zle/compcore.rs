@@ -3931,7 +3931,10 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
             // c:3259
             // Now sort the array (it contains matches).                     // c:3260
             MATCHORDER.store(flags, Ordering::Relaxed); // c:3261
-            rp.sort_by(matchcmp); // c:3262 qsort matchcmp
+            // c:3262 — C `qsort(rp, n, sizeof(Cmatch), matchcmp)`. Must use the
+            // qsort-tolerant sort: matchcmp→zstrcmp is not a strict weak order
+            // (numeric/natural sort), which makes Rust's sort_by PANIC.
+            crate::tolerant_sort::qsort_tolerant(&mut rp, matchcmp);
 
             if (flags & CGF_UNIQCON) == 0 {
                 // c:3269 not -2
@@ -3994,7 +3997,8 @@ pub fn makearray(mut rp: Vec<Cmatch>, flags: i32) -> (Vec<Cmatch>, i32, i32, i32
                 // c:3302 didn't use -1 or -2
                 MATCHORDER.store(flags, Ordering::Relaxed); // c:3306
                 let mut sp: Vec<Cmatch> = rp.clone(); // c:3309-3312 zhalloc + memcpy
-                sp.sort_by(matchcmp); // c:3313 qsort matchcmp
+                // c:3313 — qsort matchcmp; tolerant sort (non-total-order cmp).
+                crate::tolerant_sort::qsort_tolerant(&mut sp, matchcmp);
 
                 let mut del = false; // c:3303
                                      // Sweep sorted dup-detection back onto rp via flag marks.
