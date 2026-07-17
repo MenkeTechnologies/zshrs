@@ -26,7 +26,8 @@ use crate::ported::params::getsparam;
 use crate::ported::signals::unqueue_signals;
 use crate::ported::utils::{adjustcolumns, adjustlines, errflag, write_loop};
 use crate::ported::zle::comp_h::{
-    Cmatch, Cmgroup, CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_HIDE, CMF_NOLIST,
+    Cmatch, Cmgroup, CGF_HASDL, CGF_LINES, CGF_ROWS, CMF_DISPLINE, CMF_FMULT, CMF_HIDE, CMF_MULT,
+    CMF_NOLIST,
 };
 use crate::ported::zle::compcore::{listdat, MINFO, ZLEMETACS, ZLEMETALINE, ZLEMETALL};
 use crate::ported::zle::zle_refresh::{tcmultout, tcout, CLEARFLAG, NLNCT};
@@ -162,7 +163,7 @@ pub fn filecol(col: &str) -> filecol {
 pub struct filecol {
     // c:215
     /// Group pattern (NULL → applies to all groups).
-    pub prog: Option<Patprog>, // c:216
+    pub prog: Option<crate::ported::pattern::Patprog>, // c:216
     /// Color string (ANSI escape-code body).
     pub col: String, // c:217
     /// Next entry chained for the same color slot.
@@ -177,9 +178,9 @@ pub struct filecol {
 pub struct patcol {
     // c:225
     /// Group pattern (NULL → all groups).
-    pub prog: Option<Patprog>, // c:226
+    pub prog: Option<crate::ported::pattern::Patprog>, // c:226
     /// Pattern for match.
-    pub pat: Option<Patprog>, // c:227
+    pub pat: Option<crate::ported::pattern::Patprog>, // c:227
     /// Color strings indexed by submatch position (MAX_POS + 1 slots).
     pub cols: Vec<String>, // c:228
     /// Next entry in the patcol chain.
@@ -193,7 +194,7 @@ pub struct patcol {
 pub struct extcol {
     // c:236
     /// Group pattern (NULL → all groups).
-    pub prog: Option<Patprog>, // c:237
+    pub prog: Option<crate::ported::pattern::Patprog>, // c:237
     /// File extension (e.g. ".tar").
     pub ext: String, // c:238
     /// Terminal color string.
@@ -310,17 +311,207 @@ pub fn getcolval(s: &str, multi: i32) -> (String, &str) {
     (decoded, &s[i..])
 }
 
-/// Port of `getcoldef(char *s)` from Src/Zle/complist.c:330.
+/// Port of `char *getcoldef(char *s)` from Src/Zle/complist.c:330-503.
+/// Parses ONE `ZLS_COLORS`/`LS_COLORS` entry into the `mcolors` structure
+/// and returns the unconsumed tail (None to stop). An entry is one of:
+///   - `(group)…`      — optional leading group pattern (compiled Patprog,
+///                       shared by the entry it prefixes).
+///   - `*ext=col`      — extension rule → `mcolors.exts`.
+///   - `=pat=col[=col…]`— pattern rule (the form `list-colors` emits) →
+///                       `mcolors.pats`, with one color per submatch pos.
+///   - `xx=col`        — two-letter file-type code → `mcolors.files[i]`.
+/// C mutates `s` in place with `\0` splits and stores interior pointers;
+/// the Rust port builds owned Strings via `getcolval` (which returns the
+/// decoded value + tail) and appends onto the `Option<Box<…>>` chains.
 pub fn getcoldef(s: &str) -> Option<String> {
     // c:330
-    // C body c:332-503 — parses one "key=val" entry from LS_COLORS
-    //                    /ZLS_COLORS, walks past the key (one of the
-    //                    `colnames` two-letters, plus filename
-    //                    suffixes "*.ext", patterns "=cls"), returns
-    //                    pointer past the entry. Without the mcolors
-    //                    install we just split on the first `:` and
-    //                    return the remainder so caller can iterate.
-    s.split_once(':').map(|(_, rest)| rest.to_string())
+    use std::sync::atomic::Ordering as O;
+    let _ = O::Relaxed;
+    // Empty input → no color definition to parse; signal stop (None). The
+    // `getcols` driver only calls this while `!s.is_empty()`, so this guard
+    // is defensive parity with "nothing left to parse".
+    if s.is_empty() {
+        return None;
+    }
+    let mut gprog: Option<crate::ported::pattern::Patprog> = None;
+    let mut s = s;
+
+    // c:333-354 — optional `(group)` prefix → compiled group Patprog.
+    if s.starts_with('(') {
+        let b = s.as_bytes();
+        let mut l = 0i32;
+        let mut p = 1usize;
+        // c:337-343 — scan to the matching ')' honoring nesting + backslash.
+        while p < b.len() && (b[p] != b')' || l != 0) {
+            if b[p] == b'\\' && p + 1 < b.len() {
+                p += 1;
+            } else if b[p] == b'(' {
+                l += 1;
+            } else if b[p] == b')' {
+                l -= 1;
+            }
+            p += 1;
+        }
+        if p < b.len() && b[p] == b')' {
+            // c:345-352 — metafy + tokenize + patcompile the group name.
+            let grp = &s[1..p];
+            let mut mg = crate::ported::utils::metafy(grp);
+            crate::ported::glob::tokenize(&mut mg);
+            gprog = crate::ported::pattern::patcompile(&mg, 0, None);
+            s = &s[p + 1..]; // c:353 s = p + 1
+        }
+    }
+
+    if let Some(rest) = s.strip_prefix('*') {
+        // c:355-390 — `*ext=col` extension rule.
+        match rest.find('=') {
+            None => Some(String::new()), // c:365-366 return s (at NUL)
+            Some(eq) => {
+                let ext = rest[..eq].to_string(); // c:367 *s++='\0'
+                let (col, p) = getcolval(&rest[eq + 1..], 0); // c:368
+                // c:369-384 — append the extcol at the tail of mcolors.exts.
+                let ec = Box::new(extcol {
+                    prog: gprog,
+                    ext,
+                    col,
+                    next: None,
+                });
+                {
+                    let mut mc = MCOLORS.lock().unwrap();
+                    let mut cur = &mut mc.exts;
+                    while cur.is_some() {
+                        cur = &mut cur.as_mut().unwrap().next;
+                    }
+                    *cur = Some(ec);
+                }
+                // c:388-389 — `if (*p) *p++='\0'; return p;`
+                Some(if !p.is_empty() { p[1..].to_string() } else { String::new() })
+            }
+        }
+    } else if let Some(pstart) = s.strip_prefix('=') {
+        // c:391-441 — `=pat=col[=col…]` pattern rule.
+        let pb = pstart.as_bytes();
+        let mut nesting = 0i32;
+        let mut j = 0usize;
+        // c:399-408 — walk to the terminating '=' (nesting/backslash aware).
+        while j < pb.len() && (nesting != 0 || pb[j] != b'=') {
+            match pb[j] {
+                b'\\' => {
+                    if j + 1 < pb.len() {
+                        j += 1;
+                    }
+                }
+                b'(' => nesting += 1,
+                b')' => nesting -= 1,
+                _ => {}
+            }
+            j += 1;
+        }
+        if j >= pb.len() {
+            return Some(String::new()); // c:409-410 return s (NUL)
+        }
+        let pat_str = &pstart[..j]; // c:411 *s++='\0'
+        let mut cur = &pstart[j + 1..];
+        // c:412-419 — collect successive '='-separated color values.
+        let mut cols: Vec<String> = Vec::new();
+        let final_tail: &str;
+        loop {
+            let (col, t) = getcolval(cur, 1); // c:413
+            if cols.len() < MAX_POS {
+                cols.push(col); // c:414-415
+            }
+            if !t.starts_with('=') {
+                final_tail = t; // c:417 break
+                break;
+            }
+            cur = &t[1..]; // c:418 *s++='\0'
+        }
+        // c:420-435 — metafy+tokenize+patcompile the pattern; append patcol.
+        let mut mp = crate::ported::utils::metafy(pat_str);
+        crate::ported::glob::tokenize(&mut mp);
+        if let Some(prog) = crate::ported::pattern::patcompile(&mp, 0, None) {
+            let pc = Box::new(patcol {
+                prog: gprog,
+                pat: Some(prog),
+                cols,
+                next: None,
+            });
+            let mut mc = MCOLORS.lock().unwrap();
+            let mut chain = &mut mc.pats;
+            while chain.is_some() {
+                chain = &mut chain.as_mut().unwrap().next;
+            }
+            *chain = Some(pc);
+        }
+        // c:439-440 — `if (*t) *t++='\0'; return t;`
+        Some(if !final_tail.is_empty() {
+            final_tail[1..].to_string()
+        } else {
+            String::new()
+        })
+    } else {
+        // c:442-483 — two-letter file-type code `xx=col`.
+        match s.find('=') {
+            None => Some(String::new()), // c:449-450 return s (NUL)
+            Some(eq) => {
+                let n = &s[..eq]; // c:452 *s++='\0'
+                let after = &s[eq + 1..];
+                // c:453-456 — find the colnames index.
+                let idx = COLNAMES.iter().position(|&nn| nn == n);
+                // c:459-465 — special: `ln=target[...]` → follow-symlinks flag.
+                if idx == Some(COL_LN)
+                    && after.starts_with("target")
+                    && (after.as_bytes().get(6) == Some(&b':') || after.len() == 6)
+                {
+                    {
+                        let mut mc = MCOLORS.lock().unwrap();
+                        mc.flags |= LC_FOLLOW_SYMLINKS; // c:462
+                    }
+                    // c:463 — `p = s + 6;` then fall to `return p;`.
+                    Some(after[6..].to_string())
+                } else {
+                    let (col, p) = getcolval(after, 0); // c:466
+                    // c:467-480 — append the filecol (EC/LC/RC ignore gprog).
+                    if let Some(i) = idx {
+                        let fc = Box::new(filecol {
+                            prog: if i == COL_EC || i == COL_LC || i == COL_RC {
+                                None
+                            } else {
+                                gprog
+                            },
+                            col,
+                            next: None,
+                        });
+                        let mut mc = MCOLORS.lock().unwrap();
+                        if mc.files.len() <= i {
+                            mc.files.resize_with(i + 1, || filecol(""));
+                        }
+                        // c:474-479 — `if ((fo = mcolors.files[i])) { …tail…
+                        // fo->next = fc; } else mcolors.files[i] = fc;`. The
+                        // Rust `files[i]` is a value (not a nullable pointer),
+                        // so during-parse an as-yet-unset slot is the empty
+                        // default (col=="" && next==None) — replace it
+                        // outright; otherwise append at the chain tail.
+                        if mc.files[i].col.is_empty() && mc.files[i].next.is_none() {
+                            mc.files[i] = *fc;
+                        } else {
+                            let mut cur = &mut mc.files[i];
+                            while cur.next.is_some() {
+                                cur = cur.next.as_mut().unwrap();
+                            }
+                            cur.next = Some(fc);
+                        }
+                    }
+                    // c:481-482 — `if (*p) *p++='\0'; return p;`
+                    Some(if !p.is_empty() {
+                        p[1..].to_string()
+                    } else {
+                        String::new()
+                    })
+                }
+            }
+        }
+    }
 }
 
 /// Port of `static void getcols(void)` from `Src/Zle/complist.c:505`.
@@ -918,19 +1109,55 @@ pub fn putmatchcol(group: &str, n: &str) -> i32 {
     // c:881
     let mc = MCOLORS.lock().unwrap();
 
-    // c:884-898 — walk the mcolors.pats linked list looking for a
-    //              (group, n) match. The C source compares against
-    //              the bytecode `Patprog` via `pattryrefs`; the
-    //              `Patprog` typedef in `zsh_h` is the type-erased
-    //              header, while `pattern::Patprog` carries the
-    //              bytecode. The patcol substrate stores the former
-    //              today; until the loader populates the bytecode
-    //              tuple form, we skip the pattern body and rely on
-    //              the COL_NO fallback below — same observable
-    //              result (default color) for users who don't set
-    //              ZLS_COLORS pattern entries.
-    let _ = group;
-    let _ = n;
+    // c:884-898 — walk the mcolors.pats chain for a (group, n) match.
+    // `getcoldef` now compiles and stores the real `pattern::Patprog`
+    // bytecode, so this fires `pattry`/`pattryrefs` exactly as the C
+    // source: the group prog (if any) must match `group`, and the value
+    // prog must match `n`, capturing submatch positions into begpos/endpos
+    // for the per-char two-color rendering path.
+    let mut cur = mc.pats.as_deref();
+    while let Some(pc) = cur {
+        let mut nrefs = (MAX_POS - 1) as i32; // c:886 nrefs = MAX_POS - 1
+        let mut begp: Vec<i32> = vec![0; MAX_POS];
+        let mut endp: Vec<i32> = vec![0; MAX_POS];
+        // c:888 — `(!pc->prog || !group || pattry(pc->prog, group))`.
+        let group_ok = match &pc.prog {
+            None => true,
+            Some(gp) => group.is_empty() || crate::ported::pattern::pattry(gp, group),
+        };
+        // c:889 — `pattryrefs(pc->pat, n, -1, -1, NULL, 0, &nrefs, begpos, endpos)`.
+        let pat_ok = match &pc.pat {
+            None => false,
+            Some(pat) => crate::ported::pattern::pattryrefs(
+                pat,
+                n,
+                -1,
+                -1,
+                None,
+                0,
+                Some(&mut nrefs),
+                Some(&mut begp),
+                Some(&mut endp),
+            ),
+        };
+        if group_ok && pat_ok {
+            // c:890-895 — `if (pc->cols[1]) { patcols = pc->cols; return 1; }`
+            if pc.cols.len() > 1 && !pc.cols[1].is_empty() {
+                *PATCOLS.lock().unwrap() = pc.cols.clone(); // c:891 patcols = pc->cols
+                PATCOLS_IDX.store(0, Ordering::Relaxed);
+                *BEGPOS.lock().unwrap() = begp;
+                *ENDPOS.lock().unwrap() = endp;
+                NREFS.store(nrefs, Ordering::Relaxed);
+                return 1; // c:893
+            }
+            // c:896-897 — `zlrputs(pc->cols[0]); return 0;`
+            if let Some(c0) = pc.cols.first() {
+                zlrputs(c0);
+            }
+            return 0;
+        }
+        cur = pc.next.as_deref();
+    }
 
     // c:900 — `zcputs(group, COL_NO);`. Emit the default file color.
     if let Some(no_col) = mc.files.get(COL_NO) {
@@ -1986,16 +2213,65 @@ pub fn clprintm(
             MGTABP.store((mx + mm).max(0) as usize, Ordering::SeqCst); // c:1849
         }
 
-        // c:1872 — `ret = clnicezputs(subcols, m->disp ? m->disp : m->str, ml);`
         let display = m_ref
             .disp
             .as_deref()
             .unwrap_or_else(|| m_ref.str.as_deref().unwrap_or(""));
-        // Emit raw — full clnicezputs (escape-aware writer) deferred;
-        // the cell still receives the visible text.
-        let fd = SHTTY.load(Ordering::Relaxed);
-        let out_fd = if fd >= 0 { fd } else { 1 };
-        let _ = write_loop(out_fd, display.as_bytes());
+        let group = g.and_then(|grp| grp.name.clone()).unwrap_or_default();
+
+        // c:1855-1875 — pick the color cap and emit its prefix. COL_MA
+        // (selected), COL_HI (nolist), COL_DU (duplicate) are group-file
+        // colors; a filesystem match uses putfilecol; everything else is a
+        // list-colors pattern lookup via putmatchcol. Each writer emits its
+        // SGR prefix directly; `subcols` requests per-char (two-color)
+        // rendering inside clnicezputs.
+        let mut subcols = 0i32;
+        // helper: emit mcolors.files[idx] cap for the group (C zcputs).
+        let emit_filecol = |idx: usize| {
+            let cap = MCOLORS
+                .lock()
+                .ok()
+                .and_then(|mc| mc.files.get(idx).map(|f| f.col.clone()))
+                .unwrap_or_default();
+            let _ = zlrputs(&cap);
+        };
+        if m_ref.gnum == mselect {
+            emit_filecol(COL_MA); // c:1866
+        } else if (m_ref.flags & CMF_NOLIST) != 0 {
+            emit_filecol(COL_HI); // c:1868
+        } else if mselect >= 0 && (m_ref.flags & (CMF_MULT | CMF_FMULT)) != 0 {
+            emit_filecol(COL_DU); // c:1870
+        } else if m_ref.mode != 0 {
+            // c:1855-1863 — filesystem match: putfilecol with orphan detect.
+            let orphan = if m_ref.mode != 0 && m_ref.fmode == 0 {
+                COL_OR as i32
+            } else {
+                -1
+            };
+            let follow = MCOLORS
+                .lock()
+                .map(|mc| (mc.flags & LC_FOLLOW_SYMLINKS) != 0)
+                .unwrap_or(false);
+            let mode = if follow { m_ref.fmode } else { m_ref.mode };
+            subcols = putfilecol(&group, m_ref.str.as_deref().unwrap_or(""), mode, orphan);
+        } else {
+            // c:1875 — list-colors pattern lookup.
+            subcols = putmatchcol(&group, display);
+        }
+
+        // c:1872 — `ret = clnicezputs(subcols, m->disp ? m->disp : m->str, ml);`
+        let _ = clnicezputs(subcols, display, ml);
+        // c:1876 — `zcoff();` resets the cap (COL_NO / SGR reset).
+        {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, b"\x1b[0m");
+        }
+        {
+            let mut lc = LAST_CAP.lock().unwrap();
+            lc.clear();
+        }
+        zcoff();
 
         let len_str = display.chars().count() as i32;
         let lines = if len_str > 0 {
@@ -2013,6 +2289,8 @@ pub fn clprintm(
         let mut emitted_marker = 0i32;
         if cgf_files && modec != 0 {
             // c:1882
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
             let _ = write_loop(out_fd, &[modec]); // c:1887
             emitted_marker = 1; // c:1888 len++
         }
@@ -2023,6 +2301,8 @@ pub fn clprintm(
         if pad > 0 {
             // c:1890
             let pad_str = " ".repeat(pad);
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
             let _ = write_loop(out_fd, pad_str.as_bytes());
             // c:1896
         }
