@@ -1132,8 +1132,20 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                     }
                 }
                 'q' => dat.flags |= CMF_REMOVE as i32, // c:645
-                'r' => dat.rems = take(&mut p, &mut idx), // c:679 -r
-                'R' => dat.remf = take(&mut p, &mut idx), // c:680 -R
+                // c:735-738 / c:740-743 — `-r`/`-R` set CMF_REMOVE *and* take
+                // the removal spec (rems=chars / remf=widget). The port set only
+                // the spec, leaving CMF_REMOVE clear, so the auto-remove-suffix
+                // gate (compresult.rs:1525, c:1014 `if (m->flags & CMF_REMOVE)`)
+                // never fired for `compadd -r`/`-R` — the suffix wasn't removed
+                // when a following char was typed.
+                'r' => {
+                    dat.flags |= CMF_REMOVE as i32; // c:735
+                    dat.rems = take(&mut p, &mut idx); // c:737
+                }
+                'R' => {
+                    dat.flags |= CMF_REMOVE as i32; // c:740
+                    dat.remf = take(&mut p, &mut idx); // c:742
+                }
                 'n' => dat.flags |= CMF_NOLIST as i32, // c:671
                 // c:674 — `-U`: clear CAF_MATCH so the added matches DON'T have
                 // to match the command-line word. (Was mis-ported as
@@ -1142,8 +1154,14 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 // `compadd -U /abs/path` for word `~/x*` never got inserted;
                 // this broke every `-U` completer: _expand, _prefix, …)
                 'U' => dat.aflags &= !CAF_MATCH, // c:674
-                'e' => dat.aflags |= CAF_NOSORT,       // c:684
-                'Y' => dat.flags |= CMF_ISPAR as i32,  // c:685
+                // c:658 — `-e` sets CMF_ISPAR (mark matches as parameters), NOT
+                // CAF_NOSORT (the port had them wrong). CAF_NOSORT comes from
+                // `-V`(no group)/`-o`, never `-e`.
+                'e' => dat.flags |= CMF_ISPAR as i32, // c:658
+                // C has no `-Y`; kept mapping to CMF_ISPAR (harmless, unused as a
+                // compadd flag) rather than erroring, since the catch-all rejects
+                // unknown flags.
+                'Y' => dat.flags |= CMF_ISPAR as i32, // (non-C, unused)
                 '-' => {
                     // c:814-816 — `case '-': argv++; goto ca_args;`. A `-`
                     // flag char ends option parsing; this word is consumed.
