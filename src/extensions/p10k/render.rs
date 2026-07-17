@@ -17,8 +17,12 @@
 //! Phase-1 simplifications (each marked TODO at the code site):
 //!   - the `p10k display` toggle layer (`${_p9k__<i>l-...}` wrappers)
 //!     and instant prompt are not ported;
-//!   - CONTENT_EXPANSION / VISUAL_IDENTIFIER_EXPANSION are honored only
-//!     in their default passthrough and empty (hide) forms;
+//!   - CONTENT_EXPANSION / VISUAL_IDENTIFIER_EXPANSION: default
+//!     passthrough, empty (hide), and literal glyphs are honored;
+//!     arbitrary `${...}` templates route through expansion.rs's
+//!     singsub path (a zsh FUNCTION body like the user's
+//!     `my_git_formatter` VCS formatter is still not evaluated —
+//!     VCS falls back to p10k's default git format);
 //!   - joined segments (`is_joined_name`, separator "case 2") join only
 //!     within their own prompt LINE (p10k's `_p9k_left_join`,
 //!     p10k:8414-8433, is built over the concatenated multi-line list,
@@ -296,7 +300,8 @@ fn visibly_nonempty(s: &str) -> bool {
 
 /// p10k:720-722 / 951-953 — VISUAL_IDENTIFIER_EXPANSION, default
 /// `${P9K_VISUAL_IDENTIFIER}` (the resolved icon). Empty hides the
-/// icon; any other expansion string is unsupported phase-1.
+/// icon; a literal glyph ('✔'/'⭐') replaces it; arbitrary `${...}`
+/// templates evaluate through expansion.rs's singsub path.
 fn resolved_icon(seg: &Segment) -> String {
     // p10k:720-722/951-953 — arbitrary templates evaluate through the
     // shell expander (expansion.rs singsub path); the default
