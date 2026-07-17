@@ -2013,7 +2013,81 @@ pub fn compprintlist(showall: i32) -> i32 {
     } // c:1684
 
     let _ = lastused;
-    printed // c:1727 (approx; full clearflag epilogue elided)
+
+    // c:1686-1726 — clearflag epilogue. Previously elided; without it the
+    // cursor is left at the BOTTOM of the just-painted list, so the next
+    // repaint (menu-select navigation) appends a fresh copy below the old one
+    // → the list cascades down the screen. In menu-select mode (`mlbeg >= 0`)
+    // C moves the cursor back UP to the top of the list so the next paint
+    // overwrites it in place.
+    let clearflag = CLEARFLAG.load(Ordering::SeqCst);
+    let listdat_nlines_end = listdat
+        .get()
+        .and_then(|m| m.lock().ok().map(|g| g.nlines))
+        .unwrap_or(0);
+    // c:1679 — `asked = 0` before end:; the "show all N?" prompt path (which
+    // sets asked=1) isn't wired, so it is always 0 here.
+    let asked = 0i32;
+    if clearflag != 0 {
+        // c:1687
+        if mlbeg >= 0 {
+            // c:1691
+            let mut nl = listdat_nlines_end + nlnct;
+            if nl >= zterm_lines {
+                // c:1692
+                if mhasstat != 0 {
+                    // c:1693-1697 — status line at the bottom when the list
+                    // fills the screen.
+                    let fd = SHTTY.load(Ordering::Relaxed);
+                    let out_fd = if fd >= 0 { fd } else { 1 };
+                    let _ = write_loop(out_fd, b"\n");
+                    let mut stop = 0;
+                    compprintfmt("", 0, 1, 1, MLINE.load(Ordering::SeqCst), &mut stop);
+                    MSTATPRINTED.store(1, Ordering::SeqCst);
+                }
+                nl = zterm_lines - 1; // c:1698
+            } else {
+                nl -= 1; // c:1700
+            }
+            tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, nl); // c:1701
+            SHOWINGLIST.store(-1, Ordering::SeqCst); // c:1702
+            LASTLISTLEN.store(listdat_nlines_end, Ordering::SeqCst); // c:1704
+        } else {
+            let nl = listdat_nlines_end + nlnct - 1;
+            if nl < zterm_lines {
+                // c:1705
+                cleareol(); // c:1706
+                tcmultout(crate::ported::zsh_h::TCUP, crate::ported::zsh_h::TCMULTUP, nl); // c:1707
+                SHOWINGLIST.store(-1, Ordering::SeqCst); // c:1708
+                LASTLISTLEN.store(listdat_nlines_end, Ordering::SeqCst); // c:1710
+            } else {
+                CLEARFLAG.store(0, Ordering::SeqCst); // c:1712
+                if asked == 0 {
+                    // c:1713-1715
+                    MRESTLINES.store(
+                        if ml + nlnct > zterm_lines { 1 } else { 0 },
+                        Ordering::SeqCst,
+                    );
+                    compprintnl(ml);
+                }
+            }
+        }
+    } else if asked == 0 {
+        // c:1717-1719
+        MRESTLINES.store(
+            if ml + nlnct > zterm_lines { 1 } else { 0 },
+            Ordering::SeqCst,
+        );
+        compprintnl(ml);
+    }
+    // c:1721 — `listshown = (clearflag ? 1 : -1);`
+    LISTSHOWN.store(
+        if CLEARFLAG.load(Ordering::SeqCst) != 0 { 1 } else { -1 },
+        Ordering::SeqCst,
+    );
+    MNEW.store(0, Ordering::SeqCst); // c:1722
+
+    printed // c:1724
 }
 
 /// Port of `static int lasttype` from `Src/Zle/complist.c:1369`.
