@@ -2601,8 +2601,65 @@ pub fn addmatches(
         .unwrap_or_default();
     let lipre = compiprefix_s.clone();
     let lisuf = compisuffix_s.clone();
-    let lpre = compprefix_s.clone();
+    let mut lpre = compprefix_s.clone();
     let lsuf = compsuffix_s.clone();
+
+    // c:2314-2340 — strip the path-prefix (`compadd -p PPRE`) from `lpre`
+    // before matching each candidate. PPRE is already on the command line
+    // ahead of the match, so comp_match must compare the candidate against
+    // `lpre` with PPRE removed (candidate `sub` vs `su`, not vs the full
+    // `/tmp/ptree/su`). Try the active matcher first (`match_str`, part=1),
+    // else strip literally. Without this every `cmd /a/b/pre<TAB>` produced
+    // no matches — the resolved candidate never matched the full-path lpre.
+    let mut bcp: i32 = 0;
+    let mut ppre_nomatch = false;
+    if (dat.aflags & CAF_MATCH) != 0 {
+        // ppre is quoted below (c:2288) in C before this block; do the same
+        // ordering here so lengths line up with the on-line text.
+        let ppre_q: Option<String> = dat.ppre.as_deref().map(|existing| {
+            if (dat.flags & 0x0001/*CMF_FILE*/) != 0 {
+                tildequote(existing, if (dat.aflags & CAF_QUOTE) != 0 { 0 } else { 1 })
+            } else {
+                multiquote(existing, if (dat.aflags & CAF_QUOTE) != 0 { 0 } else { 1 })
+            }
+        });
+        if let Some(ppre) = ppre_q.as_deref() {
+            if !ppre.is_empty() {
+                // NOTE: `dat.ppre` is left UNquoted here — the canonical
+                // quoting happens in the c:2288 block below. `ppre_q` is a
+                // local, same-quoting copy used only for the length math.
+                let lpl = ppre.len();
+                // c:2314 — `ml = match_str(lpre, ppre, …, part=1)`. Reset the
+                // match accumulators first so this probe doesn't leak into the
+                // per-candidate comp_match (the Rust threads the match Cline
+                // through comp_match's own output, and instmatch re-inserts
+                // dat.ppre from the Cmatch, so the probe's `pline` is unused).
+                crate::ported::zle::compmatch::start_match();
+                let ml = crate::ported::zle::compmatch::match_str(
+                    &lpre, ppre, None, 0, None, 0, 0, 1,
+                );
+                if ml >= 0 {
+                    // c:2318-2325 — matcher matched the prefix.
+                    let cut = (ml as usize).min(lpre.len());
+                    lpre = lpre[cut..].to_string();
+                    bcp = ml;
+                } else if lpre.len() <= lpl && ppre.starts_with(lpre.as_str()) {
+                    // c:2335 — lpre is a prefix of ppre → nothing left.
+                    lpre.clear();
+                } else if lpre.len() > lpl && lpre.starts_with(ppre) {
+                    // c:2337 — ppre is a literal prefix of lpre → strip it.
+                    lpre = lpre[lpl..].to_string();
+                } else {
+                    // c:2339 — `*argv = NULL`: no candidate can match.
+                    ppre_nomatch = true;
+                }
+                crate::ported::zle::compmatch::start_match();
+            }
+        }
+    }
+    if ppre_nomatch {
+        return if mnum.load(Ordering::Relaxed) == _nm { 1 } else { 0 };
+    }
 
     // c:2360-2389 — when `$compstate[pattern_match]` is set, compile the
     // line prefix+suffix (with the completion point as a `*` placeholder)
@@ -2840,7 +2897,7 @@ pub fn addmatches(
                 Some(&mut lc_out),
                 qu,
                 None,
-                0,
+                bcp, // c:2535 — brace-count base advanced by the ppre strip
                 None,
                 0,
                 &mut isexact_out,
