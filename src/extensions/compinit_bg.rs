@@ -33,6 +33,9 @@ impl crate::ported::vm_helper::ShellExecutor {
             match rx.try_recv() {
                 Ok(bg) => {
                     let comps = bg.result.comps.len();
+                    // `#compdef -k`/`-K` header bindings — must run on the
+                    // shell thread (dispatches zle -C + bindkey).
+                    crate::compsys::ported::compinit::apply_keybindings(&bg.result);
                     self.set_assoc("_comps".to_string(), bg.result.comps.into_iter().collect());
                     self.set_assoc(
                         "_services".to_string(),
@@ -120,6 +123,10 @@ impl crate::ported::vm_helper::ShellExecutor {
             "_patcomps".to_string(),
             result.patcomps.clone().into_iter().collect(),
         );
+
+        // `#compdef -k`/`-K` header bindings (^X? _complete_debug,
+        // ^Xh _complete_help, …) — the in-shell half of the scan.
+        crate::compsys::ported::compinit::apply_keybindings(&result);
 
         // No SQLite cache in compat mode
         self.compsys_cache = None;

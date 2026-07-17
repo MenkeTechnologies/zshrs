@@ -2217,6 +2217,11 @@ impl ShellExecutor {
         // rather than being deferred to `drain_compinit_bg`.
         crate::compsys::ported::compinit::install_standard_complete_widgets();
         crate::compsys::ported::compinit::maybe_rebind_tab_for_expand();
+        // The stock `#compdef -k`/`-K` header bindings (^X? _complete_debug,
+        // ^Xh _complete_help, \e/ history-complete, …) — same main-thread
+        // constraint as the standard widgets; the bg scan's own collection
+        // merges too late (drain is lazy) and the cached path never scans.
+        crate::compsys::ported::compinit::install_standard_comp_keybindings();
 
         0
     }

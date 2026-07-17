@@ -824,6 +824,14 @@ pub struct CompInitResult {
     pub compautos: HashMap<String, String>,
     /// All scanned files
     pub files: Vec<CompFile>,
+    /// `#compdef -k <style> <key>...` widget bindings collected from file
+    /// headers: (func, style, keys). Applied by the foreground compinit
+    /// caller via `zle -C` + `bindkey` (upstream compinit sh:356-379) —
+    /// the scan itself may run on a background thread and must not touch
+    /// keymaps.
+    pub keybindings: Vec<(String, String, Vec<String>)>,
+    /// `#compdef -K <widget> <style> <key>` triplets: (widget, style, key, func).
+    pub widgetkeys: Vec<(String, String, String, String)>,
     /// Scan duration
     pub scan_time_ms: u64,
     /// Number of directories scanned
@@ -1002,6 +1010,83 @@ fn scan_directory(dir: &Path) -> Vec<CompFile> {
 ///
 /// This is the main entry point - replaces the zsh compinit function.
 /// Uses rayon for parallel directory and file scanning.
+/// Apply the `#compdef -k`/`-K` widget key bindings a scan collected —
+/// the in-shell half the scan can't do itself (it may run on a background
+/// thread). Mirrors compdef's key branch: sh:365 `zle -C <func> .<style>
+/// <func>`, sh:378 `bindkey <key> <func>`. Without this, header-declared
+/// completion widgets parsed but never bound — `^X?` (_complete_debug,
+/// `#compdef -k complete-word \C-x?`) and `^Xh` (_complete_help)
+/// self-inserted literally instead of running.
+pub fn apply_keybindings(result: &CompInitResult) {
+    for (func, style, keys) in &result.keybindings {
+        for key in keys {
+            install_comp_keybinding(func, style, key, func);
+        }
+    }
+    for (widget, style, key, func) in &result.widgetkeys {
+        install_comp_keybinding(widget, style, key, func);
+    }
+}
+
+/// One `#compdef -k`/`-K` binding: sh:346/365 `zle -C <widget> .<style>
+/// <func>` + sh:351/378 `bindkey <key> <widget>`. Goes through the builtin
+/// entries directly — `dispatch_function_call` resolves only shell
+/// functions and silently no-ops for builtins (see
+/// install_standard_complete_widgets).
+fn install_comp_keybinding(widget: &str, style: &str, key: &str, func: &str) {
+    let empty_ops = crate::ported::zsh_h::options {
+        ind: [0u8; crate::ported::zsh_h::MAX_OPS],
+        args: Vec::new(),
+        argscount: 0,
+        argsalloc: 0,
+    };
+    let style_dotted = if style.starts_with('.') {
+        style.to_string()
+    } else {
+        format!(".{}", style)
+    };
+    // sh:346/365 — `zle -C <widget> <.style> <func>`.
+    let zle_args = [widget.to_string(), style_dotted, func.to_string()];
+    let _ = crate::ported::zle::zle_thingy::bin_zle_complete("zle", &zle_args, &empty_ops, 0);
+    // sh:351/378 — `bindkey <key> <widget>`.
+    let bk_args = [key.to_string(), widget.to_string()];
+    let _ = crate::ported::zle::zle_keymap::bin_bindkey("bindkey", &bk_args, &empty_ops, 0);
+}
+
+/// The `#compdef -k`/`-K` headers shipped in the upstream Completion tree —
+/// the fixed set compinit produces for a stock install (each cited from its
+/// file's first line). Installed synchronously with the standard widget
+/// rebind because the background scan's results merge lazily (and the
+/// cached path skips the scan entirely); user fpath files with -k headers
+/// are additionally collected by the scan into CompInitResult.keybindings.
+const STANDARD_COMP_KEYBINDINGS: &[(&str, &str, &str, &str)] = &[
+    // (widget, style, key, func)
+    ("_complete_debug", "complete-word", "\u{18}?", "_complete_debug"), // Base/Widget/_complete_debug:1 \C-x?
+    ("_complete_help", "complete-word", "\u{18}h", "_complete_help"),   // Base/Widget/_complete_help:1 \C-xh
+    ("_complete_tag", "complete-word", "\u{18}t", "_complete_tag"),     // Base/Widget/_complete_tag:1 \C-xt
+    ("_correct_filename", "complete-word", "\u{18}C", "_correct_filename"), // _correct_filename:1 \C-xC
+    ("_correct_word", "complete-word", "\u{18}c", "_correct_word"),     // _correct_word:1 \C-xc
+    ("_read_comp", "complete-word", "\u{18}\u{12}", "_read_comp"),      // _read_comp:1 \C-x\C-r
+    ("_most_recent_file", "complete-word", "\u{18}m", "_most_recent_file"), // _most_recent_file:1 \C-xm
+    ("_next_tags", "list-choices", "\u{18}n", "_next_tags"),            // _next_tags:1 \C-xn
+    ("_expand_word", "complete-word", "\u{18}e", "_expand_word"),       // _expand_word:1 -K (1st pair)
+    ("_list_expansions", "list-choices", "\u{18}d", "_expand_word"),    // _expand_word:1 -K (2nd pair)
+    ("_bash_complete-word", "complete-word", "\u{1b}~", "_bash_completions"), // _bash_completions:1 -K
+    ("_bash_list-choices", "list-choices", "\u{18}~", "_bash_completions"),   // _bash_completions:1 -K
+    ("_history-complete-older", "complete-word", "\u{1b}/", "_history_complete_word"), // _history_complete_word:1 -K
+    ("_history-complete-newer", "complete-word", "\u{1b},", "_history_complete_word"), // _history_complete_word:1 -K
+    ("_expand_alias", "complete-word", "\u{18}a", "_expand_alias"),     // Base/Completer/_expand_alias:1 -K
+];
+
+/// Install the stock `#compdef -k`/`-K` bindings (see
+/// STANDARD_COMP_KEYBINDINGS). Runs on the main thread next to
+/// install_standard_complete_widgets.
+pub fn install_standard_comp_keybindings() {
+    for (widget, style, key, func) in STANDARD_COMP_KEYBINDINGS {
+        install_comp_keybinding(widget, style, key, func);
+    }
+}
+
 pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
     let start = Instant::now();
 
@@ -1094,8 +1179,31 @@ pub fn compinit(fpath: &[PathBuf]) -> CompInitResult {
                             result.postpatcomps.insert(pat.clone(), file.name.clone());
                         }
                     }
-                    CompDef::KeyBinding { .. } | CompDef::WidgetKey { .. } => {
-                        // Key bindings need to be handled by the shell
+                    CompDef::KeyBinding { style, keys } => {
+                        // sh:356-379 — `#compdef -k <style> <keys…>`: the widget
+                        // takes the FILE's name (e.g. _complete_debug). Collected
+                        // here; zle -C + bindkey happen in apply_keybindings
+                        // (this scan may run on a background thread).
+                        result.keybindings.push((
+                            file.name.clone(),
+                            style.clone(),
+                            keys.clone(),
+                        ));
+                    }
+                    CompDef::WidgetKey {
+                        widget,
+                        style,
+                        key,
+                    } => {
+                        // sh:336-354 — `#compdef -K <widget> <style> <key>`:
+                        // the completion FUNCTION is the file's name, the
+                        // widget name is explicit.
+                        result.widgetkeys.push((
+                            widget.clone(),
+                            style.clone(),
+                            key.clone(),
+                            file.name.clone(),
+                        ));
                     }
                 }
             }
@@ -1683,13 +1791,12 @@ pub fn compdef(args: &[String]) -> i32 {
                 if !comp_widget.starts_with('.') {
                     comp_widget = format!(".{}", comp_widget);
                 }
-                // sh:346  zle -C <wname> <comp_widget> <func>
-                let _ = crate::ported::exec::dispatch_function_call(
-                    "zle",
-                    &["-C".to_string(), wname.clone(), comp_widget, func.clone()],
-                );
-                // sh:347-352  bindkey
-                let _ = crate::ported::exec::dispatch_function_call("bindkey", &[key, wname]);
+                // sh:346 `zle -C` + sh:347-352 `bindkey` — through the
+                // BUILTIN entries; dispatch_function_call resolves only
+                // shell functions and silently no-ops for builtins, which
+                // left every `#compdef -K` widget (^Xe _expand_word,
+                // \e/ _history-complete-older, …) unbound.
+                install_comp_keybinding(&wname, &comp_widget, &key, &func);
                 i += 3;
             }
         }
@@ -1704,16 +1811,13 @@ pub fn compdef(args: &[String]) -> i32 {
             if !style.starts_with('.') {
                 style = format!(".{}", style);
             }
-            // sh:365  zle -C <func> <style> <func>
-            let _ = crate::ported::exec::dispatch_function_call(
-                "zle",
-                &["-C".to_string(), func.clone(), style, func.clone()],
-            );
+            // sh:365 `zle -C` + sh:373-378 `bindkey` — through the BUILTIN
+            // entries (see the -K arm above): the dispatch_function_call
+            // spelling silently no-op'd, so `#compdef -k` widgets — ^X?
+            // _complete_debug, ^Xh _complete_help — never bound and the
+            // keys self-inserted literally.
             for key in &args[idx..] {
-                let _ = crate::ported::exec::dispatch_function_call(
-                    "bindkey",
-                    &[key.clone(), func.clone()],
-                );
+                install_comp_keybinding(&func, &style, key, &func);
             }
         }
         _ => {
