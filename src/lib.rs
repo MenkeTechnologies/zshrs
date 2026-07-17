@@ -268,6 +268,9 @@ pub mod p10k;
 /// `plugin_cache` submodule.
 #[path = "extensions/plugin_cache.rs"]
 pub mod plugin_cache;
+/// `plugin_host` submodule — native (Rust) plugin loader (`zmodload -R`).
+#[path = "extensions/plugin_host.rs"]
+pub mod plugin_host;
 /// `recorder_ext` submodule.
 #[path = "extensions/recorder.rs"]
 pub mod recorder_ext;

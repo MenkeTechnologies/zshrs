@@ -1,0 +1,23 @@
+# Example native zshrs plugin. Build:
+#   cargo build --manifest-path examples/plugin-hello/Cargo.toml
+# then inside zshrs:
+#   zmodload -R examples/plugin-hello/target/debug/libhello.dylib   # macOS
+#   zmodload -R examples/plugin-hello/target/debug/libhello.so      # Linux
+#   rhello world
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+# cdylib is what `dlopen` loads. rlib is not needed.
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+# Standalone: declare an empty workspace so this example is NOT pulled
+# into the parent zshrs workspace (which would force it to build with
+# the shell). It still path-deps the SDK crate directly.
+[workspace]

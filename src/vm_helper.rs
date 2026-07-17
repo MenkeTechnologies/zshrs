@@ -2905,6 +2905,23 @@ impl ShellExecutor {
         background: bool,
     ) -> Result<i32, String> {
         tracing::trace!(cmd, bg = background, "exec external");
+        // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+        // Native (Rust) plugin builtins registered via `zmodload -R`
+        // (src/extensions/plugin_host.rs). fusevm compiles unknown
+        // names into external execution, so a plugin command arrives
+        // here as an "external". Resolve it BEFORE the PATH-unset guard
+        // and the process spawn — plugin builtins are in-process and
+        // need no PATH. This is the analog of C's `resolvebuiltin`
+        // slot (Src/exec.c:2700), which likewise runs before the fork.
+        // Bare names only: a `/`-qualified token is always a filesystem
+        // path, never a plugin command name. Runs synchronously even
+        // when backgrounded — zshrs is non-forking and an in-process
+        // builtin has nothing to background.
+        if !cmd.contains('/') {
+            if let Some(status) = crate::plugin_host::dispatch(cmd, args) {
+                return Ok(status);
+            }
+        }
         // c:Src/exec.c:824-876 — when arg0 has no `/`, C zsh requires
         // a PATH search. With PATH unset, the search yields no hit
         // and C emits `command not found: <cmd>`. Rust's
