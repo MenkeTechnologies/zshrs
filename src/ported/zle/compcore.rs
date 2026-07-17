@@ -2962,7 +2962,17 @@ pub fn addmatches(
         "addmatches candidate-loop done"
     );
     let _ = (ppl, psl, compignored_local, added);
-    0 // c:2636
+    // c:2636 — `return (mnum == nm)`: non-zero (1) when NO new matches were
+    // added this call, 0 when at least one landed. Was hardcoded `0`, so
+    // every `compadd` reported success even against zero matches — the
+    // `completer` chain (_main_complete) then stopped after `_complete`
+    // and never advanced to `_approximate` / `_ignored` / etc., and any
+    // `compadd … && ret=0` idiom in a completer wrongly took the match arm.
+    if mnum.load(Ordering::Relaxed) == _nm {
+        1
+    } else {
+        0
+    }
 }
 
 // =====================================================================
