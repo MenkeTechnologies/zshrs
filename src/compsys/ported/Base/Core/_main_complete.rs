@@ -584,12 +584,12 @@ pub fn _main_complete(args: &[String]) -> i32 {
             let prefix_chars = &unambig[..upos.saturating_sub(1)];
             if !prefix_chars.is_empty() {
                 let mut colors = getaparam("_comp_colors").unwrap_or_default();
-                colors.push(format!(
-                    "=(#i){}*=={}",
-                    glob_escape(prefix_chars),
-                    ambig_color
-                ));
-                setaparam("_comp_colors", colors);
+                let entry = format!("=(#i){}*=={}", glob_escape(prefix_chars), ambig_color);
+                // `_comp_colors` is `typeset -U` (sh:54) — skip if already present.
+                if !colors.contains(&entry) {
+                    colors.push(entry);
+                    setaparam("_comp_colors", colors);
+                }
             }
         }
     }
