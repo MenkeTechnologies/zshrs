@@ -991,97 +991,125 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
     dat.aflags = CAF_MATCH;
     dat.dummies = -1;
     let mut idx = 0usize;
-    let take_arg = |argv: &[String], idx: &mut usize, arg: &str| -> Option<String> {
-        // Inline form: `-Xfoo`. Else next argv slot.
-        if arg.len() > 2 {
-            Some(arg[2..].to_string())
-        } else if *idx < argv.len() {
-            let s = argv[*idx].clone();
-            *idx += 1;
-            Some(s)
-        } else {
-            None
-        }
-    };
-    while idx < argv.len() {
-        // c:613
+    // c:632-820 — flag loop. C iterates EACH CHARACTER inside every `-…`
+    // argv element (`for (p = *argv+1; *p; p++)`), so bundled flags like
+    // compdescribe/_describe's `-2V-default-` parse as `-2` then `-V` whose
+    // argument is the rest of the same word (`-default-`). The earlier port
+    // read only `arg[1]` per element and dropped everything after the first
+    // flag char, so `-2V-default-` set only `-2` and lost the group name —
+    // every described-option match fell into the implicit `default` group
+    // instead of `-default-`, and list-colors' `(-default-)` group prefix
+    // never matched (no colors). Now char-by-char with C's sp semantics.
+    'outer: while idx < argv.len() {
+        // c:632 — `for (; *argv && **argv == '-'; argv++)`
         let arg = argv[idx].clone();
+        if !arg.starts_with('-') || arg.len() < 2 {
+            break; // c:619 (non-flag word) / bare "-" (c:634-637)
+        }
         if arg == "--" {
             idx += 1;
             break;
-        } // c:617
-        if !arg.starts_with('-') || arg.len() < 2 {
-            break;
-        } // c:619
+        } // c:815 `case '-': argv++; goto ca_args`
         idx += 1;
-        let c = arg.as_bytes()[1] as char;
-        match c {
-            'a' => dat.aflags |= CAF_ARRAYS,                   // c:626
-            'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS,        // c:657
-            'l' => dat.flags |= CMF_DISPLINE as i32,           // c:766-767 `case 'l': dat.flags |= CMF_DISPLINE`
-            'o' => dat.aflags |= CAF_NOSORT,                   // c:634 -o
-            'Q' => dat.aflags |= CAF_QUOTE,                    // c:637
-            '1' => dat.aflags |= CAF_UNIQALL,                  // c:638
-            '2' => dat.aflags |= CAF_UNIQCON,                  // c:639
-            'C' => dat.aflags |= CAF_ALL,                      // c:640
-            'F' => dat.flags |= CMF_FILE as i32,               // c:642 -f
-            'f' => dat.flags |= CMF_FILE as i32,               // c:642 -f
-            'P' => dat.pre = take_arg(argv, &mut idx, &arg),   // c:660 -P
-            'S' => dat.suf = take_arg(argv, &mut idx, &arg),   // c:661 -S
-            'p' => dat.ppre = take_arg(argv, &mut idx, &arg),  // c:662 -p
-            's' => dat.psuf = take_arg(argv, &mut idx, &arg),  // c:663 -s
-            'W' => dat.prpre = take_arg(argv, &mut idx, &arg), // c:664 -W
-            'i' => dat.ipre = take_arg(argv, &mut idx, &arg),  // c:665 -i
-            'I' => dat.isuf = take_arg(argv, &mut idx, &arg),  // c:666 -I
-            'J' => dat.group = take_arg(argv, &mut idx, &arg), // c:667 -J
-            'V' => {
-                // c:668 -V
-                dat.group = take_arg(argv, &mut idx, &arg);
-                dat.aflags |= CAF_NOSORT;
-            }
-            'X' => dat.exp = take_arg(argv, &mut idx, &arg), // c:669 -X
-            'x' => dat.mesg = take_arg(argv, &mut idx, &arg), // c:670 -x
-            'd' => dat.disp = take_arg(argv, &mut idx, &arg), // c:671 -d
-            'O' => dat.opar = take_arg(argv, &mut idx, &arg), // c:672 -O
-            'A' => dat.apar = take_arg(argv, &mut idx, &arg), // c:673 -A
-            'D' => {
-                // c:674 -D
-                if let Some(s) = take_arg(argv, &mut idx, &arg) {
-                    dat.dpar.push(s);
+        let bytes = arg.clone().into_bytes();
+        let mut p = 1usize; // c:638 `p = *argv + 1`
+        while p < bytes.len() {
+            // c:638
+            let c = bytes[p] as char;
+            // c:812-825 — the `if (sp)` arg-extraction: pasted rest-of-word
+            // (`-Xfoo`) or the next word (`-X foo`). Consuming the rest of
+            // the word advances `p` to the end so the inner loop stops.
+            let mut take = |p: &mut usize, idx: &mut usize| -> Option<String> {
+                if *p + 1 < bytes.len() {
+                    // c:816-818 — `-Xfoo`: value is the rest of this word.
+                    let v = String::from_utf8_lossy(&bytes[*p + 1..]).into_owned();
+                    *p = bytes.len(); // consume rest → inner loop ends
+                    Some(v)
+                } else if *idx < argv.len() {
+                    // c:819-822 — `-X foo`: value is the next word.
+                    let v = argv[*idx].clone();
+                    *idx += 1;
+                    Some(v)
+                } else {
+                    None // c:823-828 — missing argument.
                 }
-            }
-            'E' => {
-                // c:675 -E
-                if let Some(s) = take_arg(argv, &mut idx, &arg) {
-                    dat.dummies = s.parse::<i32>().unwrap_or(-1).max(0);
+            };
+            match c {
+                'a' => dat.aflags |= CAF_ARRAYS, // c:658
+                'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS, // c:661
+                'l' => dat.flags |= CMF_DISPLINE as i32, // c:766-767
+                'o' => dat.aflags |= CAF_NOSORT, // c:634
+                'Q' => dat.aflags |= CAF_QUOTE, // c:648
+                '1' => dat.aflags |= CAF_UNIQALL, // c:693
+                '2' => dat.aflags |= CAF_UNIQCON, // c:697
+                'C' => dat.aflags |= CAF_ALL, // c:651
+                'F' => dat.ign = take(&mut p, &mut idx), // c:664 -F string
+                'f' => dat.flags |= CMF_FILE as i32, // c:654
+                'P' => dat.pre = take(&mut p, &mut idx), // c:709
+                'S' => dat.suf = take(&mut p, &mut idx), // c:713
+                'p' => dat.ppre = take(&mut p, &mut idx), // c:717
+                's' => dat.psuf = take(&mut p, &mut idx), // c:721
+                'W' => dat.prpre = take(&mut p, &mut idx), // c:725
+                'i' => dat.ipre = take(&mut p, &mut idx), // c:729
+                'I' => dat.isuf = take(&mut p, &mut idx), // c:733
+                'J' => dat.group = take(&mut p, &mut idx), // c:737
+                'V' => {
+                    // c:741 -V — unsorted group.
+                    if dat.group.is_none() {
+                        dat.aflags |= CAF_NOSORT; // c:742-743
+                    }
+                    dat.group = take(&mut p, &mut idx); // c:744
                 }
-            }
-            'M' => {
-                // c:676 -M
-                if let Some(s) = take_arg(argv, &mut idx, &arg) {
-                    if let Some(m) = parse_cmatcher(name, &s) {
-                        dat.match_ = Some(m);
-                        dat.aflags |= CAF_MATCH;
-                    } else {
-                        return 1;
+                'X' => dat.exp = take(&mut p, &mut idx), // c:757
+                'x' => dat.mesg = take(&mut p, &mut idx), // c:761
+                'd' => dat.disp = take(&mut p, &mut idx), // c:765
+                'O' => dat.opar = take(&mut p, &mut idx), // c:749
+                'A' => dat.apar = take(&mut p, &mut idx), // c:753
+                'D' => {
+                    // c:772 -D
+                    if let Some(s) = take(&mut p, &mut idx) {
+                        dat.dpar.push(s);
                     }
                 }
+                'E' => {
+                    // c:777 -E <number of dummies>
+                    if let Some(s) = take(&mut p, &mut idx) {
+                        dat.dummies = s.parse::<i32>().unwrap_or(-1).max(0);
+                    }
+                }
+                'M' => {
+                    // c:676 -M
+                    if let Some(s) = take(&mut p, &mut idx) {
+                        if let Some(m) = parse_cmatcher(name, &s) {
+                            dat.match_ = Some(m);
+                            dat.aflags |= CAF_MATCH;
+                        } else {
+                            return 1;
+                        }
+                    }
+                }
+                'q' => dat.flags |= CMF_REMOVE as i32, // c:645
+                'r' => dat.rems = take(&mut p, &mut idx), // c:679 -r
+                'R' => dat.remf = take(&mut p, &mut idx), // c:680 -R
+                'n' => dat.flags |= CMF_NOLIST as i32, // c:671
+                'U' => dat.flags |= CMF_HIDE as i32,   // c:668
+                'e' => dat.aflags |= CAF_NOSORT,       // c:684
+                'Y' => dat.flags |= CMF_ISPAR as i32,  // c:685
+                '-' => {
+                    // c:814-816 — `case '-': argv++; goto ca_args;`. A `-`
+                    // flag char ends option parsing; this word is consumed.
+                    break 'outer;
+                }
+                _ => {
+                    // c:817-820 — unknown flag.
+                    zwarnnam(name, &format!("bad option: -{}", c));
+                    return 1;
+                }
             }
-            'q' => dat.flags |= CMF_REMOVE as i32, // c:677 -q
-            'r' => dat.rems = take_arg(argv, &mut idx, &arg), // c:679 -r
-            'R' => dat.remf = take_arg(argv, &mut idx, &arg), // c:680 -R
-            'n' => dat.flags |= CMF_NOLIST as i32, // c:681 -n
-            'U' => dat.flags |= CMF_HIDE as i32,   // c:682 -U
-            'e' => dat.aflags |= CAF_NOSORT,       // c:684
-            'Y' => dat.flags |= CMF_ISPAR as i32,  // c:685
-            _ => {
-                // c:691 — unknown flag.
-                zwarnnam(name, &format!("bad option: -{}", c));
-                return 1;
-            }
+            p += 1; // c:638 `p++`
         }
     }
-    // c:822 — `args = argv` (residual after flags).
+    // c:830 — `args = argv` (residual words after flags).
     let matches = &argv[idx..];
     compcore::addmatches(&mut dat, matches) // c:828
 }
