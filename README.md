@@ -758,7 +758,10 @@ produce candidates. See [`examples/plugin-complete/`](examples/plugin-complete/)
 **Porting existing zsh plugins:** [`docs/PORTING_ZSH_PLUGIN.md`](docs/PORTING_ZSH_PLUGIN.md)
 is a construct-by-construct zsh→Rust guide, worked end-to-end on
 [**forgit**](examples/plugin-forgit/) (the git+fzf plugin, ported
-command-for-command: `ga glo gd gcf gclean gss gcp grh gi`).
+command-for-command: `ga glo gd gcf gclean gss gcp grh gi`) and — for the
+harder *self-reentrant* case — [**git-fuzzy**](examples/plugin-git-fuzzy/)
+(fzf calling back into the tool per keystroke, with a `--listen` live-reload
+watcher).
 
 ### vs bash / zsh native plugins
 
