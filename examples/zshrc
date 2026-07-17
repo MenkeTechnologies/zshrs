@@ -1,0 +1,79 @@
+# Example ~/.zshrc for zshrs
+#
+# zshrs reads the same startup files as zsh (~/.zshrc for interactive
+# shells). Everything here is ordinary zsh syntax — copy the parts you
+# want. The point of this file is the `zpm` section: how to install and
+# load plugins, both zsh script plugins and native (Rust) plugins.
+#
+# zpm keeps a single global, content-addressed store under
+# $ZSHRS_HOME/pkg/ (default ~/.zshrs/pkg/). There is no per-project
+# manifest or lockfile — you `zpm add` once, and `zpm load` at startup.
+
+# ---------------------------------------------------------------------------
+# Options / history — plain zsh, works the same in zshrs
+# ---------------------------------------------------------------------------
+setopt hist_ignore_all_dups   # collapse duplicate history entries
+setopt share_history          # share history across sessions
+setopt auto_cd                # `zshrs` a bare dir name to cd into it
+setopt extended_glob          # ^ ~ # glob operators
+HISTSIZE=100000
+SAVEHIST=100000
+
+# ---------------------------------------------------------------------------
+# Completion — compinit as usual (zshrs ships the ported compsys)
+# ---------------------------------------------------------------------------
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+
+# ---------------------------------------------------------------------------
+# Plugins with zpm
+# ---------------------------------------------------------------------------
+#
+# INSTALL (run once, interactively — these hit the network):
+#
+#   zpm add zsh-users/zsh-history-substring-search   # script plugin (github)
+#   zpm add zsh-users/zsh-autosuggestions            # script plugin (github)
+#   zpm add github:zsh-users/zsh-syntax-highlighting # explicit github: form
+#   zpm add MenkeTechnologies/zshrs-forgit           # native (Rust) plugin
+#   zpm add git+https://example.com/team/plugin.git@v1.2.0   # git+URL @ref
+#   zpm add path:~/src/my-plugin                     # local dir (no network)
+#
+# zpm auto-detects the kind:
+#   - a Cargo.toml with crate-type = ["cdylib"]  -> native (built with cargo,
+#     loaded via `zmodload -R`)
+#   - *.plugin.zsh / functions/ / *.zsh          -> script (fpath + source)
+# An optional zpm.toml at the repo root can override the metadata/kind.
+#
+# INSPECT:
+#   zpm list                 # one line per installed plugin
+#   zpm info forgit          # full record (source, store path, integrity)
+#
+# UPDATE / REMOVE:
+#   zpm update               # re-resolve + reinstall everything
+#   zpm update forgit        # just one
+#   zpm remove forgit        # unload + drop from the store
+#
+# LOAD AT STARTUP — this is the only zpm line your .zshrc needs.
+# `zpm load` is zero-network: it reads only the local store + index, so it
+# is safe and fast on every shell start. With no argument it loads every
+# installed plugin; pass a name to load just one.
+#
+zpm load
+
+# Or, to control order / load a subset explicitly:
+#   zpm load zsh-autosuggestions
+#   zpm load zsh-syntax-highlighting   # keep syntax-highlighting last
+
+# ---------------------------------------------------------------------------
+# Prompt
+# ---------------------------------------------------------------------------
+# zshrs has a native powerlevel10k engine — if you use p10k, its config
+# loads the same way it does under zsh:
+#   [[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
+
+# ---------------------------------------------------------------------------
+# Aliases / env — your own stuff below
+# ---------------------------------------------------------------------------
+alias ll='ls -lah'
+export EDITOR=vim
