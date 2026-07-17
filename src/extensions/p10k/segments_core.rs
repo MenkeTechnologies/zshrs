@@ -688,8 +688,152 @@ fn ip_segments() -> Vec<Segment> {
         // p10k:2295 cond '$P9K_IP_IP' — hidden when empty.
         return vec![];
     };
+    // Which interface produced the ip (needed for byte counters).
+    let iface = up_ipv4_interfaces()
+        .into_iter()
+        .find(|(name, _)| re.is_match(name))
+        .map(|(name, _)| name)
+        .unwrap_or_default();
+    // p10k:5702-5747 — publish P9K_IP_* so a user IP_CONTENT_EXPANSION
+    // (`${P9K_IP_RX_RATE:+…}$P9K_IP_IP`) renders rates + address instead
+    // of collapsing to just the NETWORK_ICON box.
+    publish_ip_status(&iface, &ip);
     // p10k:2295 — `_p9k_prompt_segment "$0" "cyan" "$_p9k_color1" 'NETWORK_ICON' …`
     vec![make_segment("ip", None, "cyan", color1(), "NETWORK_ICON", ip)]
+}
+
+/// Per-interface byte-counter sample from the previous prompt, for the
+/// rate delta (p10k stashes P9K_IP_{RX,TX}_BYTES + _p9__ip_timestamp).
+static IP_LAST_SAMPLE: std::sync::Mutex<Option<(String, u64, u64, f64)>> =
+    std::sync::Mutex::new(None);
+
+/// p10k:5702-5747 — set the P9K_IP_* parameters a user IP_CONTENT_EXPANSION
+/// reads: the address, interface, cumulative bytes, and the RX/TX rates
+/// (bytes-delta since the last prompt over elapsed seconds).
+fn publish_ip_status(iface: &str, ip: &str) {
+    use crate::ported::params::setsparam;
+    let _ = setsparam("P9K_IP_IP", ip); // p10k:5702
+    let _ = setsparam("P9K_IP_INTERFACE", iface);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let (rx, tx) = iface_bytes(iface).unwrap_or((0, 0));
+
+    // p10k:5728-5743 — rate only when the same iface+ip persisted across
+    // prompts; else "0 B/s".
+    let (rx_rate, tx_rate) = {
+        let mut last = IP_LAST_SAMPLE.lock().unwrap();
+        let rates = match last.as_ref() {
+            // p10k:5729 — `$ip_ip == $P9K_IP_IP && iface == P9K_IP_INTERFACE`.
+            Some((liface, lrx, ltx, lts)) if liface == iface => {
+                let t = now - lts; // p10k:5730
+                if t <= 0.0 {
+                    ("0 B/s".to_string(), "0 B/s".to_string()) // p10k:5731-5733
+                } else {
+                    (
+                        rate_str(rx.saturating_sub(*lrx) as f64 / t), // p10k:5737-5738
+                        rate_str(tx.saturating_sub(*ltx) as f64 / t), // p10k:5735-5736
+                    )
+                }
+            }
+            _ => ("0 B/s".to_string(), "0 B/s".to_string()), // p10k:5741-5742
+        };
+        *last = Some((iface.to_string(), rx, tx, now));
+        rates
+    };
+    let _ = setsparam("P9K_IP_RX_RATE", &rx_rate); // p10k:5646
+    let _ = setsparam("P9K_IP_TX_RATE", &tx_rate); // p10k:5645
+    let _ = setsparam("P9K_IP_RX_BYTES", &rx.to_string());
+    let _ = setsparam("P9K_IP_TX_BYTES", &tx.to_string());
+}
+
+/// p10k:5736/5738 — format a byte/s rate: `_p9k_human_readable_bytes`
+/// then `N B/s` (unscaled) or `N XiB/s` (scaled, X ∈ K M G …).
+fn rate_str(bytes_per_sec: f64) -> String {
+    let (val, suffix) = human_readable_bytes(bytes_per_sec);
+    if suffix == 'B' {
+        format!("{val} B/s")
+    } else {
+        format!("{val} {suffix}iB/s")
+    }
+}
+
+/// Port of `_p9k_human_readable_bytes` (p10k:327-342): scale by 1024
+/// through the B K M G … suffixes, format with 2/1/0 decimals by
+/// magnitude, strip trailing zeros. Returns (value-string, suffix-char).
+fn human_readable_bytes(n: f64) -> (String, char) {
+    const SUF: [char; 9] = ['B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']; // p10k:322
+    let mut n = n;
+    let mut suf = 'B';
+    for (i, s) in SUF.iter().enumerate() {
+        suf = *s;
+        if n < 1024.0 || i == SUF.len() - 1 {
+            break;
+        }
+        n /= 1024.0;
+    }
+    // p10k:334-340 — precision by magnitude.
+    let raw = if n >= 100.0 {
+        format!("{n:.0}.")
+    } else if n >= 10.0 {
+        format!("{n:.1}")
+    } else {
+        format!("{n:.2}")
+    };
+    // p10k:341 — `${${ret%%0#}%.}`: strip trailing zeros, then a trailing dot.
+    let trimmed = raw.trim_end_matches('0').trim_end_matches('.').to_string();
+    let trimmed = if trimmed.is_empty() { "0".to_string() } else { trimmed };
+    (trimmed, suf)
+}
+
+/// Interface (rx_bytes, tx_bytes) — Linux `/sys/class/net/<if>/statistics`,
+/// macOS/BSD via `getifaddrs` AF_LINK `if_data` (fork-free, unlike p10k's
+/// `netstat -inbI`). None when unavailable.
+#[cfg(target_os = "linux")]
+fn iface_bytes(iface: &str) -> Option<(u64, u64)> {
+    let rd = |kind: &str| -> Option<u64> {
+        std::fs::read_to_string(format!("/sys/class/net/{iface}/statistics/{kind}_bytes"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    };
+    Some((rd("rx")?, rd("tx")?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn iface_bytes(iface: &str) -> Option<(u64, u64)> {
+    // getifaddrs → the AF_LINK entry for `iface` carries `if_data` with
+    // ifi_ibytes / ifi_obytes (the same counters `netstat -inb` prints).
+    let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut ifap) } != 0 {
+        return None;
+    }
+    let mut out = None;
+    let mut cur = ifap;
+    while !cur.is_null() {
+        let ifa = unsafe { &*cur };
+        cur = ifa.ifa_next;
+        if ifa.ifa_addr.is_null() {
+            continue;
+        }
+        let sa = unsafe { &*ifa.ifa_addr };
+        if i32::from(sa.sa_family) != libc::AF_LINK {
+            continue;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr(ifa.ifa_name) }.to_string_lossy();
+        if name != iface || ifa.ifa_data.is_null() {
+            continue;
+        }
+        // ifa_data → struct if_data; read ifi_ibytes/ifi_obytes.
+        let d = unsafe { &*(ifa.ifa_data as *const libc::if_data) };
+        out = Some((d.ifi_ibytes as u64, d.ifi_obytes as u64));
+        break;
+    }
+    unsafe { libc::freeifaddrs(ifap) };
+    out
 }
 
 // ---------------------------------------------------------------------
@@ -1631,6 +1775,18 @@ mod tests {
     /// VCS_CONTENT_EXPANSION (my_git_formatter) reads, so the formatter
     /// builds the rich git format instead of echoing an empty
     /// P9K_CONTENT.
+    /// p10k:327-342/5736 — human-readable byte rates.
+    #[test]
+    fn ip_rate_formatting_matches_p10k() {
+        assert_eq!(rate_str(0.0), "0 B/s");
+        assert_eq!(rate_str(512.0), "512 B/s");
+        assert_eq!(rate_str(1024.0), "1 KiB/s");
+        assert_eq!(rate_str(1536.0), "1.5 KiB/s");
+        assert_eq!(rate_str(1024.0 * 1024.0), "1 MiB/s");
+        // ≥100 in a unit → "N." integer form then dot-stripped.
+        assert_eq!(rate_str(200.0 * 1024.0), "200 KiB/s");
+    }
+
     #[test]
     fn publish_vcs_status_sets_params() {
         let _g = crate::test_util::global_state_lock();
