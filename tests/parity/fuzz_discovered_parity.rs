@@ -3372,21 +3372,23 @@ mod ztst_mined {
     }
 
     /// A07control — `break N`/`continue N` where N is a RUNTIME
-    /// expression (`$((...))`, `$var`) is treated as N=1: the compile
-    /// path's jump-patch mechanism can only read a LITERAL level count
-    /// (`untokenize.parse::<usize>()`), so a runtime count falls back to
-    /// 1 and never breaks/continues the outer loop. Literal `break 2`
-    /// works (compile-time jump target); `continue $((2))` does not.
-    /// The fix needs runtime-count propagation through the loop-exit
-    /// codegen (set BREAKS=N, decrement per level) rather than a
-    /// compile-time jump. zsh: `continue 2` skips to the next OUTER
-    /// iteration; zshrs runs the rest of the inner loop.
+    /// expression (`$((...))`, `$var`). FIXED: emit_runtime_loop_level
+    /// (compile_zsh.rs) evaluates the count and dispatches via a jump
+    /// table to the same break_patches/continue_patches[depth-N] target
+    /// the literal path uses (N>depth clamps to outermost, N<=0 errors).
+    /// Regression pin — no longer ignored.
     #[test]
-    #[ignore = "zshrs gap: break/continue with a RUNTIME count ($((..))/$var) acts as count=1"]
     fn break_continue_runtime_count() {
         assert_parity(
             "for o in 0 1; do for i in 0 1 2; do print $o$i; continue $(( o ? 2 : 1 )); done; print end$o; done",
         );
+    }
+
+    /// `break $var` with a runtime count > 1 breaks the right number of
+    /// nested loops (was acting as break 1).
+    #[test]
+    fn break_runtime_count_multi_level() {
+        assert_parity("n=2; for i in 1 2; do for j in a b; do break $n; print $i$j; done; print mid; done; print end");
     }
 
     /// corpus bulk_n — an assoc subscript KEY with backslash-quoted
