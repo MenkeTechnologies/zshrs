@@ -1067,6 +1067,18 @@ pub fn bufswap() {
 #[allow(unreachable_code)]
 pub fn zrefresh() {
     // c:975
+    // Frame-cost telemetry (log-only, >100ms frames): the native-p10k
+    // rollout surfaced multi-second frames that read as a hung shell.
+    struct FrameTimer(std::time::Instant);
+    impl Drop for FrameTimer {
+        fn drop(&mut self) {
+            let ms = self.0.elapsed().as_millis();
+            if ms > 100 {
+                tracing::info!(target: "zle_refresh", ms, "slow zrefresh frame");
+            }
+        }
+    }
+    let _frame_t = FrameTimer(std::time::Instant::now());
     // c:999-1000 — `if (inlist) return;`. `listmatches()` (called at the
     // end of this fn to draw a pending completion list) itself calls
     // `trashzle()` → `zrefresh()`; the guard breaks that recursion so the
@@ -1542,6 +1554,22 @@ pub fn zrefresh() {
         let mut prompt_attr: zattr = 0;
         let mut esc_params = String::new();
         let mut in_esc = false;
+        // prompt.c:1183-1186 (countprompt) — `Inpar..Outpar` (`%{...%}`,
+        // expanded to \x01..\x02) is a ZERO-WIDTH region: nothing inside
+        // occupies a cell. In particular p10k's `%{\n%}` gap-line
+        // terminator (emitted when ZLE_RPROMPT_INDENT=0 makes a non-last
+        // line exactly winw wide) must not advance the video line — the
+        // eager wrap at the right margin (emit → nextline) already did,
+        // mirroring C's `while (w > zterm_columns) h++` overflow
+        // accounting. Laying the marker bytes and the hidden \n as cells
+        // shifted every later video row off the physical screen (typed
+        // input echoed at far-right columns, garbled repaints).
+        let mut in_invisible = false;
+        // prompt.c:1201-1206 — a HARD \n after an exactly-full row: the
+        // `w > zterm_columns` test is STRICT, so the full row's height
+        // comes from the \n alone. The eager emit-wrap already advanced
+        // the row, so absorb the \n instead of advancing twice.
+        let mut just_wrapped = false;
         for c in prompt.chars() {
             if in_esc {
                 if c == '[' {
@@ -1559,8 +1587,27 @@ pub fn zrefresh() {
             } else if c == '\x1b' {
                 in_esc = true;
                 esc_params.clear();
-            } else if emit(&mut rpms, c, prompt_attr) {
-                break; // c:1257 — nextline bailed
+            } else if c == '\u{1}' {
+                in_invisible = true; // Inpar — %{ begins zero-width span
+            } else if c == '\u{2}' {
+                in_invisible = false; // Outpar — %} ends it
+            } else if in_invisible {
+                // Zero-width by contract; SGR inside the span was already
+                // parsed by the in_esc arm above.
+            } else if c == '\n' {
+                // countprompt `w = 0; h++` (prompt.c:1204-1206), with the
+                // exactly-full-row absorption above.
+                if just_wrapped {
+                    just_wrapped = false;
+                } else if nextline(&mut rpms, 0) != 0 {
+                    break;
+                }
+            } else {
+                just_wrapped = false;
+                if emit(&mut rpms, c, prompt_attr) {
+                    break; // c:1257 — nextline bailed
+                }
+                just_wrapped = rpms.pos == 0; // emit wrapped at the margin
             }
         }
         // c:152 / zle_main.c:1280 — publish the prompt's trailing attribute
@@ -2226,6 +2273,33 @@ pub fn zrefresh() {
             // starts from the right SGR state.
             crate::ported::prompt::treplaceattrs(PROMPT_ATTR.load(Ordering::SeqCst));
             VCS.store(LPROMPTW.load(Ordering::SeqCst), Ordering::SeqCst);
+            // Multiline-prompt anchor: the raw print above left the REAL
+            // cursor on the prompt's LAST physical row, but VLN was homed
+            // to 0. The bridge lays the whole multiline prompt into NBUF
+            // rows 0..prompt_rows-1 (C keeps only the last prompt line in
+            // its video model — the earlier lines are printed once by the
+            // zputs above and never repainted, zle_refresh.c:1158). With
+            // VLN=0 refreshline believed the physical row under the
+            // cursor was video row 0 and repainted the whole prompt block
+            // a second time below the printed one. Anchor the video
+            // cursor to the printed prompt's last row and pre-seed OBUF
+            // with the fully-printed prompt rows so the diff treats them
+            // as already on screen. The last prompt row is NOT seeded —
+            // it shares its row with the edit line and must still be
+            // diffed (its cells re-emit identically over the print).
+            if prompt_rows > 1 {
+                let seed_rows = prompt_rows - 1;
+                {
+                    let nbuf = NBUF.lock().unwrap();
+                    let mut obuf = OBUF.lock().unwrap();
+                    obuf.clear();
+                    for r in 0..seed_rows {
+                        obuf.push(nbuf.get(r).cloned().unwrap_or_default());
+                    }
+                }
+                OLNCT.store(seed_rows as i32, Ordering::SeqCst);
+                VLN.store(seed_rows as i32, Ordering::SeqCst);
+            }
         }
     }
     let olnct = OLNCT.load(Ordering::SeqCst);
