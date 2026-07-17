@@ -15057,14 +15057,24 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             Some("aAcef:ghi:M:m:p:r:t:"),
             None,
         ),
+        // C: `BUILTIN("compadd", BINF_HANDLES_OPTS, bin_compadd, 0, -1, 0,
+        // NULL, NULL)` (complete.c:1693). compadd parses ALL its own
+        // options (the char-by-char loop in bin_compadd_body). The earlier
+        // registration gave it an incomplete getopt spec ("J:V:1X:fnqQF:Wsi")
+        // WITHOUT BINF_HANDLES_OPTS, so the dispatcher pre-parsed and
+        // STRIPPED -J/-V/-X/… into `ops` and handed bin_compadd only the
+        // positional words — every `compadd -J group -X expl …` lost its
+        // group name and explanation (second `compadd -J` groups vanished,
+        // no group headers). Must be HANDLES_OPTS + no optspec so argv
+        // reaches bin_compadd raw.
         BUILTIN(
             "compadd",
-            0,
+            BINF_HANDLES_OPTS,
             Some(crate::ported::zle::complete::bin_compadd as HandlerFunc),
             0,
             -1,
             0,
-            Some("J:V:1X:fnqQF:Wsi"),
+            None,
             None,
         ),
         BUILTIN(
