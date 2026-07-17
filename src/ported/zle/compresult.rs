@@ -3326,10 +3326,14 @@ pub fn iprintm(
     if let Some(d) = disp_now {
         // c:2253
         if (m.flags & CMF_DISPLINE) != 0 {
-            // c:2254
-            // c:2255 — `printfmt(d, 0, 1, 0)` then `putc('\n', shout)`.
-            let _ = write_loop(out, d.as_bytes());
-            let _ = write_loop(out, b"\n");
+            // c:2254-2255 — `printfmt(m->disp, 0, 1, 0); return;`. printfmt
+            // emits a trailing `\n` ONLY for newlines embedded in the disp
+            // (zle_tricky.c:2518 `if (*p == '\n')`); a single-line disp gets
+            // NO terminator here — the caller's pnl loop (printlist
+            // c:2093-2113) writes the inter-row `\n`. The earlier port added
+            // an extra `\n` here, double-spacing every CMF_DISPLINE row
+            // (verbose `_describe`/`compadd -l` description lists).
+            let _ = printfmt(d, 0, true, false);
             return 0; // c:2257
         }
         let _ = write_loop(out, d.as_bytes()); // c:2260 niceformat
