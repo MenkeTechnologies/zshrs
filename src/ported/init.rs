@@ -2013,6 +2013,14 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
                            // c:180-215 — preexec hook + ZLE_CMD_PREEXEC.
             if toplevel != 0 {
                 // c:180
+                // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+                // Native p10k engine command timer (src/extensions/p10k):
+                // stamp start-of-command for the command_execution_time
+                // segment. The zsh theme does this in a preexec hook
+                // (`_p9k__timer_start=EPOCHREALTIME`); the native engine
+                // stamps here unconditionally (no-op when inactive) so
+                // it works without any user preexec function installed.
+                crate::p10k::note_exec_start();
                 let preexec_fn = crate::ported::utils::getshfunc("preexec"); // c:181
                 let preexec_hook = crate::ported::params::paramtab()
                     .read()

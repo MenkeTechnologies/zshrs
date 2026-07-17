@@ -104,6 +104,21 @@ pub fn git_status_for(dir: &Path) -> Option<GitStatus> {
         Some(out) => {
             parse_porcelain_v2(&out, &mut status);
             if let Ok(mut map) = cache().lock() {
+                // Bound the cache: one entry per repo visited; a
+                // long-lived shell hopping across many repos must not
+                // grow this without limit. Evict the stalest entry
+                // once over the cap (cap is generous — the map is
+                // per-repo, not per-directory).
+                const CACHE_CAP: usize = 64;
+                if map.len() >= CACHE_CAP && !map.contains_key(&repo.git_dir) {
+                    if let Some(oldest) = map
+                        .iter()
+                        .max_by_key(|(_, e)| e.at.elapsed())
+                        .map(|(k, _)| k.clone())
+                    {
+                        map.remove(&oldest);
+                    }
+                }
                 map.insert(
                     repo.git_dir.clone(),
                     CacheEntry {

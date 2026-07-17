@@ -1683,6 +1683,14 @@ pub fn preprompt() {
     // before the next ZLE read, so the elapsed time is command
     // wall-time, not prompt idle.
     crate::history::history_sqlite_finish(crate::ported::builtin::LASTVAL.load(Ordering::Relaxed));
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native p10k engine (src/extensions/p10k): snapshot `$?` and close
+    // the command timer BEFORE the precmd hook runs, so precmd's own
+    // commands can't clobber what the status / command_execution_time
+    // segments show. Mirrors p10k's `_p9k_save_status` precmd ordering.
+    crate::p10k::note_command_finished(
+        crate::ported::builtin::LASTVAL.load(Ordering::Relaxed) as i64,
+    );
     // c:1532 `static time_t lastperiodic;` — periodic-hook last-fire timestamp.
     static LAST_PERIODIC: AtomicI64 = AtomicI64::new(0);
     // `lastmailcheck` is module-scoped (LAST_MAILCHECK below) because C makes it

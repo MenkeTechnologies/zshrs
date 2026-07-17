@@ -359,3 +359,48 @@ mod sq_literal_brace_not_live {
         assert_parity(r#"typeset -A m=(kk vv); print -r -- "${m[kk]}""#);
     }
 }
+
+/// A single-quoted span inside a `[[ == ]]` glob RHS must match its
+/// chars LITERALLY — quoted glob metas never become pattern operators.
+///
+/// Regression: `emit_glob_subst_pattern`'s `PatSeg::Literal` arms
+/// emitted the segment via plain `untokenize`, which strips the Snull
+/// markers WITHOUT escaping the quoted metas. powerlevel10k's
+/// non-hermetic check `[[ $_p9k__ret == (|*[^\\])'$('* ]]`
+/// (internal/p10k.zsh:952) thus compiled to `(|*[^\\])$(*` — the
+/// runtime re-tokenize promoted the quoted `(` to a live group opener
+/// and patcompile failed "bad pattern" on every prompt segment.
+mod sq_glob_meta_in_cond_pattern {
+    use super::*;
+
+    /// The exact p10k shape: quoted `$(` after a group, then `*`.
+    #[test]
+    fn p10k_non_hermetic_dollar_paren() {
+        assert_parity(r#"_r='a $(b)'; [[ $_r == (|*[^\\])'$('* ]] && print M || print N"#);
+    }
+
+    /// Same pattern, non-matching subject.
+    #[test]
+    fn p10k_non_hermetic_dollar_paren_nomatch() {
+        assert_parity(r#"_r='plain'; [[ $_r == (|*[^\\])'$('* ]] && print M || print N"#);
+    }
+
+    /// Star-adjacent quoted `$(` (needs_expand path, single Literal segment).
+    #[test]
+    fn star_quoted_dollar_paren() {
+        assert_parity(r#"_r='hello $(world)'; [[ $_r == *'$('* ]] && print M || print N"#);
+    }
+
+    /// Leading quoted `$(` anchor.
+    #[test]
+    fn leading_quoted_dollar_paren() {
+        assert_parity(r#"_r='hello $(world)'; [[ $_r == '$('* ]] && print M || print N"#);
+    }
+
+    /// Mixed: a real substitution AND a quoted meta in one RHS — the
+    /// Subst segment must still expand while the quoted `(` stays literal.
+    #[test]
+    fn subst_plus_quoted_meta() {
+        assert_parity(r#"p='hello'; _r='hello ('; [[ $_r == ${p}' ('* ]] && print M || print N"#);
+    }
+}
