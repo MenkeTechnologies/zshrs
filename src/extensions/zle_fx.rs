@@ -110,6 +110,13 @@ fn set_buffer(text: &str, cursor: usize) {
     *ZLELINE.lock().unwrap() = chars;
     ZLELL.store(n, SeqCst);
     ZLECS.store(cursor.min(n), SeqCst);
+    // zle_utils.rs:565-569 (zsh Src/Zle/zle_utils.c:827-828): every buffer
+    // edit clamps `viinsbegin > zlecs → 0`, or vi insert mode refuses to
+    // delete text left of a stale insertion mark. Whole-line replacement
+    // here must do the same or backspace dies after normal→insert.
+    if crate::ported::zle::zle_main::VIINSBEGIN.load(SeqCst) > ZLECS.load(SeqCst) {
+        crate::ported::zle::zle_main::VIINSBEGIN.store(0, SeqCst);
+    }
 }
 
 /// Cursor sits at line end (vi command mode's inclusive cursor counts the last
@@ -245,10 +252,18 @@ pub fn on_pre_widget(widget: &str) -> bool {
             }
             crate::autopair::Action::DeleteRightThenPassthrough => {
                 // ap:190/195 — RBUFFER=${RBUFFER:1}; then the original
-                // deleting widget runs.
-                let rest: String = rbuf.chars().skip(1).collect();
-                let new_line = format!("{lbuf}{rest}");
-                set_buffer(&new_line, cursor);
+                // deleting widget runs. The passthrough MUST be able to
+                // actually delete leftward, or the pair collapses
+                // asymmetrically (right char gone, left refused):
+                // vi-backward-delete-char stops at the insertion start
+                // (viinsbegin, zle_vi.c:78 classic-vi rule), so gate on it.
+                let vi_blocked = widget == "vi-backward-delete-char"
+                    && cursor <= crate::ported::zle::zle_main::VIINSBEGIN.load(SeqCst);
+                if !vi_blocked {
+                    let rest: String = rbuf.chars().skip(1).collect();
+                    let new_line = format!("{lbuf}{rest}");
+                    set_buffer(&new_line, cursor);
+                }
                 // fall through: return false so the bound widget deletes left
             }
             crate::autopair::Action::Passthrough => (),
