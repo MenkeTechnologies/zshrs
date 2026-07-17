@@ -213,9 +213,14 @@ fn previous_command() -> Option<String> {
     ring.first().map(|e| e.node.nam.clone())
 }
 
-/// Read `$ZSH_AUTOSUGGEST_STRATEGY` (defaults to `history`).
+/// Read `$ZSH_AUTOSUGGEST_STRATEGY` (defaults to `history`). The plugin
+/// declares it as an ARRAY (`ZSH_AUTOSUGGEST_STRATEGY=( match_prev_cmd )`) —
+/// read it as one, falling back to a scalar spelling.
 pub fn configured_strategies() -> Vec<Strategy> {
-    let raw = getsparam("ZSH_AUTOSUGGEST_STRATEGY").unwrap_or_default();
+    let raw = crate::ported::params::getaparam("ZSH_AUTOSUGGEST_STRATEGY")
+        .map(|v| v.join(" "))
+        .or_else(|| getsparam("ZSH_AUTOSUGGEST_STRATEGY"))
+        .unwrap_or_default();
     let mut out: Vec<Strategy> = raw
         .split_whitespace()
         .filter_map(|s| match s {
@@ -267,15 +272,25 @@ pub fn compute_autosuggestion(
     let working_directory = getsparam("PWD").unwrap_or_else(|| ".".to_owned());
 
     // fish:5351-5359 — walk matching history newest-first.
-    let candidates = source(search_string, 64);
-    // For match_prev_cmd we need neighbor context; fetch it once.
-    let match_prev_filter: Option<Vec<String>> = prev_cmd.as_ref().map(|prev| {
-        let ring = crate::ported::hist::hist_ring.lock().unwrap();
-        ring.windows(2)
-            .filter(|w| &w[1].node.nam == prev)
-            .map(|w| w[0].node.nam.clone())
-            .collect()
-    });
+    let mut candidates = source(search_string, 64);
+    // zsh-autosuggestions `match_prev_cmd` is a PREFERENCE, not a filter: it
+    // picks the most recent match whose PRECEDING history item equals the
+    // last executed command, falling back to the plain most-recent match
+    // when no neighbor-match exists (the plugin's own code path).
+    // Implementing it as a hard filter killed all suggestions for configs
+    // like `ZSH_AUTOSUGGEST_STRATEGY=( match_prev_cmd )`.
+    if let Some(prev) = &prev_cmd {
+        let preferred: Option<String> = {
+            let ring = crate::ported::hist::hist_ring.lock().unwrap();
+            ring.windows(2)
+                .find(|w| &w[1].node.nam == prev && w[0].node.nam.starts_with(search_string))
+                .map(|w| w[0].node.nam.clone())
+        };
+        if let Some(preferred) = preferred {
+            candidates.retain(|c| c != &preferred);
+            candidates.insert(0, preferred);
+        }
+    }
 
     // Budget-degradation fallback: fish validates candidates with unbounded
     // background time; the synchronous pass caps validation work. If the
@@ -285,11 +300,6 @@ pub fn compute_autosuggestion(
     let mut unvalidated_fallback: Option<AutosuggestionResult> = None;
 
     for full in &candidates {
-        if let Some(allowed) = &match_prev_filter {
-            if !allowed.contains(full) {
-                continue;
-            }
-        }
 
         // fish:5362-5375 — case-sensitive prefix first, then one icase fallback.
         let (matches, icase) = if full.starts_with(search_string) {
