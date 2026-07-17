@@ -15,20 +15,28 @@
 //! (p10k:615/834) is therefore unnecessary and omitted.
 //!
 //! Phase-1 simplifications (each marked TODO at the code site):
-//!   - joined segments ("case 2" of the separator logic) are not wired
-//!     — mod.rs strips no `_joined` suffixes yet;
 //!   - the `p10k display` toggle layer (`${_p9k__<i>l-...}` wrappers)
 //!     and instant prompt are not ported;
-//!   - non-last right prompt lines are appended padding-free after the
-//!     left content instead of gap-aligned (`_p9k_gap_pre`,
-//!     p10k:8087-8095);
 //!   - CONTENT_EXPANSION / VISUAL_IDENTIFIER_EXPANSION are honored only
-//!     in their default passthrough and empty (hide) forms.
+//!     in their default passthrough and empty (hide) forms;
+//!   - joined segments (`is_joined_name`, separator "case 2") join only
+//!     within their own prompt LINE (p10k's `_p9k_left_join`,
+//!     p10k:8414-8433, is built over the concatenated multi-line list,
+//!     but a line always opens with `bg=NONE` so cross-line joins can
+//!     only matter through skipped-anchor chains); SELF_JOINED
+//!     (p10k:697-704) is not honored — each Segment renders once so the
+//!     multi-sub-segment case it exists for cannot arise;
+//!   - non-last-line right prompts are gap-aligned with plain spaces
+//!     only: MULTILINE_*_PROMPT_GAP_CHAR / _GAP_EXPANSION and the gap
+//!     fg/bg styling (p10k:7885-7913) are unported, and the alignment
+//!     ignores `_p9k__ind` (ZLE_RPROMPT_INDENT, p10k:8094) — the right
+//!     edge is the terminal edge.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
-use crate::ported::params::getsparam;
+use crate::ported::params::{getiparam, getsparam};
 use crate::ported::utils::getkeystring;
+use crate::ported::zsh_h::WCWIDTH;
 
 /// One rendered prompt segment, produced by segments_core/segments_env.
 /// `content` is already prompt-escaped; `icon` is the resolved glyph;
@@ -43,6 +51,25 @@ pub struct Segment {
     pub icon: Option<String>,
     pub fg: String,
     pub bg: String,
+}
+
+/// p10k:5834/5849/5880/5895 —
+/// `${${(0)_p9k_line_segments_left[i]}%_joined}`: a prompt ELEMENT name
+/// may carry a `_joined` suffix. The suffix is stripped for segment
+/// dispatch (the segment function is `prompt_<base>`) and marks the
+/// element as joining the PREVIOUS element's group
+/// (`_p9k_left_join`/`_p9k_right_join`, p10k:8414-8433).
+///
+/// Contract with mod.rs: pass the element name to this fn, dispatch the
+/// segment builders on the returned base name, and put the ORIGINAL
+/// (suffixed) element name back into each built `Segment.name` — render
+/// strips the suffix again for all `POWERLEVEL9K_*` param lookups and
+/// uses it to select separator "case 2" (p10k:673/683/923).
+pub fn is_joined_name(name: &str) -> (&str, bool) {
+    match name.strip_suffix("_joined") {
+        Some(base) => (base, true),
+        None => (name, false),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -328,17 +355,30 @@ struct LeftState {
 }
 
 /// Render one left segment, appending to `out`. Mirrors the emission
-/// order of the template built at p10k:706-831.
-fn render_left_segment(seg: &Segment, st: &mut LeftState, out: &mut String) {
+/// order of the template built at p10k:706-831. `joined` is the
+/// resolved case-2 predicate (p10k:696/708-710 — the previously
+/// RENDERED segment lies inside this segment's join group). Returns
+/// whether the segment rendered (drove `_p9k__i`, p10k:828).
+fn render_left_segment(seg: &Segment, joined: bool, st: &mut LeftState, out: &mut String) -> bool {
+    // p10k:5895 — `${..%_joined}`: param/icon lookups use the BASE name.
+    let stripped;
+    let seg = match is_joined_name(&seg.name) {
+        (base, true) => {
+            stripped = Segment { name: base.to_string(), ..seg.clone() };
+            &stripped
+        }
+        _ => seg,
+    };
     let content = resolved_content(seg);
     let icon = resolved_icon(seg);
     let has_content = visibly_nonempty(&content);
     let has_icon = !icon.is_empty();
     // p10k:750-759 — `${${_p9k__e:#00}:+…}`: a segment whose content
     // AND icon are both empty renders nothing (no separators, no state
-    // update).
+    // update). This is p10k's guarantee that an empty segment never
+    // paints background padding blocks.
     if !has_content && !has_icon {
-        return;
+        return false;
     }
 
     // p10k:616-624 — resolve bg/fg through the param chain with the
@@ -368,19 +408,26 @@ fn render_left_segment(seg: &Segment, st: &mut LeftState, out: &mut String) {
 
     // Segment separator logic (p10k:669-694):
     //   if [[ $_p9k__bg == NONE ]]; then 1
-    //   elif (( joined )); then          2   (TODO: join groups unwired)
+    //   elif (( joined )); then          2
     //   elif same-bg; then               3
     //   else                             4
     match &st.bg {
         None => {
             // p10k:645-647 + 682 — first segment: optional start
             // symbol drawn %b%k%F{bg}, then style + leading space.
+            // Empty bg_color → %f (fg_seq), never the `%F{}` form
+            // (zshrs's prompt expander paints `%F{}` as palette 0).
             let start = get_icon(Some(seg), "LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL", "");
             if !start.is_empty() {
-                out.push_str(&format!("%b%k%F{{{bg_color}}}{start}"));
+                out.push_str(&format!("%b%k{}{start}", fg_seq(&bg_color)));
             }
             out.push_str(&style);
             out.push_str(&left_space);
+        }
+        Some(_) if joined => {
+            // Case 2 (p10k:683): joined segment — style only, no
+            // separator, no leading whitespace.
+            out.push_str(&style);
         }
         Some(prev_bg) => {
             // p10k:675 — $bg_color == (${_p9k__bg}|${_p9k__bg:-0})
@@ -487,14 +534,18 @@ fn render_left_segment(seg: &Segment, st: &mut LeftState, out: &mut String) {
     out.push_str(&right_space);
 
     // p10k:826-829 — publish separator state for the next segment and
-    // the end-of-line closer.
+    // the end-of-line closer. Empty bg_color publishes %f, not `%F{}`
+    // (p10k:827 interpolates `$bg_color` raw, but only ever with the
+    // resolved non-empty palette value on the themes that set one; the
+    // `%F{}` form must never reach the expander here).
     // p10k:649 — LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL defaults to the
     // segment separator.
     let end_sep = get_icon(Some(seg), "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", &sep);
-    st.sep = format!("%F{{{bg_color}}}{sep}");
+    st.sep = format!("{}{sep}", fg_seq(&bg_color));
     st.subsep = subsep;
-    st.sss = format!("%F{{{bg_color}}}{end_sep}");
+    st.sss = format!("{}{end_sep}", fg_seq(&bg_color));
     st.bg = Some(bg_color);
+    true
 }
 
 /// Render one full LEFT prompt line (segments + closing separator).
@@ -515,8 +566,20 @@ fn render_left_line(segs: &[Segment]) -> String {
         sss: format!("%f{default_end}"),
     };
     let mut body = String::new();
-    for seg in segs {
-        render_left_segment(seg, &mut st, &mut body);
+    // p10k:8414-8422 — `_p9k_left_join`: each segment's join-group
+    // anchor is itself when not `_joined`, else the previous segment's
+    // anchor. p10k:696/710 — case 2 fires when `_p9k__i` (index of the
+    // last segment that actually RENDERED, p10k:828) is >= the anchor.
+    let mut group_start = 0usize;
+    let mut last_rendered: Option<usize> = None;
+    for (i, seg) in segs.iter().enumerate() {
+        if !is_joined_name(&seg.name).1 {
+            group_start = i;
+        }
+        let joined = last_rendered.is_some_and(|li| li >= group_start);
+        if render_left_segment(seg, joined, &mut st, &mut body) {
+            last_rendered = Some(i);
+        }
     }
     let body = fix_backspace_hack(&body); // p10k:5915
     // p10k:7959 — '%b%k$_p9k__sss%b%k%f'
@@ -542,14 +605,31 @@ struct RightState {
 }
 
 /// Render one right segment, appending to `out` (p10k:853-1099).
-fn render_right_segment(seg: &Segment, st: &mut RightState, out: &mut String) {
+/// `joined` is the resolved case-2 predicate (p10k:927/940-941);
+/// returns whether the segment rendered.
+fn render_right_segment(
+    seg: &Segment,
+    joined: bool,
+    st: &mut RightState,
+    out: &mut String,
+) -> bool {
+    // p10k:5849 — `${..%_joined}`: param/icon lookups use the BASE name.
+    let stripped;
+    let seg = match is_joined_name(&seg.name) {
+        (base, true) => {
+            stripped = Segment { name: base.to_string(), ..seg.clone() };
+            &stripped
+        }
+        _ => seg,
+    };
     let content = resolved_content(seg);
     let icon = resolved_icon(seg);
     let has_content = visibly_nonempty(&content);
     let has_icon = !icon.is_empty();
-    // p10k:980-990 — the e == 00 gate, as on the left.
+    // p10k:980-990 — the e == 00 gate, as on the left: an empty segment
+    // renders nothing, never background padding.
     if !has_content && !has_icon {
-        return;
+        return false;
     }
 
     // p10k:855-867 — colors and style.
@@ -579,17 +659,24 @@ fn render_right_segment(seg: &Segment, st: &mut RightState, out: &mut String) {
     }
 
     // Segment separator logic (p10k:909-925), mirrored for the right:
-    //   1 line start / 2 joined (TODO) / 3 same bg / 4 different bg.
+    //   1 line start / 2 joined / 3 same bg / 4 different bg.
     match &st.bg {
         None => {
             // p10k:885-887 + 922 — start symbol defaults to the
-            // segment separator, drawn %b%k%F{bg}.
+            // segment separator, drawn %b%k%F{bg}. Empty bg_color →
+            // %f (fg_seq), never the `%F{}` form.
             let start = get_icon(Some(seg), "RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL", &sep);
             if !start.is_empty() {
-                out.push_str(&format!("%b%k%F{{{bg_color}}}{start}"));
+                out.push_str(&format!("%b%k{}{start}", fg_seq(&bg_color)));
             }
             out.push_str(&style);
             out.push_str(&left_space);
+        }
+        Some(_) if joined => {
+            // Case 2 (p10k:923) — $w$style: deferred whitespace, then
+            // style only; no separator, no leading whitespace.
+            out.push_str(&st.w);
+            out.push_str(&style);
         }
         Some(prev_bg) => {
             // p10k:915 — $_p9k__bg == (${bg_color}|${bg_color:-0})
@@ -603,8 +690,8 @@ fn render_right_segment(seg: &Segment, st: &mut RightState, out: &mut String) {
             } else {
                 // p10k:925 — $w%F{$bg_color}$sep$style$left_space:
                 // separator drawn fg=NEW bg on the previous background
-                // ($w restored it).
-                out.push_str(&format!("%F{{{bg_color}}}{sep}"));
+                // ($w restored it). Empty bg_color → %f, not `%F{}`.
+                out.push_str(&format!("{}{sep}", fg_seq(&bg_color)));
                 out.push_str(&style);
                 out.push_str(&left_space);
             }
@@ -688,7 +775,8 @@ fn render_right_segment(seg: &Segment, st: &mut RightState, out: &mut String) {
     w.push_str(&format!("%b{bg}{wfg}"));
     st.w = w;
 
-    // p10k:1069-1075 — the line closer `_p9k__sss`.
+    // p10k:1069-1075 — the line closer `_p9k__sss`. Empty bg_color →
+    // %f, not `%F{}`.
     let end_sep = get_icon(Some(seg), "RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL", "");
     let mut sss = String::new();
     sss.push_str(&style); // p10k:1070
@@ -697,11 +785,12 @@ fn render_right_segment(seg: &Segment, st: &mut RightState, out: &mut String) {
         sss.push_str(&style); // p10k:1071
     }
     if !end_sep.is_empty() {
-        sss.push_str(&format!("%k%F{{{bg_color}}}{end_sep}{style}")); // p10k:1072-1074
+        sss.push_str(&format!("%k{}{end_sep}{style}", fg_seq(&bg_color))); // p10k:1072-1074
     }
     st.sss = sss;
 
     st.bg = Some(bg_color); // p10k:1077
+    true
 }
 
 /// Render one full RIGHT prompt line; "" when nothing rendered
@@ -709,8 +798,17 @@ fn render_right_segment(seg: &Segment, st: &mut RightState, out: &mut String) {
 fn render_right_line(segs: &[Segment]) -> String {
     let mut st = RightState { bg: None, w: String::new(), sss: String::new() };
     let mut body = String::new();
-    for seg in segs {
-        render_right_segment(seg, &mut st, &mut body);
+    // p10k:8424-8433 — `_p9k_right_join`: same anchor fold as the left.
+    let mut group_start = 0usize;
+    let mut last_rendered: Option<usize> = None;
+    for (i, seg) in segs.iter().enumerate() {
+        if !is_joined_name(&seg.name).1 {
+            group_start = i;
+        }
+        let joined = last_rendered.is_some_and(|li| li >= group_start);
+        if render_right_segment(seg, joined, &mut st, &mut body) {
+            last_rendered = Some(i);
+        }
     }
     if body.is_empty() {
         // TODO(phase-1): _p9k_line_never_empty_right (p10k:7962) —
@@ -721,6 +819,92 @@ fn render_right_line(segs: &[Segment]) -> String {
     let body = fix_backspace_hack(&body); // p10k:5869
     // p10k:7964 — '$_p9k__sss%b%k%f'
     format!("{body}{}%b%k%f", st.sss)
+}
+
+// ---------------------------------------------------------------------------
+// Gap alignment — port of _p9k_gap_pre (p10k:8087-8095) +
+// _p9k_build_gap_post (p10k:7879-7922)
+// ---------------------------------------------------------------------------
+
+/// Strip raw ANSI escape sequences (CSI `ESC[...X`, OSC `ESC]...BEL/ST`,
+/// other two-byte `ESC x`) from an already prompt-EXPANDED string, so
+/// only printable text remains for width measurement.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match it.peek().copied() {
+            Some('[') => {
+                // CSI: parameters/intermediates until a final byte @-~.
+                it.next();
+                for c in it.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                // OSC: until BEL or ST (ESC \).
+                it.next();
+                let mut prev_esc = false;
+                for c in it.by_ref() {
+                    if c == '\u{7}' || (prev_esc && c == '\\') {
+                        break;
+                    }
+                    prev_esc = c == '\u{1b}';
+                }
+            }
+            Some(_) => {
+                it.next(); // two-byte escape (ESC c, ESC 7, …)
+            }
+            None => {}
+        }
+    }
+    out
+}
+
+/// Visible display width of a zsh PROMPT-ESCAPE string: expand through
+/// `promptexpand` (src/ported/prompt.rs:407 — `ns=0` chucks the
+/// \x01/\x02 width-ignore markers, matching the `${(%):-...}` form
+/// p10k's own width probe uses at p10k:8090), strip the raw ANSI the
+/// expansion emitted, then sum `WCWIDTH` (src/ported/zsh_h.rs:4758)
+/// over the remainder, counting non-printing (< 0) as 0.
+fn prompt_visible_width(s: &str) -> usize {
+    let (expanded, _, _) = crate::ported::prompt::promptexpand(s, 0, None);
+    strip_ansi(&expanded)
+        .chars()
+        .map(|c| WCWIDTH(c).max(0) as usize)
+        .sum()
+}
+
+/// Gap-align one non-last prompt line: left content, space padding,
+/// right content ending at the terminal edge.
+///
+/// p10k:8087-8094 — `_p9k_gap_pre` binary-searches the combined visible
+/// width of `$_p9k__lprompt$_p9k__rprompt` with `%m(l.…)` prompt
+/// conditionals, then `_p9k__m = _p9k__clm - x - _p9k__ind - 1`;
+/// p10k:7905-7908 — `_p9k_build_gap_post` fills the gap with
+/// `${(pl.$((_p9k__m+1)).. .)}` (m+1 pad chars, default ' ') and falls
+/// back to a bare newline when `m` is negative (`${${_p9k__m:#-*}…`).
+/// Eager equivalent with `ind=0`: pad = columns - width(left) -
+/// width(right); overflow (pad would be < 1, i.e. m < 0) keeps the
+/// phase-1 inline append instead of p10k's drop-the-right fallback.
+/// `measure` is injectable so tests need no live shell state.
+fn align_line(left: &str, right: &str, columns: usize, measure: &dyn Fn(&str) -> usize) -> String {
+    if right.is_empty() {
+        return left.to_string();
+    }
+    let width = measure(left) + measure(right); // p10k:8087 — $_p9k__lprompt$_p9k__rprompt
+    if width >= columns {
+        // p10k:7905 `${${_p9k__m:#-*}:+…}` — m negative; inline append.
+        return format!("{left}{right}");
+    }
+    // p10k:7906/7908 — ${(pl.$((_p9k__m+1)).. .)}: m+1 spaces.
+    format!("{left}{}{right}", " ".repeat(columns - width))
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +1017,13 @@ pub fn render_prompt(
         }
     }
 
+    // p10k:8097 — `_p9k__clm::=$COLUMNS` snapshot feeding the gap math
+    // (p10k:8094). Unset/zero COLUMNS falls back to 80.
+    let columns = match getiparam("COLUMNS") {
+        c if c > 0 => c as usize,
+        _ => 80,
+    };
+
     let mut rprompt = String::new();
     for i in 0..num_lines {
         let (lsegs, rsegs) = line_pair(i);
@@ -840,10 +1031,11 @@ pub fn render_prompt(
         let frame_suffix = right_frame_suffix(i, num_lines);
 
         // p10k:7998/8008/8035 — frame prefix goes BEFORE the line body.
-        prompt.push_str(&left_frame_prefix(i, num_lines));
-        prompt.push_str(&render_left_line(lsegs));
+        let mut line = left_frame_prefix(i, num_lines);
+        line.push_str(&render_left_line(lsegs));
 
         if i + 1 == num_lines {
+            prompt.push_str(&line);
             // p10k:5949-5952 — last line: right side becomes RPROMPT.
             // (The _p9k_prompt_prefix_right/_suffix_right COLUMNS
             // juggling, p10k:8098-8100, has no eager counterpart.)
@@ -852,12 +1044,12 @@ pub fn render_prompt(
             }
         } else {
             // p10k:5918-5947 — non-last lines with right content are
-            // gap-aligned via _p9k_gap_pre (p10k:8087-8095).
-            // TODO(phase-1): gap machinery unported — the right-line
-            // content (and frame connector) is appended padding-free
-            // after the left content.
-            prompt.push_str(&right);
-            prompt.push_str(&frame_suffix);
+            // gap-aligned: left, space fill, right ending at the
+            // terminal edge (p10k:8087-8095 + 7905-7908). The right
+            // frame connector rides with the right content, as in
+            // p10k's `_p9k_line_suffix_right` (p10k:8015/8044).
+            let right_full = format!("{right}{frame_suffix}");
+            prompt.push_str(&align_line(&line, &right_full, columns, &prompt_visible_width));
             prompt.push('\n'); // p10k:5954
         }
     }
@@ -1074,5 +1266,196 @@ mod tests {
         assert_eq!(fix_backspace_hack(" %{\u{8}X%}"), "%{%GX%}");
         assert_eq!(fix_backspace_hack("a \u{8}b"), "ab");
         assert_eq!(fix_backspace_hack("plain"), "plain");
+    }
+
+    /// Empty color specs must emit the reset escapes (%f/%k), never the
+    /// empty-brace forms `%F{}`/`%K{}` (zshrs's expander paints those
+    /// as palette 0; p10k never emits them).
+    #[test]
+    fn empty_color_spec_emits_reset_not_empty_braces() {
+        assert_eq!(fg_seq(""), "%f");
+        assert_eq!(bg_seq(""), "%k");
+        locked(|| {
+            // Left: transparent-bg segment then a colored one — the
+            // published separator recolor and the line closer both
+            // derive from the empty bg.
+            let a = seg("aseg", "AAA", "004", "");
+            let b = seg("bseg", "BBB", "007", "002");
+            let line = render_left_line(&[a.clone(), b]);
+            assert!(!line.contains("%F{}"), "empty %F brace leaked: {line}");
+            assert!(!line.contains("%K{}"), "empty %K brace leaked: {line}");
+            // Case-4 boundary: separator fg = prev (empty) bg → %f.
+            assert!(
+                line.contains("%b%K{002}%f\u{E0B0}"),
+                "empty-bg separator not reset via %f: {line}"
+            );
+
+            // Transparent-bg segment alone: closer sss = %f + end sep.
+            let solo = render_left_line(&[a]);
+            assert!(
+                solo.ends_with("%b%k%f\u{E0B0}%b%k%f"),
+                "empty-bg line closer wrong: {solo}"
+            );
+
+            // Right: transparent bg start symbol + closer paths.
+            let ra = seg("aseg", "AAA", "004", "");
+            let rline = render_right_line(&[ra]);
+            assert!(!rline.contains("%F{}"), "empty %F brace leaked: {rline}");
+            assert!(!rline.contains("%K{}"), "empty %K brace leaked: {rline}");
+            assert!(
+                rline.starts_with("%b%k%f\u{E0B2}"),
+                "empty-bg right start symbol not reset via %f: {rline}"
+            );
+        });
+    }
+
+    /// The e == 00 gate on the RIGHT side, including an icon that is
+    /// Some("") — no separators, no background, no state change
+    /// (p10k:980-990).
+    #[test]
+    fn right_empty_segment_is_skipped_entirely() {
+        locked(|| {
+            let a = seg("aseg", "AAA", "000", "004");
+            let mut hidden = seg("hseg", "", "007", "001");
+            hidden.icon = Some(String::new());
+            let b = seg("bseg", "BBB", "001", "004");
+            let line = render_right_line(&[a, hidden, b]);
+            assert!(line.contains('\u{E0B3}'), "line: {line}");
+            assert!(!line.contains("%K{001}"), "hidden segment leaked: {line}");
+        });
+    }
+
+    /// A line of ONLY empty segments renders no segment body at all.
+    #[test]
+    fn all_empty_segments_render_no_body() {
+        locked(|| {
+            let h1 = seg("hseg", "", "007", "001");
+            let h2 = seg("iseg", "", "003", "002");
+            let left = render_left_line(&[h1.clone(), h2.clone()]);
+            // Only the p10k:7959 empty-line closer remains.
+            assert_eq!(left, "%b%k%f\u{E0B0}%b%k%f", "left: {left}");
+            assert_eq!(render_right_line(&[h1, h2]), "", "right must stay empty");
+        });
+    }
+
+    /// p10k:5834/5849 — `_joined` suffix parsing.
+    #[test]
+    fn is_joined_name_suffix() {
+        assert_eq!(is_joined_name("dir"), ("dir", false));
+        assert_eq!(is_joined_name("vcs_joined"), ("vcs", true));
+        assert_eq!(is_joined_name("_joined"), ("", true));
+        assert_eq!(is_joined_name("joined"), ("joined", false));
+    }
+
+    /// Joined left segment (case 2, p10k:683): style only — no full
+    /// separator, no subseparator, no leading whitespace — even across
+    /// DIFFERENT backgrounds.
+    #[test]
+    fn left_joined_segment_has_no_separator() {
+        locked(|| {
+            let a = seg("aseg", "AAA", "000", "004");
+            let b = seg("bseg_joined", "BBB", "007", "002");
+            let line = render_left_line(&[a, b]);
+            let boundary = {
+                let s = line.find("AAA").expect("AAA rendered") + 3;
+                let e = line.find("BBB").expect("BBB rendered");
+                &line[s..e]
+            };
+            assert!(
+                !boundary.contains('\u{E0B0}') && !boundary.contains('\u{E0B1}'),
+                "separator leaked into joined boundary: {line}"
+            );
+            // A's trailing whitespace, then B's bare style (case 2).
+            assert!(
+                boundary.ends_with(" %b%K{002}%F{007}"),
+                "joined boundary must be prev right_space + style: {line}"
+            );
+            // Param/icon lookups used the BASE name: closer still the
+            // stock separator glyph for bg 002.
+            assert!(line.ends_with("%b%k%F{002}\u{E0B0}%b%k%f"), "closer: {line}");
+        });
+    }
+
+    /// p10k:696 — case 2 needs the last RENDERED segment inside the
+    /// join group: when the group's anchor is skipped (empty), the
+    /// joined segment falls back to the normal separator against the
+    /// segment before the group.
+    #[test]
+    fn left_joined_falls_back_when_anchor_skipped() {
+        locked(|| {
+            let a = seg("aseg", "AAA", "000", "004");
+            let anchor = seg("hseg", "", "007", "001"); // skipped
+            let c = seg("cseg_joined", "CCC", "007", "002");
+            let line = render_left_line(&[a, anchor, c]);
+            // Full separator between AAA and CCC (case 4, diff bg).
+            assert!(
+                line.contains("%b%K{002}%F{004}\u{E0B0}%b%K{002}%F{007}"),
+                "fallback separator missing: {line}"
+            );
+        });
+    }
+
+    /// Joined right segment (case 2, p10k:923): deferred $w, then
+    /// style only — no separator glyphs in the boundary.
+    #[test]
+    fn right_joined_segment_has_no_separator() {
+        locked(|| {
+            let a = seg("aseg", "AAA", "000", "004");
+            let b = seg("bseg_joined", "BBB", "007", "002");
+            let line = render_right_line(&[a, b]);
+            let boundary = {
+                let s = line.find("AAA").expect("AAA rendered") + 3;
+                let e = line.find("BBB").expect("BBB rendered");
+                &line[s..e]
+            };
+            assert!(
+                !boundary.contains('\u{E0B2}') && !boundary.contains('\u{E0B3}'),
+                "separator leaked into joined right boundary: {line}"
+            );
+            // $w (A's deferred space + %b bg fg restore) + B's style.
+            assert!(
+                boundary.contains("%b%K{004}%F{000}%b%K{002}%F{007}"),
+                "joined right boundary must be w + style: {line}"
+            );
+        });
+    }
+
+    /// Right-alignment padding math (p10k:8087-8094 + 7906-7908),
+    /// injectable width fn: pad so the right edge is flush; overflow
+    /// (m < 0) falls back to inline append.
+    #[test]
+    fn align_line_padding_math() {
+        let measure = |s: &str| s.chars().count();
+        assert_eq!(align_line("LL", "RRR", 10, &measure), "LL     RRR");
+        // Exactly one pad space (m == 0 → m+1 == 1).
+        assert_eq!(align_line("LLLL", "RRRRR", 10, &measure), "LLLL RRRRR");
+        // width == columns → m == -1 → inline fallback.
+        assert_eq!(align_line("LLLLL", "RRRRR", 10, &measure), "LLLLLRRRRR");
+        // Overflow → inline fallback.
+        assert_eq!(align_line("LLLLLLLL", "RRR", 10, &measure), "LLLLLLLLRRR");
+        // Empty right → left unchanged, no padding.
+        assert_eq!(align_line("LL", "", 10, &measure), "LL");
+    }
+
+    /// ANSI stripping for the width probe.
+    #[test]
+    fn strip_ansi_sequences() {
+        assert_eq!(strip_ansi("plain"), "plain");
+        assert_eq!(strip_ansi("\u{1b}[38;5;4mabc\u{1b}[0m"), "abc");
+        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}abc"), "abc");
+        assert_eq!(strip_ansi("a\u{1b}7b"), "ab");
+    }
+
+    /// Visible width of prompt-escape strings: zero-width escapes drop,
+    /// %% is one column, colored text keeps only its glyph widths.
+    #[test]
+    fn prompt_visible_width_measures_display_columns() {
+        locked(|| {
+            assert_eq!(prompt_visible_width(""), 0);
+            assert_eq!(prompt_visible_width("abc"), 3);
+            assert_eq!(prompt_visible_width("%%"), 1);
+            assert_eq!(prompt_visible_width("%F{004}abc%f"), 3);
+            assert_eq!(prompt_visible_width("%K{002}%B x %b%k"), 3);
+        });
     }
 }

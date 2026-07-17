@@ -730,6 +730,11 @@ pub fn resetvideo(state: &mut RefreshState) {
     };
     state.lpromptw = lpromptw_v as usize;
     state.rpromptw = rpromptw_v as usize;
+    tracing::debug!(target: "zle_refresh",
+        lprompth = lprompth_v, lpromptw = lpromptw_v, lpromptwof = lpromptwof_v,
+        rprompth = rprompth_v, rpromptw = rpromptw_v,
+        lbuf_len = state.lpromptbuf.len(), cols,
+        "zrefresh prompt geometry (c:770-779)");
     LPROMPTW.store(lpromptw_v, Ordering::Relaxed);
     LPROMPTH.store(lprompth_v, Ordering::Relaxed);
     LPROMPTWOF.store(lpromptwof_v, Ordering::Relaxed);
@@ -1122,7 +1127,28 @@ pub fn zrefresh() {
     let rprompt = rprompt().to_string();
     let cursor = ZLECS.load(Ordering::SeqCst);
 
-    let prompt_width = countprompt(&prompt);
+    // c:770-779 countprompt(lpromptbuf, &lpromptwof, &lprompth, 1) —
+    // the cursor/scroll math below needs the LAST physical row's
+    // width, and the repaint anchor needs the prompt's physical row
+    // count (embedded `\n`s + column wraps). Summing the WHOLE
+    // multiline prompt (the previous code) pushed `cursor_col` past
+    // `winw` for any multiline theme (native p10k = 4 lines), which
+    // engaged the horizontal-scroll slice on the full prompt string —
+    // painting the prompt from mid-line-1 and echoing typed input at
+    // a far-right column.
+    let cols_nz = cols.max(1);
+    let (prompt_width, prompt_rows) = {
+        let mut rows = 0usize;
+        let mut last_w = 0usize;
+        for line in prompt.split('\n') {
+            let w = countprompt(line);
+            rows += 1 + if w > 0 { (w - 1) / cols_nz } else { 0 };
+            last_w = w;
+        }
+        // Width of the last PHYSICAL row (a wrapped last line leaves
+        // only the remainder on the cursor's row).
+        (last_w % cols_nz.max(1), rows.max(1))
+    };
     // c:676 — `lpromptw` is the left prompt's display width. The NBUF build
     // emits that many prompt cells at the start of row 0, so syncing it
     // enables refreshline's prompt-skip (c:1862) — previously dead because
@@ -1193,18 +1219,42 @@ pub fn zrefresh() {
     // we don't have to re-walk the highlight list per char during write.
     let attrs = compute_render_attrs();
 
-    let _ = write!(handle, "\r\x1b[K");
+    // Multiline repaint anchor: the previous refresh left the cursor
+    // on the prompt's LAST physical row; `\r\x1b[K` alone re-anchored
+    // there and reprinted the whole prompt, walking a multiline
+    // prompt down the screen one block per refresh (the p10k
+    // "alternating prompts" artifact). Move back up to the first
+    // painted row and clear downward before repainting. C zsh gets
+    // this from the nbuf/obuf video diff; the single-line-model port
+    // tracks painted rows explicitly instead.
+    let prev_rows = LAST_PAINT_ROWS.load(Ordering::Relaxed);
+    if prev_rows > 1 {
+        let _ = write!(handle, "\x1b[{}A", prev_rows - 1);
+    }
+    let _ = write!(handle, "\r\x1b[J");
+    LAST_PAINT_ROWS.store(prompt_rows, Ordering::Relaxed);
 
-    // Prompt — drawn unless we've scrolled past it. Skip
-    // `scroll_offset` visible chars from the prompt (inlined
-    // from the deleted skip_chars helper) — ANSI escape
-    // sequences are skipped unconditionally so they don't
-    // count against width.
+    // Prompt — head lines (everything before the last `\n`) always
+    // print whole; the horizontal-scroll slice applies to the LAST
+    // line only, whose row the cursor shares. Slicing the full
+    // multiline string (the previous code) chopped from line 1 and
+    // painted mid-prompt garbage whenever scroll engaged.
+    let (prompt_head, prompt_last) = match prompt.rsplit_once('\n') {
+        Some((h, l)) => (Some(h), l),
+        None => (None, prompt.as_str()),
+    };
+    if let Some(h) = prompt_head {
+        let _ = write!(handle, "{}\n", h);
+    }
+    // Skip `scroll_offset` visible chars from the last prompt line
+    // (inlined from the deleted skip_chars helper) — ANSI escape
+    // sequences are skipped unconditionally so they don't count
+    // against width.
     if scroll_offset < prompt_width {
         let mut width = 0;
         let mut byte_idx = 0;
         let mut in_escape = false;
-        for (i, c) in prompt.char_indices() {
+        for (i, c) in prompt_last.char_indices() {
             if width >= scroll_offset {
                 byte_idx = i;
                 break;
@@ -1220,7 +1270,7 @@ pub fn zrefresh() {
             }
             byte_idx = i + c.len_utf8();
         }
-        let _ = write!(handle, "{}", &prompt[byte_idx..]);
+        let _ = write!(handle, "{}", &prompt_last[byte_idx..]);
     }
 
     // Compute the visible byte/char range of the buffer after scroll.
@@ -4927,6 +4977,14 @@ pub static TCOUT_FUNC_NAME: std::sync::Mutex<Option<String>> = // c:246
 ///
 /// `zattr` is `u64` (zsh.h:2689); AtomicU64 with Relaxed ordering
 /// matches C's plain global-int read/write shape.
+/// Physical rows painted by the last live-zrefresh frame (prompt rows
+/// incl. embedded `\n`s and column wraps). The next frame moves the
+/// cursor up `rows-1` before repainting so a multiline prompt repaints
+/// in place instead of walking down the screen. zleread stores 0 at
+/// edit-session entry (fresh line — nothing of ours above the cursor).
+/// RUST-ONLY — C zsh anchors repaints via the nbuf/obuf video diff.
+pub static LAST_PAINT_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub static PMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152
 /// `RPMPT_ATTR` static.
 pub static RPMPT_ATTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // c:152

@@ -593,7 +593,25 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         // into its private buffer — invisible to the poll above — so the
         // next byte never arrives and multi-byte keys like arrows break).
         let mut buf = [0u8; 1];
-        let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        // c:915-918 — EINTR with no pending shell condition retries the
+        // read instead of reporting EOF (see the simple-read path below
+        // for the full rationale; SIGCHLD from prompt-segment
+        // subprocesses interrupts this read constantly).
+        let n = loop {
+            let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+            if n == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+                && (crate::ported::utils::errflag.load(Ordering::Relaxed)
+                    & crate::ported::zsh_h::ERRFLAG_ERROR)
+                    == 0
+                && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
+                && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
+                && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
+            {
+                continue; // c:917 — retry the interrupted read
+            }
+            break n;
+        };
         if n != 1 {
             tracing::warn!(
                 "DIAG raw_getbyte poll-path returns None (EOF): read({})=={} errno={}",
@@ -634,7 +652,29 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     // RAW unbuffered read (see the poll-path note above): going through
     // `io::stdin()`'s BufReader would swallow trailing escape-sequence
     // bytes into a buffer the poll/typeahead path can't see.
-    let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+    // c:915-918 — `if (errno == EINTR) { die = 0; if (!errflag &&
+    // !retflag && !breaks && !exit_pending) continue; }` — a read
+    // interrupted by a signal (SIGCHLD from prompt-segment
+    // subprocesses, SIGWINCH, …) RETRIES unless a shell condition is
+    // pending. Returning None here treated every EINTR as EOF: the
+    // editor abandoned the read and the pending keystroke was lost
+    // (native-p10k renders spawn subprocesses per prompt, so SIGCHLD
+    // made this fire constantly).
+    let n = loop {
+        let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+        if n == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+            && (crate::ported::utils::errflag.load(Ordering::Relaxed)
+                & crate::ported::zsh_h::ERRFLAG_ERROR)
+                == 0
+            && crate::ported::builtin::RETFLAG.load(Ordering::Relaxed) == 0
+            && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
+            && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
+        {
+            continue; // c:917 — retry the interrupted read
+        }
+        break n;
+    };
     if n == 1 {
         Some(buf[0])
     } else {

@@ -160,6 +160,11 @@ fn run_cmd(
     for (k, v) in extra_env {
         c.env(k, v);
     }
+    // stdin MUST be nulled: a version tool inheriting the shell's RAW
+    // tty stdin steals pending keystrokes from the ZLE input queue
+    // (typed Enters vanished whenever a render ran these) and a tool
+    // that decides to prompt interactively blocks the whole render.
+    c.stdin(std::process::Stdio::null());
     if !merge_stderr {
         c.stderr(std::process::Stdio::null());
     }

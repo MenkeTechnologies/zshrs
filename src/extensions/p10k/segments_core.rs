@@ -485,9 +485,11 @@ fn exit2str(code: i32) -> String {
 }
 
 fn status_segments() -> Vec<Segment> {
-    // _p9k__status / _p9k__pipestatus are captured by p10k's precmd
-    // hook; here they're read at render time from the live shell state.
-    let status = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+    // _p9k__status is captured by p10k's precmd hook BEFORE other
+    // precmd functions run (_p9k_save_status); the native mirror is
+    // the preprompt snapshot in mod.rs — reading live LASTVAL here
+    // showed precmd's own last command instead of the user's.
+    let status = crate::p10k::last_status();
     let pipestatus: Vec<i32> = pipestatgetfn()
         .iter()
         .filter_map(|s| s.parse::<i32>().ok())
@@ -523,7 +525,7 @@ fn status_segments() -> Vec<Segment> {
             .collect::<Vec<_>>()
             .join("|")
     } else {
-        exit2str(status)
+        exit2str(status as i32)
     };
 
     if status != 0 {
@@ -573,24 +575,48 @@ fn status_segments() -> Vec<Segment> {
 // ---------------------------------------------------------------------
 
 fn prompt_char_segments() -> Vec<Segment> {
-    let status = crate::ported::builtin::LASTVAL.load(Ordering::Relaxed);
+    // Snapshot from mod.rs (pre-precmd `$?`), same rationale as
+    // status_segments.
+    let status = crate::p10k::last_status();
     // p10k:3331/3341 — OK vs ERROR half of the state.
     let ok = status == 0;
-    // TODO(phase-2): live keymap (VICMD '❮' p10k:3347, VIVIS 'Ⅴ'
-    // p10k:3348, VIOWR '▶' p10k:3343) needs the ZLE keymap exposed at
-    // render time; p10k reads $_p9k__keymap maintained by zle-line-init.
-    let keymap = "VIINS";
+    // `_p9k__keymap` (p10k's zle-keymap-select mirror of $KEYMAP)
+    // picks the state half. Spec patterns (non-sh-glob branch):
+    //   p10k:3336 VIINS — `${_p9k__keymap:#(vicmd|vivis|vivli)}` ❯
+    //   p10k:3338 VICMD — `:#vicmd0` (vicmd + region INactive) ❮
+    //   p10k:3339 VIVIS — `:#(vicmd1|vivis?|vivli?)` (visual) Ⅴ
+    //   p10k:3333 VIOWR — `$_p9k__zle_state` contains `overwrite` ▶
+    //     (only under PROMPT_CHAR_OVERWRITE_STATE; TODO — needs the
+    //     ZLE insert-mode flag surfaced; state defaults off).
+    // The native engine reads the live ZLE keymap directly. At
+    // preprompt time a fresh line starts in the insert keymap; the
+    // mid-line keymap-select repaint is TODO (needs a native
+    // zle-keymap-select hook to re-render). Region can't be active at
+    // a fresh prompt, so vicmd → VICMD without the region check.
+    let keymap_name = crate::ported::zle::zle_keymap::curkeymapname().clone();
+    let keymap = match keymap_name.as_str() {
+        "vicmd" => "VICMD",           // p10k:3338
+        "vivis" | "vivli" => "VIVIS", // p10k:3339
+        _ => "VIINS",                 // p10k:3336
+    };
     let state = format!("{}_{}", if ok { "OK" } else { "ERROR" }, keymap);
-    // p10k:3345 — `$0_OK_VIINS "$_p9k_color1" 76 '' … '❯'`
+    // p10k:3348 — `$0_OK_VIINS "$_p9k_color1" 76 '' … '❯'`
     // p10k:3336 — `$0_ERROR_VIINS "$_p9k_color1" 196 '' … '❯'`
     let default_fg = if ok { "76" } else { "196" };
+    // Glyph per state: ❯ VIINS (p10k:3336), ❮ VICMD (p10k:3338),
+    // Ⅴ VIVIS (p10k:3339).
+    let glyph = match keymap {
+        "VICMD" => "\u{276E}", // ❮
+        "VIVIS" => "\u{2164}", // Ⅴ
+        _ => "\u{276F}",       // ❯
+    };
     vec![make_segment(
         "prompt_char",
         Some(&state),
         color1(),
         default_fg,
         "",
-        "\u{276F}".to_string(), // ❯
+        glyph.to_string(),
     )]
 }
 

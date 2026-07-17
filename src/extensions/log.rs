@@ -102,10 +102,27 @@ pub fn init_named(filename: &str) {
         // `print -u 3 -r -- x` appended to it (and reported success), and
         // `exec 3>file` would dup2 over the live log handle.
         let _lowfd = crate::lowfd::LowFdGuard::new();
+        // Size-capped rotation at init (client-side, no background
+        // threads — the daemon owns scheduled rotation, but daemonless
+        // invocations must still bound the file). Millions of short
+        // `-fc` runs (parity fuzz harnesses) each append startup lines;
+        // unrotated this reached 18 GB / 142M lines and exhausted the
+        // disk. One stat() per shell start; over the cap the current
+        // file becomes `<name>.1` (previous `.1` is replaced) and a
+        // fresh file starts. rename() keeps writers on the old inode
+        // consistent (they finish writing to `.1`).
+        const LOG_ROTATE_BYTES: u64 = 512 * 1024 * 1024;
+        let log_path = dir.join(filename);
+        if std::fs::metadata(&log_path)
+            .map(|m| m.len() > LOG_ROTATE_BYTES)
+            .unwrap_or(false)
+        {
+            let _ = std::fs::rename(&log_path, dir.join(format!("{filename}.1")));
+        }
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(dir.join(filename))
+            .open(&log_path)
             .unwrap_or_else(|_| {
                 std::fs::OpenOptions::new()
                     .create(true)

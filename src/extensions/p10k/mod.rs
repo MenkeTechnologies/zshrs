@@ -24,8 +24,9 @@ pub mod icons;
 pub mod render;
 pub mod segments_core;
 pub mod segments_env;
+pub mod segments_sys;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 /// Engine on/off. Flipped by the theme-source intercept; never reset
 /// (a session that loaded p10k keeps the native engine for life,
@@ -34,6 +35,65 @@ static ENGINE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub fn engine_active() -> bool {
     ENGINE_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Monotonic start-of-command stamp (millis since an arbitrary epoch),
+/// written by the preexec site in init.rs. 0 = no command started yet.
+/// p10k:_p9k_preexec sets `_p9k__timer_start=EPOCHREALTIME` — same
+/// contract, Rust-side so no shell hook is needed.
+static EXEC_START_MS: AtomicU64 = AtomicU64::new(0);
+/// Duration of the last finished foreground command, millis. u64::MAX =
+/// nothing measured yet this session.
+static EXEC_LAST_MS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Called from the preexec dispatch site right before a foreground
+/// command runs (init.rs).
+pub fn note_exec_start() {
+    if engine_active() {
+        EXEC_START_MS.store(now_ms(), Ordering::Relaxed);
+    }
+}
+
+/// Called from preprompt() BEFORE the precmd hook fires: closes the
+/// timing window (p10k:_p9k_on_expand reads `_p9k__timer_start` at
+/// prompt build) and snapshots `$?` before precmd commands clobber it
+/// (p10k:_p9k_save_status).
+pub fn note_command_finished(last_status: i64) {
+    if !engine_active() {
+        return;
+    }
+    LAST_STATUS.store(last_status, Ordering::Relaxed);
+    let start = EXEC_START_MS.swap(0, Ordering::Relaxed);
+    if start != 0 {
+        EXEC_LAST_MS.store(now_ms().saturating_sub(start), Ordering::Relaxed);
+    }
+}
+
+/// Duration of the last foreground command, for the
+/// command_execution_time segment. None until the first command ends.
+pub fn last_exec_duration() -> Option<std::time::Duration> {
+    match EXEC_LAST_MS.load(Ordering::Relaxed) {
+        u64::MAX => None,
+        ms => Some(std::time::Duration::from_millis(ms)),
+    }
+}
+
+/// `$?` as it stood when the last foreground command finished —
+/// captured before precmd hooks run, so the status/prompt_char
+/// segments can't be poisoned by precmd's own commands.
+/// p10k:_p9k_save_status does exactly this.
+static LAST_STATUS: AtomicI64 = AtomicI64::new(0);
+
+pub fn last_status() -> i64 {
+    LAST_STATUS.load(Ordering::Relaxed)
 }
 
 /// Intercept `source <path>` / `. <path>` at builtin dispatch.
@@ -104,10 +164,25 @@ pub fn preprompt_render() {
                 lines.push(Vec::new());
                 continue;
             }
-            let built = segments_core::build_segment(name)
-                .or_else(|| segments_env::build_segment(name));
+            // p10k:5834/5849 — a `<seg>_joined` element runs the base
+            // segment's builder but joins the previous segment's
+            // group. Dispatch on the stripped base name; write the
+            // ORIGINAL suffixed element name back into each Segment so
+            // render's case-2 join selection sees it (render strips it
+            // again for param lookups).
+            let (base, joined) = render::is_joined_name(name);
+            let built = segments_core::build_segment(base)
+                .or_else(|| segments_env::build_segment(base))
+                .or_else(|| segments_sys::build_segment(base));
             match built {
-                Some(segs) => lines.last_mut().expect("lines never empty").extend(segs),
+                Some(mut segs) => {
+                    if joined {
+                        for s in &mut segs {
+                            s.name = name.clone();
+                        }
+                    }
+                    lines.last_mut().expect("lines never empty").extend(segs);
+                }
                 None => {
                     tracing::debug!(target: "p10k", %name, "segment not implemented — skipped")
                 }
