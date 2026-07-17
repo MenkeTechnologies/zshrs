@@ -10958,11 +10958,15 @@ pub fn bin_break(
         nump = 1; // c:5817
     }
 
-    // c:5820-5823 — positive-num requirement for BIN_CONTINUE / BIN_BREAK.
+    // c:5812-5814 — positive-num requirement for BIN_CONTINUE / BIN_BREAK.
+    // C uses `zerrnam` (NOT zwarnnam) — it sets errflag so the whole
+    // script/function aborts, matching zsh's `continue 0` behavior
+    // (prints the error ONCE and stops the loop, rather than warning and
+    // continuing to iterate).
     if nump > 0 && (func == BIN_CONTINUE || func == BIN_BREAK) && num <= 0 {
-        // c:5820
-        zwarnnam(name, &format!("argument is not positive: {}", num)); // c:5821
-        return 1; // c:5822
+        // c:5812
+        zerrnam(name, &format!("argument is not positive: {}", num)); // c:5813
+        return 1; // c:5814
     }
 
     let loops = LOOPS.load(Relaxed);

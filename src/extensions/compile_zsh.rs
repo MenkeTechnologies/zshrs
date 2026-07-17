@@ -1733,6 +1733,19 @@ impl ZshCompiler {
                 .and_then(|s| crate::lex::untokenize(s).parse::<usize>().ok())
                 .unwrap_or(1)
                 .max(1);
+            // c:Src/builtin.c:5820-5822 — `break N`/`continue N` with a
+            // non-positive N is an error ("argument is not positive"),
+            // NOT a break. The fast-jump path below clamps N to 1, so a
+            // literal `break 0` / `break -1` would silently break one
+            // level. Detect a literal non-positive integer arg and route
+            // through bin_break (the `else` arm) which emits the error
+            // and returns 1 without transferring control. (A runtime
+            // `break $n` with n<=0 stays on the fast path — pinned.)
+            let nonpositive_literal = simple
+                .words
+                .get(1)
+                .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok())
+                .is_some_and(|n| n <= 0);
             // Index from end: levels=1 → last (innermost); levels=2 →
             // second-to-last; etc. Clamped to depth.
             let depth = self.break_patches.len();
@@ -1741,7 +1754,7 @@ impl ZshCompiler {
             // `for; if then; break; fi; done` — without the drain,
             // the Then push leaks past the loop_exit.
             self.emit_cmd_stack_drain();
-            if depth > 0 {
+            if depth > 0 && !nonpositive_literal {
                 // Inside try-block: also bump BREAKS atomic so the
                 // always-arm post-restore can detect the escape and
                 // re-emit the loop-end jump.
@@ -1799,12 +1812,20 @@ impl ZshCompiler {
                 .and_then(|s| crate::lex::untokenize(s).parse::<usize>().ok())
                 .unwrap_or(1)
                 .max(1);
+            // c:5820-5822 — `continue 0`/`continue -1` errors "argument
+            // is not positive"; route through bin_break (else arm) rather
+            // than the clamp-to-1 fast path. Same as the `break` arm.
+            let nonpositive_literal = simple
+                .words
+                .get(1)
+                .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok())
+                .is_some_and(|n| n <= 0);
             let depth = self.continue_patches.len();
             // Drain pending cmd_stack pushes — same rationale as
             // for `break`. `continue` inside an inner if/then is the
             // common case in zinit's mode-aware loop bodies.
             self.emit_cmd_stack_drain();
-            if depth > 0 {
+            if depth > 0 && !nonpositive_literal {
                 // Inside try-block: bump BREAKS + CONTFLAG so the
                 // always-arm post-restore can detect the escape.
                 if self.try_block_depth > 0 {
