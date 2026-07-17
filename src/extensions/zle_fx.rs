@@ -387,13 +387,19 @@ pub fn on_post_widget(widget: &str) {
         }
     }
 
-    // ---- Line handed to the executor: full teardown BEFORE the final
-    // repaint, and NO recompute. Without this, the post-accept-line pass
-    // recomputed a suggestion for the just-accepted buffer and re-set
+    // ---- Line handed to the executor: ghost/search teardown BEFORE the
+    // final repaint, and NO recompute. Without this, the post-accept-line
+    // pass recomputed a suggestion for the just-accepted buffer and re-set
     // POSTDISPLAY, so the terminal scrolled with ghost text baked into every
     // executed line ("l" + ghost "ocal -a a=(…)" rendered as if typed).
     // DONE is the widget-set editing-finished flag (zle_misc.rs:2124) —
     // covers accept-line wrappers and user widgets calling `zle accept-line`.
+    //
+    // line_attrs are deliberately KEPT: zlecore's final zrefresh (the paint
+    // that scrolls the accepted line into history) still runs after this
+    // hook, and clearing the overlay here erased the syntax colors of every
+    // executed line in scrollback. The full clear happens in on_line_finish
+    // at zleread exit, after the display is finalized.
     if crate::ported::zle::zle_misc::DONE.load(SeqCst) != 0
         || matches!(
             widget,
@@ -405,7 +411,13 @@ pub fn on_post_widget(widget: &str) {
                 | "send-break"
         )
     {
-        on_line_finish();
+        with_fx(|fx| {
+            fx.ghost_attr = None;
+            fx.search_placed = None;
+        });
+        autosuggest::with_state(autosuggest::on_line_finish);
+        with_history_search(|hs| hs.reset());
+        crate::ported::zle::zle_params::set_postdisplay(Some(""));
         return;
     }
 
