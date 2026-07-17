@@ -1111,6 +1111,12 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
     // Run the ZLE module boot once here at startup; addhookdef's duplicate
     // guard makes a later real boot_ idempotent.
     let _ = crate::ported::zle::zle_main::boot_(std::ptr::null());
+    // C's zsh/complete module boot_ (complete.c:1758) attaches the funcs to
+    // the ZLE hookdefs registered just above: complete/before_complete/
+    // after_complete/list_matches/invalidate_list. Like zle_main::boot_ it
+    // never ran (zmodload routes to features_), so after_complete's hook had
+    // no func and menu-completion's menu_start (→ domenuselect) never fired.
+    let _ = crate::ported::zle::complete::boot_(std::ptr::null());
     // init_eprog();                                                         // c:1087
     // zero_mnumber.type = MN_INTEGER; zero_mnumber.u.l = 0;                 // c:1089-1090
 

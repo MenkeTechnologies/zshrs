@@ -2398,7 +2398,26 @@ pub fn boot_(_m: *const module) -> i32 {
             0,
         ),
     ];
-    for (name, def, flags) in comphooks {
+    // c:2306 — `addhookdefs(m, zlehooks, …)`. The six ZLE hookdefs
+    // (zle_main.c:2219) all `HOOKDEF(name, NULL, 0)`. These were NEVER
+    // registered (zle_main::boot_ wasn't called and only the comphooks were
+    // added here), so `gethookdef("after_complete")` returned null and the
+    // AFTERCOMPLETEHOOK never fired → menucmp-driven menu_start (→
+    // domenuselect / interactive menu-select) never started. Register them
+    // with def=None so `complete::boot_` can attach the real funcs.
+    let zlehooks = [
+        "list_matches",     // c:2221 LISTMATCHESHOOK
+        "complete",         // c:2223 COMPLETEHOOK
+        "before_complete",  // c:2225 BEFORECOMPLETEHOOK
+        "after_complete",   // c:2227 AFTERCOMPLETEHOOK
+        "accept_completion", // c:2229 ACCEPTCOMPHOOK
+        "invalidate_list",  // c:2231 INVALIDATELISTHOOK
+    ];
+    let all: Vec<(&str, Option<crate::ported::zsh_h::Hookfn>, i32)> = comphooks
+        .into_iter()
+        .chain(zlehooks.into_iter().map(|n| (n, None, 0)))
+        .collect();
+    for (name, def, flags) in all {
         let h = Box::into_raw(Box::new(hookdef {
             next: std::ptr::null_mut(),
             name: name.to_string(),

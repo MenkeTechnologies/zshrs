@@ -783,7 +783,14 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
     // c:909-912 — unwind: read `$compstate[insert]` etc. back into
     // the compcore globals so do_completion sees the user fn's
     // mutations.
-    let post_insert = getsparam("compstate[insert]").unwrap_or_default();
+    // Read `$compstate[insert]` via the compstate hash (the canonical
+    // home), NOT the flat `compstate[insert]` bracketed param: the latter
+    // reads empty here because the completion fn's `compstate[insert]=menu`
+    // write lands in the hash storage while the flat param is scoped to the
+    // fn. Reading the flat param missed the menu decision entirely, so
+    // USEMENU never became 1 and menu-completion (→ menucmp → the
+    // menu_start hook → domenuselect) never started.
+    let post_insert = get_compstate_str("insert").unwrap_or_default();
     if !post_insert.is_empty() {
         if post_insert.contains("automenu") {
             USEMENU.store(2, Ordering::Relaxed);
