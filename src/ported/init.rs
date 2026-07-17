@@ -1929,15 +1929,27 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         // c:120 !toplevel
         crate::ported::context::zcontext_save(); // c:121
     }
+    // One HISTORY UNIT per accepted editor line. C's par_event recurses
+    // until ENDINPUT (parse.c:635), so a pasted multi-command buffer parses
+    // into ONE prog and hend stores ONE entry ("cmd1\ncmd2"). zshrs's
+    // single-event interleave (parse_event returns per logical command; see
+    // parse.rs:766-786) would cycle hbegin/hend per command and SPLIT the
+    // pasted line into separate history entries — up-arrow then recalled
+    // only the last command. While the previous accepted line still has
+    // unconsumed input buffered, keep the history entry OPEN: skip the
+    // hend/hbegin cycle (and preprompt) until the line is drained.
+    let mut hist_open_across_events = false;
     loop {
         // c:122
         crate::ported::mem::freeheap(); // c:123
-        if stophist.load(Ordering::SeqCst) == 3 {
-            // c:124 stophist == 3
-            hend(None); // c:125 hend(NULL)
+        if !hist_open_across_events {
+            if stophist.load(Ordering::SeqCst) == 3 {
+                // c:124 stophist == 3
+                hend(None); // c:125 hend(NULL)
+            }
+            hbegin(1); // c:126 hbegin(1)
         }
-        hbegin(1); // c:126 hbegin(1)
-        if isset(SHINSTDIN) {
+        if isset(SHINSTDIN) && !hist_open_across_events {
             // c:127 isset(SHINSTDIN)
             crate::ported::utils::setblock_stdin(); // c:128
             if isset(INTERACTIVE) && toplevel != 0 {
@@ -1976,6 +1988,9 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         if prog.is_none() {
             // c:156
             hend(None); // c:158
+            // A parse failure closes any deferred same-line history unit —
+            // the next iteration must run its own hbegin again.
+            hist_open_across_events = false;
                         // c:159-161 — break on clean EOF / non-toplevel LEXERR / justonce
             let tok_v = tok(); // c:159 tok
             let errflag_v = errflag.load(Ordering::SeqCst);
@@ -2005,8 +2020,21 @@ pub fn r#loop(toplevel: i32, justonce: i32) -> i32 {
         // c:176 — `if (hend(prog))`: passing the program in commits the
         // history line. zshrs's `hend` takes Option<&[u8]>; sentinel
         // non-empty slice signals "program present" to the commit path.
-        let prog_bytes: Vec<u8> = format!("{:?}", prog_inner).into_bytes();
-        let hend_ret = hend(Some(&prog_bytes)); // c:176
+        //
+        // Same-accepted-line continuation (see hist_open_across_events at
+        // the loop head): while the input buffer still holds unconsumed
+        // chars of the line being edited, DEFER hend — chline keeps
+        // accumulating so the whole pasted buffer commits as one entry,
+        // exactly as C's to-ENDINPUT par_event produces.
+        hist_open_across_events = isset(INTERACTIVE)
+            && toplevel != 0
+            && crate::ported::input::inbufct.with(|c| c.get()) > 0;
+        let hend_ret = if hist_open_across_events {
+            1 // execute; the history commit happens when the line drains
+        } else {
+            let prog_bytes: Vec<u8> = format!("{:?}", prog_inner).into_bytes();
+            hend(Some(&prog_bytes)) // c:176
+        };
         if hend_ret != 0 {
             let _toksav = tok(); // c:177
             non_empty = 1; // c:179
