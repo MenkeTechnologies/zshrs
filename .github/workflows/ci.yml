@@ -455,6 +455,12 @@ jobs:
         run: ./target/debug/parity-fuzz --mode special --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/special.txt --out target/parity-fuzz/ci-special.txt
       - name: Fuzz — tied
         run: ./target/debug/parity-fuzz --mode tied --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/tied.txt --out target/parity-fuzz/ci-tied.txt
+      # typeset covers the attribute surface itself — -i base, -F/-E precision,
+      # -Z/-L/-R padding, -u/-l case, -U uniqueness and -T ties — including the
+      # ${(t)} type string each produces. It had a baseline file but no gate, so
+      # nothing ran it; `typeset -U path` was broken under a green build.
+      - name: Fuzz — typeset
+        run: ./target/debug/parity-fuzz --mode typeset --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/typeset.txt --out target/parity-fuzz/ci-typeset.txt
       # brace / getopts / assoc / casesel cover brace expansion (ranges, padding,
       # products), the getopts parse loop (OPTIND/OPTARG, clustering, silent
       # mode), associative-array flags/subscripts, and case pattern selection

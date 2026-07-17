@@ -3041,9 +3041,44 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             // setarrvalue's dispatch in C zsh; until that wires
             // through assignaparam, mirror here so PATH stays in sync
             // after `path=(/x)`.
+            //
+            // The mirrored value must be the array AS STORED, which for a
+            // PM_UNIQUE tie means deduped. c:4066-4076 arrsetfn fixes the
+            // order:
+            //     if (pm->node.flags & PM_UNIQUE) uniqarray(x);
+            //     pm->u.arr = x;
+            //     if (pm->ename && x) arrfixenv(pm->ename, x);
+            // — the dedupe happens FIRST, so the scalar publishes the same
+            // list the array holds and the two halves of a tie always agree.
+            // Mirroring the raw `values` broke exactly that:
+            //     typeset -U path; path=(/a /b /a)
+            //       $path → /a /b        (right)
+            //       $PATH → /a:/b:/a     (wrong; zsh gives /a:/b)
+            // i.e. `typeset -U path`, the standard PATH-dedup idiom in
+            // essentially every .zshrc. assignaparam's own arrfixenv does not
+            // rescue it: that call is gated on the param having a gsu_a wired,
+            // and `path` has none.
+            //
+            // The dedupe is applied here rather than by reading the array back
+            // after assignaparam, because this mirror must stay BEFORE it.
+            // `exec.set_scalar` is heavier than C's arrfixenv — arrfixenv only
+            // rewrites the environment string, while set_scalar re-derives the
+            // ARRAY from the scalar. Running it afterwards makes `path=()`
+            // publish PATH="" and then re-split that back into a one-element
+            // `path=("")`, where zsh leaves 0 elements.
             if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
-                let joined = values.join(&sep);
-                exec.set_scalar(scalar_name, joined);
+                let uniq = crate::ported::params::paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| t.get(&name).map(|p| p.node.flags))
+                    .map(|f| (f as u32 & crate::ported::zsh_h::PM_UNIQUE) != 0)
+                    .unwrap_or(false);
+                let mirror = if uniq {
+                    crate::ported::params::simple_arrayuniq(values.clone()) // c:4068
+                } else {
+                    values.clone()
+                };
+                exec.set_scalar(scalar_name, mirror.join(&sep)); // c:4074-4075
             }
             // c:Src/exec.c:2632-2633 addvars — `if (!assignaparam(...))
             // lastval = 1;` — a failed assignment (bad subscript, bad

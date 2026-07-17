@@ -278,8 +278,20 @@ const INTVARS: &[&str] = &["n", "neg"];
 const ARRAYS: &[&str] = &["a", "nums"];
 
 /// Parameter-expansion flag letters that are safe + deterministic to combine.
+///
+/// `D` earns its place next to its sibling `V`: the two are the same `mods`
+/// bitfield in C (c:Src/subst.c:2229-2233 set bits 1 and 2; c:4149-4167 applies
+/// them), but only `V` was listed, so `(D)` went unfuzzed. It is not merely a
+/// tilde contraction — c:Src/utils.c:1053 substnamedir also QUOTES:
+///     if (!d) return quotestring(s, QT_BACKSLASH);
+///     return zhtricat("~", d->node.nam,
+///                     quotestring(s + strlen(d->dir), QT_BACKSLASH));
+/// so it only diverges on values carrying shell-special characters. The
+/// `spaces` and `path` scalars in PREAMBLE are what make that reachable —
+/// `${(D)spaces}` must be `\ \ x\ y\ \ `, and every plain word agrees either
+/// way, which is exactly why the bug survived hand-testing on clean paths.
 const PE_FLAGS: &[&str] = &[
-    "U", "L", "C", "q", "Q", "o", "O", "n", "u", "w", "W", "#", "V", "P", "e",
+    "U", "L", "C", "q", "Q", "o", "O", "n", "u", "w", "W", "#", "V", "D", "P", "e",
 ];
 
 /// History-style word modifiers applied via `${var:MOD}` / `$var:MOD`.
@@ -292,7 +304,7 @@ fn pick<'a, T>(rng: &mut StdRng, xs: &'a [T]) -> &'a T {
 /// A scalar parameter expansion, possibly with flags / modifiers.
 fn gen_scalar_pe(rng: &mut StdRng) -> String {
     let v = pick(rng, SCALARS);
-    match rng.gen_range(0..12) {
+    match rng.gen_range(0..13) {
         0 => format!("${{{v}}}"),
         1 => format!("${{#{v}}}"),
         2 => format!("${{{v}:-fallback}}"),
@@ -315,6 +327,30 @@ fn gen_scalar_pe(rng: &mut StdRng) -> String {
                 flags.push_str(pick(rng, PE_FLAGS));
             }
             format!("${{({flags}){v}}}")
+        }
+        11 => {
+            // The `mods` bitfield flags, as their own arm rather than left to
+            // the random-combo draw above. c:Src/subst.c:2229-2233 sets bit 1
+            // for (D) and bit 2 for (V); c:4149-4167 applies them together.
+            // They need a dedicated arm because the combo draw reaches any one
+            // letter only about once per thousand seeds — measured, not
+            // assumed — which is how (D) stayed unfuzzed while it was broken.
+            //
+            // Quoting is the interesting half and it only shows on values
+            // carrying shell-special characters: substnamedir
+            // (c:Src/utils.c:1053) backslash-quotes its result, so
+            // `${(D)spaces}` must come out `\ \ x\ y\ \ ` while every plain
+            // word agrees either way. SCALARS keeps `spaces` and `path` for
+            // exactly this. Both quoted and unquoted forms are emitted: the
+            // double-quoted one collapses the value to a scalar first
+            // (c:3029-3036) and quotes the JOINED string, which is a different
+            // path through the same block.
+            let f = pick(rng, &["D", "V", "DV", "VD"]);
+            if rng.gen_bool(0.5) {
+                format!("\"${{({f}){v}}}\"")
+            } else {
+                format!("${{({f}){v}}}")
+            }
         }
         _ => format!("${{{v}##*_}}"),
     }
@@ -1472,7 +1508,7 @@ fn gen_typeset(seed: u64) -> Vec<String> {
     let n = rng.gen_range(2..=4);
     for i in 0..n {
         let v = format!("v{i}");
-        match rng.gen_range(0..6) {
+        match rng.gen_range(0..7) {
             // Integer with an output base: `typeset -i 16 x=255` -> `16#ff`.
             0 => {
                 let base = pick(&mut rng, &["2", "8", "16", "36", "10"]);
@@ -1511,6 +1547,59 @@ fn gen_typeset(seed: u64) -> Vec<String> {
                 let val = pick(&mut rng, TS_STR_VALS);
                 stmts.push(format!("typeset -{just} {w} {v}={val}"));
                 stmts.push(format!("print -r -- \"[${v}]\""));
+            }
+            // -U (unique arrays) and -T (colon-array ties), together and apart.
+            // The mode had neither, which is how `typeset -U path` — the PATH
+            // dedup idiom in essentially every .zshrc — stayed broken.
+            //
+            // Both halves of a tie must be checked, because the bug was that
+            // they DISAGREED: the array deduped while the tied scalar kept
+            // every duplicate. c:Src/params.c:4066-4076 arrsetfn is what
+            // forbids that — `if (PM_UNIQUE) uniqarray(x)` runs BEFORE
+            // `arrfixenv(pm->ename, x)` publishes to the scalar, so the pair is
+            // always consistent. Printing $S, $s and both (t) types is what
+            // makes a one-sided dedupe visible.
+            //
+            // `-UT` (combined) matters separately from `typeset -T` +
+            // `typeset -U`: c:2989/3003 pass the FULL `on` to each half, and a
+            // port that masks that down ties the pair but silently drops the
+            // uniqueness. The two spellings must agree.
+            //
+            // Duplicate-bearing values are the point — a list with no repeats
+            // agrees either way. Ties use a private name, never PATH: rewriting
+            // $PATH mid-program would change command lookup for the rest of it.
+            5 => {
+                let vals = pick(&mut rng, &["/x /y /x", "a b a c b", "1 1 1", "p q", "z"]);
+                let u = if rng.gen_bool(0.6) { "U" } else { "" };
+                match rng.gen_range(0..3) {
+                    // Plain unique array (no tie).
+                    0 => {
+                        stmts.push(format!("typeset -U {v}; {v}=({vals})"));
+                        stmts.push(format!("print -rl -- ${v}"));
+                        stmts.push(format!("{v}+=({})", pick(&mut rng, &["/x", "a", "1", "q"])));
+                        stmts.push(format!("print -r -- \"[${v}]\""));
+                    }
+                    // Tie, assigned through the ARRAY half (c:4066-4076).
+                    1 => {
+                        let sep = pick(&mut rng, &["", " ':'", " ';'", " '|'"]);
+                        stmts.push(format!("typeset -{u}T S{i} {v}{sep}"));
+                        stmts.push(format!("{v}=({vals})"));
+                        stmts.push(format!("print -r -- \"[$S{i}]\""));
+                        stmts.push(format!("print -rl -- ${v}"));
+                        stmts.push(format!("print -r -- \"${{(t)S{i}}} ${{(t){v}}}\""));
+                    }
+                    // Tie, assigned through the SCALAR half (colonarrsetfn,
+                    // c:4329-4342 — `colonsplit(x, pm->node.flags & PM_UNIQUE)`
+                    // dedupes at the split).
+                    _ => {
+                        let sv = pick(&mut rng, &["/x:/y:/x", "a:b:a", "1:1", "p:q", ""]);
+                        stmts.push(format!("typeset -{u}T S{i} {v}"));
+                        stmts.push(format!("S{i}={sv}"));
+                        stmts.push(format!("print -r -- \"[$S{i}]\""));
+                        stmts.push(format!("print -rl -- ${v}"));
+                        stmts.push(format!("print -r -- \"n=${{#{v}}}\""));
+                    }
+                }
             }
             // Case forcing, and whether it survives reassignment.
             _ => {
@@ -4117,7 +4206,7 @@ fn gen_tied(seed: u64) -> Vec<String> {
     // runs it; the export case is now probed on purpose below.
     let mut stmts: Vec<String> = Vec::new();
     for _ in 0..rng.gen_range(1..=3) {
-        let stmt = match rng.gen_range(0..14) {
+        let stmt = match rng.gen_range(0..15) {
             // Scalar → array propagation, and back.
             0 => "typeset -T TS ts; TS=a:b:c; print -r -- \"n=${#ts} [${(j:|:)ts}]\"".to_string(),
             1 => "typeset -T TS ts; ts=(x y z); print -r -- \"[$TS]\"".to_string(),
@@ -4137,6 +4226,28 @@ fn gen_tied(seed: u64) -> Vec<String> {
             9 => "typeset -T TS ts; TS=a:b:c; ts[2]=B; print -r -- \"[$TS]\"".to_string(),
             // The real thing: PATH/path are tied by the shell itself.
             10 => "path=(/bin /usr/bin); print -r -- \"[$PATH]\"; PATH=/x:/y; print -r -- \"n=${#path} [${(j:|:)path}]\"".to_string(),
+            // -U on a tie. This mode gated ties from the start but never once
+            // combined one with -U, which is how `typeset -U path` — the PATH
+            // dedup idiom in essentially every .zshrc — stayed broken while the
+            // gate stayed green.
+            //
+            // Both halves must be printed, because the failure was that they
+            // DISAGREED: the array deduped and the tied scalar kept every
+            // duplicate. c:Src/params.c:4066-4076 arrsetfn is what rules that
+            // out — `if (PM_UNIQUE) uniqarray(x)` runs BEFORE
+            // `arrfixenv(pm->ename, x)` publishes to the scalar, so the pair is
+            // always consistent. Checking only `$TS` or only `${#ts}` would
+            // have missed it.
+            11 => "typeset -UT TS ts; ts=(x y x); print -r -- \"[$TS] n=${#ts} [${(j:|:)ts}]\"".to_string(),
+            // The scalar-assign side of the same tie: c:4329-4342 colonarrsetfn
+            // passes PM_UNIQUE straight into `colonsplit(x, uniq)`, so the
+            // dedupe happens at the split.
+            12 => "typeset -UT TS ts; TS=a:b:a:b; print -r -- \"[$TS] n=${#ts} [${(j:|:)ts}]\"".to_string(),
+            // `-UT` (combined) vs `-T` then `-U` must agree. c:2989/3003 hand
+            // BOTH halves the full `on`, so a port that masks it down ties the
+            // pair but silently drops the uniqueness — `${(t)}` on each half is
+            // what makes that visible.
+            13 => "typeset -UT TS ts ,; print -r -- \"${(t)TS} ${(t)ts}\"; ts=(p q p); print -r -- \"[$TS]\"".to_string(),
             // Untying leaves both halves standing.
             _ => "typeset -T TS ts; TS=a:b; unset S; print -r -- \"${+S} ${+s}\"".to_string(),
         };

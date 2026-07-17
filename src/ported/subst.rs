@@ -14975,7 +14975,6 @@ pub fn paramsubst(
         // this is now symmetric with it.
         if (mods & 1) != 0 {
             // c:4155/4163 — `substnamedir(...)`.
-            eprintln!("PROBE mods1 isarr={} value={:?} split_parts={:?} var_name={:?}", isarr, value, split_parts, var_name);
             let dir_one = |s: &str| -> String { crate::ported::utils::substnamedir(s) };
             // c:4150 — `if (isarr) { for (ap = aval; ...) } else { val = ... }`.
             // The per-element walk is gated on isarr, NOT on "is there an array
@@ -15000,7 +14999,22 @@ pub fn paramsubst(
                     value = dir_one(&value); // c:4163
                 }
             } else {
-                value = dir_one(&value); // c:4163
+                // c:4163 — the scalar half. `val` is now the ONLY live value:
+                // c:3033-3034's double-quote collapse already ran
+                // `val = sepjoin(aval, sep, 1); isarr = 0;`, and from there C
+                // never reads aval again.
+                //
+                // This port keeps re-deriving the value list from the paramtab
+                // (`arrays_get(&var_name)`) further down, so for an array
+                // parameter the final splat (c:3960) would hand back the
+                // ORIGINAL elements and silently discard what was just
+                // computed here — `"${(D)a}"` produced `one two three` even
+                // though this block had already built `one\ two\ three`.
+                // Publishing the collapsed scalar as the value list is what
+                // makes the splat see it, and is what the (V) half below gets
+                // for free by always writing split_parts.
+                value = dir_one(&value);
+                split_parts = Some(vec![value.clone()]);
             }
         } // c:4167
 

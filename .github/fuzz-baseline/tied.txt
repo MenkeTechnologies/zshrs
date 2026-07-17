@@ -1,3 +1,59 @@
 # parity-fuzz --mode tied baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode tied --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean. Covers `typeset -T` ties: both
+# assignment directions, custom separators, empty fields, element assignment,
+# the shell's own PATH/path pair, -U on a tie, and re-tying.
+#
+# Every divergence this mode found was a real port bug and was FIXED:
+#
+#   1. `typeset -U path; path=(/a /b /a)` left $PATH as `/a:/b:/a` while $path
+#      was `/a /b` — the two halves of ONE tie disagreeing with each other. The
+#      fusevm tie mirror joined the RAW values; c:Src/params.c:4066-4076
+#      arrsetfn fixes the order —
+#          if (pm->node.flags & PM_UNIQUE) uniqarray(x);
+#          pm->u.arr = x;
+#          if (pm->ename && x) arrfixenv(pm->ename, x);
+#      — the dedupe happens BEFORE the scalar is published, so they cannot
+#      drift apart. This is `typeset -U path`, the PATH-dedup idiom in
+#      essentially every .zshrc.
+#
+#   2. `typeset -UT` tied the pair but dropped the -U entirely: the tie
+#      attributes were masked to PM_EXPORTED|PM_READONLY where C hands BOTH
+#      halves the full `on` (c:2989/3003). `on` has already had its type bits
+#      stripped at c:2742-2744, so carrying it whole is safe.
+#
+#   3. The whole c:2903-2973 block was missing — the decision between erroring,
+#      re-tying, and UPDATING an existing tie. The -T handler just installed a
+#      fresh pair every time, so it silently accepted three cases C rejects and
+#      lost every attribute the new command line did not restate:
+#        - c:2903-2918 special tied pair (PATH/path): only an identical re-tie
+#          is legal. `typeset -T PATH other` must fail with "PATH special
+#          parameter can only be tied to special parameter path" — it was
+#          silently UNTYING PATH — and `typeset -T PATH path ';'` must fail with
+#          "cannot change the join character of special tied parameters".
+#        - c:2930-2943 plain scalar already tied: re-tying it to a different
+#          array must fail with "can't tie already tied scalar".
+#        - c:2957-2973 already_tied: C does NOT rebuild. It runs typeset_single
+#          on each half "if only to update the attributes of both, and of
+#          course to set the new value if one is provided", then returns.
+#          Applying on/off to the EXISTING entries is what lets an attribute the
+#          command doesn't restate survive, so `typeset -UT TS ts; typeset -T TS
+#          ts` keeps its uniqueness (and readonly likewise). typeset_single also
+#          takes `joinchar`, so a re-tie restates the separator: `typeset -T TS
+#          ts; typeset -T TS ts ,` must join on ',' while staying tied.
+#
+# Structural note, since it is what let all three live: the port of
+# typeset_single EXISTS in builtin.rs but is DEAD CODE — nothing references it —
+# while bin_typeset carries its own inline logic. That is the same
+# faithful-port-shadowed-by-a-reimplementation shape behind the (D)/substnamedir
+# bug. The already_tied attribute update is therefore applied directly in
+# bin_typeset rather than routed through typeset_single; wiring that dead port
+# back in is the real cleanup and would subsume it.
+#
+# This mode gated ties from the start but never once combined one with -U, which
+# is how (1) and (2) survived a green gate. The -U arms print BOTH halves —
+# checking only $TS or only ${#ts} cannot see a one-sided dedupe.
+#
+# Any divergence here is a regression.

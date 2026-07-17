@@ -4349,6 +4349,145 @@ pub fn bin_typeset(
         // startup so `typeset -T PATH path :` over an env-imported
         // PATH seeds `path` from the live PATH instead of clobbering
         // it with empty.
+        // c:2900-2901 — `pm = getnode(asg0.name); apm = getnode(asg->name);`
+        // then c:2903-2943 decides between erroring, re-tying, and updating an
+        // EXISTING tie. None of that block was ported: the code below simply
+        // installed a fresh pair every time, which silently accepted three
+        // cases C rejects and lost every attribute the new command line didn't
+        // restate.
+        let (pm_flags, pm_ename, pm_level) = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| {
+                t.get(sname)
+                    .map(|p| (Some(p.node.flags as u32), p.ename.clone(), p.level))
+            })
+            .unwrap_or((None, None, 0));
+        let (apm_flags, apm_ename) = paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(aname).map(|p| (Some(p.node.flags as u32), p.ename.clone())))
+            .unwrap_or((None, None));
+        let mut already_tied = false;
+
+        if let Some(sf) = pm_flags.filter(|f| (f & (PM_SPECIAL | PM_TIED)) == (PM_SPECIAL | PM_TIED))
+        {
+            let _ = sf;
+            // c:2903-2918 — a SPECIAL tied scalar (PATH/path). Only a re-tie of
+            // the identical special pair is allowed.
+            let apm_special = apm_flags.map(|f| (f & PM_SPECIAL) != 0).unwrap_or(false);
+            if pm_ename.as_deref() != Some(aname) || !apm_special {
+                // c:2908-2911
+                zwarnnam(
+                    name,
+                    &format!(
+                        "{} special parameter can only be tied to special parameter {}",
+                        sname,
+                        pm_ename.as_deref().unwrap_or("")
+                    ),
+                );
+                unqueue_signals();
+                return 1;
+            }
+            if joinchar != ':' as i32 {
+                // c:2913-2917
+                zwarnnam(
+                    name,
+                    "cannot change the join character of special tied parameters",
+                );
+                unqueue_signals();
+                return 1;
+            }
+            already_tied = true; // c:2918
+        } else if let Some(af) =
+            apm_flags.filter(|f| (f & (PM_SPECIAL | PM_TIED)) == (PM_SPECIAL | PM_TIED))
+        {
+            let _ = af;
+            // c:2919-2929 — the ARRAY half is special+tied: catches tying it to
+            // a different scalar, or to one that is no longer special.
+            zwarnnam(
+                name,
+                &format!(
+                    "{} special parameter can only be tied to special parameter {}",
+                    aname,
+                    apm_ename.as_deref().unwrap_or("")
+                ),
+            );
+            unqueue_signals();
+            return 1;
+        } else if let Some(sf) = pm_flags {
+            // c:2930-2932 — only consider an existing scalar that is actually
+            // live in this scope.
+            if ((sf & PM_UNSET) == 0 || (sf & PM_DECLARED) != 0)
+                && (locallevel_param.load(Relaxed) as i32 == pm_level || (on as u32 & PM_LOCAL) == 0)
+            {
+                if (sf & PM_TIED) != 0 {
+                    if PM_TYPE(sf) != PM_SCALAR {
+                        // c:2934-2937
+                        zwarnnam(name, &format!("already tied as non-scalar: {sname}"));
+                        unqueue_signals();
+                        return 1;
+                    } else if pm_ename.as_deref() == Some(aname) {
+                        already_tied = true; // c:2937
+                    } else {
+                        // c:2939-2942
+                        zwarnnam(name, &format!("can't tie already tied scalar: {sname}"));
+                        unqueue_signals();
+                        return 1;
+                    }
+                }
+                // else: not tied — only the export attribute is inherited
+                // (c:2951), which `inherited_export` below already does.
+            }
+        }
+
+        if already_tied {
+            // c:2957-2973 — C does NOT rebuild the pair here. It runs
+            // typeset_single on each half "if only to update the attributes of
+            // both, and of course to set the new value if one is provided",
+            // then returns:
+            //     typeset_single(..., pm,  on,                        off,             ...)
+            //     typeset_single(..., apm, (on | PM_ARRAY) & ~PM_EXPORTED, off & ~PM_ARRAY, ...)
+            // Applying on/off to the EXISTING entries is precisely what lets an
+            // attribute the current command doesn't restate survive — so
+            // `typeset -UT TS ts; typeset -T TS ts` keeps its uniqueness, and
+            // likewise readonly. Rebuilding dropped everything but export.
+            //
+            // typeset_single itself is present in this file but is dead code
+            // (nothing calls it; bin_typeset carries its own inline logic), so
+            // the attribute update is applied directly here rather than routed
+            // through it.
+            if let Ok(mut tab) = paramtab().write() {
+                if let Some(p) = tab.get_mut(sname) {
+                    p.node.flags = ((p.node.flags as u32 | on as u32) & !(off as u32)) as i32;
+                    // c:2967 — typeset_single takes `joinchar`, so a re-tie
+                    // RE-STATES the separator: "It is possible to apply -T to
+                    // two previously tied variables but with a different
+                    // separator character, in which case the variables remain
+                    // joined as before but the separator is changed."
+                    // (Doc/Zsh/builtins.yo, -T.) Updating flags alone left
+                    // `typeset -T TS ts; typeset -T TS ts ,` joining on ':'.
+                    if let Some(td) = p.u_tied.as_mut() {
+                        td.joinchar = joinchar; // c:2967
+                    }
+                }
+                if let Some(p) = tab.get_mut(aname) {
+                    let aon = (on as u32 | PM_ARRAY) & !PM_EXPORTED; // c:2970
+                    let aoff = off as u32 & !PM_ARRAY; // c:2971
+                    p.node.flags = ((p.node.flags as u32 | aon) & !aoff) as i32;
+                }
+            }
+            // Values, if the command line carried any (c:2963 "and of course to
+            // set the new value if one is provided for either of them").
+            if let Some(sval) = sval_opt.as_deref() {
+                crate::ported::params::assignsparam(sname, sval, 0);
+            } else if let Some(arr) = aval_opt {
+                crate::ported::params::assignaparam(aname, arr, 0);
+            }
+            unqueue_signals();
+            return 0;
+        }
+
         let existing_scalar: Option<String> = {
             let from_tab = paramtab()
                 .read()
@@ -4412,7 +4551,18 @@ pub fn bin_typeset(
             .unwrap_or(0)
             & PM_EXPORTED
             & !(off as u32); // c:2953 `& ~roff` — an explicit +x still wins
-        let tie_attr: u32 = (on as u32 | inherited_export) & (PM_EXPORTED | PM_READONLY);
+        // c:2989 / c:3003 — C hands BOTH halves the full `on`:
+        //     apm = typeset_single(..., (on | PM_ARRAY) & ~PM_EXPORTED, ...)
+        //     pm  = typeset_single(..., on, ...)
+        // so every attribute the user asked for lands on the tie, not just the
+        // export/readonly pair. Masking down to PM_EXPORTED|PM_READONLY silently
+        // dropped the rest — most visibly PM_UNIQUE, so `typeset -UT B b` tied
+        // the two halves but never deduped either (`${(t)b}` read `array-tied`
+        // where zsh reads `array-tied-unique`), while the equivalent spelled as
+        // two commands (`typeset -T B b; typeset -U b`) worked. Carrying `on`
+        // whole is safe here: c:2742-2744 has already stripped the type bits
+        // from it (`if (on & PM_TIED) off |= PM_INTEGER|…|PM_HASHED; on &= ~off`).
+        let tie_attr: u32 = on as u32 | inherited_export;
         let mut apm = param::default();
         apm.node.nam = aname.to_string();
         apm.node.flags = ((PM_ARRAY | PM_TIED) | (tie_attr & !PM_EXPORTED)) as i32;
