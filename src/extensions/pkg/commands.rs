@@ -116,6 +116,100 @@ pub fn list() -> PkgResult<()> {
     Ok(())
 }
 
+/// Recursive byte size of a directory tree (0 if unreadable).
+/// Ported from strykelang's `pkg/commands.rs::dir_size_recursive`.
+fn dir_size(path: &Path) -> u64 {
+    let mut total: u64 = 0;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_dir() {
+            total += dir_size(&entry.path());
+        } else if meta.is_file() {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+/// `znative gc [--dry-run]` — remove every `store/<name>@<version>/` directory
+/// not pinned by `installed.toml` (orphans left by old versions or failed
+/// installs), plus the `git/` clone scratch (never needed after install).
+/// Ported from strykelang's `cmd_gc_global` (global model — no lockfiles).
+pub fn gc(dry_run: bool) -> PkgResult<()> {
+    let store = Store::user_default()?;
+    let index = InstalledIndex::load_from(&store)?;
+    let pinned: std::collections::HashSet<String> = index
+        .packages
+        .iter()
+        .map(|p| format!("{}@{}", p.name, p.version))
+        .collect();
+
+    let mut freed: u64 = 0;
+    let mut count: usize = 0;
+
+    // 1. Orphan store/<name>@<version> directories.
+    if let Ok(entries) = std::fs::read_dir(store.store_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.path().is_dir() && !pinned.contains(&name) {
+                let bytes = dir_size(&entry.path());
+                if dry_run {
+                    println!("znative gc: would remove {} ({} KB)", name, (bytes + 512) / 1024);
+                } else {
+                    std::fs::remove_dir_all(entry.path())
+                        .map_err(|e| PkgError::Io(format!("remove {}: {}", name, e)))?;
+                    println!("znative gc: removed {} ({} KB)", name, (bytes + 512) / 1024);
+                }
+                freed += bytes;
+                count += 1;
+            }
+        }
+    }
+
+    // 2. git/ clone scratch — the store holds the copied working tree, so the
+    //    clone under git/ is dead weight after install.
+    let git = store.git_dir();
+    let git_bytes = dir_size(&git);
+    if git_bytes > 0 {
+        if dry_run {
+            println!("znative gc: would clear git cache ({} KB)", (git_bytes + 512) / 1024);
+        } else {
+            let _ = std::fs::remove_dir_all(&git);
+            println!("znative gc: cleared git cache ({} KB)", (git_bytes + 512) / 1024);
+        }
+        freed += git_bytes;
+        count += 1;
+    }
+
+    if count == 0 {
+        println!("znative gc: nothing to collect");
+    } else {
+        let verb = if dry_run { "would free" } else { "freed" };
+        println!("znative gc: {} {} KB total", verb, (freed + 512) / 1024);
+    }
+    Ok(())
+}
+
+/// `znative clean` — clear the scratch directories (`git/`, `cache/`, `bin/`)
+/// that installs accumulate but that are not needed to load. The store and
+/// index are left intact. Ported from strykelang's `cmd_clean` (global part).
+pub fn clean() -> PkgResult<()> {
+    let store = Store::user_default()?;
+    let mut freed: u64 = 0;
+    for d in [store.git_dir(), store.cache_dir(), store.bin_dir()] {
+        if d.exists() {
+            freed += dir_size(&d);
+            std::fs::remove_dir_all(&d)
+                .map_err(|e| PkgError::Io(format!("remove {}: {}", d.display(), e)))?;
+        }
+    }
+    println!("znative clean: cleared {} KB of scratch", (freed + 512) / 1024);
+    Ok(())
+}
+
 /// `znative info <NAME>` — full record for one plugin.
 pub fn info(name: &str) -> PkgResult<()> {
     let store = Store::user_default()?;

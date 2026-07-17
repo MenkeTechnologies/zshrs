@@ -17,7 +17,12 @@ usage: znative <command> [args]
   list               list installed plugins
   info <NAME>        show details for one plugin
   update [NAME]      re-resolve + reinstall from the recorded source
-  help               this message";
+  gc [--dry-run]     remove orphan store entries + the git clone cache
+  clean              clear scratch caches (git/, cache/, bin/)
+  help               this message
+
+aliases: add=install=i  remove=rm=uninstall  list=ls  info=show
+         load=source  update=up=upgrade";
 
 /// Entry point for the `znative` builtin. `args` are the arguments only (the
 /// builtin name `znative` is NOT in `args`), so `args[0]` is the subcommand.
@@ -75,6 +80,8 @@ pub fn znative(args: &[String]) -> i32 {
             }
         }
         "update" | "upgrade" | "up" => commands::update(rest.first().map(|s| s.as_str())),
+        "gc" => commands::gc(rest.iter().any(|a| a == "--dry-run" || a == "-n")),
+        "clean" => commands::clean(),
         "help" | "-h" | "--help" | "" => {
             println!("{}", USAGE);
             return 0;
