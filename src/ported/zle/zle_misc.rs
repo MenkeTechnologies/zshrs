@@ -2067,20 +2067,78 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
         }
     }
 
-    // c:1735-1786 — suffixlist walk.
+    // c:1755-1813 — suffixlist walk, matching `ch` by suffix TYPE.
+    use crate::ported::zle::zle_h::{
+        NO_INSERT_CHAR, SUFFLAGS_SPACE, SUFTYP_NEGRNG, SUFTYP_NEGSTR, SUFTYP_POSRNG, SUFTYP_POSSTR,
+    };
     let list = suffixlist().lock().map(|g| g.clone()).unwrap_or_default();
     let mut sl: i32 = 0;
-    let ch = c as u32;
-    for entry in list.iter() {
-        // c:1735
-        // c:1741-1769 — match `ch` against entry.chars based on tp/flags.
-        let matched = entry.chars.iter().any(|&x| x as u32 == ch);
-        if matched {
-            // c:1762
-            if keep == 0 {
-                sl = entry.lensuf;
-            } // c:1764
-            break;
+    let mut sflags: i32 = 0;
+    let ch = c; // ZLE_CHAR_T codepoint
+    if c == NO_INSERT_CHAR {
+        // c:1757 — nothing inserted: remove only if the `\-` (noinsrem) flag.
+        sl = if suffixnoinsrem.load(Ordering::Relaxed) != 0 {
+            SUFFIXLEN.load(Ordering::Relaxed)
+        } else {
+            0
+        };
+    } else {
+        // c:1770-1813 — positive lists remove `lensuf`; negative lists block
+        // removal on a match and otherwise carry their `lensuf` as the
+        // fall-through (`negsuflen`) used if no positive match is found.
+        let mut negsuflen = 0i32;
+        let mut found = false;
+        for entry in list.iter() {
+            match entry.tp {
+                t if t == SUFTYP_POSSTR => {
+                    // c:1775 — ZS_memchr(chars, ch, lenstr)
+                    if entry.chars.iter().any(|&x| x as i32 == ch) {
+                        sl = entry.lensuf;
+                        found = true;
+                    }
+                }
+                t if t == SUFTYP_NEGSTR => {
+                    // c:1782
+                    if entry.chars.iter().any(|&x| x as i32 == ch) {
+                        sl = 0;
+                        found = true;
+                    } else {
+                        negsuflen = entry.lensuf;
+                    }
+                }
+                t if t == SUFTYP_POSRNG => {
+                    // c:1791 — chars[0] <= ch <= chars[1]
+                    if entry.chars.len() >= 2
+                        && (entry.chars[0] as i32) <= ch
+                        && ch <= (entry.chars[1] as i32)
+                    {
+                        sl = entry.lensuf;
+                        found = true;
+                    }
+                }
+                t if t == SUFTYP_NEGRNG => {
+                    // c:1799
+                    if entry.chars.len() >= 2
+                        && (entry.chars[0] as i32) <= ch
+                        && ch <= (entry.chars[1] as i32)
+                    {
+                        sl = 0;
+                        found = true;
+                    } else {
+                        negsuflen = entry.lensuf;
+                    }
+                }
+                _ => {}
+            }
+            if found {
+                // c:1806-1809
+                sflags = entry.flags;
+                break;
+            }
+        }
+        if !found {
+            // c:1812-1813
+            sl = negsuflen;
         }
     }
 
@@ -2102,6 +2160,17 @@ pub fn iremovesuffix(c: i32, keep: i32) -> i32 {
             ZLELL.store(g.len(), SeqCst);
         }
         ZLECS.store(new_cs, SeqCst);
+        // c:1819-1826 — SUFFLAGS_SPACE: after removing the suffix, add a space
+        // and advance over it (the `-r`/`-R` spec asked for a trailing space).
+        if sflags & SUFFLAGS_SPACE != 0 {
+            let cs2 = ZLECS.load(SeqCst);
+            if let Ok(mut g) = ZLELINE.lock() {
+                let pos = cs2.min(g.len());
+                g.insert(pos, ' ');
+                ZLELL.store(g.len(), SeqCst);
+            }
+            ZLECS.store(cs2 + 1, SeqCst);
+        }
     }
 
     // c:1796 — clear suffix list.
