@@ -152,6 +152,20 @@ pub fn preprompt_render() {
     if !engine_active() {
         return;
     }
+    let render_t0 = std::time::Instant::now();
+    // RAII so every early return still logs the frame cost.
+    struct RenderTimer(std::time::Instant);
+    impl Drop for RenderTimer {
+        fn drop(&mut self) {
+            let ms = self.0.elapsed().as_millis();
+            if ms > 100 {
+                tracing::info!(target: "p10k", ms, "slow preprompt_render");
+            } else {
+                tracing::debug!(target: "p10k", ms, "preprompt_render");
+            }
+        }
+    }
+    let _t = RenderTimer(render_t0);
     let left_elems = config::p9k_global_arr("LEFT_PROMPT_ELEMENTS");
     let right_elems = config::p9k_global_arr("RIGHT_PROMPT_ELEMENTS");
 
@@ -171,6 +185,24 @@ pub fn preprompt_render() {
             // render's case-2 join selection sees it (render strips it
             // again for param lookups).
             let (base, joined) = render::is_joined_name(name);
+            // p10k:8290-8310 — an element with
+            // POWERLEVEL9K_<ELEM>_SHOW_ON_COMMAND set is registered in
+            // `_p9k_show_on_command`; p10k:7697-7726 — on every widget
+            // it is shown only while the edit buffer holds a matching
+            // command, and `_p9k_on_expand` hides it before each prompt
+            // (p10k:6733-6736). A freshly painted prompt has an empty
+            // buffer, so the paint-time state is always HIDDEN; the
+            // show-while-typing re-render is not ported.
+            let soc = format!(
+                "POWERLEVEL9K_{}_SHOW_ON_COMMAND",
+                base.replace('-', "_").to_ascii_uppercase()
+            );
+            if crate::ported::params::getsparam(&soc).is_some()
+                || crate::ported::params::getaparam(&soc).is_some()
+            {
+                tracing::debug!(target: "p10k", %name, "SHOW_ON_COMMAND segment hidden at prompt paint");
+                continue;
+            }
             let built = segments_core::build_segment(base)
                 .or_else(|| segments_env::build_segment(base))
                 .or_else(|| segments_sys::build_segment(base));
