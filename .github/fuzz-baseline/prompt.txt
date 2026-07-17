@@ -63,4 +63,15 @@
 # `%-N<` gap lived in, and papering over it would retire the coverage that
 # found it.
 #
+# UNKNOWN conditional test char `%(X.T.F)` (fixed in prompt.rs): the ternary
+# vocabulary only carried VALID test chars, so an unknown one was never
+# compared. c:Src/prompt.c:501-503 sets `default: test = -1`, and the two
+# branch calls fire on `test == 1` / `test == 0` respectively — so with -1
+# NEITHER prints and `%(a.Y.N)` collapses to empty. The port left `test = 0`,
+# wrongly emitting the FALSE branch `N`. The same edit ported the `t/T/d/D/w`
+# clock tests (c:414-438, `arg == localtime field`) which had also fallen into
+# that default arm. Reverting the default to `test = 0` yields 126 divergences
+# on seed 1 alone (verified), so `%(a.Y.N)` / `A%(z.Y.N)B` / `%(q...)` /
+# `%(Q...)` now gate it. The clock tests are NOT generated (nondeterministic).
+#
 # Any divergence here is a regression.

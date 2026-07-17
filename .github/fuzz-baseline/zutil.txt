@@ -51,4 +51,22 @@
 # misparses it. Check `git log -S` in the fork before treating that shape as a
 # zshrs bug.
 #
+# ZSTYLE -e DYNAMIC styles (verified-correct coverage): the mode only ever
+# installed STATIC styles (`zstyle pat sty val`), so `-e` — whose value is
+# COMPUTED by evaluating code that sets `reply` at LOOKUP time (c:zutil.c:588) —
+# and its interaction with the -s/-a/-t/-b/-g reads and with static-style
+# priority went uncompared. The install loop now sometimes emits
+# `zstyle -e pat sty 'reply=(…)'` with deterministic reply bodies (scalar,
+# array, `$((…))` arithmetic, boolean). All hand-verified equal on both shells.
+#
+# LONG-OPTION zparseopts specs (`-name=array` matching `--name`, verified-correct
+# coverage): the vocabulary only had single-char specs, so the GNU-ish
+# long-option grammar (a spec name preceded by `-` — c:zutil.c:1884-1896 keeps
+# the first char as part of the name) was uncompared. A dedicated probe now
+# exercises `-file:=F`, `-help=H`, `-num+:=N`, `-long=L -short=S`, `-opt:=O`,
+# `-pre:=P` with `-D`, `-count+=C`, and a mixed short+long `x=X -tag:=T`. The
+# spec's first letter is deliberately kept OUT of the flag set {a A v D E F G K
+# M}: `-verbose` would be eaten by the fork-only `-v` argv flag (a false
+# divergence — see above) and `-all` by `-a`. All hand-verified equal on both.
+#
 # Any divergence here is a regression.

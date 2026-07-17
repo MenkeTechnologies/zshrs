@@ -672,6 +672,11 @@ jobs:
       # Empty baseline: any divergence is a regression.
       - name: Fuzz — rcexpand
         run: ./target/debug/parity-fuzz --mode rcexpand --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/rcexpand.txt --out target/parity-fuzz/ci-rcexpand.txt
+      # mbident — multibyte (non-ASCII) parameter names in braced read forms
+      # (${日}, ${#café}, ${(U)π}). Empty baseline: any divergence is a
+      # regression. Guards the Bug #1021 braced-read fix in paramsubst.
+      - name: Fuzz — mbident
+        run: ./target/debug/parity-fuzz --mode mbident --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/mbident.txt --out target/parity-fuzz/ci-mbident.txt
       # printf — PROMOTED from informational to a blocking gate: the format
       # classes that made it gap-rich were getkeystring bugs, and 10,000 cases
       # now run clean. printf drives the decoder through two flag sets nothing

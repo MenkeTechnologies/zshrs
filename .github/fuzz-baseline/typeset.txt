@@ -1,3 +1,18 @@
 # parity-fuzz --mode typeset baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode typeset --count N --verify 3  (copy NEW-signature lines).
+#
+# KNOWN GAP — `typeset -l`/`-u` case fold applied at ASSIGNMENT, not on READ
+# (docs/BUGS.md #1019). C stores the ORIGINAL value and folds on read
+# (getstrvalue, c:params.c:2505) / export (copyenvstr, c:5439), so `typeset +l`
+# re-exposes the original case. zshrs folds eagerly at assignment and loses it,
+# so removing the flag shows the folded value. The plain `[$v]` read matches
+# (both folded). The `_` arm now generates the `typeset -p` + flag-removal forms
+# that surface this; the four signatures below are the KNOWN divergence and are
+# expected until #1019 is fixed (a multi-path change — route PM_LOWER/PM_UPPER
+# scalars through getstrvalue and drop the eager assignment fold). When fixed,
+# delete these four lines.
+typeset +l v0; print -r -- "orig=[$v0]"
+typeset +l W; print -r -- "orig=[$W]"
+typeset +u v0; print -r -- "orig=[$v0]"
+typeset +u W; print -r -- "orig=[$W]"

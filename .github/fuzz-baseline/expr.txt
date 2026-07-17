@@ -1,4 +1,13 @@
 # parity-fuzz --mode expr baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode expr --count N --verify 3  (copy NEW-signature lines).
+#
+# SUBSTRING + TRAILING MODIFIER (fixed in subst.rs): the scalar-substring arm
+# (gen_scalar_pe) now emits a `:MODIFIER` tail after `${var:OFF[:LEN]}` —
+# `${v:0:8:h}` (substring then :h), `${v:2:h}` (offset-only + modifier, an alpha
+# after the first colon is NOT a length per c:subst.c:1571), chains (`:h:t`), and
+# bad letters (`:3`/`:Z`/`:x` → "unrecognized modifier `c'"). C applies the tail
+# via modify() (c:3752-3792); the old naive `splitn(2, ':')` swallowed the third
+# part as the length and failed with "bad math expression: ':' without '?'".
+# Reverting the fix yields 10 divergences on seed 1. Bug #1014.
 print -r -- "${(L#P)t}"

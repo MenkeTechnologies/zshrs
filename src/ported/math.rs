@@ -1091,27 +1091,23 @@ pub(crate) fn lexconstant() -> i32 {
         .chars()
         .filter(|&c| c != '_')
         .collect();
-    // c:Src/utils.c:2511 zstrtol — accept overflow with truncation
-    // and a `"number truncated after N digits"` warning rather
-    // than silently producing 0. zsh truncates digits past i64's
-    // 18-decimal-digit safe band, parses the leading slice as
-    // u64, casts to i64 (wrapping). Bug #350; mirrors the
-    // parse_int_arg port at builtin.rs:12794 for #258.
+    // c:Src/utils.c:2466-2515 zstrtol — accept overflow with truncation and a
+    // `"number truncated after N digits"` warning rather than silently
+    // producing 0. The fast i64 path covers everything up to i64::MAX; past
+    // it, DELEGATE to the faithful zstrtol port (same as the hex branch above
+    // at c:785) instead of a hardcoded 18-digit cut. zstrtol accumulates the
+    // magnitude in a u64 and truncates ONLY when the unsigned multiply
+    // overflows (19 digits for a 20+-digit run), then reinterprets the retained
+    // u64 as signed — so `99999999999999999999` wraps to `-8446744073709551617`
+    // (19 digits), while the fit-in-u64-but-not-i64 band (`9999999999999999999`)
+    // hits the signed-overflow special case at 18 digits. The old `[..18]` slice
+    // was one digit short on both counts. Bug #350; mirrors builtin.rs
+    // parse_int_arg for #258.
     let val: i64 = match int_str.parse::<i64>() {
         Ok(n) => n,
         Err(_) if !int_str.is_empty() && int_str.chars().all(|c| c.is_ascii_digit()) => {
-            let truncated = if int_str.len() > 18 {
-                &int_str[..18]
-            } else {
-                int_str.as_str()
-            };
-            let v = truncated.parse::<u64>().map(|u| u as i64).unwrap_or(0);
-            crate::ported::utils::zwarn(&format!(
-                "number truncated after {} digits: {}",
-                truncated.len(),
-                int_str
-            ));
-            v
+            // zstrtol emits the "number truncated after N digits" warning itself.
+            crate::ported::utils::zstrtol_underscore(&int_str, 10, false).0
         }
         Err(_) => 0,
     };

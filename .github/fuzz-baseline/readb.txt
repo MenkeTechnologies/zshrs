@@ -1,3 +1,34 @@
 # parity-fuzz --mode readb baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode readb --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers the read builtin (c:Src/builtin.c:109, spec `cd:ek:%lnpqrst:%zu:AE`):
+# multi-var IFS splitting, -r raw, -A array, -d delimiter (incl. -d ''), -k N
+# chars, -q yes/no, -u fd, and -E/-e echo. Interactive-only flags (-s, -p, -t,
+# -z, and -k with a tty) are not generated — they need a terminal and have no
+# deterministic piped-input behaviour.
+#
+# The divergence this mode found was a real port bug and is FIXED:
+#
+#   `-E` echoes each field it reads to stdout as it is read, one per line, and
+#   also assigns; `-e` echoes but assigns nothing (c:Src/builtin.c:7106
+#   `if (!OPT_ISSET(ops,'e')) setsparam(...)`). The whole-line echo worked for a
+#   SINGLE variable, but the multi-variable path assigned each field and echoed
+#   nothing:
+#
+#       $ read -rE a b <<< 'one two three'   # zsh prints, one per line:
+#       one
+#       two three
+#       $ ... | zshrs --zsh -f               # printed nothing
+#
+#   A single var echoes the whole line (it gets the whole line); multiple vars
+#   echo each assigned FIELD; `-A` echoes each word (that path already worked).
+#   The fix routes all three multi-var assignment sites through one helper that
+#   echoes when -e/-E and assigns unless -e.
+#
+#   `-E`/`-e` were simply absent from the vocabulary, so the multi-var echo path
+#   was never exercised.
+#
+# Any divergence here is a regression.

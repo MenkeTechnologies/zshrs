@@ -2432,11 +2432,19 @@ fn par_funcdef() -> Option<ZshCommand> {
 
     // Optional ()
     let saw_paren = tok() == INOUTPAR;
+    // Track the byte position just past `()` / the most-recent separator, so an
+    // UNBRACED short body (`function f () cmd`) can be sliced for `functions`
+    // rendering. pos() AFTER a zshlex is already past the next token (one-token
+    // lookahead), so record it BEFORE each advance (mirrors parse.rs:2484).
+    let mut unbraced_body_start = pos();
     if saw_paren {
         zshlex();
     }
 
-    skip_separators();
+    while tok() == SEPER || tok() == NEWLIN {
+        unbraced_body_start = pos();
+        zshlex();
+    }
 
     // Body opener: real Inbrace OR a String containing the literal `{`
     // (early-return path) OR a String containing the Inbrace marker
@@ -2567,7 +2575,21 @@ fn par_funcdef() -> Option<ZshCommand> {
         // command, matching the brace-less `foo() CMD` path
         // (parse_inline_funcdef). Bug surface: C04funcdef `function foo ()
         // print bar`.
+        // Slice the raw short-body text (unbraced_body_start was captured
+        // before the body token was lexed, above) so `functions`/`typeset -f`
+        // can list it (fusevm shfuncs render from this raw `body`, not
+        // getpermtext — hashtable.rs:1397). Without it `function f () print x`
+        // listed as `f () { }` (empty).
         par_cmd().map(|cmd| {
+            let body_source = input_slice(unbraced_body_start, pos())
+                .map(|s| {
+                    s.trim()
+                        .trim_end_matches(|c: char| {
+                            c == ';' || c == '\n' || c.is_whitespace()
+                        })
+                        .to_string()
+                })
+                .filter(|s| !s.is_empty());
             let list = ZshList {
                 sublist: ZshSublist {
                     pipe: ZshPipe {
@@ -2586,7 +2608,7 @@ fn par_funcdef() -> Option<ZshCommand> {
                 body: Box::new(ZshProgram { lists: vec![list] }),
                 tracing,
                 auto_call_args: None,
-                body_source: None,
+                body_source,
             })
         })
     }
@@ -9404,15 +9426,71 @@ fn parse_loop_body(foreach_style: bool, is_repeat: bool) -> Option<ZshProgram> {
 /// equivalent: the INOUTPAR shape in par_simple at parse.c:1836+
 /// triggers an anon-funcdef path.
 fn parse_anon_funcdef() -> Option<ZshCommand> {
+    // Track the byte position just past the `()` / most-recent separator so an
+    // UNBRACED body's raw text can be sliced for `functions` rendering. pos()
+    // AFTER a zshlex is already past the next token (one-token lookahead), so
+    // body_start must be recorded BEFORE each advance. Mirrors the braced
+    // path's body_start-before-zshlex capture (parse.rs:2484).
+    let mut body_start = pos();
     zshlex(); // skip ()
-    skip_separators();
-    // No `{` after `()` → bare empty subshell shape `()`. Fall back
-    // to a Subsh with an empty program so the status is 0 (matches
-    // zsh's `()` no-op behavior).
+    while tok() == SEPER || tok() == NEWLIN {
+        body_start = pos();
+        zshlex();
+    }
+    // c:Src/parse.c:1728-1748 — after `()` (and any separators, skipped at
+    // c:1720), the body is either a braced `{ … }` (par_list) OR, with
+    // SHORTLOOPS set (the default), a single UNBRACED command (par_list1):
+    // `() print hi` runs an anon fn whose body is `print hi`, and
+    // `f() () print hi` nests one as another function's body. A bodyless `()`
+    // is a parse error in zsh ("parse error near `()'"), which par_cmd()
+    // produces naturally when the next token can't start a command (`}`, EOF).
+    // The previous port returned an empty subshell here, so `() print hi`
+    // hit the outer "parse error near `print'" and bare `()` wrongly succeeded.
     if tok() != INBRACE_TOK {
-        return Some(ZshCommand::Subsh(Box::new(ZshProgram {
-            lists: Vec::new(),
-        })));
+        if unset(SHORTLOOPS) {
+            // c:1742 — `else if (unset(SHORTLOOPS)) YYERRORV`.
+            zerr("parse error: short function body form requires SHORTLOOPS option");
+            return None;
+        }
+        // c:1747-1748 — `else par_list1(&c)`: ONE command is the body.
+        // Slice the raw body text (body_start was captured before the body
+        // token was lexed, above) so `functions`/`typeset -f` can render it:
+        // fusevm shfuncs carry no C-shaped Eprog, so hashtable.rs:1397-1414
+        // renders from this raw `body` string, not getpermtext. Without it the
+        // body listed as `f () { }` (empty).
+        let cmd = par_cmd()?;
+        let body_source = input_slice(body_start, pos())
+            .map(|s| {
+                s.trim()
+                    .trim_end_matches(|c: char| c == ';' || c == '\n' || c.is_whitespace())
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty());
+        let list = ZshList {
+            sublist: ZshSublist {
+                pipe: ZshPipe {
+                    cmd,
+                    next: None,
+                    lineno: lineno(),
+                    merge_stderr: false,
+                },
+                next: None,
+                flags: SublistFlags::default(),
+            },
+            flags: ListFlags::default(),
+        };
+        static ANON_UNBRACED_COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = ANON_UNBRACED_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = format!("_zshrs_anon_{}", n);
+        // No trailing args for the unbraced form (the whole command IS the
+        // body); call with an empty arg list so the anon fn still executes.
+        return Some(ZshCommand::FuncDef(ZshFuncDef {
+            names: vec![name],
+            body: Box::new(ZshProgram { lists: vec![list] }),
+            tracing: false,
+            auto_call_args: Some(Vec::new()),
+            body_source,
+        }));
     }
     zshlex(); // skip {
               // c:Src/parse.c:par_subsh — anon `() { … }` body must terminate at
@@ -9565,12 +9643,20 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
     // dispatcher (parse.c:958) is called with `incmdpos = 1` for
     // the funcdef body.
     set_incmdpos(true);
+    // Track the byte position just past `()` / the most-recent separator, so an
+    // UNBRACED short body (`f() cmd`) can be sliced for `functions` rendering.
+    // pos() AFTER a zshlex is already past the next token (one-token
+    // lookahead), so record it BEFORE each advance (mirrors parse.rs:2484).
+    let mut unbraced_body_start = pos();
     // Skip ()
     if tok() == INOUTPAR {
         zshlex();
     }
 
-    skip_separators();
+    while tok() == SEPER || tok() == NEWLIN {
+        unbraced_body_start = pos();
+        zshlex();
+    }
 
     // Parse body
     if tok() == INBRACE_TOK {
@@ -9640,8 +9726,22 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
         zerr("parse error: short function body form requires SHORTLOOPS option");
         None
     } else {
+        // Slice the raw short-body text (unbraced_body_start was captured
+        // before the body token was lexed, above) so `functions`/`typeset -f`
+        // can list it (fusevm shfuncs render from this raw `body`, not
+        // getpermtext — hashtable.rs:1397). Without it `f() print x` listed as
+        // `f () { }` (empty).
         match par_cmd() {
             Some(cmd) => {
+                let body_source = input_slice(unbraced_body_start, pos())
+                    .map(|s| {
+                        s.trim()
+                            .trim_end_matches(|c: char| {
+                                c == ';' || c == '\n' || c.is_whitespace()
+                            })
+                            .to_string()
+                    })
+                    .filter(|s| !s.is_empty());
                 let list = ZshList {
                     sublist: ZshSublist {
                         pipe: ZshPipe {
@@ -9660,7 +9760,7 @@ fn parse_inline_funcdef(names: Vec<String>) -> Option<ZshCommand> {
                     body: Box::new(ZshProgram { lists: vec![list] }),
                     tracing: false,
                     auto_call_args: None,
-                    body_source: None,
+                    body_source,
                 }))
             }
             None => None,

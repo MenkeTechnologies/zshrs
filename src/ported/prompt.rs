@@ -1023,9 +1023,39 @@ pub fn putpromptchar(bv: &mut buf_vars, doprint: i32, endchar: i32) -> i32 {
                         // For arg > 0 we'd need the shtimer start; not
                         // worth approximating, leave test=0.
                     }
+                    // c:Src/prompt.c:414-438 — `t`/`T`/`d`/`D`/`w` compare
+                    // `arg` against a `localtime` field:
+                    //   timet = time(NULL); tm = localtime(&timet);
+                    //   't' -> tm_min, 'T' -> tm_hour, 'd' -> tm_mday,
+                    //   'D' -> tm_mon, 'w' -> tm_wday
+                    // Default arg = 0 selects midnight/first-of-month/Sunday,
+                    // so `%(t.A.B)` is true only during minute 0 of the hour,
+                    // matching zsh's clock-dependent behaviour.
+                    b't' | b'T' | b'd' | b'D' | b'w' => {
+                        let timet = unsafe { libc::time(std::ptr::null_mut()) };
+                        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+                        unsafe {
+                            libc::localtime_r(&timet, &mut tm);
+                        }
+                        let field = match tc {
+                            b't' => tm.tm_min,
+                            b'T' => tm.tm_hour,
+                            b'd' => tm.tm_mday,
+                            b'D' => tm.tm_mon,
+                            _ => tm.tm_wday, // 'w'
+                        };
+                        if arg == field {
+                            test = 1;
+                        }
+                    }
+                    // c:Src/prompt.c:501-503 — genuinely unknown test char:
+                    //   default: test = -1; break;
+                    // With test == -1 NEITHER `test == 1` (true branch) nor
+                    // `test == 0` (false branch) fires below, so `%(a.Y.N)`
+                    // prints nothing — not the false branch. Leaving test at 0
+                    // wrongly printed the false text.
                     _ => {
-                        // Other test chars (t, T, d, D, w) — not yet
-                        // ported. test stays 0.
+                        test = -1;
                     }
                 }
                 // c:457-460 — `if (!*bv->fm || !(sep = *++bv->fm)) return 0;`.

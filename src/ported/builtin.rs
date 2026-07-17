@@ -10044,7 +10044,7 @@ pub fn bin_print(
         // start)`. The partial output produced before the bad
         // directive is still printed (C emits via fwrite/fprintf
         // throughout the format walk).
-        let (out, bounds) = match printf_format(&fmt, rest) {
+        let (out, bounds, n_targets) = match printf_format(&fmt, rest) {
             Ok(s) => s,
             Err((partial, msg)) => {
                 print!("{}", partial); // c: partial output already in fout
@@ -10056,6 +10056,14 @@ pub fn bin_print(
                 return 1; // c:5443
             }
         };
+        // c:Src/builtin.c:5427-5429 — apply the `%n` stores. C runs setiparam
+        // inside the format loop; printf_format has no shell handle, so it
+        // collected (name, byte_count) and the assignment happens here. Done
+        // before the -z/-s output branches because in C the variable is set
+        // during formatting regardless of where the text is routed.
+        for (nv, cnt) in &n_targets {
+            crate::ported::params::setiparam(nv, *cnt as i64); // c:5428
+        }
         // c:4854-4856 — `if (OPT_ISSET(ops, 'v') || (fmt && (OPT_ISSET
         //   (ops, 'z') || OPT_ISSET(ops, 's')))) ASSIGN_MSTREAM(...)`.
         // For -f combined with -z or -s, capture output then route
@@ -12978,6 +12986,22 @@ pub fn bin_read(
         let is_ifs = |c: char| ifs.contains(c);
         // Trim leading IFS-whitespace per zsh's read semantics
         // (`a   b c` → x=a, y="b c", not x="" y=…).
+        // c:Src/builtin.c — `-E` echoes each field to stdout as it is read,
+        // one per line (c:6957 in the -A path, and the equivalent per-word
+        // display on the multi-var path); `-e` does the same but ASSIGNS
+        // NOTHING (c:7106 `if (!OPT_ISSET(ops,'e')) setsparam(...)`). This path
+        // did neither, so `read -E a b` split correctly but printed no echo
+        // (the whole-line -E echo worked only for a single variable).
+        let opt_e = OPT_ISSET(ops, b'e');
+        let opt_echo = opt_e || OPT_ISSET(ops, b'E');
+        let emit = |var: &str, val: &str| {
+            if opt_echo {
+                println!("{val}"); // c:6958 zputs + putchar('\n')
+            }
+            if !opt_e {
+                setsparam(var, val); // c:7106
+            }
+        };
         let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
         let mut remaining = trimmed.to_string();
         for (i, var) in vars.iter().enumerate() {
@@ -12986,7 +13010,7 @@ pub fn bin_read(
                 let final_val = remaining
                     .trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace())
                     .to_string();
-                setsparam(var, &final_val);
+                emit(var, &final_val);
             } else {
                 // Find next IFS char.
                 match remaining.find(is_ifs) {
@@ -13014,12 +13038,12 @@ pub fn bin_read(
                         } else {
                             after.trim_start_matches(is_ws)
                         };
-                        setsparam(var, &field);
+                        emit(var, &field);
                         remaining = rest.to_string();
                     }
                     None => {
                         // No more IFS: this var gets remaining, others empty.
-                        setsparam(var, &remaining);
+                        emit(var, &remaining);
                         remaining.clear();
                     }
                 }
@@ -16310,7 +16334,10 @@ fn BIN_PREFIX(name: &str, flags: u32) -> builtin {
 /// format-reuse CYCLE began (c:Src/builtin.c `splits`). `printf -v` to
 /// an array assigns one element per cycle, so the caller slices `out`
 /// at these boundaries.
-fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (String, String)> {
+fn printf_format(
+    fmt: &str,
+    args: &[String],
+) -> Result<(String, Vec<usize>, Vec<(String, usize)>), (String, String)> {
     // c:Src/builtin.c:4711 — `fmt = getkeystring(fmt, &flen, ...,
     // GETKEYS_PRINTF_FMT, ...);`. The format string is first run
     // through getkeystring to interpret backslash escapes (`\n`,
@@ -16340,12 +16367,24 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
     // c:Src/builtin.c — `splits`: byte offset where each format-reuse
     // cycle starts (the first is 0). Used by `printf -v ARRAY`.
     let mut bounds: Vec<usize> = Vec::new();
+    // c:Src/builtin.c:5427-5429 — `case 'n': if (curarg) setiparam(curarg,
+    // count - rcount);`. `%n` consumes an argument (the variable NAME) and
+    // stores the number of bytes emitted so far into it, printing nothing.
+    // printf_format is a pure formatter with no shell handle, so it records
+    // (name, byte_count_at_this_point) and the caller does the setiparam —
+    // out.len() here is exactly C's `count - rcount`.
+    let mut n_targets: Vec<(String, usize)> = Vec::new();
     // c:Src/builtin.c:4914-4923 — printf reapplies the format string
     // until ALL args are consumed. `printf '%s,' a b c` → `a,b,c,`,
     // not `a,`. The outer loop reapplies; the inner do-while body
     // mirrors C's per-arg conversion loop directly.
     loop {
         bounds.push(out.len());
+        // c:Src/builtin.c:5168 `rcount = count;` reset the `%n` byte count
+        // at the start of each format-reuse cycle, so `%n` reports bytes
+        // emitted SINCE this cycle began, not cumulatively. `printf 'x%n' a b`
+        // stores 1 in both a and b, not 1 and 2.
+        let cycle_start = out.len();
         let prev = arg_i;
         // c:Src/builtin.c:5175-5178 — `maxarg` is the highest positional
         // (`%n$`) referenced in THIS cycle; reset per cycle and folded
@@ -16531,6 +16570,20 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
                     return Err((out, format!("{disp}%: invalid directive")));
                 }
                 Some('%') => out.push('%'),
+                Some('n') => {
+                    // c:5427-5428 — `if (curarg) setiparam(curarg, count -
+                    // rcount);`. The arg is the target variable's NAME; nothing
+                    // is emitted. `if (curarg)` tests that an arg SLOT exists,
+                    // not that it is non-empty — an empty or malformed name is
+                    // still handed to setiparam, which errors `not an
+                    // identifier`. Only a wholly ABSENT arg is the no-op.
+                    // `count - rcount` is bytes since the cycle start
+                    // (c:5168), i.e. out.len() - cycle_start here.
+                    if let Some(name) = args.get(arg_i) {
+                        n_targets.push((name.clone(), out.len() - cycle_start)); // c:5428
+                    }
+                    arg_i += 1;
+                }
                 Some('s') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     spec.push('s');
@@ -16791,7 +16844,7 @@ fn printf_format(fmt: &str, args: &[String]) -> Result<(String, Vec<usize>), (St
             break;
         }
     }
-    Ok((out, bounds))
+    Ok((out, bounds, n_targets))
 }
 
 /// Apply a printf-style `%[-flag][width][.prec]s` spec to a string.

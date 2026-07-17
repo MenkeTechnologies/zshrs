@@ -17,4 +17,29 @@
 # to be hiding real bugs once their vocabulary was widened — a clean ungated
 # mode is an untested mode, not a correct one.
 #
+# BACKSLASH-NEWLINE in `(z)` (fixed in subst.rs): the value pool now includes
+# `$'foo\\\nbar'` / `$'a \\\nb'` (a literal backslash then a real newline) and
+# the `(z)` probe prints the JOINED word content, not just the count — because a
+# `\<NL>` line continuation collapses `foo\<NL>bar` to the single word `foobar`
+# (word count stays 1; only the content changes). zsh removes `\<NL>` and joins;
+# the port kept both chars. Reverting the fix yields 18 divergences on seed 1.
+# The `(z)` words are captured QUOTED (`"${(@z)v}"`) so the separate
+# SH_WORD_SPLIT+IFS re-split path (`zz=(${(z)v})` with `IFS=:`, still divergent)
+# is not conflated with this. Bug #1016.
+#
+# `(0)` NUL SPLIT + MULTI-CHAR `(s:SEP:)` (verified-correct coverage): the mode
+# generated only single-char `(s.X.)` / `(ps.X.)`, so NUL-delimited splitting
+# (c:subst.c:2293) and separators longer than one char (c:2299 get_strarg) were
+# uncompared. A dedicated probe now exercises `${(0)v}` (incl. `(@0)`
+# empty-preservation, `$'…\0…'` values), `${(s:--:)v}` / `${(s:XY:)v}`
+# multi-char, and `${(ps.::.)v}` empty-preservation. All hand-verified equal.
+#
+# PARTIALLY FIXED / still-divergent (docs/BUGS.md #1018/#1017): the nested
+# split-with-trailing-empty collapse (`${${(f)$'one\n'}[1]}`) is FIXED for the
+# QUOTED subscript/splat/no-op forms (gated in the `subexp` mode). STILL OPEN and
+# NOT generated here: (a) the `${#${(f)v}}` length form and UNQUOTED
+# `${${(f)v}[1]}` form (they collapse earlier via PREFORK_SINGLE, #1018); (b)
+# `zz=(${(z)v})` unquoted under SH_WORD_SPLIT with `IFS=:` re-splits the `(z)`
+# words and drops empties unlike zsh (#1017).
+#
 # Any divergence here is a regression.

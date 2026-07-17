@@ -23,4 +23,51 @@
 #   - `%` produced by a numeric escape is doubled under PRINTF_PERCENT
 #     (c:7172-7173).
 #
+# The divergence this mode found was a real port bug and is FIXED:
+#
+#   `%n` was a no-op. C stores the byte count emitted so far into a named
+#   variable (c:Src/builtin.c:5427-5429):
+#
+#       case 'n':
+#           if (curarg) setiparam(curarg, count - rcount);
+#           break;
+#
+#       $ printf 'abc%n' v; print -r -- "[$v]"
+#       zsh    abc[3]
+#       zshrs  abc[]        (v never set)
+#
+#   printf_format is a pure formatter with no shell handle, so it now collects
+#   (name, byte_count) pairs and bin_print does the setiparam. Three subtleties,
+#   each pinned:
+#     - `count - rcount` (c:5168 resets rcount per format-reuse cycle) means the
+#       count is bytes since THIS cycle began: `printf 'x%n' a b` sets both to
+#       1, not 1 and 2.
+#     - `if (curarg)` tests that an arg SLOT exists, not that it is non-empty —
+#       an empty or malformed name still reaches setiparam and errors `not an
+#       identifier`; only a wholly absent arg is the no-op.
+#     - the count is BYTES, so a multibyte literal before `%n` counts its
+#       encoded length (`héllo%n` → 6).
+#
+#   `%n` was simply absent from PF_CONV, so it was never generated. The rest of
+#   the conversion set (d i o u x X e E f g G s c b q %) all worked, so printf
+#   looked covered.
+#
+# INTEGER OVERFLOW in a `%d`/`%i`/`%x`/`%o`/`%u` operand (fixed in math.rs): the
+# arg pool only held small ints (`-20..40`), so the overflow boundary was never
+# compared. printf evaluates the operand with `mathevali`, and its lexer had an
+# ad-hoc `int_str[..18]` truncation shadowing the faithful `zstrtol` port
+# (c:Src/utils.c:2466-2515). zstrtol accumulates the magnitude in a u64 and
+# truncates ONLY on real unsigned overflow, then reinterprets the retained u64
+# as signed:
+#   - `9999999999999999999` (fits u64, not i64): signed-overflow special case,
+#     18-digit cut, `999999999999999999` (positive).
+#   - `18446744073709551615` (u64::MAX): 19-digit cut, `1844674407370955161`.
+#   - `99999999999999999999` (>u64): 19-digit cut with the retained u64 read as
+#     signed, `-8446744073709551617` (NEGATIVE wrap).
+# The old `[..18]` cut was one digit short on the count AND returned the wrong
+# (positive) value past u64. The fix delegates to `zstrtol_underscore`, matching
+# the hex branch. A self-contained probe folds the `number truncated after N
+# digits` stderr warning via `2>&1`; reverting the fix yields 132 divergences on
+# seed 7. Bug #350 / #1013.
+#
 # Any divergence here is a regression.

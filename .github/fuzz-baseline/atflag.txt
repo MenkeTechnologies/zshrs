@@ -2,6 +2,16 @@
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode atflag --count N --verify 3  (copy NEW-signature lines).
 #
+# MALFORMED DELIMITER-FLAGS (fixed in subst.rs): the mode now emits bare,
+# with-name `${(j)a}` / `${(s)a}` / `${(_)a}` (delimiter flag, no delimiter) and
+# `${(j:x)a}` / `${(_:x:)a}` (bad/non-empty arg) inside a `{ … } 2>&1` group.
+# C jumps to `flagerr` (c:subst.c:2505/2527 → "error in flags near position N")
+# for these; the port wrongly emitted "bad substitution" for `j`/`s`/`_`. The
+# `{ … } 2>&1` wrap is required because the error fires at EXPANSION time before
+# `print` runs, so a bare `print … 2>&1` would not capture it. Reverting the fix
+# yields 39 divergences on seed 1. The empty-name form `${(j)}` is deliberately
+# NOT generated — it diverges on a separate (paren-stripping) path. Bug #1015.
+#
 # FIXED (no longer gaps): the RANGE (`[lo,hi]`) subscript on an EMPTY array
 # now pads correctly via getarrvalue's `nular` port (c:params.c:2570-2585),
 # so `${#${(@)a[1,2]}}` is 1 for `a=()`; and the `(A)` array-force flag now
