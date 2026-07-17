@@ -462,7 +462,7 @@ fn zshrs_jit_segments() -> Vec<Segment> {
 /// rkyv cache-shard census under `$ZSHRS_HOME`: top-level `*.rkyv`
 /// (autoloads.rkyv — autoload_cache.rs:3/424-433; scripts.rkyv —
 /// script_cache.rs:3) plus the daemon's sharded `images/*.rkyv`
-/// (daemon/paths.rs:141-145). Shows the shard count. Hidden when the
+/// (daemon/paths.rs:141-145). Shows shard count + total bytes (humanized). Hidden when the
 /// root is missing or holds zero shards, and in parity/compat modes
 /// (caches off — vm_helper.rs:496-500). Stat-only scan behind a 30s
 /// TTL.
@@ -473,25 +473,34 @@ fn zshrs_cache_segments() -> Vec<Segment> {
     if introspection_irrelevant() {
         return vec![];
     }
-    let Some(count_s) = cached_ttl("zshrs_cache.scan", Duration::from_secs(30), || {
+    let Some(joined) = cached_ttl("zshrs_cache.scan", Duration::from_secs(30), || {
         let root = zshrs_root();
-        let rkyv_in = |dir: &std::path::Path| -> usize {
+        // One pass per dir yields shard count AND total bytes — same
+        // shape as the zshrs_jit `.fjit` scan above.
+        let rkyv_in = |dir: &std::path::Path| -> (usize, u64) {
             std::fs::read_dir(dir)
                 .map(|rd| {
                     rd.flatten()
                         .filter(|e| e.file_name().to_string_lossy().ends_with(".rkyv"))
-                        .count()
+                        .fold((0usize, 0u64), |(c, b), e| {
+                            (c + 1, b + e.metadata().map(|m| m.len()).unwrap_or(0))
+                        })
                 })
-                .unwrap_or(0)
+                .unwrap_or((0, 0))
         };
-        let count = rkyv_in(&root) + rkyv_in(&root.join("images"));
+        let (c1, b1) = rkyv_in(&root);
+        let (c2, b2) = rkyv_in(&root.join("images"));
+        let (count, bytes) = (c1 + c2, b1 + b2);
         if count == 0 {
             return None; // no cache dir / no shards — hidden
         }
-        Some(count.to_string())
+        Some(format!("{count}\u{1f}{bytes}"))
     }) else {
         return vec![];
     };
+    let mut f = joined.split('\u{1f}');
+    let count: usize = f.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let bytes: u64 = f.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     vec![make_segment(
         "zshrs_cache",
         None,
@@ -499,7 +508,7 @@ fn zshrs_cache_segments() -> Vec<Segment> {
         "blue",
         "ZSHRS_CACHE_ICON",
         "\u{F1C0}",
-        count_s,
+        format!("{count} {}", human_readable_bytes(bytes as f64)),
     )]
 }
 

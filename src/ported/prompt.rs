@@ -291,22 +291,22 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     // c:139-141 — `if (tilde && (nd = finddir(p))) modp = tricat("~",
     //              nd->node.nam, p + strlen(nd->dir));`
     let display = if tilde {
-        // Try the explicit-home arg first (test-driven path; empty
-        // string in live callers means "use finddir below").
-        if !home.is_empty() && path.starts_with(home) {
-            let rest = &path[home.len()..];
-            if rest.is_empty() || rest.starts_with('/') {
-                format!("~{}", rest)
-            } else {
-                // Home prefix matches but path continues with non-/
-                // (e.g. /homex when home=/home). Fall through to
-                // finddir which checks bounds correctly.
-                crate::ported::utils::finddir(path).unwrap_or_else(|| path.to_string())
+        // c:139 — `if (tilde && ((nd = finddir(p))))`: finddir picks
+        // the best abbreviation across $HOME AND every `hash -d`
+        // named dir (largest diff wins — ~ZPWR beats ~/.zpwr). The
+        // previous explicit-home fast path here preempted finddir for
+        // every path under $HOME, hiding all named dirs. The `home`
+        // arg survives only as the unit-test fallback for
+        // environments where the live home global is unset.
+        crate::ported::utils::finddir(path).unwrap_or_else(|| {
+            if !home.is_empty() && path.starts_with(home) {
+                let rest = &path[home.len()..];
+                if rest.is_empty() || rest.starts_with('/') {
+                    return format!("~{}", rest);
+                }
             }
-        } else {
-            // c:139 — finddir covers $HOME + every `hash -d` named-dir.
-            crate::ported::utils::finddir(path).unwrap_or_else(|| path.to_string())
-        }
+            path.to_string()
+        })
     } else {
         // c:165 — `else stradd(modp);` — no tilde transform.
         path.to_string()

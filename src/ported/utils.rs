@@ -1231,27 +1231,35 @@ pub fn fprintdir(s: &str) -> String {
 /// per c:1059.
 pub fn substnamedir(s: &str) -> String {
     // c:1053
-    // C `finddir` at c:1127 checks $HOME first (longest implicit
-    // named dir), then scans nameddirtab. Duplicate that ordering
-    // here without the pre-format, so we can apply quotestring on
-    // just the residue.
+    // C `finddir` at c:1127 runs the homenode through the SAME
+    // best-diff scan as the nameddirtab (c:1164-1165) — home COMPETES
+    // with `hash -d` entries by `diff`, it does not preempt them.
+    // Duplicate that competition here without the pre-format, so we
+    // can apply quotestring on just the residue (c:1059).
     let home = getsparam("HOME").unwrap_or_default(); // c:1133
-    if !home.is_empty() && home.len() > 1 && s.starts_with(&home) {
-        // c:1138-1141
-        let rest = &s[home.len()..];
-        if rest.is_empty() || rest.starts_with('/') {
-            // C: zhtricat("~", "", quotestring(rest, QT_BACKSLASH))
-            // — HOME is the implicit homenode (no name).
-            return format!("~{}", quotestring(rest, QT_BACKSLASH)); // c:1059
+    let mut finddir_best: i32 = 0; // c:1163
+    let mut best: Option<(String, String)> = None; // finddir_last
+    let home_diff = if home.len() == 1 { 0 } else { home.len() as i32 }; // c:1140-1141
+    if home_diff > 0 {
+        if let Some(rest) = s.strip_prefix(&home) {
+            if rest.is_empty() || rest.starts_with('/') {
+                finddir_best = home_diff;
+                // HOME is the implicit homenode (no name).
+                best = Some((String::new(), rest.to_string()));
+            }
         }
     }
-    // c:1106 finddir_scan — longest-prefix walk over nameddirtab.
-    if let Some((name, rest)) = finddir_scan(s) {
-        // c:1106
-        // c:1059 — `zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir), QT_BACKSLASH))`
-        return format!("~{}{}", name, quotestring(&rest, QT_BACKSLASH)); // c:1059
+    // c:1106 finddir_scan — best-diff walk over nameddirtab.
+    if let Some((name, rest, diff)) = finddir_scan(s) {
+        if diff > finddir_best {
+            best = Some((name, rest));
+        }
     }
-    quotestring(s, QT_BACKSLASH) // c:1058
+    match best {
+        // c:1059 — `zhtricat("~", d->node.nam, quotestring(s + strlen(d->dir), QT_BACKSLASH))`
+        Some((name, rest)) => format!("~{}{}", name, quotestring(&rest, QT_BACKSLASH)),
+        None => quotestring(s, QT_BACKSLASH), // c:1058
+    }
 }
 
 // ===========================================================
@@ -1299,27 +1307,35 @@ pub fn get_username() -> String {
     name
 }
 
-/// Port of `finddir_scan(HashNode hn, UNUSED(int flags))` from Src/utils.c:1106 — ScanFunc the
-/// C source registers with `scanhashtable(nameddirtab, …)` to pick
-/// the longest-prefix entry. Reads the typed `nameddir` entries
-/// from `nameddirtab()`.
-/// WARNING: param names don't match C — Rust=(path) vs C=(hn, flags)
-pub fn finddir_scan(path: &str) -> Option<(String, String)> {
+/// Port of `finddir_scan(HashNode hn, UNUSED(int flags))` from Src/utils.c:1103-1112 — ScanFunc the
+/// C source registers with `scanhashtable(nameddirtab, …)`. Keeps the
+/// entry with the LARGEST `diff` (zsh.h:2152 — `strlen(dir) -
+/// strlen(nam)`, the abbreviation savings — NOT the raw dir length)
+/// whose dir is a boundary-prefix of the path (`!dircmp`, c:1075-1086)
+/// and which is not ND_NOABBREV (PWD/OLDPWD entries, c:1108).
+/// WARNING: param names don't match C — Rust=(path) vs C=(hn, flags);
+/// the C statics finddir_full/finddir_last/finddir_best are threaded
+/// as the argument and the `(name, rest, diff)` return instead.
+pub fn finddir_scan(path: &str) -> Option<(String, String, i32)> {
     // c:1106
     let table = nameddirtab().lock().ok()?;
-    let mut best: Option<(String, String, usize)> = None;
+    let mut best: Option<(String, String, i32)> = None;
     for (name, nd) in table.iter() {
-        if path.starts_with(nd.dir.as_str()) {
-            let len = nd.dir.len();
-            let rest = &path[len..];
-            if (rest.is_empty() || rest.starts_with('/'))
-                && best.as_ref().map_or(true, |b| len > b.2)
-            {
-                best = Some((name.clone(), rest.to_string(), len));
+        // c:1107-1108 — `nd->diff > finddir_best && !dircmp(nd->dir,
+        // finddir_full) && !(nd->node.flags & ND_NOABBREV)`.
+        if (nd.node.flags & crate::ported::zsh_h::ND_NOABBREV) != 0 {
+            continue;
+        }
+        if best.as_ref().is_some_and(|b| nd.diff <= b.2) {
+            continue;
+        }
+        if let Some(rest) = path.strip_prefix(nd.dir.as_str()) {
+            if rest.is_empty() || rest.starts_with('/') {
+                best = Some((name.clone(), rest.to_string(), nd.diff));
             }
         }
     }
-    best.map(|(n, r, _)| (n, r))
+    best
 }
 
 /// Port of `Nameddir finddir(char *s)` from Src/utils.c:1127.
@@ -1342,31 +1358,45 @@ pub fn finddir(path: &str) -> Option<String> {
     // early init / unit-test environments).
     let _default_pm = crate::ported::zsh_h::param::default();
     let home = crate::ported::params::homegetfn(&_default_pm); // c:1138 home
-    if !home.is_empty() && home.len() > 1 && path.starts_with(&home) {
-        // c:1138-1141
-        let rest = &path[home.len()..];
-        if rest.is_empty() || rest.starts_with('/') {
-            return Some(format!("~{}", rest));
+    // c:1139-1141 + 1164-1165 — the home node (nam="", diff =
+    // strlen(home), root's 1 → 0) runs through the SAME best-diff scan
+    // as the table (`finddir_scan(&homenode.node, 0);
+    // scanhashtable(nameddirtab, …)`): it COMPETES with `hash -d`
+    // entries instead of preempting them, so a named dir with a larger
+    // diff wins (e.g. ~ZPWR over ~/.zpwr). The previous early return
+    // on the $HOME prefix hid every named dir under $HOME.
+    let mut finddir_best: i32 = 0; // c:1163
+    let mut best: Option<(String, String)> = None; // finddir_last
+    let home_diff = if home.len() == 1 { 0 } else { home.len() as i32 }; // c:1140-1141
+    if home_diff > 0 {
+        if let Some(rest) = path.strip_prefix(&home) {
+            if rest.is_empty() || rest.starts_with('/') {
+                finddir_best = home_diff;
+                best = Some((String::new(), rest.to_string()));
+            }
         }
     }
-    if let Some((name, rest)) = finddir_scan(path) {
-        // c:1167
-        return Some(format!("~{}{}", name, rest));
+    if let Some((name, rest, diff)) = finddir_scan(path) {
+        // c:1165 — scanhashtable: only a strictly larger diff replaces
+        // the home candidate (finddir_scan's `nd->diff > finddir_best`).
+        if diff > finddir_best {
+            finddir_best = diff;
+            best = Some((name, rest));
+        }
     }
-    // c:1169 — zsh_directory_name hook — returns ["name", "len"]
+    // c:1167-1175 — zsh_directory_name hook — returns ["name", "len"];
+    // wins only when its match length beats finddir_best (c:1169).
     if let Some(reply) = subst_string_by_hook("zsh_directory_name", Some("d"), path) {
         if reply.len() >= 2 {
             // c:1170
-            if let Ok(len) = reply[1].parse::<usize>() {
-                if len <= path.len() {
-                    let prefix = &path[..len];
-                    let _ = prefix;
-                    return Some(format!("~[{}]{}", reply[0], &path[len..]));
+            if let Ok(len) = reply[1].parse::<i32>() {
+                if len > finddir_best && (len as usize) <= path.len() {
+                    return Some(format!("~[{}]{}", reply[0], &path[len as usize..]));
                 }
             }
         }
     }
-    None // c:1187
+    best.map(|(name, rest)| format!("~{}{}", name, rest)) // c:1177
 }
 
 /// Port of `void adduserdir(char *s, char *t, int flags, int always)`
