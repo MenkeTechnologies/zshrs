@@ -65,13 +65,14 @@ pub fn enabled() -> bool {
     }
 }
 
-/// NATIVE-WINS POLICY: the native engines stay on even when the script
-/// plugins are loaded from the user's rc (kill switch aside). The previous
-/// yield-to-plugin gates keyed on the plugins' marker params — but a full
-/// rc (zpwr) loads all three plugins, whose zpty/async machinery doesn't
-/// fully function under zshrs, so every native engine yielded to a broken
-/// script and `zshrs -i` had no suggestions/highlighting at all while `-f`
-/// was perfect. Coexistence is benign by construction:
+/// OPT-IN POLICY (user ruling): `zshrs -f` must behave IDENTICALLY to
+/// `zsh -f` for parity purposes — every native engine defaults OFF and is
+/// enabled per-feature in `~/.zshrs/zshrs.toml` `[zle]`. The env kill
+/// switch ZSHRS_NATIVE_ZLE_FX=0 still force-disables everything.
+///
+/// When enabled, NATIVE WINS over loaded script plugins (a full rc loads
+/// zsh-autosuggestions/z-sy-h/substring-search, whose zpty/async paths
+/// don't function under zshrs). Coexistence is benign by construction:
 ///   * suggestions: native fills $POSTDISPLAY in the post-widget hook —
 ///     after any plugin widget ran — and the plugin's accept path reads
 ///     $POSTDISPLAY, so either accept route works;
@@ -80,15 +81,15 @@ pub fn enabled() -> bool {
 ///   * highlighting: user $region_highlight (what z-sy-h writes) paints
 ///     ABOVE the native layer, so a functioning plugin overrides cleanly.
 fn autosuggest_active() -> bool {
-    enabled()
+    enabled() && crate::config::current().zle.autosuggest
 }
 
 fn highlight_active() -> bool {
-    enabled()
+    enabled() && crate::config::current().zle.syntax_highlight
 }
 
 fn search_active() -> bool {
-    enabled()
+    enabled() && crate::config::current().zle.history_search
 }
 
 /// Native autopair yields to the zsh-autopair script plugin when loaded
@@ -97,6 +98,7 @@ fn search_active() -> bool {
 /// (autopair.zsh:211/216/223-225).
 fn autopair_engine_active() -> bool {
     enabled()
+        && crate::config::current().zle.autopair
         && crate::ported::zle::zle_hist::ISEARCH_ACTIVE.load(SeqCst) == 0
         && !crate::ported::zle::zle_thingy::rthingy_nocreate("autopair-insert")
 }
