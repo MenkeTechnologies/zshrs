@@ -38,8 +38,9 @@ use crate::ported::pattern::{patcompile, pattry, range_type};
 use crate::ported::utils::{zerr, zwarnnam};
 use crate::ported::zle::comp_h::{
     Cmatcher, Cpattern, CAF_ALL, CAF_ARRAYS, CAF_KEYS, CAF_MATCH, CAF_MATSORT, CAF_NOSORT,
-    CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CLF_LINE, CLF_SUF, CMF_FILE, CMF_HIDE, CMF_INTER,
-    CMF_ISPAR, CMF_LEFT, CMF_LINE, CMF_NOLIST, CMF_REMOVE, CMF_RIGHT, CPAT_ANY, CPAT_CCLASS,
+    CAF_QUOTE, CAF_UNIQALL, CAF_UNIQCON, CLF_LINE, CLF_SUF, CMF_DISPLINE, CMF_FILE, CMF_HIDE,
+    CMF_INTER, CMF_ISPAR, CMF_LEFT, CMF_LINE, CMF_NOLIST, CMF_REMOVE, CMF_RIGHT, CPAT_ANY,
+    CPAT_CCLASS,
     CPAT_CHAR, CPAT_EQUIV, CPAT_NCLASS,
 };
 use crate::ported::zle::{
@@ -1017,7 +1018,7 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
         match c {
             'a' => dat.aflags |= CAF_ARRAYS,                   // c:626
             'k' => dat.aflags |= CAF_ARRAYS | CAF_KEYS,        // c:657
-            'l' => dat.flags |= CMF_NOLIST as i32,             // c:633
+            'l' => dat.flags |= CMF_DISPLINE as i32,           // c:766-767 `case 'l': dat.flags |= CMF_DISPLINE`
             'o' => dat.aflags |= CAF_NOSORT,                   // c:634 -o
             'Q' => dat.aflags |= CAF_QUOTE,                    // c:637
             '1' => dat.aflags |= CAF_UNIQALL,                  // c:638

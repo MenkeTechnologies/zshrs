@@ -2286,15 +2286,18 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
         }
     }
     if dopr {
-        // c:2543-2548 — `fputs(out, shout); putc('\n', shout);`. The
-        //                C source writes each rendered char to shout
-        //                via per-char compzputs; the visible-byte
-        //                output is the assembled string we built.
+        // c:2576-2595 — the C tail does TCCLEAREOL / trailing-space padding
+        // but NO unconditional `putc('\n')`. printfmt emits a newline ONLY
+        // where the format itself contains one (c:2552 `if (*p=='\n')
+        // putc('\n')`, already handled per-char above). Callers add the
+        // inter-row `\n` themselves (printlist's `if(pnl) putc('\n')`,
+        // c:2007/2080). The earlier port appended a trailing `\n` here,
+        // double-spacing every CMF_DISPLINE description row and adding a
+        // blank line after each `format` explanation header.
         use std::sync::atomic::Ordering;
         let fd = crate::ported::init::SHTTY.load(Ordering::Relaxed);
         let out_fd = if fd >= 0 { fd } else { 1 };
         let _ = write_loop(out_fd, out.as_bytes());
-        let _ = write_loop(out_fd, b"\n");
     }
     cc
 }
