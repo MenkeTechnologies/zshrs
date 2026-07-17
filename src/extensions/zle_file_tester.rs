@@ -655,11 +655,44 @@ pub fn fish_wcstoi(s: &str) -> Result<i32, ()> {
 // zsh-substrate adapters (each replaces a fish API named in the header).
 // ---------------------------------------------------------------------------
 
+/// Keystroke-time expansion silencer — the zle_tricky.c pattern (zsh
+/// sets `noerrs` around completion-time expansion probes, e.g.
+/// doexpandhist/get_comp_string). With `noerrs = 1`, zerr sets errflag
+/// but NEVER prints (utils.c:175-177), so a history candidate like
+/// `~nouser` can't spray "no such user or named directory" onto the
+/// terminal on every keypress; the saved errflag is restored on drop so
+/// a failed probe never poisons the editor session, while the delta is
+/// still readable for failure detection before drop.
+struct QuietErrs {
+    saved_noerrs: i32,
+    saved_errflag: i32,
+}
+impl QuietErrs {
+    fn new() -> Self {
+        let mut g = crate::ported::utils::noerrs_lock().lock().unwrap();
+        let s = Self {
+            saved_noerrs: *g,
+            saved_errflag: errflag.load(Ordering::Relaxed),
+        };
+        *g = 1;
+        s
+    }
+    fn failed(&self) -> bool {
+        errflag.load(Ordering::Relaxed) != self.saved_errflag
+    }
+}
+impl Drop for QuietErrs {
+    fn drop(&mut self) {
+        *crate::ported::utils::noerrs_lock().lock().unwrap() = self.saved_noerrs;
+        errflag.store(self.saved_errflag, Ordering::Relaxed);
+    }
+}
+
 /// fish:file_tester.rs:116/152 — `expand_one(&mut s, ExpandFlags::FAIL_ON_CMDSUBST, ctx, None)`.
 /// zsh analog: `singsub` (subst.rs:1460, zsh Src/subst.c:514 — single-word prefork), after
 /// refusing any token that would *execute code* during highlighting: Tick/Qtick (`` ` ``),
 /// Inpar (`$(…)`/`(…)`) and Inparmath (`$((…))`, which can run `x++` side effects).
-/// errflag is saved/restored so a failed expansion never poisons the editor session.
+/// Errors are silenced AND errflag restored via QuietErrs.
 pub fn expand_one_no_cmdsubst(param: &mut String) -> bool {
     if param
         .chars()
@@ -667,11 +700,9 @@ pub fn expand_one_no_cmdsubst(param: &mut String) -> bool {
     {
         return false; // FAIL_ON_CMDSUBST
     }
-    let saved_errflag = errflag.load(Ordering::Relaxed);
+    let quiet = QuietErrs::new();
     let expanded = singsub(param);
-    let failed = errflag.load(Ordering::Relaxed) != saved_errflag;
-    errflag.store(saved_errflag, Ordering::Relaxed);
-    if failed {
+    if quiet.failed() {
         return false;
     }
     // singsub output can still carry token/quote-null chars; produce the plain string the
@@ -690,6 +721,11 @@ fn expand_tilde(input: &mut String) {
         s = format!("{Tilde}{rest}");
     }
     if s.starts_with(Tilde) {
+        // QuietErrs: `~nouser` reaches filesub's zerr ("no such user or
+        // named directory", zsh Src/subst.c:803) — silence + restore
+        // errflag; a miss just leaves the input unexpanded (fish
+        // expand_tilde semantics).
+        let _quiet = QuietErrs::new();
         if let Some(expanded) = filesubstr(&s, false) {
             *input = expanded;
         }

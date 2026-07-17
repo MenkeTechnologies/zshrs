@@ -1539,7 +1539,19 @@ pub fn zrefresh() {
                     1 => attr |= TXTBOLDFACE,
                     4 => attr |= TXTUNDERLINE,
                     7 => attr |= TXTSTANDOUT,
+                    22 => attr &= !TXTBOLDFACE,
+                    24 => attr &= !TXTUNDERLINE,
+                    27 => attr &= !TXTSTANDOUT,
                     30..=37 => attr = set_fg(attr, nums[i] - 30),
+                    // SGR 39/49 — DEFAULT fg/bg (`%f`/`%k` expand to
+                    // these). Previously unhandled: cells after a %k/%f
+                    // kept the PREVIOUS colour in the video model, so
+                    // refreshline repainted powerline transition glyphs
+                    // same-on-same (the custom_tty→prompt_char triangle
+                    // vanished) and gave the prompt char a stale
+                    // coloured box ("bleed").
+                    39 => attr &= !(TXTFGCOLOUR | (0xff << TXT_ATTR_FG_COL_SHIFT)),
+                    49 => attr &= !(TXTBGCOLOUR | (0xff << TXT_ATTR_BG_COL_SHIFT)),
                     40..=47 => attr = set_bg(attr, nums[i] - 40),
                     90..=97 => attr = set_fg(attr, nums[i] - 90 + 8),
                     100..=107 => attr = set_bg(attr, nums[i] - 100 + 8),
@@ -1550,6 +1562,11 @@ pub fn zrefresh() {
                     48 if i + 2 < nums.len() && nums[i + 1] == 5 => {
                         attr = set_bg(attr, nums[i + 2]);
                         i += 2;
+                    }
+                    // 24-bit forms (38;2;r;g;b / 48;2;r;g;b): consume the
+                    // whole clause so r/g/b aren't misread as SGR codes.
+                    38 | 48 if i + 4 < nums.len() && nums[i + 1] == 2 => {
+                        i += 4;
                     }
                     _ => {}
                 }
