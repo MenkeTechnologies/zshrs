@@ -5,7 +5,7 @@
 #   zmodload -R examples/plugin-revolver/target/debug/librevolver.so     # Linux
 #   revolver start 'Working…'  ;  sleep 3  ;  revolver stop
 #
-# Or via the package manager:  zpm add path:examples/plugin-revolver
+# Or via the package manager:  znative load path:examples/plugin-revolver
 #
 # See docs/PORTING_ZSH_PLUGIN.md for the zsh->Rust porting walkthrough.
 [package]
@@ -16,7 +16,7 @@ publish = false
 
 [lib]
 # rlib alongside cdylib so `cargo test` can link the frame-table checks;
-# zpm still loads the cdylib artifact.
+# znative still loads the cdylib artifact.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
