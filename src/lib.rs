@@ -262,6 +262,9 @@ pub mod fusevm_disasm;
 /// `intercepts` submodule.
 #[path = "extensions/intercepts.rs"]
 pub mod intercepts;
+/// `p10k` submodule — native powerlevel10k prompt engine.
+#[path = "extensions/p10k/mod.rs"]
+pub mod p10k;
 /// `plugin_cache` submodule.
 #[path = "extensions/plugin_cache.rs"]
 pub mod plugin_cache;
@@ -313,6 +316,26 @@ pub mod zle_param_sync;
 /// syntax highlighting (port of fish highlight/file_tester.rs).
 #[path = "extensions/zle_file_tester.rs"]
 pub mod zle_file_tester;
+/// `syntax_highlight` submodule — native command-line syntax highlighting
+/// (port of fish highlight/highlight.rs, driven by the zshrs lexer).
+#[path = "extensions/syntax_highlight.rs"]
+pub mod syntax_highlight;
+/// `autosuggest` submodule — native fish-style autosuggestions
+/// (port of the reader.rs autosuggestion state machine).
+#[path = "extensions/autosuggest.rs"]
+pub mod autosuggest;
+/// `history_search` submodule — native up-arrow prefix/substring/token history
+/// search (port of fish reader/history_search.rs).
+#[path = "extensions/history_search.rs"]
+pub mod history_search;
+/// `zle_fx` submodule — wiring for the native ZLE effects (autosuggest,
+/// syntax highlight, history search, autopair) into zlecore + the renderer.
+#[path = "extensions/zle_fx.rs"]
+pub mod zle_fx;
+/// `autopair` submodule — native bracket/quote auto-pairing
+/// (port of hlissner/zsh-autopair).
+#[path = "extensions/autopair.rs"]
+pub mod autopair;
 /// `zwc` submodule.
 #[path = "extensions/zwc.rs"]
 pub mod zwc;

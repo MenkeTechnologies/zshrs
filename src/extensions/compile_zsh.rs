@@ -7549,7 +7549,15 @@ impl ZshCompiler {
             // it like the multi-segment Literal arm: untokenized,
             // guard-free, escapes intact for the runtime patcompile.
             if let Some(PatSeg::Literal(text)) = segments.first() {
-                let lit = crate::lex::untokenize(text);
+                // Route through untokenize_preserve_quoted_pat_literals,
+                // NOT plain untokenize: a Snull/Dnull-quoted span inside
+                // the literal must keep its glob metas backslash-escaped.
+                // Plain untokenize dropped the markers bare, so p10k's
+                // `[[ $_p9k__ret == (|*[^\\])'$('* ]]` (internal/
+                // p10k.zsh:952) emitted `(|*[^\\])$(*` — the runtime
+                // re-tokenize promoted the quoted `(` to Inpar and
+                // patcompile died "bad pattern" on the unbalanced group.
+                let lit = untokenize_preserve_quoted_pat_literals(text);
                 let c = self.builder.add_constant(Value::str(lit.as_str()));
                 self.builder.emit(Op::LoadConst(c), 0);
                 return;
@@ -7577,7 +7585,9 @@ impl ZshCompiler {
                     }
                 }
                 PatSeg::Literal(text) => {
-                    let lit = crate::lex::untokenize(text);
+                    // Same quoted-meta escape as the single-segment fast
+                    // path above — see the comment there.
+                    let lit = untokenize_preserve_quoted_pat_literals(text);
                     let c = self.builder.add_constant(Value::str(lit.as_str()));
                     self.builder.emit(Op::LoadConst(c), 0);
                 }

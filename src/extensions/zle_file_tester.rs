@@ -86,6 +86,14 @@ pub enum RedirectionMode {
 /// abandon stale requests exactly like fish's background highlight thread does.
 pub struct OperationContext {
     cancel_flag: Arc<AtomicBool>,
+    /// Wall-clock budget: past this instant, check_cancel() reports cancelled.
+    /// fish runs its file tests on a background thread with unbounded time;
+    /// zshrs computes synchronously on the ZLE thread, so every IO loop
+    /// (directory walks, PATH scans, candidate validation) must be bounded
+    /// or a large directory turns each keystroke into a lag spike. All the
+    /// loops already poll check_cancel() — the fish shape — so the deadline
+    /// composes without touching them.
+    deadline: Option<std::time::Instant>,
 }
 
 impl OperationContext {
@@ -93,17 +101,32 @@ impl OperationContext {
     pub fn empty() -> Self {
         Self {
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            deadline: None,
         }
     }
 
     /// Build a context sharing an external cancel flag.
     pub fn with_cancel_flag(cancel_flag: Arc<AtomicBool>) -> Self {
-        Self { cancel_flag }
+        Self {
+            cancel_flag,
+            deadline: None,
+        }
+    }
+
+    /// A context that self-cancels after `budget` (see `deadline` field docs).
+    pub fn with_budget(budget: std::time::Duration) -> Self {
+        Self {
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            deadline: Some(std::time::Instant::now() + budget),
+        }
     }
 
     /// fish:operation_context.rs `check_cancel()`.
     pub fn check_cancel(&self) -> bool {
         self.cancel_flag.load(Ordering::Relaxed)
+            || self
+                .deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
     }
 }
 
@@ -637,7 +660,7 @@ pub fn fish_wcstoi(s: &str) -> Result<i32, ()> {
 /// refusing any token that would *execute code* during highlighting: Tick/Qtick (`` ` ``),
 /// Inpar (`$(…)`/`(…)`) and Inparmath (`$((…))`, which can run `x++` side effects).
 /// errflag is saved/restored so a failed expansion never poisons the editor session.
-fn expand_one_no_cmdsubst(param: &mut String) -> bool {
+pub fn expand_one_no_cmdsubst(param: &mut String) -> bool {
     if param
         .chars()
         .any(|c| c == Tick || c == Qtick || c == Inpar || c == Inparmath)

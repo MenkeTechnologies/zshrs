@@ -43,6 +43,7 @@ pub use crate::history;
 pub use crate::log;
 pub use crate::lsp;
 pub use crate::overlay_snapshot;
+pub use crate::p10k;
 pub use crate::plugin_cache;
 pub use crate::regex_mod;
 pub use crate::script_cache;

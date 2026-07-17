@@ -380,6 +380,52 @@ impl HistoryEngine {
         entries.collect()
     }
 
+    /// Case-SENSITIVE prefix probe for the per-keystroke ZLE paths
+    /// (autosuggest, up-arrow search). Uses GLOB, which is case-sensitive and
+    /// therefore eligible for the SQLite prefix optimization over
+    /// `idx_history_command` (BINARY collation). `search_prefix`'s LIKE is
+    /// case-insensitive by default and CANNOT use that index — at 500k+ rows
+    /// it full-scans, which is far too slow to run on every keystroke.
+    pub fn search_prefix_cs(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<HistoryEntry>> {
+        if prefix.is_empty() {
+            return self.recent(limit);
+        }
+
+        let mut stmt = self.conn.prepare_cached(
+            r#"SELECT id, command, timestamp, duration_ms, exit_code, cwd, frequency
+               FROM history
+               WHERE command GLOB ?1
+               ORDER BY timestamp DESC
+               LIMIT ?2"#,
+        )?;
+
+        // Escape GLOB metachars via character classes ('[' first — the
+        // replacement brackets must not themselves get re-escaped).
+        let escaped = prefix
+            .replace('[', "[[]")
+            .replace('*', "[*]")
+            .replace('?', "[?]");
+        let pattern = format!("{escaped}*");
+
+        let entries = stmt.query_map(params![pattern, limit as i64], |row| {
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                command: row.get(1)?,
+                timestamp: row.get(2)?,
+                duration_ms: row.get(3)?,
+                exit_code: row.get(4)?,
+                cwd: row.get(5)?,
+                frequency: row.get(6)?,
+            })
+        })?;
+
+        entries.collect()
+    }
+
     /// Get recent history entries
     pub fn recent(&self, limit: usize) -> rusqlite::Result<Vec<HistoryEntry>> {
         let mut stmt = self.conn.prepare(
@@ -526,7 +572,7 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
-fn with_session_engine<R>(f: impl FnOnce(&HistoryEngine) -> R) -> Option<R> {
+pub fn with_session_engine<R>(f: impl FnOnce(&HistoryEngine) -> R) -> Option<R> {
     SESSION_HISTORY.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
