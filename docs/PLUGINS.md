@@ -1,9 +1,40 @@
 # Native (Rust) Plugins
 
 zshrs hosts plugins written in a native compiled language (Rust), loaded
-at runtime with no recompile of the shell. This is unique to zshrs: every
-other Unix shell runs plugins as interpreted scripts. A plugin is an
-ordinary `cdylib` the shell `dlopen`s through a stable, versioned C ABI.
+at runtime with no recompile of the shell. A plugin is an ordinary
+`cdylib` the shell `dlopen`s through a stable, versioned C ABI. This is
+unique to zshrs — see the comparison below.
+
+## Rust plugins vs zsh plugins
+
+zsh has two ways to extend it, and zshrs adds a third. All three still
+work in zshrs (it runs zsh script plugins and its ported modules as
+before); the Rust plugin path is **additive**.
+
+|                     | zsh script plugin        | zsh native module (`zmodload`) | **zshrs Rust plugin** |
+| ------------------- | ------------------------ | ------------------------------ | --------------------- |
+| Language            | zsh script (interpreted) | C                              | Rust (any native lang via the C ABI) |
+| Artifact            | `.zsh` text file         | `.so` built in-tree            | `.dylib` / `.so` `cdylib` |
+| Build against       | nothing — it's sourced   | zsh's **private** internal headers, via the zsh build system (`.mdd` + `Src/Modules/`) | the published `zshrs-plugin` crate — `cargo add zshrs-plugin` |
+| ABI stability       | n/a                      | **none** — bound to the exact zsh build; no `MODULE_ABI_VERSION` guard exists | stable, versioned `ABI_VERSION`; mismatches refused at load |
+| Load mechanism      | `source` → parse + interpret every startup | `dlopen` + `dlsym` of `NAME_setup_`/`_boot_`/`_features_` | `dlopen` + `dlsym` of one symbol, `zshrs_plugin_init` |
+| Execution           | interpreted each call     | native machine code            | native machine code   |
+| Startup cost        | re-parsed on every shell start (the cost `zinit turbo`/`zcompile` fight) | `dlopen` once            | `dlopen` once         |
+| Registers           | functions, aliases, options, ZLE widgets, fpath completions | builtins, params, hooks (internal API) | builtins + host callbacks (`print`/`eval`/`getvar`/`setvar`) |
+| Third-party viable  | yes (the whole ecosystem — oh-my-zsh, zinit) | **no in practice** — needs the zsh source tree and tracks its internals, so ~only zsh-bundled modules exist | **yes** — depend on one crates.io crate, no zshrs source needed |
+| Type safety         | none                     | C (unchecked against zsh internals) | Rust type system, checked against the ABI crate |
+| Failure mode        | shell error, recoverable  | crash/UB against internal symbols | UB only if a handler panics across the FFI boundary (see Safety notes) |
+
+The distinction that matters: zsh already loads compiled `.so` modules,
+but only through its **internal** C API — you build against zsh's private
+headers, in its build tree, with no stable ABI, so a module is welded to
+one zsh build. That is why the zsh plugin ecosystem is almost entirely
+interpreted scripts and the native modules are almost entirely the ones
+zsh ships itself. zshrs instead exposes a **stable, published, versioned
+C ABI** (the `zshrs-plugin` crate): a third party runs `cargo add
+zshrs-plugin`, writes a handler, ships a `cdylib`, and it loads into any
+compatible zshrs — native speed, no shell source tree, no recompile of
+the shell. First compiled Unix shell to offer that.
 
 ## Architecture
 

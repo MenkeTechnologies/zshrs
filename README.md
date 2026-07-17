@@ -750,6 +750,24 @@ builtins. The host API a plugin can call back through: `print`, `eval`
 (run shell code), `getvar` / `setvar` (shell scalars), and
 `register_builtin`.
 
+### vs zsh plugins
+
+|                    | zsh script plugin | zsh native module | zshrs Rust plugin |
+| ------------------ | ----------------- | ----------------- | ----------------- |
+| Artifact           | `.zsh` (interpreted) | `.so` built in zsh's tree | `.dylib`/`.so` `cdylib` |
+| Build against      | nothing (sourced) | zsh **private** internal headers | published `zshrs-plugin` crate |
+| Stable ABI         | n/a | **none** — welded to one zsh build | versioned, load-time checked |
+| Startup            | re-parsed every start | `dlopen` once | `dlopen` once |
+| Speed              | interpreted | native | native |
+| Third-party viable | yes (scripts only) | **no in practice** | **yes** (`cargo add`) |
+
+zsh already loads compiled `.so` modules — but only through its internal
+C API, in its own build tree, with no stable ABI, so a module is welded
+to one zsh build and only the zsh-bundled modules exist in practice.
+zshrs exposes a stable, published, versioned C ABI: `cargo add
+zshrs-plugin`, ship a `cdylib`, load it into any compatible zshrs — no
+shell source tree, no recompile. First compiled Unix shell to offer that.
+
 A runnable example lives in [`examples/plugin-hello/`](examples/plugin-hello/).
 Full guide: [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
