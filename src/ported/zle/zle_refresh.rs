@@ -2626,34 +2626,15 @@ pub fn zrefresh() {
         INLIST.store(1, Ordering::Relaxed);
         crate::ported::zle::zle_h::listmatches();
         INLIST.store(0, Ordering::Relaxed);
-        // listmatches (→ asklist → trashzle → printlist) dropped the cursor
-        // below the command line and printed `listdat.nlines` grid rows with
-        // raw putc, which does NOT track the video cursor (vln/vcs). Move the
-        // REAL cursor back up onto the command-line row so the recursive
-        // reset-frame zrefresh (armed by trashzle's resetneeded) repaints the
-        // command line in place and leaves the grid intact below it. Without
-        // this the repaint lands on the last grid row and overwrites it.
-        let nlines = crate::ported::zle::compcore::listdat
-            .get()
-            .and_then(|m| m.lock().ok())
-            .map(|g| g.nlines)
-            .unwrap_or(0);
-        if nlines > 0 {
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            // Move the cursor from below the grid back to the TOP of the ZLE
-            // display (row 0), NOT just the command-line row. The display spans
-            // `nlnct` rows (multiline prompt + buffer), so from the grid bottom
-            // that is `nlines + nlnct - 1` rows up — matching C's compprintlist
-            // epilogue `tcmultout(TCUP, listdat.nlines + nlnct - 1)`. The old
-            // `\x1b[{nlines}A` moved up the list rows only, so with a multiline
-            // prompt the reset-frame repaint (which assumes the cursor at row 0)
-            // started one row too low and redrew the prompt shifted down,
-            // leaving a stale prompt line climbing the screen (Bug: menu moves
-            // up linewise after `<cmd> <TAB>` with a 2+-line prompt).
-            let up = nlines + (nlnct_final - 1).max(0);
-            let _ = write_loop(out_fd, format!("\x1b[{}A", up).as_bytes());
-        }
+        // c:1772-1773 — NO manual cursor move here. `listmatches` → `printlist`
+        // runs the C cursor-reposition epilogue (compresult.rs, c:2160-2174):
+        // it moves the cursor back up to the prompt via the terminal cursor-up
+        // capability when the list fits, or scrolls (clearflag=0 + newline)
+        // when it exceeds the screen. The recursive `zrefresh` below then
+        // repaints the command line from the top of the ZLE display, exactly
+        // as C does. The previous ad-hoc `\x1b[{n}A` move was a fixed distance
+        // that broke on terminal scroll (the completion menu climbed up
+        // linewise) — it is gone now that printlist repositions like C.
         if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
             zrefresh();
         }
