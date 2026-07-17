@@ -25,7 +25,16 @@
 /// for per-context pre-completion behavior.
 pub fn _first() -> i32 {
     // sh:1-47 — every line is a `#` comment; nothing executes.
-    0
+    // Return 1 (NOT the empty-shell-function 0): `_complete` runs
+    // `eval "$_comps[-first-]" && ret=0` (Completion/Base/Completer/_complete
+    // sh:100). A 0 here sets ret=0 with ZERO matches added, so `_complete`
+    // reports success and `_main_complete`'s completer loop breaks after it —
+    // the chain NEVER advances to `_approximate` / `_ignored` / `_correct` /
+    // `_prefix` / `_match`. The no-op hook added nothing, so per the completer
+    // contract it must report "not handled" (non-zero). A user override that
+    // actually adds matches uses an explicit `return 0` (see the sh:39 example),
+    // which is unaffected.
+    1
 }
 
 #[cfg(test)]
@@ -33,9 +42,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returns_zero() {
-        // The shell function has no body to evaluate; exit code 0
-        // (success) is the shell default for an all-comments function.
-        assert_eq!(_first(), 0);
+    fn returns_nonzero_so_completer_chain_advances() {
+        // The no-op `-first-` hook adds no matches, so it must report
+        // "not handled" (non-zero); a 0 would make `_complete` set ret=0
+        // and `_main_complete` stop before `_approximate`/`_ignored`/etc.
+        assert_eq!(_first(), 1);
     }
 }
