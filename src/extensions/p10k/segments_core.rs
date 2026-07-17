@@ -1303,11 +1303,25 @@ fn dir_segments() -> Vec<Segment> {
     let cwd = cwd();
     let home = home_dir();
 
-    // p10k:1769-1776 — path text. DIR_PATH_ABSOLUTE skips contraction.
+    // p10k:1769-1778 — path text. DIR_PATH_ABSOLUTE skips contraction;
+    // otherwise `local p=${(%):-%~}` — zsh's %~, which abbreviates
+    // against $HOME AND `hash -d` named dirs (finddir picks the best
+    // diff, so ~ZPWR beats ~/.zpwr). Routed through the faithful
+    // promptpath port (Src/prompt.c:134); contract_home stays as the
+    // no-live-shell test fallback inside promptpath. The dynamic
+    // named-dir `~[…]` disambiguation dance (p10k:1779-1798) needs
+    // zsh_directory_name functions and falls back to the absolute
+    // path when no function matches (p10k:1795-1796) — matched here
+    // by falling back to the raw cwd on a `~[` result.
     let p = if global_bool("DIR_PATH_ABSOLUTE", false) {
         cwd.clone()
     } else {
-        contract_home(&cwd, &home)
+        let abbrev = crate::ported::prompt::promptpath(&cwd, 0, true, &home);
+        if abbrev.starts_with("~[") {
+            cwd.clone() // p10k:1795-1796 — parts=(${(s:/:)${(V)_p9k__cwd}})
+        } else {
+            abbrev
+        }
     };
     // p10k:1799 — parts=("${(s:/:)p}") (quoted split keeps empties).
     let mut parts: Vec<String> = p.split('/').map(String::from).collect();

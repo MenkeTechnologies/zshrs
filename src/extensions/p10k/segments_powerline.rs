@@ -1084,7 +1084,10 @@ mod tests {
             "5.00 GiB/s" // exp 3, dec 2
         );
         assert_eq!(humanize_bytes(2000.0, "B/s", true), "2 kB/s"); // si: div 1000, no 'i'
-        assert_eq!(humanize_bytes(0.5, "B/s", false), "0.5 B/s"); // sub-1 rate clamps to exp 0
+        // Sub-1 rate clamps to exp 0 with 0 decimals — Python renders
+        // `'{:.0f}'.format(0.5)` as `0` (verified: python3 prints
+        // "0 B/s" for this input), so powerline shows `0 B/s` too.
+        assert_eq!(humanize_bytes(0.5, "B/s", false), "0 B/s"); // py:15-25
     }
 
     /// powerline:segments/common/sys.py:174-183 — divmod cascade, zero
