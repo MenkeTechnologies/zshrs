@@ -44,4 +44,27 @@
 # `${arr[x, 4]}`); reverting the fix makes this mode fail, which is the property
 # that makes the gate worth having.
 #
+# OUTPUT RADIX `[#N]` / `[##N]` (math.c convertbase / checkbase): the radix
+# arm previously generated only positive operands with plain bases 2/8/16/36/10.
+# Three verified-correct dimensions were folded in so a regression fails CI:
+#   - NEGATIVE operand: the sign precedes the `B#` prefix (`[#16] -255` ->
+#     `-16#FF`, `[##16] -255` -> `-FF`), a distinct output path from positive.
+#   - DIGIT GROUPING `_G`: an `_` is inserted every G output digits from the
+#     right, and it applies even to base 10 (`[#10_3] 1000000` -> `1_000_000`,
+#     `[#16_4] 65535` -> `16#FFFF`).
+#   - INVALID BASE out of 2..36: `invalid base (must be 2 to 36 inclusive): N`
+#     (folded to stderr via the malformed arm) — a DISTINCT diagnostic from the
+#     non-numeric `[#zz]` -> `bad output format specification` (math.c:819).
+# All were hand-verified equal on both shells before generating; they are locked
+# so a drift in any of the three fails rather than passing silently.
+#
+# FLOAT DIVISION/MODULO BY ZERO (IEEE-754): unlike the integer path — where a
+# zero divisor is UB, masked with `| 1` — float `x/0.0` is DEFINED as ±Inf,
+# `0.0/0.0` and `x%0.0` as NaN. `ar_fleaf` never produced a 0.0 divisor, so the
+# whole ±Inf/NaN surface went uncompared: the PRINT forms (`Inf`/`-Inf`/`NaN`)
+# and the propagation rules (`Inf-Inf` -> NaN, `Inf+Inf` -> Inf, `Inf*0` -> NaN,
+# `NaN==NaN` -> 0, `Inf > 1e308` -> 1). The float arm now emits a dedicated
+# special-value probe and sometimes forces a `0.0` divisor. All hand-verified
+# equal on both shells; locked so a drift in the IEEE-754 output fails CI.
+#
 # Any divergence here is a regression.

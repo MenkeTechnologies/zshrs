@@ -3114,6 +3114,19 @@ pub fn paramsubst(
     ret_flags: &mut i32, // c:1625
 ) -> (String, usize, Vec<String>) {
     // c:1625
+    // c:Src/utils.c:4347-4350 — wcsitype(IIDENT): under MULTIBYTE (and not
+    // POSIXIDENTIFIERS) any non-ASCII alphanumeric is a valid identifier char
+    // (iswalnum), so zsh accepts `${日}`, `${café}`, `${π}`. The name-scan
+    // sites below decide ASCII with their existing checks; this closure adds
+    // ONLY the non-ASCII names, leaving all ASCII parsing byte-identical.
+    // char::is_alphanumeric matches the faithful wcsitype port (utils.rs).
+    // Bug #1021 in docs/BUGS.md (braced-read leg; bare `$日` needs lexer work).
+    let is_mb_ident = |c: char| -> bool {
+        !c.is_ascii()
+            && c.is_alphanumeric()
+            && isset(crate::ported::zsh_h::MULTIBYTE)
+            && !isset(crate::ported::zsh_h::POSIXIDENTIFIERS)
+    };
     // c:Src/lex.c:1546 + Src/lex.c:1565 — C's lex emits Stringg/Qstring
     // followed by Inbrace at every `${` opener and the matching Outbrace
     // at the closer; paramsubst sees only the token form. Rust bridges
@@ -4281,10 +4294,21 @@ pub fn paramsubst(
                         unique = true;
                     } // c:2476
                     '_' => {
-                        // c:2485-2501 reserved `(_:...:)` — inner must be empty
-                        idx += 1;
-                        if idx >= body_chars.len() {
-                            zerr("bad substitution");
+                        // c:2485-2501 reserved `(_:...:)` — the inner content
+                        // MUST be empty; a missing delimiter or a non-empty
+                        // inner is a flag error. C reads the arg with get_strarg
+                        // and `goto flagerr` on failure (c:2505/2527), emitting
+                        // "error in flags near position N" — NOT "bad
+                        // substitution".
+                        idx += 1; // past `_`
+                                  // No delimiter (flag-close `)` or EOF) → the
+                                  // char after `_` is the error position.
+                        if idx >= body_chars.len() || body_chars[idx] == ')' {
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                idx + 1 + 2,
+                                body.as_str()
+                            ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
@@ -4294,13 +4318,14 @@ pub fn paramsubst(
                         while idx < body_chars.len() && body_chars[idx] != del {
                             idx += 1;
                         }
-                        if inner_start < idx {
-                            zerr("bad substitution");
-                            errflag_set_error();
-                            return (String::new(), new_pos, vec![]);
-                        }
-                        if idx >= body_chars.len() {
-                            zerr("bad substitution");
+                        // Non-empty inner OR no closing delimiter → flagerr at
+                        // the first inner char (`${(_:x:)a}` → the `x`).
+                        if inner_start < idx || idx >= body_chars.len() {
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                inner_start + 1 + 2,
+                                body.as_str()
+                            ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
@@ -4632,10 +4657,21 @@ pub fn paramsubst(
                         let is_split = fc == 's'; // c:2300
                         idx += 1; // c:2303 (++s)
                         if idx >= body_chars.len() || body_chars[idx] == ')' {
-                            zerr("bad substitution"); // c:2316 flagerr
+                            // c:2303-2316 — get_strarg(++s) finds no valid
+                            // delimiter (the next char is the flag-close `)` or
+                            // EOF), so C jumps to `flagerr` (c:2505/2527), which
+                            // emits "error in flags near position N" — NOT "bad
+                            // substitution". Position is `s` after `++s`, i.e.
+                            // the char right after the `j`/`s` flag.
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                idx + 1 + 2,
+                                body.as_str()
+                            ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
+                        let del_idx = idx; // delimiter position (for flagerr)
                         let del = body_chars[idx]; // c:2303 (get_strarg del)
                                                    // c:Src/subst.c:1366-1391 get_strarg — paired
                                                    // delimiters: `(…)`, `[…]`, `{…}`, `<…>` use
@@ -4655,7 +4691,16 @@ pub fn paramsubst(
                             idx += 1;
                         }
                         if idx >= body_chars.len() {
-                            zerr("bad substitution"); // c:2316 flagerr
+                            // c:2316 flagerr — no closing delimiter before the
+                            // flag block ends. C reports the DELIMITER position
+                            // (`s` still points at the opening delim when
+                            // get_strarg fails), so `${(j:x)a}` errors at the
+                            // `:`, not at the end.
+                            zerr(&format!(
+                                "error in flags near position {} in '${{{}}}'",
+                                del_idx + 1 + 2,
+                                body.as_str()
+                            ));
                             errflag_set_error();
                             return (String::new(), new_pos, vec![]);
                         }
@@ -4754,6 +4799,10 @@ pub fn paramsubst(
                 // path where the lexer tokenizes `-` to Dash.
                 let next_is_name_start = match next {
                     Some(ch) if ch.is_ascii_alphanumeric() => true,
+                    // c:Src/utils.c:4347-4350 wcsitype(IIDENT) — a non-ASCII
+                    // alphanumeric name (`${#日}`) is a length target under
+                    // MULTIBYTE. Bug #1021.
+                    Some(ch) if is_mb_ident(ch) => true,
                     // c:Src/subst.c getlen lookahead — zsh accepts these
                     // single-char specials as length targets but NOT `!`
                     // (`${#!}` is bad substitution: `#` becomes the `$#`
@@ -4824,6 +4873,7 @@ pub fn paramsubst(
                 let nxt = body_chars.get(idx + 1).copied().unwrap_or('\0'); // c:2199
                 let ok = nxt.is_ascii_alphanumeric()
                     || nxt == '_'
+                    || is_mb_ident(nxt) // c:utils.c:4347 — `${+日}` set-test, Bug #1021
                     || matches!(nxt, '@' | '*' | '#' | '?')
                     || (aspar
                         && (nxt == STRING || nxt == Qstring)
@@ -5185,11 +5235,22 @@ pub fn paramsubst(
                 {
                     let filtered: Vec<String> =
                         arr_parts.into_iter().filter(|p| !p.is_empty()).collect();
-                    // c:Src/subst.c:3922-3927 — 2+ elems stay an array; a
-                    // lone survivor is a scalar; nothing left is empty "".
+                    // c:Src/subst.c:3922-3927 — the array-vs-scalar decision is
+                    // made on the UNFILTERED split (aval) at c:3924
+                    // `else if (!aval[1]) val = aval[0];`, i.e. BEFORE prefork
+                    // (c:100 `uremnode`) drops the empty nodes. So a split that
+                    // produced 2+ nodes stays ARRAY-shaped even when only ONE
+                    // node survives the empty drop: `${#${(f)$'one\n'}}` is 1
+                    // (a 1-element array), and `${${(f)$'one\n'}[1]}` is `one`
+                    // (element 1) — NOT the scalar length 3 / char `o`. Reaching
+                    // `filtered.len() == 1` here already implies the original
+                    // split had ≥2 nodes (this arm only runs when at least one
+                    // node was empty AND one survived), so the lone survivor is
+                    // an array, not a scalar. Only a genuinely single-node split
+                    // (which never enters this branch) is a scalar.
                     match filtered.len() {
                         0 => (String::new(), Vec::new(), false),
-                        1 => (filtered[0].clone(), filtered, false),
+                        1 => (filtered[0].clone(), filtered, true),
                         _ => (crate::ported::utils::sepjoin(&filtered, None), filtered, true),
                     }
                 } else {
@@ -5283,6 +5344,7 @@ pub fn paramsubst(
                     // length-of-empty-name and returned 0.
                     bc.is_ascii_alphanumeric()
                         || bc == '_'
+                        || is_mb_ident(bc)
                         || bc == '@'
                         || bc == '*' || bc == '\u{87}' /* Star */
                         || bc == '#' || bc == Pound
@@ -5292,7 +5354,7 @@ pub fn paramsubst(
                         || bc == '-' || bc == '\u{9b}' /* Dash */
                         || bc == '$' || bc == Stringg
                 } else {
-                    bc.is_ascii_alphanumeric() || bc == '_'
+                    bc.is_ascii_alphanumeric() || bc == '_' || is_mb_ident(bc)
                 };
                 if allowed {
                     idx += 1;
@@ -13087,7 +13149,55 @@ pub fn paramsubst(
                         value = mod_one(&value);
                     }
                 } else {
-                    let parts: Vec<&str> = slice.splitn(2, ':').collect();
+                    // c:Src/subst.c:3752-3792 — after `${var:OFFSET[:LENGTH]}`,
+                    // any further `:MODIFIER` chain applies to the substring
+                    // result (`${path:0:8:h}` = substring then `:h` head;
+                    // `${path:2:h}` = offset-only substring then `:h`). The old
+                    // naive `splitn(2, ':')` swallowed the whole tail as the
+                    // length and failed. Split off the modifier tail with the
+                    // paren-aware colon walk (c:check_colon_subscript, c:1571 +
+                    // c:3627-3646): OFFSET runs to the first depth-0 `:`; if the
+                    // char after it is alphabetic or `&` there is NO length and
+                    // that colon opens the modifier chain (c:1571 returns NULL);
+                    // otherwise a LENGTH follows and the SECOND depth-0 `:` opens
+                    // the chain.
+                    let (core_slice, mod_tail): (&str, &str) = {
+                        let mut depth: i32 = 0;
+                        let mut first_colon: Option<usize> = None;
+                        let mut second_colon: Option<usize> = None;
+                        for (i, ch) in slice.char_indices() {
+                            match ch {
+                                '[' | Inbrack | '(' | Inpar => depth += 1,
+                                ']' | Outbrack | ')' | Outpar => depth -= 1,
+                                ':' if depth == 0 => {
+                                    if first_colon.is_none() {
+                                        first_colon = Some(i);
+                                    } else {
+                                        second_colon = Some(i);
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        match first_colon {
+                            None => (slice, ""),
+                            Some(c1) => {
+                                let after = slice[c1 + 1..].chars().next();
+                                if matches!(after, Some(c) if c.is_ascii_alphabetic() || c == '&') {
+                                    // c:1571 — alpha/`&` → offset-only substring,
+                                    // modifier chain begins at this colon.
+                                    (&slice[..c1], &slice[c1..])
+                                } else if let Some(c2) = second_colon {
+                                    // OFFSET:LENGTH, modifier chain begins at c2.
+                                    (&slice[..c2], &slice[c2..])
+                                } else {
+                                    (slice, "")
+                                }
+                            }
+                        }
+                    };
+                    let parts: Vec<&str> = core_slice.splitn(2, ':').collect();
                     // c:Src/subst.c:3825 — `${str:offset:length}` arms
                     // both go through `mathevali` (Src/math.c:1240),
                     // not literal strtol. Allows parentheses, leading
@@ -13219,6 +13329,7 @@ pub fn paramsubst(
                     } else {
                         split_parts.clone().or_else(|| arrays_get(&var_name))
                     };
+                    let array_applied = array_source.is_some();
                     if let Some(mut arr) = array_source {
                         // Positional-param slice (`@`/`*`/`argv`) — zsh
                         // counts offset 0 as $0 (script/function name),
@@ -13371,6 +13482,36 @@ pub fn paramsubst(
                             }
                             None => dv.chars().skip(start).collect(),
                         };
+                    }
+                    // c:Src/subst.c:3759-3792 — apply the trailing `:MODIFIER`
+                    // chain (if any) to the substring result.
+                    //   - An UNQUOTED array (isarr != 0) modifies each element
+                    //     (c:3768-3784).
+                    //   - A QUOTED array-with-offset has isarr == 0 (c:3654
+                    //     quoted_array_with_offset), so C runs `modify(&val)` on
+                    //     the SEPARATE scalar `val` — never the sliced array —
+                    //     leaving the array output unmodified. Skip it here.
+                    //   - A scalar modifies the value (c:3767).
+                    // modify() emits the "unrecognized modifier `c'" diagnostic
+                    // for a bad letter and sets errflag (c:3786-3791).
+                    if !mod_tail.is_empty() {
+                        if array_applied {
+                            if !qt {
+                                if let Some(elems) = split_parts.clone() {
+                                    let modified: Vec<String> =
+                                        elems.iter().map(|s| modify(s, mod_tail)).collect();
+                                    value = modified.join(" ");
+                                    split_parts = Some(modified);
+                                }
+                            }
+                            // qt (quoted array-with-offset): modifier hits the
+                            // unused scalar val → array output unchanged.
+                        } else {
+                            value = modify(&value, mod_tail);
+                        }
+                        if errflag_set() {
+                            return (String::new(), 0, Vec::new());
+                        }
                     }
                 } // close is_modifier else
             } else if {
@@ -14845,7 +14986,14 @@ pub fn paramsubst(
                     continue; // c:2439
                 } // c:2439
                 if in_dq {
-                    // c:2439
+                    // c:Src/lex.c — backslash-newline inside "…" is a LINE
+                    // CONTINUATION too: both chars are dropped and the text
+                    // joins (`"foo\<NL>bar"` lexes as `"foobar"`). Handle it
+                    // before the verbatim `\X` push below.
+                    if ch == '\\' && p + 1 < chars_v.len() && chars_v[p + 1] == '\n' {
+                        p += 2; // skip backslash + newline
+                        continue;
+                    }
                     cur.push(ch); // c:2439
                     if ch == '\\' && p + 1 < chars_v.len() {
                         // c:2439
@@ -14917,10 +15065,21 @@ pub fn paramsubst(
                 match ch {
                     // c:2439
                     '\\' if p + 1 < chars_v.len() => {
-                        // c:2439
-                        cur.push(ch); // c:2439
-                        p += 1; // c:2439
-                        cur.push(chars_v[p]); // c:2439
+                        // c:Src/lex.c / Src/input.c — a backslash-newline is a
+                        // LINE CONTINUATION: both characters are removed and the
+                        // surrounding text joins, so `foo\<NL>bar` lexes as the
+                        // single word `foobar` and `a \<NL>b` as `a` + `b`. Any
+                        // other escaped char is kept verbatim (`\<space>`, `\t`)
+                        // as part of the current word.
+                        if chars_v[p + 1] == '\n' {
+                            // Skip the backslash here; the trailing `p += 1`
+                            // (loop bottom) skips the newline. Nothing is pushed.
+                            p += 1;
+                        } else {
+                            cur.push(ch); // c:2439
+                            p += 1; // c:2439
+                            cur.push(chars_v[p]); // c:2439
+                        }
                     } // c:2439
                     '\'' => {
                         cur.push(ch);
@@ -16449,9 +16608,11 @@ pub fn paramsubst(
         let mut name_end = name_start;
         if name_end < chars.len() {
             let first = chars[name_end];
-            if first.is_ascii_alphanumeric() || first == '_' {
+            if first.is_ascii_alphanumeric() || first == '_' || is_mb_ident(first) {
                 while name_end < chars.len()
-                    && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
+                    && (chars[name_end].is_ascii_alphanumeric()
+                        || chars[name_end] == '_'
+                        || is_mb_ident(chars[name_end]))
                 {
                     name_end += 1;
                 }
@@ -16511,9 +16672,11 @@ pub fn paramsubst(
         let mut name_end = name_start;
         if name_end < chars.len() {
             let first = chars[name_end];
-            if first.is_ascii_alphanumeric() || first == '_' {
+            if first.is_ascii_alphanumeric() || first == '_' || is_mb_ident(first) {
                 while name_end < chars.len()
-                    && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
+                    && (chars[name_end].is_ascii_alphanumeric()
+                        || chars[name_end] == '_'
+                        || is_mb_ident(chars[name_end]))
                 {
                     name_end += 1;
                 }
@@ -16561,10 +16724,12 @@ pub fn paramsubst(
     // bracket here, `$match[1]` from a `(#b)` replacement template
     // resolved to "match" + literal "[1]" instead of the captured
     // group).
-    if c.is_ascii_alphabetic() || c == '_' {
+    if c.is_ascii_alphabetic() || c == '_' || is_mb_ident(c) {
         // c:1625
         let var_start = pos; // c:1625
-        while pos < chars.len() && (chars[pos].is_ascii_alphanumeric() || chars[pos] == '_') {
+        while pos < chars.len()
+            && (chars[pos].is_ascii_alphanumeric() || chars[pos] == '_' || is_mb_ident(chars[pos]))
+        {
             // c:1625
             pos += 1; // c:1625
         } // c:1625
@@ -20268,6 +20433,35 @@ mod tests {
             crate::ported::options::opt_state_set("extendedglob", prev);
         }
         out
+    }
+
+    // ── Multibyte (non-ASCII) identifier names, braced read ──────────
+    // Bug #1021 braced-read leg: under MULTIBYTE (default) + !POSIXIDENTIFIERS,
+    // paramsubst must accept non-ASCII alphanumerics in the name (c:utils.c:
+    // 4347-4350 wcsitype IIDENT → iswalnum). Pins that `${日}`, `${#café}`,
+    // `${(U)π}`, and `${#NAME}`-length discrimination resolve the multibyte
+    // name rather than failing "bad substitution". Verified equal to
+    // /opt/homebrew/bin/zsh in the `mbident` fuzz mode.
+    #[test]
+    fn paramsubst_multibyte_name_braced_read() {
+        let _g = crate::test_util::global_state_lock();
+        // The CLI sets MULTIBYTE on at init (OPT_ALL default, c:options.c:197);
+        // the unit harness leaves the slot unwritten (isset → false). Set it on
+        // — which is zsh's default and what the rest of the suite's multibyte
+        // tests (e.g. paramsubst_zsh_corpus_hash_prefix_multibyte_codepoints)
+        // already assume — and leave it on so no OFF state leaks downstream.
+        crate::ported::options::opt_state_set("multibyte", true);
+        // Plain read, CJK name.
+        assert_eq!(psubst_one("日", "hello", "${日}"), "hello");
+        // Length of a Latin-accented name (multi-byte value → char count).
+        assert_eq!(psubst_one("café", "abcde", "${#café}"), "5");
+        // Case flag on a Greek name.
+        assert_eq!(psubst_one("π", "abc", "${(U)π}"), "ABC");
+        // `${#日本語}` — the length-operator operand discrimination must treat
+        // a non-ASCII first char as a name start (not the `$#` special).
+        assert_eq!(psubst_one("日本語", "xy", "${#日本語}"), "2");
+        // ASCII-prefixed multibyte name still scans to the end.
+        assert_eq!(psubst_one("v日", "z", "${v日}"), "z");
     }
 
     // ── Default operators ────────────────────────────────────────────

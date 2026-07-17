@@ -1,3 +1,19 @@
 # parity-fuzz --mode printv baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode printv --count N --verify 3  (copy NEW-signature lines).
+#
+# COLUMN LAYOUT / TAB EXPANSION (verified-correct coverage): the option-conflict
+# arm checks the rc for `-C`/`-a`, but the actual multi-row `-C N` column layout
+# (more args than one row), the `-a` array-ACROSS vs down-then-across ordering,
+# and `-x`/`-X` TAB-stop expansion output were uncompared. A display arm now
+# emits `print -C 2/3 …`, `print -a -C 3 …`, `print -aC 2 …`, and `print -X/-x N
+# "…\t…"`. All hand-verified equal on both shells (c:Src/builtin.c bin_print).
+#
+# ECHO ESCAPE PROCESSING (verified-correct coverage): zsh's `echo` interprets
+# backslash escapes BY DEFAULT (c:Src/builtin.c bin_echo → getkeystring), which
+# was entirely uncompared. An arm now exercises the C-escapes (`\t`/`\n`/`\v`/
+# `\a`/`\e`), `\xNN` hex, `\0NNN` OCTAL (leading 0 required; bare `\NNN` stays
+# literal), `\c` (truncate rest of output), and the `-e`/`-E`/`-n`/`--` flags.
+# All hand-verified equal on both shells.
+#
+# No known gaps — any divergence here is a regression.

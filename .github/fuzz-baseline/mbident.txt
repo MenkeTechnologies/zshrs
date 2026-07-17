@@ -1,0 +1,46 @@
+# parity-fuzz --mode mbident baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode mbident --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (five seeds).
+#
+# MULTIBYTE (non-ASCII) parameter NAMES in the BRACED read forms: `${日}`,
+# `${#café}`, `${(U)π}`, `${日:u}`, `${(l:6:)Ω}`, `${+ναι}`, `${変数[1,3]}`.
+# zsh accepts non-ASCII alphanumerics in identifier names when MULTIBYTE is set
+# (default) and POSIXIDENTIFIERS is not — c:Src/utils.c:4347-4350 wcsitype's
+# IIDENT arm returns iswalnum(c) for non-ASCII. paramsubst's name-scan sites
+# were ASCII-only (`is_ascii_alphanumeric() || '_'`), so every non-ASCII name
+# returned "bad substitution". Fixed by routing them through a MULTIBYTE-aware
+# predicate that adds ONLY non-ASCII alphanumerics — ASCII parsing is
+# byte-identical, so no ASCII form can regress (Bug #1021 in docs/BUGS.md).
+#
+# Fixed sites (all inside paramsubst, src/ported/subst.rs): the main braced
+# name scan (name-start + continuation), the `${#NAME}` length-operator operand
+# discrimination, the `${+NAME}` set-test flag, and the simple `$name` /
+# `$^name` / `$+name` walks.
+#
+# ASSIGNMENT (both forms). The mode assigns each scalar via EITHER `typeset
+# NAME=val` (builtin path) OR bare `NAME=val`. The bare form exercises the
+# lexer's assignment detection (is_valid_assignment_target, c:lex.c:1233
+# itype_end(t, INAMESPC, 0)); before the fix the lexer misread `日=x` as a
+# command word → "command not found". Read is always braced.
+#
+# SCOPE — this mode generates ONLY VERIFIED-equal legs (scalar names, assigned
+# via `typeset` or bare `NAME=val`, read via a braced expansion). Two legs of
+# #1021 are deliberately NOT generated because they are still ASCII-only and
+# would fail the gate for a known gap:
+#
+#   - bare `$日` (no braces) READ — the lexer drops the non-ASCII char after `$`
+#     (gettokstr emits a Stringg-only word; `日` never reaches paramsubst), so
+#     `$日` prints literally. Only the BRACED read `${日}` works.
+#   - `typeset 日=(a b c)` ARRAY creation — the assignment/subscript name scan
+#     is a separate leg; zshrs errors "number expected". So the mode assigns
+#     scalars only.
+#
+# NAME SET excludes number-letter codepoints like `Ⅻ` (U+216B ROMAN NUMERAL
+# TWELVE): Rust's char::is_alphanumeric() counts them (Unicode Nl) but zsh's
+# iswalnum in a UTF-8 locale does not, so `typeset Ⅻ=x` errors "not valid in
+# this context" — that case is invalid INPUT (zsh rejects it), not a zshrs bug.
+# The is_alphanumeric-vs-iswalnum disagreement only affects these number-letters.
+#
+# Any divergence here is a regression.

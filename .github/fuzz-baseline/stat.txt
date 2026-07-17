@@ -1,3 +1,28 @@
 # parity-fuzz --mode stat baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode stat --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers the zsh/stat module (c:Src/Modules/stat.c bin_stat). C's flag set is
+# `g l L n N o r s t T` plus `A H f F`; the vocabulary had `A F H L n s` and now
+# also generates the display flags `-o` (octal mode), `-r` (raw value + symbolic
+# form), `-t` (always prefix the element name), `-T` (never prefix), and `-N`
+# (never show the file name). Also covers `-A` array / `-H` hash destinations,
+# `-F` time format, `-L` lstat on a symlink, whole-stat (no field selector), and
+# the no-such-file / bad-option / no-such-element error paths.
+#
+# The vocabulary audit against C found NO bug — the module is faithful,
+# including the parts most likely to drift: `-o` octal formatting, `-r`'s
+# combined `33188 (-rw-r--r--)`, the `-t`/`-T` name prefix, symbolic `-s` mode,
+# and the byte-exact `bad option: -%c` / `no such stat element` diagnostics.
+#
+# The display flags are restricted to +mode / +nlink because those are
+# deterministic for a fixed fixture file; +size / +*time / +inode / +device vary
+# and are only used through -A/-H/plain reads where the same file is stat'd by
+# both shells so they still agree.
+#
+# The audit is recorded so this mode is not re-audited from scratch; a clean
+# ungated flag is an untested one, and these are now generated.
+#
+# Any divergence here is a regression.

@@ -746,8 +746,30 @@ pub fn patcompile(exp: &str, inflags: i32, mut endexp: Option<&mut String>) -> O
                 break;
             }
             Some((bits, _assert, consumed)) => {
-                hoisted_globflags |=
-                    bits & (GF_IGNCASE | GF_LCMATCHUC | GF_MULTIBYTE | GF_BACKREF | GF_MATCHREF);
+                // The fold / backref / matchref / multibyte flags are ABSOLUTE
+                // state, not a set-only delta. patgetglobflags's returned `bits`
+                // starts at 0 and can only carry flags turned ON, so `(#I)`
+                // clearing LCMATCHUC (c: `patglobflags &= ~(GF_LCMATCHUC |
+                // GF_IGNCASE)`) comes back as 0 — an `|=` accumulate then leaves
+                // an earlier `(#l)`/`(#i)`'s fold bit set, so `(#l)(#I)foo` kept
+                // folding where zsh, after `(#I)`, matches case-sensitively.
+                //
+                // patgetglobflags ALSO updates the global patglobflags with the
+                // sets AND the clears, so it holds the authoritative running
+                // value. REPLACE the toggle-able bits from it rather than
+                // OR-accumulating the lossy return.
+                // GF_MULTIBYTE is deliberately NOT in the mask: the init above
+                // force-sets it (this port always matches UTF-8) while the
+                // global patglobflags may not carry it, so replacing it from the
+                // global would wrongly clear it and break multibyte matching.
+                // The original `|=` could not clear it either, so leaving it out
+                // preserves that (rare `(#U)` single-byte requests are no more
+                // broken than before). The fold/backref/matchref bits, which DO
+                // need clear semantics for `(#I)`/`(#B)`/`(#M)`, come from the
+                // authoritative global.
+                let gmask = GF_IGNCASE | GF_LCMATCHUC | GF_BACKREF | GF_MATCHREF;
+                let cur = patglobflags.load(Ordering::Relaxed);
+                hoisted_globflags = (hoisted_globflags & !gmask) | (cur & gmask);
                 // `(#aN)` substitution budget — low 8 bits of
                 // `patglobflags` per c:1066. Only carry it when this
                 // flag-spec actually had `(#a)` digits (non-zero err
@@ -4848,7 +4870,37 @@ pub fn patmatch(
                 let pf = patflags.load(Ordering::Relaxed);
                 let anchored = (pf & (PAT_NOANCH | PAT_NOTEND) as i32) == 0;
                 if s_off < string.len() && anchored {
-                    return None; // c:3452 fail → caller tries next alt
+                    // c:Src/pattern.c:3451-3454 sets `fail = 1` here, then the
+                    // shared approximate-match block at c:3463-3475 deletes the
+                    // trailing input one CHARACTER at a time — `++errsfound;
+                    // CHARINC(patinput); continue;` — retrying P_END until the
+                    // input is gone or the `(#aN)` budget is spent. So
+                    // `[[ ab = (#a1)? ]]` matches: `?` consumes `a`, then the
+                    // leftover `b` is deleted for one error.
+                    //
+                    // Only literal (P_EXACTLY) runs did this before, inside
+                    // approx_match_exactly's own trailing-delete; a pattern
+                    // ending in a class / `?` / `*` with input left reached
+                    // here and simply failed, so `(#a2)[^0-9]` on `abc`
+                    // (match `a`, delete `bc`) was rejected where zsh accepts
+                    // it. The class/`?` arms already delete on a FAILED match
+                    // (e.g. c:5046); this is the same edit at the pattern end.
+                    let max_errs = (glob_flags & 0xff) as i32;
+                    if state.errsfound < max_errs {
+                        if let Some(c) = string[s_off..].chars().next() {
+                            state.errsfound += 1; // c:3466 ++errsfound
+                            // c:3475 CHARINC(patinput) + continue (retry P_END).
+                            return patmatch(
+                                code,
+                                scan,
+                                string,
+                                s_off + c.len_utf8(),
+                                state,
+                                glob_flags,
+                            );
+                        }
+                    }
+                    return None; // c:3452 fail, no budget → caller tries next alt
                 }
                 return Some(s_off); // c:3453
             }

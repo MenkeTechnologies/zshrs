@@ -1,3 +1,25 @@
 # parity-fuzz --mode getopts baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode getopts --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers the getopts option-parse loop (c:Src/builtin.c bin_getopts): clustered
+# options (`-ab`), attached and separate arguments (`-aval` vs `-a val`), the
+# `--` terminator, non-option arguments, OPTIND advance and mid-array reset, and
+# both parse sources — `$@` and the explicit `getopts optstr var ARGS...` form.
+#
+# The vocabulary audit against C found NO bug here — the port is faithful,
+# including the parts most likely to drift:
+#   - silent mode (leading `:` in the optstring): an unknown option sets the
+#     name var to `?` with OPTARG holding the bad CHAR; a missing required
+#     argument sets it to `:` with OPTARG holding the option char. Non-silent
+#     prints `bad option` / `argument expected` and sets the var to `?`.
+#   - `+opt` and a bare `-` are not options: getopts stops without consuming
+#     them.
+#   - `?` as an ordinary option character in the optstring.
+# These were verified by hand and are now generated so a regression in any of
+# them fails CI rather than passing silently — a clean ungated behaviour is an
+# untested one.
+#
+# Any divergence here is a regression.

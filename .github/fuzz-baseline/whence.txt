@@ -1,3 +1,52 @@
 # parity-fuzz --mode whence baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode whence --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (four seeds).
+#
+# Covers whence / type / which / command -v / where. C's whence spec is
+# "acmpvfsSwx:" (c:Src/builtin.c:132). Generated: -a -c -m -v -w -f -x, plus the
+# type/which/command/where aliases and the reserved-word / builtin / alias /
+# function classification each must report.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The vocabulary was missing -f (print the function body) and -x<n> (tab width
+# for that body); both are now generated against the shell function `f`, which
+# is deterministic. -f/-x behave correctly.
+#
+# THREE whence flags are deliberately NOT generated:
+#
+#   -p / -s / -S — these search $PATH and resolve symlinks, so the answer is the
+#   host's /bin/ls etc., which is not deterministic across CI machines. They
+#   were verified correct by hand against a controlled PATH fixture; there is
+#   just no stable expected output to gate.
+#
+# KNOWN GAP — `whence -m <pattern>` (and `-wm`, `-pm`) lists MODULE builtins as
+# `builtin` when zsh, not having zmodload'd them under -f, does not:
+#
+#     PATH=<dir with la lb ln ls>; whence -wm 'l?'
+#         zsh    la: command  lb: command  ln: command  ls: command
+#         zshrs  ln: builtin   (spurious, before the four commands)
+#
+# `ln`, `chmod`, `chown`, `chgrp`, `mkdir`, `mv` (zsh/files), `pcre_*`
+# (zsh/pcre), `clone` (zsh/clone) and others appear. The direct path is right —
+# `whence -w chmod` reports `command` in both, and `whence -v chmod` reports
+# `chmod is /bin/chmod` — so these are NOT active builtins. Only the `-m`
+# pattern scan reaches them: C's scan (c:Src/builtin.c:4028-4065) walks
+# builtintab, and under -f zsh's builtintab simply does not contain the unloaded
+# module builtins, whereas zshrs's does. `zsh/files` etc. register via
+# setup_/boot_ (module.rs:3441), which C runs only on zmodload.
+#
+# NOT fixed here: whether zshrs SHOULD pre-register module builtins (an always-on
+# design) or should gate them behind zmodload (matching zsh) is a module-model
+# decision, and removing builtins blindly risks breaking intended behaviour. It
+# needs design intent, so it is surfaced rather than guessed at. The existing -m
+# arm uses `f` / `a*`, which do not hit the module names, so the gate stays
+# meaningful; a `?`/`l*`-style -m pattern is what exposes it.
+#
+# Any divergence here is a regression.

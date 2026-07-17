@@ -55,18 +55,48 @@
 #   back, since whether it was SET is the whole question and the exit status
 #   cannot see it.
 #
-# KNOWN GAP, deliberately NOT generated — `(#a<n>)` approximate matching:
+#   2. `(#a<n>)` approximate matching rejected a trailing-input deletion after
+#      a class / `?` / `*`:
 #
-#     [[ aaa    = (#a2)[^0-9] ]]        zsh Y   zshrs N
-#     [[ FooBar = (#a2)_(#c2,3)a ]]     zsh N   zshrs Y
+#          [[ abc = (#a2)[^0-9] ]]   zsh Y   was N   (match `a`, delete `bc`)
+#          [[ ab  = (#a1)?      ]]   zsh Y   was N   (`?` = `a`, delete `b`)
 #
-# zshrs diverges in BOTH directions, so it is neither uniformly stricter nor
-# looser than zsh — this is not a threshold tweak. C implements it as an
-# error-tolerant matcher driven by the `(#a<n>)` error budget parsed at
-# c:1062-1071 (`patglobflags = (patglobflags & ~0xff) | (ret & 0xff)`), with
-# the budget consumed during matching. Simple cases already agree
-# (`[[ abc = (#a1)abd ]]` → 0 in both), so the gap is in how the budget is
-# spent across character classes and closures. Port C's matcher, then add
-# `(#a0)`/`(#a1)`/`(#a2)` back to the flag vocabulary above.
+#      c:Src/pattern.c:3451 — at P_END, if the pattern is exhausted but input
+#      remains (anchored), `fail = 1` and the shared approximate block
+#      (c:3463-3475) deletes trailing input one CHARACTER at a time
+#      (`++errsfound; CHARINC; continue`) until the input is gone or the budget
+#      is spent. This ran only for literal (P_EXACTLY) patterns via
+#      approx_match_exactly; a class / `?` / `*`-final pattern reached P_END and
+#      simply failed. The class/`?` arms already delete on a FAILED element
+#      match — this is the same edit at the pattern end.
+#
+# TWO `(#a)` gaps remain (pre-existing, unrelated to the trailing-delete fix —
+# verified divergent at HEAD both before and after it) and are kept OUT of the
+# `(#a)` arm's curated vocabulary:
+#
+#   - many substitutions across a `?`/`*`: `[[ xyz = (#a2)a?c ]]` matches in
+#     zshrs, not zsh — zshrs undercounts the substitution edits around the `?`.
+#   - the ranged closure `(#c<n>,<m>)` under `(#a)`: `[[ abc = (#a1)a(#c1,2)b ]]`
+#     likewise too permissive (plain `(#c2)` agrees).
+#
+#   3. `(#I)` failed to CLEAR a case-fold flag that a preceding `(#l)` / `(#i)`
+#      set:
+#
+#          [[ FOO = (#l)(#I)foo ]]   zsh N (case-sensitive after (#I))   was Y
+#          [[ FOO = (#i)(#I)foo ]]   zsh N                                was Y
+#
+#      The leading-`(#...)` compile hoist (pattern.rs, the `hoisted_globflags`
+#      loop) did `hoisted_globflags |= bits & …`. patgetglobflags's returned
+#      `bits` starts at 0 and only carries flags turned ON, so `(#I)` clearing
+#      LCMATCHUC/IGNCASE came back as 0 and the `|=` left the earlier fold bit
+#      set. The GLOBAL patglobflags, which patgetglobflags updates with sets AND
+#      clears, is authoritative — the fix REPLACES the fold/backref/matchref
+#      bits from it instead of OR-accumulating the lossy return. (GF_MULTIBYTE
+#      is left out of the replace: the hoist force-sets it for this UTF-8 port,
+#      and the original `|=` could not clear it either.)
+#
+#      `(#I)` alone, `(#I)(#l)` (fold last), and single-flag `(#i)Über` matching
+#      `über` were all correct throughout — only set-then-clear was wrong.
 #
 # Any divergence here is a regression.
+

@@ -14538,3 +14538,160 @@ fn mathfunc_jn_yn_take_an_integer_order() {
         assert_eq!(out, format!("{want}\n"), "$(( {expr} ))");
     }
 }
+
+/// c:Src/builtin.c:5427-5429 — printf's `%n` stores the byte count emitted so
+/// far into a named variable and prints nothing:
+///
+/// ```c
+///     case 'n':
+///         if (curarg) setiparam(curarg, count - rcount);
+///         break;
+/// ```
+///
+/// It was a no-op in zshrs — absent from the conversion set entirely.
+/// printf_format is a pure formatter, so it now collects (name, count) and
+/// bin_print does the setiparam.
+#[test]
+fn printf_percent_n_stores_byte_count() {
+    // Basic store, and the count is where %n sits.
+    let (_s, out, _e) = run_zshrs_parity("printf 'abc%n' v; print -r -- \"[$v]\"");
+    assert_eq!(out, "abc[3]\n");
+    let (_s, out, _e) = run_zshrs_parity("printf '%d%n' 4200 n; print -r -- \"[$n]\"");
+    assert_eq!(out, "4200[4]\n");
+
+    // c:5168 — the count resets each format-reuse cycle: both get 1, not 1 & 2.
+    let (_s, out, _e) = run_zshrs_parity("printf 'x%n' a b c; print -r -- \"[$a][$b][$c]\"");
+    assert_eq!(out, "xxx[1][1][1]\n");
+
+    // Two %n within ONE cycle are cumulative within it.
+    let (_s, out, _e) = run_zshrs_parity("printf 'AB%nCD%n' p q; print -r -- \"[$p][$q]\"");
+    assert_eq!(out, "ABCD[2][4]\n");
+
+    // Byte count, not character count.
+    let (_s, out, _e) = run_zshrs_parity("printf 'héllo%n' u; print -r -- \"[$u]\"");
+    assert_eq!(out, "héllo[6]\n");
+
+    // Width padding counts.
+    let (_s, out, _e) = run_zshrs_parity("printf '%5d%n' 7 w; print -r -- \"[$w]\"");
+    assert_eq!(out, "    7[5]\n");
+
+    // `if (curarg)`: an absent target is a silent no-op…
+    let (_s, out, _e) = run_zshrs_parity("printf 'abc%n'; print -r -- done");
+    assert_eq!(out, "abcdone\n");
+    // …but a present malformed one reaches setiparam and errors `not an
+    // identifier` (which aborts the -c, so `after` never prints — same in both
+    // shells).
+    let (_s, _o, err) = run_zshrs_parity("printf '%n' 1bad; print -r -- after");
+    assert!(err.contains("not an identifier"), "malformed %n target must error: {err:?}");
+}
+
+/// c:Src/pattern.c:3451 + 3463 — approximate matching `(#a<n>)` spends its
+/// error budget on trailing-input DELETIONS once the pattern is exhausted:
+///
+/// ```c
+///     case P_END:
+///         if (!(fail = (patinput < patinend && !(patflags & PAT_NOANCH))))
+///             return 1;
+///         break;                 /* else fall into the shared approx block */
+///     ...
+///     if (fail) { if (errsfound < (patglobflags & 0xff)) {
+///         ++errsfound; CHARINC(patinput); continue;   /* delete one char */
+///     } }
+/// ```
+///
+/// This worked only for literal (P_EXACTLY) patterns; a pattern ending in a
+/// class / `?` / `*` with input left reached P_END and simply failed, so
+/// `[[ abc = (#a2)[^0-9] ]]` (match `a`, delete `bc`) was rejected where zsh
+/// matches.
+#[test]
+fn approx_match_deletes_trailing_input_after_a_class() {
+    let e = "setopt extended_glob; ";
+    for (subj, pat, want) in [
+        // The fix: trailing delete after `?` / class.
+        ("ab", "(#a1)?", "0"),
+        ("abc", "(#a2)?", "0"),
+        ("abcd", "(#a3)?", "0"),
+        ("ab", "(#a1)[^0-9]", "0"),
+        ("abc", "(#a2)[^0-9]", "0"),
+        // Budget boundary: still fails when the deletions exceed it.
+        ("abc", "(#a1)?", "1"),
+        ("abcd", "(#a2)?", "1"),
+        ("abc", "(#a1)[^0-9]", "1"),
+        // Literals (already worked) unchanged.
+        ("abc", "(#a2)a", "0"),
+        ("ab", "(#a1)a", "0"),
+        ("abc", "(#a0)abd", "1"),
+        // A class that must simply not match — no budget abuse.
+        ("a", "(#a1)[0-9]", "1"),
+        ("5", "(#a1)[a-z]", "1"),
+    ] {
+        let (_s, out, _e) = run_zshrs_parity(&format!("{e}[[ {subj} = {pat} ]]; print -r -- $?"));
+        assert_eq!(out, format!("{want}\n"), "[[ {subj} = {pat} ]]");
+    }
+}
+
+/// c:Src/pattern.c — the case-fold glob flags come in ON/OFF pairs where the
+/// LAST wins: `(#i)`/`(#l)` fold, `(#I)` restores case sensitivity
+/// (`patglobflags &= ~(GF_LCMATCHUC|GF_IGNCASE)`).
+///
+/// `(#I)` failed to CLEAR a fold flag a preceding `(#l)`/`(#i)` had set. The
+/// leading-flag compile hoist OR-accumulated patgetglobflags's return, which
+/// starts at 0 and can only carry flags turned ON — so `(#I)`'s clear came back
+/// as 0 and the earlier fold bit survived. `(#I)` alone was correct; only the
+/// set-then-clear order was wrong.
+#[test]
+fn glob_flag_capital_i_clears_a_preceding_fold_flag() {
+    let e = "setopt extended_glob; ";
+    for (subj, pat, want) in [
+        // set-then-clear: (#I) must restore case sensitivity.
+        ("FOO", "(#l)(#I)foo", "N"),
+        ("FOO", "(#i)(#I)foo", "N"),
+        ("FooBar", "(#l)(#I)(a|b|foo)**", "N"),
+        // clear-then-set: fold flag last → still folds.
+        ("FOO", "(#I)(#l)foo", "Y"),
+        ("FOO", "(#I)(#i)foo", "Y"),
+        // triple toggle: last (#i) wins.
+        ("FOO", "(#i)(#I)(#i)foo", "Y"),
+        // single flags, unchanged.
+        ("FOO", "(#i)foo", "Y"),
+        ("FOO", "(#l)foo", "Y"),
+        ("FOO", "(#I)foo", "N"),
+        ("FOO", "foo", "N"),
+    ] {
+        let (_s, out, _e) =
+            run_zshrs_parity(&format!("{e}[[ {subj} = {pat} ]] && print Y || print N"));
+        assert_eq!(out, format!("{want}\n"), "[[ {subj} = {pat} ]]");
+    }
+
+    // The fix must not disturb single-flag Unicode case-insensitivity.
+    let (_s, out, _e) = run_zshrs_parity("setopt extended_glob; [[ über = (#i)Über ]] && print Y || print N");
+    assert_eq!(out, "Y\n");
+}
+
+/// c:Src/builtin.c:109 (`...AE` in read's option spec) + c:7106 — `read -E`
+/// echoes each field it reads to stdout (one per line) AND assigns; `read -e`
+/// echoes but assigns nothing. The whole-line echo worked for a single
+/// variable, but the multi-variable path assigned each field and echoed
+/// nothing.
+#[test]
+fn read_capital_e_echoes_each_field() {
+    // Multi-var -E: one field per line, and the values are assigned.
+    let (_s, out, _e) = run_zshrs_parity("read -rE a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
+    assert_eq!(out, "one\ntwo three\na=[one] b=[two three]\n");
+
+    // Single var -E: the whole line is echoed and assigned.
+    let (_s, out, _e) = run_zshrs_parity("read -rE x <<< 'kept whole'; print -r -- \"x=[$x]\"");
+    assert_eq!(out, "kept whole\nx=[kept whole]\n");
+
+    // -e echoes but does NOT assign.
+    let (_s, out, _e) = run_zshrs_parity("a=A b=B; read -e a b <<< 'echo only'; print -r -- \"a=[$a] b=[$b]\"");
+    assert_eq!(out, "echo\nonly\na=[A] b=[B]\n");
+
+    // -A -E echoes each word (this path already worked; pinned for consistency).
+    let (_s, out, _e) = run_zshrs_parity("read -rEA arr <<< 'p q r'; print -r -- \"n=${#arr}\"");
+    assert_eq!(out, "p\nq\nr\nn=3\n");
+
+    // Plain multi-var (no -E) echoes nothing.
+    let (_s, out, _e) = run_zshrs_parity("read a b <<< 'one two three'; print -r -- \"a=[$a] b=[$b]\"");
+    assert_eq!(out, "a=[one] b=[two three]\n");
+}

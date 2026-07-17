@@ -4439,7 +4439,17 @@ fn is_valid_assignment_target(s: &str) -> bool {
             // it is gated on the codepoint fitting in a byte rather than on
             // is_ascii — otherwise `二` (U+4E8C → 0x8C) would masquerade as a
             // token and be swallowed into an identifier.
-            let c_is_ident = c.is_ascii() && crate::ztype_h::iident(c as u8);
+            // c:1233 itype_end(t, INAMESPC, 0) → wcsitype(IIDENT) accepts any
+            // non-ASCII alphanumeric under MULTIBYTE (and not POSIXIDENTIFIERS)
+            // — c:utils.c:4347-4350. So `日=x` / `café=y` are assignments, not
+            // commands. The full codepoint is tested (not `c as u8`), so a
+            // multibyte char can't collide with a token byte (0x84..0xa1).
+            // Bug #1021 (assignment leg).
+            let c_is_ident = (c.is_ascii() && crate::ztype_h::iident(c as u8))
+                || (!c.is_ascii()
+                    && c.is_alphanumeric()
+                    && isset(crate::ported::zsh_h::MULTIBYTE)
+                    && !isset(crate::ported::zsh_h::POSIXIDENTIFIERS));
             let c_is_tok = (c as u32) < 0x100 && itok(c as u8);
             if !c_is_ident && c != Stringg && !c_is_tok {
                 return false;
@@ -6325,6 +6335,35 @@ mod tests {
             vec![INPAR_TOK, INPAR_TOK, STRING_LEX, OUTPAR_TOK, STRING_LEX, OUTPAR_TOK, ENDINPUT],
             "((a)b) — two OUTPARs preserved through cmd_or_math rewind"
         );
+    }
+
+    // Bug #1021 assignment leg: is_valid_assignment_target must accept a
+    // non-ASCII alphanumeric identifier under MULTIBYTE (c:lex.c:1233
+    // itype_end(t, INAMESPC, 0) → wcsitype IIDENT → iswalnum), so `日=x` /
+    // `café=y` lex as ENVSTRING assignments, not command words. ASCII behavior
+    // is unchanged (the added clause fires only for non-ASCII).
+    // The function validates the NAME part only (the token before `=`), so
+    // inputs here are bare identifiers, not `name=value`.
+    #[test]
+    fn assignment_target_accepts_multibyte_name() {
+        let _g = crate::test_util::global_state_lock();
+        // CLI sets MULTIBYTE on at init; the unit harness leaves it unwritten.
+        crate::ported::options::opt_state_set("multibyte", true);
+        // Non-ASCII names are valid assignment targets.
+        assert!(is_valid_assignment_target("日"));
+        assert!(is_valid_assignment_target("café"));
+        assert!(is_valid_assignment_target("変数"));
+        assert!(is_valid_assignment_target("v日")); // ASCII-prefixed multibyte
+        assert!(is_valid_assignment_target("日+")); // augment `+=` form (c:1241)
+        // ASCII targets still valid.
+        assert!(is_valid_assignment_target("foo"));
+        assert!(is_valid_assignment_target("foo_bar"));
+        // With POSIXIDENTIFIERS a multibyte name is NOT a valid target
+        // (c:utils.c:4348 wcsitype returns 0); ASCII stays valid.
+        crate::ported::options::opt_state_set("posixidentifiers", true);
+        assert!(!is_valid_assignment_target("日"));
+        assert!(is_valid_assignment_target("foo"));
+        crate::ported::options::opt_state_set("posixidentifiers", false);
     }
 
     // NOTE: full-case-construct lex parity is integration-only.

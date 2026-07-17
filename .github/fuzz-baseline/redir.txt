@@ -57,4 +57,13 @@
 # line would collapse them onto one signature, and baselining the failing one
 # would then mask the passing ones.
 #
+# NOCLOBBER / `>|` / `<>` / multiple-INPUT MULTIOS (verified-correct coverage):
+# the mode gated multiple-OUTPUT tee but not the clobber-control and read-side
+# forms. A dedicated arm now exercises `>` over an existing file under
+# NO_CLOBBER (errors "file exists", rc=1, target untouched — c:exec.c:4269), the
+# `>|` clobber override (c:4256), `<>` read-write (c:4310 O_RDWR), and two `<`
+# concatenating their inputs under MULTIOS. Each embeds a distinct tag
+# (`NOCLOB`/`CLOBBER`/`RDWR`/`MULTIIN`) for signature separation. All
+# hand-verified equal on both shells.
+#
 # Any divergence here is a regression.

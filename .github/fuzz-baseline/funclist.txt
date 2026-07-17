@@ -59,6 +59,29 @@
 # definitions, and assignments. Flat command lists agree no matter how the body
 # is rendered and prove nothing — that is precisely why this went unnoticed.
 #
+# UNBRACED SHORT-BODY form `f() CMD` / `function f () CMD` (verified-correct
+# coverage). The mode only ever wrapped bodies in braces (`f() { … }`); the
+# braceless short form (c:Src/parse.c:1747-1748 par_list1 — ONE command is the
+# body) was never listed. It was a real port bug, now FIXED:
+#
+#   par_funcdef / parse_inline_funcdef / parse_anon_funcdef took the unbraced
+#   arm via par_cmd but left `body_source: None`, so the shfunc carried no raw
+#   body and no C Eprog. printshfuncnode then had nothing to render and printed
+#   `f () { }` (empty) for EVERY short-form function — `f() print hi` listed
+#   with no body at all. The fix captures the raw body slice for the short form
+#   the same way the braced arm does (parse.rs:2504). The one subtlety is the
+#   lexer's one-token lookahead: pos() AFTER a zshlex is already past the next
+#   token, so body_start is recorded BEFORE each advance through `()` and the
+#   leading separators (the braced arm sidesteps this because the `{` is its own
+#   token and pos() sits right after it). A naive `pos()` capture dropped the
+#   body's FIRST WORD (`print hi` listed as `hi`).
+#
+#   The generator now emits `f () CMD` and `function f () CMD` (single-command
+#   bodies only — par_cmd stops at the first `;`) for a fraction of cases,
+#   including the nested-anon body `() print anon`, which drives the
+#   canonicalizer's recursive re-brace + indent (zsh lists it multi-line braced,
+#   not as the raw `() print anon`). All hand-verified equal on both shells.
+#
 # Two shapes are deliberately NOT generated, both known-divergent for reasons
 # upstream of the listing code. Including them would add ~163 signatures (every
 # body × verb pair gets its own) for two underlying bugs, and each line would
