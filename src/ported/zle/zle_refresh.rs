@@ -1069,6 +1069,24 @@ pub fn zrefresh() {
     if INLIST.load(Ordering::Relaxed) != 0 {
         return;
     }
+    // c:317/1006 — C's zrefresh consults `$zle_highlight` via
+    // zle_set_highlight() (which reads the array param itself,
+    // zle_refresh.c:317 `atrs = getaparam("zle_highlight")`). This was the
+    // missing production caller: zle_set_highlight previously had only test
+    // callers, so user `region:`/`special:`/`isearch:`/`suffix:` styles were
+    // parsed but never applied. Re-parse only when the array changes.
+    {
+        static LAST_ZLE_HIGHLIGHT: std::sync::Mutex<Option<Vec<String>>> =
+            std::sync::Mutex::new(None);
+        let cur = crate::ported::params::getaparam("zle_highlight");
+        let mut last = LAST_ZLE_HIGHLIGHT.lock().unwrap();
+        if *last != cur {
+            let owned = cur.clone().unwrap_or_default();
+            let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            zle_set_highlight(&mut highlight().lock().unwrap(), &refs);
+            *last = cur;
+        }
+    }
     // c:975 — full repaint pipeline. C writes every byte through
     //          `tputs(..., putshout)` / `fputs(..., shout)`. Rust
     //          collects the rendered escape stream into a String
@@ -4504,6 +4522,14 @@ pub fn compute_render_attrs() -> Vec<Option<TextAttr>> {
         for slot in attrs.iter_mut().take(end).skip(start) {
             *slot = Some(region.attr);
         }
+    }
+    // Native ZLE effects overlay (extensions/zle_fx.rs): the fish-ported
+    // syntax highlighter + autosuggestion ghost. Painted BELOW the user
+    // `$region_highlight` layer so script plugins always override the
+    // native engine.
+    {
+        let line_len = ZLELINE.lock().unwrap().len();
+        crate::zle_fx::native_render_attrs(&mut attrs, pre_len, line_len);
     }
     // c:1102-1116 — the user `$region_highlight` entries (parsed into
     // REGION_HIGHLIGHTS by set_region_highlight) paint over the line

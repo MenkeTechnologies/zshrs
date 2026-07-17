@@ -1759,6 +1759,14 @@ pub fn preprompt() {
         return;
     }
 
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native p10k engine (src/extensions/p10k): rebuild PROMPT/RPROMPT
+    // after the precmd hook so user precmd state is fresh. Equivalent
+    // to the zsh theme's `_p9k_precmd` running as the last precmd
+    // hook (p10k.zsh registers _p9k_precmd via add-zsh-hook). No-op
+    // unless the powerlevel10k theme source was intercepted.
+    crate::p10k::preprompt_render();
+
     // c:1582-1589 — periodic-hook dispatch on PERIOD cadence.
     if period > 0 {
         let now = std::time::SystemTime::now()

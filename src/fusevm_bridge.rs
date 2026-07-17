@@ -636,6 +636,28 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native p10k engine intercept (src/extensions/p10k): sourcing
+    // powerlevel10k.zsh-theme activates the Rust segment engine
+    // instead of executing the ~13k-line zsh theme. The user's
+    // `.p10k.zsh` CONFIG is NOT intercepted — it sources normally so
+    // its POWERLEVEL9K_* typesets land in the paramtab, which the
+    // engine reads live at every render. Placed here (the chokepoint
+    // every builtin route funnels through) so `source`, `.`, and
+    // `builtin source` all hit it.
+    if matches!(name, "source" | ".") {
+        if let Some(status) = crate::p10k::maybe_intercept_theme_source(&args) {
+            // Register a `p10k` stub function so `${+functions[p10k]}`
+            // guards in .zshrc templates stay truthy and `p10k
+            // finalize` / `p10k reload` calls succeed silently (the
+            // engine reads config live — reload is inherently a
+            // no-op).
+            try_with_executor(|exec| {
+                let _ = exec.execute_script("function p10k() { : }");
+            });
+            return status;
+        }
+    }
     // c:Src/exec.c:2700-2717 — `private` is an autoloaded builtin in
     // zsh (autofeature b:private of zsh/param/private): first use
     // runs ensurefeature → require_module → load_module → boot_,

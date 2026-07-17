@@ -945,7 +945,12 @@ pub fn zlecore() {
         // c:1151-1152 — `if (execzlefunc(bindk, ...)) handlefeep();`. Ring
         // the bell when the widget returns non-zero (e.g. an ambiguous
         // completion with LISTBEEP), or when the Thingy has no widget at all.
-        if let Some(widget) = &current_widget {
+        // Native ZLE effects (extensions/zle_fx.rs) get first refusal: suggestion
+        // accept and history-search keys are handled without running the widget,
+        // the way fish's reader commands intercept before readline dispatch.
+        if crate::zle_fx::on_pre_widget(&thingy.nam) {
+            // handled natively
+        } else if let Some(widget) = &current_widget {
             if execute_widget(widget) != 0 {
                 handle_feep();
             }
@@ -967,6 +972,11 @@ pub fn zlecore() {
         {
             ZLECS.fetch_sub(1, SeqCst);
         }
+        // Native ZLE effects recompute (extensions/zle_fx.rs): autosuggestion +
+        // syntax highlight refresh on every widget, before the repaint — the
+        // fish reader does the same per readline command (reader.rs
+        // update_autosuggestion / super_highlight_me_plenty).
+        crate::zle_fx::on_post_widget(&thingy.nam);
         redrawhook();
 
         // c:1192-1194 — `if (!kungetct) zrefresh();`. Repaint after EVERY
@@ -1195,6 +1205,10 @@ pub fn zleread(
     if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-line-finish") {
         let _ = execzlefunc("zle-line-finish", &["zle-line-finish".to_string()], 1, 0);
     }
+    // Native ZLE effects teardown (extensions/zle_fx.rs): drop the highlight
+    // overlay, ghost text, and any active history search so nothing bleeds
+    // into the next prompt.
+    crate::zle_fx::on_line_finish();
 
     // c:1387-1399 — `if (eofsent || errflag || exit_pending) { s = NULL; }
     //   else { zleline[zlell++] = ZWC('\n'); s = zlegetline(NULL, NULL); }`.
