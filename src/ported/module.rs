@@ -1338,23 +1338,28 @@ impl modulestab {
     /// Register all statically-compiled modules (replaces dlopen)
     fn register_builtin_modules(&mut self) {
         let builtin_modules = [
+            // Module→features MUST match the C BUILTIN() homes or a
+            // builtin's feature lookup (`b:<name>` against its home module)
+            // fails with "module `X' has no such feature". These were
+            // SCRAMBLED: compadd/compset (complete.c:1693-1694) were under
+            // zsh/computil, while the computil builtins (computil.c:5131-
+            // 5138) were under zsh/complete, so calling `compset` from a
+            // shell fn errored `module 'zsh/complete' has no such feature`.
+            ("zsh/complete", &["compadd", "compset"][..]), // complete.c:1693-1694
+            ("zsh/complist", &["complist"][..]),
             (
-                "zsh/complete",
+                "zsh/computil",
                 &[
-                    "compctl",
-                    "compcall",
-                    "comparguments",
-                    "compdescribe",
-                    "compfiles",
-                    "compgroups",
-                    "compquote",
-                    "comptags",
-                    "comptry",
-                    "compvalues",
+                    "comparguments", // computil.c:5131
+                    "compdescribe",  // c:5132
+                    "compfiles",     // c:5133
+                    "compgroups",    // c:5134
+                    "compquote",     // c:5135
+                    "comptags",      // c:5136
+                    "comptry",       // c:5137
+                    "compvalues",    // c:5138
                 ][..],
             ),
-            ("zsh/complist", &["complist"][..]),
-            ("zsh/computil", &["compadd", "compset"][..]),
             ("zsh/datetime", &["output_strftime"][..]),
             (
                 "zsh/files",
@@ -3527,6 +3532,42 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
         "zsh/zpty" => crate::ported::modules::zpty::features_(std::ptr::null(), features),
         "zsh/zselect" => crate::ported::modules::zselect::features_(std::ptr::null(), features),
         "zsh/zutil" => crate::ported::modules::zutil::features_(std::ptr::null(), features),
+        // The three statically-linked completion modules have no per-module
+        // features_() fn in the port, so they fell to `_ => 0` (EMPTY
+        // features). That broke `ensurefeature`: calling an autoloadable
+        // completion builtin (`compset`/`compadd` from a shell completer)
+        // looked up `b:<name>` against its home module and errored "module
+        // `zsh/X' has no such feature: `b:<name>'" (same class as the
+        // zsh/sched `b:sched` error). The feature surface is `b:<builtin>`
+        // per the C BUILTIN() homes (complete.c:1693-1694 / computil.c:5131-
+        // 5138 / compctl.c:4006-4007).
+        "zsh/complete" => {
+            for f in ["b:compadd", "b:compset"] {
+                features.push(f.to_string());
+            }
+            0
+        }
+        "zsh/computil" => {
+            for f in [
+                "b:comparguments",
+                "b:compdescribe",
+                "b:compfiles",
+                "b:compgroups",
+                "b:compquote",
+                "b:comptags",
+                "b:comptry",
+                "b:compvalues",
+            ] {
+                features.push(f.to_string());
+            }
+            0
+        }
+        "zsh/compctl" => {
+            for f in ["b:compctl", "b:compcall"] {
+                features.push(f.to_string());
+            }
+            0
+        }
         _ => 0,
     }
 }
