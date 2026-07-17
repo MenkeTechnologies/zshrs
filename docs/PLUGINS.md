@@ -322,8 +322,8 @@ zsh. Upstream forks a background process and coordinates through a
 `$PPID`-keyed statefile; the native port keeps the animator as an in-process
 **thread** and the running spinner in a `static` slot — no fork, no
 statefile, since `start`/`update`/`stop` now share memory. Shows how a plugin
-does concurrent/background work under a non-forking shell.
-`zpm add path:examples/plugin-revolver`.
+does concurrent/background work under a non-forking shell. Published as a
+standalone repo: `zpm add MenkeTechnologies/zshrs-revolver`.
 
 ## Porting an existing zsh plugin
 
