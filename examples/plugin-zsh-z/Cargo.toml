@@ -1,0 +1,18 @@
+# zsh-z (frecency directory jumper) ported to a native zshrs plugin.
+#   cargo build --manifest-path examples/plugin-zsh-z/Cargo.toml
+#   zmodload -R examples/plugin-zsh-z/target/debug/libzsh_z.dylib
+#   z <partial-dir>
+[package]
+name = "zsh_z"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "zsh_z"
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+[workspace]

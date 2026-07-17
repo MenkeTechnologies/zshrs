@@ -1,0 +1,7 @@
+[plugin]
+name = "zsh-z"
+version = "0.1.0"
+description = "zsh-z frecency directory jumper ported to a native zshrs plugin (z command)"
+
+[native]
+lib = "zsh_z"    # produces libzsh_z.{dylib,so}
