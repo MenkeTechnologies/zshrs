@@ -2413,6 +2413,7 @@ pub fn addmatches(
         0
     });
 
+    tracing::debug!(target: "compsys_args", group = dat.group.as_deref().unwrap_or("<none>"), exp = dat.exp.as_deref().unwrap_or("<none>"), nargs = argv.len(), doadd = dat.dpar.is_empty(), "addmatches group");
     if let Some(g) = dat.group.as_deref() {
         // c:2115
         endcmgroup(None); // c:2116
@@ -3573,6 +3574,17 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
     };
 
     let mask = CGF_NOSORT | CGF_UNIQALL | CGF_UNIQCON | CGF_MATSORT | CGF_NUMSORT | CGF_REVSORT;
+    // Rust-only correctness note (no C counterpart — C aliases `matches` to
+    // the current group's mlist so permmatches always sees live matches):
+    // the port keeps `matches` as a separate global flushed here, so a
+    // `permmatches` triggered mid-completion (e.g. a completer's
+    // `$compstate[nmatches]` read) can process a still-open group BEFORE its
+    // matches are flushed, cache nmatches with that group empty, and — since
+    // permmatches early-returns when `newmatches==0` — never re-count it
+    // after this flush. Every `compadd -J g2` past the first vanished. Mark
+    // `newmatches` when a flush actually moves matches into a group so the
+    // next permmatches recomputes instead of returning the stale cache.
+    let flushed_any = !m_snap.is_empty() || !fm_snap.is_empty();
     if let Ok(mut g) = amatches.get_or_init(|| Mutex::new(Vec::new())).lock() {
         if let Some(grp) = g
             .iter_mut()
@@ -3585,6 +3597,9 @@ pub fn endcmgroup(ylist: Option<Vec<String>>) {
             grp.ylist = yl;
             grp.new_ = new_;
         }
+    }
+    if flushed_any {
+        newmatches.store(1, Ordering::Relaxed);
     }
 }
 
