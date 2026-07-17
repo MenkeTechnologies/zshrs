@@ -3366,10 +3366,14 @@ pub fn iprintm(
 }
 
 /// Port of `int ilistmatches(Hookdef dummy, Chdata dat)` from
-/// `Src/Zle/compresult.c:2284`. Hook callback for the standard
+/// `Src/Zle/compresult.c:2284`. Hook callback (the DEFAULT function of the
+/// `comp_list_matches` hookdef — complete.c:1717) for the standard
 /// listing path: runs `calclist`, bails when `listdat.nlines == 0`,
-/// otherwise calls `printlist(0, iprintm, 0)`.
-pub fn ilistmatches() -> i32 {
+/// otherwise calls `printlist(0, iprintm, 0)`. The `dummy`/`dat` args
+/// mirror the C `(Hookdef, Chdata)` signature so this registers directly
+/// as a `Hookfn`; both are unused (the body reads the `amatches`/`listdat`
+/// globals as the C source does).
+pub fn ilistmatches(_dummy: *mut crate::ported::zsh_h::hookdef, _dat: *mut std::ffi::c_void) -> i32 {
     // c:2284
     let _ = calclist(0); // c:2286
                          // c:2288 — bail when listdat.nlines == 0 (no matches to display).
@@ -3427,22 +3431,24 @@ pub fn list_matches() -> i32 {
     let mut dat = Chdata::default();
     dat.matches = groups.into_iter().next().map(Box::new); // c:2317 first group head
     dat.num = nmatches_g.load(Relaxed); // c:2319
-                                        // c:2325 — `runhookdef(COMPLISTMATCHESHOOK, &dat)` fires every
-                                        // registered Hookfn; first non-zero short-circuits per HOOKF_ALL.
-                                        // When `gethookdef` returns NULL (no module registered a handler)
-                                        // or `runhookdef` returns 0 with no Hookfns, fall through to the
-                                        // canonical `ilistmatches` renderer.
-    let h = crate::ported::module::gethookdef("complist-matches");
-    let handled = if !h.is_null() {
+                                        // c:2325 — `ret = runhookdef(COMPLISTMATCHESHOOK, &dat)`.
+    // COMPLISTMATCHESHOOK == the `comp_list_matches` hookdef (comp.h:451),
+    // registered at zle boot (zle_main.rs boot_) with `def = ilistmatches`
+    // and flags 0. When zsh/complist is loaded it adds `complistmatches`
+    // as a func → colored/columned/menu listing; otherwise runhookdef
+    // falls back to the `def` (ilistmatches, plain). NO manual fallback
+    // here — the earlier port looked up the wrong name ("complist-matches"
+    // vs C "comp_list_matches"), always missed the hookdef, and hard-called
+    // the plain `ilistmatches`, so `list-colors`/`group-colors` and every
+    // other complist-painted style were silently dropped.
+    let h = crate::ported::module::gethookdef("comp_list_matches");
+    if !h.is_null() {
         let dat_ptr = (&mut dat) as *mut Chdata as *mut std::ffi::c_void;
-        crate::ported::module::runhookdef(h, dat_ptr) != 0
+        crate::ported::module::runhookdef(h, dat_ptr)
     } else {
-        false
-    };
-    if !handled {
-        ilistmatches();
+        // Hookdef not registered (ZLE module not booted) — plain listing.
+        ilistmatches(std::ptr::null_mut(), std::ptr::null_mut())
     }
-    0
 }
 
 /// Port of `mod_export int invalidate_list(void)` from
@@ -4500,7 +4506,7 @@ mod tests {
     #[test]
     fn ilistmatches_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
-        let _: i32 = ilistmatches();
+        let _: i32 = ilistmatches(std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     /// c:1683 — `list_matches` returns i32.

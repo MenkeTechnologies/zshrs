@@ -814,15 +814,26 @@ pub fn listmatches() {
     // c:398 — `runhookdef(LISTMATCHESHOOK, NULL)`. Returns nonzero
     // when a Hookfn handled it; 0 (or no handler registered) falls
     // through to the default renderer.
-    let h = crate::ported::module::gethookdef("list-matches");
+    // C hook name is `list_matches` (zle_main.c:2221, LISTMATCHESHOOK),
+    // NOT `list-matches` — the earlier port's hyphen meant gethookdef
+    // always missed and the fallback hard-called `ilistmatches`, skipping
+    // `list_matches` (compresult.c:2304) and therefore the whole
+    // `comp_list_matches` sub-hook that routes to complist's colored
+    // renderer. When the ZLE `list_matches` hookdef isn't registered as a
+    // dispatchable func chain yet, fall back to `list_matches` directly (the
+    // C default handler of LISTMATCHESHOOK) — NOT `ilistmatches` — so the
+    // `comp_list_matches` → complistmatches (colored) path still runs.
+    let h = crate::ported::module::gethookdef("list_matches");
     let handled = if !h.is_null() {
         crate::ported::module::runhookdef(h, std::ptr::null_mut()) != 0
     } else {
         false
     };
     if !handled {
-        // Default handler — ilistmatches (compresult.c:2284).
-        let _ = crate::ported::zle::compresult::ilistmatches();
+        // Default handler — list_matches (compresult.c:2304), which fires
+        // the comp_list_matches hook (→ complistmatches when zsh/complist
+        // is loaded, else ilistmatches).
+        let _ = crate::ported::zle::compresult::list_matches();
     }
 }
 

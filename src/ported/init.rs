@@ -1099,6 +1099,18 @@ pub fn setupvals(cmd: Option<&str>, runscript: Option<&str>, zsh_name: &str) {
         let base = zshhooks.load(std::sync::atomic::Ordering::SeqCst);
         let _ = crate::ported::module::addhookdefs(std::ptr::null(), base, 4);
     }
+    // In C the `zsh/zle` module's boot_ (zle_main.c:2301) registers the
+    // before_trap/after_trap hookfuncs AND the comphooks[] hookdefs
+    // (insert_match, menu_start, compctl_make, compctl_cleanup,
+    // comp_list_matches with def=ilistmatches). zshrs static-links ZLE, and
+    // `zmodload zsh/zle` routes to features_, not boot_, so that
+    // registration never happened — leaving `comp_list_matches` unregistered
+    // so `list_matches` fell straight to the plain uncolored `ilistmatches`
+    // and `zmodload zsh/complist`'s `addhookfunc` had no hookdef to attach
+    // `complistmatches` to (every list-colors/group-colors style dropped).
+    // Run the ZLE module boot once here at startup; addhookdef's duplicate
+    // guard makes a later real boot_ idempotent.
+    let _ = crate::ported::zle::zle_main::boot_(std::ptr::null());
     // init_eprog();                                                         // c:1087
     // zero_mnumber.type = MN_INTEGER; zero_mnumber.u.l = 0;                 // c:1089-1090
 
