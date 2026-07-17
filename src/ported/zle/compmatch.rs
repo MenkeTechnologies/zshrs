@@ -568,8 +568,15 @@ pub fn start_match() {
         .unwrap()
         .clear();
     // c:305 — `matchparts = matchlastpart = matchsubs = matchlastsub = NULL`.
+    // All FOUR must reset. Omitting MATCHLASTPART/MATCHLASTSUB left them stale
+    // across matches: the next add_match_part read a Some MATCHLASTPART and took
+    // the append branch (`lastpart->next = p`) against the disconnected old tail
+    // while MATCHPARTS head stayed None, so `pli = matchparts` came back empty —
+    // partial-match Cline lost (e.g. `ls /dir/a<TAB>` dropped the typed `a`).
     *MATCHPARTS.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
+    *MATCHLASTPART.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
     *MATCHSUBS.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
+    *MATCHLASTSUB.get_or_init(|| Mutex::new(None)).lock().unwrap() = None;
 }
 
 /// Port of `abort_match()` from `Src/Zle/compmatch.c:312`.
