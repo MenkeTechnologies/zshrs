@@ -295,32 +295,32 @@ zshrs   # interactive
 `kubectl` completion that delegates to cobra's `kubectl __complete`, so it
 tracks the installed kubectl version (subcommands, flags, live resources)
 with no static tree to maintain. Published as:
-`zpm add MenkeTechnologies/zshrs-kubectl-completion`.
+`zpm load MenkeTechnologies/zshrs-kubectl-completion`.
 
 [`plugin-forgit/`](../examples/plugin-forgit/) — the **forgit** git+fzf
 plugin ported command-for-command from zsh (`ga glo gd gcf …`). See
 [PORTING_ZSH_PLUGIN.md](PORTING_ZSH_PLUGIN.md) for the full zsh→Rust
 walkthrough. Published as a standalone repo:
-`zpm add MenkeTechnologies/zshrs-forgit`.
+`zpm load MenkeTechnologies/zshrs-forgit`.
 
 [`plugin-git-fuzzy/`](../examples/plugin-git-fuzzy/) — **git-fuzzy**'s
 `status` command: a *self-reentrant* fzf UI (every preview/keybind
 re-invokes a helper, plus a `--listen` live-reload watcher). Shows the shim
 technique that lets fzf binds reach native builtins — see the "self-reentrant
 fzf tools" section of the porting guide. Published as:
-`zpm add MenkeTechnologies/zshrs-git-fuzzy`.
+`zpm load MenkeTechnologies/zshrs-git-fuzzy`.
 
 [`plugin-zsh-z/`](../examples/plugin-zsh-z/) — **zsh-z**, the frecency
 directory jumper (`z <partial>`), reimplemented in Rust: the `~/.z` datafile,
 the frecency formula, aging, matching, and all `z` options. `cd` is delegated
 to the shell (`host.eval`) so `$PWD`/hooks stay correct; a `chpwd` hook does
-the recording. Published as: `zpm add MenkeTechnologies/zshrs-zsh-z`.
+the recording. Published as: `zpm load MenkeTechnologies/zshrs-zsh-z`.
 
 [`plugin-git-repos/`](../examples/plugin-git-repos/) — **zsh-git-repo-cache**:
 scan the filesystem for every git repo, cache it, and `fzf`-pick one to `cd`
 into, with `--clean`/`--dirty` filters. The shell version does a sequential
 `git status` per repo; the native version classifies **in parallel across
-threads** — a real speedup. Published as: `zpm add MenkeTechnologies/zshrs-git-repos`.
+threads** — a real speedup. Published as: `zpm load MenkeTechnologies/zshrs-git-repos`.
 
 [`plugin-revolver/`](../examples/plugin-revolver/) — **revolver**, the
 progress spinner (`revolver start/update/stop/demo`, 55 styles), ported from
@@ -329,7 +329,7 @@ zsh. Upstream forks a background process and coordinates through a
 **thread** and the running spinner in a `static` slot — no fork, no
 statefile, since `start`/`update`/`stop` now share memory. Shows how a plugin
 does concurrent/background work under a non-forking shell. Published as a
-standalone repo: `zpm add MenkeTechnologies/zshrs-revolver`.
+standalone repo: `zpm load MenkeTechnologies/zshrs-revolver`.
 
 ## Porting an existing zsh plugin
 
