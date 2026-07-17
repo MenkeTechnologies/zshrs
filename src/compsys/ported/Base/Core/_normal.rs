@@ -143,12 +143,18 @@ pub fn _normal(args: &[String]) -> i32 {
         curcontext.push_str(":-command-:");
         let _ = setsparam("curcontext", &curcontext);
 
-        // sh:30 — look up `$_comps[-command-]`
-        let comps = getaparam("_comps").unwrap_or_default();
-        let comp = comps
-            .chunks(2)
-            .find(|kv| kv.first().map(|k| k == "-command-").unwrap_or(false))
-            .and_then(|kv| kv.get(1).cloned())
+        // sh:30 — look up `$_comps[-command-]`.
+        // `_comps` is a PM_HASHED associative array, so `getaparam("_comps")`
+        // returns EMPTY (flat-array read of a hash) — the old chunks(2) lookup
+        // always found nothing, so command-position completion (typing a
+        // command word + TAB, e.g. `whoa`→`whoami`, `bindke`→`bindkey`) never
+        // ran. Read the hashed storage directly, like `_complete`/`_dispatch`
+        // (compsys_param_completion_fixed). Bug: `$_comps[-command-]` came back
+        // empty even though the shell saw it set to `_autocd`.
+        let comp = crate::ported::params::paramtab_hashed_storage()
+            .lock()
+            .ok()
+            .and_then(|t| t.get("_comps").and_then(|h| h.get("-command-").cloned()))
             .unwrap_or_default();
         if !comp.is_empty() {
             // sh:31  eval "$comp" — dispatch via exec_hook
