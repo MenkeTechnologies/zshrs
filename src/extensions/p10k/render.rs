@@ -1101,6 +1101,23 @@ pub fn render_prompt(
         _ => 80,
     };
 
+    // p10k:7972-7982 — LEFT_SEGMENT_END_SEPARATOR (icon-table default
+    // ' ', icons.zsh:428): appended AFTER the last line's suffix with a
+    // %b%k%f reset — the single space real p10k leaves between the
+    // prompt char and the cursor. Under PROMPT_ON_NEWLINE it rides the
+    // second-to-last line instead (p10k:7977-7980).
+    let end_sep_line = {
+        let v = get_icon(None, "LEFT_SEGMENT_END_SEPARATOR", "");
+        if v.is_empty() {
+            usize::MAX // p10k:7973 — empty icon appends nothing
+        } else if p9k_global("PROMPT_ON_NEWLINE", "") == "true" && num_lines >= 2 {
+            num_lines - 2
+        } else {
+            num_lines - 1
+        }
+    };
+    let end_sep = get_icon(None, "LEFT_SEGMENT_END_SEPARATOR", "");
+
     let mut rprompt = String::new();
     for i in 0..num_lines {
         let (lsegs, rsegs) = line_pair(i);
@@ -1110,6 +1127,11 @@ pub fn render_prompt(
         // p10k:7998/8008/8035 — frame prefix goes BEFORE the line body.
         let mut line = left_frame_prefix(i, num_lines);
         line.push_str(&render_left_line(lsegs));
+        if i == end_sep_line {
+            // p10k:7974 — `_p9k__ret+=%b%k%f` after the icon.
+            line.push_str(&end_sep);
+            line.push_str("%b%k%f");
+        }
 
         if i + 1 == num_lines {
             prompt.push_str(&line);
