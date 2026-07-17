@@ -1345,6 +1345,41 @@ mod tests {
         assert_eq!(fix_backspace_hack("plain"), "plain");
     }
 
+    /// p10k:649 — LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL: a SEGMENT-SCOPED
+    /// param set to EMPTY must suppress the closer glyph even when the
+    /// bare global is set (the user config's
+    /// `POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL=`
+    /// vs global `…=''` — real p10k paints nothing after `❯`).
+    #[test]
+    fn segment_scoped_empty_end_symbol_suppresses_closer() {
+        locked(|| {
+            use crate::ported::params::{setsparam, unsetparam};
+            setsparam("POWERLEVEL9K_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", "\u{E0BC}");
+            setsparam("POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", "");
+            assert_eq!(
+                crate::ported::params::getsparam(
+                    "POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL"
+                ),
+                Some(String::new()),
+                "set-empty scalar must read back as Some(\"\")"
+            );
+            assert_eq!(
+                p9k_param("prompt_char", None, "LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL", "MISS"),
+                "",
+                "scoped-empty must win the probe chain"
+            );
+            let pc = seg("prompt_char", "\u{276F}", "076", "");
+            let line = render_left_line(&[pc]);
+            unsetparam("POWERLEVEL9K_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL");
+            unsetparam("POWERLEVEL9K_PROMPT_CHAR_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL");
+            assert!(
+                !line.contains('\u{E0BC}'),
+                "scoped-empty end symbol must beat the global: {:?}",
+                line.escape_debug().to_string()
+            );
+        });
+    }
+
     /// Empty color specs must emit the reset escapes (%f/%k), never the
     /// empty-brace forms `%F{}`/`%K{}` (zshrs's expander paints those
     /// as palette 0; p10k never emits them).
