@@ -2227,13 +2227,25 @@ pub fn clprintm(
         // rendering inside clnicezputs.
         let mut subcols = 0i32;
         // helper: emit mcolors.files[idx] cap for the group (C zcputs).
+        // A cap read from termcap (COL_MA/COL_EC when getcols took the
+        // TCSTANDOUTBEG branch) is ALREADY a complete escape sequence
+        // (e.g. "\e[7m"); `zlrputs` SGR-wraps its argument ("\e[{cap}m"),
+        // which would double-wrap that into "\e[\e[7mm" garbage — the menu
+        // selection highlight rendered as nothing. Emit an already-escaped
+        // cap raw; SGR-wrap only bare LS_COLORS codes like "7" / "1;35".
         let emit_filecol = |idx: usize| {
             let cap = MCOLORS
                 .lock()
                 .ok()
                 .and_then(|mc| mc.files.get(idx).map(|f| f.col.clone()))
                 .unwrap_or_default();
-            let _ = zlrputs(&cap);
+            if cap.starts_with('\x1b') {
+                let fd = SHTTY.load(Ordering::Relaxed);
+                let out = if fd >= 0 { fd } else { 1 };
+                let _ = write_loop(out, cap.as_bytes());
+            } else {
+                let _ = zlrputs(&cap);
+            }
         };
         if m_ref.gnum == mselect {
             emit_filecol(COL_MA); // c:1866
@@ -2778,7 +2790,7 @@ pub fn complistmatches(
             // c:2108
             singledraw(); // c:2109
         }
-    } else if compprintlist(if mselect >= 0 { 1 } else { 0 }) == 0           // c:2110
+    } else if compprintlist(if mselect >= 0 { 1 } else { 0 }) == 0
         || clearflag == 0
     {
         NOSELECT.store(1, Ordering::SeqCst); // c:2111
