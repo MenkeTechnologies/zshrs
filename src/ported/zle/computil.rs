@@ -7930,6 +7930,31 @@ pub fn bin_compfiles(
 
     match sub {
         b'p' | b'P' => {
+            // `_path_files` rewrites `$PREFIX`/`$SUFFIX` for each path component
+            // then calls compfiles; cf_pats/cfp_opt_pats build the glob from the
+            // compprefix/compsuffix GLOBALS. In C those globals ARE the params
+            // (gsu-bound); the Rust compparams aren't bound, and only addmatches
+            // (compadd) refreshes them — so compfiles read a STALE prefix
+            // (globbed the previous component's `sub*` for the final component
+            // `al`, so `cmd /a/b/c/pre<TAB>` never matched). Mirror addmatches'
+            // refresh here. (Same block as compcore.rs addmatches; no C fn — the
+            // C binding is implicit, so this stays inline rather than a helper.)
+            if crate::ported::zle::complete::INCOMPFUNC.load(Ordering::Relaxed) != 0 {
+                for (param, global) in [
+                    ("PREFIX", &crate::ported::zle::complete::COMPPREFIX),
+                    ("SUFFIX", &crate::ported::zle::complete::COMPSUFFIX),
+                    ("IPREFIX", &crate::ported::zle::complete::COMPIPREFIX),
+                    ("ISUFFIX", &crate::ported::zle::complete::COMPISUFFIX),
+                ] {
+                    if let Some(v) = crate::ported::params::getsparam(param) {
+                        if let Ok(mut g) =
+                            global.get_or_init(|| std::sync::Mutex::new(String::new())).lock()
+                        {
+                            *g = v;
+                        }
+                    }
+                }
+            }
             // c:4981
             // c:4983 — `if (args[0][2] && (args[0][2] != '-' || args[0][3]))`
             // reject: the only valid forms are `-p`/`-P` (no 3rd char) or
