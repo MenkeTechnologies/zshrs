@@ -54,15 +54,17 @@ fn split_lower_prefix(rest: &str) -> (&str, &str) {
 /// of bug entirely (segment names are `[a-z0-9_]` by the split).
 fn probe_names(segment: &str, state: Option<&str>, param: &str) -> [String; 3] {
     // p10k:481 — `${1//-/_}`: dashes in the style name become
-    // underscores before matching. Callers may pass either "dir" or
-    // the full "prompt_dir" form; normalize to the full form _p9k_param
-    // receives.
+    // underscores before matching. C callers pass `$0` — the segment
+    // FUNCTION name `prompt_<segment>` (prompt_char's is
+    // prompt_prompt_char). zshrs callers pass the BARE segment name,
+    // prefixed unconditionally here: the old "already prefixed?"
+    // heuristic mis-split the segment literally named "prompt_char"
+    // as segment "char", so its scoped POWERLEVEL9K_PROMPT_CHAR_*
+    // params were never probed (the user config's scoped-empty
+    // LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL lost to the bare global —
+    // a stray end-symbol glyph painted after the prompt char).
     let seg = segment.replace('-', "_");
-    let mut name = if seg.starts_with("prompt_") {
-        seg
-    } else {
-        format!("prompt_{seg}")
-    };
+    let mut name = format!("prompt_{seg}");
     if let Some(st) = state {
         name.push('_');
         name.push_str(st);
@@ -262,10 +264,14 @@ mod tests {
     /// be double-prefixed.
     #[test]
     fn full_prompt_prefixed_segment_accepted() {
+        // The segment arg is BARE by contract (probe_names prepends
+        // `prompt_` unconditionally). The old "accept prompt_dir too"
+        // heuristic mis-split the segment literally named prompt_char
+        // as segment "char"; this pins the collision case.
         with_exec(|| {
-            setsparam("POWERLEVEL9K_DIR_TESTFG7", "31");
-            assert_eq!(p9k_param("prompt_dir", None, "TESTFG7", "def"), "31");
-            unsetparam("POWERLEVEL9K_DIR_TESTFG7");
+            setsparam("POWERLEVEL9K_PROMPT_CHAR_TESTFG7", "31");
+            assert_eq!(p9k_param("prompt_char", None, "TESTFG7", "def"), "31");
+            unsetparam("POWERLEVEL9K_PROMPT_CHAR_TESTFG7");
         });
     }
 
