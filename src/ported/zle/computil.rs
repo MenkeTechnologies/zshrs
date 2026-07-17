@@ -968,10 +968,20 @@ pub fn cd_init(
     disp: i32,
 ) -> i32 {
     // c:485 — discard prior parsed state.
+    // DEADLOCK GUARD: freecdsets drains cd_state.runs and takes the
+    // cd_state lock itself (freecdsets c:116-119) — the sets must be
+    // moved OUT and the guard DROPPED before calling it. Holding the
+    // guard across the call self-deadlocked the main thread on the
+    // SECOND completion pass of every Tab (pass A leaves parsed sets;
+    // pass B's cd_init frees them) — the shell wedged spinning-parked
+    // with the tty in cooked mode.
     if cd_parsed.load(Ordering::Relaxed) != 0 {
-        let mut st = cd_state.lock().unwrap();
-        st.sep = None;
-        freecdsets(st.sets.take());
+        let old_sets = {
+            let mut st = cd_state.lock().unwrap();
+            st.sep = None;
+            st.sets.take()
+        };
+        freecdsets(old_sets);
         cd_parsed.store(0, Ordering::Relaxed);
     }
 
@@ -1014,9 +1024,14 @@ pub fn cd_init(
         let Some(mat_arr) = get_user_var(Some(arg.as_str())) else {
             // c:515
             zwarnnam(nam, &format!("invalid argument: {}", arg));
-            let mut st = cd_state.lock().unwrap();
-            st.sep = None;
-            freecdsets(st.sets.take());
+            // Guard dropped before freecdsets — see the deadlock note at
+            // the top of this fn.
+            let old_sets = {
+                let mut st = cd_state.lock().unwrap();
+                st.sep = None;
+                st.sets.take()
+            };
+            freecdsets(old_sets);
             return 1;
         };
         idx += 1;
@@ -1055,9 +1070,14 @@ pub fn cd_init(
         if idx < args.len() && !args[idx].starts_with('-') {
             let Some(match_arr) = get_user_var(Some(args[idx].as_str())) else {
                 zwarnnam(nam, &format!("invalid argument: {}", args[idx]));
-                let mut st = cd_state.lock().unwrap();
-                st.sep = None;
-                freecdsets(st.sets.take());
+                // Guard dropped before freecdsets — see the deadlock note
+                // at the top of this fn.
+                let old_sets = {
+                    let mut st = cd_state.lock().unwrap();
+                    st.sep = None;
+                    st.sets.take()
+                };
+                freecdsets(old_sets);
                 return 1;
             };
             for (i, m) in match_arr.iter().enumerate() {
