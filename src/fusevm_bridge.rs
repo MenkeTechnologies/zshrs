@@ -648,15 +648,21 @@ pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     if matches!(name, "source" | ".") {
         if let Some(status) = crate::p10k::maybe_intercept_theme_source(&args) {
             // Register a `p10k` stub function so `${+functions[p10k]}`
-            // guards in .zshrc templates stay truthy and `p10k
-            // finalize` / `p10k reload` calls succeed silently (the
-            // engine reads config live — reload is inherently a
-            // no-op).
+            // guards in .zshrc templates stay truthy. The body forwards
+            // to the bridge-intercepted `zshrs-p10k-api` name so
+            // `p10k segment` (custom-segment protocol) and the other
+            // API subcommands reach the native engine (p10k_api).
             try_with_executor(|exec| {
-                let _ = exec.execute_script("function p10k() { : }");
+                let _ = exec.execute_script("function p10k() { zshrs-p10k-api \"$@\" }");
             });
             return status;
         }
+    }
+    // Native p10k API dispatch — the `p10k` stub function forwards
+    // here (see the theme intercept above). Must run before the
+    // generic builtintab lookup: the name is not a real builtin.
+    if let Some(status) = crate::p10k::maybe_intercept_command(name, &args) {
+        return status;
     }
     // c:Src/exec.c:2700-2717 — `private` is an autoloaded builtin in
     // zsh (autofeature b:private of zsh/param/private): first use
@@ -12974,6 +12980,15 @@ impl ShellExecutor {
     /// the tree-walker's `execute_external` rather than a plain
     /// `Command::new` shortcut. Returns the exit status.
     pub fn host_exec_external(&mut self, args: &[String]) -> i32 {
+        // Native p10k API: the `p10k(){ zshrs-p10k-api "$@" }` stub's
+        // body lands here (the name is neither function nor builtin).
+        // Route into the engine instead of a PATH miss.
+        if let Some(name) = args.first() {
+            if let Some(status) = crate::p10k::maybe_intercept_command(name, &args[1..]) {
+                self.set_last_status(status);
+                return status;
+            }
+        }
         // If a glob expansion in this command's argv triggered the
         // nomatch error path, suppress the actual exec and return
         // status 1 — mirrors zsh's command-aborted-on-glob-error

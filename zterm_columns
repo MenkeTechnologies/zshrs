@@ -1,0 +1,6 @@
+23:18  up 12:29, 4 users, load averages: 7.11 4.62 4.00
+USER       TTY      FROM    LOGIN@  IDLE WHAT
+wizard     console  -      10:50   12:28 -
+wizard     s000     -      21:20       - ztmux
+wizard     s007     -      21:20       4 htoprs
+wizard     s008     -      21:20       4 iftoprs

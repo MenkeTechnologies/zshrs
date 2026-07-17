@@ -11,12 +11,17 @@
 //! that fork (vm_stat, pmset, todo.sh, task).
 //!
 //! Phase-1 scope notes (each also traced at the call site):
-//! - battery: macOS `pmset -g batt` only; the Linux
-//!   /sys/class/power_supply reader (p10k:1409-1459) is unported —
-//!   hidden on Linux.
-//! - wifi: Apple removed the private airport CLI p10k shells out to
-//!   (p10k:5211-5224); segment is hidden rather than faked. TODO:
-//!   CoreWLAN-equivalent data source.
+//! - battery: macOS `pmset -g batt` (p10k:1381-1406) and the Linux
+//!   /sys/class/power_supply reader (p10k:1409-1459) are both ported.
+//! - wifi: the Linux arm (/proc/net/wireless + `iw dev <iface> link`,
+//!   p10k:5230-5286) is ported behind a 10s TTL. On macOS the segment
+//!   stays hidden: Apple removed the private airport CLI p10k shells
+//!   out to (p10k:5213-5224), and every replacement measured on this
+//!   box fails — `system_profiler SPAirPortDataType` takes ~17s wall
+//!   (16.9s measured; `-detailLevel mini` is equally slow AND drops
+//!   the Signal/Transmit fields), `wdutil info` requires sudo, and
+//!   `ipconfig getsummary` redacts the SSID and has no RSSI. TODO:
+//!   CoreWLAN-equivalent data source. Hidden rather than faked.
 //! - vi_mode: zshrs has no `vivis`/`vivli` keymaps (zsh core doesn't
 //!   either); VISUAL is detected as vicmd + region_active, exactly the
 //!   `vicmd1` arm of p10k:4203-4204.
@@ -32,7 +37,7 @@
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
 use crate::extensions::p10k::render::Segment;
-use crate::ported::params::{getaparam, getsparam};
+use crate::ported::params::{getaparam, getsparam, setsparam};
 use crate::ported::utils::getkeystring;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -828,15 +833,150 @@ fn battery_status() -> Option<(&'static str, i64, String)> {
     Some((state, bat_percent, remain))
 }
 
-/// Linux battery: the /sys/class/power_supply reader (p10k:1409-1459)
-/// is unported — hidden. TODO(phase-2).
+/// `_p9k_read_file` (p10k:1300-1304) over an alternation glob: zsh
+/// expands `(a|b|c)(N)` in name-sorted order and _p9k_read_file reads
+/// ONLY `$1` — the first existing file wins, with no fallthrough to
+/// the next name when the read fails or the first line is empty.
+/// Callers pass `names` pre-sorted to match glob order.
+#[cfg(not(target_os = "macos"))]
+fn read_file_first(dir: &std::path::Path, names: &[&str]) -> Option<String> {
+    let path = names.iter().map(|n| dir.join(n)).find(|p| p.exists())?;
+    // p10k:1302 — IFS='' read -r: the first line, newline stripped.
+    let content = std::fs::read_to_string(path).ok()?;
+    let line = content.lines().next().unwrap_or("").to_string();
+    // p10k:1303 — [[ -n $_p9k__ret ]]
+    (!line.is_empty()).then_some(line)
+}
+
+/// read_file_first + integer parse. zsh assigns the raw string to a
+/// `local -i`; non-numeric sysfs content (never observed) is treated
+/// as an absent file instead of a math error.
+#[cfg(not(target_os = "macos"))]
+fn read_file_int(dir: &std::path::Path, names: &[&str]) -> Option<i64> {
+    read_file_first(dir, names)?.trim().parse::<i64>().ok()
+}
+
+/// Linux battery: the /sys/class/power_supply reader, the
+/// `Linux|Android` arm of `_p9k_prompt_battery_set_args`
+/// (p10k:1408-1459). Pure sysfs reads — no fork, no cache needed.
 #[cfg(not(target_os = "macos"))]
 fn battery_status() -> Option<(&'static str, i64, String)> {
-    tracing::debug!(
-        target: "p10k",
-        "battery: Linux /sys/class/power_supply reader unported — hidden"
-    );
-    None
+    // p10k:1409 — See https://sourceforge.net/projects/acpiclient.
+    // p10k:1410 — bats=( /sys/class/power_supply/(CMB*|BAT*|battery)/(FN) ):
+    // the trailing `/` resolves the sysfs symlinks, (F) keeps non-empty
+    // directories (is_dir() follows the symlink; sysfs battery dirs are
+    // never empty), sorted in glob (name) order.
+    let rd = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    let mut bats: Vec<PathBuf> = rd
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name();
+            let n = n.to_string_lossy();
+            n.starts_with("CMB") || n.starts_with("BAT") || n == "battery"
+        })
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    bats.sort();
+    // p10k:1411 — (( $#bats )) || return
+    if bats.is_empty() {
+        return None;
+    }
+
+    // p10k:1413-1414 — accumulators (`is_charching` sic, the spec's
+    // spelling).
+    let mut energy_now: i64 = 0;
+    let mut energy_full: i64 = 0;
+    let mut power_now: i64 = 0;
+    let mut is_full = true;
+    let mut is_calculating = false;
+    let mut is_charching = false;
+    for dir in &bats {
+        // p10k:1417 — local -i pow=0 full=0
+        let mut pow: i64 = 0;
+        let mut full: i64 = 0;
+        // p10k:1418-1420 — (energy_full|charge_full|charge_counter)(N)
+        // in glob order: charge_counter, charge_full, energy_full.
+        if let Some(v) = read_file_int(dir, &["charge_counter", "charge_full", "energy_full"]) {
+            full = v;
+            energy_full += v; // p10k:1419
+        }
+        // p10k:1421-1423 — (power|current)_now(N) (glob order:
+        // current_now, power_now), only when the RAW STRING is shorter
+        // than 9 chars: (( $#_p9k__ret < 9 )) filters bogus readings.
+        if let Some(s) = read_file_first(dir, &["current_now", "power_now"]) {
+            if s.len() < 9 {
+                if let Ok(v) = s.trim().parse::<i64>() {
+                    pow = v;
+                    power_now += v; // p10k:1422
+                }
+            }
+        }
+        if let Some(cap) = read_file_int(dir, &["capacity"]) {
+            // p10k:1424-1425 — (( energy_now += ret * full / 100. + 0.5 )):
+            // float math, truncated on store into the `local -i`.
+            energy_now = (energy_now as f64 + cap as f64 * full as f64 / 100.0 + 0.5) as i64;
+        } else if let Some(v) = read_file_int(dir, &["charge_now", "energy_now"]) {
+            energy_now += v; // p10k:1426-1427
+        }
+        // p10k:1429 — status unreadable → `|| continue` (skip the flag
+        // updates; the energy sums above are already accumulated).
+        let Some(bat_status) = read_file_first(dir, &["status"]) else {
+            continue;
+        };
+        if bat_status != "Full" {
+            is_full = false; // p10k:1430
+        }
+        if bat_status == "Charging" {
+            is_charching = true; // p10k:1431
+        }
+        if (bat_status == "Charging" || bat_status == "Discharging") && pow == 0 {
+            is_calculating = true; // p10k:1432
+        }
+    }
+
+    // p10k:1435 — (( energy_full )) || return
+    if energy_full == 0 {
+        return None;
+    }
+    // p10k:1437 — bat_percent=$(( 100. * energy_now / energy_full + 0.5 )):
+    // float, truncated into the `local -i`.
+    let mut bat_percent = (100.0 * energy_now as f64 / energy_full as f64 + 0.5) as i64;
+    // p10k:1438 — (( bat_percent > 100 )) && bat_percent=100
+    if bat_percent > 100 {
+        bat_percent = 100;
+    }
+
+    let mut remain = String::new();
+    let state: &'static str;
+    if is_full || (bat_percent == 100 && is_charching) {
+        state = "CHARGED"; // p10k:1440-1441
+    } else {
+        state = if is_charching {
+            "CHARGING" // p10k:1443-1444
+        } else if bat_percent < global_int("BATTERY_LOW_THRESHOLD", 10) {
+            "LOW" // p10k:1445 + 7266
+        } else {
+            "DISCONNECTED" // p10k:1448
+        };
+        if power_now > 0 {
+            // p10k:1451-1452 — remaining energy: to-full when charging,
+            // to-empty when discharging.
+            let e = if is_charching {
+                energy_full - energy_now
+            } else {
+                energy_now
+            };
+            let minutes = 60 * e / power_now; // p10k:1453
+            if minutes > 0 {
+                // p10k:1454 — $((minutes/60)):${(l#2##0#)$((minutes%60))}
+                remain = format!("{}:{:02}", minutes / 60, minutes % 60);
+            }
+        } else if is_calculating {
+            remain = "...".to_string(); // p10k:1455-1456
+        }
+    }
+    Some((state, bat_percent, remain))
 }
 
 fn battery_segments() -> Vec<Segment> {
@@ -897,13 +1037,169 @@ fn battery_segments() -> Vec<Segment> {
 // wifi (p10k:5186-5240)
 // ---------------------------------------------------------------------
 
+/// p10k:5240-5244 — the single connected interface out of
+/// /proc/net/wireless: drop the two `|` header lines, require exactly
+/// one data line, validate `iface: state rssi noise` field shapes.
+/// Returns (iface, rssi, noise).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn parse_proc_wireless(content: &str) -> Option<(String, String, String)> {
+    // p10k:5237 — lines=(${${(f)...}:#*\|*}): filter out header lines.
+    let lines: Vec<&str> = content.lines().filter(|l| !l.contains('|')).collect();
+    // p10k:5238 — (( $#lines == 1 )) || return
+    if lines.len() != 1 {
+        return None;
+    }
+    // p10k:5239 — parts=(${=lines[1]}).
+    let parts: Vec<&str> = lines[0].split_whitespace().collect();
+    // p10k:5240-5243 — iface=${parts[1]%:}; state=$parts[2];
+    // rssi=${parts[4]%.*}; noise=${parts[5]%.*} (strip from the LAST dot).
+    let strip_dot = |s: &str| match s.rfind('.') {
+        Some(i) => s[..i].to_string(),
+        None => s.to_string(),
+    };
+    let raw_iface = parts.first()?;
+    let iface = raw_iface.strip_suffix(':').unwrap_or(raw_iface); // ${parts[1]%:}
+    let state = parts.get(1)?;
+    let rssi = strip_dot(parts.get(3)?);
+    let noise = strip_dot(parts.get(4)?);
+    // p10k:5244 — [[ -n $iface && $state == 0## && $rssi == (0|-<->) &&
+    // $noise == (0|-<->) ]] || return.
+    let zero_or_neg = |s: &str| {
+        s == "0"
+            || (s.len() > 1 && s.starts_with('-') && s[1..].bytes().all(|b| b.is_ascii_digit()))
+    };
+    if iface.is_empty()
+        || state.is_empty()
+        || !state.bytes().all(|b| b == b'0')
+        || !zero_or_neg(&rssi)
+        || !zero_or_neg(&noise)
+    {
+        return None;
+    }
+    Some((iface.to_string(), rssi, noise))
+}
+
+/// p10k:5259-5269 — SSID and tx bitrate out of `iw dev <iface> link`.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn parse_iw_link(out: &str) -> Option<(String, String)> {
+    let mut ssid = String::new();
+    let mut last_tx_rate = String::new();
+    for line in out.lines() {
+        let t = line.trim_start();
+        // p10k:5262-5263 — [[:space:]]#SSID:[[:space:]]##(*)
+        if let Some(rest) = t.strip_prefix("SSID:") {
+            if rest.starts_with(char::is_whitespace) {
+                ssid = rest.trim_start().to_string();
+            }
+        // p10k:5264-5266 — 'tx bitrate:'[[:space:]]##([^[:space:]]##)' MBit/s'*
+        } else if let Some(rest) = t.strip_prefix("tx bitrate:") {
+            let rest = rest.trim_start();
+            if let Some(tok) = rest.split_whitespace().next() {
+                if rest[tok.len()..].starts_with(" MBit/s") {
+                    last_tx_rate = tok.to_string();
+                    // p10k:5266 — <->.<-> only: ${${rate%%0#}%.} (strip
+                    // trailing zeros, then the dot).
+                    if let Some((a, b)) = last_tx_rate.split_once('.') {
+                        let digits =
+                            |s: &str| !s.is_empty() && s.bytes().all(|c: u8| c.is_ascii_digit());
+                        if digits(a) && digits(b) {
+                            while last_tx_rate.ends_with('0') {
+                                last_tx_rate.pop();
+                            }
+                            if last_tx_rate.ends_with('.') {
+                                last_tx_rate.pop();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // p10k:5269 — [[ -n $ssid && -n $last_tx_rate ]] || return
+    if ssid.is_empty() || last_tx_rate.is_empty() {
+        return None;
+    }
+    Some((ssid, last_tx_rate))
+}
+
+/// p10k:5275-5286 — signal bars from the SNR margin (rssi - noise).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn wifi_bars(snr_margin: i64) -> i64 {
+    // p10k:5273-5274 — speedguide.net / wireless-nets.com SNR ratings.
+    if snr_margin >= 40 {
+        4
+    } else if snr_margin >= 25 {
+        3
+    } else if snr_margin >= 15 {
+        2
+    } else if snr_margin >= 10 {
+        1
+    } else {
+        0
+    }
+}
+
+/// macOS wifi probe: none. p10k:5213-5224 shells out to the private
+/// Apple80211 `airport` CLI, removed in macOS 14.4+. Every measured
+/// replacement fails: `system_profiler SPAirPortDataType` = 16.9s wall
+/// (`-detailLevel mini` equally slow and drops Signal/Transmit),
+/// `wdutil info` = sudo-only, `ipconfig getsummary` redacts SSID and
+/// has no RSSI. A 17s synchronous stall is a hang at any TTL. TODO:
+/// CoreWLAN-equivalent data source. Hidden rather than faked.
+#[cfg(target_os = "macos")]
+fn wifi_status() -> Option<(String, String, String, String, String)> {
+    tracing::debug!(target: "p10k", "wifi: no viable macOS data source (airport CLI removed) — hidden");
+    None
+}
+
+/// Linux wifi probe (p10k:5230-5269): /proc/net/wireless names the
+/// connected interface + rssi/noise; `iw dev <iface> link` supplies
+/// SSID + tx bitrate. The iw fork sits behind a 10s TTL (the worker
+/// refresh loop collapses, as with vm_stat). Returns
+/// (ssid, last_tx_rate, rssi, noise, bars).
+#[cfg(not(target_os = "macos"))]
+fn wifi_status() -> Option<(String, String, String, String, String)> {
+    let joined = cached_ttl("wifi.iw", Duration::from_secs(10), || {
+        // p10k:5230 — [[ -r /proc/net/wireless && -n $commands[iw] ]]
+        let iw = cmd_on_path("iw")?;
+        let content = std::fs::read_to_string("/proc/net/wireless").ok()?;
+        let (iface, rssi, noise) = parse_proc_wireless(&content)?;
+        // p10k:5259 — lines=(${(f)"$(command iw dev $iface link)"})
+        let out = run_tool(&iw, &["dev", &iface, "link"])?;
+        let (ssid, last_tx_rate) = parse_iw_link(&out)?;
+        // p10k:5275 — local -i snr_margin='rssi - noise'
+        let snr = rssi.parse::<i64>().ok()? - noise.parse::<i64>().ok()?;
+        let bars = wifi_bars(snr);
+        Some(format!(
+            "{ssid}\u{1f}{last_tx_rate}\u{1f}{rssi}\u{1f}{noise}\u{1f}{bars}"
+        ))
+    })?;
+    let mut f = joined.split('\u{1f}').map(str::to_string);
+    Some((f.next()?, f.next()?, f.next()?, f.next()?, f.next()?))
+}
+
 fn wifi_segments() -> Vec<Segment> {
-    // p10k:5192-5195 shells out to the private Apple80211 `airport`
-    // CLI, which Apple removed (macOS 14.4+); the Linux path needs
-    // /proc/net/wireless + iw (p10k:5226-5240). TODO: CoreWLAN-
-    // equivalent data source. Hidden rather than faked.
-    tracing::debug!(target: "p10k", "wifi segment: airport CLI gone — hidden (TODO)");
-    vec![]
+    let Some((ssid, last_tx_rate, rssi, noise, bars)) = wifi_status() else {
+        return vec![]; // p10k:5188 cond '$_p9k__wifi_on' — hidden
+    };
+    // p10k:5304-5310 — the P9K_WIFI_* params users reference from
+    // CONTENT_EXPANSION. LINK_AUTH is airport-only (p10k:5225) — empty.
+    let _ = setsparam("P9K_WIFI_SSID", &ssid);
+    let _ = setsparam("P9K_WIFI_LAST_TX_RATE", &last_tx_rate);
+    let _ = setsparam("P9K_WIFI_LINK_AUTH", "");
+    let _ = setsparam("P9K_WIFI_RSSI", &rssi);
+    let _ = setsparam("P9K_WIFI_NOISE", &noise);
+    let _ = setsparam("P9K_WIFI_BARS", &bars);
+    // p10k:5188 — `$0 green $_p9k_color1 WIFI_ICON 1 '$_p9k__wifi_on'
+    // '$P9K_WIFI_LAST_TX_RATE Mbps'`.
+    vec![make_segment(
+        "wifi",
+        None,
+        "green",
+        color1(),
+        "WIFI_ICON",
+        format!("{last_tx_rate} Mbps"),
+    )]
 }
 
 // ---------------------------------------------------------------------
@@ -1257,6 +1553,68 @@ mod tests {
         assert_eq!(human_readable_duration(125.0, 0, "d h m s"), "2m 5s");
         assert_eq!(human_readable_duration(4225.0, 0, "d h m s"), "1h 10m 25s");
         assert_eq!(human_readable_duration(90061.0, 0, "d h m s"), "1d 1h 1m 1s");
+    }
+
+    /// p10k:5233-5244 — /proc/net/wireless parsing against the content
+    /// example embedded in the spec (PR #973 comment).
+    #[test]
+    fn proc_wireless_spec_example() {
+        let content =
+            "Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n \
+face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n\
+wlp3s0: 0000   58.  -52.  -256        0      0      0      0     76        0\n";
+        // rssi=${parts[4]%.*}="-52", noise=${parts[5]%.*}="-256".
+        assert_eq!(
+            parse_proc_wireless(content),
+            Some(("wlp3s0".to_string(), "-52".to_string(), "-256".to_string()))
+        );
+        // Two data lines (two interfaces) → hidden (p10k:5238).
+        let two = format!("{content}wlan1: 0000   40.  -60.  -256 0 0 0 0 0 0\n");
+        assert_eq!(parse_proc_wireless(&two), None);
+        // Non-zero status word fails the `0##` validation (p10k:5244).
+        let bad = "wlp3s0: 0001   58.  -52.  -256        0      0      0      0     76        0\n";
+        assert_eq!(parse_proc_wireless(bad), None);
+    }
+
+    /// p10k:5247-5269 — `iw dev <iface> link` parsing against the
+    /// output example embedded in the spec: tx bitrate token with the
+    /// `<->.<->` trailing-zero strip (243.0 → 243).
+    #[test]
+    fn iw_link_spec_example() {
+        let out = "Connected to 74:83:c2:be:76:da (on wlp3s0)\n\
+\tSSID: DailyGrindGuest1\n\
+\tfreq: 5745\n\
+\tRX: 35192066 bytes (27041 packets)\n\
+\tTX: 4090471 bytes (24287 packets)\n\
+\tsignal: -52 dBm\n\
+\trx bitrate: 243.0 MBit/s VHT-MCS 6 40MHz VHT-NSS 2\n\
+\ttx bitrate: 240.0 MBit/s VHT-MCS 5 40MHz short GI VHT-NSS 2\n";
+        assert_eq!(
+            parse_iw_link(out),
+            Some(("DailyGrindGuest1".to_string(), "240".to_string()))
+        );
+        // Non-<->.<-> rates pass through unstripped (p10k:5266 guard).
+        let vht = "\tSSID: x\n\ttx bitrate: 240.5 MBit/s\n";
+        assert_eq!(
+            parse_iw_link(vht),
+            Some(("x".to_string(), "240.5".to_string()))
+        );
+        // Missing SSID → hidden (p10k:5269).
+        assert_eq!(parse_iw_link("\ttx bitrate: 240.0 MBit/s\n"), None);
+    }
+
+    /// p10k:5275-5286 — SNR-margin → bars ladder boundaries.
+    #[test]
+    fn wifi_bars_ladder() {
+        assert_eq!(wifi_bars(44), 4); // -52 - -96 from the spec comment
+        assert_eq!(wifi_bars(40), 4);
+        assert_eq!(wifi_bars(39), 3);
+        assert_eq!(wifi_bars(25), 3);
+        assert_eq!(wifi_bars(24), 2);
+        assert_eq!(wifi_bars(15), 2);
+        assert_eq!(wifi_bars(14), 1);
+        assert_eq!(wifi_bars(10), 1);
+        assert_eq!(wifi_bars(9), 0);
     }
 
     /// p10k:4974 — proxy value stripping: scheme, credentials, path.

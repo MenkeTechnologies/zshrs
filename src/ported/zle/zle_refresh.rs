@@ -1388,6 +1388,12 @@ pub fn zrefresh() {
     // recompute below.
     let mut cur_nvln: i32 = -1;
     let mut cur_nvcs: i32 = 0;
+    // Bridge: the video row the edit line starts on = the multiline
+    // prompt's LAST physical row. C's nbuf[0] IS that row (earlier
+    // prompt lines never enter its video model), so every c:… site
+    // that touches nbuf[0] for prompt/rprompt purposes must use this
+    // index here instead. Set by the prompt walk in the build below.
+    let mut prompt_last_row: usize = 0;
 
     // ---- Build NBUF (c:954-1400) ----------------------------------------
     // The full-repaint output above is the live renderer and is left
@@ -1610,6 +1616,8 @@ pub fn zrefresh() {
                 just_wrapped = rpms.pos == 0; // emit wrapped at the margin
             }
         }
+        // The edit line continues on the prompt's last row (C: nbuf[0]).
+        prompt_last_row = rpms.ln.max(0) as usize;
         // c:152 / zle_main.c:1280 — publish the prompt's trailing attribute
         // so refreshline's TCDEL attr-apply (c:2044) and tcoutclear (c:609)
         // make deleted/cleared cells carry the prompt's colour. C derives
@@ -2190,9 +2198,14 @@ pub fn zrefresh() {
                     rprompt_off = 0;
                 }
                 // c:1655-1656 — it fits iff strlen(nbuf[0]) + rpromptw fits.
+                // Bridge: C's nbuf[0] is the edit row; here that's the
+                // multiline prompt's last row (prompt_last_row), never
+                // literal row 0 — row 0 is the prompt's FIRST line, whose
+                // full width made this gate permanently false for any
+                // multiline theme (RPROMPT never painted).
                 let nlen = {
                     let nbuf = NBUF.lock().unwrap();
-                    nbuf.first().map(|r| ZR_strlen(r) as i32).unwrap_or(0)
+                    nbuf.get(prompt_last_row).map(|r| ZR_strlen(r) as i32).unwrap_or(0)
                 };
                 put = (nlen + rpromptw < winw - rprompt_off) as i32;
             }
@@ -2407,14 +2420,17 @@ pub fn zrefresh() {
 
         // c:1713-1725 — emit the right prompt on the first line when it fits
         // (put_rpmpt) and wasn't already on screen last frame (!oput_rpmpt).
+        // Bridge: C's "first line" (nbuf[0]) is the edit row — here the
+        // multiline prompt's last row, so RPROMPT rides the prompt_char
+        // line, not the prompt's top line.
         if PUT_RPMPT.load(Ordering::SeqCst) != 0
-            && iln == 0
+            && iln as usize == prompt_last_row
             && OPUT_RPMPT.load(Ordering::SeqCst) == 0
         {
             let rpromptw = RPROMPTW.load(Ordering::SeqCst);
             // c:1716 — `moveto(0, winw - rprompt_off - rpromptw)`.
             let col = (winw - rprompt_off - rpromptw).max(0) as usize;
-            moveto(0, col);
+            moveto(prompt_last_row, col);
             // c:1717-1718 — `treplaceattrs(pmpt_attr); applytextattributes(0);`
             crate::ported::prompt::treplaceattrs(PMPT_ATTR.load(Ordering::SeqCst));
             let mut out = crate::ported::prompt::applytextattributes(0);

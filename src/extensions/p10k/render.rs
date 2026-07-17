@@ -298,33 +298,36 @@ fn visibly_nonempty(s: &str) -> bool {
 /// `${P9K_VISUAL_IDENTIFIER}` (the resolved icon). Empty hides the
 /// icon; any other expansion string is unsupported phase-1.
 fn resolved_icon(seg: &Segment) -> String {
-    let exp = seg_param(seg, "VISUAL_IDENTIFIER_EXPANSION", "${P9K_VISUAL_IDENTIFIER}");
-    if exp.is_empty() {
-        return String::new(); // p10k:738/746 — empty expansion → no icon
-    }
-    if exp != "${P9K_VISUAL_IDENTIFIER}" {
-        // TODO(phase-1): arbitrary VISUAL_IDENTIFIER_EXPANSION strings
-        // (p10k:735-736) need the zsh expander; fall back to the glyph.
-        tracing::debug!(target: "p10k", segment = %seg.name,
-            "VISUAL_IDENTIFIER_EXPANSION override not supported; using resolved icon");
-    }
-    seg.icon.clone().unwrap_or_default()
+    // p10k:720-722/951-953 — arbitrary templates evaluate through the
+    // shell expander (expansion.rs singsub path); the default
+    // `${P9K_VISUAL_IDENTIFIER}` and empty-string cases short-circuit
+    // inside apply_visual_identifier_expansion without shell cost.
+    let (base, _) = is_joined_name(&seg.name);
+    crate::p10k::expansion::apply_visual_identifier_expansion(
+        base,
+        seg.state.as_deref(),
+        &seg.icon.clone().unwrap_or_default(),
+    )
 }
 
 /// p10k:724-726 / 955-957 — CONTENT_EXPANSION, default `${P9K_CONTENT}`.
 fn resolved_content(seg: &Segment) -> String {
-    let exp = seg_param(seg, "CONTENT_EXPANSION", "${P9K_CONTENT}");
-    if exp.is_empty() {
-        return String::new();
-    }
-    if exp != "${P9K_CONTENT}" {
-        // TODO(phase-1): arbitrary CONTENT_EXPANSION (p10k:749) needs
-        // the zsh expander; pass the segment content through.
-        tracing::debug!(target: "p10k", segment = %seg.name,
-            "CONTENT_EXPANSION override not supported; using raw content");
-    }
-    // p10k:749 — ${_p9k__c//$'\r'}: strip carriage returns.
-    seg.content.replace('\r', "")
+    // p10k:730 — `P9K_VISUAL_IDENTIFIER` is pre-set before the content
+    // template evaluates so a CONTENT_EXPANSION referencing it reads
+    // the segment's resolved icon.
+    let _ = crate::ported::params::setsparam(
+        "P9K_VISUAL_IDENTIFIER",
+        &seg.icon.clone().unwrap_or_default(),
+    );
+    let (base, _) = is_joined_name(&seg.name);
+    let expanded = crate::p10k::expansion::apply_content_expansion(
+        base,
+        seg.state.as_deref(),
+        &seg.content,
+    );
+    // p10k:749 — ${_p9k__c//$'\r'}: strip carriage returns AFTER the
+    // template expands (the template may reintroduce them).
+    expanded.replace('\r', "")
 }
 
 /// p10k:5869/5915 —

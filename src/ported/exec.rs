@@ -7692,8 +7692,24 @@ pub fn execute_script_zsh_pipeline(src: &str) -> Result<i32, String> {
 /// Run a `$(...)` command substitution on the live executor, returning
 /// captured stdout. Empty string when no executor is in scope.
 pub fn run_command_substitution(cmd: &str) -> String {
-    crate::fusevm_bridge::try_with_executor(|exec| exec.run_command_substitution(cmd))
-        .unwrap_or_default()
+    if let Some(r) =
+        crate::fusevm_bridge::try_with_executor(|exec| exec.run_command_substitution(cmd))
+    {
+        return r;
+    }
+    // Session-executor fallback for no-VM-context callers — the native
+    // p10k custom_* segments (p10k:1698 `content="$(eval $command)"`)
+    // render at preprompt time, before any ExecutorContext is entered,
+    // so try_with_executor alone returned "" and every custom segment
+    // rendered empty. Same pattern as run_function_body above; SAFETY
+    // per execode.
+    SESSION_EXECUTOR.with(|c| match c.get() {
+        Some(ptr) => {
+            let _ctx = crate::fusevm_bridge::ExecutorContext::enter(unsafe { &mut *ptr });
+            unsafe { (*ptr).run_command_substitution(cmd) }
+        }
+        None => String::new(),
+    })
 }
 
 /// Positional parameters ($1..$N) from the live executor; empty without
