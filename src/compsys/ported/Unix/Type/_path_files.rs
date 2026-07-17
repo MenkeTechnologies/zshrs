@@ -63,7 +63,27 @@ fn compset(argv: Vec<String>) -> i32 {
 /// `compquote [-p] name...` — sync each named local into paramtab is
 /// the caller's job; this just fires the builtin.
 fn compquote(argv: Vec<String>) {
-    bin_compquote("compquote", &argv, &make_ops(), 0);
+    // The C builtin is `BUILTIN("compquote", 0, bin_compquote, 1, -1, 0,
+    // "p", NULL)`: execbuiltin parses the leading `-p` into `ops` and hands
+    // bin_compquote only the parameter names. Calling bin_compquote directly
+    // bypasses that parser, so a raw `["-p","tmp1"]` made bin_compquote treat
+    // `-p` as a PARAMETER NAME and try to quote `$-` → "read-only variable: -"
+    // aborting every `foo ../<TAB>` path completion. Replicate the option
+    // parse here: leading `-<flags>` tokens set ops.ind, the rest are names.
+    let mut ops = make_ops();
+    let mut names: Vec<String> = Vec::with_capacity(argv.len());
+    let mut opts_done = false;
+    for a in argv {
+        if !opts_done && a.len() > 1 && a.starts_with('-') {
+            for ch in &a.as_bytes()[1..] {
+                ops.ind[*ch as usize] = 1;
+            }
+        } else {
+            opts_done = true;
+            names.push(a);
+        }
+    }
+    bin_compquote("compquote", &names, &ops, 0);
 }
 fn compfiles(argv: Vec<String>) -> i32 {
     bin_compfiles("compfiles", &argv, &make_ops(), 0)
