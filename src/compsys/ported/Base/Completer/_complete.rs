@@ -37,10 +37,19 @@ use crate::ported::zle::compcore::{get_compstate_str, set_compstate_str};
 
 /// Helper: flat assoc lookup.
 fn assoc_get(name: &str, key: &str) -> Option<String> {
-    let arr = getaparam(name)?;
-    arr.chunks(2)
-        .find(|kv| kv.first().map(|k| k == key).unwrap_or(false))
-        .and_then(|kv| kv.get(1).cloned())
+    // `_comps`/`_services` are PM_HASHED associative arrays, NOT flat arrays,
+    // so `getaparam` returns nothing for them — read the hashed storage
+    // directly (same fix as `_dispatch::assoc_get`). With the old getaparam
+    // path, `$_comps[-parameter-]` came back empty during completion even
+    // though the shell saw it set, so every non-command context (parameter,
+    // brace_parameter, value, condition, …) fell through to nothing —
+    // `$var<TAB>`, `${...}<TAB>`, `((expr<TAB>` all produced no matches.
+    crate::ported::params::paramtab_hashed_storage()
+        .lock()
+        .ok()?
+        .get(name)?
+        .get(key)
+        .cloned()
 }
 
 /// `_complete` — primary `completer` entry: dispatches to per-context
