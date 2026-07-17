@@ -126,12 +126,23 @@ Inside a handler, `Host` is the shell's callback table:
 | `host.eval(code) -> i32`        | run shell code, return its exit status    |
 | `host.getvar(name) -> Option`   | read a shell scalar parameter             |
 | `host.setvar(name, value)`      | set a shell scalar parameter              |
+| `host.getfunction(name) -> Option` | read a shell function's deparsed body (`${functions[name]}`) — ABI v3 |
+| `host.addfunction(name, body) -> bool` | define/replace a shell function (`functions[name]=body`) — ABI v3 |
 | `host.register_builtin(n, f)`   | register a command handler dynamically    |
 | `host.add_match(word)`          | emit one completion candidate (see below) |
 | `host.install_completion(cmd, gen)` | wire a native completion into compsys  |
 
 `Args` decodes `argv`: `.name()` is `argv[0]`, `.rest()` the arguments,
 `.to_vec()` the whole vector.
+
+`getfunction`/`addfunction` are the only structured access to shell
+*functions* (`getvar` is scalars only, `eval` returns just a status).
+Because `addfunction` then `getfunction` round-trips a body through the
+shell's own parser and pretty-printer, the pair doubles as
+deparse-as-a-service — define a temp function from arbitrary source, read
+back its normalized form (one statement per line, tab-indented). That is
+exactly how history-formatting plugins (e.g. `zsh-hist`) auto-format a
+command line.
 
 A handler returns the command's exit status (`0` = success), exactly like
 a shell builtin.

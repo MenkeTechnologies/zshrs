@@ -747,8 +747,9 @@ zmodload -uR hello                           # unload by name
 Plugin commands resolve after real builtins and shell functions, before
 PATH lookup — the same slot zsh uses for `zmodload -ab` autoloaded
 builtins. The host API a plugin can call back through: `print`, `eval`
-(run shell code), `getvar` / `setvar` (shell scalars), and
-`register_builtin`.
+(run shell code), `getvar` / `setvar` (shell scalars), `getfunction` /
+`addfunction` (read a function's deparsed body / define one — also
+deparse-as-a-service), and `register_builtin`.
 
 Plugins can also provide **native (Rust) completions** — a
 `completions:` block in `declare_plugin!` wires a Rust generator into
