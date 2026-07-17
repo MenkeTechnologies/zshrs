@@ -183,10 +183,13 @@ pub fn _dispatch(args: &[String]) -> i32 {
     }
 
     let last_arg = argv.last().cloned().unwrap_or_default();
+    tracing::debug!(target: "compsys_args", ?argv, %comp, %name, %last_arg, "_dispatch resolution");
     // sh:58-63
     if !comp.is_empty() && name != last_arg {
         let _ = setsparam("_compskip", "patterns");
-        if dispatch_function_call(&comp, &[]).unwrap_or(1) == 0 {
+        let drc = dispatch_function_call(&comp, &[]);
+        tracing::debug!(target: "compsys_args", %comp, ?drc, "_dispatch ran completer");
+        if drc.unwrap_or(1) == 0 {
             ret = 0;
         }
         let cs = getsparam("_compskip").unwrap_or_default();

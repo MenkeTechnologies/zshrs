@@ -854,7 +854,9 @@ pub fn _arguments(args: &[String]) -> i32 {
         for s in &specs {
             init_argv.push(s);
         }
-        if comparguments(&init_argv) != 0 {
+        let rc_init = comparguments(&init_argv);
+        tracing::debug!(target: "compsys_args", rc_init, nspecs = specs.len(), "comparguments -i");
+        if rc_init != 0 {
             // sh:588 — else return 1
             return 1;
         }
@@ -877,11 +879,21 @@ pub fn _arguments(args: &[String]) -> i32 {
     // sh:333-356 — get descrs/actions/subcs and the option lists, then
     // pick the right `_tags` set.
     let mut have_descrs = false;
-    if comparguments(&["-D", "descrs", "actions", "subcs"]) == 0 {
+    let rc_d = comparguments(&["-D", "descrs", "actions", "subcs"]);
+    tracing::debug!(target: "compsys_args", rc_d, prefix = %origpre, "comparguments -D");
+    if rc_d == 0 {
         // sh:333 comparguments -D descrs actions subcs
         have_descrs = true;
         let subcs = getaparam("subcs").unwrap_or_default();
-        if comparguments(&["-O", "next", "direct", "odirect", "equal"]) == 0 {
+        let rc_o = comparguments(&["-O", "next", "direct", "odirect", "equal"]);
+        tracing::debug!(
+            target: "compsys_args",
+            rc_o,
+            next = ?getaparam("next").unwrap_or_default(),
+            direct = ?getaparam("direct").unwrap_or_default(),
+            "comparguments -O"
+        );
+        if rc_o == 0 {
             // sh:334
             opts = true;
             let mut targ = subcs.clone();
@@ -1340,7 +1352,8 @@ pub fn _arguments(args: &[String]) -> i32 {
                     next.extend(odirect.iter().cloned()); // sh:526
                     setaparam("next", next);
                     // sh:527 _describe -O option next -M m -- direct -S '' -M m -- equal -qS= -M m
-                    let _ = dispatch_function_call(
+                    let nm_before = nmatches();
+                    let drc = dispatch_function_call(
                         "_describe",
                         &[
                             "-O".to_string(),
@@ -1360,6 +1373,13 @@ pub fn _arguments(args: &[String]) -> i32 {
                             "-M".to_string(),
                             matcher.clone(),
                         ],
+                    );
+                    tracing::debug!(
+                        target: "compsys_args",
+                        ?drc,
+                        nm_before,
+                        nm_after = nmatches(),
+                        "_describe -O option (multi)"
                     );
                 }
                 // sh:532-534 — restore.

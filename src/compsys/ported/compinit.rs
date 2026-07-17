@@ -705,6 +705,7 @@ pub fn install_standard_complete_widgets() -> usize {
         argsalloc: 0,
     };
     let mut count = 0usize;
+    tracing::debug!(target: "compsys_args", "install_standard_complete_widgets ENTER");
     for w in STANDARD_COMPLETE_WIDGETS {
         // `zle -C <w> .<w> _main_complete` — args are post-flag:
         // [target-thingy, base-comp-widget, completion-func].
@@ -713,7 +714,9 @@ pub fn install_standard_complete_widgets() -> usize {
             format!(".{}", w),
             "_main_complete".to_string(),
         ];
-        if crate::ported::zle::zle_thingy::bin_zle_complete("zle", &args, &empty_ops, 0) == 0 {
+        let rc_w = crate::ported::zle::zle_thingy::bin_zle_complete("zle", &args, &empty_ops, 0);
+        tracing::debug!(target: "compsys_args", widget = %w, rc_w, "zle -C standard widget");
+        if rc_w == 0 {
             count += 1;
         }
     }
@@ -726,7 +729,9 @@ pub fn install_standard_complete_widgets() -> usize {
             ".menu-select".to_string(),
             "_main_complete".to_string(),
         ];
-        if crate::ported::zle::zle_thingy::bin_zle_complete("zle", &args, &empty_ops, 0) == 0 {
+        let rc_w = crate::ported::zle::zle_thingy::bin_zle_complete("zle", &args, &empty_ops, 0);
+        tracing::debug!(target: "compsys_args", widget = "menu-select", rc_w, "zle -C standard widget");
+        if rc_w == 0 {
             count += 1;
         }
     }

@@ -112,6 +112,7 @@ pub fn completecall(args: &[String]) -> i32 {
     };
     drop(compwidget_g);
 
+    tracing::debug!(target: "compsys_args", ?func_name, has_base = base_fn.is_some(), "completecall ENTER");
     if let Some(name) = func_name {
         let g = compfunc.get_or_init(|| Mutex::new(None));
         *g.lock().unwrap() = Some(name); // c:206

@@ -358,7 +358,8 @@ pub fn _describe(args: &[String]) -> i32 {
                 let mut cd: Vec<String> =
                     vec!["-i".to_string(), _hide.clone(), _mlen.clone()];
                 cd.extend(cd_argv.clone());
-                bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
+                let rc_i = bin_compdescribe("compdescribe", &cd, &make_ops(), 0);
+                tracing::debug!(target: "compsys_args", rc_i, ?cd_argv, "compdescribe -i");
             }
 
             // sh:122 — compstate[list]="$csl".
@@ -391,7 +392,16 @@ pub fn _describe(args: &[String]) -> i32 {
                 cadd.push("_tmpd".to_string());
                 cadd.push("-a".to_string());
                 cadd.push("_tmpm".to_string());
-                if bin_compadd("compadd", &cadd, &make_ops(), 0) == 0 {
+                let rc_add = bin_compadd("compadd", &cadd, &make_ops(), 0);
+                tracing::debug!(
+                    target: "compsys_args",
+                    rc_add,
+                    tmpm = getaparam("_tmpm").unwrap_or_default().len(),
+                    tmpd = getaparam("_tmpd").unwrap_or_default().len(),
+                    args = ?getaparam("_args").unwrap_or_default(),
+                    "describe group compadd"
+                );
+                if rc_add == 0 {
                     _ret = 0;
                 }
             }

@@ -982,6 +982,18 @@ pub fn zlecore() {
             .ok()
             .and_then(|t| t.get(&thingy.nam).and_then(|th| th.widget.clone()))
             .or_else(|| thingy.widget.clone());
+        if thingy.nam.contains("complete") {
+            tracing::debug!(
+                target: "compsys_args",
+                name = %thingy.nam,
+                variant = current_widget.as_ref().map(|w| match &w.u {
+                    crate::ported::zle::zle_h::WidgetImpl::Comp { .. } => "Comp",
+                    crate::ported::zle::zle_h::WidgetImpl::Internal(_) => "Internal",
+                    _ => "Other",
+                }),
+                "zlecore widget resolution"
+            );
+        }
         // c:1151-1152 — `if (execzlefunc(bindk, ...)) handlefeep();`. Ring
         // the bell when the widget returns non-zero (e.g. an ambiguous
         // completion with LISTBEEP), or when the Thingy has no widget at all.

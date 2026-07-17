@@ -128,6 +128,14 @@ impl Drop for CompSetupGuard {
 /// (when non-empty) override the configured `completer` style with
 /// the supplied chain.
 pub fn _main_complete(args: &[String]) -> i32 {
+    tracing::debug!(target: "compsys_args", ?args, "_main_complete ENTER");
+    // Merge any finished background compinit scan BEFORE the completer
+    // lookup. The bg worker ships _comps/_services/_patcomps back over a
+    // channel, but the lazy drain's only other caller was the --doctor
+    // benchmark — in a live shell $_comps stayed EMPTY, `_dispatch`
+    // resolved comp="" for every command, and everything fell to
+    // -default- file completion (option completion dead shell-wide).
+    crate::fusevm_bridge::drain_compinit_bg_hook();
     // sh:25 — `eval "$_comp_setup"` (options + IFS half); restores on
     // every return path via Drop.
     let _comp_setup = CompSetupGuard::apply();
