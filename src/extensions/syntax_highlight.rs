@@ -1082,6 +1082,14 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
     let saved_addedx = ADDEDX.load(Ordering::SeqCst);
 
     crate::ported::context::zcontext_save(); // c:1169
+    // LEX_UNGET_BUF isolation: hgetc drains this Rust-only side channel
+    // BEFORE every input frame (lex.rs hgetc), and `$(...)` bodies use
+    // it as a deliberate cross-context handoff — so zcontext_save
+    // leaves it alone. This walk must isolate it manually: the
+    // suspended outer parse's ungot chars must not be consumed as line
+    // content, and the walk's own ungets must not leak back out.
+    let saved_unget: std::collections::VecDeque<char> =
+        crate::ported::lex::LEX_UNGET_BUF.with_borrow_mut(std::mem::take);
     ZLEMETALL.store(ll, Ordering::SeqCst);
     ZLEMETACS.store(ll + 5, Ordering::SeqCst); // park beyond max nwe = ll + 1
     ADDEDX.store(0, Ordering::SeqCst);
@@ -1156,6 +1164,9 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
     crate::ported::hist::strinend(); // c:1608
     crate::ported::input::inpop(); // c:1609
     crate::ported::context::zcontext_restore(); // c:1745
+    // Put the suspended parse's ungot chars back, discarding anything
+    // this walk left behind (see the isolation note at the top).
+    crate::ported::lex::LEX_UNGET_BUF.with_borrow_mut(|b| *b = saved_unget);
 
     ZLEMETACS.store(saved_cs, Ordering::SeqCst);
     ZLEMETALL.store(saved_ll, Ordering::SeqCst);
@@ -1766,6 +1777,37 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// The highlight walk must leave NO residue in the Rust-only
+    /// `LEX_UNGET_BUF` side channel: `hgetc` (lex.rs:4209) drains it
+    /// BEFORE every input frame, so leftover chars from a per-keystroke
+    /// highlight pass are read by the NEXT real interactive parse —
+    /// `{ print ok }` / `( print sub )` / every brace-body function
+    /// definition typed interactively died with "parse error near `}'"
+    /// while the fish engines were enabled (ZSHRS_NATIVE_ZLE_FX=0 made
+    /// it vanish). The walk must also put back what the SUSPENDED outer
+    /// parse had ungot before it blocked in zleread.
+    #[test]
+    fn lex_line_tokens_leaves_unget_buf_untouched() {
+        use crate::ported::lex::LEX_UNGET_BUF;
+        let _g = lock();
+        for line in ["{ print ok }", "( print sub )", "function q(){ print fq }", "echo hi"] {
+            // Outer-parse residue that must survive the walk verbatim.
+            LEX_UNGET_BUF.with_borrow_mut(|b| {
+                b.clear();
+                b.push_back('X');
+                b.push_back('\n');
+            });
+            let _ = lex_line_tokens(line);
+            let after: Vec<char> = LEX_UNGET_BUF.with_borrow(|b| b.iter().copied().collect());
+            assert_eq!(
+                after,
+                vec!['X', '\n'],
+                "LEX_UNGET_BUF corrupted by highlight walk of {line:?}"
+            );
+        }
+        LEX_UNGET_BUF.with_borrow_mut(|b| b.clear());
     }
 
     /// Token spans must slice the source exactly — the C nwb/nwe formulas.

@@ -2133,6 +2133,110 @@ pub fn zrefresh() {
         cur_nvcs = rpms.nvcs;
     }
 
+    // c:1125-1174 — reset-frame handling. trashzle()/reexpandprompt/history
+    // widgets/clearscreen set resetneeded when a NEW prompt is coming or the
+    // display was trashed; zleread arms it before the first paint of each
+    // line. On such a frame, home the video cursor and clear OBUF so
+    // refreshline redraws the whole prompt+line from column 0 (the real
+    // cursor sits at col 0 of a fresh row after the prior accept's trailing
+    // CRLF, or at shell startup). On a NORMAL frame (typing / completing)
+    // resetneeded is 0 and VCS/VLN carry from the previous frame's final
+    // moveto — so refreshline's moveto is a no-op at the diff point and only
+    // the changed bytes are emitted, byte-for-byte matching zsh's refresh.
+    // Only RESETNEEDED (clearscreen / reexpandprompt / zleread's first-paint
+    // arming) is consumed here. The separate ZLE_RESET_NEEDED flag is NOT a
+    // faithful `resetneeded`: nearly every editing widget in zle_misc/
+    // zle_utils sets it while porting C's `CCRIGHT()` — which is
+    // `alignmultiwordright(&zlecs, 1)`, a multibyte cursor-alignment no-op,
+    // not a full-redraw request. Consuming it would force a whole-line
+    // repaint on every keystroke (the exact full-repaint behaviour this
+    // path replaces). zlecore already calls zrefresh after each widget, so
+    // ordinary edits redraw incrementally via the OBUF diff without any
+    // reset.
+    //
+    // ORDER: this consumption must run BEFORE the right-prompt placement
+    // below — C's c:1125-1174 precedes the put_rpmpt decision at c:1643.
+    // It previously ran after, so the first frame of a fresh prompt read
+    // the STALE trashedzle=1 from the prior accept and (under
+    // transient_rprompt) suppressed RPROMPT until the next keystroke.
+    let reset_frame = RESETNEEDED.swap(0, Ordering::SeqCst) != 0;
+    if reset_frame {
+        VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
+        VLN.store(0, Ordering::SeqCst);
+        OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame
+        OLNCT.store(0, Ordering::SeqCst);
+        OPUT_RPMPT.store(0, Ordering::SeqCst); // c:1144 no right-prompt on screen
+        // c:789 (resetvideo) — clear trashedzle so the NEXT trashzle (e.g.
+        // asklist's "drop the cursor below the prompt" before a completion
+        // list) passes its `!trashedzle` gate and actually parks below the
+        // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
+        // resetneeded here is where trashedzle gets cleared again, matching C.
+        TRASHEDZLE.store(0, Ordering::Relaxed);
+        // Home the real cursor to column 0 before re-emitting the prompt.
+        // On the first paint of a line this is a fresh row (a no-op CR); on
+        // the post-list repaint (the recursive zrefresh after listmatches) it
+        // guarantees the prompt redraws at the start of the row below the
+        // printed grid rather than wherever the list left the cursor.
+        {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, b"\r");
+        }
+        // c:1158-1159 — `zputs(lpromptbuf, shout)`: print the expanded left
+        // prompt so it is physically on screen. refreshline's prompt-skip
+        // (c:1862) then draws only the content after column lpromptw and never
+        // emits the prompt cells itself (it assumes the prompt is already
+        // displayed). Without this the reset frame left lpromptw blank columns
+        // where the prompt should be. VCS is advanced to lpromptw so the video
+        // cursor stays in sync with the real cursor (which the raw prompt emit
+        // moved but does not track); C leaves vcs at 0 and relies on its
+        // moveto, but zshrs' singmoveto emits a RELATIVE cursor-right, so a
+        // stale vcs=0 would double-offset the first content moveto.
+        if !prompt.is_empty() {
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            // c:1158-1159 `zputs(lpromptbuf, shout)` skips the itok marker
+            // bytes (Src/utils.c:5272-5274) so they never reach the tty.
+            // expand_prompt leaves them as the RL_PROMPT_*_IGNORE bytes
+            // (0x01/0x02); strip them here so the raw write doesn't corrupt
+            // the render.
+            let emit: String = prompt.chars().filter(|&c| c != '\u{1}' && c != '\u{2}').collect();
+            let _ = write_loop(out_fd, emit.as_bytes());
+            // c:1163 — the prompt's literal escapes leave the terminal in
+            // pmpt_attr; publish it so refreshline's first content attr-diff
+            // starts from the right SGR state.
+            crate::ported::prompt::treplaceattrs(PROMPT_ATTR.load(Ordering::SeqCst));
+            VCS.store(LPROMPTW.load(Ordering::SeqCst), Ordering::SeqCst);
+            // Multiline-prompt anchor: the raw print above left the REAL
+            // cursor on the prompt's LAST physical row, but VLN was homed
+            // to 0. The bridge lays the whole multiline prompt into NBUF
+            // rows 0..prompt_rows-1 (C keeps only the last prompt line in
+            // its video model — the earlier lines are printed once by the
+            // zputs above and never repainted, zle_refresh.c:1158). With
+            // VLN=0 refreshline believed the physical row under the
+            // cursor was video row 0 and repainted the whole prompt block
+            // a second time below the printed one. Anchor the video
+            // cursor to the printed prompt's last row and pre-seed OBUF
+            // with the fully-printed prompt rows so the diff treats them
+            // as already on screen. The last prompt row is NOT seeded —
+            // it shares its row with the edit line and must still be
+            // diffed (its cells re-emit identically over the print).
+            if prompt_rows > 1 {
+                let seed_rows = prompt_rows - 1;
+                {
+                    let nbuf = NBUF.lock().unwrap();
+                    let mut obuf = OBUF.lock().unwrap();
+                    obuf.clear();
+                    for r in 0..seed_rows {
+                        obuf.push(nbuf.get(r).cloned().unwrap_or_default());
+                    }
+                }
+                OLNCT.store(seed_rows as i32, Ordering::SeqCst);
+                VLN.store(seed_rows as i32, Ordering::SeqCst);
+            }
+        }
+    }
+
     // c:988 — `int rprompt_off = 1;` offset of the right prompt from the right
     // of the screen. Set by the placement below, read by the emit in the
     // render loop. A zrefresh local in C; here too (both sites are in zrefresh).
@@ -2218,103 +2322,8 @@ pub fn zrefresh() {
     // refreshline diffs each new line against it and emits the minimal
     // terminal updates, then we move the cursor to its editing position.
     let nlnct = NLNCT.load(Ordering::SeqCst);
-    // c:1125-1174 — reset-frame handling. trashzle()/reexpandprompt/history
-    // widgets/clearscreen set resetneeded when a NEW prompt is coming or the
-    // display was trashed; zleread arms it before the first paint of each
-    // line. On such a frame, home the video cursor and clear OBUF so
-    // refreshline redraws the whole prompt+line from column 0 (the real
-    // cursor sits at col 0 of a fresh row after the prior accept's trailing
-    // CRLF, or at shell startup). On a NORMAL frame (typing / completing)
-    // resetneeded is 0 and VCS/VLN carry from the previous frame's final
-    // moveto — so refreshline's moveto is a no-op at the diff point and only
-    // the changed bytes are emitted, byte-for-byte matching zsh's refresh.
-    // Only RESETNEEDED (clearscreen / reexpandprompt / zleread's first-paint
-    // arming) is consumed here. The separate ZLE_RESET_NEEDED flag is NOT a
-    // faithful `resetneeded`: nearly every editing widget in zle_misc/
-    // zle_utils sets it while porting C's `CCRIGHT()` — which is
-    // `alignmultiwordright(&zlecs, 1)`, a multibyte cursor-alignment no-op,
-    // not a full-redraw request. Consuming it would force a whole-line
-    // repaint on every keystroke (the exact full-repaint behaviour this
-    // path replaces). zlecore already calls zrefresh after each widget, so
-    // ordinary edits redraw incrementally via the OBUF diff without any
-    // reset.
-    let reset_frame = RESETNEEDED.swap(0, Ordering::SeqCst) != 0;
-    if reset_frame {
-        VCS.store(0, Ordering::SeqCst); // c:1157/1170 vcs = 0
-        VLN.store(0, Ordering::SeqCst);
-        OBUF.lock().unwrap().clear(); // c:1142 resetvideo — drop the stale frame
-        OLNCT.store(0, Ordering::SeqCst);
-        OPUT_RPMPT.store(0, Ordering::SeqCst); // c:1144 no right-prompt on screen
-        // c:789 (resetvideo) — clear trashedzle so the NEXT trashzle (e.g.
-        // asklist's "drop the cursor below the prompt" before a completion
-        // list) passes its `!trashedzle` gate and actually parks below the
-        // line. trashzle sets trashedzle=1 + resetneeded=1; consuming
-        // resetneeded here is where trashedzle gets cleared again, matching C.
-        TRASHEDZLE.store(0, Ordering::Relaxed);
-        // Home the real cursor to column 0 before re-emitting the prompt.
-        // On the first paint of a line this is a fresh row (a no-op CR); on
-        // the post-list repaint (the recursive zrefresh after listmatches) it
-        // guarantees the prompt redraws at the start of the row below the
-        // printed grid rather than wherever the list left the cursor.
-        {
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, b"\r");
-        }
-        // c:1158-1159 — `zputs(lpromptbuf, shout)`: print the expanded left
-        // prompt so it is physically on screen. refreshline's prompt-skip
-        // (c:1862) then draws only the content after column lpromptw and never
-        // emits the prompt cells itself (it assumes the prompt is already
-        // displayed). Without this the reset frame left lpromptw blank columns
-        // where the prompt should be. VCS is advanced to lpromptw so the video
-        // cursor stays in sync with the real cursor (which the raw prompt emit
-        // moved but does not track); C leaves vcs at 0 and relies on its
-        // moveto, but zshrs' singmoveto emits a RELATIVE cursor-right, so a
-        // stale vcs=0 would double-offset the first content moveto.
-        if !prompt.is_empty() {
-            let fd = SHTTY.load(Ordering::Relaxed);
-            let out_fd = if fd >= 0 { fd } else { 1 };
-            // c:1158-1159 `zputs(lpromptbuf, shout)` skips the itok marker
-            // bytes (Src/utils.c:5272-5274) so they never reach the tty.
-            // expand_prompt leaves them as the RL_PROMPT_*_IGNORE bytes
-            // (0x01/0x02); strip them here so the raw write doesn't corrupt
-            // the render.
-            let emit: String = prompt.chars().filter(|&c| c != '\u{1}' && c != '\u{2}').collect();
-            let _ = write_loop(out_fd, emit.as_bytes());
-            // c:1163 — the prompt's literal escapes leave the terminal in
-            // pmpt_attr; publish it so refreshline's first content attr-diff
-            // starts from the right SGR state.
-            crate::ported::prompt::treplaceattrs(PROMPT_ATTR.load(Ordering::SeqCst));
-            VCS.store(LPROMPTW.load(Ordering::SeqCst), Ordering::SeqCst);
-            // Multiline-prompt anchor: the raw print above left the REAL
-            // cursor on the prompt's LAST physical row, but VLN was homed
-            // to 0. The bridge lays the whole multiline prompt into NBUF
-            // rows 0..prompt_rows-1 (C keeps only the last prompt line in
-            // its video model — the earlier lines are printed once by the
-            // zputs above and never repainted, zle_refresh.c:1158). With
-            // VLN=0 refreshline believed the physical row under the
-            // cursor was video row 0 and repainted the whole prompt block
-            // a second time below the printed one. Anchor the video
-            // cursor to the printed prompt's last row and pre-seed OBUF
-            // with the fully-printed prompt rows so the diff treats them
-            // as already on screen. The last prompt row is NOT seeded —
-            // it shares its row with the edit line and must still be
-            // diffed (its cells re-emit identically over the print).
-            if prompt_rows > 1 {
-                let seed_rows = prompt_rows - 1;
-                {
-                    let nbuf = NBUF.lock().unwrap();
-                    let mut obuf = OBUF.lock().unwrap();
-                    obuf.clear();
-                    for r in 0..seed_rows {
-                        obuf.push(nbuf.get(r).cloned().unwrap_or_default());
-                    }
-                }
-                OLNCT.store(seed_rows as i32, Ordering::SeqCst);
-                VLN.store(seed_rows as i32, Ordering::SeqCst);
-            }
-        }
-    }
+    // (The c:1125-1174 reset-frame handling runs ABOVE the right-prompt
+    // placement, matching C's order — see before the c:1643 block.)
     let olnct = OLNCT.load(Ordering::SeqCst);
     let saved_cleareol = CLEAREOL.load(Ordering::SeqCst);
     // c:1174 — `clearf = clearflag`: snapshot the clear flag for the loop.
