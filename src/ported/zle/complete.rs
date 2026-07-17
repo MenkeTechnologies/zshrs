@@ -846,7 +846,7 @@ pub fn parse_ordering(arg: &str, flags: &mut Option<i32>) -> i32 {
 /// (-P→pre, -S→suf, -i→ipre, -I→isuf, -p→ppre, -s→psuf, -W→prpre,
 /// -J/-V→group, -X→exp, -x→mesg, -d→disp, -O→opar, -A→apar, -D→dpar,
 /// -E→dummies, -M→match_/CAF_MATCH, -r→rems, -R→remf, -q→CMF_REMOVE,
-/// -n/-l→CMF_NOLIST, -U→CMF_HIDE, -Y→CMF_ISPAR, -a→CAF_ARRAYS,
+/// -n/-l→CMF_NOLIST, -U→clears CAF_MATCH, -Y→CMF_ISPAR, -a→CAF_ARRAYS,
 /// -k→CAF_KEYS, -Q→CAF_QUOTE, -1→CAF_UNIQALL, -2→CAF_UNIQCON,
 /// -C→CAF_ALL, -f→CMF_FILE, -o/-e→CAF_NOSORT), then dispatches the
 /// residual argv through `compcore::addmatches`.
@@ -1135,7 +1135,13 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
                 'r' => dat.rems = take(&mut p, &mut idx), // c:679 -r
                 'R' => dat.remf = take(&mut p, &mut idx), // c:680 -R
                 'n' => dat.flags |= CMF_NOLIST as i32, // c:671
-                'U' => dat.flags |= CMF_HIDE as i32,   // c:668
+                // c:674 — `-U`: clear CAF_MATCH so the added matches DON'T have
+                // to match the command-line word. (Was mis-ported as
+                // `dat.flags |= CMF_HIDE`, which merely hid the match from the
+                // list and left CAF_MATCH set — so an unconditional match like
+                // `compadd -U /abs/path` for word `~/x*` never got inserted;
+                // this broke every `-U` completer: _expand, _prefix, …)
+                'U' => dat.aflags &= !CAF_MATCH, // c:674
                 'e' => dat.aflags |= CAF_NOSORT,       // c:684
                 'Y' => dat.flags |= CMF_ISPAR as i32,  // c:685
                 '-' => {
