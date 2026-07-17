@@ -3243,7 +3243,10 @@ pub static MSEARCHSTACK: std::sync::LazyLock<std::sync::Mutex<Vec<menusearch>>> 
 /// `mtab[][]` matrix, dispatches widget actions (up/down/forward/
 /// backward/accept/search/cancel), repaints via `complistmatches`.
 /// WARNING: param names don't match C — Rust=() vs C=(dummy, dat)
-pub fn domenuselect() -> i32 {
+pub fn domenuselect(
+    _dummy: *mut crate::ported::zsh_h::hookdef,
+    _dat: *mut std::ffi::c_void,
+) -> i32 {
     // c:2383
 
     // c:2385-2396 — local declarations.
@@ -5082,6 +5085,13 @@ pub fn boot_() -> i32 {
     //  signature so it registers directly as a `Hookfn`. `menu_start`/
     //  domenuselect stays a direct compcore dispatch for now (not a Hookfn).
     crate::ported::module::addhookfunc("comp_list_matches", complistmatches);
+    // c:3596 — `addhookfunc("menu_start", domenuselect)`. Without this the
+    // `menu_start` hookdef (registered at ZLE boot) has no func, so
+    // `runhookdef(MENUSTARTHOOK)` in do_single/menucmp (compcore.c:517)
+    // returns 0 and the interactive `menu select` menu never starts (no
+    // navigation, no selection highlight). domenuselect carries the C
+    // `(Hookdef, Chdata)` signature so it registers directly as a Hookfn.
+    crate::ported::module::addhookfunc("menu_start", domenuselect);
 
     // zshrs lazily creates the standard keymaps (main/emacs/viins/…) on
     // the first bindkey / `${keymaps}` access. In C, complist loads AFTER
