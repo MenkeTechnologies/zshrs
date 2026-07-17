@@ -895,36 +895,6 @@ pub fn match_str(
     test: i32,
     part: i32,
 ) -> i32 {
-    // !!! TEMPORARY RUST-ONLY DIAGNOSTIC — env-gated recursion-depth guard to
-    // capture the degenerate matcher causing infinite match_str↔match_parts
-    // recursion (SIGBUS stack overflow on `zsh -<TAB>`). Remove once root-fixed.
-    struct DepthGuard;
-    thread_local!(static MATCH_DEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) });
-    impl Drop for DepthGuard {
-        fn drop(&mut self) {
-            MATCH_DEPTH.with(|d| d.set(d.get() - 1));
-        }
-    }
-    let _depth_guard = DepthGuard;
-    let cur_depth = MATCH_DEPTH.with(|d| {
-        let n = d.get() + 1;
-        d.set(n);
-        n
-    });
-    if cur_depth > 400 {
-        if let Ok(path) = std::env::var("ZSHRS_MATCH_DEPTH_LOG") {
-            use std::io::Write as _;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-                let _ = writeln!(
-                    f,
-                    "DEPTH {} ABORT: l={:?} w={:?} sfx={} test={} part={} bc={}",
-                    cur_depth, l_in, w_in, sfx, test, part, bc
-                );
-            }
-        }
-        return 0; // abort to prevent the stack-overflow SIGBUS during capture
-    }
-
     let l_bytes = l_in.as_bytes();
     let w_bytes = w_in.as_bytes();
     let mut ll = l_bytes.len() as i32;
@@ -1219,28 +1189,8 @@ pub fn match_str(
                         let tp_slice =
                             std::str::from_utf8(&w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
                                 .unwrap_or("");
-                        if cur_depth > 395 {
-                            if let Ok(path) = std::env::var("ZSHRS_MATCH_DEPTH_LOG") {
-                                use std::io::Write as _;
-                                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-                                    let _ = writeln!(f, "  GUARD d={} l={:?} w={:?} llen_p={} alen={} aol={} moff={} aoff={} flags={:#x} lalen={} ralen={} l_aoff={:?} tp={:?}",
-                                        cur_depth, l_in, w_in, llen_p, alen, aol, moff, aoff, mp.flags, mp.lalen, mp.ralen, l_aoff_slice, tp_slice);
-                                }
-                            }
-                        }
                         if match_parts(l_aoff_slice, tp_slice, alen, part) == 0 {
                             break;
-                        }
-                    }
-                    if accept && cur_depth > 395 {
-                        if let Ok(path) = std::env::var("ZSHRS_MATCH_DEPTH_LOG") {
-                            use std::io::Write as _;
-                            if let Ok(mut f) =
-                                std::fs::OpenOptions::new().create(true).append(true).open(&path)
-                            {
-                                let _ = writeln!(f, "  RECURSE site=main depth={} llen_p={} alen={} aol={} both={} moff={} aoff={} wlen={} tp_pos={} w_pos={} step_l={:?}",
-                                    cur_depth, llen_p, alen, aol, both, moff, aoff, mp.wlen, tp_pos, w_pos, l_in);
-                            }
                         }
                     }
 
