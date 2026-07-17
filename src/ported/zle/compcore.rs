@@ -4163,6 +4163,16 @@ pub fn permmatches(last: i32) -> i32 {
         g.new_ = 0; // c:3548
     }
 
+    // c:3490-3538 — C threads each group onto `pmatches` via
+    // `n->next = pmatches; pmatches = n` (a PREPEND), so pmatches ends up
+    // in the REVERSE of amatches iteration order. The port accumulates into
+    // a Vec with push() (append), so reverse once here to recover C's order.
+    // Without this, `group-order`/`group-name` groups list in creation order
+    // reversed (e.g. `group-order veggies fruits` showed fruits first), and
+    // the gnum/rnum numbering below — which C runs over the reversed
+    // pmatches — was assigned against the wrong sequence.
+    new_pmatches.reverse();
+
     // c:3551-3563 — assign rnum/gnum, recompute diffmatches/nbrbeg.
     let mut first_first: Option<Cmatch> = None;
     for g_pm in new_pmatches.iter_mut() {
