@@ -2303,7 +2303,11 @@ pub(crate) fn prompt(args: &[String]) -> i32 {
     };
     match args[0].as_str() {
         "-l" | "--list" => {
-            println!("Available prompt themes:");
+            // promptinit:119 `l) print Currently available prompt themes:` —
+            // the exact wording, matching promptinit:75's own `-l` help text.
+            // A paraphrase ("Available prompt themes:") breaks any script or
+            // completion that greps this listing.
+            println!("Currently available prompt themes:");
             if let Ok(tab) = crate::ported::params::paramtab().read() {
                 if let Some(pm) = tab.get("prompt_themes") {
                     if let Some(themes) = &pm.u_arr {
@@ -8975,12 +8979,53 @@ pub(crate) fn cp_impl(args: &[String]) -> i32 {
 ///   -L   force ln mode (hard link)
 ///   -s   ln -s (symlink) when in ln mode
 ///   -p prog  use `prog` instead of mv/cp/ln
+/// zmv:273 `$f -ef $g` — true when both names resolve to the SAME file (same
+/// device + inode), which is how a case-only rename looks on a case-insensitive
+/// filesystem. Only exempts the "file exists" error for `mv` (zmv:273
+/// `&& $action = mv`): a cp/ln onto itself stays an error.
+fn same_file(src: &str, dest: &str, action: &str) -> bool {
+    if action != "mv" {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(src), std::fs::metadata(dest)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (src, dest);
+        false
+    }
+}
+
 pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
+    // zmv:137 `myname=${(%):-%N}` — the FUNCTION's name (zmv/zcp/zln), which is
+    // what every diagnostic is tagged with. zmv:156 derives the action back out
+    // of it (`action=$myname[-2,-1]`), so the mapping is exactly this inverse.
+    // Errors were tagged with the ACTION instead, printing `mv: error: …` where
+    // zsh prints `zmv: error: …` — and the tag changes under `-C`/`-L`/`-p`,
+    // which zsh's never does.
+    let myname = format!("z{}", default_action);
     let mut action = default_action.to_string();
     let mut dry_run = false;
     let mut force = false;
     let mut verbose = false;
-    let mut wildcard = false;
+    // zmv:190-216 — `-w` parenthesises the wildcards in the SEARCH pattern so
+    // they can be referred to as $1..$N; `-W` does that AND rewrites the
+    // wildcards in the REPLACEMENT into sequential ${1}..${N} references.
+    // `-w` was not accepted at all, and `-W` only ever did the search half, so
+    // `zmv -W '*.txt' '*.bak'` mapped every file to the literal `*.bak` and
+    // died with a bogus "both map to" collision.
+    let mut wildcard = false; // opt_w || opt_W  (zmv:190)
+    let mut wildcard_repl = false; // opt_W       (zmv:204)
+    // zmv:148 `[[ -z $opt_Q ]] && setopt nobareglobqual` — bare glob qualifiers
+    // are OFF for the whole function unless -Q asks for them back. `-Q` was
+    // parsed as an unknown flag and dropped.
+    let mut bare_glob_qual = false; // opt_Q
     let mut symlink = false;
     let mut positional: Vec<String> = Vec::new();
     let mut iter = args.iter().peekable();
@@ -9002,7 +9047,14 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                     'f' => force = true,
                     'i' => {} // interactive — treat as skip-on-conflict
                     'v' => verbose = true,
-                    'W' => wildcard = true,
+                    'w' => wildcard = true, // zmv:190 opt_w
+                    'W' => {
+                        // zmv:190/204 — opt_W implies opt_w's pattern half.
+                        wildcard = true;
+                        wildcard_repl = true;
+                    }
+                    'Q' => bare_glob_qual = true, // zmv:148 opt_Q
+                    'q' => {}                     // zmv docs: now the default, no effect
                     's' => symlink = true,
                     'M' => action = "mv".to_string(),
                     'C' => action = "cp".to_string(),
@@ -9042,28 +9094,85 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     let mut group_idx = 0;
     while let Some(c) = chars.next() {
         match c {
+            // zmv:197-202 — under -w/-W every WILDCARD becomes its own capture
+            // group (C's `pat="${pat//${~find}/($MATCH)}"`), not just `*`. The
+            // `find` pattern there covers `**/`, `*`, `?`, `<a-b>` and `[…]`.
             '*' => {
+                // `**/` is one wildcard, not two (zmv:197 `\*\*##/`).
+                let mut atom = String::from(".*");
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    while chars.peek() == Some(&'*') {
+                        chars.next();
+                    }
+                    if chars.peek() == Some(&'/') {
+                        chars.next();
+                        atom = String::from("(?:.*/)?");
+                    }
+                }
                 if wildcard {
-                    regex_src.push_str("(.*)");
+                    regex_src.push('(');
+                    regex_src.push_str(&atom);
+                    regex_src.push(')');
                     group_idx += 1;
                 } else {
-                    regex_src.push_str(".*");
+                    regex_src.push_str(&atom);
                 }
             }
-            '?' => regex_src.push('.'),
+            '?' => {
+                if wildcard {
+                    regex_src.push_str("(.)");
+                    group_idx += 1;
+                } else {
+                    regex_src.push('.');
+                }
+            }
+            // `<a-b>` numeric range (zmv:197 `<[0-9]#-[0-9]#>`).
+            '<' if from_pat.contains('>') => {
+                let mut body = String::new();
+                let mut closed = false;
+                for cc in chars.by_ref() {
+                    if cc == '>' {
+                        closed = true;
+                        break;
+                    }
+                    body.push(cc);
+                }
+                if closed && body.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                    if wildcard {
+                        regex_src.push_str("([0-9]+)");
+                        group_idx += 1;
+                    } else {
+                        regex_src.push_str("[0-9]+");
+                    }
+                } else {
+                    regex_src.push_str("<");
+                    regex_src.push_str(&body);
+                    if closed {
+                        regex_src.push('>');
+                    }
+                }
+            }
             '(' => {
                 regex_src.push('(');
                 group_idx += 1;
             }
             ')' => regex_src.push(')'),
             '[' => {
-                regex_src.push('[');
+                let mut cls = String::from("[");
                 for cc in chars.by_ref() {
+                    cls.push(cc);
                     if cc == ']' {
-                        regex_src.push(']');
                         break;
                     }
-                    regex_src.push(cc);
+                }
+                if wildcard {
+                    regex_src.push('(');
+                    regex_src.push_str(&cls);
+                    regex_src.push(')');
+                    group_idx += 1;
+                } else {
+                    regex_src.push_str(&cls);
                 }
             }
             '|' => regex_src.push('|'),
@@ -9075,7 +9184,58 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
         }
     }
     regex_src.push('$');
-    let _ = group_idx;
+
+    // zmv:204-216 — `-W` turns the wildcards in the REPLACEMENT into
+    // sequential ${1} .. ${N} references (`repl="${repl//${~find}/$open$[++N]$close}"`),
+    // and errors when the two counts disagree (zmv:209-212).
+    let rewritten_to;
+    let to_pat: &String = if wildcard_repl {
+        let mut out = String::new();
+        let mut n = 0usize;
+        let mut tc = to_pat.chars().peekable();
+        while let Some(c) = tc.next() {
+            match c {
+                '*' => {
+                    while tc.peek() == Some(&'*') {
+                        tc.next();
+                    }
+                    if tc.peek() == Some(&'/') {
+                        tc.next();
+                    }
+                    n += 1;
+                    out.push_str(&format!("${{{}}}", n));
+                }
+                '?' => {
+                    n += 1;
+                    out.push_str(&format!("${{{}}}", n));
+                }
+                '[' => {
+                    let mut cls = String::from("[");
+                    for cc in tc.by_ref() {
+                        cls.push(cc);
+                        if cc == ']' {
+                            break;
+                        }
+                    }
+                    n += 1;
+                    out.push_str(&format!("${{{}}}", n));
+                }
+                _ => out.push(c),
+            }
+        }
+        if n != group_idx {
+            // zmv:210 — `print -P "%N: error: number of wildcards in each pattern must match"`
+            eprintln!(
+                "{}: error: number of wildcards in each pattern must match",
+                myname
+            );
+            return 1;
+        }
+        rewritten_to = out;
+        &rewritten_to
+    } else {
+        to_pat
+    };
     let re = match regex::Regex::new(&regex_src) {
         Ok(r) => r,
         Err(e) => {
@@ -9084,17 +9244,36 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
         }
     };
 
-    // Enumerate candidate files. zsh's zmv glob has `(...)` as
-    // capture-group syntax, NOT alternation, so the source pattern
-    // can't be passed straight to expand_glob (which would either
-    // treat it as a glob qualifier suffix or fail). Strip the
-    // capture parens to get a plain glob pattern, then keep only
-    // the entries that match the regex.
-    let glob_pat: String = from_pat
-        .chars()
-        .filter(|c| *c != '(' && *c != ')')
-        .collect();
+    // Enumerate candidate files. zmv:237-239 uses the pattern AS the glob
+    // (`fpat=$pat; files=(${~fpat})`) under `setopt extendedglob` (zmv:126) —
+    // in a zsh glob `(…)` is a GROUP, so `(*).​(txt|log)` is both a valid glob
+    // and the capture syntax; the two coexist by design.
+    //
+    // Stripping the parens to build the glob turned `(*).(txt|log)` into
+    // `*.txt|log`, which matches nothing with a `.log` extension — `baz.log`
+    // silently vanished from the rename set. zshrs's own glob engine handles
+    // the grouped form identically to zsh (verified against `print -rl --
+    // (*).(txt|log)`), so hand it the pattern unaltered.
+    let glob_pat: String = from_pat.clone();
+    // zmv:148 `[[ -z $opt_Q ]] && setopt nobareglobqual`. With bare glob
+    // qualifiers ON (the zsh default), a TRAILING `(…)` is parsed as a
+    // qualifier list, so `(*).(*)` — the canonical swap-name-and-extension
+    // pattern — matched nothing at all. zmv turns them off for the whole
+    // function body so the trailing group stays a capture group; `-Q` asks for
+    // the qualifier reading back.
+    //
+    // zsh sets this as a real (function-scoped) option and its glob reads it,
+    // so mirror that around the glob and restore after. glob() snapshots every
+    // glob-relevant option into TLS at entry (glob.rs:3640 enter_glob_scope),
+    // which is what keeps this coherent for the in-flight glob.
+    let saved_bgq = crate::ported::zsh_h::isset(crate::ported::zsh_h::BAREGLOBQUAL);
+    if !bare_glob_qual && saved_bgq {
+        crate::ported::options::opt_state_set("bareglobqual", false);
+    }
     let candidates = crate::fusevm_bridge::with_executor(|exec| exec.expand_glob(&glob_pat));
+    if !bare_glob_qual && saved_bgq {
+        crate::ported::options::opt_state_set("bareglobqual", true);
+    }
     if candidates.len() == 1
         && candidates[0] == glob_pat
         && !std::path::Path::new(&candidates[0]).exists()
@@ -9104,64 +9283,105 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     }
 
     // For each match, compute destination by applying captures.
+    // zmv:243 `errs=()` — substitution errors accumulate and are reported
+    // together at the end (zmv:280-284), never inline per-file.
+    let mut errs: Vec<String> = Vec::new();
     let mut renames: Vec<(String, String)> = Vec::new();
     for src in &candidates {
         let caps = match re.captures(src) {
             Some(c) => c,
             None => continue,
         };
-        // Substitute `$1`..`$9` and `${1}` in to_pat with capture
-        // group contents.
-        let mut dest = String::new();
-        let mut to_chars = to_pat.chars().peekable();
-        while let Some(c) = to_chars.next() {
-            if c == '$' {
-                let next = to_chars.peek().copied();
-                match next {
-                    Some(d) if d.is_ascii_digit() => {
-                        to_chars.next();
-                        let idx = d.to_digit(10).unwrap_or(0) as usize;
-                        if let Some(m) = caps.get(idx) {
-                            dest.push_str(m.as_str());
-                        }
-                    }
-                    Some('{') => {
-                        to_chars.next();
-                        let mut ns = String::new();
-                        while let Some(&pc) = to_chars.peek() {
-                            if pc == '}' {
-                                to_chars.next();
-                                break;
-                            }
-                            ns.push(pc);
-                            to_chars.next();
-                        }
-                        if let Ok(idx) = ns.parse::<usize>() {
-                            if let Some(m) = caps.get(idx) {
-                                dest.push_str(m.as_str());
-                            }
-                        }
-                    }
-                    _ => dest.push(c),
-                }
-            } else {
-                dest.push(c);
+        // zmv:255-257 — the destination is NOT a hand-rolled `$1` substitution:
+        //
+        //     set -- "$match[@]"
+        //     g=${(Xe)repl}
+        //
+        // i.e. the capture groups become the POSITIONAL PARAMETERS and the
+        // replacement is then run through full parameter expansion (`e`), with
+        // `X` reporting parse errors. That is what makes `$f` (the current
+        // source file, zmv:245 `for f in $files`) work, and it is why zsh's own
+        // documentation can offer `zmv -v '* *' '${f// /_}'` — an arbitrary
+        // expansion over $f, not just a number reference.
+        //
+        // Substituting only `$1`..`$9`/`${N}` by hand left `$f` as the literal
+        // text `$f`, so every file mapped to the same name and zmv aborted with
+        // "both map to new_$f". Bind f + the positionals and reuse the shell's
+        // own `(e)` machinery (subst.rs:14508 `subst_parse_str` → `singsub`),
+        // which is the same code path `${(Xe)…}` takes.
+        let saved_f = crate::fusevm_bridge::with_executor(|exec| exec.scalar("f"));
+        let saved_pp = crate::fusevm_bridge::with_executor(|exec| exec.pparams());
+        let match_args: Vec<String> = (1..caps.len())
+            .map(|i| caps.get(i).map(|m| m.as_str()).unwrap_or("").to_string())
+            .collect();
+        crate::fusevm_bridge::with_executor(|exec| {
+            exec.set_scalar("f".to_string(), src.clone()); // zmv:245 `for f in $files`
+            exec.set_pparams(match_args.clone()); // zmv:255 `set -- "$match[@]"`
+        });
+        // zmv:257 `g=${(Xe)repl}` — `X` => quoteerr, `e` => re-substitute.
+        let dest = match crate::ported::subst::subst_parse_str(to_pat, false, true) {
+            Some(parsed) => crate::ported::subst::singsub(&parsed),
+            None => crate::ported::subst::singsub(to_pat),
+        };
+        crate::fusevm_bridge::with_executor(|exec| {
+            match &saved_f {
+                Some(v) => exec.set_scalar("f".to_string(), v.clone()),
+                None => exec.set_scalar("f".to_string(), String::new()),
             }
+            exec.set_pparams(saved_pp.clone());
+        });
+        // zmv:264-265 — an empty expansion joins `errs`; it is reported with
+        // the rest at the end (zmv:280-284), not immediately.
+        if dest.is_empty() {
+            errs.push(format!("`{}' expanded to an empty string", src));
+            continue;
+        }
+        // zmv:266-270 — a file the substitution did not alter is skipped, not
+        // an error and not a collision.
+        if dest == *src {
+            if verbose {
+                println!("{} not altered, ignored", src);
+            }
+            continue;
+        }
+        // zmv:273-274 — an existing destination is an error UNLESS -f, or the
+        // source and destination are the SAME FILE and we are moving:
+        //     elif [[ -f $g && -z $opt_f && ! ($f -ef $g && $action = mv) ]]; then
+        //         errs+=("file exists: $g")
+        // The `-ef` exemption is what lets a case-only rename work on a
+        // case-INSENSITIVE filesystem (macOS): `zmv '*.txt' '${f:u}'` maps
+        // foo.txt → FOO.TXT, which `exists()` reports as true because it IS
+        // foo.txt. Without the exemption every such rename died with a bogus
+        // "destination exists" — and it fired even under `-n`, where zsh
+        // reports at mapping time through errs and never touches the disk.
+        if !force && std::path::Path::new(&dest).is_file() && !same_file(src, &dest, &action) {
+            errs.push(format!("file exists: {}", dest));
+            continue;
         }
         renames.push((src.clone(), dest));
     }
 
-    // Detect collisions: two different sources mapping to the same
-    // destination. zsh errors out before any file action.
+    // zmv:271-272 — a destination two sources both map to is an error, unless
+    // the destination is an existing DIRECTORY (`! -d $g`).
     let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    let mut collisions = false;
     for (s, d) in &renames {
         if let Some(prev) = seen.insert(d.as_str(), s.as_str()) {
-            eprintln!("{}: error: {} and {} both map to {}", action, s, prev, d);
-            collisions = true;
+            if !std::path::Path::new(d).is_dir() {
+                errs.push(format!("{} and {} both map to {}", s, prev, d));
+            }
         }
     }
-    if collisions {
+    // zmv:280-284 — every substitution error is collected and reported TOGETHER
+    // under one header, then the whole run aborts without touching a file:
+    //     print -r -- "$myname: error(s) in substitution:" >&2
+    //     print -lr -- $errs >&2
+    // Reporting each collision inline as `mv: error: …` matched neither the tag
+    // nor the shape.
+    if !errs.is_empty() {
+        eprintln!("{}: error(s) in substitution:", myname);
+        for e in &errs {
+            eprintln!("{}", e);
+        }
         return 1;
     }
 
@@ -9172,21 +9392,37 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     };
     let mut status = 0;
     for (s, d) in &renames {
-        if !force && std::path::Path::new(d).exists() {
-            eprintln!("{}: {}: destination exists", action, d);
-            status = 1;
-            continue;
+        // The "file exists" gate is NOT here: zmv:273-274 applies it while
+        // building the map, so it lands in `errs` and aborts the whole run
+        // before any file is touched (zmv:280-284). Checking it at execution
+        // time renamed the earlier files and then failed on a later one, and
+        // fired under `-n` too.
+        // zmv:288-289 — the command is assembled as an ARRAY and echoed under
+        // -i, -n OR -v (not just -n), with every word (q-) quoted:
+        //     exec=(${=action} ${=opt_o} $opt_s $dashes $f $to[$f])
+        //     [[ -n $opt_i$opt_n$opt_v ]] && print -r -- ${(q-)exec}
+        // Printing the words RAW meant a filename with a space came out as
+        // `mv -- a b.txt a b.bak` — four words, not re-runnable — where zsh
+        // prints `mv -- 'a b.txt' 'a b.bak'`. And `-v` printed a bespoke
+        // `src -> dst` line that zsh never emits.
+        if dry_run || verbose {
+            let mut exec: Vec<String> = vec![prog.clone()];
+            if symlink && action == "ln" {
+                exec.push("-s".to_string()); // zmv:288 $opt_s
+            }
+            exec.push("--".to_string()); // zmv:288 $dashes
+            exec.push(s.clone());
+            exec.push(d.clone());
+            let line: Vec<String> = exec
+                .iter()
+                .map(|w| {
+                    crate::ported::utils::quotestring(w, crate::ported::zsh_h::QT_SINGLE_OPTIONAL)
+                })
+                .collect();
+            println!("{}", line.join(" "));
         }
         if dry_run {
-            if symlink && action == "ln" {
-                println!("{} -s -- {} {}", prog, s, d);
-            } else {
-                println!("{} -- {} {}", prog, s, d);
-            }
             continue;
-        }
-        if verbose {
-            println!("{} -> {}", s, d);
         }
         let result = match action.as_str() {
             "mv" => std::fs::rename(s, d),
@@ -9235,6 +9471,62 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
 /// zcalc is interactive (REPL); we support the `-e EXPR` form
 /// which evaluates a single expression and prints the result.
 /// Without `-e`, interactive mode is not supported and we exit 1.
+/// zcalc:99-112 `zcalc_show_value()` — zcalc does NOT echo the raw arithmetic
+/// result; it reformats it:
+///
+///   elif [[ $1 = *.* ]] || (( _outdigits )); then
+///     if [[ -z $_forms[_outform] || ($_outform -eq 1 && $1 = *.) ]]; then
+///       print -- $(( $1 ))                       # trailing-dot stays raw
+///     else
+///       printf "$_forms[_outform]\n" $_outdigits $1   # _forms[1] = '%2$g'
+///     fi
+///   else
+///     printf "%d\n" $1                           # no dot → integer
+///   fi
+///
+/// So with the default `_outform=1` a float goes through `%g` (6 significant
+/// digits) — `atan(1)*4` prints `3.14159`, not the full `3.1415926535897931`
+/// the expansion produced. The bare-trailing-dot case is exempt so `sqrt(16)`
+/// keeps zsh's `4.`. Echoing arithsubst's output verbatim reported every
+/// irrational at full double precision.
+///
+/// `-#base` output (zcalc:100-101) is not reached: the native impl has no
+/// `_base`, so this covers the default path only.
+fn zcalc_show_value(result: &str) -> String {
+    // zcalc:102 `[[ $1 = *.* ]]` — a dot anywhere means "float".
+    if !result.contains('.') {
+        // zcalc:110 `printf "%d\n" $1` — a CONVERSION, not an echo. It matters
+        // for the non-finite values, which carry no dot and so land here:
+        // `zcalc -e -f '1/0'` is Inf, and printf %d renders that as ZLONG_MAX
+        // (9223372036854775807), while NaN renders as 0. Returning the text
+        // verbatim printed "Inf"/"NaN", which zsh never shows. Rust's float→int
+        // cast saturates (Inf → i64::MAX) and maps NaN → 0, matching the C
+        // cast's observed behaviour.
+        if result.parse::<i64>().is_ok() {
+            return result.to_string();
+        }
+        if let Ok(f) = result.parse::<f64>() {
+            return (f as i64).to_string();
+        }
+        return result.to_string();
+    }
+    // zcalc:104 `($_outform -eq 1 && $1 = *.)` — a value that ENDS in the dot
+    // prints raw so the trailing "." is not lost.
+    if result.ends_with('.') {
+        return result.to_string(); // zcalc:105 print -- $(( $1 ))
+    }
+    match result.parse::<f64>() {
+        // zcalc:107 `printf "$_forms[_outform]\n" $_outdigits $1` with
+        // _forms[1] = '%2$g' — the PRINTF builtin's %g (default precision 6).
+        // Not `convfloat`: that is the float-PARAMETER formatter and re-appends
+        // a trailing `.` when %g produced none (params.rs:10770, c:5748-5749),
+        // so `sqrt(2)*sqrt(2)` (2.0000000000000004) printed `2.` where zsh
+        // prints `2`.
+        Ok(v) => crate::ported::builtin::format_spec_float_conv("%g", v, 'g'),
+        Err(_) => result.to_string(),
+    }
+}
+
 pub(crate) fn zcalc(args: &[String]) -> i32 {
     // c:Functions/Misc/zcalc — option scan: `-e` = expression mode
     // (all non-option args are expressions, each evaluated and printed),
@@ -9272,6 +9564,16 @@ pub(crate) fn zcalc(args: &[String]) -> i32 {
         eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
         return 1;
     }
+    // zcalc:133 `if zmodload -i zsh/mathfunc 2>/dev/null; then` — zcalc pulls
+    // in the math library on startup, which is why `zcalc -e 'sqrt(16)'` works
+    // in zsh while a bare `$(( sqrt(16) ))` does not. The named-function table
+    // stays EMPTY until the module boots (math.rs:2519 gates on MOD_INIT_B),
+    // so the native impl answered `unknown function: sqrt` for every math
+    // function zcalc exists to provide. require_module is idempotent
+    // (needs_load checks MOD_INIT_B) and silent=1 mirrors zcalc's `2>/dev/null`.
+    if let Ok(mut tab) = crate::ported::module::MODULESTAB.lock() {
+        let _ = crate::ported::module::require_module(&mut tab, "zsh/mathfunc", None, 1);
+    }
     // c:Functions/Misc/zcalc:187 `setopt forcefloat` for `-f`. Save and
     // restore so the option doesn't leak into the caller's shell state.
     let saved_ff = crate::ported::zsh_h::isset(crate::ported::zsh_h::FORCEFLOAT);
@@ -9279,8 +9581,23 @@ pub(crate) fn zcalc(args: &[String]) -> i32 {
         crate::ported::options::opt_state_set("forcefloat", true);
     }
     for expr in exprs {
+        // zcalc:101/105 `print -- $(( … ))` — the value is printed by the
+        // arithmetic expansion itself, so a FAILED evaluation prints the
+        // diagnostic and no value at all (`zcalc -e '1/0'` writes only
+        // "division by zero" to stderr; stdout stays empty). arithsubst
+        // reports the error and hands back "0", which was then printed as a
+        // result, so a division by zero answered `0`.
+        use std::sync::atomic::Ordering;
+        let before = crate::ported::utils::errflag.load(Ordering::Relaxed);
         let result = crate::ported::subst::arithsubst(expr, "", "");
-        println!("{}", result);
+        let raised = crate::ported::utils::errflag.load(Ordering::Relaxed) != before;
+        if !raised {
+            println!("{}", zcalc_show_value(&result));
+        } else {
+            // The expression failed; don't let the flag abort the caller's
+            // shell — zcalc keeps going and still exits 0 (rc=0 above).
+            crate::ported::utils::errflag.store(before, Ordering::Relaxed);
+        }
     }
     if force_float {
         crate::ported::options::opt_state_set("forcefloat", saved_ff);

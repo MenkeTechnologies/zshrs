@@ -16560,7 +16560,12 @@ fn format_spec_float(spec: &str, n: f64) -> String {
 /// semantics (Src/builtin.c — libc snprintf): %g picks the shorter
 /// of %e/%f and strips trailing zeros; %e/%E uses scientific notation;
 /// %f/%F is decimal-fraction (no scientific). Default precision is 6.
-fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
+// pub(crate) so zcalc can format through the SAME printf conversion it calls in
+// zsh (zcalc:107 `printf "$_forms[_outform]\n" …`, _forms[1] = '%2$g'). The
+// float-parameter formatter `convfloat` is NOT interchangeable: it re-appends a
+// trailing `.` when %g yields no dot (c:params.c:5748-5749), which printf never
+// does — `sqrt(2)*sqrt(2)` must print `2`, not `2.`.
+pub(crate) fn format_spec_float_conv(spec: &str, n: f64, conv: char) -> String {
     // c:Src/builtin.c:5495-5499 — `/* force consistent form for Inf/NaN
     // output */ if (isnan(doubleval)) fputs("nan"); else if (isinf(doubleval))
     // fputs(doubleval < 0.0 ? "-inf" : "inf"); else print_val(...)`. zsh emits

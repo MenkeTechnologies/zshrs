@@ -16179,6 +16179,82 @@ pub fn paramsubst(
         return (full.clone(), new_pos_in_full, vec![full]);
     } // c:1885
 
+    // c:Src/subst.c:1890-1891 — the paramsubst-start guard explicitly admits
+    // `Hat` and `'^'`, so `$^name` IS a parameter substitution; c:2550-2557
+    // then runs the SAME flag loop for the braced and unbraced forms:
+    //     if ((c = *s) == '^' || c == Hat) {
+    //         /* RC_EXPAND_PARAM on or off (doubled) */
+    //         if ((c = *++s) == '^' || c == Hat) { plan9 = 0; s++; }
+    //         else plan9 = 1;
+    //     }
+    // zshrs recognized `^` only INSIDE `${…}`, so the unbraced
+    // RC_EXPAND_PARAM form fell through as literal text: `print -rl -- $^b`
+    // emitted `$^b`, and promptinit:23's
+    //     for theme in $^fpath/prompt_*_setup(N)
+    // found ZERO themes where zsh finds 18. This is not a corner: 29 of zsh's
+    // own shipped functions use the form, `_git` among them.
+    //
+    // Same rewrite-and-recurse shape as the `$+NAME` arm below — synthesize the
+    // brace form with the surrounding text preserved and let the brace arm
+    // (subst.rs:4661 `case '^'`) run the full plan9 logic. Preserving the
+    // prefix/suffix is the point: the compiler's whole-word fast paths
+    // (compile_zsh.rs `$=`/`$~`) can't express `$^fpath/prompt_*_setup(N)`.
+    if c == '^' || c == Hat {
+        // c:2551-2553 — a run of `^`; each one toggles plan9, so carry the
+        // whole run through and let the brace arm apply the same toggling
+        // (`$^^name` turns RC_EXPAND_PARAM back off).
+        let mut fpos = pos;
+        let mut nflags = 0usize;
+        while fpos < chars.len() && (chars[fpos] == '^' || chars[fpos] == Hat) {
+            nflags += 1;
+            fpos += 1;
+        }
+        let name_start = fpos;
+        let mut name_end = name_start;
+        if name_end < chars.len() {
+            let first = chars[name_end];
+            if first.is_ascii_alphanumeric() || first == '_' {
+                while name_end < chars.len()
+                    && (chars[name_end].is_ascii_alphanumeric() || chars[name_end] == '_')
+                {
+                    name_end += 1;
+                }
+            } else if matches!(first, '@' | '*' | '#' | '?') {
+                name_end += 1;
+            }
+        }
+        if name_end > name_start {
+            // Optional `[subscript]`, depth-tracked — same walk as the `+` arm.
+            let mut sub_end = name_end;
+            if chars.get(sub_end).copied() == Some('[') {
+                let mut depth = 1;
+                let mut q = sub_end + 1;
+                while q < chars.len() && depth > 0 {
+                    match chars[q] {
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    q += 1;
+                }
+                if depth == 0 && q < chars.len() && chars[q] == ']' {
+                    sub_end = q + 1;
+                }
+            }
+            let name_with_sub: String = chars[name_start..sub_end].iter().collect();
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = chars[sub_end..].iter().collect();
+            let flags: String = "^".repeat(nflags);
+            let rewritten = format!("{}${{{}{}}}{}", prefix, flags, name_with_sub, suffix);
+            return paramsubst(&rewritten, prefix.chars().count(), qt, pf_flags, ret_flags);
+        }
+    }
+
     // c:Src/subst.c:1939+ — `$+name` (no braces) is the brace-free
     // form of `${+name}` (chkset: emit "1" if NAME is set, "0"
     // otherwise). zsh's lexer normalizes both forms through the same

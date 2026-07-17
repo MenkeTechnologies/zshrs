@@ -1,0 +1,50 @@
+# parity-fuzz --mode zmv baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode zmv --count N --verify 3  (copy NEW-signature lines).
+#
+# zmv is an autoload FUNCTION in zsh (Functions/Misc/zmv) — its source is the
+# spec. zshrs ships a native Rust impl (ext_builtins.rs zmv) that intercepts it,
+# so this mode pins that impl against the real function. Fixed on introduction,
+# rather than baselined:
+#
+#   1. zmv:255-257 `set -- "$match[@]"; g=${(Xe)repl}` — the captures become the
+#      POSITIONALS and the replacement gets FULL parameter expansion. Only
+#      `$1`..`$9`/`${N}` were substituted by hand, so `$f` (zmv:245's loop
+#      variable) stayed literal and every file mapped to the same name
+#      ("both map to new_$f"). `${f// /_}` — from zsh's own zmv docs — could
+#      never have worked either.
+#   2. zmv:190-216 — `-w` was not accepted at all and `-W` only did the search
+#      half, so `zmv -W '*.txt' '*.bak'` mapped everything to a literal `*.bak`.
+#      `-W` also errors when the wildcard counts disagree (zmv:209-212).
+#   3. zmv:126/237-239 — the pattern IS the glob (`(…)` is a glob group under
+#      extendedglob). Stripping the parens to build the glob turned
+#      `(*).(txt|log)` into `*.txt|log` and silently dropped every `.log` file.
+#   4. zmv:148 `setopt nobareglobqual` — a TRAILING `(…)` is otherwise parsed as
+#      a qualifier, so `(*).(*)` (swap name/extension) matched nothing.
+#   5. zmv:288-289 `print -r -- ${(q-)exec}` — the echoed command is (q-) quoted
+#      and printed under -i/-n/-v alike. Words were printed RAW (`mv -- a b.txt
+#      a b.bak`, not re-runnable) and `-v` used a bespoke `src -> dst` form.
+#   6. zmv:271-276 — "file exists" is collected into `errs` at MAP time (so the
+#      run aborts before touching a file) and exempts `$f -ef $g && $action = mv`.
+#      The check ran at EXECUTION time with no -ef exemption, so a case-only
+#      rename (`zmv '*.txt' '${f:u}'`) died with a bogus "destination exists" on
+#      a case-insensitive filesystem — and fired even under -n.
+#
+# KNOWN GAP (below): the NO-MATCH path under -Q. With -Q the trailing `(*)` is a
+# real glob qualifier (executable files), which the fixture has none of, so both
+# shells report `no matches found: (*).(*)`. They differ in two ways that are
+# artifacts of zmv being NATIVE here rather than a function:
+#   - the tag: zsh blames the function and line (`zmv:239:`) because the glob
+#     fails inside the function body; zshrs's expand_glob blames the script
+#     (`zsh:1:`). Matching it would mean faking a function frame AND hardcoding
+#     zmv's line number for one zsh build.
+#   - the status: zsh's failed glob aborts with 1, zshrs's aborts with 0.
+# Closing these needs the native impl to own its glob failure instead of letting
+# expand_glob's NOMATCH abort the script — worth doing, but it is a change to
+# the glob error path, not to zmv.
+autoload -Uz zmv; zmv -n -C -Q '(*).(*)' '$N.$N'; print -r -- "rc=$?"
+autoload -Uz zmv; zmv -n -L -Q '(*).(*)' '$N.$N'; print -r -- "rc=$?"
+autoload -Uz zmv; zmv -n -Q '(*).(*)' '$N.$N'; print -r -- "rc=$?"
+autoload -Uz zmv; zmv -n -W -Q '*.*' '*.*'; print -r -- "rc=$?"
+autoload -Uz zmv; zmv -n -p echo -Q '(*).(*)' '$N.$N'; print -r -- "rc=$?"
+autoload -Uz zmv; zmv -n -w -Q '(*).(*)' '$N.$N'; print -r -- "rc=$?"

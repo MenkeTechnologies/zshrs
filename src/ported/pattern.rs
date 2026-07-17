@@ -3104,6 +3104,17 @@ pub fn pattryrefs(
         && endp.is_none()
         && patoffset == 0
         && (prog.0.flags & (PAT_NOTSTART | PAT_NOTEND) as i32) == 0
+        // c:2399-2406 — a successful match is REJECTED for a file pattern
+        // (PAT_NOGLD) whose subject starts with '.', unless the pattern itself
+        // starts with a literal dot. That rejection lives below, AFTER
+        // patmatch; returning from the fast path skipped it entirely, so
+        // `*.*` matched `.hidden` (the literal `.` was found at offset 0 by
+        // the substring scan) where zsh lists no dot files at all. Hand any
+        // dot-leading subject under a file pattern to the full matcher, which
+        // applies the rule. Costs nothing where the fast path was aimed:
+        // history search (`${history[(R)(#i)*pat*]}`) is not a file glob and
+        // never sets PAT_NOGLD, and non-dot files still take the fast path.
+        && !((prog.0.flags & PAT_NOGLD as i32) != 0 && trial.starts_with('.'))
     {
         // Shape probe, inline (build-gate: no new fn in ported/ without
         // a C counterpart): Some((literal, igncase)) iff the program is

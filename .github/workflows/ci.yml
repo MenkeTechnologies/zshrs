@@ -558,21 +558,54 @@ jobs:
       # is a regression.
       - name: Fuzz — bindkey
         run: ./target/debug/parity-fuzz --mode bindkey --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/bindkey.txt --out target/parity-fuzz/ci-bindkey.txt
-      # Informational — printf is still gap-rich (many distinct diverging format
-      # classes), so it is NOT a blocking gate yet; it reports the divergence
-      # count for visibility and its corpus is uploaded. Promote to a blocking
-      # gate (add --baseline) once the printf gaps are driven down.
-      - name: Fuzz — printf (informational)
-        continue-on-error: true
-        run: ./target/debug/parity-fuzz --mode printf --count 5000 --verify 3 --max-report 400 --out target/parity-fuzz/ci-printf.txt
-      # Informational — arith has ONE known gap class: a comma operator inside an
-      # array subscript (`${arr[((x), (y)) % 5 + 1]}`). C never string-splits a
-      # subscript — mathevalarg (Src/math.c:1534) parses at MPREC_ARG, which stops
-      # at the TOP-LEVEL comma and reports where it stopped — whereas zshrs splits
-      # on the first comma at any paren depth. Every remaining arith divergence is
-      # an instance of that one class; it is informational (not baselined) because
-      # each operand combination normalizes to its own signature. Promote to a
-      # blocking gate once mathevalarg carries C's `**ss` out-param.
+      # zmv — an autoload FUNCTION in zsh (Functions/Misc/zmv, which IS the
+      # spec) that zshrs intercepts with a native Rust impl, so this pins the
+      # impl against the real thing: capture groups, `$f` / full ${(Xe)}
+      # replacement expansion, -w/-W wildcard rewriting, (a|b) alternation,
+      # nobareglobqual, (q-)-quoted -n/-v output, and the -ef "file exists"
+      # exemption. Every probe passes -n, so the fixture stays READ-ONLY and no
+      # worker (or minimized probe) can rename a file. One known-gap class
+      # baselined: the -Q no-match tag/status — see the baseline header.
+      - name: Fuzz — zmv
+        run: ./target/debug/parity-fuzz --mode zmv --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zmv.txt --out target/parity-fuzz/ci-zmv.txt
+      # zcalc — the other autoload FUNCTION zshrs intercepts natively (with zmv/
+      # zcp/zln). Pins the impl against Functions/Misc/zcalc: the zsh/mathfunc
+      # load that makes sqrt/atan resolve at all (zcalc:133), and
+      # zcalc_show_value's reformatting (zcalc:99-112) — %g to 6 significant
+      # digits, bare-trailing-dot printed raw, and no-dot via printf %d (so Inf
+      # is ZLONG_MAX, NaN is 0). Empty baseline: any divergence is a regression.
+      - name: Fuzz — zcalc
+        run: ./target/debug/parity-fuzz --mode zcalc --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zcalc.txt --out target/parity-fuzz/ci-zcalc.txt
+      # printf — PROMOTED from informational to a blocking gate: the format
+      # classes that made it gap-rich were getkeystring bugs, and 10,000 cases
+      # now run clean. printf drives the decoder through two flag sets nothing
+      # else uses (c:zsh.h:3181-3183): GETKEYS_PRINTF_FMT (OCTAL_ESC|
+      # BACKSLASH_C|PRINTF_PERCENT) for the format and GETKEYS_PRINTF_ARG
+      # (BACKSLASH_C only) for a %b argument — so `\777` is a 0xff byte in the
+      # format but a LITERAL backslash in a %b arg, and `\E` stays literal in
+      # both. See the baseline header. Empty baseline: any divergence is a
+      # regression.
+      - name: Fuzz — printf
+        run: ./target/debug/parity-fuzz --mode printf --count 5000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/printf.txt --out target/parity-fuzz/ci-printf.txt
+      # Informational — the generator itself now runs CLEAN (4000 cases, 0
+      # divergences): the comma-inside-a-subscript class this note used to
+      # describe (`${arr[((x), (y)) % 5 + 1]}`) passes. It stays informational
+      # because the underlying structural gap is NOT closed, and a clean gate
+      # here would only mean the generator does not reach it:
+      #   arr=(a b c d e); x=2; print -r -- ${arr[(x), 4]}   # zsh: b c d
+      #                                                      # zshrs: a b c d
+      #   arr=(a b c d e);      print -r -- ${arr[(1+1), (2+2)]}  # zsh: b c d
+      #                                                           # zshrs: (empty)
+      # A RANGE subscript whose bounds are parenthesized math still mis-parses:
+      # C never string-splits a subscript — mathevalarg (Src/math.c:1514) calls
+      # `mathevall(s, MPREC_ARG, ss)`, so the MATH PARSER stops at the top-level
+      # comma and reports where via `**ss` (c:1534-1536), and params.c:1597
+      # (`r = mathevalarg(s, &s)`) resumes from there. zshrs's mathevalarg
+      # (math.rs:4008) has no `ss` out-param and its mathevall (math.rs:519)
+      # takes no prec_tp, so callers split on a comma and `parse::<i64>()` the
+      # halves — which only ever accepts a literal integer. Promote to a
+      # blocking gate once mathevalarg carries C's `**ss` out-param, and extend
+      # the generator to emit parenthesized range bounds at the same time.
       - name: Fuzz — arith (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode arith --count 4000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-arith.txt
