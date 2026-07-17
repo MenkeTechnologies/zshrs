@@ -198,15 +198,20 @@ no live function pointer survives the library it lives in.
 
 `zmodload -R` is the low-level primitive. For distribution, **zpm** (zshrs's
 package manager) installs a plugin straight from a GitHub repo — it clones,
-`cargo build --release`s the cdylib, and `zmodload -R`s it:
+`cargo build --release`s the cdylib, and `zmodload -R`s it. The full command,
+source-spec, store-layout, and `zpm.toml` reference is in
+[**ZPM.md**](ZPM.md); this section covers the plugin-authoring side.
+
+The one line a `.zshrc` needs per plugin is `zpm load owner/repo` — it
+installs on the first start and loads from the store (zero-network) after:
 
 ```bash
-zpm add MenkeTechnologies/zshrs-forgit       # native (Rust) plugin
-zpm add MenkeTechnologies/zshrs-git-fuzzy
-zpm list                                     # installed plugins
-zpm load                                     # (in .zshrc) load all at startup
-zpm remove forgit
+zpm load MenkeTechnologies/zshrs-forgit      # native (Rust) plugin, self-installing
+zpm load MenkeTechnologies/zshrs-git-fuzzy
 ```
+
+`zpm add` (install without a `.zshrc` line), `zpm list`, `zpm remove` round
+out the store — see [ZPM.md](ZPM.md) for all commands.
 
 zpm auto-detects a native plugin from a `Cargo.toml` with a `cdylib`
 crate-type (ordinary `*.plugin.zsh` script repos install too, no metadata
@@ -242,11 +247,12 @@ own forked syntax-highlighter, paged `POSTDISPLAY` output, live
 `region_highlight`, and in-widget key reads. It installs, `zpm load`s, binds
 `^R`, and runs under zshrs's ZLE unchanged.
 
-`zpm add` also takes `github:owner/repo`, a `git+URL` (optionally with an
-`@ref` tag/branch), and `path:DIR` for a local checkout (no network). A
-runnable `.zshrc` using zpm is at [`examples/zshrc`](../examples/zshrc) —
-the one line a startup file needs is `zpm load`, which is zero-network
-(store + index only) and safe even before anything is installed.
+Beyond `owner/repo`, `zpm add` also takes `github:owner/repo`, a `git+URL`
+(optionally with an `@ref` tag/branch), and `path:DIR` for a local checkout —
+see [ZPM.md](ZPM.md#sources) for all forms. A runnable `.zshrc` using zpm is
+at [`examples/zshrc`](../examples/zshrc); the one line a startup file needs is
+`zpm load`, which is zero-network (store + index only) and safe even before
+anything is installed.
 
 ## ABI versioning
 

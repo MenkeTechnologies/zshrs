@@ -7,11 +7,15 @@ use super::commands;
 const USAGE: &str = "\
 usage: zpm <command> [args]
 
-  add <SOURCE>       install + load a plugin (owner/repo, github:o/r, git+URL, path:DIR)
+  load [SOURCE...]   load plugin(s); a source not yet in the store is
+                     installed first, then loaded (for .zshrc startup).
+                     No args loads everything installed. Zero-network once
+                     stored. SOURCE: owner/repo, github:o/r, git+URL, path:DIR
+  add <SOURCE>       install + load a plugin (load self-installs, so add is
+                     mainly for installing without a .zshrc line)
   remove <NAME>      unload + delete an installed plugin
   list               list installed plugins
   info <NAME>        show details for one plugin
-  load [NAME]        load installed plugin(s) without network (for .zshrc startup)
   update [NAME]      re-resolve + reinstall from the recorded source
   help               this message";
 
