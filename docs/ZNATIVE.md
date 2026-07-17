@@ -50,11 +50,15 @@ The `add`/`update` spec is auto-classified:
 | `path:DIR`                        | `path:examples/plugin-revolver`           | local directory (no network) |
 | an absolute / `./` / `../` / `~` path | `~/src/my-plugin`                     | local directory (no network) |
 
-Any remote form may carry an `@ref` suffix (split after the last `/`) to pin a
-tag, branch, or commit: `owner/repo@v1.2.0`, `git+https://host/x.git@main`.
-Clones are shallow (`git clone --depth 1 [--branch REF]`); an arbitrary commit
-sha that a shallow `--branch` clone can't reach falls back to a full clone +
-`git checkout`.
+**Install by version** — any remote form may carry an `@ref` suffix (split
+after the last `/`) to pin a tag, branch, or commit:
+`owner/repo@v1.2.0`, `git+https://host/x.git@main`. The pin is **recorded** in
+the index (`source = github:owner/repo@v1.2.0`), so `list` shows it, `update`
+re-fetches that exact ref (not HEAD), and `load owner/repo@v1.2.0` matches only
+that pin. Clones are shallow (`git clone --depth 1 [--branch REF]`); an
+arbitrary commit sha a shallow `--branch` clone can't reach falls back to a
+full clone + `git checkout`. The official plugin repos are tagged per release
+(e.g. `MenkeTechnologies/zshrs-revolver@v0.2.1`).
 
 ## Plugin kinds
 
