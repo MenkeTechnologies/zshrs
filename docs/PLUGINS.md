@@ -226,6 +226,22 @@ lib = "forgit"        # produces libforgit.{dylib,so}
 A plugin published this way depends on the SDK as a git dependency so it
 builds standalone: `zshrs-plugin = { git = "https://github.com/MenkeTechnologies/zshrs" }`.
 
+### Script (`.zsh`) plugins
+
+zpm installs ordinary zsh script plugins too — the ones that register ZLE
+widgets, functions, and completions. These stay script (the native ABI
+registers builtins and completions, not ZLE widgets), and zpm loads them
+by adding the repo to `$fpath` and sourcing its `*.plugin.zsh`:
+
+```bash
+zpm add zdharma-continuum/history-search-multi-word   # Ctrl-R multi-word history search
+```
+
+`history-search-multi-word` is a good stress test: a ZLE widget with its
+own forked syntax-highlighter, paged `POSTDISPLAY` output, live
+`region_highlight`, and in-widget key reads. It installs, `zpm load`s, binds
+`^R`, and runs under zshrs's ZLE unchanged.
+
 `zpm add` also takes `github:owner/repo`, a `git+URL` (optionally with an
 `@ref` tag/branch), and `path:DIR` for a local checkout (no network). A
 runnable `.zshrc` using zpm is at [`examples/zshrc`](../examples/zshrc) —

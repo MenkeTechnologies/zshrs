@@ -32,6 +32,7 @@ zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
 #
 # INSTALL (run once, interactively — these hit the network):
 #
+#   zpm add zdharma-continuum/history-search-multi-word  # Ctrl-R multi-word search (ZLE widget)
 #   zpm add zsh-users/zsh-history-substring-search   # script plugin (github)
 #   zpm add zsh-users/zsh-autosuggestions            # script plugin (github)
 #   zpm add github:zsh-users/zsh-syntax-highlighting # explicit github: form
