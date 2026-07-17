@@ -2143,7 +2143,16 @@ pub fn default_bindings() {
     // past the insertion start; modern vim ships backspace=indent,eol,start).
     // OFF by default: `zshrs -f` stays zsh-identical for parity purposes.
     // Enable via `[zle] vi_backspace_unrestricted = true` in zshrs.toml.
-    if crate::config::current().zle.vi_backspace_unrestricted
+    //
+    // NEVER in `--zsh` drop-in / parity mode, regardless of config: that
+    // mode must reproduce /bin/zsh's keymap byte-for-byte (viins ^H/^? =
+    // vi-backward-delete-char). Without this gate the user's
+    // `vi_backspace_unrestricted = true` in ~/.zshrs/zshrs.toml leaked
+    // into `zshrs --zsh -f`, diverging `bindkey`/`bindkey -L` state from
+    // zsh (every config_state_parity fragment dumps bindkeys → 16 tests
+    // failed on this single line).
+    if !crate::IS_ZSH_MODE.load(std::sync::atomic::Ordering::Relaxed)
+        && crate::config::current().zle.vi_backspace_unrestricted
         && std::env::var("ZSHRS_NATIVE_ZLE_FX").map(|v| v != "0").unwrap_or(true)
     {
         for key in [0x08u8, 0x7F] {
