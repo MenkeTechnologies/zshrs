@@ -53,7 +53,23 @@ pub fn zpm(args: &[String]) -> i32 {
             Some(name) => commands::info(name),
             None => return usage_err("info requires a NAME"),
         },
-        "load" | "source" => commands::load(rest.first().map(|s| s.as_str())),
+        // `zpm load` (no args) loads every installed plugin; `zpm load SPEC…`
+        // loads each — installing on first use when SPEC is a not-yet-stored
+        // source (owner/repo, github:…, path:…). Lets `.zshrc` carry
+        // `zpm load owner/repo` lines that self-install on the first startup.
+        "load" | "source" => {
+            if rest.is_empty() {
+                commands::load(None)
+            } else {
+                let mut last = Ok(());
+                for spec in rest {
+                    if let Err(e) = commands::load(Some(spec)) {
+                        last = Err(e);
+                    }
+                }
+                last
+            }
+        }
         "update" | "upgrade" | "up" => commands::update(rest.first().map(|s| s.as_str())),
         "help" | "-h" | "--help" | "" => {
             println!("{}", USAGE);

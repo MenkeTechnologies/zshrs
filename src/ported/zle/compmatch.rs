@@ -895,10 +895,44 @@ pub fn match_str(
     test: i32,
     part: i32,
 ) -> i32 {
+    // !!! TEMPORARY RUST-ONLY DIAGNOSTIC — env-gated recursion-depth guard to
+    // capture the degenerate matcher causing infinite match_str↔match_parts
+    // recursion (SIGBUS stack overflow on `zsh -<TAB>`). Remove once root-fixed.
+    struct DepthGuard;
+    thread_local!(static MATCH_DEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) });
+    impl Drop for DepthGuard {
+        fn drop(&mut self) {
+            MATCH_DEPTH.with(|d| d.set(d.get() - 1));
+        }
+    }
+    let _depth_guard = DepthGuard;
+    let cur_depth = MATCH_DEPTH.with(|d| {
+        let n = d.get() + 1;
+        d.set(n);
+        n
+    });
+    if cur_depth > 400 {
+        if let Ok(path) = std::env::var("ZSHRS_MATCH_DEPTH_LOG") {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(
+                    f,
+                    "DEPTH {} ABORT: l={:?} w={:?} sfx={} test={} part={} bc={}",
+                    cur_depth, l_in, w_in, sfx, test, part, bc
+                );
+            }
+        }
+        return 0; // abort to prevent the stack-overflow SIGBUS during capture
+    }
+
     let l_bytes = l_in.as_bytes();
     let w_bytes = w_in.as_bytes();
     let mut ll = l_bytes.len() as i32;
     let mut lw = w_bytes.len() as i32;
+    // c:517 — `const int original_ll = ll, original_lw = lw;` used by the
+    // anti-recursion guard below (c:592-597).
+    let original_ll = ll;
+    let original_lw = lw;
     let mut il: i32 = 0;
     let mut iw: i32 = 0;
     let mut exact: i32 = 0;
@@ -989,6 +1023,17 @@ pub fn match_str(
                 if std::ptr::addr_eq(lm_box.as_ref() as *const _, mp.as_ref() as *const _) {
                     continue; // c:595
                 }
+            }
+            // c:592-597 — anti-recursion guard: in a recursive (test) call,
+            // don't apply a `*` (wlen<0) matcher at the very start of the line
+            // or word. Without this, a zero-progress `*`-match (e.g.
+            // `r:|[._-]=*` against line "-") recurses match_str↔match_parts
+            // forever → stack-overflow SIGBUS on `zsh -<TAB>`.
+            if (original_ll == ll || original_lw == lw)
+                && (test == 1 || (test != 0 && mp.left.is_none() && mp.right.is_none()))
+                && mp.wlen < 0
+            {
+                continue; // c:597
             }
             if mp.wlen < 0 {
                 // c:603-867 — `*`-pattern matcher. Handles both prefix
@@ -1156,6 +1201,45 @@ pub fn match_str(
                                 if mp_ok {
                                     accept = true;
                                 }
+                            }
+                        }
+                    }
+
+                    // c:753-755 — for a variable-length (`*`) non-both matcher,
+                    // hard-verify the anchor span with match_parts; C BREAKS the
+                    // tp-scan if it fails. The port omitted this guard, so a
+                    // zero-progress `*`-match (e.g. `r:|[._-]=*` against line
+                    // "-") recursed match_str→match_str forever → stack-overflow
+                    // SIGBUS on `zsh -<TAB>`.
+                    if accept && both == 0 && mp.wlen == -1 {
+                        let l_aoff_idx = (l_pos + aoff).max(0) as usize;
+                        let l_aoff_slice =
+                            std::str::from_utf8(&l_bytes[l_aoff_idx..]).unwrap_or("");
+                        let tp_anchor_idx = (tp_pos - moff).max(0) as usize;
+                        let tp_slice =
+                            std::str::from_utf8(&w_bytes.get(tp_anchor_idx..).unwrap_or(&[]))
+                                .unwrap_or("");
+                        if cur_depth > 395 {
+                            if let Ok(path) = std::env::var("ZSHRS_MATCH_DEPTH_LOG") {
+                                use std::io::Write as _;
+                                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                                    let _ = writeln!(f, "  GUARD d={} l={:?} w={:?} llen_p={} alen={} aol={} moff={} aoff={} flags={:#x} lalen={} ralen={} l_aoff={:?} tp={:?}",
+                                        cur_depth, l_in, w_in, llen_p, alen, aol, moff, aoff, mp.flags, mp.lalen, mp.ralen, l_aoff_slice, tp_slice);
+                                }
+                            }
+                        }
+                        if match_parts(l_aoff_slice, tp_slice, alen, part) == 0 {
+                            break;
+                        }
+                    }
+                    if accept && cur_depth > 395 {
+                        if let Ok(path) = std::env::var("ZSHRS_MATCH_DEPTH_LOG") {
+                            use std::io::Write as _;
+                            if let Ok(mut f) =
+                                std::fs::OpenOptions::new().create(true).append(true).open(&path)
+                            {
+                                let _ = writeln!(f, "  RECURSE site=main depth={} llen_p={} alen={} aol={} both={} moff={} aoff={} wlen={} tp_pos={} w_pos={} step_l={:?}",
+                                    cur_depth, llen_p, alen, aol, both, moff, aoff, mp.wlen, tp_pos, w_pos, l_in);
                             }
                         }
                     }
