@@ -2604,6 +2604,48 @@ pub fn addmatches(
     let lpre = compprefix_s.clone();
     let lsuf = compsuffix_s.clone();
 
+    // c:2360-2389 — when `$compstate[pattern_match]` is set, compile the
+    // line prefix+suffix (with the completion point as a `*` placeholder)
+    // into a Patprog so candidates are matched as GLOBS instead of literal
+    // prefixes. This is what makes `_approximate` work: it turns on
+    // pattern_match and injects a leading `(#a$n)` approximate-glob into
+    // PREFIX (via the compadd prefix injector), so e.g. `(#a1)aple*` matches
+    // `apple`. The Rust port previously always passed `cp = None` to
+    // comp_match, so pattern_match / approximate completion did nothing.
+    // C uses an `x` placeholder at the completion point precisely so the
+    // point wildcard alone never enables pattern matching; mirror that by
+    // probing haswilds() on lpre+lsuf WITHOUT the placeholder — only real
+    // wildcards in the typed prefix/suffix (`(#a1)`, `*`, `[...]`) count.
+    let cp: Option<crate::ported::pattern::Patprog> = {
+        let cpm = get_compstate_str("pattern_match").unwrap_or_default();
+        if !cpm.is_empty() {
+            let is = cpm.starts_with('*'); // c:2361 is = (*comppatmatch == '*')
+            let mut probe = format!("{}{}", lpre, lsuf);
+            crate::ported::glob::tokenize(&mut probe); // c:2371
+            if crate::ported::pattern::haswilds(&probe) {
+                // c:2372 — has real wildcards.
+                let mut pat = String::new();
+                pat.push_str(&lpre); // c:2367 lpre
+                if is {
+                    // c:2374 — `tmp[llpl] = Star` (completion-point wildcard).
+                    pat.push('*');
+                }
+                pat.push_str(&lsuf); // c:2369 lsuf
+                crate::ported::glob::tokenize(&mut pat);
+                crate::ported::glob::remnulargs(&mut pat); // c:2376
+                let prog = crate::ported::pattern::patcompile(&pat, 0, None); // c:2377
+                if prog.is_some() {
+                    haspattern.store(1, Ordering::Relaxed); // c:2378
+                }
+                prog
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
     // c:2278-2300 — dat.ipre/isuf/ppre/psuf duplication with lipre/lisuf.
     if let Some(ref existing) = dat.ipre.clone() {
         dat.ipre = Some(if !lipre.is_empty() {
@@ -2774,7 +2816,7 @@ pub fn addmatches(
                 &lpre,
                 &lsuf,
                 word,
-                None,
+                cp.as_ref(),
                 Some(&mut lc_out),
                 qu,
                 None,
