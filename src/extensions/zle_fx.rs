@@ -65,24 +65,30 @@ pub fn enabled() -> bool {
     }
 }
 
-/// Native autosuggestions yield to a loaded zsh-autosuggestions plugin
-/// (its init sets ZSH_AUTOSUGGEST_VERSION... actually the plugin exports
-/// ZSH_AUTOSUGGEST_STRATEGY etc. unconditionally; the reliable runtime marker is
-/// the widget-wrapping flag variable it always defines).
+/// NATIVE-WINS POLICY: the native engines stay on even when the script
+/// plugins are loaded from the user's rc (kill switch aside). The previous
+/// yield-to-plugin gates keyed on the plugins' marker params — but a full
+/// rc (zpwr) loads all three plugins, whose zpty/async machinery doesn't
+/// fully function under zshrs, so every native engine yielded to a broken
+/// script and `zshrs -i` had no suggestions/highlighting at all while `-f`
+/// was perfect. Coexistence is benign by construction:
+///   * suggestions: native fills $POSTDISPLAY in the post-widget hook —
+///     after any plugin widget ran — and the plugin's accept path reads
+///     $POSTDISPLAY, so either accept route works;
+///   * search: the plugin's widget NAMES are intercepted pre-dispatch and
+///     handled natively — its shfuncs simply never run;
+///   * highlighting: user $region_highlight (what z-sy-h writes) paints
+///     ABOVE the native layer, so a functioning plugin overrides cleanly.
 fn autosuggest_active() -> bool {
-    enabled() && getsparam("ZSH_AUTOSUGGEST_VERSION").is_none()
+    enabled()
 }
 
-/// Native highlighting yields to z-sy-h / f-sy-h when loaded.
 fn highlight_active() -> bool {
     enabled()
-        && getsparam("ZSH_HIGHLIGHT_VERSION").is_none()
-        && getsparam("FAST_HIGHLIGHT_VERSION").is_none()
 }
 
-/// Native search yields to zsh-history-substring-search when loaded.
 fn search_active() -> bool {
-    enabled() && getsparam("HISTORY_SUBSTRING_SEARCH_HIGHLIGHT_FOUND").is_none()
+    enabled()
 }
 
 /// Native autopair yields to the zsh-autopair script plugin when loaded
@@ -117,6 +123,20 @@ fn set_buffer(text: &str, cursor: usize) {
     if crate::ported::zle::zle_main::VIINSBEGIN.load(SeqCst) > ZLECS.load(SeqCst) {
         crate::ported::zle::zle_main::VIINSBEGIN.store(0, SeqCst);
     }
+}
+
+/// Everything right of the cursor is autopair-inserted closers (`)`, `]`,
+/// `}`, quotes, pad spaces) — see the accept-gate comment at the call site.
+fn tail_is_autopair_closers() -> bool {
+    let line = current_line();
+    let cursor = current_cursor().min(line.chars().count());
+    let tail: Vec<char> = line.chars().skip(cursor).collect();
+    if tail.is_empty() {
+        return false; // that's cursor_at_end's case
+    }
+    let cfg = crate::autopair::AutopairConfig::from_params();
+    tail.iter()
+        .all(|&c| cfg.pairs.iter().any(|(_, close)| *close == c))
 }
 
 /// Cursor sits at line end (vi command mode's inclusive cursor counts the last
@@ -272,8 +292,16 @@ pub fn on_pre_widget(widget: &str) -> bool {
         // remaining pre-widget checks and the originally bound widget.
     }
 
-    // ---- Suggestion accept (fish reader.rs:5654; plugin: _zsh_autosuggest_accept).
-    if autosuggest_active() && cursor_at_end() {
+    // ---- Suggestion accept (fish reader.rs:3607-3621 ForwardChar →
+    // is_at_autosuggestion → accept_autosuggestion(Count(MAX))).
+    //
+    // fish gates on is_at_autosuggestion (cursor == search range end,
+    // reader.rs:5620-5633) — with no autopair, `echo "` puts the cursor AT
+    // the end, so ONE right-arrow accepts to EOL. zshrs autopair inserts the
+    // closer, parking the cursor before it; a literal end-gate would demand
+    // a second press. A tail made purely of pair-closers is transparent for
+    // the gate — `echo "|"` + → accepts the whole ghost, exactly like fish.
+    if autosuggest_active() && (cursor_at_end() || tail_is_autopair_closers()) {
         let portion = if ACCEPT_FULL_WIDGETS.contains(&widget) {
             Some(AutosuggestionPortion::Count(usize::MAX))
         } else if ACCEPT_PARTIAL_WIDGETS.contains(&widget) {
