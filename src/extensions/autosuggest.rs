@@ -299,7 +299,24 @@ pub fn compute_autosuggestion(
     // every keystroke, so the degraded mode is still plugin-parity.
     let mut unvalidated_fallback: Option<AutosuggestionResult> = None;
 
-    for full in &candidates {
+    // Single-line ghost rule: when the typed buffer is single-line, a
+    // multiline history candidate is suggested only up to its first newline
+    // (fish's completion suggestions do the same via line_at_cursor,
+    // reader.rs:5494). POSTDISPLAY newlines render as real line breaks and
+    // collide with multi-row prompts (p10k) — the ghost scrambled the
+    // prompt block until the renderer learns multiline ghosts.
+    let single_line_buffer = !search_string.contains('\n');
+
+    for full_item in &candidates {
+        let full: &str = if single_line_buffer {
+            match full_item.split_once('\n') {
+                Some((first, _)) => first,
+                None => full_item.as_str(),
+            }
+        } else {
+            full_item.as_str()
+        };
+        let full = &full.to_string();
 
         // fish:5362-5375 — case-sensitive prefix first, then one icase fallback.
         let (matches, icase) = if full.starts_with(search_string) {
@@ -315,13 +332,14 @@ pub fn compute_autosuggestion(
             continue;
         }
 
+        let is_whole = full == full_item; // false when truncated at a newline
         let make_result = || {
             AutosuggestionResult::new(
                 command_line.to_owned(),
                 range.clone(),
                 full.clone(),
                 icase.then(|| search_string.chars().count()),
-                /*is_whole_item_from_history=*/ true,
+                is_whole,
             )
         };
         if !icase && unvalidated_fallback.is_none() {
