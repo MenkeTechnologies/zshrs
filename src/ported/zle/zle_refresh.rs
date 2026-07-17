@@ -2641,7 +2641,18 @@ pub fn zrefresh() {
         if nlines > 0 {
             let fd = SHTTY.load(Ordering::Relaxed);
             let out_fd = if fd >= 0 { fd } else { 1 };
-            let _ = write_loop(out_fd, format!("\x1b[{}A", nlines).as_bytes());
+            // Move the cursor from below the grid back to the TOP of the ZLE
+            // display (row 0), NOT just the command-line row. The display spans
+            // `nlnct` rows (multiline prompt + buffer), so from the grid bottom
+            // that is `nlines + nlnct - 1` rows up — matching C's compprintlist
+            // epilogue `tcmultout(TCUP, listdat.nlines + nlnct - 1)`. The old
+            // `\x1b[{nlines}A` moved up the list rows only, so with a multiline
+            // prompt the reset-frame repaint (which assumes the cursor at row 0)
+            // started one row too low and redrew the prompt shifted down,
+            // leaving a stale prompt line climbing the screen (Bug: menu moves
+            // up linewise after `<cmd> <TAB>` with a 2+-line prompt).
+            let up = nlines + (nlnct_final - 1).max(0);
+            let _ = write_loop(out_fd, format!("\x1b[{}A", up).as_bytes());
         }
         if crate::ported::utils::errflag.load(Ordering::Relaxed) == 0 {
             zrefresh();
