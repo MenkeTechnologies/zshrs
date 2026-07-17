@@ -3370,4 +3370,18 @@ mod ztst_mined {
     fn brace_range_high_bytes() {
         assert_parity(r#"print -r -- {$'\M-\C-@'..$'\M-\C-A'}"#);
     }
+
+    /// corpus bulk_n — an assoc subscript KEY with backslash-quoted
+    /// bracket metacharacters (`A[\[k\]]=v`) must STORE the dequoted key
+    /// `[k]` (zsh runs untokenize on the parsed subscript). zshrs keeps
+    /// the backslashes verbatim: `${(k)A}` → `\[k\]` not `[k]`, so a read
+    /// with `${A[[k]]}` (which does compute `[k]`) misses. Same
+    /// subscript-metacharacter class as `range_subscript_bracket_pattern`
+    /// above — the fix is subscript-key dequoting, used everywhere, so it
+    /// needs dedicated care.
+    #[test]
+    #[ignore = "zshrs gap: assoc key A[\\[k\\]] stores backslashes verbatim; zsh dequotes to [k]"]
+    fn assoc_key_backslash_bracket_dequoted() {
+        assert_parity(r#"typeset -A A; A[\[k\]]=v; print -r ${(k)A}"#);
+    }
 }
