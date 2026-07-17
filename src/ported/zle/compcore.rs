@@ -608,6 +608,7 @@ pub fn after_complete(dat: &mut [i32]) -> i32 {
 /// (`comprpms`/`compkpms`) + result-readback is stubbed locally
 /// per PORT.md Rule 9 until `params.c` substrate lands.
 pub fn callcompfunc(s: &str, fn_name: &str) {
+    tracing::debug!(target: "compsys_args", %s, %fn_name, "callcompfunc ENTER");
     // c:544
 
     if fn_name.is_empty() {

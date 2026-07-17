@@ -29,6 +29,7 @@ impl crate::ported::vm_helper::ShellExecutor {
     /// Call this before any completion lookup (prompt, tab-complete, etc.).
     /// If the background thread hasn't finished yet, this is a no-op.
     pub fn drain_compinit_bg(&mut self) {
+        tracing::debug!(target: "compsys_args", pending = self.compinit_pending.is_some(), "drain_compinit_bg ENTER");
         if let Some((rx, start)) = self.compinit_pending.take() {
             match rx.try_recv() {
                 Ok(bg) => {

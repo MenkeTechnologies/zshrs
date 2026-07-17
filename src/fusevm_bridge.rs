@@ -430,6 +430,22 @@ pub fn with_session_context<R>(f: impl FnOnce() -> R) -> R {
     }
 }
 
+/// Merge finished background-compinit results into shell state, callable
+/// from any site (active VM context first, session executor otherwise —
+/// the ZLE completion path runs OUTSIDE a VM frame, where
+/// `try_with_executor` alone is None and $_comps stayed empty forever).
+pub fn drain_compinit_bg_hook() {
+    if try_with_executor(|exec| exec.drain_compinit_bg()).is_some() {
+        return;
+    }
+    let ptr = SESSION_EXECUTOR_PTR.with(|c| c.get());
+    if let Some(ptr) = ptr {
+        // SAFETY: per with_session_context.
+        let _ctx = ExecutorContext::enter(unsafe { &mut *ptr });
+        unsafe { (*ptr).drain_compinit_bg() }
+    }
+}
+
 /// RAII guard that sets/clears the thread-local executor pointer.
 ///
 /// Idempotent: calling `enter` when a context is already active is a no-op

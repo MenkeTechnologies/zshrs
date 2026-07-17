@@ -1874,6 +1874,7 @@ impl ShellExecutor {
     /// Scans fpath for completion functions and registers them
     #[tracing::instrument(level = "info", skip(self))]
     pub(crate) fn builtin_compinit(&mut self, args: &[String]) -> i32 {
+        tracing::debug!(target: "compsys_args", ?args, "builtin_compinit ENTER");
         // Parse options
         // -C: use cache if valid (skip fpath scan)
         // -D: don't dump (don't write .zcompdump)
@@ -2203,8 +2204,6 @@ impl ShellExecutor {
             let _ = tx.send(CompInitBgResult { result, cache });
         });
 
-        self.compinit_pending = Some((rx, bg_start));
-
         // Bind the standard completion widgets to `_main_complete` on
         // the MAIN thread (sh:553-569). This must not run on the worker
         // pool: `zle -C` mutates the interactive keymap/widget table,
@@ -2213,17 +2212,47 @@ impl ShellExecutor {
         // `compfunc` empty → the Rust compsys engine (`_main_complete`)
         // is never invoked and completion silently does nothing. The
         // rebind needs only `_main_complete` (always present as a Rust
-        // port), not the background fpath-scan results, so it runs now
-        // rather than being deferred to `drain_compinit_bg`.
+        // port), not the background fpath-scan results, so it runs now.
         crate::compsys::ported::compinit::install_standard_complete_widgets();
         crate::compsys::ported::compinit::maybe_rebind_tab_for_expand();
         // The stock `#compdef -k`/`-K` header bindings (^X? _complete_debug,
         // ^Xh _complete_help, \e/ history-complete, …) — same main-thread
-        // constraint as the standard widgets; the bg scan's own collection
-        // merges too late (drain is lazy) and the cached path never scans.
+        // constraint as the standard widgets.
         crate::compsys::ported::compinit::install_standard_comp_keybindings();
 
-        0
+        // zsh CONTRACT: compinit RETURNS with $_comps populated — the scan
+        // work is parallel (rayon fan-out on the pool inside compinit()),
+        // the COMPLETION of that work is not deferred. The previous lazy
+        // merge (compinit_pending + drain) left $_comps empty until some
+        // later drain call — `_dispatch` resolved comp="" for every command
+        // and option completion was dead shell-wide. Block on the result
+        // here; warm starts take the cache path above and never reach this.
+        match rx.recv() {
+            Ok(bg) => {
+                let comps = bg.result.comps.len();
+                crate::compsys::ported::compinit::apply_keybindings(&bg.result);
+                self.set_assoc("_comps".to_string(), bg.result.comps.into_iter().collect());
+                self.set_assoc(
+                    "_services".to_string(),
+                    bg.result.services.into_iter().collect(),
+                );
+                self.set_assoc(
+                    "_patcomps".to_string(),
+                    bg.result.patcomps.into_iter().collect(),
+                );
+                self.compsys_cache = Some(bg.cache);
+                tracing::info!(
+                    wall_ms = bg_start.elapsed().as_millis() as u64,
+                    comps,
+                    "compinit: scan complete, _comps populated"
+                );
+                0
+            }
+            Err(_) => {
+                tracing::error!("compinit: scan worker died without sending results");
+                1
+            }
+        }
     }
 
     /// cdreplay - replay deferred compdef calls (zinit turbo mode)
