@@ -3282,17 +3282,32 @@ mod sibling_empty_dq_spans {
 mod ztst_mined {
     use super::*;
 
-    /// D08cmdsubst — an UNBRACED `$*`/`$@` in a word that ALSO contains a
-    /// literal `"` from a `\"` escape is left unexpanded, so its `*`
-    /// globs and fails "no matches found". `${*}` (braced) works, `$1`
-    /// works. Root cause: a word containing any `\"`-escape takes a
-    /// compile path (compile_zsh.rs) that doesn't detect the unbraced
-    /// `$*`/`$@`. zsh: `"hi"`; zshrs: nomatch error. Fix is hot-path
-    /// word-compiler and needs dedicated investigation.
+    /// D08cmdsubst — an UNBRACED `$*`/`$@` in the SAME word as ANY
+    /// backslash-escape marker (`\"`, `\\`, …) is left unexpanded, so
+    /// its `*` globs and fails "no matches found". Isolated precisely:
+    /// `${*}` (braced) works; `$1` (digit) works; `$*` in a SEPARATE
+    /// word works (`print a\"b $*` → ok). Only the same-word
+    /// backslash-marker + unbraced `$*`/`$@` combination fails. Runtime
+    /// paramsubst issue (disasm identical to the working `$1` case) —
+    /// the fix must preserve the (correct) quoted-`$*`-joins behavior,
+    /// so it needs careful quote-state tracing. zsh: `"hi"`; zshrs:
+    /// nomatch error.
     #[test]
-    #[ignore = "zshrs gap: unbraced $*/$@ not expanded in a word containing a \\\" escape (globs instead)"]
+    #[ignore = "zshrs gap: unbraced $*/$@ not expanded when the same word holds a backslash-escape marker"]
     fn escaped_quote_with_dollar_star() {
         assert_parity(r#"set -- hi; print \"$*\""#);
+    }
+
+    #[test]
+    #[ignore = "zshrs gap: same as above via \\\\ escape — backslash marker + unbraced $* in one word"]
+    fn escaped_backslash_with_dollar_star() {
+        assert_parity(r#"set -- hi; print \\$*"#);
+    }
+
+    /// `$*` in a SEPARATE word from the escape works — pin the boundary.
+    #[test]
+    fn dollar_star_separate_word_from_escape_ok() {
+        assert_parity(r#"set -- hi; print a\"b $*"#);
     }
 
     #[test]
