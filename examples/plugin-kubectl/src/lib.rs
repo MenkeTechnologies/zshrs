@@ -18,7 +18,7 @@
 
 use std::os::raw::c_int;
 use std::process::Command;
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 /// compsys generator for `kubectl`. `args.rest()` is `[$CURRENT, word0,
 /// word1, …]` where `word0 == "kubectl"` and `$CURRENT` is the 1-based

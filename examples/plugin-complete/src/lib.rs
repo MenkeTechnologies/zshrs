@@ -14,7 +14,7 @@
 //! ```
 
 use std::os::raw::c_int;
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 /// People `greet` knows how to greet. The completion filters these by the
 /// current prefix.

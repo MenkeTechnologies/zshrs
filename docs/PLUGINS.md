@@ -19,10 +19,10 @@ Native runtime plugin loading itself is **not** new — bash has
 | ------------------- | ------------------------ | ------------------------------ | --------------------- |
 | Language            | shell script (interpreted) | C                            | Rust (any native lang via the C ABI) |
 | Artifact            | `.zsh` text file         | `.so` built in the shell's tree | `.dylib` / `.so` `cdylib` |
-| Build against       | nothing — it's sourced   | the shell's **private** internal headers (`builtins.h`/`shell.h` for bash; the `.mdd` + `Src/Modules/` build for zsh) | the published `zshrs-plugin` crate — `cargo add zshrs-plugin` |
+| Build against       | nothing — it's sourced   | the shell's **private** internal headers (`builtins.h`/`shell.h` for bash; the `.mdd` + `Src/Modules/` build for zsh) | the published `znative` crate — `cargo add znative` |
 | ABI stability       | n/a                      | **none** — bound to the exact shell build; no version magic in either | stable, versioned `ABI_VERSION`; mismatches refused at load |
 | Distribution        | a file to source         | must track and rebuild against each shell release | one crates.io SDK crate, independent of the shell's source |
-| Load / unload       | `source` (re-parse every startup) | `enable -f` / `-d` (bash); `zmodload` (zsh) — `dlsym` internal symbols | `zmodload -R` / `-uR` — `dlsym` one symbol, `zshrs_plugin_init` |
+| Load / unload       | `source` (re-parse every startup) | `enable -f` / `-d` (bash); `zmodload` (zsh) — `dlsym` internal symbols | `zmodload -R` / `-uR` — `dlsym` one symbol, `znative_init` |
 | Execution           | interpreted each call     | native machine code            | native machine code   |
 | Registers           | functions, aliases, options, ZLE widgets, fpath completions | builtins/params/hooks via the shell's internal API | builtins + a curated host API (`print`/`eval`/`getvar`/`setvar`) |
 | Third-party viable  | yes (oh-my-zsh, zinit)   | **rare in practice** — needs the shell source tree and tracks its internals, so ~only the shell's own bundled modules exist | **yes** — depend on one crates.io crate, no zshrs source needed |
@@ -37,8 +37,8 @@ neither ecosystem has meaningful third-party native plugins — the native
 modules that exist are almost all the ones the shell ships itself.
 
 zshrs instead exposes a **stable, published, versioned C ABI** — the
-`zshrs-plugin` crate on crates.io, gated by `ABI_VERSION`: a third party
-runs `cargo add zshrs-plugin`, writes a handler, ships a `cdylib`, and it
+`znative` crate on crates.io, gated by `ABI_VERSION`: a third party
+runs `cargo add znative`, writes a handler, ships a `cdylib`, and it
 loads into any compatible zshrs — native speed, no shell source tree, no
 recompile, and version-mismatched plugins refused rather than crashing.
 First shell to make its native-plugin interface an independently-published,
@@ -50,7 +50,7 @@ versioned ABI package instead of its own build-tree internals.
 ┌────────────────────────┐        ┌──────────────────────────┐
 │ zshrs (host)           │        │ libfoo.dylib (plugin)    │
 │                        │        │                          │
-│ zmodload -R libfoo ────┼─dlopen─▶ zshrs_plugin_init(host)  │
+│ zmodload -R libfoo ────┼─dlopen─▶ znative_init(host)  │
 │                        │        │   host.register_builtin  │
 │ plugin_host registry   ◀────────┤   ("foo", handler)       │
 │                        │        │                          │
@@ -58,13 +58,13 @@ versioned ABI package instead of its own build-tree internals.
 │   └ plugin_host::      │        │                          │
 │      dispatch("foo") ──┼─call───▶ handler(host,argc,argv)  │
 └────────────────────────┘        └──────────────────────────┘
-        stable C ABI: zshrs-plugin crate (#[repr(C)])
+        stable C ABI: znative crate (#[repr(C)])
 ```
 
 - **Host loader**: `src/extensions/plugin_host.rs` — `dlopen` via
   `libloading`, an in-process command registry, and the host-callback
   table plugins call back through.
-- **Shared ABI**: the [`zshrs-plugin`](../plugin-sdk/) crate. Both the
+- **Shared ABI**: the [`znative`](../znative/) crate. Both the
   host and every plugin depend on it, so both agree on the exact
   `#[repr(C)]` struct layout. `ABI_VERSION` gates loading: a plugin whose
   version does not match the host is refused (a wrong layout would be
@@ -86,13 +86,13 @@ versioned ABI package instead of its own build-tree internals.
 crate-type = ["cdylib"]
 
 [dependencies]
-zshrs-plugin = "0.12"
+znative = "0.12"
 ```
 
 `src/lib.rs`:
 
 ```rust
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 use std::os::raw::c_int;
 
 fn rhello(host: &Host, args: &Args) -> c_int {
@@ -240,7 +240,7 @@ lib = "forgit"        # produces libforgit.{dylib,so}
 ```
 
 A plugin published this way depends on the SDK as a git dependency so it
-builds standalone: `zshrs-plugin = { git = "https://github.com/MenkeTechnologies/zshrs" }`.
+builds standalone: `znative = { git = "https://github.com/MenkeTechnologies/zshrs" }`.
 
 ### Script (`.zsh`) plugins
 
@@ -267,11 +267,11 @@ anything is installed.
 
 ## ABI versioning
 
-`ABI_VERSION` in the `zshrs-plugin` crate is bumped on any change to the
+`ABI_VERSION` in the `znative` crate is bumped on any change to the
 `HostApi` / `PluginInfo` / `BuiltinFn` layout or semantics. The host
 refuses to load a mismatched plugin. Keep the crate's major/minor aligned
 with your target zshrs release. The single exported symbol every plugin
-must provide is `zshrs_plugin_init` (generated by `declare_plugin!`).
+must provide is `znative_init` (generated by `declare_plugin!`).
 
 ## Examples
 

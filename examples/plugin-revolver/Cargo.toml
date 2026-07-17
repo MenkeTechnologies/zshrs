@@ -20,7 +20,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-zshrs-plugin = { path = "../../plugin-sdk" }
+znative = { path = "../../znative" }
 libc = "0.2"
 
 # Standalone: empty workspace table so this example is not pulled into the

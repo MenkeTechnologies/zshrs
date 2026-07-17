@@ -20,7 +20,7 @@
 
 ## `[PATENT PENDING]`
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **658k+ lines, 490 source files** across a 2-crate workspace (`zshrs` runtime + `zshrs-daemon`; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 55 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search — on by default), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add zshrs-plugin`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md).
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **658k+ lines, 490 source files** across a 2-crate workspace (`zshrs` runtime + `zshrs-daemon`; `compsys` was folded into the runtime), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 106 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 55 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, native fish-ported ZLE engines (syntax highlight, autosuggest, history search — on by default), persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **193 ZLE widgets registered** in `IWIDGET_NAMES` (history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 47 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility. Also **the first shell to expose its native-plugin interface as a stable, versioned, independently-published ABI** — third parties `cargo add znative`, ship a `cdylib`, and load it at runtime via `zmodload -R` (version-gated, mismatches refused). bash `enable -f` and zsh `zmodload` load native code too, but only compiled against the shell's private internal headers, welded to one build with no stable ABI; see [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
 ### [`Read the Docs`](https://menketechnologies.github.io/zshrs/index.html) &middot; [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](src/compsys/)
 
@@ -712,13 +712,13 @@ the first compiled Unix shell, and the first that **hosts plugins written
 in a native compiled language** (Rust), loaded at runtime with no
 recompile of the shell. A plugin is an ordinary `cdylib` the shell
 `dlopen`s through a stable, versioned **C ABI** (the
-[`zshrs-plugin`](plugin-sdk/) crate). Nothing about Rust's unstable
+[`znative`](znative/) crate). Nothing about Rust's unstable
 layout, allocator, or panic ABI crosses the boundary — only
 `#[repr(C)]` data.
 
 ```rust
-// src/lib.rs — crate-type = ["cdylib"], deps: zshrs-plugin
-use zshrs_plugin::{declare_plugin, Args, Host};
+// src/lib.rs — crate-type = ["cdylib"], deps: znative
+use znative::{declare_plugin, Args, Host};
 use std::os::raw::c_int;
 
 fn rhello(host: &Host, args: &Args) -> c_int {
@@ -789,7 +789,7 @@ Native runtime plugins aren't new — bash `enable -f file.so name` and zsh
 |                    | script plugin (`.zsh`) | bash `enable -f` / zsh module | zshrs Rust plugin |
 | ------------------ | ----------------- | ----------------- | ----------------- |
 | Artifact           | `.zsh` (interpreted) | `.so` built in the shell's tree | `.dylib`/`.so` `cdylib` |
-| Build against      | nothing (sourced) | the shell's **private** internal headers | published `zshrs-plugin` crate |
+| Build against      | nothing (sourced) | the shell's **private** internal headers | published `znative` crate |
 | Stable ABI         | n/a | **none** — welded to one shell build, no version gate | versioned, load-time checked |
 | Distribution       | a file to source | rebuild per shell release | one crates.io SDK crate |
 | Speed              | interpreted | native | native |
@@ -800,7 +800,7 @@ compile against the shell's private headers, with no stable ABI and no
 version gate, so a plugin is welded to one build and can crash a
 mismatched one. That's why neither has meaningful third-party native
 plugins. zshrs exposes a stable, published, versioned ABI (`cargo add
-zshrs-plugin`), version-gated at load — first shell to make its
+znative`), version-gated at load — first shell to make its
 native-plugin interface an independently-published ABI package instead of
 its own build-tree internals.
 

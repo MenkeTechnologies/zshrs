@@ -23,7 +23,7 @@ use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 fn cfg(host: &Host, key: &str) -> Option<String> {
     host.getvar(key).filter(|s| !s.is_empty())

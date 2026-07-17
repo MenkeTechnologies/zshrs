@@ -3,7 +3,7 @@
 //! shell parameters, and evaluating shell code.
 
 use std::os::raw::c_int;
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 /// `rhello [names...]` — greet, echoing argv and the shell's `$PWD`.
 fn rhello(host: &Host, args: &Args) -> c_int {

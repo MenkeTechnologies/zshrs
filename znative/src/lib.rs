@@ -56,7 +56,7 @@ pub const ABI_VERSION: u32 = 3;
 
 /// The one symbol every plugin `cdylib` must export. The host resolves
 /// it with `dlsym` after `dlopen`. Signature is [`InitFn`].
-pub const INIT_SYMBOL: &[u8] = b"zshrs_plugin_init\0";
+pub const INIT_SYMBOL: &[u8] = b"znative_init\0";
 
 /// A plugin-provided command handler.
 ///
@@ -113,7 +113,7 @@ pub struct HostApi {
     /// (see [`Host::add_match`]). The host wires it into zsh's completion
     /// system (compsys) lazily — the actual `compdef` runs the first time
     /// completion fires, at a safe point in the completion pipeline, so
-    /// this is cheap and safe to call from `zshrs_plugin_init`. Returns 0
+    /// this is cheap and safe to call from `znative_init`. Returns 0
     /// on success. (ABI v2.)
     pub register_completion:
         extern "C" fn(host: *const HostApi, cmd: *const c_char, generator: *const c_char) -> c_int,
@@ -175,7 +175,7 @@ impl Host {
     ///
     /// # Safety
     /// `api` must be the non-null `*const HostApi` the host handed to the
-    /// plugin (in `zshrs_plugin_init` or a [`BuiltinFn`] call) and must
+    /// plugin (in `znative_init` or a [`BuiltinFn`] call) and must
     /// remain valid for the lifetime of this `Host`.
     pub unsafe fn from_raw(api: *const HostApi) -> Self {
         Host { api }
@@ -250,7 +250,7 @@ impl Host {
     ///
     /// The host defers the actual `compdef` wiring until the first time
     /// completion fires, so this is safe to call from
-    /// `zshrs_plugin_init`. `declare_plugin!`'s `completions:` section
+    /// `znative_init`. `declare_plugin!`'s `completions:` section
     /// calls this for you.
     ///
     /// The generator receives, as its arguments: `$CURRENT` (1-based index
@@ -338,7 +338,7 @@ impl Args {
 
 /// Declare a plugin: its identity, the builtins it registers, and the
 /// native completions it provides. Expands to the `#[no_mangle] extern "C"
-/// fn zshrs_plugin_init` the host looks for, plus the `'static`
+/// fn znative_init` the host looks for, plus the `'static`
 /// [`PluginInfo`].
 ///
 /// * `builtins:` — each `"name" => handler` registers a command. A handler
@@ -375,7 +375,7 @@ macro_rules! declare_plugin {
         };
 
         #[no_mangle]
-        pub extern "C" fn zshrs_plugin_init(
+        pub extern "C" fn znative_init(
             host: *const $crate::HostApi,
         ) -> *const $crate::PluginInfo {
             if host.is_null() {

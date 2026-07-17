@@ -28,7 +28,7 @@ use std::io::Write;
 use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 // ============================================================
 // git / process helpers

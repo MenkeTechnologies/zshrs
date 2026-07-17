@@ -2,7 +2,7 @@
 //!
 //! zsh's `Src/module.c` `dlopen`s C `.so` modules that call `addbuiltin`
 //! against the shell's own symbols. zshrs generalises that into a
-//! **stable, versioned C ABI** (`zshrs-plugin` crate) so third parties
+//! **stable, versioned C ABI** (`znative` crate) so third parties
 //! ship a compiled `cdylib` and load it at runtime with
 //! `zmodload -R <path>` — no zshrs recompile, no zsh script glue. This
 //! is the first compiled Unix shell hosting native compiled-language
@@ -21,7 +21,7 @@
 //! ## ABI safety
 //!
 //! Everything crossing the boundary is `#[repr(C)]`. The host verifies
-//! the plugin's `abi_version` matches [`zshrs_plugin::ABI_VERSION`]
+//! the plugin's `abi_version` matches [`znative::ABI_VERSION`]
 //! before trusting any pointer it returns; a mismatch is refused (a
 //! wrong struct layout would be undefined behaviour). The loaded
 //! [`libloading::Library`] is kept alive for the process lifetime — its
@@ -35,7 +35,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::sync::{Mutex, OnceLock};
 
-use zshrs_plugin::{BuiltinFn, HostApi, InitFn, PluginInfo, ABI_VERSION, INIT_SYMBOL};
+use znative::{BuiltinFn, HostApi, InitFn, PluginInfo, ABI_VERSION, INIT_SYMBOL};
 
 /// One loaded plugin. Dropping `_lib` runs `dlclose`, so this is only
 /// ever removed by [`unload`] AFTER its builtins are purged from
