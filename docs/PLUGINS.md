@@ -226,6 +226,12 @@ lib = "forgit"        # produces libforgit.{dylib,so}
 A plugin published this way depends on the SDK as a git dependency so it
 builds standalone: `zshrs-plugin = { git = "https://github.com/MenkeTechnologies/zshrs" }`.
 
+`zpm add` also takes `github:owner/repo`, a `git+URL` (optionally with an
+`@ref` tag/branch), and `path:DIR` for a local checkout (no network). A
+runnable `.zshrc` using zpm is at [`examples/zshrc`](../examples/zshrc) —
+the one line a startup file needs is `zpm load`, which is zero-network
+(store + index only) and safe even before anything is installed.
+
 ## ABI versioning
 
 `ABI_VERSION` in the `zshrs-plugin` crate is bumped on any change to the
