@@ -4396,6 +4396,24 @@ pub fn bin_zmodload(
         zwarnnam(nam, "-b, -c, -f, -p and -u cannot be combined with -F"); // c:2456
         return 1; // c:2457
     }
+    // !!! WARNING: RUST-ONLY EXTENSION — NO C COUNTERPART !!!
+    // zshrs repurposes `-R` WITHOUT `-A` to load a native (Rust)
+    // plugin cdylib through the stable C ABI (src/extensions/
+    // plugin_host.rs): the first compiled Unix shell hosting
+    // compiled-language plugins loaded at runtime. In C zsh `-R` means
+    // "remove module alias" and is only ever meaningful alongside `-A`
+    // (Src/module.c:2459); that behaviour is preserved for `-A -R name`
+    // (both flags set falls through to bin_zmodload_alias below), so no
+    // parity is lost for the near-unused alias-removal case.
+    //   zmodload -R  <path>...    load each plugin cdylib
+    //   zmodload -R               list loaded plugins
+    //   zmodload -uR <name>...    unload each plugin by name
+    if OPT_ISSET(ops, b'R') && !OPT_ISSET(ops, b'A') {
+        // Placed before the c:2490 queue_signals, so nothing to unqueue.
+        // Handler lives in the extensions tree (not a port) —
+        // src/extensions/plugin_host.rs.
+        return crate::plugin_host::zmodload_rust_cmd(nam, args, ops);
+    }
     if OPT_ISSET(ops, b'A') || OPT_ISSET(ops, b'R') {
         // c:2459
         if ops_bcpf || ops_au || OPT_ISSET(ops, b'd')                        // c:2460

@@ -1,0 +1,21 @@
+[package]
+name = "zshrs-plugin"
+version.workspace = true
+edition = "2021"
+description = "Stable C-ABI SDK for writing native (Rust) zshrs plugins loaded at runtime via `zmodload -R`"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+repository = "https://github.com/MenkeTechnologies/zshrs"
+homepage = "https://menketechnologies.github.io/zshrs/"
+keywords = ["shell", "zsh", "plugin", "abi", "ffi"]
+categories = ["command-line-utilities", "api-bindings"]
+readme = "README.md"
+
+[lib]
+name = "zshrs_plugin"
+path = "src/lib.rs"
+
+# No dependencies — the whole point of a stable ABI crate is that it is
+# tiny, has zero transitive deps, and "still builds in 2035" (CLAUDE.md
+# durability bar). Everything crosses the boundary as `#[repr(C)]`.
+[dependencies]

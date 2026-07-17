@@ -41,6 +41,7 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 - [\[0x0A\] Compatibility](#0x0a-compatibility)
 - [\[0x0B\] Architecture](#0x0b-architecture)
 - [\[0x0C\] Editor Integration](#0x0c-editor-integration)
+- [\[0x0D\] Native Rust Plugins](#0x0d-native-rust-plugins)
 - [\[0xFF\] License](#0xff-license)
 
 ---
@@ -701,6 +702,56 @@ require("lspconfig").zshrs.setup({})
 See [`editors/intellij/README.md`](editors/intellij/README.md) for the
 JetBrains plugin's full architecture, debugger internals, and limitation
 list.
+
+---
+
+## [0x0D] NATIVE RUST PLUGINS
+
+Every shell before zshrs runs plugins as interpreted scripts. zshrs is
+the first compiled Unix shell, and the first that **hosts plugins written
+in a native compiled language** (Rust), loaded at runtime with no
+recompile of the shell. A plugin is an ordinary `cdylib` the shell
+`dlopen`s through a stable, versioned **C ABI** (the
+[`zshrs-plugin`](plugin-sdk/) crate). Nothing about Rust's unstable
+layout, allocator, or panic ABI crosses the boundary — only
+`#[repr(C)]` data.
+
+```rust
+// src/lib.rs — crate-type = ["cdylib"], deps: zshrs-plugin
+use zshrs_plugin::{declare_plugin, Args, Host};
+use std::os::raw::c_int;
+
+fn rhello(host: &Host, args: &Args) -> c_int {
+    let pwd = host.getvar("PWD").unwrap_or_default();
+    host.print(&format!("hello, {} (pwd={pwd})\n", args.rest().join(" ")));
+    0
+}
+
+declare_plugin! {
+    name: "hello",
+    version: "0.1.0",
+    builtins: { "rhello" => rhello },
+}
+```
+
+```bash
+cargo build                              # → target/debug/libhello.dylib (.so on Linux)
+
+# Inside zshrs:
+zmodload -R ./target/debug/libhello.dylib   # load
+zmodload -R                                  # list loaded plugins
+rhello world                                 # native command, no fork, no interpreter
+zmodload -uR hello                           # unload by name
+```
+
+Plugin commands resolve after real builtins and shell functions, before
+PATH lookup — the same slot zsh uses for `zmodload -ab` autoloaded
+builtins. The host API a plugin can call back through: `print`, `eval`
+(run shell code), `getvar` / `setvar` (shell scalars), and
+`register_builtin`.
+
+A runnable example lives in [`examples/plugin-hello/`](examples/plugin-hello/).
+Full guide: [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
 ---
 

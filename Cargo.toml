@@ -94,6 +94,12 @@ path = "tests/parity/main.rs"
 ctrlc = "3"
 atty = "0.2"
 zshrs-daemon = { workspace = true, optional = true }
+# Native (Rust) plugin host: `zmodload -R <dylib>` dlopen's third-party
+# cdylibs through the stable C ABI in the `zshrs-plugin` crate. libloading
+# is the foundational Rust dlopen wrapper (cross-platform dlopen/dlsym).
+# See src/extensions/plugin_host.rs and docs/PLUGINS.md.
+libloading = "0.8"
+zshrs-plugin = { workspace = true }
 fusevm = { version = "0.14.7", features = ["jit-disk-cache", "aot"] }
 regex = "1.11"
 glob = "0.3"
@@ -191,7 +197,7 @@ ureq = { version = "2", default-features = false, features = ["json"] }
 base64 = "0.22"
 
 [workspace]
-members = [".", "daemon"]
+members = [".", "daemon", "plugin-sdk"]
 
 
 # Single source of truth for inter-crate path-dep versions. Updated by
@@ -200,6 +206,7 @@ members = [".", "daemon"]
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
 zshrs-daemon = { path = "daemon", version = "0.12.16" }
+zshrs-plugin = { path = "plugin-sdk", version = "0.12.17" }
 
 [profile.release]
 opt-level = 3
