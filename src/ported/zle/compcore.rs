@@ -75,6 +75,15 @@ use std::sync::{Mutex, OnceLock};
 pub fn do_completion(s: &str, incmd: i32, lst: i32) -> i32 {
     // c:287
 
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native (Rust) plugins that registered completions via
+    // `register_completion` (src/extensions/plugin_host.rs) have their
+    // compsys `compdef` wiring deferred to here — the completion pipeline
+    // is a safe point to eval the glue (compsys itself evals here),
+    // whereas evaling during `zmodload -R` plugin-init hangs the VM.
+    // Idempotent + cheap: no-ops once the pending queue is drained.
+    crate::plugin_host::flush_pending_completions();
+
     let osl = SHOWINGLIST.load(Ordering::Relaxed); // c:289
     let mut ret: i32 = 0; // c:289
 

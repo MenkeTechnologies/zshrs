@@ -50,7 +50,9 @@ use std::os::raw::{c_char, c_int, c_void};
 /// load a plugin whose `abi_version` does not match its own — a
 /// mismatched struct layout is undefined behaviour, so this is a hard
 /// gate, not a warning.
-pub const ABI_VERSION: u32 = 1;
+///
+/// v2: added [`HostApi::register_completion`] for native completions.
+pub const ABI_VERSION: u32 = 2;
 
 /// The one symbol every plugin `cdylib` must export. The host resolves
 /// it with `dlsym` after `dlopen`. Signature is [`InitFn`].
@@ -106,6 +108,15 @@ pub struct HostApi {
         extern "C" fn(host: *const HostApi, name: *const c_char, value: *const c_char) -> c_int,
     /// Release a string previously returned by `getvar`.
     pub free_cstring: extern "C" fn(host: *const HostApi, s: *mut c_char),
+    /// Register a native completion for command `cmd`. `generator` names
+    /// a builtin that prints one candidate per line for the current word
+    /// (see [`Host::add_match`]). The host wires it into zsh's completion
+    /// system (compsys) lazily — the actual `compdef` runs the first time
+    /// completion fires, at a safe point in the completion pipeline, so
+    /// this is cheap and safe to call from `zshrs_plugin_init`. Returns 0
+    /// on success. (ABI v2.)
+    pub register_completion:
+        extern "C" fn(host: *const HostApi, cmd: *const c_char, generator: *const c_char) -> c_int,
 }
 
 /// What a plugin returns from its [`InitFn`]. The strings must have
@@ -201,6 +212,37 @@ impl Host {
         };
         (self.t().setvar)(self.api, cn.as_ptr(), cv.as_ptr()) == 0
     }
+
+    /// Emit one completion candidate. Call this from a **completion
+    /// generator** (a builtin wired up via `completions:` in
+    /// [`declare_plugin!`] or [`Host::install_completion`]). Each call
+    /// prints one candidate on its own line; the compsys glue collects
+    /// them and feeds them to `compadd`. Equivalent to
+    /// `self.print(&format!("{word}\n"))`.
+    pub fn add_match(&self, word: &str) {
+        self.print(word);
+        self.print("\n");
+    }
+
+    /// Wire a native completion generator into zsh's completion system
+    /// (compsys) for command `cmd`. `generator_builtin` is the name of a
+    /// builtin (registered via [`declare_plugin!`]) that prints one
+    /// candidate per line — call [`Host::add_match`] from it.
+    ///
+    /// The host defers the actual `compdef` wiring until the first time
+    /// completion fires, so this is safe to call from
+    /// `zshrs_plugin_init`. `declare_plugin!`'s `completions:` section
+    /// calls this for you.
+    ///
+    /// The generator receives, as its arguments: `$CURRENT` (1-based index
+    /// of the word being completed) followed by every word on the line —
+    /// so `words[current]` is the word to complete.
+    pub fn install_completion(&self, cmd: &str, generator_builtin: &str) -> bool {
+        let (Ok(cc), Ok(cg)) = (CString::new(cmd), CString::new(generator_builtin)) else {
+            return false;
+        };
+        (self.t().register_completion)(self.api, cc.as_ptr(), cg.as_ptr()) == 0
+    }
 }
 
 /// Safe view over a builtin's `(argc, argv)`. `argv[0]` is the command
@@ -249,19 +291,28 @@ impl Args {
     }
 }
 
-/// Declare a plugin: its identity and the builtins it registers. Expands
-/// to the `#[no_mangle] extern "C" fn zshrs_plugin_init` the host looks
-/// for, plus the `'static` [`PluginInfo`]. Each handler is
-/// `fn(&Host, &Args) -> c_int`.
+/// Declare a plugin: its identity, the builtins it registers, and the
+/// native completions it provides. Expands to the `#[no_mangle] extern "C"
+/// fn zshrs_plugin_init` the host looks for, plus the `'static`
+/// [`PluginInfo`].
+///
+/// * `builtins:` — each `"name" => handler` registers a command. A handler
+///   is `fn(&Host, &Args) -> c_int`.
+/// * `completions:` — each `"cmd" => generator` wires a native completion
+///   into zsh's completion system (compsys) for command `cmd`. A generator
+///   is also `fn(&Host, &Args) -> c_int`; it receives `$CURRENT` (1-based
+///   index of the word being completed) followed by every word on the
+///   line, and emits candidates with [`Host::add_match`]. (Requires
+///   `compdef` — load the plugin after `compinit`.)
+///
+/// Both sections are optional.
 ///
 /// ```ignore
 /// declare_plugin! {
-///     name: "hello",
+///     name: "greet",
 ///     version: "0.1.0",
-///     builtins: {
-///         "rhello" => hello_handler,
-///         "rbye"   => bye_handler,
-///     },
+///     builtins:    { "greet" => greet },
+///     completions: { "greet" => greet_complete },
 /// }
 /// ```
 #[macro_export]
@@ -269,7 +320,8 @@ macro_rules! declare_plugin {
     (
         name: $name:literal,
         version: $version:literal,
-        builtins: { $($cmd:literal => $handler:path),+ $(,)? } $(,)?
+        $(builtins: { $($cmd:literal => $handler:path),+ $(,)? } $(,)?)?
+        $(completions: { $($ccmd:literal => $cgen:path),+ $(,)? } $(,)?)?
     ) => {
         static __ZSHRS_PLUGIN_INFO: $crate::PluginInfo = $crate::PluginInfo {
             abi_version: $crate::ABIVERSION_FOR_MACRO,
@@ -290,7 +342,7 @@ macro_rules! declare_plugin {
                 return ::std::ptr::null();
             }
             let h = unsafe { $crate::Host::from_raw(host) };
-            $(
+            $($(
                 {
                     // One trampoline per registered handler: adapts the
                     // C-ABI BuiltinFn to the ergonomic fn(&Host,&Args).
@@ -305,7 +357,29 @@ macro_rules! declare_plugin {
                     }
                     h.register_builtin($cmd, __trampoline);
                 }
-            )+
+            )+)?
+            $($(
+                {
+                    // Completion generators are registered as hidden
+                    // builtins, then wired into compsys via compdef.
+                    extern "C" fn __cgen(
+                        host: *const $crate::HostApi,
+                        argc: usize,
+                        argv: *const *const ::std::os::raw::c_char,
+                    ) -> ::std::os::raw::c_int {
+                        let h = unsafe { $crate::Host::from_raw(host) };
+                        let a = unsafe { $crate::Args::from_raw(argc, argv) };
+                        $cgen(&h, &a)
+                    }
+                    // NB: no leading underscore — zsh/compsys treats
+                    // `_*` command names as autoloadable completion
+                    // functions, which would shadow this builtin before
+                    // plugin dispatch. Keep the prefix alphanumeric.
+                    let gen_name = concat!("zshrs_complete_", $ccmd);
+                    h.register_builtin(gen_name, __cgen);
+                    h.install_completion($ccmd, gen_name);
+                }
+            )+)?
             &__ZSHRS_PLUGIN_INFO as *const $crate::PluginInfo
         }
     };
