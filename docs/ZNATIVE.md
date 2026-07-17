@@ -27,8 +27,13 @@ no separate install step. `znative` needs `git` on `PATH` for remote sources, an
 | `remove` (`rm`, `uninstall`)   | `NAME…`     | Unload (native), delete the store copy, drop the index row. |
 | `list` (`ls`)                  | —           | One line per installed plugin: `name  version  kind  source`. |
 | `info` (`show`)                | `NAME`      | Full record: name, version, kind, source, store path, integrity, lib / files / fpath. |
-| `update` (`upgrade`, `up`)     | `[NAME]`    | Re-resolve and reinstall from the recorded source (one, or all). |
+| `update` (`upgrade`, `up`)     | `[NAME]`    | Re-resolve and reinstall from the recorded source (one, or all) — pulls the latest upstream and rebuilds. |
+| `gc`                           | `[--dry-run]` | Remove `store/<name>@<version>/` directories not pinned by the index (orphans from old versions / upgrades) plus the `git/` clone cache. `--dry-run` (`-n`) lists without deleting. |
+| `clean`                        | —           | Clear the scratch directories (`git/`, `cache/`, `bin/`); the store and index are untouched. |
 | `help` (`-h`, `--help`)        | —           | Usage. |
+
+After an `update`/`upgrade` installs a newer version, the previous
+`store/<name>@<old>/` directory is left behind; `znative gc` reclaims it.
 
 Errors print as `znative: <reason>` on stderr and the command returns non-zero.
 
