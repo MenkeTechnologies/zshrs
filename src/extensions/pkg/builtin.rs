@@ -93,3 +93,37 @@ fn usage_err(msg: &str) -> i32 {
     eprintln!("{}", USAGE);
     1
 }
+
+/// [`HandlerFunc`](crate::ported::zsh_h::HandlerFunc) adapter so `zpm` is a
+/// **first-class builtin**: registered in `createbuiltintable` via
+/// [`bintab`], so `whence -w zpm` reports `builtin`, `builtin zpm …` works,
+/// and the compiler emits a builtin opcode — not just the fusevm
+/// command-dispatch arm. `argv` is the args after the command name (zsh
+/// convention), exactly what [`zpm`] expects.
+pub fn bin_zpm(
+    _name: &str,
+    argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    zpm(argv)
+}
+
+/// Builtin-table entry for `zpm`, folded into
+/// [`createbuiltintable`](crate::ported::builtin::createbuiltintable).
+/// `BINF_HANDLES_OPTS` so `execbuiltin` passes args verbatim — `zpm` parses
+/// its own subcommands and flags.
+#[allow(non_upper_case_globals)]
+pub static bintab: std::sync::LazyLock<Vec<crate::ported::zsh_h::builtin>> =
+    std::sync::LazyLock::new(|| {
+        vec![crate::ported::builtin::BUILTIN(
+            "zpm",
+            crate::ported::zsh_h::BINF_HANDLES_OPTS,
+            Some(bin_zpm as crate::ported::zsh_h::HandlerFunc),
+            0,
+            -1,
+            0,
+            None,
+            None,
+        )]
+    });
