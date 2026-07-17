@@ -80,6 +80,12 @@ pub fn lex_context_save(ls: &mut lex_stack) {
     });
     ls.lexstop = LEX_LEXSTOP.get() as i32;
     ls.toklineno = LEX_TOKLINENO.get() as i64;
+    // NOTE: LEX_UNGET_BUF is deliberately NOT stashed here — `$(...)`
+    // bodies use it as a cross-context handoff into the nested parse
+    // (see the hungetc flow at lex.rs `all_plain` / gettokstr), so a
+    // blanket take here truncates every cmdsubst body. Nested lexes
+    // that must not see the suspended parse's ungets (the
+    // syntax-highlight walk) isolate it at their own call site.
 
     // c:235-238 — reset live state to defaults so a nested parse
     // starts from a clean slate. tokstr/lexbuf zeroed; lexbuf.siz
