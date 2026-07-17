@@ -45,35 +45,22 @@ pub fn _setup(args: &[String]) -> i32 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
-    // sh:7-23  list-colors
+    // sh:7-23  list-colors. `_comp_colors` is declared PM_UNIQUE in
+    // `_main_complete` (sh:54 `typeset -U`), so setaparam dedupes these
+    // appends/assignments automatically — no manual dedup needed here.
     let lc = lookupstyle(&ctx, "list-colors");
     if !lc.is_empty() {
-        // sh:10 — `_comp_colors` is `typeset -U` (zsh _main_complete:54), so
-        // both the `=(...)` assignment and the `+=(...)` append drop entries
-        // already present. The Rust port builds the array via setaparam (which
-        // does not honor PM_UNIQUE), so replicate the dedup here — otherwise
-        // _setup running once per completer in the chain triples every
-        // list-colors entry, bloating ZLS_COLORS that getcols reparses on
-        // every completion.
+        // sh:10
         if tag == "default" {
-            let mut uniq: Vec<String> = Vec::new();
-            for v in &lc {
-                if !uniq.contains(v) {
-                    uniq.push(v.clone());
-                }
-            }
-            setaparam("_comp_colors", uniq);
+            setaparam("_comp_colors", lc);
         } else {
             // sh:13 — wrap each non-paren entry in `(group)` prefix
             let mut existing = getaparam("_comp_colors").unwrap_or_default();
             for v in &lc {
-                let entry = if v.starts_with('(') {
-                    v.clone()
+                if v.starts_with('(') {
+                    existing.push(v.clone());
                 } else {
-                    format!("({}){}", group, v)
-                };
-                if !existing.contains(&entry) {
-                    existing.push(entry);
+                    existing.push(format!("({}){}", group, v));
                 }
             }
             setaparam("_comp_colors", existing);

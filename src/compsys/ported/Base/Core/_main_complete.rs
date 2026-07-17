@@ -295,6 +295,21 @@ pub fn _main_complete(args: &[String]) -> i32 {
     setaparam("_lastdescr", Vec::new());
     setaparam("_comp_ignore", Vec::new());
     setaparam("_comp_colors", Vec::new());
+    // sh:54 — `typeset -U _lastdescr _comp_ignore _comp_colors`. This
+    // `typeset -U` declaration was not ported: the arrays are created above via
+    // `setaparam` (plain, no PM_UNIQUE), so every later `+=` append (`_setup`
+    // per completer, `_path_files`/`_files` ignore accumulation, the ambiguous-
+    // color injection) duplicates entries. zshrs's `setaparam` DOES honor
+    // PM_UNIQUE (params.rs:7367/4627 → arrunique), so flagging the params once
+    // here makes all subsequent appends dedupe automatically, matching zsh.
+    {
+        let mut tab = crate::ported::params::paramtab().write().unwrap();
+        for nm in ["_lastdescr", "_comp_ignore", "_comp_colors"] {
+            if let Some(pm) = tab.get_mut(nm) {
+                pm.node.flags |= crate::ported::zsh_h::PM_UNIQUE as i32;
+            }
+        }
+    }
 
     // sh:137-151  completer chain
     //   `-` as first arg + ≥3 args → run only argv[1] (call mode)
@@ -583,13 +598,14 @@ pub fn _main_complete(args: &[String]) -> i32 {
         if upos > 0 && upos <= unambig.len() + 1 {
             let prefix_chars = &unambig[..upos.saturating_sub(1)];
             if !prefix_chars.is_empty() {
+                // `_comp_colors` is PM_UNIQUE (sh:54) — setaparam dedupes.
                 let mut colors = getaparam("_comp_colors").unwrap_or_default();
-                let entry = format!("=(#i){}*=={}", glob_escape(prefix_chars), ambig_color);
-                // `_comp_colors` is `typeset -U` (sh:54) — skip if already present.
-                if !colors.contains(&entry) {
-                    colors.push(entry);
-                    setaparam("_comp_colors", colors);
-                }
+                colors.push(format!(
+                    "=(#i){}*=={}",
+                    glob_escape(prefix_chars),
+                    ambig_color
+                ));
+                setaparam("_comp_colors", colors);
             }
         }
     }
