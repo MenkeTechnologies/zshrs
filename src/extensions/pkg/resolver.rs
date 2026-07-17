@@ -64,8 +64,19 @@ pub fn resolve(spec: &str, store: &Store) -> PkgResult<Staged> {
     Ok(Staged {
         dir,
         name,
-        source: label,
+        // Record the pinned ref in the source so `update` re-fetches the SAME
+        // version and `load owner/repo@REF` matches only that pin.
+        source: label_with_ref(label, git_ref),
     })
+}
+
+/// Append `@REF` to a provenance label when a version/ref was pinned, so the
+/// recorded source round-trips back through `resolve`/`split_ref`.
+fn label_with_ref(label: String, git_ref: Option<&str>) -> String {
+    match git_ref {
+        Some(r) => format!("{}@{}", label, r),
+        None => label,
+    }
 }
 
 /// The provenance label a `spec` WOULD receive, computed WITHOUT cloning or
@@ -74,13 +85,15 @@ pub fn resolve(spec: &str, store: &Store) -> PkgResult<Staged> {
 /// often differs from its `znative.toml` plugin name — e.g. `zshrs-forgit` →
 /// `forgit`). Returns `None` for a bare plugin name (not a source form).
 pub fn source_label(spec: &str) -> Option<String> {
-    let (base, _ref) = split_ref(spec);
+    let (base, git_ref) = split_ref(spec);
     if let Some(p) = local_path(base) {
         // Match the `path+file://<canonical>` the installer records.
         let dir = p.canonicalize().ok()?;
         return Some(format!("path+file://{}", dir.display()));
     }
-    git_url(base).ok().map(|(_url, label, _name)| label)
+    git_url(base)
+        .ok()
+        .map(|(_url, label, _name)| label_with_ref(label, git_ref))
 }
 
 /// Split a trailing `@REF` (branch/tag/commit) off a spec. Only splits on the
