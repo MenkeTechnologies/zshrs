@@ -823,14 +823,20 @@ pub fn listmatches() {
     // dispatchable func chain yet, fall back to `list_matches` directly (the
     // C default handler of LISTMATCHESHOOK) — NOT `ilistmatches` — so the
     // `comp_list_matches` → complistmatches (colored) path still runs.
+    // C `listmatches()` is literally `runhookdef(LISTMATCHESHOOK, NULL)`
+    // (zle.h:398) — one dispatch, no return-value inspection, no fallback.
+    // The `list_matches` hookdef carries the registered `list_matches` func
+    // (addhookfunc, complete.c:1766) which runhookdef runs exactly once
+    // (flag 0 → last func only). The return value is the listing's exit
+    // code (0 on success), NOT a "handled" flag: gating a fallback on
+    // `runhookdef(...) != 0` re-ran the whole listing on every successful
+    // list, painting it twice.
     let h = crate::ported::module::gethookdef("list_matches");
-    let handled = if !h.is_null() {
-        crate::ported::module::runhookdef(h, std::ptr::null_mut()) != 0
+    if !h.is_null() {
+        crate::ported::module::runhookdef(h, std::ptr::null_mut());
     } else {
-        false
-    };
-    if !handled {
-        // Default handler — list_matches (compresult.c:2304), which fires
+        // Hookdef not registered (ZLE module not booted) — call the C
+        // default handler directly. list_matches (compresult.c:2304) fires
         // the comp_list_matches hook (→ complistmatches when zsh/complist
         // is loaded, else ilistmatches).
         let _ = crate::ported::zle::compresult::list_matches();
