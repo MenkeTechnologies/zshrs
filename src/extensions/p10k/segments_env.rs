@@ -287,6 +287,12 @@ fn dir_has_ext(dir: &Path, exts: &[&str]) -> bool {
     for entry in rd.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
+        // zsh glob `*.(java|…)` (e.g. p10k:4562): without GLOB_DOTS a
+        // leading dot never matches, so `.gradle` in $HOME must not
+        // count as a project marker.
+        if name.starts_with('.') {
+            continue;
+        }
         if let Some(ext) = name.rsplit('.').next() {
             if name.contains('.') && exts.contains(&ext) {
                 return true;

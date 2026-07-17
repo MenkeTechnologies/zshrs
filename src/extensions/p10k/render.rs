@@ -26,11 +26,12 @@
 //!     only matter through skipped-anchor chains); SELF_JOINED
 //!     (p10k:697-704) is not honored — each Segment renders once so the
 //!     multi-sub-segment case it exists for cannot arise;
-//!   - non-last-line right prompts are gap-aligned with plain spaces
-//!     only: MULTILINE_*_PROMPT_GAP_CHAR / _GAP_EXPANSION and the gap
-//!     fg/bg styling (p10k:7885-7913) are unported, and the alignment
-//!     ignores `_p9k__ind` (ZLE_RPROMPT_INDENT, p10k:8094) — the right
-//!     edge is the terminal edge.
+//!   - non-last-line right prompts are gap-aligned per
+//!     `_p9k_build_gap_post` (gap char, gap fg/bg styling,
+//!     ZLE_RPROMPT_INDENT, drop-right-on-overflow); only
+//!     MULTILINE_*_PROMPT_GAP_EXPANSION (default passthrough), the
+//!     `p10k display */gap` toggles and the `_p9k_prompt_overflow_bug`
+//!     terminator variant (p10k:8055) are unported.
 
 use crate::extensions::p10k::config::{p9k_global, p9k_param};
 use crate::extensions::p10k::icons;
@@ -881,30 +882,103 @@ fn prompt_visible_width(s: &str) -> usize {
         .sum()
 }
 
-/// Gap-align one non-last prompt line: left content, space padding,
-/// right content ending at the terminal edge.
+/// p10k:8126 — `_p9k__ind::=${${ZLE_RPROMPT_INDENT:-1}/#-*/0}`:
+/// ZLE_RPROMPT_INDENT, unset/empty → 1, leading `-` (negative) → 0.
+/// (The `_p9k_emulate_zero_rprompt_indent` branch at p10k:8111-8124 is
+/// a workaround for zsh < 5.7.2 only and is not ported.)
+fn rprompt_indent() -> usize {
+    match getsparam("ZLE_RPROMPT_INDENT") {
+        Some(v) if !v.is_empty() => {
+            if v.starts_with('-') {
+                0
+            } else {
+                // Non-numeric behaves like zsh arith on a bare word: 0.
+                v.parse().unwrap_or(0)
+            }
+        }
+        _ => 1,
+    }
+}
+
+/// Gap-align one non-last prompt line: left content, styled gap fill,
+/// right content, line terminator. Eager port of `_p9k_build_gap_post`
+/// (p10k:7878-7922) plus its consumption in `_p9k_set_prompt`
+/// (p10k:5936/5959-5960) and the gap math of `_p9k_gap_pre`
+/// (p10k:8087-8094).
 ///
-/// p10k:8087-8094 — `_p9k_gap_pre` binary-searches the combined visible
-/// width of `$_p9k__lprompt$_p9k__rprompt` with `%m(l.…)` prompt
-/// conditionals, then `_p9k__m = _p9k__clm - x - _p9k__ind - 1`;
-/// p10k:7905-7908 — `_p9k_build_gap_post` fills the gap with
-/// `${(pl.$((_p9k__m+1)).. .)}` (m+1 pad chars, default ' ') and falls
-/// back to a bare newline when `m` is negative (`${${_p9k__m:#-*}…`).
-/// Eager equivalent with `ind=0`: pad = columns - width(left) -
-/// width(right); overflow (pad would be < 1, i.e. m < 0) keeps the
-/// phase-1 inline append instead of p10k's drop-the-right fallback.
-/// `measure` is injectable so tests need no live shell state.
-fn align_line(left: &str, right: &str, columns: usize, measure: &dyn Fn(&str) -> usize) -> String {
+/// p10k:8094 — `_p9k__m = _p9k__clm - x - _p9k__ind - 1`, where x is
+/// the combined visible width of `$_p9k__lprompt$_p9k__rprompt` and
+/// `_p9k__ind` is ZLE_RPROMPT_INDENT. p10k:7906-7917 — the emitted
+/// template is
+/// `$style${${${_p9k__m:#-*}:+<gap>$_p9k__rprompt<term>}:-\n}` plus a
+/// `%b%k%f` reset when the gap style is non-empty (p10k:7918):
+/// NEGATIVE m DROPS the right side of the line (the `:-\n` arm) —
+/// never an inline append. Otherwise the gap is m+1 copies of
+/// MULTILINE_{FIRST,NEWLINE}_PROMPT_GAP_CHAR (p10k:7884-7891,
+/// validated to display width 1, else ' ') styled with the
+/// `multiline_*_prompt_gap` BACKGROUND/FOREGROUND (p10k:7892-7898),
+/// and the terminator is `_p9k_t[1+!_p9k__ind]` (p10k:8054 —
+/// `_p9k_t=($'\n' $'%{\n%}' '')`: the newline is zero-width-marked
+/// when ind==0 because the right side then ends in the terminal's
+/// last column). Unported: MULTILINE_*_PROMPT_GAP_EXPANSION
+/// (p10k:7900-7910, default passthrough only), the `p10k display
+/// */gap` toggles (`_p9k__g`/`_p9k__<i>g`), and the
+/// `_p9k_prompt_overflow_bug` `%{%G\n%}` terminator variant
+/// (p10k:8055). `measure` is injectable so tests need no live shell
+/// state.
+fn align_line(
+    left: &str,
+    right: &str,
+    line: usize,
+    columns: usize,
+    measure: &dyn Fn(&str) -> usize,
+) -> String {
     if right.is_empty() {
-        return left.to_string();
+        // p10k:5959-5960 — `[[ -n $right ]] || _p9k__prompt+=$'\n'`:
+        // no right side, no gap machinery.
+        return format!("{left}\n");
     }
-    let width = measure(left) + measure(right); // p10k:8087 — $_p9k__lprompt$_p9k__rprompt
-    if width >= columns {
-        // p10k:7905 `${${_p9k__m:#-*}:+…}` — m negative; inline append.
-        return format!("{left}{right}");
+    // p10k:7879-7883 — line 1 uses the FIRST params, later lines NEWLINE.
+    let kind = if line == 0 { "FIRST" } else { "NEWLINE" };
+    // p10k:7884-7886 — gap char; `${_p9k__ret:- }`.
+    let mut ch = get_icon(None, &format!("MULTILINE_{kind}_PROMPT_GAP_CHAR"), "");
+    if ch.is_empty() {
+        ch = " ".to_string();
     }
-    // p10k:7906/7908 — ${(pl.$((_p9k__m+1)).. .)}: m+1 spaces.
-    format!("{left}{}{right}", " ".repeat(columns - width))
+    // p10k:7887-7891 — must be exactly one char of display width 1;
+    // p10k warns to stderr, zshrs logs (no terminal chatter).
+    if ch.chars().count() != 1 || ch.chars().next().map(WCWIDTH) != Some(1) {
+        tracing::warn!(target: "p10k", gap_char = %ch, kind,
+            "MULTILINE_*_PROMPT_GAP_CHAR is not one character long; using ' '");
+        ch = " ".to_string();
+    }
+    // p10k:7892-7898 — gap style; an empty color contributes nothing
+    // (`[[ -n $_p9k__ret ]] && …`, no %k/%f reset in the style).
+    let scope = format!("multiline_{}_prompt_gap", kind.to_ascii_lowercase());
+    let mut style = String::new();
+    let bgc = translate_color(&p9k_param(&scope, None, "BACKGROUND", ""));
+    if !bgc.is_empty() {
+        style.push_str(&bg_seq(&bgc));
+    }
+    let fgc = translate_color(&p9k_param(&scope, None, "FOREGROUND", ""));
+    if !fgc.is_empty() {
+        style.push_str(&fg_seq(&fgc));
+    }
+    let reset = if style.is_empty() { "" } else { "%b%k%f" }; // p10k:7918
+    let ind = rprompt_indent();
+    // p10k:8094 — _p9k__m = _p9k__clm - x - _p9k__ind - 1.
+    let m = columns as i64 - (measure(left) + measure(right)) as i64 - ind as i64 - 1;
+    if m < 0 {
+        // p10k:7906 — `${_p9k__m:#-*}` misses → the `:-\n` arm: the
+        // right side of the line is DROPPED, never wrapped inline.
+        return format!("{left}{style}\n{reset}");
+    }
+    // p10k:8054/8060 — terminator `_p9k_t[1+!_p9k__ind]`.
+    let term = if ind == 0 { "%{\n%}" } else { "\n" };
+    format!(
+        "{left}{style}{}{right}{term}{reset}",
+        ch.repeat(m as usize + 1) // p10k:7907 — ${(pl.$((_p9k__m+1))..<char>.)}
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1044,13 +1118,13 @@ pub fn render_prompt(
             }
         } else {
             // p10k:5918-5947 — non-last lines with right content are
-            // gap-aligned: left, space fill, right ending at the
-            // terminal edge (p10k:8087-8095 + 7905-7908). The right
+            // gap-aligned: left, styled gap fill, right, terminator
+            // (p10k:8087-8095 + 7878-7922; align_line also emits the
+            // bare-newline fallbacks of p10k:7906/5960). The right
             // frame connector rides with the right content, as in
             // p10k's `_p9k_line_suffix_right` (p10k:8015/8044).
             let right_full = format!("{right}{frame_suffix}");
-            prompt.push_str(&align_line(&line, &right_full, columns, &prompt_visible_width));
-            prompt.push('\n'); // p10k:5954
+            prompt.push_str(&align_line(&line, &right_full, i, columns, &prompt_visible_width));
         }
     }
 
@@ -1420,21 +1494,55 @@ mod tests {
         });
     }
 
-    /// Right-alignment padding math (p10k:8087-8094 + 7906-7908),
-    /// injectable width fn: pad so the right edge is flush; overflow
-    /// (m < 0) falls back to inline append.
+    /// Right-alignment padding math (p10k:8087-8094 + 7906-7917),
+    /// injectable width fn. Default ZLE_RPROMPT_INDENT (unset → 1,
+    /// p10k:8126) keeps the right edge one column in; overflow (m < 0)
+    /// DROPS the right side (`:-\n` arm), never inline-appends.
     #[test]
     fn align_line_padding_math() {
-        let measure = |s: &str| s.chars().count();
-        assert_eq!(align_line("LL", "RRR", 10, &measure), "LL     RRR");
-        // Exactly one pad space (m == 0 → m+1 == 1).
-        assert_eq!(align_line("LLLL", "RRRRR", 10, &measure), "LLLL RRRRR");
-        // width == columns → m == -1 → inline fallback.
-        assert_eq!(align_line("LLLLL", "RRRRR", 10, &measure), "LLLLLRRRRR");
-        // Overflow → inline fallback.
-        assert_eq!(align_line("LLLLLLLL", "RRR", 10, &measure), "LLLLLLLLRRR");
-        // Empty right → left unchanged, no padding.
-        assert_eq!(align_line("LL", "", 10, &measure), "LL");
+        locked(|| {
+            let measure = |s: &str| s.chars().count();
+            // m = 10-5-1-1 = 3 → 4 gap chars, right ends at column 9.
+            assert_eq!(align_line("LL", "RRR", 0, 10, &measure), "LL    RRR\n");
+            // m == 0 → exactly one pad char.
+            assert_eq!(align_line("LLL", "RRRRR", 0, 10, &measure), "LLL RRRRR\n");
+            // m == -1 → right dropped.
+            assert_eq!(align_line("LLLL", "RRRRR", 0, 10, &measure), "LLLL\n");
+            // Hard overflow → right dropped.
+            assert_eq!(align_line("LLLLLLLL", "RRRRR", 0, 10, &measure), "LLLLLLLL\n");
+            // Empty right → left + newline, no gap machinery
+            // (p10k:5960).
+            assert_eq!(align_line("LL", "", 0, 10, &measure), "LL\n");
+        });
+    }
+
+    /// Gap char + gap foreground + ZLE_RPROMPT_INDENT=0 — the shape the
+    /// user config produces (GAP_CHAR '─', GAP_FOREGROUND 244): styled
+    /// fill, zero-width-marked newline terminator (`_p9k_t[2]`,
+    /// p10k:8054), trailing %b%k%f reset (p10k:7918).
+    #[test]
+    fn align_line_gap_char_style_and_indent() {
+        locked(|| {
+            use crate::ported::params::{setsparam, unsetparam};
+            setsparam("POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_CHAR", "─");
+            setsparam("POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND", "244");
+            setsparam("ZLE_RPROMPT_INDENT", "0");
+            let measure = |s: &str| s.chars().count();
+            let first = align_line("LL", "RRR", 0, 10, &measure);
+            // Line 2+ uses the NEWLINE params (p10k:7879-7883), which
+            // are unset here → plain ' ' fill, no style, no reset.
+            let newline = align_line("LL", "RRR", 1, 10, &measure);
+            // Overflow still emits the style + reset around the bare
+            // newline (p10k:7906 — style precedes the `:-\n` arm).
+            let overflow = align_line("LLLLLLLL", "RRRRR", 0, 10, &measure);
+            unsetparam("POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_CHAR");
+            unsetparam("POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND");
+            unsetparam("ZLE_RPROMPT_INDENT");
+            // m = 10-5-0-1 = 4 → 5 fill chars, right flush at column 10.
+            assert_eq!(first, "LL%F{244}─────RRR%{\n%}%b%k%f");
+            assert_eq!(newline, "LL     RRR%{\n%}");
+            assert_eq!(overflow, "LLLLLLLL%F{244}\n%b%k%f");
+        });
     }
 
     /// ANSI stripping for the width probe.
