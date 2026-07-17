@@ -841,6 +841,40 @@ fn shorten_branch(branch: &str) -> String {
     esc_pct(branch) // p10k:3954
 }
 
+/// Publish the `VCS_STATUS_*` parameters the gitstatus backend exposes
+/// (Src gitstatus/gitstatus.plugin.zsh), read by user VCS_CONTENT_EXPANSION
+/// formatters such as `my_git_formatter`. `P9K_CONTENT` is left EMPTY by
+/// the caller on the formatting-disabled path so the formatter builds
+/// from these rather than echoing a pre-formatted string.
+fn publish_vcs_status(gs: &git::GitStatus) {
+    let has = |n: i64| if n > 0 { 1 } else { 0 };
+    for (k, v) in [
+        ("VCS_STATUS_LOCAL_BRANCH", gs.branch.clone()),
+        ("VCS_STATUS_REMOTE_BRANCH", gs.remote_branch.clone()),
+        ("VCS_STATUS_TAG", gs.tag.clone()),
+        ("VCS_STATUS_COMMIT", gs.commit.clone()),
+        ("VCS_STATUS_ACTION", gs.action.clone()),
+        ("VCS_STATUS_COMMITS_AHEAD", gs.ahead.to_string()),
+        ("VCS_STATUS_COMMITS_BEHIND", gs.behind.to_string()),
+        // GitStatus has no separate push-remote tracking; report 0.
+        ("VCS_STATUS_PUSH_COMMITS_AHEAD", "0".to_string()),
+        ("VCS_STATUS_PUSH_COMMITS_BEHIND", "0".to_string()),
+        ("VCS_STATUS_STASHES", gs.stashes.to_string()),
+        ("VCS_STATUS_NUM_STAGED", gs.staged.to_string()),
+        ("VCS_STATUS_NUM_UNSTAGED", gs.unstaged.to_string()),
+        ("VCS_STATUS_NUM_UNTRACKED", gs.untracked.to_string()),
+        ("VCS_STATUS_NUM_CONFLICTED", gs.conflicted.to_string()),
+        // HAS_* are 1/0 (never -1 "unknown" here — the native backend
+        // always has the full count).
+        ("VCS_STATUS_HAS_STAGED", has(gs.staged).to_string()),
+        ("VCS_STATUS_HAS_UNSTAGED", has(gs.unstaged).to_string()),
+        ("VCS_STATUS_HAS_UNTRACKED", has(gs.untracked).to_string()),
+        ("VCS_STATUS_HAS_CONFLICTED", has(gs.conflicted).to_string()),
+    ] {
+        let _ = crate::ported::params::setsparam(k, &v);
+    }
+}
+
 fn vcs_segments() -> Vec<Segment> {
     // p10k:4137 — configured backends; only git is ported.
     let mut backends = p9k_global_arr("VCS_BACKENDS");
@@ -917,16 +951,33 @@ fn vcs_segments() -> Vec<Segment> {
 
     let state = vcs_state_for(&gs);
 
+    // p10k:3854-3868 — the gitstatus backend publishes VCS_STATUS_*
+    // globals and, when VCS_DISABLE_GITSTATUS_FORMATTING is on, leaves
+    // P9K_CONTENT EMPTY so the user's VCS_CONTENT_EXPANSION (e.g.
+    // `my_git_formatter`) builds the content from those globals. Always
+    // publish the globals (a CONTENT_EXPANSION may read them even in the
+    // default path); the empty-content segment is only for the
+    // formatting-disabled case.
+    publish_vcs_status(&gs);
     if global_bool("VCS_DISABLE_GITSTATUS_FORMATTING", false) {
-        // p10k:3854-3868 — content comes from the user's
-        // CONTENT_EXPANSION (a live zsh function in this user's config).
-        // Unevaluable natively; fall through to p10k's own gitstatus
-        // format, which renders the same counts.
-        tracing::debug!(
-            target: "p10k",
-            "VCS_DISABLE_GITSTATUS_FORMATTING=true: custom CONTENT_EXPANSION not evaluated, \
-             rendering p10k default vcs format"
+        // Empty content → P9K_CONTENT="" reaches the formatter, which
+        // then formats from VCS_STATUS_*. Icon (VCS_GIT_ICON) and
+        // bg/fg still apply; the formatter embeds its own branch glyph.
+        let bg = p9k_param("vcs", Some(state), "BACKGROUND", vcs_state_default_bg(state));
+        let fg = p9k_param("vcs", Some(state), "FOREGROUND", color1());
+        let icon = apply_visual_identifier(
+            "vcs",
+            Some(state),
+            seg_icon("vcs", Some(state), "VCS_GIT_ICON"),
         );
+        return vec![Segment {
+            name: "vcs".to_string(),
+            state: Some(state.to_string()),
+            content: String::new(),
+            icon,
+            fg,
+            bg,
+        }];
     }
 
     // ------- content assembly, p10k:3926-4005 -------
@@ -1574,6 +1625,41 @@ mod tests {
         assert_eq!(exit2str(0), "0");
         assert_eq!(exit2str(1), "1");
         assert_eq!(exit2str(128), "128");
+    }
+
+    /// publish_vcs_status exposes every VCS_STATUS_* param a user
+    /// VCS_CONTENT_EXPANSION (my_git_formatter) reads, so the formatter
+    /// builds the rich git format instead of echoing an empty
+    /// P9K_CONTENT.
+    #[test]
+    fn publish_vcs_status_sets_params() {
+        let _g = crate::test_util::global_state_lock();
+        use crate::ported::params::getsparam;
+        let gs = git::GitStatus {
+            branch: "main".into(),
+            commit: "abc123".into(),
+            remote_branch: "origin/main".into(),
+            ahead: 3,
+            behind: 1,
+            staged: 2,
+            unstaged: 4,
+            untracked: 5,
+            conflicted: 0,
+            stashes: 1,
+            ..git::GitStatus::default()
+        };
+        publish_vcs_status(&gs);
+        assert_eq!(getsparam("VCS_STATUS_LOCAL_BRANCH").as_deref(), Some("main"));
+        assert_eq!(getsparam("VCS_STATUS_REMOTE_BRANCH").as_deref(), Some("origin/main"));
+        assert_eq!(getsparam("VCS_STATUS_COMMITS_AHEAD").as_deref(), Some("3"));
+        assert_eq!(getsparam("VCS_STATUS_COMMITS_BEHIND").as_deref(), Some("1"));
+        assert_eq!(getsparam("VCS_STATUS_NUM_STAGED").as_deref(), Some("2"));
+        assert_eq!(getsparam("VCS_STATUS_NUM_UNSTAGED").as_deref(), Some("4"));
+        assert_eq!(getsparam("VCS_STATUS_NUM_UNTRACKED").as_deref(), Some("5"));
+        assert_eq!(getsparam("VCS_STATUS_STASHES").as_deref(), Some("1"));
+        // HAS_* are 1/0 from the counts.
+        assert_eq!(getsparam("VCS_STATUS_HAS_UNSTAGED").as_deref(), Some("1"));
+        assert_eq!(getsparam("VCS_STATUS_HAS_CONFLICTED").as_deref(), Some("0"));
     }
 
     #[test]
