@@ -19,6 +19,42 @@ CI green pending the underlying fix.
 
 ---
 
+## #675 — startup slurped the entire HISTFILE into memory — replaced with lazy paging — FIXED
+
+**Status:** `fixed` (code landed via `3fe4d3f53e`)
+
+**Reproducer:** 635MB HISTFILE mirror (566k entries) → every shell start
+`read_to_end`'d the whole file and built one histent per line: seconds
+of startup and hundreds of MB, multiplied by fleet-start (35 shells at
+once). Deleting the history file "fixed" it — confirming the eager
+slurp was the cost.
+
+**Contract (user-directed):** zshrs must NEVER read the whole history
+into memory. No caps either — the FULL history stays reachable; it's
+fetched lazily:
+
+- **startup** — `readhistfile` cold path loads ONE newest page
+  (`history_lazy::PAGE_BYTES`, 8MB) and arms the pager with the file +
+  floor (byte offset / event number of the oldest loaded entry). Exact
+  zsh event numbering (fc -l, `!N`, HISTNO identical to a full load)
+  comes from a zero-heap streaming entry count (mmap, byte scan,
+  nothing retained).
+- **navigation below the floor** — the `quietgethist` chokepoint pages
+  older entries in on miss (`page_older_until(ev)`).
+- **whole-history consumers** (`${(u@)history}`, `${history[(R)pat]}`,
+  hsmw ^R) — `scanpmhistory` pages everything in first; the full cost
+  lands exactly when all of history is asked for, never at startup.
+- files smaller than one page load fully (no behavior change).
+
+**Measured:** 32MB / 500k-entry HISTFILE → startup-to-prompt 0.43s
+(was multi-second + full residency); deep search for entry #17 of 500k
+from a fresh session pages in on demand and matches; up-arrow recalls
+the newest file entry; numbering exact (newest = 500001 with one
+session command). hist parity 82/82; the 7 residual corpus failures
+are version-string/env classes unrelated to history.
+
+---
+
 ## #674 — every prompt took ~5s: full 566k-entry ZLE history rebuild per zleread — FIXED
 
 **Status:** `fixed`
