@@ -2989,13 +2989,18 @@ pub fn ca_get_opt(
                 if name == line {
                     *end = line_bytes.len(); // c:1715
                     return Some(Box::new(caopt {
-                        // c:1717
+                        // c:1717 — C returns the aliased `p` (WITH its args);
+                        // the clone must carry `p->args` so option-argument
+                        // completion (`-f <TAB>`) sees `state.def`. Dropping
+                        // args here makes every arg-taking option look like a
+                        // bare flag, so `_arguments` completes options instead
+                        // of the option's argument.
                         next: None,
                         name: p.name.clone(),
                         descr: p.descr.clone(),
                         xor: p.xor.clone(),
                         r#type: p.r#type,
-                        args: None,
+                        args: p.args.clone(),
                         active: p.active,
                         num: p.num,
                         gsname: p.gsname.clone(),
@@ -3042,13 +3047,15 @@ pub fn ca_get_opt(
                         }
                         *end = at; // c:1736
                         return Some(Box::new(caopt {
-                            // c:1738
+                            // c:1738 — as above (c:1717), preserve `p->args`
+                            // so the prefix-match path (`--opt=val`) also
+                            // carries the option's argument spec.
                             next: None,
                             name: p.name.clone(),
                             descr: p.descr.clone(),
                             xor: p.xor.clone(),
                             r#type: p.r#type,
-                            args: None,
+                            args: p.args.clone(),
                             active: p.active,
                             num: p.num,
                             gsname: p.gsname.clone(),
