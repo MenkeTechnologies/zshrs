@@ -1,0 +1,19 @@
+# kubectl completion as a native zshrs plugin. Build:
+#   cargo build --manifest-path examples/plugin-kubectl/Cargo.toml
+# then inside zshrs (after compinit):
+#   zmodload -R examples/plugin-kubectl/target/debug/libkubectl_completion.dylib
+#   kubectl get po<TAB>
+[package]
+name = "kubectl_completion"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "kubectl_completion"
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+[workspace]
