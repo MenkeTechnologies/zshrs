@@ -1025,6 +1025,10 @@ pub fn zleread(
     }
     *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(lprompt);
     *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(rprompt);
+    // Fresh edit session on a fresh terminal row — the multiline
+    // repaint anchor must not climb into the previous command's
+    // output (see LAST_PAINT_ROWS in zle_refresh.rs).
+    crate::ported::zle::zle_refresh::LAST_PAINT_ROWS.store(0, Ordering::Relaxed);
     ZLEREADFLAGS.store(flags, SeqCst);
     ZLECONTEXT.store(context, SeqCst);
 
@@ -1178,10 +1182,35 @@ pub fn zleread(
     // carries VCS/VLN across frames within a single line edit).
     zleactive.store(1, SeqCst);
     crate::ported::zle::zle_refresh::RESETNEEDED.store(1, SeqCst);
+
+    // C loads the zle module before the first zleread, running `setup_`
+    // (zle_main.c:2246-2288) which assigns `$zle_bracketed_paste`
+    // (c:2276-2280). zshrs links zle statically and never ran the module
+    // boot chain, so the param stayed unset and start_edit() below had
+    // nothing to emit. Run it once on first entry.
+    {
+        static ZLE_MODULE_SETUP: std::sync::Once = std::sync::Once::new();
+        ZLE_MODULE_SETUP.call_once(|| {
+            let _ = setup_(std::ptr::null());
+        });
+    }
+
+    // c:1362 — `start_edit()` (termquery.c:737-741 → collate_seq(0, 1)):
+    // emits the edit-mode enter sequences, most importantly bracketed
+    // paste enable (`$zle_bracketed_paste[1]` = \e[?2004h). Without this
+    // the terminal never brackets pastes, so a multi-line paste executed
+    // line-by-line instead of inserting into the buffer.
+    crate::ported::zle::termquery::start_edit();
+
     zrefresh();
 
     // Enter core loop
     zlecore();
+
+    // c:1373 — `end_edit()` (termquery.c:744-748 → collate_seq(1, -1)):
+    // leave sequences in reverse order — bracketed paste disable
+    // (\e[?2004l) so pastes at the command's own stdin stay raw.
+    crate::ported::zle::termquery::end_edit();
 
     // c:1380 — `trashzle()` after the loop parks the cursor below the edited
     // line so the accepted command's output starts on a fresh row, AND — when
