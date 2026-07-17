@@ -3568,6 +3568,22 @@ pub fn features_module(_table: &mut modulestab, name: &str, features: &mut Vec<S
             }
             0
         }
+        // The two statically-linked Builtins/ modules with builtins also
+        // had no features_() fn → `_ => 0`. `zsh/sched` is the one the user
+        // hit at session start: `zmodload zsh/sched; sched …` errored
+        // "module `zsh/sched' has no such feature: `b:sched'". Feature
+        // surface = `b:<builtin>` (sched.c:376 / rlimits.c limit/ulimit/
+        // unlimit).
+        "zsh/sched" => {
+            features.push("b:sched".to_string());
+            0
+        }
+        "zsh/rlimits" => {
+            for f in ["b:limit", "b:ulimit", "b:unlimit"] {
+                features.push(f.to_string());
+            }
+            0
+        }
         _ => 0,
     }
 }
