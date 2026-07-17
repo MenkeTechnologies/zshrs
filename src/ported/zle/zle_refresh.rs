@@ -1139,6 +1139,58 @@ pub fn zrefresh() {
     let rprompt = rprompt().to_string();
     let cursor = ZLECS.load(Ordering::SeqCst);
 
+    // c:1084-1104 — erase a shown completion list that a widget has
+    // invalidated. compcore sets CLEARLIST=1 (c:348/529/…) when the
+    // buffer changes after a list was displayed; this block was set but
+    // NEVER consumed, so an on-screen `ls -<TAB>` grid stayed stranded
+    // when the line was accepted / edited (magic-enter "screen not
+    // cleared", stale coloured file rows = the "bleed"). Runs on the
+    // PREVIOUS frame's video state, before the NBUF rebuild below.
+    if CLEARLIST.load(Ordering::Relaxed) != 0 && LISTSHOWN.load(Ordering::Relaxed) > 0 {
+        let tcd = crate::ported::init::tclen.lock().unwrap()
+            [crate::ported::zsh_h::TCCLEAREOD as usize]
+            != 0;
+        if tcd {
+            // c:1086-1093 — clear-to-end-of-display over the grid: swap
+            // nbuf[vln]↔obuf[vln] so moveto navigates the old screen,
+            // drop below the command line (nlnct), TCCLEAREOD, return.
+            let ovln = VLN.load(Ordering::SeqCst);
+            let ovcs = VCS.load(Ordering::SeqCst);
+            let vln = ovln as usize;
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                let mut obuf = OBUF.lock().unwrap();
+                if vln < nbuf.len() && vln < obuf.len() {
+                    std::mem::swap(&mut nbuf[vln], &mut obuf[vln]);
+                }
+            }
+            moveto(NLNCT.load(Ordering::SeqCst).max(0) as usize, 0); // c:1090
+            tcoutclear(crate::ported::zsh_h::TCCLEAREOD); // c:1091
+            moveto(ovln.max(0) as usize, ovcs.max(0) as usize); // c:1092
+            {
+                let mut nbuf = NBUF.lock().unwrap();
+                let mut obuf = OBUF.lock().unwrap();
+                if vln < nbuf.len() && vln < obuf.len() {
+                    std::mem::swap(&mut nbuf[vln], &mut obuf[vln]); // c:1093 restore
+                }
+            }
+        } else {
+            // c:1094-1099 — no TCCLEAREOD: invalidate + force a full
+            // reset repaint from home.
+            crate::ported::zle::zle_h::invalidatelist();
+            moveto(0, 0);
+            CLEARFLAG.store(0, Ordering::SeqCst);
+            RESETNEEDED.store(1, Ordering::SeqCst);
+        }
+        // c:1100-1102 — the list is gone from screen now.
+        LISTSHOWN.store(0, Ordering::Relaxed);
+        LASTLISTLEN.store(0, Ordering::Relaxed);
+        if SHOWINGLIST.load(Ordering::Relaxed) != -2 {
+            SHOWINGLIST.store(0, Ordering::Relaxed);
+        }
+    }
+    CLEARLIST.store(0, Ordering::Relaxed); // c:1104
+
     // c:770-779 countprompt(lpromptbuf, &lpromptwof, &lprompth, 1) —
     // the cursor/scroll math below needs the LAST physical row's
     // width, and the repaint anchor needs the prompt's physical row
