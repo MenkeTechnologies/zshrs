@@ -66,17 +66,31 @@ pub fn _expand() -> i32 {
         }
     }
 
-    // sh:26  glob expansion
+    // sh:100-115  glob expansion. zsh globs the SUBSTITUTED result (`$exp`,
+    // sh:104 `exp=( ${~exp} )`), NOT the original word — the substitution step
+    // above has already tilde/param-expanded `~/dir/*` → `/home/u/dir/*`, and
+    // the glob then runs on that. The old port globbed `word` (`~/dir/*`)
+    // directly, which is a literal no-match, so `~/dir/*<TAB>` never expanded.
+    // Glob each substituted element; keep the element verbatim when it has no
+    // metacharacters or produces no match.
     let glob_on = lookupstyle(&ctx, "glob")
         .first()
         .map(|v| !matches!(v.as_str(), "no" | "false" | "0" | "off"))
         .unwrap_or(true);
-    if glob_on && word.chars().any(|c| matches!(c, '*' | '?' | '[')) {
-        // Use std::fs glob via shell expansion
-        if let Ok(paths) = glob_match(&word) {
-            if !paths.is_empty() {
-                exp = paths;
+    if glob_on {
+        let mut globbed: Vec<String> = Vec::new();
+        for e in &exp {
+            if e.chars().any(|c| matches!(c, '*' | '?' | '[')) {
+                match glob_match(e) {
+                    Ok(paths) if !paths.is_empty() => globbed.extend(paths),
+                    _ => globbed.push(e.clone()),
+                }
+            } else {
+                globbed.push(e.clone());
             }
+        }
+        if !globbed.is_empty() {
+            exp = globbed;
         }
     }
 
