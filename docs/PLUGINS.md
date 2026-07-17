@@ -269,6 +269,12 @@ zshrs   # interactive
 # % greet --lang <TAB>   → rust  ruby  python  perl  go
 ```
 
+[`plugin-kubectl/`](../examples/plugin-kubectl/) — a real-world completion:
+`kubectl` completion that delegates to cobra's `kubectl __complete`, so it
+tracks the installed kubectl version (subcommands, flags, live resources)
+with no static tree to maintain. Published as:
+`zpm add MenkeTechnologies/zshrs-kubectl-completion`.
+
 [`plugin-forgit/`](../examples/plugin-forgit/) — the **forgit** git+fzf
 plugin ported command-for-command from zsh (`ga glo gd gcf …`). See
 [PORTING_ZSH_PLUGIN.md](PORTING_ZSH_PLUGIN.md) for the full zsh→Rust

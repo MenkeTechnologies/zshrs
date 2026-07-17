@@ -1,0 +1,7 @@
+[plugin]
+name = "kubectl-completion"
+version = "0.1.0"
+description = "kubectl completion as a native zshrs plugin (delegates to cobra `kubectl __complete`)"
+
+[native]
+lib = "kubectl_completion"    # produces libkubectl_completion.{dylib,so}
