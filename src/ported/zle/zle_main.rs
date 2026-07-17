@@ -2243,8 +2243,15 @@ pub fn setup_(m: *const module) -> i32 {
     // c:2252 — `init_thingies()` registers the built-in widgets.
     crate::ported::zle::zle_thingy::init_thingies();
     // c:2256 — `stackhist = stackcs = -1`. These exist as atomics.
-    // c:2263 — `if (shout) query_terminal()`.
-    crate::ported::zle::termquery::query_terminal();
+    // c:2263 — `if (shout) query_terminal()`. DISABLED until the response
+    // consumer is ported: C reads the terminal's answers back inside
+    // termquery.c's response state machine; zshrs only has the emitter, so
+    // under a responding terminal (tmux) the OSC 10/11/12 + DA replies
+    // landed on stdin as literal keystrokes and polluted the first prompt
+    // (`^[]10;rgb:…`, `^[P>|tmux 3.7.21^[\`, `^[[?1;2;4c`). Emitting
+    // questions we never read is strictly worse than not asking.
+    // TODO: port termquery.c's response reader, then re-enable.
+    // crate::ported::zle::termquery::query_terminal();
     // c:2275-2279 — set `$zle_bracketed_paste` to the bracketed-paste
     // mode toggle escapes.
     let bpaste = vec![

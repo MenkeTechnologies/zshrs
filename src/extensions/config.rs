@@ -64,6 +64,9 @@ pub struct ZshrsConfig {
     pub glob: GlobConfig,
     /// `log` field.
     pub log: LogConfig,
+    /// `zle` field — native fish-ported editor engines (opt-in;
+    /// `zshrs -f` stays zsh-identical by default). See [`ZleConfig`].
+    pub zle: ZleConfig,
 }
 /// Compsys backend selection — Rust port vs upstream shell functions.
 ///
@@ -147,6 +150,28 @@ pub struct GlobConfig {
 pub struct LogConfig {
     /// `level` field.
     pub level: String,
+}
+
+/// `[zle]` — the native fish-ported line-editor engines and other
+/// deliberate ZLE deviations. ALL DEFAULT OFF: `zshrs -f` must behave
+/// identically to `zsh -f` for parity purposes; these are opt-in via
+/// `~/.zshrs/zshrs.toml`. `ZSHRS_NATIVE_ZLE_FX=0` still force-disables
+/// the engines regardless of config (emergency kill switch).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ZleConfig {
+    /// fish-ported history autosuggestions (ghost text).
+    pub autosuggest: bool,
+    /// fish-ported command-line syntax highlighting.
+    pub syntax_highlight: bool,
+    /// fish-ported up-arrow substring/prefix history search.
+    pub history_search: bool,
+    /// zsh-autopair port (bracket/quote auto-pairing).
+    pub autopair: bool,
+    /// viins ^H/DEL bound to unrestricted backward-delete-char
+    /// (vim's backspace=indent,eol,start) instead of the classic-vi
+    /// vi-backward-delete-char.
+    pub vi_backspace_unrestricted: bool,
 }
 
 // ── Defaults ──

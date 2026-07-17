@@ -2125,15 +2125,15 @@ pub fn default_bindings() {
         None,
     );
 
-    // !!! ZSHRS-NATIVE DEVIATION (not in zle_bindings.c) !!!
-    // viins ^H/DEL default to the UNRESTRICTED backward-delete-char instead
-    // of vi-backward-delete-char. Classic vi (and zsh -f) refuses to
-    // backspace past the insertion start (viinsbegin); modern vim ships
-    // `backspace=indent,eol,start` and deletes through it, and it is the
-    // single most rebound key in vi-mode zshrc's. Opt back into the classic
-    // restriction with ZSHRS_NATIVE_ZLE_FX=0 or
-    // `bindkey -M viins '^?' vi-backward-delete-char`.
-    if std::env::var("ZSHRS_NATIVE_ZLE_FX").map(|v| v != "0").unwrap_or(true) {
+    // !!! ZSHRS-NATIVE DEVIATION (not in zle_bindings.c) — OPT-IN !!!
+    // viins ^H/DEL bound to the UNRESTRICTED backward-delete-char instead
+    // of vi-backward-delete-char (classic vi and zsh -f refuse to backspace
+    // past the insertion start; modern vim ships backspace=indent,eol,start).
+    // OFF by default: `zshrs -f` stays zsh-identical for parity purposes.
+    // Enable via `[zle] vi_backspace_unrestricted = true` in zshrs.toml.
+    if crate::config::current().zle.vi_backspace_unrestricted
+        && std::env::var("ZSHRS_NATIVE_ZLE_FX").map(|v| v != "0").unwrap_or(true)
+    {
         for key in [0x08u8, 0x7F] {
             bindkey(
                 &mut vmap,
