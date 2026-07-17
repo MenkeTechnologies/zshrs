@@ -1,6 +1,6 @@
-# zpm — the zshrs plugin package manager
+# znative — the zshrs plugin package manager
 
-`zpm` is a built-in command for installing shell plugins. It handles both
+`znative` is a built-in command for installing shell plugins. It handles both
 **zsh script plugins** (the oh-my-zsh / zinit kind — functions, aliases, ZLE
 widgets, completions) and **native Rust plugins** (`cdylib`s loaded through
 the [`zshrs-plugin`](../plugin-sdk/) ABI — see [PLUGINS.md](PLUGINS.md)).
@@ -10,12 +10,12 @@ no per-project manifest or lockfile. The whole workflow is one line per
 plugin in your `.zshrc`:
 
 ```sh
-zpm load owner/repo
+znative load owner/repo
 ```
 
 On the first shell start that installs the plugin and loads it; on every
 start after, the same line loads it from the store with no network. There is
-no separate install step. `zpm` needs `git` on `PATH` for remote sources, and
+no separate install step. `znative` needs `git` on `PATH` for remote sources, and
 `cargo` for native plugins that ship as source.
 
 ## Commands
@@ -30,7 +30,7 @@ no separate install step. `zpm` needs `git` on `PATH` for remote sources, and
 | `update` (`upgrade`, `up`)     | `[NAME]`    | Re-resolve and reinstall from the recorded source (one, or all). |
 | `help` (`-h`, `--help`)        | —           | Usage. |
 
-Errors print as `zpm: <reason>` on stderr and the command returns non-zero.
+Errors print as `znative: <reason>` on stderr and the command returns non-zero.
 
 ## Sources
 
@@ -58,13 +58,13 @@ sha that a shallow `--branch` clone can't reach falls back to a full clone +
 | **native** | `zmodload -R` (the plugin host)    | `cargo build --release` when no prebuilt `lib*.{dylib,so}` is present |
 | **script** | `fpath=(DIR $fpath)` + `source *.plugin.zsh` | nothing — sourced as-is |
 
-When there is no explicit `zpm.toml`, the kind is auto-detected:
+When there is no explicit `znative.toml`, the kind is auto-detected:
 
 1. a prebuilt `lib*.{dylib,so}` at the repo root, **or** a `Cargo.toml`
    whose `[lib] crate-type` includes `cdylib` → **native**;
 2. otherwise any `*.plugin.zsh`, a `functions/` directory, or `*.zsh`
    files → **script**;
-3. otherwise `zpm` reports it cannot determine the kind.
+3. otherwise `znative` reports it cannot determine the kind.
 
 ## The store
 
@@ -95,9 +95,9 @@ lib = "librevolver.dylib"          # native: the cdylib to zmodload -R
 # fpath = ["functions"]
 ```
 
-## `zpm.toml` (optional manifest)
+## `znative.toml` (optional manifest)
 
-A plugin repo may ship a `zpm.toml` at its root to declare metadata and the
+A plugin repo may ship a `znative.toml` at its root to declare metadata and the
 load recipe explicitly (it overrides auto-detection):
 
 ```toml
@@ -118,40 +118,40 @@ lib = "git_fuzzy"        # produces lib<lib>.{dylib,so}
 # fpath  = ["functions"]              # dirs to prepend to $fpath
 ```
 
-Standard oh-my-zsh / zinit `*.plugin.zsh` repos need no `zpm.toml` at all.
+Standard oh-my-zsh / zinit `*.plugin.zsh` repos need no `znative.toml` at all.
 
 ## In your `.zshrc`
 
-List the plugins you want with `zpm load owner/repo`, one per line, in load
+List the plugins you want with `znative load owner/repo`, one per line, in load
 order. First start installs each; later starts load from the store with no
 network:
 
 ```sh
-zpm load zdharma-continuum/history-search-multi-word
-zpm load zsh-users/zsh-autosuggestions
-zpm load MenkeTechnologies/zshrs-forgit
-zpm load zsh-users/zsh-syntax-highlighting   # keep highlighting last
+znative load zdharma-continuum/history-search-multi-word
+znative load zsh-users/zsh-autosuggestions
+znative load MenkeTechnologies/zshrs-forgit
+znative load zsh-users/zsh-syntax-highlighting   # keep highlighting last
 ```
 
-A bare `zpm load` (no argument) loads everything already in the store — handy
-if you prefer to `zpm add` interactively and keep just one line in `.zshrc`. A
+A bare `znative load` (no argument) loads everything already in the store — handy
+if you prefer to `znative add` interactively and keep just one line in `.zshrc`. A
 complete example startup file is at [`examples/zshrc`](../examples/zshrc).
 
 ## Examples
 
 ```sh
 # In .zshrc — self-installing on first use, zero-network after.
-zpm load zdharma-continuum/history-search-multi-word  # script: Ctrl-R multi-word search
-zpm load MenkeTechnologies/zshrs-forgit               # native: git+fzf
-zpm load MenkeTechnologies/zshrs-revolver             # native: progress spinner
-zpm load path:examples/plugin-revolver                # local checkout
-zpm load zsh-users/zsh-syntax-highlighting@0.8.0      # pinned ref
-zpm load git+https://gitlab.com/team/plugin.git       # non-GitHub URL
+znative load zdharma-continuum/history-search-multi-word  # script: Ctrl-R multi-word search
+znative load MenkeTechnologies/zshrs-forgit               # native: git+fzf
+znative load MenkeTechnologies/zshrs-revolver             # native: progress spinner
+znative load path:examples/plugin-revolver                # local checkout
+znative load zsh-users/zsh-syntax-highlighting@0.8.0      # pinned ref
+znative load git+https://gitlab.com/team/plugin.git       # non-GitHub URL
 
 # Interactive store management.
-zpm add zsh-users/zsh-autosuggestions   # install without a .zshrc line
-zpm list                                # what's installed
-zpm info forgit                         # details for one
-zpm update                              # reinstall everything from source
-zpm remove forgit                       # unload + delete
+znative add zsh-users/zsh-autosuggestions   # install without a .zshrc line
+znative list                                # what's installed
+znative info forgit                         # details for one
+znative update                              # reinstall everything from source
+znative remove forgit                       # unload + delete
 ```

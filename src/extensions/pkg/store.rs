@@ -110,7 +110,7 @@ impl Store {
 }
 
 /// The global install index at `$ZSHRS_HOME/pkg/installed.toml` — the single
-/// source of truth for what's installed. `zpm load` reads it at shell startup
+/// source of truth for what's installed. `znative load` reads it at shell startup
 /// to load every plugin with zero network.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InstalledIndex {
@@ -121,7 +121,7 @@ pub struct InstalledIndex {
     pub packages: Vec<InstalledPlugin>,
 }
 
-/// One installed plugin: identity + provenance + everything `zpm load` needs
+/// One installed plugin: identity + provenance + everything `znative load` needs
 /// to load it without re-resolving.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InstalledPlugin {
@@ -177,7 +177,7 @@ impl InstalledIndex {
         }
         let body = toml::to_string_pretty(&self)
             .map_err(|e| PkgError::Other(format!("serialize {}: {}", INSTALLED_FILE, e)))?;
-        std::fs::write(&path, format!("# zpm — auto-generated. Do not edit.\n{}", body))
+        std::fs::write(&path, format!("# znative — auto-generated. Do not edit.\n{}", body))
             .map_err(|e| PkgError::Io(format!("write {}: {}", path.display(), e)))?;
         Ok(())
     }
@@ -239,7 +239,7 @@ mod tests {
 
     fn tmp() -> PathBuf {
         let p = std::env::temp_dir().join(format!(
-            "zpm-test-{}-{}",
+            "znative-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

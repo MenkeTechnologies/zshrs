@@ -1,4 +1,4 @@
-//! zshrs plugin package manager (`zpm`) — a GLOBAL-only package manager for
+//! zshrs plugin package manager (`znative`) — a GLOBAL-only package manager for
 //! zsh script plugins AND native (Rust cdylib) plugins.
 //!
 //! Ported from strykelang's package manager (`strykelang/pkg/`), retargeted
@@ -11,14 +11,14 @@
 //! content-addressed global store, with SHA-256 integrity pinning.
 //!
 //! Surface:
-//! - [`manifest`] — a plugin's optional `zpm.toml` (`[plugin]`/`[native]`/
+//! - [`manifest`] — a plugin's optional `znative.toml` (`[plugin]`/`[native]`/
 //!   `[script]`); auto-detected when absent.
 //! - [`store`]    — `$ZSHRS_HOME/pkg/{store,cache,git,bin}/` layout + the
 //!   `installed.toml` global index.
 //! - [`resolver`] — turn a source spec (`owner/repo`, `git+URL`, `path:DIR`)
 //!   into a staged directory ready to install.
-//! - [`commands`] — `zpm {add,remove,list,info,load,update}` implementations.
-//! - [`builtin`]  — the `zpm` builtin dispatcher (wired from `fusevm_bridge`).
+//! - [`commands`] — `znative {add,remove,list,info,load,update}` implementations.
+//! - [`builtin`]  — the `znative` builtin dispatcher (wired from `fusevm_bridge`).
 
 pub mod builtin;
 pub mod commands;
@@ -28,20 +28,20 @@ pub mod store;
 
 /// Result alias used throughout the package manager. Errors are stringly-typed
 /// (one user-facing diagnostic per failure path), emitted to stderr as
-/// `zpm: <reason>` with exit code 1 — matching the shell's terse error style.
+/// `znative: <reason>` with exit code 1 — matching the shell's terse error style.
 pub type PkgResult<T> = Result<T, PkgError>;
 
 /// Errors emitted by the package manager. `Display` produces the one-line
-/// reason (no `zpm:` prefix — the builtin adds it).
+/// reason (no `znative:` prefix — the builtin adds it).
 #[derive(Debug)]
 pub enum PkgError {
     /// File I/O — read/write/create/copy.
     Io(String),
-    /// Manifest parse error (bad TOML in a plugin's `zpm.toml`).
+    /// Manifest parse error (bad TOML in a plugin's `znative.toml`).
     Manifest(String),
     /// Resolver error — unknown source form, clone/build/download failure.
     Resolve(String),
-    /// The plugin kind could not be determined (no `zpm.toml`, no
+    /// The plugin kind could not be determined (no `znative.toml`, no
     /// `*.plugin.zsh`, no cdylib/`Cargo.toml`).
     Unknown(String),
     /// Generic runtime error.

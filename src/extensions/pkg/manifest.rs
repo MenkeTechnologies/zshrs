@@ -1,8 +1,8 @@
-//! A plugin's optional `zpm.toml`, declaring how the plugin is loaded.
+//! A plugin's optional `znative.toml`, declaring how the plugin is loaded.
 //!
 //! Ported/adapted from strykelang's `pkg/manifest.rs` (`[package]`+`[ffi]`),
 //! trimmed to the two zshrs plugin kinds. When a plugin repo ships no
-//! `zpm.toml`, [`PluginKind::detect`] infers the kind from the tree, so
+//! `znative.toml`, [`PluginKind::detect`] infers the kind from the tree, so
 //! ordinary oh-my-zsh/zinit `*.plugin.zsh` repos install with no metadata.
 //!
 //! Schema:
@@ -28,9 +28,9 @@ use std::path::Path;
 use super::{PkgError, PkgResult};
 
 /// Manifest filename, at the root of a plugin's tree.
-pub const MANIFEST_FILE: &str = "zpm.toml";
+pub const MANIFEST_FILE: &str = "znative.toml";
 
-/// Parsed `zpm.toml`.
+/// Parsed `znative.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginManifest {
     /// `[plugin]` metadata.
@@ -53,7 +53,7 @@ pub struct PluginMeta {
     /// `version` — defaults to `"0.0.0"` when absent.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// One-line description (shown by `zpm list`/`info`).
+    /// One-line description (shown by `znative list`/`info`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
 }
@@ -82,7 +82,7 @@ pub struct ScriptSpec {
     pub fpath: Vec<String>,
 }
 
-/// Resolved plugin kind — either an explicit `zpm.toml` or an inferred layout.
+/// Resolved plugin kind — either an explicit `znative.toml` or an inferred layout.
 #[derive(Debug, Clone)]
 pub enum PluginKind {
     /// Rust cdylib: the `[native]` spec + the built/shipped lib stem.
@@ -92,14 +92,14 @@ pub enum PluginKind {
 }
 
 impl PluginManifest {
-    /// Parse a `zpm.toml` string.
+    /// Parse a `znative.toml` string.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> PkgResult<PluginManifest> {
         toml::from_str::<PluginManifest>(s)
-            .map_err(|e| PkgError::Manifest(format!("zpm.toml: {}", e.message())))
+            .map_err(|e| PkgError::Manifest(format!("znative.toml: {}", e.message())))
     }
 
-    /// Load a plugin's `zpm.toml` if present at `dir/zpm.toml`.
+    /// Load a plugin's `znative.toml` if present at `dir/znative.toml`.
     pub fn load(dir: &Path) -> PkgResult<Option<PluginManifest>> {
         let path = dir.join(MANIFEST_FILE);
         if !path.is_file() {
@@ -113,7 +113,7 @@ impl PluginManifest {
 
 impl PluginKind {
     /// Determine the plugin kind for a staged tree. Prefers an explicit
-    /// `zpm.toml` (`[native]` beats `[script]` when both present), then falls
+    /// `znative.toml` (`[native]` beats `[script]` when both present), then falls
     /// back to layout detection:
     ///
     /// 1. A prebuilt `lib*.{dylib,so}` anywhere, or a `Cargo.toml` whose
@@ -166,7 +166,7 @@ impl PluginKind {
         }
         if source.is_empty() && fpath.is_empty() {
             return Err(PkgError::Unknown(
-                "could not determine plugin kind: no zpm.toml, no *.plugin.zsh, \
+                "could not determine plugin kind: no znative.toml, no *.plugin.zsh, \
                  no functions/, and no Rust cdylib/Cargo.toml"
                     .into(),
             ));

@@ -205,28 +205,28 @@ Loading a plugin whose name is already loaded is refused — unload first.
 Unload purges the plugin's command registrations **before** `dlclose`, so
 no live function pointer survives the library it lives in.
 
-## Installing with zpm
+## Installing with znative
 
-`zmodload -R` is the low-level primitive. For distribution, **zpm** (zshrs's
+`zmodload -R` is the low-level primitive. For distribution, **znative** (zshrs's
 package manager) installs a plugin straight from a GitHub repo — it clones,
 `cargo build --release`s the cdylib, and `zmodload -R`s it. The full command,
-source-spec, store-layout, and `zpm.toml` reference is in
-[**ZPM.md**](ZPM.md); this section covers the plugin-authoring side.
+source-spec, store-layout, and `znative.toml` reference is in
+[**ZNATIVE.md**](ZNATIVE.md); this section covers the plugin-authoring side.
 
-The one line a `.zshrc` needs per plugin is `zpm load owner/repo` — it
+The one line a `.zshrc` needs per plugin is `znative load owner/repo` — it
 installs on the first start and loads from the store (zero-network) after:
 
 ```bash
-zpm load MenkeTechnologies/zshrs-forgit      # native (Rust) plugin, self-installing
-zpm load MenkeTechnologies/zshrs-git-fuzzy
+znative load MenkeTechnologies/zshrs-forgit      # native (Rust) plugin, self-installing
+znative load MenkeTechnologies/zshrs-git-fuzzy
 ```
 
-`zpm add` (install without a `.zshrc` line), `zpm list`, `zpm remove` round
-out the store — see [ZPM.md](ZPM.md) for all commands.
+`znative add` (install without a `.zshrc` line), `znative list`, `znative remove` round
+out the store — see [ZNATIVE.md](ZNATIVE.md) for all commands.
 
-zpm auto-detects a native plugin from a `Cargo.toml` with a `cdylib`
+znative auto-detects a native plugin from a `Cargo.toml` with a `cdylib`
 crate-type (ordinary `*.plugin.zsh` script repos install too, no metadata
-needed). An optional `zpm.toml` at the repo root supplies metadata and the
+needed). An optional `znative.toml` at the repo root supplies metadata and the
 lib stem:
 
 ```toml
@@ -244,25 +244,25 @@ builds standalone: `zshrs-plugin = { git = "https://github.com/MenkeTechnologies
 
 ### Script (`.zsh`) plugins
 
-zpm installs ordinary zsh script plugins too — the ones that register ZLE
+znative installs ordinary zsh script plugins too — the ones that register ZLE
 widgets, functions, and completions. These stay script (the native ABI
-registers builtins and completions, not ZLE widgets), and zpm loads them
+registers builtins and completions, not ZLE widgets), and znative loads them
 by adding the repo to `$fpath` and sourcing its `*.plugin.zsh`:
 
 ```bash
-zpm add zdharma-continuum/history-search-multi-word   # Ctrl-R multi-word history search
+znative add zdharma-continuum/history-search-multi-word   # Ctrl-R multi-word history search
 ```
 
 `history-search-multi-word` is a good stress test: a ZLE widget with its
 own forked syntax-highlighter, paged `POSTDISPLAY` output, live
-`region_highlight`, and in-widget key reads. It installs, `zpm load`s, binds
+`region_highlight`, and in-widget key reads. It installs, `znative load`s, binds
 `^R`, and runs under zshrs's ZLE unchanged.
 
-Beyond `owner/repo`, `zpm add` also takes `github:owner/repo`, a `git+URL`
+Beyond `owner/repo`, `znative add` also takes `github:owner/repo`, a `git+URL`
 (optionally with an `@ref` tag/branch), and `path:DIR` for a local checkout —
-see [ZPM.md](ZPM.md#sources) for all forms. A runnable `.zshrc` using zpm is
+see [ZNATIVE.md](ZNATIVE.md#sources) for all forms. A runnable `.zshrc` using znative is
 at [`examples/zshrc`](../examples/zshrc); the one line a startup file needs is
-`zpm load`, which is zero-network (store + index only) and safe even before
+`znative load`, which is zero-network (store + index only) and safe even before
 anything is installed.
 
 ## ABI versioning
@@ -306,32 +306,32 @@ zshrs   # interactive
 `kubectl` completion that delegates to cobra's `kubectl __complete`, so it
 tracks the installed kubectl version (subcommands, flags, live resources)
 with no static tree to maintain. Published as:
-`zpm load MenkeTechnologies/zshrs-kubectl-completion`.
+`znative load MenkeTechnologies/zshrs-kubectl-completion`.
 
 [`plugin-forgit/`](../examples/plugin-forgit/) — the **forgit** git+fzf
 plugin ported command-for-command from zsh (`ga glo gd gcf …`). See
 [PORTING_ZSH_PLUGIN.md](PORTING_ZSH_PLUGIN.md) for the full zsh→Rust
 walkthrough. Published as a standalone repo:
-`zpm load MenkeTechnologies/zshrs-forgit`.
+`znative load MenkeTechnologies/zshrs-forgit`.
 
 [`plugin-git-fuzzy/`](../examples/plugin-git-fuzzy/) — **git-fuzzy**'s
 `status` command: a *self-reentrant* fzf UI (every preview/keybind
 re-invokes a helper, plus a `--listen` live-reload watcher). Shows the shim
 technique that lets fzf binds reach native builtins — see the "self-reentrant
 fzf tools" section of the porting guide. Published as:
-`zpm load MenkeTechnologies/zshrs-git-fuzzy`.
+`znative load MenkeTechnologies/zshrs-git-fuzzy`.
 
 [`plugin-zsh-z/`](../examples/plugin-zsh-z/) — **zsh-z**, the frecency
 directory jumper (`z <partial>`), reimplemented in Rust: the `~/.z` datafile,
 the frecency formula, aging, matching, and all `z` options. `cd` is delegated
 to the shell (`host.eval`) so `$PWD`/hooks stay correct; a `chpwd` hook does
-the recording. Published as: `zpm load MenkeTechnologies/zshrs-zsh-z`.
+the recording. Published as: `znative load MenkeTechnologies/zshrs-zsh-z`.
 
 [`plugin-git-repos/`](../examples/plugin-git-repos/) — **zsh-git-repo-cache**:
 scan the filesystem for every git repo, cache it, and `fzf`-pick one to `cd`
 into, with `--clean`/`--dirty` filters. The shell version does a sequential
 `git status` per repo; the native version classifies **in parallel across
-threads** — a real speedup. Published as: `zpm load MenkeTechnologies/zshrs-git-repos`.
+threads** — a real speedup. Published as: `znative load MenkeTechnologies/zshrs-git-repos`.
 
 [`plugin-revolver/`](../examples/plugin-revolver/) — **revolver**, the
 progress spinner (`revolver start/update/stop/demo`, 55 styles), ported from
@@ -340,7 +340,7 @@ zsh. Upstream forks a background process and coordinates through a
 **thread** and the running spinner in a `static` slot — no fork, no
 statefile, since `start`/`update`/`stop` now share memory. Shows how a plugin
 does concurrent/background work under a non-forking shell. Published as a
-standalone repo: `zpm load MenkeTechnologies/zshrs-revolver`.
+standalone repo: `znative load MenkeTechnologies/zshrs-revolver`.
 
 ## Porting an existing zsh plugin
 
