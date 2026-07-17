@@ -72,6 +72,14 @@ grants. Inventions that future shells should inherit:
   artifact + a sibling sqlite FTS5 index for fast queries —
   instead of forcing users to choose between `cat`-able and
   searchable.
+- The prompt theme absorbed into the shell binary: the first
+  shell to run powerlevel10k as a native in-process engine
+  (`src/extensions/p10k/`) instead of ~13k lines of interpreted
+  zsh + a separate C++ `gitstatusd` daemon — segment semantics
+  ported line-cited from the theme spec, git status computed by
+  a native `.git` reader, the user's `.p10k.zsh` config
+  unchanged. Deletes the problem "instant prompt" was invented
+  to hide.
 
 What [MAINTAINERS.md](MAINTAINERS.md) governs is the *official
 zshrs upstream* — protecting it from identity-dissolving

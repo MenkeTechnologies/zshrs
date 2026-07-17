@@ -470,6 +470,35 @@
             runner. Lives in <code>src/extensions/ztest.rs</code>; port
             of strykelang&rsquo;s <code>stryke test</code> runner.</p>
           </div>
+          <div class="cat-card">
+            <h4>First shell with a native powerlevel10k engine</h4>
+            <p><strong>World&rsquo;s first shell to absorb its prompt theme
+            into the shell binary itself.</strong> Everywhere else,
+            powerlevel10k runs as ~13k lines of metaprogrammed zsh
+            re-evaluated by the prompt expander, plus
+            <code>gitstatusd</code> &mdash; a separate C++ daemon &mdash;
+            for git state; <em>p10k instant prompt exists precisely to
+            hide that cost.</em> zshrs intercepts the
+            <code>source powerlevel10k.zsh-theme</code> call at the
+            builtin-dispatch layer and renders in-process Rust instead
+            (<code>src/extensions/p10k/</code>, 11 files, 12,211 lines):
+            81 segment builders ported <code>p10k:NNN</code>-cited from
+            the theme spec (dir, vcs, status, prompt_char, kubecontext,
+            aws, virtualenv, battery, wifi, vi_mode, &hellip;) plus the
+            user-defined <code>prompt_&lt;name&gt;</code> /
+            <code>p10k segment</code> protocol,
+            <code>CONTENT_EXPANSION</code> templates through the real
+            <code>${(e)}</code> subst chain, <code>SHOW_ON_UPGLOB</code>,
+            transient prompt, right-aligned multiline assembly with gap
+            char/style. gitstatusd is absorbed: a native <code>.git</code>
+            reader (HEAD/refs/packed-refs, index v2/v3/v4 parse, stash
+            reflog, tags, ahead/behind) &mdash; no C++ daemon, no fork
+            per prompt in the cached case. The user&rsquo;s
+            <code>.p10k.zsh</code> config sources unchanged; the deferred
+            template state machine collapses into one eager linear fold
+            per prompt. The theme&rsquo;s own optimization layer becomes
+            unnecessary &mdash; the workaround is deleted, not ported.</p>
+          </div>
         </div>
 
         <p style="font-size: 12px; color: var(--text-muted); margin-top: 0.8rem;">
