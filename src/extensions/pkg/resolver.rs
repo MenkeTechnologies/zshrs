@@ -2,7 +2,7 @@
 //! Adapted from strykelang's `pkg/resolver.rs`, trimmed to the three source
 //! forms zshrs plugins ship as (no semver/registry graph — global model).
 //!
-//! Source forms accepted by `zpm add <SOURCE>`:
+//! Source forms accepted by `znative add <SOURCE>`:
 //! - `owner/repo` or `github:owner/repo` → `git clone https://github.com/owner/repo`
 //! - `git+URL`, or any URL ending in `.git` → `git clone URL`
 //! - `path:DIR`, an absolute path, or `./rel`, `../rel` → a local directory
@@ -69,9 +69,9 @@ pub fn resolve(spec: &str, store: &Store) -> PkgResult<Staged> {
 }
 
 /// The provenance label a `spec` WOULD receive, computed WITHOUT cloning or
-/// network access. Used by `zpm load <spec>` to check whether a source is
+/// network access. Used by `znative load <spec>` to check whether a source is
 /// already installed (the index keys on this label, since a repo's basename
-/// often differs from its `zpm.toml` plugin name — e.g. `zshrs-forgit` →
+/// often differs from its `znative.toml` plugin name — e.g. `zshrs-forgit` →
 /// `forgit`). Returns `None` for a bare plugin name (not a source form).
 pub fn source_label(spec: &str) -> Option<String> {
     let (base, _ref) = split_ref(spec);

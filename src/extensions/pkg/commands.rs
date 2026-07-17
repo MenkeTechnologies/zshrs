@@ -1,4 +1,4 @@
-//! `zpm` subcommand implementations (global model). Ported in spirit from
+//! `znative` subcommand implementations (global model). Ported in spirit from
 //! strykelang's `pkg/commands.rs`, reduced to the global store: install a
 //! plugin, record it in `installed.toml`, and load it — natives via the
 //! `zmodload -R` plugin host, scripts via `source` + `$fpath`.
@@ -9,7 +9,7 @@ use super::manifest::{PluginKind, PluginManifest};
 use super::store::{InstalledIndex, InstalledPlugin, Store};
 use super::{resolver, PkgError, PkgResult};
 
-/// `zpm add <SOURCE>` — resolve, install into the store, record, and load.
+/// `znative add <SOURCE>` — resolve, install into the store, record, and load.
 pub fn add(spec: &str) -> PkgResult<()> {
     let store = Store::user_default()?;
     store.ensure_layout()?;
@@ -78,11 +78,11 @@ pub fn add(spec: &str) -> PkgResult<()> {
     } else {
         format!(" — {}", description)
     };
-    println!("zpm: added {}@{} ({}){}", name, version, entry.kind, desc);
+    println!("znative: added {}@{} ({}){}", name, version, entry.kind, desc);
     Ok(())
 }
 
-/// `zpm remove <NAME>` — unload (best-effort), drop the store copy + index row.
+/// `znative remove <NAME>` — unload (best-effort), drop the store copy + index row.
 pub fn remove(name: &str) -> PkgResult<()> {
     let store = Store::user_default()?;
     let mut index = InstalledIndex::load_from(&store)?;
@@ -98,16 +98,16 @@ pub fn remove(name: &str) -> PkgResult<()> {
             .map_err(|e| PkgError::Io(format!("remove {}: {}", dir.display(), e)))?;
     }
     index.save_to(&store)?;
-    println!("zpm: removed {}", name);
+    println!("znative: removed {}", name);
     Ok(())
 }
 
-/// `zpm list` — one line per installed plugin.
+/// `znative list` — one line per installed plugin.
 pub fn list() -> PkgResult<()> {
     let store = Store::user_default()?;
     let index = InstalledIndex::load_from(&store)?;
     if index.packages.is_empty() {
-        println!("zpm: no plugins installed");
+        println!("znative: no plugins installed");
         return Ok(());
     }
     for p in &index.packages {
@@ -116,7 +116,7 @@ pub fn list() -> PkgResult<()> {
     Ok(())
 }
 
-/// `zpm info <NAME>` — full record for one plugin.
+/// `znative info <NAME>` — full record for one plugin.
 pub fn info(name: &str) -> PkgResult<()> {
     let store = Store::user_default()?;
     let index = InstalledIndex::load_from(&store)?;
@@ -143,7 +143,7 @@ pub fn info(name: &str) -> PkgResult<()> {
     Ok(())
 }
 
-/// `zpm load [NAME]` — load one plugin, or every installed plugin when no name
+/// `znative load [NAME]` — load one plugin, or every installed plugin when no name
 /// is given. Zero network: reads only the store + index. This is what a
 /// `.zshrc` calls at startup.
 pub fn load(name: Option<&str>) -> PkgResult<()> {
@@ -159,13 +159,13 @@ pub fn load(name: Option<&str>) -> PkgResult<()> {
             // 2. `n` is a SOURCE spec (owner/repo, github:…, path:…) — is a
             //    plugin from that source already installed? The index keys on
             //    the source label, since a repo basename usually differs from
-            //    the plugin's `zpm.toml` name (`zshrs-forgit` → `forgit`).
+            //    the plugin's `znative.toml` name (`zshrs-forgit` → `forgit`).
             if let Some(label) = resolver::source_label(n) {
                 if let Some(entry) = index.packages.iter().find(|p| p.source == label) {
                     return load_entry(&store, entry);
                 }
                 // 3. Not in the store yet → install-on-first-use, then load.
-                //    This is what makes `zpm load owner/repo` in `.zshrc`
+                //    This is what makes `znative load owner/repo` in `.zshrc`
                 //    self-install on the first startup and load fast after.
                 //    (`add` records it in the store and loads it.)
                 return add(n);
@@ -189,7 +189,7 @@ pub fn load(name: Option<&str>) -> PkgResult<()> {
     }
 }
 
-/// `zpm update [NAME]` — re-resolve + reinstall from the recorded source.
+/// `znative update [NAME]` — re-resolve + reinstall from the recorded source.
 pub fn update(name: Option<&str>) -> PkgResult<()> {
     let store = Store::user_default()?;
     let index = InstalledIndex::load_from(&store)?;
@@ -207,7 +207,7 @@ pub fn update(name: Option<&str>) -> PkgResult<()> {
     Ok(())
 }
 
-/// Convert a recorded provenance label back to a `zpm add` spec.
+/// Convert a recorded provenance label back to a `znative add` spec.
 fn source_to_spec(source: &str) -> String {
     if let Some(rest) = source.strip_prefix("path+file://") {
         format!("path:{}", rest)
