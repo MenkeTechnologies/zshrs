@@ -755,6 +755,11 @@ Plugins can also provide **native (Rust) completions** — a
 zsh's completion system (compsys), so `mycmd <TAB>` runs your Rust code to
 produce candidates. See [`examples/plugin-complete/`](examples/plugin-complete/).
 
+**Porting existing zsh plugins:** [`docs/PORTING_ZSH_PLUGIN.md`](docs/PORTING_ZSH_PLUGIN.md)
+is a construct-by-construct zsh→Rust guide, worked end-to-end on
+[**forgit**](examples/plugin-forgit/) (the git+fzf plugin, ported
+command-for-command: `ga glo gd gcf gclean gss gcp grh gi`).
+
 ### vs bash / zsh native plugins
 
 Native runtime plugins aren't new — bash `enable -f file.so name` and zsh

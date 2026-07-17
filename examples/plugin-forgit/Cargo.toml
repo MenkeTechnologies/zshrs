@@ -1,0 +1,23 @@
+# forgit ported to a native zshrs plugin. Build:
+#   cargo build --manifest-path examples/plugin-forgit/Cargo.toml
+# then inside zshrs:
+#   zmodload -R examples/plugin-forgit/target/debug/libforgit.dylib   # macOS
+#   zmodload -R examples/plugin-forgit/target/debug/libforgit.so      # Linux
+#   ga        # interactive git add   (needs fzf + git on PATH)
+#
+# See docs/PORTING_ZSH_PLUGIN.md for the zsh->Rust porting walkthrough.
+[package]
+name = "forgit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+# Standalone: empty workspace table so this example is not pulled into the
+# parent zshrs workspace.
+[workspace]
