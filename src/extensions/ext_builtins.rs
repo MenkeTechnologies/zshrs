@@ -1964,6 +1964,17 @@ impl ShellExecutor {
 
         // ZSHRS MODE: Use SQLite cache with function bodies
 
+        // Main-thread widget/keybinding setup runs on EVERY compinit path,
+        // BEFORE any early return. The `-C` cached branch below returned
+        // without ever rebinding the completion widgets, so a cache-hit
+        // compinit (zpwr's default) left TAB on the INTERNAL completer —
+        // `ls -<TAB>` completed FILES instead of options while the fresh-
+        // scan path worked. These installs need no scan results (sh:542
+        // binds only _main_complete; the -k table is static).
+        crate::compsys::ported::compinit::install_standard_complete_widgets();
+        crate::compsys::ported::compinit::maybe_rebind_tab_for_expand();
+        crate::compsys::ported::compinit::install_standard_comp_keybindings();
+
         // Try to use existing cache if -C and cache is valid
         if use_cache {
             if let Some(cache) = &self.compsys_cache {
@@ -2204,21 +2215,8 @@ impl ShellExecutor {
             let _ = tx.send(CompInitBgResult { result, cache });
         });
 
-        // Bind the standard completion widgets to `_main_complete` on
-        // the MAIN thread (sh:553-569). This must not run on the worker
-        // pool: `zle -C` mutates the interactive keymap/widget table,
-        // which is main-thread state. Without this, TAB stays bound to
-        // the builtin `expand-or-complete` → `makecomplist` finds
-        // `compfunc` empty → the Rust compsys engine (`_main_complete`)
-        // is never invoked and completion silently does nothing. The
-        // rebind needs only `_main_complete` (always present as a Rust
-        // port), not the background fpath-scan results, so it runs now.
-        crate::compsys::ported::compinit::install_standard_complete_widgets();
-        crate::compsys::ported::compinit::maybe_rebind_tab_for_expand();
-        // The stock `#compdef -k`/`-K` header bindings (^X? _complete_debug,
-        // ^Xh _complete_help, \e/ history-complete, …) — same main-thread
-        // constraint as the standard widgets.
-        crate::compsys::ported::compinit::install_standard_comp_keybindings();
+        // (Widget + #compdef -k installs run for ALL paths near the top of
+        // this fn, before the cached-branch early return.)
 
         // zsh CONTRACT: compinit RETURNS with $_comps populated — the scan
         // work is parallel (rayon fan-out on the pool inside compinit()),
