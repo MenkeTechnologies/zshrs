@@ -1145,15 +1145,9 @@ pub fn putmatchcol(group: &str, n: &str) -> i32 {
             if pc.cols.len() > 1 && !pc.cols[1].is_empty() {
                 *PATCOLS.lock().unwrap() = pc.cols.clone(); // c:891 patcols = pc->cols
                 PATCOLS_IDX.store(0, Ordering::Relaxed);
-                // `pattryrefs` clears+pushes, so begp/endp come back sized to
-                // `nrefs` (< MAX_POS when the pattern has fewer backrefs). But
-                // BEGPOS/ENDPOS mirror C's fixed `int[MAX_POS]` arrays, and the
-                // position-reset loop (~c:631) writes indices [nrefs..MAX_POS].
-                // Pad back to MAX_POS so that loop can't index past the end —
-                // was `panic: index 4 on len 4` on `pwd -<TAB>` (a color pattern
-                // with 4 backrefs, so begp came back len 4).
-                begp.resize(MAX_POS, 0xfffffff);
-                endp.resize(MAX_POS, 0xfffffff);
+                // begp/endp are MAX_POS-length (allocated above, c:886) and
+                // pattryrefs now fills them IN PLACE without shrinking, so they
+                // keep C's fixed `int[MAX_POS]` size for the getcol reset loop.
                 *BEGPOS.lock().unwrap() = begp;
                 *ENDPOS.lock().unwrap() = endp;
                 NREFS.store(nrefs, Ordering::Relaxed);
