@@ -1,0 +1,7 @@
+[plugin]
+name = "greet"
+version = "0.1.0"
+description = "Example native zshrs plugin — a Rust compsys completion for `greet`"
+
+[native]
+lib = "greet"        # produces libgreet.{dylib,so}

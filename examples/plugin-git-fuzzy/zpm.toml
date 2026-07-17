@@ -1,0 +1,7 @@
+[plugin]
+name = "git-fuzzy"
+version = "0.1.0"
+description = "git-fuzzy `status` ported to a native zshrs plugin — self-reentrant fzf UI"
+
+[native]
+lib = "git_fuzzy"    # produces libgit_fuzzy.{dylib,so}

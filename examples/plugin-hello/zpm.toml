@@ -1,0 +1,11 @@
+# zpm manifest — `zpm add <owner>/<repo>` builds this cdylib and loads it via
+# `zmodload -R`. Native kind is auto-detected from Cargo.toml's cdylib
+# crate-type, so this file is optional; it just provides nicer metadata for
+# `zpm list` / `zpm info`.
+[plugin]
+name = "hello"
+version = "0.1.0"
+description = "Example native zshrs plugin — builtins + host API (rhello, renv)"
+
+[native]
+lib = "hello"        # produces libhello.{dylib,so}

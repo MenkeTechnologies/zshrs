@@ -1,0 +1,7 @@
+[plugin]
+name = "forgit"
+version = "0.1.0"
+description = "forgit (git+fzf) ported to a native zshrs plugin — ga glo gd gcf gclean gss gcp grh gi"
+
+[native]
+lib = "forgit"       # produces libforgit.{dylib,so}

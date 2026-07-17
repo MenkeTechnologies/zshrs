@@ -194,6 +194,38 @@ Loading a plugin whose name is already loaded is refused — unload first.
 Unload purges the plugin's command registrations **before** `dlclose`, so
 no live function pointer survives the library it lives in.
 
+## Installing with zpm
+
+`zmodload -R` is the low-level primitive. For distribution, **zpm** (zshrs's
+package manager) installs a plugin straight from a GitHub repo — it clones,
+`cargo build --release`s the cdylib, and `zmodload -R`s it:
+
+```bash
+zpm add MenkeTechnologies/zshrs-forgit       # native (Rust) plugin
+zpm add MenkeTechnologies/zshrs-git-fuzzy
+zpm list                                     # installed plugins
+zpm load                                     # (in .zshrc) load all at startup
+zpm remove forgit
+```
+
+zpm auto-detects a native plugin from a `Cargo.toml` with a `cdylib`
+crate-type (ordinary `*.plugin.zsh` script repos install too, no metadata
+needed). An optional `zpm.toml` at the repo root supplies metadata and the
+lib stem:
+
+```toml
+[plugin]
+name = "forgit"
+version = "0.1.0"
+description = "forgit ported to a native zshrs plugin"
+
+[native]
+lib = "forgit"        # produces libforgit.{dylib,so}
+```
+
+A plugin published this way depends on the SDK as a git dependency so it
+builds standalone: `zshrs-plugin = { git = "https://github.com/MenkeTechnologies/zshrs" }`.
+
 ## ABI versioning
 
 `ABI_VERSION` in the `zshrs-plugin` crate is bumped on any change to the
@@ -234,13 +266,15 @@ zshrs   # interactive
 [`plugin-forgit/`](../examples/plugin-forgit/) — the **forgit** git+fzf
 plugin ported command-for-command from zsh (`ga glo gd gcf …`). See
 [PORTING_ZSH_PLUGIN.md](PORTING_ZSH_PLUGIN.md) for the full zsh→Rust
-walkthrough.
+walkthrough. Published as a standalone repo:
+`zpm add MenkeTechnologies/zshrs-forgit`.
 
 [`plugin-git-fuzzy/`](../examples/plugin-git-fuzzy/) — **git-fuzzy**'s
 `status` command: a *self-reentrant* fzf UI (every preview/keybind
 re-invokes a helper, plus a `--listen` live-reload watcher). Shows the shim
 technique that lets fzf binds reach native builtins — see the "self-reentrant
-fzf tools" section of the porting guide.
+fzf tools" section of the porting guide. Published as:
+`zpm add MenkeTechnologies/zshrs-git-fuzzy`.
 
 ## Porting an existing zsh plugin
 
