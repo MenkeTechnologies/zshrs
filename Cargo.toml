@@ -28,7 +28,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.18"
+version = "0.12.19"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
@@ -206,7 +206,7 @@ members = [".", "daemon", "znative"]
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
 zshrs-daemon = { path = "daemon", version = "0.12.16" }
-znative = { path = "znative", version = "0.12.18" }
+znative = { path = "znative", version = "0.12.19" }
 
 [profile.release]
 opt-level = 3
