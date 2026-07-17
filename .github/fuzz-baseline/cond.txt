@@ -1,0 +1,136 @@
+# parity-fuzz --mode cond baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode cond --count N --verify 3  (copy NEW-signature lines).
+#
+# Covers the `test` / `[` builtin: unary flags, the three-argument binary-
+# operator form, `-a`/`-o` connectives, `!`, and parenthesised groups. Both
+# spellings are generated — one builtin under two funcids (BIN_TEST=20 /
+# BIN_BRACKET=21, c:Src/builtin.c:7231-7247). stderr is folded into stdout
+# because the diagnostics are as much the contract as the status, and the
+# status alone cannot tell 1 (false) from 2 (error).
+#
+# ONE known gap. Every signature below is the SAME shape: the literal string
+# `-a` (or `-n`) used as an OPERAND next to a connective, where which token is
+# the operator is genuinely ambiguous —
+#
+#     test -a -a -a  → zsh 0 (middle `-a` is the connective, outer two are
+#                             non-empty strings), zshrs 1
+#     test '' -a -a  → zsh 1,  zshrs error
+#     test ! -a      → zsh 1,  zshrs error
+#     test -a a      → zsh "too many arguments" rc=2, zshrs 0
+#
+# C resolves these for free because it never scans for a connective: bin_test
+# does only the XSI argument-count fixups and then hands the list to the real
+# grammar (c:7276-7280 `condlex = testlex; testlex(); parse_cond()`), which
+# consumes tokens in order — so position, not spelling, decides what is an
+# operator. par_cond_2 (c:Src/parse.c:2478-2515) supplies the POSIX rules by
+# ARGUMENT COUNT: n_testargs == 1 makes `[ foo ]` into `[ -n foo ]`, and
+# n_testargs > 2 treats the SECOND argument as binary only when it really is
+# one (`=`, `<`, `>`, `==`, `!=`, `-<condnum>`), otherwise falling through.
+#
+# zshrs cannot reach any of that. bin_test is an ad-hoc argument-count parser;
+# the real grammar is unreachable because `testlex` is DEAD CODE (nothing
+# references it) and par_cond_2 hardcodes `let n_testargs: i32 = 0;`, disabling
+# the POSIX-test rule set it ports. Same faithful-port-shadowed-by-a-
+# reimplementation shape as (D)/substnamedir and typeset_single. The fix is to
+# wire testlex + par_cond with a real n_testargs — NOT to add more
+# argument-count branches or more connective-scanning to the ad-hoc parser,
+# which is exactly what cannot express these.
+#
+# Scope, measured rather than assumed: every COMMON idiom passes —
+# `[ -f x -a -d y ]`, `[ -n a -o -n b ]`, three-way chains, `-a`/`-o`
+# precedence, `[ ! -f x -a -d y ]`, `[ 1 -eq 1 -a 2 -eq 2 ]`. What is left needs
+# `-a`/`-n` spelled as a bare operand, which is vanishingly rare in practice.
+# The vocabulary generates them on purpose: a mode that only tried realistic
+# input would have been green while `test a -a b` was broken.
+#
+# FIXED here and now gated (reverting either makes this mode fail):
+#   1. A bare-word operand beside a connective was rejected outright —
+#      `test a -a b` gave "unknown condition: -a" where zsh gives 0, as did
+#      `test x -o x`, `test '' -a ''`, `test a -a b -a c`. c:2486-2492 makes a
+#      single-word condition `-n word`, and in C that applies to every operand
+#      of a connective because the grammar parses each one; the equivalent
+#      rewrite is now done explicitly.
+#   2. A four-argument form whose connective followed a `-FLAG operand` pair was
+#      rejected as "too many arguments" — `test -n a -a b`, `test -n a -o b`,
+#      `test -z '' -a x`, `test -f FILE -a x`. C has no blanket 4-arg rejection.
+#
+# Any divergence not listed below is a regression.
+#
+# NOTE on the vocabulary: `<` and `>` are NOT generated even though c:2502-2503
+# lists them as three-argument binary operators. They never reach the builtin —
+# the shell lexes them as redirections first, so `test b > a` runs `test b` and
+# CREATES a file `a` in the harness's cwd; an earlier cut of this mode dropped
+# one into the repo root. Quoting does not help: the oracle rejects
+# `test a '<' b` with "condition expected: <", so there is nothing to compare.
+# `[[ a < b ]]` is where those operators are reachable, and that is the `match`
+# mode's surface.
+[ ! -a ] N>&N; print -r -- "rc=$?"
+[ ! -n ] N>&N; print -r -- "rc=$?"
+[ '' -a -a ] N>&N; print -r -- "rc=$?"
+[ '' -o -a ] N>&N; print -r -- "rc=$?"
+[ -a -a '' ] N>&N; print -r -- "rc=$?"
+[ -a -a -a ] N>&N; print -r -- "rc=$?"
+[ -a -a -n ] N>&N; print -r -- "rc=$?"
+[ -a -a N ] N>&N; print -r -- "rc=$?"
+[ -a -a a ] N>&N; print -r -- "rc=$?"
+[ -a -a x ] N>&N; print -r -- "rc=$?"
+[ -a -o '' ] N>&N; print -r -- "rc=$?"
+[ -a -o -a ] N>&N; print -r -- "rc=$?"
+[ -a -o -n ] N>&N; print -r -- "rc=$?"
+[ -a -o N ] N>&N; print -r -- "rc=$?"
+[ -a -o a ] N>&N; print -r -- "rc=$?"
+[ -a -o x ] N>&N; print -r -- "rc=$?"
+[ -d /nWxistent-zzz -o -a ] N>&N; print -r -- "rc=$?"
+[ -d /tmp -a -a ] N>&N; print -r -- "rc=$?"
+[ -e /dev/null -a -a ] N>&N; print -r -- "rc=$?"
+[ -f /dev/null -o -a ] N>&N; print -r -- "rc=$?"
+[ -f /nWxistent-zzz -o -a ] N>&N; print -r -- "rc=$?"
+[ -n '' -o -a ] N>&N; print -r -- "rc=$?"
+[ -n -a -a ] N>&N; print -r -- "rc=$?"
+[ -n -o -a ] N>&N; print -r -- "rc=$?"
+[ -n a -a -a ] N>&N; print -r -- "rc=$?"
+[ -r /dev/null -a -a ] N>&N; print -r -- "rc=$?"
+[ -s /nWxistent-zzz -o -a ] N>&N; print -r -- "rc=$?"
+[ -z '' -a -a ] N>&N; print -r -- "rc=$?"
+[ -z a -o -a ] N>&N; print -r -- "rc=$?"
+[ N -a -a ] N>&N; print -r -- "rc=$?"
+[ N -o -a ] N>&N; print -r -- "rc=$?"
+[ a -a -a ] N>&N; print -r -- "rc=$?"
+[ a -o -a ] N>&N; print -r -- "rc=$?"
+[ x -a -a ] N>&N; print -r -- "rc=$?"
+[ x -o -a ] N>&N; print -r -- "rc=$?"
+test ! -a N>&N; print -r -- "rc=$?"
+test ! -n N>&N; print -r -- "rc=$?"
+test '' -a -a N>&N; print -r -- "rc=$?"
+test '' -o -a N>&N; print -r -- "rc=$?"
+test -a -a '' N>&N; print -r -- "rc=$?"
+test -a -a -a N>&N; print -r -- "rc=$?"
+test -a -a -n N>&N; print -r -- "rc=$?"
+test -a -a N N>&N; print -r -- "rc=$?"
+test -a -a a N>&N; print -r -- "rc=$?"
+test -a -a x N>&N; print -r -- "rc=$?"
+test -a -o '' N>&N; print -r -- "rc=$?"
+test -a -o -a N>&N; print -r -- "rc=$?"
+test -a -o -n N>&N; print -r -- "rc=$?"
+test -a -o N N>&N; print -r -- "rc=$?"
+test -a -o a N>&N; print -r -- "rc=$?"
+test -a -o x N>&N; print -r -- "rc=$?"
+test -d /nWxistent-zzz -o -a N>&N; print -r -- "rc=$?"
+test -d /tmp -a -a N>&N; print -r -- "rc=$?"
+test -f /dev/null -o -a N>&N; print -r -- "rc=$?"
+test -f /nWxistent-zzz -o -a N>&N; print -r -- "rc=$?"
+test -n '' -o -a N>&N; print -r -- "rc=$?"
+test -n -a -a N>&N; print -r -- "rc=$?"
+test -n -o -a N>&N; print -r -- "rc=$?"
+test -n a -a -a N>&N; print -r -- "rc=$?"
+test -r /dev/null -a -a N>&N; print -r -- "rc=$?"
+test -s /nWxistent-zzz -o -a N>&N; print -r -- "rc=$?"
+test -z '' -a -a N>&N; print -r -- "rc=$?"
+test -z a -o -a N>&N; print -r -- "rc=$?"
+test N -a -a N>&N; print -r -- "rc=$?"
+test N -o -a N>&N; print -r -- "rc=$?"
+test a -a -a N>&N; print -r -- "rc=$?"
+test a -o -a N>&N; print -r -- "rc=$?"
+test x -a -a N>&N; print -r -- "rc=$?"
+test x -o -a N>&N; print -r -- "rc=$?"

@@ -6301,6 +6301,47 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 other => values.push(other.to_str()),
             }
         }
+        // c:Src/params.c:3383-3389 — a subscripted ARRAY assignment to an
+        // associative array is an error, whatever the subscript looks like:
+        //     if (v && PM_TYPE(v->pm->node.flags) == PM_HASHED) {
+        //         unqueue_signals();
+        //         zerr("%s: attempt to set slice of associative array",
+        //              v->pm->node.nam);
+        //         freearray(val);
+        //         errflag |= ERRFLAG_ERROR;
+        //         return NULL;
+        //     }
+        // assignaparam (params.rs) ports this, but a single-key `h[k]=(1 2)`
+        // never reaches it: the VM lowers subscripted assignment to this
+        // builtin instead. The comma form `h[a,b]=(1 2)` DID error — it takes a
+        // different route — so the gap looked like a subscript-parsing quirk
+        // when it was really "the check lives on a path this form doesn't
+        // take". Untreated, the assignment was SILENTLY DISCARDED: rc=0 and
+        // `${h[k]}` still read its old value.
+        //
+        // Only array-valued assignment is rejected; `h[k]=x` is a scalar
+        // element store and stays legal.
+        {
+            let is_hashed = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| {
+                    t.get(&name)
+                        .map(|pm| crate::ported::zsh_h::PM_TYPE(pm.node.flags as u32) == crate::ported::zsh_h::PM_HASHED)
+                })
+                .unwrap_or(false);
+            if is_hashed {
+                crate::ported::utils::zerr(&format!(
+                    "{name}: attempt to set slice of associative array" // c:3385
+                ));
+                crate::ported::utils::errflag.fetch_or(
+                    crate::ported::zsh_h::ERRFLAG_ERROR,
+                    std::sync::atomic::Ordering::Relaxed,
+                ); // c:3387
+                return Value::Status(1); // c:3388
+            }
+        }
+
         with_executor(|exec| {
             // Parse subscript: slice `lo,hi` or single index `i`.
             // setarrvalue (Src/params.c:2895) expects 1-based start/
@@ -11535,6 +11576,56 @@ impl fusevm::ShellHost for ZshrsHost {
             // C forks for `(...)` — count the fork-equivalent so
             // `time (builtin)` reports like zsh (see FORK_EVENTS).
             crate::vm_helper::FORK_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // c:Src/exec.c:1088-1092 — entersubsh resets traps in the child:
+            //     if (!(flags & ESUB_KEEPTRAP))
+            //         for (sig = 0; sig <= SIGCOUNT; sig++)
+            //             if (!(sigtrapped[sig] & ZSIG_FUNC) &&
+            //                 !(isset(POSIXTRAPS) && (sigtrapped[sig] & ZSIG_IGNORED)))
+            //                 unsettrap(sig);
+            //
+            // A subshell does NOT inherit string-form traps. Two exemptions:
+            // FUNCTION-form traps (`TRAPUSR1() { … }`, ZSIG_FUNC) survive, and
+            // under POSIX_TRAPS an IGNORED trap (`trap '' SIG`) survives.
+            //
+            // The ZSIG_FUNC exemption is structural here rather than a flag
+            // test: zshrs keeps string-form bodies in traps_table and
+            // function-form ones in shfunctab as TRAPxxx, so filtering only
+            // traps_table leaves the function form untouched by construction.
+            // ZSIG_IGNORED is `trap '' SIG`, which stores an empty body.
+            //
+            // The LOOP BOUND is also part of the spec, not an implementation
+            // detail: `sig <= SIGCOUNT` never reaches the PSEUDO-signals,
+            // which zsh numbers above the real ones —
+            //     #define SIGZERR   (SIGCOUNT+1)
+            //     #define SIGDEBUG  (SIGCOUNT+2)      (c:Src/signals.h:34-35)
+            // so ERR/ZERR and DEBUG traps SURVIVE a subshell, while SIGEXIT
+            // (sig 0) is inside the loop and is cleared. Verified against the
+            // oracle: `trap 'print e' ERR; (trap)` lists the ERR trap;
+            // `trap 'print u' USR1; (trap)` lists nothing.
+            //
+            // Without this a subshell kept the parent's traps: `(trap)` listed
+            // them where zsh lists nothing, and — the part that isn't
+            // cosmetic — an inherited trap FIRED inside the child, so
+            // `trap 'print p' USR1; (kill -USR1 $$; print after)` printed
+            // p before after instead of after…p (the signal is meant to reach
+            // the parent, whose trap runs there).
+            //
+            // The snapshot pushed above restores the parent's table at
+            // subshell_end, which is what makes clearing safe for zshrs's
+            // in-process subshell.
+            {
+                let posixtraps = crate::ported::zsh_h::isset(crate::ported::zsh_h::POSIXTRAPS);
+                if let Ok(mut t) = crate::ported::builtin::traps_table().lock() {
+                    t.retain(|name, body| {
+                        // Above SIGCOUNT — outside c:1088's loop entirely.
+                        if name == "ERR" || name == "ZERR" || name == "DEBUG" {
+                            return true;
+                        }
+                        // c:1090-1092 — otherwise keep ONLY (POSIXTRAPS && ignored).
+                        posixtraps && body.is_empty()
+                    });
+                }
+            }
             // c:Src/exec.c:2862 — subshell fork flags carry ESUB_PGRP,
             // so entersubsh runs `clearjobtab(monitor)` (c:1219): the
             // child gets an EMPTY job table plus the procless control

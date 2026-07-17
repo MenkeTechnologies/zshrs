@@ -1,0 +1,20 @@
+# parity-fuzz --mode split baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode split --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (two seeds).
+#
+# Covers word splitting driven by IFS and the SH_WORD_SPLIT family: quoted vs
+# unquoted expansion, `${=v}` forced splitting, and the whitespace vs
+# non-whitespace separator rule — a run of WHITESPACE separators collapses to one
+# break, a non-whitespace one does not, so `a::b` under IFS=: yields an EMPTY
+# middle field. Values are chosen with leading/trailing/doubled separators so the
+# split is decided entirely by IFS.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# Any divergence here is a regression.

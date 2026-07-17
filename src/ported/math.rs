@@ -977,6 +977,24 @@ pub(crate) fn lexconstant() -> i32 {
             .chars()
             .filter(|&c| c != '_')
             .collect();
+        // c:552-559 — right after strtod:
+        //     yyval.u.d = strtod(ptr, &nptr);
+        //     if (ptr == nptr || *nptr == '.') {
+        //         zerr("bad floating point constant");
+        //         return EOI;
+        //     }
+        // The `*nptr == '.'` half is the interesting one: a SECOND dot
+        // immediately after the constant strtod just consumed is fatal at LEX
+        // time. Without it `1.2.3` lexed as the float 1.2 followed by `.3` and
+        // the failure surfaced from the PARSER as "bad math expression:
+        // operator expected at `.3 '" — a different diagnostic for what zsh
+        // calls a malformed constant. (`ptr == nptr`, strtod consuming nothing,
+        // cannot happen here: this branch is only entered having already seen a
+        // digit or a dot.)
+        if peek() == Some('.') {
+            m_error_set("bad floating point constant".to_string()); // c:557
+            return EOI; // c:558
+        }
         let val: f64 = float_str.parse().unwrap_or(0.0);
         m_yyval_set(mnumber {
             l: 0,
@@ -2489,6 +2507,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "int"
             | "j0"
             | "j1"
+            | "jn"
             | "ldexp"
             | "lgamma"
             | "log"
@@ -2507,6 +2526,7 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
             | "tanh"
             | "y0"
             | "y1"
+            | "yn"
     );
     // c:Src/module.c:2206-2322 `load_module` — the post-init flag
     // signaling "this module's setup/boot ran" is MOD_INIT_B (set
@@ -2861,8 +2881,13 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         fn logb(x: f64) -> f64;
         fn j0(x: f64) -> f64;
         fn j1(x: f64) -> f64;
+        // c:Src/Modules/mathfunc.c:334/421 — `jn(argi, argd2)` /
+        // `yn(argi, argd2)`: the ORDER is an int (TFLAG(TF_INT1)),
+        // the argument a double.
+        fn jn(n: i32, x: f64) -> f64;
         fn y0(x: f64) -> f64;
         fn y1(x: f64) -> f64;
+        fn yn(n: i32, x: f64) -> f64;
         fn cbrt(x: f64) -> f64;
         fn expm1(x: f64) -> f64;
         fn log1p(x: f64) -> f64;
@@ -2925,6 +2950,15 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
         "j0" => unsafe { j0(args.first().copied().unwrap_or(0.0)) }, // c:325
         "j1" => unsafe { j1(args.first().copied().unwrap_or(0.0)) }, // c:331
+        // c:Src/Modules/mathfunc.c:144 `NUMMATHFUNC("jn", math_func, 2, 2,
+        // MF_JN | TFLAG(TF_INT1))` + c:333-335 `retd = jn(argi, argd2);`.
+        // TF_INT1 (c:106) means the FIRST argument is the integer one —
+        // the mirror of ldexp/scalb's TF_INT2 below.
+        "jn" => {
+            let n = args.first().copied().unwrap_or(0.0) as i32;
+            let x = args.get(1).copied().unwrap_or(0.0);
+            unsafe { jn(n, x) } // c:334
+        }
         "ldexp" => {
             // c:Src/Modules/mathfunc.c:337 MF_LDEXP — `ldexp(argd, argi)`,
             // 2nd arg coerced to int (TF_INT2). Returns x * 2^n.
@@ -2960,6 +2994,13 @@ pub(crate) fn callmathfunc(call: &str) -> mnumber {
         "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
         "y0" => unsafe { y0(args.first().copied().unwrap_or(0.0)) }, // c:417
         "y1" => unsafe { y1(args.first().copied().unwrap_or(0.0)) }, // c:423
+        // c:Src/Modules/mathfunc.c:168 `NUMMATHFUNC("yn", math_func, 2, 2,
+        // MF_YN | TFLAG(TF_INT1))` + c:420-422 `retd = yn(argi, argd2);`.
+        "yn" => {
+            let n = args.first().copied().unwrap_or(0.0) as i32;
+            let x = args.get(1).copied().unwrap_or(0.0);
+            unsafe { yn(n, x) } // c:421
+        }
         // `float(x)` — widen int/float to float. Identity on
         // floats; on ints, returns same value tagged as float so
         // `printf "%.4f"` prints "3.0000" instead of "3". Direct
@@ -3501,7 +3542,7 @@ pub(crate) fn op(what: i32) {
                         }
                         // c:1348 — (-num ** b) with non-integer b is imaginary
                         if af < 0.0 && bf != bf.trunc() {
-                            m_error_set("imaginary power".to_string());
+                            m_error_set("bad math expression: imaginary power".to_string()); // c:1350
                             return;
                         }
                         mnumber {
@@ -3777,7 +3818,7 @@ pub(crate) fn op(what: i32) {
             push(result, None);
         }
         COLON => {
-            m_error_set("':' without '?'".to_string());
+            m_error_set("bad math expression: ':' without '?'".to_string()); // c:1427
         }
         _ => {
             m_error_set("unknown operator".to_string());

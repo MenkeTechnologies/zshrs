@@ -2292,7 +2292,21 @@ impl ShellExecutor {
             // the trap doesn't reset the script's exit status).
             // Preserve `status` and re-apply it after the trap
             // body returns.
+            //
+            // c:Src/signals.c:1123/1236 — `intrap++` … `intrap--` bracket a
+            // trap body, and while intrap the EXIT, DEBUG and ZERR traps are
+            // suppressed (c:1112-1119, the guard in dotrap). This path runs
+            // the EXIT body through the script pipeline rather than dotrap,
+            // so nothing raised intrap and the body's own failure re-entered
+            // the ERR trap: `trap 'print err' ERR; trap 'true; false' EXIT`
+            // printed err where zsh prints nothing.
+            //
+            // A counter, not a flag, and paired with dotrap's SELECTIVE
+            // guard: signals zsh does deliver from inside a trap body (e.g.
+            // `trap 'kill -USR1 $$' EXIT`) must still dispatch.
+            crate::ported::signals::intrap.fetch_add(1, Ordering::SeqCst); // c:1123
             let _ = self.execute_script_zsh_pipeline(&action);
+            crate::ported::signals::intrap.fetch_sub(1, Ordering::SeqCst); // c:1236
             self.set_last_status(status);
         }
         // c:Src/signals.c::dotrap(SIGEXIT) — fire TRAPEXIT() shfunc
@@ -4692,15 +4706,15 @@ pub fn glob_match_static(s: &str, pattern: &str) -> bool {
     } else {
         matched = pattry(&prog, s);
     }
-    // c:Src/pattern.c GF_MATCHREF — `(#m)pat` writes the matched
-    // substring to $MATCH on success. In `[[ str == pat ]]` cond
-    // context the pattern matches the whole string, so on success
-    // $MATCH = the input.
-    if matched && pattern.contains("(#m)") {
-        crate::ported::params::setsparam("MATCH", s);
-        crate::ported::params::setiparam("MBEGIN", 1);
-        crate::ported::params::setiparam("MEND", s.chars().count() as i64);
-    }
+    // $MATCH / $MBEGIN / $MEND are set by the MATCHER (pattern.rs, c:2526),
+    // which is where C decides it — gated on the GLOBAL patglobflags so a later
+    // `(#M)` can turn GF_MATCHREF back off (c:1099-1100).
+    //
+    // This layer used to re-do it with `pattern.contains("(#m)")`, which can
+    // only ever answer "on": it re-set $MATCH after the matcher had correctly
+    // declined to, so `(#m)(#M)a*` reported a match string where zsh leaves it
+    // unset. Wrong mechanism (a substring test cannot see which flag came last)
+    // and wrong layer (the matcher already has the compiled flags).
     matched
 }
 

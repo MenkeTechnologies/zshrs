@@ -3001,7 +3001,14 @@ pub(crate) fn getarg<'a>(
         if reverse && !has_beg {
             start = len - 1;
         }
-
+        // c:1748 — `if (beg >= 0 && beg < len) { …search… }`
+        if start >= len {
+            return Some(getarg_out::Value(if return_index {
+                Value::str("0")
+            } else {
+                Value::str("")
+            }));
+        }
         let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
             // c:1752 — `for (p = ta + beg; p >= ta; p--)`: clamp start
             // into the valid range then walk backwards. An empty array
@@ -8988,11 +8995,25 @@ pub fn intsecondssetfn(x: i64) {
 /// `return (double)(now-tv_sec - shtimer.tv_sec) + nsec/1e9;`
 /// WARNING: param names don't match C — Rust=() vs C=(pm)
 pub fn floatsecondsgetfn() -> f64 {
+    // Read shtimer BEFORE `now`, forcing its lazy init first — intsecondsgetfn
+    // (above) documents the same ordering requirement: with the opposite order
+    // a first call can observe `now < shtimer` and go backwards.
+    let timer = *shtimer_lock().lock().expect("shtimer poisoned");
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    let timer = *shtimer_lock().lock().expect("shtimer poisoned");
-    (now - timer).as_secs_f64()
+    // c:4595-4596 — `(double)(now.tv_sec - shtimer.tv_sec) +
+    //                (double)(now.tv_nsec - shtimer.tv_nsec) / 1000000000.0`
+    // C subtracts the two fields SEPARATELY and SIGNED, so a `now` behind
+    // `shtimer` simply yields a negative reading. This was
+    // `(now - timer).as_secs_f64()`, and Duration - Duration PANICS on
+    // underflow rather than going negative — `overflow when subtracting
+    // durations`. It had never fired because the float type was unreachable:
+    // `typeset -F SECONDS` was silently ignored (bin_typeset never called
+    // setsecondstype), so nothing ever selected this getter. Wiring that up
+    // turned a silent no-op into a crash, which is how this surfaced.
+    (now.as_secs() as f64 - timer.as_secs() as f64)
+        + (now.subsec_nanos() as f64 - timer.subsec_nanos() as f64) / 1_000_000_000.0
 }
 
 /// Port of `floatsecondssetfn(UNUSED(Param pm), double x)` from `Src/params.c:4603`. C body:
@@ -11176,12 +11197,28 @@ pub fn printparamvalue(p: &mut param, printflags: i32) {
                 s = v;
             }
         }
-        // c:Src/params.c::printparamvalue — for scalar specials like
-        // `-` (shell flags via dashgetfn) that have no gsu_s wired but
-        // do have a live getter routed through lookup_special_var,
-        // fall back to getsparam if both gsu_s/strgetfn returned empty.
-        // Mirrors the same dispatch the PM_INTEGER arm uses. Bug #516.
-        if s.is_empty() {
+        // c:Src/params.c::printparamvalue — for scalar SPECIALS like `-`
+        // (shell flags via dashgetfn, `${(t)-}` is `scalar-readonly-special`)
+        // that have no gsu_s wired but do have a live getter routed through
+        // lookup_special_var, fall back to getsparam if both gsu_s/strgetfn
+        // returned empty. Mirrors the same dispatch the PM_INTEGER arm uses.
+        // Bug #516.
+        //
+        // The PM_SPECIAL gate is required and was missing. getsparam applies
+        // the PM_LEFT/PM_RIGHT_B/PM_RIGHT_Z padding (that is C's VALFLAG_SUBST
+        // behaviour — the width attributes transform the value at EXPANSION),
+        // so an ungated fallback padded any ORDINARY parameter that happened to
+        // be empty:
+        //     typeset -L5 v; typeset -p v   → zsh `v=''`, was `v='     '`
+        // while `typeset -L5 v=abc` printed `abc` correctly — the fallback only
+        // fires when the value is empty, which is exactly why the bug looked
+        // like a storage problem. It is not: the store holds "" in both shells
+        // (`typeset -L5 v; typeset +L v; typeset -p v` gives `v=''` in each);
+        // only this read padded it. C's printparamvalue prints the raw value
+        // and never re-enters the substitution path.
+        //
+        // Gated the same way as the PM_EXPORTED env fallback just above.
+        if s.is_empty() && (p.node.flags as u32 & PM_SPECIAL) != 0 {
             if let Some(v) = crate::ported::params::getsparam(&p.node.nam) {
                 s = v;
             }

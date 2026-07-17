@@ -1,0 +1,76 @@
+# parity-fuzz --mode emulate baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode emulate --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (two seeds).
+#
+# Covers `emulate sh|ksh|zsh` (c:Src/options.c bin_emulate), which flips a whole
+# BLOCK of options at once, and `emulate -L` scoping that to the enclosing
+# function. The resulting option set decides word splitting, array base, $0, the
+# `[[ ]]` vs `[` grammar and the function-scope rules, so one wrong entry in the
+# emulation table silently changes the meaning of every script run under it.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# The divergence this mode found was a real port bug and is FIXED:
+#
+#   `emulate -l` ignored the per-option filter and printed the WHOLE option
+#   table — 197 lines where zsh prints 81 (`-l`) or 177 (`-lR`).
+#
+#   c:Src/options.c:988-990 — print_emulate_option prints an entry only when:
+#
+#       if (!(on->node.flags & OPT_ALIAS) &&
+#           ((fully && !(on->node.flags & OPT_SPECIAL)) ||
+#            (on->node.flags & OPT_EMULATE)))
+#
+#   where `fully` is emulate's -R. Without -R only the OPT_EMULATE options are
+#   listed; with it, everything except OPT_SPECIAL; aliases never. The port had
+#   the filter missing outright and `fully` unused (the parameter was named
+#   `_fully`).
+#
+#   The counts ARE the check, and they are exact: 81 of C's 196 optns[] entries
+#   carry OPT_EMULATE, and 196 - 12 aliases - 7 specials = 177. Both match zsh
+#   to the line. Eyeballing the head of the list shows nothing — the first
+#   entries agree either way, which is how a 197-vs-81 bug went unnoticed.
+#
+#   Two things had to be right. The flag TABLE (optns_flags) was already a
+#   faithful port of C's flag column — 0 mismatches against C for every entry
+#   it had — but it was MISSING 14 entries: all 12 OPT_ALIAS options
+#   (c:269-280, a contiguous block in C), plus continueonerror (c:122) and
+#   login (c:193). Those reported flags=0, so the aliases looked like ordinary
+#   options to the filter. The rows were extracted from C's table mechanically
+#   rather than hand-typed.
+#
+#   A SECOND bug sat behind the first, invisible until the filter was right:
+#   `emulate -l` reported the wrong option VALUES for non-zsh emulations (~38
+#   options for -l sh/ksh, ~18 for csh, 2 for -lR zsh).
+#
+#   c:6285 runs the emulation UNCONDITIONALLY:
+#
+#       if (opt_l) {
+#           cmdopts = (char *)zhalloc(OPT_SIZE);
+#           memcpy(cmdopts, opts, OPT_SIZE);     /* a COPY of the live opts */
+#       } else
+#           cmdopts = opts;
+#       emulate(shname, opt_R, &emulation, cmdopts);
+#
+#   C can do that because the target array is a parameter: under -l the
+#   emulation is applied to the COPY, so the listing shows what the options
+#   WOULD be and the shell is untouched. The port's options::emulate() has no
+#   such parameter — it writes through to the live state — so bin_emulate
+#   guarded it with `if !opt_l`, and cmdopts kept the CURRENT options. The -l
+#   path is now expressed as apply-to-live, snapshot, restore: same effect as
+#   C's copy.
+#
+#   `emulate -l zsh` looked perfect throughout, because under -f the current
+#   options ARE zsh's defaults — the one emulation where listing the wrong
+#   thing gives the right answer. Every other emulation was wrong. That is why
+#   this mode now generates the FULL listing for sh/ksh/csh/zsh and not just
+#   the counts: a count check cannot see a wrong value, and a zsh-only content
+#   check cannot see a wrong emulation.
+#
+# Any divergence here is a regression.

@@ -1,0 +1,67 @@
+# parity-fuzz --mode dirstack baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode dirstack --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (two seeds).
+#
+# Covers cd / pushd / popd / dirs and the directory stack (c:Src/builtins.c
+# bin_cd, c:Src/hashnameddir.c): `cd -`, `cd old new`, `pushd +N/-N`,
+# PUSHD_MINUS, AUTO_PUSHD, PUSHD_IGNORE_DUPS, CDPATH, `~name` named
+# directories, and the $PWD/$OLDPWD bookkeeping each must leave behind.
+#
+# The flag surface comes from the builtin table (c:Src/builtin.c:55/59/102/105):
+#   cd/chdir "qsPL"   dirs "clpv"   popd "q"   pushd "qsPL"
+# NONE of the cd/pushd/popd flags were generated and only `dirs -v` / `dirs -p`
+# were, so the entire flag surface went untested. Now covered:
+#   -P  physical: resolve symlinks, so `cd -P lnk` lands in the real directory
+#   -L  logical: keep the link in $PWD (the default)
+#   -s  refuse a path containing symlinks
+#   -q  skip the chpwd hook / suppress pushd's listing
+#   dirs -c  clear the stack     dirs -l  no `~` abbreviation
+#
+# -P/-L/-s cannot differ from a plain `cd` without a symlink to act on, which is
+# why the fixture creates one (`lnk -> a`). A flag vocabulary with nothing to
+# exercise it is the same as no vocabulary.
+#
+# SAFETY: the cleanup `rm` target is a LITERAL temp path, never derived from
+# $PWD, and the fixture `cd` bails before any rm runs. Keep it that way — a
+# generator that rm's a path computed from $PWD after a cd can delete the repo.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# KNOWN GAP — `cd -s` diagnoses the refusal with the wrong TEXT. The VERDICT is
+# right (rc=1, $PWD unchanged) and that part IS generated and gated; only the
+# message differs. Nothing here catches the text: the `cd -s` case redirects
+# stderr (`2>/dev/null`) to keep it deterministic, so the message reaches
+# neither the default stdout+exit comparison nor a `--stderr` run. It was found
+# by hand, and it stays found only because it is written down here:
+#
+#     cd -s lnk
+#         zsh    zsh:cd:1: not a directory: lnk
+#         zshrs  zsh:cd:1: lnk: symbolic link
+#
+# C has NO bespoke "symbolic link" message. `-s` is threaded through as the
+# `hard` argument (c:850 `cd_get_dest(nam, argv, OPT_ISSET(ops,'s'), func)`) →
+# cd_do_chdir → cd_try_chdir → `lchdir(buf, NULL, hard)`, and lchdir's hard path
+# walks components with lstat, which does not follow symlinks
+# (c:Src/utils.c:7490-7497):
+#
+#     if (lstat(buf, &st1)) { err = errno; break; }
+#     if (!S_ISDIR(st1.st_mode)) { err = ENOTDIR; break; }
+#
+# so a symlink-to-directory simply is not a directory, and the message is
+# strerror(ENOTDIR) reported through `%e`. zshrs instead bolts an extra
+# symlink_metadata check onto bin_cd (builtin.rs, after cd_get_dest returns) and
+# invents a string — right verdict, wrong mechanism, so the text cannot match.
+#
+# The faithful fix is to drop that block and let `hard` produce ENOTDIR through
+# lchdir, but zshrs's lchdir deliberately elides errno ("no current caller
+# inspects errno — the -1/-2/0 return is the contract"), so it needs an errno
+# contract change across every caller. Not worth a contract change for a
+# stderr-only string; recorded here for whoever touches lchdir's signature next.
+#
+# Any divergence here is a regression.

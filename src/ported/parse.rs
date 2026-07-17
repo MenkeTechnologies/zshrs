@@ -2287,9 +2287,19 @@ fn par_subsh() -> Option<ZshCommand> {
               // the construct ends. Pass OUTPAR_TOK so parse_program_until
               // stops cleanly at the closing paren.
     let prog = parse_program_until(Some(&[OUTPAR_TOK]), false);
-    if tok() == OUTPAR_TOK {
-        zshlex();
+    // c:1630-1631 — `if (tok != ((otok == INPAR) ? OUTPAR : OUTBRACE))
+    // YYERRORV(oecused);`. This arm is only reached from par_cmd's
+    // INPAR_TOK case (c:1010-1014), so the expected closer is OUTPAR.
+    // Silently accepting a missing `)` let an unterminated subshell parse
+    // clean: `zsh -fc '('` is a parse error with status 1, while zshrs
+    // returned 0 and ran nothing. `((` inherits the same path (the lexer
+    // emits two INPARs), which is why `((1` reached the command layer and
+    // reported `command not found: 1` instead of a parse error.
+    if tok() != OUTPAR_TOK {
+        yyerror(0); // c:1631 YYERRORV — sets ERRFLAG_ERROR (c:2751)
+        return None;
     }
+    zshlex(); // c:1633
     Some(ZshCommand::Subsh(Box::new(prog)))
 }
 

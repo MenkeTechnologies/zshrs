@@ -1,0 +1,23 @@
+# parity-fuzz --mode modifier baseline: normalized signatures of KNOWN gaps.
+# A divergence whose signature is here is allowed; a NEW one fails CI.
+# Regenerate: parity-fuzz --mode modifier --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — 4000 cases run clean (two seeds).
+#
+# Covers history/parameter modifiers (c:Src/hist.c): `:h` `:t` `:r` `:e` `:l`
+# `:u` `:q` `:Q` `:a` `:c`, the substitution forms (`:s/a/Z/`, `:gs|/|_|`,
+# `:fs/a//`, `:&`), their chained spellings (`:h:t`, `:t:r`, `:r:e`, `:c:t`), and
+# the `:|b` `:*b` `:^b` `:^^b` array ops.
+#
+# `:c` (PATH search, c:Src/hist.c:863) was ABSENT from the modifier list, and
+# that absence is exactly why the fuzzer never noticed `:c` was unimplemented in
+# the UNBRACED form — every probe used `${f:mod}`, which worked. A vocabulary
+# that only generates the shape which already passes proves nothing.
+#
+# The mode already existed and ran clean, but was NOT gated in CI, so nothing
+# stopped a regression in it. Gating is what makes that clean run mean
+# something. `trap` and `redir` sat in exactly this state and each turned out
+# to be hiding real bugs once their vocabulary was widened — a clean ungated
+# mode is an untested mode, not a correct one.
+#
+# Any divergence here is a regression.

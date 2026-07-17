@@ -1176,10 +1176,31 @@ pub fn printoptionlist_printequiv(optno: i32) {
 /// port emits every non-default option whose value matches `value`.
 /// Port of `print_emulate_option(HashNode hn, int fully)` from `Src/options.c:984`.
 /// WARNING: param names don't match C — Rust=(name, value, _fully) vs C=(hn, fully)
-pub fn print_emulate_option(name: &str, value: bool, _fully: bool) {
-    // c:984
+pub fn print_emulate_option(name: &str, value: bool, fully: bool) {
+    // c:988-990 — the entry prints ONLY when:
+    //
+    //     if (!(on->node.flags & OPT_ALIAS) &&
+    //         ((fully && !(on->node.flags & OPT_SPECIAL)) ||
+    //          (on->node.flags & OPT_EMULATE)))
+    //
+    // `fully` is emulate's -R. Without it, only options carrying OPT_EMULATE
+    // are listed; with it, everything except OPT_SPECIAL. Aliases are never
+    // listed either way.
+    //
+    // The filter was missing entirely and `fully` was unused (`_fully`), so the
+    // whole table printed: `emulate -l sh` gave 197 lines where zsh gives 81,
+    // and `emulate -lR sh` gave 197 where zsh gives 177. The counts are the
+    // check — 81 options carry OPT_EMULATE, and 196 - 12 aliases - 7 specials
+    // is 177.
+    let flags = optns_flags(name); // c:986 `Optname on = (Optname) hn;`
+    if (flags & OPT_ALIAS) != 0 {
+        return; // c:988
+    }
+    if !((fully && (flags & OPT_SPECIAL) == 0) || (flags & OPT_EMULATE) != 0) {
+        return; // c:989-990
+    }
     if !value {
-        // c:984 !print_emulate_opts[optno]
+        // c:994 !print_emulate_opts[optno]
         print!("no"); // c:995
     }
     println!("{}", name); // c:996
@@ -1784,6 +1805,24 @@ fn optns_flags(name: &str) -> u16 {
         "xtrace" => 0,                                        // c:267
         "zle" => OPT_SPECIAL as u16,                          // c:259
         "dvorak" => 0,                                        // c:260
+        // c:269-280 — the OPT_ALIAS block, plus continueonerror (c:122) and
+        // login (c:193). These were absent from this table entirely, so every
+        // one of them reported flags=0: the aliases looked like ordinary
+        // options to any caller reading OPT_ALIAS.
+        "continueonerror" => 0, // c:122
+        "login" => OPT_SPECIAL, // c:193
+        "braceexpand" => OPT_ALIAS, // c:269
+        "dotglob" => OPT_ALIAS, // c:270
+        "hashall" => OPT_ALIAS, // c:271
+        "histappend" => OPT_ALIAS, // c:272
+        "histexpand" => OPT_ALIAS, // c:273
+        "log" => OPT_ALIAS, // c:274
+        "mailwarn" => OPT_ALIAS, // c:275
+        "onecmd" => OPT_ALIAS, // c:276
+        "physical" => OPT_ALIAS, // c:277
+        "promptvars" => OPT_ALIAS, // c:278
+        "stdin" => OPT_ALIAS, // c:279
+        "trackall" => OPT_ALIAS, // c:280
         _ => 0,
     }
 }

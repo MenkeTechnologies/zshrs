@@ -3288,7 +3288,20 @@ pub fn pattryrefs(
         // wrapper that sniffed the pattern TEXT for "(#m)" — wrong
         // mechanism (missed hoisted/nested flag positions) and
         // wrong layer.
-        if (prog.0.globflags & GF_MATCHREF) != 0 && (prog.0.flags & PAT_FILE as i32) == 0 {
+        // c:2526 — `if ((patglobflags & GF_MATCHREF) && !(patflags & PAT_FILE))`.
+        // The source is the GLOBAL patglobflags (c:273), not `prog->globflags`.
+        // They are not the same thing: c:Src/zsh.h:1606 documents the struct
+        // field as "globbing flags to set at START", so it keeps whatever the
+        // pattern opened with, while the global is what patgetglobflags leaves
+        // after walking every flag — including a later `(#M)` turning
+        // GF_MATCHREF back off (c:1099-1100).
+        //
+        // Reading the struct field made `(#M)` inert: for all three of
+        // `(#m)a*`, `(#m)(#M)a*` and `(#M)(#m)a*` it is 0x1800, whereas the
+        // global correctly ends at 0x800 / 0x0 / 0x800. So `(#m)(#M)a*` still
+        // wrote $MATCH where zsh leaves it unset.
+        let cur_globflags = patglobflags.load(Ordering::Relaxed);
+        if (cur_globflags & GF_MATCHREF) != 0 && (prog.0.flags & PAT_FILE as i32) == 0 {
             let hi = matched_end.min(trial.len());
             let mstr: String = trial[..hi].to_string(); // c:2536 metafy(patinstart..patinput)
             let mlen = mstr.chars().count() as i64; // c:2534 CHARSUB

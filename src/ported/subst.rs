@@ -2004,6 +2004,58 @@ pub fn filesubstr(namptr: &str, assign: bool) -> Option<String> {
             let suffix: String = chars[2..].iter().collect();
             return Some(format!("{}{}", oldpwd, suffix));
         }
+        // c:757-770 — `~[...]` DYNAMIC directory naming:
+        //     } else if (str[1] == Inbrack && (ptr2 = strchr(str+2, Outbrack))) {
+        //         char **arr;
+        //         untokenize(tmp = dupstrpfx(str+2, ptr2 - (str+2)));
+        //         remnulargs(tmp);
+        //         arr = subst_string_by_hook("zsh_directory_name", "n", tmp);
+        //         res = arr ? *arr : NULL;
+        //         if (res) { *namptr = dyncat(res, ptr2+1); return 1; }
+        //         if (isset(NOMATCH) && isset(EXECOPT))
+        //             zerr("no directory expansion: ~[%s]", tmp);
+        //         return 0;
+        //     }
+        // The whole form was missing: `~[name]` fell through to the globber and
+        // came back "no matches found: ~[name]", so the zsh_directory_name hook
+        // — the entire point of the syntax, and what zsh's own
+        // zsh_directory_name_generic drives — was never consulted.
+        //
+        // The "n" direction (name → path) is this one; the port already used
+        // subst_string_by_hook for the reverse "d" direction (path → ~name) in
+        // utils.rs, so only this half was absent.
+        //
+        // Returning None (C's `return 0`) is what keeps the un-expanded word
+        // for the caller, which is why `unsetopt nomatch` correctly leaves the
+        // literal `~[foo]` — the diagnostic, not the failure, is what NOMATCH
+        // gates.
+        if (nx == Inbrack || nx == '[') && chars.len() > 2 {
+            let close = if nx == Inbrack { Outbrack } else { ']' };
+            if let Some(rel) = chars[2..].iter().position(|&c| c == close || c == ']') {
+                let end = 2 + rel; // index of the closing bracket
+                // c:760-761 — `untokenize(dupstrpfx(...)); remnulargs(tmp);`
+                let inner: String = chars[2..end].iter().collect();
+                let mut tmp = crate::ported::lex::untokenize(&inner); // c:760
+                crate::ported::glob::remnulargs(&mut tmp); // c:761
+                // c:762 — `subst_string_by_hook("zsh_directory_name", "n", tmp)`
+                let res = crate::ported::utils::subst_string_by_hook(
+                    "zsh_directory_name",
+                    Some("n"),
+                    &tmp,
+                )
+                .and_then(|v| v.into_iter().next());
+                if let Some(res) = res {
+                    // c:765 — `*namptr = dyncat(res, ptr2+1);`
+                    let suffix: String = chars[end + 1..].iter().collect();
+                    return Some(format!("{res}{suffix}")); // c:766
+                }
+                // c:768-769 — the diagnostic is gated on BOTH options.
+                if isset(crate::ported::zsh_h::NOMATCH) && isset(crate::ported::zsh_h::EXECOPT) {
+                    zerr(&format!("no directory expansion: ~[{tmp}]")); // c:769
+                }
+                return None; // c:770
+            }
+        }
         // `~+N` / `~-N` — dirstack entry. C: `if (!inblank(str[1]) &&
         // isend(*ptr) && (!idigit(str[1]) || (ptr - str < 4)))`.
         // Walk digit suffix; ptr ends at first non-digit.
@@ -6628,16 +6680,67 @@ pub fn paramsubst(
                     // "one" (scans idx 2,1 downward, finds "one"); the previous
                     // range `(start..end).rev()` scanned end..start reversed and
                     // missed everything below the begin offset.
+                    // c:Src/params.c:1738-1760 — normalize the `(b:N:)` begin
+                    // index, THEN bounds-check it; the search runs only when it
+                    // lands inside the array:
+                    //
+                    //     len = arrlen(ta);
+                    //     if (beg < 0) beg += len;
+                    //     if (down) { if (beg < 0) return 0; }
+                    //     else if (beg >= len) return len + 1;
+                    //     if (beg >= 0 && beg < len) {
+                    //         if (down) { if (!hasbeg) beg = len - 1; …
+                    //
+                    // Clamping an out-of-range begin (min(arr_len-1) / min(len))
+                    // instead searched from the nearest valid element, so a
+                    // begin past the end still matched, and a negative one was
+                    // floored to 0 rather than counted back from the end:
+                    //     dup=(x y x y x)
+                    //     ${dup[(Ib:6:)x]}   zsh 0   was 5
+                    //     ${dup[(ib:-2:)x]}  zsh 5   was 1
+                    //     ${dup[(Ib:-2:)x]}  zsh 3   was 1
+                    //
+                    // An empty iterator here yields exactly C's not-found value
+                    // via the `found_idx` match below (down → "0", forward →
+                    // len+1), so the bounds checks need only decide whether to
+                    // scan at all.
+                    let mut beg_underflow = false;
                     let iter_range: Box<dyn Iterator<Item = usize>> = if arr_len == 0 {
                         Box::new(std::iter::empty())
-                    } else if down {
-                        let start_idx = (beg.unwrap_or(arr_len as i64) - 1)
-                            .max(0)
-                            .min(arr_len as i64 - 1) as usize;
-                        Box::new((0..=start_idx).rev())
                     } else {
-                        let lo = ((beg.unwrap_or(1) - 1).max(0) as usize).min(arr_len);
-                        Box::new(lo..arr_len)
+                        let len = arr_len as i64;
+                        // c:1443-1451 — a positive `b:N:` is stored 0-based
+                        // (`beg--`); zero/negative is kept as-is for the
+                        // `beg += len` below. No `b` at all means beg = 0
+                        // (c:1373), for BOTH directions — the reverse default
+                        // is applied later, at c:1750, after the bounds check.
+                        let mut beg0 = match beg {
+                            Some(n) if n > 0 => n - 1,
+                            Some(n) => n,
+                            None => 0,
+                        };
+                        if beg0 < 0 {
+                            beg0 += len; // c:1741-1742
+                        }
+                        // c:1744 — `if (down) { if (beg < 0) return 0; }`, and
+                        // for a FORWARD search a still-negative beg falls out
+                        // of c:1748's guard and returns 0 as well. That is not
+                        // the same as forward-with-beg>=len, which returns
+                        // len+1 at c:1746, nor as forward-in-range-no-match,
+                        // which also yields len+1 — so "found nothing" has two
+                        // different answers depending on WHY, and the flag
+                        // below carries that distinction to the match on
+                        // `found_idx`.
+                        beg_underflow = beg0 < 0;
+                        if beg0 < 0 || beg0 >= len {
+                            Box::new(std::iter::empty())
+                        } else if down {
+                            // c:1750-1751 — `if (!hasbeg) beg = len - 1;`
+                            let start_idx = if beg.is_some() { beg0 } else { len - 1 } as usize;
+                            Box::new((0..=start_idx).rev())
+                        } else {
+                            Box::new((beg0 as usize)..arr_len)
+                        }
                     };
                     for idx in iter_range {
                         let elem = &arr[idx];
@@ -6666,6 +6769,10 @@ pub fn paramsubst(
                     match found_idx {
                         Some(idx) if return_index => (idx + 1).to_string(),
                         Some(idx) => arr[idx].clone(),
+                        // c:1744/1748 — a begin index that stays negative after
+                        // `beg += len` means "no scan, answer 0", even forward,
+                        // where an ordinary miss would be len+1.
+                        None if return_index && beg_underflow => "0".to_string(),
                         None if return_index && !down => {
                             // c:2945 — (i) no-match: one-past-end
                             // so `$arr[$arr[(i)pat]]` yields empty.
@@ -13062,7 +13169,33 @@ pub fn paramsubst(
                             return (String::new(), 0, Vec::new());
                         }
                     }
-                    let off = crate::ported::math::mathevali(&singsub(parts[0])).unwrap_or(0);
+                    // c:3618-3623 — the offset is evaluated and a math failure
+                    // ABORTS the substitution:
+                    //     zlong offset = mathevali(check_offset);
+                    //     ...
+                    //     if (errflag)
+                    //         return NULL;
+                    // `.unwrap_or(0)` swallowed that and silently substituted
+                    // offset 0, so `${v:(1)x:2}` quietly returned `ab` (v[0,2])
+                    // where zsh reports "bad math expression: operator expected
+                    // at `x'". The LENGTH side below already surfaces the same
+                    // error, which is why the two halves disagreed:
+                    // `${v:1:(2)x}` errored while `${v:(1)x:2}` did not.
+                    let off = match crate::ported::math::mathevali(&singsub(parts[0])) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            // Same shape as the length arm: mathevali's message
+                            // already carries the prefix for real parse errors,
+                            // so only add it when it is missing.
+                            if e.starts_with("bad math expression") {
+                                crate::ported::utils::zerr(&e);
+                            } else {
+                                crate::ported::utils::zerr(&format!("bad math expression: {e}"));
+                            }
+                            errflag_set_error(); // c:3622
+                            return (String::new(), 0, Vec::new()); // c:3623
+                        }
+                    };
                     // Array context: ${arr:offset:length} slices the
                     // ARRAY (1-based, like Bash's offset), not the joined
                     // value. Direct port of subst.c's array-shape branch
@@ -13465,7 +13598,24 @@ pub fn paramsubst(
                                     .iter()
                                     .find(|sp| sp.name == var_name.as_str())
                                 {
-                                    bits |= sp.pm_type as u32;
+                                    // Only supply the table's declared type when
+                                    // the live entry carries NONE of its own
+                                    // (PM_SCALAR is 0, so PM_TYPE == 0 means
+                                    // "untyped" — the SHLVL-imported-as-scalar
+                                    // case this overlay exists for). Applying it
+                                    // unconditionally overrode a type that was
+                                    // legitimately CHANGED: SECONDS may switch
+                                    // between integer and float
+                                    // (c:Src/params.c:4630 setsecondstype), so
+                                    // `typeset -F SECONDS` must read
+                                    // `float-special`. It reported
+                                    // `integer-special` — the table's
+                                    // declaration — even though the live flags,
+                                    // $SECONDS itself and `typeset -p` had all
+                                    // correctly become float.
+                                    if crate::ported::zsh_h::PM_TYPE(bits) == 0 {
+                                        bits |= sp.pm_type as u32;
+                                    }
                                     // c:Src/params.c — overlay the canonical
                                     // pm_flags too (PM_READONLY for #/?,
                                     // PM_TIED for path/PATH etc.). Without
@@ -18250,7 +18400,37 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                 // `/deeper`). The previous port used `xsymlinks`, which is
                 // the `:A`-style physical walk and left `/..` unresolved.
                 'a' => crate::ported::hist::chabspath(w),
-                'A' | 'P' => {
+                // c:Src/subst.c:4787-4796 — `case 'P':` is NOT `case 'A':`.
+                // It cwd-prepends a relative path and then calls
+                // `xsymlink(copy, 1)` → `chrealpath(&s, 'P', heap)`. Mode 'P'
+                // SKIPS the chabspath step that mode 'A' runs first
+                // (c:1988-1990), so `:P` never collapses `.`/`..` lexically —
+                // they only ever fold away through realpath(3), which cannot
+                // resolve them across a component that does not exist:
+                //     /a/b/../c   :A → /a/c        :P → /a/b/../c
+                //     /a/./b      :A → /a/b        :P → /a/./b
+                //     /tmp/./x    both → /private/tmp/x   (/tmp/. resolves)
+                // Sharing one arm with `:A` made `:P` behave as `:A`.
+                //
+                // Routed through chrealpath rather than the PathBuf walk below:
+                // C's backoff trims BYTES at '/', while Path::parent()/
+                // file_name() drop `.` components on the way, which silently
+                // re-collapses exactly what `:P` must preserve.
+                'P' => {
+                    let abs = if w.starts_with('/') {
+                        w.to_string()
+                    } else {
+                        // c:4788-4794 — prepend $PWD when relative.
+                        let here = crate::ported::compat::zgetcwd();
+                        if here.ends_with('/') {
+                            format!("{here}{w}")
+                        } else {
+                            format!("{here}/{w}")
+                        }
+                    };
+                    crate::ported::utils::xsymlink(&abs) // c:4795
+                }
+                'A' => {
                     // c:4585 (:A / :P absolute + resolve symlinks)
                     // zsh `:A` / `:P` do what realpath(3) does —
                     // resolve every symlink in the path. xsymlinks
@@ -18292,8 +18472,31 @@ pub fn modify(s: &str, modifiers: &str) -> String {
                                 rp.push(t);
                             }
                             Some(rp.to_string_lossy().into_owned())
-                        } else {
+                        } else if modifier == 'A' {
+                            // Nothing along the path resolved. `:A` still
+                            // collapses `.`/`..` LEXICALLY, because C routes it
+                            // through `chrealpath(&copy, 'A', 1)` (c:4737) and
+                            // chrealpath's mode-'A' branch runs chabspath FIRST
+                            // (c:1988-1990) — before realpath is ever tried.
                             xsymlinks(w).ok()
+                        } else {
+                            // `:P` must NOT collapse. C reaches it by a
+                            // different route (c:4787-4796): cwd-prepend, then
+                            // `xsymlink(copy, 1)` → `chrealpath(&s, 'P', heap)`
+                            // — mode 'P', which SKIPS chabspath and goes
+                            // straight to the realpath backoff. When nothing
+                            // resolves, chrealpath's `real == NULL` branch
+                            // (c:2047) hands back `nonreal`, i.e. the original
+                            // string untouched.
+                            //
+                            // So `.`/`..` only ever collapse through realpath(3)
+                            // — which cannot collapse them across a component
+                            // that does not exist:
+                            //     /a/b/../c   :A → /a/c        :P → /a/b/../c
+                            //     /a/./b      :A → /a/b        :P → /a/./b
+                            //     /usr/bin/../bin  both → /usr/bin  (it exists)
+                            // Sharing one arm made `:P` behave as `:A`.
+                            Some(w.to_string())
                         }
                     }
                 }
