@@ -152,6 +152,15 @@ pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> {
         for b in watch_bintab.iter() {
             m.insert(b.node.nam.clone(), b);
         }
+        // zshrs extension: fold `zpm` (the plugin package manager,
+        // src/extensions/pkg) into the builtin table so it is a first-class
+        // builtin — `whence -w zpm` reports `builtin`, `builtin zpm` works,
+        // and it dispatches through execbuiltin like any other. No C
+        // counterpart (zpm is zshrs-original).
+        let pkg_bintab: &'static Vec<builtin> = &*crate::pkg::builtin::bintab;
+        for b in pkg_bintab.iter() {
+            m.insert(b.node.nam.clone(), b);
+        }
         m
     })
 }
