@@ -360,6 +360,21 @@ pub fn _main_complete(args: &[String]) -> i32 {
         let _ = setsparam("curcontext", &new_ctx);
         curcontext = new_ctx;
 
+        // sh:184-185 — `zstyle -t … show-completer && zle -R "Trying completion
+        // for :completion:${curcontext}"`. When the show-completer style is set,
+        // flash a progress line naming the completer context being tried (a
+        // debugging aid). `zle -R <msg>` = bin_zle_refresh with the message as
+        // its sole positional (sets the statusline + refreshes).
+        if testforstyle(&format!(":completion:{}:", curcontext), "show-completer") == 0 {
+            let msg = format!("Trying completion for :completion:{}", curcontext);
+            let _ = crate::ported::zle::zle_thingy::bin_zle_refresh(
+                "zle",
+                std::slice::from_ref(&msg),
+                &make_ops(),
+                0,
+            );
+        }
+
         // sh:180  matcher-list loop
         let matchers = lookupstyle(&format!(":completion:{}:", curcontext), "matcher-list");
         let matcher_list: Vec<String> = if matchers.is_empty() {
