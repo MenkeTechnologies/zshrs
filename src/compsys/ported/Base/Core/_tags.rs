@@ -201,37 +201,43 @@ fn run_default_sort(ctx: &str, argv: &[String]) {
     }
 
     // sh:46  for tag in $order; do
-    //   `$order` is iterated as WORDS (zsh splits on IFS), so a single
-    //   element like "(|*-)argument-* (|*-)option[-+]* values" yields
-    //   three iterations.
+    //   `$order` is a zsh array reference; with SH_WORD_SPLIT off (the
+    //   default) the for-loop iterates by ELEMENT, NOT by word. A single
+    //   tag-order value such as `fruits veggies` — or the built-in default
+    //   `(|*-)argument-* (|*-)option[-+]* values` — is therefore ONE spec
+    //   whose space-separated tags are tried TOGETHER: `comptry -m` splits
+    //   the arg internally and folds every matching tag into a SINGLE match
+    //   set (c:3973-4090). Splitting the element here (the previous port
+    //   did) turned each tag into its own set, so a multi-tag value stopped
+    //   after the first tag matched instead of offering them together.
     let mut nodef = false;
-    for entry in &order {
-        for tag in entry.split_whitespace() {
-            // sh:48-52
-            if tag == "-" {
-                // sh:49  -)     nodef=yes
-                nodef = true;
-            } else if let Some(rest) = tag.strip_prefix('!') {
-                // sh:50  \!*)   comptry "${(@)argv:#(${(j:|:)~${=~tag[2,-1]}})}"
-                //   Split `rest` on whitespace into patterns; filter
-                //   argv keeping ONLY entries that don't match ANY of
-                //   the patterns; pass filtered list to comptry.
-                let pats: Vec<&str> = rest.split_whitespace().collect();
-                let filtered: Vec<String> = argv
-                    .iter()
-                    .filter(|a| !pats.iter().any(|p| zsh_glob_match(p, a)))
-                    .cloned()
-                    .collect();
-                let _ = bin_comptry("comptry", &filtered, &make_ops(), 0);
-            } else if !tag.is_empty() {
-                // sh:51  ?*)    comptry -m "$tag"
-                let _ = bin_comptry(
-                    "comptry",
-                    &["-m".to_string(), tag.to_string()],
-                    &make_ops(),
-                    0,
-                );
-            }
+    for tag in &order {
+        let tag = tag.as_str();
+        // sh:48-52
+        if tag == "-" {
+            // sh:49  -)     nodef=yes
+            nodef = true;
+        } else if let Some(rest) = tag.strip_prefix('!') {
+            // sh:50  \!*)   comptry "${(@)argv:#(${(j:|:)~${=~tag[2,-1]}})}"
+            //   Split the part AFTER `!` on whitespace into patterns
+            //   (`${=~...}`); keep only argv entries matching NONE of them;
+            //   pass the filtered list to comptry.
+            let pats: Vec<&str> = rest.split_whitespace().collect();
+            let filtered: Vec<String> = argv
+                .iter()
+                .filter(|a| !pats.iter().any(|p| zsh_glob_match(p, a)))
+                .cloned()
+                .collect();
+            let _ = bin_comptry("comptry", &filtered, &make_ops(), 0);
+        } else if !tag.is_empty() {
+            // sh:51  ?*)    comptry -m "$tag"  — the WHOLE element; comptry
+            //   splits its space-separated tags into one set.
+            let _ = bin_comptry(
+                "comptry",
+                &["-m".to_string(), tag.to_string()],
+                &make_ops(),
+                0,
+            );
         }
     }
 
