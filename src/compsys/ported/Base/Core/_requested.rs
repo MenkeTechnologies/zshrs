@@ -89,10 +89,24 @@ pub fn _requested(args: &[String]) -> i32 {
     // sh:9
     if argv.len() > 3 {
         // sh:10  _all_labels - "$__gopt[@]" "$@" || return 1
+        //
+        // The leading `-` marks `__prev=-` inside _all_labels, i.e. its
+        // `comptags -A-` reaches back ONE function-nesting level to where
+        // `_tags` registered (C invokes _all_labels as a real shell
+        // function, so it sits at locallevel+1 vs the tags' level). The
+        // Rust port calls the sibling _all_labels directly, which skips
+        // doshfunc's inc_locallevel — so without this it runs at the SAME
+        // level as the registration and `-A-` (level-1) misses, aborting
+        // the whole `_tags`/`while _tags`/`_requested` idiom with
+        // "comptags: no tags registered". Simulate the missing scope
+        // depth around the direct call.
         let mut all_args: Vec<String> = vec!["-".to_string()];
         all_args.extend(gopt.iter().cloned());
         all_args.extend(argv.iter().cloned());
-        if _all_labels(&all_args) != 0 {
+        crate::ported::utils::inc_locallevel();
+        let rc = _all_labels(&all_args);
+        crate::ported::utils::dec_locallevel();
+        if rc != 0 {
             return 1;
         }
     } else if argv.len() > 1 {
