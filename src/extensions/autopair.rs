@@ -31,12 +31,14 @@ const DEFAULT_PAIRS: &[(char, char)] = &[
     (' ', ' '),
 ];
 
-/// ap:12-19 — default left-boundary regexps per group.
+/// ap:12-19 — default left-boundary regexps per group. The zsh originals are
+/// POSIX EREs (`[]})…]`, `[^{([]`, `[.:/\!]`); these are the same classes
+/// respelled for the Rust regex crate (leading/inner brackets escaped).
 fn default_lbound(group: &str) -> Option<&'static str> {
     match group {
-        "all" => Some(r"[.:/\!]"),
-        "quotes" => Some(r"[]})a-zA-Z0-9]"),
-        "spaces" => Some(r"[^{([]"),
+        "all" => Some(r"[.:/!]"),
+        "quotes" => Some(r"[\]})a-zA-Z0-9]"),
+        "spaces" => Some(r"[^{(\[]"),
         "braces" => Some(""),
         "`" => Some("`"),
         "\"" => Some("\""),
@@ -45,15 +47,61 @@ fn default_lbound(group: &str) -> Option<&'static str> {
     }
 }
 
-/// ap:21-25 — default right-boundary regexps per group.
+/// ap:21-25 — default right-boundary regexps per group (respelled, see above).
 fn default_rbound(group: &str) -> Option<&'static str> {
     match group {
-        "all" => Some(r"[[{(<,.:?/%$!a-zA-Z0-9]"),
+        "all" => Some(r"[\[{(<,.:?/%$!a-zA-Z0-9]"),
         "quotes" => Some("[a-zA-Z0-9]"),
-        "spaces" => Some(r"[^]})]"),
+        "spaces" => Some(r"[^\]})]"),
         "braces" => Some(""),
         _ => None,
     }
+}
+
+/// User overrides arrive as zsh/POSIX EREs, where `]` right after `[`/`[^`
+/// and `[` inside a class are literals. The Rust regex crate rejects both;
+/// escape them so plugin-authored patterns keep working.
+fn zsh_ere_to_rust(pat: &str) -> String {
+    let mut out = String::with_capacity(pat.len() + 4);
+    let mut chars = pat.chars().peekable();
+    let mut in_class = false;
+    let mut class_start = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push(c);
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+                class_start = false;
+            }
+            '[' if !in_class => {
+                in_class = true;
+                out.push('[');
+                if chars.peek() == Some(&'^') {
+                    out.push(chars.next().unwrap());
+                }
+                class_start = true;
+            }
+            '[' if in_class => {
+                out.push_str(r"\[");
+                class_start = false;
+            }
+            ']' if in_class && class_start => {
+                out.push_str(r"\]"); // POSIX: leading ] is literal
+                class_start = false;
+            }
+            ']' if in_class => {
+                in_class = false;
+                out.push(']');
+            }
+            _ => {
+                out.push(c);
+                class_start = false;
+            }
+        }
+    }
+    out
 }
 
 /// Live view of the plugin's config params.
@@ -150,9 +198,11 @@ fn cached_regex_matches(pattern: &str, hay: &str) -> bool {
     if map.len() > 256 {
         map.clear();
     }
-    let entry = map
-        .entry(pattern.to_owned())
-        .or_insert_with(|| regex::Regex::new(pattern).ok());
+    let entry = map.entry(pattern.to_owned()).or_insert_with(|| {
+        regex::Regex::new(pattern)
+            .ok()
+            .or_else(|| regex::Regex::new(&zsh_ere_to_rust(pattern)).ok())
+    });
     entry.as_ref().map(|re| re.is_match(hay)).unwrap_or(false)
 }
 

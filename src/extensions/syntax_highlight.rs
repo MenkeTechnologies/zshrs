@@ -1092,6 +1092,13 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
     crate::ported::input::inpush(&crate::ported::zle::zle_tricky::dupstrspace(line), 0, None); // c:1171
     crate::ported::hist::strinbeg(0); // c:1172
 
+    // No-progress guard: on an unterminated construct the lexer can re-yield
+    // the same (retyped) LEXERR token without consuming input — inbufct stops
+    // moving and the loop would spin, accumulating TokSpans without bound
+    // (observed as a runaway-memory hang on `echo 'unterminated`). C's
+    // completion loop never hits this because gotword ends its walk at the
+    // cursor; this walk covers the whole line, so it must self-terminate.
+    let mut prev_inbufct = i32::MIN;
     loop {
         let cmdpos_before = incmdpos();
         let inredir_before = inredir();
@@ -1100,6 +1107,7 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
         // c:1215-1227 — LEXERR fixup: odd Snull/Dnull count means an unterminated
         // quote; treat as STRING so the in-progress word still gets colored.
         let mut tokv = tok();
+        let was_lexerr = tokv == LEXERR;
         if tokv == LEXERR {
             match tokstr() {
                 None => break,
@@ -1122,6 +1130,9 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
         let start = (ll - wordbeg).clamp(0, ll) as usize; // lex.c:1886
         let end = (ll + 1 - inbufct).clamp(start as i32, ll) as usize; // lex.c:1884
 
+        let no_progress = inbufct == prev_inbufct;
+        prev_inbufct = inbufct;
+
         out.push(TokSpan {
             tok: tokv,
             text: tokstr(),
@@ -1131,8 +1142,14 @@ pub fn lex_line_tokens(line: &str) -> Vec<TokSpan> {
             in_redir: inredir_before,
         });
 
-        if tokv == LEXERR {
+        // A LEXERR (even one retyped to STRING) that consumed no input can
+        // never make progress; neither can any token stream longer than the
+        // line has characters. Both are hard stops, not errors.
+        if (was_lexerr && no_progress) || out.len() > (ll as usize + 8) {
             break;
+        }
+        if was_lexerr && inbufct <= 1 {
+            break; // trailing dupstrspace space is all that remains
         }
     }
 
