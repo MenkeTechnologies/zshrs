@@ -938,11 +938,15 @@ pub fn vibackwardkillword(_args: &[String]) -> i32 {
 pub fn backwardkillword(args: &[String]) -> i32 {
     // c:499
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst); // c:499
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // Scoped read — holding the ZMOD guard across the backkill call
+    // below deadlocks (backkill → cut → cuttext locks ZMOD again).
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:504
@@ -978,7 +982,13 @@ pub fn backwardkillword(args: &[String]) -> i32 {
         }
     }
     let ct = (ZLECS.load(std::sync::atomic::Ordering::SeqCst) - x) as i32;
-    backkill(ct, 0x02 | 0x04); // c:533
+    // c:533 — `backkill(zlecs - x, CUT_FRONT|CUT_RAW);` (0x02|0x04 was
+    // CUT_REPLACE|CUT_RAW — each M-DEL REPLACED the cut buffer instead
+    // of prepending, so consecutive word kills didn't accumulate).
+    backkill(
+        ct,
+        crate::ported::zle::zle_h::CUT_FRONT | crate::ported::zle::zle_h::CUT_RAW,
+    );
     0
 }
 
@@ -1166,11 +1176,15 @@ pub fn deleteword(args: &[String]) -> i32 {
 pub fn killword(args: &[String]) -> i32 {
     // c:628
     let mut x = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-    let mut __g_zmod = ZMOD.lock().unwrap();
-    let n = if __g_zmod.flags & MOD_MULT != 0 {
-        __g_zmod.mult
-    } else {
-        1
+    // Scoped read — holding the ZMOD guard across the forekill call
+    // below deadlocks (forekill → cut → cuttext locks ZMOD again).
+    let n = {
+        let __g_zmod = ZMOD.lock().unwrap();
+        if __g_zmod.flags & MOD_MULT != 0 {
+            __g_zmod.mult
+        } else {
+            1
+        }
     };
     if n < 0 {
         // c:633
@@ -1202,7 +1216,10 @@ pub fn killword(args: &[String]) -> i32 {
         }
     }
     let ct = (x - ZLECS.load(std::sync::atomic::Ordering::SeqCst)) as i32;
-    forekill(ct, /*CUT_RAW*/ 1); // c:652
+    // c:652 — `forekill(x - zlecs, CUT_RAW);` (the literal 1 was
+    // CUT_FRONT, not CUT_RAW — killed words landed in FRONT of the
+    // cut buffer, reversing kill order).
+    forekill(ct, crate::ported::zle::zle_h::CUT_RAW);
     0
 }
 

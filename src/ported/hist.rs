@@ -3168,7 +3168,19 @@ pub fn checkcurline(he: &histent) {
 /// Port of `Histent quietgethist(zlong ev)` from Src/hist.c.
 pub fn quietgethist(ev: i64) -> Option<histent> {
     // c:2433
-    ring_get(ev)
+    // Lazy-history chokepoint: a miss BELOW the loaded floor pages the
+    // older part of the HISTFILE in on demand (extensions/history_lazy
+    // — the file is never slurped whole at startup).
+    let hit = ring_get(ev);
+    if hit.is_none()
+        && ev > 0
+        && crate::history_lazy::has_older()
+        && ev < crate::history_lazy::floor_num()
+    {
+        crate::history_lazy::page_older_until(ev);
+        return ring_get(ev);
+    }
+    hit
 }
 
 /// Port of `Histent gethist(zlong ev)` from Src/hist.c.
@@ -3653,6 +3665,28 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     } else {
         0
     };
+    // LAZY cold read — the history is never slurped whole (user-directed
+    // contract; see extensions/history_lazy.rs). A cold read loads ONE
+    // newest page; everything older stays on disk and pages in on demand
+    // (navigation below the floor, whole-history scans). Exact zsh event
+    // numbering comes from a zero-heap streaming entry count so `fc -l`,
+    // `!N` and HISTNO match a full eager load. The old cold path
+    // `read_to_end`'d the entire HISTFILE (635MB / 566k entries) into a
+    // String + one histent per line, per shell — multi-second first
+    // prompts and hundreds of MB × N shells at fleet start.
+    let page_bytes = crate::history_lazy::PAGE_BYTES as i64;
+    let tail_start: i64 = if start_pos == 0 && cur_size > page_bytes {
+        cur_size - page_bytes
+    } else {
+        start_pos
+    };
+    let tail_bounded = tail_start > start_pos;
+    let total_entries: Option<u64> = if tail_bounded {
+        crate::history_lazy::count_entries(&path)
+    } else {
+        None
+    };
+    let start_pos = tail_start;
     let (contents, raw_len) = {
         use std::io::{Read, Seek, SeekFrom};
         let mut f = match std::fs::File::open(&path) {
@@ -3727,7 +3761,30 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
     // per line.
     let mut batch: Vec<histent> = Vec::new();
     let mut current: Option<(i64, i64, String)> = None;
-    for raw_line in contents.lines() {
+    // Tail-bounded reads land mid-entry: align to the first ENTRY
+    // boundary. Skip the (guaranteed partial) first line, then — for
+    // extended-history files — skip continuation lines until a `: N:M;`
+    // header starts a fresh entry. Plain-format files align at the
+    // first full line.
+    let mut lines_iter = contents.lines();
+    let mut align_consumed: usize = 0;
+    if tail_bounded {
+        if let Some(first) = lines_iter.next() {
+            align_consumed += first.len() + 1; // partial first line
+        }
+        let looks_extended = contents.contains("\n: ");
+        if looks_extended {
+            let mut peeked = lines_iter.clone();
+            while let Some(l) = peeked.next() {
+                if l.starts_with(": ") && l.contains(';') {
+                    break;
+                }
+                align_consumed += l.len() + 1;
+                let _ = lines_iter.next();
+            }
+        }
+    }
+    for raw_line in lines_iter {
         if let Some((stim, ftim, ref mut text)) = current {
             if text.ends_with('\\') {
                 text.pop();
@@ -3770,6 +3827,23 @@ pub fn readhistfile(fn_path: Option<&str>, _err: i32, readflags: i32) {
         entry.node.flags |= HIST_OLD as i32;
         batch.push(entry);
         histlinect.fetch_add(1, SeqCst);
+    }
+    // Lazy numbering: the newest page's entries carry the TAIL of the
+    // exact event range (…, TOTAL-1, TOTAL) so numbering is identical
+    // to a full eager load; older pages fill downward on demand.
+    if tail_bounded {
+        if let Some(total) = total_entries {
+            let k = batch.len() as i64;
+            let shift = (total as i64) - k - (curhist.load(SeqCst) - k);
+            if shift != 0 {
+                for e in batch.iter_mut() {
+                    e.histnum += shift;
+                }
+                curhist.fetch_add(shift, SeqCst);
+            }
+        }
+        let floor_num = batch.first().map(|e| e.histnum).unwrap_or(0);
+        crate::history_lazy::arm(&path, tail_start + align_consumed as i64, floor_num);
     }
     if !batch.is_empty() {
         // Prepend the batch (newest-first) ahead of anything already in the

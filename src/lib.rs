@@ -201,6 +201,10 @@ pub mod heredoc_ast;
 /// `history` submodule.
 #[path = "extensions/history.rs"]
 pub mod history;
+/// `history_lazy` submodule — on-demand HISTFILE paging; the history
+/// is never slurped whole.
+#[path = "extensions/history_lazy.rs"]
+pub mod history_lazy;
 /// `log` submodule.
 #[path = "extensions/log.rs"]
 pub mod log;
@@ -305,6 +309,10 @@ pub mod ztest;
 /// (Rust-only adapter for C's live GSU setters).
 #[path = "extensions/zle_param_sync.rs"]
 pub mod zle_param_sync;
+/// `zle_file_tester` submodule — file-existence/permission tests for native ZLE
+/// syntax highlighting (port of fish highlight/file_tester.rs).
+#[path = "extensions/zle_file_tester.rs"]
+pub mod zle_file_tester;
 /// `zwc` submodule.
 #[path = "extensions/zwc.rs"]
 pub mod zwc;

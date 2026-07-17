@@ -318,23 +318,17 @@ pub fn killwholeline() -> i32 {
         while i != ZLELL.load(SeqCst) && ZLELINE.lock().unwrap()[i] != '\n' {
             i += 1;
         }
-        // c:207 — `forekill(i - zlecs + (i != zlell), ...)`. Include
-        // the trailing '\n' if there is one.
+        // c:207 — `forekill(i - zlecs + (i != zlell), fg ?
+        // (CUT_FRONT|CUT_RAW) : CUT_RAW);` — include the trailing '\n'
+        // if there is one; kill routes through cuttext (CUTBUF).
         let drop = i - ZLECS.load(SeqCst) + (if i != ZLELL.load(SeqCst) { 1 } else { 0 });
-        if drop > 0 {
-            let text: Vec<char> = ZLELINE
-                .lock()
-                .unwrap()
-                .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + drop)
-                .collect();
-            KILLRING.lock().unwrap().push_front(text);
-            if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-                KILLRING.lock().unwrap().pop_back();
-            }
-            ZLELL.fetch_sub(drop, SeqCst);
-        }
+        forekill(
+            drop as i32,
+            if _fg { CUT_FRONT | CUT_RAW } else { CUT_RAW },
+        );
         n -= 1;
     }
+    CLEARLIST.store(1, SeqCst); // c:209 `clearlist = 1;`
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0 // c:210
 }
@@ -378,21 +372,10 @@ pub fn backwardkillline() -> i32 {
         }
         nn -= 1;
     }
-    // c:243 — `forekill(i, CUT_FRONT|CUT_RAW)`. Drain forward from
-    // current zlecs by i chars; push to killring with FRONT semantics
-    // (prepended to the existing front entry if present, else new).
-    if i > 0 {
-        let text: Vec<char> = ZLELINE
-            .lock()
-            .unwrap()
-            .drain(ZLECS.load(SeqCst)..ZLECS.load(SeqCst) + i)
-            .collect();
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
-        }
-        ZLELL.fetch_sub(i, SeqCst);
-    }
+    // c:243 — `forekill(i, CUT_FRONT|CUT_RAW);` — kill routes through
+    // cuttext (CUTBUF, FRONT semantics prepend to the current cut).
+    forekill(i as i32, CUT_FRONT | CUT_RAW);
+    CLEARLIST.store(1, SeqCst); // c:244 `clearlist = 1;`
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0 // c:245
 }
@@ -642,17 +625,12 @@ pub fn killline() -> i32 {
         }
         n -= 1;
     }
-    // c:437 — `backkill(i, CUT_RAW)`. Drain the killed range and
-    // push to killring; cursor returns to start.
-    if i > 0 {
-        let text: Vec<char> = ZLELINE.lock().unwrap().drain(start..start + i).collect();
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
-        }
-        ZLELL.fetch_sub(i, SeqCst);
-        ZLECS.store(start, SeqCst);
-    }
+    // c:437 — `backkill(i, CUT_RAW);` — the walk above advanced zlecs
+    // to the range end; backkill rewinds it and routes the kill
+    // through cuttext (CUTBUF), so `yank` sees it.
+    let _ = start;
+    backkill(i as i32, CUT_RAW);
+    CLEARLIST.store(1, SeqCst); // c:438 `clearlist = 1;`
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0 // c:439
 }
@@ -696,25 +674,41 @@ pub fn killregion() -> i32 {
     if MARK.load(SeqCst) > ZLELL.load(SeqCst) {
         MARK.store(ZLELL.load(SeqCst), SeqCst);
     }
-    // c:467-479 — region_active==2 (visual-line); skip the line-mode
-    // path for the simplified port.
-    let (start, end) = if MARK.load(SeqCst) > ZLECS.load(SeqCst) {
-        (ZLECS.load(SeqCst), MARK.load(SeqCst))
-    } else {
-        (MARK.load(SeqCst), ZLECS.load(SeqCst))
-    };
-    if start < end {
-        let text: Vec<char> = ZLELINE.lock().unwrap().drain(start..end).collect();
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
+    // c:467-479 — region_active==2 (visual-line): whole-line cut.
+    if REGION_ACTIVE.load(SeqCst) == 2 {
+        let (a, b) = regionlines(); // c:469
+        ZLECS.store(a, SeqCst); // c:470 `zlecs = a;`
+        REGION_ACTIVE.store(0, SeqCst); // c:471
+        let len = b as i32 - a as i32;
+        crate::ported::zle::zle_utils::cut(a as i32, len, CUT_RAW); // c:472
+        crate::ported::zle::zle_utils::shiftchars(a as i32, len); // c:473
+        if ZLELL.load(SeqCst) != 0 {
+            // c:474
+            if ZLECS.load(SeqCst) == ZLELL.load(SeqCst) {
+                crate::ported::zle::zle_move::deccs(); // c:475-476
+            }
+            crate::ported::zle::zle_utils::foredel(1, 0); // c:477
+            let _ = crate::ported::zle::zle_move::vifirstnonblank(); // c:478
         }
-        ZLELL.fetch_sub(end - start, SeqCst);
-        ZLECS.store(start, SeqCst);
-        MARK.store(start, SeqCst);
+    } else if MARK.load(SeqCst) > ZLECS.load(SeqCst) {
+        // c:480-483 — kill forward to mark; cuttext fills CUTBUF.
+        let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+        if crate::ported::zle::zle_h::invicmdmode(&kn) {
+            MARK.fetch_add(1, SeqCst); // c:481-482 `INCPOS(mark);`
+        }
+        let n = MARK.load(SeqCst) as i32 - ZLECS.load(SeqCst) as i32;
+        forekill(n, CUT_RAW); // c:483
+    } else {
+        // c:484-487 — kill backward to mark.
+        let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+        if crate::ported::zle::zle_h::invicmdmode(&kn) {
+            crate::ported::zle::zle_move::inccs(); // c:485-486 `INCCS();`
+        }
+        let n = ZLECS.load(SeqCst) as i32 - MARK.load(SeqCst) as i32;
+        backkill(n, CUT_FRONT | CUT_RAW); // c:487
     }
     ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    0 // c:489
 }
 
 /// Port of `copyregionaskill(char **args)` from Src/Zle/zle_misc.c:494.
@@ -723,13 +717,11 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
     // c:494
     // c:494-501 — `if (*args) { stringaszleline; cuttext(line, len, CUT_REPLACE) }`.
     if let Some(arg) = args.first() {
-        // c:499 — `line = stringaszleline(*args, 0, &len, NULL, NULL);`
+        // c:499-500 — `line = stringaszleline(*args, 0, &len, NULL,
+        // NULL); cuttext(line, len, CUT_REPLACE);`
         let text: Vec<char> =
             crate::ported::zle::zle_utils::stringaszleline(arg, 0, None, None, None);
-        KILLRING.lock().unwrap().push_front(text);
-        if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-            KILLRING.lock().unwrap().pop_back();
-        }
+        crate::ported::zle::zle_utils::cuttext(&text, CUT_REPLACE); // c:500
         return 0;
     }
     // c:503-512 — copy region between point and mark.
@@ -741,82 +733,165 @@ pub fn copyregionaskill(args: &[String]) -> i32 {
     } else {
         (MARK.load(SeqCst), ZLECS.load(SeqCst))
     };
-    let text: Vec<char> = ZLELINE.lock().unwrap()[start..end].to_vec();
-    KILLRING.lock().unwrap().push_front(text);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-        KILLRING.lock().unwrap().pop_back();
+    // c:512-514 — `if (invicmdmode()) INCPOS(end); cut(start, end -
+    // start, mark > zlecs ? 0 : CUT_FRONT);` — copy through cuttext
+    // (CUTBUF) so `yank` sees it.
+    let mut end = end;
+    let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+    if crate::ported::zle::zle_h::invicmdmode(&kn) && end < ZLELL.load(SeqCst) {
+        end += 1; // c:513 `INCPOS(end);`
     }
-    0
+    crate::ported::zle::zle_utils::cut(
+        start as i32,
+        end as i32 - start as i32,
+        if MARK.load(SeqCst) > ZLECS.load(SeqCst) {
+            0
+        } else {
+            CUT_FRONT
+        },
+    ); // c:514
+    0 // c:516
 }
 
-/// Yank - insert from kill ring
-/// Port of yank(UNUSED(char **args)) from zle_misc.c
-pub fn yank() {
+/// Yank - insert from the cut buffer.
+/// Port of `yank(UNUSED(char **args))` from Src/Zle/zle_misc.c:533.
+pub fn yank() -> i32 {
     // c:533
-    // c:541-549 — `yankb = yankcs = mark = zlecs; while (n--) {
-    //              kct = -1; spaceinline(kctbuf->len);
-    //              ZS_memcpy(zleline + zlecs, kctbuf->buf, kctbuf->len);
-    //              zlecs += kctbuf->len; yanke = zlecs; }`.
-    let text_opt = KILLRING.lock().unwrap().front().cloned();
-    if let Some(text) = text_opt {
-        MARK.store(ZLECS.load(SeqCst), SeqCst); // c:543
-        spaceinline(text.len() as i32); // c:546
+    let mut n = ZMOD.lock().unwrap().mult; // c:535 `int n = zmult;`
+    if n < 0 {
+        return 1; // c:537-538
+    }
+    // c:539-542 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
+    if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+        KCTBUF_SEL.store(ZMOD.lock().unwrap().vibuf, SeqCst); // c:540
+    } else {
+        KCTBUF_SEL.store(-1, SeqCst); // c:542
+    }
+    let text: Vec<char> = match KCTBUF_SEL.load(SeqCst) {
+        -1 => crate::ported::zle::zle_main::CUTBUF
+            .lock()
+            .unwrap()
+            .buf
+            .chars()
+            .collect(),
+        idx if idx >= 0 && (idx as usize) < 36 => {
+            vibuf().lock().unwrap()[idx as usize].buf.chars().collect()
+        }
+        _ => Vec::new(),
+    };
+    if text.is_empty() {
+        return 1; // c:543-544 `if (!kctbuf->buf) return 1;`
+    }
+    // c:545 — `yankb = yankcs = mark = zlecs;`
+    let cs0 = ZLECS.load(SeqCst);
+    YANKB.store(cs0, SeqCst);
+    YANKCS.store(cs0 as i32, SeqCst);
+    MARK.store(cs0, SeqCst);
+    while n > 0 {
+        // c:546 `while (n--)`
+        KCT.store(-1, SeqCst); // c:547 `kct = -1;`
+        spaceinline(text.len() as i32); // c:548
         let cs = ZLECS.load(SeqCst);
         {
             let mut line = ZLELINE.lock().unwrap();
-            for (i, &c) in text.iter().enumerate() {
-                if cs + i < line.len() {
-                    line[cs + i] = c; // c:547
-                }
-            }
+            line[cs..cs + text.len()].copy_from_slice(&text); // c:549
         }
-        ZLECS.fetch_add(text.len(), SeqCst); // c:548
-        YANKLAST.store(true, SeqCst);
-        ZLE_RESET_NEEDED.store(1, SeqCst);
+        ZLECS.store(cs + text.len(), SeqCst); // c:550 `zlecs += kctbuf->len;`
+        YANKE.store(ZLECS.load(SeqCst), SeqCst); // c:551 `yanke = zlecs;`
+        n -= 1;
     }
+    YANKLAST.store(true, SeqCst);
+    ZLE_RESET_NEEDED.store(1, SeqCst);
+    0 // c:553
 }
 
 /// Port of `pastebuf(Cutbuffer buf, int mult, int position)` from Src/Zle/zle_misc.c:558.
-/// WARNING: param names don't match C — Rust=(zle, buf, mult, position) vs C=(buf, mult, position)
-pub fn pastebuf(buf: &[char], mult: i32, position: i32) -> i32 {
+/// c:556 — position: 0 is before, 1 after, 2 split the line
+pub fn pastebuf(buf: &crate::ported::zle::zle_h::cutbuffer, mult: i32, position: i32) -> i32 {
     // c:558
-    // Simplified port of pastebuf. The C source dispatches on
-    // CUTBUFFER_LINE flag (insert as full lines vs char-wise),
-    // computes position 0/1/2 (before/after/split), and updates
-    // yankb/yanke. Without the LINE-flag check (we treat all as
-    // char-wise) plus the simple before/after path we get the
-    // common case.
-    if buf.is_empty() {
-        return 0;
-    }
-    // c:591-592 — `if (position == 1 && zlecs != findeol()) INCCS()`.
-    if position == 1 && ZLECS.load(SeqCst) < ZLELL.load(SeqCst) {
-        ZLECS.fetch_add(1, SeqCst);
-    }
-    // c:593 — `yankb = zlecs`.
-    YANKB.store(ZLECS.load(SeqCst), SeqCst);
-    // c:595-599 — `while (mult--) { spaceinline(cc); ZS_memcpy; zlecs += cc }`.
-    let mut n = mult;
-    let cc = buf.len();
-    while n > 0 {
-        spaceinline(cc as i32); // c:596
-        let cs = ZLECS.load(SeqCst);
-        {
-            let mut line = ZLELINE.lock().unwrap();
-            for (i, &c) in buf.iter().enumerate() {
-                if cs + i < line.len() {
-                    line[cs + i] = c; // c:597
-                }
+    use crate::ported::zle::zle_h::CUTBUFFER_LINE;
+    use crate::ported::zle::zle_utils::{findbol, findeol};
+    let text: Vec<char> = buf.buf.chars().collect();
+    let mut position = position;
+    if buf.flags & CUTBUFFER_LINE != 0 {
+        // c:561 — line-mode buffer: paste whole lines.
+        if position == 2 {
+            // c:562-567 — split degrades to before/after at the edges.
+            if ZLECS.load(SeqCst) == 0 {
+                position = 0; // c:563-564
+            } else if ZLECS.load(SeqCst) == ZLELL.load(SeqCst) {
+                position = 1; // c:565-566
             }
         }
-        ZLECS.fetch_add(cc, SeqCst); // c:598
-        n -= 1;
-    }
-    // c:600 — `yanke = zlecs`.
-    YANKE.store(ZLECS.load(SeqCst), SeqCst);
-    // c:601-602 — vicmd → DECCS.
-    if ZLECS.load(SeqCst) > 0 && *crate::ported::zle::zle_keymap::curkeymapname() == "vicmd" {
-        ZLECS.fetch_sub(1, SeqCst);
+        if position == 2 {
+            // c:568-575 — split the line at the cursor.
+            YANKB.store(ZLECS.load(SeqCst), SeqCst); // c:569 `yankb = zlecs;`
+            spaceinline(text.len() as i32 + 2); // c:570
+            let mut cs = ZLECS.load(SeqCst);
+            {
+                let mut line = ZLELINE.lock().unwrap();
+                line[cs] = '\n'; // c:571 `zleline[zlecs++] = ZWC('\n');`
+                cs += 1;
+                line[cs..cs + text.len()].copy_from_slice(&text); // c:572
+                cs += text.len(); // c:573
+                line[cs] = '\n'; // c:574
+            }
+            ZLECS.store(cs, SeqCst);
+            YANKE.store(cs + 1, SeqCst); // c:575 `yanke = zlecs + 1;`
+        } else if position != 0 {
+            // c:576-581 — after: open a new line below the current one.
+            let mut cs = findeol(); // c:577 `yankb = zlecs = findeol();`
+            YANKB.store(cs, SeqCst);
+            ZLECS.store(cs, SeqCst);
+            spaceinline(text.len() as i32 + 1); // c:578
+            {
+                let mut line = ZLELINE.lock().unwrap();
+                line[cs] = '\n'; // c:579 `zleline[zlecs++] = ZWC('\n');`
+                cs += 1;
+                line[cs..cs + text.len()].copy_from_slice(&text); // c:581
+            }
+            ZLECS.store(cs, SeqCst);
+            YANKE.store(cs + text.len(), SeqCst); // c:580 `yanke = zlecs + buf->len;`
+        } else {
+            // c:582-588 — before: open a new line above the current one.
+            let cs = findbol(); // c:583 `yankb = zlecs = findbol();`
+            YANKB.store(cs, SeqCst);
+            ZLECS.store(cs, SeqCst);
+            spaceinline(text.len() as i32 + 1); // c:584
+            {
+                let mut line = ZLELINE.lock().unwrap();
+                line[cs..cs + text.len()].copy_from_slice(&text); // c:585
+                line[cs + text.len()] = '\n'; // c:587
+            }
+            YANKE.store(cs + text.len() + 1, SeqCst); // c:586 `yanke = zlecs + buf->len + 1;`
+        }
+        let _ = crate::ported::zle::zle_move::vifirstnonblank(); // c:589
+    } else {
+        // c:590-603 — char-wise paste.
+        // c:591-592 — `if (position == 1 && zlecs != findeol()) INCCS();`
+        if position == 1 && ZLECS.load(SeqCst) != findeol() {
+            crate::ported::zle::zle_move::inccs();
+        }
+        YANKB.store(ZLECS.load(SeqCst), SeqCst); // c:593 `yankb = zlecs;`
+        let cc = text.len(); // c:594 `cc = buf->len;`
+        let mut mult = mult;
+        while mult > 0 {
+            // c:595 `while (mult--)`
+            spaceinline(cc as i32); // c:596
+            let cs = ZLECS.load(SeqCst);
+            {
+                let mut line = ZLELINE.lock().unwrap();
+                line[cs..cs + cc].copy_from_slice(&text); // c:597
+            }
+            ZLECS.store(cs + cc, SeqCst); // c:598 `zlecs += cc;`
+            mult -= 1;
+        }
+        YANKE.store(ZLECS.load(SeqCst), SeqCst); // c:600 `yanke = zlecs;`
+        // c:601-602 — `if (zlecs && invicmdmode()) DECCS();`
+        let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+        if ZLECS.load(SeqCst) != 0 && crate::ported::zle::zle_h::invicmdmode(&kn) {
+            crate::ported::zle::zle_move::deccs();
+        }
     }
     ZLE_RESET_NEEDED.store(1, SeqCst);
     0
@@ -833,24 +908,34 @@ pub fn viputbefore() -> i32 {
     if ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 0; // c:616
     }
-    let buf: Vec<char> = if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
-        let idx = ZMOD.lock().unwrap().vibuf as usize;
-        if idx >= vibuf().lock().unwrap().len() {
-            return 1;
-        }
-        vibuf().lock().unwrap()[idx].clone() // c:631
-    } else {
-        KILLRING
-            .lock()
-            .unwrap()
-            .front()
-            .cloned()
-            .unwrap_or_default() // c:633
-    };
-    if buf.is_empty() {
-        return 1; // c:635
+    // c:631-634 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
+    // The unnamed register is CUTBUF (the vi cut buffer with its
+    // CUTBUFFER_LINE flag), NOT the emacs kill ring — reading the ring
+    // lost the line flag, so `yyp` pasted mid-line instead of opening
+    // a new line.
+    let kctbuf: crate::ported::zle::zle_h::cutbuffer =
+        if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+            let idx = ZMOD.lock().unwrap().vibuf as usize;
+            if idx >= vibuf().lock().unwrap().len() {
+                return 1;
+            }
+            KCTBUF_SEL.store(idx as i32, SeqCst); // c:632 `kctbuf = &vibuf[zmod.vibuf];`
+            vibuf().lock().unwrap()[idx].clone()
+        } else {
+            KCTBUF_SEL.store(-1, SeqCst); // c:634 `kctbuf = &cutbuf;`
+            let cb = crate::ported::zle::zle_main::CUTBUF.lock().unwrap();
+            crate::ported::zle::zle_h::cutbuffer {
+                buf: cb.buf.clone(),
+                len: cb.len,
+                flags: cb.flags,
+            }
+        };
+    if kctbuf.buf.is_empty() {
+        return 1; // c:635-636 `if (!kctbuf->buf) return 1;`
     }
-    pastebuf(&buf, n, 0) // c:639
+    KCT.store(-1, SeqCst); // c:637 `kct = -1;`
+    YANKCS.store(ZLECS.load(SeqCst) as i32, SeqCst); // c:638 `yankcs = zlecs;`
+    pastebuf(&kctbuf, n, 0) // c:639
 }
 
 /// Port of `viputafter(UNUSED(char **args))` from Src/Zle/zle_misc.c:644.
@@ -864,26 +949,34 @@ pub fn viputafter() -> i32 {
     if ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 0; // c:652
     }
-    // c:653-665 — OS selection branch (MOD_OSSEL = PRI|CLIP). Without
+    // c:653-667 — OS selection branch (MOD_OSSEL = PRI|CLIP). Without
     //              system_clipget we fall through to the cut-buffer path.
-    let buf: Vec<char> = if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
-        let idx = ZMOD.lock().unwrap().vibuf as usize;
-        if idx >= vibuf().lock().unwrap().len() {
-            return 1;
-        }
-        vibuf().lock().unwrap()[idx].clone() // c:667
-    } else {
-        KILLRING
-            .lock()
-            .unwrap()
-            .front()
-            .cloned()
-            .unwrap_or_default() // c:669
-    };
-    if buf.is_empty() {
-        return 1; // c:671
+    // c:668-671 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
+    // Same unnamed-register fix as viputbefore: read CUTBUF (flags
+    // intact), not the kill ring.
+    let kctbuf: crate::ported::zle::zle_h::cutbuffer =
+        if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+            let idx = ZMOD.lock().unwrap().vibuf as usize;
+            if idx >= vibuf().lock().unwrap().len() {
+                return 1;
+            }
+            KCTBUF_SEL.store(idx as i32, SeqCst); // c:669 `kctbuf = &vibuf[zmod.vibuf];`
+            vibuf().lock().unwrap()[idx].clone()
+        } else {
+            KCTBUF_SEL.store(-1, SeqCst); // c:671 `kctbuf = &cutbuf;`
+            let cb = crate::ported::zle::zle_main::CUTBUF.lock().unwrap();
+            crate::ported::zle::zle_h::cutbuffer {
+                buf: cb.buf.clone(),
+                len: cb.len,
+                flags: cb.flags,
+            }
+        };
+    if kctbuf.buf.is_empty() {
+        return 1; // c:672-673 `if (!kctbuf->buf) return 1;`
     }
-    pastebuf(&buf, n, 1) // c:675
+    KCT.store(-1, SeqCst); // c:674 `kct = -1;`
+    YANKCS.store(ZLECS.load(SeqCst) as i32, SeqCst); // c:675 `yankcs = zlecs;`
+    pastebuf(&kctbuf, n, 1) // c:676
 }
 
 /// Port of `putreplaceselection(UNUSED(char **args))` from Src/Zle/zle_misc.c:680.
@@ -895,21 +988,23 @@ pub fn putreplaceselection() -> i32 {
     if n < 0 || ZMOD.lock().unwrap().flags & MOD_NULL != 0 {
         return 1; // c:690
     }
-    let prevbuf: Vec<char> = if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
-        let idx = ZMOD.lock().unwrap().vibuf as usize;
-        if idx >= vibuf().lock().unwrap().len() {
-            return 1;
-        }
-        vibuf().lock().unwrap()[idx].clone() // c:700
-    } else {
-        KILLRING
-            .lock()
-            .unwrap()
-            .front()
-            .cloned()
-            .unwrap_or_default() // c:702
-    };
-    if prevbuf.is_empty() {
+    // c:698-702 — `kctbuf = &vibuf[zmod.vibuf]` / `kctbuf = &cutbuf`.
+    let prevbuf: crate::ported::zle::zle_h::cutbuffer =
+        if ZMOD.lock().unwrap().flags & MOD_VIBUF != 0 {
+            let idx = ZMOD.lock().unwrap().vibuf as usize;
+            if idx >= vibuf().lock().unwrap().len() {
+                return 1;
+            }
+            vibuf().lock().unwrap()[idx].clone() // c:700
+        } else {
+            let cb = crate::ported::zle::zle_main::CUTBUF.lock().unwrap();
+            crate::ported::zle::zle_h::cutbuffer {
+                buf: cb.buf.clone(),
+                len: cb.len,
+                flags: cb.flags,
+            } // c:702
+        };
+    if prevbuf.buf.is_empty() {
         return 1; // c:702
     }
     ZMOD.lock().unwrap().flags = 0; // c:712
@@ -926,40 +1021,105 @@ pub fn putreplaceselection() -> i32 {
     pastebuf(&prevbuf, n, pos) // c:721
 }
 
-/// Port of `yankpop(UNUSED(char **args))` from Src/Zle/zle_misc.c:728.
+/// Port of `yankpop(UNUSED(char **args))` from Src/Zle/zle_misc.c:741.
+///
+/// The C walk cycles `kct` through: original buffer (`-1`, whatever
+/// `kctbuf` points at) → kill ring entries newest→oldest → back to the
+/// original buffer. zshrs's `KILLRING` deque holds newest at index 0
+/// (cuttext pushes front and pins `kringnum = 0`), so the descending
+/// C index walk maps to ASCENDING deque indices.
+///
+/// Substrate note: `KILLRING` entries are `Vec<char>` without the C
+/// `struct cutbuffer` flags, so a ring entry pastes char-wise even if
+/// its kill was line-mode (`dd` then `M-y M-y`). The original CUTBUF /
+/// vibuf (`kct == -1`) keeps its flags. Retyping KILLRING to
+/// `VecDeque<cutbuffer>` lifts this.
 pub fn yankpop() -> i32 {
-    // c:728
-    // c:730-735 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
-    //               return 1`.
+    // c:741
+    let kctstart = KCT.load(SeqCst); // c:744 `int kctstart = kct;`
+    // c:747-750 — `if (!(lastcmd & ZLE_YANK) || !kring || !kctbuf)
+    //              { kctbuf = NULL; return 1; }`
     let last = LASTCMD.load(SeqCst) as i32;
-    if (last & ZLE_YANK) == 0 || KILLRING.lock().unwrap().is_empty() {
+    if (last & ZLE_YANK) == 0
+        || KILLRING.lock().unwrap().is_empty()
+        || KCTBUF_SEL.load(SeqCst) == -2
+    {
+        KCTBUF_SEL.store(-2, SeqCst); // c:748 `kctbuf = NULL;`
         return 1;
     }
-    // C body cycles the kill ring index `kct` and re-inserts the
-    // previous yank. zshrs uses VecDeque<Vec<char>> with the rotation
-    // index `yank_ring_idx`. Simplified: rotate front entry to back,
-    // delete previous yank text from line, insert new front.
-    let prev_start = YANKB.load(SeqCst);
-    let prev_end = YANKE.load(SeqCst);
-    if prev_end > prev_start && prev_end <= ZLELINE.lock().unwrap().len() {
-        ZLELINE.lock().unwrap().drain(prev_start..prev_end);
-        ZLELL.fetch_sub(prev_end - prev_start, SeqCst);
-        ZLECS.store(prev_start, SeqCst);
-    }
-    if let Some(top) = KILLRING.lock().unwrap().pop_front() {
-        KILLRING.lock().unwrap().push_back(top);
-    }
-    if let Some(next) = KILLRING.lock().unwrap().front().cloned() {
-        for (i, &c) in next.iter().enumerate() {
-            ZLELINE.lock().unwrap().insert(ZLECS.load(SeqCst) + i, c);
+    let ringlen = KILLRING.lock().unwrap().len() as i32;
+    let text: Vec<char>;
+    loop {
+        // c:751 do
+        // c:759-767 — advance kct. C: kct==-1 → kringnum (newest);
+        // else step to the next-older entry, wrapping to -1 (the
+        // original buffer) after the oldest. Deque mapping: newest is
+        // index 0, older is +1.
+        let kct = KCT.load(SeqCst);
+        let new_kct = if kct == -1 {
+            0 // c:760 `kct = kringnum;`
+        } else if kct + 1 >= ringlen {
+            -1 // c:762-764 — wrapped past the oldest → original buffer
+        } else {
+            kct + 1 // c:766
+        };
+        KCT.store(new_kct, SeqCst);
+        // c:772-774 — `if (kct == kctstart) return 1;` — full loop.
+        if new_kct == kctstart {
+            return 1;
         }
-        YANKB.store(ZLECS.load(SeqCst), SeqCst);
-        ZLECS.fetch_add(next.len(), SeqCst);
-        ZLELL.fetch_add(next.len(), SeqCst);
-        YANKE.store(ZLECS.load(SeqCst), SeqCst);
+        // c:768-771 — resolve the buffer for this kct.
+        let candidate: Vec<char> = if new_kct == -1 {
+            // c:769 — the original cutbuffer (CUTBUF or a vibuf).
+            match KCTBUF_SEL.load(SeqCst) {
+                -1 => crate::ported::zle::zle_main::CUTBUF
+                    .lock()
+                    .unwrap()
+                    .buf
+                    .chars()
+                    .collect(),
+                idx if idx >= 0 && (idx as usize) < 36 => {
+                    vibuf().lock().unwrap()[idx as usize].buf.chars().collect()
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            KILLRING
+                .lock()
+                .unwrap()
+                .get(new_kct as usize)
+                .cloned()
+                .unwrap_or_default()
+        };
+        // c:787 — `while (!buf->buf || *buf->buf == ZWC('\0'));` —
+        // skip unset / zero-length buffers.
+        if !candidate.is_empty() {
+            text = candidate;
+            break;
+        }
     }
+    // c:789-792 — replace the last yank with this buffer.
+    ZLECS.store(YANKB.load(SeqCst), SeqCst); // c:789 `zlecs = yankb;`
+    let del = YANKE.load(SeqCst) as i32 - YANKB.load(SeqCst) as i32;
+    crate::ported::zle::zle_utils::foredel(del.max(0), crate::ported::zle::zle_h::CUT_RAW); // c:790
+    ZLECS.store(YANKCS.load(SeqCst).max(0) as usize, SeqCst); // c:791 `zlecs = yankcs;`
+    let pastebuf_arg = crate::ported::zle::zle_h::cutbuffer {
+        buf: text.iter().collect(),
+        len: text.len(),
+        flags: 0,
+    };
+    // c:792 — `pastebuf(buf, 1, !!(lastcmd & ZLE_YANKAFTER));`
+    pastebuf(
+        &pastebuf_arg,
+        1,
+        if last & crate::ported::zle::zle_h::ZLE_YANKAFTER != 0 {
+            1
+        } else {
+            0
+        },
+    );
     ZLE_RESET_NEEDED.store(1, SeqCst);
-    0
+    0 // c:793
 }
 
 /// Port of `mod_export char *bracketedstring(void)` from
@@ -2005,6 +2165,13 @@ pub static KCT: AtomicI32 = AtomicI32::new(-1); // c:523
 /// rewinds to this and re-inserts the next ring entry.
 pub static YANKCS: AtomicI32 = AtomicI32::new(0); // c:523
 
+/// Port of `static Cutbuffer kctbuf` from `Src/Zle/zle_misc.c:529` —
+/// "The original cutbuffer, either cutbuf or one of the vi buffers."
+/// C stores a pointer; the Rust port encodes the referent as an index
+/// (same sentinel trick as MARK's usize::MAX): -2 = NULL, -1 = the
+/// unnamed CUTBUF, 0..=35 = vibuf\[n\].
+pub static KCTBUF_SEL: AtomicI32 = AtomicI32::new(-2); // c:529
+
 /// Port of `static int namedcmdambig` from `Src/Zle/zle_misc.c:1231`.
 /// Length of the longest unambiguous prefix among all matched
 /// `namedcmd` widget names — drives `execute-named-command` ambig
@@ -3048,13 +3215,10 @@ mod tests {
         let s: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "hello ");
         assert_eq!(ZLECS.load(SeqCst), 6);
+        // c:437 backkill → cut → cuttext: the kill lands in CUTBUF.
         assert_eq!(
-            KILLRING
-                .lock()
-                .unwrap()
-                .front()
-                .map(|v| v.iter().collect::<String>()),
-            Some("world".to_string())
+            crate::ported::zle::zle_main::CUTBUF.lock().unwrap().buf,
+            "world"
         );
     }
 
@@ -3069,13 +3233,12 @@ mod tests {
         assert!(ZLELINE.lock().unwrap().is_empty());
         assert_eq!(ZLELL.load(SeqCst), 0);
         assert_eq!(ZLECS.load(SeqCst), 0);
+        // c:1084 forekill → cut → cuttext: the killed text lands in
+        // CUTBUF (the kill ring only receives it on the next kill-
+        // boundary rotation).
         assert_eq!(
-            KILLRING
-                .lock()
-                .unwrap()
-                .front()
-                .map(|v| v.iter().collect::<String>()),
-            Some("abc".to_string())
+            crate::ported::zle::zle_main::CUTBUF.lock().unwrap().buf,
+            "abc"
         );
     }
 
@@ -3101,13 +3264,11 @@ mod tests {
         ZLECS.store(0, SeqCst);
         MARK.store(3, SeqCst);
         copyregionaskill(&[]);
+        // c:514 — the copy routes through cut → cuttext into CUTBUF;
+        // the kill ring only receives it on a later rotation.
         assert_eq!(
-            KILLRING
-                .lock()
-                .unwrap()
-                .front()
-                .map(|v| v.iter().collect::<String>()),
-            Some("hel".to_string())
+            crate::ported::zle::zle_main::CUTBUF.lock().unwrap().buf,
+            "hel"
         );
         // Buffer unchanged
         let s: String = ZLELINE.lock().unwrap().iter().collect();
@@ -3139,13 +3300,10 @@ mod tests {
         killregion();
         let s: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "aef");
+        // c:483 forekill → cut → cuttext: the kill lands in CUTBUF.
         assert_eq!(
-            KILLRING
-                .lock()
-                .unwrap()
-                .front()
-                .map(|v| v.iter().collect::<String>()),
-            Some("bcd".to_string())
+            crate::ported::zle::zle_main::CUTBUF.lock().unwrap().buf,
+            "bcd"
         );
     }
 
@@ -3196,7 +3354,11 @@ mod tests {
         *ZLELINE.lock().unwrap() = "foo".chars().collect();
         ZLELL.store(3, SeqCst);
         ZLECS.store(1, SeqCst);
-        let buf: Vec<char> = "XX".chars().collect();
+        let buf = crate::ported::zle::zle_h::cutbuffer {
+            buf: "XX".to_string(),
+            len: 2,
+            flags: 0,
+        };
         pastebuf(&buf, 1, 0);
         let s: String = ZLELINE.lock().unwrap().iter().collect();
         assert_eq!(s, "fXXoo");
@@ -3209,7 +3371,11 @@ mod tests {
         *ZLELINE.lock().unwrap() = "foo".chars().collect();
         ZLELL.store(3, SeqCst);
         ZLECS.store(1, SeqCst);
-        let buf: Vec<char> = "XX".chars().collect();
+        let buf = crate::ported::zle::zle_h::cutbuffer {
+            buf: "XX".to_string(),
+            len: 2,
+            flags: 0,
+        };
         pastebuf(&buf, 1, 1);
         // position=1 → INCCS first → insert at zlecs+1
         let s: String = ZLELINE.lock().unwrap().iter().collect();
@@ -3743,12 +3909,12 @@ mod tests {
         let _: i32 = backwarddeletechar();
     }
 
-    /// c:754 — `yank` returns void (signature pin).
+    /// c:533 — `yank` returns int (signature pin).
     #[test]
-    fn yank_returns_void_type() {
+    fn yank_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: () = yank();
+        let _: i32 = yank();
     }
 
     /// c:930 — `yankpop` returns i32.
@@ -3799,8 +3965,9 @@ mod tests {
     fn pastebuf_empty_buf_no_panic() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _ = pastebuf(&[], 1, 0);
-        let _ = pastebuf(&[], 1, 1);
+        let empty = crate::ported::zle::zle_h::cutbuffer::default();
+        let _ = pastebuf(&empty, 1, 0);
+        let _ = pastebuf(&empty, 1, 1);
     }
 
     /// c:781 — `pastebuf` returns i32 (compile-time type pin).
@@ -3808,7 +3975,8 @@ mod tests {
     fn pastebuf_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: i32 = pastebuf(&[], 1, 0);
+        let empty = crate::ported::zle::zle_h::cutbuffer::default();
+        let _: i32 = pastebuf(&empty, 1, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
