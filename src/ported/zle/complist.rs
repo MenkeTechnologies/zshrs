@@ -3344,21 +3344,24 @@ pub fn domenuselect(
                 .unwrap_or_default();
             let l = origline.len() as i32;
             ZLEMETACS.store(0, Ordering::SeqCst);
-            foredel(
-                // c:2455
-                ZLEMETALL.load(Ordering::SeqCst),
-                0,
-            );
-            spaceinline(l); // c:2456
+            // c:2455-2457 — `foredel(zlemetall, CUT_RAW); spaceinline(l);
+            //                strncpy(zlemetaline, origline, l);`
+            // C runs menu-select metafied, so `zleline == zlemetaline` and all
+            // three ops target the SAME buffer, netting `zlemetaline = origline`
+            // (length l). In zshrs the buffers are SPLIT: `foredel`(flags=0) and
+            // the non-meta-aware `spaceinline` both mutate the char `ZLELINE`,
+            // NOT `ZLEMETALINE`. So the old code inserted NUL placeholders into
+            // the wrong buffer, and `replace_range(..l)` overwrote only the
+            // first l bytes of `ZLEMETALINE`, leaving any stale tail beyond l in
+            // place — leaking `^@` NULs (from the char buffer) plus stale line
+            // content into the interactive-mode display (`ls  ^@^@^@<stale>`).
+            // Reconstruct `ZLEMETALINE` directly to the net C result instead.
             if let Some(m) = ZLEMETALINE.get() {
                 if let Ok(mut g) = m.lock() {
-                    if g.len() >= l as usize {
-                        g.replace_range(..l as usize, &origline); // c:2457
-                    } else {
-                        *g = origline.clone();
-                    }
+                    *g = origline.clone(); // c:2456-2457
                 }
             }
+            ZLEMETALL.store(l, Ordering::SeqCst);
             ZLEMETACS.store(
                 // c:2458
                 ORIGCS.load(Ordering::SeqCst),
