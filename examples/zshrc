@@ -37,6 +37,7 @@ zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
 #   zpm add zsh-users/zsh-autosuggestions            # script plugin (github)
 #   zpm add github:zsh-users/zsh-syntax-highlighting # explicit github: form
 #   zpm add MenkeTechnologies/zshrs-forgit           # native (Rust) plugin
+#   zpm add path:~/src/zshrs/examples/plugin-revolver # native spinner (revolver start/stop)
 #   zpm add git+https://example.com/team/plugin.git@v1.2.0   # git+URL @ref
 #   zpm add path:~/src/my-plugin                     # local dir (no network)
 #

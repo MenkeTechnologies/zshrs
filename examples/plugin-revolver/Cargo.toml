@@ -1,0 +1,28 @@
+# revolver ported to a native zshrs plugin. Build:
+#   cargo build --manifest-path examples/plugin-revolver/Cargo.toml
+# then inside zshrs:
+#   zmodload -R examples/plugin-revolver/target/debug/librevolver.dylib  # macOS
+#   zmodload -R examples/plugin-revolver/target/debug/librevolver.so     # Linux
+#   revolver start 'Working…'  ;  sleep 3  ;  revolver stop
+#
+# Or via the package manager:  zpm add path:examples/plugin-revolver
+#
+# See docs/PORTING_ZSH_PLUGIN.md for the zsh->Rust porting walkthrough.
+[package]
+name = "revolver"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+[lib]
+# rlib alongside cdylib so `cargo test` can link the frame-table checks;
+# zpm still loads the cdylib artifact.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+libc = "0.2"
+
+# Standalone: empty workspace table so this example is not pulled into the
+# parent zshrs workspace.
+[workspace]
