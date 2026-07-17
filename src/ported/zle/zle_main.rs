@@ -1261,6 +1261,19 @@ pub fn zleread(
     // Must run while `zleactive` is still 1 — trashzle's `zleactive &&
     // !trashedzle` gate — matching C's order (c:1380 trashzle, c:1383
     // zleactive = 0).
+    //
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Native p10k transient prompt (src/extensions/p10k/transient.rs):
+    // when enabled, the just-accepted prompt block repaints CONDENSED
+    // (prompt_char-only last line) before the command's output. The
+    // zsh theme does this from its zle-line-finish hook; the native
+    // hook point is here, right before trashzle's final repaint —
+    // swapping the ZLE prompt buffers makes that repaint paint the
+    // condensed block.
+    if let Some((tp, trp)) = crate::p10k::transient::transient_swap_for_accept() {
+        *LPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&tp);
+        *RPROMPT.lock().unwrap() = crate::prompt::expand_prompt(&trp);
+    }
     trashzle();
 
     // c:1383 — `zleactive = zlereadflags = lastlistlen = zlecontext = 0;`.

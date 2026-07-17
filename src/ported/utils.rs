@@ -2575,6 +2575,19 @@ pub fn zclose(fd: i32) -> i32 {
         let max_fd = MAX_ZSH_FD.load(Ordering::Relaxed); // c:2134
         if fd <= max_fd {
             // c:2134
+            // !!! ZSHRS THREADING ADAPTATION — deviates from C here !!!
+            // C closes blindly; it is single-threaded, so a shell-recorded
+            // fd number can never be concurrently recycled by someone else.
+            // zshrs runs 18 worker threads whose Rust-owned fds (ReadDir
+            // dirfds, SQLite, File) recycle freed numbers immediately — a
+            // stale zclose then closes a FOREIGN fd, and std panics in
+            // ReadDir::drop ("unexpected error during closedir: EBADF",
+            // observed from the compinit bg scan). An in-range fd the
+            // fdtable does NOT own is by definition not ours to close.
+            if fdtable_get(fd) == FDT_UNUSED {
+                tracing::debug!(fd, "zclose: skipping unowned in-range fd (thread-safety guard)");
+                return 0;
+            }
             if fdtable_get(fd) == FDT_FLOCK {
                 // c:2135
                 FDTABLE_FLOCKS.fetch_sub(1, Ordering::Relaxed);

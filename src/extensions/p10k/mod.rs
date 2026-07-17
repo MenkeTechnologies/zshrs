@@ -19,12 +19,17 @@
 //! in-process (no C++ daemon, no fork per prompt for the cached case).
 
 pub mod config;
+pub mod expansion;
 pub mod git;
 pub mod icons;
 pub mod render;
 pub mod segments_core;
 pub mod segments_env;
+pub mod segments_extra;
+pub mod segments_powerline;
 pub mod segments_sys;
+pub mod segments_zshrs;
+pub mod transient;
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
@@ -131,16 +136,117 @@ pub fn maybe_intercept_command(name: &str, args: &[String]) -> Option<i32> {
         return None;
     }
     match name {
-        // p10k.zsh:8600+ `function p10k()` — segment/display/reload
-        // API. Live paramtab reads make reload/refresh no-ops;
-        // `p10k segment` (used inside custom segments) is handled by
-        // the segment runner, not here.
-        "p10k" | "p10k-instant-prompt-finalize" => {
-            tracing::debug!(target: "p10k", ?args, "p10k command call absorbed by native engine");
-            Some(0)
-        }
+        // The `p10k(){ zshrs-p10k-api "$@" }` stub (registered at
+        // theme intercept) forwards here. p10k:8600+ `function p10k()`.
+        "zshrs-p10k-api" | "p10k" | "p10k-instant-prompt-finalize" => Some(p10k_api(args)),
         _ => None,
     }
+}
+
+thread_local! {
+    /// Collects `p10k segment …` emissions while a user
+    /// `prompt_<name>` function runs (p10k:8654-8698 `_p9k_segment`).
+    /// None = no user segment fn active; `p10k segment` outside one
+    /// warns like the theme does (p10k:8659).
+    static USER_SEGMENT_SINK: std::cell::RefCell<Option<Vec<render::Segment>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// `p10k <command>` API (p10k:8600+). `segment` collects into the
+/// active sink; `display`/`reload`/`refresh` are no-ops (live paramtab
+/// reads); unknown subcommands warn on stderr like the theme.
+fn p10k_api(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("segment") => {
+            // p10k:8663-8687 — `p10k segment [-t text] [-i icon]
+            // [-f fg] [-b bg] [-s state] [-c cond] [-e]`.
+            let mut text = String::new();
+            let mut icon = String::new();
+            let mut fg = String::new();
+            let mut bg = String::new();
+            let mut state: Option<String> = None;
+            let mut cond = true;
+            let mut i = 1;
+            while i < args.len() {
+                let take = |i: &mut usize| -> String {
+                    *i += 1;
+                    args.get(*i).cloned().unwrap_or_default()
+                };
+                match args[i].as_str() {
+                    "-t" => text = take(&mut i),
+                    "-i" => icon = take(&mut i),
+                    "-f" => fg = take(&mut i),
+                    "-b" => bg = take(&mut i),
+                    "-s" => state = Some(take(&mut i)),
+                    // p10k:8680 — `-c cond`: empty expansion hides.
+                    "-c" => cond = !take(&mut i).is_empty(),
+                    // -e (expand text as prompt escapes) / -r (icon is
+                    // literal): text passes through as prompt escapes
+                    // already, so both are accepted and ignored.
+                    "-e" | "-r" => {}
+                    other => {
+                        tracing::debug!(target: "p10k", %other, "p10k segment: unknown flag ignored")
+                    }
+                }
+                i += 1;
+            }
+            USER_SEGMENT_SINK.with(|s| {
+                let mut slot = s.borrow_mut();
+                match slot.as_mut() {
+                    Some(v) => {
+                        if cond {
+                            v.push(render::Segment {
+                                name: String::new(), // filled by the runner
+                                state,
+                                content: text,
+                                icon: if icon.is_empty() { None } else { Some(icon) },
+                                fg,
+                                bg,
+                            });
+                        }
+                        0
+                    }
+                    None => {
+                        // p10k:8659 — "segment: can be called only
+                        // during prompt rendering".
+                        eprintln!("zshrs: p10k: segment: can be called only during prompt rendering");
+                        1
+                    }
+                }
+            })
+        }
+        // Live paramtab reads make these no-ops.
+        Some("reload") | Some("display") | Some("refresh") | None => 0,
+        Some("finalize") => 0,
+        Some(other) => {
+            tracing::debug!(target: "p10k", %other, "p10k API subcommand absorbed");
+            0
+        }
+    }
+}
+
+/// Run a user-defined `prompt_<name>` shell function as a segment
+/// builder (p10k:8654+ custom segment protocol): arm the sink, call
+/// the function through the executor, collect what `p10k segment`
+/// deposited. Returns None when no such function exists (the caller
+/// then logs "not implemented").
+fn run_user_segment_fn(base: &str) -> Option<Vec<render::Segment>> {
+    let fname = format!("prompt_{base}");
+    crate::ported::utils::getshfunc(&fname)?;
+    USER_SEGMENT_SINK.with(|s| *s.borrow_mut() = Some(Vec::new()));
+    let status = crate::fusevm_bridge::try_with_executor(|exec| {
+        exec.execute_script(&fname).unwrap_or(-1)
+    })
+    .unwrap_or(-1);
+    let segs = USER_SEGMENT_SINK.with(|s| s.borrow_mut().take()).unwrap_or_default();
+    if status != 0 && segs.is_empty() {
+        tracing::debug!(target: "p10k", %fname, status, "user segment fn failed");
+    }
+    let mut segs = segs;
+    for s in &mut segs {
+        s.name = base.to_string();
+    }
+    Some(segs)
 }
 
 /// Build and install PROMPT/RPROMPT. Called from `preprompt()` after
@@ -203,9 +309,29 @@ pub fn preprompt_render() {
                 tracing::debug!(target: "p10k", %name, "SHOW_ON_COMMAND segment hidden at prompt paint");
                 continue;
             }
+            // p10k:833-840 — SHOW_ON_UPGLOB: with a pattern configured
+            // the segment renders only when a parent dir (cwd → ~ or /)
+            // holds a matching entry.
+            if !expansion::show_on_upglob(base) {
+                tracing::debug!(target: "p10k", %name, "SHOW_ON_UPGLOB: no parent match — hidden");
+                continue;
+            }
             let built = segments_core::build_segment(base)
                 .or_else(|| segments_env::build_segment(base))
-                .or_else(|| segments_sys::build_segment(base));
+                .or_else(|| segments_sys::build_segment(base))
+                .or_else(|| segments_extra::build_segment(base))
+                // Beyond the p10k spec: powerline-catalog segments
+                // (weather/uptime/now_playing/network_load/hg/svn/bzr/
+                // fossil) and the zshrs-native introspection family
+                // (zshrs_daemon/zshrs_workers/zshrs_jit/zshrs_cache/
+                // zshrs_history/stryke).
+                .or_else(|| segments_powerline::build_segment(base))
+                .or_else(|| segments_zshrs::build_segment(base))
+                // p10k:8600+ user-defined segments: a shell function
+                // `prompt_<name>` emits content by calling `p10k
+                // segment -t … -f …` (routed through the
+                // zshrs-p10k-api bridge into USER_SEGMENT_SINK).
+                .or_else(|| run_user_segment_fn(base));
             match built {
                 Some(mut segs) => {
                     if joined {

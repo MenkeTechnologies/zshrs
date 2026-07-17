@@ -384,6 +384,8 @@ mod tests {
             patcomps: HashMap::new(),
             postpatcomps: HashMap::new(),
             compautos: HashMap::new(),
+            keybindings: Vec::new(),
+            widgetkeys: Vec::new(),
         }
     }
 
