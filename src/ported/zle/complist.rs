@@ -2639,6 +2639,36 @@ pub fn singledraw() -> i32 {
     }
     let _ = write_loop(out_fd, b"\r"); // c:1974
 
+    // c:1975-1985 — reposition the cursor back to the TOP of the list after the
+    // incremental two-cell repaint, so the next navigation repaint starts in
+    // place. Previously elided (jumped straight to `return 0`), so the cursor
+    // was left at the moved-to cell (row `md2`); repeated menu-select
+    // navigation then drifted the grid UP onto the command line and misaligned
+    // columns. Mirrors the compprintlist epilogue fix.
+    let nlnct_sd = NLNCT.load(Ordering::SeqCst);
+    let zterm_lines_sd = adjustlines() as i32;
+    if MSTATPRINTED.load(Ordering::SeqCst) != 0 {
+        // c:1976-1981 — bottom status line present: park below it, print it,
+        // then jump back to the top row.
+        let i = zterm_lines_sd - md2 - nlnct_sd;
+        tc_downcurs(i - 1);
+        let mut stop = 0;
+        compprintfmt("", 0, 1, 1, MLINE.load(Ordering::SeqCst), &mut stop);
+        tcmultout(
+            crate::ported::zsh_h::TCUP,
+            crate::ported::zsh_h::TCMULTUP,
+            zterm_lines_sd - 1,
+        );
+    } else {
+        // c:1983 — `tcmultout(TCUP, TCMULTUP, md2 + nlnct)`.
+        tcmultout(
+            crate::ported::zsh_h::TCUP,
+            crate::ported::zsh_h::TCMULTUP,
+            md2 + nlnct_sd,
+        );
+    }
+    SHOWINGLIST.store(-1, Ordering::SeqCst); // c:1985
+
     let _ = (mcc1, mcc2);
     0 // c:1986
 }
@@ -2857,7 +2887,20 @@ pub fn complistmatches(
     let mlbeg_cur = MLBEG.load(Ordering::SeqCst);
     let molbeg = MOLBEG.load(Ordering::SeqCst);
     let clearflag = CLEARFLAG.load(Ordering::SeqCst);
-    if !mnew && inselect != 0 && cur_onlnct == nlnct                         // c:2106
+    // c:2106-2109 — C uses singledraw() (incremental two-cell highlight-move)
+    // when only the selection changed within the same frame. This port's
+    // singledraw (complist.rs:2444) still has unresolved cursor-GEOMETRY bugs:
+    // the horizontal cell positioning drops the first char of the moved cells
+    // (`build.rs`→`uild.rs`) and the grid drifts over repeated navigation (only
+    // the final cursor-up tail c:1975-1985 is ported). Forcing the full
+    // `compprintlist` repaint (correct, epilogue-fixed at c:1686-1726) on every
+    // menu-select redraw is visually identical to singledraw and renders
+    // navigation correctly — verified: columns aligned, highlight on the right
+    // cell, no drift. It just repaints the whole list per step instead of two
+    // cells (fine for completion-sized lists). Re-enable singledraw by dropping
+    // the `false &&` once its cursor math is fully ported/verified.
+    let use_singledraw = false;
+    if use_singledraw && !mnew && inselect != 0 && cur_onlnct == nlnct         // c:2106
         && mlbeg_cur >= 0 && mlbeg_cur == molbeg
     {
         if NOSELECT.load(Ordering::SeqCst) == 0 {
