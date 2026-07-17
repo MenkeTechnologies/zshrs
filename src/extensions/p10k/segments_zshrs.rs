@@ -12,7 +12,8 @@
 //! `POWERLEVEL9K_ZSHRS_*` / `POWERLEVEL9K_STRYKE_*` params through
 //! `config::p9k_param` — no code change needed to restyle.
 //!
-//! Data sources (all in-process — NO subprocess ever runs here):
+//! Data sources (in-process except the four `<tool>_version` probes,
+//! which fork `<tool> --version` at most once per 5-minute TTL):
 //! - zshrs_daemon: `crate::daemon_presence::current()` — O(1) atomic
 //!   load of the startup socket probe (daemon_presence.rs:654-668;
 //!   probe itself at :423-489).
@@ -65,6 +66,24 @@ pub fn build_segment(name: &str) -> Option<Vec<Segment>> {
         "zshrs_cache" => Some(zshrs_cache_segments()),
         "zshrs_history" => Some(zshrs_history_segments()),
         "stryke" => Some(stryke_segments()),
+        // Per-store rkyv census — one segment per authoritative store
+        // (the aggregate `zshrs_cache` sums all five).
+        "zshrs_cache_autoloads" => Some(rkyv_store_segments(name, RkyvStore::Autoloads)),
+        "zshrs_cache_scripts" => Some(rkyv_store_segments(name, RkyvStore::Scripts)),
+        "zshrs_cache_plugins" => Some(rkyv_store_segments(name, RkyvStore::Plugins)),
+        "zshrs_cache_index" => Some(rkyv_store_segments(name, RkyvStore::Index)),
+        "zshrs_cache_snapshots" => Some(rkyv_store_segments(name, RkyvStore::Snapshots)),
+        // The user's own language-runtime family — versions of the
+        // five Rust language implementations.
+        "zshrs_version" | "stryke_version" | "vimlrs_version" | "elisprs_version"
+        | "awkrs_version" => Some(lang_version_segments(name)),
+        // Per-runtime rkyv cache census: every runtime follows the
+        // same home-dir scheme (`~/.awkrs/scripts.rkyv` is the same
+        // script-cache format zshrs uses; `~/.stryke/cache/`). zshrs's
+        // own census is the richer `zshrs_cache*` family above.
+        "stryke_cache" | "vimlrs_cache" | "elisprs_cache" | "awkrs_cache" => {
+            Some(lang_cache_segments(name))
+        }
         _ => None,
     }
 }
@@ -205,11 +224,13 @@ fn make_segment(
 /// `None` results (scan/query failure) are cached too, so a broken
 /// source can't re-probe on every prompt. Bounded by the number of
 /// `&'static str` keys.
-static TTL_CACHE: OnceLock<Mutex<HashMap<&'static str, (Instant, Option<String>)>>> =
-    OnceLock::new();
+// Owned keys: callers pass runtime segment names (`&str` from the
+// dispatch), not 'static strings. (Tree-unblock edit for the E0521 at
+// lang_version_segments — the p10k session may restructure.)
+static TTL_CACHE: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
 
 fn cached_ttl(
-    key: &'static str,
+    key: &str,
     ttl: Duration,
     run: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
@@ -223,7 +244,7 @@ fn cached_ttl(
     }
     let val = run();
     if let Ok(mut guard) = m.lock() {
-        guard.insert(key, (Instant::now(), val.clone()));
+        guard.insert(key.to_string(), (Instant::now(), val.clone()));
     }
     val
 }
@@ -575,6 +596,267 @@ fn stryke_segments() -> Vec<Segment> {
 }
 
 // ---------------------------------------------------------------------
+// Per-store rkyv census — zshrs_cache_{autoloads,scripts,plugins,index,snapshots}
+// ---------------------------------------------------------------------
+
+/// The five authoritative rkyv stores under `$ZSHRS_HOME`:
+/// - Autoloads: `autoloads.rkyv` (autoload_cache.rs:424-433)
+/// - Scripts:   `scripts.rkyv`   (script_cache.rs:3)
+/// - Plugins:   `images/*.rkyv`  zinit plugin/snippet images
+///              (daemon/paths.rs:141-145, daemon/shard.rs:265)
+/// - Index:     `index.rkyv`     daemon catalog index (daemon/paths.rs:213)
+/// - Snapshots: `snapshots/*.rkyv` canonical-state snapshots
+///              (daemon/snapshot.rs:78 `snapshot_path`)
+/// There is no separate compsys rkyv artifact — `compsys.db` is the
+/// read-only sqlite MIRROR, deliberately outside this census.
+#[derive(Clone, Copy)]
+enum RkyvStore {
+    Autoloads,
+    Scripts,
+    Plugins,
+    Index,
+    Snapshots,
+}
+
+impl RkyvStore {
+    /// (single-file path, multi-file dir): exactly one is Some.
+    fn location(self, root: &std::path::Path) -> (Option<PathBuf>, Option<PathBuf>) {
+        match self {
+            RkyvStore::Autoloads => (Some(root.join("autoloads.rkyv")), None),
+            RkyvStore::Scripts => (Some(root.join("scripts.rkyv")), None),
+            RkyvStore::Index => (Some(root.join("index.rkyv")), None),
+            RkyvStore::Plugins => (None, Some(root.join("images"))),
+            RkyvStore::Snapshots => (None, Some(root.join("snapshots"))),
+        }
+    }
+
+    /// Distinct default fg per store (all on color1 bg, all
+    /// user-overridable via POWERLEVEL9K_<SEGNAME>_FOREGROUND).
+    fn default_fg(self) -> &'static str {
+        match self {
+            RkyvStore::Autoloads => "cyan",
+            RkyvStore::Scripts => "green",
+            RkyvStore::Plugins => "blue",
+            RkyvStore::Index => "magenta",
+            RkyvStore::Snapshots => "yellow",
+        }
+    }
+
+    fn ttl_key(self) -> &'static str {
+        match self {
+            RkyvStore::Autoloads => "zshrs_cache.autoloads",
+            RkyvStore::Scripts => "zshrs_cache.scripts",
+            RkyvStore::Plugins => "zshrs_cache.plugins",
+            RkyvStore::Index => "zshrs_cache.index",
+            RkyvStore::Snapshots => "zshrs_cache.snapshots",
+        }
+    }
+}
+
+/// One rkyv store as a segment: single-file stores show humanized
+/// bytes; directory stores show `count size`. Hidden when absent/empty
+/// and in parity/compat modes (same gate as the aggregate).
+fn rkyv_store_segments(segname: &str, store: RkyvStore) -> Vec<Segment> {
+    if introspection_irrelevant() {
+        return vec![];
+    }
+    let Some(joined) = cached_ttl(store.ttl_key(), Duration::from_secs(30), || {
+        let root = zshrs_root();
+        let (count, bytes) = match store.location(&root) {
+            (Some(file), None) => match std::fs::metadata(&file) {
+                Ok(m) => (1usize, m.len()),
+                Err(_) => (0, 0),
+            },
+            (None, Some(dir)) => std::fs::read_dir(&dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.file_name().to_string_lossy().ends_with(".rkyv"))
+                        .fold((0usize, 0u64), |(c, b), e| {
+                            (c + 1, b + e.metadata().map(|m| m.len()).unwrap_or(0))
+                        })
+                })
+                .unwrap_or((0, 0)),
+            _ => unreachable!("location() yields exactly one Some"),
+        };
+        if count == 0 {
+            return None; // store absent / empty — hidden
+        }
+        Some(format!("{count}\u{1f}{bytes}"))
+    }) else {
+        return vec![];
+    };
+    let mut f = joined.split('\u{1f}');
+    let count: usize = f.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let bytes: u64 = f.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let content = match store.location(&zshrs_root()) {
+        (Some(_), None) => human_readable_bytes(bytes as f64),
+        _ => format!("{count} {}", human_readable_bytes(bytes as f64)),
+    };
+    vec![make_segment(
+        segname,
+        None,
+        color1(),
+        store.default_fg(),
+        "ZSHRS_CACHE_ICON",
+        "\u{F1C0}",
+        content,
+    )]
+}
+
+// ---------------------------------------------------------------------
+// Language-runtime versions — the user's five Rust language
+// implementations: zshrs / stryke / vimlrs / elisprs / awkrs
+// ---------------------------------------------------------------------
+
+/// `<tool>_version` segments. `zshrs_version` reads the RUNNING
+/// binary's own crate version (compile-time constant — no fork, always
+/// shows). The other four probe `$PATH` and run `<tool> --version`
+/// behind a 5-minute TTL, hidden when the binary is absent. No
+/// powerline-family theme has segments for these runtimes — they are
+/// the user's own language implementations.
+fn lang_version_segments(segname: &str) -> Vec<Segment> {
+    let tool = segname.strip_suffix("_version").unwrap_or(segname);
+    // Distinct default fg per runtime; same terminal glyph default,
+    // overridable per segment (POWERLEVEL9K_<TOOL>_VERSION_ICON).
+    let (default_fg, default_glyph) = match tool {
+        "zshrs" => ("cyan", "\u{F120}"),   // terminal
+        "stryke" => ("yellow", "\u{26A1}"), // ⚡
+        "vimlrs" => ("green", "\u{E62B}"),  // vim
+        "elisprs" => ("magenta", "\u{E632}"), // emacs
+        _ => ("red", "\u{F120}"),           // awkrs
+    };
+    // cached_ttl keys are &'static str (its map outlives callers).
+    let ttl_key: &'static str = match tool {
+        "stryke" => "stryke_version",
+        "vimlrs" => "vimlrs_version",
+        "elisprs" => "elisprs_version",
+        _ => "awkrs_version",
+    };
+    let version = if tool == "zshrs" {
+        // The running shell — compile-time constant, zero cost.
+        Some(env!("CARGO_PKG_VERSION").to_string())
+    } else {
+        cached_ttl(ttl_key, Duration::from_secs(300), || {
+            let bin = path_lookup(tool)?;
+            let out = run_version(&bin)?;
+            parse_version_token(&out)
+        })
+    };
+    let Some(v) = version else {
+        return vec![]; // binary absent / no parsable version — hidden
+    };
+    vec![make_segment(
+        segname,
+        None,
+        color1(),
+        default_fg,
+        &format!("{}_ICON", segname.to_ascii_uppercase()),
+        default_glyph,
+        v,
+    )]
+}
+
+/// `<tool>_cache` segments — rkyv census of a sibling runtime's home
+/// dir: `$<TOOL>_HOME` else `~/.<tool>` (the same convention as
+/// `$ZSHRS_HOME`/`~/.zshrs`). Counts `*.rkyv` at the root plus the
+/// `cache/` subdir; content `count size`, hidden when the dir is
+/// absent or holds zero shards (a runtime that never cached shows
+/// nothing — hide, don't fake).
+fn lang_cache_segments(segname: &str) -> Vec<Segment> {
+    let tool = segname.strip_suffix("_cache").unwrap_or(segname);
+    let (ttl_key, default_fg): (&'static str, &'static str) = match tool {
+        "stryke" => ("stryke_cache", "yellow"),
+        "vimlrs" => ("vimlrs_cache", "green"),
+        "elisprs" => ("elisprs_cache", "magenta"),
+        _ => ("awkrs_cache", "red"),
+    };
+    let Some(joined) = cached_ttl(ttl_key, Duration::from_secs(30), || {
+        let home_var = format!("{}_HOME", tool.to_ascii_uppercase());
+        let root = std::env::var(&home_var)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(format!(".{tool}"))
+            });
+        let rkyv_in = |dir: &std::path::Path| -> (usize, u64) {
+            std::fs::read_dir(dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.file_name().to_string_lossy().ends_with(".rkyv"))
+                        .fold((0usize, 0u64), |(c, b), e| {
+                            (c + 1, b + e.metadata().map(|m| m.len()).unwrap_or(0))
+                        })
+                })
+                .unwrap_or((0, 0))
+        };
+        let (c1, b1) = rkyv_in(&root);
+        let (c2, b2) = rkyv_in(&root.join("cache"));
+        let (count, bytes) = (c1 + c2, b1 + b2);
+        if count == 0 {
+            return None;
+        }
+        Some(format!("{count}\u{1f}{bytes}"))
+    }) else {
+        return vec![];
+    };
+    let mut f = joined.split('\u{1f}');
+    let count: usize = f.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let bytes: u64 = f.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    vec![make_segment(
+        segname,
+        None,
+        color1(),
+        default_fg,
+        "ZSHRS_CACHE_ICON",
+        "\u{F1C0}",
+        format!("{count} {}", human_readable_bytes(bytes as f64)),
+    )]
+}
+
+/// Minimal `$PATH` walk (mirrors segments_sys::cmd_on_path — private
+/// there; this module may not edit other files).
+fn path_lookup(tool: &str) -> Option<PathBuf> {
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let cand = std::path::Path::new(dir).join(tool);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// `<bin> --version`, stdin/stderr nulled, blocking (called only on
+/// TTL-cache miss — at most once per 5 minutes per tool).
+fn run_version(bin: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new(bin)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// First digit-bearing whitespace token of the first line —
+/// `stryke 0.9.3 (aarch64)` → `0.9.3`; leading `v` stripped.
+fn parse_version_token(out: &str) -> Option<String> {
+    out.lines().next()?.split_whitespace().find_map(|t| {
+        let t = t.strip_prefix('v').unwrap_or(t);
+        if t.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            Some(t.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+// ---------------------------------------------------------------------
 // Tests (pure formatters only)
 // ---------------------------------------------------------------------
 
@@ -608,5 +890,17 @@ mod tests {
         assert_eq!(jit_content(0, 0), "jit");
         assert_eq!(jit_content(42, 1_363_149), "42 1.3M");
         assert_eq!(jit_content(1, 1024), "1 1K");
+    }
+
+    #[test]
+    fn version_token_forms() {
+        assert_eq!(
+            parse_version_token("stryke 0.9.3 (aarch64-apple-darwin)"),
+            Some("0.9.3".into())
+        );
+        assert_eq!(parse_version_token("awkrs v1.2.0"), Some("1.2.0".into()));
+        assert_eq!(parse_version_token("zshrs 0.12.15\nextra"), Some("0.12.15".into()));
+        assert_eq!(parse_version_token("no digits here"), None);
+        assert_eq!(parse_version_token(""), None);
     }
 }

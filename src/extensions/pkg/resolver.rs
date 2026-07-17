@@ -68,6 +68,21 @@ pub fn resolve(spec: &str, store: &Store) -> PkgResult<Staged> {
     })
 }
 
+/// The provenance label a `spec` WOULD receive, computed WITHOUT cloning or
+/// network access. Used by `zpm load <spec>` to check whether a source is
+/// already installed (the index keys on this label, since a repo's basename
+/// often differs from its `zpm.toml` plugin name — e.g. `zshrs-forgit` →
+/// `forgit`). Returns `None` for a bare plugin name (not a source form).
+pub fn source_label(spec: &str) -> Option<String> {
+    let (base, _ref) = split_ref(spec);
+    if let Some(p) = local_path(base) {
+        // Match the `path+file://<canonical>` the installer records.
+        let dir = p.canonicalize().ok()?;
+        return Some(format!("path+file://{}", dir.display()));
+    }
+    git_url(base).ok().map(|(_url, label, _name)| label)
+}
+
 /// Split a trailing `@REF` (branch/tag/commit) off a spec. Only splits on the
 /// LAST `@` so `git@host:...` SSH URLs keep their `@`.
 fn split_ref(spec: &str) -> (&str, Option<&str>) {

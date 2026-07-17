@@ -151,10 +151,27 @@ pub fn load(name: Option<&str>) -> PkgResult<()> {
     let index = InstalledIndex::load_from(&store)?;
     match name {
         Some(n) => {
-            let entry = index
-                .find(n)
-                .ok_or_else(|| PkgError::Other(format!("{} is not installed", n)))?;
-            load_entry(&store, entry)
+            // 1. Already installed under this name → load from the store
+            //    (fast: native = dlopen the mmap'd cdylib; no reinstall).
+            if let Some(entry) = index.find(n) {
+                return load_entry(&store, entry);
+            }
+            // 2. `n` is a SOURCE spec (owner/repo, github:…, path:…) — is a
+            //    plugin from that source already installed? The index keys on
+            //    the source label, since a repo basename usually differs from
+            //    the plugin's `zpm.toml` name (`zshrs-forgit` → `forgit`).
+            if let Some(label) = resolver::source_label(n) {
+                if let Some(entry) = index.packages.iter().find(|p| p.source == label) {
+                    return load_entry(&store, entry);
+                }
+                // 3. Not in the store yet → install-on-first-use, then load.
+                //    This is what makes `zpm load owner/repo` in `.zshrc`
+                //    self-install on the first startup and load fast after.
+                //    (`add` records it in the store and loads it.)
+                return add(n);
+            }
+            // A bare name that isn't installed and isn't a source.
+            Err(PkgError::Other(format!("{} is not installed", n)))
         }
         None => {
             let mut errs = Vec::new();
