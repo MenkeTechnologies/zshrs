@@ -751,6 +751,23 @@ builtins. The host API a plugin can call back through: `print`, `eval`
 `addfunction` (read a function's deparsed body / define one — also
 deparse-as-a-service), and `register_builtin`.
 
+### Installing plugins with `znative`
+
+`zmodload -R` is the primitive; **`znative`** is the package manager built
+on it. One line per plugin in your `.zshrc` — it installs on the first
+shell start (clone → `cargo build --release` for native plugins →
+`zmodload -R`) and then loads from a content-addressed store, zero-network,
+every start after:
+
+```bash
+znative load MenkeTechnologies/zshrs-forgit    # native (Rust) plugin, self-installing
+znative load zsh-users/zsh-autosuggestions     # zsh script plugins work too
+```
+
+Sources also take `github:owner/repo`, `git+URL@ref`, and `path:DIR`.
+Manage the store with `znative list` / `info` / `update` / `remove`. Full
+reference: [`docs/ZNATIVE.md`](docs/ZNATIVE.md).
+
 Plugins can also provide **native (Rust) completions** — a
 `completions:` block in `declare_plugin!` wires a Rust generator into
 zsh's completion system (compsys), so `mycmd <TAB>` runs your Rust code to
@@ -788,7 +805,7 @@ native-plugin interface an independently-published ABI package instead of
 its own build-tree internals.
 
 A runnable example lives in [`examples/plugin-hello/`](examples/plugin-hello/).
-Full guide: [`docs/PLUGINS.md`](docs/PLUGINS.md).
+Full guide: [`docs/PLUGINS.md`](docs/PLUGINS.md); package manager: [`docs/ZNATIVE.md`](docs/ZNATIVE.md).
 
 ---
 
