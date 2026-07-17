@@ -2746,6 +2746,24 @@ pub fn addmatches(
     let mut added = 0i32;
     let mut disp_idx = 0usize;
     let mut compignored_local = 0i32;
+    // c:2520-2522 / c:2540-2542 — `-D` parallel-array bookkeeping: the dpar
+    // arrays advance in LOCKSTEP with the candidate words. When a word is
+    // skipped (ignored, or comp_match fails) its dpar element must be dropped
+    // — i.e. `dpar_idx` advances WITHOUT the corresponding value being kept —
+    // so that surviving words stay aligned with their array elements. The
+    // port only advanced `dpar_idx` on the KEEP path (else branch below), so
+    // after any non-matching word every survivor grabbed the wrong element
+    // (e.g. `compadd -D` for path completion kept `/Applications` instead of
+    // `/tmp`), breaking `cmd /path/<TAB>` entirely.
+    macro_rules! dpar_skip_word {
+        () => {
+            for i in 0..dpar_idx.len() {
+                if dpar_idx[i] < dparr[i].len() {
+                    dpar_idx[i] += 1;
+                }
+            }
+        };
+    }
     'cand: for word in argv {
         // c:2482
         // c:2486-2489 — advance disp index.
@@ -2769,6 +2787,7 @@ pub fn addmatches(
             for suf in &aign {
                 if full.len() >= suf.len() && full.ends_with(suf.as_str()) {
                     compignored_local += 1;
+                    dpar_skip_word!(); // c:2520
                     continue 'cand;
                 }
             }
@@ -2776,6 +2795,7 @@ pub fn addmatches(
             for prog in &pign {
                 if crate::ported::pattern::pattry(prog, &full) {
                     compignored_local += 1;
+                    dpar_skip_word!(); // c:2520
                     continue 'cand;
                 }
             }
@@ -2831,6 +2851,7 @@ pub fn addmatches(
                     isexact = isexact_out;
                 }
                 None => {
+                    dpar_skip_word!(); // c:2540 — drop this word's dpar element
                     continue 'cand; // c:2541-2545 reject
                 }
             }

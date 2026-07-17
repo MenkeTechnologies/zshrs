@@ -1003,8 +1003,20 @@ fn bin_compadd_body(name: &str, argv: &[String], _ops: &options, _func: i32) -> 
     'outer: while idx < argv.len() {
         // c:632 — `for (; *argv && **argv == '-'; argv++)`
         let arg = argv[idx].clone();
-        if !arg.starts_with('-') || arg.len() < 2 {
-            break; // c:619 (non-flag word) / bare "-" (c:634-637)
+        if !arg.starts_with('-') {
+            break; // c:633 — loop cond `**argv == '-'` fails: a non-flag
+                   // word ends option parsing; it is NOT consumed (it is the
+                   // first positional match).
+        }
+        if arg.len() < 2 {
+            // c:635-637 — a bare `-` is the end-of-options marker: CONSUME it
+            // (`argv++`) and stop. The previous port broke WITHOUT consuming,
+            // so the `-` from `compadd … - words` (e.g. `compadd -D var - …`,
+            // used all over _path_files) survived as a spurious first
+            // positional word — shifting every match/dpar element by one and
+            // breaking path completion's `compadd -D` narrowing.
+            idx += 1;
+            break;
         }
         if arg == "--" {
             idx += 1;

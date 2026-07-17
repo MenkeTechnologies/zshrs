@@ -213,15 +213,16 @@ fn match_skips_prefix(s: &str, squeeze: bool) -> String {
 /// that still carry wildcards after expansion (no match) are dropped,
 /// approximating completion's nullglob-style file generation.
 fn tilde_glob(pats: &[String]) -> Vec<String> {
+    // C: `tmp1=( $~tmp1 )` (sh:472) — force filename generation. Route through
+    // the canonical `glob_path` (what `globlist` uses), which is qualifier-
+    // aware: it keeps the `/` inside a `(-/)` directory glob qualifier attached
+    // to the qualifier instead of splitting the path on it. The old
+    // `tokenize()` + `zglob()` route left that `/` as a raw path separator, so
+    // zglob split `DIR/*(-/)` and every directory-qualified file-completion
+    // glob produced nothing.
     let mut out = Vec::new();
     for p in pats {
-        let mut list = {
-            let mut s = p.clone();
-            tokenize(&mut s);
-            vec![s]
-        };
-        zglob(&mut list, 0, 0);
-        for e in list {
+        for e in crate::ported::glob::glob_path(p) {
             if !crate::ported::glob::hasbraces(&e, true) && !has_active_glob(&e) {
                 out.push(e);
             }
