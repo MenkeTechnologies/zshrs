@@ -13,6 +13,6 @@ name = "git_repos"
 crate-type = ["cdylib"]
 
 [dependencies]
-zshrs-plugin = { path = "../../plugin-sdk" }
+znative = { path = "../../znative" }
 
 [workspace]

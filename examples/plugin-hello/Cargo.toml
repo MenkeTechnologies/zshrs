@@ -15,7 +15,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-zshrs-plugin = { path = "../../plugin-sdk" }
+znative = { path = "../../znative" }
 
 # Standalone: declare an empty workspace so this example is NOT pulled
 # into the parent zshrs workspace (which would force it to build with

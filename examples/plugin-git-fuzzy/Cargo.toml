@@ -24,6 +24,6 @@ name = "git_fuzzy"
 crate-type = ["cdylib"]
 
 [dependencies]
-zshrs-plugin = { path = "../../plugin-sdk" }
+znative = { path = "../../znative" }
 
 [workspace]

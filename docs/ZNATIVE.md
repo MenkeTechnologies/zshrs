@@ -3,7 +3,7 @@
 `znative` is a built-in command for installing shell plugins. It handles both
 **zsh script plugins** (the oh-my-zsh / zinit kind — functions, aliases, ZLE
 widgets, completions) and **native Rust plugins** (`cdylib`s loaded through
-the [`zshrs-plugin`](../plugin-sdk/) ABI — see [PLUGINS.md](PLUGINS.md)).
+the [`znative`](../znative/) ABI — see [PLUGINS.md](PLUGINS.md)).
 
 It is **global only**: one content-addressed store under `$ZSHRS_HOME/pkg/`,
 no per-project manifest or lockfile. The whole workflow is one line per

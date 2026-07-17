@@ -14,6 +14,6 @@ name = "kubectl_completion"
 crate-type = ["cdylib"]
 
 [dependencies]
-zshrs-plugin = { path = "../../plugin-sdk" }
+znative = { path = "../../znative" }
 
 [workspace]

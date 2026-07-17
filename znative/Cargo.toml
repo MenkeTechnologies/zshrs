@@ -1,5 +1,5 @@
 [package]
-name = "zshrs-plugin"
+name = "znative"
 version.workspace = true
 edition = "2021"
 description = "Stable C-ABI SDK for writing native (Rust) zshrs plugins loaded at runtime via `zmodload -R`"
@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "api-bindings"]
 readme = "README.md"
 
 [lib]
-name = "zshrs_plugin"
+name = "znative"
 path = "src/lib.rs"
 
 # No dependencies — the whole point of a stable ABI crate is that it is

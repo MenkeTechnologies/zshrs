@@ -26,7 +26,7 @@ use std::io::{Read, Write};
 use std::os::raw::{c_char, c_int, c_void};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 // ANSI colors (git-fuzzy's $GREEN/$RED/... from load-configs.sh).
 const GREEN: &str = "\x1b[32m";

@@ -58,7 +58,7 @@ pub struct PluginMeta {
     pub description: String,
 }
 
-/// `[native]` — a Rust cdylib plugin using the `zshrs-plugin` SDK.
+/// `[native]` — a Rust cdylib plugin using the `znative` SDK.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NativeSpec {
     /// Library file stem — produces `lib<lib>.{dylib,so}`. When empty the

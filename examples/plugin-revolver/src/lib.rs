@@ -47,7 +47,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 /// One spinner style: name, frame interval (seconds), animation frames.
 /// Faithful transcription of `_revolver_spinners` in `bin/revolver`. The

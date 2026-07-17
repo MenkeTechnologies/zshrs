@@ -18,7 +18,7 @@
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use zshrs_plugin::{declare_plugin, Args, Host};
+use znative::{declare_plugin, Args, Host};
 
 const MAX_SCORE_DEFAULT: f64 = 9000.0;
 
