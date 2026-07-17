@@ -243,19 +243,29 @@ pub fn _description(args: &[String]) -> i32 {
         setaparam("_lastdescr", lastdescr);
     }
 
-    // sh:16-17
+    // sh:16  zstyle -s ":completion:${curcontext}:$1" group-name gname &&
+    // sh:17      [[ -z "$gname" ]] && gname="$1"
     let curcontext = getsparam("curcontext").unwrap_or_default();
     let tag1 = argv.first().cloned().unwrap_or_default();
     let ctx1 = format!(":completion:{}:{}", curcontext, tag1);
-    let mut gname: String = lookupstyle(&ctx1, "group-name")
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    // sh:17 — the `zstyle -s … && [[ -z gname ]] && gname=$1` idiom
-    //   fires the fallback only when the style is set but empty.
-    //   `lookupstyle` returns Vec; we approximate by leaving gname
-    //   empty when the style is unset (the sh:92 branch's
-    //   gname-empty path then routes through `-default-` correctly).
+    // `zstyle -s` succeeds (RC 0) whenever the style pattern matches, even
+    // when the matched value is the empty string. `lookupstyle` mirrors
+    // that: an empty Vec means "unset" (RC 1 — skip the whole `&&` chain),
+    // a non-empty Vec means "set" (RC 0 — run the `[[ -z gname ]]` test).
+    // `-s` collapses the value array to a scalar (space-joined), so join
+    // rather than take only the first element.
+    let gn_vals = lookupstyle(&ctx1, "group-name");
+    let mut gname: String = if gn_vals.is_empty() {
+        String::new() // style unset → gname stays empty (sh:92 → -default-)
+    } else {
+        let v = crate::ported::utils::zjoin(&gn_vals, ' ');
+        // sh:17 — style set: an empty value defaults the group to the tag.
+        if v.is_empty() {
+            tag1.clone()
+        } else {
+            v
+        }
+    };
 
     // sh:19  _setup "$1" "${gname:--default-}"
     {
