@@ -1,0 +1,29 @@
+# bigH/git-fuzzy's `status` command, ported to a native zshrs plugin.
+# Build:
+#   cargo build --manifest-path examples/plugin-git-fuzzy/Cargo.toml
+# then inside zshrs:
+#   zmodload -R examples/plugin-git-fuzzy/target/debug/libgit_fuzzy.dylib
+#   gf status        # interactive git status UI  (needs fzf >= 0.71 + git)
+#
+# git-fuzzy is a *self-reentrant* fzf UI: every preview/keybind re-invokes a
+# helper. In bash that re-execs `git fuzzy helper …` and re-sources the
+# library per keystroke. Here the helpers are builtins in this plugin; fzf
+# binds reach them through a tiny generated shim that runs
+#   zshrs -fc 'zmodload -R <self.dylib>; gf --helper <sub> <args>'
+# so there is no per-keystroke library sourcing — the native-host point.
+#
+# See docs/PORTING_ZSH_PLUGIN.md ("Self-reentrant fzf tools").
+[package]
+name = "git_fuzzy"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "git_fuzzy"
+crate-type = ["cdylib"]
+
+[dependencies]
+zshrs-plugin = { path = "../../plugin-sdk" }
+
+[workspace]

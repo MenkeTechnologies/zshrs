@@ -2913,6 +2913,22 @@ pub fn complistmatches(
         NOSELECT.store(1, Ordering::SeqCst); // c:2111
     }
 
+    // Rust adaptation (mirrors ilistmatches, compresult.rs c:2172): the
+    // recursive `zrefresh` that follows `listmatches` re-enters this hook while
+    // `showinglist == -2`. C makes that re-entry harmless with `singledraw`
+    // (incremental highlight move); this port gates singledraw OFF and does a
+    // full `compprintlist` each time, so a re-entry would repaint the ENTIRE
+    // menu again below the first — a visible duplicate. It bites only when the
+    // list SCROLLS (clearflag=0): compprintlist's fits-branch sets
+    // showinglist=-1, but the exceeds-branch (c:1712) leaves it -2. Mark the
+    // list shown (-1) so the recursive zrefresh repaints only the command line
+    // — the same guard the plain-list path already has. (Was masked by the
+    // removed `\x1b[A` cursor hack, which repositioned so the 2nd draw
+    // overwrote the 1st; the faithful fix is to not draw twice at all.)
+    if SHOWINGLIST.load(Ordering::SeqCst) == -2 {
+        SHOWINGLIST.store(-1, Ordering::SeqCst);
+    }
+
     // c:2113-2116 — capture frame state for next call's diff.
     ONLNCT.store(nlnct, Ordering::SeqCst); // c:2113
     MOLBEG.store(MLBEG.load(Ordering::SeqCst), Ordering::SeqCst); // c:2114

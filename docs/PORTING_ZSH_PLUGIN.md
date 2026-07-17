@@ -238,3 +238,66 @@ zshrs
 
 The full, buildable result is in
 [`examples/plugin-forgit/src/lib.rs`](../examples/plugin-forgit/src/lib.rs).
+
+## Advanced: self-reentrant fzf tools (git-fuzzy)
+
+forgit is "list → fzf → act": fzf runs once. Tools like
+[**git-fuzzy**](../examples/plugin-git-fuzzy/) are **self-reentrant** — the
+fzf UI calls *back* into the tool on every keystroke: `--preview 'git fuzzy
+helper status_preview {…}'`, `--bind '<key>:execute(git fuzzy helper
+status_add {+2..})+reload(…)'`, a `--listen` port that a background watcher
+POSTs live reloads to. In bash this re-execs the `git-fuzzy` script and
+re-sources its library **per keystroke** — git-fuzzy even has "dispatch-aware
+sourcing" to keep that cheap. That per-keystroke sourcing is exactly the
+overhead a compiled host exists to delete.
+
+The wrinkle: fzf runs its bind/preview commands via `sh`, which **cannot
+call a plugin builtin**. Three parts make it work:
+
+**1. Helpers are builtins too.** The plugin registers `gf` and dispatches an
+internal `--helper <sub>` mode: `gf --helper status_preview …`,
+`gf --helper status_add …`. Same code path, no separate binary.
+
+**2. A shim bridges fzf → the plugin.** Since `sh` can't reach the builtin,
+generate a tiny shim once and point every fzf bind at it:
+
+```rust
+// ~/.cache/zshrs/gf-helper.sh
+//   #!/bin/sh
+//   exec <zshrs> -fc 'zmodload -R "$0" 2>/dev/null; gf --helper "$@"' <self.dylib> "$@"
+```
+
+fzf's binds become `execute(<shim> status_add {+2..})`. Each invocation is a
+fresh `zshrs` that `dlopen`s this plugin (an mmap'd dylib — no parsing) and
+runs the helper builtin. That replaces bash's per-keystroke library sourcing
+with a single dlopen. The plugin finds **its own** dylib path with `dladdr`
+and the zshrs binary with `std::env::current_exe()`; pass the dylib as `$0`
+(not embedded in the `-c` script) so a path with spaces survives.
+
+**3. Live reload without `curl`.** git-fuzzy's watcher POSTs `reload-sync(…)`
+to fzf's `--listen` port. Port it to a raw `TcpStream` write — no `curl`
+dependency, and the watch loop itself is Rust:
+
+```rust
+fn fzf_post(port: u16, action: &str) -> bool {
+    let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) else { return false };
+    let req = format!("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\
+                       Connection: close\r\n\r\n{}", action.len(), action);
+    s.write_all(req.as_bytes()).is_ok()   // connect failing == fzf gone -> stop watching
+}
+```
+
+**Verifying interactive TUIs.** The *logic* (helpers, the shim round-trip,
+menu generation, the `--expect` interpreter, geometry, diff rendering) is
+unit-testable headlessly: call `gf --helper …` directly, drive the top-level
+command with a stub `fzf` that echoes a selection, and invoke the generated
+shim by hand. The **live fzf render** — the actual full-screen UI reacting to
+keys — must be checked in a **real terminal**; a scripted PTY can drive a
+plain `sh | fzf` but does not faithfully reproduce an interactive shell
+handing the terminal to a full-screen child, so don't treat a blank PTY
+capture as a failure. Verify the UI by running it.
+
+The full port of git-fuzzy's `status` command (preview, inspect, stage /
+unstage / discard / amend / patch / commit / edit, and the `--listen`
+live-reload watcher) is in
+[`examples/plugin-git-fuzzy/src/lib.rs`](../examples/plugin-git-fuzzy/src/lib.rs).

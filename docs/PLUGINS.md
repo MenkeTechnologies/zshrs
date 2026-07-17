@@ -236,6 +236,12 @@ plugin ported command-for-command from zsh (`ga glo gd gcf …`). See
 [PORTING_ZSH_PLUGIN.md](PORTING_ZSH_PLUGIN.md) for the full zsh→Rust
 walkthrough.
 
+[`plugin-git-fuzzy/`](../examples/plugin-git-fuzzy/) — **git-fuzzy**'s
+`status` command: a *self-reentrant* fzf UI (every preview/keybind
+re-invokes a helper, plus a `--listen` live-reload watcher). Shows the shim
+technique that lets fzf binds reach native builtins — see the "self-reentrant
+fzf tools" section of the porting guide.
+
 ## Porting an existing zsh plugin
 
 If you have a zsh plugin (shell functions + aliases + completions) and want
