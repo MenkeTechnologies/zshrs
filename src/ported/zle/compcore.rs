@@ -2950,10 +2950,20 @@ pub fn addmatches(
             // `compadd -d` display string (the description lines
             // _describe/_arguments build) was silently dropped and lists
             // rendered bare match names.
-            if cur_disp.is_some() {
+            // c:2560-2561 — `cm->rems = dat->rems; cm->remf = dat->remf`. These
+            // were previously SKIPPED here (only `disp` was patched), so a
+            // `compadd -r <chars>` / `-R <widget>` custom suffix-removal spec
+            // never reached the match: makesuffixstr got `s=None` and the
+            // char-based auto-remove-suffix was inert. Patch them on the just-
+            // pushed match copy (the port's add_match_data returns a value).
+            {
                 if let Ok(mut g) = matches.get_or_init(|| Mutex::new(Vec::new())).lock() {
                     if let Some(last) = g.last_mut() {
-                        last.disp = cur_disp.clone();
+                        last.rems = dat.rems.clone(); // c:2560
+                        last.remf = dat.remf.clone(); // c:2561
+                        if cur_disp.is_some() {
+                            last.disp = cur_disp.clone(); // c:2562-2563
+                        }
                     }
                 }
             }
