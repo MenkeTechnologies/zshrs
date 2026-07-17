@@ -304,6 +304,12 @@ technique that lets fzf binds reach native builtins — see the "self-reentrant
 fzf tools" section of the porting guide. Published as:
 `zpm add MenkeTechnologies/zshrs-git-fuzzy`.
 
+[`plugin-zsh-z/`](../examples/plugin-zsh-z/) — **zsh-z**, the frecency
+directory jumper (`z <partial>`), reimplemented in Rust: the `~/.z` datafile,
+the frecency formula, aging, matching, and all `z` options. `cd` is delegated
+to the shell (`host.eval`) so `$PWD`/hooks stay correct; a `chpwd` hook does
+the recording. Published as: `zpm add MenkeTechnologies/zshrs-zsh-z`.
+
 ## Porting an existing zsh plugin
 
 If you have a zsh plugin (shell functions + aliases + completions) and want
