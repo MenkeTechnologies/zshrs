@@ -4371,6 +4371,23 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // `break N`/`continue N` with a RUNTIME level count. Pops [count,
+    // name]; math-evaluates count (c:builtin.c:5811 `mathevali`); on
+    // count <= 0 emits `argument is not positive: N` via zerrnam (sets
+    // errflag → abort, c:5813) and pushes Int(0) (matches no jump-table
+    // entry → control falls through to the errflag abort). Otherwise
+    // pushes Int(count) for the compiled jump table to dispatch on.
+    vm.register_builtin(BUILTIN_BREAK_COUNT_VALIDATE, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let count_s = vm.pop().to_str();
+        let count = crate::ported::math::mathevali(&count_s).unwrap_or(0);
+        if count <= 0 {
+            crate::ported::utils::zerrnam(&name, &format!("argument is not positive: {count}"));
+            return Value::Int(0);
+        }
+        Value::Int(count)
+    });
+
     // `${arr[*]}` — join array elements with the first IFS char into
     // a single string. Matches zsh: in DQ context this preserves the
     // join; in array context too the result is one Value::Str.
@@ -10530,6 +10547,8 @@ pub const BUILTIN_CONCAT_PLAN9: u16 = 646;
 /// Routes straight to `concat_splice`, C's non-plan9 join-first-and-last path
 /// (c:4366-4437).
 pub const BUILTIN_CONCAT_SPLICE_NOPLAN9: u16 = 647;
+/// `break N`/`continue N` runtime-count validator (see registration).
+pub const BUILTIN_BREAK_COUNT_VALIDATE: u16 = 648;
 /// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
 pub const BUILTIN_COND_ACCESS: u16 = 638;
 

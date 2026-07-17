@@ -1741,11 +1741,16 @@ impl ZshCompiler {
             // through bin_break (the `else` arm) which emits the error
             // and returns 1 without transferring control. (A runtime
             // `break $n` with n<=0 stays on the fast path — pinned.)
-            let nonpositive_literal = simple
+            let literal_int = simple
                 .words
                 .get(1)
-                .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok())
-                .is_some_and(|n| n <= 0);
+                .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok());
+            let nonpositive_literal = literal_int.is_some_and(|n| n <= 0);
+            // `break N` where N is a RUNTIME expression ($((..))/$var):
+            // the literal fast path can't read it, so it fell back to
+            // N=1. Emit a runtime jump table dispatching to the same
+            // break_patches[depth-N] target the literal path uses.
+            let runtime_count = simple.words.len() > 1 && literal_int.is_none();
             // Index from end: levels=1 → last (innermost); levels=2 →
             // second-to-last; etc. Clamped to depth.
             let depth = self.break_patches.len();
@@ -1754,7 +1759,9 @@ impl ZshCompiler {
             // `for; if then; break; fi; done` — without the drain,
             // the Then push leaks past the loop_exit.
             self.emit_cmd_stack_drain();
-            if depth > 0 && !nonpositive_literal {
+            if depth > 0 && runtime_count {
+                self.emit_runtime_loop_level(&simple.words[1], "break", false);
+            } else if depth > 0 && !nonpositive_literal {
                 // Inside try-block: also bump BREAKS atomic so the
                 // always-arm post-restore can detect the escape and
                 // re-emit the loop-end jump.
@@ -1815,17 +1822,20 @@ impl ZshCompiler {
             // c:5820-5822 — `continue 0`/`continue -1` errors "argument
             // is not positive"; route through bin_break (else arm) rather
             // than the clamp-to-1 fast path. Same as the `break` arm.
-            let nonpositive_literal = simple
+            let literal_int = simple
                 .words
                 .get(1)
-                .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok())
-                .is_some_and(|n| n <= 0);
+                .and_then(|s| crate::lex::untokenize(s).parse::<i64>().ok());
+            let nonpositive_literal = literal_int.is_some_and(|n| n <= 0);
+            let runtime_count = simple.words.len() > 1 && literal_int.is_none();
             let depth = self.continue_patches.len();
             // Drain pending cmd_stack pushes — same rationale as
             // for `break`. `continue` inside an inner if/then is the
             // common case in zinit's mode-aware loop bodies.
             self.emit_cmd_stack_drain();
-            if depth > 0 && !nonpositive_literal {
+            if depth > 0 && runtime_count {
+                self.emit_runtime_loop_level(&simple.words[1], "continue", true);
+            } else if depth > 0 && !nonpositive_literal {
                 // Inside try-block: bump BREAKS + CONTFLAG so the
                 // always-arm post-restore can detect the escape.
                 if self.try_block_depth > 0 {
@@ -3740,6 +3750,59 @@ impl ZshCompiler {
     /// matched shapes start with an unescaped `$`, so markers can
     /// only come from a quote span wrapping the expansion (e.g.
     /// `"$a[0]"`), where zsh suppresses filename generation.
+    /// Emit a runtime jump table for `break N`/`continue N` where N is a
+    /// runtime expression. Evaluates the count (math), validates it is
+    /// positive (else zerrnam + errflag abort), then dispatches to the
+    /// SAME patch-list target the literal path uses:
+    /// break_patches/continue_patches[depth-N], clamping N>depth to the
+    /// outermost. `name` is "break"/"continue" for the error text;
+    /// `is_continue` selects the continue vs break patch list.
+    fn emit_runtime_loop_level(&mut self, count_word: &str, name: &str, is_continue: bool) {
+        let depth = if is_continue {
+            self.continue_patches.len()
+        } else {
+            self.break_patches.len()
+        };
+        // count on stack (compile the arg word), then the builtin name.
+        self.compile_word_str(count_word);
+        let nc = self.builder.add_constant(Value::str(name));
+        self.builder.emit(Op::LoadConst(nc), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::vm_helper::BUILTIN_BREAK_COUNT_VALIDATE, 2),
+            0,
+        );
+        // Stash the validated count (Int, or 0 on the error path).
+        let cnt_slot = self.next_slot;
+        self.next_slot += 1;
+        self.builder.emit(Op::SetSlot(cnt_slot), 0);
+        // N == L → jump to the L-th enclosing loop's target.
+        for l in 1..=depth {
+            self.builder.emit(Op::GetSlot(cnt_slot), 0);
+            self.builder.emit(Op::LoadInt(l as i64), 0);
+            self.builder.emit(Op::NumEq, 0);
+            let j = self.builder.emit(Op::JumpIfTrue(0), 0);
+            let idx = depth - l;
+            if is_continue {
+                self.continue_patches[idx].push(j);
+            } else {
+                self.break_patches[idx].push(j);
+            }
+        }
+        // N > depth → clamp to the outermost loop (zsh clamps).
+        self.builder.emit(Op::GetSlot(cnt_slot), 0);
+        self.builder.emit(Op::LoadInt(depth as i64), 0);
+        self.builder.emit(Op::NumGt, 0);
+        let j = self.builder.emit(Op::JumpIfTrue(0), 0);
+        if is_continue {
+            self.continue_patches[0].push(j);
+        } else {
+            self.break_patches[0].push(j);
+        }
+        // N <= 0: BREAK_COUNT_VALIDATE already emitted the error and set
+        // errflag; no table entry matches Int(0), so control falls
+        // through here and the VM aborts on errflag.
+    }
+
     fn emit_unbraced_subscript(&mut self, name: &str, key: &str, suffix: &str, quoted: bool) {
         let name_const = self.builder.add_constant(Value::str(name));
         let key_const = self.builder.add_constant(Value::str(key));
