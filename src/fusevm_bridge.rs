@@ -12334,6 +12334,12 @@ impl fusevm::ShellHost for ZshrsHost {
             "zcalc" => {
                 return Some(crate::extensions::ext_builtins::zcalc(&args));
             }
+            // zpm — the plugin package manager (src/extensions/pkg/). Installs
+            // + loads zsh script and native (Rust cdylib) plugins from a global
+            // content-addressed store. `zpm add owner/repo`, `zpm load`, ...
+            "zpm" => {
+                return Some(crate::extensions::pkg::builtin::zpm(&args));
+            }
             // ztest framework (src/extensions/ztest.rs — port of
             // ../strykelang's unit-test framework). All zassert_*/
             // ztest_* names route through the single try_dispatch

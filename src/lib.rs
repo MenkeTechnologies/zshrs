@@ -271,6 +271,9 @@ pub mod plugin_cache;
 /// `plugin_host` submodule — native (Rust) plugin loader (`zmodload -R`).
 #[path = "extensions/plugin_host.rs"]
 pub mod plugin_host;
+/// `pkg` — the `zpm` plugin package manager (global store).
+#[path = "extensions/pkg/mod.rs"]
+pub mod pkg;
 /// `recorder_ext` submodule.
 #[path = "extensions/recorder.rs"]
 pub mod recorder_ext;
