@@ -122,10 +122,57 @@ pub fn makezleparams(_ro: i32) {
     let _ = setsparam("POSTDISPLAY", &postdisp);
     let _ = crate::ported::params::setaparam("region_highlight", rh.clone());
 
+    // c:zleparams[] MARK / REGION_ACTIVE / CUTBUFFER / killring —
+    // region and cut-buffer state. Visual-mode widgets (and plugins
+    // like zsh-vi-mode) read AND write these; without publish +
+    // write-back they saw empty values and their writes vanished.
+    let mark = get_mark() as i64; // c:zleparams MARK getfn
+    let region_active = get_region_active(); // c:zleparams REGION_ACTIVE getfn
+    let cutbuffer = get_cutbuffer(); // c:zleparams CUTBUFFER getfn
+    let killring_v = get_killring(); // c:zleparams killring getfn
+    let _ = setiparam("MARK", mark);
+    let _ = setiparam("REGION_ACTIVE", region_active);
+    let _ = setsparam("CUTBUFFER", &cutbuffer);
+    let _ = crate::ported::params::setaparam("killring", killring_v.clone());
+    // c:zleparams[] read-only state params.
+    let _ = setsparam("PREBUFFER", &get_prebuffer()); // c:zleparams PREBUFFER
+    let _ = setiparam("KEYS_QUEUED_COUNT", get_keys_queued_count()); // c:153
+    let _ = setiparam("YANK_START", get_yankstart()); // c:176
+    let _ = setiparam("YANK_END", get_yankend()); // c:177
+    let _ = setiparam("YANK_ACTIVE", get_yankactive()); // c:178
+    let _ = setiparam("ISEARCHMATCH_START", get_isearchmatchstart()); // c:179
+    let _ = setiparam("ISEARCHMATCH_END", get_isearchmatchend()); // c:180
+    let _ = setiparam("ISEARCHMATCH_ACTIVE", get_isearchmatchactive()); // c:181
+    let _ = setiparam("SUFFIX_START", get_suffixstart()); // c:182
+    let _ = setiparam("SUFFIX_END", get_suffixend()); // c:183
+    let _ = setiparam("SUFFIX_ACTIVE", get_suffixactive()); // c:184
+    let _ = setiparam("ZLE_RECURSIVE", get_recursive()); // c:185
+    let _ = setsparam("ZLE_STATE", &get_zle_state()); // c:186
+    let _ = setiparam(
+        "UNDO_CHANGE_NO",
+        crate::ported::zle::zle_main::UNDO_CHANGENO.load(Ordering::SeqCst) as i64,
+    ); // c:170
+    let _ = setiparam(
+        "UNDO_LIMIT_NO",
+        crate::ported::zle::zle_main::UNDO_LIMITNO.load(Ordering::SeqCst) as i64,
+    ); // c:172
+
     // RUST-ONLY (crate::zle_param_sync — adapter for C's live GSU
     // setters): record the values just snapshotted so the sync
     // boundaries can diff widget mutations against them.
-    crate::zle_param_sync::arm_snapshot(line, lbuf, rbuf, cs as i64, predisp, postdisp, rh);
+    crate::zle_param_sync::arm_snapshot(
+        line,
+        lbuf,
+        rbuf,
+        cs as i64,
+        predisp,
+        postdisp,
+        rh,
+        mark,
+        region_active,
+        cutbuffer,
+        killring_v,
+    );
 }
 
 /// Direct port of `static void zleunsetfn(Param pm, int exp)` from
@@ -699,11 +746,14 @@ pub fn set_register(name: char, value: &str) -> i32 {
         // c:765 — invalid register; C reports zerr and returns.
         return 1;
     };
-    // c:769-772 — `vbuf = &vibuf[name-offset]; if (*value)
+    // c:781-788 — `vbuf = &vibuf[name-offset]; if (*value)
     //              vbuf->buf = stringaszleline(value, 0, &n, ...);
     //              vbuf->len = n`.
     if (idx as usize) < vibuf().lock().unwrap().len() {
-        vibuf().lock().unwrap()[idx as usize] = value.chars().collect();
+        let mut vb = vibuf().lock().unwrap();
+        let slot = &mut vb[idx as usize];
+        slot.buf = value.to_string();
+        slot.len = value.chars().count(); // c:788 `vbuf->len = n;`
     }
     0
 }
@@ -739,7 +789,7 @@ pub fn scan_registers(_ht: i32, func: Option<ScanFunc>, flags: i32) {
     let mut ch: u8 = b'a'; // c:798 ch = 'a'
     for i in 0..36usize {
         // c:798 for (i = 0; i < 36; i++)
-        let val: String = buf.get(i).map(|v| v.iter().collect()).unwrap_or_default(); // c:801 zlelineasstring(vibuf[i].buf, ...)
+        let val: String = buf.get(i).map(|v| v.buf.clone()).unwrap_or_default(); // c:801 zlelineasstring(vibuf[i].buf, ...)
         let pm = param {
             node: hashnode {
                 // c:794 memset(&pm, 0)
@@ -790,11 +840,7 @@ pub fn get_registers(name: &str) -> Option<String> {
     };
     // c:798 — `pm->u.str = zlelineasstring(vibuf[i].buf, ...)`.
     if (idx as usize) < vibuf().lock().unwrap().len() {
-        Some(
-            vibuf().lock().unwrap()[idx as usize]
-                .iter()
-                .collect::<String>(),
-        )
+        Some(vibuf().lock().unwrap()[idx as usize].buf.clone())
     } else {
         None
     }
@@ -823,7 +869,7 @@ pub fn unset_registers(exp: i32) {
     //                              vibuf[i].len = 0; } stdunsetfn(...) }`.
     if exp != 0 {
         for buf in vibuf().lock().unwrap().iter_mut() {
-            buf.clear();
+            *buf = crate::ported::zle::zle_h::cutbuffer::default();
         }
     }
 }
@@ -1454,7 +1500,7 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         // Register 'a' (idx 0).
         set_register('a', "hello");
-        let s: String = vibuf().lock().unwrap()[0].iter().collect();
+        let s: String = vibuf().lock().unwrap()[0].buf.clone();
         assert_eq!(s, "hello");
         // get_registers reads back the same.
         assert_eq!(get_registers("a"), Some("hello".to_string()));
@@ -1466,7 +1512,7 @@ mod widget_killring_tests {
         let _g = zle_test_setup();
         // Register '0' → idx 26.
         set_register('0', "zero");
-        let s: String = vibuf().lock().unwrap()[26].iter().collect();
+        let s: String = vibuf().lock().unwrap()[26].buf.clone();
         assert_eq!(s, "zero");
         assert_eq!(get_registers("0"), Some("zero".to_string()));
     }

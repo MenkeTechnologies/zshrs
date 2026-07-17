@@ -877,24 +877,7 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
             crate::ported::zle::zle_main::zle_resetprompt();
             0
         }),
-        "yank" => Some(|_| {
-            let ring = KILLRING.lock().unwrap();
-            let text = match ring.front() {
-                Some(t) => t.clone(),
-                None => return 1,
-            };
-            drop(ring);
-            let cs = ZLECS.load(std::sync::atomic::Ordering::SeqCst);
-            let mut line = ZLELINE.lock().unwrap();
-            for (i, c) in text.iter().enumerate() {
-                line.insert(cs + i, *c);
-            }
-            let new_ll = line.len();
-            drop(line);
-            ZLELL.store(new_ll, std::sync::atomic::Ordering::SeqCst);
-            ZLECS.store(cs + text.len(), std::sync::atomic::Ordering::SeqCst);
-            0
-        }),
+        "yank" => Some(|_| super::zle_misc::yank()),
         "vi-yank" => Some(viyank),
         "which-command" => Some(super::zle_misc::processcmd),
         "run-help" => Some(super::zle_misc::processcmd),
@@ -906,6 +889,84 @@ pub fn iwidget_lookup(name: &str) -> Option<super::zle_h::ZleIntFunc> {
         // lookup yields a valid `Thingy` rather than no-op.
         "execute-named-cmd" => Some(|_| 0),
         "execute-last-named-cmd" => Some(|_| 0),
+        // Remaining iwidgets.list entries — each maps to its already-
+        // ported fn (same order as the C-generated widgets[] table).
+        "accept-and-infer-next-history" => {
+            Some(|_| super::zle_hist::acceptandinfernexthistory())
+        }
+        "accept-and-menu-complete" => Some(super::zle_tricky::acceptandmenucomplete),
+        "argument-base" => Some(super::zle_misc::argumentbase),
+        // c:zle_utils.c:1422-1425 — the bound handlesuffix widget body
+        // is `return 0` (suffix logic runs off the ZLE_NOTCOMMAND /
+        // ZLE_KEEPSUFFIX flags in the key loop).
+        "auto-suffix-remove" => Some(|_| 0),
+        "auto-suffix-retain" => Some(|_| 0),
+        "backward-delete-word" => Some(super::zle_word::backwarddeleteword),
+        "backward-kill-line" => Some(|_| super::zle_misc::backwardkillline()),
+        "beginning-of-history" => Some(|_| super::zle_hist::beginningofhistory()),
+        "beginning-of-line-hist" => Some(|_| super::zle_move::beginningoflinehist()),
+        "bracketed-paste" => Some(super::zle_misc::bracketedpaste),
+        "copy-prev-shell-word" => Some(|_| super::zle_misc::copyprevshellword()),
+        "deactivate-region" => Some(|_| super::zle_move::deactivateregion()),
+        "delete-char" => Some(|_| super::zle_misc::deletechar()),
+        "delete-word" => Some(super::zle_word::deleteword),
+        "describe-key-briefly" => Some(|_| super::zle_main::describe_key_briefly()),
+        "down-line" => Some(|_| super::zle_hist::downline()),
+        "down-line-or-search" => Some(|_| super::zle_hist::downlineorsearch()),
+        "emacs-backward-word" => Some(super::zle_word::emacsbackwardword),
+        "emacs-forward-word" => Some(super::zle_word::emacsforwardword),
+        "end-of-history" => Some(|_| super::zle_hist::endofhistory()),
+        "end-of-line-hist" => Some(|_| super::zle_move::endoflinehist()),
+        "end-of-list" => Some(|_| super::zle_tricky::endoflist()),
+        "exchange-point-and-mark" => Some(|_| super::zle_move::exchangepointandmark()),
+        "expand-cmd-path" => Some(|_| super::zle_tricky::expandcmdpath()),
+        "expand-or-complete-prefix" => Some(super::zle_tricky::expandorcompleteprefix),
+        "expand-word" => Some(super::zle_tricky::expandword),
+        "gosmacs-transpose-chars" => Some(|_| super::zle_misc::gosmacstransposechars()),
+        "history-beginning-search-backward" => {
+            Some(|_| super::zle_hist::historybeginningsearchbackward())
+        }
+        "history-beginning-search-forward" => {
+            Some(|_| super::zle_hist::historybeginningsearchforward())
+        }
+        "history-incremental-pattern-search-backward" => {
+            Some(|_| super::zle_hist::historyincrementalpatternsearchbackward())
+        }
+        "history-incremental-pattern-search-forward" => {
+            Some(|_| super::zle_hist::historyincrementalpatternsearchforward())
+        }
+        "infer-next-history" => Some(|_| super::zle_hist::infernexthistory()),
+        "kill-buffer" => Some(|_| super::zle_misc::killbuffer()),
+        "kill-region" => Some(|_| super::zle_misc::killregion()),
+        "magic-space" => Some(|_| super::zle_tricky::magicspace()),
+        "overwrite-mode" => Some(|_| super::zle_misc::overwritemode()),
+        "push-input" => Some(|_| super::zle_hist::pushinput()),
+        "push-line-or-edit" => Some(|_| super::zle_hist::pushlineoredit()),
+        "put-replace-selection" => Some(|_| super::zle_misc::putreplaceselection()),
+        "read-command" => Some(|_| super::zle_keymap::readcommand()),
+        "recursive-edit" => Some(|_| super::zle_main::recursiveedit()),
+        "select-a-blank-word" => Some(|_| super::textobjects::selectword()),
+        "select-a-shell-word" => Some(|_| super::textobjects::selectargument()),
+        "select-a-word" => Some(|_| super::textobjects::selectword()),
+        "select-in-blank-word" => Some(|_| super::textobjects::selectword()),
+        "select-in-shell-word" => Some(|_| super::textobjects::selectargument()),
+        "select-in-word" => Some(|_| super::textobjects::selectword()),
+        "set-local-history" => Some(|_| super::zle_hist::setlocalhistory()),
+        "split-undo" => Some(|_| super::zle_utils::splitundo()),
+        "universal-argument" => Some(super::zle_misc::universalargument),
+        "up-line" => Some(|_| super::zle_hist::upline()),
+        "up-line-or-search" => Some(|_| super::zle_hist::uplineorsearch()),
+        "vi-backward-blank-word-end" => Some(super::zle_word::vibackwardblankwordend),
+        "vi-backward-word-end" => Some(super::zle_word::vibackwardwordend),
+        "vi-beginning-of-line" => Some(|_| super::zle_move::vibeginningofline()),
+        "vi-caps-lock-panic" => Some(|_| super::zle_vi::vicapslockpanic()),
+        "vi-down-case" => Some(|_| super::zle_vi::vidowncase()),
+        "vi-oper-swap-case" => Some(|_| super::zle_vi::vioperswapcase()),
+        "vi-pound-insert" => Some(|_| super::zle_vi::vipoundinsert()),
+        "vi-undo-change" => Some(super::zle_utils::viundochange),
+        "vi-up-case" => Some(|_| super::zle_vi::viupcase()),
+        "vi-yank-eol" => Some(|_| super::zle_vi::viyankeol()),
+        "what-cursor-position" => Some(|_| super::zle_misc::whatcursorposition()),
         _ => None,
     }
 }
@@ -973,27 +1034,42 @@ pub static IWIDGET_FLAGS: &[(&str, i32)] = {
         ("up-history", ZLE_LINEMOVE),
         ("up-line-or-history", ZLE_LINEMOVE),
         ("up-line-or-search", ZLE_LINEMOVE),
-        // Kill widgets (non-VI-operator forms).
-        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("kill-region", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("kill-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-backward-kill-word", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-change-eol", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-change-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-delete-char", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-kill-eol", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-kill-line", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-yank-eol", ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-yank-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX),
-        // VI operator-pending widgets (read further keys; also kill).
-        ("vi-change", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-delete", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-yank", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
-        ("vi-oper-swap-case", ZLE_VIOPER | ZLE_KILL | ZLE_KEEPSUFFIX),
-        // Yank widgets.
-        ("yank", ZLE_YANK | ZLE_YANKAFTER),
-        ("yank-pop", ZLE_YANK | ZLE_YANKBEFORE),
+        // Kill widgets (non-VI-operator forms) — flags per iwidgets.list.
+        ("kill-buffer", ZLE_KILL | ZLE_KEEPSUFFIX), // c:78
+        ("kill-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:79
+        ("kill-region", ZLE_KILL | ZLE_KEEPSUFFIX), // c:80
+        ("kill-whole-line", ZLE_KILL | ZLE_KEEPSUFFIX), // c:81
+        ("kill-word", ZLE_KILL | ZLE_KEEPSUFFIX), // c:82
+        ("vi-backward-delete-char", ZLE_KEEPSUFFIX), // c:132
+        ("vi-backward-kill-word", ZLE_KEEPSUFFIX), // c:133
+        ("vi-change-eol", 0), // c:140
+        ("vi-change-whole-line", 0), // c:141
+        ("vi-delete-char", ZLE_KEEPSUFFIX), // c:144
+        ("vi-kill-eol", ZLE_KEEPSUFFIX), // c:169
+        ("vi-kill-line", ZLE_KEEPSUFFIX), // c:170
+        ("vi-yank-eol", 0), // c:195
+        ("vi-yank-whole-line", 0), // c:196
+        // VI operator-pending widgets (read further keys).
+        ("vi-change", ZLE_LASTCOL | ZLE_VIOPER), // c:139
+        ("vi-delete", ZLE_KEEPSUFFIX | ZLE_LASTCOL | ZLE_VIOPER), // c:143
+        ("vi-yank", ZLE_LASTCOL | ZLE_VIOPER), // c:194
+        ("vi-oper-swap-case", ZLE_LASTCOL | ZLE_VIOPER), // c:174
+        ("vi-swap-case", ZLE_LASTCOL), // c:189
+        ("vi-undo-change", ZLE_KEEPSUFFIX), // c:190
+        ("vi-repeat-change", 0), // c:179
+        // Yank/put widgets — ZLE_YANK* drives yankpop's before/after.
+        ("yank", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:202
+        ("yank-pop", ZLE_KEEPSUFFIX | ZLE_NOTCOMMAND), // c:203
+        ("vi-put-after", ZLE_YANKAFTER | ZLE_KEEPSUFFIX), // c:176
+        ("vi-put-before", ZLE_YANKBEFORE | ZLE_KEEPSUFFIX), // c:177
+        ("put-replace-selection", ZLE_KEEPSUFFIX), // c:94
+        (
+            "bracketed-paste",
+            ZLE_MENUCMP | ZLE_KEEPSUFFIX | ZLE_YANKBEFORE,
+        ), // c:31
+        ("copy-region-as-kill", ZLE_KEEPSUFFIX), // c:37
+        ("delete-char", ZLE_KEEPSUFFIX), // c:39
+        ("delete-word", ZLE_KEEPSUFFIX), // c:41
         // Non-command widgets (don't update lastcmd).
         ("argument-base", ZLE_NOTCOMMAND),
         ("digit-argument", ZLE_NOTCOMMAND),

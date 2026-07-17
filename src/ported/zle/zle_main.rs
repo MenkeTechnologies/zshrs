@@ -874,16 +874,40 @@ pub fn zlecore() {
         // We can only check this *after* reading a char, so the
         // detection lives below.
 
+        // c:1132 — `vilinerange = 0;` — per-key reset.
+        crate::ported::zle::zle_vi::VILINERANGE.store(0, SeqCst);
         // c:1133 — `reselectkeymap();`. A widget (or a shell function it
         // ran) may have relinked or deleted the keymap we're editing
         // under; re-open it by name before every key read.
         crate::ported::zle::zle_keymap::reselectkeymap();
 
+        // c:1134-1135 — `selectlocalmap(invicmdmode() && region_active
+        // && (km = openkeymap("visual")) ? km : NULL);` — while a
+        // visual selection is active in vicmd mode, the `visual` local
+        // keymap resolves keys first (iw/aw text objects, `o`
+        // exchange, `S` surround-style rebinds). Without it, `vaw`
+        // dispatched vicmd's `a` (vi-add-next) and dropped to insert
+        // mode mid-selection.
+        {
+            let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+            let vis = if crate::ported::zle::zle_h::invicmdmode(&kn)
+                && REGION_ACTIVE.load(SeqCst) != 0
+            {
+                crate::ported::zle::zle_keymap::openkeymap("visual")
+            } else {
+                None
+            };
+            crate::ported::zle::zle_keymap::selectlocalmap(vis);
+        }
+
         // Resolve the next bound widget via multi-byte keymap lookup.
         // Mirrors zle_main.c:1136 `bindk = getkeycmd();` — our
         // get_key_cmd walks the keymap trie reading bytes until it
         // hits a leaf or a non-prefix.
-        let thingy = match get_key_cmd() {
+        let thingy = get_key_cmd();
+        // c:1137 — `selectlocalmap(NULL);`
+        crate::ported::zle::zle_keymap::selectlocalmap(None);
+        let thingy = match thingy {
             Some(t) => t,
             None => {
                 EOFSENT.store(1, SeqCst);
@@ -1001,6 +1025,19 @@ pub fn zleread(
     MARK.store(0, SeqCst);
     DONE.store(0, SeqCst);
     EOFSENT.store(0, SeqCst); // c:1294 eofsent = 0 (cleared before zlecore)
+    // c:1285 — `histline = curhist;` — vi `G` (vifetchhistory) and the
+    // getvirange modified-line check compare against this.
+    crate::ported::zle::zle_hist::histline.store(
+        crate::ported::hist::curhist.load(SeqCst) as i32,
+        SeqCst,
+    );
+    // c:1289-1291 — `virangeflag = lastcmd = … = 0; vichgflag = 0;
+    // viinrepeat = 0;` — stale vi-change state from an interrupted
+    // edit must not leak into the next line (a leftover vichgflag
+    // blocks startvichange from ever recording again, killing `.`).
+    crate::ported::zle::zle_vi::VIRANGEFLAG.store(0, SeqCst); // c:1289
+    crate::ported::zle::zle_vi::VICHGFLAG.store(0, SeqCst); // c:1290
+    crate::ported::zle::zle_vi::VIINREPEAT.store(0, SeqCst); // c:1291
 
     // c:1294 — `selectkeymap("main", 1);`. Re-resolve `main` at the start
     // of EVERY line edit: `curkeymap` caches the keymap the last edit ran
@@ -1233,6 +1270,15 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         }
     }
 
+    // c:1423-1424 — `int nestedvichg = vichgflag; int isrepeat =
+    // (viinrepeat == 3);` — vi-change bookkeeping for `.` repeat.
+    let nestedvichg = crate::ported::zle::zle_vi::VICHGFLAG.load(SeqCst);
+    let isrepeat = crate::ported::zle::zle_vi::VIINREPEAT.load(SeqCst) == 3;
+    if isrepeat {
+        // c:1437-1438 — `if (isrepeat) viinrepeat = 2;`
+        crate::ported::zle::zle_vi::VIINREPEAT.store(2, SeqCst);
+    }
+
     // c:1426-1427 — `Thingy save_bindk = bindk; Thingy save_lbindk = lbindk;`.
     let save_bindk = BINDK.lock().ok().and_then(|b| b.clone());
     let _save_lbindk = LBINDK.lock().ok().and_then(|b| b.clone());
@@ -1290,6 +1336,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
             if set_bindk != 0 {
                 *BINDK.lock().unwrap() = save_bindk; // c:1597
             }
+            crate::zle_param_sync::end_vichg_frame(nestedvichg, isrepeat, rc); // c:1579-1595
             return rc;
         }
     }
@@ -1380,6 +1427,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
         if set_bindk != 0 {
             *BINDK.lock().unwrap() = save_bindk;
         }
+        crate::zle_param_sync::end_vichg_frame(nestedvichg, isrepeat, rc); // c:1579-1595
         return rc;
     }
 
@@ -1388,6 +1436,7 @@ pub fn execzlefunc(name: &str, args: &[String], set_bindk: i32, set_lbindk: i32)
     if set_bindk != 0 {
         *BINDK.lock().unwrap() = save_bindk; // c:1597
     }
+    crate::zle_param_sync::end_vichg_frame(nestedvichg, isrepeat, 0); // c:1579-1595
     0
 }
 
@@ -2290,7 +2339,7 @@ pub fn finish_(m: *const module) -> i32 {
     // mutex owns its slots; Drop will fire when the static is replaced.
     if let Ok(mut vb) = vibuf().lock() {
         for slot in vb.iter_mut() {
-            slot.clear();
+            *slot = crate::ported::zle::zle_h::cutbuffer::default();
         }
     }
     // c:2351-2352 — `zle_entry_ptr = NULL; zle_load_state = 0`. Our
@@ -2382,10 +2431,13 @@ pub fn zle_reset() {
     RPROMPT.lock().unwrap().clear();
     PRE_ZLE_STATUS.store(0, SeqCst);
     for slot in vibuf().lock().unwrap().iter_mut() {
-        slot.clear();
+        *slot = crate::ported::zle::zle_h::cutbuffer::default();
     }
     KILLRING.lock().unwrap().clear();
     KILLRINGMAX.store(8, SeqCst);
+    *CUTBUF.lock().unwrap() = crate::ported::zle::zle_h::cutbuffer::default();
+    crate::ported::zle::zle_misc::KCT.store(-1, SeqCst);
+    crate::ported::zle::zle_misc::KCTBUF_SEL.store(-2, SeqCst);
     YANKLAST.store(false, SeqCst);
     NEG_ARG.store(false, SeqCst);
     MULT.store(1, SeqCst);
@@ -2766,10 +2818,19 @@ pub fn in_vi_cmd_mode() -> bool {
 /// `t_executenamedcmd` redirection at zle_keymap.c:1787 — both are
 /// host-driven concerns that the bin can layer on top.
 pub fn get_key_cmd() -> Option<Thingy> {
-    let km = {
-        let local = LOCALKEYMAP.lock().unwrap().clone();
-        let cur = curkeymap.lock().unwrap().clone();
-        local.or(cur)?
+    // c:zle_keymap.c:1607-1616 — a selected LOCAL keymap (viopp/visual/
+    // isearch) does NOT replace the global keymap wholesale: each key is
+    // looked up in the local map first, and when it is neither bound nor
+    // a prefix there, the GLOBAL map resolves it (`if (!loc && !ispfx)
+    // f = keybind(km, keybuf, &s);`). Collapsing to `local.or(cur)`
+    // made every key unbound in viopp (y/d/c motions, yy doubling) die
+    // as EOF, aborting vi operators and leaking the viopp map.
+    let local_km = LOCALKEYMAP.lock().unwrap().clone();
+    let global_km = curkeymap.lock().unwrap().clone();
+    let km = match (&local_km, &global_km) {
+        (None, None) => return None,
+        (Some(l), None) => l.clone(),
+        (_, Some(g)) => g.clone(),
     };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
     let mut last_match: Option<Thingy> = None;
@@ -2823,35 +2884,59 @@ pub fn get_key_cmd() -> Option<Thingy> {
             SeqCst,
         );
 
-        // Look up the current buffer.
-        let (current_match, is_prefix) = if buf.len() == 1 {
-            let m = km.first[b as usize].clone();
-            let pfx = km.multi.keys().any(|k| k.len() > 1 && k[0] == b);
-            (m, pfx)
-        } else {
-            let entry = km.multi.get(&buf[..]);
-            let m = entry.and_then(|e| e.bind.clone());
-            // Whether the current sequence is a PREFIX of a longer binding.
-            // The entry's `prefixct` only counts when `km.multi` holds an
-            // intermediate node for `buf`; if it stores full sequences
-            // only (e.g. `^[[A` but no `^[[` node), prefixct is 0 and the
-            // walk broke after `^[` — leaking `[A`/`[D` so arrow keys
-            // dispatched ESC + literal bytes (left "deleted", up did
-            // nothing). Detect prefix the same way the single-byte arm
-            // does: ANY bound sequence longer than `buf` that starts with
-            // `buf`.
-            let pfx = entry.map(|e| e.prefixct > 0).unwrap_or(false)
-                || km
-                    .multi
-                    .keys()
-                    .any(|k| k.len() > buf.len() && k.starts_with(&buf[..]));
-            (m, pfx)
+        // Look up the current buffer in one keymap: (binding, is_prefix).
+        let lookup = |m: &crate::ported::zle::zle_keymap::Keymap| {
+            if buf.len() == 1 {
+                let bind = m.first[b as usize].clone();
+                let pfx = m.multi.keys().any(|k| k.len() > 1 && k[0] == b);
+                (bind, pfx)
+            } else {
+                let entry = m.multi.get(&buf[..]);
+                let bind = entry.and_then(|e| e.bind.clone());
+                // Whether the current sequence is a PREFIX of a longer binding.
+                // The entry's `prefixct` only counts when `multi` holds an
+                // intermediate node for `buf`; if it stores full sequences
+                // only (e.g. `^[[A` but no `^[[` node), prefixct is 0 and the
+                // walk broke after `^[` — leaking `[A`/`[D` so arrow keys
+                // dispatched ESC + literal bytes (left "deleted", up did
+                // nothing). Detect prefix the same way the single-byte arm
+                // does: ANY bound sequence longer than `buf` that starts with
+                // `buf`.
+                let pfx = entry.map(|e| e.prefixct > 0).unwrap_or(false)
+                    || m.multi
+                        .keys()
+                        .any(|k| k.len() > buf.len() && k.starts_with(&buf[..]));
+                (bind, pfx)
+            }
         };
+        // c:1607-1616 — local keymap first; fall back to the effective
+        // map (`km` — global when present) when the sequence is neither
+        // bound nor a prefix locally; `km`'s prefix status always
+        // extends the walk.
+        let (mut current_match, mut is_prefix) = match (&local_km, &global_km) {
+            (Some(l), Some(_)) => lookup(l), // c:1610-1612
+            _ => (None, false),
+        };
+        let (km_match, km_pfx) = lookup(&km);
+        if current_match.is_none() && !is_prefix {
+            // c:1614-1615 `if (!loc && !ispfx) f = keybind(km, keybuf, &s);`
+            current_match = km_match;
+        }
+        is_prefix |= km_pfx; // c:1616 `ispfx |= keyisprefix(km, keybuf);`
 
+        // c:1618 — `if (f != t_undefinedkey)` — an unbound sequence
+        // (keybind's t_undefinedkey) is NOT a match: recording it armed
+        // the key timeout, so a bare ESC dispatched alone as
+        // undefined-key before the rest of an `^[f`-style Meta binding
+        // arrived (M-f / M-DEL dead for any typist slower than
+        // KEYTIMEOUT). C keeps the read BLOCKING until a real binding
+        // or a non-prefix byte resolves the sequence.
         if let Some(t) = current_match {
-            last_match = Some(t);
-            last_match_len = buf.len();
-            lastc = LASTCHAR.load(SeqCst); // c:1622 — `lastc = lastchar;`
+            if t.nam != "undefined-key" {
+                last_match = Some(t);
+                last_match_len = buf.len();
+                lastc = LASTCHAR.load(SeqCst); // c:1622 — `lastc = lastchar;`
+            }
         }
 
         // If this sequence is no longer a prefix of any binding,
@@ -2889,6 +2974,18 @@ pub fn get_key_cmd() -> Option<Thingy> {
         ); // c:1708
     }
 
+    // c:1583 — `Thingy func = t_undefinedkey;` — bytes were read but
+    // nothing matched: C returns t_undefinedkey (getkeycmd's caller
+    // feeps). Returning None here would read as EOF and EXIT the shell
+    // on any unbound key.
+    if last_match.is_none() && !buf.is_empty() {
+        return crate::ported::zle::zle_thingy::thingytab()
+            .lock()
+            .ok()
+            .and_then(|t| t.get("undefined-key").cloned())
+            .or_else(|| Some(Thingy::new("undefined-key")));
+    }
+
     if std::env::var_os("ZSHRS_ZLE_LOG").is_some() {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -2923,6 +3020,14 @@ pub fn get_key_cmd() -> Option<Thingy> {
 ///     post-call (zle_main.c calls `handleundo()` from the zlecore
 ///     loop after each widget).
 fn execute_widget(widget: &widget) -> i32 {
+    // c:1423-1424 — `int nestedvichg = vichgflag; int isrepeat =
+    // (viinrepeat == 3);` — vi-change bookkeeping for `.` repeat.
+    let nestedvichg = crate::ported::zle::zle_vi::VICHGFLAG.load(SeqCst);
+    let isrepeat = crate::ported::zle::zle_vi::VIINREPEAT.load(SeqCst) == 3;
+    if isrepeat {
+        // c:1437-1438 — `if (isrepeat) viinrepeat = 2;`
+        crate::ported::zle::zle_vi::VIINREPEAT.store(2, SeqCst);
+    }
     // Reset sticky column unless the widget keeps it.
     if (widget.flags & ZLE_LASTCOL) == 0 {
         LASTCOL.store(-1, SeqCst);
@@ -2972,6 +3077,9 @@ fn execute_widget(widget: &widget) -> i32 {
     // Capture the change (if any) into the undo stack. undo/redo widgets
     // call mkundoent themselves, so a no-op diff here is harmless.
     mkundoent();
+
+    // c:1579-1595 — if this widget constituted the vi change, end it.
+    crate::zle_param_sync::end_vichg_frame(nestedvichg, isrepeat, ret);
 
     ret
 }
@@ -3377,9 +3485,12 @@ pub static LPROMPT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new
 pub static RPROMPT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 /// Port of `int pre_zle_status` from `Src/Zle/zle_main.c`.
 pub static PRE_ZLE_STATUS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-/// Port of `ZLE_STRING_T vibuf[36]` from `Src/Zle/zle_misc.c`.
-pub static VIBUF: std::sync::OnceLock<std::sync::Mutex<[Vec<char>; 36]>> =
-    std::sync::OnceLock::new();
+/// Port of `struct cutbuffer vibuf[36]` from `Src/Zle/zle_utils.c:59`.
+/// Each register carries its own CUTBUFFER_* flags (line-mode yanks
+/// must paste as whole lines).
+pub static VIBUF: std::sync::OnceLock<
+    std::sync::Mutex<[crate::ported::zle::zle_h::cutbuffer; 36]>,
+> = std::sync::OnceLock::new();
 
 /// Emacs mode flag
 pub fn is_emacs() -> bool {
@@ -3507,8 +3618,12 @@ pub static HIGHLIGHT: std::sync::OnceLock<std::sync::Mutex<HighlightManager>> =
 // the accessor wrappers interleaved between real port ported.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /// `vibuf` — see implementation.
-pub fn vibuf() -> &'static std::sync::Mutex<[Vec<char>; 36]> {
-    VIBUF.get_or_init(|| std::sync::Mutex::new(std::array::from_fn(|_| Vec::new())))
+pub fn vibuf() -> &'static std::sync::Mutex<[crate::ported::zle::zle_h::cutbuffer; 36]> {
+    VIBUF.get_or_init(|| {
+        std::sync::Mutex::new(std::array::from_fn(|_| {
+            crate::ported::zle::zle_h::cutbuffer::default()
+        }))
+    })
 }
 /// `history` — see implementation.
 pub fn history() -> &'static std::sync::Mutex<History> {

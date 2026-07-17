@@ -983,10 +983,12 @@ pub fn selectlocalmap(m: Option<Arc<Keymap>>) {
     };
     // c:541-542 — `if (oldm && !m) reselectkeymap()`.
     if oldm.is_some() && m.is_none() {
-        // reselectkeymap operates against file-scope ZLE statics; the
-        // safe fallback here is selectkeymap on the main keymap by
-        // name, which is what reselectkeymap does internally.
-        let _ = selectkeymap("main", 1);
+        // reselectkeymap re-opens the CURRENT keymap by name
+        // (zle_keymap.c:551 `selectkeymap(curkeymapname, 1)`). It was
+        // previously hardcoded to "main", which yanked vi command mode
+        // back to viins whenever a vi operator dropped its viopp local
+        // map — `yy` left the editor in insert mode so `p` self-inserted.
+        reselectkeymap();
     }
 }
 

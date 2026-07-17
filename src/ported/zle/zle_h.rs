@@ -710,6 +710,7 @@ pub fn removesuffix() -> i32 {
 /// binary data, not NUL-terminated. `len` is a character count
 /// (N.B. number of characters, not size in bytes). `flags` uses the
 /// CUTBUFFER_* constants defined below.
+#[derive(Clone, Default)]
 pub struct cutbuffer {
     // c:342
     pub buf: ZLE_STRING_T, // c:343

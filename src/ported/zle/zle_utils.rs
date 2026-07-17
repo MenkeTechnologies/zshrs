@@ -749,35 +749,47 @@ pub fn cuttext(
     let mod_vibuf = ZMOD.lock().unwrap().vibuf as usize;
     let chars: Vec<char> = txt.to_vec();
 
+    let text: String = chars.iter().collect();
     if mod_flags & MOD_VIBUF != 0 {
-        // c:961-979 — write to vibuf[zmod.vibuf].
+        // c:964-986 — write to vibuf[zmod.vibuf].
         let idx = mod_vibuf.min(vibuf().lock().unwrap().len().saturating_sub(1));
         let viapp = mod_flags & MOD_VIAPP != 0;
         let mut vibuf_guard = vibuf().lock().unwrap();
-        if !viapp || vibuf_guard[idx].is_empty() {
-            // c:962-967 — replace.
-            vibuf_guard[idx] = chars;
+        let b = &mut vibuf_guard[idx];
+        if !viapp || b.buf.is_empty() {
+            // c:967-972 — replace.
+            b.buf = text;
+            b.len = ct;
+            b.flags = if vilinerange { CUTBUFFER_LINE } else { 0 }; // c:972
         } else {
-            // c:968-979 — append; insert \n separator under
-            //              CUTBUFFER_LINE semantics.
+            // c:973-985 — append; insert \n separator when the buffer
+            //             is (or becomes) line-mode.
             if vilinerange {
-                vibuf_guard[idx].push('\n');
+                b.flags |= CUTBUFFER_LINE; // c:976-977
             }
-            vibuf_guard[idx].extend(chars);
+            if b.flags & CUTBUFFER_LINE != 0 {
+                b.buf.push('\n'); // c:982-983 `b->buf[len++] = ZWC('\n');`
+            }
+            b.buf.push_str(&text); // c:984
+            b.len = b.buf.chars().count(); // c:985 `b->len = len + ct;`
         }
         return;
     } else if flags & CUT_YANK != 0 {
-        // c:980-986 — vi "0 register (idx 26).
+        // c:987-993 — Save in "0 (idx 26).
         if let Some(slot) = vibuf().lock().unwrap().get_mut(26) {
-            *slot = chars;
+            slot.buf = text.clone();
+            slot.len = ct; // c:992
+            slot.flags = if vilinerange { CUTBUFFER_LINE } else { 0 }; // c:993
         }
     } else {
-        // c:987-997 — shift "1-"8 to "2-"9, store at "1 (idx 27).
+        // c:994-1003 — Save in "1, shifting "1-"8 along to "2-"9.
         let mut v = vibuf().lock().unwrap();
         for n in (28..36).rev() {
-            v[n] = v[n - 1].clone();
+            v[n] = v[n - 1].clone(); // c:998-999
         }
-        v[27] = chars.clone();
+        v[27].buf = text.clone();
+        v[27].len = ct; // c:1002
+        v[27].flags = if vilinerange { CUTBUFFER_LINE } else { 0 }; // c:1003
     }
 
     // c:1004-1018 — rotate CUTBUF into KILLRING on kill+replace
@@ -818,8 +830,13 @@ pub fn cuttext(
         cb.buf.push_str(&cell);
     }
     cb.len = cb.buf.chars().count();
+    // c:1039-1042 — the line flag tracks THIS cut: set on a line-range
+    // cut, CLEARED otherwise (a later char-wise kill must not keep
+    // pasting as whole lines).
     if vilinerange {
         cb.flags |= CUTBUFFER_LINE;
+    } else {
+        cb.flags &= !CUTBUFFER_LINE;
     }
 }
 
@@ -832,26 +849,20 @@ pub fn cuttext(
 /// DECCS adjustment loop the non-RAW path uses.
 /// WARNING: param names don't match C — Rust=(zle, ct, flags) vs C=(ct, flags)
 pub fn backkill(ct: i32, flags: i32) {
-    // c:1045
-    let ct = ct as usize;
-    if ct == 0 || ZLECS.load(Ordering::SeqCst) == 0 {
-        return;
-    }
-    let _ = flags; // CUT_RAW path: no DECCS multibyte adjustment.
-    let take_n = ct.min(ZLECS.load(Ordering::SeqCst));
-    let start = ZLECS.load(Ordering::SeqCst) - take_n;
-    let cut_chars: Vec<char> = ZLELINE
-        .lock()
-        .unwrap()
-        .drain(start..ZLECS.load(Ordering::SeqCst))
-        .collect(); // c:1057 cut + shiftchars
-    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
+    // c:1052
+    // c:1055-1062 — move the cursor back over the killed range. The
+    // non-RAW arm's DECCS walk collapses to the same subtraction for
+    // Vec<char> storage; both arms clamp at 0.
+    let take_n = (ct.max(0) as usize).min(ZLECS.load(Ordering::SeqCst));
+    let start = ZLECS.load(Ordering::SeqCst) - take_n; // c:1056 `zlecs -= ct;`
     ZLECS.store(start, Ordering::SeqCst);
-    KILLRING.lock().unwrap().push_front(cut_chars);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(Ordering::SeqCst) {
-        KILLRING.lock().unwrap().pop_back();
-    }
-    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1059 CCRIGHT
+    // c:1064-1065 — `cut(zlecs, ct, flags); shiftchars(zlecs, ct);` —
+    // the kill routes through cuttext (CUTBUF + vi registers + kill-
+    // ring rotation), NOT straight onto the kill ring: pushing here
+    // bypassed CUTBUF so `yank`/`p` never saw the killed text.
+    cut(start as i32, take_n as i32, flags); // c:1064
+    shiftchars(start as i32, take_n as i32); // c:1065
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1066 CCRIGHT
 }
 
 /// Port of `forekill(int ct, int flags)` from `Src/Zle/zle_utils.c:1064`. Cuts `ct`
@@ -864,21 +875,19 @@ pub fn backkill(ct: i32, flags: i32) {
 /// re-walk.
 /// WARNING: param names don't match C — Rust=(zle, ct, flags) vs C=(ct, flags)
 pub fn forekill(ct: i32, flags: i32) {
-    // c:1064
-    let ct = ct as usize;
-    if ct == 0 || ZLECS.load(Ordering::SeqCst) >= ZLELL.load(Ordering::SeqCst) {
-        return;
-    }
-    let _ = flags; // CUT_RAW path: no INCCS multibyte adjustment.
-    let take_n = ct.min(ZLELL.load(Ordering::SeqCst) - ZLECS.load(Ordering::SeqCst));
-    let i = ZLECS.load(Ordering::SeqCst);
-    let cut_chars: Vec<char> = ZLELINE.lock().unwrap().drain(i..i + take_n).collect(); // c:1077 cut + shiftchars
-    ZLELL.store(ZLELINE.lock().unwrap().len(), Ordering::SeqCst);
-    KILLRING.lock().unwrap().push_front(cut_chars);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(Ordering::SeqCst) {
-        KILLRING.lock().unwrap().pop_back();
-    }
-    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1079 CCRIGHT
+    // c:1071
+    let i = ZLECS.load(Ordering::SeqCst); // c:1073 `int i = zlecs;`
+    // c:1076-1082 — the non-RAW arm's INCCS walk collapses to the same
+    // clamped count for Vec<char> storage; zlecs stays at `i`.
+    let take_n =
+        (ct.max(0) as usize).min(ZLELL.load(Ordering::SeqCst).saturating_sub(i));
+    // c:1084-1085 — `cut(i, ct, flags); shiftchars(i, ct);` — the kill
+    // routes through cuttext (CUTBUF + vi registers + kill-ring
+    // rotation), NOT straight onto the kill ring: pushing here
+    // bypassed CUTBUF so `yank`/`p` never saw the killed text.
+    cut(i as i32, take_n as i32, flags); // c:1084
+    shiftchars(i as i32, take_n as i32); // c:1085
+    ZLE_RESET_NEEDED.store(1, Ordering::SeqCst); // c:1086 CCRIGHT
 }
 
 /// Port of `backdel(int ct, int flags)` from `Src/Zle/zle_utils.c:1084`. Removes `ct`
@@ -1976,13 +1985,17 @@ pub fn cut_to_buffer(buf: usize, append: bool) {
             (MARK.load(Ordering::SeqCst), ZLECS.load(Ordering::SeqCst))
         };
 
-        let text: Vec<char> = ZLELINE.lock().unwrap()[start..end].to_vec();
+        let text: String = ZLELINE.lock().unwrap()[start..end].iter().collect();
 
+        let mut vb = vibuf().lock().unwrap();
+        let slot = &mut vb[buf];
         if append {
-            vibuf().lock().unwrap()[buf].extend(text);
+            slot.buf.push_str(&text);
         } else {
-            vibuf().lock().unwrap()[buf] = text;
+            slot.buf = text;
+            slot.flags = 0;
         }
+        slot.len = slot.buf.chars().count();
     }
 }
 
@@ -1994,7 +2007,7 @@ pub fn cut_to_buffer(buf: usize, append: bool) {
 /// as the file-scope `VIBUF` static (zle_main.rs).
 pub fn paste_from_buffer(buf: usize, after: bool) {
     if buf < vibuf().lock().unwrap().len() {
-        let text = vibuf().lock().unwrap()[buf].clone();
+        let text: Vec<char> = vibuf().lock().unwrap()[buf].buf.chars().collect();
         if !text.is_empty() {
             if after && ZLECS.load(Ordering::SeqCst) < ZLELL.load(Ordering::SeqCst) {
                 ZLECS.fetch_add(1, Ordering::SeqCst);

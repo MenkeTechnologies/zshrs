@@ -2179,20 +2179,43 @@ pub fn infernexthistory() -> i32 {
 
 /// Port of `vifetchhistory(UNUSED(char **args))` from Src/Zle/zle_hist.c:1787.
 pub fn vifetchhistory() -> i32 {
-    // c:1787
-    // C body (c:1787-1804): vi `G` — fetch history entry numbered
-    //                      mult; with no count fetch most recent.
-    let n = ZMOD.lock().unwrap().mult;
-    if n <= 0 {
-        if history().lock().unwrap().entries.is_empty() {
-            return 1;
-        }
-        // Single-statement double-lock would deadlock; hoist.
-        let mut h = history().lock().unwrap();
-        h.cursor = h.entries.len() - 1;
-        return 0;
+    // c:1788
+    use crate::ported::zle::zle_main::ZLEREADFLAGS;
+    use crate::ported::zle::zle_vi::VIRANGEFLAG;
+    // c:1790-1791 — `if (zmult < 0) return 1;` (zle.h:267 zmult ≡ zmod.mult).
+    if ZMOD.lock().unwrap().mult < 0 {
+        return 1;
     }
-    if (n as usize) > history().lock().unwrap().entries.len() {
+    let mod_mult = ZMOD.lock().unwrap().flags & crate::ported::zle::zle_h::MOD_MULT != 0;
+    let no_hist =
+        ZLEREADFLAGS.load(Ordering::SeqCst) & crate::ported::zsh_h::ZLRF_HISTORY == 0;
+    // c:1792-1800 — on the current history line (or mid-range), a bare
+    // `G` moves to the beginning of the LAST buffer line.
+    if histline.load(Ordering::SeqCst) as i64 == crate::ported::hist::curhist.load(Ordering::SeqCst)
+        || VIRANGEFLAG.load(Ordering::SeqCst) != 0
+        || no_hist
+    {
+        if !mod_mult {
+            // c:1793-1796 — `zlecs = zlell; zlecs = findbol(); return 0;`
+            ZLECS.store(ZLELL.load(Ordering::SeqCst), Ordering::SeqCst); // c:1794
+            ZLECS.store(
+                crate::ported::zle::zle_utils::findbol(),
+                Ordering::SeqCst,
+            ); // c:1795
+            return 0; // c:1796
+        }
+        if VIRANGEFLAG.load(Ordering::SeqCst) != 0 || no_hist {
+            return 1; // c:1798-1799
+        }
+    }
+    // c:1801-1804 — `zle_goto_hist((zmod.flags & MOD_MULT) ? zmult :
+    // curhist, 0, 0)` — jump to the numbered history event (absolute).
+    let n = if mod_mult {
+        ZMOD.lock().unwrap().mult
+    } else {
+        crate::ported::hist::curhist.load(Ordering::SeqCst) as i32
+    };
+    if (n as usize) > history().lock().unwrap().entries.len() || n <= 0 {
         return 1;
     }
     history().lock().unwrap().cursor = (n as usize).saturating_sub(1);

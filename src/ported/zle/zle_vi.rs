@@ -38,18 +38,20 @@ use crate::ported::zle::{
 /// startvitext at the current position.
 pub fn vichange() -> i32 {
     // c:438
-    startvichange(1); // c:440
-    let c2 = getvirange(0); // c:441
+    startvichange(1); // c:443
+    // c:444 — `getvirange(1)` — wf=1 sets WORDFLAG so word motions
+    // stop at end-of-word (`cw` behaves like `ce`, keeping the
+    // trailing whitespace).
+    let c2 = getvirange(1); // c:444
     if c2 != -1 {
         let cs = ZLECS.load(SeqCst) as i32;
-        forekill(
-            c2 - cs, // c:443
-            CUT_RAW,
-        );
-        startvitext(1); // c:444
-        return 0;
+        forekill(c2 - cs, CUT_RAW); // c:446
+        selectkeymap("main", 1); // c:447
+        VIINSBEGIN.store(ZLECS.load(SeqCst), SeqCst); // c:448 `viinsbegin = zlecs;`
+        VISTARTCHANGE.store(UNDO_CHANGENO.load(SeqCst), SeqCst); // c:449
+        return 0; // c:445 ret = 0
     }
-    1 // c:453 ret=1
+    1 // c:451
 }
 
 /// Direct port of `void startvichange(int im)` from
@@ -288,7 +290,7 @@ pub fn getvirange(wf: i32) -> i32 {
     let mpos: i32 = load_mark(); // c:174
     let mut ret: i32 = 0; // c:174
     let visual: i32 = REGION_ACTIVE.load(SeqCst) as i32; // c:175 region_active
-    let mult1 = crate::ported::zle::compcore::ZMULT.load(SeqCst); // c:176 zmult
+    let mult1 = ZMOD.lock().unwrap().mult; // c:176 zmult (zle.h:267 `#define zmult (zmod.mult)`)
     let hist1 = histline.load(SeqCst); // c:176 histline
 
     if visual != 0 {
@@ -350,28 +352,25 @@ pub fn getvirange(wf: i32) -> i32 {
                 .as_ref()
                 .map(|t| t.nam.clone())
                 == Some(k2.nam.clone());
-            if is_bindk {
-                // c:220 `dovilinerange()` — line-oriented repeat of the
-                // operator key (dd/cc/yy). The Rust `dovilinerange`
-                // returns the whole-line [bol,end) range for the current
-                // line; here we honor the C post-conditions so the final
-                // whole-line expansion below yields the target line(s).
-                let _range = dovilinerange();
-                VILINERANGE.store(1, SeqCst); // c:330 `vilinerange = 1;`
-                VIRANGEFLAG.store(2, SeqCst); // c:332 `virangeflag = 2;`
-                // Rust dovilinerange has no failure return; ret stays 0.
-            } else if execzlefunc(&k2.nam, &[], 1, 0) != 0 {
-                // c:220 `execzlefunc(k2, zlenoargs, 1, 0)`
+            // c:215-219 — With k2 == bindk, the command key is repeated:
+            // a number of lines is used.  If the function used
+            // returns 1, we fail.
+            if if is_bindk {
+                dovilinerange() // c:220 `(k2 == bindk) ? dovilinerange()`
+            } else {
+                execzlefunc(&k2.nam, &[], 1, 0) // c:220 `: execzlefunc(k2, zlenoargs, 1, 0)`
+            } != 0
+            {
                 ret = -1; // c:221
             }
             if VIINREPEAT.load(SeqCst) != 0 {
                 // c:222 `if (viinrepeat)`
-                crate::ported::zle::compcore::ZMULT.store(mult1, SeqCst); // c:223 `zmult = mult1;`
+                ZMOD.lock().unwrap().mult = mult1; // c:223 `zmult = mult1;`
             } else {
                 // c:224
                 let tmult = ZMOD.lock().unwrap().tmult;
                 let zm = mult1 * tmult; // c:225 `zmult = mult1 * zmod.tmult;`
-                crate::ported::zle::compcore::ZMULT.store(zm, SeqCst);
+                ZMOD.lock().unwrap().mult = zm;
                 if VICHGFLAG.load(SeqCst) == 2 {
                     // c:226 `if (vichgflag == 2)`
                     CURVICHG.lock().unwrap().mod_.mult = zm; // c:227
@@ -483,21 +482,67 @@ pub fn getvirange(wf: i32) -> i32 {
 }
 
 /// Port of `dovilinerange()` from Src/Zle/zle_vi.c:302.
-/// WARNING: param names don't match C — Rust=(zle) vs C=()
-pub fn dovilinerange() -> (usize, usize) {
-    // c:302
-    // C body (c:304-333): expands the current vi range to whole lines
-    //                    (includes leading/trailing newlines). Returns
-    //                    a [start, end) byte pair.
-    let bol = findbol();
-    let eol = findeol();
-    // Include the trailing newline if present.
-    let end = if eol < ZLELL.load(SeqCst) {
-        eol + 1
+pub fn dovilinerange() -> i32 {
+    // c:305 — `int pos = zlecs, n = zmult;`
+    let pos = ZLECS.load(SeqCst) as i64;
+    let mut n = ZMOD.lock().unwrap().mult as i64; // zle.h:267 `#define zmult (zmod.mult)`
+    // C tracks the walk in `zlecs` itself, which transiently holds
+    // zlell+1 (downward) or -1 (upward). Mirror it in an i64 and sync
+    // the global before each findeol/findbol call (both read zlecs).
+    let mut cs: i64 = pos;
+
+    // c:307-310 — A number of lines is taken as the range.  The current line
+    // is included.  If the repeat count is positive the lines go
+    // downward, otherwise upward.  The repeat count gives the
+    // number of lines.
+    VILINERANGE.store(1, SeqCst); // c:311 `vilinerange = 1;`
+    if n == 0 {
+        return 1; // c:312-313 `if (!n) return 1;`
+    }
+    if n > 0 {
+        // c:315 `while(n-- && zlecs <= zlell) zlecs = findeol() + 1;`
+        loop {
+            let t = n;
+            n -= 1;
+            if t == 0 || cs > ZLELL.load(SeqCst) as i64 {
+                break;
+            }
+            ZLECS.store(cs as usize, SeqCst);
+            cs = findeol() as i64 + 1;
+        }
+        if n != -1 {
+            // c:317-320 — ran off the end before the count was used up.
+            ZLECS.store(pos as usize, SeqCst); // c:318 `zlecs = pos;`
+            return 1; // c:319
+        }
+        ZLECS.store(cs as usize, SeqCst);
+        deccs(); // c:321 `DECCS();`
     } else {
-        eol
-    };
-    (bol, end)
+        // c:323 `while(n++ && zlecs >= 0) zlecs = findbol() - 1;`
+        loop {
+            let t = n;
+            n += 1;
+            if t == 0 || cs < 0 {
+                break;
+            }
+            ZLECS.store(cs as usize, SeqCst);
+            cs = findbol() as i64 - 1;
+        }
+        if n != 1 {
+            // c:325-328 — ran off the top before the count was used up.
+            ZLECS.store(pos as usize, SeqCst); // c:326 `zlecs = pos;`
+            return 1; // c:327
+        }
+        // c:329 `INCCS();` — cs may be -1 (line 0's bol - 1); +1 → 0.
+        if cs < 0 {
+            ZLECS.store(0, SeqCst);
+        } else {
+            ZLECS.store(cs as usize, SeqCst);
+            inccs();
+        }
+    }
+    VIRANGEFLAG.store(2, SeqCst); // c:331 `virangeflag = 2;`
+    0 // c:332 `return 0;`
 }
 
 /// Port of `viaddnext(UNUSED(char **args))` from Src/Zle/zle_vi.c:336.
@@ -739,18 +784,14 @@ pub fn viyank(_args: &[String]) -> i32 {
 /// Port of `viyankeol(UNUSED(char **args))` from Src/Zle/zle_vi.c:537.
 pub fn viyankeol() -> i32 {
     // c:537
-    // C body (c:539-547): `x = findeol(); startvichange(-1); if (x ==
-    //                     zlecs) return 1; cut(zlecs, x-zlecs, CUT_YANK);
-    //                     return 0`.
-    let x = findeol();
-    startvichange(-1);
+    let x = findeol(); // c:540 `int x = findeol();`
+    startvichange(-1); // c:542
     if x == ZLECS.load(SeqCst) {
-        return 1; // c:550
+        return 1; // c:543-544
     }
-    let text: Vec<char> = ZLELINE.lock().unwrap()[ZLECS.load(SeqCst)..x].to_vec();
-    KILLRING.lock().unwrap().push_front(text);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-        KILLRING.lock().unwrap().pop_back();
+    {
+        let cs = ZLECS.load(SeqCst) as i32;
+        cut(cs, x as i32 - cs, CUT_YANK); // c:545
     }
     0 // c:550
 }
@@ -758,32 +799,29 @@ pub fn viyankeol() -> i32 {
 /// Port of `viyankwholeline(UNUSED(char **args))` from Src/Zle/zle_vi.c:550.
 pub fn viyankwholeline() -> i32 {
     // c:550
-    // C body (c:553-572): `bol = findbol(); startvichange(-1); n = zmult;
-    //                     if (n < 1) return 1; for (i=n; i--; ) zlecs =
-    //                     findeol() + 1; if (zlecs > zlell) zlecs = zlell;
-    //                     cut(bol, zlecs - bol, CUT_YANK); zlecs = bol +
-    //                     oldcs - bol; return 0`.
+    // c:553 — `int bol = findbol(), oldcs = zlecs;`
     let bol = findbol();
     let oldcs = ZLECS.load(SeqCst);
-    startvichange(-1);
-    let n = ZMOD.lock().unwrap().mult;
+    startvichange(-1); // c:556
+    let mut n = ZMOD.lock().unwrap().mult; // c:557 `n = zmult;`
     if n < 1 {
-        return 1;
+        return 1; // c:558-559
     }
-    for _ in 0..n {
-        ZLECS.store(findeol() + 1, SeqCst);
+    // c:560-566 — `while(n--) { if (zlecs > zlell) { zlecs = oldcs;
+    //              return 1; } zlecs = findeol() + 1; }`
+    while n > 0 {
         if ZLECS.load(SeqCst) > ZLELL.load(SeqCst) {
-            ZLECS.store(ZLELL.load(SeqCst), SeqCst);
+            ZLECS.store(oldcs, SeqCst); // c:562
+            return 1; // c:563
         }
+        ZLECS.store(findeol() + 1, SeqCst); // c:565
+        n -= 1;
     }
-    let end = ZLECS.load(SeqCst);
-    let text: Vec<char> = ZLELINE.lock().unwrap()[bol..end].to_vec();
-    KILLRING.lock().unwrap().push_front(text);
-    if KILLRING.lock().unwrap().len() > KILLRINGMAX.load(SeqCst) {
-        KILLRING.lock().unwrap().pop_back();
-    }
-    ZLECS.store(oldcs, SeqCst);
-    0
+    VILINERANGE.store(1, SeqCst); // c:567 `vilinerange = 1;`
+    let end = ZLECS.load(SeqCst) as i32;
+    cut(bol as i32, end - bol as i32 - 1, CUT_YANK); // c:568
+    ZLECS.store(oldcs, SeqCst); // c:569 `zlecs = oldcs;`
+    0 // c:570
 }
 
 /// Port of `vireplace(UNUSED(char **args))` from Src/Zle/zle_vi.c:574.
@@ -2850,21 +2888,48 @@ mod tests {
         let _: i32 = getvirange(0);
     }
 
-    /// c:287 — `dovilinerange()` returns (usize, usize) tuple.
+    /// c:302-333 — `dovilinerange()` with zmult=1 walks one line down
+    /// (`zlecs = findeol() + 1`, then DECCS) and reports success: the
+    /// cursor lands on the current line's eol, vilinerange=1,
+    /// virangeflag=2. This is the `yy`/`dd`/`cc` doubled-operator range.
     #[test]
-    fn dovilinerange_returns_tuple_type() {
+    fn dovilinerange_single_line_lands_on_eol() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: (usize, usize) = dovilinerange();
+        let line: Vec<char> = "echo aaa\necho bbb\necho ccc".chars().collect();
+        ZLELL.store(line.len(), SeqCst);
+        *ZLELINE.lock().unwrap() = line;
+        ZLECS.store(0, SeqCst);
+        ZMOD.lock().unwrap().mult = 1;
+        let ret: i32 = dovilinerange();
+        assert_eq!(ret, 0, "single-line range succeeds");
+        assert_eq!(ZLECS.load(SeqCst), 8, "cursor at eol of line 1");
+        assert_eq!(VILINERANGE.load(SeqCst), 1, "c:311");
+        assert_eq!(VIRANGEFLAG.load(SeqCst), 2, "c:331");
+        VIRANGEFLAG.store(0, SeqCst);
+        *ZLELINE.lock().unwrap() = Vec::new();
+        ZLELL.store(0, SeqCst);
+        ZLECS.store(0, SeqCst);
     }
 
-    /// c:287 — `dovilinerange()` lo ≤ hi invariant (valid range).
+    /// c:314-320 — a count larger than the remaining lines fails:
+    /// zlecs is restored and dovilinerange returns 1.
     #[test]
-    fn dovilinerange_returns_valid_range() {
+    fn dovilinerange_overrun_count_fails_and_restores() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let (lo, hi) = dovilinerange();
-        assert!(lo <= hi, "lo={} must ≤ hi={}", lo, hi);
+        let line: Vec<char> = "echo aaa\necho bbb".chars().collect();
+        ZLELL.store(line.len(), SeqCst);
+        *ZLELINE.lock().unwrap() = line;
+        ZLECS.store(3, SeqCst);
+        ZMOD.lock().unwrap().mult = 9;
+        let ret: i32 = dovilinerange();
+        assert_eq!(ret, 1, "count past last line fails (c:319)");
+        assert_eq!(ZLECS.load(SeqCst), 3, "zlecs restored (c:318)");
+        ZMOD.lock().unwrap().mult = 1;
+        *ZLELINE.lock().unwrap() = Vec::new();
+        ZLELL.store(0, SeqCst);
+        ZLECS.store(0, SeqCst);
     }
 
     /// c:382 — `videletechar` return in u8 exit-code range.
@@ -3060,12 +3125,12 @@ mod tests {
         let _: i32 = getvirange(0);
     }
 
-    /// c:287 — `dovilinerange` returns (usize, usize) tuple.
+    /// c:302 — `dovilinerange` returns int (0 success / 1 failure).
     #[test]
-    fn dovilinerange_returns_usize_pair_type() {
+    fn dovilinerange_returns_i32_type() {
         let _g = crate::test_util::global_state_lock();
         let _g2 = zle_test_setup();
-        let _: (usize, usize) = dovilinerange();
+        let _: i32 = dovilinerange();
     }
 
     /// c:304 — `viaddnext` returns i32.

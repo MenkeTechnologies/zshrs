@@ -34,11 +34,20 @@ pub struct ZleParamSnapshot {
     postdisplay: String,
     /// `$region_highlight` user entries in their string form.
     region_highlight: Vec<String>,
+    /// `$MARK` / `$REGION_ACTIVE` — region state (C set_mark /
+    /// set_region_active GSU, zle_params.c:161/168). Visual-mode
+    /// widgets write these.
+    mark: i64,
+    region_active: i64,
+    /// `$CUTBUFFER` / `$killring` (C zle_params.c:149/155).
+    cutbuffer: String,
+    killring: Vec<String>,
 }
 
 static ZLE_PARAM_SNAPSHOT: Mutex<Option<ZleParamSnapshot>> = Mutex::new(None);
 
 /// Arm the snapshot with the values `makezleparams` just published.
+#[allow(clippy::too_many_arguments)]
 pub fn arm_snapshot(
     buffer: String,
     lbuffer: String,
@@ -47,6 +56,10 @@ pub fn arm_snapshot(
     predisplay: String,
     postdisplay: String,
     region_highlight: Vec<String>,
+    mark: i64,
+    region_active: i64,
+    cutbuffer: String,
+    killring: Vec<String>,
 ) {
     *ZLE_PARAM_SNAPSHOT.lock().unwrap() = Some(ZleParamSnapshot {
         buffer,
@@ -56,6 +69,10 @@ pub fn arm_snapshot(
         predisplay,
         postdisplay,
         region_highlight,
+        mark,
+        region_active,
+        cutbuffer,
+        killring,
     });
 }
 
@@ -182,6 +199,87 @@ pub fn sync_from_paramtab() {
     let post_rh = crate::ported::params::getaparam("region_highlight").unwrap_or_default();
     if post_rh != snap.region_highlight {
         crate::ported::zle::zle_refresh::set_region_highlight(Some(&post_rh));
+    }
+    // `$MARK` / `$REGION_ACTIVE` — C's set_mark / set_region_active
+    // GSU setters (zle_params.c:161/168) apply widget writes live.
+    let post_mark = crate::ported::params::getiparam("MARK");
+    if post_mark != snap.mark && post_mark >= 0 {
+        crate::ported::zle::zle_params::set_mark(post_mark as usize);
+    }
+    let post_ra = crate::ported::params::getiparam("REGION_ACTIVE");
+    if post_ra != snap.region_active {
+        let _ = crate::ported::zle::zle_params::set_region_active(post_ra);
+    }
+    // `$CUTBUFFER` / `$killring` (zle_params.c:149/155).
+    let post_cutbuf = crate::ported::params::getsparam("CUTBUFFER").unwrap_or_default();
+    if post_cutbuf != snap.cutbuffer {
+        crate::ported::zle::zle_params::set_cutbuffer(&post_cutbuf);
+    }
+    let post_kr = crate::ported::params::getaparam("killring").unwrap_or_default();
+    if post_kr != snap.killring {
+        crate::ported::zle::zle_params::set_killring(Some(&post_kr));
+    }
+}
+
+/// !!! WARNING: RUST-ONLY HELPER — NO DIRECT C COUNTERPART !!!
+/// C's `execzlefunc` epilogue (Src/Zle/zle_main.c:1579-1595) runs once
+/// at the single exit point. The Rust dispatch is split across
+/// `zle_main::execute_widget` (zlecore's inline arm) and
+/// `zle_main::execzlefunc` (nested / `zle <widget>` calls), each with
+/// multiple returns, so the epilogue lives here and both call it with
+/// their entry-time snapshot (`nestedvichg` = vichgflag at entry,
+/// `isrepeat` = viinrepeat==3 at entry — zle_main.c:1423-1424).
+///
+/// c:1579-1593 — end the vi change this widget constituted:
+///   * in vicmd mode, a successful change is promoted `lastvichg =
+///     curvichg` (the `.`-repeat target); a failed one is discarded.
+///   * out of vicmd mode the change continues recording through
+///     insert mode (`vichgflag = 1`) until `vicmdmode()` ends it.
+/// c:1594-1595 — a `.`-repeat that entered insert mode stays live
+/// (`viinrepeat = 1`) so `vicmdmode()` can finish it.
+pub fn end_vichg_frame(nestedvichg: i32, isrepeat: bool, ret: i32) {
+    use crate::ported::zle::zle_vi::{CURVICHG, LASTVICHG, VICHGFLAG, VIINREPEAT};
+    use std::sync::atomic::Ordering::SeqCst;
+    // c:1580 — `if (vichgflag == 2 && !nestedvichg)`.
+    if VICHGFLAG.load(SeqCst) == 2 && nestedvichg == 0 {
+        let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+        if crate::ported::zle::zle_h::invicmdmode(&kn) {
+            // c:1581
+            if ret != 0 {
+                // c:1582-1583 — `free(curvichg.buf);` — failed change.
+                let mut cur = CURVICHG.lock().unwrap();
+                cur.buf.clear();
+                cur.bufsz = 0;
+                cur.bufptr = 0;
+            } else {
+                // c:1585-1587 — `lastvichg = curvichg;` — a completed
+                // vicmd-mode change becomes the `.`-repeat target.
+                let mut last = LASTVICHG.lock().unwrap();
+                let mut cur = CURVICHG.lock().unwrap();
+                last.mod_ = cur.mod_.clone();
+                last.buf = std::mem::take(&mut cur.buf);
+                last.bufsz = cur.bufsz;
+                last.bufptr = cur.bufptr;
+                cur.bufsz = 0;
+                cur.bufptr = 0; // c:1590 `curvichg.buf = NULL;`
+            }
+            VICHGFLAG.store(0, SeqCst); // c:1589
+        } else {
+            // c:1592 — vi change continues while in insert mode.
+            VICHGFLAG.store(1, SeqCst);
+        }
+    }
+    if isrepeat {
+        // c:1594-1595 — `viinrepeat = !invicmdmode();`
+        let kn = crate::ported::zle::zle_keymap::curkeymapname().clone();
+        VIINREPEAT.store(
+            if crate::ported::zle::zle_h::invicmdmode(&kn) {
+                0
+            } else {
+                1
+            },
+            SeqCst,
+        );
     }
 }
 

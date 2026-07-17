@@ -2644,6 +2644,11 @@ pub fn scanpmhistory(
         Some(f) => f,
         None => return,
     };
+    // Lazy-history chokepoint: a WHOLE-`$history` scan (`${(u@)history}`,
+    // `${history[(R)pat]}`, hsmw ^R) wants ALL of it — page the rest of
+    // the HISTFILE in now. This is the on-demand full load; startup
+    // never slurps the file (extensions/history_lazy).
+    crate::history_lazy::page_older_until(0);
     // Snapshot (histnum, command) pairs so func() can re-enter without
     // deadlocking on the hist_ring mutex.
     let entries: Vec<(i64, String)> = {
