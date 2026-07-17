@@ -382,8 +382,161 @@ pub fn _main_complete(args: &[String]) -> i32 {
     let comp_mesg = getsparam("_comp_mesg").unwrap_or_default();
     let old_list = get_compstate_str("old_list").unwrap_or_default();
 
+    // sh:234-349 — menu-completion decision. When there are enough matches
+    // (or we kept an old list), evaluate the `menu` style (stashed by
+    // `_setup` into `_last_menu_style`, combined here with `_menu_style` and
+    // `_def_menu_style`) to decide whether `compstate[insert]` becomes
+    // `menu` and, if so, whether interactive menu-selection (`MENUSELECT`/
+    // `MENUMODE`) is enabled. Without this the `menu select` style was inert
+    // — `compstate[insert]` never became `menu`, so menucmp never set and
+    // the interactive menu never started.
+    if old_list == "keep" || nm > 1 {
+        // sh:236-237 — re-prepend last-round styles if the count changed.
+        let last_nm: i64 = getsparam("_last_nmatches")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(-1);
+        if last_nm >= 0 && last_nm != nm {
+            let mut ms = getaparam("_last_menu_style").unwrap_or_default();
+            ms.extend(getaparam("_menu_style").unwrap_or_default());
+            setaparam("_menu_style", ms);
+        }
+        // sh:239 — tmp = list_lines + BUFFERLINES + 1.
+        let list_lines: i64 = get_compstate_str("list_lines")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let bufferlines = getiparam("BUFFERLINES");
+        let lines = getiparam("LINES");
+        let tmp = list_lines + bufferlines + 1;
+        // sh:241 — append the default menu styles.
+        let mut menu_style = getaparam("_menu_style").unwrap_or_default();
+        menu_style.extend(getaparam("_def_menu_style").unwrap_or_default());
+        setaparam("_menu_style", menu_style.clone());
+
+        // `_menu_style[(r)PAT]` — first element matching a simple glob.
+        let has = |pat_fn: &dyn Fn(&str) -> bool| menu_style.iter().any(|e| pat_fn(e.as_str()));
+        // sh:244-245 — select=long-list OR (yes|true|on|1)=long-list.
+        let long_list = has(&|e| {
+            e == "select=long-list"
+                || matches!(e, "yes=long-list" | "true=long-list" | "on=long-list" | "1=long-list")
+        });
+        let list_has = get_compstate_str("list")
+            .map(|l| l == "list" || l.contains(" list") || l.starts_with("list "))
+            .unwrap_or(false);
+        let cur_insert = get_compstate_str("insert").unwrap_or_default();
+
+        // Compute the smallest numeric threshold across elements matching a
+        // yes-like prefix (sh:252-267); mirrors the C min/max loops: a bare
+        // word (or `=word`) → 0, `=N` → N (clamped ≥0), otherwise 9999999.
+        let threshold = |starts: &dyn Fn(&str) -> bool| -> Option<i64> {
+            let sel: Vec<&String> = menu_style.iter().filter(|e| starts(e.as_str())).collect();
+            if sel.is_empty() {
+                return None;
+            }
+            let mut m = 9999999i64;
+            for i in sel {
+                let num = if let Some(eq) = i.find('=') {
+                    let rest = &i[eq + 1..];
+                    if rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                        rest.parse::<i64>().unwrap_or(0).max(0)
+                    } else {
+                        9999999
+                    }
+                } else {
+                    0
+                };
+                if num < m {
+                    m = num;
+                }
+                if m == 0 {
+                    break;
+                }
+            }
+            Some(m)
+        };
+        let yes_like = |e: &str| {
+            e.starts_with("yes") || e.starts_with("true") || e.starts_with("1") || e.starts_with("on")
+        };
+        let no_like = |e: &str| {
+            e.starts_with("no") || e.starts_with("false") || e.starts_with("0") || e.starts_with("off")
+        };
+        let auto = has(&|e| e.starts_with("auto"));
+
+        if list_has && tmp > lines && long_list {
+            set_compstate_str("insert", "menu"); // sh:246
+        } else if cur_insert == saved_insert {
+            // sh:247
+            let long = has(&|e| {
+                matches!(e, "yes=long" | "true=long" | "1=long" | "on=long")
+            });
+            if !cur_insert.is_empty() && long && tmp > lines {
+                set_compstate_str("insert", "menu"); // sh:250
+            } else {
+                let min = threshold(&|e: &str| yes_like(e)); // sh:252-267
+                let max = threshold(&|e: &str| no_like(e)); // sh:270-285
+                if (min.is_some_and(|mn| nm >= mn) && max.map(|mx| nm < mx).unwrap_or(true))
+                    || (auto && cur_insert == "automenu")
+                {
+                    set_compstate_str("insert", "menu"); // sh:291
+                } else if max.is_some_and(|mx| nm >= mx) {
+                    set_compstate_str("insert", "unambiguous"); // sh:293
+                } else if auto && cur_insert != "automenu" {
+                    set_compstate_str("insert", "automenu-unambiguous"); // sh:296
+                }
+            }
+        }
+
+        // sh:301-349 — MENUSELECT/MENUMODE setup for `*menu*` inserts.
+        if get_compstate_str("insert").unwrap_or_default().contains("menu") {
+            if getsparam("MENUSELECT").as_deref() == Some("00") {
+                let _ = setsparam("MENUSELECT", "0"); // sh:302
+            }
+            if has(&|e| e.starts_with("no-select")) {
+                unsetparam("MENUSELECT"); // sh:304
+            } else if has(&|e| e.starts_with("select=long")) {
+                if tmp > lines {
+                    let mut ops_i = make_ops();
+                    ops_i.ind[b'i' as usize] = 1;
+                    let _ = crate::ported::module::bin_zmodload(
+                        "zmodload",
+                        &["zsh/complist".to_string()],
+                        &ops_i,
+                        0,
+                    ); // sh:306 zmodload -i zsh/complist
+                    let _ = setsparam("MENUSELECT", "00"); // sh:307
+                }
+            }
+            if getsparam("MENUSELECT").as_deref() != Some("00") {
+                if let Some(min) = threshold(&|e: &str| e.starts_with("select")) {
+                    let mut ops_i = make_ops();
+                    ops_i.ind[b'i' as usize] = 1;
+                    let _ = crate::ported::module::bin_zmodload(
+                        "zmodload",
+                        &["zsh/complist".to_string()],
+                        &ops_i,
+                        0,
+                    ); // sh:322 zmodload -i zsh/complist
+                    let _ = setsparam("MENUSELECT", &min.to_string()); // sh:323
+                } else {
+                    unsetparam("MENUSELECT"); // sh:325
+                }
+            }
+            if getsparam("MENUSELECT").is_some() {
+                if has(&|e| e.starts_with("interactive")) {
+                    let _ = setsparam("MENUMODE", "interactive"); // sh:338
+                } else if has(&|e| e.starts_with("search")) {
+                    if has(&|e| e.contains("backward")) {
+                        let _ = setsparam("MENUMODE", "search-backward"); // sh:341
+                    } else {
+                        let _ = setsparam("MENUMODE", "search-forward"); // sh:343
+                    }
+                } else {
+                    unsetparam("MENUMODE"); // sh:346
+                }
+            }
+        }
+    }
     // sh:350-352 — no matches but a message was set: list it
-    if nm < 1 && !comp_mesg.is_empty() {
+    else if nm < 1 && !comp_mesg.is_empty() {
         set_compstate_str("insert", "");
         set_compstate_str("list", "list force");
     } else if nm == 0 && comp_mesg.is_empty() && old_list != "keep" {
