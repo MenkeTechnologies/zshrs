@@ -576,6 +576,20 @@ jobs:
       # is ZLONG_MAX, NaN is 0). Empty baseline: any divergence is a regression.
       - name: Fuzz — zcalc
         run: ./target/debug/parity-fuzz --mode zcalc --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/zcalc.txt --out target/parity-fuzz/ci-zcalc.txt
+      # rcexpand — RC_EXPAND_PARAM (the `^` flag / plan9, c:Src/subst.c:2550)
+      # and its sibling unbraced flag `=` (spbreak, c:2558), each paired with
+      # its braced form. C runs ONE flag loop for braced and unbraced alike
+      # (c:1890-1891), so `$^a` and `${^a}` must agree exactly — this port
+      # reaches them through different code, which is how the unbraced forms
+      # came to compile to LITERAL text (`$^fpath/prompt_*_setup(N)` found ZERO
+      # themes; 29 of zsh's own functions use the form). Eight bugs, most from
+      # ONE cause: the flags are known only at COMPILE time while every concat
+      # builtin dispatched on the RUNTIME option, so a flag could not override
+      # its own option. Also pins prefork's empty-word delete running AFTER the
+      # word is assembled (c:184-188) — `${=s}.x` is `a b .x`, not `'' a b .x`.
+      # Empty baseline: any divergence is a regression.
+      - name: Fuzz — rcexpand
+        run: ./target/debug/parity-fuzz --mode rcexpand --count 3000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/rcexpand.txt --out target/parity-fuzz/ci-rcexpand.txt
       # printf — PROMOTED from informational to a blocking gate: the format
       # classes that made it gap-rich were getkeystring bugs, and 10,000 cases
       # now run clean. printf drives the decoder through two flag sets nothing
@@ -587,28 +601,31 @@ jobs:
       # regression.
       - name: Fuzz — printf
         run: ./target/debug/parity-fuzz --mode printf --count 5000 --verify 3 --max-report 400 --baseline .github/fuzz-baseline/printf.txt --out target/parity-fuzz/ci-printf.txt
-      # Informational — the generator itself now runs CLEAN (4000 cases, 0
-      # divergences): the comma-inside-a-subscript class this note used to
-      # describe (`${arr[((x), (y)) % 5 + 1]}`) passes. It stays informational
-      # because the underlying structural gap is NOT closed, and a clean gate
-      # here would only mean the generator does not reach it:
-      #   arr=(a b c d e); x=2; print -r -- ${arr[(x), 4]}   # zsh: b c d
-      #                                                      # zshrs: a b c d
-      #   arr=(a b c d e);      print -r -- ${arr[(1+1), (2+2)]}  # zsh: b c d
-      #                                                           # zshrs: (empty)
-      # A RANGE subscript whose bounds are parenthesized math still mis-parses:
-      # C never string-splits a subscript — mathevalarg (Src/math.c:1514) calls
-      # `mathevall(s, MPREC_ARG, ss)`, so the MATH PARSER stops at the top-level
-      # comma and reports where via `**ss` (c:1534-1536), and params.c:1597
-      # (`r = mathevalarg(s, &s)`) resumes from there. zshrs's mathevalarg
-      # (math.rs:4008) has no `ss` out-param and its mathevall (math.rs:519)
-      # takes no prec_tp, so callers split on a comma and `parse::<i64>()` the
-      # halves — which only ever accepts a literal integer. Promote to a
-      # blocking gate once mathevalarg carries C's `**ss` out-param, and extend
-      # the generator to emit parenthesized range bounds at the same time.
-      - name: Fuzz — arith (informational)
-        continue-on-error: true
-        run: ./target/debug/parity-fuzz --mode arith --count 4000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-arith.txt
+      # arith — PROMOTED from informational to a blocking gate. The class that
+      # kept it informational was a PARENTHESISED bound in a RANGE subscript
+      # (`${arr[(x), 4]}` sliced the whole array where zsh gives `b c d`). The
+      # old note blamed mathevalarg's missing `**ss` out-param and a
+      # comma-split-at-any-depth; both were wrong — the bug was one branch in
+      # the slice-bound evaluator that stripped ANY leading `(…)` as a flag
+      # group. C only reads `(…)` as flags while the chars ARE flags
+      # (c:Src/params.c:1392-1476) and its `flagerr` arm (c:1477-1482) REWINDS
+      # to before the `(` otherwise, so the group is re-read as math — hence
+      # `${arr[(zz)1]}` saying `bad math expression`. The generator only ever
+      # emitted SINGLE-index subscripts, which is why the mode ran clean while
+      # the bug was live; it now emits range bounds too, and reverting the fix
+      # makes this gate fail. Empty baseline: any divergence is a regression.
+      - name: Fuzz — arith
+        run: ./target/debug/parity-fuzz --mode arith --count 4000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/arith.txt --out target/parity-fuzz/ci-arith.txt
+      # prompt covers the `print -P` / ${(%)…} expander: %-escapes, %(x.t.f)
+      # ternaries, %N<s< / %N>s> truncation (both signs), colours and %{raw%}.
+      # Fully clean (empty baseline: any divergence is a regression). Count is
+      # lower than its siblings on purpose: ~12% of generated cases hang ZSH —
+      # an upstream infinite loop in countprompt (`w -= zterm_columns` with
+      # zterm_columns == 0) — and each one costs a full timeout before the
+      # harness discards it. See the baseline file for the exact trigger and why
+      # the harness must NOT export COLUMNS to dodge it.
+      - name: Fuzz — prompt
+        run: ./target/debug/parity-fuzz --mode prompt --count 2000 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/prompt.txt --out target/parity-fuzz/ci-prompt.txt
       # Informational — the remaining unicode divergences are the byte-mode
       # class: when the MULTIBYTE option is OFF (`unsetopt multibyte`) the
       # length / index / slice / pad / split / char-class sites must count
@@ -616,7 +633,20 @@ jobs:
       # Src/utils.c:5611 mb_metacharlenconv / :5654 mb_metastrlenend, which
       # short-circuit to byte length when MULTIBYTE is unset). That is a broad
       # structural change across many sites for a rarely-used option, so it
-      # stays informational. FIXED: the `(m)` display-cell padding TRUNCATION
+      # stays informational.
+      #
+      # The blocker is representational, not just breadth: byte-mode ops
+      # deliberately CUT multibyte characters, so zsh emits invalid UTF-8 and
+      # the port's String-typed values cannot hold the result. Verified —
+      # `unsetopt multibyte`:
+      #   cy=Привет; ${(l:8::.:)cy}  → zsh `ивет`   (last 8 BYTES of 12)
+      #   acc=$'é'; ${acc[1,-2]} → zsh `e` + a lone 0xCC
+      #   ${(L)acc} / ${(C)cy} / ${wide/[[:alpha:]]/X} → all split a UTF-8
+      #   sequence mid-character.
+      # Closing it means carrying these values as bytes (or metafied) through
+      # every length/index/slice/pad/case/char-class site — not a local fix.
+      #
+      # FIXED: the `(m)` display-cell padding TRUNCATION
       # now counts wide chars in cells on both sides (c:Src/subst.c:912-1080),
       # so `${(ml:8:)日本語テキスト}` keeps the last 8 CELLS, not 8 chars.
       - name: Fuzz — unicode (informational)

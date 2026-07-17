@@ -3745,44 +3745,73 @@ impl ZshCompiler {
         //         if ((c = *++s) == '^' || c == Hat) { plan9 = 0; s++; }
         //         else plan9 = 1;
         //     }
-        // This compiler instead carries a WHOLE-WORD fast path per flag
-        // (`$#`, `$+`, `$=`, `$~`) and never had one for `^`, so `$^b`
-        // compiled to LITERAL text — `print -rl -- $^b` printed `$^b`, and
-        // promptinit:23's `for theme in $^fpath/prompt_*_setup(N)` found ZERO
-        // themes where zsh finds 18. 29 of zsh's own shipped functions use the
-        // form, `_git` among them.
+        // The same loop also handles `=` (c:2558-2569, SH_WORD_SPLIT / spbreak),
+        // which has the identical problem: this compiler carries a WHOLE-WORD
+        // fast path per flag (`$#`, `$+`, `$=`, `$~`) and nothing for `^`, so
+        //   * `$^b` compiled to LITERAL text — `print -rl -- $^b` printed
+        //     `$^b`, and promptinit:23's `for theme in $^fpath/prompt_*_setup(N)`
+        //     found ZERO themes where zsh finds 18 (29 of zsh's own shipped
+        //     functions use the form, `_git` among them); and
+        //   * `$=s` worked ONLY as a whole word — `pre$=s` / `$=s.x` / `$==s.x`
+        //     all stayed literal, because a fast path keyed on
+        //     `untoked.starts_with("$=")` with an all-alphanumeric name cannot
+        //     express an affix.
         //
-        // Normalise `$^NAME` → `${^NAME}` in the TOKEN stream and let the brace
-        // machinery (already correct for `${^b}/*.txt(N)`) own it. Rewriting
-        // tokens rather than the untokenized text keeps the suffix's glob
-        // tokens intact, which is the whole point: the whole-word fast paths
-        // cannot express `$^fpath/prompt_*_setup(N)`.
+        // Normalise `$^NAME` → `${^NAME}` and `$=NAME` → `${=NAME}` in the TOKEN
+        // stream and let the brace machinery own them — it is already correct
+        // for `${^b}/*.txt(N)` and `pre${=s}`. Rewriting tokens rather than the
+        // untokenized text keeps the suffix's glob tokens intact, which is the
+        // whole point: the whole-word fast paths cannot express
+        // `$^fpath/prompt_*_setup(N)`.
         //
         // Quote-safe by construction: only an UNQUOTED `$` is tokenized to
-        // Stringg (`\u{85}`). Inside `'…'` or after a backslash the `$` stays a
-        // raw byte, so this scan cannot fire there — `'$^b'` and `\$^b` remain
-        // literal, exactly as zsh has them.
+        // Stringg (`\u{85}`) / Qstring (`\u{8c}`). Inside `'…'` or after a
+        // backslash the `$` stays a raw byte, so this scan cannot fire there —
+        // `'$^b'` and `\$^b` remain literal, exactly as zsh has them.
         let s_rc_norm: String;
         let s: &str = if (s.contains(crate::ported::zsh_h::Stringg)
             || s.contains(crate::ported::zsh_h::Qstring))
-            && (s.contains(crate::ported::zsh_h::Hat) || s.contains('^'))
+            && (s.contains(crate::ported::zsh_h::Hat)
+                || s.contains('^')
+                || s.contains(crate::ported::zsh_h::Equals)
+                || s.contains('='))
         {
             let ch: Vec<char> = s.chars().collect();
             let mut out = String::with_capacity(s.len() + 2);
             let mut i = 0usize;
             while i < ch.len() {
-                // Stringg (`$`) followed by a run of `^` / Hat, then a name.
+                // Stringg (`$`) followed by a run of one flag char, then a name.
                 // A DQ `$` is Qstring (`\u{8c}`), not Stringg — `"$^b"` must
                 // normalise too. Re-emit whichever token was there so the
                 // double-quote context is preserved.
+                //
+                // `^` (c:2551 plan9) and `=` (c:2558 spbreak) each double to
+                // mean "off", so the run is carried through verbatim and the
+                // brace arm applies the same toggling. A run mixes only one
+                // char: C's loop re-reads `*s` each pass, but `$^=x` is not a
+                // shape either shell's fast paths accept, so keep it simple and
+                // only fold a homogeneous run.
+                let flag_char = if i + 1 < ch.len() {
+                    match ch[i + 1] {
+                        c if c == crate::ported::zsh_h::Hat || c == '^' => Some('^'),
+                        c if c == crate::ported::zsh_h::Equals || c == '=' => Some('='),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 if (ch[i] == crate::ported::zsh_h::Stringg
                     || ch[i] == crate::ported::zsh_h::Qstring)
-                    && i + 1 < ch.len()
-                    && (ch[i + 1] == crate::ported::zsh_h::Hat || ch[i + 1] == '^')
+                    && flag_char.is_some()
                 {
+                    let fc = flag_char.unwrap();
+                    let is_flag = |c: char| match fc {
+                        '^' => c == crate::ported::zsh_h::Hat || c == '^',
+                        _ => c == crate::ported::zsh_h::Equals || c == '=',
+                    };
                     let mut j = i + 1;
                     let mut nflags = 0usize;
-                    while j < ch.len() && (ch[j] == crate::ported::zsh_h::Hat || ch[j] == '^') {
+                    while j < ch.len() && is_flag(ch[j]) {
                         nflags += 1;
                         j += 1;
                     }
@@ -3806,7 +3835,7 @@ impl ZshCompiler {
                         out.push(ch[i]);
                         out.push(crate::ported::zsh_h::Inbrace);
                         for _ in 0..nflags {
-                            out.push('^');
+                            out.push(fc);
                         }
                         out.extend(&ch[name_start..name_end]);
                         out.push(crate::ported::zsh_h::Outbrace);
@@ -5141,7 +5170,20 @@ impl ZshCompiler {
         // as Value::Array; the surrounding word's CONCAT_DISTRIBUTE
         // (segment fast-path detected via is_distribute_expansion)
         // does the actual splicing.
-        if !has_bnull && untoked.starts_with("${^") && untoked.ends_with('}') {
+        // c:Src/subst.c:3029-3036 — inside DOUBLE QUOTES the array is joined
+        // BEFORE plan9 ever runs:
+        //     if (qt && !getlen && isarr > 0) {
+        //         val = sepjoin(aval, sep, 1);
+        //         isarr = 0;
+        //     }
+        // and the RC_EXPAND_PARAM block (c:4316) sits inside the `isarr` arm,
+        // so it is skipped. `"pre${^b}"` is therefore `pred1 d2` — one word,
+        // no cross-product. Distributing regardless of context made it
+        // `pred1 pred2`. Falling through in DQ hands the word to the normal
+        // path, which joins exactly as c:3032 does. Same `in_dq` test the
+        // `$name` / `${=name}` arms already use.
+        let rc_in_dq = self.dq_context_depth > 0 || word_is_single_dq_span(s);
+        if !has_bnull && !rc_in_dq && untoked.starts_with("${^") && untoked.ends_with('}') {
             let inner = &untoked[3..untoked.len() - 1];
             let bare = inner
                 .strip_suffix("[@]")
@@ -5159,6 +5201,26 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_ALL, 1), 0);
+                // c:Src/subst.c:184-188 — prefork's empty-word removal
+                // (`uremnode`) applies to an UNQUOTED splat, so
+                // `a=(a '' b); print -l -- ${^a}` is 2 lines, not 3. Same drop
+                // the `${arr[@]}` fast path below appends after its ARRAY_ALL,
+                // and the `$@`/`$*` splat before it — this path emitted
+                // ARRAY_ALL and skipped it.
+                //
+                // ONLY as a standalone word. As a sub-segment (`x${^a}y`,
+                // word_seg_depth > 0) the plan9 cross-product runs FIRST and
+                // turns the empty element into a NON-empty word — zsh prints
+                // `xay`, `xy`, `xby`, keeping all three — so dropping here,
+                // before the concat, would lose the middle one. DQ is already
+                // excluded: the fast path is gated on !rc_in_dq above, and a
+                // quoted splat keeps empties via nulstring.
+                if self.word_seg_depth == 0 {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        0,
+                    );
+                }
                 return;
             }
         }
@@ -5227,6 +5289,24 @@ impl ZshCompiler {
                     let argc = if keep_empties { 1 } else { 0 };
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_FORCE_SPLIT, argc),
+                        0,
+                    );
+                } else if !in_scalar_assign
+                    && self.word_seg_depth == 0
+                    && !(self.dq_context_depth > 0 || word_is_single_dq_span(s))
+                {
+                    // c:Src/subst.c:184-188 — `${==s}` forces NO split
+                    // (c:2560-2564 `spbreak = 0`), but an unquoted expansion
+                    // that comes out EMPTY is still an empty WORD, and prefork
+                    // deletes it: `s=''; r=(${==s})` has ZERO elements in zsh.
+                    // The split arm above reaches that for free (splitting ""
+                    // yields no fields → an empty array), and every other form
+                    // does too (`$v`, `${v}`, `${=s}` are all 0) — only the
+                    // no-split arm returned Value::Str("") and kept the word.
+                    // Quoted `"${==s}"` correctly keeps its one empty word, so
+                    // this is gated off in DQ.
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
                         0,
                     );
                 }
@@ -6345,6 +6425,31 @@ impl ZshCompiler {
                     WordSegment::Expansion(exp) => is_distribute_expansion(exp),
                     _ => false,
                 });
+                // c:Src/subst.c:4362-4365 — plan9 (`${^arr}`) DELETES the whole
+                // word when the array is empty:
+                //     if (plan9) { uremnode(l, n); return n; }
+                // whereas every other distribute shape keeps it: `x${(@)a}y`
+                // and `x${(f)v}y` are `xy` for an empty value, but `x${^a}y` is
+                // NOTHING. Both used to compile to CONCAT_DISTRIBUTE_FORCED,
+                // which keeps the word, so the plan9 removal never happened —
+                // and the flag path could not borrow the OPTION path's correct
+                // behaviour (`setopt rcexpandparam; x${a}y` removes it) because
+                // that one dispatches on the runtime option, which the `^` flag
+                // does not set. The `^`-ness is known only here, at compile
+                // time, so pick the plan9 concat here.
+                let has_plan9_seg = segs.iter().any(|seg| match seg {
+                    WordSegment::Expansion(exp) => is_plan9_expansion(exp),
+                    _ => false,
+                });
+                // c:2553-2555 — `${^^a}` forces plan9 OFF, overriding the
+                // rcexpandparam OPTION. Every other concat builtin re-reads
+                // that option at runtime, so under `setopt rcexpandparam` the
+                // word cross-producted anyway and `${^^a}.x` gave
+                // `a.x b.x c.x` instead of zsh's `a`, `b`, `c.x`.
+                let has_plan9_off_seg = segs.iter().any(|seg| match seg {
+                    WordSegment::Expansion(exp) => is_plan9_off_expansion(exp),
+                    _ => false,
+                });
                 // If the parent word is DQ-wrapped (raw form starts and
                 // ends with Dnull), each Expansion segment inherits the
                 // DQ context. Track via the compiler's
@@ -6376,6 +6481,15 @@ impl ZshCompiler {
                 let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
                 let concat_builtin = if has_splice_seg {
                     Some(crate::vm_helper::BUILTIN_CONCAT_SPLICE)
+                } else if has_plan9_seg {
+                    // c:4316-4365 — cartesian emit PLUS the empty-array word
+                    // deletion. Must precede the generic distribute arm: a
+                    // `${^a}` segment satisfies both tests.
+                    Some(crate::fusevm_bridge::BUILTIN_CONCAT_PLAN9)
+                } else if has_plan9_off_seg {
+                    // c:2554 — `${^^a}` overrides the option; splice, never
+                    // cross-product.
+                    Some(crate::fusevm_bridge::BUILTIN_CONCAT_SPLICE_NOPLAN9)
                 } else if has_distribute_seg {
                     // `${^arr}` / `${(@)arr}` etc — distribution is
                     // explicit at the source level, not gated on the
@@ -6553,6 +6667,37 @@ impl ZshCompiler {
                             self.builder.emit(Op::Concat, 0);
                         }
                     }
+                }
+                // c:Src/subst.c:184-188 — prefork's `uremnode` deletes an EMPTY
+                // word once the expansion is ASSEMBLED. Order is the whole
+                // point: for `s=' a b '` the split leaves an empty field at
+                // each end, and an affix attaches to the empty on ITS side, so
+                // zsh gives
+                //     ${=s}.x   → `a` `b` `.x`     (trailing empty became .x,
+                //                                   LEADING empty deleted)
+                //     pre${=s}  → `pre` `a` `b`    (leading empty became pre,
+                //                                   TRAILING empty deleted)
+                // i.e. only the FAR-side empty goes. Dropping before the concat
+                // would delete the very field the affix was going to land on
+                // (`${=s}.x` would lose `.x`), which is why the drop lives here
+                // and not next to the split.
+                //
+                // Gated on an array-producing segment: a word with no expansion
+                // (`print -rl -- ""`) must keep its literal empty. Quoted words
+                // keep empties (nulstring), and a scalar-assignment RHS is
+                // joined below rather than split into words.
+                if !parent_is_dq
+                    && (has_splice_seg
+                        || has_distribute_seg
+                        || has_plan9_seg
+                        || has_plan9_off_seg)
+                    && self.scalar_assign_depth == 0
+                    && self.assign_builtin_arg_depth == 0
+                {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_ARRAY_DROP_EMPTY, 1),
+                        0,
+                    );
                 }
                 // c:Src/subst.c:3032 (sepjoin under ssub) — a SCALAR
                 // assignment RHS coerces an assembled array to one
@@ -9726,6 +9871,68 @@ fn is_splice_expansion(s: &str) -> bool {
 /// text. Includes explicit forms (`${^arr}`, `${(@)…}`, `${(s.…)…}`)
 /// and array-producing flag expansions where every element pairs with
 /// every literal segment.
+/// True for a `${^^name}` segment — RC_EXPAND_PARAM forced OFF by the doubled
+/// flag (c:Src/subst.c:2553-2555 `plan9 = 0`).
+///
+/// The mirror of `is_plan9_expansion`. The flag has to override the
+/// `rcexpandparam` OPTION, and every concat builtin except
+/// BUILTIN_CONCAT_SPLICE_NOPLAN9 re-reads that option at runtime — so, exactly
+/// as with `^`, the compiler is the only place that knows `^^` was written.
+fn is_plan9_off_expansion(s: &str) -> bool {
+    let pq = crate::lex::untokenize_preserve_quotes(s);
+    let normalized: String = pq
+        .trim_start_matches('"')
+        .trim_end_matches('"')
+        .chars()
+        .map(|c| {
+            if c == crate::ported::zsh_h::Qstring {
+                '$'
+            } else {
+                c
+            }
+        })
+        .collect();
+    match normalized
+        .strip_prefix("${")
+        .and_then(|t| t.strip_suffix('}'))
+    {
+        Some(inner) => inner.starts_with("^^"),
+        None => false,
+    }
+}
+
+/// True for a `${^name}` segment — RC_EXPAND_PARAM forced ON by the flag
+/// (c:Src/subst.c:2551-2557 `plan9 = 1`).
+///
+/// A subset of `is_distribute_expansion`: those shapes all cross-product, but
+/// only plan9 DELETES the word when the array is empty (c:4362 `uremnode`), so
+/// the two need different concat builtins. `${^^name}` is excluded — the
+/// doubled flag turns plan9 back OFF (c:2554). Same Qstring-aware normalization
+/// as `is_distribute_expansion`, so a DQ-wrapped `"${^a}"` is recognised too.
+fn is_plan9_expansion(s: &str) -> bool {
+    let pq = crate::lex::untokenize_preserve_quotes(s);
+    let normalized: String = pq
+        .trim_start_matches('"')
+        .trim_end_matches('"')
+        .chars()
+        .map(|c| {
+            if c == crate::ported::zsh_h::Qstring {
+                '$'
+            } else {
+                c
+            }
+        })
+        .collect();
+    match normalized
+        .strip_prefix("${")
+        .and_then(|t| t.strip_suffix('}'))
+    {
+        // c:2551-2557 — single `^` on, doubled `^^` off.
+        Some(inner) => inner.starts_with('^') && !inner.starts_with("^^"),
+        None => false,
+    }
+}
+
 fn is_distribute_expansion(s: &str) -> bool {
     let pq = crate::lex::untokenize_preserve_quotes(s);
     // Same Qstring-aware normalization as is_splice_expansion — see
