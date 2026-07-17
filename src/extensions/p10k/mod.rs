@@ -31,6 +31,7 @@ pub mod segments_powerline;
 pub mod segments_sys;
 pub mod segments_zshrs;
 pub mod transient;
+pub mod wizard;
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
@@ -38,6 +39,16 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 /// (a session that loaded p10k keeps the native engine for life,
 /// matching the zsh theme's own irreversibility).
 static ENGINE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// wizard:1620 `__p9k_root_dir` — the p10k install root (parent of
+/// `powerlevel10k.zsh-theme`), captured at theme-source intercept so
+/// `p10k configure` can read the `config/p10k-*.zsh` base templates.
+pub static P10K_ROOT_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The p10k install root if known (theme was sourced this session).
+pub fn p10k_root_dir() -> Option<String> {
+    P10K_ROOT_DIR.lock().unwrap().clone()
+}
 
 pub fn engine_active() -> bool {
     ENGINE_ACTIVE.load(Ordering::Relaxed)
@@ -122,6 +133,13 @@ pub fn maybe_intercept_theme_source(args: &[String]) -> Option<i32> {
         return None;
     }
     ENGINE_ACTIVE.store(true, Ordering::Relaxed);
+    // wizard:1620 — `$__p9k_root_dir/config/p10k-*.zsh`: the config
+    // wizard reads its base templates relative to the p10k install
+    // root. The theme entry point IS `<root>/powerlevel10k.zsh-theme`,
+    // so the root is the sourced file's parent dir.
+    if let Some(dir) = path.rsplit_once('/').map(|(d, _)| d.to_string()) {
+        *P10K_ROOT_DIR.lock().unwrap() = Some(dir);
+    }
     tracing::info!(target: "p10k", %path, "native p10k engine activated (theme source intercepted)");
     Some(0)
 }
@@ -171,15 +189,13 @@ fn p10k_api(args: &[String]) -> i32 {
         "segment" => p10k_segment(&args[1..]),
         // p10k:9036-9109 — `display part-pattern=state-list…` / -a / -r.
         "display" => p10k_display(&args[1..]),
-        // p10k:9110-9118 — `configure`: the 2153-line wizard is out of
-        // native-engine scope; absorb (endgame: accept silently).
+        // p10k:9110-9118 — `configure`: launch the native wizard port.
         "configure" => {
             if args.len() > 1 {
                 api::print_usage(api::CONFIGURE_USAGE, true); // p10k:9112
                 return 1;
             }
-            tracing::info!(target: "p10k", "p10k configure absorbed (native engine has no wizard; edit .p10k.zsh)");
-            0
+            wizard::run(false)
         }
         // p10k:9119-9126 — `reload`.
         "reload" => {
