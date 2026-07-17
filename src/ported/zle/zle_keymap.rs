@@ -952,15 +952,27 @@ pub fn selectkeymap(name: &str, fb: i32) -> i32 {
     if !oldname.is_empty()
         && oldname != resolved
         && crate::ported::builtins::sched::zleactive.load(std::sync::atomic::Ordering::Relaxed) != 0
-        && crate::ported::zle::zle_thingy::rthingy_nocreate("zle-keymap-select")
     {
-        // c:519 — `execzlefunc(t, args, 1, 0)` with args[0] = old keymap name.
-        let _ = crate::ported::zle::zle_main::execzlefunc(
-            "zle-keymap-select",
-            &[oldname],
-            1,
-            0,
-        );
+        if crate::ported::zle::zle_thingy::rthingy_nocreate("zle-keymap-select") {
+            // c:519 — `execzlefunc(t, args, 1, 0)` with args[0] = old keymap name.
+            let _ = crate::ported::zle::zle_main::execzlefunc(
+                "zle-keymap-select",
+                &[oldname],
+                1,
+                0,
+            );
+        }
+        // Native p10k engine (extensions/p10k): the script theme flips the
+        // prompt_char arrow (❯/❮/Ⅴ) from its zle-keymap-select widget
+        // (p10k:3336-3339 keyed on _p9k__keymap); the native engine installs
+        // no widget, so notify it here — prompt_char reads the LIVE keymap
+        // at render time (segments_core.rs), so a re-render + reset-prompt
+        // repaints the flipped arrow mid-edit. No-op when the engine is
+        // inactive.
+        if crate::p10k::engine_active() {
+            crate::p10k::preprompt_render();
+            crate::ported::zle::zle_main::zle_resetprompt();
+        }
     }
     0 // c:527
 }
