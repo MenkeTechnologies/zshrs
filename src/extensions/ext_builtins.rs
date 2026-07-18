@@ -8266,41 +8266,57 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     }
 
     let mut set = None;
+    let mut print_p = false;
+    let mut quiet = false; // `-q`: suppress output, report via exit status
     let mut opts: Vec<String> = Vec::new();
 
     for arg in args {
         match arg.as_str() {
             "-s" => set = Some(true),
             "-u" => set = Some(false),
-            "-p" => {
-                // Print option status
-                crate::fusevm_bridge::with_executor(|exec| {
-                    for opt in &opts {
-                        let val = crate::ported::options::opt_state_get(opt).unwrap_or(false);
-                        println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
-                    }
-                });
-                return 0;
-            }
+            "-p" => print_p = true,
+            "-q" => quiet = true,
+            // `-o` restricts to `set -o` option names; zshrs shares one option
+            // table, so accept it and treat the names normally.
+            "-o" => {}
             _ => opts.push(arg.clone()),
         }
     }
 
     if let Some(enable) = set {
+        // Set / unset. `-q` suppresses the (already silent) output; the exit
+        // status is 0 on success.
         crate::fusevm_bridge::with_executor(|exec| {
+            let _ = exec;
             for opt in &opts {
-                crate::ported::options::opt_state_set(&opt, enable);
+                crate::ported::options::opt_state_set(opt, enable);
             }
         });
-    } else {
-        crate::fusevm_bridge::with_executor(|exec| {
-            for opt in &opts {
-                let val = crate::ported::options::opt_state_get(opt).unwrap_or(false);
+        return 0;
+    }
+
+    // Query mode (no -s/-u). `-q` (quiet): print nothing, return 0 only when
+    // EVERY queried option is set, else 1 (bash shopt -q semantics). Otherwise
+    // print each option's state in the reusable `shopt -s/-u NAME` form.
+    let mut all_set = true;
+    crate::fusevm_bridge::with_executor(|exec| {
+        let _ = exec;
+        for opt in &opts {
+            let val = crate::ported::options::opt_state_get(opt).unwrap_or(false);
+            if !val {
+                all_set = false;
+            }
+            if !quiet {
+                let _ = print_p;
                 println!("shopt {} {}", if val { "-s" } else { "-u" }, opt);
             }
-        });
+        }
+    });
+    if quiet && !opts.is_empty() && !all_set {
+        1
+    } else {
+        0
     }
-    0
 }
 /// zsleep - sleep with fractional seconds
 pub(crate) fn zsleep(args: &[String]) -> i32 {

@@ -6051,6 +6051,7 @@ pub fn paramsubst(
         let mut bash_casemod_pat = String::new(); // single-char glob; empty = all chars
         let mut bash_casemod_toggle: u8 = 0; // 0=none, 1=~~ toggle-all, 2=~ toggle-first
         let mut bash_at_q = false; // ${v@Q} shell-quote
+        let mut bash_at_a = false; // ${v@a} attribute-flags string
         if crate::dash_mode::bash_mode() {
             let r = rest.as_str();
             match r {
@@ -6058,6 +6059,7 @@ pub fn paramsubst(
                 "@L" => bash_casemod = 2,
                 "@u" => bash_casemod = 3,
                 "@Q" => bash_at_q = true,
+                "@a" => bash_at_a = true,
                 "~~" => bash_casemod_toggle = 1,
                 "~" => bash_casemod_toggle = 2,
                 _ => {
@@ -6078,7 +6080,7 @@ pub fn paramsubst(
                     }
                 }
             }
-            if bash_casemod != 0 || bash_casemod_toggle != 0 || bash_at_q {
+            if bash_casemod != 0 || bash_casemod_toggle != 0 || bash_at_q || bash_at_a {
                 rest = String::new();
             }
         }
@@ -14597,6 +14599,46 @@ pub fn paramsubst(
             if let Some(parts) = split_parts.as_ref() {
                 split_parts = Some(parts.iter().map(|p| q(p)).collect());
             }
+        }
+
+        // bash `${v@a}` — the variable's attribute FLAGS as a letter string
+        // (`r` readonly, `i` integer, `a` indexed array, `A` assoc, `x` export,
+        // `l` lower, `u` upper), empty for a plain variable. No C counterpart;
+        // --bash only. Reads the param's flags from the canonical table.
+        if bash_at_a {
+            use crate::ported::zsh_h::{
+                PM_ARRAY, PM_EXPORTED, PM_HASHED, PM_INTEGER, PM_LOWER, PM_READONLY, PM_UPPER,
+            };
+            let flags = crate::ported::params::paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(&var_name).map(|p| p.node.flags as u32))
+                .unwrap_or(0);
+            let mut attrs = String::new();
+            // bash attribute order (empirically: array, i, r, x, then u/l which
+            // are mutually exclusive): `declare -rix` → "irx", `-aux` → "axu".
+            if flags & PM_HASHED != 0 {
+                attrs.push('A');
+            } else if flags & PM_ARRAY != 0 {
+                attrs.push('a');
+            }
+            if flags & PM_INTEGER != 0 {
+                attrs.push('i');
+            }
+            if flags & PM_READONLY != 0 {
+                attrs.push('r');
+            }
+            if flags & PM_EXPORTED != 0 {
+                attrs.push('x');
+            }
+            if flags & PM_UPPER != 0 {
+                attrs.push('u');
+            }
+            if flags & PM_LOWER != 0 {
+                attrs.push('l');
+            }
+            value = attrs;
+            split_parts = None;
         }
 
         if casmod != CASMOD_NONE {
