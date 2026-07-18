@@ -8478,6 +8478,52 @@ pub fn bin_whence(
         }
     }
 
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash `type -t NAME` prints a
+    // single word naming what NAME resolves to — `alias` / `keyword` /
+    // `function` / `builtin` / `file` — or nothing (exit 1) if unknown. zsh's
+    // `type` has no `-t`, so this is gated to --bash. Precedence matches bash:
+    // alias, keyword, function, builtin, file. Uses a closure (not a free fn)
+    // to satisfy the port-purity build gate on src/ported/.
+    if crate::dash_mode::bash_mode() && OPT_ISSET(ops, b't') {
+        let type_of = |name: &str| -> Option<&'static str> {
+            if aliastab_lock()
+                .read()
+                .ok()
+                .map_or(false, |t| t.get(name).is_some())
+            {
+                return Some("alias");
+            }
+            if reswdtab_lock()
+                .read()
+                .ok()
+                .map_or(false, |t| t.get(name).is_some())
+            {
+                return Some("keyword");
+            }
+            if getshfunc(name).is_some() {
+                return Some("function");
+            }
+            let disabled = BUILTINS_DISABLED
+                .lock()
+                .map_or(false, |s| s.contains(name));
+            if !disabled && createbuiltintable().get(name).is_some() {
+                return Some("builtin");
+            }
+            if crate::ported::exec::findcmd(name, 0, 0).is_some() {
+                return Some("file");
+            }
+            None
+        };
+        let mut rc = 0;
+        for name in argv {
+            match type_of(name) {
+                Some(t) => println!("{}", t),
+                None => rc = 1,
+            }
+        }
+        return rc;
+    }
+
     // c:4004-4012 — printflags from -w/-c/-v/(default simple)/-f.
     if OPT_ISSET(ops, b'w') {
         printflags |= PRINT_WHENCE_WORD;
@@ -15374,7 +15420,9 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("ampfsSw"),
+            // `t` (bash `type -t`) accepted only meaningfully in --bash;
+            // bin_whence gates the behavior on bash_mode().
+            Some("ampfsStw"),
             Some("v"),
         ),
         BUILTIN(
