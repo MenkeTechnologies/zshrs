@@ -5660,6 +5660,19 @@ pub fn paramsubst(
         let mut was_at_star_splat = false;
         if idx < body_chars.len() && (body_chars[idx] == '[' || body_chars[idx] == Inbrack) {
             // c:2867
+            // dash/ash have no array subscripts — braced `${name[...]}` (any of
+            // `[@]`/`[*]`/`[N]`/`[key]`) is a "Bad substitution" there. This arm
+            // is reached only for the BRACED form (body_chars comes from the
+            // `${…}` body); the unbraced `$name[...]` form is handled on a
+            // separate path and is already left as `$name` + literal `[...]`,
+            // matching real dash. The array LITERAL `a=(…)` is rejected earlier
+            // at parse time. Gated on dash_strict (--dash/--ash); --sh is
+            // bash-backed on macOS. Found by the per-mode dash-strictness sweep.
+            if crate::dash_mode::dash_strict() {
+                zerr("bad substitution");
+                errflag_set_error();
+                return (String::new(), new_pos, vec![]);
+            }
             idx += 1; // c:2867
             let sub_start = idx;
             let mut depth = 1_i32;

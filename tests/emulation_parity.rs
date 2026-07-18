@@ -753,6 +753,47 @@ fn dash_strict_rejects_arith_command() {
 }
 
 #[test]
+fn dash_strict_rejects_braced_array_subscript() {
+    // dash/ash have no array subscripts — braced `${name[...]}` is a "Bad
+    // substitution" there. The array LITERAL `a=(…)` is already rejected at
+    // parse time (so arrays can't even be created under --dash); this covers
+    // the subscript-expansion forms. The unbraced `$name[...]` form is left as
+    // `$name` + literal `[...]`, matching dash exactly. Found by the per-mode
+    // dash-strictness sweep.
+    //
+    // KNOWN RESIDUAL: the `[@]` splat compiles to a fusevm array opcode
+    // (JOIN_STAR / ARRAY_ALL) that bypasses the ported paramsubst, so
+    // `${a[@]}` is not yet gated here. Tracked as backlog — completing it needs
+    // dash_strict checks at the several compile_zsh.rs splat-emit sites. The
+    // other four subscript shapes (`[N]`/`[key]`/`[*]`/negative) ARE gated.
+    let probe = |flag: &str, script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    for strict in ["--dash", "--ash"] {
+        for sub in ["a=hi; echo \"${a[0]}\"", "echo \"${a[1]}\"", "a=hi; echo \"${a[*]}\"", "echo \"${x[key]}\""] {
+            let (_o, ok) = probe(strict, sub);
+            assert!(!ok, "{strict}: braced subscript `{sub}` must be a bad substitution");
+        }
+        // The UNBRACED form stays literal (matches dash): `$a[0]` → value + `[0]`.
+        let (out, ok) = probe(strict, "a=hi; echo \"$a[0]\"");
+        assert!(ok && out.trim() == "hi[0]", "{strict}: unbraced $a[0] stays literal → hi[0]");
+        // Normal ${x} forms still work.
+        let (out2, ok2) = probe(strict, "x=hi; echo \"${x}:${#x}\"");
+        assert!(ok2 && out2.trim() == "hi:2", "{strict}: plain ${{x}}/${{#x}} still work");
+    }
+    // --zsh/--bash keep array subscripts.
+    for m in ["--zsh", "--bash"] {
+        let (out, ok) = probe(m, "a=(x y z); echo \"${a[1]}\"");
+        assert!(ok, "{m}: array subscript must work (got exit failure)");
+        assert!(!out.is_empty(), "{m}: array subscript must produce output");
+    }
+}
+
+#[test]
 fn dash_strict_rejects_nonposix_reserved_words() {
     // dash/ash have none of the zsh/bash/ksh reserved words `[[` / `function`
     // / `coproc` — each is an ordinary command word there (`[[`/`coproc` → not
