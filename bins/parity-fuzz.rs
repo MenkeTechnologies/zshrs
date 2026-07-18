@@ -1502,7 +1502,7 @@ fn gen_subscript(seed: u64) -> Vec<String> {
     let n = rng.gen_range(2..=5);
     for _ in 0..n {
         let arr = pick(&mut rng, &["a", "nums", "dup"]);
-        let expr = match rng.gen_range(0..16) {
+        let expr = match rng.gen_range(0..17) {
             // Subscript SET-ness must agree with the value the same subscript
             // yields — `${x[i]}` and `${+x[i]}` are decided by separate code,
             // and they had drifted three ways (docs/BUGS.md #1043):
@@ -1847,6 +1847,77 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                 }
             }
             // Count / length of a subscripted result.
+            // Flag COMBINATIONS and k/K on a plain array.
+            //
+            // c:Src/params.c:1390-1483 — the flag switch is SEQUENTIAL and each
+            // direction arm RESETS the others, so the LAST one wins: `(ri)`
+            // ends ind=1 (INDEX) while `(ir)` ends ind=0 (VALUE). Every prior
+            // arm generated at most ONE direction letter, so nothing could tell
+            // an order-blind `flags.contains('i')` apart from the real switch —
+            // and the inline array search in subst.rs was exactly that.
+            //
+            // k/K were also never generated against a plain ARRAY (arm 12 uses
+            // them only on the assoc `m`). C sets `rev = 1` for them
+            // unconditionally and gates only `keymatch` on the parameter being
+            // a hash (c:1400/1405), so on an array they must reduce to r/R;
+            // zshrs instead rejected them and fell through to the math path.
+            // Bug #1050.
+            // MALFORMED flag blocks — an `n`/`b`/`s` delimiter that never
+            // recurs. c:Src/subst.c:1348 get_strarg "Returns a pointer to the
+            // final delimiter" and yields end-of-string when there is none;
+            // getarg then hits `if (!*t) goto flagerr` (c:Src/params.c:1434/
+            // 1447/1463), which resets every flag and sets `s = *str - 1`
+            // (c:1479-1482) so the WHOLE subscript, parens included, goes to
+            // mathevalarg. Every spelling below therefore produces a
+            // `bad math expression` diagnostic in zsh; zshrs used to swallow
+            // the unterminated arg, strip the flag block, and return an
+            // element. Bug #1051.
+            //
+            // `(zz)N` (unknown flag letter) is included as the control: it
+            // reached the same fallback all along, which is precisely why the
+            // divergence stayed invisible.
+            16 => {
+                let n = rng.gen_range(1..=3);
+                let bad = pick(
+                    &mut rng,
+                    &[
+                        "(nX2)", "(bX2)", "(sX:)", "(n:2)", "(b:2)", "(s:x)", "(ne:2:r)",
+                        "(be:2:r)", "(se:x:)", "(zz)", "(n)", "(b)", "(s)",
+                    ],
+                );
+                let tgt = pick(&mut rng, &["a", "dup", "ws", "m"]);
+                format!("${{{tgt}[{bad}{n}]}}")
+            }
+            14 => {
+                let p = pick(&mut rng, SUB_PATS);
+                let combo = pick(
+                    &mut rng,
+                    &[
+                        // Two direction letters — order decides the answer.
+                        "ir", "ri", "iI", "Ii", "rI", "Ir", "Ri", "iR", "rR", "Rr", "IR", "RI",
+                        // k/K alone on an array, and mixed with the others.
+                        "k", "K", "ki", "ik", "kI", "Ik", "kr", "rk", "KR", "RK", "kK", "Kk",
+                        // Three-letter chains: only the last direction survives.
+                        "irk", "kir", "IrK", "riI",
+                        // Non-direction flags must NOT make a word searchable
+                        // on their own (c:1575 `if (!rev)` routes to
+                        // mathevalarg) — paired here so `e`/`n`/`b` ride along
+                        // with a real direction letter as zsh requires.
+                        // NB the delimiter spelling: `n` takes the NEXT
+                        // character as its delimiter, so `(n:2:r)` is "n with
+                        // delimiter `:`, arg 2, then r". Writing `(ne:2:r)`
+                        // instead means "delimiter `e`", whose arg never
+                        // terminates — C's get_strarg (Src/subst.c:1348) then
+                        // returns end-of-string, `if (!*t) goto flagerr`
+                        // (c:1434) resets every flag, and the WHOLE subscript
+                        // goes to mathevalarg. zshrs doesn't reproduce that
+                        // fallback (open, see docs/BUGS.md #1051), so the
+                        // malformed spelling is deliberately NOT generated.
+                        "er", "ei", "n:2:r", "b:2:i", "b:1:K",
+                    ],
+                );
+                format!("${{{arr}[({combo}){p}]}}")
+            }
             _ => {
                 let p = pick(&mut rng, SUB_PATS);
                 let f = pick(&mut rng, &["r", "R", "i", "I"]);
@@ -4861,6 +4932,36 @@ fn gen_emulate(seed: u64) -> Vec<String> {
                     "a=(1 2 3); print -r -- ${a[1]}",
                     "print -r -- ${#*}",
                     "x=5; print -r -- $((x*2))",
+                    // `emulate sh -c` / `ksh -c` sets SH_GLOB for the body,
+                    // and SH_GLOB changes how the LEXER treats `(`, `)` and
+                    // `<` — but only OUTSIDE a `${...}`/subscript. Inside one,
+                    // c:Src/lex.c:1080/989/1188 `break` out of the switch so
+                    // the character is emitted LITERALLY and the token keeps
+                    // going to the closing brace. zshrs had translated those
+                    // three C `break`s as Rust loop breaks, which ENDED the
+                    // token and produced "closing brace expected" for every
+                    // `${(flag)...}` under sh/ksh emulation. Bug #1052.
+                    //
+                    // Only reachable through the `-c` form: a function body is
+                    // parsed BEFORE `emulate -L sh` in it takes effect, so the
+                    // -L arm above can never exercise the lexer under SH_GLOB.
+                    "print -r -- ${(t)PATH}",
+                    "v=abc; print -r -- ${(U)v}",
+                    "v=abc; print -r -- ${(L)${(U)v}}",
+                    "a=(1 2); print -r -- ${(j:-:)a}",
+                    "print -r -- ${x:-<lit>}",
+                    "a=(1 2 3); print -r -- ${a[(r)2]}",
+                    // NOT generated, all three still divergent and each a
+                    // DIFFERENT bug from #1052 (see docs/BUGS.md #1053):
+                    //   ${x:-(paren)} / ${x:-a|b}  — under ZSH emulation the
+                    //     unquoted `:-` default is glob-expanded by zsh (NOMATCH
+                    //     fires); zshrs returns it literally. SH_GLOB-independent.
+                    //   ${arr[@]:#<no-data>}       — under sh/ksh the `<` must be
+                    //     literal, so nothing matches and both elements survive;
+                    //     zshrs drops one. isnumglob (c:Src/lex.c:581) rejects
+                    //     `<no-data>` outright, so this is not the lexer's
+                    //     numeric-glob path.
+                    "a=(1 2 3); print -r -- ${a[1<2]}",
                 ],
             );
             stmts.push(format!("emulate {emu} -c '{body}'"));
@@ -5490,6 +5591,65 @@ fn gen_jobs(seed: u64) -> Vec<String> {
         ],
     );
     vec![format!("{setup} {probe}")]
+}
+
+/// EXTENDEDGLOB operators (`#`, `##`, `^`) in words that also contain a
+/// parameter expansion, with the option turned on AT RUNTIME by `setopt`.
+///
+/// c:Src/lex.c:433-434 — `lextok2['#'] = Pound;` / `lextok2['^'] = Hat;`
+/// tokenize unconditionally; the EXTENDEDGLOB test happens later, at glob
+/// time, in haswilds (c:Src/pattern.c:4363-4370). zshrs had the test in its
+/// COMPILER instead, so a `setopt extendedglob` inside the script came too
+/// late to affect the already-compiled word. Bug #1049.
+///
+/// Every case runs `setopt` INSIDE the probe — passing `-o extendedglob` on
+/// the command line masks the bug entirely, which is what hid it.
+///
+/// Fixture safety: `touch` targets are ABSOLUTE, so if the minimizer drops
+/// the `cd` (it runs SUBSETS of a probe) the files still land in the fixture
+/// dir and never in the repo. Nothing is ever removed.
+fn gen_extglob(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // Names chosen so `#`/`##`/`^` have both matches and non-matches to
+    // discriminate: `a##` must match aa/aaa but not ab/b.
+    let setup = "d=${TMPDIR:-/tmp}/zshrs-fuzz-extglob; mkdir -p $d; \
+                 touch $d/aa $d/aaa $d/ab $d/b $d/bb; cd $d";
+    // Whether EXTENDEDGLOB is on decides literal-vs-pattern. Both legs
+    // matter: the fix must not make `#` glob while the option is off.
+    let opt = pick(&mut rng, &["setopt extendedglob; ", ""]);
+    let probe = pick(
+        &mut rng,
+        &[
+            // The regressed shapes: operator adjacent to an expansion.
+            r#"v=a; print -r -- ${v}##"#,
+            r#"v=a; print -r -- $v##"#,
+            r#"v=a; print -r -- $v#"#,
+            r#"print -r -- ${:-a}##"#,
+            r#"v=a; print -r -- a##$v"#,
+            r#"w=zz; print -r -- ${w}a##a"#,
+            r#"v=a; print -r -- ${v}#b"#,
+            // Hat rides the same compile-time gate.
+            r#"v=aa; print -r -- ^$v"#,
+            r#"v=aa; print -r -- ^${v}"#,
+            r#"u=; print -r -- ^$u"#,
+            // Operators that already worked — pinned so the widened
+            // needs_glob cannot regress them.
+            r#"v=a; print -r -- ${v}*"#,
+            r#"v=a; print -r -- $v?"#,
+            r#"v=a; print -r -- $v(#c2,3)"#,
+            r#"v=aa; print -r -- ${v}~ab"#,
+            r#"print -r -- a##"#,
+            r#"print -r -- ^b"#,
+            // Quoting/escaping must still suppress the operator.
+            r#"v=a; print -r -- "${v}##""#,
+            r#"v=a; print -r -- ${v}\#\#"#,
+            r##"v=x; print -r -- "#$v#""##,
+            // A `#` that is ordinary text, not an operator.
+            r#"v=1; print -r -- ${v}#comment"#,
+            r#"v=a; print -r -- $v^b"#,
+        ],
+    );
+    vec![format!("{setup}; {opt}{probe}")]
 }
 
 fn gen_paramod(seed: u64) -> Vec<String> {
@@ -6740,7 +6900,7 @@ fn gen_default(seed: u64) -> Vec<String> {
     };
     let mut stmts = vec![state.to_string()];
     for _ in 0..rng.gen_range(2..=4) {
-        let stmt = match rng.gen_range(0..16) {
+        let stmt = match rng.gen_range(0..17) {
             // `-` vs `:-`.
             0 => "print -r -- \"[${x-DEF}]\"".to_string(),
             1 => "print -r -- \"[${x:-DEF}]\"".to_string(),
@@ -6767,6 +6927,39 @@ fn gen_default(seed: u64) -> Vec<String> {
             // `:+` guard idiom (append only when set).
             14 => "print -r -- \"${x:+prefix:}rest\"".to_string(),
             // Assignment default reflects into a later plain read.
+            // UNQUOTED default/alt word carrying a glob metacharacter.
+            //
+            // The default word is SOURCE text, so its metacharacters drive
+            // filename generation on the assembled word (a parameter VALUE
+            // never globs — the `$y` arms above cover that side). Every other
+            // arm here double-quotes its result, which suppresses globbing
+            // entirely, so nothing exercised this leg.
+            //
+            // zshrs bracketed the word for the runtime glob decision only when
+            // the source contained `*`, `?` or `[`, so `(paren)` and `a|b`
+            // came out literal where zsh globs them. Bug #1053.
+            //
+            // Fixture: absolute `touch` targets so a minimizer that drops the
+            // `cd` (it runs SUBSETS) still cannot write into the repo, and
+            // nothing is ever removed.
+            15 => {
+                let word = pick(
+                    &mut rng,
+                    &[
+                        // Metas that already worked — pinned against regression.
+                        "a*", "[ab]?", "zz*", "a?",
+                        // The regressed shapes.
+                        "(paren)", "a|b", "aa|zz", "zz|yy", "(aa|ab)",
+                        // No metacharacter at all: must stay literal.
+                        "plain",
+                    ],
+                );
+                let op = pick(&mut rng, &["-", ":-", "+", ":+"]);
+                format!(
+                    "d=${{TMPDIR:-/tmp}}/zshrs-fuzz-defglob; mkdir -p $d; \
+                     touch $d/aa $d/ab $d/b; cd $d; print -r -- ${{x{op}{word}}}"
+                )
+            }
             _ => "v=${x:=filled}; print -r -- \"v=[$v] x=[$x]\"".to_string(),
         };
         stmts.push(stmt);
@@ -8350,6 +8543,7 @@ enum Mode {
     Rcexpand,
     Mbident,
     Jobs,
+    Extglob,
 }
 
 struct Args {
@@ -8437,6 +8631,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Rcexpand => gen_rcexpand(seed),
         Mode::Mbident => gen_mbident(seed),
         Mode::Jobs => gen_jobs(seed),
+        Mode::Extglob => gen_extglob(seed),
     }
 }
 
@@ -8512,6 +8707,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Rcexpand => "rcexpand",
         Mode::Mbident => "mbident",
         Mode::Jobs => "jobs",
+        Mode::Extglob => "extglob",
     }
 }
 
@@ -8587,6 +8783,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Rcexpand,
         Mode::Mbident,
         Mode::Jobs,
+        Mode::Extglob,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }

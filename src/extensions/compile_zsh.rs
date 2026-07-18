@@ -6330,8 +6330,46 @@ impl ZshCompiler {
                     && self.dq_context_depth == 0
                     && self.scalar_assign_depth == 0 // scalar `v=${x:-*}` RHS doesn't glob
                     && self.assign_builtin_arg_depth == 0 // typeset/export NAME=value arg
-                    && s.chars()
-                        .any(|c| matches!(c, '*' | '?' | '[' | '\u{87}' | '\u{97}' | '\u{91}'));
+                    // Which metacharacters can make the default word glob is
+                    // decided at RUNTIME by `haswilds` on the pretokenized
+                    // source (subst.rs, the DEFAULT_WORD_GLOB_PENDING gate).
+                    // This compile-time test only decides whether to BRACKET
+                    // the word so that runtime answer can be acted on, so it
+                    // must not be narrower than haswilds — it listed only
+                    // `*`/`?`/`[`, so `${x:-(paren)}` was never bracketed:
+                    // the runtime set PENDING correctly and nothing consumed
+                    // it, and the word came out literal where zsh globs it
+                    // (`(paren)` parses as a glob QUALIFIER — zsh says
+                    // "number expected"). haswilds (c:Src/pattern.c:4325-4371)
+                    // fires on Inpar / Bar / Star / Inbrack / Inang / Quest,
+                    // plus Pound / Hat under EXTENDEDGLOB, so accept each of
+                    // those in both raw and token form. Over-accepting is
+                    // harmless — the bracket is a RESET/APPLY pair whose
+                    // handler returns the word untouched when PENDING is
+                    // false — whereas under-accepting silently loses the
+                    // glob. Deliberately NOT gated on isset(EXTENDEDGLOB):
+                    // that is a runtime option and reading it here is the
+                    // #1049 mistake. Bug #1053.
+                    && s.chars().any(|c| {
+                        matches!(
+                            c,
+                            '*' | '?'
+                                | '['
+                                | '('
+                                | '|'
+                                | '<'
+                                | '#'
+                                | '^'
+                                | '\u{87}' // Star
+                                | '\u{97}' // Quest
+                                | '\u{91}' // Inbrack
+                                | '\u{88}' // Inpar
+                                | '\u{8e}' // Bar
+                                | '\u{94}' // Inang
+                                | '\u{84}' // Pound
+                                | '\u{86}' // Hat
+                        )
+                    });
                 if dwg_mod {
                     self.builder.emit(
                         Op::CallBuiltin(crate::vm_helper::BUILTIN_DEFAULT_WORD_GLOB_RESET, 0),
@@ -6654,7 +6692,10 @@ impl ZshCompiler {
                 {
                     let mut in_sq = false;
                     let mut in_dq = false;
-                    let extglob = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+                    // NB: deliberately no `isset(EXTENDEDGLOB)` here. This is
+                    // the COMPILER; every option it could read is a RUNTIME
+                    // value that a `setopt` later in the same script may
+                    // change. See the Pound/Hat arm below (bug #1049).
                     for seg in &segs {
                         let lit = match seg {
                             WordSegment::Literal(l) => l,
@@ -6680,7 +6721,31 @@ impl ZshCompiler {
                                 '(' => saw_inpar = true,
                                 '|' => saw_bar = true,
                                 ')' => saw_outpar = true,
-                                '#' | '\u{84}' | '^' | '\u{86}' if extglob => {
+                                // c:Src/lex.c:433-434 — `lextok2['#'] = Pound;`
+                                // / `lextok2['^'] = Hat;` tokenize
+                                // UNCONDITIONALLY; the lexer never consults
+                                // EXTENDEDGLOB. The option test lives at glob
+                                // time in haswilds (c:Src/pattern.c:4363-4370,
+                                // `case Pound: if (isset(EXTENDEDGLOB) && …)`),
+                                // which the Rust port already mirrors at
+                                // pattern.rs:4119-4126.
+                                //
+                                // Testing EXTENDEDGLOB HERE read a RUNTIME
+                                // option at COMPILE time: the whole script is
+                                // compiled before any `setopt` in it executes,
+                                // so `setopt extendedglob; v=a; print ${v}##`
+                                // compiled with the option still off, never
+                                // emitted the glob op, and printed `a##`.
+                                // Passing `-o extendedglob` (set before
+                                // compile) worked — the tell. Bug #1049.
+                                //
+                                // Emitting the op unconditionally is safe
+                                // because it only routes the word to
+                                // expand_glob, which gates on haswilds and
+                                // hands back the literal when the option is
+                                // off — same as C, where a Pound-carrying word
+                                // always reaches zglob and haswilds decides.
+                                '#' | '\u{84}' | '^' | '\u{86}' => {
                                     needs_glob = true;
                                 }
                                 '{' | '\u{8f}' | '}' | '\u{90}' => {
