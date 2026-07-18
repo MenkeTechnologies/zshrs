@@ -1719,6 +1719,19 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                             continue;
                         }
                     }
+                    Some('[') if crate::dash_mode::dash_strict() => {
+                        // !!! DASH-STRICT GATE (no C counterpart) !!! dash/ash
+                        // have no `$[...]` arithmetic substitution (a deprecated
+                        // bash/zsh form; POSIX uses `$(( ))`). The `$` is a
+                        // literal dollar and `[...]` ordinary text, so
+                        // `echo $[1+2]` prints `$[1+2]` like /bin/dash. Emit
+                        // `Bnull '$'` (mirrors the `$'...'` gate above) and push
+                        // the `[` back so it re-lexes as a literal bracket.
+                        hungetc('[');
+                        LEX_LEXSTOP.set(false);
+                        add(Bnull);
+                        add('$');
+                    }
                     Some('[') => {
                         // c:1023 — `$[...]` arithmetic substitution.
                         // C: `cmdpush(CS_MATHSUBST); ... c =

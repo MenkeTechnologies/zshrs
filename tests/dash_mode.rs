@@ -117,6 +117,17 @@ fn dash_rejects_arith_base_num() {
 }
 
 #[test]
+fn dash_old_dollar_bracket_arith_is_literal() {
+    // `$[expr]` is a deprecated bash/zsh arithmetic form; POSIX uses `$(( ))`.
+    // dash/ash have no `$[ ]` — the `$` is a literal dollar and `[expr]` plain
+    // text, so `echo $[1+2]` prints `$[1+2]`, not `3`.
+    assert_eq!(run_dash_mode("echo $[1+2]").0, "$[1+2]\n");
+    assert_eq!(run_dash_mode("x=5; echo $[x*2]").0, "$[x*2]\n");
+    // The POSIX `$(( ))` form still evaluates.
+    assert_eq!(run_dash_mode("echo $((1+2))").0, "3\n");
+}
+
+#[test]
 fn dash_double_bracket_is_not_reserved() {
     // dash has no `[[ ]]`; it is an ordinary command → "not found".
     let (out, code) = run_dash_mode("[[ 1 = 1 ]] && echo yes");
