@@ -529,6 +529,9 @@ fn bash_case_and_at_transforms() {
     assert_eq!(bash(r#"declare -a a=(1); printf '%s' "${a@a}""#), "a");
     assert_eq!(bash(r#"declare -A m=([k]=v); printf '%s' "${m@a}""#), "A");
     assert_eq!(bash(r#"declare -rix v=5; printf '%s' "${v@a}""#), "irx");
+    // `${v@E}` expands ANSI-C backslash escapes like $'…'.
+    assert_eq!(bash(r#"v="x\ty"; printf '%s' "${v@E}""#), "x\ty");
+    assert_eq!(bash(r#"v="a\x41b"; printf '%s' "${v@E}""#), "aAb");
 
     // `@`/`~` transforms are a bad substitution under --zsh (rc 1, no output).
     let out = Command::new(zshrs_bin())

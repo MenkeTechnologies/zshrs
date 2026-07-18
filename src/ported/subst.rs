@@ -6052,6 +6052,7 @@ pub fn paramsubst(
         let mut bash_casemod_toggle: u8 = 0; // 0=none, 1=~~ toggle-all, 2=~ toggle-first
         let mut bash_at_q = false; // ${v@Q} shell-quote
         let mut bash_at_a = false; // ${v@a} attribute-flags string
+        let mut bash_at_e = false; // ${v@E} expand ANSI-C backslash escapes
         if crate::dash_mode::bash_mode() {
             let r = rest.as_str();
             match r {
@@ -6060,6 +6061,7 @@ pub fn paramsubst(
                 "@u" => bash_casemod = 3,
                 "@Q" => bash_at_q = true,
                 "@a" => bash_at_a = true,
+                "@E" => bash_at_e = true,
                 "~~" => bash_casemod_toggle = 1,
                 "~" => bash_casemod_toggle = 2,
                 _ => {
@@ -6080,7 +6082,8 @@ pub fn paramsubst(
                     }
                 }
             }
-            if bash_casemod != 0 || bash_casemod_toggle != 0 || bash_at_q || bash_at_a {
+            if bash_casemod != 0 || bash_casemod_toggle != 0 || bash_at_q || bash_at_a || bash_at_e
+            {
                 rest = String::new();
             }
         }
@@ -14639,6 +14642,24 @@ pub fn paramsubst(
             }
             value = attrs;
             split_parts = None;
+        }
+
+        // bash `${v@E}` — expand ANSI-C backslash escapes in the value exactly
+        // as `$'…'` does (\t \n \xNN \nnn \e …). Reuses the canonical
+        // getkeystring `$'…'` processor. No C counterpart; --bash only.
+        if bash_at_e {
+            let e = |s: &str| -> String {
+                crate::ported::utils::getkeystring_with(
+                    s,
+                    crate::ported::zsh_h::GETKEYS_DOLLARS_QUOTE as u32,
+                    None,
+                )
+                .0
+            };
+            value = e(&value);
+            if let Some(parts) = split_parts.as_ref() {
+                split_parts = Some(parts.iter().map(|p| e(p)).collect());
+            }
         }
 
         if casmod != CASMOD_NONE {
