@@ -670,6 +670,48 @@ fn shell_aliases_map_to_base_modes() {
 }
 
 #[test]
+fn dash_strict_rejects_substring_expansion() {
+    // `${var:OFFSET[:LEN]}` substring is a ksh/bash/zsh extension — real dash
+    // and ash reject it as "Bad substitution" (non-zero exit). The POSIX
+    // `:-`/`:+`/`:=`/`:?` operators and `#`/`##`/`%`/`%%`/`${#v}` are NOT
+    // substring and MUST keep working. macOS `/bin/sh` is bash (accepts
+    // substring), so this is gated on dash_strict (--dash/--ash), not the
+    // broader posix-faithful set. Found by the per-mode param fuzzer.
+    let probe = |flag: &str, script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    for strict in ["--dash", "--ash"] {
+        for sub in ["v=abcdef; echo \"${v:2}\"", "v=abcdef; echo \"${v:2:3}\"", "v=abcdef; echo \"${v: -2}\""] {
+            let (out, ok) = probe(strict, sub);
+            assert!(!ok, "{strict}: substring `{sub}` must be a bad substitution");
+            assert!(out.trim().is_empty(), "{strict}: substring `{sub}` prints nothing");
+        }
+        // POSIX operators + length must still work under strict mode.
+        for (script, want) in [
+            ("v=; echo \"${v:-def}\"", "def"),
+            ("v=x; echo \"${v:+set}\"", "set"),
+            ("unset v; echo \"${v:=asg}\"", "asg"),
+            ("v=abc; echo \"${v#a}\"", "bc"),
+            ("v=abc; echo \"${v%c}\"", "ab"),
+            ("v=abc; echo \"${#v}\"", "3"),
+        ] {
+            let (out, ok) = probe(strict, script);
+            assert!(ok, "{strict}: POSIX `{script}` must succeed");
+            assert_eq!(out.trim(), want, "{strict}: {script}");
+        }
+    }
+    // --sh (bash-backed on macOS), --bash, --ksh, --zsh DO support substring.
+    for m in ["--sh", "--bash", "--ksh", "--zsh"] {
+        let (out, ok) = probe(m, "v=abcdef; echo \"${v:2:3}\"");
+        assert!(ok && out.trim() == "cde", "{m}: substring must yield cde");
+    }
+}
+
+#[test]
 fn bash_mode_self_contained() {
     // Self-contained bash-mode checks (no /bin/bash needed): bash is a
     // superset of POSIX sh — brace expansion is ON (unlike `emulate sh`),

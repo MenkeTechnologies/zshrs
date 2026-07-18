@@ -13843,6 +13843,18 @@ pub fn paramsubst(
                         value = mod_one(&value);
                     }
                 } else {
+                    // dash/ash have NO `${var:OFFSET[:LEN]}` substring extension:
+                    // real dash rejects it as "Bad substitution" (rc 2). Only the
+                    // POSIX `:-`/`:+`/`:=`/`:?` operators (handled in an earlier
+                    // arm) are valid there. Gate on dash_strict() (--dash/--ash)
+                    // — NOT posix_faithful(): macOS `/bin/sh` is bash, which DOES
+                    // accept substring, so --sh must keep it. Found by the
+                    // per-mode param fuzzer (gen_param_permode).
+                    if crate::dash_mode::dash_strict() {
+                        zerr("bad substitution");
+                        errflag_set_error();
+                        return (String::new(), 0, Vec::new());
+                    }
                     // c:Src/subst.c:3752-3792 — after `${var:OFFSET[:LENGTH]}`,
                     // any further `:MODIFIER` chain applies to the substring
                     // result (`${path:0:8:h}` = substring then `:h` head;
