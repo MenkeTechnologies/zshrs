@@ -319,6 +319,30 @@ const PORTABLE_CORPUS: &[&str] = &[
     "printf '%s\\n' \"$( (echo a; echo b) | tail -1)\"",         // subshell piped in cmd-sub
     "seq 1 3 | while read n; do printf '%s' \"$n\"; done; echo",  // pipe into while-read
     "{ read a; read b; } <<END\nfirst\nsecond\nEND\necho \"$a-$b\"", // group read from heredoc
+    // Ninth expansion batch (harness_classify9.sh) — arithmetic edge cases +
+    // parameter-expansion operator combos.
+    "echo $(( 3 + 4 * 2 - 1 ))",                                  // precedence → 10
+    "echo $(( 2 * (3 + 4) ))",                                    // parens override → 14
+    "echo $(( -10 / 3 ))",                                        // negative int div → -3
+    "echo $(( -10 % 3 ))",                                        // negative modulo → -1
+    "echo $(( 3 * -2 ))",                                         // multiply by negative → -6
+    "echo $(( 1 + 2 == 3 ))",                                     // arith then compare → 1
+    "echo $(( 3 <= 3 ))\" \"$(( 4 >= 5 ))",                       // <= and >=
+    "echo $(( 1 && 1 && 0 ))\" \"$(( 0 || 0 || 1 ))",            // chained &&/||
+    "echo $(( 5 & 6 | 1 ))",                                      // bitwise and-then-or → 5
+    "echo $(( 15 >> 1 << 1 ))",                                   // chained shifts → 14
+    "x=10; echo $(( x % 3 + x / 3 ))",                           // mod + div → 4
+    "a=2; b=3; echo $(( a < b ? b - a : a - b ))",              // ternary with subtraction → 1
+    "echo $(( 1 < 2 && 2 < 3 && 3 < 4 ))",                       // fully chained comparisons → 1
+    "v=a/b/c; echo \"${v##*/}\" \"${v#*/}\"",                    // longest vs shortest prefix
+    "v=file.tar.gz; echo \"${v%%.*}\" \"${v%.*}\"",             // longest vs shortest suffix
+    "unset v; echo \"[${v:+set}][${v:-def}]\"",                  // :+ and :- on unset
+    "v=; echo \"[${v:+set}][${v-keep}]\"",                       // :+ vs - on empty
+    "echo \"${#unset_variable}\"",                               // length of unset → 0
+    "v=a=b=c; echo \"${v#*=}\" \"${v##*=}\"",                    // strip through first vs last =
+    "x=5; case $(( x > 3 )) in 1) echo big;; 0) echo small;; esac", // arith result in case
+    "v=UPPER; case $v in [A-Z]*) echo caps;; esac",              // case uppercase class
+    "v=123abc; case $v in [0-9]*) echo startsdigit;; esac",      // case starts-with-digit
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -483,6 +507,20 @@ const EXTENDED_CORPUS: &[&str] = &[
     "a=(1 2 3); (( sum=0 )); for x in \"${a[@]}\"; do (( sum+=x )); done; echo $sum", // (( += )) over array
     "[[ abc == a?c ]] && [[ abc == ??? ]] && echo both", // two [[ globs chained
     "x=5; case $x in [1-3]) echo lo;; [4-6]) echo mid;; esac", // case numeric ranges
+    // Ninth expansion batch (harness_classify9.sh).
+    // (bare `a[N]` arith subscript omitted — 0-based vs 1-based index differs
+    //  across shells / emulation legs, flagged by the full-matrix run.)
+    "a=(10 20 30); s=0; for x in \"${a[@]}\"; do (( s += x )); done; echo $s", // sum via (( ))
+    "[[ 5 -gt 3 && 3 -gt 1 ]] && echo chain",             // [[ arith && chain
+    "[[ abc == a[bc]c ]] && echo cls",                    // [[ bracket-class glob
+    "[[ abcdef == a*e? ]] && echo m",                     // [[ mixed */? glob
+    "a=(x y z); echo \"${a[@]:1:1}\"",                    // single-element slice
+    "v=Hello; [[ $v == [A-Z]* ]] && echo caps",           // [[ leading-uppercase class
+    "(( x = 2**10 )); echo $x",                           // (( )) power → 1024
+    "a=(a b c); [[ ${#a[@]} -eq 3 ]] && echo three",      // array count in [[ -eq ]]
+    "x=42; [[ $x =~ ^[0-9]+$ ]] && echo num",             // =~ digit regex
+    "[[ \"foo bar\" == *\" \"* ]] && echo hasspace",      // [[ glob for embedded space
+    "a=(1 2 3); b=$(( ${a[0]} + ${a[2]} )); echo $b",     // ${a[i]} in arith cmd-sub
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
