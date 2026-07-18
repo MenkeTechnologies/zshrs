@@ -4424,6 +4424,42 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                 let (op, val) = parse_range_spec(&mut chars);
                 qs.qualifiers.push(qualifier::Links { value: val, op });
             }
+            // c:Src/glob.c:1445-1449 — `case 'd': func = qualdev;
+            // data = qgetnum(&s);`. Matches files by device number
+            // (`qualdev`, c:3688, is `buf->st_dev == dv`). Both the
+            // `qualifier::Device` variant and the `qualdev` matcher were
+            // already ported and wired at glob.rs:4894 — only this parser arm
+            // was missing, so `*(d5)` never reached them and a bare `*(d)`
+            // reported "unknown file attribute: d" where zsh says
+            // "number expected".
+            //
+            // c:826-834 qgetnum takes PLAIN digits — deliberately NOT
+            // `parse_range_spec`, which would also accept the `+`/`-` range
+            // operators that `l`/`L`/`m` use and that C does not allow here.
+            'd' => {
+                let mut num = String::new();
+                while let Some(&pc) = chars.peek() {
+                    if pc.is_ascii_digit() {
+                        num.push(pc);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if num.is_empty() {
+                    // c:830-833 — `if (!idigit(**s)) { zerr("number expected");
+                    // return 0; }`. Matches the sibling error arms in this
+                    // parser (`Y`, `f`): report, set errflag, stop.
+                    crate::ported::utils::zerr("number expected"); // c:832
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs;
+                }
+                qs.qualifiers
+                    .push(qualifier::Device(num.parse().unwrap_or(0))); // c:1448
+            }
             // Times
             'a' => {
                 let (unit, op, val) = schedgetfn(&mut chars);

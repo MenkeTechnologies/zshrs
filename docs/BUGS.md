@@ -19,6 +19,828 @@ CI green pending the underlying fix.
 
 ---
 
+## #1048 — `$(jobs)` printed the parent's job table instead of an empty one — fixed
+
+**Status:** `fixed` 2026-07-18 — surfaced probing job control across subshell forms.
+
+```
+$ zsh   -fc 'sleep 2 & print -r -- "[$(jobs)]"'   → []
+$ zshrs -c  '…same…'                              → [[1]  + running    sleep 2]   ✗
+```
+Identical for every spelling: `` `jobs` ``, `x=$(jobs)`, and all of `-l` / `-p` /
+`-r`.
+
+C: `getoutput` (Src/exec.c:4782, and `getoutputfile` for `=(...)` at 4986) runs
+`entersubsh(ESUB_PGRP|ESUB_NOMONITOR)` in the forked child, and Src/exec.c:1219
+turns ESUB_PGRP into `clearjobtab(monitor)` — so the child starts with an EMPTY
+table. The `oldjobtab` snapshot that would preserve a viewable copy
+(Src/jobs.c:1800) is gated on `monitor`, so a non-interactive shell retains
+nothing whatsoever. That is the whole reason zsh prints an empty table here.
+
+zshrs already called `clearjobtab` in the two paths that genuinely fork —
+the `(...)` subshell (fusevm_bridge.rs:12034) and pipeline stages
+(fusevm_bridge.rs:2630) — which is why `( jobs )` and `jobs | cat` were already
+correct. Command substitution was the gap: zshrs runs it IN-PROCESS via
+`run_command_substitution` (vm_helper.rs:3193), so there is no fork to clear a
+private copy, and clearing outright would destroy the parent's real table.
+
+Fix mirrors the fork by extending the snapshot/restore block that path already
+maintains for paramtab / opts / traps / IFS / shfunctab: snapshot the globals
+`clearjobtab` mutates on the non-monitor path (`JOBTAB`, `MAXJOB`, `THISJOB`),
+call `clearjobtab`, then restore after the sub-VM returns. This is exact rather
+than approximate because `freejob` (Src/jobs.c:1457) is struct-local — it clears
+procs/auxprocs/ty/pwd/stat and nothing else, with no `waitpid`, `kill`, or
+external table touched — so nothing observable happens between clear and
+restore.
+
+`CURJOB`/`PREVJOB` are restored too. They are plain globals in C, so a forked
+child's `setcurjob` never reaches the parent; without restoring them the table
+came back but the `+`/`-` current/previous markers did not
+(`sleep 2 & x=$(jobs); jobs` lost the `+`).
+
+Gated by the new `jobs` fuzz mode. Load-bearing: disabling ONLY the
+`clearjobtab` call (both binaries rebuilt) reports 52 new divergences over 120
+cases; restored, 0 across 300 cases on three seeds.
+
+One case found NON-COMPARABLE and excluded from generation: reading the
+PARENT's table after the cmd-subst child forked its own background job
+(`sleep 2 & print -r -- "[$(sleep 2 & jobs)]"; jobs`) is nondeterministic in
+BOTH shells — over three runs each, zsh printed the parent job once and zshrs
+once. Only the child's half is stable (it reports slot `[2]`, because
+`clearjobtab` emptied the table and `initjob` at Src/jobs.c:1828 then claimed
+slot 1 as the procless control job), so the probe keeps that half and drops the
+trailing `jobs`.
+
+---
+
+## #1046 — two `autoload` gaps: `-X` did not abort, `-w` was a stub — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced probing autoload option variants.
+
+**A. `autoload -X` outside a function printed but did not abort.**
+```
+$ zsh  -fc 'autoload -X; echo AFTER'   → zsh:autoload:1: bad autoload
+$ zshrs -c '…same…'                    → zsh:autoload:1: bad autoload
+                                         AFTER                        ✗
+```
+C is `zerrnam(name, "bad autoload")` (Src/builtin.c:3637). The `zerr*` family
+sets `errflag`, which aborts the enclosing command AND the script; `zwarn*` only
+prints. zshrs called `zwarnnam` — the in-source comment right above it already
+cited `zerrnam`, so the port had drifted from its own citation. The message
+matched all along; only the abort was missing, which is why nothing caught it.
+
+Scope checked before changing: a SUBSHELL (`(autoload -X); echo AFTER`) still
+continues in both, because only the subshell dies, and inside a function `-X`
+takes the real autoload path and never reaches this branch.
+
+**B. `autoload -w FILE` was a stub — the whole option did nothing.**
+```
+$ zsh  -fc 'autoload -w /nonexistent.zwc'  → zsh:autoload:1: can't open zwc file: /nonexistent.zwc
+$ zshrs -c '…same…'                        → <silence>                                            ✗
+```
+C: `returnval = dump_autoload(name, *argv, on, ops, func);` (c:3713-3714).
+zshrs's loop had a bare `continue` with a comment naming the call it wasn't
+making, so a missing dump produced no diagnostic and a VALID dump registered no
+functions. `dump_autoload` itself was already ported with a matching signature
+(parse.rs), and the "can't open zwc file" warning already existed inside
+`load_dump_header` — the feature was complete but unreachable, the same shape as
+#1045's `d` glob qualifier.
+
+Verified END TO END, not just on the error path: compiling a real functions
+dump (`zcompile -c`) and running `autoload -w fdump.zwc` now registers both
+names (`${+functions[myfn1]}` = 1, two entries in `${(ok)functions}`), matching
+zsh exactly — including zsh's own follow-on behaviour that CALLING such a
+function then fails with "function definition file not found". The first attempt
+at this check silently produced no dump at all (`zcompile -c` needs the
+functions defined first), so both shells merely agreed on "can't open" and the
+positive path went untested; the run was redone with a real dump. Also correct:
+the `.zwc` extension is appended when absent, and a non-dump file reports
+`invalid zwc file`.
+
+Gated by the `autoload` mode's new arm — the `echo AFTER` is the load-bearing
+part of the `-X` rows, since the diagnostic alone already matched. Only
+non-writing rows are generated: the positive path needs a compiled dump on disk
+and this mode has no scratch fixture cwd to write one into. Reverting reproduces
+31 divergences/500-seed.
+
+---
+
+## NOT-A-BUG — glob sort TIE order differs from zsh
+
+**Recorded 2026-07-19** so it is not re-filed. Probing the `o`/`O` sort keys
+turns up what looks like a divergence whenever every file ties on the chosen
+key:
+
+```
+$ zsh  -fc 'print -r -- *(.olN)'   → b_empty a_small c_big
+$ zshrs -c '…same…'                → a_small b_empty c_big
+```
+
+It is not a contract. `gmatchcmp` (Src/glob.c:936) walks `gf_sortlist` and
+returns the FIRST non-zero key comparison — there is no implicit name
+tie-break — so an all-ties comparison returns 0, and the result is handed to
+`qsort` (c:1976), which is unstable by definition. The surviving order is
+whatever the libc qsort does with that input, i.e. an implementation detail, the
+same category as unsorted assoc iteration order which this project already
+treats as non-comparable.
+
+The sort KEYS themselves are correct, which is the part that matters and was
+verified separately: giving the files distinct link counts makes both shells
+agree on the group ordering (`ol` puts the 1-link files before the 2-link ones,
+`Ol` reverses it) and only the within-group order differs.
+
+The `glob` fuzz mode already avoids this by construction — its fileset comment
+states sizes and mtimes are deliberately distinct so the ordering qualifiers are
+deterministic, and `od`/`ol` (on which a flat directory always ties) are not in
+the qualifier vocabulary. Adding them would make the mode flake rather than test
+anything.
+
+---
+
+## #1047 — `${(t)param[sub]}` — the subscript indexes the TYPE STRING — port-bug
+
+**Status:** `port-bug` 2026-07-19 — surfaced probing associative arrays. NOT
+fixed: characterised precisely but left open, see the value note at the end.
+
+The semantics are the surprising part and are worth recording on their own.
+`${(t)x[sub]}` does NOT ask for the type of element `sub`; `(t)` produces the
+type STRING and the subscript then indexes THAT string. `"array"` is
+a(1) r(2) r(3) a(4) y(5), so:
+
+```
+a=(1 2 3)                      zsh      zshrs
+${(t)a}                        array    array    ✓
+${(t)a[1]}                     a        a        ✓
+${(t)a[2]}                     r        r        ✓
+${(t)a[1,3]}                   arr      r        ✗
+${(t)a[-1]}                    y        a        ✗
+integer i;  ${(t)i[1,3]}       int      t        ✗
+typeset -A m=(a 1); ${(t)m[a]} <empty>  association  ✗
+```
+
+C reaches this by re-entering the subscript loop after the `wantt` arm: it
+`createparam(nulstring, PM_SCALAR)` holding the type tag and calls `getindex` on
+that (c:Src/subst.c:2867-2900), so the tag is subscripted exactly like any
+scalar. `${(t)m[a]}` is `"association"["a"]` — a non-numeric subscript on a
+scalar — hence empty.
+
+zshrs's deviation is precise and reads like a simplified single-index
+implementation: a RANGE uses only its last component as a single index (`[1,3]`
+returns index 3), a NEGATIVE index is taken as its absolute value (`[-1]`
+returns index 1), and a non-numeric subscript returns the whole tag instead of
+empty. The control confirms the ordinary scalar path is fine — `t=array;
+${t[1,3]}` gives `arr` and `${t[a]}` gives empty — so only the `(t)` route is
+wrong, and the fix is to route the tag through the normal scalar-slice path
+rather than a bespoke index.
+
+Not fixed here: three instrumented attempts failed to reach the site (the
+ordinary scalar-slice helpers are not on this path either), and the case is
+pathological — subscripting a type string is not something real code does. The
+model above plus the exact deviation pattern should make it quick for a focused
+pass; chasing it further was not a good use of a hot-path session.
+
+---
+
+## #1045 — `d<NUM>` glob qualifier (match by device) was never parsed — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced probing stat-based glob qualifiers.
+
+```
+$ zsh  -fc 'print -r -- *(.dN)'   → zsh: number expected
+$ zshrs -c 'print -r -- *(.dN)'   → zsh: unknown file attribute: d   ✗
+$ zsh  -fc 'print -r -- *(.d16777233N)'   → a b        (the files' device)
+$ zshrs -c '…same…'                       → unknown file attribute  ✗
+```
+
+The interesting part is that almost all of it was already ported: the
+`qualifier::Device(u64)` variant existed, `qualdev` was implemented
+(glob.rs, `buf.st_dev as i64 == dv`, c:Src/glob.c:3688), and the two were
+already wired together in the matcher dispatch. Only the PARSER arm was
+missing, so nothing could ever construct a `Device` qualifier — the feature was
+present but unreachable, and the qualifier fell through to the
+"unknown file attribute" arm.
+
+C: `case 'd': func = qualdev; data = qgetnum(&s);` (c:1445-1449). The argument
+is read by `qgetnum` (c:826-834), which takes PLAIN digits and errors
+`number expected` when the next character is not one — deliberately NOT the
+`parse_range_spec` helper used by `l`/`L`/`m`, which would also accept the
+`+`/`-` range operators that C does not allow here. The error path mirrors the
+sibling `Y`/`f` arms: report, set errflag, stop.
+
+Note the top-level `d` does not collide with the `d` inside an `o`/`O` SORT
+spec (`GS_DEPTH`, c:1673) — that is parsed in a different context.
+
+Gated by the `glob` mode's qualifier vocabulary. Only machine-INDEPENDENT forms
+are generated — the two error spellings and a device number nothing can be on
+(so the result is reliably empty); a matching `st_dev` varies per filesystem and
+would make the mode's answer depend on where it runs. Reverting reproduces 22
+divergences/500-seed.
+
+---
+
+## #1044 — search subscripts ignore the index base — fixed
+
+**Status:** `fixed` 2026-07-19 (both halves). Surfaced by the #1043 fuzz arm:
+setting an index option and then using a SEARCH subscript diverged. No prior arm
+combined the two, which is why it went unseen.
+
+**Fixed — `(i)`/`(I)` index under KSHARRAYS.**
+```
+                                              zsh   zshrs (before)
+setopt ksharrays; a=(x y z);   ${a[(i)y]}      1        2      ✗
+                               ${a[(i)q]}      3        4      ✗ (len vs len+1)
+setopt ksharrays; a=(x y x);   ${a[(I)x]}      2        3      ✗
+setopt ksharrays; s=abcdef;    ${s[(i)c]}      2        3      ✗
+setopt ksharrays; a=(a b c d e); ${a[(r)b,(r)d]}  b c d   c d e ✗ (range bound)
+```
+C shifts the index in `getindex`: `if (start > 0 && (isset(KSHARRAYS) ||
+(v->pm->node.flags & PM_HASHED))) start--;` (Src/params.c:2091). The `> 0`
+guard is what keeps the `(I)` no-match answer at 0. PM_HASHED is deliberately
+not mirrored — an assoc `(i)` returns the matched KEY, not a position, so there
+is nothing to shift (checked against zsh).
+
+**Why it took three edits.** The `(i)`/`(I)` search is implemented THREE times:
+faithfully in `params::getarg`, and twice more INLINE in `paramsubst` (once for
+arrays, once for scalars). Only `getarg` was reached by range bounds, which is
+why fixing it alone corrected `${a[(r)b,(r)d]}` while a standalone
+`${a[(i)pat]}` stayed wrong — the standalone form never calls `getarg` at all
+(verified by instrumenting it: the helper was never entered). The same rule now
+appears in all three, via `ksh_idx` in getarg and a `ksh_search_index` closure
+in paramsubst. **Folding the two inline copies back onto `getarg` is the real
+repair** — this is the same "faithful port shadowed by a reimplementation"
+shape as #1027 and #1031, and until it is done every index rule has to be
+written three times.
+
+**Also fixed — `(R)` no-match under KSHZEROSUBSCRIPT.**
+```
+                                                    zsh     zshrs (before)
+setopt kshzerosubscript; a=(one two three); ${a[(R)zz]}   one       <empty>  ✗
+setopt kshzerosubscript; s=abcdef;          ${s[(R)zz]}     a       <empty>  ✗
+```
+A REVERSE miss resolves to subscript 0, and `getindex` decides what 0 means:
+under KSHZEROSUBSCRIPT it is the FIRST element (`end = startnextlen`,
+Src/params.c:2140), otherwise the `VALFLAG_EMPTY` arm makes the expansion empty.
+The inline copies short-circuited a miss straight to `""`, skipping that
+decision.
+
+The two negative controls are what pin the rule, and both were verified against
+zsh rather than assumed:
+  * a FORWARD `(r)` miss is `len+1`, out of range under either base, so it stays
+    empty — the fix must not touch it;
+  * `KSHARRAYS` ALONE also stays empty, because it leaves the 0 as 0 without
+    supplying the zero-subscript meaning. A naive "a miss returns the first
+    element" patch would have broken both.
+
+Gated by the `subscript` mode's arm 15 (match, no-match, reverse, `(b:N:)`,
+scalar, and range forms, generated under all three bases — default, KSHARRAYS
+and KSHZEROSUBSCRIPT — so the option cannot be satisfied by making every miss
+return the first element). Reverting the paramsubst half reproduces 38-49
+divergences/500-seed depending on which hunks are out; the getarg half, 13. Each
+`setopt` is kept inside a SUBSHELL so an option cannot leak into the rest of a
+generated case.
+
+---
+
+## #1043 — subscript SET-ness disagreed with the value the same subscript yields — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced probing option-set semantics.
+
+`${x[i]}` and `${+x[i]}` are decided by separate code, and they had drifted three
+ways. All three made `${x[i]:-default}` fire when the element plainly exists:
+
+```
+                                            zsh        zshrs (before)
+s=hello;                 ${s[1]:-n} ${+s[1]}   h 1        n 0        ✗ scalar: no branch at all
+setopt ksharrays;        ${a[0]:-n} ${+a[0]}   1 1        n 0        ✗ 0-based ignored
+setopt ksharrays;        ${a[3]:-n} ${+a[3]}   n 0        3 1        ✗ …and off the end reads SET
+setopt kshzerosubscript; ${a[0]:-n} ${+a[0]}   1 1        n 0        ✗ [0] is the first element
+```
+
+The set-ness test hardcoded `i - 1` regardless of options (subst.rs), so
+KSHARRAYS (0-based, c:Src/params.c:2120) was off by one in BOTH directions and
+KSHZEROSUBSCRIPT (`[0]` = first element, c:2134) mapped to slot `-1`. A numeric
+subscript on a SCALAR had no branch whatsoever — zsh answers `${+s[N]}` with 1
+for any N once `s` exists, letting the empty VALUE drive `:-`.
+
+The same `i - 1` assumption also broke ASSIGNMENT under KSHZEROSUBSCRIPT
+(params.rs): `a[0]=Z` computed slot `-1`, fell into the negative-subscript
+branch and INSERTED — `(1 2 3)` became `(Z 1 2 3)` where zsh replaces element one
+`(Z 2 3)`; `s[0]=X` on `hello` gave `Xhello` instead of `Xello`.
+
+Fixed in all three places by mapping the subscript the same way the value path
+does: negative → from the end, KSHARRAYS → as-is, `0` under KSHZEROSUBSCRIPT →
+slot 0, else `i - 1`. Unregressed: out-of-range reads/writes, negative
+subscripts (including the past-the-start prepend), slices, `@`/`*`, assoc keys,
+search-flag subscripts, PM_UNIQUE dedupe, and the non-option error
+(`a[0]=Z` without either option still reports "assignment to invalid subscript
+range"). No regression across 15 modes.
+
+Gated by the `subscript` mode's new arm 15, which prints the value and `${+…}`
+together so the two can never drift apart again. Reverting the read fix
+reproduces 60 divergences/500-seed; reverting the assign fix, 14.
+
+---
+
+## #1042 — anti-fork builtins: lookup and execution disagree about the same name — port-bug (narrow)
+
+**Status:** `port-bug` 2026-07-19, **re-diagnosed 2026-07-19**. The original
+entry here claimed "narrowing `$PATH` still executes commands no longer on it"
+and blamed a stale command hash. **That diagnosis was wrong** and is retracted —
+recorded rather than quietly deleted, because acting on it would have sent a
+future pass chasing a non-bug.
+
+What actually happens: zshrs implements ~91 commands as native anti-fork
+builtins (`EXT_BUILTIN_NAMES`, ext_builtins.rs:26, plus fusevm
+`shell_builtins`). Those run without consulting `$PATH` at all — which is the
+INTENDED design, not a defect. `PATH=; printenv HOME` succeeding is that design,
+not a stale hash.
+
+The real defect is narrower: the lookup path and the execution dispatcher
+disagree about the same name, and they do so in **opposite directions** for two
+disjoint groups. Measured with an emptied `PATH`:
+
+```
+                        command -v   rs exec   zsh exec
+cat, basename, wc, head   found(0)     127       127     lookup says builtin, exec fails
+printenv, env, expr, nproc  not(1)       0       127     lookup says absent, exec succeeds
+```
+
+Neither group is self-consistent: the first advertises a builtin it will not
+run, the second runs a builtin it will not advertise.
+
+**Reach.** With a normal `$PATH` the second group agrees with zsh completely
+(`command -v`, `whence -w`, and execution all match) — the divergence needs a
+narrowed or emptied path. The first group's `whence -w cat` → `builtin` (vs
+zsh's `command`) is visible always, but that is simply the anti-fork design
+being truthful about itself.
+
+**Not fixed here, deliberately.** Two things would have to be decided first, and
+both are project policy rather than port fidelity: (1) which names should be
+anti-fork builtins at all, and (2) whether `whence`/`command -v` ought to
+advertise them as `builtin` — which increases zsh divergence — or stay silent —
+which is what produces the second group's mismatch. Picking either unilaterally
+would be choosing a product direction, not porting C. What IS unambiguous is
+that a single name should not be classified one way by lookup and another by
+exec; that internal consistency is the actionable part whenever the policy is
+settled.
+
+---
+
+## #1041 — `${(t)X}` reported a type for a parameter `${+X}` says is unset — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced auditing special-parameter presence.
+
+zshrs answered the two introspection forms inconsistently for `ERRNO`:
+
+```
+$ zsh  -fc 'print -r -- "[${+ERRNO}][${(t)ERRNO}]"'   → [0][]
+$ zshrs -c 'print -r -- "[${+ERRNO}][${(t)ERRNO}]"'   → [0][integer-special]  ✗
+```
+
+`${+ERRNO}` correctly said "not set" while `${(t)ERRNO}` handed back a type for
+that same parameter.
+
+**C contract.** The `(t)` arm is gated on a FLAG test, not on whether a paramtab
+entry exists (Src/subst.c:2812-2814):
+```c
+if (v && v->pm && ((v->pm->node.flags & PM_DECLARED) ||
+                   !(v->pm->node.flags & PM_UNSET))) {
+    ... emit the type tag ...
+}   /* else: empty */
+```
+`ERRNO` is registered in the base table as `IPDEF1("ERRNO", errno_gsu, PM_UNSET)`
+(Src/params.c:298) — present, but UNSET and never declared — so C emits nothing.
+zshrs registers it the same way (params.rs:483), so the registration was right;
+the `(t)` gate was the bug.
+
+zshrs used an explicitly-labelled "approximation of C's PM_DECLARED || !PM_UNSET
+check" that tested `paramtab().get(name).is_some()` — mere existence. That
+over-reports for exactly this shape. Replaced with the real condition: when the
+entry exists, consult its flags (`PM_DECLARED || !PM_UNSET`). The
+declared-but-unset case that the approximation was protecting still works —
+`setopt typesettounset; typeset x` keeps emitting `scalar` because that path
+stamps `PM_DECLARED` (builtin.rs:8286).
+
+Verified unregressed across `PATH`, `path`, `HOME`, `IFS`, `RANDOM`, `SECONDS`,
+`LINES`, `COLUMNS`, `TTYIDLE`, `EPOCHSECONDS`, `ZSH_VERSION`, `UID`, `PPID`,
+`status`, `argv`, ordinary scalars/arrays/assocs, and the Bug #216 shape
+`${(t)nosuch:-DEF}` (which must still yield `DEF`). Gated by the `special` fuzz
+mode's new arm 14, which pairs `${+X}` with `${(t)X}` so the two can never drift
+apart again; reverting reproduces 8 divergences/500-seed.
+
+### Related, still open: module parameters exposed without their module
+
+`${+epochtime}` is 1 in zshrs and 0 in zsh — `epochtime` is provided by
+`zsh/datetime`, and once that module is loaded both agree
+(`1 array-readonly-hide-hideval-special`). zshrs registers it unconditionally.
+Left alone deliberately: zshrs is the MORE permissive side here, so a script
+using `${+epochtime}` as a module-presence probe gets a wrong answer, but
+tightening it could break setups that rely on the parameter being there without
+an explicit `zmodload`. Same tradeoff as the `if cond { body }` asymmetry in
+#1037. Recorded so the choice is visible rather than an oversight.
+
+---
+
+## #1040 — `local` of an EXPORTED variable stayed visible to child processes — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced while fixing #1039 D (it was what
+still separated `local HISTSIZE=5` from zsh). Pre-existing and independent of
+that fix: verified identical before it.
+
+A plain `local` shadowing an exported variable must NOT itself be exported. zsh
+removes the outer value from the environment for the local's lifetime and does
+not export the local, so the name is absent from a child's environment entirely.
+zshrs exports the local instead:
+
+```
+$ zsh  -fc 'export EV=out; f(){ local EV=in; sh -c "echo [\$EV]" }; f'   → []
+$ zshrs -c 'export EV=out; f(){ local EV=in; sh -c "echo [\$EV]" }; f'   → [in]   ✗
+$ zsh  -fc 'f(){ local HOME=/zzz; sh -c "echo [\$HOME]" }; f'            → []
+$ zshrs -c 'f(){ local HOME=/zzz; sh -c "echo [\$HOME]" }; f'            → [/zzz] ✗
+```
+
+`${(t)}` shows the same defect statically: `local HOME=7` reads
+`scalar-local-export-special` where zsh reports `scalar-local-special`. Any
+exported name is affected (HOME, TERM, HISTSIZE, SAVEHIST, and ordinary
+user exports).
+
+**C contract.** `typeset_single` carries exactly ONE flag across when localizing
+— `on |= pm->node.flags & PM_TIED;` (Src/builtin.c:2389). `PM_EXPORTED` is
+deliberately not among them, and the outer's environment entry is dropped for
+the duration by `delenv(oldpm)` (c:1143); `unsetparam_pm` re-exports the outer on
+the way out (c:3926-3934), which zshrs already does correctly since #1038 — the
+restore-after case passes in both shells.
+
+**The flag was never the problem.** `${(t)EV}` already read `scalar-local` — the
+local was correctly NOT exported. What leaked was the ENVIRONMENT entry: the
+outer's `EV=out` stayed in `environ` for the whole life of the local, so the
+local's assignment republished over that existing entry. Nothing on the
+parameter side could observe this; only a child process could, which is why it
+survived until now.
+
+Fixed in `createparam`'s shadow arm, the exact spot C spells the intent out:
+```c
+if ((pm->old = oldpm)) {
+    /* needed to avoid freeing oldpm, but we do take it
+     * out of the environment when it's hidden. */
+    if (oldpm->env)
+        delenv(oldpm);
+```
+zshrs set `old: oldpm` but never dropped the entry. It now calls `delenvvalue`
+when localizing over a param that carries an env entry or `PM_EXPORTED`
+(params.rs, guarded on `PM_LOCAL`). This is the creation-side counterpart to
+#1038, which already restores the outer's export on scope exit — the pair is now
+symmetric.
+
+Verified: `local -x` still exports its OWN value (`export EV=out; f(){ local -x
+EV=in; sh -c 'echo $EV' }` → `in`), the outer is restored on return (parameter
+AND environment), and ordinary `export` / `export` inside a function / `VAR=x
+cmd` prefix assignment are unaffected. Fixing this ALSO completed #1039 D: the
+env-backed integer specials `HISTSIZE`/`SAVEHIST` and the scalars `HOME`/`TERM`
+had needed both changes, and the whole special-localization matrix (IFS, HOME,
+TERM, WORDCHARS, HISTSIZE, SAVEHIST, RANDOM, SECONDS, LINES, COLUMNS,
+TMPPREFIX, KEYTIMEOUT) is now green.
+
+Gated by the `func` fuzz mode's arm 9, which observes with an in-function
+`printenv` because `${(t)}` cannot see the defect. Disabling ONLY this one line
+reproduces 39 divergences/500-seed (measured in isolation from #1038/#1039 D,
+which share the file).
+
+---
+
+## #1039 — localizing a TIED / SPECIAL parameter (`local path=(…)`, `local -T V v`) — fixed
+
+**Status:** `port-bug` 2026-07-19 — surfaced probing scope/tie interaction.
+NOT fixed: all four symptoms below share one root — C's `typeset_single`
+newspecial branch (Src/builtin.c:2381-2467) is an explicit no-op in zshrs
+(builtin.rs:3710-3721 computes `newspecial`, then discards the state with
+`let _ = (altpm, pname_owned, _keeplocal, _dont_set, _readonly)`), and the real
+localization work lives in `bin_typeset`'s option matrix, which has no
+equivalent. Fixing it is an architectural port, not a patch — see below.
+
+**A. `local path=(…)` did not update `$PATH` — FIXED 2026-07-19.**
+```
+$ zsh  -fc 'PATH=/usr/bin; f(){ local path=(/bin); command -v ls }; f'  → /bin/ls
+$ zshrs -c '…same…'  (before)                                          → <empty>  ✗
+```
+
+The two halves failed for different reasons and were fixed in two passes. The
+FLAGS half fell out of the #1039 D change (`${(t)path}` now reads
+`array-local-tied-special` in both). The write-through needed this:
+
+`assignaparam` publishes a tied array to its paired scalar only when the param
+carries a `gsu_a` setfn (`ename` + `arrfixenv`, params.rs:7469-7481). But
+path/fpath/cdpath/… are registered from the `special_paramdef` DATA table
+(params.rs:1027) with **no gsu pointers at all**, so that branch never ran. A
+GLOBAL `path=(…)` hid the bug because it compiles to `BUILTIN_SET_ARRAY` in the
+bridge, which carries the tie itself; `local path=(…)` is a typeset
+DECLARATION, so it goes through `assignaparam` instead and `$PATH` never moved.
+Fixed by adding the name-routed `TIED_COLON_ARRAYS` sync there, writing the
+scalar straight into paramtab (calling `assignsparam` would recurse — it owns
+the scalar→array half of the same tie), then `env::set_var` and, for PATH,
+`emptycmdnamtable()` so command lookup actually follows the localized path.
+
+*Two earlier hypotheses were tested and ruled out; recorded so they are not
+retried:* (1) inheriting the shadowed param's `gsu_a`/`gsu_h` — a verified
+no-op, since there is no array setter to inherit; reverted rather than left as
+dead code. (2) "the global never reaches `setaparam`" — that was a measurement
+error: the instrumentation was truncated by noisy startup output. Re-measured,
+it is the LOCAL case that reaches `setaparam`/`assignaparam` and the GLOBAL one
+that does not.
+
+Verified: value, `${(t)}`, child environment, nested scopes, and rollback on
+return all match, and `command -v` follows the localized path and is restored
+afterwards. Unregressed: global `path=(…)`/`PATH=…` both directions,
+`local PATH=` (scalar side), `typeset -U path`, plain local arrays. Gated by the
+`tied` fuzz mode's new arm 16 — every existing arm there was global, which is
+why the mode stayed green over this. Disabling only this hunk reproduces 52
+divergences/500-seed.
+
+```
+$ zsh  -fc 'PATH=/usr/bin; f(){ local path=(/bin); command -v ls }; f'  → /bin/ls
+$ zshrs -c 'PATH=/usr/bin; f(){ local path=(/bin); command -v ls }; f'  → <empty>  ✗
+```
+Commands run inside the function do not see the localized path. `${(t)path}`
+is the tell — zsh `array-local-tied-special`, zshrs `array-local`: the local
+drops both `PM_TIED` and `PM_SPECIAL`. The SCALAR direction is fine
+(`local PATH=/bin` correctly updates `path`), as is the global array direction
+(`path=(/bin)` updates `PATH`); only localizing the ARRAY half loses the tie.
+`local path=(…)` is a very common zsh idiom, so this silently breaks functions
+that temporarily adjust PATH.
+
+**B. A USER tie must BREAK locally — FIXED 2026-07-19.** zsh only preserves the
+tie for `PM_SPECIAL` params; a `typeset -T` pair is `PM_TIED` but not special, so
+a local array shadowing it is an ordinary local:
+```
+$ zsh  -fc 'typeset -T V v; V=g1:g2; f(){ local -a v=(a b); print "[$V]" }; f'  → [g1:g2]
+$ zshrs -c '…same…'  (before)                                                  → [a:b]   ✗
+```
+
+This was a READ-path bug, not a write-path one, and two wrong hypotheses were
+tried before instrumenting settled it — recorded so they are not retried:
+  1. *The name-keyed mirror in the bridge (`tied_array_to_scalar`) firing for a
+     local shadow.* Gating it on the current pm's `PM_TIED` changed nothing:
+     that mirror is never reached for this shape. The speculative gate was
+     reverted rather than left in as an untested branch.
+  2. *Something writing `$V`.* Instrumenting `assignsparam` showed it fires only
+     for the initial `V=g1:g2` — **nothing writes V at all**, yet `$V` reads
+     `a:b`.
+
+The value is DERIVED at read time: `tiedarrgetfn` resolved the tie's partner by
+NAME via `paramtab().get(ename)`, which returns whatever binding is currently
+visible — so it landed on the local shadow. C links the pair by struct pointer,
+so `local -a v` cannot change what `$V` reads. Note the local was already
+correctly untied (`${(t)v}` = `array-local`, matching zsh): the FLAGS were right
+and only the read was wrong, which is why nothing flag-based had caught it.
+Fixed by walking the shadow chain (`old`) to the binding that actually carries
+`PM_TIED`.
+
+A local SPECIAL is unaffected and A stays fixed: it keeps `PM_TIED` through the
+newspecial inheritance (`${(t)path}` = `array-local-tied-special`), so
+`local path=(…)` still publishes to `$PATH`. That is the single flag that
+separates the two tie kinds, and the fuzz arm asserts `${(t)}` on both so they
+cannot merge again. Reverting reproduces 49 divergences/500-seed.
+
+**C. `local -T V v` on an EXISTING tie corrupted it permanently — FIXED 2026-07-19.**
+```
+                                  zsh                     zshrs (before)
+inside  local -T V v          V=[]  v=[]              V=[g1:g2] v=[g1 g2]   ✗ inherits
+after return                  V=[g1:g2] t=scalar-tied V=[] t=<empty>        ✗ param gone
+then    V=z1:z2 → $v          [z1 z2]                 []                    ✗ tie dead
+```
+
+Two independent defects, and the destructive one is the second:
+
+*The outer pair was destroyed.* C's guard (c:Src/builtin.c:2929) —
+`(locallevel == pm->level || !(on & PM_LOCAL))` — declines the `already_tied`
+short-circuit when the existing binding sits at a shallower level, so a fresh
+shadowing pair is built through `typeset_single` → `createparam`, which keeps
+the displaced binding as `pm->old` (c:Src/params.c:1137) for `endparamscope` to
+restore. zshrs built both halves from `param::default()` (`old: None`) and
+inserted them straight over the top, so the outer pair simply vanished: after
+the function returned `$V` was empty, `${(t)V}` reported nothing at all, and
+every later `V=…` stopped updating `v` — the global tie was dead for the rest of
+the shell. Fixed by chaining the displaced binding into `old`, gated on it being
+at a shallower level so a same-scope re-tie still legitimately replaces.
+
+*The local inherited the shadowed value.* A declaration at the CURRENT scope
+adopts an existing scalar (`V=pre:set; typeset -T V v` → `pre:set`), but one
+that SHADOWS starts empty. Gating that on `PM_LOCAL` alone was wrong and broke
+the global form — `PM_LOCAL` is set for a plain top-level `typeset` too — so the
+test also requires `locallevel > 0`. Both directions are now generated in the
+fuzz arm precisely because the first attempt at this silently regressed the
+global case.
+
+Unaffected and verified: `local -T V=x:y v` (explicit value wins), fresh
+`local -T W w` with no prior tie, `typeset -T V=a:b v`, `typeset -TU P p`
+dedupe, custom join chars, and both global propagation directions.
+
+With A, B, C and D all fixed, #1039 is closed. Reverting C reproduces 15
+divergences/500-seed.
+
+**D. Typed SPECIAL scalars lost their type when localized — FIXED 2026-07-19.**
+This was the narrowest reproducer of the missing newspecial branch (no tie
+involved), and it is now fixed:
+```
+                                zsh                      zshrs (before)
+local HISTSIZE=5   (inside)   in=5                     in=999999999  ✗ assign lost
+local RANDOM=1     ${(t)}     integer-local-special    scalar-local  ✗
+local SECONDS=100  ${(t)}     integer-local-special    scalar-local  ✗
+```
+zshrs emulated newspecial with a hardcoded table of special SCALAR names
+(HOME / IFS / TERM / WORDCHARS / …, params.rs:2328-2338) that stamped the
+canonical GSU + `PM_SPECIAL` on the local. Every INTEGER special was absent from
+that list, so it was created generic: the setter never reached the real storage
+(the assignment was silently dropped) and the type decayed to `scalar-local`.
+
+Fixed by doing what C does instead of growing the list — `createparam` now
+inherits the SHADOWED param's accessors and type when it is `PM_SPECIAL`
+(c:2381-2392 "we keep the same struct … copy the get/set methods"): the local
+takes `old`'s `gsu_s`/`gsu_i`/`gsu_f`, re-stamps `PM_TYPE(old.flags)` over the
+caller-supplied type, and sets `PM_SPECIAL`. `RANDOM`, `SECONDS`, `LINES` and
+`COLUMNS` are now fully correct (value AND `integer-local-special`, rolling back
+to `integer-special` on return). Gated by the `func` fuzz mode's arm 10; reverting
+reproduces ~69 divergences/500-seed (shared with #1038, same file).
+
+`HISTSIZE` and `SAVEHIST` initially still differed by one attribute
+(`integer-local-export-special` vs zsh's `integer-local-special`) because they
+are env-backed and so also tripped the separate defect in #1040. With that now
+fixed too, the entire special-localization matrix is green — IFS, HOME, TERM,
+WORDCHARS, HISTSIZE, SAVEHIST, RANDOM, SECONDS, LINES, COLUMNS, TMPPREFIX,
+KEYTIMEOUT — and all of it except `RANDOM` (random by definition) is pinned by
+the `func` mode's arm 10.
+
+**C contract.** When localizing a param that is `PM_SPECIAL`, `typeset_single`
+sets `newspecial = NS_NORMAL` (c:2087-2089) and the apply branch keeps the SAME
+struct — preserving the gsu get/set methods, i.e. the tie behaviour — while
+zeroing the contents into a `tpm` placeholder held as `pm->old`, and carries the
+tie flag across explicitly: `on |= pm->node.flags & PM_TIED;` (c:2389).
+`scanendscope` then restores that placeholder and re-fires the special setter
+(c:5900-5933, the branch zshrs already implements for the pop side).
+
+**Why not patched now.** A flags-only patch (stamping `PM_TIED|PM_SPECIAL` on
+the local) would make `${(t)path}` read correctly WITHOUT restoring the
+write-through, because the tie is carried by the special SETTER, not the flag —
+C's whole point in "keeping the same struct". That would be misleading
+half-correctness. A faithful fix ports c:2381-2467 and decides which path owns
+localization, since `typeset_single` is currently vestigial. Recorded with the
+exact shapes and the `${(t)…}` probe so a focused pass has the contract.
+
+---
+
+## #1038 — `local -x` leaked into the real process ENVIRONMENT after the function returned — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced probing function scoping.
+
+An exported local outlived its scope in the ENVIRONMENT (and was inherited by
+every child process) even though the parameter itself was correctly popped. The
+shell's environment therefore disagreed with its own parameter table:
+
+```
+$ zsh  -fc 'f(){ local -x E=1 }; f; printenv E; echo rc=$?'   → rc=1        (absent)
+$ zshrs -c 'f(){ local -x E=1 }; f; printenv E; echo rc=$?'   → 1 / rc=0    ✗ still set
+$ zshrs -c 'f(){ local -x E=1 }; f; sh -c "echo [\$E]"'       → [1]         ✗ child inherits
+$ zshrs -c 'f(){ local -x E=1 }; f; typeset -p E'             → no such variable
+```
+
+That last line is the tell: paramtab was clean, so no parameter-level
+introspection could see the leak — only a child process could. Shadowing was
+wrong too, in the opposite direction: `export E=outer; f(){ local -x E=inner }`
+left `inner` in the environment where zsh restores `outer`.
+
+**C contract.** `scanendscope` (Src/params.c:5900) unsets each out-of-scope
+param through `unsetparam_pm`, which strips its environment entry —
+`if (pm->env) delenv(pm);` (c:3862) — and then, when an outer binding is
+restored, re-exports it: `if (oldpm->node.flags & PM_EXPORTED) export_param(oldpm);`
+(c:3926-3934), undoing the `delenv(oldpm)` that `typeset_single` did (c:1143)
+when the local first shadowed it.
+
+zshrs's `endparamscope` pops the node directly out of the table
+(`tab.remove(&n)`, params.rs:10891) rather than routing through
+`unsetparam_pm`, so neither step ran. Fixed by capturing the popped param's
+`PM_EXPORTED` flag and the outer binding's exported value before `pm.old` is
+moved, then applying the net effect after the restore: the outer value if it was
+exported, otherwise no entry. Uses the raw `env::set_var`/`delenvvalue` helpers
+rather than `export_param`/`unsetparam_pm` because the paramtab write lock is
+still held there and those re-enter it.
+
+Verified unregressed: plain `export`, `export` inside a function, `unset`,
+`typeset -x`, `local -a`/`-A`/`-r`/`-ax`, `VAR=x cmd` prefix assignment, and
+`local -x HOME=/tmp` shadowing a real environment variable. Gated by the `func`
+fuzz mode's new arm 9 (fresh name / shadowing an exported global / shadowing a
+plain global), which observes through `printenv` since paramtab cannot see the
+defect. Reverting reproduces ~59 divergences/500-seed.
+
+---
+
+## #1037 — `time` on a PIPELINE reports one aggregate line, not one per process — port-bug
+
+**Status:** `port-bug` 2026-07-19 — surfaced probing control-flow/keyword grammar.
+NOT fixed: needs per-child `rusage` capture (`wait4`), which rs does not do
+anywhere today. Documented with the C contract so a focused pass can port it.
+
+zsh emits one timing report per PROCESS in the job; rs emits a single report for
+the whole pipeline. With `TIMEFMT="%J"` the output is fully deterministic (no
+timing numbers), so the divergence is purely structural:
+
+```
+$ zsh  -fc 'TIMEFMT="[%J]"; time echo a | cat | wc -l'
+       1
+[echo a]
+[cat]
+[wc -l]
+$ zshrs -c 'TIMEFMT="[%J]"; time echo a | cat | wc -l'
+       1
+[echo a | cat | wc -l]        ✗ one line, joined text
+```
+
+A SIMPLE command matches (`time sleep 0` → `[sleep 0]` in both); only pipelines
+diverge.
+
+**C contract.** `dumptime` (Src/jobs.c:1020-1030) walks the job's process list
+and calls `printtime` once per process, each with that process's OWN
+`bgtime`/`endtime`, its own `ti` (rusage), and its own `pn->text`:
+```c
+for (pn = jn->procs; pn; pn = pn->next)
+    printtime(dtime_ts(&dtimespec, &pn->bgtime, &pn->endtime), &pn->ti, pn->text);
+```
+
+**Why deferred.** rs's `time` keyword (fusevm_bridge.rs:5657-5718) runs the timed
+sublist in a sub-VM and brackets it with `getrusage(RUSAGE_CHILDREN)`, then emits
+ONE `printtime` with the sublist's joined source text. That aggregate cannot be
+attributed to individual pipeline elements: rs has no `wait4`/`wait3` call
+anywhere, so no per-child rusage is ever collected (the `process` struct does
+already carry `bgtime`/`endtime`). A faithful fix needs (1) per-child rusage at
+reap time, (2) per-process command text on the job, and (3) routing the `time`
+keyword through the job's process list instead of the sublist aggregate — a
+change to process reaping and job accounting. Splitting the aggregate across
+processes to fake per-line numbers would be inventing data, so it was not done.
+
+### Related, deliberately NOT fixed: `if cond { body }` at bare end-of-input
+
+rs is MORE PERMISSIVE than zsh here. Per `par_if`'s INBRACE branch
+(Src/parse.c:1459-1476), after the body's `}` zsh breaks out only on `SEPER`;
+with anything else it re-enters the arm loop, where end-of-input fails the
+`!(xtok == IF || xtok == ELIF)` guard and `YYERRORV`s:
+
+```
+$ zsh  -fc 'if [[ 1 = 1 ]] { print A }'    → parse error near `}'
+$ zshrs -c 'if [[ 1 = 1 ]] { print A }'    → A
+```
+
+rs's `par_if` (parse.rs:2155) breaks on `SEPER | NEWLIN | SEMI | ENDINPUT` —
+the extra `ENDINPUT` is the whole difference. It is left alone on purpose: the
+divergence needs `-c` with NO trailing separator, so it is unreachable from any
+script FILE (which ends in a newline) — verified identical via file and with a
+trailing `;`/newline — while this exact brace path is load-bearing for real
+plugin code (`if [[ … ]] { … } elif { … } { … }` in fast-syntax-highlighting,
+cited at parse.rs:2078). Accepting a superset never breaks a working script;
+adding a rejection there could. Recorded so the asymmetry is intentional, not
+an oversight.
+
+---
+
+## #1036 — `function { body }` (keyword anonymous function) rejected with one space — fixed
+
+**Status:** `fixed` 2026-07-18 — surfaced probing anonymous-function spellings.
+
+zsh's `function` keyword with NO name is an anonymous function, identical to
+`() { body }` including trailing args. rs rejected the ordinary one-space
+spelling as a parse error, while the two-space spelling worked — an off-by-one,
+not a missing grammar:
+
+```
+% zsh  -fc 'function { echo anon }'        → anon
+% zshrs -c 'function { echo anon }'        → zsh:1: parse error near `}'   ✗
+% zshrs -c 'function {  echo anon }'       → anon    (two spaces — worked)
+```
+
+C: `par_funcdef`'s name loop promotes a `STRING` token that is exactly `{` to
+`INBRACE` (`if ((*tokstr == Inbrace || *tokstr == '{') && !tokstr[1])`,
+Src/parse.c:1701-1705), so a nameless `function {` opens the body; the trailing
+`if (num == 0)` arm (parse.c:1763) then collects the call arguments.
+
+rs guards the nameless form by peeking the source byte after the brace to reject
+the malformed `function {body}`. Tokenizing the brace leaves `pos()` at `{`+2 —
+the lexer consumes the brace AND the single separator char behind it — so the
+byte after `{` is at `pos() - 1`. The guard read `pos()`, i.e. one byte too far,
+landing on the first BODY character whenever exactly ONE space followed the
+brace (`{ echo` → peeked `e` → "malformed"); with two spaces a second space sat
+under the peek, so it passed by luck. Fixed by peeking `pos() - 1`.
+
+The genuinely malformed `function {body}` is unaffected: with no separator the
+lexer folds `{body` into a single STRING word and never emits a brace token, so
+the guard is not reached and the parse fails downstream exactly as zsh does
+(verified `function {print -r -- x}` still errors identically). Bug #60 intact.
+
+Gated by the `anonfn` fuzz mode, which only ever generated the `()` spelling —
+the entire `function`-keyword grammar arm was untested. Added arms 12-18 cover
+args, `$@`, `$0`, redirection, return status, the one-/two-space/tab separators,
+and the malformed no-separator form. Reverting reproduces ~205
+divergences/500-seed.
+
+---
+
 ## #1035 — empty / omitted array-subscript index silently accepted (wrong data, no error) — partially fixed
 
 **Status:** `partially-fixed` 2026-07-18 — the RANGE-bound cases (`${a[,N]}`,
@@ -45,14 +867,58 @@ in-source comment (math.c:1521-1527) states this is deliberate and distinct from
 top-level `matheval()` (used by `$(( ))`), which ALLOWS empty — which is exactly
 why `$(( ))` succeeds but `${a[ ]}` errors.
 
-**Still open — single-subscript empty (`[]`, `[ ]`, flag-only).** These take the
-single-INDEX (no-comma) path, a hotter site handling every `${a[i]}`, and the
-error text is context-dependent: bare `${a[]}` → `invalid subscript` (params.c:2022);
-`${a[]:-X}` and `${a[ ]}` → `bad math expression: empty string`. `${a[]}` also
-still returns the WHOLE value (treated as no-subscript). A yet-narrower arm at
-subst.rs:6102 (nested `${${…}[,N]}`) has the same `unwrap_or` default but is a
-value-computing expression (no early-return point), needing a different injection
-shape. Deferred rather than guessed. Original cases + swallow-sites below.
+**Empty BRACKETS `${a[]}` — FIXED 2026-07-19.** This was the wrong-DATA case, not
+merely a missing diagnostic:
+```
+                              zsh                    zshrs (before)
+a=(1 2 3); ${a[]}         invalid subscript, e1    1 2 3   e0   ✗ whole array
+s=hello;   ${s[]}         invalid subscript, e1    hello   e0   ✗ whole scalar
+m=(k v);   ${m[]}         invalid subscript, e1    v       e0   ✗ a value
+a=(1 2 3); ${a[]:-D}      invalid subscript, e1    1 2 3   e0   ✗ default ignored
+```
+The subscript machinery was only entered when the brackets had CONTENT
+(`if idx > sub_start`), so an empty pair left `subscript` as `None` and the
+expansion fell straight through to the whole-value path — which is why it
+produced data rather than an error. C rejects it outright:
+`zerr("invalid subscript")` (Src/params.c:2022). Fixed with an `else` arm at
+that guard. The `:-D` row matters: the expansion is an error BEFORE the default
+is considered, so the default must not rescue it.
+
+Worth recording how it was located: the first patch went in at the subscript
+CAPTURE site and was silently unreachable — instrumenting showed the capture
+sees `"2"` for `${a[2]}` and is never reached for `${a[]}`, which is what
+pointed at the `idx > sub_start` guard one level up.
+
+**Still open — whitespace and flag-only subscripts.** `${a[ ]}`, `${a[()]}`,
+`${a[(e)]}`, `${a[(n:2:)]}`, `${s[ ]}` all produce the right (empty) OUTPUT
+already and differ ONLY in exit status, since zsh errors: `${a[ ]}` →
+`bad math expression: operand expected at end of string`, the flag-only forms →
+`bad math expression: empty string`. (`${a[\ ]}` and `${a[]}` are already
+correct; `k=" "; ${a[$k]}` is the same shape as `${a[ ]}`.)
+
+**The trap: this validation is TYPE-DEPENDENT and cannot be done at capture
+time.** For an ASSOC the same text is a KEY, not a math expression, and is
+perfectly legal — `typeset -A m=(k v); ${m[ ]}` and `${m[()]}` both exit 0 in
+zsh. A blanket check where the subscript is captured would break assoc key
+lookups; this was verified against zsh BEFORE writing any code, having nearly
+made exactly that mistake.
+
+So the check belongs where the subscript is already being treated as math, and
+that is three separate places with three different shapes: the SCALAR path
+(subst.rs, which already routes through `mathevali` and reports its errors, so
+only the empty/whitespace pre-check is missing), the ARRAY single-index path,
+and the flag-form path through `getarg` (the only one that strips a leading
+`(…)` group, which is what makes `[(e)]` empty). Faithfully, C distinguishes the
+two messages because subscripts evaluate through `mathevalarg` →
+`mathevall(…, MPREC_ARG, …)`, which rejects an empty expression outright and
+whose parser reports "operand expected" for whitespace — whereas top-level
+`$(( ))` uses MPREC_TOP and legitimately yields 0 in both shells. zshrs's
+`mathevall` does not thread `prec_tp` yet, so matching both messages exactly
+means threading that through rather than hardcoding two strings at three sites.
+
+Left open deliberately: exit-status-only, on input no real script writes,
+against three hot sites that every `${a[i]}` passes through. Original cases +
+swallow-sites below.
 
 An empty or omitted subscript bound must abort the parameter expansion (empty
 stdout, exit 1); rs silently returns wrong data or empty with exit 0:
@@ -527,9 +1393,24 @@ get_strarg, subst.rs:4003+) computes the 1-based offset one short when the width
 arg is empty/malformed. `(s:::)` and `(ws:::)` (position 8) already match — only
 the `l`/`r` width arm is off. Deep in the arg state machine; low value.
 
-Both are deferred: malformed-flag-syntax error text with correct stdout+exit,
-disproportionate fix effort (bridge plumbing / offset state machine) for the
-value. Recorded so a future error-message-parity pass has the exact shapes.
+**C. The quoted expression is TRUNCATED at `}`.** C's message carries the
+original untokenized string from `${` to the end of the WORD, so any source
+after the closing brace is included; rs stops at the brace:
+```sh
+$ zsh  -fc 'print -r -- "${(s)x}"'
+zsh:1: error in flags near position 5 in '${(s)x}"'    # trailing " kept
+$ zshrs --zsh -c 'print -r -- "${(s)x}"'
+zsh:1: error in flags near position 5 in '${(s)x}'     # truncated
+```
+Same shape for `(j)` and `(l)`. The POSITION is right in all three — only the
+echoed expression differs. Same root as A: C uses `dupstring(*str + 1)`
+(c:subst.c:2518-2527) while rs formats `'${{{body}}}'` from the brace body
+alone, at nine call sites (subst.rs:4107/4204/4261/4323/4340/4375/4425/4443/…).
+
+All three are deferred: malformed-flag-syntax error text with correct
+stdout+exit, disproportionate fix effort (threading the original untokenized
+string to nine sites / offset state machine) for the value. Recorded so a future
+error-message-parity pass has the exact shapes.
 
 ---
 

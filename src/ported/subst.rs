@@ -3684,6 +3684,35 @@ pub fn paramsubst(
         // c:1683 — `int chkset = 0;` (${+pm} flag) — see chkset
         // handling in the body; declared locally there for now.
 
+        // Shift a 1-based search-subscript index into the shell's index base.
+        // c:Src/params.c:2091 — `if (start > 0 && (isset(KSHARRAYS) ||
+        // (v->pm->node.flags & PM_HASHED))) start--;`.
+        //
+        // `(i)`/`(I)` compute a 1-BASED position; under KSHARRAYS subscripts
+        // are 0-based, so the index handed back has to come down by one. The
+        // `> 0` guard preserves the `(I)` no-match answer of 0. PM_HASHED is
+        // deliberately NOT folded in — an assoc `(i)` returns the matched KEY
+        // rather than a position, so there is nothing to shift (checked
+        // against zsh).
+        //
+        // A closure rather than a helper fn: the build gate rejects a new
+        // top-level `fn` in src/ported/ with no C counterpart, and this is a
+        // fragment of getindex, not a function of its own.
+        //
+        // It is needed here at all because the `(i)`/`(I)` search exists THREE
+        // times — faithfully in `params::getarg`, and twice more inline below
+        // (array form and scalar form). That is why the option was honoured on
+        // range bounds, which go through getarg, but not on a standalone
+        // `${a[(i)pat]}`, which does not. Folding the two inline copies back
+        // onto getarg is the real repair; docs/BUGS.md #1044.
+        let ksh_search_index = |one_based: i64| -> String {
+            // c:2091
+            if one_based > 0 && isset(crate::ported::zsh_h::KSHARRAYS) {
+                (one_based - 1).to_string()
+            } else {
+                one_based.to_string()
+            }
+        };
         // c:1691 — `int vunset = 0;` — value-was-unset flag.
         // c:1697 — `int wantt = 0;` (t) typeinfo flag.
         let mut wantt = false; // c:1697
@@ -5842,10 +5871,33 @@ pub fn paramsubst(
                         return (String::new(), idx + 1, vec![]);
                     }
                 }
+                // c:Src/params.c:2022 — `zerr("invalid subscript")`. An EMPTY
+                // bracket pair is not a subscript at all; zsh rejects `${a[]}`
+                // outright (and `${a[]:-D}` too — the default never applies,
+                // the expansion is an error). zshrs treated the empty string as
+                // "no subscript present" and fell through to the whole-value
+                // path, so `${a[]}` on (1 2 3) printed `1 2 3` at status 0 and
+                // `${s[]}` printed the whole scalar — wrong DATA, not just a
+                // missing diagnostic. docs/BUGS.md #1035.
                 if matches!(expanded.as_str(), "@" | "*") {
                     was_at_star_splat = true;
                 }
                 subscript = Some(expanded);
+            } else {
+                // c:Src/params.c:2022 — `zerr("invalid subscript")`. An EMPTY
+                // bracket pair is not a subscript; zsh rejects `${a[]}`
+                // outright, and `${a[]:-D}` too — the expansion is an error, so
+                // the default never applies. The guard above only enters the
+                // subscript machinery when the brackets have CONTENT
+                // (`idx > sub_start`), so an empty pair left `subscript` as
+                // None and the expansion fell through to the whole-value path:
+                // `${a[]}` on (1 2 3) printed `1 2 3` at status 0, `${s[]}`
+                // printed the whole scalar, and `${m[]}` on an assoc printed a
+                // value. That is wrong DATA, not merely a missing diagnostic.
+                // docs/BUGS.md #1035.
+                zerr("invalid subscript"); // c:2022
+                errflag_set_error();
+                return (String::new(), idx + 1, vec![]);
             }
             if idx < body_chars.len() {
                 idx += 1;
@@ -7018,7 +7070,7 @@ pub fn paramsubst(
                         }
                     }
                     match found_idx {
-                        Some(idx) if return_index => (idx + 1).to_string(),
+                        Some(idx) if return_index => ksh_search_index(idx as i64 + 1),
                         Some(idx) => arr[idx].clone(),
                         // c:1744/1748 — a begin index that stays negative after
                         // `beg += len` means "no scan, answer 0", even forward,
@@ -7027,11 +7079,25 @@ pub fn paramsubst(
                         None if return_index && !down => {
                             // c:2945 — (i) no-match: one-past-end
                             // so `$arr[$arr[(i)pat]]` yields empty.
-                            (arr.len() + 1).to_string()
+                            ksh_search_index(arr.len() as i64 + 1)
                         }
                         None if return_index && down => {
                             // c:2945 — (I) no-match: 0 (before first).
                             "0".to_string()
+                        }
+                        // A REVERSE miss resolves to subscript 0, and c:2134
+                        // decides what subscript 0 means: under
+                        // KSHZEROSUBSCRIPT `getindex` treats `[0]` as the FIRST
+                        // element (`end = startnextlen`), otherwise it takes the
+                        // VALFLAG_EMPTY arm and the expansion is empty. So
+                        // `a=(one two three); setopt kshzerosubscript;
+                        // ${a[(R)zz]}` is `one`, not "". A FORWARD miss yields
+                        // len+1 instead, which is out of range under either
+                        // base, which is why `(r)` stays empty — and why
+                        // KSHARRAYS alone stays empty too: it leaves the 0 as 0
+                        // and the zero-subscript rule is what it lacks.
+                        None if down && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) => {
+                            arr.first().cloned().unwrap_or_default() // c:2140
                         }
                         None => String::new(),
                     }
@@ -8057,7 +8123,7 @@ pub fn paramsubst(
                             }
                         }
                         match (found, return_index) {
-                            (Some(s), true) => (s + 1).to_string(),
+                            (Some(s), true) => ksh_search_index(s as i64 + 1),
                             (Some(s), false) => {
                                 // c:Src/params.c:1798-1980 — scalar (r)/(R)
                                 // returns the CHAR at the match position,
@@ -8080,10 +8146,26 @@ pub fn paramsubst(
                                 } else if n == 0 {
                                     "0".to_string()
                                 } else if flags.contains('i') {
-                                    (n + 1).to_string()
+                                    ksh_search_index(n as i64 + 1)
                                 } else {
                                     "0".to_string()
                                 }
+                            }
+                            // Scalar twin of the array arm above: a REVERSE
+                            // (`R`) miss resolves to subscript 0, which c:2134
+                            // turns into the FIRST character under
+                            // KSHZEROSUBSCRIPT and into empty otherwise. A
+                            // forward (`r`) miss is len+1 — out of range either
+                            // way, so it stays empty.
+                            (None, false)
+                                if flags.contains('R')
+                                    && scalar_is_set
+                                    && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT) =>
+                            {
+                                s_chars
+                                    .first()
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_default() // c:2140
                             }
                             (None, false) => String::new(),
                         }
@@ -8773,7 +8855,30 @@ pub fn paramsubst(
                         } else {
                             sub.parse::<i64>().ok().is_some_and(|i| {
                                 let len = a.len() as i64;
-                                let real = if i < 0 { len + i } else { i - 1 };
+                                // The subscript→slot mapping has to match the
+                                // one the VALUE path uses, or `${a[i]}` and
+                                // `${+a[i]}` disagree. This hardcoded `i - 1`
+                                // ignored both index options:
+                                //   KSHARRAYS (c:Src/params.c:2120) is 0-based,
+                                //     so `a[0]` read as slot -1 (reported UNSET
+                                //     while `${a[0]}` returned the first
+                                //     element) and `a[3]` as slot 2 (reported
+                                //     SET though it is past the end).
+                                //   KSHZEROSUBSCRIPT (c:Src/params.c:2134)
+                                //     treats `[0]` as the FIRST element, so it
+                                //     maps to slot 0, not -1 — `${a[0]:-none}`
+                                //     wrongly fired the default.
+                                let real = if i < 0 {
+                                    len + i
+                                } else if isset(crate::ported::zsh_h::KSHARRAYS) {
+                                    i
+                                } else if i == 0
+                                    && isset(crate::ported::zsh_h::KSHZEROSUBSCRIPT)
+                                {
+                                    0
+                                } else {
+                                    i - 1
+                                };
                                 real >= 0 && (real as usize) < a.len()
                             })
                         }
@@ -8783,6 +8888,20 @@ pub fn paramsubst(
                 // scalar's own existence — `${str[@]:-x}` is legal
                 // and `str` may be the only declared form.
                 || ((is_at_or_star || is_slice) && vars_contains(&var_name))
+                // A NUMERIC subscript on a scalar indexes its characters, and
+                // the parameter itself is what set-ness refers to: zsh answers
+                // `${+s[N]}` with 1 for ANY N once `s` exists (`s=hello` gives
+                // 1 for both `s[1]` and the out-of-range `s[9]`), and lets the
+                // `:-` default be decided by the resulting — possibly empty —
+                // VALUE instead. There was no branch for this shape at all, so
+                // is_set stayed false and `${s[1]:-n}` fired the default even
+                // though the character exists. Guarded to true scalars: an
+                // ARRAY out-of-range index (`${+a[4]}`) must stay 0, which the
+                // array branch above already decides.
+                || (sub.parse::<i64>().is_ok()
+                    && vars_contains(&var_name)
+                    && !arrays_contains(&var_name)
+                    && !assoc_contains(&var_name))
                 // c:Src/Modules/parameter.c — magic-assoc tables
                 // (`builtins`, `commands`, `functions`, `aliases`, etc.)
                 // dispatch through PARTAB. Without this fallback,
@@ -13930,18 +14049,28 @@ pub fn paramsubst(
             // (the "unset → empty tag" fallback below), clobbering
             // the default that `:-` already substituted.
             //
-            // Approximation of C's PM_DECLARED || !PM_UNSET check:
-            // skip the wantt arm when the var is fully unset (no
-            // paramtab entry, no env, no array/assoc store, not a
-            // recognized magic-assoc name). For "declared but unset"
-            // (`typeset -i x; ${(t)x}`), paramtab still has the
-            // entry — `paramtab().read().get(&var_name).is_some()`
-            // returns true and we DO emit the tag matching zsh.
+            // c:2812 is a FLAG test, not an existence test: `(flags &
+            // PM_DECLARED) || !(flags & PM_UNSET)`. Testing only "is there a
+            // paramtab entry" over-reports for a parameter that lives in the
+            // table but is registered UNSET and never declared — C's
+            // `IPDEF1("ERRNO", errno_gsu, PM_UNSET)` (c:Src/params.c:298) is
+            // exactly that shape, and zshrs answered `${(t)ERRNO}` with
+            // `integer-special` where zsh gives the empty string, while
+            // agreeing that `${+ERRNO}` is 0 — internally inconsistent.
+            // Consult the flags when the entry exists; "declared but unset"
+            // (`setopt typesettounset; typeset x`) still emits its tag because
+            // that path stamps PM_DECLARED (builtin.rs:8286).
             let declared = paramtab()
                 .read()
                 .ok()
-                .and_then(|tab| tab.get(&var_name).cloned())
-                .is_some()
+                .and_then(|tab| {
+                    tab.get(&var_name).map(|p| {
+                        let f = p.node.flags as u32;
+                        (f & crate::ported::zsh_h::PM_DECLARED) != 0
+                            || (f & crate::ported::zsh_h::PM_UNSET) == 0
+                    })
+                })
+                .unwrap_or(false)
                 || arrays_contains(&var_name)
                 || assoc_contains(&var_name)
                 || crate::ported::modules::parameter::PARTAB_ARRAY

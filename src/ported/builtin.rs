@@ -4564,7 +4564,22 @@ pub fn bin_typeset(
             } else {
                 crate::ported::utils::sepsplit(sval, Some(&joinsep), true)
             }
-        } else if let Some(old) = existing_scalar.as_deref() {
+        } else if let Some(old) = existing_scalar
+            .as_deref()
+            // Inheriting the existing scalar is for a tie declared at the
+            // CURRENT scope: `V=pre:set; typeset -T V v` adopts `pre:set`. A
+            // declaration that SHADOWS an outer binding creates a fresh one, so
+            // it starts EMPTY even though a value is visible —
+            // `V=plain; f(){ local -T V v; print $V }` prints nothing in zsh,
+            // where zshrs printed `plain`. An explicit value is unaffected:
+            // `local -T V=x:y v` takes the `sval_opt` branch above.
+            //
+            // Both halves of the test matter. PM_LOCAL alone is not enough —
+            // it is set for a plain top-level `typeset` too, and gating on it
+            // by itself made the GLOBAL `typeset -T V v` stop inheriting. The
+            // `locallevel > 0` half is what restricts this to a real shadow.
+            .filter(|_| (on as u32 & PM_LOCAL) == 0 || locallevel.load(Relaxed) == 0)
+        {
             if old.is_empty() {
                 Vec::new()
             } else if split_one {
@@ -4677,6 +4692,30 @@ pub fn bin_typeset(
         }));
 
         if let Ok(mut tab) = paramtab().write() {
+            // c:Src/params.c:1137 — when a declaration SHADOWS an existing
+            // binding, `createparam` keeps the displaced one as `pm->old` so
+            // `endparamscope` can put it back. This path builds both halves
+            // from `param::default()` (`old: None`) and inserted them straight
+            // over the top, so `local -T V v` over an existing `typeset -T V v`
+            // DESTROYED the outer pair: after the function returned `$V` was
+            // empty, `${(t)V}` reported nothing at all, and every later
+            // `V=…` stopped updating `v` — the global tie was gone for the rest
+            // of the shell's life. docs/BUGS.md #1039 C.
+            //
+            // Only chain when this declaration is actually creating a shadow at
+            // a DEEPER level: re-tying at the same level legitimately replaces
+            // the binding (and `already_tied` above handles the same-partner
+            // case), so an unconditional chain would build a bogus restore
+            // stack for plain global re-ties.
+            let cur_ll = locallevel.load(Relaxed) as i32;
+            let mut apm = apm;
+            let mut spm = spm;
+            if tab.get(aname).map(|p| p.level < cur_ll).unwrap_or(false) {
+                apm.old = tab.remove(aname); // c:1137 `pm->old = oldpm`
+            }
+            if tab.get(sname).map(|p| p.level < cur_ll).unwrap_or(false) {
+                spm.old = tab.remove(sname); // c:1137
+            }
             tab.insert(aname.to_string(), Box::new(apm));
             tab.insert(sname.to_string(), Box::new(spm));
         }
@@ -7741,8 +7780,16 @@ pub fn bin_functions(
         let ret;
         if funcname.is_none() {
             // c:3635
-            // c:3637 — `zerrnam(name, "bad autoload");`
-            zwarnnam(name, "bad autoload"); // c:3637
+            // c:3637 — `zerrnam(name, "bad autoload");`. zerrnam, NOT zwarnnam:
+            // in C the `zerr*` family sets `errflag`, which aborts the enclosing
+            // command and the script, while `zwarn*` only prints. The comment
+            // here already cited zerrnam but the call was the warning form, so
+            // `autoload -X` outside a function printed the diagnostic and then
+            // kept going — `autoload -X; echo AFTER` ran AFTER where zsh stops.
+            // (A subshell still continues in both, because only the subshell
+            // dies; inside a function `-X` takes the real autoload path and
+            // never reaches here.)
+            zerrnam(name, "bad autoload"); // c:3637
             ret = 1; // c:3638
         } else {
             let fname = funcname.unwrap();
@@ -7926,10 +7973,18 @@ pub fn bin_functions(
     queue_signals(); // c:3711
     for fname in argv {
         // c:3712
-        // c:3713-3714 — `-w` (compile-and-dump) path.
+        // c:3713-3714 — `returnval = dump_autoload(name, *argv, on, ops, func);`
+        // This was a stub that just `continue`d, so `autoload -w FILE.zwc`
+        // silently did nothing: a missing dump produced no diagnostic where zsh
+        // reports `can't open zwc file: …` (the warning lives in
+        // `load_dump_header`, parse.rs), and a VALID dump never registered its
+        // functions for autoload at all. `dump_autoload` itself was already
+        // ported with a matching signature (parse.rs) — only this call was
+        // missing, so the whole `-w` feature was unreachable.
         if OPT_ISSET(ops, b'w') {
             // c:3713
-            // dump_autoload(name, fname, on, ops, func) — dump.c port.
+            returnval =
+                crate::ported::parse::dump_autoload(name, fname, on as i32, ops, _func); // c:3714
             continue;
         }
         // c:3715 — `shf = shfunctab->getnode(shfunctab, *argv);`
