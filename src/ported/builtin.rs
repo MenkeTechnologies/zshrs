@@ -8196,6 +8196,23 @@ pub fn bin_unset(
                                 }
                             }
                         }
+                    } else if crate::dash_mode::bash_mode() {
+                        // bash sparse arrays: subscripts are 0-based and
+                        // `unset a[i]` leaves a HOLE (index gap) rather than
+                        // shifting or clearing to a dense empty. Negative
+                        // indexes count from the end. The dense Vec keeps a
+                        // "" placeholder; bash_arrays tracks the hole so
+                        // `${a[@]}`/`${#a[@]}`/`${!a[@]}` skip it.
+                        if let Ok(i) = key.parse::<i32>() {
+                            let len_i = arr.len() as i32;
+                            let idx0 = if i < 0 { len_i + i } else { i };
+                            if idx0 >= 0 && (idx0 as usize) < arr.len() {
+                                let idx = idx0 as usize;
+                                arr[idx] = String::new();
+                                crate::bash_arrays::note_unset(nm, idx);
+                                crate::ported::exec::set_array(nm, arr);
+                            }
+                        }
                     } else if let Ok(i) = key.parse::<i32>() {
                         // c:Src/params.c — single-index unset only
                         // accepts positive subscripts and the special

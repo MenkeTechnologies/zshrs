@@ -5465,11 +5465,15 @@ pub fn paramsubst(
                     && (after[1] == '@' || after[1] == '*')
                     && (after[2] == ']' || after[2] == Outbrack)
                 {
-                    // `${!ident[@]}` / `[*]` → the array's indices. Dense array
-                    // → 0..len-1 (ksharrays 0-based). Bind a temp index array
-                    // and leave the `[@]`/`[*]` for the subscript-splat loop.
+                    // `${!ident[@]}` / `[*]` → the array's live indices. Dense
+                    // 0..len-1, minus any bash sparse holes (so `unset a[1];
+                    // ${!a[@]}` → `0 2`). Bind a temp index array and leave the
+                    // `[@]`/`[*]` for the subscript-splat loop.
                     let len = arrays_get(&target).map(|a| a.len()).unwrap_or(0);
-                    let indices: Vec<String> = (0..len).map(|i| i.to_string()).collect();
+                    let indices: Vec<String> = crate::bash_arrays::live_indices(&target, len)
+                        .into_iter()
+                        .map(|i| i.to_string())
+                        .collect();
                     static BANG_SEQ: AtomicUsize = AtomicUsize::new(0);
                     let temp =
                         format!("__subexp_arr_{}", BANG_SEQ.fetch_add(1, Ordering::Relaxed));
@@ -9047,7 +9051,11 @@ pub fn paramsubst(
                                 0
                             }
                         } else if let Some(arr) = arrays_get(&var_name) {
-                            arr.len()
+                            // bash sparse arrays: `${#a[@]}` counts LIVE
+                            // elements — holes from `a[5]=q` padding or
+                            // `unset a[i]` don't count. No-op in --zsh
+                            // (dense; no holes tracked). c:3854
+                            crate::bash_arrays::live_len(&var_name, arr.len())
                         } else if let Some(map) = assoc_get(&var_name) {
                             map.len()
                         } else if let Some(ref keys) = magic_keys {
@@ -9056,7 +9064,7 @@ pub fn paramsubst(
                             0
                         }
                     } else if let Some(arr) = arrays_get(&var_name) {
-                        arr.len() // c:3854
+                        crate::bash_arrays::live_len(&var_name, arr.len()) // c:3854
                     } else if let Some(map) = assoc_get(&var_name) {
                         map.len() // c:3854 (assoc len)
                     } else if let Some(ref keys) = magic_keys {
@@ -9660,7 +9668,17 @@ pub fn paramsubst(
                     // utils.c:3928) rather than re-deriving IFS[0] inline
                     // — sepjoin owns the default-sep rules (IFS[0], the
                     // leading-space → " " fallback, and IFS="" → "").
-                    value = crate::ported::utils::sepjoin(sp, sep.as_deref()); // c:3032
+                    // bash sparse arrays: when sp IS the raw dense array (no
+                    // operator reshaped it), join only LIVE elements so
+                    // `"${a[*]}"` is `x y z q`, not `x y z   q`. No-op in --zsh.
+                    if crate::bash_arrays::has_holes(&var_name)
+                        && arrays_get(&var_name).as_deref() == Some(sp.as_slice())
+                    {
+                        let live = crate::bash_arrays::compact(&var_name, sp.clone());
+                        value = crate::ported::utils::sepjoin(&live, sep.as_deref());
+                    } else {
+                        value = crate::ported::utils::sepjoin(sp, sep.as_deref()); // c:3032
+                    }
                 } else if let Some(arr) = arrays_get(&var_name) {
                     // KSHARRAYS bare array → join sees only element 0.
                     let arr: Vec<String> =
@@ -9670,7 +9688,8 @@ pub fn paramsubst(
                         {
                             arr.into_iter().take(1).collect()
                         } else {
-                            arr
+                            // bash sparse arrays: drop hole slots before join.
+                            crate::bash_arrays::compact(&var_name, arr)
                         };
                     value = crate::ported::utils::sepjoin(&arr, sep.as_deref());
                 // c:3032
@@ -16380,6 +16399,14 @@ pub fn paramsubst(
                 // so unquoted no-affix still elides — matching zsh.
                 if !qt && !plan9 && spsep.is_some() {
                     sp.into_iter().filter(|s| !s.is_empty()).collect()
+                } else if crate::bash_arrays::has_holes(&var_name)
+                    && arrays_get(&var_name).as_deref() == Some(sp.as_slice())
+                {
+                    // bash sparse arrays: `"${a[@]}"` / `"${a[*]}"` splat the
+                    // dense Vec via split_parts (== the raw array here, no
+                    // operator having reshaped it); drop the hole slots so the
+                    // splat is `x y z q`, not `x y z   q`. No-op in --zsh.
+                    crate::bash_arrays::compact(&var_name, sp)
                 } else {
                     sp // c:3950
                 }
@@ -16534,6 +16561,10 @@ pub fn paramsubst(
                     // the values, not the IFS-joined scalar. Without the
                     // assoc arm it fell to `vec![value]` and joined.
                     arrays_get(&var_name)
+                        // bash sparse arrays: `${a[@]}` splats only LIVE
+                        // elements, dropping hole slots (`a[5]=q` padding,
+                        // `unset a[i]`). No-op in --zsh (dense).
+                        .map(|a| crate::bash_arrays::compact(&var_name, a))
                         .or_else(|| {
                             assoc_get(&var_name).map(|m| m.values().cloned().collect())
                         })
@@ -16551,7 +16582,9 @@ pub fn paramsubst(
                     vec![value.clone()]
                 }
             } else if let Some(arr) = arrays_get(&var_name) {
-                arr.clone() // c:3960 (real array splat)
+                // bash sparse arrays: bare-array splat drops hole slots.
+                // No-op in --zsh (dense). c:3960 (real array splat)
+                crate::bash_arrays::compact(&var_name, arr.clone())
             } else if let Some(keys) = (if (hkeys & SCANPM_WANTKEYS) != 0
                 && (hvals & SCANPM_WANTVALS) == 0
             {
