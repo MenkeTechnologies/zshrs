@@ -126,9 +126,32 @@ pub fn _call_program(args: &[String]) -> i32 {
         Err(_) => return 1,
     };
 
-    // Publish stdout for caller via REPLY (shell convention).
+    // Publish stdout for caller via REPLY (a zshrs convenience the native
+    // callers — `_pick_variant` — read directly).
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let _ = crate::ported::params::setsparam("REPLY", &stdout);
+    // C's `_call_program` is `eval $command` — it prints the helper's stdout,
+    // which a shell caller captures with `local help="$(_call_program …)"`
+    // (e.g. `_netcat`). The port piped stdout into `$REPLY` only, so those
+    // captures came back empty. Re-emit stdout to fd 1 — but ONLY when fd 1 is
+    // CAPTURED (a pipe/file), not a terminal. Inside a `$(…)` fd 1 is the
+    // capture pipe → `!isatty` → the write is captured, not shown. In the DIRECT
+    // `_call_program` call native `_pick_variant` makes during completion, fd 1
+    // is the live display (a tty) → `isatty` → skip, so we don't leak the
+    // helper's output onto the screen (which regressed ls-/chmod/find-/grep-/
+    // df-/tr- when emitted unconditionally). isatty is more robust than the
+    // `cmdsubst_outer_stdout()` stack, which is empty during the completion-
+    // context cmdsub (that capture path doesn't push it).
+    if std::env::var_os("ZSHRS_CSDBG").is_some() {
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/cs.log")
+            .map(|mut f| { use std::io::Write as _; let _ = writeln!(f, "CALLPROG cmdline={:?} out_len={} isatty1={}", cmdline.join(" "), output.stdout.len(), unsafe { libc::isatty(1) }); });
+    }
+    if !output.stdout.is_empty() && unsafe { libc::isatty(1) } == 0 {
+        use std::io::Write as _;
+        let mut so = std::io::stdout();
+        let _ = so.write_all(&output.stdout);
+        let _ = so.flush();
+    }
     if output.status.success() {
         0
     } else {

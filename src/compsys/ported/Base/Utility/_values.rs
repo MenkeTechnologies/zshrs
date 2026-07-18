@@ -448,8 +448,8 @@ fn values_impl(args: &[String]) -> i32 {
             let _ = execute_script(body);
         }
     } else if action.starts_with(' ') {
-        // sh:134-141 — leading space: call the words directly (no expl).
-        let parts: Vec<String> = action.split_whitespace().map(|s| s.to_string()).collect();
+        // sh:138 — `eval "action=( $action )"; "$action[@]"` (quote-respecting).
+        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
         loop {
             if _next_label(&[
                 "arguments".to_string(),
@@ -468,8 +468,8 @@ fn values_impl(args: &[String]) -> i32 {
             }
         }
     } else {
-        // sh:142-149 — call `cmd subopts expl rest…` per label.
-        let parts: Vec<String> = action.split_whitespace().map(|s| s.to_string()).collect();
+        // sh:146 — `eval "action=( $action )"` then cmd+args (quote-respecting).
+        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
         if let Some((cmd, rest)) = parts.split_first() {
             loop {
                 if _next_label(&[

@@ -35,7 +35,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::sync::{Mutex, OnceLock};
 
-use znative::{BuiltinFn, HostApi, InitFn, PluginInfo, ABI_VERSION, INIT_SYMBOL};
+use znative::{BuiltinFn, CompFn, HostApi, InitFn, PluginInfo, ABI_VERSION, INIT_SYMBOL};
 
 /// One loaded plugin. Dropping `_lib` runs `dlclose`, so this is only
 /// ever removed by [`unload`] AFTER its builtins are purged from
@@ -88,6 +88,22 @@ fn load_lock() -> &'static Mutex<()> {
 fn ownership() -> &'static Mutex<HashMap<String, String>> {
     static O: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     O.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// compsys `_NAME` → (override handler, owning plugin). Consulted by the
+/// completion router (`compsys::router::try_rust_dispatch`) BEFORE the
+/// built-in Rust port, so a plugin-provided `_command_names` (etc.) wins.
+/// (ABI v4.)
+fn compfn_registry() -> &'static Mutex<HashMap<String, (CompFn, String)>> {
+    static CR: OnceLock<Mutex<HashMap<String, (CompFn, String)>>> = OnceLock::new();
+    CR.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Staging for compfn overrides registered during a single `init`, tagged
+/// with the owner after init returns. Serialised by [`load_lock`]. (ABI v4.)
+fn compfn_staging() -> &'static Mutex<Vec<(String, CompFn)>> {
+    static CS: OnceLock<Mutex<Vec<(String, CompFn)>>> = OnceLock::new();
+    CS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// Completion wirings a plugin requested via `register_completion` that
@@ -244,6 +260,55 @@ extern "C" fn host_addfunction(
     0
 }
 
+extern "C" fn host_register_compfn(
+    _host: *const HostApi,
+    name: *const c_char,
+    handler: CompFn,
+) -> c_int {
+    if name.is_null() {
+        return 1;
+    }
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    if name.is_empty() {
+        return 1;
+    }
+    compfn_staging().lock().unwrap().push((name, handler));
+    0
+}
+
+extern "C" fn host_comp_dispatch(
+    _host: *const HostApi,
+    name: *const c_char,
+    argc: usize,
+    argv: *const *const c_char,
+) -> c_int {
+    if name.is_null() {
+        return 1;
+    }
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    // Decode argv[0..argc] into owned Strings (argv[0] is the _fn name;
+    // dispatch_function_call takes the arguments after it).
+    let mut args: Vec<String> = Vec::with_capacity(argc);
+    if !argv.is_null() {
+        for i in 0..argc {
+            let p = unsafe { *argv.add(i) };
+            if p.is_null() {
+                break;
+            }
+            args.push(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
+        }
+    }
+    // args[0] is `name` itself (the compfn's argv[0]); pass args[1..] as the
+    // dispatched function's argument list, matching how the completer chain
+    // invokes `_alternative`/`_path_commands` etc.
+    let call_args: &[String] = if args.is_empty() { &[] } else { &args[1..] };
+    crate::ported::exec::dispatch_function_call(&name, call_args).unwrap_or(1)
+}
+
+extern "C" fn host_empty_command_hash(_host: *const HostApi) {
+    crate::ported::hashtable::emptycmdnamtable();
+}
+
 /// The single process-wide host table. Leaked so its address is
 /// `'static` — plugins may retain the `*const HostApi` and call through
 /// it from any builtin at any time.
@@ -262,6 +327,9 @@ fn host_api() -> *const HostApi {
             register_completion: host_register_completion,
             getfunction: host_getfunction,
             addfunction: host_addfunction,
+            register_compfn: host_register_compfn,
+            comp_dispatch: host_comp_dispatch,
+            empty_command_hash: host_empty_command_hash,
         });
         Box::into_raw(boxed) as usize
     });
@@ -296,16 +364,19 @@ pub fn load(path: &str) -> Result<String, String> {
     // pending-completion length so we can tag the entries THIS init adds
     // with the owning plugin (the name isn't known until init returns).
     staging().lock().unwrap().clear();
+    compfn_staging().lock().unwrap().clear();
     let pc_start = pending_completions().lock().unwrap().len();
     let info_ptr: *const PluginInfo = init(host_api());
     if info_ptr.is_null() {
         staging().lock().unwrap().clear();
+        compfn_staging().lock().unwrap().clear();
         pending_completions().lock().unwrap().truncate(pc_start);
         return Err(format!("`{}`: plugin init failed (ABI mismatch or error)", path));
     }
     let info = unsafe { &*info_ptr };
     if info.abi_version != ABI_VERSION {
         staging().lock().unwrap().clear();
+        compfn_staging().lock().unwrap().clear();
         pending_completions().lock().unwrap().truncate(pc_start);
         return Err(format!(
             "`{}`: ABI version {} != host {}",
@@ -319,6 +390,7 @@ pub fn load(path: &str) -> Result<String, String> {
     // the first with no clean unload story.
     if plugins().lock().unwrap().iter().any(|p| p.name == name) {
         staging().lock().unwrap().clear();
+        compfn_staging().lock().unwrap().clear();
         pending_completions().lock().unwrap().truncate(pc_start);
         return Err(format!("plugin `{}` already loaded", name));
     }
@@ -331,6 +403,16 @@ pub fn load(path: &str) -> Result<String, String> {
         for (cmd, func) in staged {
             reg.insert(cmd.clone(), BuiltinEntry { func, _pad: () });
             own.insert(cmd, name.clone());
+        }
+    }
+
+    // Commit staged compfn overrides, tagged with owner. (ABI v4.)
+    let staged_cf: Vec<(String, CompFn)> =
+        std::mem::take(&mut *compfn_staging().lock().unwrap());
+    {
+        let mut cr = compfn_registry().lock().unwrap();
+        for (fname, func) in staged_cf {
+            cr.insert(fname, (func, name.clone()));
         }
     }
 
@@ -423,6 +505,13 @@ pub fn unload(name: &str) -> Result<(), String> {
         }
     }
 
+    // Purge compfn overrides owned by this plugin BEFORE dlclose, so no
+    // dangling CompFn pointer survives the `dlclose`. (ABI v4.)
+    compfn_registry()
+        .lock()
+        .unwrap()
+        .retain(|_, (_, o)| o.as_str() != name);
+
     // Drop this plugin's completion bookkeeping. We do NOT eval here to
     // tear down the compsys glue function (evaling deep in the `zmodload`
     // call stack hangs the VM); the orphaned `_zshrs_plug_<cmd>` function
@@ -446,6 +535,37 @@ pub fn unload(name: &str) -> Result<(), String> {
         drop(p); // explicit: dlclose here, after registry purge.
     }
     Ok(())
+}
+
+/// Completion-router hook. Returns a plugin-registered override handler
+/// for the compsys function `name` (a `_NAME`), or `None`. Consulted by
+/// `compsys::router::try_rust_dispatch` BEFORE the built-in Rust port, so a
+/// plugin's `_command_names` (etc.) supersedes both the port and the shell
+/// autoload. (ABI v4.)
+pub fn compfn_override(name: &str) -> Option<CompFn> {
+    compfn_registry().lock().unwrap().get(name).map(|(f, _)| *f)
+}
+
+/// Invoke a plugin's override for compsys `_fn` `name`, if one is
+/// registered. `args` are the completion-function arguments (argv[1..]);
+/// argv[0] is set to `name`, matching the completer-chain convention.
+/// Returns `Some(rc)` if a plugin handled it, else `None` (fall through to
+/// the built-in port / shell autoload). (ABI v4.)
+pub fn dispatch_compfn(name: &str, args: &[String]) -> Option<i32> {
+    let func = compfn_override(name)?;
+    // Build argv = [name, args...] as NUL-terminated C strings, valid for
+    // the duration of the call (mirrors `dispatch`).
+    let mut owned: Vec<CString> = Vec::with_capacity(args.len() + 1);
+    owned.push(CString::new(name).ok()?);
+    for a in args {
+        owned.push(
+            CString::new(a.as_str())
+                .unwrap_or_else(|_| CString::new(a.replace('\0', "")).unwrap_or_default()),
+        );
+    }
+    let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
+    let rc = func(host_api(), ptrs.len(), ptrs.as_ptr());
+    Some(rc as i32)
 }
 
 /// Command-resolution hook. Called from `execute_external_bg` for bare

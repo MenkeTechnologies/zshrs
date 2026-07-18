@@ -46,6 +46,30 @@ pub fn try_rust_dispatch(name: &str) -> Option<fn(&[String]) -> i32> {
     rust_compsys_lookup(name)
 }
 
+/// Dispatch compsys `_fn` `name` with `args`, honoring plugin overrides.
+/// Precedence: a plugin-registered `CompFn` (ABI v4, `zmodload -R`) wins
+/// over the built-in Rust port. Returns `Some(rc)` when either handled it,
+/// `None` when neither does (caller falls through to shell autoload).
+///
+/// The plugin override intercepts even when `backend != Rust`: the user
+/// installed it explicitly, so it should run regardless of the built-in
+/// port toggle. The built-in port stays gated behind [`try_rust_dispatch`].
+pub fn dispatch_compsys(name: &str, args: &[String]) -> Option<i32> {
+    if let Some(rc) = crate::extensions::plugin_host::dispatch_compfn(name, args) {
+        return Some(rc);
+    }
+    try_rust_dispatch(name).map(|f| f(args))
+}
+
+/// True if a plugin override (ABI v4) OR a built-in Rust port handles
+/// `name`. Used where a caller must know whether the completer is
+/// intercepted natively (e.g. to skip the shell-autoload prelude) without
+/// invoking it.
+pub fn is_intercepted(name: &str) -> bool {
+    crate::extensions::plugin_host::compfn_override(name).is_some()
+        || try_rust_dispatch(name).is_some()
+}
+
 /// Per-name dispatch table — maps `_NAME` to a `fn(&[String]) -> i32`
 /// pointer to the Rust port entry. Every `_NAME` port declared in
 /// `compsys::ported` (`mod.rs`) is wired here so the completer chain

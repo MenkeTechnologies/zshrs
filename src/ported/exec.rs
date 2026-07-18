@@ -644,7 +644,7 @@ pub fn loadautofn(
             // Mark the stub loaded and return success — call-time dispatch
             // short-circuits to the native fn (vm_helper.rs:2276), so no
             // funcdef/body is needed.
-            if crate::compsys::router::try_rust_dispatch(&name).is_some() {
+            if crate::compsys::router::is_intercepted(&name) {
                 unsafe {
                     (*shf).node.flags &= !(PM_UNDEFINED as i32);
                 }

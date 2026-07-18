@@ -2480,8 +2480,9 @@ impl ShellExecutor {
     pub fn run_function_body_only(&mut self, name: &str, args: &[String]) -> Option<i32> {
         // Same Rust-port short-circuit as dispatch_function_call,
         // sans the doshfunc wrap.
-        if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(name) {
-            return Some(rust_fn(args));
+        if let Some(rc) = crate::compsys::router::dispatch_compsys(name, args) {
+            // Plugin override (ABI v4) wins over the built-in Rust port.
+            return Some(rc);
         }
         // Bug #657 gap #2 — `_regex_arguments`-generated completion functions
         // live in a runtime registry, not the static router table (a plain
@@ -2592,6 +2593,22 @@ impl ShellExecutor {
         if is_disabled {
             return None;
         }
+        // `_regex_arguments NAME …` (e.g. `_regex_arguments _sed_expressions …`
+        // in `_sed`) eval-defines a real shell function NAME in zsh. This port
+        // stores it in a runtime registry keyed by NAME (a static router fn-ptr
+        // can't carry a dynamic name). `run_function_body_only` already consults
+        // that registry, but `dispatch_function_call` — the path an `_arguments`
+        // action (`:sed script:_sed_expressions`) or any by-name caller takes —
+        // did not, so the call fell through to the autoload prelude and errored
+        // "function definition file not found" (`sed -<TAB>`). Consult the
+        // registry here too, before autoload. Returned directly (like
+        // run_function_body_only) — the regex body drives compsys globals, not
+        // function locals, so it needs no doshfunc scope wrap.
+        if let Some(rc) =
+            crate::compsys::ported::_regex_arguments::dispatch_if_registered(name)
+        {
+            return Some(rc);
+        }
         // zshrs-original: `[compsys] backend = "rust"` short-circuit.
         // When a `_NAME` has a Rust port AND the user opted into the
         // rust backend, run the Rust fn directly here — but still
@@ -2608,9 +2625,17 @@ impl ShellExecutor {
         // wrap below applies uniformly to both.
         let direct_rust_fn: Option<fn(&[String]) -> i32> =
             crate::compsys::router::try_rust_dispatch(name);
-        // Autoload prelude skipped when a Rust port wins — no upstream
-        // shell function to load.
-        if direct_rust_fn.is_none() && !self.functions_compiled.contains_key(name) {
+        // A plugin-registered override (ABI v4, `zmodload -R`) also
+        // intercepts natively: it supplies the body, so no shell autoload
+        // or compiled chunk is needed — same as a built-in Rust port.
+        let has_plugin_override =
+            crate::extensions::plugin_host::compfn_override(name).is_some();
+        // Autoload prelude skipped when a Rust port OR plugin override wins
+        // — no upstream shell function to load.
+        if direct_rust_fn.is_none()
+            && !has_plugin_override
+            && !self.functions_compiled.contains_key(name)
+        {
             // compinit bulk-loads $_comps from the dump/cache but (unlike
             // zsh's `compdef -na`, which `autoload -rUz`s every completer)
             // does NOT register the completer functions as autoload stubs.
@@ -2757,7 +2782,7 @@ impl ShellExecutor {
         // lookup entirely — the body_runner closure below will run
         // the Rust fn pointer directly. Otherwise require a compiled
         // chunk for the autoloaded body.
-        let chunk_opt = if direct_rust_fn.is_some() {
+        let chunk_opt = if direct_rust_fn.is_some() || has_plugin_override {
             None
         } else {
             Some(self.functions_compiled.get(name).cloned()?)
@@ -2819,11 +2844,23 @@ impl ShellExecutor {
         // defaulted to an empty string, which the funcsourcetrace
         // getfn rendered as `:N` (or worse, picked up the
         // function name from a parallel field). Bug #515.
-        let synth_filename = self
-            .function_def_file
-            .get(name)
-            .cloned()
-            .flatten()
+        // c:Src/exec.c:5620/5625 — the source file is `getshfuncfile(shf)`,
+        // which reads the shfunc's own `filename` (authoritative: set by
+        // execfuncdef for a normally-defined function, and by loadautofn — as
+        // the fpath dir with PM_LOADDIR — for an AUTOLOADED one). Prefer it.
+        // `function_def_file` is a zshrs-only side map that, for an autoloaded
+        // function, was stamped with the OUTER `scriptfilename` ("zsh") at
+        // compile time, not the fpath file — so it must NOT override
+        // getshfuncfile. Consulting it second still covers functions whose
+        // shfunc `filename` wasn't recorded (compile_funcdef-routed defs);
+        // scriptfilename is the final fallback. Without getshfuncfile winning,
+        // funcsourcetrace reported "zsh" for every autoloaded completer, which
+        // broke `_git`: its first git-completion.bash search path is
+        // `"$(dirname ${funcsourcetrace[1]%:*})"/git-completion.bash` — "zsh"
+        // resolved to `./git-completion.bash`, found nothing, and
+        // `. "$script"` errored (`_git:.:48: no such file or directory`).
+        let synth_filename = crate::ported::hashtable::getshfuncfile(name)
+            .or_else(|| self.function_def_file.get(name).cloned().flatten())
             .or_else(|| self.scriptfilename.clone());
         // c:Src/exec.c:5409 — `shf->lineno = lineno;` (def line).
         // `function_line_base[name]` carries compile_funcdef's
@@ -2863,10 +2900,16 @@ impl ShellExecutor {
         // running any command sees 0 instead of the caller's status.
         let seed_status = self.last_status();
         let body_args: Vec<String> = args.to_vec();
+        let name_owned = name.to_string();
         let body_runner = move || -> i32 {
-            // Branch: Rust port (direct fn call) or fusevm Chunk
-            // (autoloaded shell body). Both run INSIDE doshfunc's
-            // scope so prologue/epilogue applies identically.
+            // Branch: plugin override (ABI v4) → built-in Rust port →
+            // fusevm Chunk (autoloaded shell body). All run INSIDE
+            // doshfunc's scope so prologue/epilogue applies identically.
+            if let Some(rc) =
+                crate::extensions::plugin_host::dispatch_compfn(&name_owned, &body_args)
+            {
+                return rc;
+            }
             if let Some(f) = direct_rust_fn {
                 return f(&body_args);
             }

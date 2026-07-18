@@ -131,6 +131,9 @@ Inside a handler, `Host` is the shell's callback table:
 | `host.register_builtin(n, f)`   | register a command handler dynamically    |
 | `host.add_match(word)`          | emit one completion candidate (see below) |
 | `host.install_completion(cmd, gen)` | wire a native completion into compsys  |
+| `host.register_compfn(name, f)` | override a compsys `_fn` with a native handler — ABI v4 |
+| `host.comp_dispatch(name, args) -> i32` | invoke a compsys `_fn` (`_alternative`, …) — ABI v4 |
+| `host.empty_command_hash()`     | empty the command-name hash (`cmdnamtab`) — ABI v4 |
 
 `Args` decodes `argv`: `.name()` is `argv[0]`, `.rest()` the arguments,
 `.to_vec()` the whole vector.
@@ -188,6 +191,38 @@ doing it during plugin-init would run compsys glue too early). So **load
 the plugin after `compinit`**. No leading-underscore is used for the
 generator name — zsh treats `_*` command names as autoloadable completers,
 which would shadow the builtin.
+
+## Compsys function overrides (ABI v4)
+
+A plugin can also **replace a compsys internal `_fn`** — e.g. `_command_names`
+— with a native Rust handler, not just add a per-command completion. Add a
+`compfns:` section to `declare_plugin!`, mapping the `_NAME` to a handler
+(`fn(&Host, &Args) -> c_int`):
+
+```rust
+declare_plugin! {
+    name: "command_names",
+    version: "0.1.0",
+    compfns: { "_command_names" => command_names },
+}
+```
+
+The completion router resolves an override **before** the built-in Rust port
+and before the autoloaded shell function, so the plugin's version wins.
+This is how a user reproduces a *customized* completer (one whose behavior
+differs from stock zsh — such as a framework's patched `_command_names`) at
+native speed, instead of the built-in port silently running stock behavior.
+
+The handler builds its tag/spec list in Rust, then delegates the heavy
+lifting with `host.comp_dispatch("_alternative", &specs)`; `host.getvar`
+reads `$PREFIX`/`$PATH`/etc., and `host.eval` runs any snippet needing shell
+scope (e.g. a `local -A +h commands` shadow that must stay live across the
+nested `_alternative`/`_path_commands` calls). See
+[`examples/plugin-command-names/`](../examples/plugin-command-names/).
+
+Overrides are opt-in per `zmodload -R`: without the plugin loaded, the
+built-in port runs unchanged. Unload purges the override **before**
+`dlclose`, like command registrations.
 
 ## Managing plugins
 

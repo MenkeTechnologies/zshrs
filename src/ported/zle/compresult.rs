@@ -3140,7 +3140,16 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                         pnl = 1;
                     }
                 }
-                if pnl != 0 {
+                // c:2106 — `if (n && pnl)`. The trailing newline that separates
+                // the DISPLINE rows from the column grid below fires ONLY when
+                // there ARE grid matches (`n = g->dcount`). When every match is
+                // a displine (dcount == 0, e.g. a `_describe` list where all
+                // rows carry a description), emitting it here appended a
+                // spurious blank row after the last displine — the list printed
+                // one row too tall, so always-last-prompt's cursor-up landed one
+                // row too low and reprinted the command line over the first
+                // match. The `n &&` guard was missing.
+                if g.dcount != 0 && pnl != 0 {
                     let _ = write_loop(out_fd, b"\n");
                     ml += 1;
                     pnl = 0;
@@ -3188,7 +3197,19 @@ pub fn printlist(over: i32, showall: i32) -> i32 {
                 }
             }
         }
-        pnl = 1;
+        // c:2157-2158 — `if (g->lcount || (showall && g->mcount)) pnl = 1;`.
+        // Only a group that actually printed rows arms the pending-newline for
+        // the NEXT group. A preceding EMPTY group (lcount==0 && mcount==0, e.g.
+        // the "default" placeholder group `_arguments` inserts) must NOT set
+        // pnl — an unconditional `pnl = 1` here made the first real match row
+        // emit a spurious leading newline, pushing the whole list down one row
+        // so the always-last-prompt cursor-up (`nlines+nlnct-1`) landed one row
+        // too low (cursor left below the command line; a second Tab then
+        // reprinted the line beneath the stale one). Bug: `pwd -<TAB>` cursor at
+        // row 1 vs zsh's row 0.
+        if g.lcount != 0 || (showall != 0 && g.mcount != 0) {
+            pnl = 1;
+        }
     }
 
     // c:2160-2174 — cursor-reposition epilogue (FAITHFUL PORT; was OMITTED).
