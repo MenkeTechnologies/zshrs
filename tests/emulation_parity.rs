@@ -515,6 +515,13 @@ fn bash_case_and_at_transforms() {
     assert_eq!(bash(r#"v="a b"; printf '%s' "${v@Q}""#), "'a b'");
     assert_eq!(bash(r#"v="it's"; printf '%s' "${v@Q}""#), r#"'it'\''s'"#);
     assert_eq!(bash(r#"v=; printf '%s' "${v@Q}""#), "''");
+    // Case-mod with a single-char PATTERN: only matching chars transform.
+    assert_eq!(bash(r#"v=hello_world; printf '%s' "${v^^[hw]}""#), "Hello_World");
+    assert_eq!(bash(r#"v=HELLO; printf '%s' "${v,,[HE]}""#), "heLLO");
+    assert_eq!(bash(r#"v=abcABC; printf '%s' "${v^^[a-c]}""#), "ABCABC");
+    // `${v^PAT}` upper-cases the first char only if it matches the pattern.
+    assert_eq!(bash(r#"v=hello; printf '%s' "${v^h}""#), "Hello");
+    assert_eq!(bash(r#"v=hello; printf '%s' "${v^l}""#), "hello");
 
     // `@`/`~` transforms are a bad substitution under --zsh (rc 1, no output).
     let out = Command::new(zshrs_bin())
@@ -599,6 +606,37 @@ fn bash_arith_subscript_and_assoc_keys() {
         String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
     };
     assert_eq!(zsh("a=(10 20 30); echo $(( a[1] ))"), "10");
+}
+
+#[test]
+fn bash_prefix_name_matching() {
+    // bash `${!prefix@}` / `${!prefix*}` list the NAMES of set variables whose
+    // name starts with `prefix` (sorted), excluding zsh-internal magic params
+    // (aliases / argv / functions / …) that bash has no equivalent for.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    // `@` splats separate words → sort them for a determinstic assertion.
+    assert_eq!(
+        bash(r#"aa=1; ab=2; ba=3; for v in "${!a@}"; do echo "$v"; done | sort | tr '\n' ' '"#),
+        "aa ab"
+    );
+    assert_eq!(bash(r#"zqx1=1; zqx2=2; echo "${!zqx@}""#), "zqx1 zqx2");
+    assert_eq!(bash(r#"myvar=9; echo "${!myv*}""#), "myvar");
+    // No zsh magic params leak in (aliases/argv start with 'a').
+    assert_eq!(
+        bash(r#"for v in "${!a@}"; do echo "$v"; done | grep -c -E '^(aliases|argv)$'"#),
+        "0"
+    );
+
+    // Indirect (`${!x}`) and array indices (`${!a[@]}`) — same `!` syntax —
+    // must keep working.
+    assert_eq!(bash(r#"x=y; y=hi; echo "${!x}""#), "hi");
+    assert_eq!(bash(r#"a=(p q r); echo "${!a[@]}""#), "0 1 2");
 }
 
 #[test]
