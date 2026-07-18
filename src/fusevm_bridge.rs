@@ -4675,7 +4675,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 .map(|c| c.to_string())
                 .unwrap_or_default();
             let in_dq = exec.in_dq_context > 0;
-            let joined = if name == "@" || name == "*" || name == "argv" {
+            let joined = if let Some(v) = crate::dash_mode::bash_special_array(&name) {
+                // bash `"${PIPESTATUS[*]}"` / `"${FUNCNAME[*]}"` join.
+                v.join(&sep)
+            } else if name == "@" || name == "*" || name == "argv" {
                 exec.pparams().join(&sep)
             } else if let Some(assoc_map) = exec.assoc(&name) {
                 // c:Src/params.c — assoc-splat values for
@@ -4730,6 +4733,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // therefore an empty ARRAY, and plan9 deletes the whole word
         // (c:4362) rather than keeping the surrounding text.
         note_empty_is_scalar(false);
+        // bash `"${PIPESTATUS[@]}"` / `"${FUNCNAME[@]}"` / `"${BASH_VERSINFO[@]}"`
+        // splat — alias the zsh-native special. No-op in --zsh.
+        if let Some(v) = crate::dash_mode::bash_special_array(&name) {
+            return Value::Array(v.into_iter().map(Value::str).collect());
+        }
         with_executor(|exec| {
             // Special positional names — splice the positional list.
             if name == "@" || name == "*" || name == "argv" {

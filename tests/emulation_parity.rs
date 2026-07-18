@@ -526,6 +526,46 @@ fn bash_case_and_at_transforms() {
 }
 
 #[test]
+fn bash_special_variables() {
+    // bash special vars that alias zsh natives (or are synthesized) under
+    // --bash: PIPESTATUS≈pipestatus, FUNCNAME≈funcstack, BASH_VERSINFO/
+    // BASH_VERSION synthesized. Values are deterministic given the script, so
+    // no reference binary is needed (ground truth verified against bash 5.x).
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    // PIPESTATUS — per-stage exit codes, 0-indexed, all subscript forms.
+    assert_eq!(bash(r#"true | false | true; echo "${PIPESTATUS[@]}""#), "0 1 0");
+    assert_eq!(bash(r#"true | false | true; echo "${PIPESTATUS[*]}""#), "0 1 0");
+    assert_eq!(bash(r#"true | false; echo "${PIPESTATUS[0]}${PIPESTATUS[1]}""#), "01");
+    assert_eq!(bash(r#"true | false | true; echo "${#PIPESTATUS[@]}""#), "3");
+    // FUNCNAME — call stack, innermost (current) first; nested frames.
+    assert_eq!(bash(r#"f() { echo "${FUNCNAME[0]}"; }; f"#), "f");
+    assert_eq!(bash(r#"g(){ f(){ echo "${FUNCNAME[@]}"; }; f; }; g"#), "f g");
+    // BASH_VERSINFO — 6-element array, first element numeric & >= 4.
+    assert_eq!(bash(r#"echo "${#BASH_VERSINFO[@]}""#), "6");
+    assert_eq!(bash(r#"[[ ${BASH_VERSINFO[0]} =~ ^[0-9]+$ ]] && echo num"#), "num");
+    assert_eq!(bash(r#"[[ ${BASH_VERSINFO[0]} -ge 4 ]] && echo modern"#), "modern");
+    // BASH_VERSION — non-empty `X.Y.Z(...)-release` shape.
+    assert!(bash(r#"echo "$BASH_VERSION""#).contains("-release"));
+
+    // --zsh must NOT expose the bash names (empty), but zsh natives still work.
+    let zsh = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(zsh(r#"true|false; echo "[${PIPESTATUS[0]}][$BASH_VERSION]""#), "[][]");
+    assert_eq!(zsh(r#"true|false|true; echo "${pipestatus[@]}""#), "0 1 0");
+}
+
+#[test]
 fn bash_alpha_brace_step() {
     // bash supports an alphabetic brace-range STEP (`{a..e..2}` → a c e); zsh
     // does not (emits the literal), so it is gated to --bash. Direction is

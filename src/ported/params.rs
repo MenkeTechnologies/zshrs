@@ -12614,6 +12614,24 @@ fn is_unset_special(name: &str) -> bool {
 /// path. Mirrors the `Param.gsu->getfn` dispatch C zsh does
 /// inside `getsparam` / `getstrvalue` (Src/params.c:3076 / 2335).
 pub fn lookup_special_var(name: &str) -> Option<String> {
+    // bash special SCALARS under --bash: `$BASH_VERSION` (version string) and
+    // the scalar/bare reads of bash's special arrays (bash: `$PIPESTATUS` ==
+    // `${PIPESTATUS[0]}`, `$FUNCNAME` == current function, `$BASH_VERSINFO` ==
+    // major). No-op in --zsh (gate) — those names are ordinary there.
+    if crate::dash_mode::bash_mode() {
+        match name {
+            "BASH_VERSION" => return Some(crate::dash_mode::bash_version()),
+            "PIPESTATUS" | "FUNCNAME" | "BASH_VERSINFO" => {
+                // bare read = element 0 of the aliased array (empty if none).
+                return Some(
+                    crate::dash_mode::bash_special_array(name)
+                        .and_then(|a| a.into_iter().next())
+                        .unwrap_or_default(),
+                );
+            }
+            _ => {}
+        }
+    }
     // c:Src/params.c:3853 — PM_UNSET-flagged specials skip getfn.
     // Only applies to regenerator-style specials (RANDOM, SECONDS,
     // EPOCHSECONDS, TTYIDLE, ERRNO) — identity specials like UID, GID,
