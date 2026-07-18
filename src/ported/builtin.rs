@@ -11892,7 +11892,19 @@ pub fn eval(argv: &[String]) -> i32 {
             // flowing to the caller (no capture) which is what eval
             // wants. Same routing the eval-via-execstring path uses
             // (vm_helper.rs:1518 EXIT-trap fire).
-            let _ = crate::ported::exec::execute_script_zsh_pipeline(&joined);
+            //
+            // Recursion backstop — zsh's per-pipeline `initjob()` caps eval
+            // recursion at MAX_MAXJOBS ("job table full or recursion limit
+            // exceeded"); the fusevm pipeline path doesn't, so guard here at
+            // the FS_EVAL re-entry (funcnest counts FS_FUNC frames only, so
+            // pure `eval`-string recursion is otherwise unbounded → stack
+            // overflow / SIGBUS). The FS_EVAL frame just pushed is popped
+            // below as normal.
+            if crate::ported::exec::recursion_limit_exceeded() {
+                LASTVAL.store(1, Relaxed);
+            } else {
+                let _ = crate::ported::exec::execute_script_zsh_pipeline(&joined);
+            }
             // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
             let ef = errflag.load(Relaxed);
             let lv = LASTVAL.load(Relaxed);

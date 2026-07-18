@@ -3457,8 +3457,16 @@ pub fn ilistmatches(_dummy: *mut crate::ported::zsh_h::hookdef, _dat: *mut std::
 pub fn list_matches() -> i32 {
     // c:2304
     if VALIDLIST.load(Ordering::SeqCst) == 0 {
-        // c:2311
-        showmsg("BUG: listmatches called with bogus list");
+        // c:2306-2313 — this sanity check is `#ifdef DEBUG` in C, i.e. it must
+        // NOT print to a real terminal. Route it to the env-gated log instead
+        // of `showmsg` (which spammed the daily-driver prompt), and still bail
+        // like C does.
+        if let Ok(path) = std::env::var("ZSHRS_COMPLIST_LOG") {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(f, "list_matches: BOGUS LIST (VALIDLIST==0) — bailing");
+            }
+        }
         return 1; // c:2313
     }
     // c:2317-2324 — populate the chdata bag.

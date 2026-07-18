@@ -7973,9 +7973,18 @@ pub fn execpline2(
 ///
 /// Divergences from C, each forced by the Rust substrate and cited
 /// inline at the point of use:
-///   * `initjob` never returns -1 (the `Vec`-backed jobtab grows on
-///     demand), so C's `initjob() == -1` table-full bailout (c:1756-1760)
-///     is unreachable and omitted.
+///   * `initjob` here grows the `Vec`-backed jobtab on demand and does
+///     not return -1, so C's per-pipeline table-full bailout (c:1756-1760)
+///     is inert on THIS path. That bailout is zsh's universal recursion
+///     backstop (`initjob` caps the table at `MAX_MAXJOBS` → `zerr("job
+///     table full or recursion limit exceeded")`), which bounds recursion
+///     through paths FUNCNEST does not count (sourced files, `eval`). The
+///     fusevm runtime that actually executes pipelines does not allocate a
+///     job per pipeline, so that backstop was missing entirely — runaway
+///     `source`/`eval` recursion overflowed the (large but finite)
+///     main-thread stack → SIGBUS. It is reinstated behaviourally by
+///     `recursion_limit_exceeded()` (below), checked at the FS_SOURCE /
+///     FS_EVAL re-entry points.
 ///   * `errbrk_saved` / `prev_errflag` / `prev_breaks` (jobs.c:128
 ///     globals) are only *read* here; their setter lives in the
 ///     not-yet-ported jobs.c reaping path, so they stay 0 and the

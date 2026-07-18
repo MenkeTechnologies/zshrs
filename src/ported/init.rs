@@ -1634,7 +1634,17 @@ pub fn source(s: &str) -> i32 {
         None => std::fs::read_to_string(path),
     };
     if let Ok(body) = contents {
-        let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
+        // c:1618-1642 — zsh runs the sourced list through execpline, whose
+        // per-pipeline `initjob()` caps recursion at MAX_MAXJOBS ("job table
+        // full or recursion limit exceeded"). The fusevm pipeline path below
+        // doesn't allocate a job per pipeline, so without this guard runaway
+        // `. self`-style recursion overflowed the main-thread stack → SIGBUS.
+        // Refuse the deeper body once the ceiling is reached; the FS_SOURCE
+        // frame just pushed is popped normally below, and zerr's errflag
+        // unwinds the outer sources.
+        if !crate::ported::exec::recursion_limit_exceeded() {
+            let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
+        }
     }
 
     sourcelevel.fetch_sub(1, Ordering::SeqCst); // c:1644

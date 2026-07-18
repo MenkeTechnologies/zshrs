@@ -3583,19 +3583,43 @@ impl ZshCompiler {
                 // C zsh evaluates RHS once: `prefork(list, ...)` then
                 // both `quotedzputs(*ptr, xtrerr)` (for trace, c:2628)
                 // AND `assignaparam(name, arr, ...)` (for assign,
-                // c:2633) read the same expanded `arr`. To get the
-                // single-eval property in our stack-machine port,
-                // stash each expanded value in a fresh slot right
-                // after compile_word_str, leaving the live copy on
-                // the stack for SET_ARRAY. The trace block then
-                // reads from the slots.
+                // c:2633) read the same expanded `arr`. We get the same
+                // single-eval property by assembling the expanded values
+                // into ONE Value::Array (MakeArray) and driving BOTH the
+                // xtrace line and SET_ARRAY off that single array — see
+                // the emit sequence after the element loop. The earlier
+                // port stashed one VM slot per element for the trace,
+                // which overflowed `next_slot` (u16, capped by fusevm's
+                // Op::SetSlot(u16)) on large literals — a .zcompdump's
+                // ~51k-element `_comps=(...)` panicked ("add with
+                // overflow"). No per-element slots now.
                 //
                 // Bump assign_context_depth so compile_word_str's
                 // own WORD_SPLIT (for unquoted `$(…)`) is suppressed
                 // — the outer loop emits ONE WORD_SPLIT per element
                 // below.
-                let mut trace_slots: Vec<u16> = Vec::with_capacity(elements.len());
+                // Data-literal fast path: a large `arr=(...)` whose elements are
+                // ALL compile-time literals compiles to ONE Value::Array constant
+                // (one LoadConst), not N per-element LoadConst + MakeArray. This is
+                // what dodges the u16 constant-pool wall — a `.zcompdump`'s
+                // `_comps=(...)` is 96k unique constants as per-element code, but a
+                // single Array constant either way. Threshold-gated so ordinary
+                // small arrays keep the well-exercised per-element path.
+                let literal_vals: Option<Vec<Value>> = if elements.len() >= 1024 {
+                    elements
+                        .iter()
+                        .map(|e| literal_array_elem_value(e).map(|s| Value::str(s.as_str())))
+                        .collect()
+                } else {
+                    None
+                };
+                let batched = literal_vals.is_some();
+                if let Some(vals) = literal_vals {
+                    let ac = self.builder.add_constant(Value::Array(vals));
+                    self.builder.emit(Op::LoadConst(ac), 0);
+                }
                 let mut stack_values = 0usize;
+                if !batched {
                 for elem in elements.iter() {
                     // c:Src/subst.c:49-79 keyvalpairelement, invoked
                     // from prefork's PREFORK_ASSIGN walk (c:111-117).
@@ -3620,11 +3644,6 @@ impl ZshCompiler {
                         };
                         let mc = self.builder.add_constant(Value::str(marker.as_str()));
                         self.builder.emit(Op::LoadConst(mc), 0);
-                        let ms = self.next_slot;
-                        self.next_slot += 1;
-                        self.builder.emit(Op::Dup, 0);
-                        self.builder.emit(Op::SetSlot(ms), 0);
-                        trace_slots.push(ms);
                         for part in [&key_raw, &val_raw] {
                             // c:Src/subst.c:65/75 `singsub(&dat)` —
                             // PREFORK_SINGLE semantics: parameter /
@@ -3638,11 +3657,6 @@ impl ZshCompiler {
                             self.compile_word_str(part);
                             self.dq_context_depth -= 1;
                             self.assign_context_depth -= 1;
-                            let ps = self.next_slot;
-                            self.next_slot += 1;
-                            self.builder.emit(Op::Dup, 0);
-                            self.builder.emit(Op::SetSlot(ps), 0);
-                            trace_slots.push(ps);
                         }
                         stack_values += 3;
                         continue;
@@ -3657,66 +3671,55 @@ impl ZshCompiler {
                         self.builder
                             .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_WORD_SPLIT, 0), 0);
                     }
-                    // Stash the expanded value for the trace, leaving
-                    // the original on the stack for SET_ARRAY.
-                    let s = self.next_slot;
-                    self.next_slot += 1;
-                    self.builder.emit(Op::Dup, 0);
-                    self.builder.emit(Op::SetSlot(s), 0);
-                    trace_slots.push(s);
                     stack_values += 1;
                 }
-                // c:Src/exec.c::addvars:2624-2632 — emit the trace
-                // line. C's emission:
-                //   fprintf(xtrerr, "%s=", name);   // "name="
-                //   fprintf(xtrerr, "( ");          // "( "
-                //   for *ptr in arr:
-                //     quotedzputs(*ptr, xtrerr);    // "elem"
-                //     fputc(' ', xtrerr);           // " "
-                //   fprintf(xtrerr, ") ");          // ") "
-                // For empty arr the per-element loop is skipped so the
-                // bytes become `name=( ) `; for a 3-element array the
-                // bytes become `name=( a b c ) ` (one trailing space
-                // per element + the close's leading space-with-`) `).
-                // Build the same byte sequence via Concat ops — single
-                // uniform code path, no empty special case.
+                // Collapse the N element values into ONE Value::Array. CallBuiltin's
+                // argc is u8 in the fusevm opcode (op.rs `CallBuiltin(u16, u8)`), so
+                // passing N+1 separate stack args wrapped the count mod 256 for a
+                // literal `arr=(...)` with >254 elements. MakeArray takes a u16 count;
+                // SET_ARRAY/APPEND_ARRAY flatten a single Value::Array arg and still
+                // run the `[key]=value` marker detection on the flattened list, so both
+                // plain and assoc-pair literals round-trip (the same shape
+                // `arr=($other_array)` already takes). MakeArray's count is a
+                // u16 operand; a literal with > 65535 elements that is NOT all-literal
+                // (so it missed the single-Array-constant fast path above) would wrap
+                // it mod 65536 and silently truncate — route those through
+                // BUILTIN_MAKE_ARRAY_COUNTED, whose count is a runtime i64.
+                if stack_values <= u16::MAX as usize {
+                    self.builder.emit(Op::MakeArray(stack_values as u16), 0);
+                } else {
+                    self.builder.emit(Op::LoadInt(stack_values as i64), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::vm_helper::BUILTIN_MAKE_ARRAY_COUNTED, 1),
+                        0,
+                    );
+                }
+                } // end `if !batched` — the array Value is now on the stack either
+                  // way (one Array constant, or assembled from element ops).
+                // c:Src/exec.c::addvars:2624-2632 — the xtrace line. C's emission:
+                //   fprintf(xtrerr, "%s=( ", name);        // "name=( "
+                //   for *ptr in arr: quotedzputs(*ptr); fputc(' ');
+                //   fprintf(xtrerr, ") ");                 // ") "
+                // all inside `if (xtr) { … }` (guarded on the live xtrace state).
+                // Drive it off the WHOLE assembled array via BUILTIN_XTRACE_ARRAY_LINE
+                // (Dup keeps the array on the stack for SET_ARRAY): the builtin reads
+                // the single Value::Array — the same one SET_ARRAY consumes — quotes
+                // each element with quotedzputs, wraps in the `prefix … ) ` frame, and
+                // prints only when xtrace is on. Zero per-element VM slots (the prior
+                // one-slot-per-element trace overflowed next_slot on large literals).
                 let prefix_str = if assign.append {
                     format!("{}+=( ", assign.name)
                 } else {
                     format!("{}=( ", assign.name)
                 };
+                self.builder.emit(Op::Dup, 0);
                 let pc = self.builder.add_constant(Value::str(prefix_str.as_str()));
                 self.builder.emit(Op::LoadConst(pc), 0);
-                let sep_const = self.builder.add_constant(Value::str(" "));
-                for slot in &trace_slots {
-                    self.builder.emit(Op::GetSlot(*slot), 0);
-                    self.builder
-                        .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_QUOTEDZPUTS, 1), 0);
-                    self.builder.emit(Op::Concat, 0);
-                    self.builder.emit(Op::LoadConst(sep_const), 0);
-                    self.builder.emit(Op::Concat, 0);
-                }
-                let close = self.builder.add_constant(Value::str(") "));
-                self.builder.emit(Op::LoadConst(close), 0);
-                self.builder.emit(Op::Concat, 0);
-                // Emit via BUILTIN_XTRACE_LINE — it gates on the
-                // live xtrace opt-state and skips the printprompt4 +
-                // eprintln when xtrace is off (same as C's
-                // `if (xtr) { … }` guard at c:Src/exec.c:2517).
-                self.builder
-                    .emit(Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_LINE, 1), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_XTRACE_ARRAY_LINE, 2),
+                    0,
+                );
                 self.builder.emit(Op::Pop, 0);
-                // Collapse the N element values into ONE Value::Array before
-                // the SET_ARRAY call. CallBuiltin's argc is u8 in the fusevm
-                // opcode (op.rs `CallBuiltin(u16, u8)`), so passing N+1
-                // separate stack args wrapped the count mod 256 for a literal
-                // `arr=(...)` with >254 elements — silently dropping the first
-                // 256. MakeArray takes a u16 count; SET_ARRAY/APPEND_ARRAY
-                // flatten a single Value::Array arg and still run the
-                // `[key]=value` marker detection on the flattened list, so
-                // both plain and assoc-pair literals round-trip at any size
-                // (the same shape `arr=($other_array)` already takes).
-                self.builder.emit(Op::MakeArray(stack_values as u16), 0);
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let argc = 2u8;
@@ -12592,6 +12595,47 @@ fn has_unquoted_param_or_subst(s: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// A large `arr=(...)` literal whose elements are ALL compile-time literals
+/// is DATA, not code: it should compile to a single `Value::Array` constant,
+/// not N per-element `LoadConst` + `MakeArray` (which explodes the u16 constant
+/// pool — a `.zcompdump`'s 96k-unique-constant `_comps=(...)` overflowed it).
+/// Returns the element's literal value iff it has NO expansion and NO
+/// glob/brace/tilde/equals/paren metacharacter OUTSIDE quotes — i.e. its
+/// expansion is the identity and `untokenize(e)` is exactly the value the
+/// per-element path would push as one `LoadConst`. This deliberately accepts
+/// multi-span / escaped-quote literals like `''\''brew'` (→ `'brew`), which a
+/// naive "exactly two Snull" check would reject — 5 such keys in the zpwr
+/// `_comps=(...)` were forcing the whole 103k-element literal off the fast
+/// path and back into the u16-pool-overflowing per-element codegen.
+/// Anything with `$`/backtick expansion, an unquoted glob/brace/tilde/`=`
+/// (raw OR its token form), or a `[key]=` marker returns None so the caller
+/// keeps the per-element path.
+fn literal_array_elem_value(e: &str) -> Option<String> {
+    use crate::ported::zsh_h::{Equals, Inbrace, Inbrack, Inpar, Quest, Star, Tilde};
+    if has_unquoted_expansion(e) {
+        return None;
+    }
+    let blocked = unquoted(e, '*')
+        || unquoted(e, Star)
+        || unquoted(e, '?')
+        || unquoted(e, Quest)
+        || unquoted(e, '[')
+        || unquoted(e, Inbrack)
+        || unquoted(e, '{')
+        || unquoted(e, Inbrace)
+        || unquoted(e, '~')
+        || unquoted(e, Tilde)
+        || unquoted(e, '=')
+        || unquoted(e, Equals)
+        || unquoted(e, '(')
+        || unquoted(e, Inpar);
+    if blocked {
+        None
+    } else {
+        Some(crate::lex::untokenize(e))
+    }
 }
 
 fn has_unquoted_expansion(s: &str) -> bool {
