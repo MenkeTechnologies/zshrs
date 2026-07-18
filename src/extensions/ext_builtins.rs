@@ -9754,3 +9754,23 @@ mod add_zsh_hook_tests {
         assert_eq!(rc, 1);
     }
 }
+
+/// zshrs-extension builtins folded into `builtintab` at runtime by
+/// `createbuiltintable` (the `znative` package manager, the ztest/zassert
+/// framework, `watch`/`sched`) but absent from the static `BUILTINS` port
+/// table. `whence`/`type`/`where`/`which` scan `BUILTINS`, so without these
+/// helpers they misclassify these first-class builtins as external/"none".
+/// Lives outside `src/ported/` (Rust-only, no C counterpart) so the
+/// port-drift gate stays clean — same arrangement as the daemon `z*`
+/// `is_zshrs_builtin` check that `bin_whence` already calls.
+pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::zsh_h::builtin> {
+    crate::pkg::builtin::bintab
+        .iter()
+        .chain(crate::extensions::ztest::bintab.iter())
+        .chain(crate::ported::modules::watch::bintab.iter())
+}
+
+/// True if `name` is one of the folded extension builtins above.
+pub fn is_extension_builtin(name: &str) -> bool {
+    extension_builtin_defs().any(|b| b.node.nam == name)
+}

@@ -161,6 +161,15 @@ pub fn createbuiltintable() -> &'static HashMap<String, &'static builtin> {
         for b in pkg_bintab.iter() {
             m.insert(b.node.nam.clone(), b);
         }
+        // zshrs extension: fold the ztest/zassert unit-test framework
+        // (src/extensions/ztest.rs) into the builtin table so `zassert_eq`,
+        // `ztest_run`, … are first-class builtins in `zshrs -f` (visible to
+        // `whence -w`, `builtin`, `disable`, completion) — not just the
+        // fusevm command-dispatch arm. No C counterpart (zshrs-original).
+        let ztest_bintab: &'static Vec<builtin> = &*crate::extensions::ztest::bintab;
+        for b in ztest_bintab.iter() {
+            m.insert(b.node.nam.clone(), b);
+        }
         m
     })
 }
@@ -8544,6 +8553,7 @@ pub fn bin_whence(
                         // ordering. Collect+sort to match.
                         let mut bn_matches: Vec<&builtin> = BUILTINS
                             .iter()
+                            .chain(crate::extensions::ext_builtins::extension_builtin_defs())
                             .filter(|b| pattry(&prog, &b.node.nam))
                             .collect();
                         bn_matches.sort_by(|a, b| a.node.nam.cmp(&b.node.nam));
@@ -8826,6 +8836,25 @@ pub fn bin_whence(
             // type must classify them as such (`whence -w zd` reported
             // the external /opt/homebrew/bin/zd instead).
             if builtin_node.is_none() && crate::daemon::builtins::is_zshrs_builtin(arg) {
+                let mut ext_node = hashnode {
+                    next: None,
+                    nam: arg.clone(),
+                    flags: 0,
+                };
+                printbuiltinnode(&mut ext_node as *mut hashnode, printflags);
+                informed = 1;
+                if !all {
+                    continue;
+                }
+            }
+            // zshrs extension builtins folded into builtintab (znative package
+            // manager, ztest/zassert framework, watch) — first-class builtins
+            // absent from the static BUILTINS table; classify like the daemon
+            // z* family above so `whence -w zassert_eq` reports `builtin`.
+            if builtin_node.is_none()
+                && !crate::daemon::builtins::is_zshrs_builtin(arg)
+                && crate::extensions::ext_builtins::is_extension_builtin(arg)
+            {
                 let mut ext_node = hashnode {
                     next: None,
                     nam: arg.clone(),
