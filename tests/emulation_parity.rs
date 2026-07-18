@@ -616,6 +616,45 @@ fn bash_arith_subscript_and_assoc_keys() {
 }
 
 #[test]
+fn bash_declare_p_format() {
+    // bash `declare -p` uses the reusable `declare -FLAGS name="value"` form
+    // (scalar) / `declare -a name=([i]="v" …)` / `declare -A name=([k]="v" …)`,
+    // not zsh's `typeset`. Values are backslash-escaped inside the quotes.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(bash("x=5; declare -p x"), r#"declare -- x="5""#);
+    assert_eq!(bash("declare -i n=7; declare -p n"), r#"declare -i n="7""#);
+    assert_eq!(bash("declare -rx e=hi; declare -p e"), r#"declare -rx e="hi""#);
+    assert_eq!(
+        bash("a=(one two three); declare -p a"),
+        r#"declare -a a=([0]="one" [1]="two" [2]="three")"#
+    );
+    assert_eq!(
+        bash("declare -A m=([k1]=v1); declare -p m"),
+        r#"declare -A m=([k1]="v1" )"#
+    );
+    // Sparse indexed array lists only the live indices.
+    assert_eq!(
+        bash("a=(x y z); a[5]=q; declare -p a"),
+        r#"declare -a a=([0]="x" [1]="y" [2]="z" [5]="q")"#
+    );
+    // Special chars inside "…" are backslash-escaped.
+    assert_eq!(bash(r#"v="a\"b\$c"; declare -p v"#), r#"declare -- v="a\"b\$c""#);
+
+    // --zsh keeps the zsh `typeset` form.
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "x=5; typeset -p x"])
+        .output()
+        .expect("spawn");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("typeset"));
+}
+
+#[test]
 fn bash_shopt_q() {
     // bash `shopt -q OPT` is quiet — no output, exit 0 iff every named option
     // is set, else 1. Previously `-q` was mistaken for an option name.
