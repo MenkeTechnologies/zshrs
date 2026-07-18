@@ -5437,31 +5437,57 @@ pub fn paramsubst(
         }
         if (var_name == "!" || var_name == "\u{9c}") && idx < body_chars.len() {
             let nx = body_chars[idx];
-            // !!! BASH-MODE GATE (no C counterpart) !!! bash's `${!name}` is
-            // indirect expansion: read `$name`, then expand the variable IT
-            // names (`y=x; x=5; ${!y}` → `5`). zsh/ksh lack it (zsh uses
-            // `${(P)name}`). Only the SIMPLE `${!ident}` form is handled — the
-            // whole remaining body must be a plain identifier; the complex
-            // bash forms (`${!arr[@]}` indices, `${!prefix*}` name-match) fall
-            // through to the "bad substitution" reject below, as before.
-            let rest_is_ident = (nx.is_ascii_alphanumeric() || nx == '_')
-                && body_chars[idx..]
-                    .iter()
-                    .all(|c| c.is_ascii_alphanumeric() || *c == '_');
-            if crate::dash_mode::bash_mode() && rest_is_ident {
-                let target: String = body_chars[idx..].iter().collect();
-                // Deref: value of `target` is the name to expand. raw_value is
-                // fetched from var_name later (subst.rs:6030), so re-pointing
-                // it here and consuming the identifier does the indirection.
-                var_name = crate::ported::params::getsparam(&target).unwrap_or_default();
-                idx = body_chars.len();
-            } else if nx.is_ascii_alphanumeric()
-                || nx == '_'
-                || nx == '@'
-                || nx == '*'
-                || nx == '\u{87}'
-                || nx == '!'
-                || nx == '\u{9c}'
+            // !!! BASH-MODE GATE (no C counterpart) !!! bash's `${!name}` forms:
+            //   * `${!ident}`      — indirect: expand the var NAMED by $ident.
+            //   * `${!ident[@]}` / `${!ident[*]}` — the array INDICES.
+            // zsh/ksh lack these (zsh uses `${(P)name}`; indexed-array keys
+            // have no `(k)` form). Parse the identifier after `!`, classify the
+            // form, and handle it; the rarer `${!prefix*}` name-match still
+            // falls through to the "bad substitution" reject below.
+            let mut bash_handled = false;
+            if crate::dash_mode::bash_mode() && (nx.is_ascii_alphanumeric() || nx == '_') {
+                let mut j = idx;
+                while j < body_chars.len()
+                    && (body_chars[j].is_ascii_alphanumeric() || body_chars[j] == '_')
+                {
+                    j += 1;
+                }
+                let target: String = body_chars[idx..j].iter().collect();
+                let after = &body_chars[j..];
+                if after.is_empty() {
+                    // `${!ident}` indirect. raw_value is fetched from var_name
+                    // later (subst.rs ~6030), so re-pointing does the indirect.
+                    var_name = crate::ported::params::getsparam(&target).unwrap_or_default();
+                    idx = body_chars.len();
+                    bash_handled = true;
+                } else if after.len() == 3
+                    && (after[0] == '[' || after[0] == Inbrack)
+                    && (after[1] == '@' || after[1] == '*')
+                    && (after[2] == ']' || after[2] == Outbrack)
+                {
+                    // `${!ident[@]}` / `[*]` → the array's indices. Dense array
+                    // → 0..len-1 (ksharrays 0-based). Bind a temp index array
+                    // and leave the `[@]`/`[*]` for the subscript-splat loop.
+                    let len = arrays_get(&target).map(|a| a.len()).unwrap_or(0);
+                    let indices: Vec<String> = (0..len).map(|i| i.to_string()).collect();
+                    static BANG_SEQ: AtomicUsize = AtomicUsize::new(0);
+                    let temp =
+                        format!("__subexp_arr_{}", BANG_SEQ.fetch_add(1, Ordering::Relaxed));
+                    arrays_insert(temp.clone(), indices);
+                    subexp_temp_guard.track(temp.clone());
+                    subexp_array_temp = Some(temp);
+                    idx = j; // leave [@]/[*] for the splat loop
+                    bash_handled = true;
+                }
+            }
+            if !bash_handled
+                && (nx.is_ascii_alphanumeric()
+                    || nx == '_'
+                    || nx == '@'
+                    || nx == '*'
+                    || nx == '\u{87}'
+                    || nx == '!'
+                    || nx == '\u{9c}')
             /* Bang, c:Src/zsh.h:183 */
             {
                 zerr("bad substitution");
