@@ -183,6 +183,27 @@ const PORTABLE_CORPUS: &[&str] = &[
     "printf '%5.2f\\n' 3.14159",                                   // width.precision float
     "printf '%-5s|\\n' hi",                                        // left-justified string
     "printf '%+d\\n' 5",                                           // forced-sign int
+    // Third expansion batch (harness_classify3.sh — all ref shells agree).
+    "printf '%s\\n' \"${x:=a}${x:=b}\"",                           // repeated := (2nd no-op) → ab? aa
+    "x=abcdef; printf '%s\\n' \"${x#a?c}\"",                       // glob '?' inside prefix strip
+    "v=aXbXc; printf '%s\\n' \"${v#*X}\" \"${v##*X}\"",            // shortest vs longest glob strip
+    "printf '%s\\n' \"$(( ${x:-4} + 1 ))\"",                       // default expansion inside arith
+    "x=5; printf '%s\\n' \"$(( x ? x : -1 ))\"",                   // bare-var arith ternary
+    "printf '%s\\n' \"$(( 07 + 1 ))\"",                            // octal literal in arith → 8
+    "set -- 1 2 3; printf '%s\\n' \"$@\"",                         // \"$@\" separate words
+    "set -- 1 2 3; printf '[%s]\\n' \"$*\"",                       // \"$*\" IFS-joined
+    "set --; printf '%s\\n' \"$#\"",                               // zero positionals
+    "x=$(exit 3); printf '%s\\n' \"$?\"",                          // cmd-sub propagates exit
+    "true; false; printf '%s\\n' \"$?\"",                          // status of last command
+    "x=5; unset x; printf '%s\\n' \"${x:-gone}\"",                 // unset then default
+    "printf '%s\\n' \"${#}\"",                                     // positional count via ${#}
+    "set -- aa bbb c; printf '%s\\n' \"${#1}\" \"${#2}\"",         // length of positionals
+    "v=hello world; printf '%s\\n' \"${v% *}\"",                   // strip last word
+    "v=a; v=${v}${v}${v}; printf '%s\\n' \"$v\"",                  // self-concatenation
+    "printf '%s\\n' \"$(( 5 % 3 % 2 ))\"",                         // left-assoc modulo → 0
+    "printf '%s\\n' \"$(( (1+2)*(3+4) ))\"",                       // grouped arith → 21
+    "x=3; case $x in 1) ;; 2) ;; *) printf other;; esac; printf '\\n'", // empty arms + default
+    "r=$(printf line); printf '[%s]\\n' \"$r\"",                   // cmd-sub no trailing NL
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -274,6 +295,24 @@ const EXTENDED_CORPUS: &[&str] = &[
     "a=(1 2 3); s=0; for x in \"${a[@]}\"; do s=$((s+x)); done; printf '%s\\n' \"$s\"", // iterate+sum
     "v=Hello; [[ $v == H* ]] && printf y; printf '\\n'",    // var glob match
     "a=(1 2 3); printf '%s\\n' \"${a[@]/2/X}\"",            // per-element replace across array
+    // Third expansion batch (harness_classify3.sh — bash/ksh/zsh agree).
+    "a=(1 2 3); printf '%s\\n' \"${a[@]:0:2}\"",            // slice offset 0 len 2
+    "a=(x); printf '%s\\n' \"${a[@]}\"",                    // single-element splat
+    "a=(1 2 3); b=(\"${a[@]}\"); printf '%s\\n' \"${#b[@]}\"", // array copy preserves count
+    "[[ abc == \"abc\" ]] && printf y; printf '\\n'",       // quoted RHS = literal match
+    "[[ 5 == 5 ]] && printf y; printf '\\n'",               // numeric-looking string equal
+    "[[ -z ${x} ]] && printf empty; printf '\\n'",          // -z on unset braced var
+    "[[ abc == a?? ]] && printf y; printf '\\n'",           // two single-char globs
+    "(( 3 < 2 )) && printf lt || printf ge; printf '\\n'",  // false (( )) → || branch
+    "x=10; while (( x > 7 )); do x=$((x-1)); done; printf '%s\\n' \"$x\"", // (( )) while cond
+    "v=Hello_World; printf '%s\\n' \"${v//_/ }\"",          // replace underscore with space
+    "v=abc; printf '%s\\n' \"${v/b}\"",                     // replace-with-nothing (delete)
+    "a=(1 2 3 4 5); printf '%s\\n' \"${a[@]:1}\"",          // slice offset to end
+    "printf '%s ' {5..1}; printf '\\n'",                    // descending numeric range
+    "[[ 100 -gt 99 ]] && printf y; printf '\\n'",           // [[ numeric -gt
+    "x=5; (( y = x++ )); printf '%s %s\\n' \"$x\" \"$y\"",  // post-increment in arith assign
+    "[[ foobar == foo* && foobar == *bar ]] && printf y; printf '\\n'", // compound glob AND
+    "(( x = 1 << 10 )); printf '%s\\n' \"$x\"",             // (( )) shift-assign → 1024
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
