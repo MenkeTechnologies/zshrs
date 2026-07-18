@@ -136,9 +136,13 @@ jobs:
       - name: Install reference shells (ubuntu runner)
         if: runner.os == 'Linux'
         # Core five (zsh/ksh/dash + bash & /bin/sh already present) are
-        # enforced; mksh is a real package (best-effort leg). ash is
-        # best-effort and simply skips where absent.
-        run: sudo apt-get update && sudo apt-get install -y zsh ksh dash mksh
+        # enforced; mksh is a real package (best-effort leg). `ash` is exposed
+        # as a symlink to dash — the Almquist family is the same shell, and
+        # `/bin/ash` is a dash symlink on real Debian/Ubuntu systems — so the
+        # ash leg verifies the `--ash` alias end-to-end against a real binary.
+        run: |
+          sudo apt-get update && sudo apt-get install -y zsh ksh dash mksh
+          sudo ln -sf "$(command -v dash)" /usr/local/bin/ash
       - name: Run emulation parity + dash-strict suites
         run: cargo test --locked --test emulation_parity --test dash_mode -- --nocapture
 
