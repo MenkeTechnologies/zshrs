@@ -1060,6 +1060,19 @@ const GLOB_QUAL: &[&str] = &[
     // qualgid `g`, qualnlink `l`).
     "(pN)", "(=N)", "(%N)", "(%bN)", "(%cN)", "(F)", "(/F)", "(U)", "(u0N)", "(g0N)",
     "(f0644N)", "(f-100N)", "(l1N)", "(sN)", "(SN)", "(tN)", "(-@N)", "(-/)", "(.:t)", "(.:r)",
+    // Malformed `e`/`f` qualifiers — the C error paths the vocabulary never
+    // reached. Both abort the glob with a fixed message, so the output is
+    // fileset-independent:
+    //   c:Src/glob.c:1102 glob_exec_string → get_strarg: a bare `e` (delimiter
+    //     would be the `)`) or an unterminated body is `zerr("missing end of
+    //     string")`. Was silently dropped (matched every file).
+    //   c:Src/glob.c:884/930 qgetmodespec: a bare `f` or an unterminated /
+    //     unparseable mode spec is `zerr("invalid mode specification")`. Was
+    //     silently dropped.
+    // NOTE: the letter-without-`who` forms (`f-w`, `f=r`, `f-x`) are a SEPARATE
+    // still-open mode-MATCHING gap (see docs/BUGS.md #1033) and are deliberately
+    // excluded here so this mode stays green.
+    "(e)", "(f)", "(e:foo)", "(f:u+x)", "(f:qq:)", "(e:'[[ -n \"$REPLY\" ]]':)",
 ];
 
 /// One or two glob-pattern print statements, prefixed with `setopt extendedglob`
@@ -1476,7 +1489,7 @@ fn gen_subscript(seed: u64) -> Vec<String> {
     let n = rng.gen_range(2..=5);
     for _ in 0..n {
         let arr = pick(&mut rng, &["a", "nums", "dup"]);
-        let expr = match rng.gen_range(0..14) {
+        let expr = match rng.gen_range(0..15) {
             // Plain element, including out-of-range and negative indices.
             0 => {
                 let i: i32 = rng.gen_range(-7..=7);
@@ -1617,6 +1630,23 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                     1 => format!("${{m[k1]:=NEWVAL}}"),
                     2 => format!("${{{arr}[3]:=Z}}"),
                     _ => format!("${{m[nokey]:?}}"),
+                }
+            }
+            // Omitted range bound. c:Src/math.c:1521-1531 — a range bound is
+            // evaluated by `mathevalarg` → `mathevall(…, MPREC_ARG, …)`, whose
+            // entry point rejects an empty expression with `bad math
+            // expression: empty string` (deliberately stricter than top-level
+            // `matheval`, which allows empty — so `$(( ))` is fine but `${a[,2]}`
+            // is not). Both the array-slice and scalar char-slice arms defaulted
+            // the omitted bound and silently sliced instead of erroring
+            // (docs/BUGS.md #1035). Covers array (`a`) and scalar (`ws`) forms.
+            13 => {
+                let n = rng.gen_range(-3..=5);
+                match rng.gen_range(0..4) {
+                    0 => format!("${{{arr}[,{n}]}}"),
+                    1 => format!("${{{arr}[{n},]}}"),
+                    2 => "${a[,]}".to_string(),
+                    _ => format!("${{ws[,{n}]}}"),
                 }
             }
             // Count / length of a subscripted result.
@@ -6268,7 +6298,7 @@ fn gen_anonfn(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts: Vec<String> = Vec::new();
     for _ in 0..rng.gen_range(1..=2) {
-        let stmt = match rng.gen_range(0..12) {
+        let stmt = match rng.gen_range(0..19) {
             0 => "() { print -r -- \"n=$# 1=$1 2=$2\" } a b c".to_string(),
             // $@ / $* inside.
             1 => "() { print -rl -- \"$@\"; print -r -- END } x y z".to_string(),
@@ -6289,6 +6319,28 @@ fn gen_anonfn(seed: u64) -> Vec<String> {
             9 => "() { for a; do print -r -- \"<$a>\"; done } p q r".to_string(),
             // Nested anon.
             10 => "() { () { print -r -- inner } } ".to_string(),
+            // ---- `function`-keyword anonymous form (c:Src/parse.c:1701-1705) ----
+            // par_funcdef's name loop promotes a STRING token that is exactly
+            // `{` to INBRACE, so a NAMELESS `function { body }` is an anonymous
+            // function — same as `() { body }`, args and all. Only the `()`
+            // spelling was ever generated, so this whole grammar arm was
+            // untested: the parser mis-peeked the byte after the brace and
+            // rejected the one-space form `function { cmd }` as malformed
+            // while the two-space form parsed (docs/BUGS.md #1036). Both the
+            // one- and two-space spellings are generated below.
+            12 => "function { print -r -- \"n=$# 1=$1 2=$2\" } a b c".to_string(),
+            13 => "function { print -rl -- \"$@\"; print -r -- END } x y".to_string(),
+            14 => "function { print -r -- \"[$0]\" }".to_string(),
+            15 => "function { print -r -- inside } >/dev/null; print -r -- after".to_string(),
+            16 => "function { return 3 }; print -r -- \"rc=$?\"".to_string(),
+            // Two-space spelling (the form that accidentally worked) plus a tab
+            // separator — both are valid brace separators.
+            17 => "function {  print -r -- two }; function {\tprint -r -- tab }".to_string(),
+            // MALFORMED: no separator after `{`. The lexer folds `{print` into
+            // one word, so no brace token is emitted and zsh reports
+            // `parse error near `}'`. Pins that the fix above did not start
+            // accepting this. Bug #60.
+            18 => "function {print -r -- x}".to_string(),
             // Arguments from an expansion.
             _ => "arr=(1 2 3); () { print -r -- \"n=$# sum=$(( $1 + $2 + $3 ))\" } $arr".to_string(),
         };
@@ -6531,8 +6583,23 @@ fn gen_whence(seed: u64) -> Vec<String> {
             10 => "print() { builtin print SHADOW }; whence -w print; unfunction print; whence -w print".to_string(),
             // `where` lists all locations (whence -ca form) — probe on a builtin.
             11 => format!("where {n} 2>/dev/null; print -r -- \"rc=$?\""),
-            // Disabling a builtin changes its resolution.
-            12 => "disable print 2>/dev/null; whence -w print; enable print; whence -w print".to_string(),
+            // Disabling a builtin masks it from whence/type/which/where.
+            // c:Src/hashtable.c:239 gethashnode returns NULL for a DISABLED
+            // builtintab node, and c:Src/builtin.c:4065 scanmatchtable's
+            // DISABLED arg skips them in the -m walk. rs splits builtins across
+            // the static BUILTINS table, fusevm shell_builtins, and extension
+            // defs, so the mask has to apply to every classification path:
+            //   let  — plain core builtin, not on $PATH  → `none`
+            //   print — anti-fork/extension builtin, not on $PATH → `none`
+            //   echo — builtin AND /bin/echo on $PATH → falls through to `command`
+            // then re-enable restores the builtin classification.
+            12 => "disable let print echo 2>/dev/null; \
+                   whence -w let; whence -w print; whence -w echo; \
+                   type let 2>/dev/null || print -r -- \"rc=$?\"; \
+                   which print 2>/dev/null; print -r -- \"rc=$?\"; \
+                   whence -wm 'let' 2>/dev/null; print -r -- \"m=$?\"; \
+                   enable let print echo; whence -w let; whence -w print"
+                .to_string(),
             // A reserved word.
             13 => "whence -w while; whence -w do; whence -w '{'".to_string(),
             // c:Src/builtin.c:132 — whence's spec is "acmpvfsSwx:". Only
@@ -7374,7 +7441,33 @@ fn gen_zmv(seed: u64) -> Vec<String> {
     // zmv:149-151 selects them anyway.
     let action = "zmv";
 
-    match rng.gen_range(0..6) {
+    match rng.gen_range(0..7) {
+        // GLOBBING-FLAG source patterns against REAL fixture files, so the
+        // capture BINDING (not just arg parsing) is exercised. The native zmv
+        // (ext_builtins.rs) globbed without EXTENDED_GLOB and bound captures to
+        // the positionals only, so `(#b)` (→ $match), `(#m)` (→ $MATCH), `(#i)`
+        // (case-insensitive), and `$match[N]` refs all failed — either "no
+        // matches found" or an empty-expansion collision. Bug #1031. Files are
+        // created in a per-seed dir and the mode is -n (read-only) throughout.
+        6 => {
+            let (pat, repl) = pick(
+                &mut rng,
+                &[
+                    ("(#b)file(?).dat", "f$match[1].out"),
+                    ("(#b)(*).dat", "$match[1].new"),
+                    ("(#b)(*).(*)", "$match[2].$match[1]"),
+                    ("(#m)file*.dat", "renamed_$MATCH"),
+                    ("(#i)FILE(?).dat", "x$1.dat"),
+                    ("(*).dat", "y$match[1].dat"),
+                    ("(*).(*)", "$match[2].$match[1]"),
+                ],
+            );
+            vec![format!(
+                "d=${{TMPDIR:-/tmp}}/pf_zmv_{seed}; command rm -rf $d; command mkdir -p $d; cd $d; \
+                 touch file1.dat file2.dat foo.txt; autoload -Uz zmv; \
+                 zmv -n '{pat}' '{repl}'; print -r -- \"rc=$?\"; command rm -rf $d"
+            )]
+        }
         // Explicit capture groups + $N references.
         0 | 1 => {
             let (pat, repl) = pick(&mut rng, ZMV_PAREN);
