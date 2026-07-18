@@ -11445,6 +11445,77 @@ pub fn printparamnode(hn: &mut param, mut printflags: i32) {
             .unwrap_or_default();
         hn.u_arr = Some(pp);
     }
+    // !!! BASH-MODE GATE (no C counterpart) !!! `declare -p` (PRINT_TYPESET)
+    // uses bash's reusable format under --bash: `declare -FLAGS name="value"`
+    // for a scalar, `declare -a name=([i]="v" …)` / `declare -A name=([k]="v"
+    // …)` for arrays/assocs — not zsh's `typeset` form. Sparse indexed arrays
+    // list only their live indices. --zsh keeps zsh output (gate). Covers both
+    // the explicit-name and the all-params listing print paths.
+    if crate::dash_mode::bash_mode() && (printflags & PRINT_TYPESET) != 0 {
+        let fl = hn.node.flags as u32;
+        let nm = hn.node.nam.clone();
+        let mut fstr = String::new();
+        if fl & PM_HASHED != 0 {
+            fstr.push('A');
+        } else if fl & PM_ARRAY != 0 {
+            fstr.push('a');
+        }
+        if fl & PM_INTEGER != 0 {
+            fstr.push('i');
+        }
+        if fl & PM_READONLY != 0 {
+            fstr.push('r');
+        }
+        if fl & PM_EXPORTED != 0 {
+            fstr.push('x');
+        }
+        if fl & PM_UPPER != 0 {
+            fstr.push('u');
+        }
+        if fl & PM_LOWER != 0 {
+            fstr.push('l');
+        }
+        let flag_disp = if fstr.is_empty() {
+            "--".to_string()
+        } else {
+            format!("-{}", fstr)
+        };
+        // Backslash-escape the chars that are special inside `"…"`.
+        let esc = |s: &str| -> String {
+            let mut o = String::with_capacity(s.len());
+            for c in s.chars() {
+                if matches!(c, '"' | '\\' | '$' | '`') {
+                    o.push('\\');
+                }
+                o.push(c);
+            }
+            o
+        };
+        if fl & PM_HASHED != 0 {
+            let m = crate::ported::exec::assoc(&nm).unwrap_or_default();
+            let body: String = m
+                .iter()
+                .map(|(k, v)| format!("[{}]=\"{}\" ", esc(k), esc(v)))
+                .collect();
+            println!("declare {} {}=({})", flag_disp, nm, body);
+        } else if fl & PM_ARRAY != 0 {
+            let a = hn
+                .u_arr
+                .clone()
+                .or_else(|| crate::ported::exec::array(&nm))
+                .unwrap_or_default();
+            let body: String = crate::bash_arrays::live_indices(&nm, a.len())
+                .iter()
+                .filter_map(|&i| a.get(i).map(|v| format!("[{}]=\"{}\"", i, esc(v))))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("declare {} {}=({})", flag_disp, nm, body);
+        } else {
+            let v = getsparam(&nm).unwrap_or_default();
+            println!("declare {} {}=\"{}\"", flag_disp, nm, esc(&v));
+        }
+        return;
+    }
     let f = hn.node.flags as u32;
     if (f & PM_HASHELEM) == 0
         && (printflags & PRINT_WITH_NAMESPACE) == 0
