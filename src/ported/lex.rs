@@ -1418,7 +1418,20 @@ fn gettok() -> lextok {
                     // resulting str starts with the Inpar marker
                     // (parse.c:1322 hack). Mirror exactly: do not gate
                     // on incasepat.
-                    if isset(SHGLOB) || LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() {
+                    // c:parse.c:2601 — par_cond bumps `incond` (to >1) around
+                    // the RHS of a `[[ ]]` binary op so "parentheses do
+                    // globbing" (a literal pattern/regex char), not grouping.
+                    // In that bumped state `(` must be a literal even under
+                    // SHGLOB (ksh/bash emulation) — otherwise `[[ x =~ (a)(b)
+                    // ]]` splits the regex into INPAR tokens and par_cond's
+                    // single-STRING RHS read fails with "condition expected".
+                    // Verified against zsh: `emulate ksh; [[ abc =~ (a)(b) ]]`
+                    // works. Native zsh (no SHGLOB) already reached this via
+                    // the `incond == 1` miss; the explicit `> 1` guard makes
+                    // it hold under SHGLOB too.
+                    if LEX_INCOND.get() > 1 {
+                        gettokstr('(', false)
+                    } else if isset(SHGLOB) || LEX_INCOND.get() == 1 || LEX_INCMDPOS.get() {
                         INPAR_TOK
                     } else {
                         gettokstr('(', false)
@@ -1890,7 +1903,20 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                     if sub || in_brace_param > 0 {
                         break;
                     }
-                    if unset(KSHGLOB) && LEX_LEXBUF.with_borrow(|b| b.len) > 0 {
+                    // c:1084 — `!KSHGLOB && lexbuf.len → goto brk`. In sh
+                    // emulation (SHGLOB, no KSHGLOB) a `(` after existing
+                    // content ends the word (ksh function-def heuristic). But
+                    // in the `[[ ]]` cond-RHS PATTERN context (par_cond bumps
+                    // incond >1 so "parentheses do globbing"), adjacent groups
+                    // like `[[ x =~ (a)(b) ]]` must stay ONE regex word — the
+                    // second `(` is a literal, not a word break. Verified vs
+                    // zsh: `emulate sh; [[ ab =~ (a)(b) ]]` works. Without this
+                    // exception, `--bash` (KSHGLOB off) split the regex and
+                    // par_cond failed with "condition expected".
+                    if unset(KSHGLOB)
+                        && LEX_INCOND.get() <= 1
+                        && LEX_LEXBUF.with_borrow(|b| b.len) > 0
+                    {
                         break;
                     }
                 }
