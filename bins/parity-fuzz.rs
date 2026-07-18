@@ -578,7 +578,7 @@ fn gen_arith(rng: &mut StdRng, depth: u32) -> String {
 /// (intersection), `:#pat` / `(M):#pat` (element filter). Uses PREAMBLE arrays
 /// `a` and `b` (which share `two`/`four`) so the results are non-trivial.
 fn gen_setops(rng: &mut StdRng) -> String {
-    match rng.gen_range(0..8) {
+    match rng.gen_range(0..16) {
         0 => "${a:|b}".to_string(),              // elements of a not in b
         1 => "${a:*b}".to_string(),              // intersection of a and b
         2 => "\"${(@)a:|b}\"".to_string(),
@@ -586,7 +586,21 @@ fn gen_setops(rng: &mut StdRng) -> String {
         4 => "${(M)a:#*e}".to_string(),          // keep elements matching *e
         5 => "${nums:#[13]}".to_string(),        // drop bare 1 / 3
         6 => "\"${(j:,:)${a:|b}}\"".to_string(), // join the difference
-        _ => "${#${a:#*e*}}".to_string(),        // count after filter
+        7 => "${#${a:#*e*}}".to_string(),        // count after filter
+        // `:^` / `:^^` array ZIP (c:Src/subst.c:3456 SUB_ZIP) — interleave.
+        8 => "${a:^b}".to_string(),
+        9 => "${a:^^b}".to_string(),
+        10 => "\"${(@)a:^b}\"".to_string(),
+        11 => "${#${a:^b}}".to_string(),
+        // INVALID RHS operands: the zip/intersect/difference RHS MUST be a bare
+        // identifier (c:3464/3527 `if (*itype_end(s, INAMESPC, 0))` →
+        // "not an identifier: s"). A command-sub / subscript / `:mod` operand
+        // must ABORT the expansion (empty stdout, exit!=0), not be silently
+        // read as an unset parameter. Bug #1022.
+        12 => "${a:^$(print z)}".to_string(),
+        13 => "${a:|b[2]}".to_string(),
+        14 => "${a:*b:t}".to_string(),
+        _ => "${a:^^b[1]}".to_string(),
     }
 }
 
@@ -1831,7 +1845,55 @@ fn gen_typeset(seed: u64) -> Vec<String> {
     let n = rng.gen_range(2..=4);
     for i in 0..n {
         let v = format!("v{i}");
-        match rng.gen_range(0..8) {
+        match rng.gen_range(0..11) {
+            // `typeset +a`/`+A` — REMOVE the array/hashed attribute. c:Src/
+            // builtin.c:2117-2131 — this is a type change (`chflags` picks up
+            // `off & PM_ARRAY`, tc=1); UNLIKE +i/+E/+l the value is NOT
+            // migrated (an array has no scalar form) so the param becomes an
+            // EMPTY scalar. zshrs's +i/+l conversion mask omitted PM_ARRAY/
+            // PM_HASHED so `+a`/`+A` were silent no-ops. Bug #1029. Compares
+            // ${(t)} (must flip to scalar) + value (must be empty) + count.
+            10 => {
+                let arr = rng.gen_bool(0.5);
+                let (decl, plus) = if arr { ("-a", "+a") } else { ("-A", "+A") };
+                let init = if arr { "(1 2 3)" } else { "(k v)" };
+                stmts.push(format!("typeset {decl} {v}={init}"));
+                stmts.push(format!("typeset {plus} {v}"));
+                stmts.push(format!("print -r -- \"${{(t){v}}} [${v}] ${{#{v}}}\""));
+            }
+            // SCALAR value assigned to an ARRAY/HASHED declaration:
+            // `typeset -a g=1`, `typeset -A h=1`, `typeset -aU u=1`. c:Src/
+            // builtin.c:2342-2345 — "NAME: inconsistent type for assignment",
+            // PER param, leaving the param UNSET (a pre-existing value dropped).
+            // zshrs handled the paren-RHS-to-non-array half but silently
+            // accepted the scalar-RHS-to-array-decl half. Bug #1028. Stderr
+            // folded + `${v-UNSET}` readback.
+            9 => {
+                let decl = pick(&mut rng, &["-a", "-A", "-aU", "-ga", "-gA"]);
+                let val = pick(&mut rng, TS_INT_VALS);
+                stmts.push(format!("{{ typeset {decl} {v}={val} }} 2>&1"));
+                stmts.push(format!("print -r -- \"[${v}]\" \"${{{v}-UNSET}}\""));
+            }
+            // Integer output base OUT OF RANGE: `typeset -i 0` / `-i 37` /
+            // `-i 100`. c:Src/builtin.c:1982 — an integer base must be 2..=36
+            // inclusive; outside that zsh errors "invalid base (must be 2 to
+            // 36 inclusive): N" PER param and leaves the param UNSET. The live
+            // base-stamp never validated (the faithful typeset_setbase port was
+            // dead code), so `-i 0`/`-i 37` produced `0#…`/`37#…`. Bug #1027.
+            // Stderr folded so the diagnostic + the empty readback are both
+            // compared; both attached (`-i0`) and separate (`-i 0`) forms.
+            8 => {
+                let base = pick(&mut rng, &["0", "1", "37", "40", "100"]);
+                let val = pick(&mut rng, TS_INT_VALS);
+                let attached = rng.gen_bool(0.5);
+                let decl = if attached {
+                    format!("typeset -i{base} {v}={val}")
+                } else {
+                    format!("typeset -i {base} {v}={val}")
+                };
+                stmts.push(format!("{{ {decl} }} 2>&1"));
+                stmts.push(format!("print -r -- \"[${v}]\" \"${{{v}-UNSET}}\""));
+            }
             // Integer with an output base: `typeset -i 16 x=255` -> `16#ff`.
             0 => {
                 let base = pick(&mut rng, &["2", "8", "16", "36", "10"]);
@@ -2569,7 +2631,28 @@ fn gen_redir(seed: u64) -> Vec<String> {
         "command rm -rf $d; command mkdir -p $d; cd $d".to_string(),
     ];
 
-    match rng.gen_range(0..8) {
+    match rng.gen_range(0..9) {
+        // NAMED-FD open FAILURE: `{var}<file` (missing file) / `{var}>file`
+        // (missing parent dir). The open must fail with "no such file or
+        // directory: PATH", set $?=1 and SKIP the command (c:Src/exec.c:
+        // 3790-3795). zshrs's fusevm {var} path silently returned Status(1)
+        // with no diagnostic and no redirect_failed flag, so the command ran
+        // anyway with exit 0 (Bug #1024). Numeric (`3<`) and non-varid (`<`)
+        // forms were already correct; only the {var} form leaked. Stderr is
+        // folded so the diagnostic itself is compared, not just the skip.
+        7 => {
+            let form = pick(
+                &mut rng,
+                &[
+                    "{ echo ran {u}< $d/nope } 2>&1; print -r -- \"rc=$? IN\"",
+                    "{ echo ran {u}> $d/nodir/f } 2>&1; print -r -- \"rc=$? OUT\"",
+                    "exec {u}< $d/nope 2>&1; print -r -- \"rc=$? EXEC\"",
+                    "echo before; { echo ran {u}> $d/nodir/f } 2>&1; echo after",
+                    "integer u; { print x {u}< $d/nope } 2>&1 && print opened || print failed",
+                ],
+            );
+            stmts.push(form.to_string());
+        }
         // NOCLOBBER / `>|` clobber-override / `<>` read-write / multiple-INPUT
         // MULTIOS. The mode gated multiple-OUTPUT tee (arm 0) but not these:
         //   - `>` over an existing file under NO_CLOBBER errors "file exists"
@@ -2944,6 +3027,13 @@ fn gen_arith_mode(seed: u64) -> Vec<String> {
                         // the non-numeric `[#zz]` above ("bad output format
                         // specification", math.c:819). Both fold to stderr here.
                         "[#37] 5", "[#1] 5", "[#40] 99", "[##0] 5",
+                        // Assignment to a NON-lvalue (`1 = 2`, `(1+1) = 3`):
+                        // c:math.c:997 `zerr("bad math expression: lvalue
+                        // required")`. The assignment-operator arm dropped the
+                        // "bad math expression: " prefix (unlike the getvar/
+                        // setvar sites), so `(( 1 = 2 ))` printed a shorter
+                        // message than zsh. Bug #1025.
+                        "1 = 2", "5 = 3 + 2", "1 = x", "(1+1) = 3", "0 = 1",
                     ],
                 );
                 // stderr MUST be folded in. These all fail identically at the
@@ -4860,6 +4950,21 @@ const STRF_FMTS: &[&str] = &[
     "%Z|%z",        // TZ-pinned
     "%c|%x|%X",     // locale-dependent (same libc both sides)
     "%w|%u",        // weekday numbering: 0-6 (Sun=0) vs 1-7 (Mon=1)
+    // Specifiers STRF_FMTS previously missed (all verified equal vs
+    // /opt/homebrew/bin/zsh): %g 2-digit ISO year, %h == %b, %P lowercase
+    // am/pm, %r 12-hour clock time.
+    "%g|%h|%P|%r",
+    // glibc field modifiers — the FLAG (`-` no-pad, `_` space-pad, `0`
+    // zero-pad) / CASE (`^` upper, `#` swap) / ALT (`E` era, `O` alt-numeric)
+    // prefixes between `%` and the conversion. strftime formatting is a
+    // classic cross-libc divergence source and none of these were gated.
+    "%-e|%-m|%-H|%-j",      // no-pad numeric
+    "%_e|%_d|%_m",          // space-pad numeric
+    "%0e|%0k|%0l",          // zero-pad the normally space-padded ones
+    "%^a|%^A|%^b|%^B|%^p",  // force upper-case names
+    "%#a|%#A|%#p",          // swap-case names
+    "%Oe|%Od|%OH|%OI|%Om",  // O modifier (alternate numeric symbols)
+    "%Ec|%EY",              // E modifier (alternate era representation)
 ];
 
 fn gen_datetime(seed: u64) -> Vec<String> {
@@ -6249,6 +6354,15 @@ fn gen_printv(seed: u64) -> Vec<String> {
                     "print -X 4 \"a\\tb\\tc\"",
                     "print -X 2 \"ab\\tcd\\tef\"",
                     "print -x 8 \"x\\ty\\tz\"",
+                    // EMPTY-arg columnate: c:Src/builtin.c:4982-5025 emits a
+                    // newline PER ROW and returns, so ZERO args = ZERO rows =
+                    // NO output (not the empty line the shared terminator would
+                    // add). A trailing `print END` makes the missing/extra
+                    // newline visible in stdout. Bug #1030.
+                    "print -c; print -r -- END",
+                    "print -C 2; print -r -- END",
+                    "print -C 5; print -r -- END",
+                    "print -aC 3; print -r -- END",
                 ],
             )
             .to_string(),
@@ -7377,7 +7491,18 @@ fn gen_testcond(seed: u64) -> Vec<String> {
         // (BIN_TEST=20 / BIN_BRACKET=21, c:Src/builtin.c:7231-7247); `[`
         // additionally requires its closing `]`.
         let bracket = rng.gen_bool(0.5);
-        let expr = match rng.gen_range(0..8) {
+        let expr = match rng.gen_range(0..9) {
+            // Double/triple negation of a unary test: `! ! -n x` =
+            // not(not(-n x)) (c:builtin.c:7270 + par_cond's `!` rule). The
+            // pre-flight heuristic rejected a leading-`!` chain over a unary
+            // operand as "condition expected: !" until it was taught to peek
+            // past the `!`s to the `<unary-op> <operand>` pair (Bug #1026).
+            // Single `! <unary>` (arm 6) already worked; the SECOND `!` broke.
+            8 => format!(
+                "{} {}",
+                pick(&mut rng, &["! !", "! ! !"]),
+                pick(&mut rng, COND_UNARY)
+            ),
             // A single operand, either form.
             0 => pick(&mut rng, COND_UNARY).to_string(),
             1 => pick(&mut rng, COND_BARE).to_string(),

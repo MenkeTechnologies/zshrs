@@ -12645,6 +12645,21 @@ pub fn paramsubst(
                     arr
                 };
                 let other_name = rhs.trim(); // c:3543
+                // c:Src/subst.c:3527 — the RHS must be a bare identifier:
+                // itype_end(s, INAMESPC, 0) has to reach the end of `s`, else
+                // abort with "not an identifier: s". Without this a non-name
+                // operand (`$(…)`, `b[1]`, `"lit"`, `b:t`) was silently treated
+                // as an unset parameter instead of erroring.
+                if crate::ported::utils::itype_end(
+                    other_name,
+                    crate::ported::ztype_h::INAMESPC,
+                    false,
+                ) < other_name.len()
+                {
+                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3529
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 // c:Src/subst.c:3539 — the array filter only runs when
@@ -12716,6 +12731,17 @@ pub fn paramsubst(
                     arr
                 };
                 let other_name = rhs.trim(); // c:3543
+                // c:Src/subst.c:3527 — RHS must be a bare identifier (see `:|`).
+                if crate::ported::utils::itype_end(
+                    other_name,
+                    crate::ported::ztype_h::INAMESPC,
+                    false,
+                ) < other_name.len()
+                {
+                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3529
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let other = arrays_get(other_name).unwrap_or_default();
                 let other_set: std::collections::HashSet<&String> = other.iter().collect();
                 // c:Src/subst.c:3539/3566 — DQ scalar context (see the `:|`
@@ -12768,6 +12794,18 @@ pub fn paramsubst(
                     .or_else(|| vars_get(&var_name).map(|s| vec![s]))
                     .unwrap_or_default();
                 let other_name = rhs.trim();
+                // c:Src/subst.c:3464 — the zip RHS must be a bare identifier
+                // (see the `:|` arm); `:^^` shares the same gate.
+                if crate::ported::utils::itype_end(
+                    other_name,
+                    crate::ported::ztype_h::INAMESPC,
+                    false,
+                ) < other_name.len()
+                {
+                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3466
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let other = arrays_get(other_name)
                     .or_else(|| vars_get(other_name).map(|s| vec![s]))
                     .unwrap_or_default();
@@ -12850,6 +12888,19 @@ pub fn paramsubst(
                 let arr_opt =
                     arrays_get(&var_name).or_else(|| vars_get(&var_name).map(|s| vec![s]));
                 let other_name = rhs.trim();
+                // c:Src/subst.c:3464 — the zip RHS must be a bare identifier:
+                // itype_end(s, INAMESPC, 0) has to reach the end of `s`, else
+                // abort with "not an identifier: s" (see the `:|` arm).
+                if crate::ported::utils::itype_end(
+                    other_name,
+                    crate::ported::ztype_h::INAMESPC,
+                    false,
+                ) < other_name.len()
+                {
+                    zerr(&format!("not an identifier: {}", untokenize(other_name))); // c:3466
+                    errflag_set_error();
+                    return (String::new(), new_pos, vec![]);
+                }
                 let other_opt =
                     arrays_get(other_name).or_else(|| vars_get(other_name).map(|s| vec![s]));
                 let arr_unset = arr_opt.is_none();
@@ -21482,6 +21533,39 @@ mod tests {
             assert_eq!(multi, vec!["b", "d"]);
         } else {
             assert_eq!(out, "b d");
+        }
+    }
+
+    /// Bug #1022: the zip (`:^`/`:^^`) and set-op (`:|`/`:*`) RHS must be a
+    /// bare identifier (c:Src/subst.c:3464/3527 `if (*itype_end(s, INAMESPC,
+    /// 0)) zerr("not an identifier")`). A command-sub / subscript / `:mod`
+    /// operand must ABORT the expansion (errflag set), not be silently read as
+    /// an unset parameter. Valid identifiers (incl. all-digit names) still zip.
+    #[test]
+    fn paramsubst_zip_setop_rhs_must_be_identifier() {
+        let _g = crate::test_util::global_state_lock();
+        let _ = crate::ported::params::setaparam(
+            "ZB",
+            vec!["x".into(), "y".into(), "z".into()],
+        );
+        // Valid: zip two arrays by name.
+        let (out, multi) = psubst_arr("ZA", &["1", "2", "3"], "${ZA[@]:^ZB}");
+        let got = if multi.is_empty() { out } else { multi.join(" ") };
+        assert_eq!(got, "1 x 2 y 3 z", "valid :^ zips");
+        // Invalid RHS operands each abort with errflag set.
+        for expr in [
+            "${ZA[@]:^ZB[1]}",  // subscript
+            "${ZA[@]:^^ZB[1]}", // subscript, long zip
+            "${ZA[@]:|ZB:t}",   // history modifier
+            "${ZA[@]:*ZB[2]}",  // subscript
+        ] {
+            errflag.store(0, Ordering::Relaxed);
+            let _ = paramsubst(expr, 0, false, 0, &mut 0);
+            assert_ne!(
+                errflag.load(Ordering::Relaxed),
+                0,
+                "non-identifier RHS must set errflag: {expr}"
+            );
         }
     }
 

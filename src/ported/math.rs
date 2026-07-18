@@ -3582,7 +3582,12 @@ pub(crate) fn op(what: i32) {
                 let final_val = setmathvar(name, result);
                 push(final_val, Some(name.clone()));
             } else {
-                m_error_set("lvalue required".to_string());
+                // c:Src/math.c:997 — `zerr("bad math expression: lvalue
+                // required")`. The prefix was missing here (unlike the sibling
+                // sites at getvar/setvar), so `(( 1 = 2 ))` printed
+                // `lvalue required` instead of `bad math expression: lvalue
+                // required`. Bug #1025.
+                m_error_set("bad math expression: lvalue required".to_string());
                 push(
                     mnumber {
                         l: 0,
@@ -5511,6 +5516,23 @@ mod tests {
         let _g = crate::test_util::global_state_lock();
         assert!(mathevali("1/0").is_err());
         assert!(mathevali("5/(2-2)").is_err());
+    }
+
+    /// Bug #1025: assigning to a non-lvalue (`1 = 2`) must fail with the FULL
+    /// "bad math expression: lvalue required" (c:Src/math.c:997), not the
+    /// prefix-stripped "lvalue required" the assignment-operator arm emitted.
+    #[test]
+    fn mathevali_assign_to_nonlvalue_keeps_bad_math_prefix() {
+        let _g = crate::test_util::global_state_lock();
+        for expr in ["1 = 2", "5 = 3 + 2", "(1+1) = 3"] {
+            let err = mathevali(expr).expect_err("assign to non-lvalue must error");
+            assert_eq!(
+                err, "bad math expression: lvalue required",
+                "expr {expr:?} must carry the `bad math expression:` prefix"
+            );
+        }
+        // A real lvalue still assigns.
+        assert_eq!(mathevali("x = 5").unwrap(), 5);
     }
 
     /// c:1505-1508 — `mathevali` returns `(x.type & MN_FLOAT) ?

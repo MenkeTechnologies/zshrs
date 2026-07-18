@@ -19,6 +19,332 @@ CI green pending the underlying fix.
 
 ---
 
+## #1030 — `print -c` / `print -C N` with no args emitted a spurious newline — fixed
+
+**Status:** `fixed` 2026-07-18 — surfaced probing `print` flag combinations.
+
+`print -c` / `print -C N` with ZERO arguments printed an empty line; zsh prints
+NOTHING. `print -c ""` (one empty-string arg) correctly prints one newline on
+both.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'print -c' | od -An -c      # (no output)
+$ zshrs --zsh -c 'print -c' | od -An -c                 # BEFORE
+   \n
+```
+
+**Root cause.** C's columnate block (c:Src/builtin.c:4982-5025) emits its newline
+PER ROW and then `return`s — it never reaches the shared final terminator
+(c:5130). With zero args there are zero rows → zero newlines. zshrs builds an
+empty columnate body and then falls through to the shared terminator
+(builtin.rs:10663), which appends `\n`.
+
+**Fix.** The final-terminator computation now suppresses the newline when a
+columnate flag (`-c`/`-C`) is set AND the (post-`-m`-filter) arg list is empty.
+`print -c ""` (one arg → one row → one newline) and all non-empty columnate
+layouts are unaffected. Gated by the `printv` fuzz mode (empty-columnate arm
+with a trailing `print END` marker); reverting reproduces ~27 divergences/
+500-seed.
+
+---
+
+## #1029 — `typeset +a`/`+A` (remove array attribute) was a silent no-op — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced probing `typeset +flag` attribute
+removal.
+
+`typeset +a NAME` / `+A NAME` removes the array/hashed attribute — a type
+change. zsh recreates the param as an EMPTY scalar (an array/assoc has no
+scalar representation, so the value is dropped, unlike `+i`/`+E`/`+l` which
+migrate the value). zshrs left the param untouched (still an array with its
+contents).
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -a a=(1 2 3); typeset +a a; print "${(t)a} [$a] ${#a}"'
+scalar [] 0
+$ zshrs --zsh -c 'typeset -a a=(1 2 3); typeset +a a; print "${(t)a} [$a] ${#a}"'  # BEFORE
+array [1 2 3] 3
+```
+
+**Root cause.** The no-value attribute path's type-conversion mask
+(builtin.rs:6535 `pre_assign_to_clear`) covers `PM_INTEGER|PM_EFLOAT|PM_FFLOAT|
+PM_LOWER|PM_UPPER|PM_NAMEREF` but NOT `PM_ARRAY|PM_HASHED`, so `off & PM_ARRAY`
+had no effect (c:Src/builtin.c:2117-2131 makes it a `tc=1` type change).
+
+**Fix.** The no-value branch now detects `off & (PM_ARRAY|PM_HASHED)` on a param
+that IS array/hashed, drops the `paramtab_hashed_storage` backing (else a scalar
+deref still read the joined assoc values), `unsetparam`s it, and recreates an
+empty scalar. `+a`/`+A` on a non-array is a no-op; `+i`/`+E`/`+l` value-migration
+unaffected. Gated by the `typeset` fuzz mode (new `+a`/`+A` arm comparing
+`${(t)}` + value + count); reverting reproduces ~139 divergences/800-seed.
+
+---
+
+## #1028 — `typeset -a g=1` (scalar → array decl) silently accepted — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced while probing typeset type-consistency
+(noted in #1027).
+
+Assigning a SCALAR value to an explicitly-declared array/hashed parameter
+(`typeset -a g=1`, `typeset -A h=1`, `typeset -aU u=1`, `local -a x=scalar`) is
+an error in zsh — `NAME: inconsistent type for assignment`, PER param, leaving
+the param UNSET (a pre-existing value is dropped too). zshrs silently accepted
+it, assigning the scalar as element 0.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -a g=1; print "[$g]"'
+zsh:typeset:1: g: inconsistent type for assignment
+[]
+$ zshrs --zsh -c 'typeset -a g=1; print "[$g]"'   # BEFORE
+[1]
+```
+
+**Root cause.** C's consistency test (c:Src/builtin.c:2342-2345) has two halves:
+an ARRAY RHS (`x=(...)`) to a non-array decl, and a SCALAR RHS to an
+array/hashed decl. zshrs implemented only the first (builtin.rs:5687, gated on
+`is_paren_init`); the scalar-RHS-to-array-decl half was missing — the existing
+scalar-branch check (6032) only caught a scalar assigned to a pre-EXISTING array
+WITHOUT a type flag, not the `-a`/`-A` decl form.
+
+**Fix.** The scalar-assign branch now also errors when the declaration requests
+`PM_ARRAY|PM_HASHED` (builtin.rs), `unsetparam`s the param, and skips to the
+next name — matching zsh's per-param error + unset semantics. Valid array/assoc
+decls (`-a arr=(1 2 3)`, `-A h=(k v)`, empty `-a g`, `-a g; g=(1 2)`) unaffected.
+Gated by the `typeset` fuzz mode (new inconsistent-type arm, stderr folded,
+`${v-UNSET}` readback); reverting reproduces ~145 divergences/800-seed.
+
+---
+
+## #1027 — `typeset -i<N>` accepted out-of-range integer bases — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced probing `typeset -p` / `${(t)}` type
+formats.
+
+`typeset -i N` (integer output base) accepted any `N`; zsh requires 2..=36 and
+errors `invalid base (must be 2 to 36 inclusive): N` — PER param — leaving each
+param UNSET (a pre-existing value is dropped too). zshrs produced nonsense like
+`0#…` / `37#…` / `100#a` and left the value assigned.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'typeset -i0 x=42; print "[$x]"'
+zsh:typeset:1: invalid base (must be 2 to 36 inclusive): 0
+[]
+$ zshrs --zsh -c 'typeset -i0 x=42; print "[$x]"'   # BEFORE
+[0]                                                 # no error, value kept
+$ zshrs --zsh -c 'typeset -i37 x=42; print $x'      # BEFORE → 37#15
+```
+
+**Root cause — faithful-port-shadowed-by-reimplementation.** The faithful
+`typeset_setbase` port (builtin.rs:3323, c:builtin.c:1961) HAS the 2..=36 check
+(3362) but had ZERO callers — the live typeset path stamped `pm.base` inline
+(builtin.rs:6252, c:1990) without validating.
+
+**Fix.** The name loop now validates the `-i` base BEFORE assigning the value:
+out of `2..=36` → `zwarnnam("invalid base (must be 2 to 36 inclusive): N")`,
+`unsetparam` the just-created param, set returnval=1, and skip to the next name
+— matching zsh's per-param error + unset semantics. Both attached (`-i0`) and
+separate (`-i 0`) forms; `-E`/`-F` precision unaffected (no base range). Gated
+by the `typeset` fuzz mode (new invalid-base arm, stderr folded, `${x-UNSET}`
+readback); reverting reproduces ~142 divergences/900-seed.
+
+**Also seen while probing (separate, NOT fixed):** `typeset -ux u=hello; typeset
+-p u` shows `u=HELLO` vs zsh's `u=hello` — the documented #1019 case-fold-at-
+assignment family. And `typeset -ga g=1` (array decl + scalar assign) should
+error "inconsistent type for assignment" but zshrs accepts it. Recorded for
+later.
+
+---
+
+## #1026 — `test`/`[` double-negation `! ! -n x` wrongly errored — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced by probing `test`/`[` argument grammar.
+
+`test ! ! -n x` (double negation of a unary test) errored with
+`condition expected: !` and exit 2, instead of evaluating `not(not(-n x))` = 0.
+zshrs's `bin_test` is a heuristic hand-rolled parser (not the full `par_cond`
+grammar); a pre-flight diagnostic check rejected any 4+ arg form lacking a
+binary connective/paren/binop — and it only recognised BINARY ops, so a
+leading-`!` chain over a UNARY operand tripped it. Single `! -n x` already
+worked; the second `!` broke.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'test ! ! -n x; echo $?'
+0
+$ zshrs --zsh -c 'test ! ! -n x; echo $?'          # BEFORE
+zsh:1: condition expected: !
+2
+```
+
+**Fix.** The pre-flight (builtin.rs) now strips a leading `!` chain and, if the
+remainder is exactly a `<unary-op> <operand>` pair, defers to `evalcond` (which
+handles `!` at cond.rs:152) instead of rejecting — matching C (c:builtin.c:7270
++ par_cond's `!` rule). Other malformed leading-`!` forms (`! ! a b`) still fall
+through to rejection unchanged. Gated by the `cond` fuzz mode (new double/triple
+negation arm, stderr folded); reverting reproduces ~123 divergences/800-seed.
+Unit test `bin_test_double_negation_of_unary_op`.
+
+**Known residuals (NOT fixed — the heuristic parser can't match zsh's
+grammar-based behaviour here; proper fix is the general `par_cond` grammar):**
+  - Trailing connective with a missing operand: `[ 1 -eq 1 -a ]` → zsh rc 1,
+    `[ 1 -eq 1 -o ]` → zsh rc 0; zshrs errors "too many arguments" (rc 2). The
+    general grammar treats the empty trailing operand as false.
+  - Malformed leading-`!` forms report a different diagnostic than zsh
+    (`[ ! ! a b ]` → zsh "parse error: condition expected: a" vs zshrs
+    "condition expected: !") — stderr-only, exit code (2) already matches.
+
+---
+
+## #1025 — `(( 1 = 2 ))` "lvalue required" dropped the "bad math expression:" prefix — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced while checking `functions -M` math
+error messages.
+
+Assigning to a non-lvalue (`(( 1 = 2 ))`, `let "1 = 2"`, `$(( 5 = 3 ))`) errored
+with `lvalue required` instead of zsh's `bad math expression: lvalue required`.
+The prefix was present at the getvar/setvar sites (math.rs:2353/3677/3707) but
+the assignment-operator arm (math.rs:3569) stored the message without it.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc '(( 1 = 2 ))'
+zsh:1: bad math expression: lvalue required
+$ zshrs --zsh -c '(( 1 = 2 ))'            # BEFORE
+zsh:1: lvalue required
+```
+Affected every context (`(( ))`, `$(( ))`, assignment, `let`, and `functions -M`
+math functions), since they all route assignment through the same arm.
+
+**Fix.** math.rs:3569 now emits `bad math expression: lvalue required`, matching
+C (c:Src/math.c:997) and the sibling sites. Gated by the `arith` fuzz mode
+(malformed-expression arm 8, stderr folded, now includes `1 = 2` / `(1+1) = 3`);
+reverting reproduces ~73 divergences/1000-seed. Unit test
+`mathevali_assign_to_nonlvalue_keeps_bad_math_prefix`.
+
+**Known residual (separate, not fixed):** two obscure malformed-math message
+edges — `(( 1 2 ))` reports `` operator expected at `2' `` vs zsh's `` `2 ' ``
+(trailing space in the quoted remaining input), and `(( foo( ))` reports
+`parse error` vs zsh's ``parse error near `)' ``. Both are error-text-only for
+malformed input; low value, recorded for a future error-parity pass.
+
+---
+
+## #1024 — named-fd `{var}<file` redirect ignores open failure — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced by fuzzing named-fd redirections onto
+nonexistent paths.
+
+A `{var}<file` / `{var}>file` redirect (the brace form that allocates an fd ≥ 10
+and binds it to `$var`) silently ignored a failed `open()`. zsh reports the
+error, sets `$?=1`, and SKIPS the command; zshrs ran the command anyway with
+exit 0 and no diagnostic. The numeric (`3<file`) and non-varid (`<file`) forms
+were already correct — only the `{var}` form leaked.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'exec {fd}< /nonexistent; print ok'
+zsh:1: no such file or directory: /nonexistent            # then: ok
+$ zshrs --zsh -c 'exec {fd}< /nonexistent; print ok'      # BEFORE
+ok                                                        # no error, exit 0
+$ /opt/homebrew/bin/zsh -fc 'echo x {fd}> /nodir/f'       # command SKIPPED
+zsh:1: no such file or directory: /nodir/f
+$ zshrs --zsh -c 'echo x {fd}> /nodir/f'                  # BEFORE: ran it
+x
+```
+
+**Root cause.** Named-fd redirects run through the fusevm ShellHost path
+(`src/fusevm_bridge.rs`), not the exec.rs interpreter loop (which does check
+`fil == -1`). On `libc::open` returning < 0 the bridge did `return
+Value::Status(1)` WITHOUT emitting the errno message or setting
+`exec.redirect_failed` — so no diagnostic printed and the caller never learned
+the redirect failed, running the command.
+
+**Fix.** On `fd < 0`, emit `zwarn("%e: %s", errno, path)` (via `redir_errno_msg`,
+the same helper the non-varid open-failure path uses) and set
+`redirect_failed = true`, matching C (c:Src/exec.c:3790-3795) and every other
+redirect-error branch. Gated by the `redir` fuzz mode (new named-fd
+open-failure arm, stderr folded); reverting reproduces ~96 divergences/900-seed.
+
+---
+
+## #1023 — malformed-flag "error in flags" message: mangled expr + off-by-one position — cosmetic
+
+**Status:** `known` 2026-07-19 — surfaced by fuzzing malformed `${(…)…}` flag
+blocks. STDERR-only: stdout and exit already match zsh (both abort), so this is
+error-message cosmetics, not a behavior gap. Two independent defects:
+
+**A. `${(flags)#name}` echoes a MANGLED expression.** The `#`-length form with a
+malformed flag block loses its parens and `#` in the diagnostic:
+```sh
+$ zsh  -fc 'v=x; print -r -- ${(ws:::)#v}'
+zsh:1: error in flags near position 8 in '${(ws:::)#v}'
+$ zshrs --zsh -c 'v=x; print -r -- ${(ws:::)#v}'
+zsh:1: error in flags near position 8 in '${ws:::v}'   # parens + # dropped
+```
+Root cause: the bridge rewrites `${(flags)#name}` before paramsubst sees it, so
+`body` (used verbatim in the message, subst.rs:4092/4189/4246/…) is already the
+stripped `ws:::v`. WITHOUT the `#` the message is correct (`${(ws:::)v}` echoes
+fine), and every VALID `${(w)#v}` / `${(ws.:.)#v}` form works — so the mangling
+is error-path-only. C uses `dupstring(*str + 1)` — the original untokenized
+string (c:subst.c:2518-2527) — for the message; a faithful fix carries the
+original brace body through the bridge rewrite to the error site.
+
+**B. `${(l:::)v}` reports the wrong position.** `${(l:::)v}` → zsh "position 7",
+zshrs "position 6" (off by one). The `(l)`/`(r)` width parse (get_intarg /
+get_strarg, subst.rs:4003+) computes the 1-based offset one short when the width
+arg is empty/malformed. `(s:::)` and `(ws:::)` (position 8) already match — only
+the `l`/`r` width arm is off. Deep in the arg state machine; low value.
+
+Both are deferred: malformed-flag-syntax error text with correct stdout+exit,
+disproportionate fix effort (bridge plumbing / offset state machine) for the
+value. Recorded so a future error-message-parity pass has the exact shapes.
+
+---
+
+## #1022 — zip/set-op (`:^` `:^^` `:|` `:*`) RHS not validated as an identifier — fixed
+
+**Status:** `fixed` 2026-07-19 — surfaced by fuzzing `${a:^^$(print x y)}`.
+
+zsh requires the RIGHT operand of the array zip (`:^`/`:^^`) and set-op
+(`:|` difference, `:*` intersection) expansions to be a bare parameter NAME,
+and errors `not an identifier: s` otherwise (c:Src/subst.c:3464 zip / :3527
+set-op — `if (*itype_end(s, INAMESPC, 0)) { untokenize(s); zerr(...); }`).
+zshrs skipped the check: a non-name operand was silently looked up as an unset
+parameter, so the whole thing quietly returned the LEFT array unchanged.
+
+**Repro**
+```sh
+$ /opt/homebrew/bin/zsh -fc 'a=(1 2); print -r -- ${a:^$(echo x)}'
+zsh:1: not an identifier: $(echo x)          # exit 1
+$ zshrs --zsh -c 'a=(1 2); print -r -- ${a:^$(echo x)}'   # BEFORE
+1 2                                          # exit 0 — silently wrong
+```
+Also mis-accepted: `${a:^b[1]}` (subscript), `${a:|b:t}` (modifier),
+`${a:*$(...)}`, and the `:^^` long-zip form.
+
+**Fix** — all four operator arms (subst.rs `paramsubst`) now run
+`itype_end(other_name, INAMESPC, false) < other_name.len()` → `zerr("not an
+identifier: {}", untokenize(other_name))` + `errflag_set_error()` and abort,
+matching C. All-digit names (`${a:^123}`) still pass (digits are IIDENT).
+Gated by the `expr` fuzz mode (`gen_setops` now emits `:^`/`:^^` plus the
+invalid-operand shapes); reverting reproduces 22 divergences/600-seed.
+
+**Known residual (NOT fixed):** a QUOTED string-literal operand that happens to
+spell an identifier — `${a:^"literal"}` — still slips through. zsh reports
+`not an identifier: "literal"` because it checks the raw tokenized operand
+(quotes = Dnull markers) BEFORE dequoting; by the time the operator arm runs,
+zshrs has already stripped the quotes (`r=":^literal"`), so the operand is
+indistinguishable from a bare `literal`. Detecting it needs the Dnull markers
+preserved through to the operator arm — a deeper plumbing change. Two other
+pre-existing zip divergences are also out of scope here: `${a:^123}` (numeric
+operand fetch) and `${a:^h}` (assoc operand, C uses gethparam).
+
+---
+
 ## #1021 — multibyte (non-ASCII) identifier names rejected everywhere but `typeset` — partially fixed
 
 **Status:** `partially-fixed` 2026-07-18 — BRACED READ + BARE ASSIGNMENT legs
@@ -48,14 +374,19 @@ set-test (4874), and the simple `$name`/`$^name`/`$+name` walks. Verified: 4000
 regression; reverting the closure reproduces 209 divergences per 800-case seed.
 
 **Remaining legs (still ASCII-only, NOT generated by `mbident`):**
-  - bare `$日` (no braces) READ prints literally. ROOT CAUSE (traced): the
-    lexer drops the non-ASCII char after `$`. `gettokstr`'s LX2_STRING arm
-    (lex.rs ~1826) emits `Stringg` and hungets the following char, but the word
-    then ends with only `Stringg` in it — paramsubst receives `s="\u{85}"` with
-    `日` in a SEPARATE node (confirmed via stringsubst trace: node=`"\u{85}"`,
-    len=1). `$café` lexes differently again (never reaches stringsubst, scans
-    only `caf`). This is a lexer word/token-boundary problem, distinct from the
-    paramsubst name-scan already fixed — needs its own pass.
+  - bare `$日` (no braces) READ prints literally. ROOT CAUSE (re-traced — the
+    lexer is NOT the culprit): `gettokstr` builds the FULL word `\u{85}日X`
+    (confirmed — `日` and `X` both go through the LX2_OTHER `add(c)` arm). But
+    by the time `multsub` runs the word is already truncated to `\u{85}` (the
+    lone `Stringg`) — `日X` is dropped in the parse→wordcode→prefork word
+    storage/retrieval layer, BEFORE expansion. `$café` differs again: it never
+    reaches `multsub`; the ASCII name `caf` is compiled to a direct param-ref
+    instruction and the trailing `é` survives as literal (output `é`). Note the
+    compile-time glob/subscript `$name` scan (compile_zsh.rs:3456) already uses
+    `is_alphanumeric()`, so it is NOT the truncation site. This is a wordcode
+    string-storage issue (likely a byte-vs-char length in the `$name` word
+    encoding), distinct from every name-scan fixed so far — needs a dedicated
+    pass through the wordcode `$name` compilation, not a lexer or paramsubst fix.
   - `typeset 日=(a b c)` array creation → `number expected` — the
     assignment/subscript name scan is a separate leg.
   - `$(( 日 + 1 ))` arith var names — math.rs `is_ident`/`is_ident_start`.
