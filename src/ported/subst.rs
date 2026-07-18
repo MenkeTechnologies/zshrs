@@ -17801,8 +17801,16 @@ pub fn paramsubst(
         let _ = value;
 
         // Handle word splitting
-        if pf_flags & PREFORK_SHWORDSPLIT != 0 && !qt {
-            // c:1625
+        // c:Src/subst.c:1705 — `int spbreak = (pf_flags & PREFORK_SHWORDSPLIT)
+        // && !(pf_flags & PREFORK_SINGLE) && !qt;`. The `!(pf_flags &
+        // PREFORK_SINGLE)` term was missing here, so a bare `$var` expanded via
+        // singsub (PREFORK_SINGLE — e.g. a `${x#$pat}`/`${x/$pat/r}` pattern
+        // operand, or a scalar-assignment RHS) got IFS-word-split whenever
+        // SH_WORD_SPLIT was on. That kept only the FIRST word of the pattern:
+        // under --bash/--ksh (shwordsplit on by default) `w="a b"; ${v/$w/X}`
+        // matched just "a". zsh never word-splits a SINGLE-context expansion.
+        if pf_flags & PREFORK_SHWORDSPLIT != 0 && pf_flags & PREFORK_SINGLE == 0 && !qt {
+            // c:1705
             let words = value
                 .split_whitespace()
                 .map(String::from)

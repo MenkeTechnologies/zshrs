@@ -363,6 +363,14 @@ const PORTABLE_CORPUS: &[&str] = &[
     "x=3.5; echo \"${x%.*}\"",                                  // strip fractional part
     "echo $(( 5 > 3 ? 5 : 3 ))\" \"$(( 2 > 8 ? 2 : 8 ))",       // two ternaries → 5 8
     "for i in $(seq 3 -1 1); do printf '%d' \"$i\"; done; echo", // descending seq
+    // A `#`/`%`/`##`/`%%` pattern taken from an UNQUOTED $var must NOT be
+    // word-split even under SH_WORD_SPLIT (on by default in bash/ksh/dash/sh) —
+    // the whole var value is the pattern, spaces included. Regression for a
+    // singsub-path split bug (missing PREFORK_SINGLE gate). Found by fuzzer.
+    "v='a b c'; w='a b'; printf '[%s]' \"${v#$w}\"",            // spaced prefix pattern → [ c]
+    "v='x y z'; w='y z'; printf '[%s]' \"${v%$w}\"",            // spaced suffix pattern → [x ]
+    "v='hello world'; w='hello world'; printf '[%s]' \"${v#$w}\"", // whole-value pattern → []
+    "p='/a b/c'; printf '[%s]' \"${p##*/}\"",                   // spaced path basename → [c]
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -553,6 +561,12 @@ const EXTENDED_CORPUS: &[&str] = &[
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
     // (bash/ksh) legitimately differs and would flag a non-bug.
+    // A `${v/PAT/r}` replace whose PAT comes from an unquoted $var must use the
+    // WHOLE var (spaces included) as the pattern, never word-split it, even
+    // under SH_WORD_SPLIT. `/`-replace is bash/ksh/zsh-only (not POSIX), so it
+    // lives in EXTENDED. Regression for the singsub PREFORK_SINGLE split bug.
+    "v='a b c'; w='a b'; printf '[%s]' \"${v/$w/X}\"",     // spaced replace pattern → [X c]
+    "v='a b c'; w='b c'; printf '[%s]' \"${v//$w/Y}\"",    // spaced global replace → [a Y]
 ];
 
 fn find_shell(candidates: &[&str]) -> Option<String> {
@@ -965,6 +979,38 @@ fn bash_substring_negative_offset_underflow() {
         assert_eq!(mode(m, r#"v=hello; printf '[%s]' "${v: -10}""#), "[hello]", "{m}");
         assert_eq!(mode(m, r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#), "[1][2][3]", "{m}");
     }
+}
+
+#[test]
+fn pattern_operand_not_word_split_under_shwordsplit() {
+    // A `#`/`%`/`/` pattern taken from an unquoted $var must be used whole —
+    // never IFS-word-split — even when SH_WORD_SPLIT is active (bash/ksh
+    // default, and zsh under `setopt shwordsplit`). The singsub path (C's
+    // PREFORK_SINGLE) suppresses word splitting; a missing SINGLE gate made the
+    // pattern collapse to its first word under --bash/--ksh. Ground truth: all
+    // reference shells agree. Found by gen_param_fuzz2 (multi-mode).
+    let mode = |m: &str, script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args([m, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for m in ["--zsh", "--bash", "--ksh"] {
+        // strip with spaced pattern from $var
+        assert_eq!(mode(m, r#"v='a b c'; w='a b'; printf '[%s]' "${v#$w}""#), "[ c]", "{m}");
+        assert_eq!(mode(m, r#"v='x y z'; w='y z'; printf '[%s]' "${v%$w}""#), "[x ]", "{m}");
+        assert_eq!(mode(m, r#"v='hi there'; w='hi there'; printf '[%s]' "${v#$w}""#), "[]", "{m}");
+        // replace with spaced pattern from $var
+        assert_eq!(mode(m, r#"v='a b c'; w='a b'; printf '[%s]' "${v/$w/X}""#), "[X c]", "{m}");
+        assert_eq!(mode(m, r#"v='a b c'; w='b c'; printf '[%s]' "${v//$w/Y}""#), "[a Y]", "{m}");
+    }
+    // The fix must NOT disable ordinary word-splitting of a bare unquoted $var
+    // in bash/ksh (SH_WORD_SPLIT on): `$w` in command/arg position still splits.
+    assert_eq!(mode("--bash", r#"w='a b c'; printf '<%s>' $w"#), "<a><b><c>");
+    assert_eq!(mode("--ksh", r#"w='a b c'; printf '<%s>' $w"#), "<a><b><c>");
+    // ...and a scalar-assignment RHS (also singsub) must keep the value intact.
+    assert_eq!(mode("--bash", r#"w='a b c'; v=$w; printf '[%s]' "$v""#), "[a b c]");
 }
 
 #[test]
