@@ -319,6 +319,39 @@ fn bash_param_expansion_indirect_and_casemod() {
 }
 
 #[test]
+fn bash_mapfile_readarray() {
+    // `mapfile` / `readarray` read lines from stdin into an array (bash).
+    // Values are fixed via here-strings, so no reference binary is needed.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // -t strips the trailing newline; count is 3.
+    assert_eq!(bash("mapfile -t L <<< $'a\\nb\\nc'; printf '%s' \"${#L[@]}\""), "3");
+    assert_eq!(bash("mapfile -t L <<< $'a\\nb\\nc'; printf '%s' \"${L[1]}\""), "b");
+    // readarray is an alias.
+    assert_eq!(bash("readarray -t L <<< $'x\\ny'; printf '%s' \"${#L[@]}\""), "2");
+    // Without -t the trailing delimiter is kept in each element.
+    assert_eq!(bash("mapfile L <<< $'x\\ny'; printf '[%s]' \"${L[@]}\""), "[x\n][y\n]");
+    // -s skip + -n count.
+    assert_eq!(bash("mapfile -t -s 1 -n 2 L <<< $'a\\nb\\nc\\nd'; printf '%s' \"${L[*]}\""), "b c");
+    // -d custom delimiter.
+    assert_eq!(bash("mapfile -d : -t L <<< 'a:b:c'; printf '%s' \"${L[1]}\""), "b");
+    // Default array name is MAPFILE.
+    assert_eq!(bash("mapfile -t <<< $'p\\nq'; printf '%s' \"${MAPFILE[0]}\""), "p");
+
+    // Gated to non-zsh: `mapfile` is "command not found" under --zsh.
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "mapfile x"])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success(), "--zsh: mapfile must be command-not-found");
+}
+
+#[test]
 fn emulation_parity_matrix() {
     let require = std::env::var("ZSHRS_REQUIRE_REF_SHELLS").is_ok();
     let mut tested = 0usize;
