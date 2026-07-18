@@ -2997,6 +2997,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         for v in popped {
             flatten_array_value(v, &mut values);
         }
+        // Bash sparse: a full `a=(...)` reassign resets the array to dense
+        // (drops any prior holes from subscript-assign / unset).
+        if crate::dash_mode::bash_mode() {
+            crate::bash_arrays::clear(&name);
+        }
         let blocked = with_executor(|exec| {
             // Assoc init `typeset -A m; m=(k v k v ...)` — route to
             // canonical sethparam (Src/params.c:3602) which parses the
@@ -3883,6 +3888,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let value = vm.pop().to_str();
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Bash sparse-array tracking for `a[i]=v` (scalar single-index). A set
+        // that pads the dense Vec past its old end leaves old_len..i as holes;
+        // on an undefined array, `a[5]=q` leaves only index 5 (count 1). Only
+        // for INDEXED arrays (assoc keys are strings), bash mode, numeric key.
+        // Captured before the assign; applied after (on the array path).
+        let sparse_track: Option<(String, usize, usize)> =
+            if crate::dash_mode::bash_mode() && !key.contains(',') {
+                key.trim().parse::<usize>().ok().and_then(|i| {
+                    with_executor(|exec| {
+                        if exec.assoc(&name).is_none() {
+                            let old_len = exec.array(&name).map(|a| a.len()).unwrap_or(0);
+                            Some((name.clone(), old_len, i))
+                        } else {
+                            None
+                        }
+                    })
+                })
+            } else {
+                None
+            };
         if key_is_dynamic && key.is_empty() {
             with_executor(|exec| {
                 let _ = exec;
@@ -4143,6 +4168,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         }
         let subscripted = format!("{}[{}]", name, resolved_key);
         crate::ported::params::assignsparam(&subscripted, &value, crate::ported::zsh_h::ASSPM_WARN);
+        if let Some((nm, old_len, i)) = sparse_track {
+            crate::bash_arrays::note_subscript_set(&nm, old_len, i);
+        }
         Value::Status(0)
     });
 
@@ -4627,7 +4655,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // docs/BUGS.md.
                 assoc_map.values().cloned().collect::<Vec<_>>().join(&sep)
             } else if let Some(arr) = exec.array(&name) {
-                arr.join(&sep)
+                // bash sparse arrays: `"${a[*]}"` joins only LIVE elements,
+                // dropping hole slots. No-op in --zsh (no holes tracked).
+                crate::bash_arrays::compact(&name, arr).join(&sep)
             } else {
                 exec.get_variable(&name)
             };
@@ -4735,7 +4765,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 );
             }
             match exec.array(&name) {
-                Some(v) => Value::Array(v.iter().map(Value::str).collect()),
+                Some(v) => {
+                    // bash sparse arrays: `"${a[@]}"` splats only LIVE
+                    // elements, dropping hole slots (`a[5]=q` padding,
+                    // `unset a[i]`). No-op in --zsh (no holes tracked).
+                    let v = crate::bash_arrays::compact(&name, v);
+                    Value::Array(v.iter().map(Value::str).collect())
+                }
                 None => {
                     // Fall back to scalar lookup. zsh (unlike bash)
                     // does NOT IFS-split a scalar variable in a for
@@ -6473,6 +6509,22 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 other => values.push(other.to_str()),
             }
         }
+        // Bash sparse-array tracking: a single-index `a[i]=v` that pads the
+        // dense Vec past its old end leaves indices old_len..i as HOLES (not
+        // real elements), so `${#a[@]}`/`${!a[@]}` skip them like bash. Only
+        // in bash mode, only for a plain non-append single index (0-based
+        // under ksharrays). Captured before the assign; applied after.
+        let sparse_track: Option<(String, usize, usize)> = if crate::dash_mode::bash_mode()
+            && !append
+            && !key.contains(',')
+        {
+            key.trim().parse::<usize>().ok().map(|i| {
+                let old_len = with_executor(|exec| exec.array(&name).map(|a| a.len()).unwrap_or(0));
+                (name.clone(), old_len, i)
+            })
+        } else {
+            None
+        };
         // c:Src/params.c:3383-3389 — a subscripted ARRAY assignment to an
         // associative array is an error, whatever the subscript looks like:
         //     if (v && PM_TYPE(v->pm->node.flags) == PM_HASHED) {
@@ -6718,6 +6770,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
         });
+        if let Some((nm, old_len, i)) = sparse_track {
+            crate::bash_arrays::note_subscript_set(&nm, old_len, i);
+        }
         Value::Status(0)
     });
 

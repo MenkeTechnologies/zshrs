@@ -164,6 +164,9 @@ pub mod dap;
 /// `dash_mode` submodule — strict-dash emulation flag (Rust-only).
 #[path = "extensions/dash_mode.rs"]
 pub mod dash_mode;
+/// `bash_arrays` submodule — bash sparse-array holes tracker (Rust-only).
+#[path = "extensions/bash_arrays.rs"]
+pub mod bash_arrays;
 /// `dumpers` submodule.
 #[path = "extensions/dumpers.rs"]
 pub mod dumpers;

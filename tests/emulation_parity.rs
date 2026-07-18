@@ -422,6 +422,69 @@ fn bash_mapfile_readarray() {
 }
 
 #[test]
+fn bash_sparse_arrays() {
+    // bash indexed arrays are SPARSE: `a[5]=q` on a 3-element array leaves
+    // indices {0,1,2,5} (NOT dense 0..5 with padding), and `unset a[i]`
+    // removes an index leaving a gap. zsh/zshrs arrays are dense `Vec`, so
+    // this is emulated under --bash via a side "holes" table consulted by
+    // `${a[@]}`/`${a[*]}`/`${#a[@]}`/`${!a[@]}`. Values are fully fixed, so
+    // no reference binary is needed (ground truth is bash 5.x, verified).
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // Padding-on-assign creates holes, not dense empties. (Ground truth is
+    // bash 5.x; `printf '%s'` on a `[@]` splat cycles the format per arg, so
+    // the live elements concatenate; `[*]` is one joined arg and keeps IFS.)
+    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${#a[@]}""#), "4");
+    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[@]}""#), "xyzq");
+    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[*]}""#), "x y z q");
+    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${!a[@]}""#), "0125");
+    // Custom IFS applies to the star-join over live elements only.
+    assert_eq!(bash(r#"a=(x y z); a[5]=q; IFS=,; printf '%s' "${a[*]}""#), "x,y,z,q");
+    // `unset a[i]` is 0-based and leaves a hole.
+    assert_eq!(bash(r#"a=(x y z); unset a[1]; printf '%s' "${a[@]}""#), "xz");
+    assert_eq!(bash(r#"a=(x y z); unset a[1]; printf '%s' "${!a[@]}|${#a[@]}""#), "02|2");
+    // Fully sparse from an empty array.
+    assert_eq!(
+        bash(r#"a=(); a[3]=d; a[7]=h; printf '%s' "${a[@]}|${!a[@]}|${#a[@]}""#),
+        "dh|37|2"
+    );
+    // Re-assigning a hole makes it live again (count returns to dense).
+    assert_eq!(
+        bash(r#"a=(x y z); unset a[1]; a[1]=Y; printf '%s' "${a[@]}|${#a[@]}""#),
+        "xYz|3"
+    );
+    // A full `a=(...)` reassign clears all holes.
+    assert_eq!(
+        bash(r#"a=(x y z); a[5]=q; a=(m n); printf '%s' "${#a[@]}|${!a[@]}""#),
+        "2|01"
+    );
+    // LEGIT empty elements are NOT holes — a quoted splat keeps them.
+    assert_eq!(bash(r#"a=(x "" z); printf '<%s>' "${a[@]}""#), "<x><><z>");
+    assert_eq!(bash(r#"a=(x "" z); printf '%s' "${#a[@]}""#), "3");
+
+    // --zsh must be UNAFFECTED: dense semantics, `a[6]=q` on a 3-elem array
+    // (1-based) pads to length 6.
+    let zsh = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(zsh(r#"a=(x y z); a[6]=q; printf '%s' "${#a[@]}""#), "6");
+    // The padding empties survive as real (dense) elements under --zsh.
+    assert_eq!(
+        zsh(r#"a=(x y z); a[6]=q; printf '<%s>' "${a[@]}""#),
+        "<x><y><z><><><q>"
+    );
+}
+
+#[test]
 fn emulation_parity_matrix() {
     let require = std::env::var("ZSHRS_REQUIRE_REF_SHELLS").is_ok();
     let mut tested = 0usize;
