@@ -4338,6 +4338,7 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                         if !closed {
                             // c:884/930 — `zerr("invalid mode specification")`
                             // on an unterminated spec; the glob then fails.
+                            crate::ported::utils::zerr("invalid mode specification");
                             crate::ported::utils::errflag.fetch_or(
                                 crate::ported::utils::ERRFLAG_ERROR,
                                 std::sync::atomic::Ordering::Relaxed,
@@ -4352,6 +4353,17 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                                 _ => (perm, 0),
                             };
                             qs.qualifiers.push(qualifier::Mode { yes, no });
+                        } else {
+                            // c:884/930 — qgetmodespec's every failure path is
+                            // `zerr("invalid mode specification"); return 0;`.
+                            // rs's qgetmodespec returns None only on those, so
+                            // None must fail the glob, not silently drop `f`.
+                            crate::ported::utils::zerr("invalid mode specification");
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::utils::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return qs;
                         }
                         ""
                     }
@@ -4370,6 +4382,17 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
                                 _ => (perm, 0),
                             };
                             qs.qualifiers.push(qualifier::Mode { yes, no });
+                        } else {
+                            // c:930 — a bare `f` (empty spec) or otherwise
+                            // unparseable mode is `zerr("invalid mode
+                            // specification"); return 0;` in qgetmodespec, which
+                            // aborts the glob rather than dropping the qualifier.
+                            crate::ported::utils::zerr("invalid mode specification");
+                            crate::ported::utils::errflag.fetch_or(
+                                crate::ported::utils::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return qs;
                         }
                         ""
                     }
@@ -4682,18 +4705,40 @@ fn parse_qualifier_string(s: &str) -> qualifier_set {
             // was defined but had no parser arm — was rejected as
             // "unknown file attribute: e". Bug #469.
             'e' => {
+                // c:1712-1719 — `e` routes through glob_exec_string →
+                // get_strarg, which requires a delimiter char after `e` AND a
+                // matching closer. A bare `e` (nothing after, delim would be the
+                // `)`) or an unterminated body is `zerr("missing end of
+                // string"); return NULL;` (c:1102), aborting the glob.
                 let delim = match chars.next() {
                     Some(d) => d,
-                    None => break,
+                    None => {
+                        crate::ported::utils::zerr("missing end of string");
+                        crate::ported::utils::errflag.fetch_or(
+                            crate::ported::utils::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return qs;
+                    }
                 };
                 let mut body = String::new();
+                let mut closed = false;
                 while let Some(&pc) = chars.peek() {
                     if pc == delim {
                         chars.next();
+                        closed = true;
                         break;
                     }
                     body.push(pc);
                     chars.next();
+                }
+                if !closed {
+                    crate::ported::utils::zerr("missing end of string");
+                    crate::ported::utils::errflag.fetch_or(
+                        crate::ported::utils::ERRFLAG_ERROR,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    return qs;
                 }
                 if negated {
                     // (^e:CODE:) inverts; we route through Eval and

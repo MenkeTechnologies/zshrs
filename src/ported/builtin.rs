@@ -8624,10 +8624,19 @@ pub fn bin_whence(
                         // declaration order (echo, echoti, echotc) so
                         // the unsorted walk produced a different
                         // ordering. Collect+sort to match.
+                        // c:4065 — the `DISABLED` mask arg to scanmatchtable
+                        // makes the walk SKIP nodes carrying DISABLED, so a
+                        // `disable`d builtin never appears in `whence -m`.
+                        let disabled_snapshot: std::collections::HashSet<String> =
+                            BUILTINS_DISABLED
+                                .lock()
+                                .map(|s| s.clone())
+                                .unwrap_or_default();
                         let mut bn_matches: Vec<&builtin> = BUILTINS
                             .iter()
                             .chain(crate::extensions::ext_builtins::extension_builtin_defs())
                             .filter(|b| pattry(&prog, &b.node.nam))
+                            .filter(|b| !disabled_snapshot.contains(b.node.nam.as_str()))
                             .collect();
                         bn_matches.sort_by(|a, b| a.node.nam.cmp(&b.node.nam));
                         for b in bn_matches {
@@ -8908,7 +8917,10 @@ pub fn bin_whence(
             // living in BUILTINS — but they ARE builtins and whence/
             // type must classify them as such (`whence -w zd` reported
             // the external /opt/homebrew/bin/zd instead).
-            if builtin_node.is_none() && crate::daemon::builtins::is_zshrs_builtin(arg) {
+            if builtin_node.is_none()
+                && !is_disabled_builtin
+                && crate::daemon::builtins::is_zshrs_builtin(arg)
+            {
                 let mut ext_node = hashnode {
                     next: None,
                     nam: arg.clone(),
@@ -8925,6 +8937,7 @@ pub fn bin_whence(
             // absent from the static BUILTINS table; classify like the daemon
             // z* family above so `whence -w zassert_eq` reports `builtin`.
             if builtin_node.is_none()
+                && !is_disabled_builtin
                 && !crate::daemon::builtins::is_zshrs_builtin(arg)
                 && crate::extensions::ext_builtins::is_extension_builtin(arg)
             {

@@ -9121,10 +9121,63 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     //   `?`   → `.`
     //   `(p)` → `(p_translated)` capture group
     //   `[…]` → `[…]` literal char class
+    // zmv:117 "The pattern is always treated as an EXTENDED_GLOB pattern." The
+    // SOURCE may lead with globbing FLAGS: `(#b)` (backreferences → $match, the
+    // default for zmv captures), `(#m)` ($MATCH = the whole match), `(#i)`/
+    // `(#l)` (case-insensitive). The GLOB above honours them via extendedglob,
+    // but the capture REGEX must strip them — regex `()` groups already give
+    // backreferences, so `(#b)` is a no-op there, `(#i)`/`(#l)` map to a
+    // case-insensitive regex, and `(#m)` binds $MATCH to the whole match.
+    // Without stripping, `(#b)file(?).dat` compiled to a regex containing a
+    // literal `(#b)` group that matched no real filename → empty rename set.
+    let mut case_insensitive = false;
+    let mut want_match_var = false;
+    let mut re_pat = from_pat.clone();
+    while let Some(rest) = re_pat.strip_prefix("(#") {
+        let Some(close) = rest.find(')') else { break };
+        let flags = &rest[..close];
+        // Only a pure flag group (recognised letters/digits). Anything else —
+        // e.g. `(#c2,3)` count spec followed by a pattern — is left for the
+        // regex builder to reject/handle rather than mis-stripped.
+        if flags.is_empty() || !flags.chars().all(|c| "bmiIlaeqsMBcC0123456789".contains(c)) {
+            break;
+        }
+        if flags.contains('i') || flags.contains('l') {
+            case_insensitive = true;
+        }
+        if flags.contains('m') {
+            want_match_var = true;
+        }
+        re_pat = rest[close + 1..].to_string();
+    }
     let mut regex_src = String::from("^");
-    let mut chars = from_pat.chars().peekable();
+    if case_insensitive {
+        regex_src.push_str("(?i)");
+    }
+    let mut chars = re_pat.chars().peekable();
     let mut group_idx = 0;
+    // Byte offset in `regex_src` where the most recently emitted atom began, so
+    // an extendedglob quantifier (`#` = zero-or-more, `##` = one-or-more; zmv
+    // runs under `setopt extendedglob`, zmv:126) can wrap it. For a group the
+    // opening `(` position is stashed here so `(...)#`/`(...)##` wrap the whole
+    // group, not just its trailing `)`.
+    let mut last_atom_start = regex_src.len();
+    let mut group_starts: Vec<usize> = Vec::new();
     while let Some(c) = chars.next() {
+        // zsh globbing `x#`/`x##` — a postfix quantifier on the previous atom.
+        if c == '#' {
+            let one_or_more = chars.peek() == Some(&'#');
+            if one_or_more {
+                chars.next();
+            }
+            let atom: String = regex_src[last_atom_start..].to_string();
+            regex_src.truncate(last_atom_start);
+            regex_src.push_str("(?:");
+            regex_src.push_str(&atom);
+            regex_src.push_str(if one_or_more { ")+" } else { ")*" });
+            continue;
+        }
+        let atom_begin = regex_src.len();
         match c {
             // zmv:197-202 — under -w/-W every WILDCARD becomes its own capture
             // group (C's `pat="${pat//${~find}/($MATCH)}"`), not just `*`. The
@@ -9160,7 +9213,7 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                 }
             }
             // `<a-b>` numeric range (zmv:197 `<[0-9]#-[0-9]#>`).
-            '<' if from_pat.contains('>') => {
+            '<' if re_pat.contains('>') => {
                 let mut body = String::new();
                 let mut closed = false;
                 for cc in chars.by_ref() {
@@ -9186,6 +9239,7 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
                 }
             }
             '(' => {
+                group_starts.push(atom_begin);
                 regex_src.push('(');
                 group_idx += 1;
             }
@@ -9214,6 +9268,12 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             }
             _ => regex_src.push(c),
         }
+        // A closing `)` makes the whole group the atom a following `#` quantifies.
+        last_atom_start = if c == ')' {
+            group_starts.pop().unwrap_or(atom_begin)
+        } else {
+            atom_begin
+        };
     }
     regex_src.push('$');
 
@@ -9302,7 +9362,19 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
     if !bare_glob_qual && saved_bgq {
         crate::ported::options::opt_state_set("bareglobqual", false);
     }
+    // zmv:126 `setopt extendedglob` — zmv always treats its pattern as an
+    // EXTENDED_GLOB pattern, which is what makes globbing flags like `(#b)`
+    // (backreferences → $match), `(#m)` ($MATCH), and `(#i)` work. The native
+    // impl globbed WITHOUT it, so `zmv '(#b)file(?).dat' …` glob-failed with
+    // "no matches found" before any rename could happen.
+    let saved_eg = crate::ported::zsh_h::isset(crate::ported::zsh_h::EXTENDEDGLOB);
+    if !saved_eg {
+        crate::ported::options::opt_state_set("extendedglob", true);
+    }
     let candidates = crate::fusevm_bridge::with_executor(|exec| exec.expand_glob(&glob_pat));
+    if !saved_eg {
+        crate::ported::options::opt_state_set("extendedglob", false);
+    }
     if !bare_glob_qual && saved_bgq {
         crate::ported::options::opt_state_set("bareglobqual", true);
     }
@@ -9343,6 +9415,19 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
         // which is the same code path `${(Xe)…}` takes.
         let saved_f = crate::fusevm_bridge::with_executor(|exec| exec.scalar("f"));
         let saved_pp = crate::fusevm_bridge::with_executor(|exec| exec.pparams());
+        // zmv binds the capture groups to BOTH `$match` (from `[[ $f =
+        // (#b)$pat ]]`, zmv:260) AND the positionals (`set -- "$match[@]"`,
+        // zmv:261), so a replacement can reference either `$match[1]` or `$1`.
+        // Binding only the positionals left `$match[1]` expanding to EMPTY, so
+        // `zmv '(*).dat' 'x$match[1].dat'` mapped every file to the same name
+        // and aborted with a bogus "both map to" collision. Save + restore
+        // `$match` around the expansion, mirroring how `$f`/positionals are.
+        let saved_match = crate::ported::params::getaparam("match");
+        let saved_match_var = if want_match_var {
+            crate::fusevm_bridge::with_executor(|exec| exec.scalar("MATCH"))
+        } else {
+            None
+        };
         let match_args: Vec<String> = (1..caps.len())
             .map(|i| caps.get(i).map(|m| m.as_str()).unwrap_or("").to_string())
             .collect();
@@ -9350,6 +9435,12 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             exec.set_scalar("f".to_string(), src.clone()); // zmv:245 `for f in $files`
             exec.set_pparams(match_args.clone()); // zmv:255 `set -- "$match[@]"`
         });
+        let _ = crate::ported::params::setaparam("match", match_args.clone()); // zmv:260 `$match`
+        // `(#m)` binds $MATCH to the whole match (regex group 0).
+        if want_match_var {
+            let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            crate::fusevm_bridge::with_executor(|exec| exec.set_scalar("MATCH".to_string(), whole));
+        }
         // zmv:257 `g=${(Xe)repl}` — `X` => quoteerr, `e` => re-substitute.
         let dest = match crate::ported::subst::subst_parse_str(to_pat, false, true) {
             Some(parsed) => crate::ported::subst::singsub(&parsed),
@@ -9362,6 +9453,24 @@ pub(crate) fn zmv(args: &[String], default_action: &str) -> i32 {
             }
             exec.set_pparams(saved_pp.clone());
         });
+        match &saved_match {
+            Some(m) => {
+                let _ = crate::ported::params::setaparam("match", m.clone());
+            }
+            None => {
+                crate::ported::params::unsetparam("match");
+            }
+        }
+        if want_match_var {
+            match &saved_match_var {
+                Some(v) => crate::fusevm_bridge::with_executor(|exec| {
+                    exec.set_scalar("MATCH".to_string(), v.clone())
+                }),
+                None => {
+                    crate::ported::params::unsetparam("MATCH");
+                }
+            }
+        }
         // zmv:264-265 — an empty expansion joins `errs`; it is reported with
         // the rest at the end (zmv:280-284), not immediately.
         if dest.is_empty() {

@@ -7219,6 +7219,23 @@ pub fn paramsubst(
                             return (String::new(), 0, Vec::new()); // c:2124
                         }
                     }
+                    // c:Src/math.c:1521-1531 — a range BOUND is evaluated via
+                    // `mathevalarg` → `mathevall(…, MPREC_ARG, …)`, whose entry
+                    // point REJECTS an empty expression:
+                    // `if (!*s) { zerr("bad math expression: empty string"); }`.
+                    // (The in-source comment there notes this is deliberately
+                    // stricter than top-level `matheval()`, which allows empty —
+                    // why `$(( ))` succeeds but `${a[,2]}` errors.) rs evaluates
+                    // bounds with `mathevali` (= `matheval`, empty → 0), so an
+                    // OMITTED bound silently sliced instead of erroring. #1035.
+                    if start_str.trim().is_empty() || end_str.trim().is_empty() {
+                        zerr("bad math expression: empty string"); // c:1531
+                        errflag.fetch_or(
+                            crate::ported::zsh_h::ERRFLAG_ERROR,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        return (String::new(), 0, Vec::new());
+                    }
                     // c:Src/params.c::getarg — the subscript expression
                     // is routed through singsub then mathevali
                     // (math.c:367), so bare identifier names like `n`
@@ -8137,6 +8154,20 @@ pub fn paramsubst(
                             )
                         })
                     } {
+                        // c:Src/math.c:1521-1531 — an OMITTED range bound is an
+                        // empty math expression through `mathevalarg`, whose
+                        // MPREC_ARG entry errors `bad math expression: empty
+                        // string` (stricter than top-level `matheval`, which
+                        // allows empty). Mirror the array-slice guard above so
+                        // `${s[,2]}`/`${s[2,]}` error instead of char-slicing. #1035.
+                        if lo.trim().is_empty() || hi.trim().is_empty() {
+                            zerr("bad math expression: empty string"); // c:1531
+                            errflag.fetch_or(
+                                crate::ported::zsh_h::ERRFLAG_ERROR,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            return (String::new(), 0, Vec::new());
+                        }
                         // `${var[N,M]}` scalar char-slice — bug-for-bug port
                         // of getarrvalue's range arm operating on a per-char
                         // pseudo-array. Direct port of Src/params.c:1625

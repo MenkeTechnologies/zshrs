@@ -19,6 +19,234 @@ CI green pending the underlying fix.
 
 ---
 
+## #1035 — empty / omitted array-subscript index silently accepted (wrong data, no error) — partially fixed
+
+**Status:** `partially-fixed` 2026-07-18 — the RANGE-bound cases (`${a[,N]}`,
+`${a[N,]}`, `${a[,]}` for both arrays and scalar char-slices, incl. the nested
+`${${(P)n}[,N]}` forms) are FIXED; the single-subscript empty cases
+(`${a[]}`, `${a[ ]}`, `${a[()]}`, `${a[(e)]}`, `${a[(n:2:)]}`) remain open (a
+distinct single-index site with context-dependent error text — see bottom).
+
+**What was fixed.** The two primary range-slice arms (array slice at
+subst.rs ~7170, scalar char-slice at ~8106) evaluated each bound with `mathevali`
+(= `matheval`, which returns 0 on empty), so an OMITTED range bound silently
+sliced with a defaulted value. Both now guard an empty bound the same way the
+adjacent `start_is_inv` check does — `zerr("bad math expression: empty string")`
++ `errflag.fetch_or(ERRFLAG_ERROR)` + return an empty expansion — which the
+substitution pipeline propagates to empty stdout + exit 1 (verified identical to
+the already-correct `${a[1+]}` path). Gated by the `subscript` fuzz mode's new
+arm 13; reverting reproduces ~86 divergences/500-seed. No regression across
+subscript/subst/split/paramod/assoc/posparam/typeset/match.
+
+**C contract.** Subscript bounds evaluate via `mathevalarg` →
+`mathevall(…, MPREC_ARG, …)`, whose entry point REJECTS an empty expression:
+`if (!*s) { zerr("bad math expression: empty string"); }` (Src/math.c:1531). The
+in-source comment (math.c:1521-1527) states this is deliberate and distinct from
+top-level `matheval()` (used by `$(( ))`), which ALLOWS empty — which is exactly
+why `$(( ))` succeeds but `${a[ ]}` errors.
+
+**Still open — single-subscript empty (`[]`, `[ ]`, flag-only).** These take the
+single-INDEX (no-comma) path, a hotter site handling every `${a[i]}`, and the
+error text is context-dependent: bare `${a[]}` → `invalid subscript` (params.c:2022);
+`${a[]:-X}` and `${a[ ]}` → `bad math expression: empty string`. `${a[]}` also
+still returns the WHOLE value (treated as no-subscript). A yet-narrower arm at
+subst.rs:6102 (nested `${${…}[,N]}`) has the same `unwrap_or` default but is a
+value-computing expression (no early-return point), needing a different injection
+shape. Deferred rather than guessed. Original cases + swallow-sites below.
+
+An empty or omitted subscript bound must abort the parameter expansion (empty
+stdout, exit 1); rs silently returns wrong data or empty with exit 0:
+
+```
+                                 zsh            zshrs
+${a[]}   (a=(1 2 3))       invalid subscript   → 1 2 3   (WHOLE array!)  exit0 ✗
+${s[]}   (s=hello)         invalid subscript   → hello   (WHOLE scalar!) exit0 ✗
+${a[,2]}                   bad math: empty str  → 1 2                     exit0 ✗
+${a[1,]}                   bad math: empty str  → <empty>                 exit0 ✗
+${a[ ]}                    bad math: empty str  → <empty>                 exit0 ✗
+${a[()]}  ${a[(e)]}  ${a[(n:2:)]}   bad math: empty str  → <empty>        exit0 ✗
+```
+
+**C contract.** Subscript bounds evaluate via `mathevalarg` →
+`mathevall(…, MPREC_ARG, …)`, whose entry point REJECTS an empty expression:
+`if (!*s) { zerr("bad math expression: empty string"); }` (Src/math.c:1531). The
+in-source comment (math.c:1521-1527) states this is deliberate and distinct from
+top-level `matheval()` (used by `$(( ))`), which ALLOWS empty — which is exactly
+why `$(( ))` succeeds but `${a[ ]}` errors. The completely-empty bracket `[]` is
+caught earlier, at parse level: `getindex` → `zerr("invalid subscript")`
+(Src/params.c:2022).
+
+**rs swallow-sites** (each defaults empty→value instead of erroring, and none set
+`errflag`, so exit stays 0):
+  - scalar range `bound_idx`: `mathevali(&expanded).unwrap_or(default)` and the
+    `return default` search-miss arms (subst.rs ~8250/8262) — `default` is the
+    omitted-bound value, but zsh has NO valid omitted bound, so the fallback is
+    uniformly wrong.
+  - scalar single-index, array single-index, and array `[lo,hi]` range
+    (subst.rs ~8058, ~6107, ~7329) — parallel `unwrap_or` / default logic.
+  - the completely-empty `[]` is treated as "no subscript" and returns the whole
+    value rather than routing to `getindex`'s `invalid subscript` (params.rs:3269
+    exists but isn't reached for the empty-body case).
+
+rs ALREADY propagates correctly for NON-empty malformed math (`${a[1+]}` →
+`bad math expression` + exit 1 in both), so the machinery works; only the empty
+case is swallowed. A faithful fix routes every subscript bound/index through a
+`mathevalarg`-style evaluator that errors on empty AND sets `errflag` (rs's
+`mathevalarg` prints but does not set it — cf. #1033/#1034 where `zerr` needed a
+paired `errflag.fetch_or`), then verifies the flag aborts the expansion to empty
+stdout + exit 1 at all four sites. Deferred rather than guessed.
+
+---
+
+## #1034 — glob `(e)` / `(f)` bare or unterminated qualifier silently accepted — fixed
+
+**Status:** `fixed` 2026-07-18 — surfaced probing glob-qualifier error paths.
+
+A bare or unterminated `e` (shell-eval) or `f` (mode) glob qualifier must abort
+the glob with a fixed error; rs silently dropped the qualifier and matched every
+file:
+
+```
+% zsh  -fc 'print -r -- *(e)'      → zsh: missing end of string
+% zsh  -fc 'print -r -- *(f)'      → zsh: invalid mode specification
+% zsh  -fc 'print -r -- *(f:u+x)'  → zsh: invalid mode specification   (unterminated)
+% zshrs -c 'print -r -- *(e)'      → <all files>   ✗
+% zshrs -c 'print -r -- *(f)'      → <all files>   ✗
+```
+
+C: `e`/`+`/`P` route through `glob_exec_string` → `get_strarg`, which requires a
+delimiter char plus a matching closer; absence is `zerr("missing end of string")`
+(Src/glob.c:1102). `f` routes through `qgetmodespec`, whose every failure path is
+`zerr("invalid mode specification"); return 0` (Src/glob.c:884/930). Fix: the `e`
+arm errors on a missing delimiter or unterminated body; the `f` arm errors when
+`qgetmodespec` returns `None` (it returns `None` only on those C error paths) and
+when a delimited spec is unterminated. Each now calls `zerr` AND sets `errflag`
+(rs's `zerr` does not set it) and returns, mirroring C's
+`zerr(); restore_globstate(); return`. Gated by the `glob` fuzz mode's new
+`(e)`/`(f)`/`(e:foo)`/`(f:u+x)`/`(f:qq:)` qualifier vocabulary; reverting
+reproduces ~25 divergences/500-seed.
+
+---
+
+## #1033 — glob `f` mode qualifier: perm letters parsed without an explicit `who` — port-bug
+
+**Status:** `port-bug` 2026-07-18 — surfaced alongside #1034; NOT fixed, needs a
+faithful re-port of the `qgetmodespec`/`qualmodeflags` packed-value contract.
+
+The letter-without-`who` mode forms diverge in the MATCH result (not the error
+path #1034 covers):
+
+```
+% zsh  -fc 'print -r -- *(f-w)'  → all files   ;  zshrs → no matches found   ✗
+% zsh  -fc 'print -r -- *(f=r)'  → all files   ;  zshrs → no matches found   ✗
+% zsh  -fc 'print -r -- *(f-x)'  → <755 file>  ;  zshrs → <644/600 files>    ✗
+```
+
+In C `qgetmodespec` the permission LETTERS (`r`/`w`/`x`/`s`/`t`) are parsed only
+inside the `if (mask)` arm (Src/glob.c:877), i.e. only when a `who` (`u`/`g`/`o`/
+`a`) was explicitly given; with no `who` the `else if` arm parses ONLY digits and
+`?` (Src/glob.c:901), so the letter is ignored. rs's `qgetmodespec` defaults
+`who` to `0o7777` and parses letters unconditionally, AND rs computes the
+yes/no mask in the qualifier parser rather than consuming C's packed
+`(yes&07777)|((no&07777)<<12)` return through `qualmodeflags`. The empirical zsh
+results (`f+x`→executable-only but `f-w`→all) are inconsistent with a naive
+letter-gating patch, confirming the whole `f` match path needs a faithful
+packed-value port, not a one-line change. Deferred rather than guessed. The
+`glob` fuzz vocabulary deliberately omits these forms so the mode stays green
+pending the port.
+
+---
+
+## #1032 — `disable`d builtin still reported as `builtin` by whence/type/which — fixed
+
+**Status:** `fixed` 2026-07-18 — surfaced by the `whence` fuzz mode
+(`disable print; whence -w print`).
+
+`disable NAME` marks a builtin unusable; zsh then resolves the name as if the
+builtin does not exist. `whence -w`/`type`/`which`/`where` all look the name up
+via `builtintab->getnode` (= `gethashnode`, Src/hashtable.c:239), which returns
+NULL for a node carrying the `DISABLED` flag, and the `-m` walk passes `DISABLED`
+to `scanmatchtable` (Src/builtin.c:4065) to skip such nodes:
+
+```
+% zsh  -fc 'disable print; whence -w print'   → print: none
+% zsh  -fc 'disable let;   type let'          → let not found
+% zshrs -c 'disable print; whence -w print'   → print: builtin   ✗
+% zshrs -c 'disable let;   type let'          → let is a shell builtin  ✗
+```
+
+rs already gated the STATIC `BUILTINS` lookup on the `BUILTINS_DISABLED` set, but
+rs splits builtins across three registries — the static `BUILTINS` table, fusevm
+`shell_builtins` (`echo`/`print`/`let`/`true`/… anti-fork natives), and the
+extension/daemon defs — and the two fallback classification paths in `bin_whence`
+(`is_zshrs_builtin` and `is_extension_builtin`, builtin.rs:8911/8927) plus the
+`-m` scan (builtin.rs:8627) did NOT consult the disabled set, so any anti-fork
+native still classified as `builtin` when disabled. Fix: gate all three paths on
+the disabled set (single-name fallbacks get `&& !is_disabled_builtin`; the `-m`
+scan filters matches against a `BUILTINS_DISABLED` snapshot), matching zsh's
+single-`builtintab`-with-DISABLED-mask model. Gated by the `whence` fuzz mode's
+arm 12 (now covering `let`/`print`/`echo` across `whence -w`/`type`/`which`/`-m`
++ re-enable); reverting reproduces ~82 divergences/500-seed.
+
+---
+
+## #1031 — `zmv` with `(#b)` backreferences / `$match` in the replacement fails — fixed
+
+**Status:** `fixed` 2026-07-18 — the previous iteration documented this as
+root-cause-not-isolated; it turned out to be rs's NATIVE `zmv` reimplementation
+(`src/extensions/ext_builtins.rs`, which intercepts the autoloaded function via
+fusevm_bridge.rs), not the zsh function. Three defects, all now fixed:
+  1. The capture groups were bound only to the POSITIONALS (`$1`..) and `$f`,
+     never the `$match` array — so `$match[N]` in the replacement expanded
+     EMPTY (every file mapped to the same name → collision).
+  2. The candidate glob ran WITHOUT `EXTENDED_GLOB` (zsh's zmv `setopt
+     extendedglob`, zmv:126), so a `(#b)`/`(#m)`/`(#i)` source pattern
+     glob-failed with "no matches found" before any rename.
+  3. The capture REGEX was built from the raw pattern including the `(#…)` flag
+     group, so even once globbed, `re.captures` failed (empty rename set).
+The fix binds captures to `$match` (+ `$MATCH` for `(#m)`), runs the glob under
+extendedglob, and strips the leading `(#b)`/`(#m)`/`(#i)`/`(#l)` flag group from
+the regex (mapping `(#i)`/`(#l)` → case-insensitive). A follow-on fix taught the
+glob→regex builder the extendedglob postfix quantifiers `x#` (zero-or-more →
+`(?:x)*`) and `x##` (one-or-more → `(?:x)+`), including group forms `(…)#` /
+`(…)##` via a `(`-position stack — previously `#` fell through as a literal, so
+`(#b)(a#).txt` globbed but its capture regex never matched. Gated by the `zmv` fuzz
+mode's new fixture-file arm; reverting reproduces ~79 divergences/500-seed. The
+earlier "every primitive works in isolation" finding was the tell — the failing
+code was never the zsh function, so isolating its constructs could never fail.
+
+**Original characterization** — `zmv` failed whenever the replacement used the
+`$match` capture array, or the source pattern began with `(#b)`:
+```sh
+$ cd /tmp/d  # contains file1.dat file2.dat
+$ /opt/homebrew/bin/zsh -fc 'autoload -Uz zmv; zmv -n "(*).dat" "x\$match[1].dat"'
+mv -- file1.dat xfile1.dat
+mv -- file2.dat xfile2.dat
+$ zshrs --zsh -c 'autoload -Uz zmv; zmv -n "(*).dat" "x\$match[1].dat"'   # rs
+zmv: error(s) in substitution:
+file2.dat and file1.dat both map to x.dat        # $match[1] expanded EMPTY
+```
+Two manifestations:
+  - **Replacement `$match[N]`** (`zmv "(*).dat" "x$match[1].dat"`): the loop
+    runs but `$match[1]` is EMPTY at zmv's `g=${(Xe)repl}` (zmv line 263), so
+    every file maps to the same name → collision error. `$1`-style refs work.
+  - **`(#b)` source** (`zmv "(#b)file(?).dat" ...`): errors "no matches found"
+    at the COMMAND line — rs never enters the zmv function body (verified: an
+    entry-marker `print` prepended to a local copy never fires).
+
+**What was RULED OUT** (all verified equal to zsh in isolation): direct globbing
+of `(#b)file(?).dat`; `${~fpat}` globbing (incl. inside `() { setopt
+localoptions nullglob; … }`); `[[ $f = (#b)${~pat} ]]` populating `$match`;
+`set -- "$match[@]"`; `${(Xe)repl}` / `${(e)repl}` re-expanding `$match[1]`;
+autoloaded (both wrapper- and bare-body) functions receiving quoted `(#b)…`
+args literally; and a full hand-written function replicating zmv's exact context
+(`emulate -RL zsh; setopt extendedglob nobareglobqual; local match; [[ ]];
+set --; g=${(Xe)repl}`) — which produces the CORRECT `g=xfile1`. Every primitive
+works; only the composite zmv fails, so the cause is a subtle interaction not
+yet reproduced in isolation. NOT gated (no clean minimal repro to gate on yet).
+
+---
+
 ## #1030 — `print -c` / `print -C N` with no args emitted a spurious newline — fixed
 
 **Status:** `fixed` 2026-07-18 — surfaced probing `print` flag combinations.
