@@ -474,7 +474,7 @@ cargo test --test examples_demos_ci          # full sweep, ~46s parallel
 - ZWC precompiled function support
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
-- `--posix` mode for strict POSIX compliance
+- Per-shell emulation drop-ins: `--zsh`, `--bash`, `--ksh`, `--sh`/`--posix`, and `--dash`. `--dash` is a strict Debian Almquist Shell mode — it applies the `sh` option presets and additionally rejects the zsh-only syntax dash has never had (`$'...'` ANSI-C quoting, `<<<` here-strings, `+=` compound assignment, `name=(...)` arrays, the `[[ ]]` reserved word, arith `**`/`,`, and `printf %q`) while using XSI `echo` — verified byte-for-byte against `/bin/dash`
 
 ### Test corpus parity
 

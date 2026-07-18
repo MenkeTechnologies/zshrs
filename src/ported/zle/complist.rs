@@ -1842,16 +1842,14 @@ pub fn compprintlist(showall: i32) -> i32 {
 
             // c:1611-1674 — grid row/column loop.
             let mut nl_cnt = nc;
-            let mut p_idx: usize = 0;
-            // Skip CMF_HIDE/CMF_NOLIST matches at head.
-            while p_idx < g.matches.len() {
-                let m = &g.matches[p_idx];
-                if (m.flags & CMF_HIDE) != 0 || (showall == 0 && (m.flags & CMF_NOLIST) != 0) {
-                    p_idx += 1;
-                } else {
-                    break;
-                }
-            }
+            // c:1609 — `p = skipnolist(g->matches, showall)`. Must use the
+            // full skipnolist predicate (compresult.rs): besides CMF_HIDE /
+            // CMF_NOLIST / CMF_MULT it ALSO skips `disp && CMF_DISPLINE`
+            // matches — those are printed by the CGF_HASDL block above, so
+            // the grid must not re-print them (else described matches double-
+            // print and concatenate into the packed group).
+            let mut p_idx: usize =
+                crate::ported::zle::compresult::skipnolist(&g.matches, showall);
             let mut n = g.dcount;
             while n > 0 && nl_cnt > 0 && errflag.load(Ordering::SeqCst) == 0 {
                 if last_type == 0 && ml >= mlbeg {
@@ -1927,17 +1925,11 @@ pub fn compprintlist(showall: i32) -> i32 {
                                     if q_idx < g.matches.len() {
                                         q_idx += 1;
                                     }
-                                    while q_idx < g.matches.len() {
-                                        // c:1649 skipnolist
-                                        let m2 = &g.matches[q_idx];
-                                        if (m2.flags & CMF_HIDE) != 0
-                                            || (showall == 0 && (m2.flags & CMF_NOLIST) != 0)
-                                        {
-                                            q_idx += 1;
-                                        } else {
-                                            break;
-                                        }
-                                    }
+                                    // c:1649 — `q = skipnolist(q+1, showall)`
+                                    q_idx += crate::ported::zle::compresult::skipnolist(
+                                        &g.matches[q_idx..],
+                                        showall,
+                                    );
                                 }
                             }
                             mc += 1; // c:1650
@@ -1984,16 +1976,11 @@ pub fn compprintlist(showall: i32) -> i32 {
                             if p_idx < g.matches.len() {
                                 p_idx += 1;
                             }
-                            while p_idx < g.matches.len() {
-                                let m2 = &g.matches[p_idx];
-                                if (m2.flags & CMF_HIDE) != 0
-                                    || (showall == 0 && (m2.flags & CMF_NOLIST) != 0)
-                                {
-                                    p_idx += 1;
-                                } else {
-                                    break;
-                                }
-                            }
+                            // c:1670 — `p = skipnolist(p+1, showall)`
+                            p_idx += crate::ported::zle::compresult::skipnolist(
+                                &g.matches[p_idx..],
+                                showall,
+                            );
                         }
                     }
                 }

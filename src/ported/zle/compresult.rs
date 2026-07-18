@@ -3467,6 +3467,24 @@ pub fn list_matches() -> i32 {
                 let _ = writeln!(f, "list_matches: BOGUS LIST (VALIDLIST==0) — bailing");
             }
         }
+        // !!! RUST-ONLY DIVERGENCE FROM C — recursion-safety, not in C source.
+        // The `if (!validlist)` guard above is `#ifdef DEBUG` in C: production
+        // builds DON'T have it and fall through to `complistmatches`, whose
+        // `nlnct >= zterm_lines` early-exit (complist.c:2007-2011) resets
+        // `showinglist = 0`. This port compiled the DEBUG guard in
+        // unconditionally and returned WITHOUT resolving `showinglist`, so when
+        // `zrefresh`'s post-list branch fires with `showinglist == -2` while the
+        // list is already invalid (`validlist == 0` — e.g. a stale list whose
+        // `showinglist` was flipped back to -2 by `resetvideo`, c:787, on a
+        // SIGWINCH resize), `list_matches` did nothing to `showinglist`, so the
+        // recursive `zrefresh` (zle_refresh.c:1715) re-entered the SAME state
+        // forever → unbounded self-recursion → stack overflow (SIGBUS on
+        // resize). Clear the display-list flags here so the caller's recursion
+        // terminates, matching the net effect of C production's fall-through.
+        SHOWINGLIST.store(0, Ordering::SeqCst);
+        if LISTSHOWN.load(Ordering::SeqCst) < 0 {
+            LISTSHOWN.store(0, Ordering::SeqCst);
+        }
         return 1; // c:2313
     }
     // c:2317-2324 — populate the chdata bag.

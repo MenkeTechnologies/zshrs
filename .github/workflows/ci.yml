@@ -109,6 +109,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  emulation-parity:
+    # Four-way emulation parity: `zshrs --{zsh,ksh,sh,dash}` vs the real
+    # reference shells (tests/emulation_parity.rs) + the dash-strict
+    # rejection suite (tests/dash_mode.rs). ZSHRS_REQUIRE_REF_SHELLS=1
+    # turns a missing reference shell into a failure so the contract is
+    # enforced, not silently skipped — hence every shell is installed
+    # below (dash + /bin/sh are already present on both runners; the
+    # ubuntu runner additionally needs zsh and ksh).
+    name: Emulation parity
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      RUST_BACKTRACE: 1
+      ZSHRS_REQUIRE_REF_SHELLS: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install reference shells (ubuntu runner)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh ksh dash
+      - name: Run emulation parity + dash-strict suites
+        run: cargo test --locked --test emulation_parity --test dash_mode -- --nocapture
+
   # ztst job removed: the per-block fresh-spawn wrapper at tests/ztst_runner.rs
   # was a fake-pass (counted failures, never asserted). The corpus exercises
   # interactive ZLE/completion/job-control/signal-trap paths that need a real

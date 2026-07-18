@@ -4653,6 +4653,19 @@ impl ShellExecutor {
         self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
         crate::ported::options::emulate("ksh", true);
     }
+    /// `enter_dash_mode` — strict-dash (Debian Almquist Shell) runtime.
+    /// Same executor setup as [`enter_posix_mode`] (dash IS `sh` for every
+    /// option), but calls `emulate("dash")` so the Rust-only DASH_STRICT
+    /// flag is raised (and NOT cleared, as `emulate("sh")` would). See
+    /// `src/extensions/dash_mode.rs`.
+    pub fn enter_dash_mode(&mut self) {
+        self.posix_mode = true;
+        self.plugin_cache = None;
+        self.compsys_cache = None;
+        self.compinit_pending = None;
+        self.worker_pool = std::sync::Arc::new(crate::worker::WorkerPool::new(1));
+        crate::ported::options::emulate("dash", true);
+    }
 }
 
 /// Thin (text, pattern) → bool wrapper over the canonical

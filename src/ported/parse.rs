@@ -9915,6 +9915,26 @@ fn parse_cond_primary() -> Option<ZshCond> {
         return Some(ZshCond::Unary(s1, s2));
     }
 
+    // c:Src/parse.c:2626 par_cond_double / :2716 par_cond_multi — a leading
+    // MULTI-char `-X` operator (not a 2-char unary, not a negative number) is
+    // a module/completion condition (`COND_MOD`): the operator name plus all
+    // following operand words. The wordcode parser (par_cond_2/par_cond_double
+    // @ this file's 3271) already does this; the AST parser (this fn, which
+    // feeds the active fusevm compiler) did NOT, so `[[ -prefix PAT ]]`,
+    // `[[ -after PAT ]]` etc. hit "condition expected: -prefix" → `_dispatch`
+    // / `_arguments` failed to load and every completion routed through them
+    // died. Validity of `-X` is checked at EVAL time (unknown → error), never
+    // at parse — mirror that leniency here.
+    if s1_chars.len() > 2 && IS_DASH(s1_chars[0]) && !is_negative_number {
+        let mut margs: Vec<String> = Vec::new();
+        while tok() == STRING_LEX {
+            margs.push(tokstr().unwrap_or_default());
+            zshlex();
+            skip_cond_separators();
+        }
+        return Some(ZshCond::ModCond(s1, margs));
+    }
+
     // Check for binary operator. Direct port of zsh/Src/parse.c:2601-2603:
     //   incond++;  /* parentheses do globbing */
     //   do condlex(); while (COND_SEP());

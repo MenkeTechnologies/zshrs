@@ -2543,14 +2543,19 @@ pub fn comp_check() -> i32 {
 pub fn cond_psfix(a: &[String], id: i32) -> i32 {
     // c:1662
     if comp_check() != 0 {
-        // c:1662
-        // c:1665-1670 — do_comp_vars dispatch on the prefix/suffix
-        // pattern + count. The match-test returns 0 when no
-        // completion matcher set is active; that's the
-        // false-by-default contract the C source delivers when
-        // called outside an in-flight completion.
-        let _ = a;
-        return 0;
+        // c:1664 — `if (comp_check())`
+        if a.len() >= 2 {
+            // c:1666 — `if (a[1]) return do_comp_vars(id, cond_val(a,0),
+            //           cond_str(a,1,1), 0, NULL, 0);`
+            let na = crate::ported::cond::cond_val(a, 0) as i32;
+            let sa = crate::ported::cond::cond_str(a, 1, true);
+            return do_comp_vars(id, na, &sa, 0, "", 0);
+        } else {
+            // c:1669 — `else return do_comp_vars(id, -1, cond_str(a,0,1),
+            //           0, NULL, 0);`
+            let sa = crate::ported::cond::cond_str(a, 0, true);
+            return do_comp_vars(id, -1, &sa, 0, "", 0);
+        }
     }
     0 // c:1671
 }

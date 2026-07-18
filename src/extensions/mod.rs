@@ -35,6 +35,7 @@ pub use crate::completion;
 pub use crate::config;
 pub use crate::daemon_presence;
 pub use crate::dap;
+pub use crate::dash_mode;
 pub use crate::ext_builtins;
 pub use crate::fds;
 pub use crate::fish_features;

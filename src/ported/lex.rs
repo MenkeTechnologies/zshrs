@@ -1455,6 +1455,17 @@ fn gettok() -> lextok {
                             hungetc('<');
                             INANG_TOK
                         }
+                        Some('<') if crate::dash_mode::dash_strict() => {
+                            // !!! DASH-STRICT GATE (no C counterpart) !!!
+                            // dash has no `<<<` here-string. Unget the third
+                            // `<` so `<<` stays a here-document operator and
+                            // the dangling `<` becomes a stray redirection the
+                            // parser rejects — matching /bin/dash's
+                            // "Syntax error: redirection unexpected".
+                            hungetc('<');
+                            LEX_LEXSTOP.set(false);
+                            DINANG
+                        }
                         Some('<') => TRINANG,
                         Some('-') => DINANGDASH,
                         _ => {
@@ -1738,6 +1749,26 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         if in_brace_param == 0 {
                             in_brace_param = bct;
                         }
+                    }
+                    Some('\'') if crate::dash_mode::dash_strict() => {
+                        // !!! DASH-STRICT GATE (no C counterpart) !!!
+                        // dash has no `$'...'` ANSI-C quoting: the `$` is a
+                        // literal dollar and the following `'` opens an
+                        // ordinary single-quoted string, so `printf %s $'\t'`
+                        // yields `$\t` exactly like /bin/dash.
+                        //
+                        // The `$` MUST be emitted as an escaped literal
+                        // (`Bnull '$'`), NOT as `Stringg`: the re-lexed
+                        // single quote emits a leading `Snull`, and the byte
+                        // pair `Stringg Snull` is precisely what getkeystring
+                        // (lex.rs:4910) decodes as a `$'...'` region — which
+                        // would re-enable the ANSI-C decode we are suppressing.
+                        // `Bnull '$'` is a plain literal dollar that cannot
+                        // combine with the following `Snull`.
+                        hungetc('\'');
+                        LEX_LEXSTOP.set(false);
+                        add(Bnull);
+                        add('$');
                     }
                     Some('\'') => {
                         // $'...' ANSI-C escape syntax.
@@ -2134,6 +2165,15 @@ fn gettokstr(c: char, sub: bool) -> lextok {
                         let tok_so_far = LEX_LEXBUF.with_borrow(|b| b.as_str().to_string());
                         if is_valid_assignment_target(&tok_so_far) {
                             let next = hgetc();
+                            if next == Some('(') && crate::dash_mode::dash_strict() {
+                                // !!! DASH-STRICT GATE (no C counterpart) !!!
+                                // dash has no arrays; `name=(...)` is a hard
+                                // syntax error ("( unexpected"). Emit LEXERR
+                                // so the parse fails like /bin/dash instead
+                                // of lexing an ENVARRAY assignment.
+                                peek = LEXERR;
+                                break;
+                            }
                             if next == Some('(') {
                                 // VAR=(...) array assignment. Per zsh
                                 // (lex.c emits ENVARRAY with tokstr =
@@ -3444,6 +3484,16 @@ pub fn exalias() -> bool {
         } else {
             None
         };
+        // !!! DASH-STRICT GATE (no C counterpart) !!! dash has no `[[ ]]`
+        // conditional; `[[` is an ordinary command word (→ "not found").
+        // Suppress only the DINBRACK promotion — every POSIX reserved word
+        // (if/then/while/for/case/…) stays intact. The `]]`/`!`-in-cond
+        // branches below are gated on LEX_INCOND, which never rises now.
+        let rw_tok = if rw_tok == Some(DINBRACK) && crate::dash_mode::dash_strict() {
+            None
+        } else {
+            rw_tok
+        };
         if let Some(rwtok) = rw_tok {
             set_tok(rwtok);
             if rwtok == REPEAT {
@@ -4415,7 +4465,8 @@ fn is_valid_assignment_target(s: &str) -> bool {
                 chars.next();
             }
             // c:1241-1242 — `if (*t == '+') t++;` optional `+=` form.
-            if chars.peek() == Some(&'+') {
+            // dash-strict has no `+=` (see identifier path below).
+            if chars.peek() == Some(&'+') && !crate::dash_mode::dash_strict() {
                 chars.next();
             }
             return chars.peek().is_none();
@@ -4469,8 +4520,12 @@ fn is_valid_assignment_target(s: &str) -> bool {
         let _ = bal; // C ignores the return value here — `t` is advanced regardless.
     }
     // c:1241-1242 — `if (*t == '+') t++;` — optional `+=` form.
+    // !!! DASH-STRICT GATE (no C counterpart) !!! dash has no `+=`
+    // compound assignment; `x+=b` is a command word (→ "not found").
+    // Leaving the `+` unconsumed makes `cursor` non-empty below so the
+    // whole `x+` fails the assignment test, matching /bin/dash.
     if let Some(c) = cursor.chars().next() {
-        if c == '+' {
+        if c == '+' && !crate::dash_mode::dash_strict() {
             cursor = &cursor[1..];
         }
     }

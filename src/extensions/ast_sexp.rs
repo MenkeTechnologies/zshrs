@@ -345,6 +345,15 @@ fn emit_cond(c: &ZshCond, out: &mut String) {
             emit_str(p, out);
             out.push(')');
         }
+        ZshCond::ModCond(op, args) => {
+            out.push_str("(ModCond ");
+            emit_str(op, out);
+            for a in args {
+                out.push(' ');
+                emit_str(a, out);
+            }
+            out.push(')');
+        }
     }
 }
 

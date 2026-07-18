@@ -161,6 +161,9 @@ pub mod ast_sexp;
 /// `dap` submodule.
 #[path = "extensions/dap.rs"]
 pub mod dap;
+/// `dash_mode` submodule — strict-dash emulation flag (Rust-only).
+#[path = "extensions/dash_mode.rs"]
+pub mod dash_mode;
 /// `dumpers` submodule.
 #[path = "extensions/dumpers.rs"]
 pub mod dumpers;
