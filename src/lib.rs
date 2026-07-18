@@ -98,6 +98,10 @@ pub mod completion;
 /// `config` submodule.
 #[path = "extensions/config.rs"]
 pub mod config;
+/// `cow_map` submodule — copy-on-write HashMap wrapper for cheap subshell
+/// snapshot/restore (Rust-only helper).
+#[path = "extensions/cow_map.rs"]
+pub mod cow_map;
 /// `daemon_presence` submodule.
 #[path = "extensions/daemon_presence.rs"]
 pub mod daemon_presence;
@@ -302,6 +306,10 @@ pub mod stringsort;
 /// `worker` submodule.
 #[path = "extensions/worker.rs"]
 pub mod worker;
+/// `async_precmd` submodule — run precmd-style hooks on the worker pool so they
+/// don't block prompt rendering (writes into the shared param table).
+#[path = "extensions/async_precmd.rs"]
+pub mod async_precmd;
 /// `zsh_builtin_docs` submodule.
 #[path = "extensions/zsh_builtin_docs.rs"]
 pub mod zsh_builtin_docs;

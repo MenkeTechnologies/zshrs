@@ -1805,6 +1805,14 @@ pub fn preprompt() {
     // unless the powerlevel10k theme source was intercepted.
     crate::p10k::preprompt_render();
 
+    // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
+    // Fire the `async_precmd` hooks on the worker pool AFTER the prompt is
+    // built/rendered, so they never block the paint. Non-blocking: submits to
+    // the pool and returns immediately; the hooks write into the shared param
+    // table which the NEXT prompt render reads. (Same call shape as the p10k
+    // render above — the ShellExecutor-using logic lives in the extension.)
+    crate::async_precmd::fire_async_precmd();
+
     // c:1582-1589 — periodic-hook dispatch on PERIOD cadence.
     if period > 0 {
         let now = std::time::SystemTime::now()
