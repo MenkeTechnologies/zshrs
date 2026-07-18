@@ -2301,6 +2301,31 @@ pub fn patcomppiece(flagp: &mut i32, paren: i32, tail_out: &mut usize) -> i64 {
             // The numglob shape mirrors C's isnumglob exactly: digits
             // then `-` then digits then `>`. Empty leading / trailing
             // digit runs are OK (gives the `<-N>` / `<N->` / `<->` forms).
+            // c:Src/pattern.c:499-506 — `if (isset(SHGLOB))
+            // zpc_special[ZPC_INPAR] = zpc_special[ZPC_INANG] = Marker;`
+            // ("Grouping and numeric ranges are not valid. We do allow
+            // alternation, however; it's needed for case."). patcompcharsset
+            // (pattern.rs:487) already applies that mask, but this arm never
+            // consulted the table: it ran its inline isnumglob walk
+            // unconditionally, so `<->` stayed an ACTIVE numeric range under
+            // `emulate sh` / `emulate ksh`. C asserts the case is unreachable
+            // there — `DPUTS(isset(SHGLOB), "Treating <..> as numeric range
+            // with SHGLOB")` (c:1532). A disabled slot also covers user
+            // `disable -p '<'`. Fall through to the same literal-`<` emit the
+            // non-numeric rewind path uses. Bug #1053-B.
+            let inang_disabled = { zpc_special.lock().unwrap()[ZPC_INANG as usize] != b'<' };
+            if inang_disabled {
+                let h = patnode(P_EXACTLY);
+                let mut buf = patout.lock().unwrap();
+                let len: u32 = 1;
+                buf.extend_from_slice(&len.to_le_bytes());
+                buf.push(b'<');
+                drop(buf);
+                patparse_off.fetch_add(1, Ordering::Relaxed);
+                *flagp |= P_SIMPLE;
+                *tail_out = h;
+                return h as i64;
+            }
             let entry_off = patparse_off.load(Ordering::Relaxed);
             patparse_off.fetch_add(1, Ordering::Relaxed); // consume `<`
             let parse_n = patparse.lock().unwrap();

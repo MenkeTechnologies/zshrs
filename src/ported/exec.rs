@@ -5644,6 +5644,14 @@ pub fn execshfunc(shf: &mut shfunc, args: &mut Vec<String>) {
 /// status (which doshfunc reads as `lastval` for the `noreturnval`
 /// path).
 #[allow(non_snake_case)]
+/// Port of the module-global `oflags` in `Src/exec.c` (set at c:5970 via
+/// `funcsave->oflags = oflags;`). Holds the attribute flags of the function
+/// CURRENTLY executing, so a nested call can tell whether its caller carried
+/// PM_TAGGED_LOCAL — that is what makes `functions -T` non-recursive.
+/// zshrs-original storage shape (atomic rather than a plain global); the
+/// save/restore discipline matches C's funcsave. Bug #1058.
+pub static FUNC_OFLAGS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 pub fn doshfunc(
     shfunc: &mut shfunc,                  // c:5823
     doshargs: Vec<String>,                // c:5823
@@ -5655,7 +5663,9 @@ pub fn doshfunc(
     use crate::ported::modules::parameter::FUNCSTACK;
     use crate::ported::params::endparamscope;
     use crate::ported::params::locallevel as locallevel_atomic;
-    use crate::ported::zsh_h::{FS_EVAL, FS_FUNC, FS_SOURCE, FUNCTIONARGZERO, PM_UNDEFINED};
+    use crate::ported::zsh_h::{
+        FS_EVAL, FS_FUNC, FS_SOURCE, FUNCTIONARGZERO, PM_TAGGED, PM_TAGGED_LOCAL, PM_UNDEFINED,
+    };
     use std::sync::atomic::Ordering;
 
     let name = shfunc.node.nam.clone(); // c:5827
@@ -5801,13 +5811,45 @@ pub fn doshfunc(
     // c:5915-5916 — `funcsave->emulation/sticky = emulation/sticky;`
     // Emulation snapshot pending the sticky-emulation port.
 
-    // c:5954-5969 — PM_TAGGED / PM_WARNNESTED option-override block.
-    // Anonymous-function name comparison via pointer equality in C;
-    // zshrs uses string equality. Skip until ANONYMOUS_FUNCTION_NAME
-    // sentinel is ported.
-
-    // c:5970 — `funcsave->oflags = oflags;` — module-global tracking
-    // function-attribute inheritance. Skip until oflags is ported.
+    // c:5954-5960 — PM_TAGGED / PM_TAGGED_LOCAL turn XTRACE on for the
+    // duration of the call:
+    //     if (flags & (PM_TAGGED|PM_TAGGED_LOCAL))
+    //         opts[XTRACE] = 1;
+    //     else if (oflags & PM_TAGGED_LOCAL) {
+    //         if (shfunc->node.nam == ANONYMOUS_FUNCTION_NAME)
+    //             flags |= PM_TAGGED_LOCAL;
+    //         else
+    //             opts[XTRACE] = 0;
+    //     }
+    // This is what makes `functions -t f` / `-T f` trace a SINGLE function
+    // without `setopt xtrace` globally. It was previously skipped, so both
+    // flags parsed and stored correctly (builtin.rs c:3358-3365) but nothing
+    // ever consulted them and the traced function ran silently.
+    //
+    // `-T` is the non-recursive form: a function called FROM a `-T` function
+    // gets XTRACE turned back OFF unless it is itself tagged. C tracks the
+    // caller's flags in the module-global `oflags`, saved per call at c:5970
+    // (`funcsave->oflags = oflags;`) and restored on return — mirrored here by
+    // FUNC_OFLAGS. Anonymous functions are the documented exception: they
+    // INHERIT the local tag instead of clearing it, so `-T` tracing spans the
+    // `(anon)` bodies inside the traced function.
+    //
+    // No restore of XTRACE is needed here: it is already in the
+    // always-restored subset at the exit block below (c:6097-6101).
+    // Bug #1058.
+    let mut fn_flags = shfunc.node.flags as u32;
+    let oflags_prev = FUNC_OFLAGS.load(Ordering::Relaxed);
+    if (fn_flags & (PM_TAGGED | PM_TAGGED_LOCAL)) != 0 {
+        opt_state_set("xtrace", true); // c:5955
+    } else if (oflags_prev & PM_TAGGED_LOCAL) != 0 {
+        // c:5956
+        if shfunc.node.nam == ANONYMOUS_FUNCTION_NAME {
+            fn_flags |= PM_TAGGED_LOCAL; // c:5958
+        } else {
+            opt_state_set("xtrace", false); // c:5960
+        }
+    }
+    FUNC_OFLAGS.store(fn_flags, Ordering::Relaxed); // c:5970
 
     // c:5977 — `opts[PRINTEXITVALUE] = 0;` — suppress printexitvalue
     // for inner commands; outer flag restored on exit.
@@ -6130,6 +6172,11 @@ pub fn doshfunc(
             }
         }
     }
+
+    // c:5970 counterpart — `oflags = funcsave->oflags;` restores the caller's
+    // attribute set so a sibling call after this one sees the right `-T`
+    // inheritance. Bug #1058.
+    FUNC_OFLAGS.store(oflags_prev, Ordering::Relaxed);
 
     // c:6104-6112 — LOCALLOOPS warn-on-active-continue/break + restore
     // breaks/contflag/loops snapshot. Skip the warn lines for now;

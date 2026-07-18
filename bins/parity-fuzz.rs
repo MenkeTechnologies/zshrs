@@ -1635,6 +1635,65 @@ fn gen_subscript(seed: u64) -> Vec<String> {
                             r#"(setopt ksharrays; d=(x y x y x); print -r -- "[${d[(ib:3:)x]}]")"#,
                             "SUBSHELL",
                         ),
+                        // KSHARRAYS scalarizes a BARE array reference to
+                        // element 0, so `${arr:#pat}` filters only that one
+                        // element while `${arr[@]:#pat}` / `${arr[*]:#pat}`
+                        // filter the whole array. zshrs applied the reduction
+                        // to all three because the compile layer bound the
+                        // `:#` modifier to the BARE name, discarding the
+                        // `[@]`/`[*]` before paramsubst could record the splat
+                        // — so under `emulate sh` / `emulate ksh` (both set
+                        // KSH_ARRAYS) the filter returned at most one element.
+                        // The no-match forms are the sharpest probes: nothing
+                        // matches, so the whole array must survive, and any
+                        // truncation shows up immediately. Bug #1054.
+                        (
+                            r#"(setopt ksharrays; arr=(a b c); print -r -- "[${arr[@]:#zzz}][${arr:#zzz}]"; print -r -- ${arr[*]:#zzz})"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; arr=(a b c); print -r -- "[${arr[@]:#a}][${arr:#a}]"; print -r -- ${arr[*]:#a})"#,
+                            "SUBSHELL",
+                        ),
+                        // Inside DOUBLE QUOTES only `[@]` keeps the array
+                        // spliced; `[*]` and a RANGE join with IFS into one
+                        // word, so the filter then tests that single joined
+                        // string as a WHOLE — the `"$@"` vs `"$*"` distinction
+                        // carried through `:#`. zshrs filtered per-element for
+                        // all of them, so `"${arr[*]:#b}"` dropped `b` where
+                        // zsh leaves `a b c` untouched (no whole-string match).
+                        // The match/no-match PAIR is what pins it: `:#b` must
+                        // NOT filter while `:#a b c` and `:#*b*` must clear it
+                        // completely. `%`/`/` cannot expose this because they
+                        // transform-then-join; only the element-REMOVING
+                        // filter does. Bug #1055.
+                        (
+                            r#"(arr=(a b c); print -r -- "[${arr[*]:#b}][${arr[*]:#a b c}][${arr[*]:#*b*}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(arr=(a b c); print -r -- "[${arr[1,3]:#b}][${arr[1,3]:#a b c}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(arr=(a b c); print -r -- "[${arr[@]:#b}][${arr:#b}][${(@)arr[*]:#b}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(IFS=-; arr=(a b c); print -r -- "[${arr[*]:#a-b-c}][${arr[*]:#b}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; arr=(a b c); print -r -- "[${(M)arr[@]:#a}][${arr[@]:#c}]")"#,
+                            "SUBSHELL",
+                        ),
+                        // Same shapes with KSHARRAYS OFF — the reduction must
+                        // not fire at all and every form filters the whole
+                        // array.
+                        (
+                            r#"(arr=(a b c); print -r -- "[${arr[@]:#b}][${arr:#b}]"; print -r -- ${arr[*]:#b})"#,
+                            "SUBSHELL",
+                        ),
                         (
                             r#"(setopt ksharrays; a=(a b c d e); print -r -- "[${a[(r)b,(r)d]}]")"#,
                             "SUBSHELL",
@@ -2754,7 +2813,34 @@ fn gen_func(seed: u64) -> Vec<String> {
                     "setopt functionargzero",
                 ],
             );
-            format!("{o}; typeset u; print -r -- \"[${{u-UNSET}}]\"; typeset u=1; typeset u")
+            // The option-TOGGLE sequence is the sharp one. A bare `typeset u`
+            // declared while TYPESET_TO_UNSET is set leaves u PM_UNSET
+            // (PM_DEFAULTED = PM_DECLARED|PM_UNSET, zsh.h:1934); a LATER
+            // `typeset u` must then print NOTHING and re-declare, because C
+            // computes `usepm` from the parameter's UNSET flag at the top of
+            // typeset_single (c:Src/builtin.c:2062-2064) and the bare-name
+            // print at c:2246 sits inside that branch. zshrs keyed the
+            // suppression off the live OPTION instead, so it stayed silent
+            // while the option was set and started printing `u=''` the moment
+            // it was unset — invisible unless the option is toggled BETWEEN
+            // the two declarations. Bug #1056.
+            let toggled = pick(
+                &mut rng,
+                &[
+                    "setopt typesettounset; typeset u; unsetopt typesettounset; typeset u",
+                    "setopt typesettounset; typeset -g u; unsetopt typesettounset; typeset u",
+                    "setopt typesettounset; typeset -x u; unsetopt typesettounset; typeset u",
+                    "setopt typesettounset; typeset u; u=v; unsetopt typesettounset; typeset u",
+                    "setopt typesettounset; typeset u; unsetopt typesettounset; typeset -p u",
+                    "unsetopt typesettounset; typeset u; setopt typesettounset; typeset u",
+                ],
+            );
+            match rng.gen_range(0..2) {
+                0 => format!(
+                    "{o}; typeset u; print -r -- \"[${{u-UNSET}}]\"; typeset u=1; typeset u"
+                ),
+                _ => format!("{toggled}; print -r -- \"[${{u-UNSET}}][${{+u}}]\""),
+            }
         }
         _ => "local v=outer_local; inner_fn".to_string(),
     };
@@ -2788,6 +2874,86 @@ fn gen_func(seed: u64) -> Vec<String> {
     // After the call the globals must be exactly as they were, unless
     // `typeset -g` deliberately reached through.
     stmts.push(r#"print -r -- "after v=$v arr=(${arr[*]}) h=${h[k]}""#.to_string());
+
+    // Per-function execution tracing, as its OWN statements — the arm above
+    // builds a function BODY, so a probe placed there would have been wrapped
+    // as `f() { … }` and never run standalone.
+    //
+    // `functions -t` / `-T` store PM_TAGGED / PM_TAGGED_LOCAL on the shfunctab
+    // node, and doshfunc turns those into XTRACE for the call
+    // (c:Src/exec.c:5954-5960). zshrs stored both flags correctly but the
+    // synthesized shfunc handed to doshfunc hardcoded flags=0, severing the
+    // link: a tagged function ran silently while global `setopt xtrace` — not
+    // routed through that struct — traced fine, which is what hid it.
+    //
+    // The g-nested rows are what separate `-t` from `-T`: `-T` is the
+    // NON-recursive form, so a function called from a `-T` function is not
+    // traced unless itself tagged. A single-function probe cannot tell them
+    // apart. Anonymous-function bodies are deliberately NOT generated — zsh
+    // emits an extra trace line for the `(anon)` invocation that zshrs does
+    // not (docs/BUGS.md #1058, that leg still open). Bug #1058.
+    if rng.gen_bool(0.5) {
+        let traced = pick(
+            &mut rng,
+            &[
+                // xtrace goes to STDERR, and the harness compares STDOUT
+                // (plus exit status) unless the program folds stderr in — so
+                // every row here MUST carry `2>&1` or the trace is invisible
+                // to the differ and the probe silently tests nothing.
+                //
+                // Block-wrapped forms are included now that #1059 is fixed:
+                // entering a function installs a FRESH cmdstack
+                // (c:Src/exec.c:5572-5585), so `%_` inside the callee shows
+                // the callee's own context, not the caller's `cursh`/`then`/
+                // `for`/`case`. Since default PS4 ends in `%_`, every traced
+                // line inside a called function depends on that.
+                "tf(){ print x }; functions -t tf; tf 2>&1",
+                "tf(){ print x }; functions -T tf; tf 2>&1",
+                "tf(){ :; }; functions -T tf; tf 2>&1",
+                "tf(){ print x }; functions -t tf; functions +t tf; tf 2>&1",
+                "tf(){ print x }; functions -T tf; functions +T tf; tf 2>&1",
+                "tg(){ print g }; tf(){ tg }; functions -t tf; tf 2>&1",
+                "tg(){ print g }; tf(){ tg }; functions -T tf; tf 2>&1",
+                "tg(){ print g }; tf(){ tg }; functions -t tg; tf 2>&1",
+                "tg(){ print g }; tf(){ tg }; functions -T tf; functions -t tg; tf 2>&1",
+                "tf(){ print x }; functions -T tf; tf 2>&1; print mid; tf 2>&1",
+                // %_ / cmdstack isolation across the function boundary — the
+                // caller's parser context must NOT leak into the callee.
+                "tf(){ print x }; functions -t tf; { tf } 2>&1",
+                "tg(){ print g }; tf(){ tg }; functions -t tf; if true; then tf; fi 2>&1",
+                "tf(){ print x }; functions -t tf; for i in 1; do tf; done 2>&1",
+                "tf(){ print x }; functions -t tf; case x in x) tf;; esac 2>&1",
+            ],
+        );
+        stmts.push(traced.to_string());
+    }
+
+    // `%_` directly, without xtrace: the cmdstack a function body sees. C gives
+    // the callee a FRESH one (c:Src/exec.c:5572-5585), so the caller's `cursh`
+    // / `then` / `for` / `case` context must not show through. Probed on its
+    // own because it needs no stderr folding, unlike the xtrace rows. Bug #1059.
+    if rng.gen_bool(0.5) {
+        let ctx = pick(
+            &mut rng,
+            &[
+                r#"pf(){ print -rP "[%_]" }; { pf }"#,
+                r#"pf(){ print -rP "[%_]" }; if true; then pf; fi"#,
+                r#"pf(){ print -rP "[%_]" }; for i in 1; do pf; done"#,
+                r#"pf(){ print -rP "[%_]" }; case x in x) pf;; esac"#,
+                r#"pf(){ print -rP "[%_]" }; while true; do pf; break; done"#,
+                r#"pf(){ print -rP "[%_]" }; pg(){ { pf } }; pg"#,
+                r#"pf(){ print -rP "[%_]" }; pf"#,
+                r#"pf(){ print -rP "[%_]" }; ( pf )"#,
+                // The callee's OWN context must still render.
+                r#"pf(){ { print -rP "[%_]" } }; pf"#,
+                r#"pf(){ if true; then print -rP "[%_]"; fi }; pf"#,
+                // No function involved at all.
+                r#"{ print -rP "[%_]" }"#,
+                r#"if true; then print -rP "[%_]"; fi"#,
+            ],
+        );
+        stmts.push(ctx.to_string());
+    }
     // The environment side of the scope pop (see the `local -x` arm above).
     // `printenv` is the observation point because the leak does NOT show up in
     // paramtab — the param is correctly gone while the environ entry survives.
@@ -3762,8 +3928,33 @@ fn gen_builtin(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts: Vec<String> = Vec::new();
 
-    match rng.gen_range(0..7) {
+    match rng.gen_range(0..8) {
         // ---- print: the flag matrix, over a fixed word list.
+        // `builtin NAME` diagnostics. The prefix is the point: zsh emits
+        // `zsh:LINE: no such builtin: NAME` via zwarn (c:Src/exec.c:3436), and
+        // zshrs had a hand-rolled `eprintln!("zshrs:1: …")` in the bridge that
+        // bypassed the ported zwarn — the ONLY error shape of twelve probed
+        // that carried the wrong prefix. Folded to stdout with 2>&1 because the
+        // harness compares stdout. Bug #1063.
+        7 => {
+            let probe = pick(
+                &mut rng,
+                &[
+                    // NB the no-such-builtin message itself is NOT probed
+                    // with an in-program `2>&1`: zsh emits that diagnostic
+                    // OUTSIDE the redirection scope (it stays on stderr even
+                    // under `2>&1` / `2>/dev/null`), which is a separate open
+                    // divergence — docs/BUGS.md #1064. Its rc is still pinned.
+                    "builtin nosuchbuiltin-xyz 2>/dev/null; print rc=$?",
+                    "builtin -- print x 2>/dev/null; print rc=$?",
+                    "builtin print hi 2>&1; print rc=$?",
+                    "builtin builtin print x 2>&1; print rc=$?",
+                    "pf(){ builtin print inner }; pf 2>&1; print rc=$?",
+                    "command nosuchcommand-xyz 2>&1; print rc=$?",
+                ],
+            );
+            stmts.push(probe.to_string());
+        }
         0 => {
             let n = rng.gen_range(1..=4);
             let words: Vec<String> = (0..n)
@@ -4951,6 +5142,22 @@ fn gen_emulate(seed: u64) -> Vec<String> {
                     "a=(1 2); print -r -- ${(j:-:)a}",
                     "print -r -- ${x:-<lit>}",
                     "a=(1 2 3); print -r -- ${a[(r)2]}",
+                    // SH_GLOB disables GROUPING and NUMERIC RANGES in the
+                    // pattern compiler — c:Src/pattern.c:499-506
+                    // `if (isset(SHGLOB)) zpc_special[ZPC_INPAR] =
+                    // zpc_special[ZPC_INANG] = Marker;` ("Grouping and numeric
+                    // ranges are not valid. We do allow alternation, however;
+                    // it's needed for case."). So `<->` is LITERAL text under
+                    // sh/ksh and matches nothing. C treats reaching the range
+                    // compiler under SHGLOB as a bug: `DPUTS(isset(SHGLOB),
+                    // "Treating <..> as numeric range with SHGLOB")` (c:1532).
+                    // zshrs applied the mask in patcompcharsset but its `<`
+                    // arm never consulted the table. Bug #1053-B.
+                    "[[ 5 == <-> ]]; print rc=$?",
+                    "[[ 15 == <1-20> ]]; print rc=$?",
+                    "case 5 in <->) print m;; *) print n;; esac",
+                    "a=(1 2 3); print -r -- ${a[(r)<->]}",
+                    "s=abc; print -r -- ${s#<->}",
                     // NOT generated, all three still divergent and each a
                     // DIFFERENT bug from #1052 (see docs/BUGS.md #1053):
                     //   ${x:-(paren)} / ${x:-a|b}  — under ZSH emulation the
