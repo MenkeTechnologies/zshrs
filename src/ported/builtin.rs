@@ -5064,6 +5064,38 @@ pub fn bin_typeset(
                 } else {
                     0
                 };
+            // !!! BASH-MODE GATE (no C counterpart) !!! `declare -p` of a bash
+            // synthesized special array (PIPESTATUS / FUNCNAME / BASH_VERSINFO)
+            // — these live outside paramtab, so the normal lookup below can't
+            // find them. Emit the bash reusable form (BASH_VERSINFO is a
+            // readonly array).
+            if crate::dash_mode::bash_mode() {
+                if let Some(vals) = crate::dash_mode::bash_special_array(arg_name) {
+                    let esc = |s: &str| -> String {
+                        let mut o = String::with_capacity(s.len());
+                        for c in s.chars() {
+                            if matches!(c, '"' | '\\' | '$' | '`') {
+                                o.push('\\');
+                            }
+                            o.push(c);
+                        }
+                        o
+                    };
+                    let flags = if arg_name == "BASH_VERSINFO" {
+                        "-ar"
+                    } else {
+                        "-a"
+                    };
+                    let body: String = vals
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| format!("[{}]=\"{}\"", i, esc(v)))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    println!("declare {} {}=({})", flags, arg_name, body);
+                    continue;
+                }
+            }
             let existed = paramtab()
                 .read()
                 .map(|t| t.contains_key(arg_name))
