@@ -1465,6 +1465,18 @@ fn gettok() -> lextok {
             }
             let d = hgetc();
             let peek = match d {
+                Some('(') if crate::dash_mode::dash_strict() => {
+                    // !!! DASH-STRICT GATE (no C counterpart) !!!
+                    // dash/ash have no `<(...)` process substitution. Unget the
+                    // `(` so `<` stays a plain input redirection; the `(` then
+                    // sits where a redirection target (filename) is expected, so
+                    // the parser rejects it — matching /bin/dash's
+                    // "Syntax error: \"(\" unexpected". Twin of the `<<<`
+                    // here-string gate below. Found by the dash-strictness sweep.
+                    hungetc('(');
+                    LEX_LEXSTOP.set(false);
+                    INANG_TOK
+                }
                 Some('(') => {
                     // c:828-832 — `<(...)` process substitution.
                     // Fall through to gettokstr; tokfd write doesn't
@@ -1555,6 +1567,16 @@ fn gettok() -> lextok {
             }
             let d = hgetc();
             let peek = match d {
+                Some('(') if crate::dash_mode::dash_strict() => {
+                    // !!! DASH-STRICT GATE (no C counterpart) !!!
+                    // dash/ash have no `>(...)` process substitution. Unget the
+                    // `(` so `>` stays a plain output redirection and the `(`
+                    // becomes an unexpected redirection target → parser rejects
+                    // it, matching /bin/dash. Twin of the `<(` gate above.
+                    hungetc('(');
+                    LEX_LEXSTOP.set(false);
+                    OUTANG_TOK
+                }
                 Some('(') => {
                     // `>(...)` process substitution.
                     hungetc('(');

@@ -747,6 +747,36 @@ fn dash_strict_rejects_arith_command() {
 }
 
 #[test]
+fn dash_strict_rejects_process_substitution() {
+    // dash/ash have no `<(...)` / `>(...)` process substitution — the `<`/`>`
+    // is a plain redirection and the `(` is an unexpected target, so the parser
+    // rejects it (non-zero). bash/zsh support it. macOS `/bin/sh` is bash, so
+    // this is gated on dash_strict (--dash/--ash), not posix-faithful. Found by
+    // the per-mode dash-strictness sweep.
+    let probe = |flag: &str, script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    for strict in ["--dash", "--ash"] {
+        for ps in ["cat <(echo hi)", "diff <(echo a) <(echo a)", "echo x > >(cat)"] {
+            let (_o, ok) = probe(strict, ps);
+            assert!(!ok, "{strict}: process substitution `{ps}` must be a syntax error");
+        }
+        // Plain redirections must still work under strict mode.
+        let (out, ok) = probe(strict, "printf 'y\\n' | cat");
+        assert!(ok && out.trim() == "y", "{strict}: plain pipe/redirect still works");
+    }
+    // bash/zsh support process substitution.
+    for m in ["--bash", "--zsh"] {
+        let (out, ok) = probe(m, "cat <(echo works)");
+        assert!(ok && out.trim() == "works", "{m}: process substitution → works");
+    }
+}
+
+#[test]
 fn bash_mode_self_contained() {
     // Self-contained bash-mode checks (no /bin/bash needed): bash is a
     // superset of POSIX sh — brace expansion is ON (unlike `emulate sh`),
