@@ -553,6 +553,49 @@ fn bash_case_and_at_transforms() {
 }
 
 #[test]
+fn bash_nocasematch_and_read_n() {
+    // Two more --bash-only behaviors:
+    //  * `shopt -s nocasematch` → case-insensitive `[[ == ]]` / `[[ != ]]`.
+    //  * `read -n N` reads at most N chars from stdin (zsh's -n is a no-op).
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    // nocasematch
+    assert_eq!(bash("shopt -s nocasematch; [[ HELLO == hello ]] && echo ci"), "ci");
+    assert_eq!(bash("shopt -s nocasematch; [[ Hello == h* ]] && echo m"), "m");
+    assert_eq!(
+        bash("shopt -s nocasematch; [[ ABC != abc ]] && echo ne || echo eq"),
+        "eq"
+    );
+    // Still case-sensitive without the shopt, and after unsetting it.
+    assert_eq!(bash("[[ HELLO == hello ]] && echo ci || echo cs"), "cs");
+    assert_eq!(
+        bash("shopt -s nocasematch; shopt -u nocasematch; [[ AB == ab ]] && echo ci || echo cs"),
+        "cs"
+    );
+    // read -n
+    assert_eq!(bash(r#"read -n 3 x <<< "abcdef"; echo "$x""#), "abc");
+    assert_eq!(bash(r#"read -n 10 x <<< "short"; echo "$x""#), "short");
+    assert_eq!(bash(r#"read -n 2 a b <<< "xy"; echo "$a-$b""#), "xy-");
+
+    // --zsh: nocasematch is inert (case-sensitive), `read -n` is a boolean
+    // no-op reading the whole line (matching real zsh).
+    let zsh = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(zsh("[[ HELLO == hello ]] && echo ci || echo cs"), "cs");
+    assert_eq!(zsh(r#"read -n foo <<< "hi there"; echo "[$foo]""#), "[hi there]");
+}
+
+#[test]
 fn bash_type_t_query() {
     // bash `type -t NAME` prints a single word: alias / keyword / function /
     // builtin / file, or nothing (exit 1) if unknown. zsh's `type` has no -t.
