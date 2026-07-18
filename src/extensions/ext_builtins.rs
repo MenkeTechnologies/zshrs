@@ -9770,7 +9770,17 @@ pub fn extension_builtin_defs() -> impl Iterator<Item = &'static crate::ported::
         .chain(crate::ported::modules::watch::bintab.iter())
 }
 
-/// True if `name` is one of the folded extension builtins above.
+/// True if `name` is a zshrs builtin that the static `BUILTINS` port table
+/// does not list, so `whence`/`type`/`command` classify it as `builtin`:
+///
+///  * the folded extension bintabs (znative, ztest, watch), and
+///  * every fusevm-registered builtin — the authoritative VM registry
+///    (`fusevm::shell_builtins::is_builtin`) that the compiler resolves a
+///    literal command name against. This covers the zshrs-original builtins
+///    (`async`, `await`, `barrier`, `peach`, `doctor`, `dbview`, …) AND the
+///    coreutils shadows (`cat`, `head`, `sort`, `cut`, …) that zshrs runs
+///    in-process. Without this they dispatch on a literal name but report
+///    `none`/external — a builtin that `whence` can't see.
 pub fn is_extension_builtin(name: &str) -> bool {
-    extension_builtin_defs().any(|b| b.node.nam == name)
+    fusevm::shell_builtins::is_builtin(name) || extension_builtin_defs().any(|b| b.node.nam == name)
 }
