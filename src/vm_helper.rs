@@ -262,7 +262,8 @@ pub struct SubshellSnapshot {
     /// `inner` because paramsubst reads through paramtab).
     pub paramtab: crate::fast_hash::FastMap<String, crate::ported::zsh_h::Param>,
     /// `paramtab_hashed_storage` field.
-    pub paramtab_hashed_storage: HashMap<String, IndexMap<String, String>>,
+    pub paramtab_hashed_storage:
+        crate::cow_map::CowHashMap<String, IndexMap<String, String>>,
     /// `positional_params` field.
     pub positional_params: Vec<String>,
     /// `env_vars` field.
@@ -324,7 +325,8 @@ pub struct SubshellSnapshot {
     /// the full `HashMap<String, Box<shfunc>>` clone — shfunc is
     /// `Clone` and the table snapshot is bounded by the user's
     /// declared function set.
-    pub shfuncs: std::collections::HashMap<String, Box<crate::ported::zsh_h::shfunc>>,
+    pub shfuncs:
+        std::sync::Arc<std::collections::HashMap<String, Box<crate::ported::zsh_h::shfunc>>>,
     /// Parent's compiled-function chunks at subshell entry. Companion
     /// to `shfuncs` above — `ShellExecutor.functions_compiled` is the
     /// runtime dispatch table that `Op::CallFunction` reads through;
@@ -849,6 +851,27 @@ impl ShellExecutor {
             crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
             _ => name.to_string(),
         };
+        // The live param's TYPE is authoritative — paramtab_hashed_storage is
+        // keyed by NAME ONLY (no scope), so a local ARRAY that shadows a special
+        // assoc (`local -a options` / `local -a commands` over the hidden
+        // `options`/`commands` specials) leaves a stale (emptied) hashed_storage
+        // entry behind. Without this guard `exec.assoc("options")` returned
+        // Some(empty), so a subsequent bare `options=(-a -b -c)` routed through
+        // sethparam → "bad set of key/value pairs for associative array"
+        // (odd count), breaking `_sqlite`'s `local -a options; options=(…)`
+        // (separate statements — the one-statement `local -a commands=(…)` form
+        // that openssl uses is typed correctly by bin_typeset). Consult the
+        // current param: if it exists and is NOT PM_HASHED, it's an array/scalar
+        // shadow and the stale assoc storage must not be seen.
+        if let Some(flags) = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(resolved.as_str()).map(|p| p.node.flags as u32))
+        {
+            if (flags & PM_HASHED) == 0 {
+                return None;
+            }
+        }
         paramtab_hashed_storage()
             .lock()
             .ok()
@@ -877,6 +900,18 @@ impl ShellExecutor {
             crate::ported::params::nameref_resolution::Target { name: t_, .. } => t_,
             _ => name.to_string(),
         };
+        // Live-param type is authoritative (see `assoc` above): a non-PM_HASHED
+        // shadow (e.g. `local -a options`) hides the stale name-keyed
+        // hashed_storage entry.
+        if let Some(flags) = crate::ported::params::paramtab()
+            .read()
+            .ok()
+            .and_then(|t| t.get(resolved.as_str()).map(|p| p.node.flags as u32))
+        {
+            if (flags & PM_HASHED) == 0 {
+                return false;
+            }
+        }
         paramtab_hashed_storage()
             .lock()
             .ok()
@@ -1006,6 +1041,82 @@ impl ShellExecutor {
     pub fn unset_scalar(&mut self, name: &str) {
         unsetparam(name);
     }
+    /// Lightweight executor for a POOL WORKER THREAD. Unlike [`new`] (a full
+    /// session bootstrap that re-derives PWD, imports the environment, seeds
+    /// `OPTS_LIVE`, and writes ~30 default params into the GLOBAL param table),
+    /// this constructs ONLY the per-executor struct fields and touches NO
+    /// global state. A worker shares the already-populated, `RwLock`-synchronized
+    /// globals (params / functions / options); re-seeding them here would clobber
+    /// the live main session's values (IFS, OPTIND, `$_`, user options, …).
+    ///
+    /// The worker pool is shared (Arc) — a worker never spins up its own pool.
+    /// Per-worker SQLite caches (compsys / plugin) and the history engine are
+    /// left `None`: a worker runs short compute bodies, not interactive editing.
+    ///
+    /// Phase 1 of the in-process thread-execution model (replaces the
+    /// subprocess-forking parallel builtins). The caller runs the body under
+    /// `ExecutorContext::enter(&mut wex)` so the VM's thread_local executor
+    /// resolves on the worker thread; param writes flow to the shared globals.
+    pub fn new_worker(pool: std::sync::Arc<crate::worker::WorkerPool>) -> Self {
+        // fpath from the inherited env, same as new() — pure read, no global write.
+        let fpath = env::var("FPATH")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        Self {
+            scriptname: Some("zsh".to_string()),
+            scriptfilename: Some("zsh".to_string()),
+            subshell_snapshots: Vec::new(),
+            inline_env_stack: Vec::new(),
+            current_command_glob_failed: std::cell::Cell::new(false),
+            jobs: JobTable::new(),
+            fpath,
+            history: None,        // worker: no interactive history engine
+            completions: HashMap::new(),
+            process_sub_counter: 0,
+            zstyles: Vec::new(),
+            local_scope_depth: 0,
+            pending_underscore: None,
+            in_dq_context: 0,
+            in_scalar_assign: 0,
+            profiling_enabled: false,
+            compsys_cache: None,  // worker: no per-thread SQLite mirror
+            compinit_pending: None,
+            plugin_cache: None,   // worker: no per-thread plugin cache
+            deferred_compdefs: Vec::new(),
+            returning: None,
+            zsh_compat: false,
+            bash_compat: false,
+            posix_mode: false,
+            worker_pool: pool,    // SHARED — never spawn a nested pool
+            intercepts: Vec::new(),
+            async_jobs: HashMap::new(),
+            next_async_id: 1,
+            redirect_scope_stack: Vec::new(),
+            multios_scope_stack: Vec::new(),
+            exec_redirs_permanent: false,
+            pipe_output_pending: false,
+            pipe_output_scope: None,
+            redirect_failed: false,
+            functions_compiled: HashMap::new(),
+            function_source: HashMap::new(),
+            function_line_base: HashMap::new(),
+            function_def_file: HashMap::new(),
+            prompt_funcstack: Vec::new(),
+            tied_array_to_scalar: HashMap::new(),
+            ztest_pass_count: std::sync::atomic::AtomicUsize::new(0),
+            ztest_fail_count: std::sync::atomic::AtomicUsize::new(0),
+            ztest_skip_count: std::sync::atomic::AtomicUsize::new(0),
+            ztest_pass_total: std::sync::atomic::AtomicUsize::new(0),
+            ztest_fail_total: std::sync::atomic::AtomicUsize::new(0),
+            ztest_skip_total: std::sync::atomic::AtomicUsize::new(0),
+            ztest_run_failed: std::sync::atomic::AtomicBool::new(false),
+            ztest_suppress_stdout: false,
+        }
+    }
+
     /// `new` — see implementation.
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
@@ -3815,6 +3926,53 @@ mod tests {
         let mut exec = ShellExecutor::new();
         let status = exec.execute_script("true").unwrap();
         assert_eq!(status, 0);
+    }
+
+    /// Phase 1 of the in-process thread-execution model: prove a shell body
+    /// runs on a POOL WORKER THREAD via `new_worker` and that its `typeset -g`
+    /// lands in the GLOBAL (RwLock-synchronized) param table. Each worker writes
+    /// a DISTINCT key, so a green run shows: (a) `ExecutorContext::enter` +
+    /// `execute_script_zsh_pipeline` work off the main thread, and (b) N
+    /// concurrent writers don't corrupt the shared table. This is the linchpin
+    /// for converting the subprocess-forking parallel builtins to threads.
+    #[test]
+    fn phase1_worker_shell_writes_reach_global_paramtab() {
+        let _g = crate::test_util::global_state_lock();
+        // Seed the globals (options, default params) exactly as a live session
+        // would — workers SHARE these; new_worker() never re-seeds them.
+        let _main = ShellExecutor::new();
+
+        let pool = std::sync::Arc::new(crate::worker::WorkerPool::new(4));
+        const N: usize = 16;
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        for i in 0..N {
+            let tx = tx.clone();
+            let pool_for_worker = std::sync::Arc::clone(&pool);
+            pool.submit(move || {
+                // Lightweight per-worker executor; shares the global tables.
+                let mut wex = ShellExecutor::new_worker(pool_for_worker);
+                let _ = wex.execute_script_zsh_pipeline(&format!(
+                    "typeset -g PHASE1_WK_{i}=val_{i}"
+                ));
+                let _ = tx.send(i);
+            });
+        }
+        drop(tx);
+        // Barrier: wait for all N workers.
+        let mut done = 0usize;
+        while rx.recv().is_ok() {
+            done += 1;
+        }
+        assert_eq!(done, N, "all {N} workers completed");
+
+        // Every worker's write must be visible in the global param table.
+        for i in 0..N {
+            assert_eq!(
+                getsparam(&format!("PHASE1_WK_{i}")),
+                Some(format!("val_{i}")),
+                "worker {i} typeset -g did not reach the global paramtab"
+            );
+        }
     }
 
     #[test]
