@@ -12733,13 +12733,16 @@ pub fn bin_read(
         }
     }
 
-    // !!! BASH-MODE GATE (no C counterpart) !!! bash `read -n N` reads at most
-    // N chars from the input (stopping early at the delimiter), NOT from a
-    // terminal. zsh's optstr treats `-n` as a boolean no-op, so the count N is
-    // left as the first positional; pull it out and route through the char-read
-    // path. `bash_nchars` also skips the tty requirement and stops at newline.
-    let bash_nchars = crate::dash_mode::bash_mode()
-        && OPT_ISSET(ops, b'n')
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash `read -n N` / `read -N N`
+    // read chars from the input (not a terminal): `-n` reads AT MOST N,
+    // stopping early at the delimiter (newline); `-N` reads EXACTLY N, ignoring
+    // the delimiter. zsh's optstr treats both as boolean no-ops, so the count N
+    // is left as the first positional; pull it out and route through the
+    // char-read path (also skips the tty requirement).
+    let bash_n = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'n');
+    let bash_bign = crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'N');
+    let bash_stop_at_nl = bash_n && !bash_bign; // -N ignores the delimiter
+    let bash_nchars = (bash_n || bash_bign)
         && args
             .first()
             .map(|a| a.trim().parse::<i32>().is_ok())
@@ -13048,7 +13051,7 @@ pub fn bin_read(
         while bytes_read < nchars as usize {
             match read_byte(ufd) {
                 Ok(Some(b)) => {
-                    if bash_nchars && b == b'\n' {
+                    if bash_stop_at_nl && b == b'\n' {
                         break; // bash -n stops early at the delimiter
                     }
                     got[bytes_read] = b;
@@ -15323,7 +15326,7 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             // `a` is bash's array-read flag (zsh/ksh use `A`); accepted here
             // so `read -a arr` parses, and treated as array-read only in
             // bash mode (see bin_read's want_array).
-            Some("acd:ek:%lnpqrst:%zu:AE"),
+            Some("acd:ek:%lnNpqrst:%zu:AE"),
             None,
         ),
         BUILTIN(
