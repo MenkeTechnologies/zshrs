@@ -297,6 +297,28 @@ const PORTABLE_CORPUS: &[&str] = &[
     "a=x; b=y; echo \"$a$b\" \"$a-$b\"",                         // concat vs separated
     "v=$(false && echo yes || echo no); echo \"$v\"",           // cmd-sub with && ||
     "unset x; echo \"${x:=set}\"; echo \"$x\"",                  // := assigns then reads
+    // Eighth expansion batch (harness_classify8.sh) — grouping, subshells,
+    // nested loops, case globs, heredoc-with-cmd-sub.
+    "{ echo a; echo b; }",                                       // brace group
+    "( echo x; echo y )",                                        // subshell group
+    "{ echo grouped; } | cat",                                  // brace group piped
+    "x=5; ( x=10 ); echo $x",                                    // subshell var isolation
+    "echo before; { false; } || echo recovered",                // group in || chain
+    "v=$( { echo one; echo two; } ); echo \"$v\" | wc -l | tr -d ' '", // group in cmd-sub
+    "for i in 1 2; do for j in a b; do printf '%s%s ' \"$i\" \"$j\"; done; done; echo", // nested for
+    "n=0; for x in a b c; do case $x in b) continue;; esac; n=$((n+1)); done; echo $n", // continue in case
+    "for x in 1 2 3 4 5; do [ $x -eq 3 ] && break; printf '%s' \"$x\"; done; echo", // break in for
+    "cat <<END\n$(echo cmd-in-heredoc)\nEND",                    // cmd-sub inside heredoc
+    "x=hi; cat <<END\nvalue=$x\nEND",                            // var inside heredoc
+    "x=$(exit 2) || echo \"failed:$?\"",                         // cmd-sub failure status in ||
+    "case \"\" in \"\") echo empty;; esac",                     // empty-string case
+    "case 5 in [0-9]) echo digit;; esac",                       // case digit class
+    "case abc in ?b?) echo mid;; esac",                          // case ? globs
+    "x=file.txt; case $x in *.txt) echo text;; *.log) echo log;; esac", // case extension match
+    "r=0; for x in 1 2 3; do r=$((r+x)); done; [ $r -eq 6 ] && echo sum6", // loop sum + test
+    "printf '%s\\n' \"$( (echo a; echo b) | tail -1)\"",         // subshell piped in cmd-sub
+    "seq 1 3 | while read n; do printf '%s' \"$n\"; done; echo",  // pipe into while-read
+    "{ read a; read b; } <<END\nfirst\nsecond\nEND\necho \"$a-$b\"", // group read from heredoc
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -453,6 +475,14 @@ const EXTENDED_CORPUS: &[&str] = &[
     "(( a = 2, b = 3, c = a + b )); echo \"$c\"",          // comma-sequence assigns → 5
     "v=aXbXc; echo \"${v%%X*}|${v##*X}\"",                 // greedy strip both ends
     "(( x = 10 % 3 )); [[ $x -eq 1 ]] && echo mod",        // (( )) result in [[ -eq ]]
+    // Eighth expansion batch (harness_classify8.sh).
+    "a=(1 2 3); ( a=(x y); echo \"${#a[@]}\" ); echo \"${#a[@]}\"", // subshell array isolation
+    // (empty-array `${#a[@]}` count omitted — legitimately differs on mksh)
+    "a=(a b c); i=0; while [ $i -lt \"${#a[@]}\" ]; do printf '%s' \"${a[$i]}\"; i=$((i+1)); done; echo", // index while over array
+    "a=(3 1 2); b=(\"${a[@]}\"); echo \"${b[0]}${b[1]}${b[2]}\"", // array copy by splat
+    "a=(1 2 3); (( sum=0 )); for x in \"${a[@]}\"; do (( sum+=x )); done; echo $sum", // (( += )) over array
+    "[[ abc == a?c ]] && [[ abc == ??? ]] && echo both", // two [[ globs chained
+    "x=5; case $x in [1-3]) echo lo;; [4-6]) echo mid;; esac", // case numeric ranges
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
