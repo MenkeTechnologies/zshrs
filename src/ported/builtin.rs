@@ -16934,6 +16934,71 @@ fn printf_format(
                     out.push_str(&format_spec_str(&spec, &a, false));
                     arg_i += 1;
                 }
+                // bash/ksh `printf '%(FMT)T' TS` — strftime(FMT, TS). The
+                // timestamp is epoch seconds; a NEGATIVE value or a MISSING
+                // arg means "now" (bash also defines -2 = shell start, treated
+                // as now here). zsh's printf has NO such directive (it uses the
+                // `strftime` builtin), so it is gated to bash / ksh emulation;
+                // under --zsh it stays an "invalid directive" like real zsh.
+                Some('(') => {
+                    let allow = crate::dash_mode::bash_mode()
+                        || crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_KSH);
+                    // Collect the strftime format up to the matching ')'.
+                    let mut tfmt = String::new();
+                    let mut closed = false;
+                    for c in iter.by_ref() {
+                        if c == ')' {
+                            closed = true;
+                            break;
+                        }
+                        tfmt.push(c);
+                    }
+                    // The conversion char after ')' must be 'T'.
+                    let conv_t = iter.next() == Some('T');
+                    if !allow || !closed || !conv_t {
+                        return Err((out, format!("{}(: invalid directive", spec)));
+                    }
+                    let now = crate::ported::modules::datetime::getcurrenttime()
+                        .first()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(0);
+                    let ts: i64 = match args.get(arg_i) {
+                        Some(a) => {
+                            arg_i += 1;
+                            let v = parse_int_arg(a);
+                            if v < 0 {
+                                now
+                            } else {
+                                v
+                            }
+                        }
+                        None => now,
+                    };
+                    let formatted = (|| -> Option<String> {
+                        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+                        let t = ts as libc::time_t;
+                        let cfmt = std::ffi::CString::new(tfmt.as_str()).ok()?;
+                        unsafe {
+                            if libc::localtime_r(&t, &mut tm).is_null() {
+                                return None;
+                            }
+                            let mut buf = vec![0u8; 256];
+                            let n = libc::strftime(
+                                buf.as_mut_ptr() as *mut libc::c_char,
+                                buf.len(),
+                                cfmt.as_ptr(),
+                                &tm,
+                            );
+                            buf.truncate(n);
+                            String::from_utf8(buf).ok()
+                        }
+                    })()
+                    .unwrap_or_default();
+                    // Apply any field width/flags to the rendered string, the
+                    // same way `%s` does.
+                    spec.push('s');
+                    out.push_str(&format_spec_str(&spec, &formatted, false));
+                }
                 Some('d') | Some('i') => {
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     let n = parse_int_arg(&a);

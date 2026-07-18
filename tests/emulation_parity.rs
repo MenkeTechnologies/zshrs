@@ -609,6 +609,38 @@ fn bash_arith_subscript_and_assoc_keys() {
 }
 
 #[test]
+fn bash_printf_time_format() {
+    // bash/ksh `printf '%(FMT)T' TS` renders TS (epoch seconds) via strftime;
+    // a negative or missing TS means "now". zsh's printf lacks this directive.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    // Fixed timestamps in UTC are deterministic across machines.
+    assert_eq!(bash(r#"TZ=UTC printf '%(%Y-%m-%d)T\n' 0"#), "1970-01-01");
+    assert_eq!(
+        bash(r#"TZ=UTC printf '%(%Y-%m-%dT%H:%M:%S)T\n' 1000000000"#),
+        "2001-09-09T01:46:40"
+    );
+    // Field width applies to the rendered string.
+    assert_eq!(bash(r#"TZ=UTC printf '[%10(%Y)T]\n' 0"#), "[      1970]");
+    // A missing timestamp uses the current time — assert only its shape.
+    let now_year = bash(r#"printf '%(%Y)T\n'"#);
+    assert!(now_year.len() == 4 && now_year.chars().all(|c| c.is_ascii_digit()));
+
+    // --zsh has no `%(...)T` directive — it must stay an invalid directive.
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", r#"printf '%(%Y)T\n' 0"#])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
+}
+
+#[test]
 fn bash_prefix_name_matching() {
     // bash `${!prefix@}` / `${!prefix*}` list the NAMES of set variables whose
     // name starts with `prefix` (sorted), excluding zsh-internal magic params
