@@ -511,6 +511,20 @@ fn add(c: char) {
 /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
 /// a command substitution.
 fn cmd_or_math() -> i32 {
+    // dash/ash have NO `(( ))` arithmetic command — `((` is just two nested
+    // subshells `( (`. Real dash runs `(( 1 + 1 ))` as the command `1` (with
+    // args `+ 1`) inside two subshells → "1: not found", non-zero. Force the
+    // command (subshell) path here so zshrs --dash/--ash matches: push back the
+    // second `(` (already consumed by the LX1_INPAR caller) and return CMD, as
+    // the rewind path below does. Runs BEFORE cmdpush so there is no cmdpop
+    // imbalance. `for ((…))` is unaffected (it returns DINPAR earlier, before
+    // cmd_or_math), and `$(( ))` arithmetic uses a different path entirely.
+    // Found by the per-mode dash-strictness sweep.
+    if crate::dash_mode::dash_strict() {
+        hungetc('(');
+        LEX_LEXSTOP.set(false);
+        return CMD_OR_MATH_CMD;
+    }
     let oldlen = LEX_LEXBUF.with_borrow(|b| b.buf_len());
 
     // c:501 — `cmdpush(cs_type);` — the C source takes a `cs_type`
