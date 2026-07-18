@@ -808,7 +808,11 @@ pub(crate) fn lexconstant() -> i32 {
                 });
                 return NUM;
             }
-            Some('b') => {
+            // !!! DASH-STRICT GATE !!! `0b` binary literals are a zsh/bash(4+)
+            // extension; real dash/ash reject them (POSIX has only decimal /
+            // `0` octal / `0x` hex). Under --dash/--ash the `b` is left
+            // unconsumed so `0b101` errors on the stray `b`, matching dash.
+            Some('b') if !crate::dash_mode::dash_strict() => {
                 // Binary: 0b1010
                 advance();
                 let bin_start = m_pos();

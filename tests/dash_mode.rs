@@ -100,10 +100,15 @@ fn dash_rejects_arith_base_num() {
     // POSIX arithmetic (dash/ash) has NO `base#num` syntax — only decimal,
     // `0` octal, `0x` hex. `16#ff` etc. are zsh/bash/ksh extensions that real
     // dash rejects ("expecting EOF: 16#ff"). --dash must error, not compute.
-    for script in ["echo $((16#ff))", "echo $((8#17))", "echo $((2#1010))"] {
+    for script in [
+        "echo $((16#ff))",
+        "echo $((8#17))",
+        "echo $((2#1010))",
+        "echo $((0b101))", // 0b binary is also non-POSIX (bash 4+/zsh only)
+    ] {
         let (out, code) = run_dash_mode(script);
         assert_eq!(out, "", "`{script}` should produce no output under --dash");
-        assert_ne!(code, 0, "`{script}` base#num must error under --dash");
+        assert_ne!(code, 0, "`{script}` non-POSIX arith base must error under --dash");
     }
     // But plain POSIX bases still work.
     assert_eq!(run_dash_mode("echo $((0x1f))").0, "31\n");
