@@ -597,10 +597,21 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
         // read instead of reporting EOF (see the simple-read path below
         // for the full rationale; SIGCHLD from prompt-segment
         // subprocesses interrupts this read constantly).
+        let mut eintr_retries = 0i32;
         let n = loop {
             let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
-            if n == -1
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+            let errno = std::io::Error::last_os_error().raw_os_error();
+            // c:917 — retry a signal-interrupted read unless a shell condition
+            // is pending. On macOS/BSD a blocking tty read interrupted by a
+            // signal (SIGCHLD from p10k's per-prompt subprocesses) can return
+            // 0 with errno=EINTR — Linux returns -1. Treating that 0 as hard
+            // EOF aborted the read mid-escape-sequence, so arrow keys (\e[A …)
+            // self-inserted. Retry BOTH the -1 and the spurious-0 EINTR case,
+            // bounded to 20 (C's getbyte icnt guard) so a genuine hangup EOF
+            // still terminates.
+            if (n == -1 || n == 0)
+                && errno == Some(libc::EINTR)
+                && eintr_retries < 20
                 && (crate::ported::utils::errflag.load(Ordering::Relaxed)
                     & crate::ported::zsh_h::ERRFLAG_ERROR)
                     == 0
@@ -608,6 +619,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
                 && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
                 && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
             {
+                eintr_retries += 1;
                 continue; // c:917 — retry the interrupted read
             }
             break n;
@@ -660,10 +672,21 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
     // editor abandoned the read and the pending keystroke was lost
     // (native-p10k renders spawn subprocesses per prompt, so SIGCHLD
     // made this fire constantly).
+    let mut eintr_retries = 0i32;
     let n = loop {
         let n = unsafe { libc::read(shtty, buf.as_mut_ptr() as *mut libc::c_void, 1) };
-        if n == -1
-            && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        // c:917 — retry a signal-interrupted read unless a shell condition is
+        // pending. On macOS/BSD a blocking tty read interrupted by a signal
+        // (SIGCHLD from p10k's per-prompt subprocesses) can return 0 with
+        // errno=EINTR — Linux returns -1. Treating that spurious 0 as hard EOF
+        // aborted the read mid-escape-sequence, so arrow keys (\e[A, \e[B, …)
+        // self-inserted as literal `^[[A`. Retry BOTH the -1 and the 0 EINTR
+        // case, bounded to 20 (C's getbyte icnt guard) so a genuine hangup EOF
+        // still terminates. This was the "all arrow keys broken" regression.
+        if (n == -1 || n == 0)
+            && errno == Some(libc::EINTR)
+            && eintr_retries < 20
             && (crate::ported::utils::errflag.load(Ordering::Relaxed)
                 & crate::ported::zsh_h::ERRFLAG_ERROR)
                 == 0
@@ -671,6 +694,7 @@ pub fn raw_getbyte(do_keytmout: bool) -> Option<u8> {
             && crate::ported::builtin::BREAKS.load(Ordering::Relaxed) == 0
             && crate::ported::builtin::EXIT_PENDING.load(Ordering::Relaxed) == 0
         {
+            eintr_retries += 1;
             continue; // c:917 — retry the interrupted read
         }
         break n;
