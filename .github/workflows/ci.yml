@@ -110,13 +110,15 @@ jobs:
           retention-days: 30
 
   emulation-parity:
-    # Four-way emulation parity: `zshrs --{zsh,ksh,sh,dash}` vs the real
+    # Five-way emulation parity: `zshrs --{zsh,bash,ksh,sh,dash}` vs the real
     # reference shells (tests/emulation_parity.rs) + the dash-strict
-    # rejection suite (tests/dash_mode.rs). ZSHRS_REQUIRE_REF_SHELLS=1
-    # turns a missing reference shell into a failure so the contract is
-    # enforced, not silently skipped — hence every shell is installed
-    # below (dash + /bin/sh are already present on both runners; the
-    # ubuntu runner additionally needs zsh and ksh).
+    # rejection suite (tests/dash_mode.rs). The portable corpus runs against
+    # all five; an extended corpus (arrays, [[, (( )), brace expansion,
+    # substring/replace) runs against the extended shells (zsh/bash/ksh).
+    # ZSHRS_REQUIRE_REF_SHELLS=1 turns a missing reference shell into a
+    # failure so the contract is enforced, not silently skipped — hence every
+    # shell is installed below (bash, dash and /bin/sh are already present on
+    # both runners; the ubuntu runner additionally needs zsh and ksh).
     name: Emulation parity
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -133,7 +135,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install reference shells (ubuntu runner)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zsh ksh dash
+        # Core five (zsh/ksh/dash + bash & /bin/sh already present) are
+        # enforced; mksh is a real package (best-effort leg). ash is
+        # best-effort and simply skips where absent.
+        run: sudo apt-get update && sudo apt-get install -y zsh ksh dash mksh
       - name: Run emulation parity + dash-strict suites
         run: cargo test --locked --test emulation_parity --test dash_mode -- --nocapture
 

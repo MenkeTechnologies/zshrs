@@ -13054,6 +13054,31 @@ pub fn bin_read(
         return if is_yes { 0 } else { 1 };
     }
 
+    // Backslash-escaped chars were tagged with the Bnull mark (\u{99}) by
+    // the read loop so the IFS splitting below treats them as literal.
+    // `rmark` is that tag; `unmark` strips it (keeping the escaped char),
+    // applied to every field/value just before assignment. Both are no-ops
+    // on the common markerless line (fast `contains` guard). No C
+    // counterpart — C's read splits inline during the char loop, so it
+    // never needs a post-hoc mark; the port splits in a second pass.
+    let rmark = '\u{99}';
+    let unmark = |s: &str| -> String {
+        if !s.contains(rmark) {
+            return s.to_string();
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut m = false;
+        for c in s.chars() {
+            if !m && c == rmark {
+                m = true;
+                continue;
+            }
+            m = false;
+            out.push(c);
+        }
+        out
+    };
+
     // Assign to scalar reply, multi-var split, or array.
     // c:6685-6735 — `read x y z` splits buf by IFS, fills the first
     // N-1 vars with one IFS-separated field each, and stores the
@@ -13091,6 +13116,14 @@ pub fn bin_read(
         let mut field = String::new();
         let mut chars = trimmed.chars().peekable();
         while let Some(c) = chars.next() {
+            // A Bnull-marked char is a backslash-escaped literal — never a
+            // separator. Consume the mark and push the following char raw.
+            if c == rmark {
+                if let Some(nc) = chars.next() {
+                    field.push(nc);
+                }
+                continue;
+            }
             if is_ifs(c) {
                 parts.push(std::mem::take(&mut field));
                 if c.is_whitespace() {
@@ -13170,16 +13203,38 @@ pub fn bin_read(
         // (the whole-line -E echo worked only for a single variable).
         let opt_e = OPT_ISSET(ops, b'e');
         let opt_echo = opt_e || OPT_ISSET(ops, b'E');
+        // Strip escape marks just before assignment so `read x y` on `a\ b`
+        // assigns x="a b" (one field), matching dash/ksh/bash/zsh.
         let emit = |var: &str, val: &str| {
+            let val = unmark(val);
             if opt_echo {
                 println!("{val}"); // c:6958 zputs + putchar('\n')
             }
             if !opt_e {
-                setsparam(var, val); // c:7106
+                setsparam(var, &val); // c:7106
             }
         };
         let trimmed = buf.trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace());
         let mut remaining = trimmed.to_string();
+        // Find the next UNMARKED IFS separator (a Bnull-marked char is a
+        // backslash-escaped literal and never delimits).
+        let next_sep = |s: &str| -> Option<usize> {
+            let mut m = false;
+            for (bi, c) in s.char_indices() {
+                if m {
+                    m = false;
+                    continue;
+                }
+                if c == rmark {
+                    m = true;
+                    continue;
+                }
+                if is_ifs(c) {
+                    return Some(bi);
+                }
+            }
+            None
+        };
         for (i, var) in vars.iter().enumerate() {
             if i + 1 == vars.len() {
                 // Last var: store the remainder, trim trailing IFS.
@@ -13189,7 +13244,7 @@ pub fn bin_read(
                 emit(var, &final_val);
             } else {
                 // Find next IFS char.
-                match remaining.find(is_ifs) {
+                match next_sep(&remaining) {
                     Some(idx) => {
                         let field = remaining[..idx].to_string();
                         // c:Src/utils.c:3711 spacesplit — skip the whole
@@ -13241,6 +13296,8 @@ pub fn bin_read(
         let trimmed = buf
             .trim_start_matches(|c: char| is_ifs(c) && c.is_whitespace())
             .trim_end_matches(|c: char| is_ifs(c) && c.is_whitespace());
+        // Strip backslash-escape marks: `read x` on `a\ b` → x="a b".
+        let trimmed = unmark(trimmed);
         // c:Src/builtin.c:7102-7109 — `-e` / `-E` flags. Both echo
         // the read content to stdout (`zputs(buf, stdout); putchar
         // ('\n')`); `-e` ALSO skips the setsparam (echo-only, no
@@ -13251,7 +13308,7 @@ pub fn bin_read(
             println!("{}", trimmed);
         }
         if !opt_e {
-            setsparam(&reply, trimmed);
+            setsparam(&reply, &trimmed);
         }
     }
     // c:Src/builtin.c:6534 — partial-EOF post-assign exit.
@@ -17098,6 +17155,50 @@ fn parse_int_arg(s: &str) -> i64 {
     // the trailing space gets stripped before the leading-quote test.
     if let Some(rest) = s.strip_prefix('\'').or_else(|| s.strip_prefix('"')) {
         return rest.chars().next().map(|c| c as i64).unwrap_or(0);
+    }
+    // !!! POSIX-FAITHFUL GATE (no C counterpart) !!!
+    // zsh's printf `%d` math-EVALUATES its operand, so `printf %d A` treats
+    // `A` as a math variable (→ 0, exit 0) and `printf %d 1+1` → 2. dash /
+    // POSIX sh instead do `strtoimax` NUMERIC parsing: they use the leading
+    // parsed value and exit non-zero on any non-numeric junk (`A` → 0 exit 1,
+    // `1+1` → 1 exit 1, `12x` → 12 exit 1, `  7  ` → 7 exit 1), while an
+    // empty operand is a clean 0. Under `zshrs --sh`/`--dash`
+    // (posix_faithful + EMULATE_SH) parse numerically to match the real
+    // shell exactly. `--... --zsh` and runtime `emulate sh` leave
+    // posix_faithful() false and keep zsh's math-eval semantics.
+    if crate::dash_mode::posix_faithful()
+        && crate::ported::zsh_h::EMULATION(crate::ported::zsh_h::EMULATE_SH)
+    {
+        if s.is_empty() {
+            return 0; // dash: empty operand → 0, exit 0 (no error)
+        }
+        // strtoimax: skip leading whitespace, optional sign, base prefix.
+        let t = s.trim_start_matches([' ', '\t', '\n']);
+        let (neg, body) = match t.strip_prefix('-') {
+            Some(r) => (true, r),
+            None => (false, t.strip_prefix('+').unwrap_or(t)),
+        };
+        let (radix, digits) = if let Some(h) =
+            body.strip_prefix("0x").or_else(|| body.strip_prefix("0X"))
+        {
+            (16u32, h)
+        } else if body.starts_with('0') {
+            (8u32, body) // leading 0 → octal ("0" itself is a clean 0)
+        } else {
+            (10u32, body)
+        };
+        let ndig = digits.chars().take_while(|c| c.is_digit(radix)).count();
+        // Digit chars are ASCII, so char count == byte length of the run.
+        let mut val = i64::from_str_radix(&digits[..ndig], radix).unwrap_or(0);
+        if neg {
+            val = -val;
+        }
+        // POSIX: any leftover after the digit run — or no digits at all —
+        // is a diagnostic (exit 1); the leading value is still used.
+        if ndig == 0 || ndig != digits.chars().count() {
+            PRINTF_MATH_ERR.with(|c| c.set(true));
+        }
+        return val;
     }
     // c:Src/builtin.c:5460 — `zlongval = mathevali(metafy(curarg, …))`.
     // printf evaluates the %d/%i operand as a math expression. matheval

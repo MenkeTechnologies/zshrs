@@ -279,7 +279,10 @@ pub fn emulate(mode: &str, fully: bool) {
     // (parseopts_setemulate → emulate(basename)) and the `emulate dash`
     // builtin, since both funnel through this one function.
     let bare = mode.strip_prefix('r').unwrap_or(mode);
-    let is_dash = bare == "dash";
+    // `ash` (the original Almquist shell / BusyBox ash) is the parent of
+    // `dash` (Debian Almquist Shell) and shares its strict-POSIX subset, so
+    // both names select the same dash-strict personality.
+    let is_dash = bare == "dash" || bare == "ash";
     // Strict-dash flag is orthogonal to the EMULATION bitmap: raise it for
     // `dash`, clear it for every other personality so a later `emulate zsh`
     // (etc.) fully leaves dash mode. The flag itself is a Rust-only
