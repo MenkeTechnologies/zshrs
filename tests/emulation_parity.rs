@@ -222,6 +222,39 @@ const PORTABLE_CORPUS: &[&str] = &[
     "x=$((3)); y=$((x*x)); printf '%s\\n' \"$y\"",                 // chained arithmetic assigns
     "printf '%s\\n' \"$(false || echo recovered)\"",              // cmd-sub with || recovery
     "v=a:b:c; while [ -n \"$v\" ]; do printf '%s ' \"${v%%:*}\"; case $v in *:*) v=\"${v#*:}\";; *) v='';; esac; done; printf '\\n'", // split-loop idiom
+    // Fifth expansion batch (harness_classify5.sh) — heredocs, redirection,
+    // pipelines, printf specifiers, arith bases, getopts. NOTE: heredoc entries
+    // use REAL newlines (\n in the Rust literal), not the printf \\n escape.
+    "cat <<EOF\nline1\nline2\nEOF",                               // plain heredoc
+    "cat <<-EOF\n\tindented\n\ttabbed\nEOF",                      // <<- strips leading tabs
+    "x=world; cat <<EOF\nhello $x\nEOF",                          // heredoc expands vars
+    "cat <<\"EOF\"\nno $expand here\nEOF",                        // quoted delimiter → literal
+    "read a b <<EOF\none two three\nEOF\nprintf '%s\\n' \"$a\"",  // read from heredoc
+    "printf '%s\\n' foo > /dev/null; printf '%s\\n' bar",         // redirect stdout to /dev/null
+    "printf 'err\\n' >&2 2>/dev/null; printf 'out\\n'",           // stderr redirect
+    "exec 3>&1; printf '%s\\n' via3 >&3; exec 3>&-",              // custom fd dup + close
+    "{ printf a; printf b; } | tr a-z A-Z",                       // brace group piped
+    "printf '%s\\n' one two three | wc -l | tr -d ' '",           // multi-stage pipeline
+    "echo hi | cat | cat | cat",                                  // long pipeline
+    "x=$(printf a; printf b; printf c); printf '%s\\n' \"$x\"",   // cmd-sub multi-statement
+    "true | false; printf '%s\\n' \"$?\"",                        // pipeline exit = last stage
+    "false | true; printf '%s\\n' \"$?\"",                        // pipeline exit = last (0)
+    "false && printf a; printf '%s\\n' \"$?\"",                   // && short-circuit status
+    "( exit 5 ); printf '%s\\n' \"$?\"",                          // subshell exit status
+    "printf '%5.3f\\n' 3.14159",                                  // float width.precision
+    "printf '%e\\n' 1000",                                        // scientific notation
+    "printf '%g\\n' 0.0001",                                      // general float format
+    "printf '%i\\n' 42",                                          // %i alias for %d
+    "printf '%%\\n'",                                             // literal percent
+    "printf 'a%sb%sc\\n' X Y",                                    // interleaved %s
+    "printf '%o\\n' 64",                                          // octal output → 100
+    // NB: `$(( base#num ))` is NOT portable — bash/ksh/zsh accept it but real
+    // dash/ash reject it (POSIX arithmetic has no base# syntax), so it lives in
+    // EXTENDED, and dash-strict mode rejects it to match the real shell.
+    "set -- -a -b arg; getopts 'ab:' o; printf '%s\\n' \"$o\"",   // getopts first flag
+    "printf '[%10s]\\n' hi",                                      // right-justified width
+    "printf '[%-10s]\\n' hi",                                     // left-justified width
+    "x=$(echo a b c); set -- $x; printf '%s\\n' \"$2\"",          // cmd-sub then word-split
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -342,6 +375,23 @@ const EXTENDED_CORPUS: &[&str] = &[
     "[[ \"\" ]] || printf empty; printf '\\n'",             // [[ empty-string ]] is false
     "[[ x ]] && printf nonempty; printf '\\n'",             // [[ nonempty-string ]] is true
     "a=(one); a+=(two three); printf '%s\\n' \"${a[*]}\"",  // multi-element append
+    // Fifth expansion batch (harness_classify5.sh — anchored/class/nested).
+    "a=(1 2 3); printf '%s\\n' \"${a[@]/#/x}\"",            // prepend to each element
+    "a=(1 2 3); printf '%s\\n' \"${a[@]/%/y}\"",            // append to each element
+    "x=5; [[ $x -eq 5 ]] && printf y; printf '\\n'",        // [[ arithmetic -eq
+    "[[ -e /dev/null ]] && printf exists; printf '\\n'",    // [[ file-exists test
+    "a=(a b c); printf '%s\\n' \"${a[@]:0:0}\"; printf end", // zero-length slice
+    "v=abcdef; printf '%s\\n' \"${v:(-2)}\"",               // paren negative offset
+    "v=hello; printf '%s\\n' \"${v/[aeiou]/_}\"",           // bracket-class first replace
+    "(( x = 5 )); printf '%s\\n' \"$(( x > 3 ? x * 2 : 0 ))\"", // arith ternary with mul
+    "[[ 3.14 == 3.* ]] && printf y; printf '\\n'",          // glob on dotted string
+    "[[ $(printf abc) == a* ]] && printf y; printf '\\n'",  // cmd-sub in [[ operand
+    "for i in {1..3}; do for j in {1..2}; do printf '%s' \"$i$j\"; done; done; printf '\\n'", // nested brace-for
+    "(( total = 0 )); for n in 1 2 3 4 5; do (( total += n )); done; printf '%s\\n' \"$total\"", // (( += )) accumulate
+    // Non-portable `base#num` arithmetic (bash/ksh/zsh accept; dash/ash reject).
+    "printf '%s\\n' \"$(( 16#ff ))\"",                     // hex base → 255
+    "printf '%s\\n' \"$(( 8#17 ))\"",                      // octal base → 15
+    "printf '%s\\n' \"$(( 2#11111111 ))\"",                // binary base → 255
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
