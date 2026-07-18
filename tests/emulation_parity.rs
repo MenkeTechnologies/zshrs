@@ -343,6 +343,26 @@ const PORTABLE_CORPUS: &[&str] = &[
     "x=5; case $(( x > 3 )) in 1) echo big;; 0) echo small;; esac", // arith result in case
     "v=UPPER; case $v in [A-Z]*) echo caps;; esac",              // case uppercase class
     "v=123abc; case $v in [0-9]*) echo startsdigit;; esac",      // case starts-with-digit
+    // Tenth expansion batch (harness_classify10.sh) — printf number formats,
+    // arith assignment, IFS-with-explicit-count, redirection.
+    "printf '%d\\n' 007",                                        // leading-zero decimal → 7
+    "printf '%d\\n' +5",                                         // explicit-plus decimal → 5
+    "printf '%.0f\\n' 2.7",                                      // float round to int → 3
+    "printf '%x\\n' 4095",                                       // hex output → fff
+    "printf '%08x\\n' 255",                                      // zero-padded hex
+    "printf '%+.1f\\n' 1.5",                                     // signed one-decimal float
+    "printf '%3d|%-3d\\n' 5 5",                                  // right vs left numeric width
+    "printf '%s=%s\\n' key value",                              // key=value format
+    "x=5; x=$((x+1)); echo \"$x\"",                             // arith reassign → 6
+    "x=5; : $((x=x*2)); echo \"$x\"",                           // arith side-effect via : → 10
+    "IFS=; v='a b c'; set -- $v; echo \"$#\"",                  // empty IFS → 1 field
+    "IFS=:; for p in /a:/b:/c; do echo \"$p\"; done",           // IFS split in for-list
+    "v='key=value'; k=\"${v%%=*}\"; val=\"${v#*=}\"; echo \"$k:$val\"", // split on first =
+    "cat /dev/null; echo empty-cat-ok",                         // cat empty file
+    "> /dev/null echo prefixed-redirect",                       // leading redirect
+    "x=3.5; echo \"${x%.*}\"",                                  // strip fractional part
+    "echo $(( 5 > 3 ? 5 : 3 ))\" \"$(( 2 > 8 ? 2 : 8 ))",       // two ternaries → 5 8
+    "for i in $(seq 3 -1 1); do printf '%d' \"$i\"; done; echo", // descending seq
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -521,6 +541,14 @@ const EXTENDED_CORPUS: &[&str] = &[
     "x=42; [[ $x =~ ^[0-9]+$ ]] && echo num",             // =~ digit regex
     "[[ \"foo bar\" == *\" \"* ]] && echo hasspace",      // [[ glob for embedded space
     "a=(1 2 3); b=$(( ${a[0]} + ${a[2]} )); echo $b",     // ${a[i]} in arith cmd-sub
+    // Tenth expansion batch (harness_classify10.sh) — arith compound-assign ops.
+    "x=5; (( x <<= 2 )); echo $x",                        // left-shift-assign → 20
+    "x=20; (( x >>= 2 )); echo $x",                       // right-shift-assign → 5
+    "x=6; (( x &= 3 )); echo $x",                         // and-assign → 2
+    "x=5; (( x |= 2 )); echo $x",                         // or-assign → 7
+    "x=5; (( x ^= 1 )); echo $x",                         // xor-assign → 4
+    "[[ $((3+4)) -eq 7 ]] && echo arith-in-test",         // arith cmd-sub in [[ -eq ]]
+    "a=(1 2 3 4); s=0; for x in \"${a[@]}\"; do s=$((s+x)); done; echo $s", // iterate + sum → 10
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
