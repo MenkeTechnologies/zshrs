@@ -3658,10 +3658,21 @@ pub fn getstrvalue(v: Option<&mut value>) -> String {
         // base-10). With `convbase` now ported (params.rs:6577), honor
         // `pm.base` so `typeset -i 16 x=255` renders as `0xff` rather
         // than `255` per zsh's `$x`-expansion + `typeset -p`.
+        // !!! POSIX-FAITHFUL GATE !!! zsh gives integer variables a per-var
+        // output base (`(( z=0xff ))` → `typeset -i16 z=255` → `$z` prints
+        // `16#FF`). bash/ksh/POSIX have no such feature: integers always
+        // print in decimal. Under `--sh`/`--ksh`/`--dash`/`--bash`
+        // (posix_faithful) force base 10 so `(( z=0xff )); echo $z` → `255`,
+        // matching the real shell. `--... --zsh` keeps zsh's based display.
+        let base = if pm.base > 0 && !crate::dash_mode::posix_faithful() {
+            pm.base // c:2373 pm->base
+        } else {
+            10
+        };
         convbase_underscore(
             intgetfn(pm),
-            if pm.base > 0 { pm.base } else { 10 }, // c:2373 pm->base
-            pm.width,                               // c:2373 pm->width for underscore grouping
+            base,
+            pm.width, // c:2373 pm->width for underscore grouping
         )
     } else if t == PM_EFLOAT || t == PM_FFLOAT {
         // c:2366-2370 — `convfloat(getfn(pm), pm->base, pm->node.flags,
@@ -4256,7 +4267,12 @@ pub fn assignstrvalue(v: Option<&mut value>, val: Option<String>, flags: i32) {
                 {
                     pm.width = s.len() as i32;
                 }
-                if pm.base == 0 {
+                // !!! POSIX-FAITHFUL GATE !!! zsh gives an integer var the
+                // output base of the literal it was assigned (`(( z=0xff ))`
+                // → base 16 → `$z` prints `16#FF`). bash/ksh/POSIX have no
+                // such per-var base — integers always print decimal. Under
+                // posix_faithful, never attach a base so `echo $z` → `255`.
+                if pm.base == 0 && !crate::dash_mode::posix_faithful() {
                     let lb = lastbase();
                     if lb != -1 {
                         pm.base = lb;
@@ -7639,7 +7655,10 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
         // Mirror the assignstrvalue path at c:3714 so `(( X = 16#ff ))`
         // creates X as `typeset -i16 X=255` (displays as `16#FF`)
         // rather than naked decimal `255`.
-        let inherited_base = if val.type_ == MN_FLOAT {
+        // Posix-faithful: no per-var output base — bash/ksh/POSIX integers
+        // always print decimal, so a freshly created `(( z=0xff ))` var must
+        // not inherit base 16. (zsh mode keeps the base.)
+        let inherited_base = if val.type_ == MN_FLOAT || crate::dash_mode::posix_faithful() {
             0
         } else {
             let lb = crate::ported::math::lastbase();
@@ -7733,7 +7752,9 @@ pub fn assignnparam(s: &str, val: mnumber, flags: i32) -> Option<Box<param>> {
                 // docs/BUGS.md. The create path already inherits at
                 // params.rs:5759-5768; this is the reassign-path
                 // equivalent.
-                if pm.base == 0 {
+                // Posix-faithful: no per-var output base (see the create-path
+                // gate above) — bash/ksh/POSIX integers print decimal.
+                if pm.base == 0 && !crate::dash_mode::posix_faithful() {
                     let lb = crate::ported::math::lastbase();
                     if lb > 0 {
                         pm.base = lb;

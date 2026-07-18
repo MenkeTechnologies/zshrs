@@ -13841,7 +13841,14 @@ pub fn bin_test(
     // Detect `<`/`>` in a binary-op position (the middle of a 3-arg
     // form, or any position after an operand) and emit the canonical
     // diagnostic before reaching evalcond.
-    if argv.iter().any(|a| a == "<" || a == ">") {
+    //
+    // !!! POSIX-FAITHFUL GATE !!! This zsh-only rejection is WRONG for the
+    // Bourne-family drop-ins: dash / sh / ksh / bash `test` all accept
+    // `string1 < string2` / `>` as lexical string comparison (`[ abc \< abd ]`
+    // → true). Only zsh's `[` lacks it. Under `--sh`/`--ksh`/`--dash`/`--bash`
+    // (posix_faithful) skip the rejection and let evalcond evaluate them as
+    // COND_STRLT / COND_STRGTR, matching the real shell.
+    if !crate::dash_mode::posix_faithful() && argv.iter().any(|a| a == "<" || a == ">") {
         let offending = argv
             .iter()
             .find(|a| a.as_str() == "<" || a.as_str() == ">")

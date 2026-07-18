@@ -1021,10 +1021,18 @@ pub fn createcmdnamtable() {
 /// re-scan from the start.
 /// WARNING: param names don't match C — Rust=() vs C=(ht)
 pub fn emptycmdnamtable() {
+    // c:1015 — `emptyhashtable(ht);`
     cmdnamtab_lock()
         .write()
         .expect("cmdnamtab poisoned")
         .clear();
+    // c:1016 — `pathchecked = path;`. Resetting the cursor here (not in
+    // each caller) is what C does: every caller that empties the table
+    // must also allow a subsequent `fillcmdnamtable` to re-walk PATH
+    // from the start. Without this, emptying the table (e.g. a `PATH`
+    // reassignment) left `pathchecked` exhausted, so the next
+    // `${(k)commands}` / `compadd -k commands` scan refilled nothing.
+    pathchecked.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Port of `hashdir(char **dirp)` from `Src/hashtable.c:634`.
@@ -1057,10 +1065,25 @@ pub fn hashdir(dir: &str, dir_index: usize) {
 /// re-walk PATH entries that were already scanned.
 /// WARNING: param names don't match C — Rust=(path) vs C=(ht)
 pub fn fillcmdnamtable(path: &[String]) {
-    let mut tab = cmdnamtab_lock().write().expect("cmdnamtab poisoned");
-    for (idx, dir) in path.iter().enumerate() {
-        tab.hash_dir(dir, idx);
+    // c:716 — `for (pq = pathchecked; *pq; pq++) hashdir(pq);`. Start
+    // from the cursor, NOT index 0: dirs already walked by an earlier
+    // fill (or by `hashcmd`, which bumps `pathchecked`) must not be
+    // re-scanned. Re-filling from 0 on every call made
+    // `${(k)commands}` / `compadd -k commands` return the entire PATH
+    // even when `pathchecked` was exhausted and the table had been
+    // emptied — diverging from zsh, whose scan yields the current
+    // (possibly empty) table. Symptom: `l<TAB>` listed all 230 PATH
+    // commands vs zsh's 5 builtins.
+    use std::sync::atomic::Ordering;
+    let from = pathchecked.load(Ordering::SeqCst);
+    if from < path.len() {
+        let mut tab = cmdnamtab_lock().write().expect("cmdnamtab poisoned");
+        for idx in from..path.len() {
+            tab.hash_dir(&path[idx], idx);
+        }
     }
+    // c:719 — `pathchecked = pq;` — cursor advances to the end.
+    pathchecked.store(path.len(), Ordering::SeqCst);
 }
 
 /// Port of `freecmdnamnode(HashNode hn)` from `Src/hashtable.c:724`.

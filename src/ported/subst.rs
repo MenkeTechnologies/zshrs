@@ -10552,6 +10552,15 @@ pub fn paramsubst(
                     }
                     (pat_buf, String::new())
                 };
+                // !!! DASH-STRICT GATE !!! dash/ash have no `${var/pat/repl}`
+                // replacement — it is a "Bad substitution" error. bash/ksh/sh
+                // support it (they are not dash_strict). Raise before doing
+                // the replace so `echo "${v/b/X}"` fails like /bin/dash.
+                if crate::dash_mode::dash_strict() {
+                    zerr("bad substitution");
+                    errflag_set_error();
+                    return (String::new(), chars.len(), vec![]);
+                }
                 let (raw_pat, raw_repl) = split_unescaped(rep);
                 // c:Src/lex.c:1519-1556 + c:Src/subst.c:301 — inside
                 // double quotes `$'` is Qstring + RAW `'` and is NOT
@@ -11236,6 +11245,15 @@ pub fn paramsubst(
                     }
                     (pat_buf, String::new())
                 };
+                // !!! DASH-STRICT GATE !!! dash/ash have no `${var/pat/repl}`
+                // replacement — it is a "Bad substitution" error. bash/ksh/sh
+                // support it (they are not dash_strict). Raise before doing
+                // the replace so `echo "${v/b/X}"` fails like /bin/dash.
+                if crate::dash_mode::dash_strict() {
+                    zerr("bad substitution");
+                    errflag_set_error();
+                    return (String::new(), chars.len(), vec![]);
+                }
                 let (raw_pat, raw_repl) = split_unescaped(rep);
                 // c:Src/lex.c:1519-1556 + c:Src/subst.c:301 — inside
                 // double quotes `$'` is Qstring + RAW `'` and is NOT

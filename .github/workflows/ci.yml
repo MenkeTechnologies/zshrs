@@ -110,11 +110,13 @@ jobs:
           retention-days: 30
 
   emulation-parity:
-    # Five-way emulation parity: `zshrs --{zsh,bash,ksh,sh,dash}` vs the real
-    # reference shells (tests/emulation_parity.rs) + the dash-strict
-    # rejection suite (tests/dash_mode.rs). The portable corpus runs against
-    # all five; an extended corpus (arrays, [[, (( )), brace expansion,
-    # substring/replace) runs against the extended shells (zsh/bash/ksh).
+    # Emulation parity MATRIX (9 ways): `zshrs --{zsh,bash,ksh,sh,dash}` vs the
+    # real reference shells, PLUS the cross-emulation legs `zshrs --sh --zsh` /
+    # `--ksh --zsh` (zsh-style) vs real zsh doing `emulate sh` / `emulate ksh`,
+    # plus best-effort mksh/ash (tests/emulation_parity.rs) + the dash-strict
+    # rejection suite (tests/dash_mode.rs). The portable corpus runs for every
+    # way; an extended corpus (arrays, [[, (( )), brace expansion,
+    # substring/replace) runs for the extended ways (zsh/bash/ksh + ksh/zsh).
     # ZSHRS_REQUIRE_REF_SHELLS=1 turns a missing reference shell into a
     # failure so the contract is enforced, not silently skipped — hence every
     # shell is installed below (bash, dash and /bin/sh are already present on
