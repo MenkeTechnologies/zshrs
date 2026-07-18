@@ -1,4 +1,4 @@
-//! # `zshrs-plugin` — native plugin SDK for zshrs
+//! # `znative` — native plugin SDK for zshrs
 //!
 //! zshrs is the first compiled Unix shell; this crate is what makes it
 //! the first compiled shell that **hosts third-party plugins written in
@@ -15,7 +15,7 @@
 //! ## Writing a plugin
 //!
 //! ```ignore
-//! use zshrs_plugin::{declare_plugin, Args, Host};
+//! use znative::{declare_plugin, Args, Host};
 //! use std::os::raw::c_int;
 //!
 //! fn hello(host: &Host, args: &Args) -> c_int {
@@ -35,12 +35,25 @@
 //! [lib]
 //! crate-type = ["cdylib"]
 //! [dependencies]
-//! zshrs-plugin = "0.12"
+//! znative = "0.12"
 //! ```
 //!
 //! `cargo build` produces `libhello.dylib` / `libhello.so`; then inside
 //! zshrs: `zmodload -R ~/plugins/libhello.dylib` and `rhello` is a live
 //! command.
+//!
+//! ## Host API
+//!
+//! Inside a handler, [`Host`] is the shell's callback table:
+//!
+//! | Method | Purpose |
+//! | --- | --- |
+//! | [`print`](Host::print) | write to the shell's stdout |
+//! | [`eval`](Host::eval) | run shell code, return its exit status |
+//! | [`getvar`](Host::getvar) / [`setvar`](Host::setvar) | read/set a shell scalar parameter |
+//! | [`getfunction`](Host::getfunction) / [`addfunction`](Host::addfunction) | read a function's deparsed body / define one (also deparse-as-a-service) — ABI v3 |
+//! | [`register_builtin`](Host::register_builtin) | register a command handler dynamically |
+//! | [`add_match`](Host::add_match) / [`install_completion`](Host::install_completion) | emit a completion candidate / wire a native completion into compsys — ABI v2 |
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
@@ -432,7 +445,7 @@ macro_rules! declare_plugin {
 
 // The macro can't name `ABI_VERSION` inside a `const` initializer of a
 // downstream crate without importing it; re-export under a stable path
-// the macro hard-codes so users need only `use zshrs_plugin::*` or the
+// the macro hard-codes so users need only `use znative::*` or the
 // two names in the doc example.
 #[doc(hidden)]
 pub const ABIVERSION_FOR_MACRO: u32 = ABI_VERSION;
