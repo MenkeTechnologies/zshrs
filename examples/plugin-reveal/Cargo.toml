@@ -1,0 +1,18 @@
+# reveal (open a repo's GitHub/Heroku pages in the browser) as a native zshrs plugin.
+#   cargo build --manifest-path examples/plugin-reveal/Cargo.toml
+#   zmodload -R examples/plugin-reveal/target/debug/libreveal.dylib
+#   reveal
+[package]
+name = "reveal"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "reveal"
+crate-type = ["cdylib"]
+
+[dependencies]
+znative = { path = "../../znative" }
+
+[workspace]

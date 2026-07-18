@@ -342,6 +342,22 @@ statefile, since `start`/`update`/`stop` now share memory. Shows how a plugin
 does concurrent/background work under a non-forking shell. Published as a
 standalone repo: `znative load MenkeTechnologies/zshrs-revolver`.
 
+[`plugin-fasd/`](../examples/plugin-fasd/) — **fasd**, frecency for **files
+and directories** (`a s d f j v` + `fasd`), ported from the fasd shell script.
+A `preexec` hook feeds every command's path arguments to the datafile; queries
+match terms in order (last term in the basename) case-sensitive → insensitive
+→ fuzzy, and score `Σrank * frecent(dx)`. Where `zsh-z` tracks only `cd`
+targets, fasd tracks files too — the regex + fuzzy matcher and awk scoring are
+reimplemented in Rust. Published as: `znative load MenkeTechnologies/zshrs-fasd`.
+
+[`plugin-reveal/`](../examples/plugin-reveal/) — **reveal** (from gh_reveal):
+open the current repo's GitHub page(s) in the browser. Picks the platform
+opener, reads `git remote -v`, normalizes each SSH/HTTPS URL to
+`host/user/repo` (dropping scheme, userinfo, port, `.git`), and opens
+`https://<that>` — Heroku remotes open their dashboard + app URLs. Shows a
+plugin that shells out (`git`, the OS opener) rather than reimplementing.
+Published as: `znative load MenkeTechnologies/zshrs-reveal`.
+
 ## Porting an existing zsh plugin
 
 If you have a zsh plugin (shell functions + aliases + completions) and want

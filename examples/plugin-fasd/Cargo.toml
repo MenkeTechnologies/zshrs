@@ -1,0 +1,19 @@
+# fasd (file+directory frecency: a/s/d/f/j/v) ported to a native zshrs plugin.
+#   cargo build --manifest-path examples/plugin-fasd/Cargo.toml
+#   zmodload -R examples/plugin-fasd/target/debug/libfasd.dylib
+#   d <partial-dir>   |   f <partial-file>   |   j <partial-dir>
+[package]
+name = "fasd"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "fasd"
+crate-type = ["cdylib"]
+
+[dependencies]
+znative = { path = "../../znative" }
+regex = "1"
+
+[workspace]
