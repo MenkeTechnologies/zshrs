@@ -9375,9 +9375,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // backspace) into an ARGLESS `local` — the full
                     // parameter-table dump the user saw per keystroke.
                     if only.is_empty() {
-                        let word_has_quoted_span = text.chars().any(|c| {
-                            matches!(c, '\u{9e}' | '\u{9d}' | '\u{8c}' | '\u{9f}' | '"' | '\'')
-                        });
+                        // A quote span that WRAPS the expansion keeps the
+                        // empty arg (`"${v[-1]}"` → one empty arg). But a
+                        // quote INSIDE the `${…}` braces — e.g. the alternate
+                        // of `${x:+'q'}` or `${x:-'d'}` — does NOT: when that
+                        // branch isn't taken the result is a plain unquoted
+                        // empty and must ELIDE, matching zsh (`a=(A ${x:+'q'}
+                        // C)` → 2 elements, not 3). So only count quote
+                        // markers at brace-depth 0 (outside `${…}`). Inbrace
+                        // = \u{8f}, Outbrace = \u{90}.
+                        let mut depth = 0i32;
+                        let mut word_has_quoted_span = false;
+                        for c in text.chars() {
+                            match c {
+                                '\u{8f}' => depth += 1,
+                                '\u{90}' => depth -= 1,
+                                '\u{9e}' | '\u{9d}' | '\u{8c}' | '\u{9f}' | '"' | '\''
+                                    if depth <= 0 =>
+                                {
+                                    word_has_quoted_span = true;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
                         if word_has_quoted_span {
                             Value::str(String::new())
                         } else {
