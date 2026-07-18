@@ -180,6 +180,92 @@ fn sh_zsh_combo_keeps_zsh_split() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "3");
 }
 
+// ── read: backslash-escaped IFS char is literal (fixed universal bug) ───
+
+#[test]
+fn read_backslash_escapes_ifs() {
+    // `read x y` on `a\ b`: the escaped space is literal, so it is ONE
+    // field — x="a b", y="". dash/ksh/bash/zsh all agree; this was wrong
+    // in zshrs across every mode before the fix.
+    let out = Command::new(zshrs_bin())
+        .args(["--dash", "-f", "-c", "read x y; printf '[%s][%s]' \"$x\" \"$y\""])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut ch| {
+            use std::io::Write;
+            ch.stdin.take().unwrap().write_all(b"a\\ b\n")?;
+            ch.wait_with_output()
+        })
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[a b][]");
+}
+
+#[test]
+fn read_backslash_escapes_custom_ifs() {
+    // Escaped separator (`a\:b`) is literal; the unescaped `:` splits.
+    let out = Command::new(zshrs_bin())
+        .args(["--dash", "-f", "-c", "IFS=:; read x y; printf '[%s][%s]' \"$x\" \"$y\""])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut ch| {
+            use std::io::Write;
+            ch.stdin.take().unwrap().write_all(b"a\\:b:c\n")?;
+            ch.wait_with_output()
+        })
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[a:b][c]");
+}
+
+// ── printf %d: POSIX numeric parsing (not zsh math-eval) ────────────────
+
+#[test]
+fn dash_printf_d_numeric_contract() {
+    // dash/POSIX-sh printf %d does strtoimax numeric parsing: leading value
+    // used, exit non-zero on any junk; empty operand is a clean 0. --dash
+    // must match /bin/dash exactly (output AND exit), unlike zsh's math-eval.
+    let cases: &[(&str, &str, bool)] = &[
+        // (arg, stdout, exit_ok)
+        ("", "0", true),
+        ("0x10", "16", true),
+        ("010", "8", true),
+        ("-5", "-5", true),
+        ("A", "0", false),
+        ("1+1", "1", false),
+        ("12x", "12", false),
+        ("0", "0", true),
+    ];
+    for (arg, want_out, want_ok) in cases {
+        let out = Command::new(zshrs_bin())
+            .args(["--dash", "-f", "-c", "printf '%d' \"$1\"", "_", arg])
+            .output()
+            .expect("spawn");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), *want_out, "printf %d {arg:?} output");
+        assert_eq!(out.status.success(), *want_ok, "printf %d {arg:?} exit");
+    }
+}
+
+#[test]
+fn printf_d_math_eval_kept_in_zsh_and_ksh() {
+    // Under --zsh and --ksh, printf %d keeps zsh's math evaluation: `A` is a
+    // math var (→ 0, exit 0) and `1+1` → 2. Proves the posix-numeric path is
+    // gated to sh/dash only.
+    for mode in ["--zsh", "--ksh"] {
+        let out = Command::new(zshrs_bin())
+            .args([mode, "-f", "-c", "printf '%d' A"])
+            .output()
+            .expect("spawn");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "0");
+        assert!(out.status.success(), "{mode}: printf %d A should exit 0 (math var)");
+    }
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "printf '%d' 1+1"])
+        .output()
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2");
+}
+
 // ── controls: dash-legal POSIX must still work under --dash ─────────────
 
 #[test]

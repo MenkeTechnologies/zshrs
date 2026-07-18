@@ -561,8 +561,10 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
   --bash       identical-behaviour drop-in for /bin/bash
   --ksh        identical-behaviour drop-in for /bin/ksh (ksh-93)
+  --mksh       identical-behaviour drop-in for mksh (MirBSD ksh; ksh base)
   --sh         identical-behaviour drop-in for /bin/sh / POSIX (alias of --posix)
   --dash       identical-behaviour drop-in for /bin/dash (strict POSIX subset)
+  --ash        identical-behaviour drop-in for ash (Almquist; alias of --dash)
   --csh        identical-behaviour drop-in for /bin/csh
   --posix      identical-behaviour drop-in for /bin/sh (Bourne)
   --emulate MODE  alias for --MODE (zsh-compat: `emulate zsh` etc.)
@@ -1172,7 +1174,7 @@ pub fn zshrs_main() {
         .unwrap_or_default();
     let argv0_inferred_mode: Option<ShellMode> = match argv0_basename.as_str() {
         "ksh" | "ksh93" | "mksh" | "pdksh" => Some(ShellMode::Ksh),
-        "dash" => Some(ShellMode::Dash),
+        "dash" | "ash" => Some(ShellMode::Dash),
         "sh" => Some(ShellMode::Posix),
         "bash" => Some(ShellMode::Bash),
         "zsh" | "zsh-5.9" => Some(ShellMode::Zsh),
@@ -1186,13 +1188,15 @@ pub fn zshrs_main() {
     //
     // `--emulate MODE` form is zsh-compat (Src/init.c:443) — looks at
     // the next arg as the mode name; same final mapping.
-    let explicit_mode: Option<ShellMode> = if args.iter().any(|a| a == "--dash") {
+    let explicit_mode: Option<ShellMode> = if args.iter().any(|a| a == "--dash" || a == "--ash") {
+        // ash and dash are the same Almquist strict-POSIX shell family.
         Some(ShellMode::Dash)
     } else if args.iter().any(|a| a == "--posix" || a == "--sh") {
         Some(ShellMode::Posix)
     } else if args.iter().any(|a| a == "--bash") {
         Some(ShellMode::Bash)
-    } else if args.iter().any(|a| a == "--ksh") {
+    } else if args.iter().any(|a| a == "--ksh" || a == "--mksh") {
+        // mksh (MirBSD Korn shell) uses the same ksh emulation base.
         Some(ShellMode::Ksh)
     } else if args.iter().any(|a| a == "--csh") {
         // csh emulation routes to Zsh mode (zshrs has no separate csh
@@ -1204,8 +1208,8 @@ pub fn zshrs_main() {
     } else if let Some(emu_idx) = args.iter().position(|a| a == "--emulate") {
         // `--emulate MODE` — consume the next arg as the mode name.
         match args.get(emu_idx + 1).map(|s| s.as_str()) {
-            Some("ksh") => Some(ShellMode::Ksh),
-            Some("dash") => Some(ShellMode::Dash),
+            Some("ksh" | "mksh" | "pdksh") => Some(ShellMode::Ksh),
+            Some("dash" | "ash") => Some(ShellMode::Dash),
             Some("sh" | "posix") => Some(ShellMode::Posix),
             Some("bash") => Some(ShellMode::Bash),
             Some("csh" | "zsh") => Some(ShellMode::Zsh),
@@ -1261,10 +1265,19 @@ pub fn zshrs_main() {
     // instead by clearing the flag. See extensions::dash_mode.
     let posix_family = matches!(
         shell_mode(),
-        ShellMode::Posix | ShellMode::Ksh | ShellMode::Dash
+        ShellMode::Posix | ShellMode::Ksh | ShellMode::Dash | ShellMode::Bash
     );
     let zsh_style_requested = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
     zsh::extensions::dash_mode::set_posix_faithful(posix_family && !zsh_style_requested);
+
+    // bash-specific option deltas on top of the shared `sh` emulation base.
+    // bash is a SUPERSET of POSIX sh: unlike `emulate sh` (which sets
+    // IGNOREBRACES), bash performs brace expansion by default
+    // (`printf %s {a,b}` → `a b`, `{1..3}` → `1 2 3`). Re-enable it for
+    // `--bash` so it matches /bin/bash.
+    if matches!(shell_mode(), ShellMode::Bash) && !zsh_style_requested {
+        zsh::ported::options::opt_state_set("ignorebraces", false);
+    }
 
     if parity_mode_selected {
         // Use the process-local AtomicBool override instead of
@@ -1646,8 +1659,10 @@ pub fn zshrs_main() {
                 || a == "--zsh"
                 || a == "--bash"
                 || a == "--ksh"
+                || a == "--mksh"
                 || a == "--sh"
                 || a == "--dash"
+                || a == "--ash"
                 || a == "--csh"
                 || a == "--posix"
                 || a == "-f"
