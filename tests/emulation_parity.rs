@@ -712,6 +712,41 @@ fn dash_strict_rejects_substring_expansion() {
 }
 
 #[test]
+fn dash_strict_rejects_arith_command() {
+    // dash/ash have no `(( ))` arithmetic command — `((` is two nested
+    // subshells `( (`, so `(( 1 + 1 ))` runs the command `1` (→ not found,
+    // non-zero) rather than arith-evaluating. zsh/bash/ksh DO have the arith
+    // command (exit reflects the truth value). Found by the per-mode
+    // dash-strictness sweep. `for ((…))` and `$(( ))` use different lexer
+    // paths and are covered by the EXTENDED corpus / regression cases below.
+    let probe = |flag: &str, script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    for strict in ["--dash", "--ash"] {
+        // `(( 1 + 1 ))` → runs command `1` in a subshell → non-zero exit.
+        let (_o, ok) = probe(strict, "(( 1 + 1 ))");
+        assert!(!ok, "{strict}: `(( 1 + 1 ))` must run as a subshell command (non-zero)");
+        // A genuine nested subshell still works: `(( echo hi ))` → prints hi.
+        let (out, ok2) = probe(strict, "(( echo hi ))");
+        assert!(ok2 && out.trim() == "hi", "{strict}: nested subshell `(( echo hi ))` → hi");
+        // `$(( ))` arithmetic expansion is unaffected (POSIX).
+        let (out, ok3) = probe(strict, "echo $((2+3))");
+        assert!(ok3 && out.trim() == "5", "{strict}: $((2+3)) still works");
+    }
+    // zsh/bash/ksh keep the arith command: `(( 1 ))` true → exit 0.
+    for m in ["--zsh", "--bash", "--ksh"] {
+        let (_o, ok) = probe(m, "(( 1 ))");
+        assert!(ok, "{m}: `(( 1 ))` arith command truthy → exit 0");
+        let (_o2, ok_false) = probe(m, "(( 0 ))");
+        assert!(!ok_false, "{m}: `(( 0 ))` arith command falsy → exit 1");
+    }
+}
+
+#[test]
 fn bash_mode_self_contained() {
     // Self-contained bash-mode checks (no /bin/bash needed): bash is a
     // superset of POSIX sh — brace expansion is ON (unlike `emulate sh`),
