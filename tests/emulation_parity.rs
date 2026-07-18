@@ -279,6 +279,24 @@ const PORTABLE_CORPUS: &[&str] = &[
     "a=1; b=$a; unset a; echo \"${b}\"",                          // unset original keeps copy
     "s='  trim  '; echo \"$s\" | sed 's/^ *//;s/ *$//'",          // sed trim
     "printf '%s|' a b; echo",                                     // printf format reuse
+    // Seventh expansion batch (harness_classify7.sh) — quoting + nesting.
+    "echo \"a\\\"b\"",                                            // escaped quote inside DQ
+    "echo \"it's\"",                                             // apostrophe inside DQ
+    "echo one\"two\"three",                                      // adjacent quoted/unquoted
+    "echo \"$( echo nested )\"",                                 // cmd-sub inside DQ
+    "echo \"\\$escaped\"",                                       // literal $ via backslash in DQ
+    "set -- one two; echo \"$1,$2\"",                            // positional in DQ
+    "set -- a b c; shift; echo \"$@\"",                          // shift then \"$@\"
+    "f() { echo \"$#\"; }; f a b c d",                           // arg count in function
+    "x=; echo \"${x:+has}${x:-none}\"",                          // adjacent :+ / :- on empty
+    "echo \"$(echo \"$(echo deep)\")\"",                         // nested cmd-sub with inner DQ
+    "a=$((1+1)); b=$((a+1)); c=$((b+1)); echo \"$a$b$c\"",       // chained arith assigns → 234
+    "echo \"$(( 1+1 ))$(( 2+2 ))\"",                             // adjacent arith in DQ
+    "x=5; echo \"result=$(( x * x ))\"",                         // arith interpolated in DQ
+    "x=abc; y=\"pre-${x}-post\"; echo \"$y\"",                   // braced var in DQ string
+    "a=x; b=y; echo \"$a$b\" \"$a-$b\"",                         // concat vs separated
+    "v=$(false && echo yes || echo no); echo \"$v\"",           // cmd-sub with && ||
+    "unset x; echo \"${x:=set}\"; echo \"$x\"",                  // := assigns then reads
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -426,6 +444,15 @@ const EXTENDED_CORPUS: &[&str] = &[
     "v=Hello; [[ ${v:0:1} == H ]] && echo cap",            // substring in [[ ]]
     "a=(1 2 3); echo \"$(( ${#a[@]} * 2 ))\"",             // array count in arith → 6
     "a=(3 1 2); n=${#a[@]}; echo \"$n\"",                  // count into scalar
+    // Seventh expansion batch (harness_classify7.sh).
+    "a=(\"a b\" c); echo \"${#a[@]}\"",                    // quoted-space element → count 2
+    "a=(1 2 3); printf '%s,' \"${a[@]}\"; echo",           // per-element printf
+    "[[ \"a b\" == \"a b\" ]] && echo eq",                 // quoted-space equality
+    "[[ \"\" != x ]] && echo ne",                          // empty != nonempty
+    "x=42; [[ $x == 4* ]] && echo m",                      // var glob prefix
+    "(( a = 2, b = 3, c = a + b )); echo \"$c\"",          // comma-sequence assigns → 5
+    "v=aXbXc; echo \"${v%%X*}|${v##*X}\"",                 // greedy strip both ends
+    "(( x = 10 % 3 )); [[ $x -eq 1 ]] && echo mod",        // (( )) result in [[ -eq ]]
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
