@@ -696,6 +696,36 @@ fn bash_mode_self_contained() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "0");
     assert!(!out.status.success(), "--bash printf %d A should exit non-zero");
 
+    // bash (unlike zsh/ksh/dash/sh) also errors on an explicitly-supplied EMPTY
+    // numeric operand — prints 0 but exits 1 — for every numeric conversion. A
+    // MISSING operand is NOT an error. Divergence point (bash-only), so it lives
+    // here rather than in the shared corpus. Found by gen_printf_permode fuzzer.
+    let run = |flags: &[&str], script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args(flags)
+            .args(["-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    for conv in ["%d", "%i", "%o", "%u", "%x", "%X"] {
+        let (out, ok) = run(&["--bash"], &format!("printf '{conv}' ''"));
+        assert_eq!(out, "0", "--bash printf {conv} '' prints 0");
+        assert!(!ok, "--bash printf {conv} '' (empty arg) must exit non-zero");
+        // Missing operand is not an error.
+        let (_o, ok_missing) = run(&["--bash"], &format!("printf '{conv}\\n'"));
+        assert!(ok_missing, "--bash printf {conv} (missing arg) must exit zero");
+        // zsh/ksh/dash/sh accept an empty operand as a clean 0 (exit zero).
+        for m in ["--zsh", "--ksh", "--dash", "--sh"] {
+            let (_o2, ok2) = run(&[m], &format!("printf '{conv}' ''"));
+            assert!(ok2, "{m} printf {conv} '' must exit zero (clean 0)");
+        }
+    }
+    // Recycling: empty then valid — bash prints both, still exits 1.
+    let (out, ok) = run(&["--bash"], "printf '%d\\n' '' 5");
+    assert_eq!(out, "0\n5\n", "--bash recycling prints 0 then 5");
+    assert!(!ok, "--bash recycling with an empty operand still exits non-zero");
+
     // POSIX sh must NOT brace-expand (regression guard for the gate).
     let out = Command::new(zshrs_bin())
         .args(["--sh", "-f", "-c", "printf '%s ' {a,b,c}"])

@@ -103,6 +103,18 @@ pub fn bash_mode() -> bool {
     BASH_MODE.load(Ordering::Relaxed)
 }
 
+/// True when `printf` in bash mode should treat this operand to a numeric
+/// conversion (`%d %i %o %u %x %X`) as an error (still prints 0, but exit
+/// status 1). bash — unlike zsh/ksh/dash/sh — errors on an explicitly-supplied
+/// EMPTY operand (`printf '%d' ''` → rc 1); a MISSING operand (`printf '%d'`)
+/// is NOT an error, so `arg` distinguishes them: `Some("")` → true, `None` →
+/// false. Non-empty junk ("abc"/"+"/"  ") already errors via mathevali in every
+/// mode, so only the empty-string case is handled here. Verified vs bash 5.x.
+#[inline]
+pub fn bash_printf_empty_numeric_error(arg: Option<&String>) -> bool {
+    bash_mode() && matches!(arg, Some(s) if s.is_empty())
+}
+
 /// Set (or clear) bash drop-in mode. Called from the binary's CLI mode
 /// application (raised for `--bash`, unless `--zsh` overrides).
 #[inline]
