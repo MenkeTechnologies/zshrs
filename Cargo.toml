@@ -28,7 +28,7 @@ exclude = [
 
 
 [workspace.package]
-version = "0.12.20"
+version = "0.12.21"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies <linux.dev25@gmail.com>"]
@@ -100,7 +100,7 @@ zshrs-daemon = { workspace = true, optional = true }
 # See src/extensions/plugin_host.rs and docs/PLUGINS.md.
 libloading = "0.8"
 znative = { workspace = true }
-fusevm = { version = "0.14.7", features = ["jit-disk-cache", "aot"] }
+fusevm = { version = "0.14.9", features = ["jit-disk-cache", "aot"] }
 regex = "1.11"
 glob = "0.3"
 libc = "0.2"
@@ -205,8 +205,8 @@ members = [".", "daemon", "znative"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-zshrs-daemon = { path = "daemon", version = "0.12.16" }
-znative = { path = "znative", version = "0.12.20" }
+zshrs-daemon = { path = "daemon", version = "0.12.21" }
+znative = { path = "znative", version = "0.12.21" }
 
 [profile.release]
 opt-level = 3

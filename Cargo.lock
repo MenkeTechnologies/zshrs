@@ -781,9 +781,9 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "fusevm"
-version = "0.14.7"
+version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4c8251a79612cfcc594205997bec94c9fca5b58b1a45978630d8c06fe3bb8e0"
+checksum = "8e640ac835d8f3a55d30b745ef51ccdbf2013518b46fa9794468e14991563b95"
 dependencies = [
  "bincode",
  "chrono",
@@ -3450,11 +3450,11 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "znative"
-version = "0.12.20"
+version = "0.12.21"
 
 [[package]]
 name = "zshrs"
-version = "0.12.20"
+version = "0.12.21"
 dependencies = [
  "atty",
  "base64",
@@ -3511,7 +3511,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.12.20"
+version = "0.12.21"
 dependencies = [
  "atty",
  "axum",
