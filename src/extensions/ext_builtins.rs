@@ -8283,13 +8283,28 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
         }
     }
 
+    // `nocasematch` is a bash-only shopt (no zsh option), tracked separately
+    // so it survives opt_state (which silently drops unknown names). Read via
+    // dash_mode::nocasematch() by cond.rs / case matching.
+    let shopt_get = |name: &str| -> bool {
+        if name == "nocasematch" {
+            crate::dash_mode::nocasematch()
+        } else {
+            crate::ported::options::opt_state_get(name).unwrap_or(false)
+        }
+    };
+
     if let Some(enable) = set {
         // Set / unset. `-q` suppresses the (already silent) output; the exit
         // status is 0 on success.
         crate::fusevm_bridge::with_executor(|exec| {
             let _ = exec;
             for opt in &opts {
-                crate::ported::options::opt_state_set(opt, enable);
+                if opt == "nocasematch" {
+                    crate::dash_mode::set_nocasematch(enable);
+                } else {
+                    crate::ported::options::opt_state_set(opt, enable);
+                }
             }
         });
         return 0;
@@ -8302,7 +8317,7 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
     crate::fusevm_bridge::with_executor(|exec| {
         let _ = exec;
         for opt in &opts {
-            let val = crate::ported::options::opt_state_get(opt).unwrap_or(false);
+            let val = shopt_get(opt);
             if !val {
                 all_set = false;
             }
