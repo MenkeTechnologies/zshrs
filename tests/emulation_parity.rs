@@ -111,6 +111,20 @@ const PORTABLE_CORPUS: &[&str] = &[
     // Identical in dash/ksh/sh AND zsh, so it belongs in the shared corpus.
     "printf 'a\\\\ b\\n' | { read x y; printf '[%s][%s]\\n' \"$x\" \"$y\"; }",
     "printf 'a\\\\ b\\n' | { read x; printf '[%s]\\n' \"$x\"; }",
+    // Harder POSIX torture (all 7 ways agree).
+    "printf '%05d\\n' 5",                                          // zero-pad width
+    "printf '%d\\n' \"$((5 - - 3))\"",                             // unary-minus chain → 8
+    "printf '%d\\n' \"$((7 & 3 | 4))\"",                           // bitwise precedence → 7
+    "printf '%d\\n' \"$((1 ? 2 ? 3 : 4 : 5))\"",                   // nested ternary → 3
+    "v=aaa/bbb; printf '%s\\n' \"${v#*/}\"",                       // shortest prefix strip
+    "v=x.tar.gz; printf '%s\\n' \"${v%.gz}\"",                     // suffix strip
+    "unset x; printf '%s\\n' \"${x:-${y:-deep}}\"",               // nested default
+    "printf '%s\\n' \"$(echo \"$(echo deep)\")\"",               // nested command sub
+    "case abc in a|b|abc) printf alt;; esac; printf '\\n'",        // case alternation
+    "[ 5 -eq 05 ] && printf eq; printf '\\n'",                     // leading-zero numeric test
+    "set -- -a -b -c; while getopts abc o; do printf '%s' \"$o\"; done; printf '\\n'", // getopts
+    "set -- 1 2 3 4 5; shift 3; printf '%s\\n' \"$*\"",            // shift N
+    "printf '%b\\n' 'a\\tb'",                                      // %b escape interpretation
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -140,6 +154,20 @@ const EXTENDED_CORPUS: &[&str] = &[
     "printf '%s ' a{1,2}b; printf '\\n'",                  // brace with affixes
     "cat <<< hi",                                          // here-string
     "read x <<< 'in here'; printf '%s\\n' \"$x\"",         // here-string into read
+    // Harder extended torture (bash/ksh/zsh agree, each vs its own shell).
+    "a=(a b c d e); printf '%s\\n' \"${a[@]:1:2}\"",       // array slice
+    "a=(x y z); a+=(q); printf '%s\\n' \"${#a[@]}\"",      // array append
+    "a=(1 2 3); printf '%s\\n' \"${a[@]: -1}\"",           // last element (neg offset)
+    "[[ hello == h?llo ]] && printf y; printf '\\n'",      // [[ ? glob
+    "[[ \"a b\" == \"a b\" ]] && printf y; printf '\\n'",  // [[ quoted equal
+    "(( x = 2 ** 8 )); printf '%s\\n' \"$x\"",             // (( )) power
+    "x=5; printf '%s\\n' \"$(( x > 3 ? x : 0 ))\"",        // arith ternary
+    "v=abcdef; printf '%s\\n' \"${v:(-3):2}\"",            // substring paren-neg offset
+    "[[ abcXYZ =~ [A-Z]+ ]] && printf y; printf '\\n'",    // [[ regex char-class
+    "v=aXbXcX; printf '%s\\n' \"${v//X}\"",                // replace-with-nothing
+    "echo {1..3}{a,b}",                                    // brace cross-product
+    "(( n=10, n%=3 )); printf '%s\\n' \"$n\"",             // comma + mod-assign
+    "a=(one two three); printf '%s\\n' \"${a[@]#t}\"",     // per-element prefix strip
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
 ];
