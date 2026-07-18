@@ -153,6 +153,8 @@ complete example startup file is at [`examples/zshrc`](../examples/zshrc).
 znative load zdharma-continuum/history-search-multi-word  # script: Ctrl-R multi-word search
 znative load MenkeTechnologies/zshrs-forgit               # native: git+fzf
 znative load MenkeTechnologies/zshrs-revolver             # native: progress spinner
+znative load MenkeTechnologies/zshrs-fasd                 # native: file+dir frecency
+znative load MenkeTechnologies/zshrs-reveal               # native: open repo in browser
 znative load path:examples/plugin-revolver                # local checkout
 znative load zsh-users/zsh-syntax-highlighting@0.8.0      # pinned ref
 znative load git+https://gitlab.com/team/plugin.git       # non-GitHub URL

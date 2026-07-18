@@ -1,0 +1,7 @@
+[plugin]
+name = "fasd"
+version = "0.1.0"
+description = "fasd file+directory frecency ported to a native zshrs plugin (fasd/a/s/d/f/j)"
+
+[native]
+lib = "fasd"    # produces libfasd.{dylib,so}

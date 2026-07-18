@@ -1,0 +1,7 @@
+[plugin]
+name = "reveal"
+version = "0.1.0"
+description = "open the current repo's GitHub/Heroku pages in the browser (reveal)"
+
+[native]
+lib = "reveal"    # produces libreveal.{dylib,so}
