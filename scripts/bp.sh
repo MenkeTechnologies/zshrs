@@ -143,6 +143,11 @@ publish() {
 }
 
 # zshrs-parse + compsys absorbed into runtime — no longer published separately.
+# Dependency order: znative (leaf C-ABI plugin SDK) and zshrs-daemon are both
+# workspace deps of zshrs, so both MUST publish first — otherwise `cargo publish
+# -p zshrs` fails to resolve `znative = "^$NEW"` / the daemon at the new version
+# (they only exist at the previous version on crates.io until published here).
+publish znative
 publish zshrs-daemon
 publish zshrs
 
