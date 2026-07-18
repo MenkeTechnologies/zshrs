@@ -12716,7 +12716,7 @@ pub fn bin_read(
     ops: &options,
     _func: i32,
 ) -> i32 {
-    let args = args.to_vec();
+    let mut args = args.to_vec();
     let mut nchars: i32 = 1; // c:6415
     let mut partial_eof = false;
 
@@ -12731,6 +12731,21 @@ pub fn bin_read(
                 return 1;
             }
         }
+    }
+
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash `read -n N` reads at most
+    // N chars from the input (stopping early at the delimiter), NOT from a
+    // terminal. zsh's optstr treats `-n` as a boolean no-op, so the count N is
+    // left as the first positional; pull it out and route through the char-read
+    // path. `bash_nchars` also skips the tty requirement and stops at newline.
+    let bash_nchars = crate::dash_mode::bash_mode()
+        && OPT_ISSET(ops, b'n')
+        && args
+            .first()
+            .map(|a| a.trim().parse::<i32>().is_ok())
+            .unwrap_or(false);
+    if bash_nchars {
+        nchars = args.remove(0).trim().parse::<i32>().unwrap_or(1);
     }
 
     // c:6445-6446 — `firstarg = (*args && **args == '?' ? *args++ :
@@ -12786,6 +12801,7 @@ pub fn bin_read(
     // error and returns 1. Mirror here (the SHTTY substrate isn't
     // ported yet; the libc::isatty check approximates).
     if (OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q'))
+        && !bash_nchars
         && !OPT_HASARG(ops, b'u')
         && !OPT_ISSET(ops, b'p')
     {
@@ -13011,7 +13027,7 @@ pub fn bin_read(
             0
         };
     }
-    if OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q') {
+    if OPT_ISSET(ops, b'k') || OPT_ISSET(ops, b'q') || bash_nchars {
         // c:Src/builtin.c:6630 — `if (OPT_ISSET(ops,'k') ||
         // OPT_ISSET(ops,'q'))` — both read raw chars (no line/IFS
         // processing). `-q` reads exactly one char (nchars defaults to
@@ -13022,6 +13038,8 @@ pub fn bin_read(
         // read that zsh treats as failure (returns 1) because no
         // bytes can be consumed. Mirror so `read -k 0` exits 1
         // instead of "succeeding" with an empty buffer.
+        // bash `-n N` (bash_nchars) joins this raw-char path but STOPS at the
+        // delimiter (newline): `read -n 10 <<< "ab"` gets "ab", not 10 bytes.
         if nchars <= 0 {
             return 1;
         }
@@ -13030,6 +13048,9 @@ pub fn bin_read(
         while bytes_read < nchars as usize {
             match read_byte(ufd) {
                 Ok(Some(b)) => {
+                    if bash_nchars && b == b'\n' {
+                        break; // bash -n stops early at the delimiter
+                    }
                     got[bytes_read] = b;
                     bytes_read += 1;
                 }
