@@ -690,6 +690,12 @@ fn dash_strict_rejects_substring_expansion() {
             assert!(!ok, "{strict}: substring `{sub}` must be a bad substitution");
             assert!(out.trim().is_empty(), "{strict}: substring `{sub}` prints nothing");
         }
+        // `${(flags)name}` parameter-flag blocks are also a bad substitution in
+        // dash (POSIX `${` never starts with `(`).
+        for flag in ["x=hi; echo \"${(U)x}\"", "x=a; echo \"${(w)x}\""] {
+            let (_o, ok) = probe(strict, flag);
+            assert!(!ok, "{strict}: param-flag `{flag}` must be a bad substitution");
+        }
         // POSIX operators + length must still work under strict mode.
         for (script, want) in [
             ("v=; echo \"${v:-def}\"", "def"),

@@ -3905,6 +3905,17 @@ pub fn paramsubst(
         // intermediate untokenize pass.
         if matches!(body_chars.first(), Some(&'(') | Some(&Inpar)) {
             // c:2147
+            // dash/ash have no `${(flags)name}` parameter-flag block — a `(`
+            // right after `${` is a "Bad substitution" error there. POSIX `${`
+            // is always followed by a name / `#` / `!`, never `(`, so there is
+            // no valid-dash construct to break. Reject before parsing flags.
+            // Gated on dash_strict (--dash/--ash); --sh is bash-backed on macOS
+            // and does support the (…) flags. Found by the dash-strictness sweep.
+            if crate::dash_mode::dash_strict() {
+                zerr("bad substitution");
+                errflag_set_error();
+                return (String::new(), new_pos, vec![]);
+            }
             // `~` inside `(flags)` toggles tok_arg for untok_and_escape on
             // s/j/l/r flag args — subst.c:2157-2159 (not globsubst).
             let mut tok_arg = false; // c:2145
