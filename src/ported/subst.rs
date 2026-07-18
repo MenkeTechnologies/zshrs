@@ -13771,7 +13771,15 @@ pub fn paramsubst(
                     crate::ported::zsh_h::ERRFLAG_ERROR,
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                value = String::new();
+                // c:Src/subst.c:2993-3003 — a "bad substitution" ABORTS the
+                // expansion (and, non-interactively, the whole script through
+                // ERRFLAG_ERROR). Return an empty node list immediately, like
+                // the quote-in-operand reject (~5433) and every other bad-subst
+                // site. The previous code set errflag but fell through with an
+                // empty `value`, so the enclosing command still ran: `print
+                // ${(oe)a b}` printed a blank line and exited 0 where zsh exits
+                // 1 and executes nothing further in the script.
+                return (String::new(), new_pos, Vec::new());
             }
         }
         // c:Src/subst.c:2764 — `(t)` on a `(P)`-indirect subexp
