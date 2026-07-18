@@ -1881,7 +1881,12 @@ pub(crate) fn zzlex() -> i32 {
             }
 
             '*' => {
-                if peek() == Some('*') {
+                // !!! DASH-STRICT GATE (no C counterpart) !!!
+                // dash arithmetic has no `**` exponentiation operator.
+                // Skip the POWER branch under dash_strict so `2**10` lexes
+                // as `2 * * 10` (MUL MUL) and the parser errors with
+                // "expecting primary", matching /bin/dash.
+                if peek() == Some('*') && !crate::dash_mode::dash_strict() {
                     advance();
                     if peek() == Some('=') {
                         advance();
@@ -1982,7 +1987,18 @@ pub(crate) fn zzlex() -> i32 {
             }
 
             ':' => return COLON,
-            ',' => return COMMA,
+            ',' => {
+                // !!! DASH-STRICT GATE (no C counterpart) !!!
+                // dash arithmetic has no comma operator; `$((1,2))` errors.
+                // Flag an error and end input so the whole `$((...))` fails
+                // with a non-zero status like /bin/dash (which reports
+                // "expecting EOF").
+                if crate::dash_mode::dash_strict() {
+                    m_error_set("bad math expression: ',' operator not supported".to_string());
+                    return EOI;
+                }
+                return COMMA;
+            }
 
             '[' => {
                 // [base]value or output format [#base]

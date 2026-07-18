@@ -308,6 +308,12 @@ pub enum ZshCond {
     Binary(String, String, String), // str = pat, a -eq b, etc.
     /// `Regex` variant.
     Regex(String, String), // str =~ regex
+    /// Module/completion condition: `[[ -prefix PAT ]]`, `[[ -after PAT ]]`,
+    /// etc. Any multi-char `-X` operator in a `[[ ]]` becomes a module
+    /// condition (C `COND_MOD`, parse.c:2634) — the operator name (with its
+    /// leading dash) plus its operand words. Registration/validity is checked
+    /// at EVAL time (unknown names → "unknown condition: -X"), not at parse.
+    ModCond(String, Vec<String>),
 }
 
 /// Try/always block

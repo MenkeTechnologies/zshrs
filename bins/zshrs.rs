@@ -562,8 +562,9 @@ byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
   --bash       identical-behaviour drop-in for /bin/bash
   --ksh        identical-behaviour drop-in for /bin/ksh (ksh-93)
   --sh         identical-behaviour drop-in for /bin/sh / POSIX (alias of --posix)
+  --dash       identical-behaviour drop-in for /bin/dash (strict POSIX subset)
   --csh        identical-behaviour drop-in for /bin/csh
-  --posix      identical-behaviour drop-in for /bin/sh (Bourne / dash)
+  --posix      identical-behaviour drop-in for /bin/sh (Bourne)
   --emulate MODE  alias for --MODE (zsh-compat: `emulate zsh` etc.)
   --zsh-compat alias of --zsh (legacy spelling)
 
@@ -886,8 +887,15 @@ pub enum ShellMode {
     /// POSIX sh / Bourne strict — only POSIX builtins, no zsh / bash
     /// extensions, no arrays, no `[[`, no extended globbing, no SQLite
     /// caches, no worker pool, no daemon. Used for parity tests against
-    /// `/bin/sh` (Bourne / dash).
+    /// `/bin/sh` (Bourne).
     Posix,
+    /// dash (Debian Almquist Shell) strict — `sh` emulation PLUS the
+    /// strict-POSIX syntactic subset that makes zshrs reject exactly what
+    /// `/bin/dash` rejects: `$'...'`, `<<<`, `+=`, `name=(...)` arrays,
+    /// the `[[ ]]` reserved word, arith `**` / `,`, and non-XSI echo.
+    /// Drives `emulate("dash")` → `EMULATE_SH` + `DASH_STRICT`. Used for
+    /// parity tests against `/bin/dash` with `zshrs --dash script.sh`.
+    Dash,
 }
 
 static mut SHELL_MODE: ShellMode = ShellMode::Zshrs;
@@ -917,6 +925,10 @@ pub fn is_ksh_mode() -> bool {
 /// `is_posix_mode` — see implementation.
 pub fn is_posix_mode() -> bool {
     matches!(shell_mode(), ShellMode::Posix)
+}
+/// `is_dash_mode` — true in strict-dash parity mode (`zshrs --dash`).
+pub fn is_dash_mode() -> bool {
+    matches!(shell_mode(), ShellMode::Dash)
 }
 /// `is_zshrs_mode` — see implementation.
 pub fn is_zshrs_mode() -> bool {
@@ -1160,7 +1172,8 @@ pub fn zshrs_main() {
         .unwrap_or_default();
     let argv0_inferred_mode: Option<ShellMode> = match argv0_basename.as_str() {
         "ksh" | "ksh93" | "mksh" | "pdksh" => Some(ShellMode::Ksh),
-        "sh" | "dash" => Some(ShellMode::Posix),
+        "dash" => Some(ShellMode::Dash),
+        "sh" => Some(ShellMode::Posix),
         "bash" => Some(ShellMode::Bash),
         "zsh" | "zsh-5.9" => Some(ShellMode::Zsh),
         _ => None,
@@ -1173,7 +1186,9 @@ pub fn zshrs_main() {
     //
     // `--emulate MODE` form is zsh-compat (Src/init.c:443) — looks at
     // the next arg as the mode name; same final mapping.
-    let explicit_mode: Option<ShellMode> = if args.iter().any(|a| a == "--posix" || a == "--sh") {
+    let explicit_mode: Option<ShellMode> = if args.iter().any(|a| a == "--dash") {
+        Some(ShellMode::Dash)
+    } else if args.iter().any(|a| a == "--posix" || a == "--sh") {
         Some(ShellMode::Posix)
     } else if args.iter().any(|a| a == "--bash") {
         Some(ShellMode::Bash)
@@ -1190,6 +1205,7 @@ pub fn zshrs_main() {
         // `--emulate MODE` — consume the next arg as the mode name.
         match args.get(emu_idx + 1).map(|s| s.as_str()) {
             Some("ksh") => Some(ShellMode::Ksh),
+            Some("dash") => Some(ShellMode::Dash),
             Some("sh" | "posix") => Some(ShellMode::Posix),
             Some("bash") => Some(ShellMode::Bash),
             Some("csh" | "zsh") => Some(ShellMode::Zsh),
@@ -1227,6 +1243,7 @@ pub fn zshrs_main() {
     // EMULATE_ZSH bitmap (idempotent — that's the default).
     let emu_name = match shell_mode() {
         ShellMode::Ksh => "ksh",
+        ShellMode::Dash => "dash", // sh emulation + DASH_STRICT (see options::emulate)
         ShellMode::Posix => "sh",
         ShellMode::Bash => "sh", // bash ≈ sh emulation; bash-specific bits flagged via is_bash_mode()
         ShellMode::Zsh | ShellMode::Zshrs => "zsh",
@@ -1618,6 +1635,7 @@ pub fn zshrs_main() {
                 || a == "--bash"
                 || a == "--ksh"
                 || a == "--sh"
+                || a == "--dash"
                 || a == "--csh"
                 || a == "--posix"
                 || a == "-f"
@@ -1671,7 +1689,11 @@ pub fn zshrs_main() {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
         executor.bash_compat = is_bash_mode();
-        if is_posix_mode() {
+        if is_dash_mode() {
+            // dash is sh + strict subset; enter_dash_mode sets EMULATE_SH
+            // AND raises DASH_STRICT (enter_posix_mode would clear it).
+            executor.enter_dash_mode();
+        } else if is_posix_mode() {
             executor.enter_posix_mode();
         }
         if is_ksh_mode() {

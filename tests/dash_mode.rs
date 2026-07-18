@@ -1,0 +1,262 @@
+//! Tests for `zshrs --dash` strict-dash (Debian Almquist Shell) mode.
+//!
+//! dash is behaviourally `sh` for every emulation option, so `--dash`
+//! sets the same `EMULATE_SH` presets as `--sh` (verified below). On top
+//! of that it raises the Rust-only `DASH_STRICT` flag
+//! (src/extensions/dash_mode.rs), which rejects the zsh syntactic
+//! extensions dash has never had. Each rejection audited against real
+//! `/bin/dash` is pinned here two ways:
+//!   1. a self-contained assertion on `zshrs --dash` output (runs in any
+//!      CI, no reference shell required), and
+//!   2. a byte-parity differential against `/bin/dash` when that binary
+//!      is present (the curated-corpus harness; skipped otherwise).
+
+use std::path::Path;
+use std::process::Command;
+
+fn zshrs_bin() -> String {
+    env!("CARGO_BIN_EXE_zshrs").to_string()
+}
+
+/// Run `zshrs --dash -f -c <script>` → (stdout, exit-code). `-f` skips
+/// rc files so the result depends only on the mode, not the environment.
+fn run_dash_mode(script: &str) -> (String, i32) {
+    let out = Command::new(zshrs_bin())
+        .args(["--dash", "-f", "-c", script])
+        .output()
+        .expect("zshrs --dash failed to spawn");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+/// Query an emulation option via the `$options` associative array —
+/// reliable across emulations, unlike bare `setopt`'s listing whose
+/// format shifts under sh/ksh/posixbuiltins.
+fn option_on(name: &str) -> bool {
+    let (out, _) = run_dash_mode(&format!("print -r -- ${{options[{name}]}}"));
+    out.trim() == "on"
+}
+
+// ── dash is sh for options: EMULATE_SH presets must be set ──────────────
+
+#[test]
+fn dash_mode_sets_shwordsplit() {
+    assert!(option_on("shwordsplit"));
+    // ... and it is behaviourally active.
+    let (out, _) = run_dash_mode("v=\"a b c\"; set -- $v; echo $#");
+    assert_eq!(out.trim(), "3");
+}
+
+#[test]
+fn dash_mode_sets_posixbuiltins() {
+    assert!(option_on("posixbuiltins"));
+}
+
+#[test]
+fn dash_mode_sets_ksharrays() {
+    // dash arrays don't exist, but the sh option preset still applies.
+    assert!(option_on("ksharrays"));
+}
+
+#[test]
+fn dash_mode_matches_sh_option_presets() {
+    // dash IS sh for every emulation option — the two modes must agree on
+    // the full EMULATE_SH delta set.
+    for opt in ["shwordsplit", "posixbuiltins", "ksharrays", "shglob", "bsdecho"] {
+        let dash = run_dash_mode(&format!("print -r -- ${{options[{opt}]}}")).0;
+        let sh = Command::new(zshrs_bin())
+            .args(["--sh", "-f", "-c", &format!("print -r -- ${{options[{opt}]}}")])
+            .output()
+            .expect("spawn");
+        assert_eq!(
+            dash.trim(),
+            String::from_utf8_lossy(&sh.stdout).trim(),
+            "option `{opt}` differs between --dash and --sh"
+        );
+    }
+}
+
+// ── DASH_STRICT rejections: self-contained (no reference shell) ─────────
+
+#[test]
+fn dash_rejects_arith_power() {
+    // `**` is not a dash arithmetic operator → error, no output.
+    let (out, code) = run_dash_mode("echo $((2**10))");
+    assert_eq!(out, "");
+    assert_ne!(code, 0, "`**` should error under --dash");
+}
+
+#[test]
+fn dash_rejects_arith_comma() {
+    let (out, code) = run_dash_mode("echo $((1,2))");
+    assert_eq!(out, "");
+    assert_ne!(code, 0, "arith `,` should error under --dash");
+}
+
+#[test]
+fn dash_double_bracket_is_not_reserved() {
+    // dash has no `[[ ]]`; it is an ordinary command → "not found".
+    let (out, code) = run_dash_mode("[[ 1 = 1 ]] && echo yes");
+    assert_eq!(out, "");
+    assert_ne!(code, 0, "`[[` must not be a reserved word under --dash");
+}
+
+#[test]
+fn dash_rejects_array_literal() {
+    let (out, code) = run_dash_mode("a=(1 2 3); echo done");
+    assert_eq!(out, "");
+    assert_ne!(code, 0, "`name=(...)` must be a syntax error under --dash");
+}
+
+#[test]
+fn dash_rejects_here_string() {
+    let (out, code) = run_dash_mode("cat <<< hi");
+    assert_eq!(out, "");
+    assert_ne!(code, 0, "`<<<` must be a syntax error under --dash");
+}
+
+#[test]
+fn dash_no_ansi_c_quoting() {
+    // `$'\t'` is a literal `$` followed by an ordinary single-quoted
+    // `\t` (two chars), NOT a tab — exactly like /bin/dash.
+    let (out, code) = run_dash_mode("printf '%s' $'\\t'");
+    assert_eq!(out, "$\\t");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn dash_no_plus_equals() {
+    // `x+=b` is a command word, not an append-assign; `x` keeps its
+    // value and the stray command fails, but `echo $x` still runs.
+    let (out, _) = run_dash_mode("x=a; x+=b 2>/dev/null; echo $x");
+    assert_eq!(out.trim(), "a");
+}
+
+#[test]
+fn dash_echo_is_xsi() {
+    // dash's echo interprets backslash escapes by default (XSI), the
+    // opposite of the BSDECHO that EMULATE_SH sets.
+    let (out, _) = run_dash_mode("echo 'a\\tb'");
+    assert_eq!(out, "a\tb\n");
+}
+
+#[test]
+fn dash_printf_no_percent_q() {
+    let (out, code) = run_dash_mode("printf '%q' 'a b'");
+    assert_eq!(out, "");
+    assert_ne!(code, 0, "printf %q must be an invalid directive under --dash");
+}
+
+// ── controls: dash-legal POSIX must still work under --dash ─────────────
+
+#[test]
+fn dash_posix_still_works() {
+    let cases: &[(&str, &str)] = &[
+        ("x=hi; echo $x", "hi\n"),
+        ("if [ 1 = 1 ]; then echo y; fi", "y\n"),
+        ("v=\"a b c\"; set -- $v; echo $#", "3\n"),
+        ("echo $((3*4))", "12\n"),
+        ("case x in x) echo m;; esac", "m\n"),
+        ("echo ${z:-def}", "def\n"),
+        ("echo `echo bt`", "bt\n"),
+        ("for i in a b c; do printf %s \"$i\"; done; echo", "abc\n"),
+    ];
+    for (script, want) in cases {
+        let (out, code) = run_dash_mode(script);
+        assert_eq!(out, *want, "script `{script}` diverged");
+        assert_eq!(code, 0, "script `{script}` should succeed");
+    }
+}
+
+// ── zsh mode must NOT regress: the extensions still work there ──────────
+
+#[test]
+fn zsh_mode_keeps_extensions() {
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "printf '%s' $'\\t'"])
+        .output()
+        .expect("spawn");
+    // Under zsh, `$'\t'` IS ANSI-C decoded to a real tab.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "\t");
+}
+
+// ── curated-corpus byte-parity against real /bin/dash (when present) ────
+
+/// Scripts that MUST produce identical stdout + exit-sign in `/bin/dash`
+/// and `zshrs --dash`. Kept to portable POSIX plus the audited-rejection
+/// set so the comparison is meaningful (random fuzzing would just surface
+/// intentional zsh≠dash language differences as noise).
+const DASH_CORPUS: &[&str] = &[
+    // portable POSIX — must run identically
+    "x=hi; echo $x",
+    "v=\"a b c\"; set -- $v; echo $#",
+    "if [ -n x ]; then echo y; fi",
+    "echo $((7%3)) $((2*3)) $((10/2))",
+    "for i in 1 2 3; do printf %s $i; done; echo",
+    "i=0; while [ $i -lt 3 ]; do i=$((i+1)); done; echo $i",
+    "case abc in a*) echo hit;; esac",
+    "echo ${undef:-fallback}",
+    "f() { echo \"in $1\"; }; f arg",
+    "echo a b c | wc -w",
+    "printf '%s-%s\\n' one two",
+    // audited rejections — dash errors, zshrs --dash must error too
+    "echo $((2**10))",
+    "a=(1 2 3)",
+    "cat <<< x",
+    "[[ 1 = 1 ]]",
+    "printf '%q' x",
+];
+
+#[test]
+fn dash_corpus_byte_parity_when_dash_present() {
+    let dash = ["/bin/dash", "/usr/bin/dash"]
+        .into_iter()
+        .find(|p| Path::new(p).exists());
+    let Some(dash) = dash else {
+        eprintln!("skipping: no /bin/dash on this host");
+        return;
+    };
+
+    let mut mismatches = Vec::new();
+    for script in DASH_CORPUS {
+        let d = Command::new(dash)
+            .args(["-c", script])
+            .output()
+            .expect("dash spawn");
+        let z = Command::new(zshrs_bin())
+            .args(["--dash", "-f", "-c", script])
+            .output()
+            .expect("zshrs spawn");
+
+        let d_out = String::from_utf8_lossy(&d.stdout);
+        let z_out = String::from_utf8_lossy(&z.stdout);
+        let d_ok = d.status.success();
+        let z_ok = z.status.success();
+
+        // Compare stdout exactly and exit-code SIGN (0 vs non-0). stderr
+        // text legitimately differs across shells and is not compared.
+        if d_out != z_out || d_ok != z_ok {
+            mismatches.push(format!(
+                "  script: {script:?}\n    dash: ok={d_ok} out={d_out:?}\n    zrs : ok={z_ok} out={z_out:?}"
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "zshrs --dash diverged from /bin/dash on {} script(s):\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn dash_mode_help_lists_flag() {
+    let out = Command::new(zshrs_bin())
+        .arg("--help")
+        .output()
+        .expect("zshrs --help failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("--dash"), "--help missing --dash:\n{stdout}");
+}

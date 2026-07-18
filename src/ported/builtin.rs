@@ -10343,7 +10343,15 @@ pub fn bin_print(
     // escape processing is OFF unless `-e` is explicitly passed.
     // Without bsd_echo (the SysV default), escapes process unless
     // `-E`/`-R`/`-r` is set.
-    let bsd_echo_active = echo_mode && isset(BSDECHO);
+    // !!! DASH-STRICT GATE (no C counterpart) !!! dash's `echo` is the
+    // XSI/SysV variant: it interprets `\t`, `\n`, `\c`, … by default.
+    // EMULATE_SH sets BSDECHO (escapes OFF without -e), the opposite of
+    // dash, so force bsd_echo inactive under dash_strict → escapes process
+    // by default, matching `/bin/dash`. (Note: dash's echo also does not
+    // consume -e/-E as flags; that flag-parsing nuance is not handled here
+    // — only the default escape behavior is aligned.)
+    let bsd_echo_active =
+        echo_mode && isset(BSDECHO) && !crate::dash_mode::dash_strict();
     let suppress_escapes = OPT_ISSET(ops, b'R')
         || OPT_ISSET(ops, b'r')
         || (echo_mode && OPT_ISSET(ops, b'E'))
@@ -16810,7 +16818,11 @@ fn printf_format(
                 // command lines; the difference makes those caches
                 // unreadable in zsh-syntax debuggers expecting the
                 // backslash form.
-                Some('q') => {
+                // !!! DASH-STRICT GATE (no C counterpart) !!! dash's printf
+                // has no `%q` directive; it errors "invalid directive". Under
+                // dash_strict, skip this arm so `%q` falls to the `Some(other)`
+                // arm below, which produces exactly that error like /bin/dash.
+                Some('q') if !crate::dash_mode::dash_strict() => {
                     // c:Src/builtin.c:5387-5391 — `stringval = curarg ?
                     // quotestring(...) : &nullstr`. A MISSING argument (curarg
                     // == NULL) is the empty nullstr and is NOT quoted, so

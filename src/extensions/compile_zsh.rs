@@ -8486,6 +8486,14 @@ impl ZshCompiler {
                 push_lit(self, " =~ ");
                 push_word(self, regex);
             }
+            ZshCond::ModCond(op, args) => {
+                let op_clean = crate::lex::untokenize(op);
+                push_lit(self, &op_clean);
+                for arg in args {
+                    push_lit(self, " ");
+                    push_word(self, arg);
+                }
+            }
         }
     }
 
@@ -8881,6 +8889,26 @@ impl ZshCompiler {
                 };
                 self.compile_word_str(&dq_wrapped);
                 self.builder.emit(Op::RegexMatch, 0);
+            }
+            ZshCond::ModCond(op, args) => {
+                // `[[ -prefix PAT ]]` etc. — completion/module condition
+                // (C COND_MOD). Push each already-expanded operand word, then
+                // the operator word last, and dispatch to the host handler
+                // which runs cond_psfix/cond_range → do_comp_vars. Operands
+                // undergo parameter expansion but NOT globbing (cond operand
+                // semantics), so DQ-suppress globbing like the unary path.
+                for arg in args {
+                    self.dq_context_depth += 1;
+                    self.compile_word_str(arg);
+                    self.dq_context_depth -= 1;
+                }
+                let op_clean = crate::lex::untokenize(op);
+                let idx = self.builder.add_constant(Value::str(op_clean.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::vm_helper::BUILTIN_COND_MOD, (args.len() + 1) as u8),
+                    0,
+                );
             }
         }
     }
@@ -12722,6 +12750,14 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
         }
         ZshCond::Regex(left, regex) => {
             format!("{} =~ {}", untok(left), untok(regex))
+        }
+        ZshCond::ModCond(op, args) => {
+            let mut s = untok(op);
+            for a in args {
+                s.push(' ');
+                s.push_str(&untok(a));
+            }
+            s
         }
     }
 }

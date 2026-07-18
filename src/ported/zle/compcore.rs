@@ -2391,6 +2391,21 @@ pub fn addmatches(
 ) -> i32 {
     let _nm = mnum.load(Ordering::Relaxed); // c:2095 nm
 
+    // c:2049 — C's `complist` global is GSU-backed by `$compstate[list]`, so a
+    // completer's `compstate[list]="... packed"` write (e.g. `_describe`
+    // setting the grouped/packed layout) is visible to `addmatch` via `complist`.
+    // The Rust port keeps COMPLIST as a separate global set only from the global
+    // at completion init (c:740), so param writes never reached it — matches
+    // added by grouped `_describe`/`_arguments` never got CMF_PACKED, so their
+    // group lost CGF_PACKED and calclist skipped the per-column-width pass,
+    // collapsing the name/description columns into one uniform column. Sync the
+    // param → global here so `packed`/`rows` reach CMF_PACKED/CMF_ROWS.
+    if let Some(cl) = get_compstate_str("list") {
+        if let Ok(mut g) = COMPLIST.get_or_init(|| Mutex::new(String::new())).lock() {
+            *g = cl;
+        }
+    }
+
     if dat.dummies >= 0 {
         // c:2106
         dat.aflags = (dat.aflags | CAF_NOSORT | CAF_UNIQCON) & !CAF_UNIQALL; // c:2107-2108

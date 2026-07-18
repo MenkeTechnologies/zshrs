@@ -266,11 +266,34 @@ pub fn emulate(mode: &str, fully: bool) {
     } else {
         ch
     };
-    let new_emu = match ch {
-        'c' => EMULATE_CSH,
-        'k' => EMULATE_KSH,
-        's' | 'b' => EMULATE_SH,
-        _ => EMULATE_ZSH,
+    // !!! RUST-ONLY DIVERGENCE FROM zsh !!!
+    // Upstream zsh (Src/options.c:533) has no `dash` personality: the
+    // char dispatch below only knows c/k/s/b, so a shell invoked as
+    // `dash` sees first char `d` fall through to EMULATE_ZSH. dash
+    // (Debian Almquist Shell) is a strict POSIX sh, so zshrs recognises
+    // the `dash` / `rdash` name and maps it to EMULATE_SH — the same
+    // personality zsh applies to `sh` and `bash`. There is no separate
+    // EMULATE_DASH bit; dash and sh are behaviourally identical under
+    // this emulation, so no new installemulation() option-delta entry is
+    // required. Reached from both the startup argv[0] path
+    // (parseopts_setemulate → emulate(basename)) and the `emulate dash`
+    // builtin, since both funnel through this one function.
+    let bare = mode.strip_prefix('r').unwrap_or(mode);
+    let is_dash = bare == "dash";
+    // Strict-dash flag is orthogonal to the EMULATION bitmap: raise it for
+    // `dash`, clear it for every other personality so a later `emulate zsh`
+    // (etc.) fully leaves dash mode. The flag itself is a Rust-only
+    // extension (no C counterpart) and lives in src/extensions/dash_mode.rs.
+    crate::extensions::dash_mode::set_dash_strict(is_dash);
+    let new_emu = if is_dash {
+        EMULATE_SH
+    } else {
+        match ch {
+            'c' => EMULATE_CSH,
+            'k' => EMULATE_KSH,
+            's' | 'b' => EMULATE_SH,
+            _ => EMULATE_ZSH,
+        }
     };
     EMULATION.store(new_emu, std::sync::atomic::Ordering::Relaxed);
     // c:542-548 — `*new_emulation = EMULATE_xSH`. The canonical global the

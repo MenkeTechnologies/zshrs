@@ -6193,6 +6193,55 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Bool(crate::ported::cond::doaccess(&path, mode) != 0)
     });
 
+    // `[[ -prefix PAT ]]` / `-suffix` / `-after` / `-between` module condition.
+    // Stack (pushed by the ModCond compile arm): arg0 … argN-1, then the
+    // operator word last. argc = N+1.
+    vm.register_builtin(BUILTIN_COND_MOD, |vm, argc| {
+        use crate::ported::zle::complete::{
+            cond_psfix, cond_range, CVT_PREPAT, CVT_SUFPAT,
+        };
+        let op = vm.pop().to_str(); // operator word (pushed last → popped first)
+        let n = (argc as usize).saturating_sub(1);
+        let mut args: Vec<String> = Vec::with_capacity(n);
+        for _ in 0..n {
+            args.push(vm.pop().to_str());
+        }
+        args.reverse(); // restore arg0 … argN-1 order
+        // Dispatch the module/completion condition (C evalcond COND_MOD path:
+        // condtab lookup + arity check, cond.c:149-185, over the four cotab[]
+        // entries at complete.c:1697-1702). Handlers return 1=match/true.
+        let name: String = op
+            .trim_start_matches(|c: char| c == '-' || c == '\u{9b}')
+            .to_string();
+        let (min, max): (usize, usize) = match name.as_str() {
+            "prefix" | "suffix" => (1, 2),
+            "after" => (1, 1),
+            "between" => (2, 2),
+            _ => {
+                crate::ported::utils::zerr(&format!(
+                    "unknown condition: {}",
+                    op.replace('\u{9b}', "-")
+                ));
+                return Value::Bool(false);
+            }
+        };
+        if args.len() < min || args.len() > max {
+            crate::ported::utils::zerr(&format!(
+                "unknown condition: {}",
+                op.replace('\u{9b}', "-")
+            ));
+            return Value::Bool(false);
+        }
+        let r = match name.as_str() {
+            "prefix" => cond_psfix(&args, CVT_PREPAT),
+            "suffix" => cond_psfix(&args, CVT_SUFPAT),
+            "after" => cond_range(&args, 0),
+            "between" => cond_range(&args, 1),
+            _ => 0,
+        };
+        Value::Bool(r == 1)
+    });
+
     vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {
         let fd_str = vm.pop().to_str();
         let fd: i32 = fd_str.trim().parse().unwrap_or(-1);
@@ -10681,6 +10730,12 @@ pub const BUILTIN_CONCAT_SPLICE_NOPLAN9: u16 = 647;
 pub const BUILTIN_BREAK_COUNT_VALIDATE: u16 = 648;
 /// `[[ -r/-w/-x file ]]` via access(2) (doaccess) — see handler.
 pub const BUILTIN_COND_ACCESS: u16 = 638;
+
+/// Evaluate a `[[ ]]` module/completion condition (`-prefix`/`-suffix`/
+/// `-after`/`-between`). Stack (top-first): argc operand words, then the
+/// operator word. Dispatches to `complete::eval_mod_cond`. Result pushed as
+/// Bool (true = condition matched). Used by the `ZshCond::ModCond` compile arm.
+pub const BUILTIN_COND_MOD: u16 = 651;
 
 /// Update `$LINENO` to track the source line of the next statement.
 /// Stack: \[n\] (the line number from `ZshPipe.lineno`). Direct port

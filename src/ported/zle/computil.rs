@@ -644,6 +644,29 @@ pub fn cd_prep() -> i32 {
 
         let preplines = prep_lines.len();
 
+        // c:350/369 — CRT_DUMMY runs carry `expl->strs` so cd_get can reach
+        // `run->strs->set->opts` (C:764). We only need a cdstr whose `.set`
+        // indexes the right set; mirror C's use of grps[0] (the first prep
+        // line = the CRT_EXPL head). Passing None dropped the set's matcher
+        // opts from every dummy column, breaking the grouped-description
+        // alignment.
+        let dummy_set_idx = prep_lines.first().map(|l| l.set).unwrap_or(0);
+        let make_dummy_strs = || -> Option<Box<cdstr>> {
+            Some(Box::new(cdstr {
+                next: None,
+                str: None,
+                desc: None,
+                r#match: None,
+                sortstr: None,
+                len: 0,
+                width: 0,
+                other: None,
+                kind: 0,
+                set: dummy_set_idx,
+                run: None,
+            }))
+        };
+
         // c:323-326 — CRT_EXPL header: link all preplines via .run.
         // Build a chain of header cdstrs (desc + str only).
         if preplines > 0 {
@@ -709,7 +732,7 @@ pub fn cd_prep() -> i32 {
                             new_runs.push(Box::new(cdrun {
                                 next: None,
                                 r#type: CRT_DUMMY,
-                                strs: None,
+                                strs: make_dummy_strs(),
                                 count: dummy_count,
                             }));
                             dummy_count = 0;
@@ -733,7 +756,7 @@ pub fn cd_prep() -> i32 {
                     new_runs.push(Box::new(cdrun {
                         next: None,
                         r#type: CRT_DUMMY,
-                        strs: None,
+                        strs: make_dummy_strs(),
                         count: dummy_count,
                     }));
                 }
