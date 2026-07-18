@@ -8869,6 +8869,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let length = vm.pop().to_int();
         let offset = vm.pop().to_int();
         let name = vm.pop().to_str();
+        // !!! DASH-STRICT GATE !!! dash/ash have no `${var:offset:length}`
+        // substring expansion (it is a "Bad substitution"); bash/ksh/sh do.
+        if crate::dash_mode::dash_strict() {
+            crate::ported::utils::zerr("bad substitution");
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::str("");
+        }
         let off_sep = if offset < 0 { " " } else { "" };
         let body = if length == i64::MIN {
             format!("${{{}:{}{}}}", name, off_sep, offset)
@@ -9432,6 +9443,19 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let repl = vm.pop().to_str();
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // !!! DASH-STRICT GATE !!! dash / ash have no `${var/pat/repl}`
+        // pattern-replacement expansion — it is a "Bad substitution" error
+        // (bash/ksh/POSIX-sh support it, so those modes fall through). Raise
+        // the canonical zsh diagnostic + exit 1 to match /bin/dash's failure.
+        if crate::dash_mode::dash_strict() {
+            crate::ported::utils::zerr("bad substitution");
+            crate::ported::utils::errflag.fetch_or(
+                crate::ported::zsh_h::ERRFLAG_ERROR,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            with_executor(|exec| exec.set_last_status(1));
+            return Value::str("");
+        }
         // DQ context: C's lexer marks every `$` inside double quotes
         // as the Qstring token (Src/lex.c dquote_parse) and keeps `'`
         // a plain char — so a DQ replacement's `$'…'` is LITERAL in
