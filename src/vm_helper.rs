@@ -57,6 +57,28 @@ use crate::ported::math::mathevali;
 use crate::ported::modules::parameter::*;
 use crate::ported::subst::singsub;
 
+thread_local! {
+    /// Eval-recursion depth counter — no C counterpart by design.
+    ///
+    /// !!! WARNING: RUST-ONLY BACKSTOP — reproduces C behaviour, no C fn !!!
+    ///
+    /// zsh bounds runaway `eval` recursion via its job table: every eval'd
+    /// list runs through `execpline`, which grabs a job slot per pipeline
+    /// (`initjob`), and the table caps at `MAX_MAXJOBS` → `zerr("job table
+    /// full or recursion limit exceeded")` (Src/jobs.c:1878-1884). The fusevm
+    /// runtime that executes eval bodies allocates no job per pipeline, and
+    /// nested evals push no funcstack frame (INEVAL suppression, matching zsh's
+    /// `if (!ineval)` at Src/builtin.c:6164), so neither the job table nor the
+    /// FUNCNEST/FUNCSTACK depth reflects eval nesting — leaving eval recursion
+    /// unbounded until the (256 MB but finite) main-thread stack overflows →
+    /// uncatchable SIGBUS. This counter is the Rust proxy for zsh's count of
+    /// concurrently-held job slots: `builtin.rs::eval` bumps it around each
+    /// eval body and refuses to recurse at the same `MAX_MAXJOBS` ceiling.
+    /// Lives here (not src/ported/) because it is an architectural Rust-only
+    /// backstop with no 1:1 C symbol.
+    pub static EVAL_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// O(1) single-key probe against the canonical hashed storage — the
 /// fast-path companion to subst.rs `assoc_get` for order-independent
 /// single-key reads. Returns `None` when `name` (post-nameref) isn't
