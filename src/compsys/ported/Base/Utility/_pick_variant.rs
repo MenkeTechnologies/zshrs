@@ -138,11 +138,23 @@ pub fn _pick_variant(args: &[String]) -> i32 {
         return 0;
     }
 
-    // sh:36 — _call_program variant <cmd> <extra args>
+    // sh:36 — `output="$(_call_program variant … "${@[2,-1]}" </dev/null 2>&1)"`.
+    // The shell captures the probe command's output with STDERR MERGED (`2>&1`)
+    // and stdin from /dev/null. Native `_call_program` publishes only the
+    // command's STDOUT to `$REPLY`, and native `_pick_variant` calls it directly
+    // (no `$(… 2>&1)` wrapper), so a probe that prints its usage/version to
+    // STDERR — e.g. `nc -h` (BSD netcat writes 86 lines to stderr, nothing to
+    // stdout) — yielded an EMPTY `$REPLY`, no pattern matched, and the DEFAULT
+    // (last) variant was picked: `nc <TAB>` completed `nedit` options
+    // (`-iconic`/`-line`/…) instead of netcat's `-b`/`-i`/`-l`. `_call_program`
+    // runs `sh -c <joined args>`, so append the redirects as command words to
+    // reproduce the `</dev/null 2>&1` the shell puts on the `$()`.
     let mut call_args: Vec<String> = vec!["variant".to_string(), cmd_name.clone()];
     if argv.len() > 1 {
         call_args.extend(argv[1..].iter().cloned());
     }
+    call_args.push("</dev/null".to_string());
+    call_args.push("2>&1".to_string());
     let _ = _call_program(&call_args);
     let output = getsparam("REPLY").unwrap_or_default();
 

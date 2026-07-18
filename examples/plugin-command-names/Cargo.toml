@@ -1,0 +1,22 @@
+# Example native compsys-override plugin: a Rust ABI (`register_compfn`,
+# ABI v4) replacement for a customized `_command_names`. Build:
+#   cargo build --manifest-path examples/plugin-command-names/Cargo.toml
+# then inside zshrs (after compinit):
+#   zmodload -R examples/plugin-command-names/target/debug/libcommand_names.dylib  # macOS
+#   zmodload -R examples/plugin-command-names/target/debug/libcommand_names.so     # Linux
+#   l<TAB>   # completion driven by the Rust _command_names override
+[package]
+name = "command_names"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+znative = { path = "../../znative" }
+
+# Standalone: empty workspace table so this example is not pulled into the
+# parent zshrs workspace.
+[workspace]

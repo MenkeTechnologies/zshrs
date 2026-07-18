@@ -822,7 +822,21 @@ pub fn _arguments(args: &[String]) -> i32 {
     // options, fold them against the user specs, memoise into the
     // persistent `_args_cache_<cmd>` global, and pass `tmpargv +
     // <cached optspecs>` on to `comparguments -i`. See `long_option_cache`.
-    let full: Vec<String> = args[i..].to_vec();
+    // In zsh, `_arguments … $specs` expands `$specs` UNQUOTED, so empty-string
+    // array elements are elided before `_arguments` runs — `comparguments -i`
+    // never receives an empty spec. zshrs's fusevm does NOT elide unquoted-array
+    // empties during COMPLETION (it does in normal execution) — see
+    // [[compsys_completion_empty_word_elision]] — so a completer built via the
+    // `local scalar; scalar+=(…)` idiom (which prepends an empty element, e.g.
+    // `_tr`) passes an empty "" through to `comparguments -i`, which rejects it
+    // with `invalid argument:` and drops the whole option list. An empty spec is
+    // never valid (specs are `-x[…]`, `n:msg:act`, `*:…`, `(…)-x`, …) and zsh
+    // never delivers one, so dropping empties here matches zsh's effective
+    // behaviour. This is a targeted compensation for the fusevm elision gap; the
+    // proper fix is to elide unquoted-array empties in the completion-context
+    // argv build. Flag VALUES (`-M ''`, `-A ''`) are already consumed by the
+    // flag loop above, so only genuine spec-position empties reach here.
+    let full: Vec<String> = args[i..].iter().filter(|s| !s.is_empty()).cloned().collect();
     let specs: Vec<String> = match full.iter().rposition(|s| s == "--") {
         // sh:36 (( long )) — `(I)` returns the last match (rposition).
         Some(long) => long_option_cache(&full, long, &cmd),
@@ -1103,9 +1117,9 @@ pub fn _arguments(args: &[String]) -> i32 {
                         }
                         tried = true;
                     } else if action.starts_with(' ') {
-                        // sh:449 — action starts with space: just call it.
-                        let parts: Vec<String> =
-                            action.split_whitespace().map(|s| s.to_string()).collect();
+                        // sh:453 — `eval "action=( $action )"; "$action[@]"`.
+                        // Quote-respecting split (see eval_action_words).
+                        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
                                 if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])
@@ -1123,9 +1137,10 @@ pub fn _arguments(args: &[String]) -> i32 {
                         }
                         tried = true;
                     } else {
-                        // sh:459 — call action[1] with subopts, expl, rest.
-                        let parts: Vec<String> =
-                            action.split_whitespace().map(|s| s.to_string()).collect();
+                        // sh:463 — `eval "action=( $action )"`, then call
+                        // action[1] with subopts, expl, rest. The split MUST
+                        // respect quotes (see eval_action_words).
+                        let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                         if let Some((cmd, rest)) = parts.split_first() {
                             loop {
                                 if _next_label(&[subc.clone(), "expl".to_string(), descr.clone()])

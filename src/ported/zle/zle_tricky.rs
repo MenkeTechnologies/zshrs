@@ -2234,7 +2234,12 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
     // c:2431
     let bytes = fmt.as_bytes();
     let mut i = 0;
-    let mut cc = 0i32; // c:2434
+    let mut l = 0i32; // c:2434 — line counter (the RETURN is a LINE count).
+    let mut cc = 0i32; // c:2434 — column counter on the current line.
+    // c:2544/2595 — wrapping/return divide by the terminal width.
+    let zterm_columns = crate::ported::zle::zle_refresh::WINW
+        .load(Ordering::Relaxed)
+        .max(1);
     let mut out = String::new();
     while i < bytes.len() {
         let c = bytes[i];
@@ -2279,9 +2284,20 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
                 }
             }
             i += 1;
+        } else if c == b'\n' {
+            // c:2537-2554 — a literal newline in the format ends a display
+            // line: account the wrapped rows of the line just finished, reset
+            // the column counter, and emit the '\n' (when printing).
+            cc += 1; // c:2538
+            l += 1 + ((cc - 1) / zterm_columns); // c:2550
+            cc = 0; // c:2551
+            out.push('\n'); // c:2553
+            i += 1;
         } else {
+            // c:2555-2572 — an ordinary character advances the column by its
+            // display width (1 for the ASCII bytes this byte-wise loop sees).
             out.push(c as char);
-            cc += 1;
+            cc += 1; // c:2570 (WCWIDTH; 1 per byte here)
             i += 1;
         }
     }
@@ -2299,7 +2315,16 @@ pub fn printfmt(fmt: &str, n: i32, dopr: bool, doesc: bool) -> i32 {
         let out_fd = if fd >= 0 { fd } else { 1 };
         let _ = write_loop(out_fd, out.as_bytes());
     }
-    cc
+    // c:2595 — `return l + (cc / zterm_columns);`. printfmt returns the number
+    // of DISPLAY LINES the format occupies (beyond the first) — NOT the
+    // character count. The previous port returned `cc` (chars), so
+    // `calclist`'s `nlines += 1 + printfmt(disp,…)` over-counted every
+    // described / CMF_DISPLINE match by its width (a 13-char row counted as 14
+    // lines): `listdat.nlines` ballooned (3 matches → 42), the epilogue's
+    // `nlines+nlnct-1` exceeded the screen, always-last-prompt's cursor-up was
+    // skipped, and the cursor was left below a short list (spurious trailing
+    // prompt on `_describe`-based completions: `kill -`, `systemctl `, etc.).
+    l + (cc / zterm_columns)
 }
 
 /// Port of `listlist(LinkList l)` from Src/Zle/zle_tricky.c:2602.

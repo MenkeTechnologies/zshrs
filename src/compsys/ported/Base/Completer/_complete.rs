@@ -80,7 +80,8 @@ pub fn _complete() -> i32 {
             }
             // Fall through to the generic dispatch via _alternative-
             //   style action: treat `action` as a command.
-            let parts: Vec<String> = action.split_whitespace().map(|s| s.to_string()).collect();
+            // C _complete sh:61/72 `eval ws=( "$action" )` — quote-respecting split.
+            let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
             if let Some((cmd, rest)) = parts.split_first() {
                 return dispatch_function_call(cmd, rest).unwrap_or(1);
             }

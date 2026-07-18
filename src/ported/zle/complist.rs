@@ -1757,7 +1757,6 @@ pub fn compprintlist(showall: i32) -> i32 {
             // c:1530
             // c:1532-1675 — cmatch grid render.
             let n_total = g.dcount;
-            let _ = n_total;
             let nc = g.lins;
 
             // c:1537-1590 — CGF_HASDL whole-line displays.
@@ -1822,8 +1821,19 @@ pub fn compprintlist(showall: i32) -> i32 {
                     } // c:1587
                 }
             }
-            if pnl != 0 {
-                // c:1591
+            // c:1591 — `if (n && pnl)`. This is the newline that SEPARATES the
+            // CGF_HASDL displine rows from the column grid printed below them.
+            // It must fire ONLY when there ARE grid matches to print
+            // (`n = g->dcount`). When every match is a displine (dcount == 0,
+            // e.g. options rendered one-per-line with descriptions: `mkdir -`,
+            // `cp -`, `mv -`, `ps -`, …), the `n &&` guard suppresses it — the
+            // port dropped the guard (`if pnl != 0`), so it emitted a spurious
+            // trailing newline after the LAST displine. The list then printed
+            // one row too tall, so the always-last-prompt cursor-up
+            // (`nlines+nlnct-1`) landed one row too low and reprinted the
+            // command line over the first option. This is the complist (`zmodload
+            // zsh/complist`) twin of the compresult.rs `dcount` fix.
+            if n_total != 0 && pnl != 0 {
                 if dolistnl(ml) && compprintnl(ml) != 0 {
                     break 'outer;
                 }

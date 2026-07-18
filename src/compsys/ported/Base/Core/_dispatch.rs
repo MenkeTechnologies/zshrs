@@ -140,8 +140,9 @@ pub fn _dispatch(args: &[String]) -> i32 {
                     //   malformed pattern.
                     let matched = pattern_match(pat, str_arg);
                     if matched {
+                        // C _dispatch `eval "$comp"` — quote-respecting split.
                         let parts: Vec<String> =
-                            action.split_whitespace().map(|s| s.to_string()).collect();
+                            crate::compsys::ported::eval_action_words(&action);
                         if let Some((cmd, rest)) = parts.split_first() {
                             if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
                                 ret = 0;
@@ -218,8 +219,9 @@ pub fn _dispatch(args: &[String]) -> i32 {
                 {
                     if let Some(action) = i.get(1) {
                         let _ = setsparam("_compskip", "default");
+                        // C _dispatch `eval "$comp"` — quote-respecting split.
                         let parts: Vec<String> =
-                            action.split_whitespace().map(|s| s.to_string()).collect();
+                            crate::compsys::ported::eval_action_words(action);
                         if let Some((cmd, rest)) = parts.split_first() {
                             if dispatch_function_call(cmd, rest).unwrap_or(1) == 0 {
                                 ret = 0;

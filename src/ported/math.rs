@@ -4774,8 +4774,12 @@ pub(crate) fn parse_compound(expr: &str) -> Option<(String, String, String, Stri
         [b'<', b'<', b'=', ..] => ("<<=", 3),
         [b'>', b'>', b'=', ..] => (">>=", 3),
         [b'*', b'*', b'=', ..] => ("**=", 3),
-        [b'+', b'+', ..] => ("++", 2),
-        [b'-', b'-', ..] => ("--", 2),
+        // !!! DASH-STRICT GATE !!! `++`/`--` are C inc/dec ops absent from POSIX
+        // arithmetic; dash/ash reject `$((a++))`. Don't recognize them under
+        // --dash/--ash so the expression falls through to normal parsing and
+        // errors on the stray `+`/`-`, like the real shell. `+=` etc. stay.
+        [b'+', b'+', ..] if !crate::dash_mode::dash_strict() => ("++", 2),
+        [b'-', b'-', ..] if !crate::dash_mode::dash_strict() => ("--", 2),
         [b'+', b'=', ..] => ("+=", 2),
         [b'-', b'=', ..] => ("-=", 2),
         [b'*', b'=', ..] => ("*=", 2),

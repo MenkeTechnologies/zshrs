@@ -757,9 +757,12 @@ pub fn callcompfunc(s: &str, fn_name: &str) {
         // c:6042 — `runshfunc(prog, wrappers, name)`. zshrs runs the
         // body via either the Rust compsys port (direct fn call) or
         // the fusevm Chunk dispatch (via exec accessors).
-        if let Some(rust_fn) = crate::compsys::router::try_rust_dispatch(&fn_name_owned) {
+        if let Some(rc) =
+            crate::compsys::router::dispatch_compsys(&fn_name_owned, &largs_for_body[1..])
+        {
+            // Plugin override (ABI v4) wins over the built-in Rust port.
             // C convention: largs[0] = fn name, [1..] = real argv.
-            return rust_fn(&largs_for_body[1..]);
+            return rc;
         }
         crate::ported::exec::dispatch_function_call(&fn_name_owned, &largs_for_body[1..])
             .unwrap_or_else(|| crate::ported::builtin::LASTVAL.load(Ordering::Relaxed))

@@ -65,7 +65,22 @@ use std::os::raw::{c_char, c_int, c_void};
 /// gate, not a warning.
 ///
 /// v2: added [`HostApi::register_completion`] for native completions.
-pub const ABI_VERSION: u32 = 3;
+/// v3: added [`HostApi::getfunction`] / [`HostApi::addfunction`].
+/// v4: added [`HostApi::register_compfn`] / [`HostApi::comp_dispatch`] /
+///     [`HostApi::empty_command_hash`] — override a compsys `_fn` (e.g.
+///     `_command_names`) with a native handler that dispatches other
+///     completion functions and applies the `local -A +h commands` shadow.
+pub const ABI_VERSION: u32 = 4;
+
+/// A plugin-provided compsys function override — the native replacement
+/// for a shell completion function named `_NAME` (e.g. `_command_names`).
+/// Same C-ABI shape as [`BuiltinFn`]: registered via
+/// [`HostApi::register_compfn`] and dispatched by the host's completion
+/// router (`try_rust_dispatch`) in place of the built-in Rust port or the
+/// autoloaded shell function. `argv[0]` is the `_NAME`; `argv[1..]` are the
+/// completion-function arguments. (ABI v4.)
+pub type CompFn =
+    extern "C" fn(host: *const HostApi, argc: usize, argv: *const *const c_char) -> c_int;
 
 /// The one symbol every plugin `cdylib` must export. The host resolves
 /// it with `dlsym` after `dlopen`. Signature is [`InitFn`].
@@ -149,6 +164,31 @@ pub struct HostApi {
         name: *const c_char,
         body: *const c_char,
     ) -> c_int,
+    /// Register a native override for the compsys function `name` (a
+    /// `_NAME`, e.g. `_command_names`). Once registered, the host's
+    /// completion router dispatches `handler` in place of the built-in
+    /// Rust port or the autoloaded shell function. Returns 0 on success.
+    /// `name` is copied by the host. (ABI v4.)
+    pub register_compfn:
+        extern "C" fn(host: *const HostApi, name: *const c_char, handler: CompFn) -> c_int,
+    /// Invoke a compsys function `name` (e.g. `_alternative`, `_path_commands`)
+    /// with `argv[0..argc]` as its arguments — the host resolves it exactly
+    /// as the completer chain would (native port, then shell autoload), in
+    /// the *current* completion scope so `local`/tag state nests correctly.
+    /// Returns the function's status. This is how an overriding
+    /// [`CompFn`] delegates the bulk of its work. (ABI v4.)
+    pub comp_dispatch: extern "C" fn(
+        host: *const HostApi,
+        name: *const c_char,
+        argc: usize,
+        argv: *const *const c_char,
+    ) -> c_int,
+    /// Empty the shell's command-name hash (`cmdnamtab`), the observable
+    /// effect of `local -a +h path; local -A +h commands` inside a
+    /// completion function: a subsequent `compadd -k commands` then adds
+    /// nothing until the hash refills. Used by an overriding
+    /// `_command_names` to reproduce the customized shadow. (ABI v4.)
+    pub empty_command_hash: extern "C" fn(host: *const HostApi),
 }
 
 /// What a plugin returns from its [`InitFn`]. The strings must have
@@ -301,6 +341,43 @@ impl Host {
         };
         (self.t().addfunction)(self.api, cn.as_ptr(), cb.as_ptr()) == 0
     }
+
+    /// Register `handler` as the native override for compsys function
+    /// `name` (a `_NAME`). Usually done for you by `declare_plugin!`'s
+    /// `compfns:` section. Returns `true` on success. (ABI v4.)
+    pub fn register_compfn(&self, name: &str, handler: CompFn) -> bool {
+        let Ok(cname) = CString::new(name) else {
+            return false;
+        };
+        (self.t().register_compfn)(self.api, cname.as_ptr(), handler) == 0
+    }
+
+    /// Invoke compsys function `name` with `args` in the current
+    /// completion scope; returns its status. Delegates to the host's
+    /// completer resolution (native port → shell autoload). (ABI v4.)
+    pub fn comp_dispatch(&self, name: &str, args: &[&str]) -> i32 {
+        let Ok(cname) = CString::new(name) else {
+            return 1;
+        };
+        // Build argv[0..] = name, args… as owned CStrings + a NULL-free
+        // pointer array valid for the duration of the call.
+        let mut cargs: Vec<CString> = Vec::with_capacity(args.len() + 1);
+        cargs.push(cname);
+        for a in args {
+            match CString::new(*a) {
+                Ok(c) => cargs.push(c),
+                Err(_) => return 1,
+            }
+        }
+        let argv: Vec<*const c_char> = cargs.iter().map(|c| c.as_ptr()).collect();
+        (self.t().comp_dispatch)(self.api, argv[0], argv.len(), argv.as_ptr()) as i32
+    }
+
+    /// Empty the command-name hash — the observable effect of the
+    /// `local -A +h commands` shadow inside a completion function. (ABI v4.)
+    pub fn empty_command_hash(&self) {
+        (self.t().empty_command_hash)(self.api);
+    }
 }
 
 /// Safe view over a builtin's `(argc, argv)`. `argv[0]` is the command
@@ -380,6 +457,7 @@ macro_rules! declare_plugin {
         version: $version:literal,
         $(builtins: { $($cmd:literal => $handler:path),+ $(,)? } $(,)?)?
         $(completions: { $($ccmd:literal => $cgen:path),+ $(,)? } $(,)?)?
+        $(compfns: { $($cfname:literal => $cfhandler:path),+ $(,)? } $(,)?)?
     ) => {
         static __ZSHRS_PLUGIN_INFO: $crate::PluginInfo = $crate::PluginInfo {
             abi_version: $crate::ABIVERSION_FOR_MACRO,
@@ -436,6 +514,24 @@ macro_rules! declare_plugin {
                     let gen_name = concat!("zshrs_complete_", $ccmd);
                     h.register_builtin(gen_name, __cgen);
                     h.install_completion($ccmd, gen_name);
+                }
+            )+)?
+            $($(
+                {
+                    // One trampoline per compsys `_fn` override: adapts the
+                    // C-ABI CompFn to the ergonomic fn(&Host,&Args). The
+                    // host's completion router dispatches this in place of
+                    // the built-in port / shell autoload for `$cfname`.
+                    extern "C" fn __compfn(
+                        host: *const $crate::HostApi,
+                        argc: usize,
+                        argv: *const *const ::std::os::raw::c_char,
+                    ) -> ::std::os::raw::c_int {
+                        let h = unsafe { $crate::Host::from_raw(host) };
+                        let a = unsafe { $crate::Args::from_raw(argc, argv) };
+                        $cfhandler(&h, &a)
+                    }
+                    h.register_compfn($cfname, __compfn);
                 }
             )+)?
             &__ZSHRS_PLUGIN_INFO as *const $crate::PluginInfo

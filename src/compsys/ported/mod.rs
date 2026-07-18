@@ -13,6 +13,26 @@
 //! (`compsys::ported::_command_names`) so existing call sites need
 //! no changes.
 
+/// Split a completion-action string into an argv the way every compsys
+/// dispatcher does it — `eval "action=( $action )"` (e.g. `_arguments`
+/// sh:453/463, `_alternative` sh:61/69, `_values` sh:138/146, `_complete`
+/// sh:61/72). The shell word-parser keeps quoted words with embedded spaces
+/// whole and strips their quotes (`-M "r:|/=* r:|=*"` → one arg `r:|/=* r:|=*`)
+/// and honours backslash escapes (`device\ path`). The ports previously used
+/// `str::split_whitespace()`, a quote-blind split, which chopped
+/// `-M "r:|/=* r:|=*"` into `-M`, `"r:|/=*`, `r:|=*"` — the stray leading `"`
+/// made `compadd`'s matcher parser reject it (`unknown match specification
+/// character '"'`, seen on `df -<TAB>` via `_umountable` → `_canonical_paths`).
+/// The scratch globals are unset because zsh's `action` is a function local.
+pub fn eval_action_words(action: &str) -> Vec<String> {
+    let _ = crate::ported::params::setsparam("_cs_split_src", action);
+    let _ = crate::ported::exec::execute_script("eval \"_cs_split_dst=( $_cs_split_src )\"");
+    let out = crate::ported::params::getaparam("_cs_split_dst").unwrap_or_default();
+    let _ = crate::ported::params::unsetparam("_cs_split_src");
+    let _ = crate::ported::params::unsetparam("_cs_split_dst");
+    out
+}
+
 // ── Base/Completer/ ───────────────────────────────────────────────────
 /// `_all_matches` submodule.
 #[allow(non_snake_case, non_camel_case_types)]

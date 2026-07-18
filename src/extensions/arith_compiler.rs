@@ -397,7 +397,12 @@ impl<'a> ArithCompiler<'a> {
             b'+' => {
                 self.pos += 1;
                 match self.peek_char() {
-                    Some(b'+') => {
+                    // !!! DASH-STRICT GATE !!! `++`/`--` are C inc/dec operators
+                    // that POSIX arithmetic (dash/ash) lacks — they reject
+                    // `$((a++))`. Don't consume the second `+`: it becomes a
+                    // separate unary `+` with no operand → parse error, like
+                    // dash. `+=` is POSIX-valid and stays.
+                    Some(b'+') if !crate::dash_mode::dash_strict() => {
                         self.pos += 1;
                         (Tok::PreInc, String::new())
                     }
@@ -411,7 +416,7 @@ impl<'a> ArithCompiler<'a> {
             b'-' => {
                 self.pos += 1;
                 match self.peek_char() {
-                    Some(b'-') => {
+                    Some(b'-') if !crate::dash_mode::dash_strict() => {
                         self.pos += 1;
                         (Tok::PreDec, String::new())
                     }

@@ -6890,8 +6890,18 @@ pub fn nicezputs(s: &str, stream: &mut dyn std::io::Write) -> i32 {
 /// this via [`sb_niceformat`] which is the same render-then-measure
 /// path.
 pub fn niceztrlen(s: &str) -> usize {
-    // c equivalent: l = sb_niceformat(s, NULL, NULL, 0); return l;
-    sb_niceformat(s, None, None, 0)
+    // c:5343-5348 — under MULTIBYTE_SUPPORT (which zshrs targets) `niceztrlen`
+    // is the multibyte version: it walks whole characters via `mb_niceformat`,
+    // whose per-char width comes from `wcs_nicechar_sel`'s wcwidth — so a
+    // printable multibyte char (e.g. U+2010 `‐`, 3 bytes / 1 column) counts as
+    // 1, not 3. The port previously called `sb_niceformat`, the single-byte
+    // (`#else`, c:5320-5341) version that counts each byte separately, so any
+    // description/match with a multibyte glyph over-measured its display width
+    // by (bytes−columns). In `cd_get`'s described-list truncation
+    // (computil.rs) that over-measure consumed the remaining-width budget too
+    // early and clipped the tail off descriptions containing such a glyph —
+    // e.g. `xz -<TAB>`'s "…multi‐threaded decompression" lost its final "on".
+    mb_niceformat(s, None, None, 0)
 }
 
 /// Multibyte-aware nice-format of a string.

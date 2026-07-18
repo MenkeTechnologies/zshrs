@@ -1269,6 +1269,20 @@ pub fn restrict_range(b: i32, e: i32) {
         *words = new_words; // c:930 freearray + assign
         let cur = COMPCURRENT.load(Ordering::Relaxed);
         COMPCURRENT.store(cur - b, Ordering::Relaxed); // c:931 compcurrent -= b
+
+        // zshrs sync: in C `$words`/`$CURRENT` ARE the compwords/compcurrent
+        // globals (special-param getfn reads them live), so restricting the
+        // globals is instantly visible to a completion function. zshrs's
+        // `$words`/`$CURRENT` are static param copies (set once at completion
+        // setup), so they desync from the globals here. Mirror the restricted
+        // range into the params so an `_arguments '*::'` (CAA_RARGS) /
+        // `'*:::'` (CAA_RREST) rest-arg ACTION sees the rest-only
+        // `$words`/`$CURRENT` — e.g. `_systemctl_command`'s `(( CURRENT == 1 ))`.
+        let restricted = words.clone();
+        let new_cur = COMPCURRENT.load(Ordering::Relaxed);
+        drop(words); // release COMPWORDS lock before touching paramtab
+        crate::ported::params::setaparam("words", restricted);
+        let _ = crate::ported::params::setiparam("CURRENT", new_cur as i64);
     }
 }
 
@@ -1652,10 +1666,21 @@ pub fn bin_compset(
             nb = 0;
         }
         CVT_PREPAT | CVT_SUFPAT => {
-            // c:1203-1206 — with a second arg, the FIRST is the count and
-            // the SECOND is the pattern: `na = atoi(sa); sa = sb;`.
+            // c:1208-1212 — with a second arg the FIRST is the count and the
+            // SECOND the pattern (`na = atoi(sa); sa = sb;` — the `sa = sb`
+            // reassignment is handled via `pat` below). WITHOUT a second arg
+            // (the common `compset -P <pat>` / `-S <pat>`), C sets `na = -1`,
+            // meaning "match the pattern ONCE, anchored at the END of the
+            // prefix/suffix". The previous port omitted this else branch, so
+            // `na` stayed 0 and `do_comp_vars`'s `if (na == 0) return 0`
+            // bailed BEFORE calling `ignore_prefix`/`ignore_suffix` — so
+            // `compset -P -` matched nothing and never stripped `-` off
+            // `$PREFIX`. Result: `tar -<TAB>` (`compset -P -; _values …`) and
+            // any `compset -P/-S <pat>` completer produced an empty list.
             if sb_ref.is_some() {
-                na = sa_ref.parse::<i32>().unwrap_or(0); // c:1205
+                na = sa_ref.parse::<i32>().unwrap_or(0); // c:1209
+            } else {
+                na = -1; // c:1212
             }
             nb = 0;
         }
@@ -1674,16 +1699,22 @@ pub fn bin_compset(
     } else {
         sa_ref
     };
-    // c:1218 — `do_comp_vars(test, na, sa, nb, sb, 0)` dispatch.
+    // c:1217 — `return !do_comp_vars(test, na, sa, nb, sb, 1);`. The final
+    // arg is `mod = 1` (MODIFY), NOT 0: for the PATTERN forms
+    // (`compset -P`/`-S` = CVT_PREPAT/SUFPAT) do_comp_vars only calls
+    // `ignore_prefix`/`ignore_suffix` — which actually strips the matched
+    // pattern off `$PREFIX`/`$IPREFIX` — when `mod != 0`. The previous port
+    // passed 0, so `compset -P -` matched but never moved the `-` from
+    // `$PREFIX` to `$IPREFIX`: `$PREFIX` stayed `-`, and a following
+    // `_values`/`_describe` filtered its single-letter matches against `-`
+    // (none matched) → empty listing. Symptom: `tar -<TAB>` (which does
+    // `compset -P -; _values …`) showed nothing vs zsh's A/c/f/t/u/v/x.
+    //
     // `do_comp_vars` returns 1 when it matched/modified and 0 otherwise
-    // (C-boolean). The `compset` BUILTIN, like every shell command,
-    // reports success as exit status 0 — and the compsys shell-function
-    // ports test it that way (`compset -P … && …` / `== 0`). Convert:
-    // match → 0 (success), no match → 1 (failure). Without this,
-    // `_main_complete`'s `compset -P 1 '=' == 0` fired on EVERY word
-    // (0 == no-match), forcing `$compstate[context]=equal` and command
-    // completion for every argument.
-    if do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 0) != 0 {
+    // (C-boolean); the `compset` BUILTIN reports success as exit status 0
+    // (compsys tests `compset -P … && …` / `== 0`), so match → 0, no match → 1
+    // (C's `return !do_comp_vars(...)`).
+    if do_comp_vars(test, na, pat, nb, sb_ref.unwrap_or(""), 1) != 0 {
         0
     } else {
         1

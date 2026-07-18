@@ -207,8 +207,8 @@ pub fn _alternative(args: &[String]) -> i32 {
                     let _ = crate::ported::exec::execute_script(body);
                 }
             } else if action.starts_with(' ') {
-                // sh:57   bare-call form
-                let parts: Vec<String> = action.split_whitespace().map(|s| s.to_string()).collect();
+                // sh:61 — `eval "action=( $action )"; "$action[@]"`.
+                let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                 loop {
                     let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];
                     if _next_label(&nl) != 0 {
@@ -220,8 +220,8 @@ pub fn _alternative(args: &[String]) -> i32 {
                     }
                 }
             } else {
-                // sh:64  cmd args with descriptions
-                let parts: Vec<String> = action.split_whitespace().map(|s| s.to_string()).collect();
+                // sh:69 — `eval "action=( $action )"`, then cmd args with descs.
+                let parts: Vec<String> = crate::compsys::ported::eval_action_words(&action);
                 if let Some((cmd, rest)) = parts.split_first() {
                     loop {
                         let nl = vec![tag.clone(), "expl".to_string(), descr.clone()];

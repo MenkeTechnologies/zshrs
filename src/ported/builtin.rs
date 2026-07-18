@@ -4949,11 +4949,11 @@ pub fn bin_typeset(
         // turning readonly OFF, which reaches this branch by a different route.
         // setsecondstype (params.rs) is the real port and had NO callers.
         if !tied_mode {
-            let pmf = paramtab()
+            let pm_info = paramtab()
                 .read()
                 .ok()
-                .and_then(|t| t.get(arg_name).map(|p| p.node.flags as u32));
-            if let Some(pmf) = pmf {
+                .and_then(|t| t.get(arg_name).map(|p| (p.node.flags as u32, p.level)));
+            if let Some((pmf, pm_level)) = pm_info {
                 let chflags = ((off as u32 & pmf) | (on as u32 & !pmf))
                     & (PM_INTEGER
                         | PM_EFLOAT
@@ -4963,7 +4963,21 @@ pub fn bin_typeset(
                         | PM_TIED
                         | PM_AUTOLOAD); // c:2118-2120
                 let tc = chflags != 0 && chflags != (PM_EFLOAT | PM_FFLOAT); // c:2122
-                if tc && (pmf & PM_SPECIAL) != 0 {
+                // c:2078-2091 — a `local` at a DEEPER scope than the existing
+                // param does not CHANGE that param's type; it SHADOWS it with a
+                // fresh local (createparam installs the pm.old chain, restored by
+                // endparamscope). Only a SAME-scope re-typeset of a special is the
+                // forbidden type change. The port applied the special type-change
+                // error against the higher-scope param unconditionally, so
+                // `local -a commands` (HASHED command-hash special → local ARRAY)
+                // inside a function wrongly errored "can't change type of a
+                // special parameter" and aborted — e.g. `_openssl_subcommands`'s
+                // `local -a commands=(…)`, leaving `openssl <TAB>` empty. zsh
+                // allows the shadow in a function (errors only at same scope /
+                // top level). Mirror the reuse-decision guard used at c:2078-2091.
+                let creating_local_shadow =
+                    (on as u32 & PM_LOCAL) != 0 && pm_level != locallevel_param.load(Relaxed);
+                if tc && (pmf & PM_SPECIAL) != 0 && !creating_local_shadow {
                     let mut err = true; // c:2144
                     if arg_name == "SECONDS" {
                         // c:2171 — `else if (!setsecondstype(pm, on, off))`.
