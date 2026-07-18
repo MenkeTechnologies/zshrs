@@ -2476,12 +2476,23 @@ fn par_funcdef() -> Option<ZshCommand> {
         //   (`function name {body}` and `function () {body}` both work
         //   in zsh). Bug #60 in docs/BUGS.md.
         if names.is_empty() && !saw_paren {
-            // Peek the next source byte after the current lexer position
-            // (`{` was just tokenized — `pos()` points just past it).
-            // A whitespace separator means proper `function { body }`
-            // form; anything else is the malformed `function {body}`
-            // shape zsh rejects.
-            let next_byte = input_slice(pos(), pos() + 1)
+            // Check the source byte IMMEDIATELY after the `{`. Tokenizing the
+            // brace leaves `pos()` at `{`+2 — the lexer consumes the brace AND
+            // the one separator char behind it — so that byte lives at
+            // `pos() - 1`, NOT at `pos()`. Reading `pos()` looked one byte too
+            // far and hit the first BODY character whenever exactly ONE space
+            // followed the brace, so `function { echo x }` was rejected as
+            // malformed while `function {  echo x }` (two spaces, leaving a
+            // second space under the peek) parsed. Both are valid in zsh.
+            //
+            // The genuinely malformed `function {body}` never reaches here:
+            // with no separator the lexer folds `{body` into a single STRING
+            // word instead of emitting a brace token, so this branch is not
+            // taken and the parse fails downstream — which is what zsh does
+            // too (`parse error near `}'`). Bug #60 in docs/BUGS.md.
+            let next_byte = pos()
+                .checked_sub(1)
+                .and_then(|p| input_slice(p, pos()))
                 .and_then(|s| s.bytes().next())
                 .unwrap_or(b' ');
             if !matches!(next_byte, b' ' | b'\t' | b'\n' | b';') {

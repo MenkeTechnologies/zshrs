@@ -3455,6 +3455,43 @@ impl ShellExecutor {
                     .unwrap_or_default();
                 let functions_compiled_snap = self.functions_compiled.clone();
                 let function_source_snap = self.function_source.clone();
+                // c:Src/exec.c:4782 — getoutput's child runs
+                // `entersubsh(ESUB_PGRP|ESUB_NOMONITOR)`, and c:1219
+                // `if (flags & ESUB_PGRP) clearjobtab(monitor)` hands
+                // that child an EMPTY job table. The oldjobtab snapshot
+                // (c:Src/jobs.c:1800) is monitor-only, so a
+                // non-interactive shell keeps nothing at all — which is
+                // why zsh prints nothing for `sleep 5 & print $(jobs)`.
+                // The `(...)` and pipeline-stage paths already call
+                // clearjobtab in their forked children; cmd-subst runs
+                // in-process, so snapshot the globals clearjobtab
+                // mutates and restore them below. freejob (c:1457) is
+                // struct-local — no waitpid/kill — so the restore is
+                // exact.
+                let jobtab_snap = crate::ported::jobs::JOBTAB
+                    .get()
+                    .and_then(|t| t.lock().ok().map(|g| g.clone()));
+                let maxjob_snap = crate::ported::jobs::MAXJOB
+                    .get()
+                    .and_then(|m| m.lock().ok().map(|g| *g));
+                let thisjob_snap = crate::ported::jobs::THISJOB
+                    .get()
+                    .and_then(|t| t.lock().ok().map(|g| *g));
+                // curjob/prevjob (c:Src/jobs.c) are plain globals in C,
+                // so the forked child's setcurjob calls never reach the
+                // parent — restore them alongside the table, else the
+                // `+`/`-` markers are lost after a `$(jobs)`.
+                let curjob_snap = crate::ported::jobs::CURJOB
+                    .get()
+                    .and_then(|t| t.lock().ok().map(|g| *g));
+                let prevjob_snap = crate::ported::jobs::PREVJOB
+                    .get()
+                    .and_then(|t| t.lock().ok().map(|g| *g));
+                {
+                    let monitor =
+                        crate::ported::zsh_h::isset(crate::ported::zsh_h::MONITOR) as i32;
+                    crate::ported::jobs::clearjobtab(&mut self.jobs, monitor);
+                }
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 vm.set_shell_host(Box::new(ZshrsHost));
@@ -3598,6 +3635,34 @@ impl ShellExecutor {
                 }
                 self.functions_compiled = functions_compiled_snap;
                 self.function_source = function_source_snap;
+                // Undo the clearjobtab above — in C the cleared table
+                // belongs to the forked child and dies with it, so the
+                // parent's table must come back untouched.
+                if let (Some(js), Some(t)) = (jobtab_snap, crate::ported::jobs::JOBTAB.get()) {
+                    if let Ok(mut g) = t.lock() {
+                        *g = js;
+                    }
+                }
+                if let (Some(mj), Some(m)) = (maxjob_snap, crate::ported::jobs::MAXJOB.get()) {
+                    if let Ok(mut g) = m.lock() {
+                        *g = mj;
+                    }
+                }
+                if let (Some(tj), Some(t)) = (thisjob_snap, crate::ported::jobs::THISJOB.get()) {
+                    if let Ok(mut g) = t.lock() {
+                        *g = tj;
+                    }
+                }
+                if let (Some(cj), Some(t)) = (curjob_snap, crate::ported::jobs::CURJOB.get()) {
+                    if let Ok(mut g) = t.lock() {
+                        *g = cj;
+                    }
+                }
+                if let (Some(pj), Some(t)) = (prevjob_snap, crate::ported::jobs::PREVJOB.get()) {
+                    if let Ok(mut g) = t.lock() {
+                        *g = pj;
+                    }
+                }
             }
         }
         // Restore LINENO so outer xtrace sees the outer line. LINENO

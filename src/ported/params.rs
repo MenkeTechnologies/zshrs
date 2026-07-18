@@ -2266,6 +2266,23 @@ pub fn createparam(
                     m.insert(name.to_string(), IndexMap::new());
                 }
             }
+            // c:Src/params.c:1138-1144 — the shadow arm, where C spells the
+            // intent out: "needed to avoid freeing oldpm, but we do take it out
+            // of the environment when it's hidden" — `if (oldpm->env)
+            // delenv(oldpm);`. Without it the name stays in `environ` for the
+            // whole life of the local, so the local's assignment republished
+            // over that existing entry and CHILD PROCESSES saw the local value:
+            //   export EV=out; f(){ local EV=in; sh -c 'echo [$EV]' }; f
+            // printed `[in]` where zsh prints `[]`. Note the FLAG was already
+            // correct (`${(t)EV}` = `scalar-local`, not exported) — only the
+            // environment entry leaked, which is why nothing parameter-side
+            // could see it. docs/BUGS.md #1040. The symmetric re-export of the
+            // outer value on scope exit is #1038, in endparamscope.
+            if (flags as u32 & PM_LOCAL) != 0
+                && (op.env.is_some() || (op.node.flags as u32 & PM_EXPORTED) != 0)
+            {
+                delenvvalue(name); // c:1142 delenv(oldpm)
+            }
             Some(op)
         } else {
             None
@@ -2340,6 +2357,46 @@ pub fn createparam(
         if let Some(gsu) = special_gsu {
             pm.gsu_s = Some(gsu);
             pm.node.flags |= PM_SPECIAL as i32;
+        }
+    }
+    // c:Src/builtin.c:2087-2089 + 2381-2392 — when `local` shadows a
+    // PM_SPECIAL parameter, typeset_single sets `newspecial = NS_NORMAL` and
+    // the apply branch keeps the SAME struct: "For specials, we keep the same
+    // struct but zero everything. Maybe it would be easier to create a new
+    // struct but copy the get/set methods." So the local inherits the
+    // shadowed param's accessors AND its type — it does not decay to a plain
+    // scalar.
+    //
+    // The name table above only enumerates special SCALARS, so every INTEGER
+    // special fell through and was created generic: `local HISTSIZE=5` built a
+    // `scalar-local` whose setter never reached the real HISTSIZE storage, so
+    // the assignment was silently dropped and `${(t)HISTSIZE}` read
+    // `scalar-local` where zsh reports `integer-local-special`. Same for
+    // SAVEHIST / SECONDS / RANDOM / LINES / COLUMNS. Inherit from the shadowed
+    // param generically rather than growing the list — that is what C does.
+    // docs/BUGS.md #1039 (D).
+    if (pm.node.flags as u32 & PM_SPECIAL) == 0 {
+        let inherited = pm.old.as_ref().and_then(|old| {
+            if (old.node.flags as u32 & PM_SPECIAL) != 0 {
+                Some((
+                    old.gsu_s.clone(),
+                    old.gsu_i.clone(),
+                    old.gsu_f.clone(),
+                    PM_TYPE(old.node.flags as u32),
+                ))
+            } else {
+                None
+            }
+        });
+        if let Some((gs, gi, gf, ty)) = inherited {
+            pm.gsu_s = gs;
+            pm.gsu_i = gi;
+            pm.gsu_f = gf;
+            // Re-stamp the type from the shadowed special: createparam was
+            // called with the caller's flags (PM_SCALAR for a bare `local X=1`),
+            // which would otherwise override the special's real type.
+            pm.node.flags &= !(PM_TYPE(u32::MAX) as i32);
+            pm.node.flags |= PM_SPECIAL as i32 | ty as i32;
         }
     }
     // c:1146 `paramtab->addnode(paramtab, ztrdup(name), pm)`. For
@@ -2950,6 +3007,26 @@ pub(crate) fn getarg<'a>(
         let word = flags.contains('w') || flags.contains('f');
         let _ = word;
         let return_index = flags.contains('i') || flags.contains('I');
+        // c:Src/params.c:2091 — `if (start > 0 && (isset(KSHARRAYS) ||
+        // (v->pm->node.flags & PM_HASHED))) start--;`. The search loop below
+        // yields a 1-BASED index, but under KSHARRAYS the shell's indices are
+        // 0-based, so every index that leaves here has to be shifted down. This
+        // was missed entirely, which showed up two ways:
+        //   `setopt ksharrays; a=(x y z); ${a[(i)y]}` → 2, zsh says 1, and the
+        //     no-match answer came out len+1 (4) instead of len (3);
+        //   a RANGE bound built from a search (`${a[(r)b,(r)d]}`) fed the
+        //     unshifted index straight into the 0-based slice machinery, so the
+        //     window slid one element right — `c d e` for zsh's `b c d`.
+        // The `> 0` guard is what keeps the `(I)` no-match answer at 0.
+        // (PM_HASHED is not folded in here: an assoc `(i)` returns the KEY, not
+        // an index, so there is nothing to shift — verified against zsh.)
+        let ksh_idx = |i: i64| -> String {
+            if i > 0 && isset(KSHARRAYS) {
+                (i - 1).to_string()
+            } else {
+                i.to_string()
+            }
+        };
         // C params.c:1575 `if (!rev)` — without a direction flag
         // (r/R/i/I/k/K), getarg does NOT enter the search loop on
         // arrays; pat is mathevalarg'd as an integer index instead.
@@ -2992,7 +3069,7 @@ pub(crate) fn getarg<'a>(
             }
         } else if start >= len {
             return Some(getarg_out::Value(if return_index {
-                Value::str((arr.len() + 1).to_string())
+                Value::str(ksh_idx(arr.len() as i64 + 1))
             } else {
                 Value::str("")
             }));
@@ -3054,7 +3131,7 @@ pub(crate) fn getarg<'a>(
                 remaining -= 1;
                 if remaining == 0 {
                     return Some(getarg_out::Value(if return_index {
-                        Value::str((i + 1).to_string())
+                        Value::str(ksh_idx(i as i64 + 1))
                     } else {
                         Value::str(s.clone())
                     }));
@@ -3066,7 +3143,7 @@ pub(crate) fn getarg<'a>(
             if flags.contains('I') {
                 Value::str("0")
             } else {
-                Value::str((arr.len() + 1).to_string())
+                Value::str(ksh_idx(arr.len() as i64 + 1))
             }
         } else {
             Value::str("")
@@ -6338,10 +6415,19 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                     return None;
                 }
                 // 1-based forward, negative-from-end. KSHARRAYS = 0-based.
+                // c:Src/params.c:2134 — under KSHZEROSUBSCRIPT a `[0]`
+                // subscript "is treated as accessing the first element", so it
+                // must land on real index 0, NOT on `0 - 1 = -1`. Falling into
+                // the negative branch made `s[0]=X` INSERT at the front
+                // ("Xhello") instead of replacing the first character
+                // ("Xello"). Only the zero case shifts: `[1]` stays 1-based
+                // (`idx - 1`), and KSHARRAYS is already 0-based above.
                 let raw = if idx < 0 {
                     len + idx
                 } else if isset(KSHARRAYS) {
                     idx
+                } else if idx == 0 && kshzero {
+                    0
                 } else {
                     idx - 1
                 };
@@ -6385,10 +6471,18 @@ pub fn assignsparam(s: &str, val: &str, flags: i32) -> Option<Param> {
                 let uniq = (pm.node.flags as u32 & PM_UNIQUE) != 0;
                 let arr = pm.u_arr.get_or_insert_with(Vec::new);
                 let len = arr.len() as i64;
+                // c:Src/params.c:2134 — same KSHZEROSUBSCRIPT rule as the
+                // scalar splice above: `[0]` accesses the FIRST element, so it
+                // maps to real index 0. Computing `idx - 1 = -1` sent it down
+                // the negative-subscript branch, which PREPENDS: `a[0]=Z` on
+                // (1 2 3) gave (Z 1 2 3) where zsh replaces element one and
+                // gives (Z 2 3).
                 let real_idx = if idx < 0 {
                     len + idx
                 } else if isset(KSHARRAYS) {
                     idx
+                } else if idx == 0 && kshzero {
+                    0
                 } else {
                     idx - 1
                 };
@@ -7421,6 +7515,38 @@ pub fn assignaparam(name: &str, val: Vec<String>, flags: i32) -> Option<Param> {
     // locks; safe to call now that we've dropped the write lock.
     if let Some(ename) = ename_for_envsync {
         arrfixenv(&ename, Some(&val_final));
+    }
+    // c:Src/params.c:3434 — `setarrvalue(v, val)` runs the array's setfn, and
+    // for a colon-tied special that setfn republishes the joined value to its
+    // paired SCALAR. zshrs routes that through `ename` + `arrfixenv` above, but
+    // only when a `gsu_a` setfn exists — and path/fpath/cdpath/… are registered
+    // from the `special_paramdef` DATA table (params.rs:1027) with no gsu
+    // pointers at all, so `ename_for_envsync` was None and the scalar never
+    // moved. A GLOBAL `path=(…)` hides the bug because it compiles to
+    // BUILTIN_SET_ARRAY in the bridge, which carries the tie itself; a
+    // `local path=(…)` is a typeset DECLARATION and lands here instead, so
+    // `$PATH` — and therefore command lookup inside the function — kept the
+    // outer value. docs/BUGS.md #1039 A.
+    //
+    // Writes the scalar straight into paramtab rather than calling
+    // `assignsparam`, matching the existing sync sites: assignsparam carries
+    // the scalar→array half of the same tie, so routing through it would
+    // recurse.
+    if let Some((_, sc)) = TIED_COLON_ARRAYS.iter().find(|(a, _)| *a == name) {
+        let joined = val_final.join(":");
+        if let Ok(mut tab) = paramtab().write() {
+            if let Some(entry) = tab.get_mut(*sc) {
+                entry.u_str = Some(joined.clone());
+                entry.u_arr = None;
+            }
+        }
+        // Keep the process environment and the command hash in step, exactly as
+        // the scalar-side sync does — without the rehash, `command -v` inside
+        // the function still resolves against the stale PATH.
+        std::env::set_var(sc, &joined);
+        if *sc == "PATH" {
+            crate::ported::hashtable::emptycmdnamtable();
+        }
     }
     // c:Src/params.c:3262 IPDEF9 — \`argv\`/\`@\`/\`*\` are aliases for
     // the C global \`pparams\` (the positional parameter vector).
@@ -8684,8 +8810,30 @@ pub fn tiedarrgetfn(pm: &param) -> Vec<String> {
     if let Some(ename) = pm.ename.as_deref() {
         if let Ok(tab) = paramtab().read() {
             if let Some(apm) = tab.get(ename) {
-                if let Some(arr) = apm.u_arr.as_ref() {
-                    return arr.clone();
+                // The partner is found by NAME, so the lookup lands on whatever
+                // binding is currently visible — including a LOCAL shadow that
+                // is no part of the tie. C links the pair by struct pointer, so
+                // `local -a v=(a b)` inside a function cannot change what `$V`
+                // reads; zshrs published the local through the scalar half
+                // (`$V` became `a:b` where zsh keeps `g1:g2`). Note the local
+                // is genuinely untied — `${(t)v}` is `array-local`, matching
+                // zsh — so the flags were already right and only this read was
+                // wrong. Walk the shadow chain (`old`) to the binding that
+                // actually carries PM_TIED. docs/BUGS.md #1039 B.
+                //
+                // A local SPECIAL is unaffected: it keeps PM_TIED through the
+                // newspecial inheritance (`${(t)path}` is
+                // `array-local-tied-special`), so `local path=(…)` still
+                // publishes to `$PATH` as #1039 A requires.
+                let mut cand: Option<&param> = Some(apm);
+                while let Some(p) = cand {
+                    if (p.node.flags as u32 & PM_TIED) != 0 {
+                        if let Some(arr) = p.u_arr.as_ref() {
+                            return arr.clone();
+                        }
+                        break;
+                    }
+                    cand = p.old.as_deref();
                 }
             }
         }
@@ -10895,6 +11043,28 @@ pub fn endparamscope() {
                     .as_ref()
                     .map(|p| (p.node.flags as u32 & PM_HASHED) != 0)
                     .unwrap_or(false);
+                // c:Src/params.c:3862 — scanendscope's non-special arm calls
+                // `unsetparam_pm(pm, 0, 0)`, whose `if (pm->env) delenv(pm)`
+                // strips the popped local's ENVIRON entry. This pop path
+                // removes the node from the table directly instead of routing
+                // through unsetparam_pm, so an exported local's environment
+                // entry outlived its scope: `f(){ local -x E=1 }; f` left E=1
+                // in the real process environment — inherited by every child —
+                // even though paramtab itself was clean (`typeset -p E` already
+                // reported "no such variable").
+                let popped_exported = (pm.node.flags as u32 & PM_EXPORTED) != 0;
+                // c:Src/params.c:3926-3934 — once the outer binding is back,
+                // `if (oldpm->node.flags & PM_EXPORTED) export_param(oldpm)`
+                // re-exports the OUTER value, which typeset_single had removed
+                // from the environment (c:1143 `delenv(oldpm)`) when the local
+                // shadowed it. Capture it before `pm.old` is moved below.
+                let outer_export: Option<String> = pm.old.as_ref().and_then(|p| {
+                    if (p.node.flags as u32 & PM_EXPORTED) != 0 {
+                        Some(p.u_str.clone().unwrap_or_default())
+                    } else {
+                        None
+                    }
+                });
                 if let Some(prev) = pm.old {
                     // c:scanendscope:5933 pm->old = tpm->old
                     // PM_TIED counts too — the tied array's GLOBAL
@@ -10962,6 +11132,17 @@ pub fn endparamscope() {
                                 m.remove(&n);
                             }
                         }
+                    }
+                }
+                // Net environment effect of the two C steps above: the outer
+                // value if it was exported, otherwise no entry at all. Uses
+                // the raw env helpers (not export_param/unsetparam_pm) because
+                // we still hold the paramtab write lock here and those re-enter
+                // it; neither `env::set_var` nor `delenvvalue` touches paramtab.
+                if popped_exported || outer_export.is_some() {
+                    match &outer_export {
+                        Some(v) => env::set_var(&n, v), // c:3933 export_param(oldpm)
+                        None => delenvvalue(&n),        // c:3862 delenv(pm)
                     }
                 }
             }

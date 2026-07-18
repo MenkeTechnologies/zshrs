@@ -1073,6 +1073,19 @@ const GLOB_QUAL: &[&str] = &[
     // still-open mode-MATCHING gap (see docs/BUGS.md #1033) and are deliberately
     // excluded here so this mode stays green.
     "(e)", "(f)", "(e:foo)", "(f:u+x)", "(f:qq:)", "(e:'[[ -n \"$REPLY\" ]]':)",
+    // `d<NUM>` — match by st_dev. c:Src/glob.c:1445-1449 `case 'd': func =
+    // qualdev; data = qgetnum(&s);` with qualdev (c:3688) = `buf->st_dev == dv`.
+    // Both the `qualifier::Device` variant and the `qualdev` matcher were
+    // already ported and wired, but the PARSER never had a `d` arm, so `*(d5)`
+    // could not reach them and a bare `*(d)` reported "unknown file attribute:
+    // d" where zsh says "number expected" (c:832 qgetnum takes plain digits —
+    // no `+`/`-` range operator, unlike l/L/m).
+    //
+    // Only the machine-INDEPENDENT forms are generated: the two error spellings,
+    // and a device number nothing can be on (so the result is reliably empty).
+    // A matching st_dev differs per filesystem and would make the mode's answer
+    // depend on where it is run.
+    "(d)", "(.dN)", "(.d999999999N)", "(d999999999N)", "(.Nd999999999)",
 ];
 
 /// One or two glob-pattern print statements, prefixed with `setopt extendedglob`
@@ -1489,7 +1502,191 @@ fn gen_subscript(seed: u64) -> Vec<String> {
     let n = rng.gen_range(2..=5);
     for _ in 0..n {
         let arr = pick(&mut rng, &["a", "nums", "dup"]);
-        let expr = match rng.gen_range(0..15) {
+        let expr = match rng.gen_range(0..16) {
+            // Subscript SET-ness must agree with the value the same subscript
+            // yields — `${x[i]}` and `${+x[i]}` are decided by separate code,
+            // and they had drifted three ways (docs/BUGS.md #1043):
+            //   * KSHARRAYS (c:Src/params.c:2120) is 0-based, but the set-ness
+            //     test hardcoded `i - 1`, so `a[0]` read as slot -1 (UNSET
+            //     while the value path returned element one) and `a[3]` as slot
+            //     2 (SET though past the end).
+            //   * KSHZEROSUBSCRIPT (c:2134) makes `[0]` the FIRST element, so
+            //     it maps to slot 0 rather than -1.
+            //   * A numeric subscript on a SCALAR had no branch at all, so
+            //     `${s[1]:-n}` fired its default even though the character is
+            //     there. zsh answers `${+s[N]}` with 1 for any N once `s`
+            //     exists and lets the empty VALUE drive `:-`.
+            // Each case prints the value and `${+…}` together so the two can
+            // never diverge again; the options are set inline since the mode's
+            // shared state is plain zsh-style.
+            // NB: every arm here yields an EXPRESSION — the loop tail wraps it
+            // in `print -r -- "[…]"`. Returning a whole statement nests one
+            // print inside another and silently probes nothing, so the value
+            // and `${+…}` are paired using a `][` separator inside that one
+            // wrapper, and any setopt/typeset setup is pushed as its own
+            // statement via `pre` instead.
+            15 => {
+                // The KSHARRAYS / KSHZEROSUBSCRIPT rows run inside a SUBSHELL.
+                // Setting either option as a bare statement leaks into the rest
+                // of the case (the loop emits 2-5 statements), and flag-form
+                // subscripts are separately broken under those options —
+                // `${nums[(i)t*]}` and `${#a[(R)y]}` diverge once ksharrays or
+                // kshzerosubscript is live (docs/BUGS.md #1044). Leaking here
+                // would wedge this mode on a DIFFERENT bug than the one being
+                // pinned, so the option is confined and the wrapper expression
+                // is a fixed literal.
+                let (setup, e) = pick(
+                    &mut rng,
+                    &[
+                        ("", r#"${a[1]:-n}][${+a[1]}][${a[9]:-n}][${+a[9]}"#),
+                        ("", r#"${a[0]:-n}][${+a[0]}][${a[-1]:-n}][${+a[-1]}"#),
+                        ("s=hello", r#"${s[1]:-n}][${+s[1]}][${s[9]:-n}][${+s[9]}"#),
+                        ("s=hello", r#"${s[-1]:-n}][${+s[-1]}"#),
+                        (
+                            r#"(setopt kshzerosubscript; print -r -- "[${a[0]:-n}][${+a[0]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt kshzerosubscript; s=hello; print -r -- "[${s[0]:-n}][${+s[0]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; print -r -- "[${a[0]:-n}][${+a[0]}][${a[9]:-n}][${+a[9]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; s=hello; print -r -- "[${s[0]:-n}][${+s[0]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            "typeset -A mm=(k v)",
+                            r#"${+mm[k]}][${+mm[no]}][${mm[no]:-d}"#,
+                        ),
+                        // ASSIGNMENT through subscript 0. c:Src/params.c:2134 —
+                        // under KSHZEROSUBSCRIPT `[0]` is the FIRST element, so
+                        // it must REPLACE it; mapping it to `0 - 1 = -1` sent
+                        // the write down the negative-subscript branch, which
+                        // INSERTS: `a[0]=Z` on (1 2 3) gave (Z 1 2 3) instead of
+                        // (Z 2 3), and `s[0]=X` on "hello" gave "Xhello" instead
+                        // of "Xello". Reads alone never covered this.
+                        (
+                            r#"(setopt kshzerosubscript; a=(1 2 3); a[0]=Z; print -r -- "[${a[*]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt kshzerosubscript; s=hello; s[0]=X; print -r -- "[$s]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(a=(1 2 3); a[0]=Z 2>&1; print -r -- "[${a[*]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        // An EMPTY bracket pair is not a subscript:
+                        // c:Src/params.c:2022 `zerr("invalid subscript")`.
+                        // zshrs only entered the subscript machinery when the
+                        // brackets had CONTENT, so `${a[]}` left "no subscript"
+                        // and returned the WHOLE value at status 0 — wrong data,
+                        // not just a missing diagnostic (docs/BUGS.md #1035).
+                        // Array, scalar and assoc are all generated because each
+                        // fell through to a different whole-value path, and the
+                        // `:-D` row pins that the default does NOT rescue it —
+                        // the expansion is an error before the default is
+                        // considered.
+                        (
+                            r#"(a=(1 2 3); print -r -- "[${a[]}]" 2>&1; print -r -- "rc=$?")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(s=hello; print -r -- "[${s[]}]" 2>&1; print -r -- "rc=$?")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(typeset -A mm=(k v); print -r -- "[${mm[]}]" 2>&1)"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(a=(1 2 3); print -r -- "[${a[]:-D}]" 2>&1)"#,
+                            "SUBSHELL",
+                        ),
+                        // SEARCH-subscript index under KSHARRAYS.
+                        // c:Src/params.c:2091 `if (start > 0 && isset(KSHARRAYS))
+                        // start--` — `(i)`/`(I)` compute a 1-based position and
+                        // it must come down by one when subscripts are 0-based.
+                        // The search is implemented three times (getarg plus two
+                        // inline copies in paramsubst), so the option was honoured
+                        // on RANGE bounds and ignored on a standalone
+                        // `${a[(i)pat]}` (docs/BUGS.md #1044). Match, no-match
+                        // (len vs len+1), reverse, `(b:N:)`, the scalar form and
+                        // the range form are all covered; `(I)` no-match must stay
+                        // 0 under either base.
+                        (
+                            r#"(setopt ksharrays; a=(x y z); print -r -- "[${a[(i)y]}][${a[(i)q]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; a=(x y x); print -r -- "[${a[(I)x]}][${a[(I)q]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; s=abcdef; print -r -- "[${s[(i)c]}][${s[(I)c]}][${s[(i)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; d=(x y x y x); print -r -- "[${d[(ib:3:)x]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; a=(a b c d e); print -r -- "[${a[(r)b,(r)d]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(a=(x y z); print -r -- "[${a[(i)y]}][${a[(i)q]}][${a[(I)y]}][${a[(I)q]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(s=abcdef; print -r -- "[${s[(i)c]}][${s[(I)c]}][${s[(i)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        // A REVERSE search MISS resolves to subscript 0, and
+                        // c:Src/params.c:2134 decides what 0 means: the FIRST
+                        // element under KSHZEROSUBSCRIPT, empty otherwise. A
+                        // forward miss is len+1 — out of range either way — so
+                        // `(r)` stays empty, and KSHARRAYS alone stays empty
+                        // because it leaves the 0 as 0 without the
+                        // zero-subscript rule. All three bases are generated so
+                        // the option cannot be "fixed" by making every miss
+                        // return the first element.
+                        (
+                            r#"(setopt kshzerosubscript; a=(one two three); print -r -- "[${a[(R)zz]}][${a[(r)zz]}][${#a[(R)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt kshzerosubscript; s=abcdef; print -r -- "[${s[(R)zz]}][${s[(r)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(a=(one two three); print -r -- "[${a[(R)zz]}][${a[(r)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt ksharrays; a=(one two three); print -r -- "[${a[(R)zz]}][${a[(r)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt kshzerosubscript; a=(); print -r -- "[${a[(R)zz]}]"; e=; print -r -- "[${e[(R)zz]}]")"#,
+                            "SUBSHELL",
+                        ),
+                        (
+                            r#"(setopt kshzerosubscript; a=(one two three); print -r -- "[${a[(R)t*]}][${a[(r)t*]}]")"#,
+                            "SUBSHELL",
+                        ),
+                    ],
+                );
+                if !setup.is_empty() {
+                    stmts.push(setup.to_string());
+                }
+                e.to_string()
+            }
             // Plain element, including out-of-range and negative indices.
             0 => {
                 let i: i32 = rng.gen_range(-7..=7);
@@ -2363,9 +2560,93 @@ fn gen_func(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec!["v=global; typeset -a arr=(g1 g2); typeset -A h=(k gv)".to_string()];
 
-    let body = match rng.gen_range(0..9) {
+    // Set when the body exports something, so the trailing checks can look at
+    // the real ENVIRONMENT — a `local -x` leak is invisible to paramtab
+    // introspection (`typeset -p` correctly reports "no such variable" while
+    // the stale environ entry survives), so only a child process can see it.
+    let mut export_check: Option<String> = None;
+    let body = match rng.gen_range(0..11) {
+        // Localizing a SPECIAL parameter. c:Src/builtin.c:2087-2089 sets
+        // `newspecial = NS_NORMAL` so the local keeps the special struct (and
+        // its gsu setter), and c:Src/params.c:5900-5933 scanendscope re-fires
+        // that setter on the way out so the GLOBAL side effect rolls back.
+        // `local IFS=` is the shape that regressed as Bug #8 — the global ifs
+        // character buffer stayed pinned to the local value after return, so
+        // word splitting outside the function silently used the wrong
+        // separator. No generator localized a special at all, so nothing
+        // guarded it. The check splits the SAME string inside and outside, so
+        // a buffer that failed to roll back shows up as a different field
+        // count rather than needing to inspect $IFS itself.
+        //
+        // The INTEGER specials below are the narrow reproducer for the missing
+        // newspecial inheritance: the local used to be built as a plain scalar,
+        // so `${(t)…}` read `scalar-local` instead of `integer-local-special`
+        // and the assignment never reached the real storage. Both the type and
+        // the roll-back on return are checked. SECONDS/LINES/COLUMNS are the
+        // deterministic members of that set — RANDOM is random by definition,
+        // and HISTSIZE/SAVEHIST still carry a separate pre-existing export-flag
+        // defect (docs/BUGS.md #1039 D), so neither is generated. The TIED
+        // specials (path, `local -T`) remain broken (#1039 A/B/C) and are
+        // likewise excluded so the mode stays green.
+        10 => {
+            let (decl, probe) = match rng.gen_range(0..11) {
+                0 => ("local IFS=:", r#"s="a:b:c"; print -r -- "n=${#${=s}}""#),
+                1 => ("local IFS=,", r#"s="x,y"; print -r -- "n=${#${=s}}""#),
+                2 => ("local IFS=", r#"s="a b"; print -r -- "n=${#${=s}}""#),
+                3 => ("local -a fignore=(o)", r#"print -r -- "n=${#fignore}""#),
+                4 => ("local SECONDS=7", r#"print -r -- "v=$SECONDS t=${(t)SECONDS}""#),
+                5 => ("local LINES=7", r#"print -r -- "v=$LINES t=${(t)LINES}""#),
+                6 => ("local COLUMNS=7", r#"print -r -- "v=$COLUMNS t=${(t)COLUMNS}""#),
+                // HISTSIZE / SAVEHIST are the env-backed integer specials: they
+                // needed BOTH the newspecial inheritance (#1039 D) and the
+                // delenv-on-shadow (#1040) before they matched, so they cover
+                // the two fixes jointly. HOME/TERM are the scalar counterpart.
+                7 => ("local HISTSIZE=7", r#"print -r -- "v=$HISTSIZE t=${(t)HISTSIZE}""#),
+                8 => ("local SAVEHIST=7", r#"print -r -- "v=$SAVEHIST t=${(t)SAVEHIST}""#),
+                9 => ("local HOME=/zz", r#"print -r -- "v=$HOME t=${(t)HOME}""#),
+                _ => ("local TERM=xx", r#"print -r -- "v=$TERM t=${(t)TERM}""#),
+            };
+            export_check = Some(
+                r#"s="a:b:c"; print -r -- "after n=${#${=s}} fignore=[${fignore[*]}] t=${(t)SECONDS}${(t)LINES}""#
+                    .to_string(),
+            );
+            format!("{decl}; {probe}")
+        }
         // local shadows, and the global is restored on return.
         0 => "local v=inner; print -r -- \"in=$v\"".to_string(),
+        // c:Src/params.c:3862/3926-3934 — scanendscope pops a local via
+        // unsetparam_pm, whose `if (pm->env) delenv(pm)` drops the ENVIRON
+        // entry, and the outer binding is then re-exported when it carried
+        // PM_EXPORTED. zshrs popped the node straight out of paramtab and did
+        // neither, so an exported local outlived its scope IN THE ENVIRONMENT
+        // and every child inherited it (docs/BUGS.md #1038). Three shapes:
+        // fresh name (must vanish), shadowing an exported global (outer must
+        // come back), shadowing a plain global (must vanish from environ).
+        9 => {
+            // The `local` (no -x) rows are #1040: C's createparam takes the
+            // shadowed value OUT of the environment while the local hides it
+            // (`if (oldpm->env) delenv(oldpm)`, c:Src/params.c:1142), and the
+            // local is NOT itself exported. zshrs left the outer entry in
+            // `environ`, so the local's assignment republished over it and a
+            // CHILD saw the local value — invisible to `${(t)}`, which already
+            // read `scalar-local`, so only a child process can catch it.
+            let (setup, decl, check) = match rng.gen_range(0..6) {
+                0 => ("", "local -x XP=inner", "XP"),
+                1 => ("export XP=outer; ", "local -x XP=inner", "XP"),
+                2 => ("XP=plain; ", "local -x XP=inner", "XP"),
+                3 => ("export XP=outer; ", "local XP=inner", "XP"),
+                4 => ("export XP=outer; ", "local XP", "XP"),
+                _ => ("XP=plain; ", "local XP=inner", "XP"),
+            };
+            export_check = Some(format!(
+                "printenv {check}; print -r -- \"envrc=$? param=[${{{check}-unset}}]\""
+            ));
+            stmts.push(format!("{setup}:"));
+            // The in-function `printenv` is the load-bearing observation for
+            // #1040: the parameter side is already correct there, so only the
+            // environment as a CHILD sees it distinguishes the two shells.
+            format!("{decl}; print -r -- \"in=$XP\"; printenv XP; print -r -- \"inenv=$?\"")
+        }
         // typeset -g writes through the local scope to the global.
         1 => "local v=inner; typeset -g v=clobbered; print -r -- \"in=$v\"".to_string(),
         // local array shadowing.
@@ -2408,13 +2689,40 @@ fn gen_func(seed: u64) -> Vec<String> {
     };
 
     stmts.push("inner_fn() { print -r -- \"nested_sees=$v\" }".to_string());
-    stmts.push(format!("f() {{ {body} }}"));
+    // c:Src/parse.c:1672 par_funcdef — a funcdef has SIX spellings, and this
+    // generator only ever emitted `f() { … }`, so the rest of the grammar arm
+    // was untested. That single-spelling blind spot is exactly what hid the
+    // `function { … }` anonymous-form bug in the sibling `anonfn` mode
+    // (docs/BUGS.md #1036), so pin every spelling here:
+    //   f() { }        the only form previously generated
+    //   f () { }       space before the parens
+    //   function f { } keyword, no parens (name loop + INBRACE, c:1700-1706)
+    //   function f() { } / function f () { }  keyword + parens (c:1717 INOUTPAR)
+    //   function -T f { }  the tracing option consumed before the name (c:1688)
+    //   function -- f { }  explicit end-of-options (c:1693)
+    // `-T` prints an xtrace line to stderr, which the harness compares only
+    // under 2>&1, so it stays a plain stdout-parity case here.
+    let def = match rng.gen_range(0..6) {
+        0 => format!("f() {{ {body} }}"),
+        1 => format!("f () {{ {body} }}"),
+        2 => format!("function f {{ {body} }}"),
+        3 => format!("function f() {{ {body} }}"),
+        4 => format!("function f () {{ {body} }}"),
+        _ => format!("function -- f {{ {body} }}"),
+    };
+    stmts.push(def);
 
     let call_args = pick(&mut rng, &["", "a", "a b", "a b c", "'x y' z"]);
     stmts.push(format!("f {call_args}; print -r -- \"rc=$?\""));
     // After the call the globals must be exactly as they were, unless
     // `typeset -g` deliberately reached through.
     stmts.push(r#"print -r -- "after v=$v arr=(${arr[*]}) h=${h[k]}""#.to_string());
+    // The environment side of the scope pop (see the `local -x` arm above).
+    // `printenv` is the observation point because the leak does NOT show up in
+    // paramtab — the param is correctly gone while the environ entry survives.
+    if let Some(chk) = export_check {
+        stmts.push(chk);
+    }
     stmts
 }
 
@@ -5120,6 +5428,70 @@ fn gen_mbident(seed: u64) -> Vec<String> {
     vec![format!("{assign}; print -r -- {expr}")]
 }
 
+/// Job-table visibility across subshell boundaries.
+///
+/// c:Src/exec.c:4782 — `getoutput` (the `$(...)` implementation) forks and
+/// runs `entersubsh(ESUB_PGRP|ESUB_NOMONITOR)`; c:1219 turns ESUB_PGRP into
+/// `clearjobtab(monitor)`, so the child sees an EMPTY table. The oldjobtab
+/// snapshot at c:Src/jobs.c:1800 is monitor-only, so a non-interactive shell
+/// retains nothing at all. zshrs runs cmd-subst in-process, so it has to
+/// snapshot/clear/restore instead of relying on the fork. Bug #1048.
+///
+/// Deliberately excluded from generation:
+///   - `jobs -l` / `-p` OUTSIDE a cmd-subst: they print PIDs, which differ
+///     between the two shells by construction (non-comparable).
+///   - short sleeps: a job that can reap mid-script races running-vs-done.
+///     `sleep 2` is always still running when the probe reads the table.
+fn gen_jobs(seed: u64) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    // One or two background jobs — two exercises the `+`/`-` current/previous
+    // markers, which ride on the curjob/prevjob globals rather than the table.
+    let setup = pick(
+        &mut rng,
+        &["sleep 2 &", "sleep 2 & sleep 3 &", "sleep 2 & sleep 3 & sleep 4 &"],
+    );
+    let probe = pick(
+        &mut rng,
+        &[
+            // The cmd-subst leg itself: every spelling must read empty.
+            r#"print -r -- "[$(jobs)]""#,
+            r#"print -r -- "[$(jobs -l)]""#,
+            r#"print -r -- "[$(jobs -p)]""#,
+            r#"print -r -- "[$(jobs -r)]""#,
+            r#"print -r -- "[`jobs`]""#,
+            r#"x=$(jobs); print -r -- "[$x]""#,
+            r#"x=$(jobs -p); print -r -- "[$x]""#,
+            // The restore leg: the parent's table (and its markers) must
+            // survive a cmd-subst untouched.
+            "x=$(jobs); jobs",
+            "x=$(echo hi); jobs",
+            r#"print -r -- "[$(jobs)]"; jobs"#,
+            "x=$(jobs); x=$(jobs); jobs",
+            "jobs; x=$(jobs); jobs",
+            // Sibling subshell forms that already cleared correctly —
+            // pinned so the cmd-subst fix cannot regress them.
+            "( jobs )",
+            "jobs | cat",
+            "jobs",
+            // Job references must still resolve after a cmd-subst.
+            "x=$(jobs); kill %1; print rc=$?",
+            "x=$(jobs); kill %+ 2>/dev/null; print rc=$?",
+            // A background job STARTED inside the cmd-subst gets slot 2:
+            // clearjobtab emptied the table, then initjob (c:Src/jobs.c:1828)
+            // claimed slot 1 as the procless control job. No trailing `jobs`
+            // here — inspecting the PARENT's table after the child has
+            // forked its own background job is NON-COMPARABLE: both shells
+            // print it only sometimes (verified 3 runs each, zsh 1/3 and
+            // zshrs 1/3), so the parent-survives leg is covered by the
+            // `x=$(jobs); jobs` probes above instead.
+            "print -r -- \"[$(sleep 2 & jobs)]\"",
+            // Post-wait state.
+            "x=$(jobs); wait; jobs; print done",
+        ],
+    );
+    vec![format!("{setup} {probe}")]
+}
+
 fn gen_paramod(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec!["zmodload zsh/parameter".to_string()];
@@ -5280,7 +5652,38 @@ fn gen_autoload(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts = vec!["fpath=(./fns)".to_string()];
     for _ in 0..rng.gen_range(1..=3) {
-        let stmt = match rng.gen_range(0..12) {
+        let stmt = match rng.gen_range(0..13) {
+            // Two error paths that were both silently wrong.
+            //
+            // `autoload -X` outside a function is `zerrnam(name, "bad
+            // autoload")` (c:Src/builtin.c:3637) — the zerr* family sets
+            // errflag, so the script STOPS. zshrs used zwarnnam, printing the
+            // same text and carrying on, so a trailing `echo AFTER` ran where
+            // zsh produces nothing. The `echo AFTER` is the whole point of the
+            // case: the message alone matched already.
+            //
+            // `autoload -w FILE` was a stub that never called `dump_autoload`
+            // (c:3713-3714), so a missing dump produced NO diagnostic where zsh
+            // says `can't open zwc file: …`, and a valid one registered
+            // nothing. Note zsh appends `.zwc` when absent, which the bare
+            // `/nonexistent` row pins.
+            //
+            // Only non-writing rows are generated — the positive path needs a
+            // real compiled dump on disk, and a mode that writes files needs a
+            // scratch fixture cwd it does not have here.
+            12 => pick(
+                &mut rng,
+                &[
+                    "autoload -X; echo AFTER",
+                    "echo BEFORE; autoload -X; echo AFTER",
+                    "(autoload -X); echo AFTER",
+                    "autoload -w /nonexistent.zwc; echo AFTER",
+                    "autoload -w /nonexistent.zwc; print -r -- \"rc=$?\"",
+                    "autoload -w /nonexistent; echo AFTER",
+                    "autoload +X -w /nonexistent.zwc; echo AFTER",
+                ],
+            )
+            .to_string(),
             // Default (non-ksh) autoload: the file's text is the body.
             0 => "autoload -Uz af_args; af_args a b c".to_string(),
             1 => "autoload -Uz af_plain; af_plain; af_plain".to_string(),
@@ -5744,7 +6147,70 @@ fn gen_tied(seed: u64) -> Vec<String> {
     // runs it; the export case is now probed on purpose below.
     let mut stmts: Vec<String> = Vec::new();
     for _ in 0..rng.gen_range(1..=3) {
-        let stmt = match rng.gen_range(0..16) {
+        let stmt = match rng.gen_range(0..17) {
+            // LOCALIZING a colon-tied special. c:Src/params.c:3434 —
+            // `setarrvalue` runs the array's setfn, which republishes the
+            // joined value to the paired scalar; that must hold for a local
+            // shadow too, and roll back on return. zshrs wired the tie only
+            // where a `gsu_a` setfn exists, and path/fpath/cdpath come from a
+            // DATA table with no gsu pointers — so a GLOBAL `path=(…)` worked
+            // (the bridge's BUILTIN_SET_ARRAY carries the tie itself) while
+            // `local path=(…)`, being a typeset DECLARATION, went through
+            // assignaparam and left `$PATH` untouched. Every existing arm in
+            // this mode was global, which is why it stayed green over the bug
+            // (docs/BUGS.md #1039 A). PATH is assigned explicitly first so the
+            // values are machine-independent; `command -v` is the functional
+            // half — lookup must follow the localized path, then be restored.
+            16 => pick(
+                &mut rng,
+                &[
+                    r#"PATH=/usr/bin; f(){ local path=(/bin); print -r -- "in=[$PATH]" }; f; print -r -- "out=[$PATH]""#,
+                    r#"PATH=/usr/bin; f(){ local -a path=(/bin /sbin); print -r -- "in=[$PATH]" }; f; print -r -- "out=[$PATH]""#,
+                    r#"PATH=/usr/bin:/bin; f(){ local path=(/nonexistent); command -v ls; print -r -- "rc=$?" }; f; command -v ls"#,
+                    r#"FPATH=/a; f(){ local fpath=(/b); print -r -- "in=[$FPATH]" }; f; print -r -- "out=[$FPATH]""#,
+                    r#"CDPATH=/a; f(){ local cdpath=(/b); print -r -- "in=[$CDPATH]" }; f; print -r -- "out=[$CDPATH]""#,
+                    r#"PATH=/usr/bin; f(){ local path=(/bin); g; print -r -- "back=[$PATH]" }; g(){ local path=(/sbin); print -r -- "g=[$PATH]" }; f; print -r -- "out=[$PATH]""#,
+                    r#"PATH=/usr/bin; f(){ local PATH=/bin; print -r -- "in=[${path[*]}]" }; f; print -r -- "out=[${path[*]}]""#,
+                    // A USER tie must BREAK on localization, unlike a SPECIAL
+                    // one. zsh only preserves the tie for PM_SPECIAL params, so
+                    // `local -a v` shadowing a `typeset -T V v` pair is an
+                    // ordinary local (`${(t)v}` = `array-local`) and `$V` keeps
+                    // its global value. zshrs resolved the tie's partner by
+                    // NAME at READ time, so `$V` picked up the local shadow and
+                    // reported `a:b` (docs/BUGS.md #1039 B). The `${(t)}` rows
+                    // pin that the two tie kinds stay distinguishable — the
+                    // flags were already correct while the read was not, so a
+                    // type-only check would have missed this entirely.
+                    r#"typeset -T V v; V=g1:g2; f(){ local -a v=(a b); print -r -- "in=[$V] t=${(t)v}" }; f; print -r -- "out=[$V]""#,
+                    r#"typeset -T V v; V=g1:g2; f(){ local v=(a b); print -r -- "in=[$V]" }; f; print -r -- "out=[$V]""#,
+                    r#"typeset -T V v; V=g1:g2; f(){ local -a v=(a b); print -r -- "vv=[${v[*]}]" }; f; print -r -- "outv=[${v[*]}]""#,
+                    r#"PATH=/usr/bin; f(){ local path=(/bin); print -r -- "t=${(t)path}" }; f"#,
+                    // `local -T` over an EXISTING tie. C's guard
+                    // (c:Src/builtin.c:2929) declines the already_tied
+                    // short-circuit when the binding is at a shallower level,
+                    // so a fresh shadowing pair is built and the outer is kept
+                    // as `pm->old`. zshrs built both halves from
+                    // `param::default()` and inserted them over the top, so the
+                    // outer pair was DESTROYED: after return `$V` was empty,
+                    // `${(t)V}` reported nothing, and every later `V=…` stopped
+                    // updating `v` — the global tie was dead for the rest of the
+                    // shell (docs/BUGS.md #1039 C). The `V=…` AFTER the call is
+                    // the load-bearing row: restoring the value alone is not
+                    // enough, the tie has to still function.
+                    //
+                    // The local also starts EMPTY rather than inheriting the
+                    // shadowed value, while a same-scope declaration DOES
+                    // inherit — both directions are generated, since gating that
+                    // on PM_LOCAL alone silently broke the global form.
+                    r#"typeset -T V v; V=g1:g2; f(){ local -T V v; print -r -- "in=[$V][${v[*]}]" }; f; print -r -- "out=[$V] t=${(t)V}""#,
+                    r#"typeset -T V v; V=g1:g2; f(){ local -T V v }; f; V=z1:z2; print -r -- "tie=[${v[*]}]""#,
+                    r#"V=plain; f(){ local -T V v; print -r -- "in=[$V][${v[*]}]" }; f; print -r -- "out=[$V]""#,
+                    r#"V=pre:set; typeset -T V v; print -r -- "[$V][${v[*]}]""#,
+                    r#"V=g1:g2; f(){ local -T V=x:y v; print -r -- "in=[$V]" }; f; print -r -- "out=[$V]""#,
+                    r#"f(){ local -T W w; W=a:b; print -r -- "in=${#w}" }; f; print -r -- "out=[${W:-unset}]""#,
+                ],
+            )
+            .to_string(),
             // Scalar → array propagation, and back.
             0 => "typeset -T TS ts; TS=a:b:c; print -r -- \"n=${#ts} [${(j:|:)ts}]\"".to_string(),
             1 => "typeset -T TS ts; ts=(x y z); print -r -- \"[$TS]\"".to_string(),
@@ -5944,7 +6410,32 @@ fn gen_special(seed: u64) -> Vec<String> {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stmts: Vec<String> = Vec::new();
     for _ in 0..rng.gen_range(2..=4) {
-        let stmt = match rng.gen_range(0..14) {
+        let stmt = match rng.gen_range(0..15) {
+            // `${(t)}` must agree with `${+}`. c:Src/subst.c:2812 gates the
+            // type tag on `(flags & PM_DECLARED) || !(flags & PM_UNSET)` — a
+            // FLAG test, not "does a paramtab entry exist". zshrs used the
+            // existence test, so a parameter registered in the table but UNSET
+            // and never declared reported a type while `${+}` said 0. `ERRNO`
+            // is precisely that shape in both shells
+            // (`IPDEF1("ERRNO", errno_gsu, PM_UNSET)`, c:Src/params.c:298), so
+            // it is the load-bearing case; the `typesettounset` rows are the
+            // other side of the same condition — declared-but-unset MUST still
+            // emit its tag, via PM_DECLARED. docs/BUGS.md #1041.
+            14 => pick(
+                &mut rng,
+                &[
+                    r#"print -r -- "[${+ERRNO}][${(t)ERRNO}]""#,
+                    r#"print -r -- "[${+EPOCHSECONDS}][${(t)EPOCHSECONDS}]""#,
+                    r#"print -r -- "[${+nosuchvar}][${(t)nosuchvar}]""#,
+                    r#"v=1; unset v; print -r -- "[${+v}][${(t)v}]""#,
+                    r#"setopt typesettounset; typeset x; print -r -- "[${+x}][${(t)x}]""#,
+                    r#"setopt typesettounset; typeset -i y; print -r -- "[${+y}][${(t)y}]""#,
+                    r#"unsetopt typesettounset; typeset x; print -r -- "[${+x}][${(t)x}]""#,
+                    r#"f(){ local lv; print -r -- "[${+lv}][${(t)lv}]" }; f"#,
+                    r#"print -r -- "${(t)nosuch:-DEF}""#,
+                ],
+            )
+            .to_string(),
             // $? threading.
             0 => "true; print -r -- $?; false; print -r -- $?; (exit 7); print -r -- $?".to_string(),
             // LINENO counts SOURCE lines, and is 1-based.
@@ -7858,6 +8349,7 @@ enum Mode {
     Shinstdin,
     Rcexpand,
     Mbident,
+    Jobs,
 }
 
 struct Args {
@@ -7944,6 +8436,7 @@ fn gen_case(seed: u64, mode: Mode) -> Vec<String> {
         Mode::Shinstdin => gen_shinstdin(seed),
         Mode::Rcexpand => gen_rcexpand(seed),
         Mode::Mbident => gen_mbident(seed),
+        Mode::Jobs => gen_jobs(seed),
     }
 }
 
@@ -8018,6 +8511,7 @@ fn mode_name(m: Mode) -> &'static str {
         Mode::Shinstdin => "shinstdin",
         Mode::Rcexpand => "rcexpand",
         Mode::Mbident => "mbident",
+        Mode::Jobs => "jobs",
     }
 }
 
@@ -8092,6 +8586,7 @@ fn mode_from_name(s: &str) -> Option<Mode> {
         Mode::Shinstdin,
         Mode::Rcexpand,
         Mode::Mbident,
+        Mode::Jobs,
     ];
     ALL.iter().copied().find(|&m| mode_name(m) == s)
 }

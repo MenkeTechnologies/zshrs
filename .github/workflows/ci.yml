@@ -778,6 +778,13 @@ jobs:
       - name: Fuzz — unicode (informational)
         continue-on-error: true
         run: ./target/debug/parity-fuzz --mode unicode --count 3000 --verify 3 --max-report 200 --out target/parity-fuzz/ci-unicode.txt
+      # Job-table visibility across the cmd-subst boundary. Deliberately a
+      # LOW count: every case backgrounds a `sleep 2` so the job is reliably
+      # still running when the probe reads the table, which caps throughput
+      # at ~1.5 cases/s. The generator space is only 3 setups x 20 probes,
+      # so 200 already covers it several times over. Bug #1048.
+      - name: Fuzz — jobs
+        run: ./target/debug/parity-fuzz --mode jobs --count 200 --verify 3 --max-report 200 --baseline .github/fuzz-baseline/jobs.txt --out target/parity-fuzz/ci-jobs.txt
       - name: Upload divergence corpora
         if: failure()
         uses: actions/upload-artifact@v4
