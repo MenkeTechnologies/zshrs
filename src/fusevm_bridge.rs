@@ -1266,7 +1266,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     macro_rules! reg_passthru {
         ($vm:expr, $id:expr, $name:literal) => {
             $vm.register_builtin($id, |vm, argc| {
-                Value::Status(dispatch_builtin($name, pop_args(vm, argc)))
+                let args = pop_args(vm, argc);
+                // function > builtin: a same-named user function wins over
+                // the builtin on the normal (CallBuiltin) invocation path.
+                // The compiler's `user_function_shadow` already routes the
+                // same-compile-unit case through CallFunction; this probe
+                // extends that to the cross-unit / interactive case (define
+                // `zstyle() { … }` on one line, call it on the next). The
+                // forced `builtin NAME` / `command NAME` paths dispatch
+                // through their own handlers, not this one, so they still
+                // reach the builtin as required.
+                if let Some(s) = try_user_fn_override($name, &args) {
+                    return Value::Status(s);
+                }
+                Value::Status(dispatch_builtin($name, args))
+            });
+        };
+    }
+
+    // zshrs-original extension builtins (async / peach / doctor / …) that
+    // route to an ExecutorContext method. Like `reg_overridable!`, they
+    // probe `try_user_fn_override` FIRST so a user function of the same
+    // name wins — zsh's alias → function → builtin dispatch order. Without
+    // the probe, `doctor() { … }; doctor` silently ran the builtin and
+    // ignored the function (function > builtin violated for these).
+    macro_rules! reg_ext_overridable {
+        ($vm:expr, $id:expr, $name:literal, $method:ident) => {
+            $vm.register_builtin($id, |vm, argc| {
+                let args = pop_args(vm, argc);
+                if let Some(s) = try_user_fn_override($name, &args) {
+                    return Value::Status(s);
+                }
+                Value::Status(with_executor(|exec| exec.$method(&args)))
             });
         };
     }
@@ -2310,10 +2341,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(with_executor(|exec| exec.builtin_compinit(&args)))
     });
 
-    vm.register_builtin(BUILTIN_CDREPLAY, |vm, argc| {
-        let args = pop_args(vm, argc);
-        Value::Status(with_executor(|exec| exec.builtin_cdreplay(&args)))
-    });
+    reg_ext_overridable!(vm, BUILTIN_CDREPLAY, "cdreplay", builtin_cdreplay);
 
     // Zsh-specific
     reg_passthru!(vm, BUILTIN_ZSTYLE, "zstyle");
@@ -2368,7 +2396,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     reg_passthru!(vm, BUILTIN_STRFTIME, "strftime");
 
     vm.register_builtin(BUILTIN_ZSLEEP, |vm, argc| {
-        Value::Status(crate::extensions::ext_builtins::zsleep(&pop_args(vm, argc)))
+        let args = pop_args(vm, argc);
+        // function > builtin: a user `zsleep() { … }` wins.
+        if let Some(s) = try_user_fn_override("zsleep", &args) {
+            return Value::Status(s);
+        }
+        Value::Status(crate::extensions::ext_builtins::zsleep(&args))
     });
 
     reg_passthru!(vm, BUILTIN_ZSYSTEM, "zsystem");
@@ -2402,74 +2435,28 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(crate::extensions::ext_builtins::prompt(&args))
     });
 
-    // Async / Parallel (zshrs extensions)
-    vm.register_builtin(BUILTIN_ASYNC, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_async(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_AWAIT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_await(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_PMAP, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_pmap(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_PGREP, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_pgrep(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_PEACH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_peach(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_BARRIER, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_barrier(&args));
-        Value::Status(status)
-    });
+    // Async / Parallel (zshrs extensions) — all overridable by a
+    // same-named user function (function > builtin).
+    reg_ext_overridable!(vm, BUILTIN_ASYNC, "async", builtin_async);
+    reg_ext_overridable!(vm, BUILTIN_AWAIT, "await", builtin_await);
+    reg_ext_overridable!(vm, BUILTIN_PMAP, "pmap", builtin_pmap);
+    reg_ext_overridable!(vm, BUILTIN_PGREP, "pgrep", builtin_pgrep);
+    reg_ext_overridable!(vm, BUILTIN_PEACH, "peach", builtin_peach);
+    reg_ext_overridable!(vm, BUILTIN_BARRIER, "barrier", builtin_barrier);
 
     // Intercept (AOP)
-    vm.register_builtin(BUILTIN_INTERCEPT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_intercept(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_INTERCEPT_PROCEED, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_intercept_proceed(&args));
-        Value::Status(status)
-    });
+    reg_ext_overridable!(vm, BUILTIN_INTERCEPT, "intercept", builtin_intercept);
+    reg_ext_overridable!(
+        vm,
+        BUILTIN_INTERCEPT_PROCEED,
+        "intercept_proceed",
+        builtin_intercept_proceed
+    );
 
     // Debug / Profile
-    vm.register_builtin(BUILTIN_DOCTOR, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_doctor(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_DBVIEW, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_dbview(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_PROFILE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_profile(&args));
-        Value::Status(status)
-    });
+    reg_ext_overridable!(vm, BUILTIN_DOCTOR, "doctor", builtin_doctor);
+    reg_ext_overridable!(vm, BUILTIN_DBVIEW, "dbview", builtin_dbview);
+    reg_ext_overridable!(vm, BUILTIN_PROFILE, "profile", builtin_profile);
 
     reg_passthru!(vm, BUILTIN_ZPROF, "zprof");
 
