@@ -8213,36 +8213,35 @@ pub(crate) fn readarray(args: &[String]) -> i32 {
         }
     }
 
-    // Split on `delimiter`. The delimiter byte itself is NOT
-    // included in each element (bash splits same way; -t doesn't
-    // change inclusion since the delim is already absent).
+    // Split on `delimiter` into records. bash KEEPS the delimiter byte
+    // at the end of each element unless `-t` (strip_trailing) removes it
+    // (`mapfile L` on "x\ny\n" → ("x\n" "y\n"); `-t` → ("x" "y")). Rust's
+    // split() drops the delimiter, so re-append it when not stripping —
+    // for every chunk that was actually followed by a delimiter (all but a
+    // final record with no trailing delimiter). A trailing empty chunk
+    // produced by a final delimiter byte is not a record.
+    let delim_char = delimiter as char;
+    let chunks: Vec<&[u8]> = input.split(|b| *b == delimiter).collect();
+    let n_chunks = chunks.len();
     let mut lines: Vec<String> = Vec::new();
     let mut line_count = 0usize;
-    for chunk in input.split(|b| *b == delimiter) {
-        // Skip a trailing empty produced by a final delimiter byte:
-        // bash's readarray drops it for `-t` but keeps it otherwise.
-        // We emulate by suppressing trailing empties unconditionally
-        // when the input ended with the delim — matches the common
-        // 'one entry per line' expectation.
+    for (idx, chunk) in chunks.iter().enumerate() {
+        if idx + 1 == n_chunks && chunk.is_empty() {
+            continue; // trailing empty after the final delimiter
+        }
         line_count += 1;
         if line_count <= skip {
             continue;
         }
         let mut line = String::from_utf8_lossy(chunk).to_string();
-        if strip_trailing {
-            while line.ends_with('\n') || line.ends_with('\r') {
-                line.pop();
-            }
+        let had_delim = idx + 1 < n_chunks; // this chunk was followed by delim
+        if !strip_trailing && had_delim {
+            line.push(delim_char);
         }
         lines.push(line);
         if count > 0 && lines.len() >= count {
             break;
         }
-    }
-    // Drop trailing empty if input ended with delimiter and the
-    // user didn't ask for it.
-    if input.last() == Some(&delimiter) && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
-        lines.pop();
     }
 
     crate::ported::params::setaparam(&array_name, lines);

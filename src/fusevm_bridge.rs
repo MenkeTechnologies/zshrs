@@ -1499,10 +1499,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             let _ = args;
             return Value::Status(127);
         }
-        // Non-zsh modes (bash drop-in) get a passthru to the canonical
-        // dispatcher in case a future port adds a real mapfile builtin
-        // — until then the rc=1 unknown-command default applies.
-        Value::Status(dispatch_builtin("mapfile", args))
+        // Non-zsh modes (bash drop-in): mapfile / readarray reads lines
+        // from stdin (or `-u fd`) into an array. Handled by the ported
+        // bash builtin in ext_builtins.
+        Value::Status(crate::extensions::ext_builtins::readarray(&args))
     });
     reg_passthru!(vm, BUILTIN_BREAK, "break");
     reg_passthru!(vm, BUILTIN_CONTINUE, "continue");
