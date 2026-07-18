@@ -526,6 +526,41 @@ fn bash_case_and_at_transforms() {
 }
 
 #[test]
+fn bash_type_t_query() {
+    // bash `type -t NAME` prints a single word: alias / keyword / function /
+    // builtin / file, or nothing (exit 1) if unknown. zsh's `type` has no -t.
+    let bash = |script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (
+            String::from_utf8_lossy(&out.stdout).trim_end().to_owned(),
+            out.status.success(),
+        )
+    };
+    assert_eq!(bash("f() { :; }; type -t f").0, "function");
+    assert_eq!(bash("type -t echo").0, "builtin");
+    assert_eq!(bash("type -t if").0, "keyword");
+    assert_eq!(bash("type -t while").0, "keyword");
+    assert_eq!(bash("type -t ls").0, "file");
+    // Unknown name → empty output, exit 1.
+    let (out, ok) = bash("type -t definitely_not_a_command_xyz");
+    assert_eq!(out, "");
+    assert!(!ok);
+    // Precedence: a function shadowing a builtin name reports "function".
+    assert_eq!(bash("true() { :; }; type -t true").0, "function");
+
+    // --zsh: `-t` is not a zsh `type` flag — the query path stays off, so the
+    // normal verbose `type` output is produced (not a one-word type).
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "f(){ :; }; type f"])
+        .output()
+        .expect("spawn");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("function"));
+}
+
+#[test]
 fn bash_arith_subscript_and_assoc_keys() {
     // bash indexed arrays are 0-based in ARITHMETIC too (`$(( a[1] ))` is the
     // second element), and `${!m[@]}` on an associative array yields its KEYS.
