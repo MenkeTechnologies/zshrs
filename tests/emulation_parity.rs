@@ -936,6 +936,38 @@ fn bash_case_and_at_transforms() {
 }
 
 #[test]
+fn bash_substring_negative_offset_underflow() {
+    // Divergence point (not corpus-eligible: reference shells DISAGREE).
+    // bash empties the substring when a negative offset underflows past the
+    // start of the value; zsh AND ksh93 clamp the offset to 0 and return the
+    // whole value. `${v: -10}` on "hello" → "" in bash, "hello" in zsh/ksh93.
+    // Ground truth is real bash 5.x / real ksh93. Found by gen_param_fuzz.
+    let mode = |m: &str, script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args([m, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // --bash: underflow → empty.
+    assert_eq!(mode("--bash", r#"v=hello; printf '[%s]' "${v: -10}""#), "[]");
+    assert_eq!(mode("--bash", r#"v=x; printf '[%s]' "${v: -3}""#), "[]");
+    assert_eq!(mode("--bash", r#"v=abc; printf '[%s]' "${v: -5:2}""#), "[]");
+    assert_eq!(mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#), "[]");
+    assert_eq!(mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -5:2}""#), "[]");
+    // --bash: in-range negative offset still works normally.
+    assert_eq!(mode("--bash", r#"v=hello; printf '[%s]' "${v: -5}""#), "[hello]");
+    assert_eq!(mode("--bash", r#"v=hello; printf '[%s]' "${v: -3}""#), "[llo]");
+    // printf recycles its format per word, so a 2-word slice → [2][3].
+    assert_eq!(mode("--bash", r#"a=(1 2 3); printf '[%s]' "${a[@]: -2}""#), "[2][3]");
+    // --zsh AND --ksh: clamp to 0 (whole value / array), no underflow-emptying.
+    for m in ["--zsh", "--ksh"] {
+        assert_eq!(mode(m, r#"v=hello; printf '[%s]' "${v: -10}""#), "[hello]", "{m}");
+        assert_eq!(mode(m, r#"a=(1 2 3); printf '[%s]' "${a[@]: -5}""#), "[1][2][3]", "{m}");
+    }
+}
+
+#[test]
 fn bash_nocasematch_and_read_n() {
     // Two more --bash-only behaviors:
     //  * `shopt -s nocasematch` → case-insensitive `[[ == ]]` / `[[ != ]]`.
