@@ -1581,11 +1581,26 @@ pub fn multsub(s: &str, pf_flags: i32) -> (String, Vec<String>, bool, i32) {
             // c:3737-3741 — isep_one: consume ONE non-whitespace separator if
             // present, then absorb the following IFS-whitespace run. This is
             // the "whitespace absorbed around a non-ws separator" rule.
+            let mut consumed_nonws_sep = false;
             if is_nonws_sep(chars[i]) {
                 i += 1;
+                consumed_nonws_sep = true;
                 while i < chars.len() && is_ifs_wsep(chars[i]) {
                     i += 1;
                 }
+            }
+
+            // !!! POSIX-FAITHFUL GATE (no C counterpart) !!!
+            // zsh (and its `emulate sh`) emits a trailing empty field when a
+            // non-whitespace separator is the last thing in the input:
+            // `IFS=:; set -- $v` on `a:b:` → (a, b, "") = 3. dash/ksh/bash
+            // drop that trailing empty → (a, b) = 2. A MIDDLE empty (`a::b`)
+            // is kept by all shells and is unaffected here (i < len then).
+            // Under `zshrs --sh/--ksh/--dash` (real-shell-faithful) skip the
+            // trailing empty; `--...  --zsh` leaves posix_faithful() false and
+            // preserves zsh's behavior. See extensions::dash_mode.
+            if consumed_nonws_sep && i >= chars.len() && crate::dash_mode::posix_faithful() {
+                break;
             }
 
             // c:3746-3747 — findsep: collect the field up to the next

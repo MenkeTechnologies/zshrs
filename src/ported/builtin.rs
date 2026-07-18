@@ -12848,9 +12848,15 @@ pub fn bin_read(
                     }
                     // c:7055-7057 — an unescaped backslash is consumed and
                     // escapes the next byte (unless `-r`).
+                    let was_escaped = bslash; // this byte follows a backslash
                     bslash = b == b'\\' && !bslash && !raw_mode; // c:7055
                     if bslash {
                         continue; // c:7057
+                    }
+                    // Mark a backslash-escaped byte literal so IFS splitting
+                    // skips it (see the default-line loop above for the rule).
+                    if was_escaped {
+                        buf_bytes.extend_from_slice("\u{99}".as_bytes());
                     }
                     buf_bytes.push(b);
                 }
@@ -12907,6 +12913,13 @@ pub fn bin_read(
                                     // Line continuation — drop both.
                                     continue;
                                 }
+                                // A backslash-escaped char is literal and must
+                                // NOT act as an IFS separator: dash/ksh/bash/zsh
+                                // all read `a\ b` as the single field `a b`.
+                                // Prefix it with the Bnull mark (\u{99}, UTF-8
+                                // C2 99) so the IFS split below skips it; the
+                                // mark is stripped before assignment.
+                                buf_bytes.extend_from_slice("\u{99}".as_bytes());
                                 buf_bytes.push(nx);
                                 continue;
                             }
