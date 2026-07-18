@@ -13716,10 +13716,17 @@ pub fn bin_test(
             argv.remove(0); // c:7267
         }
     }
-    if argv.len() == 3 && argv[0] == "!" {
-        // c:7270 (effective)
-        sense = 1; // c:7271
-        argv.remove(0); // c:7272
+    if argv.len() == 4 && argv[0] == "!" {
+        // c:Src/builtin.c:7262 — `if (nargs == 4 && !strcmp("!", argv[0]))`.
+        // The `!` negation short-circuit fires ONLY at FOUR args (`[ ! a = b ]`
+        // → negate the 3-arg binary test). At THREE args the leading `!` is
+        // NOT stripped: it falls through to parse_cond, which applies the POSIX
+        // rule "if $2 is a binary operator, test $1 op $3" — so `[ ! = x ]` is
+        // the string comparison "!" = "x", not a negation. A prior port used
+        // `nargs == 3` here, erroring (rc 2) on every `[ "!" op X ]` / `[ "(" op
+        // X ]` / `[ "-n" op X ]` where op is binary. Found by the test/[ fuzzer.
+        sense = 1; // c:7263
+        argv.remove(0); // c:7264
     }
 
     // c:Src/parse.c:2486-2492 par_cond_2 — a condition that is a single WORD
