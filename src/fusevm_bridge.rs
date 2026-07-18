@@ -1470,10 +1470,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                   // for in-eval errors. Bug #420.
         let oscriptname = crate::ported::utils::scriptname_get();
         crate::ported::utils::set_scriptname(Some("(eval)".to_string()));
-        let mut status = with_executor(|exec| {
-            // c:6175 execode
-            exec.execute_script(&src).unwrap_or(1)
+        // Recursion backstop — c:Src/jobs.c:1878-1884. zsh caps eval recursion
+        // via its job table (every eval'd pipeline grabs a job slot; the table
+        // caps at MAX_MAXJOBS → "job table full or recursion limit exceeded").
+        // The fusevm runtime allocates no job per pipeline, and nested evals
+        // push no funcstack frame (INEVAL suppression, c:6164), so eval nesting
+        // is invisible to both the job table AND FUNCNEST/FUNCSTACK — runaway
+        // `eval`-string recursion overflowed the 256 MB main-thread stack →
+        // uncatchable SIGBUS. Track eval re-entry depth (the Rust proxy for
+        // held job slots) and refuse at the same MAX_MAXJOBS ceiling.
+        let eval_depth = crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| {
+            let v = d.get() + 1;
+            d.set(v);
+            v
         });
+        let mut status = if eval_depth >= crate::ported::jobs::MAX_MAXJOBS {
+            crate::ported::utils::zerr("job table full or recursion limit exceeded");
+            1
+        } else {
+            with_executor(|exec| {
+                // c:6175 execode
+                exec.execute_script(&src).unwrap_or(1)
+            })
+        };
+        crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
         // c:Src/builtin.c:6211-6212 — `if (errflag && !lastval)
         //   lastval = errflag;`
         // c:Src/builtin.c:6221 — `errflag &= ~ERRFLAG_ERROR;`

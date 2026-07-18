@@ -1634,15 +1634,27 @@ pub fn source(s: &str) -> i32 {
         None => std::fs::read_to_string(path),
     };
     if let Ok(body) = contents {
-        // c:1618-1642 — zsh runs the sourced list through execpline, whose
-        // per-pipeline `initjob()` caps recursion at MAX_MAXJOBS ("job table
-        // full or recursion limit exceeded"). The fusevm pipeline path below
-        // doesn't allocate a job per pipeline, so without this guard runaway
-        // `. self`-style recursion overflowed the main-thread stack → SIGBUS.
-        // Refuse the deeper body once the ceiling is reached; the FS_SOURCE
-        // frame just pushed is popped normally below, and zerr's errflag
-        // unwinds the outer sources.
-        if !crate::ported::exec::recursion_limit_exceeded() {
+        // c:Src/jobs.c:1878-1884 — zsh runs the sourced list through
+        // execpline, whose per-pipeline `initjob()` caps recursion at
+        // MAX_MAXJOBS: `zerr("job table full or recursion limit exceeded")`
+        // then bails. The fusevm pipeline path below doesn't allocate a job
+        // per pipeline, so without this guard runaway `. self`-style
+        // recursion (invisible to FUNCNEST, which counts FS_FUNC frames
+        // only) overflowed the 256 MB main-thread stack → uncatchable
+        // SIGBUS. Reproduce the ceiling: total FUNCSTACK depth is the proxy
+        // for zsh's concurrently-held job slots. At/over the ceiling, raise
+        // the zsh-identical error (zerr sets ERRFLAG_ERROR so the outer
+        // sourced lists unwind) and refuse the deeper body — the FS_SOURCE
+        // frame just pushed is popped normally below.
+        let over_limit = crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .map(|s| s.len())
+            .unwrap_or(0)
+            >= crate::ported::jobs::MAX_MAXJOBS;
+        if over_limit {
+            crate::ported::utils::zerr("job table full or recursion limit exceeded");
+            crate::ported::builtin::LASTVAL.store(1, Ordering::Relaxed);
+        } else {
             let _ = crate::ported::exec::execute_script_zsh_pipeline(&body);
         }
     }

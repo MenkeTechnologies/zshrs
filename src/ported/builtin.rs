@@ -11735,14 +11735,36 @@ pub fn bin_dot(
     // executing the sourced body, so a stale flag from the caller's
     // context can't abort the file's first list.
     crate::ported::utils::errflag.fetch_and(!crate::ported::zsh_h::ERRFLAG_ERROR, Relaxed);
-    let mut result = match zwc_src {
-        Some(src) => crate::ported::exec::execute_script(&src).unwrap_or(1), // c:1566 prog path
-        None => match fs::read_to_string(&path) {
-            // c:6140
-            Ok(src) => crate::ported::exec::execute_script(&src).unwrap_or(1),
-            // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
-            Err(_) => 128 - 2,
-        },
+    // Recursion backstop — c:Src/jobs.c:1878-1884. zsh runs the sourced
+    // list through execpline, whose per-pipeline `initjob()` caps recursion
+    // at MAX_MAXJOBS: `zerr("job table full or recursion limit exceeded")`
+    // then bails. The fusevm pipeline path (execute_script below) doesn't
+    // allocate a job per pipeline, so without this guard runaway
+    // `. self`-style recursion — invisible to FUNCNEST, which counts only
+    // FS_FUNC frames (doshfunc, exec.rs:5684) — grew the FS_SOURCE stack
+    // unbounded and overflowed the 256 MB main-thread stack → uncatchable
+    // SIGBUS. Total FUNCSTACK depth (incl. the FS_SOURCE frame just pushed)
+    // is the proxy for zsh's concurrently-held job slots; at/over the
+    // ceiling, raise the zsh-identical error and refuse the deeper body
+    // (SOURCE_ERROR → 126, as zsh's bail returns). The frame is popped below.
+    let over_limit = crate::ported::modules::parameter::FUNCSTACK
+        .lock()
+        .map(|s| s.len())
+        .unwrap_or(0)
+        >= crate::ported::jobs::MAX_MAXJOBS;
+    let mut result = if over_limit {
+        crate::ported::utils::zerr("job table full or recursion limit exceeded");
+        128 - 2 // c:6143 — SOURCE_ERROR = 2 → 126
+    } else {
+        match zwc_src {
+            Some(src) => crate::ported::exec::execute_script(&src).unwrap_or(1), // c:1566 prog path
+            None => match fs::read_to_string(&path) {
+                // c:6140
+                Ok(src) => crate::ported::exec::execute_script(&src).unwrap_or(1),
+                // c:6143 — SOURCE_ERROR = 2 (Src/zsh.h:2216) → 128 - 2 = 126.
+                Err(_) => 128 - 2,
+            },
+        }
     };
     // c:Src/init.c:1623-1624 — `if (errflag) ret = SOURCE_ERROR;`
     // c:Src/init.c:1663 — `errflag &= ~ERRFLAG_ERROR;` on the restore
@@ -11893,18 +11915,29 @@ pub fn eval(argv: &[String]) -> i32 {
             // wants. Same routing the eval-via-execstring path uses
             // (vm_helper.rs:1518 EXIT-trap fire).
             //
-            // Recursion backstop — zsh's per-pipeline `initjob()` caps eval
-            // recursion at MAX_MAXJOBS ("job table full or recursion limit
-            // exceeded"); the fusevm pipeline path doesn't, so guard here at
-            // the FS_EVAL re-entry (funcnest counts FS_FUNC frames only, so
-            // pure `eval`-string recursion is otherwise unbounded → stack
-            // overflow / SIGBUS). The FS_EVAL frame just pushed is popped
-            // below as normal.
-            if crate::ported::exec::recursion_limit_exceeded() {
+            // Recursion backstop — c:Src/jobs.c:1878-1884. zsh's per-pipeline
+            // `initjob()` caps eval recursion at MAX_MAXJOBS ("job table full
+            // or recursion limit exceeded"); the fusevm pipeline path doesn't
+            // allocate a job per pipeline, so runaway `eval`-string recursion
+            // (invisible to FUNCNEST, which counts FS_FUNC frames only, AND to
+            // the FS_EVAL frame count — nested evals suppress the funcstack
+            // push via INEVAL, c:6164, exactly like zsh) is otherwise unbounded
+            // → main-thread stack overflow → SIGBUS. Track eval re-entry depth
+            // directly (the Rust proxy for zsh's concurrently-held job slots,
+            // one per nested eval pipeline) and cap at the same MAX_MAXJOBS
+            // ceiling. Requested as a parity fix by the maintainer.
+            let eval_depth = crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| {
+                let v = d.get() + 1;
+                d.set(v);
+                v
+            });
+            if eval_depth >= crate::ported::jobs::MAX_MAXJOBS {
+                crate::ported::utils::zerr("job table full or recursion limit exceeded");
                 LASTVAL.store(1, Relaxed);
             } else {
                 let _ = crate::ported::exec::execute_script_zsh_pipeline(&joined);
             }
+            crate::vm_helper::EVAL_RECURSION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
             // c:6211-6212 — `if (errflag && !lastval) lastval = errflag;`
             let ef = errflag.load(Relaxed);
             let lv = LASTVAL.load(Relaxed);
