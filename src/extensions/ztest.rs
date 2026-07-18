@@ -477,6 +477,47 @@ pub fn try_dispatch(exec: &ShellExecutor, name: &str, args: &[String]) -> Option
     Some(s)
 }
 
+/// One [`HandlerFunc`](crate::ported::zsh_h::HandlerFunc) for every
+/// registered ztest/zassert name: routes to [`try_dispatch`] using the
+/// builtin's own name. Executed via `execbuiltin` when the fusevm compiler
+/// emits a builtin opcode (because the name is now in the builtin table).
+#[allow(non_snake_case)]
+pub fn bin_ztest(
+    _name: &str,
+    argv: &[String],
+    _ops: &crate::ported::zsh_h::options,
+    _func: i32,
+) -> i32 {
+    crate::fusevm_bridge::with_executor(|exec| try_dispatch(exec, _name, argv).unwrap_or(1))
+}
+
+/// Builtin-table entries for the whole ztest/zassert family, folded into
+/// [`createbuiltintable`](crate::ported::builtin::createbuiltintable) so
+/// they are **first-class builtins in `zshrs -f`**: `whence -w zassert_eq`
+/// reports `builtin`, `builtin zassert_eq …` works, `disable`/completion
+/// see them — not just the fusevm command-dispatch arm. `BINF_HANDLES_OPTS`
+/// so `execbuiltin` passes args verbatim (assertions parse their own).
+/// No C counterpart (ztest is zshrs-original).
+#[allow(non_upper_case_globals)]
+pub static bintab: std::sync::LazyLock<Vec<crate::ported::zsh_h::builtin>> =
+    std::sync::LazyLock::new(|| {
+        ZTEST_BUILTIN_NAMES
+            .iter()
+            .map(|&name| {
+                crate::ported::builtin::BUILTIN(
+                    name,
+                    crate::ported::zsh_h::BINF_HANDLES_OPTS,
+                    Some(bin_ztest as crate::ported::zsh_h::HandlerFunc),
+                    0,
+                    -1,
+                    0,
+                    None,
+                    None,
+                )
+            })
+            .collect()
+    });
+
 // ── Worker-pool runner ──────────────────────────────────────────────────
 //
 // stryke: cli_runners.rs:153-694. Two halves:
