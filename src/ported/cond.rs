@@ -449,6 +449,21 @@ pub fn evalcond(
                         // resolved inside patcompile, which drops GF_IGNCASE
                         // for a non-PAT_FILE pattern, so `nocaseglob` stays
                         // out of `[[ ]]`.
+                        // !!! BASH-MODE GATE (no C counterpart) !!! bash
+                        // `shopt -s nocasematch` makes `[[ == ]]` case-
+                        // insensitive; lowercase both sides (glob metachars are
+                        // not letters, so pattern structure is preserved).
+                        let (pat, text) = if crate::dash_mode::nocasematch() {
+                            (
+                                std::borrow::Cow::Owned(pat.to_lowercase()),
+                                std::borrow::Cow::Owned(text.to_lowercase()),
+                            )
+                        } else {
+                            (
+                                std::borrow::Cow::Borrowed(pat),
+                                std::borrow::Cow::Borrowed(text),
+                            )
+                        };
                         let mut tok = pat.to_string();
                         crate::ported::glob::tokenize(&mut tok);
                         match crate::ported::pattern::patcompile(
@@ -457,7 +472,7 @@ pub fn evalcond(
                             None,
                         ) {
                             // c:322 — `test = (pprog && pattry(pprog, left));`
-                            Some(p) => Ok(crate::ported::pattern::pattry(&p, text)),
+                            Some(p) => Ok(crate::ported::pattern::pattry(&p, &text)),
                             None => Err(()), // c:313
                         }
                     };

@@ -56,6 +56,23 @@ static POSIX_FAITHFUL: AtomicBool = AtomicBool::new(false);
 /// unaffected. Set from the binary's CLI mode-application; defaults `false`.
 static BASH_MODE: AtomicBool = AtomicBool::new(false);
 
+/// bash `shopt -s nocasematch` — case-insensitive `[[ == ]]` / `[[ =~ ]]` /
+/// `case`. It is NOT a zsh option (opt_state can't store it), so it needs its
+/// own flag. Toggled by the `shopt` builtin; read by cond.rs / case matching.
+static NOCASEMATCH: AtomicBool = AtomicBool::new(false);
+
+/// True when `shopt -s nocasematch` is active (bash case-insensitive matching).
+#[inline]
+pub fn nocasematch() -> bool {
+    NOCASEMATCH.load(Ordering::Relaxed)
+}
+
+/// Set/clear bash `nocasematch`.
+#[inline]
+pub fn set_nocasematch(on: bool) {
+    NOCASEMATCH.store(on, Ordering::Relaxed);
+}
+
 /// True when the shell is running in strict-dash mode (`emulate dash` or
 /// `zshrs --dash`). Gates the zsh-extension rejections that make zshrs
 /// match `/bin/dash` byte-for-byte.

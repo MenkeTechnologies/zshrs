@@ -8224,6 +8224,15 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_COND_STRMATCH, |vm, _argc| {
         let pat = vm.pop().to_str();
         let s = vm.pop().to_str();
+        // bash `shopt -s nocasematch` → case-insensitive `[[ == ]]` / `[[ != ]]`.
+        // Lowercase BOTH sides for the match decision (glob metacharacters are
+        // not letters, so the pattern's `*`/`?`/`[…]` structure is preserved).
+        // No-op unless the bash shopt is active. --zsh unaffected.
+        let (s, pat) = if crate::dash_mode::nocasematch() {
+            (s.to_lowercase(), pat.to_lowercase())
+        } else {
+            (s, pat)
+        };
         let mut pat_tok = pat.clone();
         crate::ported::glob::tokenize(&mut pat_tok);
         if crate::ported::pattern::patcompile(
