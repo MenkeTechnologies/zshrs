@@ -280,6 +280,45 @@ fn bash_mode_self_contained() {
 }
 
 #[test]
+fn bash_param_expansion_indirect_and_casemod() {
+    // bash-only param syntax that zsh/ksh reject (so it can't live in the
+    // shared corpus): `${!name}` indirect and `${v^^}`/`${v,,}`/`${v^}`/
+    // `${v,}` case modification. Values are fixed, so no reference binary
+    // is needed.
+    let bash = |script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    let cases: &[(&str, &str)] = &[
+        // indirect (B)
+        ("x=5; y=x; printf '%s' \"${!y}\"", "5"),
+        ("foo=bar; ref=foo; printf '%s' \"${!ref}\"", "bar"),
+        ("unset q; r=q; printf '[%s]' \"${!r}\"", "[]"),
+        // case modification (C)
+        ("v=Hello; printf '%s' \"${v^^}\"", "HELLO"),
+        ("v=Hello; printf '%s' \"${v,,}\"", "hello"),
+        ("v=hello; printf '%s' \"${v^}\"", "Hello"),
+        ("v=HELLO; printf '%s' \"${v,}\"", "hELLO"),
+        ("v=abcDEF; printf '%s-%s' \"${v^^}\" \"${v,,}\"", "ABCDEF-abcdef"),
+    ];
+    for (script, want) in cases {
+        assert_eq!(bash(script).0, *want, "--bash: {script}");
+    }
+    // These must remain a "bad substitution" error under --zsh / --dash
+    // (the syntax is gated to bash mode only).
+    for mode in ["--zsh", "--dash"] {
+        let out = Command::new(zshrs_bin())
+            .args([mode, "-f", "-c", "x=5; y=x; printf '%s' \"${!y}\""])
+            .output()
+            .expect("spawn");
+        assert!(!out.status.success(), "{mode}: ${{!y}} must not do indirect");
+    }
+}
+
+#[test]
 fn emulation_parity_matrix() {
     let require = std::env::var("ZSHRS_REQUIRE_REF_SHELLS").is_ok();
     let mut tested = 0usize;

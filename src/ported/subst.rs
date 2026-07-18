@@ -5437,7 +5437,25 @@ pub fn paramsubst(
         }
         if (var_name == "!" || var_name == "\u{9c}") && idx < body_chars.len() {
             let nx = body_chars[idx];
-            if nx.is_ascii_alphanumeric()
+            // !!! BASH-MODE GATE (no C counterpart) !!! bash's `${!name}` is
+            // indirect expansion: read `$name`, then expand the variable IT
+            // names (`y=x; x=5; ${!y}` → `5`). zsh/ksh lack it (zsh uses
+            // `${(P)name}`). Only the SIMPLE `${!ident}` form is handled — the
+            // whole remaining body must be a plain identifier; the complex
+            // bash forms (`${!arr[@]}` indices, `${!prefix*}` name-match) fall
+            // through to the "bad substitution" reject below, as before.
+            let rest_is_ident = (nx.is_ascii_alphanumeric() || nx == '_')
+                && body_chars[idx..]
+                    .iter()
+                    .all(|c| c.is_ascii_alphanumeric() || *c == '_');
+            if crate::dash_mode::bash_mode() && rest_is_ident {
+                let target: String = body_chars[idx..].iter().collect();
+                // Deref: value of `target` is the name to expand. raw_value is
+                // fetched from var_name later (subst.rs:6030), so re-pointing
+                // it here and consuming the identifier does the indirection.
+                var_name = crate::ported::params::getsparam(&target).unwrap_or_default();
+                idx = body_chars.len();
+            } else if nx.is_ascii_alphanumeric()
                 || nx == '_'
                 || nx == '@'
                 || nx == '*'
@@ -5913,6 +5931,39 @@ pub fn paramsubst(
             }
             out
         };
+
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash case-modification
+        // suffixes: `${v^^}` upper-all, `${v,,}` lower-all, `${v^}` upper-
+        // first-char, `${v,}` lower-first-char. zsh/ksh lack this syntax
+        // (`^`/`,` are the rc-expand / other operators there), so it is gated
+        // to `--bash`. `^^`/`,,` reuse the existing `casmod` machinery
+        // (applied at subst.rs:14300); the single-char forms set
+        // `bash_casemod_first` handled alongside. Only the bare suffix (no
+        // trailing pattern) is recognised — the rarer `${v^^pat}` form is
+        // left as-is. Consumes the suffix from `rest`.
+        let mut rest = rest;
+        let mut bash_casemod_first: u8 = 0; // 0=none, 1=^ upper-first, 2=, lower-first
+        if crate::dash_mode::bash_mode() {
+            match rest.as_str() {
+                "^^" => {
+                    casmod = CASMOD_UPPER;
+                    rest = String::new();
+                }
+                ",," => {
+                    casmod = CASMOD_LOWER;
+                    rest = String::new();
+                }
+                "^" => {
+                    bash_casemod_first = 1;
+                    rest = String::new();
+                }
+                "," => {
+                    bash_casemod_first = 2;
+                    rest = String::new();
+                }
+                _ => {}
+            }
+        }
 
         // (P) indirect: take the var name from somewhere — either
         // the value of a parameter (\${(P)x}) or the result of a
@@ -14278,6 +14329,32 @@ pub fn paramsubst(
             let int_bit = errflag.load(Ordering::Relaxed) & crate::ported::zsh_h::ERRFLAG_INT;
             errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
+
+        // !!! BASH-MODE GATE !!! `${v^}` / `${v,}` upper/lower the FIRST char
+        // only (bash). `^^`/`,,` route through `casmod` below instead. Applied
+        // to the scalar value and each split element.
+        if bash_casemod_first != 0 {
+            let apply_first = |s: &str| -> String {
+                let s: String =
+                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
+                let mut it = s.chars();
+                match it.next() {
+                    Some(f) => {
+                        let mapped: String = if bash_casemod_first == 1 {
+                            f.to_uppercase().collect()
+                        } else {
+                            f.to_lowercase().collect()
+                        };
+                        format!("{}{}", mapped, it.as_str())
+                    }
+                    None => String::new(),
+                }
+            };
+            value = apply_first(&value);
+            if let Some(parts) = split_parts.as_ref() {
+                split_parts = Some(parts.iter().map(|p| apply_first(p)).collect());
+            }
+        }
 
         if casmod != CASMOD_NONE {
             // c:3937 if (casmod != CASMOD_NONE)

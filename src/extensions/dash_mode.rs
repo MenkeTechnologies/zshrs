@@ -49,6 +49,13 @@ static DASH_STRICT: AtomicBool = AtomicBool::new(false);
 /// binary's CLI mode-application, so it defaults `false` in the library.
 static POSIX_FAITHFUL: AtomicBool = AtomicBool::new(false);
 
+/// Process-global bash drop-in flag (`zshrs --bash`). bash is a SUPERSET of
+/// POSIX sh with syntax zsh lacks: indirect `${!var}` and case-modification
+/// `${v^^}` / `${v,,}` / `${v^}` / `${v,}`. These are parsed in the subst
+/// layer only when this is set, so native zsh and the other modes are
+/// unaffected. Set from the binary's CLI mode-application; defaults `false`.
+static BASH_MODE: AtomicBool = AtomicBool::new(false);
+
 /// True when the shell is running in strict-dash mode (`emulate dash` or
 /// `zshrs --dash`). Gates the zsh-extension rejections that make zshrs
 /// match `/bin/dash` byte-for-byte.
@@ -70,6 +77,20 @@ pub fn set_dash_strict(on: bool) {
 #[inline]
 pub fn posix_faithful() -> bool {
     POSIX_FAITHFUL.load(Ordering::Relaxed)
+}
+
+/// True in bash drop-in mode (`zshrs --bash`). Enables bash-only param
+/// expansion syntax (`${!var}` indirect, `${v^^}` case-mod). See [`BASH_MODE`].
+#[inline]
+pub fn bash_mode() -> bool {
+    BASH_MODE.load(Ordering::Relaxed)
+}
+
+/// Set (or clear) bash drop-in mode. Called from the binary's CLI mode
+/// application (raised for `--bash`, unless `--zsh` overrides).
+#[inline]
+pub fn set_bash_mode(on: bool) {
+    BASH_MODE.store(on, Ordering::Relaxed);
 }
 
 /// Set (or clear) real-shell-faithful mode. Called from the binary's CLI
