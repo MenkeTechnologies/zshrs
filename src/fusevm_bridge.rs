@@ -651,6 +651,44 @@ fn module_bound_builtin_module(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Dispatch a zshrs-ORIGINAL builtin by NAME, argv-style. These are
+/// registered as fusevm opcodes in [`register_builtins`] (async, doctor,
+/// peach, …), so a *literal* name compiles to `CallBuiltin` and runs. But
+/// they are absent from the static `BUILTINS` port table and the merged
+/// `builtintab`, so when the command name is resolved only at run time —
+/// `$var` indirection, `builtin NAME` — the ported command-resolution path
+/// never finds them and reports "command not found" / "no such builtin",
+/// even though `whence` (correctly) calls them builtins. The
+/// `register_builtins` closures use the VM only to pop args and then call an
+/// executor method, so the identical dispatch works here from any parent-side
+/// resolver that has an executor — no VM re-entry (which would alias the
+/// running `&mut VM`). Returns `None` for a name that is not one of them, so
+/// the caller falls through to external lookup.
+///
+/// !!! Keep in sync with the matching `vm.register_builtin(...)` closures in
+/// `register_builtins`: both must route a name to the same executor method.
+pub(crate) fn try_run_registered_builtin(name: &str, argv: &[String]) -> Option<i32> {
+    let s = match name {
+        "async" => with_executor(|e| e.builtin_async(argv)),
+        "await" => with_executor(|e| e.builtin_await(argv)),
+        "barrier" => with_executor(|e| e.builtin_barrier(argv)),
+        "peach" => with_executor(|e| e.builtin_peach(argv)),
+        "pmap" => with_executor(|e| e.builtin_pmap(argv)),
+        "pgrep" => with_executor(|e| e.builtin_pgrep(argv)),
+        "intercept" => with_executor(|e| e.builtin_intercept(argv)),
+        "intercept_proceed" => with_executor(|e| e.builtin_intercept_proceed(argv)),
+        "doctor" => with_executor(|e| e.builtin_doctor(argv)),
+        "dbview" => with_executor(|e| e.builtin_dbview(argv)),
+        "profile" => with_executor(|e| e.builtin_profile(argv)),
+        "caller" => with_executor(|e| e.builtin_caller(argv)),
+        "help" => with_executor(|e| e.builtin_help(argv)),
+        "cdreplay" => with_executor(|e| e.builtin_cdreplay(argv)),
+        "zsleep" => crate::extensions::ext_builtins::zsleep(argv),
+        _ => return None,
+    };
+    Some(s)
+}
+
 pub(crate) fn dispatch_builtin_raw(name: &str, args: Vec<String>) -> i32 {
     // !!! WARNING: RUST-ONLY — NO C COUNTERPART !!!
     // Native p10k engine intercept (src/extensions/p10k): sourcing
@@ -1550,6 +1588,11 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // before dispatch.
         let tab = crate::ported::builtin::createbuiltintable();
         if !tab.contains_key(name.as_str()) {
+            // zshrs-original opcode builtins (async, doctor, peach, …) aren't
+            // in builtintab; `builtin NAME` must still reach them.
+            if let Some(status) = try_run_registered_builtin(name, rest) {
+                return Value::Status(status);
+            }
             eprintln!("zshrs:1: no such builtin: {}", name);
             return Value::Status(1);
         }
@@ -8156,6 +8199,26 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(result) = intercepted {
             return Value::Status(result.unwrap_or(127));
         }
+        // zshrs-original opcode builtins (async, doctor, peach, …) reached
+        // via a run-time-resolved head (`$var`): they are absent from the
+        // static BUILTINS port table / builtintab, so execcmd_exec below would
+        // treat the head as external and report "command not found" — even
+        // though `whence` calls it a builtin and a literal head runs it via
+        // CallBuiltin. Dispatch by name here, but ONLY when the head is neither
+        // a user function nor a ported builtin, so the shell's
+        // function -> builtin -> external order is preserved.
+        if let Some(head) = args.first() {
+            let is_fn = with_executor(|e| e.function_exists(head));
+            let is_ported =
+                crate::ported::builtin::createbuiltintable().contains_key(head.as_str());
+            if !is_fn && !is_ported {
+                if let Some(status) = try_run_registered_builtin(head, &args[1..]) {
+                    crate::ported::builtin::LASTVAL
+                        .store(status, std::sync::atomic::Ordering::Relaxed);
+                    return Value::Status(status);
+                }
+            }
+        }
         // c:Src/exec.c:2900 execcmd_exec — canonical simple-command
         // dispatcher. Runs precmd-modifier walk (c:3013-3091), then
         // dispatches to execbuiltin (c:4233) / runshfunc (c:3431+) /
@@ -12487,6 +12550,14 @@ impl fusevm::ShellHost for ZshrsHost {
                 !disabled && crate::ported::builtin::createbuiltintable().contains_key(name);
             if bn_in_tab {
                 return Some(dispatch_builtin_raw(name, args));
+            }
+            // zshrs-original opcode builtins (async, doctor, peach, …) are not
+            // in builtintab, so a run-time-resolved name (`$var`) never reaches
+            // them. Dispatch by name here — after ported builtins, before
+            // external — matching the shell's function -> builtin -> external
+            // order (`has_user_fn` was checked above, so functions still win).
+            if let Some(status) = try_run_registered_builtin(name, &args) {
+                return Some(status);
             }
         }
 
