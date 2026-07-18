@@ -347,6 +347,48 @@ fn bash_param_expansion_indirect_and_casemod() {
 }
 
 #[test]
+fn bash_regex_rematch_read_a_indices() {
+    // Bash features surfaced by harder fuzzing, gated to --bash:
+    //   * `[[ x =~ (a)(b) ]]` — regex with adjacent capture groups (parsed
+    //     wrong under bash/ksh emulation before the lexer fix).
+    //   * `$BASH_REMATCH` — array of the whole match + capture groups.
+    //   * `read -a arr` — bash array-read flag (zsh/ksh use -A).
+    //   * `${!arr[@]}` — array indices.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // =~ regex with adjacent groups + BASH_REMATCH.
+    assert_eq!(
+        bash("[[ abcdef =~ (b)(c) ]] && printf '%s-%s-%s' \"${BASH_REMATCH[0]}\" \"${BASH_REMATCH[1]}\" \"${BASH_REMATCH[2]}\""),
+        "bc-b-c"
+    );
+    assert_eq!(
+        bash("[[ 2024-01-15 =~ ([0-9]+)-([0-9]+)-([0-9]+) ]] && printf '%s/%s/%s' \"${BASH_REMATCH[1]}\" \"${BASH_REMATCH[2]}\" \"${BASH_REMATCH[3]}\""),
+        "2024/01/15"
+    );
+    // read -a array read.
+    assert_eq!(bash("read -a arr <<< 'x y z'; printf '%s' \"${arr[1]}\""), "y");
+    assert_eq!(bash("read -a arr <<< 'one two three'; printf '%s' \"${#arr[@]}\""), "3");
+    // ${!arr[@]} indices (3 separate args → joined with a space here).
+    assert_eq!(bash("a=(x y z); printf '%s ' \"${!a[@]}\""), "0 1 2 ");
+    assert_eq!(
+        bash("a=(p q r); for i in \"${!a[@]}\"; do printf '%s:%s ' \"$i\" \"${a[$i]}\"; done"),
+        "0:p 1:q 2:r "
+    );
+
+    // BASH_REMATCH must stay unset under --zsh (uses $match instead).
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "[[ ab =~ (a) ]]; printf '[%s]' \"${BASH_REMATCH:-unset}\""])
+        .output()
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[unset]");
+}
+
+#[test]
 fn bash_mapfile_readarray() {
     // `mapfile` / `readarray` read lines from stdin into an array (bash).
     // Values are fixed via here-strings, so no reference binary is needed.
