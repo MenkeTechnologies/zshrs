@@ -5674,21 +5674,33 @@ fn expand_range(
     }
 
     // Try character range
-    // c:Src/lex.c::dobrace alpha-range path — only handles bare a..z,
-    // not a..z..N. zsh emits literal `{a..z..3}` because the step
-    // form is numeric-only. Detect step_text presence on the char-
-    // range arm and refuse to expand so the literal survives.
-    if left.len() == 1 && right.len() == 1 && step_text.is_empty() {
+    // c:Src/lex.c::dobrace alpha-range path — zsh only handles bare a..z,
+    // NOT a..z..N (it emits literal `{a..z..3}` because the step form is
+    // numeric-only). bash DOES support an alpha step (`{a..e..2}` → a c e),
+    // so honor `step_text` only under --bash; --zsh keeps refusing it so the
+    // literal survives (verified: real zsh emits `{a..e..2}` unchanged).
+    // bash ignores the step's SIGN for alpha (`{a..e..-2}` == `{a..e..2}`),
+    // so use abs(step) and take direction purely from start vs end.
+    let alpha_step_ok = step_text.is_empty() || crate::dash_mode::bash_mode();
+    if left.len() == 1 && right.len() == 1 && alpha_step_ok {
         let start = left.chars().next()?;
         let end = right.chars().next()?;
-        let (start, end, reverse) = if start <= end {
+        let step = incr_abs.max(1) as u32;
+        let (lo, hi, reverse) = if start <= end {
             (start, end, false)
         } else {
             (end, start, true)
         };
 
         let mut results = Vec::new();
-        let mut chars: Vec<char> = (start..=end).collect();
+        let mut chars: Vec<char> = Vec::new();
+        let mut v = lo as u32;
+        while v <= hi as u32 {
+            if let Some(c) = char::from_u32(v) {
+                chars.push(c);
+            }
+            v += step;
+        }
         if reverse {
             chars.reverse();
         }

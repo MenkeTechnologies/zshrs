@@ -5973,22 +5973,43 @@ pub fn paramsubst(
         // left as-is. Consumes the suffix from `rest`.
         let mut rest = rest;
         let mut bash_casemod_first: u8 = 0; // 0=none, 1=^ upper-first, 2=, lower-first
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash case-TOGGLE `${v~~}`
+        // (flip every char) / `${v~}` (flip first char), and the `@`-transform
+        // operators `${v@U}`/`${v@L}`/`${v@u}` (upper-all/lower-all/upper-first)
+        // and `${v@Q}` (shell-quote). zsh/ksh lack all of these (`~` is filename
+        // expansion, `@` is the array-splat pseudo-name there), so gated to
+        // --bash. The rarer `@E`/`@P`/`@A`/`@a`/`@k`/`@K` transforms are not yet
+        // handled — they fall through to the bad-substitution reject like zsh.
+        let mut bash_casemod_toggle: u8 = 0; // 0=none, 1=~~ toggle-all, 2=~ toggle-first
+        let mut bash_at_q = false; // ${v@Q} shell-quote
         if crate::dash_mode::bash_mode() {
             match rest.as_str() {
-                "^^" => {
+                "^^" | "@U" => {
                     casmod = CASMOD_UPPER;
                     rest = String::new();
                 }
-                ",," => {
+                ",," | "@L" => {
                     casmod = CASMOD_LOWER;
                     rest = String::new();
                 }
-                "^" => {
+                "^" | "@u" => {
                     bash_casemod_first = 1;
                     rest = String::new();
                 }
                 "," => {
                     bash_casemod_first = 2;
+                    rest = String::new();
+                }
+                "~~" => {
+                    bash_casemod_toggle = 1;
+                    rest = String::new();
+                }
+                "~" => {
+                    bash_casemod_toggle = 2;
+                    rest = String::new();
+                }
+                "@Q" => {
+                    bash_at_q = true;
                     rest = String::new();
                 }
                 _ => {}
@@ -14437,6 +14458,51 @@ pub fn paramsubst(
             value = apply_first(&value);
             if let Some(parts) = split_parts.as_ref() {
                 split_parts = Some(parts.iter().map(|p| apply_first(p)).collect());
+            }
+        }
+
+        // bash `${v~~}` / `${v~}` case-TOGGLE — flip the case of every char
+        // (~~) or just the first (~). No C counterpart; --bash only.
+        if bash_casemod_toggle != 0 {
+            let toggle = |s: &str| -> String {
+                let s: String =
+                    String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
+                let flip = |c: char| -> String {
+                    if c.is_uppercase() {
+                        c.to_lowercase().collect()
+                    } else if c.is_lowercase() {
+                        c.to_uppercase().collect()
+                    } else {
+                        c.to_string()
+                    }
+                };
+                if bash_casemod_toggle == 1 {
+                    s.chars().map(flip).collect()
+                } else {
+                    let mut it = s.chars();
+                    match it.next() {
+                        Some(f) => format!("{}{}", flip(f), it.as_str()),
+                        None => String::new(),
+                    }
+                }
+            };
+            value = toggle(&value);
+            if let Some(parts) = split_parts.as_ref() {
+                split_parts = Some(parts.iter().map(|p| toggle(p)).collect());
+            }
+        }
+
+        // bash `${v@Q}` — render the value single-quoted so it can be reused
+        // as shell input. bash ALWAYS wraps in single quotes (even a bare
+        // identifier: `abc` → `'abc'`), so QT_SINGLE, not the "only-when-
+        // needed" optional form. No C counterpart; --bash only.
+        if bash_at_q {
+            let q = |s: &str| -> String {
+                crate::ported::utils::quotestring(s, crate::ported::zsh_h::QT_SINGLE)
+            };
+            value = q(&value);
+            if let Some(parts) = split_parts.as_ref() {
+                split_parts = Some(parts.iter().map(|p| q(p)).collect());
             }
         }
 

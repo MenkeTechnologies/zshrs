@@ -442,7 +442,7 @@ fn bash_sparse_arrays() {
     assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${#a[@]}""#), "4");
     assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[@]}""#), "xyzq");
     assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${a[*]}""#), "x y z q");
-    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${!a[@]}""#), "0125");
+    assert_eq!(bash(r#"a=(x y z); a[5]=q; printf '%s' "${!a[*]}""#), "0 1 2 5");
     // Custom IFS applies to the star-join over live elements only.
     assert_eq!(bash(r#"a=(x y z); a[5]=q; IFS=,; printf '%s' "${a[*]}""#), "x,y,z,q");
     // `unset a[i]` is 0-based and leaves a hole.
@@ -482,6 +482,79 @@ fn bash_sparse_arrays() {
         zsh(r#"a=(x y z); a[6]=q; printf '<%s>' "${a[@]}""#),
         "<x><y><z><><><q>"
     );
+
+    // Explicit-index array literal is sparse: `a=([2]=x [5]=y)` → {2,5}.
+    // ("${a[*]}" is one joined arg, so IFS separates cleanly; likewise the
+    // quoted "${!a[@]}" is a single space-joined index string.)
+    assert_eq!(bash(r#"a=([2]=two [5]=five); printf '%s' "${a[*]}""#), "two five");
+    assert_eq!(bash(r#"a=([2]=two [5]=five); printf '%s' "${!a[*]}""#), "2 5");
+    assert_eq!(bash(r#"a=([2]=two [5]=five); printf '%s' "${#a[@]}""#), "2");
+    // Mixing a literal with a later subscript-assign keeps both live.
+    assert_eq!(bash(r#"a=([3]=x); a[1]=y; printf '%s' "${!a[*]}""#), "1 3");
+    assert_eq!(bash(r#"a=([3]=x); a[1]=y; printf '%s' "${a[*]}""#), "y x");
+}
+
+#[test]
+fn bash_case_and_at_transforms() {
+    // bash string transforms with no zsh equivalent, gated to --bash. Ground
+    // truth is bash 5.x. `${v~~}`/`${v~}` toggle case; `${v@U/@L/@u}` upper-all/
+    // lower-all/upper-first; `${v@Q}` shell-quotes (always single-quoted).
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(bash(r#"s=HeLLo; printf '%s' "${s~~}""#), "hEllO");
+    assert_eq!(bash(r#"s=HeLLo; printf '%s' "${s~}""#), "heLLo");
+    assert_eq!(bash(r#"v=Hello; printf '%s' "${v@U}""#), "HELLO");
+    assert_eq!(bash(r#"v=Hello; printf '%s' "${v@L}""#), "hello");
+    assert_eq!(bash(r#"v=hello; printf '%s' "${v@u}""#), "Hello");
+    assert_eq!(bash(r#"v=abc; printf '%s' "${v@Q}""#), "'abc'");
+    assert_eq!(bash(r#"v="a b"; printf '%s' "${v@Q}""#), "'a b'");
+    assert_eq!(bash(r#"v="it's"; printf '%s' "${v@Q}""#), r#"'it'\''s'"#);
+    assert_eq!(bash(r#"v=; printf '%s' "${v@Q}""#), "''");
+
+    // `@`/`~` transforms are a bad substitution under --zsh (rc 1, no output).
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", r#"v=Hi; echo "${v@U}""#])
+        .output()
+        .expect("spawn");
+    assert!(!out.status.success(), "--zsh: ${{v@U}} must be bad substitution");
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
+}
+
+#[test]
+fn bash_alpha_brace_step() {
+    // bash supports an alphabetic brace-range STEP (`{a..e..2}` → a c e); zsh
+    // does not (emits the literal), so it is gated to --bash. Direction is
+    // taken from the endpoints; the step's sign is ignored for the alpha form.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(bash("echo {a..e..2}"), "a c e");
+    assert_eq!(bash("echo {e..a..2}"), "e c a");
+    assert_eq!(bash("echo {a..e..-2}"), "a c e");
+    assert_eq!(bash("echo {z..a..5}"), "z u p k f a");
+    assert_eq!(bash("echo {A..E..2}"), "A C E");
+    // Numeric step is shared with zsh and stays correct.
+    assert_eq!(bash("echo {1..10..3}"), "1 4 7 10");
+
+    // --zsh keeps the alpha-step literal (matching real zsh), numeric works.
+    let zsh = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(zsh("echo {a..e..2}"), "{a..e..2}");
+    assert_eq!(zsh("echo {1..10..3}"), "1 4 7 10");
 }
 
 #[test]
