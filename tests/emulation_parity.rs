@@ -255,6 +255,30 @@ const PORTABLE_CORPUS: &[&str] = &[
     "printf '[%10s]\\n' hi",                                      // right-justified width
     "printf '[%-10s]\\n' hi",                                     // left-justified width
     "x=$(echo a b c); set -- $x; printf '%s\\n' \"$2\"",          // cmd-sub then word-split
+    // Sixth expansion batch (harness_classify6.sh) — test/[ operators, external
+    // command pipelines, expr, exit-status chains.
+    "[ 5 -gt 3 ] && [ 3 -lt 5 ] && echo y",                       // numeric -gt/-lt
+    "[ -n \"a\" -a -z \"\" ] && echo y",                          // -n/-z with -a
+    "[ abc = abc ] && echo eq",                                   // string equality
+    "[ abc != xyz ] && echo ne",                                  // string inequality
+    "[ 5 -eq 5 -o 3 -eq 4 ] && echo or",                          // -eq with -o
+    "[ ! -z x ] && echo notempty",                                // negated -z
+    "test 3 -lt 4 && echo lt",                                    // `test` builtin form
+    "[ -e /dev/null ] && echo exists",                            // -e file test
+    "[ -d /tmp ] && echo isdir",                                  // -d directory test
+    "v=foo; case $v in foo|bar) echo m;; esac",                   // case alternation
+    "echo 'one two three' | cut -d' ' -f2",                       // cut field
+    "echo abcABC | tr 'a-z' 'A-Z'",                               // tr translit
+    "echo hello | wc -c | tr -d ' '",                             // wc -c piped
+    "x=$(echo a; echo b); echo \"$x\" | wc -l | tr -d ' '",       // multiline cmd-sub count
+    "for x in $(seq 1 3); do printf '%s' \"$x\"; done; echo",     // for over $(seq)
+    "x=5; expr $x + 3",                                           // expr arithmetic
+    "y=$(expr 10 / 2); echo \"$y\"",                              // expr in cmd-sub
+    "true; echo $?; false; echo $?",                              // exit-status of true/false
+    "x=hi; export x; sh -c 'echo $x'",                            // export crosses to child sh
+    "a=1; b=$a; unset a; echo \"${b}\"",                          // unset original keeps copy
+    "s='  trim  '; echo \"$s\" | sed 's/^ *//;s/ *$//'",          // sed trim
+    "printf '%s|' a b; echo",                                     // printf format reuse
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -392,6 +416,16 @@ const EXTENDED_CORPUS: &[&str] = &[
     "printf '%s\\n' \"$(( 16#ff ))\"",                     // hex base → 255
     "printf '%s\\n' \"$(( 8#17 ))\"",                      // octal base → 15
     "printf '%s\\n' \"$(( 2#11111111 ))\"",                // binary base → 255
+    // Sixth expansion batch (harness_classify6.sh).
+    "a=(1 2 3); echo \"${a[@]}\" | tr ' ' '+'",            // splat piped to tr
+    "[[ abc =~ ^abc$ ]] && echo m",                        // =~ fully anchored
+    "[[ x != y ]] && echo ne",                             // [[ string !=
+    "(( 2 + 2 == 4 )) && echo math",                       // (( )) equality truth
+    "a=(a b c d e); echo \"${a[@]:1}\"",                    // slice offset to end
+    "a=(x y); a=(\"${a[@]}\" z); echo \"${#a[@]}\"",        // splat-append copy → 3
+    "v=Hello; [[ ${v:0:1} == H ]] && echo cap",            // substring in [[ ]]
+    "a=(1 2 3); echo \"$(( ${#a[@]} * 2 ))\"",             // array count in arith → 6
+    "a=(3 1 2); n=${#a[@]}; echo \"$n\"",                  // count into scalar
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
