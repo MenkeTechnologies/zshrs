@@ -6941,6 +6941,58 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // BUILTIN_XTRACE_ARRAY_LINE — xtrace line for an `arr=(...)` / `arr+=(...)`
+    // assignment. Stack on entry: [array, prefix] (argc = 2); pops prefix
+    // ("name=( " / "name+=( "), then the whole assembled Value::Array. Direct
+    // port of c:Src/exec.c::addvars:2624-2632, guarded on the live xtrace
+    // state like C's `if (xtr)`: prints `prefix qz(e0) qz(e1) … ) ` with each
+    // element shell-quoted (quotedzputs). Replaces the former one-VM-slot-per-
+    // element trace, which overflowed next_slot (u16) on large literals.
+    vm.register_builtin(BUILTIN_XTRACE_ARRAY_LINE, |vm, _argc| {
+        let prefix = vm.pop().to_str();
+        let arr = vm.pop();
+        let live = vm.last_status;
+        with_executor(|exec| {
+            exec.set_last_status(live);
+        });
+        let on = with_executor(|_exec| opt_state_get("xtrace").unwrap_or(false));
+        if on {
+            let already = XTRACE_DONE_PS4.with(|f| f.get());
+            if !already {
+                printprompt4();
+            }
+            let mut line = String::with_capacity(prefix.len() + 16);
+            line.push_str(&prefix);
+            if let Value::Array(items) = arr {
+                for it in items {
+                    line.push_str(&crate::ported::utils::quotedzputs(&it.to_str()));
+                    line.push(' ');
+                }
+            }
+            line.push_str(") ");
+            line.push('\n');
+            xtrerr_fputs(&line);
+            xtrerr_flush();
+            XTRACE_DONE_PS4.with(|f| f.set(false));
+        }
+        Value::Status(0)
+    });
+
+    // BUILTIN_MAKE_ARRAY_COUNTED — pop a count Int (top), then pop that many
+    // values below it, and push them as one Value::Array (bottom-of-group
+    // first). Same result as Op::MakeArray(N) but N comes from the stack as an
+    // i64, dodging MakeArray's u16 operand cap. The compiler emits this only
+    // when a literal `arr=(...)` has more than u16::MAX elements.
+    vm.register_builtin(BUILTIN_MAKE_ARRAY_COUNTED, |vm, _argc| {
+        let count = vm.pop().to_int().max(0) as usize;
+        let mut items: Vec<Value> = Vec::with_capacity(count);
+        for _ in 0..count {
+            items.push(vm.pop());
+        }
+        items.reverse();
+        Value::Array(items)
+    });
+
     // Like XTRACE_LINE but reads the top `argc - 1` values from the
     // VM stack WITHOUT consuming them (peek), then pops a prefix
     // string at the top. Joins prefix + peeked args with spaces using
@@ -10422,6 +10474,14 @@ pub const BUILTIN_LOGOUT: u16 = 610;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 /// `BUILTIN_XTRACE_LINE` constant.
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
+/// `BUILTIN_XTRACE_ARRAY_LINE` — xtrace an `arr=(...)` assignment from the
+/// whole assembled `Value::Array` (see compile_zsh array-literal codegen).
+pub const BUILTIN_XTRACE_ARRAY_LINE: u16 = 649;
+/// `BUILTIN_MAKE_ARRAY_COUNTED` — like `Op::MakeArray(u16)` but the element
+/// count is a runtime `Int` on the stack, so it is not capped at 65535. Used
+/// by the array-literal codegen only when the literal has > u16::MAX elements
+/// (e.g. a .zcompdump's ~103k-element `_comps=(...)`).
+pub const BUILTIN_MAKE_ARRAY_COUNTED: u16 = 650;
 /// `BUILTIN_ARRAY_JOIN_STAR` constant.
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
 /// `BUILTIN_SET_RAW_OPT` constant.

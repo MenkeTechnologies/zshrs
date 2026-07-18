@@ -2395,8 +2395,25 @@ pub fn clprintm(
             let _ = write_loop(out_fd, pad_str.as_bytes());
             // c:1896
         }
+        // c:1898 — zcoff() reset after the pad fill.
+        zcoff();
+        // c:1899-1903 — inter-column separator. Unless this cell is the last
+        // column of the row (lastc), C emits the COL_SP cap, two LITERAL spaces
+        // (`fputs("  ", shout)`), and a reset. This port dropped the block
+        // (`let _ = lastc;`), so every column collapsed against the next
+        // (`f001f011` instead of `f001  f011`). The gap was only masked in
+        // variable-width listings, where the pad-to-content-width above happened
+        // to leave space after the shorter entries; the longest entry in each
+        // column still touched its neighbour.
+        if lastc == 0 {
+            // c:1899
+            emit_filecol(COL_SP); // c:1900 — zcputs(g->name, COL_SP)
+            let fd = SHTTY.load(Ordering::Relaxed);
+            let out_fd = if fd >= 0 { fd } else { 1 };
+            let _ = write_loop(out_fd, b"  "); // c:1901 — fputs("  ", shout)
+            zcoff(); // c:1902
+        }
     }
-    let _ = lastc;
     0 // c:1988 ret
 }
 
@@ -2904,17 +2921,48 @@ pub fn complistmatches(
     let clearflag = CLEARFLAG.load(Ordering::SeqCst);
     // c:2106-2109 — C uses singledraw() (incremental two-cell highlight-move)
     // when only the selection changed within the same frame, instead of
-    // repainting the whole list every keystroke (which visibly flashes the list
-    // up/down as you navigate). The earlier gate-off was a bandaid: singledraw's
-    // horizontal cell math was wrong because it STUBBED singlecalc as identity
-    // (dropping the first char of the moved cell, `build.rs`→`uild.rs`) and
-    // hardcoded the last-column flag / stale mlprinted. Those are now ported
-    // faithfully (singlecalc called at c:1949-1950, lc/mcc/mlprinted wired,
-    // listshown set at c:1986), so the incremental path is enabled.
-    let use_singledraw = true;
-    if use_singledraw && !mnew && inselect != 0 && cur_onlnct == nlnct         // c:2106
-        && mlbeg_cur >= 0 && mlbeg_cur == molbeg
-    {
+    // repainting the whole list every keystroke.
+    //
+    // GATED OFF by default. Enabling it (0e8a580bf1) fixed singledraw's own cell
+    // math (singlecalc, mcc/lc/mlprinted — all faithful now) but was committed
+    // WITHOUT live verification (the commit says so). Live + headless A/B since
+    // then shows it still corrupts the SCROLL-PAGER menu (LISTPROMPT set →
+    // mscroll=1): the list columns split mid-word / merge across rows (e.g.
+    // `lz`+`diff`, `libpng16-confi`+`g`, `lil`+`l3build`). Root cause is NOT in
+    // singledraw's emitted bytes — they match the C algorithm exactly (down md1,
+    // paint cell1, down md2-md1, paint cell2, up md2+nlnct). It is the cursor
+    // BASELINE at singledraw entry: singledraw is differential and assumes the
+    // cursor is parked at list-top (row 0 of the window), but across menuselect
+    // frames zshrs does not hold that invariant (the intervening zle refresh /
+    // trashzle leaves the cursor elsewhere), so the two repainted cells land on
+    // the wrong rows while the rest of the prior frame stays. The full
+    // compprintlist repaint is self-consistent (redraws the whole grid from its
+    // own baseline) so it renders correctly — verified byte-clean columns via
+    // A/B. Re-enable only after the baseline invariant is proven byte-identical
+    // to zsh's menuselect redisplay (needs a zsh reference capture). Opt-in with
+    // ZSHRS_SINGLEDRAW=1 for that work.
+    let use_singledraw = std::env::var("ZSHRS_SINGLEDRAW").is_ok();
+    let took_singledraw = use_singledraw
+        && !mnew
+        && inselect != 0
+        && cur_onlnct == nlnct
+        && mlbeg_cur >= 0
+        && mlbeg_cur == molbeg;
+    // TEMP env-gated diagnostic (ZSHRS_COMPLIST_LOG) — traces every complist
+    // redraw invocation + which branch it takes, to diagnose the p10k <TAB>
+    // multi-draw duplication. No-op unless the env var is set.
+    if let Ok(path) = std::env::var("ZSHRS_COMPLIST_LOG") {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "complistmatches: branch={} mnew={} inselect={} onlnct={} nlnct={} mlbeg={} molbeg={} mselect={} clearflag={} mscroll={} showinglist_in={} nlines={} noselect={}",
+                if took_singledraw { "SINGLEDRAW" } else { "COMPPRINTLIST" },
+                mnew, inselect, cur_onlnct, nlnct, mlbeg_cur, molbeg, mselect, clearflag,
+                MSCROLL.load(Ordering::SeqCst), SHOWINGLIST.load(Ordering::SeqCst),
+                listdat.get().and_then(|m| m.lock().ok().map(|g| g.nlines)).unwrap_or(-1),
+                NOSELECT.load(Ordering::SeqCst));
+        }
+    }
+    if took_singledraw {
         if NOSELECT.load(Ordering::SeqCst) == 0 {
             // c:2108
             singledraw(); // c:2109
