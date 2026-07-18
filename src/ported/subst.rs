@@ -3825,6 +3825,10 @@ pub fn paramsubst(
         //     shape from multsub at line ~4182 with the same isarr
         //     semantic.
         let mut subexp_array_temp: Option<String> = None;
+        // Deferred subscript for the bash `${!prefix@}`/`${!prefix*}` name-match
+        // (set in the `!`-handling block below, applied once `subscript` is
+        // declared — the `!` block runs before that declaration).
+        let mut bang_prefix_subscript: Option<String> = None;
         let mut subexp_arr_parts: Option<Vec<String>> = None;
         // Evicts any `__subexp_arr_*` scratch temp this paramsubst call
         // stashes in the global paramtab (line ~4853) when the call
@@ -5488,6 +5492,53 @@ pub fn paramsubst(
                     subexp_array_temp = Some(temp);
                     idx = j; // leave [@]/[*] for the splat loop
                     bash_handled = true;
+                } else if after.len() == 1
+                    && matches!(after[0], '@' | '*' | '\u{87}' /* Star */)
+                {
+                    // `${!prefix@}` / `${!prefix*}` → the NAMES of all set
+                    // parameters whose name begins with `prefix`, sorted (bash
+                    // name-matching indirection). `@` splats them as separate
+                    // words, `*` joins via IFS — same distinction as `$@`/`$*`,
+                    // so bind a temp array and set the matching subscript.
+                    // The `parameters` scan includes zsh-internal magic params
+                    // (aliases / functions / commands / options / argv / …) that
+                    // bash has no equivalent for; exclude them so `${!a@}` lists
+                    // only real user/env variables, not `aliases`/`argv`. Plain
+                    // specials that DO exist in bash (PATH/PWD/…) are kept.
+                    let magic: std::collections::HashSet<&str> =
+                        crate::ported::modules::parameter::PARTAB
+                            .iter()
+                            .map(|e| e.name)
+                            .chain(
+                                crate::ported::modules::parameter::PARTAB_ARRAY
+                                    .iter()
+                                    .map(|e| e.name),
+                            )
+                            .chain(std::iter::once("argv"))
+                            .collect();
+                    let mut names: Vec<String> =
+                        crate::vm_helper::partab_scan_keys("parameters")
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|n| n.starts_with(&target) && !magic.contains(n.as_str()))
+                            .collect();
+                    names.sort();
+                    names.dedup();
+                    static BANG_PFX_SEQ: AtomicUsize = AtomicUsize::new(0);
+                    let temp = format!(
+                        "__subexp_arr_{}",
+                        BANG_PFX_SEQ.fetch_add(1, Ordering::Relaxed)
+                    );
+                    arrays_insert(temp.clone(), names);
+                    subexp_temp_guard.track(temp.clone());
+                    subexp_array_temp = Some(temp);
+                    bang_prefix_subscript = Some(if after[0] == '*' || after[0] == '\u{87}' {
+                        "*".to_string()
+                    } else {
+                        "@".to_string()
+                    });
+                    idx = body_chars.len(); // consumed the whole body
+                    bash_handled = true;
                 }
             }
             if !bash_handled
@@ -5557,6 +5608,11 @@ pub fn paramsubst(
         // the subscript opener as Inbrack TOKEN since the lexer
         // tokenizes `[`/`]` inside `${…}` to Inbrack/Outbrack.
         let mut subscript: Option<String> = None; // c:2867
+        // Apply the deferred `${!prefix@}`/`${!prefix*}` splat subscript (the
+        // `!` block above bound the name array into subexp_array_temp).
+        if let Some(s) = bang_prefix_subscript.take() {
+            subscript = Some(s);
+        }
         // Persistent record that the reference carried an explicit `[@]`/`[*]`
         // splat. `subscript` gets cleared by downstream fetch arms, so the
         // KSHARRAYS bare→element-0 reductions (below) key off this flag to keep
@@ -5978,47 +6034,52 @@ pub fn paramsubst(
         // trailing pattern) is recognised — the rarer `${v^^pat}` form is
         // left as-is. Consumes the suffix from `rest`.
         let mut rest = rest;
-        let mut bash_casemod_first: u8 = 0; // 0=none, 1=^ upper-first, 2=, lower-first
-        // !!! BASH-MODE GATE (no C counterpart) !!! bash case-TOGGLE `${v~~}`
-        // (flip every char) / `${v~}` (flip first char), and the `@`-transform
-        // operators `${v@U}`/`${v@L}`/`${v@u}` (upper-all/lower-all/upper-first)
-        // and `${v@Q}` (shell-quote). zsh/ksh lack all of these (`~` is filename
-        // expansion, `@` is the array-splat pseudo-name there), so gated to
-        // --bash. The rarer `@E`/`@P`/`@A`/`@a`/`@k`/`@K` transforms are not yet
-        // handled — they fall through to the bad-substitution reject like zsh.
+        // !!! BASH-MODE GATE (no C counterpart) !!! bash case modification.
+        //   `${v^^}` / `${v^^PAT}` — upper-case every char (matching PAT)
+        //   `${v^}`  / `${v^PAT}`  — upper-case the FIRST char (if it matches)
+        //   `${v,,}` / `${v,,PAT}` — lower-case matching chars
+        //   `${v,}`  / `${v,PAT}`  — lower-case the first char (if it matches)
+        //   `${v@U}`/`${v@L}`/`${v@u}` — upper-all / lower-all / upper-first
+        //   `${v~~}` / `${v~}`     — case TOGGLE (all / first char)
+        //   `${v@Q}`               — shell-quote
+        // PAT is a glob matching a SINGLE character (`[hw]`, `?`, `a`); empty
+        // PAT matches every char. zsh/ksh lack all of this (`^`/`,` are rc-
+        // expand there, `~` is filename expansion, `@` the splat pseudo-name),
+        // so gated to --bash. Rarer `@E`/`@P`/`@A`/`@a`/`@k`/`@K` still fall
+        // through to the bad-substitution reject like zsh.
+        let mut bash_casemod: u8 = 0; // 0=none 1=upper-all 2=lower-all 3=upper-first 4=lower-first
+        let mut bash_casemod_pat = String::new(); // single-char glob; empty = all chars
         let mut bash_casemod_toggle: u8 = 0; // 0=none, 1=~~ toggle-all, 2=~ toggle-first
         let mut bash_at_q = false; // ${v@Q} shell-quote
         if crate::dash_mode::bash_mode() {
-            match rest.as_str() {
-                "^^" | "@U" => {
-                    casmod = CASMOD_UPPER;
-                    rest = String::new();
+            let r = rest.as_str();
+            match r {
+                "@U" => bash_casemod = 1,
+                "@L" => bash_casemod = 2,
+                "@u" => bash_casemod = 3,
+                "@Q" => bash_at_q = true,
+                "~~" => bash_casemod_toggle = 1,
+                "~" => bash_casemod_toggle = 2,
+                _ => {
+                    // Case-mod operator + optional single-char pattern. Check
+                    // the doubled forms first so `^^`/`,,` win over `^`/`,`.
+                    if let Some(pat) = r.strip_prefix("^^") {
+                        bash_casemod = 1;
+                        bash_casemod_pat = pat.to_string();
+                    } else if let Some(pat) = r.strip_prefix(",,") {
+                        bash_casemod = 2;
+                        bash_casemod_pat = pat.to_string();
+                    } else if let Some(pat) = r.strip_prefix('^') {
+                        bash_casemod = 3;
+                        bash_casemod_pat = pat.to_string();
+                    } else if let Some(pat) = r.strip_prefix(',') {
+                        bash_casemod = 4;
+                        bash_casemod_pat = pat.to_string();
+                    }
                 }
-                ",," | "@L" => {
-                    casmod = CASMOD_LOWER;
-                    rest = String::new();
-                }
-                "^" | "@u" => {
-                    bash_casemod_first = 1;
-                    rest = String::new();
-                }
-                "," => {
-                    bash_casemod_first = 2;
-                    rest = String::new();
-                }
-                "~~" => {
-                    bash_casemod_toggle = 1;
-                    rest = String::new();
-                }
-                "~" => {
-                    bash_casemod_toggle = 2;
-                    rest = String::new();
-                }
-                "@Q" => {
-                    bash_at_q = true;
-                    rest = String::new();
-                }
-                _ => {}
+            }
+            if bash_casemod != 0 || bash_casemod_toggle != 0 || bash_at_q {
+                rest = String::new();
             }
         }
 
@@ -14441,29 +14502,55 @@ pub fn paramsubst(
             errflag.store(saved_errflag | int_bit, Ordering::Relaxed);
         } // c:1673
 
-        // !!! BASH-MODE GATE !!! `${v^}` / `${v,}` upper/lower the FIRST char
-        // only (bash). `^^`/`,,` route through `casmod` below instead. Applied
-        // to the scalar value and each split element.
-        if bash_casemod_first != 0 {
-            let apply_first = |s: &str| -> String {
+        // !!! BASH-MODE GATE !!! bash case modification with an optional
+        // single-char pattern: `${v^^}`/`${v^^PAT}` (upper all matching),
+        // `${v^}`/`${v^PAT}` (upper first if matching), `,,`/`,` (lower), plus
+        // `@U`/`@L`/`@u`. Applied to the scalar value and each split element.
+        if bash_casemod != 0 {
+            // Compile the single-char pattern ONCE (empty ⇒ match all). A
+            // failed compile falls back to a literal single-char compare.
+            let pat = bash_casemod_pat.clone();
+            let matches = move |c: char| -> bool {
+                if pat.is_empty() {
+                    return true;
+                }
+                let cs = c.to_string();
+                crate::ported::pattern::patcompile(
+                    &{
+                        let mut t = pat.clone();
+                        crate::ported::glob::tokenize(&mut t);
+                        t
+                    },
+                    crate::ported::zsh_h::PAT_HEAPDUP as i32,
+                    None,
+                )
+                .map_or(pat == cs, |p| crate::ported::pattern::pattry(&p, &cs))
+            };
+            let upper = bash_casemod == 1 || bash_casemod == 3;
+            let only_first = bash_casemod == 3 || bash_casemod == 4;
+            let xform = |s: &str| -> String {
                 let s: String =
                     String::from_utf8_lossy(&crate::ported::utils::unmetafy_str(s)).into_owned();
-                let mut it = s.chars();
-                match it.next() {
-                    Some(f) => {
-                        let mapped: String = if bash_casemod_first == 1 {
-                            f.to_uppercase().collect()
+                let mut out = String::with_capacity(s.len());
+                let mut first = true;
+                for c in s.chars() {
+                    let at_first = first;
+                    first = false;
+                    if (!only_first || at_first) && matches(c) {
+                        if upper {
+                            out.extend(c.to_uppercase());
                         } else {
-                            f.to_lowercase().collect()
-                        };
-                        format!("{}{}", mapped, it.as_str())
+                            out.extend(c.to_lowercase());
+                        }
+                    } else {
+                        out.push(c);
                     }
-                    None => String::new(),
                 }
+                out
             };
-            value = apply_first(&value);
+            value = xform(&value);
             if let Some(parts) = split_parts.as_ref() {
-                split_parts = Some(parts.iter().map(|p| apply_first(p)).collect());
+                split_parts = Some(parts.iter().map(|p| xform(p)).collect());
             }
         }
 
