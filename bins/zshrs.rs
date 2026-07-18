@@ -1254,6 +1254,18 @@ pub fn zshrs_main() {
         zsh::ported::options::emulate(emu_name, true);
     }
 
+    // Real-shell-faithful toggle: a bare POSIX-family drop-in
+    // (`--sh`/`--ksh`/`--dash`) makes zshrs match the ACTUAL shell rather
+    // than zsh's approximation of it (e.g. trailing-empty-field splitting).
+    // Adding `--zsh` (`zshrs --sh --zsh`) selects zsh-style emulation
+    // instead by clearing the flag. See extensions::dash_mode.
+    let posix_family = matches!(
+        shell_mode(),
+        ShellMode::Posix | ShellMode::Ksh | ShellMode::Dash
+    );
+    let zsh_style_requested = args.iter().any(|a| a == "--zsh" || a == "--zsh-compat");
+    zsh::extensions::dash_mode::set_posix_faithful(posix_family && !zsh_style_requested);
+
     if parity_mode_selected {
         // Use the process-local AtomicBool override instead of
         // exporting `ZSHRS_CACHE=0` in env. The env-var approach

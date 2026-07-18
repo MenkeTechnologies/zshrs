@@ -66,6 +66,16 @@ const PORTABLE_CORPUS: &[&str] = &[
     "if [ a = a ]; then printf eq; fi; printf '\\n'",              // test builtin
     "n=5; printf '%s\\n' \"$((n*n))\"",                            // arith mult
     "printf '%s ' one two three; printf '\\n'",                    // printf reuse
+    // Field splitting on a non-whitespace IFS — the trailing-empty-field
+    // rule where zsh diverges from the POSIX shells. In a bare drop-in
+    // mode these MUST match the real shell (posix-faithful): a trailing
+    // separator drops the empty field, a leading/middle one keeps it.
+    "IFS=:; v=a:b:; set -- $v; printf '%s\\n' \"$#\"",             // trailing → drop empty
+    "IFS=:; v=:a:b; set -- $v; printf '%s\\n' \"$#\"",             // leading → keep empty
+    "IFS=:; v=a::b; set -- $v; printf '%s\\n' \"$#\"",             // middle → keep empty
+    "IFS=:; v=:; set -- $v; printf '%s\\n' \"$#\"",                // lone separator
+    "IFS=:; v=:a::b:; set -- $v; printf '%s\\n' \"$#\"",           // combined
+    "IFS=:; v=a:b:c; set -- $v; printf '%s\\n' \"$#\"",            // no trailing
 ];
 
 fn find_shell(sh: &RefShell) -> Option<String> {
@@ -94,6 +104,26 @@ fn run(bin: &str, args: &[&str], script: &str) -> (String, bool) {
     full.push(script);
     let out = Command::new(bin).args(&full).output().unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
     (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+}
+
+/// The enforcement decision, extracted so it is unit-testable without
+/// depending on which reference shells happen to be installed: when
+/// `ZSHRS_REQUIRE_REF_SHELLS` is set, any absent reference shell is fatal.
+fn missing_is_fatal(require: bool, missing: &[&str]) -> bool {
+    require && !missing.is_empty()
+}
+
+#[test]
+fn enforcement_gate_logic() {
+    // Not requiring → a miss is a skip, never fatal.
+    assert!(!missing_is_fatal(false, &["ksh"]));
+    assert!(!missing_is_fatal(false, &[]));
+    // Requiring + all present → not fatal.
+    assert!(!missing_is_fatal(true, &[]));
+    // Requiring + a miss → fatal. This is the CI contract: a missing
+    // reference shell fails the build instead of silently passing.
+    assert!(missing_is_fatal(true, &["ksh"]));
+    assert!(missing_is_fatal(true, &["ksh", "dash"]));
 }
 
 #[test]
@@ -137,7 +167,7 @@ fn emulation_parity_four_way() {
         mismatches.join("\n")
     );
 
-    if require && !missing.is_empty() {
+    if missing_is_fatal(require, &missing) {
         panic!(
             "ZSHRS_REQUIRE_REF_SHELLS is set but these reference shells were absent: {missing:?}. \
              Install them so the parity contract is enforced, not skipped."

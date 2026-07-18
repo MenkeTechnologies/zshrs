@@ -4932,10 +4932,24 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     // c:3736-3756 — main word loop.
     while si < bytes.len() {
         let iend = isep_one(si); // c:3737 itype_end(s, ISEP, 1)
-        if iend != si {
+        let consumed_sep = iend != si;
+        if consumed_sep {
             // c:3738-3741 — consume the single non-ws sep + following WS.
             si = iend;
             si = skipwsep_at(si);
+        }
+        // !!! POSIX-FAITHFUL GATE (no C counterpart) !!!
+        // zsh (and `emulate sh`) emits a trailing empty field when a
+        // non-whitespace IFS separator is the last thing in the input:
+        // `IFS=:; set -- $v` on `a:b:` → (a, b, "") = 3. dash/ksh/bash drop
+        // that trailing empty → (a, b) = 2. A MIDDLE empty (`a::b`) keeps
+        // `si < len` here and is unaffected. Scoped to `!allownull` (the
+        // unquoted-split path `set -- $v` uses); the quoted `"${=v}"` /
+        // `${(s::)}` allownull path keeps zsh semantics. `zshrs --sh/--ksh/
+        // --dash` sets posix_faithful(); `--... --zsh` leaves it false.
+        if consumed_sep && si >= bytes.len() && !allownull && crate::dash_mode::posix_faithful()
+        {
+            break;
         }
         t = si; // c:3746 — `t = s;`
         si = findsep_at(si); // c:3747 — `findsep(&s, NULL, quote);`

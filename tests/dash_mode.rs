@@ -149,6 +149,37 @@ fn dash_printf_no_percent_q() {
     assert_ne!(code, 0, "printf %q must be an invalid directive under --dash");
 }
 
+// ── posix-faithful field splitting: trailing empty field dropped ───────
+
+#[test]
+fn dash_field_split_drops_trailing_empty() {
+    // dash/ksh/bash drop a trailing empty field on a non-whitespace IFS
+    // separator; zsh keeps it. --dash must match the real shell.
+    let cases: &[(&str, &str)] = &[
+        ("a:b:", "2"),   // trailing separator → no trailing empty
+        (":a:b", "3"),   // leading separator → empty first field kept
+        ("a::b", "3"),   // middle empty kept
+        (":", "1"),      // lone separator → one empty field
+        (":a::b:", "4"), // combined
+        ("a:b:c", "3"),  // no trailing separator
+    ];
+    for (val, want) in cases {
+        let (out, _) = run_dash_mode(&format!("IFS=:; v={val}; set -- $v; printf '%s' \"$#\""));
+        assert_eq!(out, *want, "IFS split of {val:?} under --dash");
+    }
+}
+
+#[test]
+fn sh_zsh_combo_keeps_zsh_split() {
+    // `--sh --zsh` selects zsh-style emulation: the trailing empty field is
+    // KEPT (zsh behavior), proving the --zsh opt-out works.
+    let out = Command::new(zshrs_bin())
+        .args(["--sh", "--zsh", "-f", "-c", "IFS=:; v=a:b:; set -- $v; printf '%s' \"$#\""])
+        .output()
+        .expect("spawn");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3");
+}
+
 // ── controls: dash-legal POSIX must still work under --dash ─────────────
 
 #[test]

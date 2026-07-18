@@ -148,9 +148,15 @@ pub fn _pick_variant(args: &[String]) -> i32 {
 
     // sh:38-43 — for each (name, pattern), test output match
     for (name, pat) in &var {
+        // sh:39 — `if [[ $output = *$~pat* ]]`: the pattern is matched as a
+        // SUBSTRING (`*…*` on both sides), not anchored to the whole output.
+        // Without the wrapping `*`, `pattry` did a full-string match, so e.g.
+        // `grep (BSD grep, GNU compatible) 2.6.0-FreeBSD` never matched the
+        // `gpl2='(2.5.1|GNU compatible)'` spec → `_pick_variant` fell through
+        // to the `unix` default → wrong (reduced) option set for `grep`/etc.
         let matched = match patcompile(
             &{
-                let mut __pat_tok = (pat).to_string();
+                let mut __pat_tok = format!("*{}*", pat);
                 crate::ported::glob::tokenize(&mut __pat_tok);
                 __pat_tok
             },

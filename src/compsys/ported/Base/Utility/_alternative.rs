@@ -138,9 +138,33 @@ pub fn _alternative(args: &[String]) -> i32 {
                 // sh:30  Empty action → defer to messages collection.
                 mesgs.push(format!("{}:{}", tag, descr));
             } else if action.starts_with("((") && action.ends_with("))") {
-                // sh:35  ((value:desc value:desc …)) → describe-style
+                // sh:35  ((value:desc value:desc …)) → describe-style.
+                // sh:39 does `eval ws=( ${action[3,-3]} )` — the `eval`
+                // strips backslash escapes so `a\:all` becomes `a:all`,
+                // letting `_describe` split value from description on the
+                // (now unescaped) colon. `split_whitespace().to_string()`
+                // kept the backslash, so `_describe` saw `a\:all`, treated
+                // the `\:` as a literal (non-separator) colon, and rendered
+                // the raw `a:all` instead of `a  -- all` (e.g. `chmod <TAB>`
+                // via `_file_modes` → `_alternative 'who:who:((a\:all …))'`).
                 let body = &action[2..action.len() - 2];
-                let items: Vec<String> = body.split_whitespace().map(|s| s.to_string()).collect();
+                let items: Vec<String> = body
+                    .split_whitespace()
+                    .map(|s| {
+                        let mut out = String::with_capacity(s.len());
+                        let mut chars = s.chars();
+                        while let Some(c) = chars.next() {
+                            if c == '\\' {
+                                if let Some(n) = chars.next() {
+                                    out.push(n);
+                                }
+                            } else {
+                                out.push(c);
+                            }
+                        }
+                        out
+                    })
+                    .collect();
                 setaparam("ws", items);
                 let mut describe_argv: Vec<String> = vec![
                     "-t".to_string(),
