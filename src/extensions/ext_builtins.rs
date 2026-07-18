@@ -8283,14 +8283,15 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
         }
     }
 
-    // `nocasematch` is a bash-only shopt (no zsh option), tracked separately
-    // so it survives opt_state (which silently drops unknown names). Read via
-    // dash_mode::nocasematch() by cond.rs / case matching.
+    // Some bash shopts have no direct zsh option and would be silently dropped
+    // by opt_state. Map them: `nocasematch` → a dedicated flag; `extglob` →
+    // zsh's `kshglob` (which enables the identical `@()`/`*()/+()/?()/!()`
+    // ksh-style patterns). Others fall through to opt_state.
     let shopt_get = |name: &str| -> bool {
-        if name == "nocasematch" {
-            crate::dash_mode::nocasematch()
-        } else {
-            crate::ported::options::opt_state_get(name).unwrap_or(false)
+        match name {
+            "nocasematch" => crate::dash_mode::nocasematch(),
+            "extglob" => crate::ported::options::opt_state_get("kshglob").unwrap_or(false),
+            _ => crate::ported::options::opt_state_get(name).unwrap_or(false),
         }
     };
 
@@ -8300,10 +8301,11 @@ pub(crate) fn shopt(args: &[String]) -> i32 {
         crate::fusevm_bridge::with_executor(|exec| {
             let _ = exec;
             for opt in &opts {
-                if opt == "nocasematch" {
-                    crate::dash_mode::set_nocasematch(enable);
-                } else {
-                    crate::ported::options::opt_state_set(opt, enable);
+                match opt.as_str() {
+                    "nocasematch" => crate::dash_mode::set_nocasematch(enable),
+                    // bash `extglob` ≡ zsh `kshglob`.
+                    "extglob" => crate::ported::options::opt_state_set("kshglob", enable),
+                    _ => crate::ported::options::opt_state_set(opt, enable),
                 }
             }
         });
