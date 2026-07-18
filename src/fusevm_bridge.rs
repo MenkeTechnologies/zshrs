@@ -5924,6 +5924,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         };
         let fd = unsafe { libc::open(path_c.as_ptr(), flags, 0o666) };
         if fd < 0 {
+            // c:Src/exec.c:3790-3795 — report the open failure and mark the
+            // redirect failed so the command is SKIPPED, matching the numeric-fd
+            // (`3< file`) and non-varid (`< file`) paths. Previously this
+            // silently returned Status(1) with no diagnostic and no
+            // redirect_failed flag, so `{fd}< /nonexistent` ran the command
+            // anyway with exit 0 (zsh errors "no such file or directory" +
+            // skips the command). `%e: %s` = strerror(errno) : filename.
+            let e = std::io::Error::last_os_error();
+            let msg = redir_errno_msg(&e);
+            crate::ported::utils::zwarn(&format!("{}: {}", msg, path));
+            with_executor(|exec| exec.redirect_failed = true);
             return Value::Status(1);
         }
         // c:2404-2412 addfd varid arm — `fd1 = movefd(fd2);

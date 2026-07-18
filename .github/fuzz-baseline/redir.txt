@@ -66,4 +66,16 @@
 # (`NOCLOB`/`CLOBBER`/`RDWR`/`MULTIIN`) for signature separation. All
 # hand-verified equal on both shells.
 #
+# NAMED-FD OPEN FAILURE (Bug #1024, FIXED). A `{var}<file` / `{var}>file`
+# redirect whose open FAILS (missing file for read, missing parent dir for
+# write) must report "no such file or directory: PATH", set $?=1, and SKIP the
+# command (c:Src/exec.c:3790-3795). The numeric (`3<`) and non-varid (`<`) forms
+# were already correct, but the fusevm {var} path (fusevm_bridge.rs) silently
+# returned Status(1) with NO diagnostic and NO redirect_failed flag — so the
+# command ran anyway with exit 0. The fix routes the open failure through the
+# same `zwarn("%e: %s")` + redirect_failed as the other forms. A dedicated arm
+# now exercises `{u}<` on a missing file and `{u}>` into a missing dir, in both
+# exec and command context, with stderr folded (`2>&1`) so the diagnostic
+# itself is compared. Reverting the fix reproduces ~96 divergences/900-seed.
+#
 # Any divergence here is a regression.

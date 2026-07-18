@@ -6034,6 +6034,21 @@ pub fn bin_typeset(
                     returnval = 1;
                     continue;
                 }
+                // c:Src/builtin.c:2342-2345 (second half of the inconsistency
+                // test) — a SCALAR value assigned to an explicitly-REQUESTED
+                // array/hashed declaration (`typeset -a g=1`, `typeset -A h=1`,
+                // `typeset -aU u=1`) is inconsistent. The check above only
+                // caught a scalar assigned to a pre-EXISTING array with no type
+                // flag; this catches the `-a`/`-A` decl form (paren-RHS to a
+                // non-array is the mirror half at builtin.rs:5687). zsh errors
+                // and leaves the param UNSET (a pre-existing value dropped too).
+                // Bug #1028.
+                if (on as u32 & (PM_ARRAY | PM_HASHED)) != 0 {
+                    zerrnam(name, &format!("{}: inconsistent type for assignment", n)); // c:2345
+                    crate::ported::params::unsetparam(n);
+                    returnval = 1;
+                    continue;
+                }
                 // c:3010-3030 — `name=value` scalar assign. C-canonical
                 // `setsparam` (Src/params.c:3350) writes paramtab; the
                 // env mirror at `Src/params.c:3024 addenv` follows.
@@ -6160,6 +6175,32 @@ pub fn bin_typeset(
                             if (off as u32 & PM_NAMEREF) != 0 {
                                 pm.width = 0;
                                 pm.base = 0;
+                            }
+                        }
+                    }
+                }
+                // c:Src/builtin.c:1982-1986 (typeset_setbase) — an integer
+                // base must be 2..=36 inclusive. Validate BEFORE assigning the
+                // value: on an invalid base zsh errors PER param and leaves the
+                // (already-created) param EMPTY. The live base-stamp below
+                // (c:1990) never validated, so `typeset -i0`/`-i1`/`-i37`
+                // silently produced `0#…`/`37#…`. The faithful typeset_setbase
+                // port has the check but was dead code. Bug #1027.
+                if (on & PM_INTEGER) != 0 && OPT_HASARG(&ops, b'i') {
+                    if let Some(bs) = OPT_ARG(&ops, b'i') {
+                        if let Ok(bv) = bs.trim().parse::<i32>() {
+                            if !(2..=36).contains(&bv) {
+                                crate::ported::utils::zwarnnam(
+                                    name,
+                                    &format!("invalid base (must be 2 to 36 inclusive): {}", bv),
+                                );
+                                // zsh leaves the param UNSET on this failure
+                                // (even a pre-existing value is dropped) — the
+                                // just-created param is torn down before the
+                                // value is assigned.
+                                crate::ported::params::unsetparam(n);
+                                returnval = 1;
+                                continue;
                             }
                         }
                     }
@@ -6481,6 +6522,38 @@ pub fn bin_typeset(
                     }
                 }
                 let _ = was_fresh;
+            }
+            // c:Src/builtin.c:2117-2131 — `typeset +a`/`+A` removes the
+            // array/hashed attribute, which is a TYPE CHANGE (`chflags` picks
+            // up `off & PM_ARRAY`, `tc=1`, `usepm=0`). UNLIKE the +i/+E/+l
+            // conversions below — which migrate the stored value back to a
+            // scalar — an array/assoc has no scalar representation, so the
+            // recreated scalar is EMPTY. `typeset -a a=(1 2 3); typeset +a a`
+            // → `a` is a scalar with value "". Only fires when the param is
+            // ACTUALLY array/hashed (a no-op `+a` on a scalar leaves it be).
+            // Bug #1029.
+            if (off as u32 & (PM_ARRAY | PM_HASHED)) != 0 {
+                let is_arraylike = paramtab()
+                    .read()
+                    .ok()
+                    .and_then(|t| {
+                        t.get(arg).map(|pm| {
+                            let typ = PM_TYPE(pm.node.flags as u32);
+                            typ == PM_ARRAY || typ == PM_HASHED
+                        })
+                    })
+                    == Some(true);
+                if is_arraylike {
+                    // Drop the assoc backing map too — unsetparam alone can
+                    // leave the paramtab_hashed_storage entry, so a later
+                    // scalar deref still saw the joined values (`+A` on
+                    // `h=(k v)` read back `v` instead of "").
+                    if let Ok(mut m) = crate::ported::params::paramtab_hashed_storage().lock() {
+                        m.remove(arg);
+                    }
+                    crate::ported::params::unsetparam(arg);
+                    crate::ported::params::assignsparam(arg, "", 0); // empty scalar
+                }
             }
             // c:Src/builtin.c::typeset_single c:2374-2378 — the `+i`
             // / `+E` / `+F` / `+l` / `+u` / `+r` / `+n` paths
@@ -10595,7 +10668,15 @@ pub fn bin_print(
         // NUL instead of newline; else newline. `\c` truncation
         // (c:utils.c:7045) also suppresses — matches zsh's
         // `echo "a\cb"; echo END` → `aEND`.
-        let final_term: &[u8] = if nonewline || backslash_c_truncated {
+        //
+        // c:Src/builtin.c:4982-5025 — the columnate (`-c`/`-C`) block emits its
+        // newline PER ROW and then `return ret`s, never reaching this shared
+        // terminator. With ZERO args there are zero rows, so `print -c` /
+        // `print -C 2` output NOTHING — not the empty line this path would add.
+        // (`print -c ""` has one arg → one row → one newline, still correct.)
+        let columnate_empty =
+            (OPT_ISSET(ops, b'c') || OPT_ISSET(ops, b'C')) && processed_args.is_empty();
+        let final_term: &[u8] = if nonewline || backslash_c_truncated || columnate_empty {
             b""
         } else if nul_sep {
             b"\0"
@@ -13573,7 +13654,26 @@ pub fn bin_test(
             .any(|a| matches!(a.as_str(), "&&" | "||" | "-a" | "-o"));
         let has_paren = argv.iter().any(|a| a == "(");
         let has_known_binop_mid = argv.iter().any(|a| known_binops.contains(&a.as_str()));
-        if !has_connective && !has_paren && !has_known_binop_mid {
+        // c:Src/builtin.c:7270 + par_cond's `!` rule — a LEADING `!` negation
+        // chain wraps a valid condition: `test ! ! -n x` = not(not(-n x)) → 0.
+        // The heuristic above only recognises BINARY ops, so it wrongly
+        // rejected a `!+ <unary-op> <operand>` form ("condition expected: !").
+        // Strip the leading `!`s: if the remainder is exactly a known unary op
+        // + its operand, let evalcond (which handles `!` at cond.rs:152)
+        // evaluate it. Other malformed leading-`!` forms (`! ! a b`) still fall
+        // through to the rejection below. Bug #1026 (double-negation leg).
+        let lead_bangs = argv.iter().take_while(|a| a.as_str() == "!").count();
+        let rest = &argv[lead_bangs..];
+        let rest_is_unary = lead_bangs >= 1
+            && rest.len() == 2
+            && rest[0].len() == 2
+            && rest[0].starts_with('-')
+            && matches!(
+                rest[0].chars().nth(1).unwrap_or(' '),
+                'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'k' | 'L' | 'n' | 'o' | 'p'
+                    | 'r' | 's' | 'S' | 't' | 'u' | 'v' | 'w' | 'x' | 'z' | 'G' | 'N' | 'O'
+            );
+        if !has_connective && !has_paren && !has_known_binop_mid && !rest_is_unary {
             crate::ported::utils::zwarn(&format!("condition expected: {}", argv[0]));
             let _ = name;
             return 2;
@@ -18216,6 +18316,35 @@ mod tests {
         );
 
         // Restore.
+        errflag.store(saved, Relaxed);
+    }
+
+    /// Bug #1026: `test ! ! -n abc` = not(not(-n abc)) → 0 (true). The
+    /// pre-flight rejected a leading-`!` chain over a unary operand as
+    /// "condition expected: !" (c:builtin.c:7270 + par_cond `!` rule).
+    #[test]
+    fn bin_test_double_negation_of_unary_op() {
+        let _g = crate::test_util::global_state_lock();
+        let saved = errflag.load(Relaxed);
+        let ops = options {
+            ind: [0; MAX_OPS],
+            args: Vec::new(),
+            argscount: 0,
+            argsalloc: 0,
+        };
+        let mk = |s: &[&str]| s.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        let run = |a: &[&str]| {
+            errflag.store(0, Relaxed);
+            bin_test("test", &mk(a), &ops, crate::ported::hashtable_h::BIN_TEST)
+        };
+        // not(not(-n abc)) = not(not true) = true → 0
+        assert_eq!(run(&["!", "!", "-n", "abc"]), 0);
+        // not(not(not(-n abc))) = false → 1
+        assert_eq!(run(&["!", "!", "!", "-n", "abc"]), 1);
+        // not(not(-n "")) = not(not false) = false → 1
+        assert_eq!(run(&["!", "!", "-n", ""]), 1);
+        // Single negation unaffected: not(-n abc) → 1
+        assert_eq!(run(&["!", "-n", "abc"]), 1);
         errflag.store(saved, Relaxed);
     }
 

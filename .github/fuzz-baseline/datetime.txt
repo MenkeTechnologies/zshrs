@@ -1,3 +1,23 @@
 # parity-fuzz --mode datetime baseline: normalized signatures of KNOWN gaps.
 # A divergence whose signature is here is allowed; a NEW one fails CI.
 # Regenerate: parity-fuzz --mode datetime --count N --verify 3  (copy NEW-signature lines).
+#
+# No known gaps — clean across seeds. Covers zsh/datetime strftime formatting
+# (`strftime FMT EPOCH`, `-s` assign, `-r` parse, `%s` round-trip, `%N` nanos),
+# TZ-pinned to UTC so %Z/%z are deterministic on both shells.
+#
+# STRF_FMTS is the format vocabulary. Beyond the base conversions (%Y %m %d %H
+# %M %S %j %U %W %V %G %u %w %a %A %b %B %C %y %e %k %l %I %p %D %F %R %T %s %n
+# %t %% %Z %z %c %x %X) it now also gates (all verified equal vs
+# /opt/homebrew/bin/zsh — strftime is a classic cross-libc divergence source):
+#
+#   %g %h %P %r            — specifiers the base list omitted.
+#   %-e %-m %-H %-j        — glibc `-` no-pad flag.
+#   %_e %_d %_m            — glibc `_` space-pad flag.
+#   %0e %0k %0l            — glibc `0` zero-pad flag.
+#   %^a %^A %^b %^B %^p    — glibc `^` upper-case modifier.
+#   %#a %#A %#p            — glibc `#` swap-case modifier.
+#   %Oe %Od %OH %OI %Om    — POSIX `O` alternate-numeric modifier.
+#   %Ec %EY                — POSIX `E` alternate-era modifier.
+#
+# Any divergence here is a regression.
