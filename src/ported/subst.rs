@@ -5465,15 +5465,21 @@ pub fn paramsubst(
                     && (after[1] == '@' || after[1] == '*')
                     && (after[2] == ']' || after[2] == Outbrack)
                 {
-                    // `${!ident[@]}` / `[*]` → the array's live indices. Dense
-                    // 0..len-1, minus any bash sparse holes (so `unset a[1];
-                    // ${!a[@]}` → `0 2`). Bind a temp index array and leave the
-                    // `[@]`/`[*]` for the subscript-splat loop.
-                    let len = arrays_get(&target).map(|a| a.len()).unwrap_or(0);
-                    let indices: Vec<String> = crate::bash_arrays::live_indices(&target, len)
-                        .into_iter()
-                        .map(|i| i.to_string())
-                        .collect();
+                    // `${!ident[@]}` / `[*]` → the KEYS of an associative
+                    // array (bash hash order), or the live INDICES of an
+                    // indexed array (dense 0..len-1 minus any bash sparse
+                    // holes, so `unset a[1]; ${!a[@]}` → `0 2`). Bind a temp
+                    // array and leave the `[@]`/`[*]` for the subscript-splat
+                    // loop.
+                    let indices: Vec<String> = if let Some(map) = assoc_get(&target) {
+                        map.keys().cloned().collect()
+                    } else {
+                        let len = arrays_get(&target).map(|a| a.len()).unwrap_or(0);
+                        crate::bash_arrays::live_indices(&target, len)
+                            .into_iter()
+                            .map(|i| i.to_string())
+                            .collect()
+                    };
                     static BANG_SEQ: AtomicUsize = AtomicUsize::new(0);
                     let temp =
                         format!("__subexp_arr_{}", BANG_SEQ.fetch_add(1, Ordering::Relaxed));

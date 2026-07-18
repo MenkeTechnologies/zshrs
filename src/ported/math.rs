@@ -316,8 +316,17 @@ pub(crate) fn getmathparam(name: &str) -> mnumber {
                 if let Some(pm) = tab.get(arr_name) {
                     if let Some(arr) = &pm.u_arr {
                         let len = arr.len() as i64;
+                        // !!! BASH-MODE GATE (no C counterpart) !!! bash
+                        // indexed arrays are 0-based in arithmetic too
+                        // (`$(( a[1] ))` is the SECOND element), so skip the
+                        // zsh 1-based `-1`. Negative indices count from the
+                        // end identically in both, so only the non-negative
+                        // arm differs. Mirrors the param-expansion 0-based
+                        // subscript already applied in --bash.
                         let pos = if idx_val < 0 {
                             len + idx_val
+                        } else if crate::dash_mode::bash_mode() {
+                            idx_val
                         } else {
                             idx_val - 1
                         };
