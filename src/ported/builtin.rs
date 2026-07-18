@@ -17165,6 +17165,9 @@ fn printf_format(
                     out.push_str(&format_spec_str(&spec, &formatted, false));
                 }
                 Some('d') | Some('i') => {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                        PRINTF_MATH_ERR.with(|c| c.set(true));
+                    }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     let n = parse_int_arg(&a);
                     spec.push('d');
@@ -17172,6 +17175,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('u') => {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                        PRINTF_MATH_ERR.with(|c| c.set(true));
+                    }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
                     // curarg, &zulongval)) zulongval = mathevali(...)`.
@@ -17187,6 +17193,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('x') => {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                        PRINTF_MATH_ERR.with(|c| c.set(true));
+                    }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
                     // curarg, &zulongval)) zulongval = mathevali(...)`.
@@ -17202,6 +17211,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('X') => {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                        PRINTF_MATH_ERR.with(|c| c.set(true));
+                    }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
                     // curarg, &zulongval)) zulongval = mathevali(...)`.
@@ -17217,6 +17229,9 @@ fn printf_format(
                     arg_i += 1;
                 }
                 Some('o') => {
+                    if crate::extensions::dash_mode::bash_printf_empty_numeric_error(args.get(arg_i)) {
+                        PRINTF_MATH_ERR.with(|c| c.set(true));
+                    }
                     let a = args.get(arg_i).cloned().unwrap_or_default();
                     // c:Src/builtin.c:5511 — `if (!zstrtoul_underscore(
                     // curarg, &zulongval)) zulongval = mathevali(...)`.
