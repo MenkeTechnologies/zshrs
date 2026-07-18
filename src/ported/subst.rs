@@ -13786,6 +13786,13 @@ pub fn paramsubst(
                             arr.insert(0, s0); // c:715
                         }
                         let n = arr.len() as i64; // c:715
+                        // bash empties the slice when a negative offset underflows
+                        // past element 0 (`${a[@]: -5}` on a 3-elem array → "" in
+                        // bash, whole array in zsh/ksh93). See the scalar arm's
+                        // `bash_off_underflow` note. zsh clamps; bash yields empty.
+                        let bash_off_underflow = crate::extensions::dash_mode::bash_mode()
+                            && off < 0
+                            && (n + off) < 0;
                         let lo = if off < 0 {
                             (n + off).max(0)
                         } else {
@@ -13849,6 +13856,7 @@ pub fn paramsubst(
                             } // c:715
                             None => arr.iter().skip(lo).cloned().collect(), // c:715
                         };
+                        let kept = if bash_off_underflow { Vec::new() } else { kept };
                         value = kept.join(" "); // c:715
                         split_parts = Some(kept); // c:715 (auto-splat slice)
                     } else {
@@ -13864,6 +13872,16 @@ pub fn paramsubst(
                         )
                         .into_owned();
                         let total = dv.chars().count() as i64;
+                        // bash (unlike zsh/ksh93) yields the EMPTY string when a
+                        // negative offset underflows past the start of the value
+                        // (`${v: -10}` on "hello" → "" in bash, "hello" in
+                        // zsh/ksh93). zsh clamps `total+off` to 0; bash treats the
+                        // out-of-range start as no substring. Gate on bash mode so
+                        // `--zsh`/`--ksh` keep the zsh-faithful clamp. Verified via
+                        // 9-way parity fuzzer (gen_param_fuzz `${v: -N}`).
+                        let bash_off_underflow = crate::extensions::dash_mode::bash_mode()
+                            && off < 0
+                            && (total + off) < 0;
                         let start = if off < 0 {
                             (total + off).max(0)
                         } else {
@@ -13926,6 +13944,9 @@ pub fn paramsubst(
                             }
                             None => dv.chars().skip(start).collect(),
                         };
+                        if bash_off_underflow {
+                            value = String::new();
+                        }
                     }
                     // c:Src/subst.c:3759-3792 — apply the trailing `:MODIFIER`
                     // chain (if any) to the substring result.
