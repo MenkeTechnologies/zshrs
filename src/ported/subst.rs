@@ -19450,6 +19450,17 @@ fn arrays_get(name: &str) -> Option<Vec<String>> {
         let pp = crate::ported::builtin::PPARAMS.lock().ok()?;
         return Some(pp.clone());
     }
+    // bash special arrays (PIPESTATUS / FUNCNAME / BASH_VERSINFO) alias the
+    // zsh-native specials under --bash. Covers the operator/subscript read
+    // forms (`${PIPESTATUS[0]}`, `${#FUNCNAME[@]}`) that route through
+    // paramsubst; the bare `[@]` splat goes through exec::array (aliased
+    // there too). No-op in --zsh. Only uppercase names, so the pipestatus
+    // alias never self-recurses.
+    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        if let Some(v) = crate::dash_mode::bash_special_array(name) {
+            return Some(v);
+        }
+    }
     // c:Src/Modules/parameter.c:2239 — `dirstack` PM_SPECIAL array
     // reads the canonical DIRSTACK LinkList via dirs_gsu.getfn.
     // paramtab has no u_arr backing for it; route here so

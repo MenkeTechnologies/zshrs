@@ -100,3 +100,52 @@ pub fn set_bash_mode(on: bool) {
 pub fn set_posix_faithful(on: bool) {
     POSIX_FAITHFUL.store(on, Ordering::Relaxed);
 }
+
+/// The bash version zshrs advertises in `--bash` mode. Scripts gate features
+/// on `${BASH_VERSINFO[0]}` (e.g. `>= 4` for assoc arrays / `${v^^}`), so a
+/// modern 5.x keeps every feature path live. Not tied to any real build.
+pub const BASH_VERSION_MAJOR: &str = "5";
+pub const BASH_VERSION_MINOR: &str = "2";
+pub const BASH_VERSION_PATCH: &str = "0";
+
+/// `$BASH_VERSION` scalar, e.g. `5.2.0(1)-release`.
+pub fn bash_version() -> String {
+    format!(
+        "{}.{}.{}(1)-release",
+        BASH_VERSION_MAJOR, BASH_VERSION_MINOR, BASH_VERSION_PATCH
+    )
+}
+
+/// `${BASH_VERSINFO[@]}` — the 6-element bash version array:
+/// `(major minor patch build release machtype)`.
+pub fn bash_versinfo() -> Vec<String> {
+    vec![
+        BASH_VERSION_MAJOR.to_string(),
+        BASH_VERSION_MINOR.to_string(),
+        BASH_VERSION_PATCH.to_string(),
+        "1".to_string(),
+        "release".to_string(),
+        std::env::consts::ARCH.to_string(),
+    ]
+}
+
+/// Resolve a bash special ARRAY name (`PIPESTATUS`, `FUNCNAME`,
+/// `BASH_VERSINFO`) to its value in `--bash` mode by aliasing the zsh-native
+/// special or synthesizing it. Returns `None` for any other name (or outside
+/// bash mode) so callers fall through to normal array resolution.
+pub fn bash_special_array(name: &str) -> Option<Vec<String>> {
+    if !bash_mode() {
+        return None;
+    }
+    match name {
+        // bash PIPESTATUS ≈ zsh pipestatus (per-stage exit codes, 0-indexed).
+        "PIPESTATUS" => Some(crate::ported::exec::array("pipestatus").unwrap_or_default()),
+        // bash FUNCNAME ≈ zsh funcstack — call stack, innermost (current) first.
+        "FUNCNAME" => crate::ported::modules::parameter::FUNCSTACK
+            .lock()
+            .ok()
+            .map(|f| f.iter().rev().map(|fs| fs.name.clone()).collect()),
+        "BASH_VERSINFO" => Some(bash_versinfo()),
+        _ => None,
+    }
+}

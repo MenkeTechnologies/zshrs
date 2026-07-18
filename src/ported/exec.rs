@@ -7581,6 +7581,16 @@ pub fn execode(
 /// param table (`params::getaparam`) when no executor is in scope, so
 /// compsys / unit-test environments still observe shell-side arrays.
 pub fn array(name: &str) -> Option<Vec<String>> {
+    // bash special arrays (PIPESTATUS / FUNCNAME / BASH_VERSINFO) alias the
+    // zsh-native specials in --bash mode. Checked before the stored-array
+    // lookup so a user array of the same name can still shadow it (rare), but
+    // after the bash-mode gate so --zsh is untouched. Guard against the
+    // PIPESTATUS→pipestatus self-alias recursing by only aliasing uppercase.
+    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        if let Some(v) = crate::dash_mode::bash_special_array(name) {
+            return Some(v);
+        }
+    }
     if let Some(Some(v)) = crate::fusevm_bridge::try_with_executor(|exec| exec.array(name)) {
         return Some(v);
     }
