@@ -1036,6 +1036,55 @@ pub fn dashgetfn() -> String {
 /// Static-link path: walks ZSH_OPTIONS_SET (canonical option name
 /// registry) and reads each option's live state via opt_state_get.
 pub fn printoptionstates(hadplus: bool) {
+    // !!! BASH-MODE GATE (no C counterpart) !!! bash `set -o` lists a FIXED set
+    // of ~27 named options (not zsh's ~180) as `name<TAB>on/off` (`set +o` uses
+    // the reusable `set -o name` / `set +o name` form). Each maps to the zshrs
+    // option state; a few bash-only names with no zsh option resolve to off.
+    // --zsh keeps the full zsh listing below.
+    if crate::dash_mode::bash_mode() {
+        // (bash option name, zshrs option name to query). Order = bash's
+        // (already alphabetical), so no re-sort.
+        const BASH_SET_O: &[(&str, &str)] = &[
+            ("allexport", "allexport"),
+            ("braceexpand", "braceexpand"),
+            ("emacs", "emacs"),
+            ("errexit", "errexit"),
+            ("errtrace", "errtrace"),
+            ("functrace", "functrace"),
+            ("hashall", "hashall"),
+            ("histexpand", "histexpand"),
+            ("history", "history"),
+            ("ignoreeof", "ignoreeof"),
+            ("interactive-comments", "interactivecomments"),
+            ("keyword", "keyword"),
+            ("monitor", "monitor"),
+            ("noclobber", "noclobber"),
+            ("noexec", "noexec"),
+            ("noglob", "noglob"),
+            ("nolog", "nolog"),
+            ("notify", "notify"),
+            ("nounset", "nounset"),
+            ("onecmd", "singlecommand"),
+            ("physical", "physical"),
+            ("pipefail", "pipefail"),
+            // bash's user-facing `set -o posix` toggle (off by default); NOT
+            // zshrs's internal `posixbuiltins`, which is on in --bash.
+            ("posix", "posix"),
+            ("privileged", "privileged"),
+            ("verbose", "verbose"),
+            ("vi", "vi"),
+            ("xtrace", "xtrace"),
+        ];
+        for (bname, zname) in BASH_SET_O {
+            let on = opt_state_get(zname).unwrap_or(false);
+            if hadplus {
+                println!("set {}o {}", if on { "-" } else { "+" }, bname);
+            } else {
+                println!("{:<15}\t{}", bname, if on { "on" } else { "off" });
+            }
+        }
+        return;
+    }
     // c:909
     // c:Src/builtin.c:910 — `scanhashtable(optiontab, 1, 0,
     // OPT_ALIAS, printoptionnodestate, hadplus)`. The 4th arg
