@@ -1624,7 +1624,16 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             if let Some(status) = try_run_registered_builtin(name, rest) {
                 return Value::Status(status);
             }
-            eprintln!("zshrs:1: no such builtin: {}", name);
+            // c:Src/exec.c:3436 — `zwarn("no such builtin: %s", cmdarg);`.
+            // Route through the ported `zwarn` rather than formatting the
+            // prefix by hand: zwarn emits zsh's `zsh:LINE:` prefix, and the
+            // hand-rolled `eprintln!` here printed `zshrs:1:` instead. Of the
+            // twelve error shapes probed this was the ONLY one carrying the
+            // wrong prefix — the ported twin at exec.rs:9878 already used
+            // zwarn correctly, so this was a reimplementation shadowing a
+            // faithful port (same shape as #1027 / #1031 / #1044 / #1050).
+            // Bug #1063.
+            crate::ported::utils::zwarn(&format!("no such builtin: {}", name));
             return Value::Status(1);
         }
         // `builtin foo` MUST bypass function shadow — that's the whole

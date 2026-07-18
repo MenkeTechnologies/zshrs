@@ -11690,6 +11690,12 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // joined-then-stripped).
     let mut after_name = name_end;
     let mut had_at = at_flag_seen;
+    // The EXACT splat suffix the source carried, if any. `had_at` cannot serve
+    // this purpose: it is deliberately false for `[*]` (which joins with IFS
+    // rather than forcing per-element semantics in DQ), yet `[*]` still has to
+    // reach paramsubst as a SUBSCRIPT so the KSHARRAYS bare-ref reduction is
+    // skipped. Bug #1054.
+    let mut splat_suffix: Option<&str> = None;
     // Char-aware boundary check — name_end + 3 may land mid-codepoint
     // when the preceding bytes include UTF-8 multi-byte chars (e.g.
     // METATOKEN bytes in lexer-emitted input). `is_char_boundary`
@@ -11700,12 +11706,14 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             // `[@]` = splice-expand (per-element even in DQ)
             after_name = name_end + 3;
             had_at = true;
+            splat_suffix = Some("[@]");
         } else if tail == "[*]" {
             // `[*]` = join-with-IFS-then-scalar (matches the bare-
             // name DQ join-then-strip behavior — leave had_at false
             // so the runtime treats it like the unsubscripted
             // `"${a%%pat}"` case).
             after_name = name_end + 3;
+            splat_suffix = Some("[*]");
         }
     }
     let rest = &inner[after_name..];
@@ -11758,8 +11766,21 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
 
     // `${var:#pattern}` — filter: remove matching elements.
     if let Some(pat) = rest.strip_prefix(":#") {
+        // Re-attach the `[@]` / `[*]` suffix when the source carried one,
+        // exactly as the substring path below does. paramsubst's subscript
+        // loop is what records the splat (`was_at_star_splat`, subst.rs), and
+        // that flag is what exempts the reference from the KSHARRAYS
+        // "bare ref scalarizes to element 0" reduction. Binding the filter to
+        // the bare name threw the `[@]` away before paramsubst ever saw it, so
+        // under KSH_ARRAYS — which `emulate sh` / `emulate ksh` both set —
+        // `${arr[@]:#pat}` was reduced to element 0 and then filtered,
+        // returning at most one element. Bug #1054.
+        let runtime_name = match splat_suffix {
+            Some(sfx) => format!("{}{}", name, sfx),
+            None => name.clone(),
+        };
         return Some(ParamModifier {
-            name,
+            name: runtime_name,
             kind: ParamModifierKind::FilterRemoveMatching {
                 pattern: pat.to_string(),
             },

@@ -10397,8 +10397,27 @@ pub fn paramsubst(
                 // and must still filter per-element; the joined-
                 // scalar arm made the test always-true and routed
                 // every plugin autoload into the +X arm).
+                // Only `[@]` (and the `(@)` flag / positional `$@`) keeps the
+                // array SPLICED inside double quotes. `"${a[*]}"` and a RANGE
+                // `"${a[1,3]}"` join with IFS into one word — the classic
+                // `"$@"` vs `"$*"` distinction — so the filter then tests that
+                // single joined string as a WHOLE. Verified against zsh:
+                //   "${arr[*]:#b}"     -> a b c   (no whole-string match)
+                //   "${arr[*]:#a b c}" -> <empty> (whole string matches)
+                //   "${arr[*]:#*b*}"   -> <empty>
+                //   "${arr[1,3]:#b}"   -> a b c
+                // while "${arr[@]:#b}" stays per-element -> a c.
+                // `is_array_subscript` still has to include `*` and ranges for
+                // `has_subscript` (they ARE array-shaped, so they must not take
+                // the single-slot scalar path), so the DQ-join decision needs
+                // its own narrower test rather than reusing it. The other
+                // per-element operators (`%`, `/`) cannot expose this because
+                // they transform-then-join, which yields the same text either
+                // way; only the FILTER, which REMOVES elements, shows it.
+                // Bug #1055.
+                let splices_in_dq = matches!(subscript.as_deref(), Some("@"));
                 let per_element_array =
-                    !has_subscript && (!qt || is_array_subscript || nojoin == 2 || var_name == "@");
+                    !has_subscript && (!qt || splices_in_dq || nojoin == 2 || var_name == "@");
                 // c:Src/subst.c:3417 + Src/glob.c:2727 — empty
                 // pattern. C's `patcompile("")` returns a Patprog
                 // whose body matches only the empty string (no

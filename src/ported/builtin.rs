@@ -6572,6 +6572,29 @@ pub fn bin_typeset(
             // chain and return the target's value instead (c:2374 via
             // the +n type-conversion arm; K01 "remove nameref
             // attribute" expects `typeset ptr=var`).
+            // c:Src/builtin.c:2062-2064 — C computes `usepm` at the TOP of
+            // typeset_single, BEFORE the parameter is touched, and the bare-name
+            // print at c:2246 lives inside that branch:
+            //   usepm = pm && (!(pm->node.flags & PM_UNSET) || OPT_ISSET(ops,'p') ||
+            //                  (isset(POSIXBUILTINS) &&
+            //                   (pm->node.flags & (PM_READONLY|PM_EXPORTED))));
+            // "Here we just avoid using it for the present tests if it's unset."
+            // So `typeset NAME` on a declared-but-UNSET param prints NOTHING.
+            // The snapshot MUST be taken here: later in this same iteration the
+            // re-declaration clears PM_UNSET, so reading the flag at the print
+            // site always saw it already cleared. TYPESET_TO_UNSET produces
+            // exactly this state (PM_DEFAULTED = PM_DECLARED|PM_UNSET,
+            // zsh.h:1934). Bug #1056.
+            let usepm_at_entry = paramtab()
+                .read()
+                .ok()
+                .and_then(|t| t.get(arg.as_str()).map(|p| p.node.flags as u32))
+                .map(|f| {
+                    (f & PM_UNSET) == 0
+                        || (isset(crate::ported::zsh_h::POSIXBUILTINS)
+                            && (f & (PM_READONLY | PM_EXPORTED)) != 0)
+                })
+                .unwrap_or(true);
             let saved_val =
                 if (off as u32 & PM_NAMEREF) != 0 && crate::ported::params::is_nameref(arg) {
                     paramtab()
@@ -6934,6 +6957,23 @@ pub fn bin_typeset(
             // for already-environment-exported names on every load;
             // without this gate zshrs spammed `VAR=value` for each on
             // startup.
+            // c:Src/builtin.c:2062-2064 — the print at c:2246 sits INSIDE the
+            // `usepm` branch, and usepm is false for an UNSET parameter:
+            //   usepm = pm && (!(pm->node.flags & PM_UNSET) || OPT_ISSET(ops,'p') ||
+            //                  (isset(POSIXBUILTINS) &&
+            //                   (pm->node.flags & (PM_READONLY|PM_EXPORTED))));
+            // with the comment "Here we just avoid using it for the present
+            // tests if it's unset." So `typeset NAME` on a declared-but-UNSET
+            // param prints NOTHING and re-declares instead.
+            //
+            // TYPESET_TO_UNSET creates exactly that state: PM_DEFAULTED is
+            // `PM_DECLARED|PM_UNSET` (zsh.h:1934). zshrs suppressed the print
+            // only while the OPTION was still set, so
+            // `setopt typesettounset; typeset x; unsetopt typesettounset;
+            // typeset x` printed `x=''` where zsh is silent — the gate has to
+            // key off the parameter's UNSET flag, not the live option.
+            // The `-p` term of usepm is already covered by the `!OPT_ISSET(p)`
+            // conjunct below. Bug #1056.
             if user_on == 0
                 && off == 0
                 && not_localizing
@@ -6941,6 +6981,7 @@ pub fn bin_typeset(
                 && !OPT_ISSET(&ops, b'g')
                 && (!isset(TYPESETSILENT) || OPT_ISSET(&ops, b'm'))
                 && pname_in_tab
+                && usepm_at_entry
             {
                 let with_ns = if OPT_ISSET(&ops, b'm') {
                     PRINT_WITH_NAMESPACE

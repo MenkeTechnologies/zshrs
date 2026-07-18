@@ -2988,11 +2988,25 @@ impl ShellExecutor {
             1i64,
             self.function_line_base.get(name).copied().unwrap_or(0),
         );
+        // Carry the REAL function's attribute flags over from shfunctab.
+        // `functions -t/-T/-W` store PM_TAGGED / PM_TAGGED_LOCAL /
+        // PM_WARNNESTED on the shfunctab node (builtin.rs c:3719), and
+        // doshfunc turns PM_TAGGED* into XTRACE for the duration of the call
+        // (exec.c:5954-5960). Hardcoding 0 here severed that link: the flags
+        // were parsed and stored correctly, but the synthesized shfunc handed
+        // to doshfunc always claimed "no attributes", so `functions -t f; f`
+        // ran silently while `setopt xtrace` (a global option, not routed
+        // through this struct) traced normally. Bug #1058.
+        let synth_flags = crate::ported::hashtable::shfunctab_lock()
+            .read()
+            .ok()
+            .and_then(|t| t.get(display_name.as_str()).map(|s| s.node.flags))
+            .unwrap_or(0);
         let mut synth_shf = crate::ported::zsh_h::shfunc {
             node: crate::ported::zsh_h::hashnode {
                 next: None,
                 nam: display_name.clone(),
-                flags: 0,
+                flags: synth_flags,
             },
             filename: synth_filename,
             lineno: synth_lineno,
@@ -3045,9 +3059,27 @@ impl ShellExecutor {
 
         // Enter executor context BEFORE doshfunc so the body_runner's
         // VM builtins can `with_executor(...)` to reach this state.
+        // c:Src/exec.c:5572-5585 — execshfunc swaps in a FRESH, EMPTY cmdstack
+        // for the duration of a shell-function call and restores the caller's
+        // afterwards:
+        //     ocs = cmdstack; ocsp = cmdsp;
+        //     cmdstack = zalloc(CMDSTACKSZ); cmdsp = 0;
+        //     doshfunc(shf, args, 0);
+        //     free(cmdstack); cmdstack = ocs; cmdsp = ocsp;
+        // The cmdstack is what `%_` renders, so without the swap a function
+        // body inherits the CALLER's parser context: `f(){ print -rP "[%_]" }`
+        // printed `[cursh]` inside `{ f }`, `[then]` inside an `if`, `[for]`
+        // inside a loop and `[case]` inside a case arm, where zsh prints `[]`
+        // in every one. Most visible under xtrace, whose default PS4 ends in
+        // `%_`, so every traced line inside a called function carried a stale
+        // field. `( f )` was already correct only because the subshell forks.
+        // Bug #1059.
+        let saved_cmdstack: Vec<u8> =
+            crate::ported::prompt::CMDSTACK.with(|s| std::mem::take(&mut *s.borrow_mut()));
         let _ctx = ExecutorContext::enter(self);
         let status = crate::ported::exec::doshfunc(&mut synth_shf, doshargs, false, body_runner);
         drop(_ctx);
+        crate::ported::prompt::CMDSTACK.with(|s| *s.borrow_mut() = saved_cmdstack);
 
         self.prompt_funcstack.pop();
         self.local_scope_depth -= 1;
