@@ -125,6 +125,38 @@ const PORTABLE_CORPUS: &[&str] = &[
     "set -- -a -b -c; while getopts abc o; do printf '%s' \"$o\"; done; printf '\\n'", // getopts
     "set -- 1 2 3 4 5; shift 3; printf '%s\\n' \"$*\"",            // shift N
     "printf '%b\\n' 'a\\tb'",                                      // %b escape interpretation
+    // Expansion batch — every one verified byte-identical across
+    // zsh/bash/ksh/sh/dash (scratchpad/harness_classify.sh); guards a
+    // regression in any single mode against ALL real shells at once.
+    "x=5; y=3; printf '%s\\n' \"$((x*y+x-y))\"",                   // arith mixed ops → 17
+    "printf '%s\\n' \"$((17/4))\" \"$((17%4))\"",                  // int div + mod
+    "printf '%s\\n' \"$((1<<4))\" \"$((256>>2))\"",               // shifts
+    "printf '%s\\n' \"$((5&3))\" \"$((5|2))\" \"$((5^1))\"",       // bitwise and/or/xor
+    "printf '%s\\n' \"$((3>2))\" \"$((2>3))\" \"$((2==2))\"",      // arith comparisons
+    "x=10; printf '%s\\n' \"$((x>5?x:0))\"",                       // arith ternary
+    "printf '%s\\n' \"$(( (2+3) * 4 ))\"",                         // parenthesized arith
+    "printf '%s\\n' \"$((0x1f))\"",                                // hex literal → 31
+    "v=a.b.c; printf '%s\\n' \"${v%%.*}\" \"${v##*.}\"",           // greedy strip both ends
+    "v=a.b.c; printf '%s\\n' \"${v%.*}\" \"${v#*.}\"",             // lazy strip both ends
+    "v=aXbXc; printf '%s\\n' \"${v%X*}\"",                         // suffix strip with glob
+    "x=; printf '%s\\n' \"${x:-def}\" \"${x-def}\"",               // :- vs - on empty
+    "x=set; printf '%s\\n' \"${x:+yes}\"",                         // :+ alt on set
+    "unset x; printf '%s\\n' \"${x:=assigned}\" \"$x\"",           // := assign-default
+    "printf '%s\\n' \"${x:-$(printf sub)}\"",                      // default = cmd-sub
+    "set -- a b c; printf '%s\\n' \"$#\" \"$1\" \"$3\"",           // positional count/index
+    "set -- a b c d e; shift 2; printf '%s\\n' \"$1\" \"$#\"",     // shift then count
+    "f() { return 7; }; f; printf '%s\\n' \"$?\"",                 // function return status
+    "cmd() { echo \"$@\"; }; cmd a b c",                          // \"$@\" forwarding
+    "i=0; until [ $i -ge 3 ]; do i=$((i+1)); done; printf '%s\\n' \"$i\"", // until loop
+    "s=0; for x in 1 2 3 4; do s=$((s+x)); done; printf '%s\\n' \"$s\"",   // for-in accumulate
+    "case xyz in a*|x*) printf hit;; esac; printf '\\n'",          // case alternation glob
+    "case foo in ???) printf three;; esac; printf '\\n'",          // case fixed-length glob
+    "x=$(printf 'a b c'); printf '%s\\n' \"$x\"",                  // cmd-sub with spaces (quoted)
+    "printf '%03d\\n' 7",                                          // width+zero pad
+    "printf '%x %o\\n' 255 8",                                     // hex + octal output
+    "v=hello; printf '%s\\n' \"${v}world\"",                       // braced-var concat
+    "readonly r=5; printf '%s\\n' \"$r\"",                         // readonly then read
+    "if [ 3 -gt 2 ] && [ 1 -lt 2 ]; then printf both; fi; printf '\\n'", // chained test
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -168,8 +200,35 @@ const EXTENDED_CORPUS: &[&str] = &[
     "echo {1..3}{a,b}",                                    // brace cross-product
     "(( n=10, n%=3 )); printf '%s\\n' \"$n\"",             // comma + mod-assign
     "a=(one two three); printf '%s\\n' \"${a[@]#t}\"",     // per-element prefix strip
+    // Expansion batch — verified identical across bash/ksh/zsh vs each mode
+    // (scratchpad/harness_classify.sh). Base-agnostic (splat/count/slice) or
+    // per-mode-correct against the matching reference.
+    "a=(1 2 3); a+=(4 5); printf '%s\\n' \"${#a[@]}\"",     // append then count → 5
+    "[[ abcdef == a*f ]] && printf y; printf '\\n'",        // [[ leading+trailing glob
+    "[[ hello == h[aeiou]llo ]] && printf y; printf '\\n'", // [[ bracket class
+    "[[ abc != xyz ]] && printf y; printf '\\n'",           // [[ inequality
+    "[[ 5 -gt 3 ]] && [[ 2 -lt 4 ]] && printf y; printf '\\n'", // [[ arith tests chained
+    "[[ -n foo && -z '' ]] && printf y; printf '\\n'",      // [[ -n/-z with &&
+    "[[ abc == ?bc ]] && printf y; printf '\\n'",           // [[ single-char glob
+    "[[ 'a b' == 'a b' ]] && printf y; printf '\\n'",       // [[ quoted-space equality
+    "x=5; (( x *= 2 )); printf '%s\\n' \"$x\"",             // (( )) compound *=
+    "(( a = 10 )); (( a-- )); printf '%s\\n' \"$a\"",       // (( )) post-decrement
+    "(( r = 17 % 5 )); printf '%s\\n' \"$r\"",              // (( )) modulo
+    "n=8; printf '%s\\n' \"$(( n & (n-1) ))\"",             // clear-lowest-bit idiom
+    "for ((i=0; i<4; i++)); do printf '%s' \"$i\"; done; printf '\\n'", // C-for concat
+    "v=abcdefgh; printf '%s\\n' \"${v:2:4}\"",              // substring offset+len
+    "v=abcdef; printf '%s\\n' \"${v: -3:2}\"",              // negative-offset substring+len
+    "v=aXbXcXd; printf '%s\\n' \"${v//X/_}\"",              // global replace
+    "s=\"a b c\"; printf '%s\\n' \"${s// /-}\"",            // global replace spaces
+    "printf '%s ' {2..8..2}; printf '\\n'",                 // numeric brace step
+    "printf '%s ' {a..e}; printf '\\n'",                    // alpha brace range
+    "echo x{1,2,3}y",                                       // brace list with affixes
+    "x=3; case $x in [1-5]) printf lo;; esac; printf '\\n'", // case numeric class
+    "a=(x y z); printf '%s\\n' \"${a[@]}\"",                // whole-array splat
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
+    // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
+    // (bash/ksh) legitimately differs and would flag a non-bug.
 ];
 
 fn find_shell(candidates: &[&str]) -> Option<String> {
