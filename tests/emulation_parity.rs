@@ -1,5 +1,12 @@
-//! Four-way emulation parity harness: `zshrs --{zsh,ksh,sh,dash}` vs the
-//! matching reference shell (`zsh`, `ksh`, `/bin/sh`, `/bin/dash`).
+//! Nine-way emulation parity harness (`PARITY_CASES`): each "way" runs a
+//! zshrs emulation mode against its *correct* reference and requires
+//! byte-identical stdout + exit-code sign. Seven ways are real-shell-faithful
+//! — `zshrs --X` vs the real shell X: `zsh`, `bash`, `ksh`, `/bin/sh`,
+//! `/bin/dash` required, plus `mksh` and `ash` best-effort. Two ways are
+//! zsh-STYLE cross-emulation legs — `zshrs --sh --zsh` / `--ksh --zsh` (which
+//! deliberately keep zsh semantics) vs real zsh doing `emulate sh` /
+//! `emulate ksh`, because the correct reference for "zsh's approximation of
+//! sh" is zsh itself, not `/bin/sh`.
 //!
 //! This is the curated-corpus differential the way `parity-fuzz.rs` is for
 //! `--zsh` at scale: a hand-picked set of *portable* scripts that MUST be
@@ -23,38 +30,45 @@ fn zshrs_bin() -> String {
 }
 
 /// A reference shell and the zshrs flag that emulates it.
-struct RefShell {
-    /// Human label / the emulation name.
+/// One parity "way": a zshrs invocation paired with the reference invocation
+/// it must match. Most cases are `zshrs --X` vs the real shell X. Two are
+/// CROSS-EMULATION cases — zshrs's zsh-STYLE emulation of a POSIX shell
+/// (`--sh --zsh` / `--ksh --zsh`, which deliberately keeps zsh semantics)
+/// vs the real zsh doing the same `emulate` — because the correct reference
+/// for "zsh's approximation of sh" is zsh itself, not /bin/sh.
+struct ParityCase {
+    /// Human label / the way's name.
     name: &'static str,
-    /// zshrs emulation flag (e.g. `--dash`).
-    zshrs_flag: &'static str,
-    /// Candidate absolute paths / PATH names for the real shell, tried in
-    /// order; first that exists wins.
+    /// zshrs emulation flags (e.g. `["--sh", "--zsh"]`).
+    zshrs_flags: &'static [&'static str],
+    /// Candidate paths / PATH names for the reference binary, first wins.
     candidates: &'static [&'static str],
-    /// True for shells with the extended feature set (indexed arrays, `[[`,
-    /// `(( ))`, brace expansion, substring/replace expansion). The
-    /// EXTENDED_CORPUS runs only against these; the Bourne shells (sh/dash)
-    /// lack these constructs and would just error uniformly.
+    /// When set, prepend `emulate <this>\n` to the reference script so the
+    /// reference (zsh) runs in the matching emulation — the cross-emulation
+    /// legs. `None` runs the reference shell natively.
+    ref_emulate: Option<&'static str>,
+    /// Run the EXTENDED_CORPUS too (arrays / `[[` / `(( ))` / braces).
     extended: bool,
-    /// Best-effort shells (ash, mksh) that are not on every runner. Absence
-    /// is always a skip, never fatal — even under ZSHRS_REQUIRE_REF_SHELLS.
-    /// The core five (zsh/bash/ksh/sh/dash) are required by that flag.
+    /// Best-effort case: absence of its reference is a skip, never fatal even
+    /// under ZSHRS_REQUIRE_REF_SHELLS. The core ways are required.
     optional: bool,
 }
 
-const REF_SHELLS: &[RefShell] = &[
-    RefShell { name: "zsh",  zshrs_flag: "--zsh",  candidates: &["zsh", "/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/zsh"], extended: true,  optional: false },
-    RefShell { name: "bash", zshrs_flag: "--bash", candidates: &["bash", "/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash"], extended: true, optional: false },
-    RefShell { name: "ksh",  zshrs_flag: "--ksh",  candidates: &["ksh", "/bin/ksh", "/usr/bin/ksh"], extended: true,  optional: false },
-    RefShell { name: "sh",   zshrs_flag: "--sh",   candidates: &["/bin/sh"], extended: false, optional: false },
-    RefShell { name: "dash", zshrs_flag: "--dash", candidates: &["/bin/dash", "/usr/bin/dash"], extended: false, optional: false },
-    // Best-effort variants (parent/cousin shells): ash ≈ dash, mksh ≈ ksh.
-    // mksh runs the PORTABLE corpus only: its extended features (`=~`,
-    // C-style `for ((`, `{1..n}` range) differ from the ksh93 semantics
-    // zshrs's `--mksh`/ksh base targets, so those are legitimate mksh-vs-ksh93
-    // differences, not zshrs bugs. Basic POSIX is identical.
-    RefShell { name: "mksh", zshrs_flag: "--mksh", candidates: &["mksh", "/bin/mksh", "/usr/bin/mksh"], extended: false, optional: true },
-    RefShell { name: "ash",  zshrs_flag: "--ash",  candidates: &["ash", "/bin/ash", "/usr/bin/ash"], extended: false, optional: true },
+const ZSH: &[&str] = &["zsh", "/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/zsh"];
+
+const PARITY_CASES: &[ParityCase] = &[
+    // ── zshrs --X vs the real shell X (real-shell-faithful) ──────────────
+    ParityCase { name: "zsh",  zshrs_flags: &["--zsh"],  candidates: ZSH, ref_emulate: None, extended: true,  optional: false },
+    ParityCase { name: "bash", zshrs_flags: &["--bash"], candidates: &["bash", "/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash"], ref_emulate: None, extended: true, optional: false },
+    ParityCase { name: "ksh",  zshrs_flags: &["--ksh"],  candidates: &["ksh", "/bin/ksh", "/usr/bin/ksh"], ref_emulate: None, extended: true,  optional: false },
+    ParityCase { name: "sh",   zshrs_flags: &["--sh"],   candidates: &["/bin/sh"], ref_emulate: None, extended: false, optional: false },
+    ParityCase { name: "dash", zshrs_flags: &["--dash"], candidates: &["/bin/dash", "/usr/bin/dash"], ref_emulate: None, extended: false, optional: false },
+    // ── zshrs --X --zsh (zsh-STYLE) vs real zsh doing `emulate X` ────────
+    ParityCase { name: "sh/zsh-style",  zshrs_flags: &["--sh", "--zsh"],  candidates: ZSH, ref_emulate: Some("sh"),  extended: false, optional: false },
+    ParityCase { name: "ksh/zsh-style", zshrs_flags: &["--ksh", "--zsh"], candidates: ZSH, ref_emulate: Some("ksh"), extended: true,  optional: false },
+    // ── best-effort variants: ash ≈ dash, mksh ≈ ksh (POSIX base only) ───
+    ParityCase { name: "mksh", zshrs_flags: &["--mksh"], candidates: &["mksh", "/bin/mksh", "/usr/bin/mksh"], ref_emulate: None, extended: false, optional: true },
+    ParityCase { name: "ash",  zshrs_flags: &["--ash"],  candidates: &["ash", "/bin/ash", "/usr/bin/ash"], ref_emulate: None, extended: false, optional: true },
 ];
 
 /// Portable scripts that every one of {zsh, ksh, sh, dash} executes
@@ -130,8 +144,8 @@ const EXTENDED_CORPUS: &[&str] = &[
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
 ];
 
-fn find_shell(sh: &RefShell) -> Option<String> {
-    for c in sh.candidates {
+fn find_shell(candidates: &[&str]) -> Option<String> {
+    for c in candidates {
         if c.starts_with('/') {
             if Path::new(c).exists() {
                 return Some((*c).to_string());
@@ -156,6 +170,26 @@ fn run(bin: &str, args: &[&str], script: &str) -> (String, bool) {
     full.push(script);
     let out = Command::new(bin).args(&full).output().unwrap_or_else(|e| panic!("spawn {bin}: {e}"));
     (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+}
+
+/// Run one corpus script through a parity case: zshrs with the case flags,
+/// and the reference binary (optionally prefixed with `emulate X` for the
+/// cross-emulation legs, and `-f` when the reference is zsh).
+fn run_case(case: &ParityCase, refbin: &str, script: &str) -> ((String, bool), (String, bool)) {
+    // zshrs side: the case's flags + `-f`.
+    let mut zargs: Vec<&str> = case.zshrs_flags.to_vec();
+    zargs.push("-f");
+    let z = run(&zshrs_bin(), &zargs, script);
+
+    // Reference side. Cross-emulation legs run zsh with `emulate X` prepended;
+    // a bare zsh reference also takes `-f` (no rc) for determinism.
+    let ref_is_zsh = case.ref_emulate.is_some() || case.name == "zsh";
+    let ref_args: &[&str] = if ref_is_zsh { &["-f"] } else { &[] };
+    let r = match case.ref_emulate {
+        Some(emu) => run(refbin, ref_args, &format!("emulate {emu}\n{script}")),
+        None => run(refbin, ref_args, script),
+    };
+    (r, z)
 }
 
 /// The enforcement decision, extracted so it is unit-testable without
@@ -246,51 +280,50 @@ fn bash_mode_self_contained() {
 }
 
 #[test]
-fn emulation_parity_four_way() {
+fn emulation_parity_matrix() {
     let require = std::env::var("ZSHRS_REQUIRE_REF_SHELLS").is_ok();
     let mut tested = 0usize;
     let mut missing: Vec<&str> = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
 
-    for sh in REF_SHELLS {
-        let Some(refbin) = find_shell(sh) else {
-            // Optional shells (ash/mksh) are best-effort: absence never
-            // counts toward the enforced-missing list.
-            if !sh.optional {
-                missing.push(sh.name);
+    for case in PARITY_CASES {
+        let Some(refbin) = find_shell(case.candidates) else {
+            // Optional cases (ash/mksh) are best-effort: absence never counts
+            // toward the enforced-missing list.
+            if !case.optional {
+                missing.push(case.name);
             }
             eprintln!(
-                "skip: reference shell `{}` not found{}",
-                sh.name,
-                if sh.optional { " (optional)" } else { "" }
+                "skip: `{}` reference not found{}",
+                case.name,
+                if case.optional { " (optional)" } else { "" }
             );
             continue;
         };
         tested += 1;
-        eprintln!("testing {} : zshrs {} vs {} (extended={})", sh.name, sh.zshrs_flag, refbin, sh.extended);
+        let emu = case.ref_emulate.map(|e| format!(" [emulate {e}]")).unwrap_or_default();
+        eprintln!(
+            "testing {} : zshrs {} vs {}{} (extended={})",
+            case.name, case.zshrs_flags.join(" "), refbin, emu, case.extended
+        );
 
-        // The portable corpus runs against every shell; the extended corpus
-        // only against shells that have arrays / [[ / (( )) / brace expansion.
+        // The portable corpus runs for every case; the extended corpus only
+        // for cases whose reference has arrays / [[ / (( )) / brace expansion.
         let corpus = PORTABLE_CORPUS
             .iter()
-            .chain(if sh.extended { EXTENDED_CORPUS } else { &[] });
+            .chain(if case.extended { EXTENDED_CORPUS } else { &[] });
         for script in corpus {
-            // zsh reference is run with -f (no rc); the POSIX shells ignore -f
-            // but take no rc for -c anyway, so run them plain.
-            let ref_args: &[&str] = if sh.name == "zsh" { &["-f"] } else { &[] };
-            let (r_out, r_ok) = run(&refbin, ref_args, script);
-            let (z_out, z_ok) = run(&zshrs_bin(), &[sh.zshrs_flag, "-f"], script);
-
+            let ((r_out, r_ok), (z_out, z_ok)) = run_case(case, &refbin, script);
             if r_out != z_out || r_ok != z_ok {
                 mismatches.push(format!(
-                    "  [{}] {script:?}\n    {}: ok={r_ok} out={r_out:?}\n    zrs: ok={z_ok} out={z_out:?}",
-                    sh.name, sh.name
+                    "  [{}] {script:?}\n    ref: ok={r_ok} out={r_out:?}\n    zrs: ok={z_ok} out={z_out:?}",
+                    case.name
                 ));
             }
         }
     }
 
-    eprintln!("emulation parity: tested {tested} reference shell(s), {} missing", missing.len());
+    eprintln!("emulation parity: tested {tested} way(s), {} missing", missing.len());
 
     assert!(
         mismatches.is_empty(),
@@ -301,7 +334,7 @@ fn emulation_parity_four_way() {
 
     if missing_is_fatal(require, &missing) {
         panic!(
-            "ZSHRS_REQUIRE_REF_SHELLS is set but these reference shells were absent: {missing:?}. \
+            "ZSHRS_REQUIRE_REF_SHELLS is set but these reference ways were absent: {missing:?}. \
              Install them so the parity contract is enforced, not skipped."
         );
     }
