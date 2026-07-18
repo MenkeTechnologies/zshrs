@@ -12615,7 +12615,11 @@ pub fn bin_read(
         prompt = Some(args[argi][1..].to_string());
         argi += 1;
     }
-    let want_array = OPT_ISSET(ops, b'A');
+    // `-A` is the zsh/ksh array-read flag; bash uses `-a`. Honor `-a` as an
+    // array read only in bash mode so `read -a arr <<< "x y z"` works like
+    // /bin/bash (in other modes `-a` parses but is inert, matching nothing).
+    let want_array =
+        OPT_ISSET(ops, b'A') || (crate::dash_mode::bash_mode() && OPT_ISSET(ops, b'a'));
     let reply = if argi < args.len() {
         let mut r = args[argi].clone();
         argi += 1;
@@ -15160,7 +15164,10 @@ pub static BUILTINS: std::sync::LazyLock<Vec<builtin>> = std::sync::LazyLock::ne
             0,
             -1,
             0,
-            Some("cd:ek:%lnpqrst:%zu:AE"),
+            // `a` is bash's array-read flag (zsh/ksh use `A`); accepted here
+            // so `read -a arr` parses, and treated as array-read only in
+            // bash mode (see bin_read's want_array).
+            Some("acd:ek:%lnpqrst:%zu:AE"),
             None,
         ),
         BUILTIN(

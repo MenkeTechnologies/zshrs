@@ -1277,6 +1277,10 @@ pub fn zshrs_main() {
     // `--bash` so it matches /bin/bash.
     if matches!(shell_mode(), ShellMode::Bash) && !zsh_style_requested {
         zsh::ported::options::opt_state_set("ignorebraces", false);
+        // bash always populates `$BASH_REMATCH` (array: [0]=whole match,
+        // [1..]=capture groups) after `[[ str =~ re ]]`. zsh gates this on
+        // the BASH_REMATCH option; turn it on for --bash.
+        zsh::ported::options::opt_state_set("bashrematch", true);
         // Enable bash-only param expansion syntax (`${!var}` indirect,
         // `${v^^}` case-mod) in the subst layer.
         zsh::extensions::dash_mode::set_bash_mode(true);
