@@ -204,6 +204,24 @@ const PORTABLE_CORPUS: &[&str] = &[
     "printf '%s\\n' \"$(( (1+2)*(3+4) ))\"",                       // grouped arith → 21
     "x=3; case $x in 1) ;; 2) ;; *) printf other;; esac; printf '\\n'", // empty arms + default
     "r=$(printf line); printf '[%s]\\n' \"$r\"",                   // cmd-sub no trailing NL
+    // Fourth expansion batch (harness_classify4.sh — deep nesting / dynamic).
+    "v=abc; printf '%s\\n' \"${v#${v}}\"",                         // strip self → empty
+    "x=b; v=abc; printf '%s\\n' \"${v#*$x}\"",                     // dynamic glob strip pattern
+    "p=ab; v=abcd; printf '%s\\n' \"${v#$p}\"",                    // variable-valued prefix strip
+    "printf '%s\\n' \"${x:-${y:-${z:-deep}}}\"",                   // triple-nested default
+    "x=1; printf '%s\\n' \"$(( x + $(printf 2) ))\"",             // cmd-sub inside arithmetic
+    "printf '%s\\n' \"$(printf '%s' \"$(printf '%s' innermost)\")\"", // nested command sub
+    "v=a1b2c3; printf '%s\\n' \"${v#[a-z][0-9]}\"",                // bracket-class prefix strip
+    "a=3; b=4; printf '%s\\n' \"$(( a*a + b*b ))\"",               // arith with repeated vars → 25
+    "printf '%s\\n' \"$(( 1 + 2 * 3 - 4 / 2 ))\"",                 // full precedence → 5
+    "f() { echo \"$1\"; }; f \"$(printf 'with space')\"",         // cmd-sub arg keeps spaces
+    "set -- a b c; for x; do printf '%s' \"$x\"; done; printf '\\n'", // for over \"$@\" implicitly
+    "set -- a b c; n=$#; while [ $# -gt 0 ]; do shift; done; printf '%s\\n' \"$n\"", // shift-drain
+    "a=''; b=x; printf '%s\\n' \"${a:-$b}\"",                      // default sourced from another var
+    "printf '%s\\n' \"$(( 10 - 2 - 3 ))\"",                        // left-assoc subtraction → 5
+    "x=$((3)); y=$((x*x)); printf '%s\\n' \"$y\"",                 // chained arithmetic assigns
+    "printf '%s\\n' \"$(false || echo recovered)\"",              // cmd-sub with || recovery
+    "v=a:b:c; while [ -n \"$v\" ]; do printf '%s ' \"${v%%:*}\"; case $v in *:*) v=\"${v#*:}\";; *) v='';; esac; done; printf '\\n'", // split-loop idiom
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -313,6 +331,17 @@ const EXTENDED_CORPUS: &[&str] = &[
     "x=5; (( y = x++ )); printf '%s %s\\n' \"$x\" \"$y\"",  // post-increment in arith assign
     "[[ foobar == foo* && foobar == *bar ]] && printf y; printf '\\n'", // compound glob AND
     "(( x = 1 << 10 )); printf '%s\\n' \"$x\"",             // (( )) shift-assign → 1024
+    // Fourth expansion batch (harness_classify4.sh — per-element / iteration).
+    "a=(x y z); printf '%s\\n' \"${a[@]#?}\"",              // strip first char of each
+    "a=(foo bar); printf '%s\\n' \"${a[@]%o*}\"",           // strip suffix glob of each
+    "a=(1 2 3 4); printf '%s\\n' \"${#a[@]}\" \"${a[@]: -1}\"", // count + last element
+    "v=aaabbb; printf '%s\\n' \"${v//a/}\"",                // delete-all replace
+    "v=a.b.c.d; printf '%s\\n' \"${v//./ }\"",              // replace all dots with space
+    "(( n = 5 )); (( n > 3 && n < 10 )) && printf mid; printf '\\n'", // arith range test
+    "a=(1 2 3); c=0; for x in \"${a[@]}\"; do (( c++ )); done; printf '%s\\n' \"$c\"", // iterate + (( c++ ))
+    "[[ \"\" ]] || printf empty; printf '\\n'",             // [[ empty-string ]] is false
+    "[[ x ]] && printf nonempty; printf '\\n'",             // [[ nonempty-string ]] is true
+    "a=(one); a+=(two three); printf '%s\\n' \"${a[*]}\"",  // multi-element append
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
