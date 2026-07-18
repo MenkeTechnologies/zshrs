@@ -157,6 +157,32 @@ const PORTABLE_CORPUS: &[&str] = &[
     "v=hello; printf '%s\\n' \"${v}world\"",                       // braced-var concat
     "readonly r=5; printf '%s\\n' \"$r\"",                         // readonly then read
     "if [ 3 -gt 2 ] && [ 1 -lt 2 ]; then printf both; fi; printf '\\n'", // chained test
+    // Second expansion batch (harness_classify2.sh — all ref shells agree).
+    "printf '%s\\n' \"${#@}\"",                                    // count of \"$@\"
+    "x=abc; printf '%s\\n' \"${x#?}\" \"${x%?}\"",                 // single-char strip both
+    "v=aaabbb; printf '%s\\n' \"${v##a}\"",                        // greedy prefix (only first a)
+    "printf '%s\\n' \"$(( -5 ))\" \"$(( - 5 ))\"",                 // unary minus, spaced
+    "printf '%s\\n' \"$(( !0 ))\" \"$(( !5 ))\"",                  // logical not
+    "printf '%s\\n' \"$(( ~0 ))\"",                                // bitwise not → -1
+    "x=3; printf '%s\\n' \"$(( x += 2 ))\" \"$x\"",                // arith += side effect
+    "printf '%d\\n' \"'A\"",                                       // char → code point 65
+    "printf '%s\\n' \"$(( 1 && 0 ))\" \"$(( 1 || 0 ))\"",          // logical and/or
+    "printf '%s\\n' \"$(( 3 == 3 && 4 != 5 ))\"",                  // compound comparison
+    "a=5; printf '%s\\n' \"$(( a > 0 ? (a > 3 ? 2 : 1) : 0 ))\"",  // nested ternary
+    "printf '%s\\n' \"$(( 100 / 3 * 3 ))\"",                       // left-assoc div/mul → 99
+    "printf '%s\\n' \"${TERM+set}\"",                              // +alt (unquoted var may be unset→'')
+    "a=hello; b=$a; a=world; printf '%s\\n' \"$b\"",               // value copy, not alias
+    "v=$(printf 'x\\ny\\n'); printf '[%s]\\n' \"$v\"",             // multiline cmd-sub trims trailing NL
+    "x=5; { x=10; }; printf '%s\\n' \"$x\"",                       // brace group shares scope
+    "x=5; (x=10); printf '%s\\n' \"$x\"",                          // subshell isolates
+    "f() { g() { printf inner; }; g; }; f; printf '\\n'",          // nested function
+    "v=abc; case $v in *b*) printf mid;; esac; printf '\\n'",      // case substring glob
+    "n=0; for x in; do n=$((n+1)); done; printf '%s\\n' \"$n\"",   // empty for list
+    "printf '%s\\n' \"${x-}${y-}\"",                               // unset - default (empty)
+    "printf '%.2f\\n' 3",                                          // float format of int
+    "printf '%5.2f\\n' 3.14159",                                   // width.precision float
+    "printf '%-5s|\\n' hi",                                        // left-justified string
+    "printf '%+d\\n' 5",                                           // forced-sign int
 ];
 
 /// Extended-feature corpus — indexed arrays, `[[`, `(( ))`, brace expansion,
@@ -225,6 +251,29 @@ const EXTENDED_CORPUS: &[&str] = &[
     "echo x{1,2,3}y",                                       // brace list with affixes
     "x=3; case $x in [1-5]) printf lo;; esac; printf '\\n'", // case numeric class
     "a=(x y z); printf '%s\\n' \"${a[@]}\"",                // whole-array splat
+    // Second expansion batch (harness_classify2.sh — bash/ksh/zsh agree).
+    "a=(1 2 3); printf '%s\\n' \"${a[@]: -2}\"",            // last-2 slice (neg offset)
+    "a=(a b c); printf '%s\\n' \"${#a[*]}\"",               // count via [*]
+    "a=(one two three); printf '%s\\n' \"${a[*]}\"",        // [*] join with space
+    "a=(x y z); IFS=,; printf '%s\\n' \"${a[*]}\"",         // [*] join with custom IFS
+    "a=(1 2 3 4); printf '%s\\n' \"${a[@]:2}\"",            // slice from offset to end
+    "a=(a b); printf '%s\\n' \"${a[@]+set}\"",              // +alt on set array
+    "[[ abc =~ b ]] && printf y; printf '\\n'",             // =~ substring regex
+    "[[ 2024 =~ ^[0-9]+$ ]] && printf num; printf '\\n'",   // =~ anchored digit regex
+    "[[ abcABC == *ABC ]] && printf y; printf '\\n'",       // trailing glob
+    "[[ \"\" == \"\" ]] && printf empty; printf '\\n'",     // empty == empty
+    "[[ ab < ac ]] && printf lt; printf '\\n'",             // string less-than
+    "(( 0 )) || printf zero; printf '\\n'",                 // (( )) false → ||
+    "(( 5 )) && printf nonzero; printf '\\n'",              // (( )) true → &&
+    "(( a = 5, b = a * 2 )); printf '%s\\n' \"$b\"",        // (( )) comma sequence
+    "v=abcdef; printf '%s\\n' \"${v:0:3}\"",                // substring from 0
+    "v=abcdef; printf '%s\\n' \"${v:3}\"",                  // substring to end
+    "v=aaa; printf '%s\\n' \"${v/#a/X}\"",                  // anchored-prefix replace
+    "v=aaa; printf '%s\\n' \"${v/%a/X}\"",                  // anchored-suffix replace
+    "printf '%s ' {A..C}{1..2}; printf '\\n'",              // alpha×numeric cross-product
+    "a=(1 2 3); s=0; for x in \"${a[@]}\"; do s=$((s+x)); done; printf '%s\\n' \"$s\"", // iterate+sum
+    "v=Hello; [[ $v == H* ]] && printf y; printf '\\n'",    // var glob match
+    "a=(1 2 3); printf '%s\\n' \"${a[@]/2/X}\"",            // per-element replace across array
     // NB: `local` is intentionally NOT here — ksh93 has no `local` builtin
     // (it uses `typeset`), so it is a legitimate ksh divergence, not a bug.
     // Bare `${a[N]}` single-index is also excluded — 1-based (zsh) vs 0-based
