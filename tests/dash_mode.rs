@@ -96,6 +96,22 @@ fn dash_rejects_arith_comma() {
 }
 
 #[test]
+fn dash_rejects_arith_base_num() {
+    // POSIX arithmetic (dash/ash) has NO `base#num` syntax — only decimal,
+    // `0` octal, `0x` hex. `16#ff` etc. are zsh/bash/ksh extensions that real
+    // dash rejects ("expecting EOF: 16#ff"). --dash must error, not compute.
+    for script in ["echo $((16#ff))", "echo $((8#17))", "echo $((2#1010))"] {
+        let (out, code) = run_dash_mode(script);
+        assert_eq!(out, "", "`{script}` should produce no output under --dash");
+        assert_ne!(code, 0, "`{script}` base#num must error under --dash");
+    }
+    // But plain POSIX bases still work.
+    assert_eq!(run_dash_mode("echo $((0x1f))").0, "31\n");
+    assert_eq!(run_dash_mode("echo $((010))").0, "8\n");
+    assert_eq!(run_dash_mode("echo $((2 + 3 * 4))").0, "14\n");
+}
+
+#[test]
 fn dash_double_bracket_is_not_reserved() {
     // dash has no `[[ ]]`; it is an ordinary command → "not found".
     let (out, code) = run_dash_mode("[[ 1 = 1 ]] && echo yes");

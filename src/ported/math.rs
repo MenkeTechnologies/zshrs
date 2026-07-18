@@ -1014,7 +1014,12 @@ pub(crate) fn lexconstant() -> i32 {
     }
 
     // Check for base#value syntax (e.g., 16#FF)
-    if peek() == Some('#') {
+    // !!! DASH-STRICT GATE (no C counterpart) !!! real dash/ash have POSIX
+    // arithmetic only (decimal / `0` octal / `0x` hex); `base#num` is a
+    // zsh/bash/ksh extension they reject. Under `zshrs --dash`/`--ash` do NOT
+    // consume `#` as a base separator — the parser then hits the stray `#` and
+    // errors like the real shell. --sh (bash-family) and --ksh keep accepting.
+    if peek() == Some('#') && !crate::dash_mode::dash_strict() {
         advance();
         let base_str: String = m_input_clone()[num_start..m_pos() - 1]
             .chars()

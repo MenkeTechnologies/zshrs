@@ -259,7 +259,18 @@ impl<'a> ArithCompiler<'a> {
         // number is the base (2..=36); the digits after `#` use that
         // base. zsh accepts `#` (signed result) and `##` (unsigned),
         // but for the arith_compiler scope just `#` is sufficient.
-        if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b'#' {
+        //
+        // !!! DASH-STRICT GATE (no C counterpart) !!! real dash/ash have POSIX
+        // arithmetic ONLY (decimal, `0` octal, `0x` hex) — `base#num` is a
+        // zsh/bash/ksh extension they REJECT ("expecting EOF: 16#ff"). Under
+        // `zshrs --dash`/`--ash`, do NOT consume the `#` as a base separator;
+        // leave the decimal parsed and let the stray `#` surface as an
+        // unexpected token, matching the real shell's error. bash-family --sh
+        // and --ksh keep accepting base#num (their real shells do too).
+        if self.pos < self.input.len()
+            && self.input.as_bytes()[self.pos] == b'#'
+            && !crate::dash_mode::dash_strict()
+        {
             let base_str = &self.input[start..self.pos];
             if let Ok(base) = base_str.parse::<u32>() {
                 if (2..=36).contains(&base) {
