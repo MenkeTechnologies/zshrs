@@ -3203,6 +3203,34 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 exec.set_last_status(1);
                 return true;
             }
+            // Bash sparse: an explicit-index array literal `a=([2]=x [5]=y)`
+            // leaves the un-indexed slots as HOLES (bash: count 2, indices
+            // {2,5}), not dense empties. assignaparam has already placed each
+            // value at its 0-based index; mark every OTHER slot a hole. Gated
+            // to a PURE indexed literal (every element a `[idx]=val` triple) —
+            // a mixed positional/indexed literal (`a=(x [3]=y z)`) needs the
+            // positional-counter replay we don't model, so it stays dense.
+            if crate::dash_mode::bash_mode() && has_kv {
+                let marker = crate::ported::zsh_h::Marker;
+                let pure_indexed = !values.is_empty()
+                    && values.len() % 3 == 0
+                    && values.chunks(3).all(|ch| ch[0].starts_with(marker));
+                if pure_indexed {
+                    let mut explicit: std::collections::BTreeSet<usize> =
+                        std::collections::BTreeSet::new();
+                    for ch in values.chunks(3) {
+                        if let Ok(i) = ch[1].trim().parse::<usize>() {
+                            explicit.insert(i);
+                        }
+                    }
+                    let len = exec.array(&name).map(|a| a.len()).unwrap_or(0);
+                    for i in 0..len {
+                        if !explicit.contains(&i) {
+                            crate::bash_arrays::note_unset(&name, i);
+                        }
+                    }
+                }
+            }
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
