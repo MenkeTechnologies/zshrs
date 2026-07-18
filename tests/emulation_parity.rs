@@ -1661,6 +1661,44 @@ fn bash_alpha_brace_step() {
 }
 
 #[test]
+fn test_bracket_posix_three_arg_binary_rule() {
+    // POSIX `test`/`[` 3-argument rule: with exactly three operands and a
+    // BINARY operator in the middle, it is a binary test of $1 and $3 — even
+    // when $1 looks like an operator (`!`). `[ "!" = "x" ]` compares the
+    // strings, it is NOT a negation. Universal across zsh/bash/ksh/dash/sh, so
+    // every zshrs mode must agree. A prior port errored (rc 2) on all of these.
+    // Found by the test/[ operator fuzzer.
+    let sig = |flag: &str, script: &str| -> bool {
+        Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", script])
+            .output()
+            .expect("spawn")
+            .status
+            .success()
+    };
+    // (script, expected-success) — true == exit 0.
+    let cases: &[(&str, bool)] = &[
+        ("[ \"!\" = \"=\" ]", false),   // "!" != "="  → false
+        ("[ \"!\" != \"=\" ]", true),   // "!" != "="  → true
+        ("[ \"!\" = \"!\" ]", true),    // "!" == "!"  → true
+        ("[ \"!\" != \"a\" ]", true),   // "!" != "a"  → true
+        // negation forms still work (4-arg ! strips; 3-arg unary-middle negates)
+        ("[ ! -z foo ]", true),         // ! (-z foo) → ! false → true
+        ("[ ! a = b ]", true),          // ! (a = b)  → ! false → true
+        ("[ ! a ]", false),             // ! (-n a)   → ! true  → false
+        // ordinary binary + unary unaffected
+        ("[ a = b ]", false),
+        ("[ 5 -eq 5 ]", true),
+        ("[ -n x ]", true),
+    ];
+    for m in ["--zsh", "--bash", "--ksh", "--dash", "--sh"] {
+        for (script, want) in cases {
+            assert_eq!(sig(m, script), *want, "{m}: {script} expected success={want}");
+        }
+    }
+}
+
+#[test]
 fn emulation_parity_matrix() {
     let require = std::env::var("ZSHRS_REQUIRE_REF_SHELLS").is_ok();
     let mut tested = 0usize;

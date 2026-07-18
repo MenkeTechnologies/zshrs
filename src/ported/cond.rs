@@ -620,6 +620,29 @@ pub fn evalcond(
         }
     }
 
+    // POSIX test 3-argument rule (c:Src/parse.c par_cond_2 c:2495; bin_test
+    // c:Src/builtin.c:7262 leaves the 3-arg `!` for the grammar): with EXACTLY
+    // three tokens and a recognised BINARY operator in the middle, it is ALWAYS
+    // a binary test of the first and third — even when the first token LOOKS
+    // like an operator. `[ "!" = "x" ]` compares the strings "!" and "x", not a
+    // negation. Enter the walker at the PRIMARY level (prec 3), which reads the
+    // left token literally, bypassing the NOT handler (prec 2) that would
+    // otherwise consume a leading `!`. Verified identical in real zsh for both
+    // `[ ]` and `[[ ]]`. A literal `(` or single-char `-X` as the left operand
+    // is left to the general walker (it would misfire at prec 3); those forms
+    // are a rare residual. Found by the test/[ fuzzer.
+    if toks.len() == 3
+        && crate::ported::text::is_cond_binary_op(toks[1]) != 0
+        && toks[0] != "("
+        && !(toks[0].starts_with('-') && toks[0].len() == 2)
+    {
+        let mut p = 0usize;
+        let r = walk(&toks, &mut p, options, variables, posix_mode, from_test, 3);
+        if p == toks.len() {
+            return r;
+        }
+    }
+
     let mut pos = 0usize;
     let r = walk(
         &toks, &mut pos, options, variables, posix_mode, from_test, 0,
