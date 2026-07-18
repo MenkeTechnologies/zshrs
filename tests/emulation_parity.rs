@@ -753,6 +753,38 @@ fn dash_strict_rejects_arith_command() {
 }
 
 #[test]
+fn dash_strict_rejects_nonposix_reserved_words() {
+    // dash/ash have none of the zsh/bash/ksh reserved words `[[` / `function`
+    // / `coproc` — each is an ordinary command word there (`[[`/`coproc` → not
+    // found; `function` → the following `{` is a syntax error). The POSIX
+    // `name()` function form and every POSIX reserved word must keep working.
+    // Found by the per-mode dash-strictness sweep.
+    let probe = |flag: &str, script: &str| -> (String, bool) {
+        let out = Command::new(zshrs_bin())
+            .args([flag, "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.success())
+    };
+    for strict in ["--dash", "--ash"] {
+        for script in ["function f { echo hi; }; f", "coproc cat", "[[ a == a ]]"] {
+            let (_o, ok) = probe(strict, script);
+            assert!(!ok, "{strict}: `{script}` must not run (non-POSIX reserved word)");
+        }
+        // POSIX function form + reserved words still work.
+        let (out, ok) = probe(strict, "f() { echo hi; }; f");
+        assert!(ok && out.trim() == "hi", "{strict}: POSIX `name()` function must work");
+        let (out2, ok2) = probe(strict, "if true; then echo y; fi");
+        assert!(ok2 && out2.trim() == "y", "{strict}: POSIX `if` must work");
+    }
+    // zsh/bash/ksh keep `function` and `coproc`.
+    for m in ["--zsh", "--bash", "--ksh"] {
+        let (out, ok) = probe(m, "function g { echo fn; }; g");
+        assert!(ok && out.trim() == "fn", "{m}: `function` keyword must work");
+    }
+}
+
+#[test]
 fn dash_strict_rejects_process_substitution() {
     // dash/ash have no `<(...)` / `>(...)` process substitution — the `<`/`>`
     // is a plain redirection and the `(` is an unexpected target, so the parser

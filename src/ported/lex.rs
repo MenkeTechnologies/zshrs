@@ -3587,12 +3587,17 @@ pub fn exalias() -> bool {
         } else {
             None
         };
-        // !!! DASH-STRICT GATE (no C counterpart) !!! dash has no `[[ ]]`
-        // conditional; `[[` is an ordinary command word (→ "not found").
-        // Suppress only the DINBRACK promotion — every POSIX reserved word
-        // (if/then/while/for/case/…) stays intact. The `]]`/`!`-in-cond
-        // branches below are gated on LEX_INCOND, which never rises now.
-        let rw_tok = if rw_tok == Some(DINBRACK) && crate::dash_mode::dash_strict() {
+        // !!! DASH-STRICT GATE (no C counterpart) !!! dash has none of the
+        // zsh/bash/ksh reserved words `[[` / `function` / `coproc`; each is an
+        // ordinary command word there (`[[`/`coproc` → "not found", `function`
+        // → the following `{` is a syntax error). Suppress ONLY these three
+        // promotions — every POSIX reserved word (if/then/while/for/case/until/
+        // do/done/{/}/…) stays intact. The `]]`/`!`-in-cond branches below are
+        // gated on LEX_INCOND, which never rises now. Found by the per-mode
+        // dash-strictness sweep.
+        let rw_tok = if crate::dash_mode::dash_strict()
+            && matches!(rw_tok, Some(DINBRACK) | Some(FUNC) | Some(COPROC))
+        {
             None
         } else {
             rw_tok
