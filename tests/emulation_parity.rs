@@ -492,6 +492,16 @@ fn bash_sparse_arrays() {
     // Mixing a literal with a later subscript-assign keeps both live.
     assert_eq!(bash(r#"a=([3]=x); a[1]=y; printf '%s' "${!a[*]}""#), "1 3");
     assert_eq!(bash(r#"a=([3]=x); a[1]=y; printf '%s' "${a[*]}""#), "y x");
+    // `declare -a` / `typeset -a` with explicit indices is sparse too.
+    assert_eq!(
+        bash(r#"declare -a a=([5]=x [10]=y); printf '%s|%s|%s' "${a[*]}" "${!a[*]}" "${#a[@]}""#),
+        "x y|5 10|2"
+    );
+    assert_eq!(bash(r#"typeset -a a=([2]=q); printf '%s' "${a[2]}""#), "q");
+    assert_eq!(
+        bash(r#"declare -a a=([5]=x [10]=y); declare -p a"#).trim_end(),
+        r#"declare -a a=([5]="x" [10]="y")"#
+    );
 }
 
 #[test]
