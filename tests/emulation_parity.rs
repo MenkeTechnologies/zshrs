@@ -526,6 +526,47 @@ fn bash_case_and_at_transforms() {
 }
 
 #[test]
+fn bash_arith_subscript_and_assoc_keys() {
+    // bash indexed arrays are 0-based in ARITHMETIC too (`$(( a[1] ))` is the
+    // second element), and `${!m[@]}` on an associative array yields its KEYS.
+    // Both were zsh-shaped before (1-based arith; empty assoc-key indirect).
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    // 0-based arithmetic subscript, read + compound.
+    assert_eq!(bash("a=(10 20 30); echo $(( a[1] ))"), "20");
+    assert_eq!(bash("a=(10 20 30); echo $(( a[0] + a[2] ))"), "40");
+    assert_eq!(bash("a=(10 20 30); echo $(( a[-1] ))"), "30");
+    assert_eq!(bash("a=(1 2 3); i=1; echo $(( a[i] ))"), "2");
+    assert_eq!(bash(r#"a=(10 20 30); (( a[0]++ )); echo "${a[0]}""#), "11");
+    // `${!m[@]}` = assoc keys; order is hash-dependent, so exercise it
+    // functionally (sum every value via its key) — order-independent.
+    assert_eq!(
+        bash(r#"declare -A m=([a]=1 [b]=2 [c]=3); s=0; for k in "${!m[@]}"; do s=$((s+m[$k])); done; echo $s"#),
+        "6"
+    );
+    // The key SET is correct (sorted for determinism).
+    assert_eq!(
+        bash(r#"declare -A m=([x]=1 [y]=2 [z]=3); for k in "${!m[@]}"; do echo "$k"; done | sort | tr -d '\n'"#),
+        "xyz"
+    );
+
+    // --zsh keeps 1-based arithmetic subscripts (matching real zsh).
+    let zsh = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--zsh", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
+    };
+    assert_eq!(zsh("a=(10 20 30); echo $(( a[1] ))"), "10");
+}
+
+#[test]
 fn bash_special_variables() {
     // bash special vars that alias zsh natives (or are synthesized) under
     // --bash: PIPESTATUS≈pipestatus, FUNCNAME≈funcstack, BASH_VERSINFO/
