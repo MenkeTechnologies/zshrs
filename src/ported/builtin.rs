@@ -5951,6 +5951,46 @@ pub fn bin_typeset(
                         }
                     }
                     crate::ported::exec::set_assoc(n, map.clone());
+                } else if crate::dash_mode::bash_mode()
+                    && !elems.is_empty()
+                    && elems
+                        .iter()
+                        .all(|e| e.starts_with('[') && e.contains("]="))
+                    && elems.iter().all(|e| {
+                        e.find("]=")
+                            .map(|c| e[1..c].trim().parse::<usize>().is_ok())
+                            .unwrap_or(false)
+                    })
+                {
+                    // !!! BASH-MODE GATE !!! bash `declare -a a=([5]=x [10]=y)`
+                    // — explicit 0-based indices in an indexed-array literal
+                    // (the assoc branch above handles the `-A` form). Place each
+                    // value at its index and record the un-indexed slots as
+                    // sparse holes, mirroring the plain `a=([i]=v)` path.
+                    let mut pairs: Vec<(usize, String)> = Vec::new();
+                    for e in &elems {
+                        let close = e.find("]=").unwrap();
+                        if let Ok(idx) = e[1..close].trim().parse::<usize>() {
+                            pairs.push((idx, e[close + 2..].to_string()));
+                        }
+                    }
+                    let len = pairs.iter().map(|(i, _)| *i + 1).max().unwrap_or(0);
+                    let mut dense = vec![String::new(); len];
+                    let mut explicit: std::collections::BTreeSet<usize> =
+                        std::collections::BTreeSet::new();
+                    for (i, v) in pairs {
+                        if i < dense.len() {
+                            dense[i] = v;
+                            explicit.insert(i);
+                        }
+                    }
+                    crate::ported::exec::set_array(n, dense.clone());
+                    crate::bash_arrays::clear(n);
+                    for i in 0..dense.len() {
+                        if !explicit.contains(&i) {
+                            crate::bash_arrays::note_unset(n, i);
+                        }
+                    }
                 } else {
                     // c:2980-2995 — plain array.
                     crate::ported::exec::set_array(n, elems.clone());
