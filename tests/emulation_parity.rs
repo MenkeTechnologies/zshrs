@@ -616,6 +616,51 @@ fn bash_arith_subscript_and_assoc_keys() {
 }
 
 #[test]
+fn bash_set_o_listing() {
+    // bash `set -o` lists a fixed ~27 named options as `name<TAB>on/off`;
+    // `set +o` uses the reusable `set -o name` / `set +o name` form. zsh lists
+    // its full ~180-option set with different naming, so --bash gets the bash
+    // table instead.
+    let bash = |script: &str| -> String {
+        let out = Command::new(zshrs_bin())
+            .args(["--bash", "-f", "-c", script])
+            .output()
+            .expect("spawn");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // Parse `set -o` into (name, on/off) pairs (name is padded, then a TAB).
+    let state_of = |listing: &str, opt: &str| -> Option<String> {
+        listing.lines().find_map(|l| {
+            let (n, v) = l.split_once('\t')?;
+            (n.trim() == opt).then(|| v.trim().to_string())
+        })
+    };
+    let listing = bash("set -o");
+    assert_eq!(state_of(&listing, "braceexpand").as_deref(), Some("on"));
+    assert_eq!(state_of(&listing, "errexit").as_deref(), Some("off"));
+    assert_eq!(state_of(&listing, "pipefail").as_deref(), Some("off"));
+    // Exactly the 27 bash options (each line has a tab-separated on/off).
+    let count = listing.lines().filter(|l| l.contains('\t')).count();
+    assert_eq!(count, 27, "bash set -o should list 27 options");
+    // Enabling flips the state.
+    assert_eq!(
+        state_of(&bash("set -o errexit; set -o"), "errexit").as_deref(),
+        Some("on")
+    );
+    // `set +o` reusable form.
+    assert!(bash("set +o").contains("set +o allexport"));
+    assert!(bash("set -o pipefail; set +o").contains("set -o pipefail"));
+
+    // --zsh keeps the full zsh option listing (uses `no`-prefixed names).
+    let out = Command::new(zshrs_bin())
+        .args(["--zsh", "-f", "-c", "set -o"])
+        .output()
+        .expect("spawn");
+    let zout = String::from_utf8_lossy(&out.stdout);
+    assert!(zout.lines().count() > 50, "zsh set -o lists many options");
+}
+
+#[test]
 fn bash_declare_p_format() {
     // bash `declare -p` uses the reusable `declare -FLAGS name="value"` form
     // (scalar) / `declare -a name=([i]="v" …)` / `declare -A name=([k]="v" …)`,
